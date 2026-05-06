@@ -90,20 +90,14 @@ fsm Handshaker implements StreamingOp<int>.Server {
 
 Modules are used for hierarchical grouping and manual structural wiring.
 
-## 5. Latency-Insensitive Dataflow (Tags)
+## Latency-Insensitive Dataflow (Tags)
 
 Tags manage synchronization. The distinction between combinatorial and sequential logic is derived from the tag's implementation.
 
-### 5.1 Tag Definitions & Implicit Scoping
+### Tag Definitions & Implicit Scoping
 
 Tags can be applied explicitly or inherited via scope.
 
-  
-
-Code snippet
-
-  
-  
 ```
 tag FrameSync : uint32 with handshake, capacity=8;  
   
@@ -118,7 +112,7 @@ module Top() {
 }  
 ```  
 
-### 5.2 Resource Scoreboarding
+### Resource Scoreboarding
 
 When a tag is defined with capacity=N, the compiler instantiates a hardware scoreboard (Priority Encoder + Bitmask) to manage in-flight transactions.
 
@@ -131,11 +125,11 @@ When a tag is defined with capacity=N, the compiler instantiates a hardware scor
 3.  Tag-Based Dispatch: Matching on a struct-based tag to route data to parallel workers.
     
 
-## 6. Composition & Configuration
+## Composition & Configuration
 
 The Configuration Facet allows for late binding and architectural swapping.
 
-### 6.1 Chaining & Parallelism
+### Chaining & Parallelism
 
 The pipe operator `|>` chains compatible interfaces, while fork/join manages parallel branches.
 
@@ -146,13 +140,13 @@ module ImageProcessor() {
   
   // Parallel fork-join with automatic latency balancing  
   fork {  
-  branch A { res_a := @Sync heavy_op(p_in); }  
-  branch B { res_b := @Sync light_op(p_in); }  
+    branch A { res_a := @Sync heavy_op(p_in); }  
+    branch B { res_b := @Sync light_op(p_in); }  
   } join @Sync (result => res_a + res_b);  
 }  
 ```  
 
-### 6.2 Implementation Binding
+### Implementation Binding
 
 ```
 // Configuration Facet  
@@ -162,7 +156,7 @@ instance my_op : StreamingOp<int>;
 bind my_op => MultPipe;  
 ```  
 
-## 7. Interoperability & Testing
+## Interoperability & Testing
 
 LHdl avoids a non-synthesizable subset for verification. Instead, it provides:
 
@@ -171,7 +165,7 @@ LHdl avoids a non-synthesizable subset for verification. Instead, it provides:
 -   Behavioral Facets: High-level implementations of interfaces used specifically for verification.
     
 
-## 8. Synthesis Strategy
+## Synthesis Strategy
 
 The compiler resolves the abstract "time-less" Design Facet by:
 
@@ -181,5 +175,5 @@ The compiler resolves the abstract "time-less" Design Facet by:
     
 3.  Flat Mapping: Resolving multidimensional array access and struct padding into a target-agnostic netlist before final VHDL/Verilog emission.
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbLTc5NDQ0NDk3MywtNjQ5OTIzNjMzXX0=
+eyJoaXN0b3J5IjpbMjI0ODQzODE5LC02NDk5MjM2MzNdfQ==
 -->
