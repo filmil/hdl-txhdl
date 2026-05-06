@@ -36,13 +36,15 @@ Interfaces are the primary unit of reuse. Every first-class citizen (Module, Pip
   
 ```
 interface StreamingOp <type T> {  
-   in_data : T;  
-   out_data : T;
+    in_data : T;  
+    out_data : T;
   
-  modport Server { in in_data; out out_data; }  
+    modport Server { in in_data; out out_data; }  
     modport Client { out in_data; in out_data; }  
 }  
 ```  
+
+
 
 ### Examples
 
@@ -56,7 +58,7 @@ interface StreamingOp <type T> {
 
 Modules, Pipelines, and FSMs are specialized implementation styles for interfaces.
 
-### 4.1 Pipelines (Dataflow-Centric)
+### Pipelines (Dataflow-Centric)
 
 Pipelines define a sequence of operations. The compiler performs Live-Range Analysis to automatically bridge variables across stages.
 
@@ -68,7 +70,7 @@ pipeline MultPipe implements StreamingOp<int>.Server {
 }  
 ```
 
-### 4.2 State Machines (Control-Centric)
+### State Machines (Control-Centric)
 
 FSMs manage sequential transitions and protocol logic.
 
@@ -84,7 +86,7 @@ fsm Handshaker implements StreamingOp<int>.Server {
 }  
 ``` 
 
-### 4.3 Modules (Structural-Centric)
+### Modules (Structural-Centric)
 
 Modules are used for hierarchical grouping and manual structural wiring.
 
@@ -179,5 +181,5 @@ The compiler resolves the abstract "time-less" Design Facet by:
     
 3.  Flat Mapping: Resolving multidimensional array access and struct padding into a target-agnostic netlist before final VHDL/Verilog emission.
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbMTcwMTExNTk3OSwtNjQ5OTIzNjMzXX0=
+eyJoaXN0b3J5IjpbLTc5NDQ0NDk3MywtNjQ5OTIzNjMzXX0=
 -->
