@@ -56,7 +56,6 @@ interface StreamingOp <type T> {
     
 3.  Role-Based Modports: Defining Master and Slave views of the same wires.
     
-
 4. First-Class Citizens
 
 Modules, Pipelines, and FSMs are specialized implementation styles for interfaces.
@@ -71,35 +70,29 @@ Code snippet
 
   
   
-
+```verilog
 pipeline MultPipe implements StreamingOp<int>.Server {  
-pipe int temp;  
-stage S1 { temp := in_data * 2; }  
-stage S2 { out_data := temp + 5; }  
+  pipe int temp;  
+  stage S1 { temp := in_data * 2; }  
+  stage S2 { out_data := temp + 5; }  
 }  
-  
+```
 
 ### 4.2 State Machines (Control-Centric)
 
 FSMs manage sequential transitions and protocol logic.
 
-  
-
-Code snippet
-
-  
-  
-
+```go
 fsm Handshaker implements StreamingOp<int>.Server {  
-state Idle {  
-if (in_data > 0) { next => Processing; }  
+  state Idle {  
+    if (in_data > 0) { next => Processing; }  
+  }  
+  state Processing {  
+    out_data := in_data;  
+    next => Idle;  
+  }  
 }  
-state Processing {  
-out_data := in_data;  
-next => Idle;  
-}  
-}  
-  
+ ``` 
 
 ### 4.3 Modules (Structural-Centric)
 
@@ -223,5 +216,5 @@ The compiler resolves the abstract "time-less" Design Facet by:
     
 3.  Flat Mapping: Resolving multidimensional array access and struct padding into a target-agnostic netlist before final VHDL/Verilog emission.
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbLTE2MjU4NzUwNjFdfQ==
+eyJoaXN0b3J5IjpbMjM4NjQwODUxXX0=
 -->
