@@ -150,52 +150,36 @@ The pipe operator `|>` chains compatible interfaces, while fork/join manages par
 ```
 module ImageProcessor() {  
   // Chain multiple pipelines that satisfy StreamingOp  
-p_out := p_in |> Grayscale() |> Blur() |> Sharpen();  
+ p_out := p_in |> Grayscale() |> Blur() |> Sharpen();  
   
   // Parallel fork-join with automatic latency balancing  
   fork {  
-branch A { res_a := @Sync heavy_op(p_in); }  
-branch B { res_b := @Sync light_op(p_in); }  
-} join @Sync (result => res_a + res_b);  
+  branch A { res_a := @Sync heavy_op(p_in); }  
+  branch B { res_b := @Sync light_op(p_in); }  
+  } join @Sync (result => res_a + res_b);  
 }  
 ```  
 
 ### 6.2 Implementation Binding
 
-  
-
-Code snippet
-
-  
-  
-
+```
 // Configuration Facet  
 instance my_op : StreamingOp<int>;  
   
 // Swap implementations without changing the Design Facet  
 bind my_op => MultPipe;  
-  
+```  
 
-## 
-
-----------
-
-7. Interoperability & Testing
+## 7. Interoperability & Testing
 
 LHdl avoids a non-synthesizable subset for verification. Instead, it provides:
 
 -   Conventional Interop: Ability to wrap Verilog/VHDL modules as LHdl interfaces.
-    
 -   Language Hooks: Direct interoperability with Go or Rust for simulation drivers and file I/O.
-    
 -   Behavioral Facets: High-level implementations of interfaces used specifically for verification.
     
 
-## 
-
-----------
-
-8. Synthesis Strategy
+## 8. Synthesis Strategy
 
 The compiler resolves the abstract "time-less" Design Facet by:
 
@@ -205,5 +189,5 @@ The compiler resolves the abstract "time-less" Design Facet by:
     
 3.  Flat Mapping: Resolving multidimensional array access and struct padding into a target-agnostic netlist before final VHDL/Verilog emission.
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbNzg4NjA3NzgxXX0=
+eyJoaXN0b3J5IjpbLTUzNDk1NjM5MV19
 -->
