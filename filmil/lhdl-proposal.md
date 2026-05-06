@@ -7,11 +7,7 @@ draft: true
 
 LHdl is a modern Hardware Definition Language built on the principle that architectural intent should be decoupled from physical implementation. It prioritizes reuse, deterministic parsing, and the abstraction of time.
 
-## 
-
-----------
-
-1. Core Philosophy & The Three Facets
+## 1. Core Philosophy & The Three Facets
 
 LHdl separates the concerns of hardware development into three distinct facets to allow for architectural exploration without manual RTL rewriting.
 
@@ -64,13 +60,7 @@ Modules, Pipelines, and FSMs are specialized implementation styles for interface
 
 Pipelines define a sequence of operations. The compiler performs Live-Range Analysis to automatically bridge variables across stages.
 
-  
-
-Code snippet
-
-  
-  
-```verilog
+```
 pipeline MultPipe implements StreamingOp<int>.Server {  
   pipe int temp;  
   stage S1 { temp := in_data * 2; }  
@@ -82,7 +72,7 @@ pipeline MultPipe implements StreamingOp<int>.Server {
 
 FSMs manage sequential transitions and protocol logic.
 
-```go
+```
 fsm Handshaker implements StreamingOp<int>.Server {  
   state Idle {  
     if (in_data > 0) { next => Processing; }  
@@ -92,7 +82,7 @@ fsm Handshaker implements StreamingOp<int>.Server {
     next => Idle;  
   }  
 }  
- ``` 
+``` 
 
 ### 4.3 Modules (Structural-Centric)
 
@@ -150,7 +140,7 @@ The pipe operator `|>` chains compatible interfaces, while fork/join manages par
 ```
 module ImageProcessor() {  
   // Chain multiple pipelines that satisfy StreamingOp  
- p_out := p_in |> Grayscale() |> Blur() |> Sharpen();  
+  p_out := p_in |> Grayscale() |> Blur() |> Sharpen();  
   
   // Parallel fork-join with automatic latency balancing  
   fork {  
@@ -189,5 +179,5 @@ The compiler resolves the abstract "time-less" Design Facet by:
     
 3.  Flat Mapping: Resolving multidimensional array access and struct padding into a target-agnostic netlist before final VHDL/Verilog emission.
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbLTUzNDk1NjM5MV19
+eyJoaXN0b3J5IjpbLTY0OTkyMzYzM119
 -->
