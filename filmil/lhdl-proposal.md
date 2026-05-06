@@ -98,11 +98,7 @@ fsm Handshaker implements StreamingOp<int>.Server {
 
 Modules are used for hierarchical grouping and manual structural wiring.
 
-## 
-
-----------
-
-5. Latency-Insensitive Dataflow (Tags)
+## 5. Latency-Insensitive Dataflow (Tags)
 
 Tags manage synchronization. The distinction between combinatorial and sequential logic is derived from the tag's implementation.
 
@@ -116,16 +112,19 @@ Code snippet
 
   
   
-
+```
 tag FrameSync : uint32 with handshake, capacity=8;  
   
 module Top() {  
-default tag FrameSync; // All assignments in this scope are now synchronized  
+  default tag FrameSync; 
+  // All assignments in this scope are 
+  // now synchronized  
   
-val_a := input_x + 1; // Implicitly @FrameSync  
-val_b := ~input_y; // Explicitly "raw" (combinatorial ZST)  
+  val_a := input_x + 1; // Implicitly @FrameSync  
+  val_b := ~input_y;
+  // Explicitly "raw" (combinatorial ZST)  
 }  
-  
+```  
 
 ### 5.2 Resource Scoreboarding
 
@@ -140,36 +139,26 @@ When a tag is defined with capacity=N, the compiler instantiates a hardware scor
 3.  Tag-Based Dispatch: Matching on a struct-based tag to route data to parallel workers.
     
 
-## 
-
-----------
-
-6. Composition & Configuration
+## 6. Composition & Configuration
 
 The Configuration Facet allows for late binding and architectural swapping.
 
 ### 6.1 Chaining & Parallelism
 
-The pipe operator |> chains compatible interfaces, while fork/join manages parallel branches.
+The pipe operator `|>` chains compatible interfaces, while fork/join manages parallel branches.
 
-  
-
-Code snippet
-
-  
-  
-
+```
 module ImageProcessor() {  
-// Chain multiple pipelines that satisfy StreamingOp  
+  // Chain multiple pipelines that satisfy StreamingOp  
 p_out := p_in |> Grayscale() |> Blur() |> Sharpen();  
   
-// Parallel fork-join with automatic latency balancing  
-fork {  
+  // Parallel fork-join with automatic latency balancing  
+  fork {  
 branch A { res_a := @Sync heavy_op(p_in); }  
 branch B { res_b := @Sync light_op(p_in); }  
 } join @Sync (result => res_a + res_b);  
 }  
-  
+```  
 
 ### 6.2 Implementation Binding
 
@@ -216,5 +205,5 @@ The compiler resolves the abstract "time-less" Design Facet by:
     
 3.  Flat Mapping: Resolving multidimensional array access and struct padding into a target-agnostic netlist before final VHDL/Verilog emission.
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbMjM4NjQwODUxXX0=
+eyJoaXN0b3J5IjpbNzg4NjA3NzgxXX0=
 -->
