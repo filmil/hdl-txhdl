@@ -22,17 +22,17 @@ LHdl separates the concerns of hardware development into three distinct facets t
 -   Configuration Facet: Handles the assembly of the system, binding specific implementations to interface instances and setting generic parameters.
     
 
-## 
+
 
 ----------
 
 2. Syntax & Lexical Structure
 
-LHdl is strictly LL(1) to ensure fast, deterministic parsing and simple tooling.
+LHdl is LL(1) to ensure fast, deterministic parsing and simple tooling. This is not a hard requirement, but it works for small and straightforward languages.
 
--   Brace-Scoped: Uses {} for blocks to improve scannability and reduce reserved keywords.
+-   Brace-Scoped: Uses `{...}` for blocks to improve scannability and reduce reserved keywords (you don't need to make `begin`, `end`, `else` etc reserved.
     
--   Prefix-Heavy: Every construct is announced by a unique keyword or symbol.
+-   Prefix-Heavy: Every construct is announced by a unique keyword or symbol. This si a
     
 -   Flat Arrays: Multidimensional arrays are natively supported; the compiler handles flat bit-offset calculations:  
 
@@ -242,5 +242,5 @@ The compiler resolves the abstract "time-less" Design Facet by:
     
 3.  Flat Mapping: Resolving multidimensional array access and struct padding into a target-agnostic netlist before final VHDL/Verilog emission.
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbMTc1NjQ3OTU4OF19
+eyJoaXN0b3J5IjpbLTg4MDI4ODg5XX0=
 -->
