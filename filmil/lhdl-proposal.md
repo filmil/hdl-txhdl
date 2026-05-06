@@ -7,7 +7,7 @@ draft: true
 
 LHdl is a modern Hardware Definition Language built on the principle that architectural intent should be decoupled from physical implementation. It prioritizes reuse, deterministic parsing, and the abstraction of time.
 
-## 1. Core Philosophy & The Three Facets
+## Core Philosophy & The Three Facets
 
 LHdl separates the concerns of hardware development into three distinct facets to allow for architectural exploration without manual RTL rewriting.
 
@@ -17,7 +17,7 @@ LHdl separates the concerns of hardware development into three distinct facets t
     
 -   Configuration Facet: Handles the assembly of the system, binding specific implementations to interface instances and setting generic parameters.
     
-## 2. Syntax & Lexical Structure
+## Syntax & Lexical Structure
 
 LHdl is LL(1) to ensure fast, deterministic parsing and simple tooling. This is not a hard requirement, but it works for small and straightforward languages.
 
@@ -30,16 +30,16 @@ LHdl is LL(1) to ensure fast, deterministic parsing and simple tooling. This is 
     $$\text{Offset} = \left( \sum_{k=1}^{n} \left( i_k \prod_{j=k+1}^{n} D_j \right) \right) \times \text{sizeof}(Type)$$
     
 
-## 3. Interfaces: The Universal Contract
+## Interfaces: The Universal Contract
 
 Interfaces are the primary unit of reuse. Every first-class citizen (Module, Pipeline, FSM) can implement an interface.
   
-```rust
+```
 interface StreamingOp <type T> {  
-  in_data : T;  
-  out_data : T;  
+   in_data : T;  
+   out_data : T;
   
-    modport Server { in in_data; out out_data; }  
+  modport Server { in in_data; out out_data; }  
     modport Client { out in_data; in out_data; }  
 }  
 ```  
@@ -48,7 +48,7 @@ interface StreamingOp <type T> {
 
 1.  Standard Bus Interface: Defining a Wishbone-like structure.
     
-2.  Parameterized Interface: Using <width: int> to scale data paths.
+2.  Parameterized Interface: Using `<width: int>` to scale data paths.
     
 3.  Role-Based Modports: Defining Master and Slave views of the same wires.
     
@@ -179,5 +179,5 @@ The compiler resolves the abstract "time-less" Design Facet by:
     
 3.  Flat Mapping: Resolving multidimensional array access and struct padding into a target-agnostic netlist before final VHDL/Verilog emission.
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbLTY0OTkyMzYzM119
+eyJoaXN0b3J5IjpbMTcwMTExNTk3OSwtNjQ5OTIzNjMzXX0=
 -->
