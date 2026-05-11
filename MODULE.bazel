@@ -1,0 +1,6 @@
+module(
+    name = "txhdl",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "bazel_ebook", version = "2.0.15")
