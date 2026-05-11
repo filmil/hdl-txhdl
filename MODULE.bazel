@@ -4,4 +4,4 @@ module(
 )
 
 bazel_dep(name = "bazel_ebook", version = "2.0.15")
-bazel_dep(name = "rules_shell", version = "0.3.0")
+bazel_dep(name = "rules_shell", version = "0.6.1")
