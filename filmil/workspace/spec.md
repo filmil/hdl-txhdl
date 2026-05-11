@@ -159,17 +159,23 @@ Pipelines, FSMs, Procedures, and Functions are first-class constructs that can o
 
 ### **Grammar: Primitives**
 ```ebnf
-module_def ::= "module" identifier [ generic_decl ] [ "implements" identifier ] "{" { statement | instance_decl } "}"
+module_def ::= "module" identifier [ generic_decl ] [ "implements" identifier ]
+               "{" { statement | instance_decl } "}"
 
-pipeline_def ::= "pipeline" identifier [ generic_decl ] [ "implements" identifier ] "{" { pipe_decl | stage_def } "}"
+pipeline_def ::= "pipeline" identifier [ generic_decl ]
+                 [ "implements" identifier ] "{" { pipe_decl | stage_def } "}"
 pipe_decl ::= "pipe" identifier ":" type ";"
-stage_def ::= "stage" identifier [ "(" port_list ")" ] [ ":" identifier "(" bind_list ")" ] "{" { statement } "}"
+stage_def ::= "stage" identifier [ "(" port_list ")" ]
+              [ ":" identifier "(" bind_list ")" ] "{" { statement } "}"
 
-fsm_def ::= "fsm" identifier [ generic_decl ] [ "implements" identifier ] "{" { state_def } "}"
+fsm_def ::= "fsm" identifier [ generic_decl ] [ "implements" identifier ]
+            "{" { state_def } "}"
 state_def ::= "state" identifier "{" { statement } "}"
 
-proc_def ::= [ "pub" ] "proc" identifier "(" [ port_list ] ")" "{" { statement } "}"
-func_def ::= [ "pub" ] "func" identifier "(" [ port_list ] ")" "->" return_type "{" { statement } "}"
+proc_def ::= [ "pub" ] "proc" identifier "(" [ port_list ] ")"
+             "{" { statement } "}"
+func_def ::= [ "pub" ] "func" identifier "(" [ port_list ] ")" "->" return_type
+             "{" { statement } "}"
 
 return_type ::= type | "(" type { "," type } ")"
 port_list ::= port_decl { "," port_decl }
@@ -214,7 +220,8 @@ FLHDL uses **Tags** to manage synchronization without manual cycle-counting. Tag
 protocol_def ::= "protocol" identifier "{" { protocol_signal } "}"
 protocol_signal ::= ( "forward" | "backward" ) port_decl ";"
 
-tag_def ::= "tag" identifier ":" type [ "with" identifier ] [ "capacity" "=" literal ] ";"
+tag_def ::= "tag" identifier ":" type [ "with" identifier ]
+            [ "capacity" "=" literal ] ";"
 tag_prefix ::= "@" identifier | "~"
 ```
 
@@ -264,11 +271,13 @@ return_stmt ::= "return" expression ";"
 
 if_stmt ::= "if" expression "{" { statement } "}" [ "else" "{" { statement } "}" ]
 
-match_stmt ::= "match" [ tag_prefix ] expression "{" { match_arm } [ "default" ":" { statement } ] "}"
+match_stmt ::= "match" [ tag_prefix ] expression
+               "{" { match_arm } [ "default" ":" { statement } ] "}"
 match_arm ::= "case" pattern ":" { statement }
 pattern ::= literal | bit_mask | identifier
 
-fork_stmt ::= "fork" "{" { "branch" identifier "{" { statement } "}" } "join" [ tag_prefix ] [ "(" bind_list ")" ] ";"
+fork_stmt ::= "fork" "{" { "branch" identifier "{" { statement } "}" } "join"
+              [ tag_prefix ] [ "(" bind_list ")" ] ";"
 ```
 
 ### **Example**
@@ -299,7 +308,8 @@ expression ::= term { binary_op term }
 term ::= literal | lvalue | "(" expression ")" | function_call
 function_call ::= identifier "(" [ expression { "," expression } ] ")"
 
-binary_op ::= "+" | "-" | "*" | "/" | "&" | "|" | "^" | "==" | "!=" | "<" | ">" | "<=" | ">=" | ">>" | "<<" | "|>"
+binary_op ::= "+" | "-" | "*" | "/" | "&" | "|" | "^" | "==" | "!="
+            | "<" | ">" | "<=" | ">=" | ">>" | "<<" | "|>"
 ```
 
 ### **Example**
@@ -407,17 +417,23 @@ enum_variant ::= "case" identifier [ "(" type ")" ] [ "=" literal ] ";"
 
 type ::= identifier [ "<" literal { "," literal } ">" ] [ "[" slice_or_index "]" ]
 
-module_def ::= "module" identifier [ generic_decl ] [ "implements" identifier ] "{" { statement | instance_decl } "}"
+module_def ::= "module" identifier [ generic_decl ] [ "implements" identifier ]
+               "{" { statement | instance_decl } "}"
 
-pipeline_def ::= "pipeline" identifier [ generic_decl ] [ "implements" identifier ] "{" { pipe_decl | stage_def } "}"
+pipeline_def ::= "pipeline" identifier [ generic_decl ]
+                 [ "implements" identifier ] "{" { pipe_decl | stage_def } "}"
 pipe_decl ::= "pipe" identifier ":" type ";"
-stage_def ::= "stage" identifier [ "(" port_list ")" ] [ ":" identifier "(" bind_list ")" ] "{" { statement } "}"
+stage_def ::= "stage" identifier [ "(" port_list ")" ]
+              [ ":" identifier "(" bind_list ")" ] "{" { statement } "}"
 
-fsm_def ::= "fsm" identifier [ generic_decl ] [ "implements" identifier ] "{" { state_def } "}"
+fsm_def ::= "fsm" identifier [ generic_decl ] [ "implements" identifier ]
+            "{" { state_def } "}"
 state_def ::= "state" identifier "{" { statement } "}"
 
-proc_def ::= [ "pub" ] "proc" identifier "(" [ port_list ] ")" "{" { statement } "}"
-func_def ::= [ "pub" ] "func" identifier "(" [ port_list ] ")" "->" return_type "{" { statement } "}"
+proc_def ::= [ "pub" ] "proc" identifier "(" [ port_list ] ")"
+             "{" { statement } "}"
+func_def ::= [ "pub" ] "func" identifier "(" [ port_list ] ")" "->" return_type
+             "{" { statement } "}"
 
 return_type ::= type | "(" type { "," type } ")"
 port_list ::= port_decl { "," port_decl }
@@ -427,7 +443,8 @@ instance_decl ::= identifier ":" identifier "(" bind_list ")" ";"
 protocol_def ::= "protocol" identifier "{" { protocol_signal } "}"
 protocol_signal ::= ( "forward" | "backward" ) port_decl ";"
 
-tag_def ::= "tag" identifier ":" type [ "with" identifier ] [ "capacity" "=" literal ] ";"
+tag_def ::= "tag" identifier ":" type [ "with" identifier ]
+            [ "capacity" "=" literal ] ";"
 tag_prefix ::= "@" identifier | "~"
 
 statement ::= var_decl
@@ -447,11 +464,13 @@ return_stmt ::= "return" expression ";"
 
 if_stmt ::= "if" expression "{" { statement } "}" [ "else" "{" { statement } "}" ]
 
-match_stmt ::= "match" [ tag_prefix ] expression "{" { match_arm } [ "default" ":" { statement } ] "}"
+match_stmt ::= "match" [ tag_prefix ] expression
+               "{" { match_arm } [ "default" ":" { statement } ] "}"
 match_arm ::= "case" pattern ":" { statement }
 pattern ::= literal | bit_mask | identifier
 
-fork_stmt ::= "fork" "{" { "branch" identifier "{" { statement } "}" } "join" [ tag_prefix ] [ "(" bind_list ")" ] ";"
+fork_stmt ::= "fork" "{" { "branch" identifier "{" { statement } "}" } "join"
+              [ tag_prefix ] [ "(" bind_list ")" ] ";"
 
 lvalue ::= identifier { "." identifier | "[" slice_or_index "]" }
 
@@ -462,5 +481,6 @@ expression ::= term { binary_op term }
 term ::= literal | lvalue | "(" expression ")" | function_call
 function_call ::= identifier "(" [ expression { "," expression } ] ")"
 
-binary_op ::= "+" | "-" | "*" | "/" | "&" | "|" | "^" | "==" | "!=" | "<" | ">" | "<=" | ">=" | ">>" | "<<" | "|>"
+binary_op ::= "+" | "-" | "*" | "/" | "&" | "|" | "^" | "==" | "!="
+            | "<" | ">" | "<=" | ">=" | ">>" | "<<" | "|>"
 ```
