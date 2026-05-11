@@ -1,0 +1,27 @@
+load("@bazel_ebook//build:rules.bzl", "ebook_pdf", "markdown_lib")
+
+package(default_visibility = ["//visibility:public"])
+
+markdown_lib(
+    name = "draft_spec_md",
+    srcs = ["draft-spec.md"],
+)
+
+ebook_pdf(
+    name = "draft-spec-pdf",
+    metadata_xml = "empty.xml",
+    title_yaml = "empty.yaml",
+    deps = [":draft_spec_md"],
+)
+
+markdown_lib(
+    name = "spec_md",
+    srcs = ["spec.md"],
+)
+
+ebook_pdf(
+    name = "spec-pdf",
+    metadata_xml = "empty.xml",
+    title_yaml = "empty.yaml",
+    deps = [":spec_md"],
+)
