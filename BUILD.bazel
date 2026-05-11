@@ -1,0 +1,8 @@
+load("@bazel_ebook//build:rules.bzl", "markdown_lib")
+
+package(default_visibility = ["//visibility:public"])
+
+markdown_lib(
+    name = "empty_md",
+    srcs = ["empty.md"],
+)

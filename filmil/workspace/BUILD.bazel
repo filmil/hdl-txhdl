@@ -2,6 +2,12 @@ load("@bazel_ebook//build:rules.bzl", "ebook_pdf", "markdown_lib", "pandoc_stand
 
 package(default_visibility = ["//visibility:public"])
 
+genrule(
+    name = "empty_xml_gen",
+    outs = ["empty_gen.xml"],
+    cmd = "touch $@",
+)
+
 markdown_lib(
     name = "draft_spec_md",
     srcs = ["draft-spec.md"],
@@ -9,16 +15,16 @@ markdown_lib(
 
 ebook_pdf(
     name = "draft-spec-pdf",
-    metadata_xml = "empty.xml",
+    metadata_xml = ":empty_xml_gen",
     title_yaml = "empty.yaml",
     tags = ["pdf"],
-    deps = [":draft_spec_md"],
+    deps = ["//:empty_md", ":draft_spec_md"],
 )
 
 pandoc_standalone_html(
     name = "draft-spec-html",
     tags = ["html"],
-    deps = [":draft_spec_md"],
+    deps = ["//:empty_md", ":draft_spec_md"],
 )
 
 markdown_lib(
@@ -28,16 +34,16 @@ markdown_lib(
 
 ebook_pdf(
     name = "spec-pdf",
-    metadata_xml = "empty.xml",
+    metadata_xml = ":empty_xml_gen",
     title_yaml = "empty.yaml",
     tags = ["pdf"],
-    deps = [":spec_md"],
+    deps = ["//:empty_md", ":spec_md"],
 )
 
 pandoc_standalone_html(
     name = "spec-html",
     tags = ["html"],
-    deps = [":spec_md"],
+    deps = ["//:empty_md", ":spec_md"],
 )
 
 markdown_lib(
@@ -47,16 +53,16 @@ markdown_lib(
 
 ebook_pdf(
     name = "lhdl-proposal-pdf",
-    metadata_xml = "empty.xml",
+    metadata_xml = ":empty_xml_gen",
     title_yaml = "empty.yaml",
     tags = ["pdf"],
-    deps = [":lhdl_proposal_md"],
+    deps = ["//:empty_md", ":lhdl_proposal_md"],
 )
 
 pandoc_standalone_html(
     name = "lhdl-proposal-html",
     tags = ["html"],
-    deps = [":lhdl_proposal_md"],
+    deps = ["//:empty_md", ":lhdl_proposal_md"],
 )
 
 markdown_lib(
@@ -66,14 +72,14 @@ markdown_lib(
 
 ebook_pdf(
     name = "readme-pdf",
-    metadata_xml = "empty.xml",
+    metadata_xml = ":empty_xml_gen",
     title_yaml = "empty.yaml",
     tags = ["pdf"],
-    deps = [":readme_md"],
+    deps = ["//:empty_md", ":readme_md"],
 )
 
 pandoc_standalone_html(
     name = "readme-html",
     tags = ["html"],
-    deps = [":readme_md"],
+    deps = ["//:empty_md", ":readme_md"],
 )
