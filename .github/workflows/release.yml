@@ -1,0 +1,29 @@
+name: Release
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: "Build everything"
+        run: "bazel build //..."
+      - name: "Deploy everything"
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          external_repository: filmil/hdlfactory.com.template
+          publish_dir: ./bazel-bin/filmil
+          destination_dir: static/txhdl/filmil
+          publish_branch: main
+          deploy_key: "${{ secrets.DEPLOY_KEY }}"
+      - name: "Kill ssh-agent, see: https://github.com/peaceiris/actions-gh-pages/issues/909"
+        run: "killall ssh-agent"
