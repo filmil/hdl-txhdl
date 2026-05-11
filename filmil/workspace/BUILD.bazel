@@ -1,4 +1,4 @@
-load("@bazel_ebook//build:rules.bzl", "ebook_pdf", "markdown_lib")
+load("@bazel_ebook//build:rules.bzl", "ebook_pdf", "markdown_lib", "pandoc_standalone_html")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -15,6 +15,12 @@ ebook_pdf(
     deps = [":draft_spec_md"],
 )
 
+pandoc_standalone_html(
+    name = "draft-spec-html",
+    tags = ["html"],
+    deps = [":draft_spec_md"],
+)
+
 markdown_lib(
     name = "spec_md",
     srcs = ["spec.md"],
@@ -25,6 +31,12 @@ ebook_pdf(
     metadata_xml = "empty.xml",
     title_yaml = "empty.yaml",
     tags = ["pdf"],
+    deps = [":spec_md"],
+)
+
+pandoc_standalone_html(
+    name = "spec-html",
+    tags = ["html"],
     deps = [":spec_md"],
 )
 
@@ -41,6 +53,12 @@ ebook_pdf(
     deps = [":lhdl_proposal_md"],
 )
 
+pandoc_standalone_html(
+    name = "lhdl-proposal-html",
+    tags = ["html"],
+    deps = [":lhdl_proposal_md"],
+)
+
 markdown_lib(
     name = "readme_md",
     srcs = ["README.md"],
@@ -51,5 +69,11 @@ ebook_pdf(
     metadata_xml = "empty.xml",
     title_yaml = "empty.yaml",
     tags = ["pdf"],
+    deps = [":readme_md"],
+)
+
+pandoc_standalone_html(
+    name = "readme-html",
+    tags = ["html"],
     deps = [":readme_md"],
 )
