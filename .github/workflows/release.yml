@@ -11,6 +11,14 @@ jobs:
         uses: abhinavsingh/setup-bazel@v3
         with:
           version: 9.0.1
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazel
+          key: ${{ runner.os }}-bazel-${{ hashFiles('.bazelversion', '.bazelrc', 'MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bazel-
       # This remaps directories, which doesn't work well with BID.
       #- name: Setup bazel
         #uses: bazel-contrib/setup-bazel@0.15.0
