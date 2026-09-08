@@ -131,28 +131,46 @@ all.
 The `latex-pdf-tutorial` skill in the coding SOP states both halves of this.
 
 
-## 5. Figures are text, for now
+## 5. Figures are TikZ
 
-Every figure in the article is a framed listing rather than a drawing, and
-the reason is the toolchain and not a preference.
+Both figures in the article are TikZ pictures.
 
-TikZ is the right tool for a box-and-arrow diagram in LaTeX, and the
-`eng-standards` fragment of the coding SOP now says so.
-It is not available here.
-The pinned TeX distribution includes no `pgf`, and the package cannot be
-fetched reproducibly for the reason section 3 gives.
-Vendoring it means 6.4 MB across 260 files, which is a decision worth taking
-deliberately rather than as a side effect.
+That needed `pgf`, which the pinned TeX distribution does not include, so it
+is vendored under `//third_party/pgf`.
+The tree is flattened, because `latex_document` copies a `data` file under
+its package relative path and pdflatex searches the build directory rather
+than a tree beneath it.
+Flattening is safe for this package, and that was checked rather than
+assumed: no file in pgf reads another by a path, only by a bare name.
+Four files collide across upstream's four trees, all of them `.lua` files
+belonging to the graph drawing libraries that only LuaTeX loads, and they
+are dropped.
+That leaves 282 files and 4.4 MB.
 
-Text figures do buy one thing while they last.
-A TikZ picture can be wrong in a way that produces no warning and no error:
-the document compiles clean, every reference resolves, no box is overfull,
+A TikZ picture can be wrong in a way that produces no warning and no error.
+The document compiles clean, every reference resolves, no box is overfull,
 and an arrowhead is still buried in a box border.
-Only rendering the page and looking at it finds that.
-A text figure is already what it will look like.
+The only way to find that is to render the pages and look at them:
 
-When `pgf` is vendored under `//third_party`, the diagrams should become
-TikZ.
+```sh
+PDF=bazel-bin/docs/article.pdf
+N=$(pdfinfo $PDF | awk '/Pages/{print $2}')
+for p in $(seq 1 $N); do
+  pdftotext -f $p -l $p $PDF - 2>/dev/null | grep -q '^Fig\.' \
+    && echo "figure on page $p"
+done
+pdftoppm -r 150 -png -f <p> -l <p> $PDF /tmp/fig
+```
+
+That pass found two defects that the build reported as success.
+The facet boxes centred their item lists, which reads as ragged rather than
+as a list.
+And Figure 1 drew its distinction with a 3 per cent grey difference, which
+is invisible in print, on a figure whose entire message is that
+distinction.
+Both are fixed: the lists are left aligned, and a worked-out mechanism is
+now shaded and solid while one that is only named is unshaded and dashed.
+Two channels, so the figure survives being photocopied.
 
 ## 6. What is built and released
 

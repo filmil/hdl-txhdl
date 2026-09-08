@@ -425,7 +425,8 @@ On the token `pub` a predictive parser cannot choose between them, so the
 * `spec/language.md` has no Bazel target, so the largest specification is
   never built.
   `filmil/workspace/BUILD.bazel` builds the four smaller files.
-* The default branch is `dev`, and both GitHub workflows trigger on `main`.
+* The GitHub workflows triggered on `main` while the default branch was
+  `dev` at the time. Both are now gone, and `main` is the default.
 * The workflows live in `.github/workflows`, and the canonical remote is
   Forgejo, which reads `.forgejo/workflows`.
   Neither workflow runs.

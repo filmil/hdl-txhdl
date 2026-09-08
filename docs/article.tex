@@ -32,6 +32,8 @@
 \usepackage{float}
 \usepackage{xcolor}
 \usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc}
 \usepackage[hidelinks,bookmarks=true]{hyperref}
 
 % Numbered, definition-style box for a rule the reader is meant to apply.
@@ -62,6 +64,10 @@
 \definecolor{numgray}{gray}{0.45}
 \definecolor{framegray}{gray}{0.70}
 \definecolor{bgshade}{gray}{0.97}
+% A darker fill for figure cells. The listing background has to stay very
+% light to keep code readable; a figure cell has to be clearly shaded or the
+% distinction it draws is invisible in print.
+\definecolor{cellshade}{gray}{0.90}
 
 % `'` is deliberately not a string delimiter: the language uses it for loop
 % labels, as Rust does, so treating it as a quote would swallow the rest of
@@ -119,6 +125,20 @@
   belowskip=6pt,
 }
 \lstset{style=txhdl}
+
+% House TikZ styles. `shorten` lives on the arrow styles rather than on each
+% arrow, so every arrow in the document gets the gap, including ones added
+% later. TikZ clips a path at a node's border, so without it an arrowhead
+% butts against the box with no gap at all. Keep `node distance` well above
+% twice the shorten, or the arrow shrinks to nothing.
+\tikzset{
+  box/.style={draw,rounded corners=2pt,align=center,inner sep=4pt,
+              font=\footnotesize},
+  boxf/.style={box,fill=bgshade},
+  lbl/.style={font=\scriptsize\itshape,align=center},
+  fl/.style={-{Stealth[length=4pt]},shorten >=2.5pt,shorten <=2.5pt},
+  fld/.style={fl,dashed},
+}
 
 \InputIfFileExists{buildstamp.tex}{}{}
 \providecommand{\buildstamp}{Draft build (outside the Bazel flow).}

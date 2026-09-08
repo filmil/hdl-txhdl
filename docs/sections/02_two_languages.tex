@@ -62,7 +62,9 @@ properties are in the language, and properties use temporal operators.
 
 \subsection{The asymmetry}
 
-Each language is thin exactly where the other is thick.
+Four of the seven concerns in Figure~\ref{fig:asymmetry} are worked out on
+both sides. The three that are not decide the merge, and each is thin on a
+different side.
 
 LHDL has no way to write a protocol body. Its state machine is a hand
 written state enumeration, which is the form \code{await} exists to remove.
@@ -71,32 +73,70 @@ connections and an address-decoding bus, and there is no interface, no late
 binding, no configuration facet, no way to wrap legacy Verilog and no way to
 swap an implementation.
 
-\begin{lstlisting}[style=ascii,caption={Where each language is detailed.
-\#\#\#\# marks a worked-out mechanism, \ldots\ marks something named but not
-specified.},captionpos=b,label={fig:asymmetry}]
-                 LHDL                 TxHDL
-                 ====                 =====
- system          three facets         instance, connect
- assembly        config / bind        address-decode bus
-                 ####################  ..
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[
+    node distance=4mm and 10mm,
+    row/.style={font=\footnotesize\bfseries,align=right,text width=26mm},
+    cell/.style={box,text width=52mm,align=left},
+    % Two channels, not one. An IEEE article gets printed and photocopied,
+    % and a 3 per cent grey difference does not survive that. A worked-out
+    % mechanism is shaded and solid; one that is only named is unshaded and
+    % dashed, so the distinction reads even with the fill gone.
+    thin/.style={cell,fill=white,draw=framegray,dashed},
+    thick/.style={cell,fill=cellshade,draw=black},
+  ]
 
- contracts       interface + modport  structural typing
-                 ###############      ########
+  \node[font=\footnotesize\bfseries] (hl) at (0,0) {LHDL};
+  \node[font=\footnotesize\bfseries,right=62mm of hl] (ht) {TxHDL};
+  \node[row,left=10mm of hl] (h0) {};
 
- inter-module    tags, |>, fork/join  bus + channel
- communication   elastic buffers      valid/ready, then
-                 ##############       ##############
+  \node[row] (r1) at ($(h0)+(0,-9mm)$) {system\\assembly};
+  \node[thick,right=10mm of r1] (l1)
+    {three facets; \code{config} and \code{bind}; domain to clock mapping};
+  \node[thin,right=10mm of l1] (t1)
+    {\code{instance}, \code{connect}; address-decode bus};
 
- intra-module    pipeline + stage     seq + await + select
- behaviour       state blocks         comb, wire, always
-                 ....                 ######################
+  \node[row,below=of r1] (r2) {contracts};
+  \node[thick,right=10mm of r2] (l2)
+    {\code{interface} plus \code{modport}; \code{implements}};
+  \node[thick,right=10mm of l2] (t2)
+    {structural typing on transaction fields};
 
- types           u32, uint<W>         u<N>, i<N>, bits<N>
-                 #####                ###############
+  \node[row,below=of r2] (r3) {inter-module\\communication};
+  \node[thick,right=10mm of r3] (l3)
+    {tags, chaining, fork and join; elastic buffers; scoreboards};
+  \node[thick,right=10mm of l3] (t3)
+    {\code{bus} plus \code{channel}; valid and ready; callbacks};
 
- verification    FFI, gRPC co-sim     assert/assume/cover
-                 #############        ##############
+  \node[row,below=of r3] (r4) {intra-module\\behaviour};
+  \node[thin,right=10mm of r4] (l4)
+    {\code{pipeline} plus \code{stage}; \code{state} blocks};
+  \node[thick,right=10mm of l4] (t4)
+    {\code{seq}, \code{await}, \code{select}; \code{comb}, \code{wire},
+     \code{always}};
 
- grammar         full EBNF            none
-                 ##########           .
-\end{lstlisting}
+  \node[row,below=of r4] (r5) {types};
+  \node[thick,right=10mm of r5] (l5)
+    {\code{u32}, \code{uint<W>}};
+  \node[thick,right=10mm of l5] (t5)
+    {\code{u<N>}, \code{i<N>}, \code{bits<N>}, arrays, enums};
+
+  \node[row,below=of r5] (r6) {verification};
+  \node[thick,right=10mm of r6] (l6)
+    {foreign function interface; gRPC co-simulation};
+  \node[thick,right=10mm of l6] (t6)
+    {\code{assert}, \code{assume}, \code{cover}, \code{property}};
+
+  \node[row,below=of r6] (r7) {grammar};
+  \node[thick,right=10mm of r7] (l7) {full EBNF, LL(1) claimed};
+  \node[thin,right=10mm of l7] (t7) {none};
+
+\end{tikzpicture}
+\caption{Where each language is detailed. A shaded cell is a worked-out
+mechanism; an unshaded one is named and not specified. Four rows are worked
+out on both sides. The three that are not, system assembly, intra-module
+behaviour and the grammar, are the ones that make the merge possible: each
+is thin on one side and thick on the other, and the thin side differs.}
+\label{fig:asymmetry}
+\end{figure*}

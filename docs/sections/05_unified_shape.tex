@@ -5,45 +5,45 @@
 The merged specification is organised by facet, and each facet states which
 constructs belong to it.
 
-\begin{lstlisting}[style=ascii,caption={The three facets and what each one
-holds.},captionpos=b,label={fig:facets}]
- +--------------------------------------------+
- | DESIGN FACET          (timeless, no cycles)|
- |                                            |
- |  trait        contract, with role views    |
- |  transaction  data that moves between      |
- |               modules                      |
- |  bus          channels, valid/ready        |
- |  struct enum  data layout                  |
- |  flow         dataflow, compiler-timed     |
- |  pipeline     staged, with a signature     |
- |  fn           pure combinational           |
- +--------------------------------------------+
-                     |
-                     |  impl ... for ...
-                     v
- +--------------------------------------------+
- | IMPLEMENTATION FACET   (cycles, as written)|
- |                                            |
- |  module       state, ports, instances      |
- |  seq          await, select, callbacks     |
- |  tag          a domain and its policy      |
- |  protocol     custom handshake             |
- |  assert assume cover property              |
- +--------------------------------------------+
-                     |
-                     |  bind
-                     v
- +--------------------------------------------+
- | CONFIGURATION FACET        (no logic at all)|
- |                                            |
- |  config       a named build                |
- |  bind         socket <- implementation     |
- |  domain       tag -> clock and reset       |
- |  blackbox     socket <- Verilog or VHDL    |
- |  foreign      socket <- Go, Rust, C++      |
- +--------------------------------------------+
-\end{lstlisting}
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[node distance=7mm]
+
+  \node[boxf,text width=62mm,align=left] (design) {%
+    \centerline{\textbf{Design facet}\ \ \emph{timeless, no cycles}}\\[2pt]
+    \code{trait} contract, with role views \\
+    \code{transaction} data that moves between modules \\
+    \code{bus} channels, valid and ready \\
+    \code{struct} \code{enum} data layout \\
+    \code{flow} dataflow, scheduled by the compiler \\
+    \code{pipeline} staged, with a signature \\
+    \code{fn} pure combinational};
+
+  \node[boxf,text width=62mm,align=left,below=of design] (impl) {%
+    \centerline{\textbf{Implementation facet}\ \ \emph{cycles, as written}}\\[2pt]
+    \code{module} state, ports, instances \\
+    \code{seq} await, select, callbacks \\
+    \code{tag} a domain and its policy \\
+    \code{protocol} custom handshake \\
+    \code{assert} \code{assume} \code{cover} \code{property}};
+
+  \node[boxf,text width=62mm,align=left,below=of impl] (config) {%
+    \centerline{\textbf{Configuration facet}\ \ \emph{no logic at all}}\\[2pt]
+    \code{config} a named build \\
+    \code{bind} socket to implementation \\
+    \code{domain} tag to clock and reset \\
+    \code{blackbox} socket to Verilog or VHDL \\
+    \code{foreign} socket to Go, Rust or C++};
+
+  \draw[fl] (design) -- node[lbl,right=1mm] {\code{impl ... for ...}} (impl);
+  \draw[fl] (impl)   -- node[lbl,right=1mm] {\code{bind}} (config);
+
+\end{tikzpicture}
+\caption{The three facets and what each one holds. A construct belongs to
+exactly one, and the arrows are the only two ways a facet reaches the one
+below it.}
+\label{fig:facets}
+\end{figure}
 
 The rule that makes this work is that a socket in the design facet names a
 trait, never an implementation. Both an unbound socket and a directly

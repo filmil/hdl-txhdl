@@ -11,9 +11,10 @@ upstream.
 |---|---|---|
 | `ieeetran/` | The IEEE journal document class the article is set in | LPPL 1.3 |
 | `listings/` | Code listing support the article uses for every example | LPPL |
+| `pgf/` | TikZ, which draws every figure in the article | GPL or LPPL 1.3c |
 
-Both are LaTeX packages that the pinned TeX distribution does not include,
-and that cannot be fetched reproducibly.
+All three are LaTeX packages that the pinned TeX distribution does not
+include, and that cannot be fetched reproducibly.
 `docs/document-build-plan.md` section 3 states the measurements behind that.
 
 A LaTeX document cannot read these in place.
