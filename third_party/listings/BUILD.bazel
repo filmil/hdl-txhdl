@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: LPPL-1.3c
+package(default_visibility = ["//visibility:public"])
+
+# Listed rather than globbed. A vendored tree should say exactly which files
+# it ships, so a file added by accident does not travel with the next build.
+filegroup(
+    name = "files",
+    srcs = [
+        "listings.cfg",
+        "listings.sty",
+        "lstmisc.sty",
+    ],
+)

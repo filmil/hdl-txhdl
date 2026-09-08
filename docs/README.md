@@ -21,10 +21,11 @@ Those reasons live here.
 | `document-build-plan.md` | How the article is built, what was tried before, and why two TeX packages are vendored |
 
 `article.tex` and `sections/` are the article itself, built by
-`//docs:article`. `IEEEtran.cls`, `IEEEtrantools.sty`, `listings.sty`,
-`lstmisc.sty` and `listings.cfg` are vendored upstream files that the pinned
-TeX distribution lacks; `document-build-plan.md` section 3 says why they are
-not fetched.
+`//docs:article`.
+The class and package files it needs are vendored under `//third_party`, and
+a `genrule` here copies them into this package, because LaTeX cannot read
+them where they live.
+`document-build-plan.md` section 3 says why they are vendored at all.
 
 ## What belongs here
 

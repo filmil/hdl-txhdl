@@ -18,8 +18,9 @@ spelling, and Section~\ref{sec:conflicts} resolves all four.
 
 Seven files state language content. Their sizes say which ones matter.
 
-\begin{table}[H]
-\caption{The source material.}
+\begin{table*}[t]
+\caption{The source material. Two languages, seven files, four spellings of
+the name.}
 \label{tab:sources}
 \centering
 \footnotesize
@@ -27,16 +28,16 @@ Seven files state language content. Their sizes say which ones matter.
 \toprule
 Path & Lines & Language & What it is \\
 \midrule
-\code{spec/language.md}      & 2241 & TxHDL & complete, 20 sections \\
-\code{workspace/draft-spec}  & 1218 & LHDL  & prose plus EBNF \\
-\code{workspace/spec}        &  486 & LHDL  & condensed, with a grammar \\
-\code{workspace/lhdl-prop.}  &  178 & LHDL  & the earliest sketch \\
-\code{theses.md}             &   94 & LHDL  & twelve design theses \\
-\code{proposal.md}           &   27 & both  & a prior read of the repository \\
-\code{README.md}             &    1 & none  & names the two authors \\
+\code{spec/language.md}                  & 2241 & TxHDL & The complete TxHDL specification, 20 numbered sections \\
+\code{filmil/workspace/draft-spec.md}    & 1218 & LHDL  & The long LHDL draft, prose plus EBNF \\
+\code{filmil/workspace/spec.md}          &  486 & LHDL  & A condensed LHDL specification with a consolidated grammar \\
+\code{filmil/workspace/lhdl-proposal.md} &  178 & LHDL  & The earliest LHDL sketch \\
+\code{filmil/theses.md}                  &   94 & LHDL  & The twelve design theses the language argues from \\
+\code{proposal.md}                       &   27 & both  & A prior agent's read of the repository and its next steps \\
+\code{README.md}                         &    1 & none  & One sentence naming the two authors \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 The most complete specification in the repository was, until this work, the
 one that was never built or published. \code{spec/language.md} had no build

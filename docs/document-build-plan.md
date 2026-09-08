@@ -78,15 +78,20 @@ A content-addressed pin cannot match a moving target, so no value of the
 attribute succeeds.
 
 `IEEEtran.cls`, `IEEEtrantools.sty`, `listings.sty`, `lstmisc.sty` and
-`listings.cfg` therefore live in `docs/` and are passed in the
-`latex_document` `data` attribute, which the ruleset documents as the way to
-supply a class or style file.
+`listings.cfg` are therefore vendored, under `//third_party/ieeetran` and
+`//third_party/listings`, so every vendored byte is tracked in one place.
 Each is upstream and unmodified, under the LaTeX Project Public License,
 with its copyright header intact.
+Each directory holds a `LICENSE` and a `README.md` naming the upstream
+source.
 
-They sit next to `article.tex` rather than in a subdirectory.
-`data` copies files under their package relative paths, and LaTeX searches
-the working directory rather than a `texmf/` beneath it.
+They cannot be used from there.
+`latex_document` copies a `data` file into the build directory under its
+package relative path, and pdflatex searches the build directory rather than
+a tree beneath it, so a file from `//third_party` lands at `third_party/...`
+and is never found.
+`//docs` copies them into its own package with a `genrule` first, which puts
+them next to `article.tex`.
 
 
 ## 4. Fonts
@@ -126,17 +131,28 @@ all.
 The `latex-pdf-tutorial` skill in the coding SOP states both halves of this.
 
 
-## 5. Figures are ASCII
+## 5. Figures are text, for now
 
-Every figure in the article is a listing rather than a drawing.
+Every figure in the article is a framed listing rather than a drawing, and
+the reason is the toolchain and not a preference.
 
-That follows the `eng-standards` fragment of the coding SOP, which requires
-a design document to illustrate a module's architecture with ASCII art.
-It also keeps `tikz` and `pgfplots` off the dependency list.
-And it removes a class of defect that produces no warning and no error: a
-document that compiles clean, resolves every reference, reports zero
-overfull boxes, and still has an arrowhead buried in a box border.
+TikZ is the right tool for a box-and-arrow diagram in LaTeX, and the
+`eng-standards` fragment of the coding SOP now says so.
+It is not available here.
+The pinned TeX distribution includes no `pgf`, and the package cannot be
+fetched reproducibly for the reason section 3 gives.
+Vendoring it means 6.4 MB across 260 files, which is a decision worth taking
+deliberately rather than as a side effect.
 
+Text figures do buy one thing while they last.
+A TikZ picture can be wrong in a way that produces no warning and no error:
+the document compiles clean, every reference resolves, no box is overfull,
+and an arrowhead is still buried in a box border.
+Only rendering the page and looking at it finds that.
+A text figure is already what it will look like.
+
+When `pgf` is vendored under `//third_party`, the diagrams should become
+TikZ.
 
 ## 6. What is built and released
 

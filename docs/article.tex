@@ -52,34 +52,71 @@
 \newcommand{\code}[1]{\texttt{#1}}
 \newcommand{\term}[1]{\emph{#1}}
 
-% One listing style for the language, one for plain ASCII figures. `'` is not
-% a string delimiter here: the language uses it for loop labels, as Rust does.
-\definecolor{cmtgray}{gray}{0.40}
+% Syntax highlighting. Four roles, distinguishable in colour and still
+% distinguishable in greyscale, because an IEEE article gets printed: the
+% keyword is the only bold role, the comment is the only italic one, and the
+% two remaining roles differ in lightness as well as in hue.
+\definecolor{kwblue}{RGB}{20,60,150}
+\definecolor{cmtgreen}{RGB}{90,120,90}
+\definecolor{strred}{RGB}{150,50,40}
+\definecolor{numgray}{gray}{0.45}
+\definecolor{framegray}{gray}{0.70}
+\definecolor{bgshade}{gray}{0.97}
+
+% `'` is deliberately not a string delimiter: the language uses it for loop
+% labels, as Rust does, so treating it as a quote would swallow the rest of
+% the line.
 \lstdefinestyle{txhdl}{
   basicstyle=\ttfamily\scriptsize,
-  commentstyle=\color{cmtgray}\itshape,
-  keywordstyle=\bfseries,
+  keywordstyle=\bfseries\color{kwblue},
+  commentstyle=\itshape\color{cmtgreen},
+  stringstyle=\color{strred},
+  numberstyle=\tiny\color{numgray},
   morekeywords={mod,use,pub,const,type,struct,enum,trait,impl,fn,async,let,mut,
     match,if,else,loop,while,for,in,break,continue,return,as,await,
     module,bus,channel,transaction,protocol,pipeline,flow,seq,config,
     port,stage,pipe,instance,connect,bind,tag,domain,blackbox,foreign,
-    property,role,signal,handler,true,false},
+    property,role,signal,handler,true,false,
+    sequence,interface,modport,implements,package,import,var,wire,func,proc,
+    case,default,next,fork,branch,join,state,fsm},
   morecomment=[l]{//},
+  morestring=[b]",
   showstringspaces=false,
   columns=fullflexible,
   keepspaces=true,
   breaklines=true,
   breakatwhitespace=true,
-  xleftmargin=2pt,
-  aboveskip=4pt,
-  belowskip=4pt,
+  % Framed, so a listing is bounded rather than floating in the column.
+  frame=single,
+  rulecolor=\color{framegray},
+  framesep=3pt,
+  backgroundcolor=\color{bgshade},
+  xleftmargin=3pt,
+  xrightmargin=3pt,
+  aboveskip=6pt,
+  belowskip=6pt,
 }
+
+% Figures drawn as text. Framed the same way, and with the highlighting
+% switched off, because a box-and-arrow diagram is not code and half its
+% words turning blue reads as an accident. Setting a style adds keys rather
+% than clearing the ones already set, so the three roles are neutralised by
+% hand rather than by leaving them out.
 \lstdefinestyle{ascii}{
   basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\ttfamily,
+  commentstyle=\ttfamily,
+  stringstyle=\ttfamily,
   columns=fullflexible,
   keepspaces=true,
-  aboveskip=4pt,
-  belowskip=4pt,
+  frame=single,
+  rulecolor=\color{framegray},
+  framesep=3pt,
+  backgroundcolor=\color{bgshade},
+  xleftmargin=3pt,
+  xrightmargin=3pt,
+  aboveskip=6pt,
+  belowskip=6pt,
 }
 \lstset{style=txhdl}
 

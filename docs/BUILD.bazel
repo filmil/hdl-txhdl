@@ -3,24 +3,35 @@ load("@rules_latex_host//latex:defs.bzl", "latex_document")
 
 package(default_visibility = ["//visibility:public"])
 
-# The specification as an IEEE two-column article, set in Computer Modern.
-# Built against the hermetic LaTeX toolchain registered in MODULE.bazel, so
-# nothing has to be installed on the machine running the build.
-latex_document(
-    name = "article",
-    main = "article.tex",
-    # Neither IEEEtran nor listings is in the pinned TeX distribution, and
-    # neither can be fetched reproducibly from texlive.info. See
-    # MODULE.bazel. Every file here is upstream and unmodified, distributed
-    # under the LaTeX Project Public License with its copyright header
-    # intact. `data` copies them next to the master, which is where LaTeX
-    # looks first.
-    data = [
+# The vendored class and package files live in //third_party, so every
+# vendored byte is tracked in one place. They cannot be used from there:
+# `latex_document` copies a `data` file into the build directory under its
+# package relative path, and pdflatex searches the build directory rather
+# than a tree beneath it, so a file from //third_party would land at
+# `third_party/...` and never be found. Copying them into this package first
+# puts them next to the master, which is where LaTeX looks.
+genrule(
+    name = "vendored_tex",
+    srcs = [
+        "//third_party/ieeetran:files",
+        "//third_party/listings:files",
+    ],
+    outs = [
         "IEEEtran.cls",
         "IEEEtrantools.sty",
         "listings.cfg",
         "listings.sty",
         "lstmisc.sty",
     ],
+    cmd = "for f in $(SRCS); do cp \"$$f\" \"$(RULEDIR)/$$(basename $$f)\"; done",
+)
+
+# The specification as an IEEE two-column article, set in Computer Modern.
+# Built against the hermetic LaTeX toolchain registered in MODULE.bazel, so
+# nothing has to be installed on the machine running the build.
+latex_document(
+    name = "article",
+    main = "article.tex",
+    data = [":vendored_tex"],
     deps = glob(["sections/*.tex"]),
 )

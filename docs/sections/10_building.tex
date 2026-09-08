@@ -40,14 +40,23 @@ with the whole tool set provisioned from a Debian package snapshot. It works
 and it is hermetic, and it does not run on the project's build machine,
 which is why this article is LaTeX.
 
-\subsection{Figures are ASCII}
+\subsection{Why the figures are text and not TikZ}
 
-Every figure here is a listing, not a drawing. That is a deliberate choice
-and it follows an existing project rule: a design document illustrates a
-module's architecture with ASCII art. It also removes the drawing packages
-from the dependency list, and removes the class of defect that produces no
-warning and no error, where a document compiles clean and a figure is still
-wrong because an arrowhead is buried in a box border.
+Every figure here is a framed listing rather than a drawing, and the reason
+is the toolchain rather than a preference. TikZ is the right tool for a
+box-and-arrow diagram in LaTeX. It is not available: the pinned TeX
+distribution includes no \code{pgf}, and the package cannot be fetched
+reproducibly for the reason Section~\ref{sec:building} already gives. Adding
+it means vendoring 6.4\,MB across 260 files.
+
+Text figures do buy one thing. A TikZ picture can be wrong in a way that
+produces no warning and no error: the document compiles clean, every
+reference resolves, no box is overfull, and an arrowhead is still buried in
+a box border. Only rendering the page and looking at it finds that. A text
+figure is already what it will look like.
+
+That is a reason to be comfortable with the current figures, not a reason to
+prefer them. When \code{pgf} is vendored, the diagrams should become TikZ.
 
 \subsection{Release}
 
