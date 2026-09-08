@@ -38,3 +38,30 @@ nothing later overwrites:
 fj -H git.hdlfactory.com actions dispatch release.yml main -R origin
 fj -H git.hdlfactory.com release list -R origin
 ```
+
+## Running the workflows locally
+
+The workflows live in `.forgejo/workflows`, because the canonical remote is
+Forgejo.
+There is nothing under `.github`, and a checkout that still has one is out
+of date: fetch and reset before testing, or `act` will run a workflow that
+was deleted.
+
+Forgejo Actions is act underneath, so `act` reproduces a run locally.
+Two flags are needed every time.
+`-W` names the directory, because act reads `.github/workflows` by default.
+`-P` maps the `docker` label this instance's runners advertise onto a real
+image, because act knows nothing about that label.
+
+```sh
+act -W .forgejo/workflows -P docker=catthehacker/ubuntu:act-latest pull_request
+act -W .forgejo/workflows/release.yml -P docker=catthehacker/ubuntu:act-latest workflow_dispatch
+```
+
+Name the event, as those commands do.
+`release.yml` triggers only on `schedule` and `workflow_dispatch`, so act's
+default `push` event matches nothing and runs no job at all.
+
+A local release run reaches the final step and fails there, because
+publishing needs a token that a local run does not have.
+Everything before it is the part worth testing.

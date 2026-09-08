@@ -30,30 +30,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      # A nightly with no commits behind it produces a release identical to
-      # yesterday's. A dispatched run always proceeds, because somebody asked
-      # for it.
+      # Only a scheduled run can decide there is nothing to do. A nightly with
+      # no commits behind it would repeat yesterday's release, and a list of
+      # identical releases hides the ones that differ.
+      #
+      # Every other event proceeds. That includes a manual dispatch, and it
+      # includes whatever event a local `act` run supplies, so testing this
+      # workflow locally does not silently skip every step and report success.
       - name: Decide whether to release
         id: decide
         env:
           EVENT: ${{ github.event_name }}
         run: |
           set -eu
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            echo "dispatched by hand"
+          if [ "$EVENT" != "schedule" ]; then
+            echo "event is '$EVENT', proceeding"
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           elif [ -n "$(git log --since='25 hours ago' --format=%H)" ]; then
-            echo "commits landed since the last nightly"
+            echo "commits landed since the last nightly, proceeding"
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           else
             echo "no commit in the last 25 hours, skipping"
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # The scheduled release is rolling, so it overwrites its own assets. A
-      # dispatched release is new every time and must never overwrite one, so
-      # a repeated dispatch inside the same second is the only way to collide
-      # and it fails rather than destroying the earlier one.
+      # The scheduled release is rolling and overwrites its own assets, so
+      # one link always points at the current documents. Every other run
+      # produces a release stamped with the UTC date and time, with override
+      # off, so nothing later destroys a release somebody asked for.
       - name: Compute the tag
         if: steps.decide.outputs.proceed == 'true'
         id: tag
@@ -61,12 +65,12 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           set -eu
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            tag="release-$(date -u +%Y%m%d-%H%M%S)"
-            override=false
-          else
+          if [ "$EVENT" = "schedule" ]; then
             tag="nightly"
             override=true
+          else
+            tag="release-$(date -u +%Y%m%d-%H%M%S)"
+            override=false
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "override=$override" >> "$GITHUB_OUTPUT"
