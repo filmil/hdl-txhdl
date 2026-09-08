@@ -1,4 +1,4 @@
-:qODq# TxHDL - Transaction Hardware Description Language
+# TxHDL - Transaction Hardware Description Language
 
 ## Complete Language Specification
 

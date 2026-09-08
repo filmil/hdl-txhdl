@@ -436,24 +436,24 @@ On the token `pub` a predictive parser cannot choose between them, so the
   `file://` URL.
 
 
-## 7. Decisions the merge needs from a human
+## 7. Decisions
 
-Three, and only the first blocks the work.
+**1. The name: TxHDL. Settled September 8, 2026.**
+The repository, the Bazel module, and the published path are all `txhdl`,
+and transactions are the distinguishing idea.
+FLHDL, LHdl, and LHDL are retired.
+They appear in this directory, and nowhere else, from here on.
 
-**1. The name.**
-The repository, the Bazel module, and the published path are all `txhdl`.
-The recommendation is to keep **TxHDL** and retire FLHDL, LHdl, and LHDL to
-this directory's history.
-Transactions are the distinguishing idea, and renaming the repository costs
-more than renaming the document.
+**2. What happens to `filmil/workspace/`: deferred. September 8, 2026.**
+The four files stay in the tree for now.
+The options, for whenever this is picked up again, are that they merge into
+the specification and then leave, or that they stay as source material.
+`filmil/theses.md` is a separate case either way.
+The theses are an argument, not a specification, and they belong in the
+specification as a rationale section rather than being deleted.
 
-**2. What happens to `filmil/workspace/`.**
-The recommendation is that the four files merge into the specification and
-then leave the tree, with `docs/unification-analysis.md` recording what they
-said.
-`filmil/theses.md` is the exception.
-The theses are an argument, not a specification, and they read well as the
-rationale section of the article.
+One decision is still open here.
+`syntax-decisions.md` section 8 lists three more, all about spelling.
 
 **3. The behavioral keywords.**
 Section 3 gives the merged language two behavioral forms.
@@ -474,7 +474,7 @@ Neither name appears in either source, and both are open to a better one.
 5. Fold the LHDL theses into a rationale section.
 6. Delete `filmil/workspace/`, `proposal.md`, and `empty.md`, and move their
    Bazel targets onto the specification.
-7. Add the article build described in `article-build-plan.md`.
+7. Build the documents as `document-build-plan.md` describes.
 
 Step 3 matters most.
 Both source specifications state a grammar or claim a property that their own

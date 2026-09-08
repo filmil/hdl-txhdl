@@ -1,0 +1,8 @@
+---
+title:
+- type: main
+  text: TxHDL
+- type: subtitle
+  text: A transaction-centric hardware description language
+author: Filip Filmar, Dragisa Jankovic
+...

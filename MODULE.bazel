@@ -3,5 +3,12 @@ module(
     version = "0.0.0",
 )
 
-bazel_dep(name = "bazel_ebook", version = "2.0.15")
+bazel_dep(name = "bazel_ebook", version = "3.0.0")
+
+# bazel_ebook 3.0.0 calls rootfs_binary(env = ...) but pins bazel_rootfs
+# 1.1.1, which has no `env` attribute, so its //image package fails to
+# analyze. 1.2.1 adds the attribute. Naming it here raises the resolved
+# version through minimal version selection. Remove this once bazel_ebook
+# ships a release that pins it itself.
+bazel_dep(name = "bazel_rootfs", version = "1.2.1")
 bazel_dep(name = "rules_shell", version = "0.6.1")

@@ -18,7 +18,7 @@ Those reasons live here.
 |---|---|
 | `unification-analysis.md` | What each language is, what conflicts, what each contributes, and every defect found in the two sources |
 | `syntax-decisions.md` | The Rust-shaped surface syntax chosen for the merged language, one decision per conflict, with a worked example |
-| `article-build-plan.md` | How the specification becomes an IEEEtran article, and what has to be built to get there |
+| `document-build-plan.md` | How the specification becomes a PDF and an HTML page, what is hermetic and what is not, and what the first render found |
 
 ## What belongs here
 
@@ -32,7 +32,7 @@ Three kinds qualify:
 * An analysis of source material that the merge consumes.
   Once `filmil/workspace/draft-spec.md` is folded in and deleted, the
   record of what it said is here.
-* A plan for machinery that the specification feeds, such as the article
+* A plan for machinery that the specification feeds, such as the document
   build.
 
 A document does not belong here when the specification itself should state
