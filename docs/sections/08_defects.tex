@@ -1,0 +1,89 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Defects in the Sources}
+\label{sec:defects}
+
+These were found by reading, because no parser exists for either language.
+Each has to be settled while merging, since a merged specification cannot
+state two things at once.
+
+\subsection{TxHDL}
+
+Eleven, in \code{spec/language.md}. The line numbers are from the file as
+committed.
+
+\begin{itemize}
+  \item Line 1: the file begins with the literal text \code{:qODq} before
+        its title. A stray editor keystroke was committed, and it rendered
+        into the title of the first PDF built from the file.
+  \item Line 660 states that a module holds only one sequence.
+        \code{module Counter} at line 416 declares two, and
+        \code{module DualPortMemory} at line 2012 declares two.
+  \item Lines 133 and 141: inside one enumeration, two variants share the
+        encoding \code{0x02}. Lines 135 and 140 share \code{0x04}.
+  \item Line 1112: an array declared with 256 elements is initialised with
+        four and a comment.
+  \item Line 740: a timeout requires its else block to end in a value, and
+        blocks as expressions are never defined.
+  \item Line 2043: a port uses an anonymous bus type inline, and the bus
+        section never defines that form.
+  \item Line 1196: a clock domain is given a frequency literal, and the
+        literal section defines no unit suffix.
+  \item There is no grammar. A quick reference lists keywords and
+        operators, and never their syntax.
+  \item Transactions and structs are both product types, with no stated
+        rule for choosing one.
+  \item Subtype compatibility says a receiver ignores extra fields, and the
+        width of the physical channel for that case is not stated.
+\end{itemize}
+
+\subsection{LHDL}
+
+The grammar and the examples disagree in sixteen places. Three are enough on
+their own: no interface, no modport and no generic parameter list written in
+any of the four LHDL files parses against the grammar in the condensed
+specification.
+
+\begin{itemize}
+  \item An interface item must be a directed port declaration, and every
+        interface in every file writes undirected fields.
+  \item A modport takes port declarations, which require a type, and every
+        modport writes a direction and a name with no type.
+  \item A generic declaration puts the name first, and the examples write
+        the keyword first.
+  \item A tag definition requires a type, and five examples omit it. One
+        writes the tag name with a leading marker the grammar does not
+        allow. Another writes a comma the grammar does not allow.
+  \item A variable declaration has no initialiser, and the examples give
+        one.
+  \item The parallel-composition statement has two incompatible
+        productions, one per file. Every example uses the first.
+  \item The operator table offers two assignment operators, and the grammar
+        offers one.
+  \item A state transition takes a keyword in the grammar, and one example
+        omits it.
+  \item The prose names functions one way and the grammar another.
+  \item Struct fields are comma separated in the grammar and semicolon
+        separated in one example.
+  \item A module has no port list and no tag in the grammar, and one
+        example gives it both.
+  \item Neither the domain block nor a bare binding appears among the
+        top-level definitions, and both appear at top level in an example.
+  \item An instance declaration requires a parenthesised binding list, and
+        an example has none.
+  \item One example calls an interface instance as a function, and no rule
+        covers that.
+\end{itemize}
+
+The LL(1) claim is asserted and never checked. One conflict is visible
+without tooling: two top-level productions both begin with an optional
+\code{pub}, so a predictive parser cannot choose between them on that token
+until the prefix is factored out.
+
+\subsection{The lesson for the merged specification}
+
+Both sources state a grammar, or claim a property, that their own examples
+break. The only reason that survived is that nothing checked it. Every
+construct in the merged specification therefore gets an example, every
+example is a file, and every file is parsed by a test. That is also what
+makes an existing project rule true rather than aspirational: every piece of
+specification must have a test, and that test must pass.

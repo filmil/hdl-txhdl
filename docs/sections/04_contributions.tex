@@ -1,0 +1,56 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{What Each Specification Contributes}
+\label{sec:contributions}
+
+The merge is not a compromise. Most of both languages survives, because most
+of both is about something the other never addressed.
+
+\subsection{From LHDL}
+
+\begin{enumerate}
+  \item The three facets, as the top-level organisation of the
+        specification.
+  \item Tags: synchronisation domains, elastic flow, custom protocols,
+        capacity and scoreboards.
+  \item Contracts with role views, from \code{interface} and
+        \code{modport}.
+  \item Late binding: \code{config}, \code{bind}, \code{blackbox} and
+        \code{foreign}.
+  \item Clock and reset abstracted into domains and mapped in
+        configuration.
+  \item The foreign function interface and gRPC co-simulation, including
+        generated bit-exact software structs.
+  \item Chaining and parallel composition with automatic latency
+        balancing.
+  \item Visibility with \code{pub}, and a package system.
+  \item The discipline of stating a grammar, and the LL(1) target.
+\end{enumerate}
+
+\subsection{From TxHDL}
+
+\begin{enumerate}
+  \item Transactions, buses and channels with implicit valid and ready.
+  \item \code{await}, \code{select} and timeouts: the readable protocol
+        body.
+  \item Tagged channels, callbacks and the completion barrier.
+  \item Structural compatibility for transaction and struct types.
+  \item Generic parameters in Rust form.
+  \item The concrete type system: sized integers, bit vectors, arrays, and
+        enumerations with explicit encodings.
+  \item The bit manipulation set: slicing, concatenation, replication,
+        extension, reductions and bit counting.
+  \item Assertions, assumptions, cover points and properties.
+  \item Module instantiation, instance arrays and address-decoding buses.
+  \item The lowering notes: sequences become state machines, an await
+        becomes a state transition, a callback becomes a pending table with
+        a dispatcher.
+\end{enumerate}
+
+\subsection{Dropped from both}
+
+LHDL's \code{state} blocks go, because a sequence with \code{await} states
+the same machine and reads better, and
+Section~\ref{sec:conflicts} already keeps both models of time. TxHDL's
+Verilog-style bit slice and sized literal go, replaced by ranges and casts.
+LHDL's directional range operators go: Rust has no such operator, and the
+same intent is written with a range and an explicit reversal.

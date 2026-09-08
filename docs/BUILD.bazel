@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+load("@rules_latex_host//latex:defs.bzl", "latex_document")
+
+package(default_visibility = ["//visibility:public"])
+
+# The specification as an IEEE two-column article, set in Computer Modern.
+# Built against the hermetic LaTeX toolchain registered in MODULE.bazel, so
+# nothing has to be installed on the machine running the build.
+latex_document(
+    name = "article",
+    main = "article.tex",
+    # Neither IEEEtran nor listings is in the pinned TeX distribution, and
+    # neither can be fetched reproducibly from texlive.info. See
+    # MODULE.bazel. Every file here is upstream and unmodified, distributed
+    # under the LaTeX Project Public License with its copyright header
+    # intact. `data` copies them next to the master, which is where LaTeX
+    # looks first.
+    data = [
+        "IEEEtran.cls",
+        "IEEEtrantools.sty",
+        "listings.cfg",
+        "listings.sty",
+        "lstmisc.sty",
+    ],
+    deps = glob(["sections/*.tex"]),
+)

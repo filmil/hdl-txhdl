@@ -1,0 +1,102 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{What Each Language Is}
+\label{sec:two-languages}
+
+\subsection{LHDL: dataflow, and time as an implementation detail}
+
+LHDL starts from twelve theses. The eighth is the one that shapes the
+language: at the design level there should be no notion of combinational
+versus sequential logic. The designer writes dataflow and never counts
+cycles, and the compiler decides where registers go.
+
+The mechanism is the \term{tag}. A tag names a synchronisation domain.
+Operations sharing a tag are aligned by the compiler through longest path
+analysis, which inserts bridge registers into the shorter paths. Adding
+\code{with handshake} makes the domain elastic: the compiler replaces
+flip-flops with skid buffers and wires ready and valid across the whole
+domain. Adding \code{capacity=32} makes the compiler generate a scoreboard
+that tracks up to 32 transactions in flight and asserts backpressure when
+full.
+
+The organising idea is the \term{three facets}. The design facet states
+logic and contracts and is timeless. The implementation facet maps logic
+onto fabric and handles retiming. The configuration facet binds
+implementations into sockets, sets generic parameters, maps tags onto
+physical clocks, and links foreign code. Changing the target fabric edits
+the configuration facet and leaves the design facet untouched.
+
+Reuse runs through \term{interfaces} with \term{modports}. An interface
+declares fields, and a modport names a role and gives each field a direction
+for that role. A module, a pipeline or a state machine can implement an
+interface.
+
+Verification is delegated. LHDL adds no non-synthesisable subset. The
+configuration facet instead binds an interface to a foreign implementation
+in Go, Rust or C++, and the compiler generates a gRPC bridge and bit-exact
+software structs.
+
+\subsection{TxHDL: transactions, and time written down}
+
+TxHDL starts elsewhere. Communication between modules happens through
+transactions over buses, never through raw signals. Inside a module one
+sequential flow is easy to reason about, while modules run in parallel.
+Variables become registers based on how they are used.
+
+The mechanism is \code{await}. A sequence blocks until a transaction
+arrives, until a condition holds, or for a stated number of cycles.
+\code{select} waits on several events and takes the first. A timeout bounds
+the wait. A protocol that takes 40 cycles reads as 40 lines of straight
+code rather than as a state enumeration.
+
+Communication runs through \term{buses} made of \term{channels}, each with
+implicit valid and ready handshaking. A channel marked \code{tagged by id}
+matches responses to requests out of order, and a \code{then} clause
+registers a callback that fires when the matching response arrives.
+
+Typing is \term{structural}. Two transactions with the same fields are
+compatible whatever their names, and a transaction with extra fields can be
+sent where fewer are expected.
+
+Verification is native. Assertions, assumptions, cover points and
+properties are in the language, and properties use temporal operators.
+
+\subsection{The asymmetry}
+
+Each language is thin exactly where the other is thick.
+
+LHDL has no way to write a protocol body. Its state machine is a hand
+written state enumeration, which is the form \code{await} exists to remove.
+TxHDL has no way to assemble a system. Its top level offers instances,
+connections and an address-decoding bus, and there is no interface, no late
+binding, no configuration facet, no way to wrap legacy Verilog and no way to
+swap an implementation.
+
+\begin{lstlisting}[style=ascii,caption={Where each language is detailed.
+\#\#\#\# marks a worked-out mechanism, \ldots\ marks something named but not
+specified.},captionpos=b,label={fig:asymmetry}]
+                 LHDL                 TxHDL
+                 ====                 =====
+ system          three facets         instance, connect
+ assembly        config / bind        address-decode bus
+                 ####################  ..
+
+ contracts       interface + modport  structural typing
+                 ###############      ########
+
+ inter-module    tags, |>, fork/join  bus + channel
+ communication   elastic buffers      valid/ready, then
+                 ##############       ##############
+
+ intra-module    pipeline + stage     seq + await + select
+ behaviour       state blocks         comb, wire, always
+                 ....                 ######################
+
+ types           u32, uint<W>         u<N>, i<N>, bits<N>
+                 #####                ###############
+
+ verification    FFI, gRPC co-sim     assert/assume/cover
+                 #############        ##############
+
+ grammar         full EBNF            none
+                 ##########           .
+\end{lstlisting}

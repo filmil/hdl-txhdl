@@ -1,0 +1,171 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% The TxHDL specification, as an IEEE two-column article.
+% Built by //docs:article. See docs/document-build-plan.md.
+\documentclass[journal,9pt]{IEEEtran}
+
+% Computer Modern. IEEEtran selects Times (ptm) by default, so the face has
+% to be chosen explicitly.
+%
+% Latin Modern is the Computer Modern variety used here, and the choice is
+% forced rather than aesthetic. Under T1 encoding, plain `cmr` has no Type 1
+% outlines unless cm-super is installed, and it is not in the pinned
+% distribution, so pdflatex falls back to EC bitmaps and every glyph in the
+% PDF becomes a Type 3 font. That was measured: the first build produced a
+% document with 10 Type 3 fonts and no Type 1. Latin Modern is Computer
+% Modern redrawn with a full T1 repertoire and real .pfb outlines, so the
+% same design comes out scalable.
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+% microtype is not in the pinned TeX distribution. emergencystretch alone
+% keeps the two-column measure from producing overfull lines.
+\setlength{\emergencystretch}{3em}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{booktabs}
+\usepackage{array}
+% enumitem is not in the pinned TeX distribution; the list spacing below
+% does what \setlist would have done.
+\usepackage{float}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[hidelinks,bookmarks=true]{hyperref}
+
+% Numbered, definition-style box for a rule the reader is meant to apply.
+\theoremstyle{definition}
+\newtheorem{rulebox}{Rule}
+\newtheorem{example}{Example}
+
+% Unnumbered asides.
+\theoremstyle{remark}
+\newtheorem*{tip}{Tip}
+\newtheorem*{pitfall}{Pitfall}
+
+% Tighter lists, in place of enumitem's \setlist.
+\setlength{\topsep}{2pt}
+\setlength{\itemsep}{1pt}
+\setlength{\parsep}{0pt}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\term}[1]{\emph{#1}}
+
+% One listing style for the language, one for plain ASCII figures. `'` is not
+% a string delimiter here: the language uses it for loop labels, as Rust does.
+\definecolor{cmtgray}{gray}{0.40}
+\lstdefinestyle{txhdl}{
+  basicstyle=\ttfamily\scriptsize,
+  commentstyle=\color{cmtgray}\itshape,
+  keywordstyle=\bfseries,
+  morekeywords={mod,use,pub,const,type,struct,enum,trait,impl,fn,async,let,mut,
+    match,if,else,loop,while,for,in,break,continue,return,as,await,
+    module,bus,channel,transaction,protocol,pipeline,flow,seq,config,
+    port,stage,pipe,instance,connect,bind,tag,domain,blackbox,foreign,
+    property,role,signal,handler,true,false},
+  morecomment=[l]{//},
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  breaklines=true,
+  breakatwhitespace=true,
+  xleftmargin=2pt,
+  aboveskip=4pt,
+  belowskip=4pt,
+}
+\lstdefinestyle{ascii}{
+  basicstyle=\ttfamily\scriptsize,
+  columns=fullflexible,
+  keepspaces=true,
+  aboveskip=4pt,
+  belowskip=4pt,
+}
+\lstset{style=txhdl}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{TxHDL: Unifying a Dataflow and a Transaction Hardware Description
+Language}
+
+\author{Filip Filmar and Dragisa Jankovic%
+\thanks{This article states the merged TxHDL specification. It consolidates
+two hardware description languages that were developed independently, LHDL
+and TxHDL, into one. The analysis behind each decision is in the project
+repository under \code{docs/}.}%
+\thanks{\buildstamp}}
+
+\markboth{TxHDL Specification}{Filmar and Jankovic: TxHDL}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Two hardware description languages were developed independently for the same
+project. LHDL describes dataflow and leaves time to the compiler: the
+designer never counts cycles, and synchronisation tags tell the compiler
+where to put registers. TxHDL describes transactions over buses and lets a
+module block for as many cycles as a protocol takes. We show that the two do
+not compete. Each is nearly silent where the other is detailed: LHDL has no
+construct for writing a multi-cycle protocol body, and TxHDL has no
+interface, no late binding and no configuration facet. Four questions needed
+a decision about meaning rather than spelling, and we resolve all four. The
+merged language keeps both models of time and states which one a construct
+belongs to. Its surface syntax follows Rust, which removes six defects that
+the two source specifications had, including two grammars that their own
+examples did not parse against.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Hardware description languages, high-level synthesis, latency-insensitive
+design, language specification, dataflow, transaction-level modelling.
+\end{IEEEkeywords}
+
+{\footnotesize\tableofcontents}
+
+\input{sections/01_introduction}
+\input{sections/02_two_languages}
+\input{sections/03_conflicts}
+\input{sections/04_contributions}
+\input{sections/05_unified_shape}
+\input{sections/06_syntax}
+\input{sections/07_worked_example}
+\input{sections/08_defects}
+\input{sections/09_decisions}
+\input{sections/10_building}
+
+\begin{thebibliography}{10}
+
+\bibitem{ieee1076}
+IEEE, \emph{IEEE Standard VHDL Language Reference Manual}, IEEE Std
+1076-2019, 2019.
+
+\bibitem{ieee1800}
+IEEE, \emph{IEEE Standard for SystemVerilog}, IEEE Std 1800-2023, 2023.
+
+\bibitem{carloni2001}
+L.~P. Carloni, K.~L. McMillan, and A.~L. Sangiovanni-Vincentelli, ``Theory of
+latency-insensitive design,'' \emph{IEEE Trans. Computer-Aided Design},
+vol.~20, no.~9, pp. 1059--1076, 2001.
+
+\bibitem{cortadella2006}
+J.~Cortadella, M.~Kishinevsky, and B.~Grundmann, ``Synthesis of synchronous
+elastic architectures,'' in \emph{Proc. Design Automation Conf.}, 2006, pp.
+657--662.
+
+\bibitem{bachrach2012}
+J.~Bachrach \emph{et al.}, ``Chisel: Constructing hardware in a Scala embedded
+language,'' in \emph{Proc. Design Automation Conf.}, 2012, pp. 1216--1225.
+
+\bibitem{nikhil2004}
+R.~Nikhil, ``Bluespec System Verilog: efficient, correct RTL from high level
+specifications,'' in \emph{Proc. MEMOCODE}, 2004, pp. 69--70.
+
+\bibitem{rust}
+N.~D. Matsakis and F.~S. Klock, ``The Rust language,'' \emph{Ada Letters},
+vol.~34, no.~3, pp. 103--104, 2014.
+
+\end{thebibliography}
+
+\end{document}

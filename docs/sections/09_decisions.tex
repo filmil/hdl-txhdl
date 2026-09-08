@@ -1,0 +1,51 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Decisions and Remaining Work}
+\label{sec:decisions}
+
+\subsection{Settled}
+
+\emph{The name is TxHDL.} The repository, the build module and the published
+path are all named \code{txhdl}, and transactions are the distinguishing
+idea. FLHDL, LHdl and LHDL are retired, and appear from here on only in the
+project's analysis documents.
+
+\emph{The behavioural keywords are \code{flow} and \code{seq}.} Neither word
+is inherited from a source, so neither drags old semantics with it.
+
+\emph{The fate of the LHDL source files is deferred.} They stay in the tree
+for now. Whether they merge into the specification and then leave, or stay
+as source material, is a decision for later. The twelve theses are a
+separate case either way: they are an argument rather than a specification,
+and they belong in the merged document as a rationale section.
+
+\subsection{Still open}
+
+\begin{itemize}
+  \item \emph{Awaiting a condition.} A boolean that is itself awaitable
+        keeps one rule, at the cost of reading oddly the first time. A
+        prefix statement reads better in isolation, at the cost of two
+        spellings for one idea.
+  \item \emph{Chaining.} Replacing LHDL's pipe operator with a method chain
+        costs one non-Rust operator and reads well for long chains either
+        way.
+  \item \emph{Whether a transaction is its own item} or an attribute on a
+        struct. The attribute is one fewer keyword at the cost of a longer
+        declaration.
+\end{itemize}
+
+\subsection{Order of work}
+
+\begin{enumerate}
+  \item Write the merged specification section by section, in facet order,
+        taking the type system and the bit manipulation set first, because
+        nothing else can be written without them.
+  \item Write the grammar as each section lands, rather than at the end, and
+        check the LL(1) property with a generator instead of asserting it.
+  \item Fold the facets, tags and configuration in from LHDL.
+  \item Fold the twelve theses in as a rationale section.
+  \item Move every code example out of the prose and into its own file, so
+        the examples become a test corpus.
+\end{enumerate}
+
+The second step matters most, for the reason
+Section~\ref{sec:defects} gives.
