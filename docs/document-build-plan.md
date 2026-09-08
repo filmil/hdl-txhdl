@@ -115,8 +115,9 @@ The release workflow publishes `bazel-bin/filmil` to
 `filmil/hdlfactory.com.template` under `static/txhdl/filmil`.
 Once the specification builds, that path should publish `bazel-bin/spec` as
 well, or instead.
-Issue #1 covers the workflow work, including the fact that neither workflow
-currently runs.
+Issue #1 covered the workflow work.
+`.forgejo/workflows/build.yml` and `.forgejo/workflows/release.yml` now do
+it, and the two GitHub workflows are deleted.
 
 
 ## 3. What the first successful render found
@@ -199,7 +200,9 @@ Retrofitting it means editing the document by hand once.
 6. **Create `examples/` and move code out of the prose into it.**
    Do this as part of writing the merged specification.
 7. **Publish `bazel-bin/spec` from the release workflow.**
-   Part of issue #1.
+   Done. `.forgejo/workflows/release.yml` gathers every `*.pdf` and
+   `*.html` under `bazel-bin/` into `dist/release/`, naming each file after
+   its output path so two packages cannot overwrite one another.
 8. **Retire the `filmil/workspace` document targets** once the decision
    deferred in `unification-analysis.md` section 7 is made.
 
@@ -213,7 +216,9 @@ A rootfs, a Zig toolchain, graphviz from source, calibre, and a TeX
 installation.
 That is the cost of a build that asks the machine for nothing, and it is
 paid once per machine.
-Cache it in CI, which issue #1 already provides for.
+Both workflows cache `~/.cache/bazel` and `~/.cache/bazelisk`, keyed on
+`.bazelversion`, `.bazelrc`, `MODULE.bazel` and `MODULE.bazel.lock`.
+The runner is serial, so a cache miss costs every other queued run.
 
 **`ebook_pdf` needs `//:empty_md` in its deps.**
 Every existing target in the repository lists it, and the pattern gets

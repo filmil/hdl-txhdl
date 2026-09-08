@@ -1,0 +1,135 @@
+# Publish the rendered documents as a release.
+#
+# Two ways in, one job, two kinds of release.
+#
+#   schedule          -> the rolling `nightly` release, overwritten each night
+#   workflow_dispatch -> a new release stamped with the UTC date and time
+#
+# The nightly is a moving target, so somebody who wants "the current
+# documents" always has one link. A dispatched release is a fixed point that
+# nothing later overwrites, which is what makes it worth cutting by hand.
+name: release
+
+on:
+  schedule:
+    # 03:00 UTC daily.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: docker
+    steps:
+      # fetch-depth 0, because the nightly skip below reads the commit dates.
+      # A shallow clone shows one commit whatever actually happened.
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A nightly with no commits behind it produces a release identical to
+      # yesterday's. A dispatched run always proceeds, because somebody asked
+      # for it.
+      - name: Decide whether to release
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -eu
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "dispatched by hand"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$(git log --since='25 hours ago' --format=%H)" ]; then
+            echo "commits landed since the last nightly"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no commit in the last 25 hours, skipping"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The scheduled release is rolling, so it overwrites its own assets. A
+      # dispatched release is new every time and must never overwrite one, so
+      # a repeated dispatch inside the same second is the only way to collide
+      # and it fails rather than destroying the earlier one.
+      - name: Compute the tag
+        if: steps.decide.outputs.proceed == 'true'
+        id: tag
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -eu
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            tag="release-$(date -u +%Y%m%d-%H%M%S)"
+            override=false
+          else
+            tag="nightly"
+            override=true
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "override=$override" >> "$GITHUB_OUTPUT"
+          echo "releasing as $tag (override=$override)"
+
+      # Nothing else is installed. Every other tool this build needs comes
+      # from MODULE.bazel, including pandoc, TeX and the C compiler.
+      - name: Install Bazelisk (pinned)
+        if: steps.decide.outputs.proceed == 'true'
+        run: |
+          set -eux
+          { command -v curl && command -v git; } >/dev/null 2>&1 || {
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends ca-certificates curl git
+          }
+          curl -fsSL -o /usr/local/bin/bazel \
+            https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
+          echo "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992  /usr/local/bin/bazel" | sha256sum -c
+          chmod +x /usr/local/bin/bazel
+
+      - name: Cache Bazel
+        if: steps.decide.outputs.proceed == 'true'
+        uses: https://code.forgejo.org/actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ hashFiles('.bazelversion', '.bazelrc', 'MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-keys: |
+            bazel-
+
+      - name: Build everything
+        if: steps.decide.outputs.proceed == 'true'
+        run: bazel build //...
+
+      # bazel-bin is a symlink, so find needs -L to walk it. The output path
+      # becomes the file name, so two packages that each produce `spec-pdf.pdf`
+      # do not overwrite one another in the release directory.
+      - name: Gather the documents
+        if: steps.decide.outputs.proceed == 'true'
+        run: |
+          set -eu
+          mkdir -p dist/release
+          find -L bazel-bin -type f \( -name '*.pdf' -o -name '*.html' \) -print0 |
+            while IFS= read -r -d '' f; do
+              rel="${f#bazel-bin/}"
+              cp "$f" "dist/release/$(printf '%s' "$rel" | tr '/' '-')"
+            done
+          ls -la dist/release
+          [ -n "$(ls -A dist/release)" ] || { echo "nothing to release" >&2; exit 1; }
+
+      # Referenced by full URL so it resolves whatever the instance's default
+      # action host is. The built-in per-run token is enough given
+      # `permissions: contents: write`; FORGEJO_RELEASE_TOKEN wins when set.
+      - name: Publish the release
+        if: steps.decide.outputs.proceed == 'true'
+        uses: https://code.forgejo.org/actions/forgejo-release@v2.13.4
+        with:
+          direction: upload
+          url: ${{ github.server_url }}
+          repo: ${{ github.repository }}
+          tag: ${{ steps.tag.outputs.tag }}
+          release-dir: dist/release
+          override: ${{ steps.tag.outputs.override }}
+          token: ${{ secrets.FORGEJO_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}

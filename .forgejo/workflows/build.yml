@@ -1,0 +1,56 @@
+# Build and test on every pull request and on every push to a mainline branch.
+#
+# Building everything is most of the test: every document target renders a PDF
+# and an HTML page, and a document that does not render fails the build.
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+jobs:
+  build:
+    runs-on: docker
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+
+      # Nothing else is installed. Every other tool this build needs comes
+      # from MODULE.bazel, including pandoc, TeX and the C compiler.
+      #
+      # Do not replace this with a setup-bazel action. Those resolve the
+      # `bazelbuild` organization through the API of the instance they run
+      # on, which here is git.hdlfactory.com, and fail with
+      # `GetUserByName ... does not exist`.
+      - name: Install Bazelisk (pinned)
+        run: |
+          set -eux
+          { command -v curl && command -v git; } >/dev/null 2>&1 || {
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends ca-certificates curl git
+          }
+          curl -fsSL -o /usr/local/bin/bazel \
+            https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
+          echo "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992  /usr/local/bin/bazel" | sha256sum -c
+          chmod +x /usr/local/bin/bazel
+
+      # A cold build fetches a Debian rootfs, a Zig toolchain, graphviz built
+      # from source and a TeX installation, which is roughly 950 actions. The
+      # runner is serial, so a cache miss costs every other queued run.
+      - name: Cache Bazel
+        uses: https://code.forgejo.org/actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ hashFiles('.bazelversion', '.bazelrc', 'MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-keys: |
+            bazel-
+
+      - name: Build everything
+        run: bazel build //...
+
+      - name: Test everything
+        run: bazel test //... --test_output=errors
