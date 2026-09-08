@@ -3,12 +3,26 @@ module(
     version = "0.0.0",
 )
 
-bazel_dep(name = "bazel_ebook", version = "3.0.0")
+# LaTeX, from the custom registry named in .bazelrc. The module registers a
+# `system` toolchain that shells out to the host's pdflatex; the hermetic
+# toolchain declared below is registered by this root module and therefore
+# wins, so the build needs nothing installed on the machine.
+bazel_dep(name = "rules_latex_host", version = "0.3.0")
 
-# bazel_ebook 3.0.0 calls rootfs_binary(env = ...) but pins bazel_rootfs
-# 1.1.1, which has no `env` attribute, so its //image package fails to
-# analyze. 1.2.1 adds the attribute. Naming it here raises the resolved
-# version through minimal version selection. Remove this once bazel_ebook
-# ships a release that pins it itself.
-bazel_dep(name = "bazel_rootfs", version = "1.2.1")
-bazel_dep(name = "rules_shell", version = "0.6.1")
+hermetic_latex = use_extension(
+    "@rules_latex_host//latex:extensions.bzl",
+    "hermetic_latex",
+)
+
+# The pinned TinyTeX distribution carries neither IEEEtran nor the drawing
+# packages, and the obvious fix does not work here. `texlive_archives` pins a
+# package archive by sha256, but texlive.info answers Bazel with a different
+# byte stream on every request (the hash changed on each of two consecutive
+# fetches, while curl returned identical bytes each time), so no pin can
+# match. IEEEtran.cls and IEEEtrantools.sty are therefore vendored next to
+# the document and passed through `data`, which the ruleset documents as the
+# way to supply a class or style file. That removes the fetch entirely.
+hermetic_latex.toolchain()
+use_repo(hermetic_latex, "hermetic_latex")
+
+register_toolchains("@hermetic_latex//:all")

@@ -1,0 +1,119 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Surface Syntax, Biased Toward Rust}
+\label{sec:syntax}
+
+Where the two languages disagree and Rust has an answer, Rust wins. Rust is
+familiar, it is popular enough that engineers arrive already reading it, and
+its constructs hold up under the coding patterns people now use. The bias
+also earns its keep in a way that was not obvious in advance: it removes six
+defects present in the sources, listed in Section~\ref{sec:defects}.
+
+Where Rust has no answer, because the construct is about hardware and not
+about software, the better of the two sources wins.
+
+Rust's naming conventions apply throughout. Types, traits, buses,
+transactions and modules take \code{CamelCase}. Values, functions, ports and
+stages take \code{snake\_case}. Constants take
+\code{SCREAMING\_SNAKE\_CASE}.
+
+\subsection{The decision that does the most work}
+
+TxHDL declares state with \code{var} and combinational logic with
+\code{wire}. LHDL argues, in its eighth thesis, that the designer should not
+make that distinction at all. Rust settles it with one keyword that neither
+source has.
+
+\begin{lstlisting}
+let sum = a + b;            // a binding. Always a + b. A wire.
+let mut count: u8 = 0;      // a place. Holds its value. A register.
+\end{lstlisting}
+
+\code{mut} states whether the value changes, which is a fact about the
+design. It never states whether a flip-flop appears, which is a fact about
+the implementation. This satisfies LHDL's eighth thesis and TxHDL's third
+principle, ``variables become registers automatically based on usage'', with
+one keyword readers already know. Both \code{var} and \code{wire} are
+dropped.
+
+\subsection{Conflicts that Rust settles}
+
+Table~\ref{tab:syntax} lists them. Two entries are worth drawing out.
+
+\emph{Bit slicing.} LHDL writes a Rust range and TxHDL writes a Verilog
+descending pair. The range wins, which is the one place LHDL's spelling is
+the more Rust-like of the two.
+
+\emph{Awaiting.} Rust settled on postfix, and postfix chains where prefix
+does not. Three of TxHDL's four await forms take it without argument. The
+fourth, awaiting a condition, has no Rust ancestor, because Rust has no
+cycle to wait for. The proposal is that a boolean is itself awaitable and
+completes on the first cycle where it holds, which keeps one rule instead of
+two. It reads oddly the first time, which is the argument against it.
+
+\begin{table*}[t]
+\caption{Conflicts Rust settles, with the precedent for each.}
+\label{tab:syntax}
+\centering
+\footnotesize
+\begin{tabular}{@{}llll@{}}
+\toprule
+Concern & LHDL & TxHDL & Merged \\
+\midrule
+Assignment          & \code{x := e}          & \code{x = e}             & \code{x = e} \\
+Declaration         & \code{var x: T;}       & \code{var} / \code{wire} & \code{let} / \code{let mut} \\
+Match arm           & \code{case P: \{..\}}  & \code{P => \{..\}}       & \code{P => \{..\}} \\
+Match default       & \code{default:}        & \code{\_ =>}             & \code{\_ =>} \\
+Enum variant        & \code{case Data(u32);} & \code{Add = 0x00,}       & both, comma separated \\
+Struct fields       & \code{,} and \code{;}  & \code{;}                 & \code{,} \\
+Struct literal      & none                   & \code{\{ .addr = 1 \}}   & \code{Req \{ addr: 1 \}} \\
+Function            & \code{func f() -> T}   & \code{func f() -> T}     & \code{fn f() -> T} \\
+Multi-cycle call    & none                   & \code{proc}              & \code{async fn} \\
+Ternary             & none                   & \code{c ? a : b}         & \code{if c \{a\} else \{b\}} \\
+Cast                & \code{u16(x)}          & \code{zext(x)}           & \code{x as u16} \\
+Visibility          & \code{pub}             & none                     & \code{pub} \\
+Packages            & \code{package a.b;}    & none                     & \code{mod}, \code{use a::b} \\
+Generics            & \code{<type T>}        & \code{<T, const N: u32>} & \code{<T, const N: u32>} \\
+Bit slice           & \code{w[0..8]}         & \code{w[7:0]}            & \code{w[0..8]}, \code{w[12..=14]} \\
+Array type          & \code{u32[16]}         & \code{u32[16]}           & \code{[u32; 16]} \\
+Loop                & \code{for (i in 0..n)} & \code{for (i in 0..n)}   & \code{for i in 0..n} \\
+Loop step           & none                   & \code{step 4}            & \code{(0..n).step\_by(4)} \\
+Labels              & none                   & \code{outer:}            & \code{'outer:} \\
+Contract            & \code{implements}      & structural               & \code{trait}, \code{impl T for M} \\
+Role                & \code{modport Master}  & \code{.master}           & \code{Bus::Master} \\
+Assertion           & none                   & \code{assert c : "m"}    & \code{assert!(c, "m")} \\
+Parallel branches   & \code{fork}/\code{join}& none                     & \code{join!(f(), g())} \\
+Await               & none                   & \code{await port.req}    & \code{port.req.await} \\
+Send                & none                   & \code{port.req <- \{..\}}& \code{port.req.send(..).await} \\
+Callback            & none                   & \code{then (r) \{..\}}   & \code{.then(|r| \{..\})} \\
+Timeout             & none                   & \code{timeout N else}    & \code{.timeout(N).await} \\
+Tag application     & \code{@Sync expr}       & none                     & \code{\#[tag(Sync)]} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Where Rust has no answer}
+
+These constructs describe hardware, so the better source wins.
+
+\begin{itemize}
+  \item \term{Contract for wires}: \code{bus} with \code{channel}, from
+        TxHDL. LHDL's \code{interface} does two jobs at once, a wire bundle
+        and an implementation socket, which is why its grammar and its
+        examples disagree. Splitting the jobs fixes both.
+  \item \term{Contract for behaviour}: \code{trait}, replacing LHDL's
+        interface in socket position. Late binding needs a name for a role
+        an implementation fills, and that is what a trait is.
+  \item \term{Timeless behaviour}: \code{flow}, from LHDL's dataflow model.
+  \item \term{Sequenced behaviour}: \code{seq}, from TxHDL's sequence.
+  \item \term{Synchronisation}: \code{tag}, from LHDL, spelled as an
+        attribute, which states in one place what LHDL's grammar and
+        examples spell three different ways.
+  \item \term{Clock and reset}: \code{domain} in the configuration facet. A
+        clock is a physical fact, and the design facet should not name one.
+  \item \term{Late binding and foreign code}: \code{config}, \code{bind},
+        \code{blackbox} and \code{foreign}, from LHDL. TxHDL has no
+        mechanism at all.
+  \item \term{Contiguous memory}: a named type, replacing LHDL's comma
+        index. A comma inside brackets is too quiet for a decision that
+        changes which primitive the synthesiser infers.
+\end{itemize}

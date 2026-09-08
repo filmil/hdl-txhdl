@@ -1,0 +1,82 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Four Real Conflicts}
+\label{sec:conflicts}
+
+Everything else the two languages disagree about is spelling, and
+Section~\ref{sec:syntax} settles spelling. These four need a decision about
+meaning.
+
+\subsection{Does the designer count cycles?}
+
+LHDL says no. TxHDL says yes, and a UART example counts baud intervals
+explicitly.
+
+\begin{rulebox}[Both, with a boundary]
+The two answers apply to different things, and the conflict disappears once
+that is stated. A UART's baud interval is a specification: it comes from the
+protocol on the wire, and a compiler that retimed it would break the design.
+An adder's latency is not a specification: it comes from the fabric, and a
+compiler that fixed it by hand would waste the fabric.
+\end{rulebox}
+
+The merged language therefore has two behavioural forms and a rule for
+choosing between them.
+
+\begin{itemize}
+  \item \term{Timeless form}, spelled \code{flow}, from LHDL. Dataflow and
+        tags, no cycle counts. The compiler schedules it, and a cycle count
+        written inside one is a compile error.
+  \item \term{Sequenced form}, spelled \code{seq}, from TxHDL. Explicit
+        ordering with \code{await}. Cycle counts are honoured exactly as
+        written.
+\end{itemize}
+
+A \code{seq} may call a \code{flow}, and the call absorbs whatever latency
+the compiler chose. A \code{flow} may instantiate a \code{seq} behind a
+contract, and sees it as a fixed or elastic latency component.
+
+\subsection{Nominal contracts or structural typing?}
+
+LHDL declares conformance with \code{implements}. TxHDL infers it from
+matching fields.
+
+\begin{rulebox}[Structural for data, nominal for behaviour]
+Each source already uses its mechanism for what that mechanism is good at.
+Field compatibility between two transactions is a question about layout, and
+structural typing decides layout well. Whether a pipeline satisfies a bus
+contract is a question about intent, and intent should be declared, because
+two modules can share a field set by accident.
+\end{rulebox}
+
+\subsection{Is verification in the language?}
+
+LHDL's twelfth thesis argues for interop with existing testing
+infrastructure instead of a non-synthesisable subset. TxHDL puts assertions,
+assumptions, cover points and properties in the language.
+
+\begin{rulebox}[Both, split by what the construct talks to]
+The thesis argues against a simulation subset: file input and output, string
+handling, and stimulus generation. It does not argue against formal
+properties. Assertions and properties are read by formal tools and by
+synthesis, not by a simulator's runtime library, so they do not create the
+subset the thesis objects to.
+\end{rulebox}
+
+Stimulus, file handling and scoreboarding move to the foreign function
+interface, per LHDL. Assertions, assumptions, cover points and properties
+stay in the language, per TxHDL.
+
+\subsection{Where does a pipeline live?}
+
+LHDL makes a pipeline a top-level definition that may implement an
+interface, with a \code{pipe} declaration for a value that persists across
+stages. TxHDL makes it a member of a module with a call signature and a
+return in the last stage.
+
+\begin{rulebox}[TxHDL's shape, LHDL's placement]
+A pipeline is an item with a signature. It may be declared at top level and
+may implement a contract, which is what LHDL needs for late binding. It may
+also be declared inside a module and called, which is what TxHDL needs for
+the common case. LHDL's \code{pipe} declaration stays, because live range
+analysis needs somewhere to say that a value crosses a stage boundary.
+\end{rulebox}

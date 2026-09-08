@@ -1,0 +1,67 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Introduction}
+\label{sec:introduction}
+
+\IEEEPARstart{T}{wo} hardware description languages were written for one
+project, independently, and both describe the same intended hardware. The
+goal is a single consistent specification. This article states what has to
+happen to get there, and settles every question that a merge cannot leave
+open.
+
+The short answer is that the two languages do not compete. LHDL says how a
+large system is assembled, configured and scheduled. TxHDL says how one
+module talks a multi-cycle protocol. Each is nearly silent where the other
+is detailed. Four questions need a decision about meaning rather than about
+spelling, and Section~\ref{sec:conflicts} resolves all four.
+
+\subsection{What the sources are}
+
+Seven files state language content. Their sizes say which ones matter.
+
+\begin{table}[H]
+\caption{The source material.}
+\label{tab:sources}
+\centering
+\footnotesize
+\begin{tabular}{@{}lrll@{}}
+\toprule
+Path & Lines & Language & What it is \\
+\midrule
+\code{spec/language.md}      & 2241 & TxHDL & complete, 20 sections \\
+\code{workspace/draft-spec}  & 1218 & LHDL  & prose plus EBNF \\
+\code{workspace/spec}        &  486 & LHDL  & condensed, with a grammar \\
+\code{workspace/lhdl-prop.}  &  178 & LHDL  & the earliest sketch \\
+\code{theses.md}             &   94 & LHDL  & twelve design theses \\
+\code{proposal.md}           &   27 & both  & a prior read of the repository \\
+\code{README.md}             &    1 & none  & names the two authors \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The most complete specification in the repository was, until this work, the
+one that was never built or published. \code{spec/language.md} had no build
+target, while the four smaller files did.
+
+The language is named four ways across those files. The long LHDL draft
+writes FLHDL 88 times, the condensed one writes it 9 times, the earliest
+sketch writes LHdl 6 times, and \code{spec/language.md} writes TxHDL 5
+times. The repository, the build module and the published path are all named
+\code{txhdl}. Section~\ref{sec:decisions} settles the name.
+
+\subsection{Contributions}
+
+\begin{enumerate}
+  \item An account of what each language actually specifies, and of the
+        asymmetry that makes a merge possible rather than a compromise
+        (Section~\ref{sec:two-languages}).
+  \item Resolutions for the four semantic conflicts, of which the model of
+        time is the one that shapes the language
+        (Section~\ref{sec:conflicts}).
+  \item A surface syntax biased toward Rust, decided construct by
+        construct, which removes six defects present in the sources rather
+        than restating them (Section~\ref{sec:syntax}).
+  \item An inventory of every defect found by reading the two sources,
+        with line numbers, including sixteen places where the LHDL grammar
+        and the LHDL examples disagree
+        (Section~\ref{sec:defects}).
+\end{enumerate}

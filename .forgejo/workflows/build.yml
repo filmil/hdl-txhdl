@@ -52,5 +52,15 @@ jobs:
       - name: Build everything
         run: bazel build //...
 
+      # Bazel exits 4 when testing is requested and no test target exists,
+      # which is the state until the specification's examples become a test
+      # corpus. Every other non-zero exit still fails the job, and a test
+      # added later runs here without touching this file.
       - name: Test everything
-        run: bazel test //... --test_output=errors
+        run: |
+          set -o pipefail
+          bazel test //... --test_output=errors || {
+            status=$?
+            [ "$status" -eq 4 ] || exit "$status"
+            echo "no test targets yet; build is the only gate"
+          }

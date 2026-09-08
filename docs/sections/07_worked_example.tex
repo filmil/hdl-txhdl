@@ -1,0 +1,152 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Same Design, Three Ways}
+\label{sec:worked-example}
+
+A multiply accumulate unit reads pairs of words from memory, accumulates
+their products, and answers over a bus. It is small enough to print and
+large enough to need a contract, a protocol body, a tag and a binding.
+
+\subsection{As TxHDL states it today}
+
+TxHDL writes the protocol well and cannot state the tag, the contract or the
+binding.
+
+\begin{lstlisting}
+module MacUnit {
+    port host: MacBus.slave;
+    port mem:  MemBus.master;
+
+    var acc: u64 = 0;
+
+    pipeline mac(a: u32, b: u32, prev: u64) -> u64 {
+        stage mul { var p = zext<u64>(a) * zext<u64>(b); }
+        stage add { return prev + p; }
+    }
+
+    sequence main {
+        loop {
+            var req = await host.request;
+            acc = 0;
+            for (i in 0..req.count) {
+                mem.request <- { .addr = req.addr + i*8,
+                                 .write = false };
+                var lo = await mem.response;
+                mem.request <- { .addr = req.addr + i*8 + 4,
+                                 .write = false };
+                var hi = await mem.response;
+                acc = mac(lo.data[31:0], hi.data[31:0], acc);
+            }
+            host.response <- { .acc = acc };
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{As LHDL states it today}
+
+LHDL states the contract, the tag and the binding, and has no way to write
+the loop. The listing below is where an LHDL author stops.
+
+\begin{lstlisting}
+interface MacOp {
+    addr  : uint<32>;
+    count : uint<8>;
+    acc   : uint<64>;
+
+    modport Server { in addr; in count; out acc; }
+}
+
+tag @MemFetch with handshake, capacity=8;
+
+pipeline Mac implements MacOp.Server {
+    pipe p: u64;
+    stage Mul { p := a * b; }
+    stage Add { acc := p + acc; }
+}
+
+config Build {
+    bind Top.mac_unit => Mac;
+}
+\end{lstlisting}
+
+No LHDL construct reads \code{count} words one after another and waits for
+each response. A state machine would state it as hand written states, which
+is the form \code{await} exists to replace.
+
+\subsection{Merged}
+
+\begin{lstlisting}
+transaction MacRequest { addr: u32, count: u8 }
+transaction MacResponse { acc: u64 }
+
+bus MacBus {
+    channel request:  MacRequest,
+    channel response: MacResponse,
+}
+
+pub trait MacOp {
+    async fn run(&mut self, req: MacRequest) -> MacResponse;
+}
+
+// Two stages, so the multiplier does not sit in the adder's
+// path. The compiler places the register between them.
+pipeline mac(a: u32, b: u32, prev: u64) -> u64 {
+    stage mul { let p = (a as u64) * (b as u64); }
+    stage add { prev + p }
+}
+
+#[tag(MemFetch, handshake, capacity = 8)]
+pub module MacUnit {
+    port host: MacBus::Slave,
+    port mem:  MemBus::Master,
+
+    let mut acc: u64 = 0;
+
+    seq main {
+        loop {
+            let req = host.request.await;
+            acc = 0;
+
+            for i in 0..req.count {
+                let lo = mem.read(req.addr + i*8).await;
+                let hi = mem.read(req.addr + i*8 + 4).await;
+                acc = mac(lo.data[0..32], hi.data[0..32], acc);
+            }
+
+            assert!(req.count > 0, "empty accumulate");
+            host.response.send(MacResponse { acc }).await;
+        }
+    }
+}
+
+impl MacOp for MacUnit {}
+
+config Build {
+    bind top.mac_unit => MacUnit;
+
+    domain MemFetch {
+        clock: sys_clk_100mhz,
+        reset: sys_rst_n,
+    }
+}
+\end{lstlisting}
+
+Nine differences from the TxHDL version are worth naming, because each is a
+decision from Table~\ref{tab:syntax}.
+
+\begin{enumerate}
+  \item \code{var acc} becomes \code{let mut acc}, so the text says the
+        value changes and not that a register exists.
+  \item The zero-extension call becomes an \code{as} cast.
+  \item The descending bit slice becomes a range.
+  \item The prefix await becomes postfix.
+  \item The send becomes a call that returns a value, so a request and its
+        response are one line instead of two.
+  \item The designated initialiser becomes a struct literal, with the type
+        named and field shorthand doing the rest.
+  \item \code{sequence} becomes \code{seq}, and its cycle counts stay
+        exactly as written.
+  \item The tag, the trait and the configuration come from LHDL, and TxHDL
+        had no way to write any of them.
+  \item The assertion comes from TxHDL, and LHDL had no way to write it.
+\end{enumerate}

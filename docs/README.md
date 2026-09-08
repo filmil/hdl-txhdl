@@ -18,7 +18,13 @@ Those reasons live here.
 |---|---|
 | `unification-analysis.md` | What each language is, what conflicts, what each contributes, and every defect found in the two sources |
 | `syntax-decisions.md` | The Rust-shaped surface syntax chosen for the merged language, one decision per conflict, with a worked example |
-| `document-build-plan.md` | How the specification becomes a PDF and an HTML page, what is hermetic and what is not, and what the first render found |
+| `document-build-plan.md` | How the article is built, what was tried before, and why two TeX packages are vendored |
+
+`article.tex` and `sections/` are the article itself, built by
+`//docs:article`. `IEEEtran.cls`, `IEEEtrantools.sty`, `listings.sty`,
+`lstmisc.sty` and `listings.cfg` are vendored upstream files that the pinned
+TeX distribution lacks; `document-build-plan.md` section 3 says why they are
+not fetched.
 
 ## What belongs here
 

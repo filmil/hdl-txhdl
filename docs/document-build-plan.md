@@ -1,230 +1,175 @@
 # Building the specification documents
 
-Status: plan, September 8, 2026.
+Status: as built, September 8, 2026.
 Author: automated coding assistant, with human supervision.
 
-The specification is written in Markdown, and Bazel renders it to PDF and
-HTML with `bazel_ebook`.
+The specification is published as an IEEE two-column article, set in
+Computer Modern, built from LaTeX by Bazel, and attached to every release.
 
-An earlier draft of this document planned an IEEEtran article built with
-`rules_latex_host`.
-That is dropped.
-`rules_latex_host` shells out to the host's `pdflatex`, so it could not be
-made hermetic without vendoring a TeX distribution, and the article was not
-essential.
+```sh
+bazel build //docs:article     # -> bazel-bin/docs/article.pdf
+```
+
+This document records what was tried, what failed, and why the build looks
+the way it does.
+Two earlier arrangements are described, because the reasons they were
+dropped are the reasons this one is shaped as it is.
 
 
-## 1. Hermeticity: what was wrong and what fixed it
+## 1. What was tried before
 
-The repository used to pin
-`bazel_dep(name = "bazel_ebook", version = "2.0.15")`.
-That version depends on `bazel_rules_bid` 1.2.4 and runs pandoc and TeX by
-shelling out to `docker`.
-On a machine without Docker the build fails, and this was measured rather
-than guessed:
+### bazel_ebook, Markdown to PDF through pandoc
+
+The repository used to render Markdown with `bazel_ebook`.
+Version 2.0.15 depends on `bazel_rules_bid` and shells out to `docker`, so
+it failed on any machine without Docker:
 
 ```
-bazel-out/k8-opt-exec/bin/external/bazel_rules_bid+/build/docker_run:
+bazel-out/.../bazel_rules_bid+/build/docker_run:
   line 198: docker: command not found
-ERROR: Building PDF for: language-pdf failed
 ```
 
-`bazel_ebook` **3.0.0**, published September 8, 2026, fixes it.
-It drops `bazel_rules_bid` entirely and provisions every tool through Bazel:
+`bazel_ebook` 3.0.0 fixed that, and it is genuinely hermetic.
+It takes pandoc and plantuml from a pinned multitool lockfile, builds
+graphviz from source with `hermetic_cc_toolchain`, and gets TeX from a
+`rules_distroless` rootfs pinned against `snapshot.ubuntu.com`.
+It rendered a 45 page PDF of the specification here, in 591 seconds from a
+cold cache.
 
-| Tool | Source in 3.0.0 |
-|---|---|
-| `pandoc`, `plantuml` | `@multitool`, pinned in `multitool.lock.json` |
-| `pandoc-crossref` | a release tarball pinned by sha256, matched to that pandoc |
-| `dot` | the `graphviz` Bazel module, built from source |
-| the C compiler that builds it | `hermetic_cc_toolchain`, so the compiler is the same on every machine |
-| `pdflatex`, `latex`, `dvipng`, `dvisvgm`, `gs` | a rootfs built by `rules_distroless` from `https://snapshot.ubuntu.com/ubuntu/` |
-| `asy`, `drawtiming`, `gladtex`, `ebook-convert`, `rsvg-convert` | the same rootfs |
-| fonts | the DejaVu release archive, pinned by sha256 |
+It does not run on the project's build machine, which is the whole reason it
+is gone.
+The approach is sound and the implementation works.
 
-The apt packages are pinned in `image/packages.lock.json`, and the archive
-is a snapshot service rather than a live mirror, so the same build fetches
-the same bytes next year.
+### rules_latex_host with the system toolchain
 
-One part of that rootfs is worth understanding, because it is the piece that
-usually goes wrong.
-A rootfs assembled from `.deb` files holds the contents of those files and
-nothing else, since no maintainer script has run.
-TeX is configured almost entirely by its postinst, so `fmtutil.cnf`,
-`updmap.cfg`, and the compiled `.fmt` files are all absent, and `pdflatex`
-will not start without them.
-`image/texmf.bzl` builds them at build time using the TeX in the rootfs.
-Nothing is downloaded for that step and nothing comes from the host.
+`rules_latex_host` registers a `system` toolchain that wraps the host's
+`pdflatex`, `poppler-utils` and `ghostscript`.
+That needs those tools installed on every machine that builds, which the
+`hermetic` fragment of the coding SOP forbids.
+The module also ships a hermetic toolchain, so this was never necessary.
 
-The toolchain target that ties this together is still named
-`docker_toolchain`, which now misleads.
-Its `ebook_toolchain` sets only `hermetic_tools` and sets neither `tools`
-nor `wrapper`.
 
-### One version skew to work around
+## 2. What the build does now
 
-`bazel_ebook` 3.0.0 calls `rootfs_binary(env = ...)` in six places in
-`image/BUILD.bazel`, and pins `bazel_rootfs` 1.1.1, whose `rootfs_binary`
-has no `env` attribute.
-Its `//image` package therefore fails to analyze, and so does
-`//build/toolchains:default_tools`, which reads `//image:texmf`:
+`MODULE.bazel` declares the hermetic toolchain and registers it from the
+root module, which is what makes it win over the `system` toolchain the
+module registers for itself.
 
+Three archives make up that toolchain, each pinned by URL and SHA-256.
+A TinyTeX distribution, whose binaries locate their own tree with no install
+step.
+qpdf, which backs the page-count and concatenation contract.
+Ghostscript, used only for the outline of a combined PDF.
+
+Nothing is taken from the machine running the build.
+
+
+## 3. Two packages are vendored, and why
+
+TinyTeX includes neither IEEEtran nor `listings`, and the ruleset says so.
+The documented fix is `texlive_archives`, which pins a package archive from
+a dated TeX Live snapshot by SHA-256.
+
+That does not work here.
+`texlive.info` answers Bazel with different bytes on every request.
+Two consecutive fetches produced checksums `33f4b564...` and `10509900...`,
+while `curl` returned the same 89368 bytes on three tries.
+A content-addressed pin cannot match a moving target, so no value of the
+attribute succeeds.
+
+`IEEEtran.cls`, `IEEEtrantools.sty`, `listings.sty`, `lstmisc.sty` and
+`listings.cfg` therefore live in `docs/` and are passed in the
+`latex_document` `data` attribute, which the ruleset documents as the way to
+supply a class or style file.
+Each is upstream and unmodified, under the LaTeX Project Public License,
+with its copyright header intact.
+
+They sit next to `article.tex` rather than in a subdirectory.
+`data` copies files under their package relative paths, and LaTeX searches
+the working directory rather than a `texmf/` beneath it.
+
+
+## 4. Fonts
+
+The article is set in **Latin Modern**, the Computer Modern variety that
+works under pdflatex.
+
+Two things had to be forced.
+
+IEEEtran selects Times on its own.
+The first build came out in `ptm` with nothing having asked for it.
+
+Plain `cmr` under `[T1]{fontenc}` is not the fix.
+The T1 Computer Modern outlines live in `cm-super`, which is not in the
+pinned distribution, so pdflatex falls back to EC bitmaps.
+That build produced a PDF with no Type 1 face at all and every glyph a
+Type 3 bitmap.
+IEEE rejects Type 3, and it renders badly at any zoom.
+
+`lmodern` fixed it.
+The same document, with nothing else changed, came out with all 16 faces
+Type 1.
+
+Check a finished PDF rather than the source:
+
+```sh
+pdffonts bazel-bin/docs/article.pdf | awk 'NR>2 {print $2, $3}' | sort | uniq -c
 ```
-ERROR: @@bazel_ebook+//image/BUILD.bazel:121:14: @@bazel_ebook+//image:drawtiming:
-  no such attribute 'env' in 'rootfs_binary' rule
-```
 
-`bazel_rootfs` 1.2.1 adds the attribute.
-Naming it as a direct dependency in this repository's `MODULE.bazel` raises
-the resolved version through minimal version selection, and the comment
-there says to remove it once `bazel_ebook` pins it itself:
+Every line should read `Type 1`.
 
-```python
-bazel_dep(name = "bazel_rootfs", version = "1.2.1")
-```
-
-The real fix belongs upstream, in a `bazel_ebook` 3.0.1 that pins
-`bazel_rootfs` 1.2.1 or later.
-
-**Verified end to end.**
-`bazelisk build //spec:language-pdf` extracts the rootfs, compiles the
-`tex`, `latex` and `pdflatex` formats, and produces a 45 page PDF.
-Docker is not involved at any point, and nothing is taken from the machine
-running the build.
+New Computer Modern in its Book weight is the less spindly Computer Modern,
+and it would be the better face at 9pt in two columns.
+It needs LuaLaTeX or XeLaTeX: the package requires `fontspec` and
+`unicode-math`, and version 8.1.1 ships 41 OpenType files and no Type 1 at
+all.
+The `latex-pdf-tutorial` skill in the coding SOP states both halves of this.
 
 
-## 2. What gets built
+## 5. Figures are ASCII
+
+Every figure in the article is a listing rather than a drawing.
+
+That follows the `eng-standards` fragment of the coding SOP, which requires
+a design document to illustrate a module's architecture with ASCII art.
+It also keeps `tikz` and `pgfplots` off the dependency list.
+And it removes a class of defect that produces no warning and no error: a
+document that compiles clean, resolves every reference, reports zero
+overfull boxes, and still has an arrowhead buried in a box border.
+
+
+## 6. What is built and released
 
 | Target | Output |
 |---|---|
-| `//spec:language-pdf` | the specification as a PDF |
-| `//spec:language-html` | the specification as a standalone HTML page |
+| `//docs:article` | the specification as an IEEE two-column PDF |
 
-`spec/BUILD.bazel` follows the pattern already used in
-`filmil/workspace/BUILD.bazel`: a `markdown_lib` naming the source, an
-`ebook_pdf`, and a `pandoc_standalone_html`.
-`ebook_pdf` asks for EPUB metadata even when only a PDF is wanted, so a
-`genrule` supplies an empty XML file, and `spec/title.yaml` supplies the
-title and the authors.
+`.forgejo/workflows/release.yml` gathers every `*.pdf` and `*.html` under
+`bazel-bin/` into `dist/release/`, so the article is attached to the rolling
+`nightly` release and to every dated release cut by hand.
 
-Before this change `spec/language.md` had no Bazel target at all.
-The four smaller files under `filmil/workspace/` were built and published,
-and the 2241 line specification was not.
-
-The release workflow publishes `bazel-bin/filmil` to
-`filmil/hdlfactory.com.template` under `static/txhdl/filmil`.
-Once the specification builds, that path should publish `bazel-bin/spec` as
-well, or instead.
-Issue #1 covered the workflow work.
-`.forgejo/workflows/build.yml` and `.forgejo/workflows/release.yml` now do
-it, and the two GitHub workflows are deleted.
+`bazel test //...` exits 4 today, because no test target exists yet.
+The build workflow treats that one exit code as success and fails on every
+other, so a test added later runs without editing the workflow.
 
 
-## 3. What the first successful render found
+## 7. Remaining work
 
-The PDF is 45 pages on US letter, and the LaTeX run reports **zero overfull
-boxes**, which was the failure mode worth worrying about with 20 sections of
-wide code blocks.
-
-It reports **20 undefined hyper references**, one per entry in the
-hand-written Table of Contents at `spec/language.md:9`.
-Anchors such as `#1-design-philosophy` resolve in a Markdown viewer and in
-HTML, and resolve to nothing in the PDF.
-
-The fix is to delete the hand-written Table of Contents and let pandoc
-generate one.
-That also removes a list that has to be edited by hand every time a section
-is added, renamed, or renumbered, which is exactly the kind of list that
-goes stale.
-
-One further warning comes from `bazel_ebook` itself, not from this
-repository: `Deprecated: --mathml. Use --math-method=mathml instead.`
-
-
-## 4. Keep the examples out of the prose
-
-This part survives from the earlier draft, because it has nothing to do with
-the output format.
-
-A specification whose code examples are fenced blocks inside the prose
-cannot be checked.
-A specification whose examples are files in a directory can.
-
-```
-   examples/
-     mac_unit.tx          <-- the only copy of this code
-     wishbone.tx
-     dma.tx
-        |
-        |  pandoc include filter
-        v
-   spec/language.md
-        |
-        v
-   PDF and HTML
-```
-
-`fragments/eng-standards.md` in the coding SOP requires that every piece of
-specification has a test, and that the test passes.
-Prose cannot satisfy that.
-Files can: when the parser exists, the test is that every file under
-`examples/` parses, and that every production in the grammar appears in at
-least one file.
-
-`bazel_ebook` already depends on `pandoc-include` and the `include-files`
-pandoc extension, so the mechanism is present and needs no new dependency.
-
-Do this while rewriting the specification, not after.
-Retrofitting it means editing the document by hand once.
-
-
-## 5. Work items
-
-1. **Move to `bazel_ebook` 3.0.0.**
-   Done on this branch, with the `bazel_rootfs` 1.2.1 workaround from
-   section 1.
-2. **Get `bazel_ebook` 3.0.1 released** with `bazel_rootfs` 1.2.1 or later
-   pinned, then delete the workaround.
-3. **Add `spec/BUILD.bazel` and `spec/title.yaml`.**
-   Done on this branch.
-4. **Raise `.bazelversion` from `9.0.1` to `9.2.0`.**
-   Done on this branch.
-   The `bazel` fragment of the coding SOP requires `9.2.0` or later, because
-   `9.1.0` and earlier crash with a `NullPointerException` when fetching a
-   repository named by a `file://` URL.
-   `ProgressInputStream.reportProgress` calls `String.equals` on
-   `URI.getHost()`, which returns `null` for such a URL.
-   The workflows pin `9.0.1` too, and issue #1 covers those.
-5. **Replace the hand-written Table of Contents** with a generated one.
-   Section 3.
-6. **Create `examples/` and move code out of the prose into it.**
-   Do this as part of writing the merged specification.
-7. **Publish `bazel-bin/spec` from the release workflow.**
-   Done. `.forgejo/workflows/release.yml` gathers every `*.pdf` and
-   `*.html` under `bazel-bin/` into `dist/release/`, naming each file after
-   its output path so two packages cannot overwrite one another.
-8. **Retire the `filmil/workspace` document targets** once the decision
-   deferred in `unification-analysis.md` section 7 is made.
-
-
-## 6. Things that will bite
-
-**The first build fetches a lot.**
-944 actions and just under 10 minutes on a warm network and a cold Bazel
-cache.
-A rootfs, a Zig toolchain, graphviz from source, calibre, and a TeX
-installation.
-That is the cost of a build that asks the machine for nothing, and it is
-paid once per machine.
-Both workflows cache `~/.cache/bazel` and `~/.cache/bazelisk`, keyed on
-`.bazelversion`, `.bazelrc`, `MODULE.bazel` and `MODULE.bazel.lock`.
-The runner is serial, so a cache miss costs every other queued run.
-
-**`ebook_pdf` needs `//:empty_md` in its deps.**
-Every existing target in the repository lists it, and the pattern gets
-copied rather than understood.
-Keep listing it.
-
-**Do not commit the PDF.**
-`.gitignore` excludes `bazel-*`, and the artifact is delivered from
-`bazel-bin/spec/`.
+1. **Move the code examples into their own files.**
+   A specification whose examples are fenced blocks cannot be checked.
+   One whose examples are files can.
+   When the parser exists, the test is that every file under `examples/`
+   parses, and that every production in the grammar appears in at least one
+   file.
+   That is what makes the `eng-standards` rule true rather than
+   aspirational: every piece of specification must have a test, and that
+   test must pass.
+2. **Finish the merged specification.**
+   `spec/merged-draft.md` holds five written sections and the full section
+   skeleton.
+   `docs/unification-analysis.md` section 8 states the order to write the
+   rest in.
+3. **Fold the article and the specification together** once the
+   specification is finished, so there is one source rather than two.
+4. **Decide the fate of `filmil/workspace/`**, deferred in
+   `docs/unification-analysis.md` section 7.

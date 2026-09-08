@@ -1,0 +1,52 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Unified Shape}
+\label{sec:unified-shape}
+
+The merged specification is organised by facet, and each facet states which
+constructs belong to it.
+
+\begin{lstlisting}[style=ascii,caption={The three facets and what each one
+holds.},captionpos=b,label={fig:facets}]
+ +--------------------------------------------+
+ | DESIGN FACET          (timeless, no cycles)|
+ |                                            |
+ |  trait        contract, with role views    |
+ |  transaction  data that moves between      |
+ |               modules                      |
+ |  bus          channels, valid/ready        |
+ |  struct enum  data layout                  |
+ |  flow         dataflow, compiler-timed     |
+ |  pipeline     staged, with a signature     |
+ |  fn           pure combinational           |
+ +--------------------------------------------+
+                     |
+                     |  impl ... for ...
+                     v
+ +--------------------------------------------+
+ | IMPLEMENTATION FACET   (cycles, as written)|
+ |                                            |
+ |  module       state, ports, instances      |
+ |  seq          await, select, callbacks     |
+ |  tag          a domain and its policy      |
+ |  protocol     custom handshake             |
+ |  assert assume cover property              |
+ +--------------------------------------------+
+                     |
+                     |  bind
+                     v
+ +--------------------------------------------+
+ | CONFIGURATION FACET        (no logic at all)|
+ |                                            |
+ |  config       a named build                |
+ |  bind         socket <- implementation     |
+ |  domain       tag -> clock and reset       |
+ |  blackbox     socket <- Verilog or VHDL    |
+ |  foreign      socket <- Go, Rust, C++      |
+ +--------------------------------------------+
+\end{lstlisting}
+
+The rule that makes this work is that a socket in the design facet names a
+trait, never an implementation. Both an unbound socket and a directly
+instantiated component are legal, and they differ in when the implementation
+is chosen. The first defers the choice to a configuration. The second makes
+it at the instantiation site.
