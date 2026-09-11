@@ -32,18 +32,22 @@ examples~\cite{examples}, and the cover~\cite{cover} lists all of them.}%
 \begin{abstract}
 Vreteno is a 32-bit RISC-V core, the RV32I base integer set, written
 in TxHDL: the first design large enough to ask whether the language
-scales past its examples. This is its second form, a two-stage
-pipeline in simulation, one process in which a fetch stage reads the
-instruction memory into an instruction register while an execute
-stage runs the instruction before it, with one bubble per taken
-branch or jump. It is checked in lockstep against a reference model
-of the instruction set written as a plain program: the model steps
-when the core retires an instruction, and after every cycle the
-program counter, the thirty-one registers and the halt must agree,
-and at the halt the data memory must. The demonstration program and
-sixty-four random ones pass, and a deliberately broken shift, and a
-branch that does not squash the word after it, each fail at their
-first use. Every listing here
+scales past its examples. This is its third form: a two-stage
+pipeline, one process in which a fetch stage reads the instruction
+memory into an instruction register while an execute stage runs the
+instruction before it, with one bubble per taken branch or jump,
+written in the subset the lowering reads, so that the same file
+simulates and is a netlist. It is checked twice. In lockstep against
+a reference model of the instruction set written as a plain program:
+the model steps when the core retires an instruction, and after
+every cycle the program counter, the thirty-one registers and the
+halt must agree, and at the halt the data memory must; the
+demonstration program and sixty-four random ones pass, and a
+deliberately broken shift, and a branch that does not squash the word
+after it, each fail at their first use. And as a netlist: the VHDL
+the lowering writes, with the program in its instruction memory, is
+simulated under nvc against the trace the Rust core wrote, every
+register and output at every tick, and agrees. Every listing here
 is the file in the tree, and the trace and the figure are what the
 build produced when it ran the core.
 \end{abstract}
@@ -68,16 +72,19 @@ this size can be tested to a standard the small examples cannot reach;
 and what the lowering must grow to before such a design becomes a
 netlist.
 
-The plan has three steps, and this document covers the first two.
-The core was written first as a single-cycle machine in simulation
-form and checked against a reference model, so the design was known
+The plan had three steps, and this document covers all three. The
+core was written first as a single-cycle machine in simulation form
+and checked against a reference model, so the design was known
 correct before anything else was asked of it. Then it became the
 pipeline of two stages it is now, and the lockstep check is what
 kept that refactoring honest: the test changed in one place, the
 core in one file, and the same programs passed. Last, the lowering
-grows until the core is a netlist that simulates, under nvc, against
-the same traces, which is the check the smaller
-examples~\cite{examples} already pass.
+grew until the core was a netlist, and the core was rewritten in the
+subset the lowering reads, with the lockstep check again holding the
+rewrite to the same behaviour; and the netlist simulates, under nvc,
+against the trace the Rust core wrote, which is the check the smaller
+examples~\cite{examples} pass. What the lowering had to grow for
+this is stated in Section~\ref{sec:v-netlist}.
 
 \section{The Instruction Set as Bits}
 \label{sec:v-isa}
@@ -159,14 +166,19 @@ registers within one process, no forwarding is needed: an
 instruction writes the register file at the end of its cycle, and
 the next reads it at the start of the next.
 
-This is the simulation form. The decode and the selection are Rust
-\code{match}es over the fields, which the lowering does not reach
-yet, and the ALU is a function that returns a value rather than a
-\code{case!} that drives one. The state, the waits and the drives are
-the language's, so the lockstep test and the waveform are real, and
-the lowering, when it comes, is a change to this file and not a
-rewrite: the \code{match}es become \code{case!} arms over enums, and
-the functions become the operators they already call.
+This is the lowerable form, and it reads as a netlist does: every
+name after the wait is a function of the state and the inputs, and
+nothing branches. \code{select!} chooses among values, the ALU by
+\code{f3}, the branch condition, the loaded and the stored word, the
+writeback value, the target and whether the core knows the opcode;
+\code{when!} and \code{case!} choose among drives, the register file
+and data memory writes under their enables, and the fetch's state by
+reset, halt, redirect or advance, in that priority. Register zero
+reads as zero rather than being protected from writes, since a mask
+on a read is a multiplexer and a guard on every arm is not. The
+first form of this file, single-cycle and with Rust \code{match}es,
+is in the history; the lockstep test passed each form, which is what
+made rewriting it safe.
 
 \lstinputlisting[caption={\code{core.rs}: the two-stage
 core.},label={lst:v-core}]{cpu/vreteno/src/core.rs}
@@ -245,7 +257,10 @@ run, the reset, the first dozen instructions and the first bubble,
 drawn from the waveform the run wrote; \code{pc} there is the fetch
 stage's counter, one instruction ahead of the one executing, and
 \code{done} is low on the bubble. The whole run is in the FST beside
-it, for a viewer.
+it, for a viewer. The run ends by writing the VHDL of the core, with
+the program in its instruction memory, which Section~\ref{sec:v-netlist}
+takes up, and by printing the Verilog, which closes
+Listing~\ref{lst:v-out}.
 
 \lstinputlisting[caption={\code{main.rs}: the run and the
 waveform.},label={lst:v-main}]{cpu/vreteno/src/main.rs}
@@ -263,6 +278,48 @@ until the first taken branch, whose bubble is the cycle with
 \lstinputlisting[style=ascii,caption={What \code{vreteno} printed when
 the build ran it.},label={lst:v-out}]{out_vreteno.txt}
 
+\section{The Netlist}
+\label{sec:v-netlist}
+
+The Verilog at the end of Listing~\ref{lst:v-out} is the core as
+hardware: five registers, three memories, the instruction memory
+holding the program, a wire per \code{let} of the loop, three
+temporaries, and one clocked block of fifteen lines. The VHDL the run
+wrote beside it says the same, and the build simulates that VHDL
+under nvc against the trace the Rust core wrote, the testbench
+replaying the reset and checking every register and every output at
+every tick, sixty-six ticks and eight signals; the netlist agrees.
+The test is \code{//docs:vreteno\_sim\_vreteno\_tb\_test}.
+
+The lowering grew in five ways for this, each stated and checked in
+the examples document~\cite{examples} before the core used it. A
+memory is an array, written through \code{at} and read by index, and
+the netlist takes the memory's first words from the example, since
+the lowering cannot see what \code{Mem::with} gave at run time.
+\code{slice}, \code{concat}, \code{sext} and \code{zext} are the
+part selects, concatenations and extensions of the target language,
+the width of an expression inferred where an extension replicates a
+bit; a slice of an expression, which neither language allows, is
+hoisted into a wire. \code{select!} is a chain of conditionals, and
+an integer is a pattern. A \code{let} is a wire named for it, so the
+netlist reads as the source does, and a struct literal is the
+concatenation of its fields. And in VHDL a conditional inside an
+expression and a truth value as a bit are functions, \code{mux} and
+\code{tobit}, declared in every architecture, since VHDL-2008 has
+neither as an operator.
+
+The netlist was checked as the model was: a testbench that could not
+fail would prove nothing. The register file is not traced, so the
+testbench cannot see it, but every write to it shows in the
+writeback output the next tick, and every read shows in the program
+counter and the outputs that follow; the sixty-six ticks of the
+demonstration exercise every instruction of the program through
+both. The checks that failed on the way, a truth value rendered
+ambiguously, a bitwise \code{and} rendered as a comparison, a
+concatenation of ambiguous type, a slice of an expression and a
+temporary named with a leading underscore, all failed to analyze or
+differed at their first tick, which is the test doing its work.
+
 \section{What Comes Next}
 \label{sec:v-next}
 
@@ -275,14 +332,18 @@ not change, since it compares architectural state when an
 instruction retires. This is the step to take when the core has a
 netlist and a clock period to shorten, and not before.
 
-The lowering. The core uses \code{match} over fields where a lowered
-unit would use \code{case!} over enums, and functions where it would
-use operators in arms. Its memories lower already: a \code{Mem} is an
-array in the netlist, written through \code{at} and read by index,
-which the examples document~\cite{examples} shows checked under nvc.
-The decode and the selection are what remain, and each has a
-precedent there. When the core lowers, the same trace that checks
-the model checks the netlist.
+Synthesis. The netlist is Verilog and VHDL that simulates; whether
+it synthesizes, and to what, is the next question, and the first
+answer will come from an open toolchain on an FPGA, with the
+instruction memory as a block RAM initialised from the program. The
+lowering will need to say what a memory's read port is, since a
+combinational read of a block RAM is not what the runtime's plain
+read means to every tool.
+
+Traps and the rest of the privileged architecture, and the
+multiplication extension, are the instruction set's next steps, and
+each begins in the model, is added to the core under the lockstep
+test, and is checked as a netlist by the same trace.
 
 \begin{thebibliography}{10}
 
