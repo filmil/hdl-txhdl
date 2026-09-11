@@ -5,16 +5,19 @@
 //! execute stage decodes the fields of the word in that register,
 //! executes, writes the register file and the data memory, and, on a
 //! taken branch or a jump, redirects the fetch and squashes the word
-//! it fetched this cycle, which is the one-cycle penalty. Simulation
-//! form: the decode and the selection are Rust `match`es over the
-//! fields, which the lowering does not reach yet; the state, the
-//! waits and the drives are the language's, so the lockstep test and
-//! the waveform are real, and lowering is a later change to this
-//! file and not a rewrite.
-use txhdl::comp::{Clock, DefaultClock, In, Mem, Out, Reg, Unit};
-use txhdl::funcs::{band, bor, bxor, eq, lt, lt_signed, shl, shr, sra};
+//! it fetched this cycle, which is the one-cycle penalty.
+//!
+//! Written in the subset `#[lower]` reads: every value is a function
+//! of the state and the inputs, `select!` chooses among values and
+//! `when!` and `case!` among drives, and nothing branches. So the
+//! same file simulates and lowers, and the netlist is simulated
+//! against the trace the simulation wrote.
+use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
+use txhdl::funcs::{
+    band, bor, bxor, eq, is_zero, lt, lt_signed, shl, shr, sra,
+};
 use txhdl::types::{Bit, U};
-use txhdl::{Trace, Value};
+use txhdl::{case, lower, select, when, Trace, Value};
 
 /// Words of instruction memory and of data memory. Data memory is at
 /// `DATA_BASE`, as the model has it.
@@ -33,10 +36,6 @@ pub struct Writeback {
     pub val: U<32>,
 }
 
-/// The core's outputs: halted, the instruction executed, the
-/// writeback.
-pub type Outputs = (Out<Bit>, Out<U<32>>, Out<Writeback>);
-
 /// The state: the fetch stage's program counter; the instruction
 /// register, its program counter and whether it holds an
 /// instruction, which is the boundary between the stages; the halt;
@@ -53,36 +52,6 @@ pub struct Vreteno {
     pub dmem: Mem<U<32>, DMEM_WORDS>,
 }
 
-/// The arithmetic and logic unit: `f3` selects, `alt` is bit 30 of
-/// the word where it matters, subtraction and the arithmetic shift.
-fn alu(f3: U<3>, alt: Bit, a: U<32>, b: U<32>) -> U<32> {
-    let k = b.raw() as usize & 31;
-    match f3.raw() {
-        0 if alt.to_bool() => a.wrapping_sub(b),
-        0 => a.wrapping_add(b),
-        1 => shl(a, k),
-        2 => lt_signed(a, b).zext(),
-        3 => lt(a, b).zext(),
-        4 => bxor(a, b),
-        5 if alt.to_bool() => sra(a, k),
-        5 => shr(a, k),
-        6 => bor(a, b),
-        _ => band(a, b),
-    }
-}
-
-/// The branch condition, by `f3`.
-fn taken(f3: U<3>, a: U<32>, b: U<32>) -> Bit {
-    match f3.raw() {
-        0 => eq(a, b),
-        1 => eq(a, b).not(),
-        4 => lt_signed(a, b),
-        5 => lt_signed(a, b).not(),
-        6 => lt(a, b),
-        _ => lt(a, b).not(),
-    }
-}
-
 impl Vreteno {
     /// A core with its program loaded.
     pub fn with(program: &[u32]) -> Self {
@@ -91,10 +60,6 @@ impl Vreteno {
             imem: Mem::with(&words),
             ..Default::default()
         }
-    }
-
-    fn data_word(&self, addr: U<32>) -> usize {
-        (addr.raw() as u32).wrapping_sub(DATA_BASE) as usize / 4
     }
 
     /// The architectural program counter: that of the instruction
@@ -109,8 +74,13 @@ impl Vreteno {
     }
 }
 
-impl Unit<In<Bit>, Outputs> for Vreteno {
-    async fn run(&mut self, rst: In<Bit>, (halt, instr, wb): Outputs) {
+#[lower]
+impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
+    async fn run(
+        &mut self,
+        rst: In<Bit>,
+        (halt, instr, wb): (Out<Bit>, Out<U<32>>, Out<Writeback>),
+    ) {
         loop {
             DefaultClock::rising().await;
             let rst = rst.get();
@@ -120,7 +90,7 @@ impl Unit<In<Bit>, Outputs> for Vreteno {
             // The fetch stage: the word at the program counter, into
             // the instruction register unless the execute stage
             // redirects below.
-            let fetched = self.imem.read(fetch_pc.raw() as usize / 4);
+            let fetched = self.imem.read(fetch_pc.slice::<2, 10>());
             // The execute stage: the fields of the word.
             let opcode = ir.slice::<0, 7>();
             let rd = ir.slice::<7, 5>();
@@ -150,122 +120,144 @@ impl Unit<In<Bit>, Outputs> for Vreteno {
                 .concat::<10, 20>(ir.slice::<21, 10>())
                 .concat::<1, 21>(U::<1>::from(0u8))
                 .sext::<32>();
-            let a = self.regs.read(rs1.raw() as usize);
-            let b = self.regs.read(rs2.raw() as usize);
+            // The operands: register zero reads as zero.
+            let a = mux(is_zero(rs1), U::from(0u32), self.regs.read(rs1));
+            let b = mux(is_zero(rs2), U::from(0u32), self.regs.read(rs2));
             let pc4 = pc.wrapping_add(U::from(4u8));
+            let run = rst.not().and(halted.not()).and(valid);
 
-            let mut next = pc4;
-            let mut write: Option<U<32>> = None;
-            let mut stop = Bit::Zero;
-            let run = !rst.to_bool() && !halted.to_bool() && valid.to_bool();
-            match opcode.raw() as u32 {
-                _ if !run => {
-                    stop = halted;
-                }
-                0x37 => write = Some(imm_u),
-                0x17 => write = Some(pc.wrapping_add(imm_u)),
-                0x6f => {
-                    write = Some(pc4);
-                    next = pc.wrapping_add(imm_j);
-                }
-                0x67 => {
-                    write = Some(pc4);
-                    next = a.wrapping_add(imm_i).and(U::from(1u8).not());
-                }
-                0x63 => {
-                    if taken(f3, a, b).to_bool() {
-                        next = pc.wrapping_add(imm_b);
-                    }
-                }
-                0x03 => {
-                    let addr = a.wrapping_add(imm_i);
-                    let word = self.dmem.read(self.data_word(addr));
-                    let lane = addr.raw() as usize & 3;
-                    let byte = shr(word, 8 * lane).slice::<0, 8>();
-                    let half = shr(word, 16 * (lane >> 1)).slice::<0, 16>();
-                    write = Some(match f3.raw() {
-                        0 => byte.sext::<32>(),
-                        1 => half.sext::<32>(),
-                        2 => word,
-                        4 => byte.zext::<32>(),
-                        _ => half.zext::<32>(),
-                    });
-                }
-                0x23 => {
-                    let addr = a.wrapping_add(imm_s);
-                    let at = self.data_word(addr);
-                    let word = self.dmem.read(at);
-                    let lane = addr.raw() as usize & 3;
-                    let v = match f3.raw() {
-                        0 => {
-                            let mask = shl(U::from(0xffu32), 8 * lane);
-                            bor(
-                                band(word, mask.not()),
-                                band(shl(b, 8 * lane), mask),
-                            )
-                        }
-                        1 => {
-                            let mask =
-                                shl(U::from(0xffffu32), 16 * (lane >> 1));
-                            bor(
-                                band(word, mask.not()),
-                                band(shl(b, 16 * (lane >> 1)), mask),
-                            )
-                        }
-                        _ => b,
-                    };
-                    self.dmem.write(at, v);
-                }
-                // Register-immediate: `alt` only means something to the
-                // shift right, since an immediate may have bit 30 set.
-                0x13 => {
-                    let alt = alt.and(eq(f3, U::from(5u8)));
-                    write = Some(alu(f3, alt, a, imm_i));
-                }
-                0x33 => write = Some(alu(f3, alt, a, b)),
-                0x0f => {}
+            // The ALU, shared by the register and immediate forms; bit
+            // 30 means subtract or arithmetic shift, except that an
+            // immediate may have it set and mean nothing by it.
+            let alu_b = mux(eq(opcode, U::from(0x13u8)), imm_i, b);
+            let sh = alu_b.slice::<0, 5>();
+            let sub =
+                alt.and(eq(opcode, U::from(0x33u8)).or(eq(f3, U::from(5u8))));
+            let alu = select!(f3.raw() => {
+                0 => mux(sub, a.wrapping_sub(alu_b), a.wrapping_add(alu_b)),
+                1 => shl(a, sh.raw() as usize),
+                2 => lt_signed(a, alu_b).zext(),
+                3 => lt(a, alu_b).zext(),
+                4 => bxor(a, alu_b),
+                5 => mux(
+                    sub,
+                    sra(a, sh.raw() as usize),
+                    shr(a, sh.raw() as usize)
+                ),
+                6 => bor(a, alu_b),
+                _ => band(a, alu_b),
+            });
+            // The branch condition.
+            let taken = select!(f3.raw() => {
+                0 => eq(a, b),
+                1 => eq(a, b).not(),
+                4 => lt_signed(a, b),
+                5 => lt_signed(a, b).not(),
+                6 => lt(a, b),
+                _ => lt(a, b).not(),
+            });
+            // Loads and stores: the word, the lane within it, and the
+            // byte or half in that lane, extended or merged.
+            let addr = a.wrapping_add(select!(opcode.raw() => {
+                0x23 => imm_s,
+                _ => imm_i,
+            }));
+            let daddr = addr.wrapping_sub(U::from(DATA_BASE)).slice::<2, 10>();
+            let word = self.dmem.read(daddr);
+            let bsh = addr.slice::<0, 2>().concat::<3, 5>(U::<3>::from(0u8));
+            let hsh = addr.slice::<1, 1>().concat::<4, 5>(U::<4>::from(0u8));
+            let byte = shr(word, bsh.raw() as usize).slice::<0, 8>();
+            let half = shr(word, hsh.raw() as usize).slice::<0, 16>();
+            let loaded = select!(f3.raw() => {
+                0 => byte.sext::<32>(),
+                1 => half.sext::<32>(),
+                2 => word,
+                4 => byte.zext::<32>(),
+                _ => half.zext::<32>(),
+            });
+            let bmask = shl(U::<32>::from(0xffu32), bsh.raw() as usize);
+            let hmask = shl(U::<32>::from(0xffffu32), hsh.raw() as usize);
+            let stored = select!(f3.raw() => {
+                0 => bor(
+                    band(word, bmask.not()),
+                    shl(b.slice::<0, 8>().zext::<32>(), bsh.raw() as usize)
+                ),
+                1 => bor(
+                    band(word, hmask.not()),
+                    shl(b.slice::<0, 16>().zext::<32>(), hsh.raw() as usize)
+                ),
+                _ => b,
+            });
+
+            // What the instruction does: the value it writes back, if
+            // any, where it goes next, and whether the core knows it.
+            let writes = select!(opcode.raw() => {
+                0x37 | 0x17 | 0x6f | 0x67 | 0x03 | 0x13 | 0x33 => Bit::One,
+                _ => Bit::Zero,
+            });
+            let wval = select!(opcode.raw() => {
+                0x37 => imm_u,
+                0x17 => pc.wrapping_add(imm_u),
+                0x6f | 0x67 => pc4,
+                0x03 => loaded,
+                _ => alu,
+            });
+            let target = select!(opcode.raw() => {
+                0x6f => pc.wrapping_add(imm_j),
+                0x67 => a.wrapping_add(imm_i).and(U::<32>::from(1u32).not()),
+                _ => pc.wrapping_add(imm_b),
+            });
+            let jump = select!(opcode.raw() => {
+                0x6f | 0x67 => Bit::One,
+                0x63 => taken,
+                _ => Bit::Zero,
+            });
+            let known = select!(opcode.raw() => {
+                0x37 | 0x17 | 0x6f | 0x67 | 0x63 | 0x03 | 0x23 | 0x13 | 0x33
+                | 0x0f => Bit::One,
+                _ => Bit::Zero,
+            });
+            // Halted: on ebreak, ecall or a word the core does not
+            // know, and then for good.
+            let stop = mux(run, known.not(), halted);
+            let wrote = run.and(writes).and(is_zero(rd).not());
+            let store = run.and(eq(opcode, U::from(0x23u8)));
+
+            // The drives. A redirect means the next instruction is not
+            // the one the fetch stage read this cycle, so that word is
+            // squashed and the fetch restarts at the target; a halt
+            // parks the program counter on the halting instruction, as
+            // the model's does.
+            when!(wrote => { self.regs.at(rd) <= wval });
+            when!(store => { self.dmem.at(daddr) <= stored });
+            case!(rst => {
+                Bit::One => {
+                    self.pc <= U::from(0u8);
+                    self.valid <= Bit::Zero
+                },
+                _ if run.and(stop).to_bool() => {
+                    self.pc <= pc;
+                    self.valid <= Bit::Zero
+                },
+                _ if stop.to_bool() => { self.valid <= Bit::Zero },
+                _ if run.and(jump).to_bool() => {
+                    self.pc <= target;
+                    self.valid <= Bit::Zero
+                },
                 _ => {
-                    // ecall, ebreak, and anything the core does not know.
-                    next = pc;
-                    stop = Bit::One;
-                }
-            }
-            let wrote = write.is_some() && rd.raw() != 0;
-            if let Some(v) = write {
-                if wrote {
-                    self.regs.write(rd.raw() as usize, v);
-                }
-            }
-            // A redirect: the next instruction is not the one the
-            // fetch stage read this cycle, so that word is squashed
-            // and the fetch restarts at the target.
-            let redirect = run && next != pc4;
-            if rst.to_bool() {
-                self.pc.set(U::from(0u8));
-                self.valid.set(Bit::Zero);
-            } else if stop.to_bool() {
-                // Halted: the program counter parks on the halting
-                // instruction, as the model's does.
-                if run {
-                    self.pc.set(pc);
-                }
-                self.valid.set(Bit::Zero);
-            } else if redirect {
-                self.pc.set(next);
-                self.valid.set(Bit::Zero);
-            } else {
-                self.pc.set(fetch_pc.wrapping_add(U::from(4u8)));
-                self.ir.set(fetched);
-                self.ir_pc.set(fetch_pc);
-                self.valid.set(Bit::One);
-            }
+                    self.pc <= fetch_pc.wrapping_add(U::from(4u8));
+                    self.ir <= fetched;
+                    self.ir_pc <= fetch_pc;
+                    self.valid <= Bit::One
+                },
+            });
             self.halted.set(stop);
             halt.set(stop);
-            instr.set(if run { ir } else { U::from(0u8) });
+            instr.set(mux(run, ir, U::from(0u32)));
             wb.set(Writeback {
-                done: Bit::from_bool(run),
-                rd: if wrote { rd } else { U::from(0u8) },
-                val: write.unwrap_or_default(),
+                done: run,
+                rd: mux(wrote, rd, U::from(0u8)),
+                val: mux(run.and(writes), wval, U::from(0u32)),
             });
         }
     }

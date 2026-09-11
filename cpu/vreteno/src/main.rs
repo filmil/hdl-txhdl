@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Run the demonstration program on the core, print a line per cycle,
-//! and write the waveform where `TXHDL_FST` points.
+//! write the waveform where `TXHDL_FST` points, and the VHDL of the
+//! core, with the program in its instruction memory, where
+//! `TXHDL_VHDL` points; then print the Verilog.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
@@ -58,4 +60,11 @@ fn main() {
     for a in 0..3usize {
         println!("mem[{a}] = {:#010x}", dmem.read(a).raw());
     }
+    // The netlist, with the program in its instruction memory, which
+    // the lowering cannot see: Mem::with gave it at run time.
+    let mut lowered = Vreteno::lowered("vreteno");
+    let words: Vec<u128> = program.iter().map(|&w| w as u128).collect();
+    lowered.init("imem", &words);
+    txhdl::netlist::write_vhdl_from_env(&lowered);
+    print!("\n{}", lowered.verilog());
 }
