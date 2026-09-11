@@ -315,6 +315,28 @@ pub fn run_for<F: Future<Output = ()>>(f: F, cycles: usize) -> bool {
 /// One cycle.
 pub fn step<F: Future<Output = ()>>(f: F) -> bool { run_for(f, 1) }
 
+/// A design being run one cycle at a time, so a testbench can look at
+/// its wires between cycles. Clone the reading ends you want to watch
+/// before starting it, because starting it borrows the top.
+pub struct Running<F: Future<Output = ()>> {
+    f: Pin<Box<F>>,
+    done: bool,
+}
+
+impl<F: Future<Output = ()>> Running<F> {
+    pub fn new(f: F) -> Self { Running { f: Box::pin(f), done: false } }
+
+    /// Advance one cycle. Returns whether the design has finished, which
+    /// a unit never does.
+    pub fn cycle(&mut self) -> bool {
+        if self.done { return true }
+        let w = noop_waker();
+        let mut cx = Context::from_waker(&w);
+        self.done = self.f.as_mut().poll(&mut cx).is_ready();
+        self.done
+    }
+}
+
 /// Elaborate the design a configuration names and run it for a number
 /// of cycles. A real one emits a netlist; this one simulates, which is
 /// enough for a `main` to reach the design through nothing but the
