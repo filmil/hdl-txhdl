@@ -497,11 +497,13 @@ impl Lowered {
                 Kind::Reg | Kind::Mem => {}
             }
         }
+        writeln!(out, "`timescale 1ns/1ps").unwrap();
         writeln!(out, "module {name}(\n  {}\n);", plist.join(",\n  ")).unwrap();
         for (n, k, w, d) in &self.fields {
             match k {
+                // Zero at the start, as the runtime's register is.
                 Some(Kind::Reg) => {
-                    writeln!(out, "  reg {}{n};", range(*w)).unwrap()
+                    writeln!(out, "  reg {}{n} = 0;", range(*w)).unwrap()
                 }
                 // A memory, zero at the start as the runtime's is, then
                 // its first words if the example gave them.
@@ -832,13 +834,17 @@ impl Lowered {
 }
 
 /// Write a lowered unit's VHDL and its ports sidecar where `TXHDL_VHDL`
-/// points, if it does. What an example calls so the build can simulate
-/// what the example lowered.
+/// points, and its Verilog where `TXHDL_VERILOG` points, if they do.
+/// What an example calls so the build can simulate what the example
+/// lowered, under nvc and under Verilator.
 pub fn write_vhdl_from_env(l: &Lowered) {
     if let Ok(p) = std::env::var("TXHDL_VHDL") {
         std::fs::write(&p, l.vhdl()).expect("TXHDL_VHDL file");
         std::fs::write(format!("{p}.ports"), l.ports_file())
             .expect("ports file");
+    }
+    if let Ok(p) = std::env::var("TXHDL_VERILOG") {
+        std::fs::write(&p, l.verilog()).expect("TXHDL_VERILOG file");
     }
 }
 
@@ -862,16 +868,26 @@ fn vexpr(e: &Expr, l: &Lowered) -> String {
         Expr::Bin("<s", a, b) => {
             format!("($signed({}) < $signed({}))", vexpr(a, l), vexpr(b, l))
         }
+        // Self-determined inside $unsigned, since Verilog decides
+        // signedness by the whole expression, and an unsigned operand
+        // anywhere in it would make the shift logical.
         Expr::Bin(">>>", a, b) => {
-            format!("($signed({}) >>> {})", vexpr(a, l), vexpr(b, l))
+            format!("$unsigned($signed({}) >>> {})", vexpr(a, l), vexpr(b, l))
         }
         Expr::Bin(op, a, b) => {
             format!("({} {op} {})", vexpr(a, l), vexpr(b, l))
         }
         Expr::Not(a) if a.is_bool() => format!("(!{})", vexpr(a, l)),
         Expr::Not(a) => format!("(~{})", vexpr(a, l)),
+        // A number in a branch takes the other branch's width: unsized,
+        // it would be 32 bits wide inside a concatenation.
         Expr::Cond(c, a, b) => {
-            format!("({} ? {} : {})", vexpr(c, l), vexpr(a, l), vexpr(b, l))
+            let w = l.ewidth(a).max(l.ewidth(b));
+            let side = |x: &Expr| match x {
+                Expr::Num(k) if w > 0 => format!("{w}'d{k}"),
+                x => vexpr(x, l),
+            };
+            format!("({} ? {} : {})", vexpr(c, l), side(a), side(b))
         }
         Expr::Index(a, i) => format!("{}[{}]", vexpr(a, l), vexpr(i, l)),
         Expr::Slice(a, lo, len) => {

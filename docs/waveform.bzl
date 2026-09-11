@@ -10,19 +10,24 @@ tools pinned in //:multitool.lock.json; and draws the text as TikZ
 NAME_timing.tex.
 """
 
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_nvc//nvc:rules.bzl", "vhdl_test")
+load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
+load("@rules_verilog//verilog:defs.bzl", "verilog_library")
 
 def waveform(name, example, signals, lowered = None, until = None):
     """`lowered = (entity, unit)` also takes the example's VHDL and
-    simulates it against the trace: NAME.vhd and NAME.vhd.ports from
-    the run, NAME_tb.vhd from fst2tb, and a vhdl_test NAME_sim.
-    `until` cuts the figure at that tick, for a run too long to draw
-    whole."""
+    Verilog and simulates each against the trace: NAME.vhd, NAME.v and
+    NAME.vhd.ports from the run, NAME_tb.vhd and NAME_tb.v from fst2tb,
+    a vhdl_test NAME_sim under nvc and a cc_test NAME_vsim_test under
+    Verilator. `until` cuts the figure at that tick, for a run too long
+    to draw whole."""
     outs = ["out_" + name + ".txt", name + ".fst", name + ".fst.names"]
     env = "TXHDL_FST=$(RULEDIR)/" + name + ".fst"
     if lowered:
-        outs += [name + ".vhd", name + ".vhd.ports"]
+        outs += [name + ".vhd", name + ".vhd.ports", name + ".v"]
         env += " TXHDL_VHDL=$(RULEDIR)/" + name + ".vhd"
+        env += " TXHDL_VERILOG=$(RULEDIR)/" + name + ".v"
     native.genrule(
         name = name + "_run",
         outs = outs,
@@ -45,6 +50,31 @@ def waveform(name, example, signals, lowered = None, until = None):
             srcs = [name + ".vhd", name + "_tb.vhd"],
             deps = [],
             entities = [entity + "_tb"],
+        )
+        native.genrule(
+            name = name + "_tbgen_v",
+            srcs = [name + ".fst", name + ".vhd.ports"],
+            outs = [name + "_tb.v"],
+            cmd = "$(location //tools/fst2tb) $(location " + name + ".fst)" +
+                  " $(location " + name + ".vhd.ports) " + entity + " " + unit +
+                  " --verilog > $@",
+            tools = ["//tools/fst2tb"],
+        )
+        verilog_library(
+            name = name + "_vl",
+            srcs = [name + ".v", name + "_tb.v"],
+            top_module = entity + "_tb",
+        )
+        verilator_cc_library(
+            name = name + "_verilated",
+            module = ":" + name + "_vl",
+            timing = True,
+            vopts = ["--main", "-Wno-fatal"],
+        )
+        cc_test(
+            name = name + "_vsim_test",
+            srcs = ["//tools/vlcheck:main.cc"],
+            deps = [":" + name + "_verilated"],
         )
     native.genrule(
         name = name + "_db",

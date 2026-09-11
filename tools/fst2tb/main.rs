@@ -20,13 +20,15 @@
 //! where the trace has its valid high, since under a low valid the
 //! trace holds the last offer and the entity computes the wire anyway.
 //!
-//! Usage: fst2tb FILE.fst FILE.vhd.ports ENTITY UNIT > tb.vhd
-//! where UNIT is the name the Rust testbench gave the unit in the trace.
+//! Usage: fst2tb FILE.fst FILE.vhd.ports ENTITY UNIT [--verilog] > tb
+//! where UNIT is the name the Rust testbench gave the unit in the trace;
+//! `--verilog` writes the same testbench in Verilog, for Verilator.
 use std::collections::BTreeMap;
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let (fst, ports, entity, unit) = (&a[1], &a[2], &a[3], &a[4]);
+    let verilog = a.get(5).map(|s| s == "--verilog").unwrap_or(false);
     let ports: Vec<(String, String, usize)> = std::fs::read_to_string(ports)
         .expect("ports")
         .lines()
@@ -105,6 +107,116 @@ fn main() {
             format!("unsigned({} downto 0)", w - 1)
         }
     };
+    let at = |i: usize| -> Option<String> {
+        None.or(Some(String::new())).filter(|_| i < times.len())
+    };
+    let _ = at;
+    let val = |name: &str, i: usize| -> Option<String> {
+        values
+            .get(name)
+            .and_then(|v| v.get(i))
+            .filter(|s| !s.is_empty())
+            .cloned()
+    };
+    // The same testbench in Verilog, for Verilator. The clock's edges
+    // sit at 2k + 0.5, so the inputs applied at time zero and at 2k+1
+    // come before the edge that reads them, and a tenth of a tick
+    // separates applying the inputs from checking the wires.
+    if verilog {
+        let vlit = |w: usize, bits: &str| format!("{w}'b{bits}");
+        let vty = |w: usize| {
+            if w == 1 {
+                String::new()
+            } else {
+                format!("[{}:0] ", w - 1)
+            }
+        };
+        let mut o = String::new();
+        o.push_str(&format!("`timescale 1ns/1ps\nmodule {entity}_tb;\n"));
+        for (n, d, w) in &ports {
+            if d == "reg" {
+                continue;
+            }
+            if is_in(d) {
+                o.push_str(&format!("  reg {}{n} = 0;\n", vty(*w)));
+            } else {
+                o.push_str(&format!("  wire {}{n};\n", vty(*w)));
+            }
+        }
+        o.push_str("  integer errors = 0;\n");
+        let maps: Vec<String> = ports
+            .iter()
+            .filter(|p| p.1 != "reg")
+            .map(|p| format!(".{0}({0})", p.0))
+            .collect();
+        o.push_str(&format!("  {entity} uut ({});\n", maps.join(", ")));
+        let last = times.last().copied().unwrap_or(0) as usize;
+        o.push_str(&format!(
+            "  initial begin\n    #0.5;\n    repeat ({}) begin\n      \
+             {clock} = 1; #1;\n      {clock} = 0; #1;\n    end\n  end\n",
+            last / 2 + 2
+        ));
+        o.push_str("  initial begin\n");
+        for (n, d, w) in &ports {
+            if d == "in" && *n != clock {
+                if let Some(v) = val(&trace_name(n, d), 0) {
+                    o.push_str(&format!("    {n} = {};\n", vlit(*w, &v)));
+                }
+            }
+        }
+        let check =
+            |o: &mut String, what: &str, sig: &str, w: usize, v: &str| {
+                o.push_str(&format!(
+                    "    if ({sig} !== {}) begin $display(\"{what} differs \
+                 at %0t\", $time); errors = errors + 1; end\n",
+                    vlit(w, v)
+                ));
+            };
+        let mut t = 0usize;
+        while t + 2 <= last {
+            o.push_str("    #1;\n");
+            for (n, d, w) in &ports {
+                if is_in(d) && *n != clock {
+                    let at = if registered(d) { t } else { t + 2 };
+                    if let Some(v) = val(&trace_name(n, d), at) {
+                        o.push_str(&format!("    {n} = {};\n", vlit(*w, &v)));
+                    }
+                }
+            }
+            o.push_str("    #0.1;\n");
+            for (n, d, w) in &ports {
+                if d == "reg" {
+                    if let Some(v) = val(&trace_name(n, d), t) {
+                        check(&mut o, n, &format!("uut.{n}"), *w, &v);
+                    }
+                }
+            }
+            for (n, d, w) in &ports {
+                if is_out(d) {
+                    if d == "txout" && n.ends_with("_data") {
+                        let valid =
+                            trace_name(&n.replace("_data", "_valid"), d);
+                        if val(&valid, t + 2).as_deref() != Some("1") {
+                            continue;
+                        }
+                    }
+                    if let Some(v) = val(&trace_name(n, d), t + 2) {
+                        check(&mut o, n, n, *w, &v);
+                    }
+                }
+            }
+            o.push_str("    #0.9;\n");
+            t += 2;
+        }
+        o.push_str(
+            "    #1;\n    if (errors == 0) \
+             $display(\"the lowering agrees with the trace\");\n    \
+             else $fatal(1, \"the lowering differs from the trace\");\n    \
+             $finish;\n  end\nendmodule\n",
+        );
+        print!("{o}");
+        return;
+    }
     let mut o = String::new();
     o.push_str(
         "library ieee;\nuse ieee.std_logic_1164.all;\n\
@@ -153,17 +265,6 @@ fn main() {
          report what & \" differs at \" & time'image(at) severity error;\n\
          errors <= errors + 1;\n      end if;\n    end procedure;\n  begin\n",
     );
-    let at = |i: usize| -> Option<String> {
-        None.or(Some(String::new())).filter(|_| i < times.len())
-    };
-    let _ = at;
-    let val = |name: &str, i: usize| -> Option<String> {
-        values
-            .get(name)
-            .and_then(|v| v.get(i))
-            .filter(|s| !s.is_empty())
-            .cloned()
-    };
     // Inputs for the edge at tick 0 are applied before any wait; a
     // registered input starts as the channel does, empty.
     for (n, d, w) in &ports {
