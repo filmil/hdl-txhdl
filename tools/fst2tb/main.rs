@@ -83,8 +83,9 @@ fn main() {
     let is_in = |d: &str| d == "in" || d == "rxin" || d == "txin";
     let is_out = |d: &str| d == "out" || d == "rxout" || d == "txout";
     let registered = |d: &str| d == "rxin" || d == "txin";
+    let is_reg = |d: &str| d == "reg" || d == "regf";
     let trace_name = |port: &str, dir: &str| -> String {
-        if dir == "reg" {
+        if is_reg(dir) {
             format!("{unit}.{port}")
         } else if dir.starts_with("rx") || dir.starts_with("tx") {
             let (ch, part) = port.rsplit_once('_').unwrap_or((port, ""));
@@ -134,7 +135,7 @@ fn main() {
         let mut o = String::new();
         o.push_str(&format!("`timescale 1ns/1ps\nmodule {entity}_tb;\n"));
         for (n, d, w) in &ports {
-            if d == "reg" {
+            if is_reg(d) {
                 continue;
             }
             if is_in(d) {
@@ -146,7 +147,7 @@ fn main() {
         o.push_str("  integer errors = 0;\n");
         let maps: Vec<String> = ports
             .iter()
-            .filter(|p| p.1 != "reg")
+            .filter(|p| !is_reg(&p.1))
             .map(|p| format!(".{0}({0})", p.0))
             .collect();
         o.push_str(&format!("  {entity} uut ({});\n", maps.join(", ")));
@@ -184,11 +185,17 @@ fn main() {
                 }
             }
             o.push_str("    #0.1;\n");
+            // A rising-edge register took its value at 2k; a
+            // falling-edge one at the falling edge before, 2k-1 in the
+            // trace, since here the clock falls at 2k+1.5.
             for (n, d, w) in &ports {
-                if d == "reg" {
-                    if let Some(v) = val(&trace_name(n, d), t) {
-                        check(&mut o, n, &format!("uut.{n}"), *w, &v);
-                    }
+                let at = match d.as_str() {
+                    "reg" => t,
+                    "regf" if t >= 1 => t - 1,
+                    _ => continue,
+                };
+                if let Some(v) = val(&trace_name(n, d), at) {
+                    check(&mut o, n, &format!("uut.{n}"), *w, &v);
                 }
             }
             for (n, d, w) in &ports {
@@ -227,7 +234,7 @@ fn main() {
          architecture sim of {entity}_tb is\n"
     ));
     for (n, d, w) in &ports {
-        if d != "reg" {
+        if !is_reg(d) {
             let init = if *w == 1 { "'0'" } else { "(others => '0')" };
             o.push_str(&format!("  signal {n} : {} := {init};\n", ty(*w)));
         }
@@ -239,7 +246,7 @@ fn main() {
     ));
     let maps: Vec<String> = ports
         .iter()
-        .filter(|p| p.1 != "reg")
+        .filter(|p| !is_reg(&p.1))
         .map(|p| format!("{0} => {0}", p.0))
         .collect();
     o.push_str(&format!("{});\n\n", maps.join(", ")));
@@ -292,17 +299,23 @@ fn main() {
             }
         }
         o.push_str("    wait for 0 ns;\n    wait for 0 ns;\n");
+        // A rising-edge register took its value at 2k; a falling-edge
+        // one takes it at 2k+1, this instant, and the two deltas above
+        // have let it, so it is checked against the trace at 2k+1.
         for (n, d, w) in &ports {
-            if d == "reg" {
-                if let Some(v) = val(&trace_name(n, d), t) {
-                    o.push_str(&format!(
-                        "    expect(\"{n}\", \
-                         << signal .{entity}_tb.uut.{n} : {} >> \
-                         = {}, now);\n",
-                        ty(*w),
-                        lit(*w, &v)
-                    ));
-                }
+            let at = match d.as_str() {
+                "reg" => t,
+                "regf" => t + 1,
+                _ => continue,
+            };
+            if let Some(v) = val(&trace_name(n, d), at) {
+                o.push_str(&format!(
+                    "    expect(\"{n}\", \
+                     << signal .{entity}_tb.uut.{n} : {} >> \
+                     = {}, now);\n",
+                    ty(*w),
+                    lit(*w, &v)
+                ));
             }
         }
         for (n, d, w) in &ports {

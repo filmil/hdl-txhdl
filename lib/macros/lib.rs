@@ -1299,7 +1299,7 @@ fn target_name(ts: &[TokenTree]) -> Result<String, String> {
     match ts {
         [TokenTree::Ident(id)] => Ok(id.to_string()),
         [TokenTree::Ident(s), TokenTree::Punct(_), TokenTree::Ident(f)]
-            if s.to_string() == "self" =>
+            if matches!(s.to_string().as_str(), "self" | "this") =>
         {
             Ok(f.to_string())
         }
@@ -1511,7 +1511,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             tr(&inner, subst)
         }
         [TokenTree::Ident(s), TokenTree::Punct(_), TokenTree::Ident(f)]
-            if s.to_string() == "self" =>
+            if matches!(s.to_string().as_str(), "self" | "this") =>
         {
             Ok(ename(&f.to_string()))
         }
@@ -1842,235 +1842,221 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     else {
         return err(body.span(), "expected run's body");
     };
+    // Every `loop` in run's body is a process: one, or several under
+    // `join2(async { loop .. }, async { loop .. })`.
+    fn find_loops(ts: &[TokenTree], out: &mut Vec<Group>) {
+        let mut i = 0;
+        while i < ts.len() {
+            match (&ts[i], ts.get(i + 1)) {
+                (TokenTree::Ident(id), Some(TokenTree::Group(g)))
+                    if id.to_string() == "loop"
+                        && g.delimiter() == Delimiter::Brace =>
+                {
+                    out.push(g.clone());
+                    i += 2;
+                    continue;
+                }
+                (TokenTree::Group(g), _) => {
+                    let inner: Vec<TokenTree> =
+                        g.stream().into_iter().collect();
+                    find_loops(&inner, out);
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+    }
     let ft: Vec<TokenTree> = fbody.stream().into_iter().collect();
-    let Some(lp) = ft.iter().position(
-        |t| matches!(t, TokenTree::Ident(id) if id.to_string() == "loop"),
-    ) else {
-        return err(fbody.span(), "run must be a `loop`");
-    };
-    let TokenTree::Group(lbody) = &ft[lp + 1] else {
-        return err(fbody.span(), "expected the loop body");
-    };
-    let mut clock = String::new();
-    let mut guard: Option<String> = None;
-    let mut subst: Vec<(String, String)> = Vec::new();
-    let mut stmts: Vec<String> = Vec::new();
+    let mut loops: Vec<Group> = Vec::new();
+    find_loops(&ft, &mut loops);
+    if loops.is_empty() {
+        return err(fbody.span(), "run must be a `loop`, or `join2` of loops");
+    }
     // `let` names that became wires of the netlist, with what drives
     // each; a name bound twice gets a numbered second wire.
     let mut wires: Vec<(String, String)> = Vec::new();
-    for st in statements(lbody) {
-        let ts: Vec<TokenTree> = st.into_iter().collect();
-        let text: String = ts
-            .iter()
-            .map(|t| t.to_string())
-            .collect::<Vec<_>>()
-            .join("");
-        if let Some(c) = text.strip_suffix("::rising().await") {
-            clock = format!("<{c} as ::txhdl::comp::Clock>::NAME");
-            continue;
-        }
-        // until(C::rising, || cond).await: the wait, and the guard on
-        // every register drive after it.
-        if text.starts_with("until(") && text.ends_with(").await") {
-            let TokenTree::Group(g) = &ts[1] else {
-                return err(ts[0].span(), "expected until(..)");
-            };
-            let parts = split_commas(g);
-            if parts.len() != 2 {
-                return err(ts[0].span(), "expected until(C::rising, || cond)");
-            }
-            let ctext: String = parts[0]
+    let mut procs: Vec<String> = Vec::new();
+    for lbody in &loops {
+        let mut clock = String::new();
+        let mut falling = false;
+        let mut guard: Option<String> = None;
+        let mut subst: Vec<(String, String)> = Vec::new();
+        let mut stmts: Vec<String> = Vec::new();
+        for st in statements(lbody) {
+            let ts: Vec<TokenTree> = st.into_iter().collect();
+            let text: String = ts
                 .iter()
                 .map(|t| t.to_string())
                 .collect::<Vec<_>>()
                 .join("");
-            let Some(c) = ctext.strip_suffix("::rising") else {
-                return err(ts[0].span(), "only a rising edge is lowered yet");
-            };
-            clock = format!("<{c} as ::txhdl::comp::Clock>::NAME");
-            let body = &parts[1][2..]; // past the `||` of the closure
-            let cond = match tr(body, &subst) {
-                Ok(c) => c,
-                Err(m) => return err(ts[0].span(), &m),
-            };
-            guard = Some(cond.clone());
-            stmts.push(format!("S::Guard({cond})"));
-            continue;
-        }
-        // let v = rx.wait().await: a receive is the wait, and its guard.
-        if text.starts_with("let") && text.ends_with(".wait().await") {
-            let TokenTree::Ident(n) = &ts[1] else {
-                return err(ts[1].span(), "expected a name");
-            };
-            let TokenTree::Ident(rx) = &ts[3] else {
-                return err(ts[3].span(), "expected a channel");
-            };
-            let cond = ename(&format!("{rx}_valid"));
-            guard = Some(cond.clone());
-            stmts.push(format!("S::Guard({cond})"));
-            stmts.push(format!(
-                "S::Drive(T::Name(\"{rx}_ready\".to_string()), \
-                 E::Bits(1, \"1\".to_string()))"
-            ));
-            subst.push((n.to_string(), ename(&format!("{rx}_data"))));
-            continue;
-        }
-        let is_macro = matches!(
-            (&ts[0], ts.get(1)),
-            (TokenTree::Ident(_), Some(TokenTree::Punct(p)))
-                if p.as_char() == '!'
-        );
-        if is_macro && !text.starts_with("when!") && !text.starts_with("case!")
-        {
-            continue;
-        }
-        // A receive under the guard: ready is asserted with the guard.
-        if text.contains(".recv()") {
-            let Some(g) = &guard else {
-                return err(ts[0].span(), "recv needs a wait before it");
-            };
-            let TokenTree::Ident(rx) = &ts[3] else {
-                return err(ts[0].span(), "expected `let v = rx.recv()`");
-            };
-            stmts.push(format!(
-                "S::Drive(T::Name(\"{rx}_ready\".to_string()), {g})"
-            ));
-        }
-        if text.starts_with("let") {
-            // `let a = e` or `let (a, b) = (e1, e2)`, bound pairwise.
-            let (names, exprs): (Vec<Vec<TokenTree>>, Vec<Vec<TokenTree>>) =
-                match (&ts[1], ts.get(3)) {
-                    (TokenTree::Group(ng), Some(TokenTree::Group(eg))) => {
-                        (split_commas(ng), split_commas(eg))
-                    }
-                    _ => (vec![vec![ts[1].clone()]], vec![ts[3..].to_vec()]),
-                };
-            if names.len() != exprs.len() {
-                return err(ts[0].span(), "a tuple let must bind pairwise");
+            if let Some(c) = text.strip_suffix("::rising().await") {
+                clock = format!("<{c} as ::txhdl::comp::Clock>::NAME");
+                continue;
             }
-            for (n, e) in names.iter().zip(&exprs) {
-                let name = n[0].to_string();
-                let v = match tr(e, &subst) {
+            if let Some(c) = text.strip_suffix("::falling().await") {
+                clock = format!("<{c} as ::txhdl::comp::Clock>::NAME");
+                falling = true;
+                continue;
+            }
+            // until(C::rising, || cond).await: the wait, and the guard on
+            // every register drive after it.
+            if text.starts_with("until(") && text.ends_with(").await") {
+                let TokenTree::Group(g) = &ts[1] else {
+                    return err(ts[0].span(), "expected until(..)");
+                };
+                let parts = split_commas(g);
+                if parts.len() != 2 {
+                    return err(
+                        ts[0].span(),
+                        "expected until(C::rising, || cond)",
+                    );
+                }
+                let ctext: String = parts[0]
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join("");
+                let c = if let Some(c) = ctext.strip_suffix("::rising") {
+                    c
+                } else if let Some(c) = ctext.strip_suffix("::falling") {
+                    falling = true;
+                    c
+                } else {
+                    return err(ts[0].span(), "expected until(C::rising, ..)");
+                };
+                clock = format!("<{c} as ::txhdl::comp::Clock>::NAME");
+                let body = &parts[1][2..]; // past the `||` of the closure
+                let cond = match tr(body, &subst) {
+                    Ok(c) => c,
+                    Err(m) => return err(ts[0].span(), &m),
+                };
+                guard = Some(cond.clone());
+                stmts.push(format!("S::Guard({cond})"));
+                continue;
+            }
+            // let v = rx.wait().await: a receive is the wait, and its guard.
+            if text.starts_with("let") && text.ends_with(".wait().await") {
+                let TokenTree::Ident(n) = &ts[1] else {
+                    return err(ts[1].span(), "expected a name");
+                };
+                let TokenTree::Ident(rx) = &ts[3] else {
+                    return err(ts[3].span(), "expected a channel");
+                };
+                let cond = ename(&format!("{rx}_valid"));
+                guard = Some(cond.clone());
+                stmts.push(format!("S::Guard({cond})"));
+                stmts.push(format!(
+                    "S::Drive(T::Name(\"{rx}_ready\".to_string()), \
+                 E::Bits(1, \"1\".to_string()))"
+                ));
+                subst.push((n.to_string(), ename(&format!("{rx}_data"))));
+                continue;
+            }
+            let is_macro = matches!(
+                (&ts[0], ts.get(1)),
+                (TokenTree::Ident(_), Some(TokenTree::Punct(p)))
+                    if p.as_char() == '!'
+            );
+            if is_macro
+                && !text.starts_with("when!")
+                && !text.starts_with("case!")
+            {
+                continue;
+            }
+            // A receive under the guard: ready is asserted with the guard.
+            if text.contains(".recv()") {
+                let Some(g) = &guard else {
+                    return err(ts[0].span(), "recv needs a wait before it");
+                };
+                let TokenTree::Ident(rx) = &ts[3] else {
+                    return err(ts[0].span(), "expected `let v = rx.recv()`");
+                };
+                stmts.push(format!(
+                    "S::Drive(T::Name(\"{rx}_ready\".to_string()), {g})"
+                ));
+            }
+            if text.starts_with("let") {
+                // `let a = e` or `let (a, b) = (e1, e2)`, bound pairwise.
+                let (names, exprs): (Vec<Vec<TokenTree>>, Vec<Vec<TokenTree>>) =
+                    match (&ts[1], ts.get(3)) {
+                        (TokenTree::Group(ng), Some(TokenTree::Group(eg))) => {
+                            (split_commas(ng), split_commas(eg))
+                        }
+                        _ => {
+                            (vec![vec![ts[1].clone()]], vec![ts[3..].to_vec()])
+                        }
+                    };
+                if names.len() != exprs.len() {
+                    return err(ts[0].span(), "a tuple let must bind pairwise");
+                }
+                for (n, e) in names.iter().zip(&exprs) {
+                    let name = n[0].to_string();
+                    let v = match tr(e, &subst) {
+                        Ok(v) => v,
+                        Err(m) => return err(ts[0].span(), &m),
+                    };
+                    // A read of a port or a register, or a number, is an
+                    // alias; anything computed is a wire named for the let.
+                    let alias = v.starts_with("E::Name(")
+                        || v.starts_with("E::Num(")
+                        || v.starts_with("E::Bits(")
+                        || v.starts_with("::txhdl::netlist::lit(");
+                    if alias || name == "_" {
+                        subst.push((name, v));
+                        continue;
+                    }
+                    let mut w = name.clone();
+                    if pnames.contains(&w) {
+                        w.push_str("_w");
+                    }
+                    let taken = wires.iter().filter(|(x, _)| *x == w).count();
+                    if taken > 0 {
+                        w = format!("{w}_{}", taken + 1);
+                    }
+                    wires.push((w.clone(), v));
+                    subst.push((name, ename(&w)));
+                }
+                continue;
+            }
+            if text.starts_with("case!") {
+                let TokenTree::Group(g) = &ts[2] else {
+                    return err(ts[0].span(), "expected case!(..)");
+                };
+                let ct: Vec<TokenTree> = g.stream().into_iter().collect();
+                let Some((value, k)) = up_to_arrow(&ct, 0) else {
+                    return err(ts[0].span(), "expected `value =>`");
+                };
+                let vt: Vec<TokenTree> = value.into_iter().collect();
+                let v = match tr(&vt, &subst) {
                     Ok(v) => v,
                     Err(m) => return err(ts[0].span(), &m),
                 };
-                // A read of a port or a register, or a number, is an
-                // alias; anything computed is a wire named for the let.
-                let alias = v.starts_with("E::Name(")
-                    || v.starts_with("E::Num(")
-                    || v.starts_with("E::Bits(")
-                    || v.starts_with("::txhdl::netlist::lit(");
-                if alias || name == "_" {
-                    subst.push((name, v));
-                    continue;
-                }
-                let mut w = name.clone();
-                if pnames.contains(&w) {
-                    w.push_str("_w");
-                }
-                let taken = wires.iter().filter(|(x, _)| *x == w).count();
-                if taken > 0 {
-                    w = format!("{w}_{}", taken + 1);
-                }
-                wires.push((w.clone(), v));
-                subst.push((name, ename(&w)));
-            }
-            continue;
-        }
-        if text.starts_with("case!") {
-            let TokenTree::Group(g) = &ts[2] else {
-                return err(ts[0].span(), "expected case!(..)");
-            };
-            let ct: Vec<TokenTree> = g.stream().into_iter().collect();
-            let Some((value, k)) = up_to_arrow(&ct, 0) else {
-                return err(ts[0].span(), "expected `value =>`");
-            };
-            let vt: Vec<TokenTree> = value.into_iter().collect();
-            let v = match tr(&vt, &subst) {
-                Ok(v) => v,
-                Err(m) => return err(ts[0].span(), &m),
-            };
-            let TokenTree::Group(arms_g) = &ct[k] else {
-                return err(ts[0].span(), "expected the arms");
-            };
-            let at: Vec<TokenTree> = arms_g.stream().into_iter().collect();
-            let mut arms = Vec::new();
-            let mut j = 0;
-            while j < at.len() {
-                let Some((pat, k2)) = up_to_arrow(&at, j) else {
-                    return err(at[j].span(), "expected `pattern => { .. }`");
+                let TokenTree::Group(arms_g) = &ct[k] else {
+                    return err(ts[0].span(), "expected the arms");
                 };
-                let pt: Vec<TokenTree> = pat.into_iter().collect();
-                let cond = match pattern_cond(&pt, &v, &subst) {
-                    Ok(c) => c,
-                    Err(m) => return err(at[j].span(), &m),
-                };
-                let TokenTree::Group(body) = &at[k2] else {
-                    return err(at[j].span(), "expected `{ .. }`");
-                };
-                let mut drives = Vec::new();
-                for d in statements(body) {
-                    let Some((lhs, rhs)) = split_becomes(d) else {
+                let at: Vec<TokenTree> = arms_g.stream().into_iter().collect();
+                let mut arms = Vec::new();
+                let mut j = 0;
+                while j < at.len() {
+                    let Some((pat, k2)) = up_to_arrow(&at, j) else {
                         return err(
-                            body.span(),
-                            "expected `register <= value`",
+                            at[j].span(),
+                            "expected `pattern => { .. }`",
                         );
                     };
-                    let lt: Vec<TokenTree> = lhs.into_iter().collect();
-                    let rt: Vec<TokenTree> = rhs.into_iter().collect();
-                    let l = match target_expr(&lt, &subst) {
-                        Ok(l) => l,
-                        Err(m) => return err(body.span(), &m),
+                    let pt: Vec<TokenTree> = pat.into_iter().collect();
+                    let cond = match pattern_cond(&pt, &v, &subst) {
+                        Ok(c) => c,
+                        Err(m) => return err(at[j].span(), &m),
                     };
-                    let r = match tr(&rt, &subst) {
-                        Ok(r) => r,
-                        Err(m) => return err(body.span(), &m),
+                    let TokenTree::Group(body) = &at[k2] else {
+                        return err(at[j].span(), "expected `{ .. }`");
                     };
-                    drives.push(format!("({l}, {r})"));
-                }
-                arms.push(format!("({cond}, vec![{}])", drives.join(", ")));
-                j = k2 + 1;
-                if let Some(TokenTree::Punct(p)) = at.get(j) {
-                    if p.as_char() == ',' {
-                        j += 1;
-                    }
-                }
-            }
-            stmts.push(format!("S::Case(vec![{}])", arms.join(", ")));
-            continue;
-        }
-        if text.starts_with("when!") {
-            let TokenTree::Group(g) = &ts[2] else {
-                return err(ts[0].span(), "expected when!(..)");
-            };
-            let wt: Vec<TokenTree> = g.stream().into_iter().collect();
-            let Some((cond, k)) = up_to_arrow(&wt, 0) else {
-                return err(ts[0].span(), "expected `cond =>`");
-            };
-            let ct: Vec<TokenTree> = cond.into_iter().collect();
-            let c = match tr(&ct, &subst) {
-                Ok(c) => c,
-                Err(m) => return err(ts[0].span(), &m),
-            };
-            let TokenTree::Group(then) = &wt[k] else {
-                return err(ts[0].span(), "expected `{ .. }`");
-            };
-            let otherwise = match (wt.get(k + 1), wt.get(k + 2)) {
-                (Some(TokenTree::Ident(e)), Some(TokenTree::Group(g)))
-                    if e.to_string() == "else" =>
-                {
-                    Some(g)
-                }
-                _ => None,
-            };
-            let mut arms = Vec::new();
-            for arm in [Some(then), otherwise] {
-                let mut drives = Vec::new();
-                if let Some(g) = arm {
-                    for d in statements(g) {
+                    let mut drives = Vec::new();
+                    for d in statements(body) {
                         let Some((lhs, rhs)) = split_becomes(d) else {
                             return err(
-                                g.span(),
+                                body.span(),
                                 "expected `register <= value`",
                             );
                         };
@@ -2078,84 +2064,153 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         let rt: Vec<TokenTree> = rhs.into_iter().collect();
                         let l = match target_expr(&lt, &subst) {
                             Ok(l) => l,
-                            Err(m) => return err(g.span(), &m),
+                            Err(m) => return err(body.span(), &m),
                         };
                         let r = match tr(&rt, &subst) {
                             Ok(r) => r,
-                            Err(m) => return err(g.span(), &m),
+                            Err(m) => return err(body.span(), &m),
                         };
                         drives.push(format!("({l}, {r})"));
                     }
+                    arms.push(format!("({cond}, vec![{}])", drives.join(", ")));
+                    j = k2 + 1;
+                    if let Some(TokenTree::Punct(p)) = at.get(j) {
+                        if p.as_char() == ',' {
+                            j += 1;
+                        }
+                    }
                 }
-                arms.push(format!("vec![{}]", drives.join(", ")));
+                stmts.push(format!("S::Case(vec![{}])", arms.join(", ")));
+                continue;
             }
-            stmts.push(format!("S::When({c}, {}, {})", arms[0], arms[1]));
-            continue;
-        }
-        // tx.send(e): data driven, valid asserted with the guard.
-        if text.ends_with(")") && ts.len() >= 3 {
-            let end = ts.len() - 3;
-            if let (
-                TokenTree::Punct(dot),
-                TokenTree::Ident(m),
-                TokenTree::Group(g),
-            ) = (&ts[end], &ts[end + 1], &ts[end + 2])
-            {
-                if dot.as_char() == '.' && m.to_string() == "send" {
-                    let Some(gd) = guard.clone() else {
-                        return err(
-                            ts[0].span(),
-                            "send needs a wait before it",
-                        );
-                    };
-                    let tx = match target_name(&ts[..end]) {
-                        Ok(t) => t,
-                        Err(m) => return err(ts[0].span(), &m),
-                    };
-                    let at: Vec<TokenTree> = g.stream().into_iter().collect();
-                    let e = match tr(&at, &subst) {
-                        Ok(e) => e,
-                        Err(m) => return err(ts[0].span(), &m),
-                    };
-                    stmts.push(format!(
-                        "S::Drive(T::Name(\"{tx}_data\".to_string()), {e})"
-                    ));
-                    stmts.push(format!(
+            if text.starts_with("when!") {
+                let TokenTree::Group(g) = &ts[2] else {
+                    return err(ts[0].span(), "expected when!(..)");
+                };
+                let wt: Vec<TokenTree> = g.stream().into_iter().collect();
+                let Some((cond, k)) = up_to_arrow(&wt, 0) else {
+                    return err(ts[0].span(), "expected `cond =>`");
+                };
+                let ct: Vec<TokenTree> = cond.into_iter().collect();
+                let c = match tr(&ct, &subst) {
+                    Ok(c) => c,
+                    Err(m) => return err(ts[0].span(), &m),
+                };
+                let TokenTree::Group(then) = &wt[k] else {
+                    return err(ts[0].span(), "expected `{ .. }`");
+                };
+                let otherwise = match (wt.get(k + 1), wt.get(k + 2)) {
+                    (Some(TokenTree::Ident(e)), Some(TokenTree::Group(g)))
+                        if e.to_string() == "else" =>
+                    {
+                        Some(g)
+                    }
+                    _ => None,
+                };
+                let mut arms = Vec::new();
+                for arm in [Some(then), otherwise] {
+                    let mut drives = Vec::new();
+                    if let Some(g) = arm {
+                        for d in statements(g) {
+                            let Some((lhs, rhs)) = split_becomes(d) else {
+                                return err(
+                                    g.span(),
+                                    "expected `register <= value`",
+                                );
+                            };
+                            let lt: Vec<TokenTree> = lhs.into_iter().collect();
+                            let rt: Vec<TokenTree> = rhs.into_iter().collect();
+                            let l = match target_expr(&lt, &subst) {
+                                Ok(l) => l,
+                                Err(m) => return err(g.span(), &m),
+                            };
+                            let r = match tr(&rt, &subst) {
+                                Ok(r) => r,
+                                Err(m) => return err(g.span(), &m),
+                            };
+                            drives.push(format!("({l}, {r})"));
+                        }
+                    }
+                    arms.push(format!("vec![{}]", drives.join(", ")));
+                }
+                stmts.push(format!("S::When({c}, {}, {})", arms[0], arms[1]));
+                continue;
+            }
+            // tx.send(e): data driven, valid asserted with the guard.
+            if text.ends_with(")") && ts.len() >= 3 {
+                let end = ts.len() - 3;
+                if let (
+                    TokenTree::Punct(dot),
+                    TokenTree::Ident(m),
+                    TokenTree::Group(g),
+                ) = (&ts[end], &ts[end + 1], &ts[end + 2])
+                {
+                    if dot.as_char() == '.' && m.to_string() == "send" {
+                        let Some(gd) = guard.clone() else {
+                            return err(
+                                ts[0].span(),
+                                "send needs a wait before it",
+                            );
+                        };
+                        let tx = match target_name(&ts[..end]) {
+                            Ok(t) => t,
+                            Err(m) => return err(ts[0].span(), &m),
+                        };
+                        let at: Vec<TokenTree> =
+                            g.stream().into_iter().collect();
+                        let e = match tr(&at, &subst) {
+                            Ok(e) => e,
+                            Err(m) => return err(ts[0].span(), &m),
+                        };
+                        stmts.push(format!(
+                            "S::Drive(T::Name(\"{tx}_data\".to_string()), {e})"
+                        ));
+                        stmts.push(format!(
                         "S::Drive(T::Name(\"{tx}_valid\".to_string()), {gd})"
                     ));
-                    continue;
+                        continue;
+                    }
                 }
             }
-        }
-        if ts.len() >= 3 {
-            let end = ts.len() - 3;
-            if let (
-                TokenTree::Punct(dot),
-                TokenTree::Ident(m),
-                TokenTree::Group(g),
-            ) = (&ts[end], &ts[end + 1], &ts[end + 2])
-            {
-                if dot.as_char() == '.' && m.to_string() == "set" {
-                    let target = match target_name(&ts[..end]) {
-                        Ok(t) => t,
-                        Err(m) => return err(ts[0].span(), &m),
-                    };
-                    let at: Vec<TokenTree> = g.stream().into_iter().collect();
-                    let e = match tr(&at, &subst) {
-                        Ok(e) => e,
-                        Err(m) => return err(ts[0].span(), &m),
-                    };
-                    stmts.push(format!(
-                        "S::Drive(T::Name(\"{target}\".to_string()), {e})"
-                    ));
-                    continue;
+            if ts.len() >= 3 {
+                let end = ts.len() - 3;
+                if let (
+                    TokenTree::Punct(dot),
+                    TokenTree::Ident(m),
+                    TokenTree::Group(g),
+                ) = (&ts[end], &ts[end + 1], &ts[end + 2])
+                {
+                    if dot.as_char() == '.' && m.to_string() == "set" {
+                        let target = match target_name(&ts[..end]) {
+                            Ok(t) => t,
+                            Err(m) => return err(ts[0].span(), &m),
+                        };
+                        let at: Vec<TokenTree> =
+                            g.stream().into_iter().collect();
+                        let e = match tr(&at, &subst) {
+                            Ok(e) => e,
+                            Err(m) => return err(ts[0].span(), &m),
+                        };
+                        stmts.push(format!(
+                            "S::Drive(T::Name(\"{target}\".to_string()), {e})"
+                        ));
+                        continue;
+                    }
                 }
             }
+            return err(ts[0].span(), &format!("cannot lower `{text}`"));
         }
-        return err(ts[0].span(), &format!("cannot lower `{text}`"));
-    }
-    if clock.is_empty() {
-        return err(body.span(), "run must start by waiting for `C::rising()`");
+        if clock.is_empty() {
+            return err(
+                body.span(),
+                "a loop must start by waiting for an edge",
+            );
+        }
+        procs.push(format!(
+            "::txhdl::netlist::Process {{ clock: {clock}, falling: {falling}, \
+         body: vec![{}] }}",
+            stmts.join(",\n")
+        ));
     }
     let generated_text = format!(
         "impl{generics} {unit} {{\n\
@@ -2166,11 +2221,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          use ::txhdl::netlist::{{Expr as E, Stmt as S, Target as T}};\n\
          ::txhdl::netlist::Lowered {{\n\
          name: name.to_string(),\n\
-         clock: {clock},\n\
          fields: <Self as ::txhdl::netlist::Fields>::fields(),\n\
          ports: vec![{ports}],\n\
          wires: vec![{wires}],\n\
-         body: vec![{stmts}],\n\
+         procs: vec![{procs}],\n\
          init: Vec::new(),\n\
          }}\n}}\n\
          /// The Verilog of this unit.\n\
@@ -2185,7 +2239,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             .map(|(n, e)| format!("(\"{n}\".to_string(), {e})"))
             .collect::<Vec<_>>()
             .join(",\n"),
-        stmts = stmts.join(",\n"),
+        procs = procs.join(",\n"),
     );
     if let Ok(dir) = std::env::var("TXHDL_MACRO_DUMP") {
         let _ = std::fs::write(

@@ -271,24 +271,60 @@ pub enum Stmt {
     Guard(Expr),
 }
 
+/// One process of a unit: a loop of one wait, on the rising or the
+/// falling edge of its clock, and the statements after the wait. A
+/// clocked block in the netlist.
+pub struct Process {
+    pub clock: &'static str,
+    pub falling: bool,
+    pub body: Vec<Stmt>,
+}
+
 /// A unit as `#[lower]` read it: what its `run` needs from its ports,
-/// its registers from its fields, and the statements of its loop. The
-/// two emitters render it.
+/// its registers from its fields, and its processes, one per loop of
+/// `run`. The two emitters render it.
 pub struct Lowered {
     pub name: String,
-    pub clock: &'static str,
     pub fields: Vec<(&'static str, Option<Kind>, usize, usize)>,
     pub ports: Vec<(String, Kind, usize)>,
-    /// The `let` names of the loop that are computed, each a wire
+    /// The `let` names of the loops that are computed, each a wire
     /// driven by its expression; a read of a port or register is an
     /// alias and not here.
     pub wires: Vec<(String, Expr)>,
-    pub body: Vec<Stmt>,
+    pub procs: Vec<Process>,
     /// A memory's first words, as `Mem::with` gave them: a program.
     pub init: Vec<(String, Vec<u128>)>,
 }
 
 impl Lowered {
+    /// The clocks the processes wait for, each once, in order.
+    fn clocks(&self) -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = Vec::new();
+        for p in &self.procs {
+            if !out.contains(&p.clock) {
+                out.push(p.clock);
+            }
+        }
+        out
+    }
+    /// Whether a register is driven by a falling-edge process.
+    fn falling_reg(&self, name: &str) -> bool {
+        fn drives(d: &[(Target, Expr)], name: &str) -> bool {
+            d.iter()
+                .any(|(t, _)| matches!(t, Target::Name(n) if n == name))
+        }
+        self.procs.iter().any(|p| {
+            p.falling
+                && p.body.iter().any(|st| match st {
+                    Stmt::Drive(Target::Name(n), _) => n == name,
+                    Stmt::Drive(_, _) | Stmt::Guard(_) => false,
+                    Stmt::When(_, a, b) => drives(a, name) || drives(b, name),
+                    Stmt::Case(arms) => {
+                        arms.iter().any(|(_, d)| drives(d, name))
+                    }
+                })
+        })
+    }
     /// Give a memory its first words, as `Mem::with` gave them at run
     /// time; the netlist cannot see those, so the example says them
     /// again here.
@@ -301,7 +337,11 @@ impl Lowered {
     #[allow(clippy::type_complexity)]
     fn hoisted(
         &self,
-    ) -> (Vec<Stmt>, Vec<(String, Expr)>, Vec<(String, usize, Expr)>) {
+    ) -> (
+        Vec<Process>,
+        Vec<(String, Expr)>,
+        Vec<(String, usize, Expr)>,
+    ) {
         let mut temps: Vec<(String, usize, Expr)> = Vec::new();
         fn go(
             e: &Expr,
@@ -359,29 +399,38 @@ impl Lowered {
             .iter()
             .map(|(n, e)| (n.clone(), go(e, self, &mut temps)))
             .collect();
-        let body = self
-            .body
-            .iter()
-            .map(|st| match st {
-                Stmt::Drive(x, e) => {
-                    Stmt::Drive(target(x, &mut temps), go(e, self, &mut temps))
-                }
-                Stmt::When(c, a, b) => Stmt::When(
-                    go(c, self, &mut temps),
-                    drives(a, &mut temps),
-                    drives(b, &mut temps),
-                ),
-                Stmt::Case(arms) => Stmt::Case(
-                    arms.iter()
-                        .map(|(c, d)| {
-                            (go(c, self, &mut temps), drives(d, &mut temps))
-                        })
-                        .collect(),
-                ),
-                Stmt::Guard(c) => Stmt::Guard(go(c, self, &mut temps)),
-            })
-            .collect();
-        (body, wires, temps)
+        let mut procs = Vec::new();
+        for p in &self.procs {
+            let body = p
+                .body
+                .iter()
+                .map(|st| match st {
+                    Stmt::Drive(x, e) => Stmt::Drive(
+                        target(x, &mut temps),
+                        go(e, self, &mut temps),
+                    ),
+                    Stmt::When(c, a, b) => Stmt::When(
+                        go(c, self, &mut temps),
+                        drives(a, &mut temps),
+                        drives(b, &mut temps),
+                    ),
+                    Stmt::Case(arms) => Stmt::Case(
+                        arms.iter()
+                            .map(|(c, d)| {
+                                (go(c, self, &mut temps), drives(d, &mut temps))
+                            })
+                            .collect(),
+                    ),
+                    Stmt::Guard(c) => Stmt::Guard(go(c, self, &mut temps)),
+                })
+                .collect();
+            procs.push(Process {
+                clock: p.clock,
+                falling: p.falling,
+                body,
+            });
+        }
+        (procs, wires, temps)
     }
     fn is_reg(&self, t: &str) -> bool {
         self.fields
@@ -450,7 +499,10 @@ impl Lowered {
     /// since the trace names them by side and a channel's inputs are
     /// registered where a wire's are not.
     pub fn ports_file(&self) -> String {
-        let mut out = format!("{} in 1\n", self.clock);
+        let mut out = String::new();
+        for c in self.clocks() {
+            out.push_str(&format!("{c} in 1\n"));
+        }
         for (n, k, w) in &self.ports {
             match k {
                 Kind::Out => out.push_str(&format!("{n} out {w}\n")),
@@ -468,6 +520,9 @@ impl Lowered {
         }
         for (n, k, w, d) in &self.fields {
             match k {
+                Some(Kind::Reg) if self.falling_reg(n) => {
+                    out.push_str(&format!("{n} regf {w}\n"))
+                }
                 Some(Kind::Reg) => out.push_str(&format!("{n} reg {w}\n")),
                 Some(Kind::Mem) => out.push_str(&format!("{n} mem {w} {d}\n")),
                 _ => {}
@@ -478,10 +533,11 @@ impl Lowered {
 
     /// The Verilog.
     pub fn verilog(&self) -> String {
-        let (name, clock) = (&self.name, self.clock);
+        let name = &self.name;
         let l = self;
         let mut out = String::new();
-        let mut plist = vec![format!("input {clock}")];
+        let mut plist: Vec<String> =
+            self.clocks().iter().map(|c| format!("input {c}")).collect();
         for (n, k, w) in &self.ports {
             match k {
                 Kind::Out => plist.push(format!("output {}{n}", range(*w))),
@@ -535,7 +591,7 @@ impl Lowered {
                 _ => {}
             }
         }
-        let (body, wires, temps) = self.hoisted();
+        let (procs, wires, temps) = self.hoisted();
         for (n, e) in &wires {
             writeln!(out, "  wire {}{n};", range(self.ewidth(e))).unwrap();
         }
@@ -543,9 +599,7 @@ impl Lowered {
             writeln!(out, "  wire {}{t} = {};", range(*w), vexpr(e, l))
                 .unwrap();
         }
-        let mut seq: Vec<String> = Vec::new();
         let mut comb: Vec<String> = Vec::new();
-        let mut guard = false;
         let drive = |seq: &mut Vec<String>,
                      comb: &mut Vec<String>,
                      ind: &str,
@@ -566,52 +620,61 @@ impl Lowered {
         for (n, e) in &wires {
             comb.push(format!("  assign {n} = {};", vexpr(e, l)));
         }
-        for st in &body {
-            match st {
-                Stmt::Guard(c) => {
-                    guard = true;
-                    seq.push(format!("    if ({}) begin", vexpr(c, l)));
-                }
-                Stmt::Drive(t, e) => {
-                    let ind = if guard { "      " } else { "    " };
-                    drive(&mut seq, &mut comb, ind, t, e)
-                }
-                Stmt::When(c, then, otherwise) => {
-                    seq.push(format!("    if ({}) begin", vexpr(c, l)));
-                    for (t, e) in then {
-                        drive(&mut seq, &mut comb, "      ", t, e);
+        // A clocked block per process, on its clock and its edge.
+        for p in &procs {
+            let mut seq: Vec<String> = Vec::new();
+            let mut guard = false;
+            for st in &p.body {
+                match st {
+                    Stmt::Guard(c) => {
+                        guard = true;
+                        seq.push(format!("    if ({}) begin", vexpr(c, l)));
                     }
-                    if !otherwise.is_empty() {
-                        seq.push("    end else begin".into());
-                        for (t, e) in otherwise {
+                    Stmt::Drive(t, e) => {
+                        let ind = if guard { "      " } else { "    " };
+                        drive(&mut seq, &mut comb, ind, t, e)
+                    }
+                    Stmt::When(c, then, otherwise) => {
+                        seq.push(format!("    if ({}) begin", vexpr(c, l)));
+                        for (t, e) in then {
                             drive(&mut seq, &mut comb, "      ", t, e);
                         }
-                    }
-                    seq.push("    end".into());
-                }
-                Stmt::Case(arms) => {
-                    for (i, (c, drives)) in arms.iter().enumerate() {
-                        let kw = if i == 0 { "if" } else { "end else if" };
-                        seq.push(format!("    {kw} ({}) begin", vexpr(c, l)));
-                        for (t, e) in drives {
-                            drive(&mut seq, &mut comb, "      ", t, e);
+                        if !otherwise.is_empty() {
+                            seq.push("    end else begin".into());
+                            for (t, e) in otherwise {
+                                drive(&mut seq, &mut comb, "      ", t, e);
+                            }
                         }
-                    }
-                    if !arms.is_empty() {
                         seq.push("    end".into());
                     }
+                    Stmt::Case(arms) => {
+                        for (i, (c, drives)) in arms.iter().enumerate() {
+                            let kw = if i == 0 { "if" } else { "end else if" };
+                            seq.push(format!(
+                                "    {kw} ({}) begin",
+                                vexpr(c, l)
+                            ));
+                            for (t, e) in drives {
+                                drive(&mut seq, &mut comb, "      ", t, e);
+                            }
+                        }
+                        if !arms.is_empty() {
+                            seq.push("    end".into());
+                        }
+                    }
                 }
             }
-        }
-        if guard {
-            seq.push("    end".into());
-        }
-        if seq.iter().any(|l| l.contains("<=")) {
-            writeln!(out, "  always @(posedge {clock}) begin").unwrap();
-            for l in &seq {
-                writeln!(out, "{l}").unwrap();
+            if guard {
+                seq.push("    end".into());
             }
-            writeln!(out, "  end").unwrap();
+            if seq.iter().any(|l| l.contains("<=")) {
+                let edge = if p.falling { "negedge" } else { "posedge" };
+                writeln!(out, "  always @({edge} {}) begin", p.clock).unwrap();
+                for l in &seq {
+                    writeln!(out, "{l}").unwrap();
+                }
+                writeln!(out, "  end").unwrap();
+            }
         }
         for l in &comb {
             writeln!(out, "{l}").unwrap();
@@ -623,7 +686,7 @@ impl Lowered {
     /// The VHDL, 2008: an entity, one process on the rising edge for
     /// the registers, a concurrent assignment per wire.
     pub fn vhdl(&self) -> String {
-        let (name, clock) = (&self.name, self.clock);
+        let name = &self.name;
         let ty = |w: usize| {
             if w == 1 {
                 "std_logic".to_string()
@@ -631,7 +694,11 @@ impl Lowered {
                 format!("unsigned({} downto 0)", w - 1)
             }
         };
-        let mut plist = vec![format!("{clock} : in std_logic")];
+        let mut plist: Vec<String> = self
+            .clocks()
+            .iter()
+            .map(|c| format!("{c} : in std_logic"))
+            .collect();
         for (n, k, w) in &self.ports {
             match k {
                 Kind::Out => plist.push(format!("{n} : out {}", ty(*w))),
@@ -714,7 +781,7 @@ impl Lowered {
                 _ => {}
             }
         }
-        let (body, wires, temps) = self.hoisted();
+        let (procs, wires, temps) = self.hoisted();
         for (n, e) in &wires {
             writeln!(out, "  signal {n} : {};", ty(self.ewidth(e))).unwrap();
         }
@@ -722,9 +789,7 @@ impl Lowered {
             writeln!(out, "  signal {t} : {};", ty(*w)).unwrap();
         }
         writeln!(out, "begin").unwrap();
-        let mut seq: Vec<String> = Vec::new();
         let mut comb: Vec<String> = Vec::new();
-        let mut guard = false;
         // A value for a target of width `w`: an integer becomes an
         // unsigned of that width, since VHDL will not assign one bare.
         let sized = |e: &Expr, w: usize| -> String {
@@ -774,56 +839,66 @@ impl Lowered {
         for (n, e) in &wires {
             comb.push(format!("  {}", assign(n, self.ewidth(e), e)));
         }
-        for st in &body {
-            match st {
-                Stmt::Guard(c) => {
-                    guard = true;
-                    seq.push(format!("      if {} then", hbool(c, self)));
-                }
-                Stmt::Drive(t, e) => {
-                    let ind = if guard { "        " } else { "      " };
-                    drive(&mut seq, &mut comb, ind, t, e)
-                }
-                Stmt::When(c, then, otherwise) => {
-                    seq.push(format!("      if {} then", hbool(c, self)));
-                    for (t, e) in then {
-                        drive(&mut seq, &mut comb, "        ", t, e);
+        // A process per process, on its clock and its edge.
+        for p in &procs {
+            let mut seq: Vec<String> = Vec::new();
+            let mut guard = false;
+            for st in &p.body {
+                match st {
+                    Stmt::Guard(c) => {
+                        guard = true;
+                        seq.push(format!("      if {} then", hbool(c, self)));
                     }
-                    if !otherwise.is_empty() {
-                        seq.push("      else".into());
-                        for (t, e) in otherwise {
+                    Stmt::Drive(t, e) => {
+                        let ind = if guard { "        " } else { "      " };
+                        drive(&mut seq, &mut comb, ind, t, e)
+                    }
+                    Stmt::When(c, then, otherwise) => {
+                        seq.push(format!("      if {} then", hbool(c, self)));
+                        for (t, e) in then {
                             drive(&mut seq, &mut comb, "        ", t, e);
                         }
-                    }
-                    seq.push("      end if;".into());
-                }
-                Stmt::Case(arms) => {
-                    for (i, (c, drives)) in arms.iter().enumerate() {
-                        let kw = if i == 0 { "if" } else { "elsif" };
-                        seq.push(format!("      {kw} {} then", hbool(c, self)));
-                        for (t, e) in drives {
-                            drive(&mut seq, &mut comb, "        ", t, e);
+                        if !otherwise.is_empty() {
+                            seq.push("      else".into());
+                            for (t, e) in otherwise {
+                                drive(&mut seq, &mut comb, "        ", t, e);
+                            }
                         }
-                    }
-                    if !arms.is_empty() {
                         seq.push("      end if;".into());
                     }
+                    Stmt::Case(arms) => {
+                        for (i, (c, drives)) in arms.iter().enumerate() {
+                            let kw = if i == 0 { "if" } else { "elsif" };
+                            seq.push(format!(
+                                "      {kw} {} then",
+                                hbool(c, self)
+                            ));
+                            for (t, e) in drives {
+                                drive(&mut seq, &mut comb, "        ", t, e);
+                            }
+                        }
+                        if !arms.is_empty() {
+                            seq.push("      end if;".into());
+                        }
+                    }
                 }
             }
-        }
-        if guard {
-            seq.push("      end if;".into());
-        }
-        if seq.iter().any(|l| l.contains("<=")) {
-            writeln!(
-                out,
-                "  process ({clock})\n  begin\n    if rising_edge({clock}) then"
-            )
-            .unwrap();
-            for l in &seq {
-                writeln!(out, "{l}").unwrap();
+            if guard {
+                seq.push("      end if;".into());
             }
-            writeln!(out, "    end if;\n  end process;").unwrap();
+            if seq.iter().any(|l| l.contains("<=")) {
+                let c = p.clock;
+                let edge = if p.falling { "falling" } else { "rising" };
+                writeln!(
+                    out,
+                    "  process ({c})\n  begin\n    if {edge}_edge({c}) then"
+                )
+                .unwrap();
+                for l in &seq {
+                    writeln!(out, "{l}").unwrap();
+                }
+                writeln!(out, "    end if;\n  end process;").unwrap();
+            }
         }
         for l in &comb {
             writeln!(out, "{l}").unwrap();
