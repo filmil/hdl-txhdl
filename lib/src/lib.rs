@@ -12,7 +12,8 @@
 //! - [`funcs`]: operators that cannot. All plain `fn`.
 //! - `#[derive(Transaction)]`, `#[derive(Bus)]`, `#[derive(Value)]`,
 //!   `#[derive(Trace)]`, `interface!`, `when!` and `case!`, re-exported
-//!   from `txhdl_macros`.
+//!   from `txhdl_macros`; and `select!`, a value chosen by pattern,
+//!   defined here.
 //! - [`comp::trace`]: names for signals and a VCD writer.
 //! - [`netlist`]: a structural Verilog skeleton from the same walk.
 //!
@@ -29,3 +30,15 @@ pub mod types;
 pub use txhdl_macros::{
     case, interface, lower, pipeline, when, Bus, Trace, Transaction, Value,
 };
+
+/// `select!(value => { pattern => expr, .., _ => expr })`: a value
+/// chosen by the first pattern that matches, `match` by another name.
+/// The name says what the hardware is: a chain of multiplexers, the
+/// arms in priority order, which is what `#[lower]` makes of it. A
+/// pattern may carry an `if` guard, as `case!`'s may.
+#[macro_export]
+macro_rules! select {
+    ($v:expr => { $($p:pat $(if $g:expr)? => $e:expr),+ $(,)? }) => {
+        match $v { $($p $(if $g)? => $e),+ }
+    };
+}
