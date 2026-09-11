@@ -519,9 +519,10 @@ is small enough to fit on one page, the runtime simulates it with a
 stated model of time, the lowering turns it into Verilog and VHDL,
 and the build holds the three to one behaviour under two simulators.
 A RISC-V core written in it runs, lowers, is checked against its own
-trace, and runs at 100~MHz on an Artix-7. The next steps are a
-board, and a third pipeline stage for the memories the block RAM
-wants registered.
+trace, and runs at 100~MHz on an Artix-7, whose bitstream, with a
+clock, a reset and four LEDs around the core, is built. The next
+steps are the board in hand, and a third pipeline stage for the
+memories the block RAM wants registered.
 
 \begin{thebibliography}{10}
 

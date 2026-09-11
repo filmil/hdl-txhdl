@@ -381,6 +381,32 @@ being on it. So the core runs at 100~MHz on this part with a
 quarter of a nanosecond to spare, and a third stage is what would
 buy more.
 
+\subsection{The board}
+
+The board is the Alinx AX7A200, the Artix-7 the part was chosen for,
+and \code{bazel build //cpu/vreteno:vreteno\_board\_pnr} builds
+its bitstream. Listing~\ref{lst:v-board} is the one file of the
+design written by hand rather than lowered, and it holds what a
+board needs and a core does not: the board's 200~MHz differential
+clock brought down to the 100~MHz the core meets through an MMCM,
+the reset button synchronised into that clock and held until the
+clock has locked, and four LEDs, lit when driven low, showing the
+core halted, a heartbeat, the reset released and the clock locked.
+The constraints name the board's pins as the project's other designs
+for it do, so the bitstream is real: the routed design meets
+100~MHz with 0.309~ns of slack, in 1526 LUTs, 132 flip-flops, one
+block RAM tile and the MMCM, with no critical warning.
+\code{bazel run //cpu/vreteno:vreteno\_board\_flash} writes it into
+the board's QSPI flash over the programming cable. What the board
+should show, once it does: the clock LED at once, the running LED
+while the button is up, the heartbeat at three a second, and the
+halt LED lit a few hundred nanoseconds after the reset is released,
+since the demonstration program halts in sixty cycles; holding the
+reset puts it out, and releasing it lights it again.
+
+\lstinputlisting[caption={\code{board/vreteno\_board.v}: the board
+top, by hand.},label={lst:v-board}]{cpu/vreteno/board/vreteno_board.v}
+
 \section{What Comes Next}
 \label{sec:v-next}
 
@@ -393,12 +419,9 @@ not change, since it compares architectural state when an
 instruction retires. This is the step to take when the core has a
 netlist and a clock period to shorten, and not before.
 
-A board. Section~\ref{sec:v-synth} places and routes with a clock
-constraint and no pins; the ruleset programs a flash as well, and the
-first board is the Artix-7 the part was chosen for, which needs pin
-constraints, a reset from a button and something for the halt to
-light. Timing is known: ten nanoseconds with a quarter of one to
-spare, and the path that sets it.
+The board, programmed. Its bitstream is built and the flash target
+writes it; what its LEDs should show is stated above, and the first
+thing to do with the board in hand is to see that they do.
 
 Traps and the rest of the privileged architecture, and the
 multiplication extension, are the instruction set's next steps, and

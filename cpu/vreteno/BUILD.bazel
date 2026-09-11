@@ -53,7 +53,11 @@ rust_test(
 
 filegroup(
     name = "sources",
-    srcs = glob(["src/*.rs", "tests/*.rs"]),
+    srcs = glob([
+        "src/*.rs",
+        "tests/*.rs",
+        "board/*.v",
+    ]),
 )
 
 # Synthesis of the core's Verilog, as the document build wrote it, on an
@@ -64,6 +68,7 @@ filegroup(
 load(
     "@rules_vivado//build/vivado:rules.bzl",
     "vivado_place_and_route2",
+    "vivado_program_flash",
     "vivado_project",
     "vivado_synthesis",
     "vivado_synthesis2",
@@ -109,5 +114,49 @@ vivado_place_and_route2(
     name = "vreteno_pnr",
     synthesis = ":vreteno_synth2",
     xdcs = [":vreteno_xdc"],
+    tags = ["manual"],
+)
+
+# The core on the Alinx AX7A200: a hand-written Verilog top brings the
+# board's 200 MHz clock down to 100 MHz, synchronises the reset button,
+# and lights a LED on halt; the constraints name the board's pins, so
+# this bitstream is real. Manual, as every Vivado target is.
+#
+#   bazel build //cpu/vreteno:vreteno_board_pnr
+filegroup(
+    name = "ax7a200_xdc",
+    srcs = ["board/ax7a200.xdc"],
+)
+
+vivado_synthesis2(
+    name = "vreteno_board_synth",
+    srcs = [
+        "board/vreteno_board.v",
+        "//docs:vreteno.v",
+    ],
+    part = "xc7a200tfbg484-2",
+    top = "vreteno_board",
+    xdcs = [":ax7a200_xdc"],
+    tags = ["manual"],
+)
+
+vivado_place_and_route2(
+    name = "vreteno_board_pnr",
+    synthesis = ":vreteno_board_synth",
+    xdcs = [":ax7a200_xdc"],
+    tags = ["manual"],
+)
+
+# Write the bitstream into the board's QSPI flash, a Micron MT25QL256
+# over a 4-bit bus, as the a200t examples do:
+#
+#   bazel run //cpu/vreteno:vreteno_board_flash -- \
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/<serial>'
+vivado_program_flash(
+    name = "vreteno_board_flash",
+    size = 32,
+    flash_part = "mt25ql256-spi-x1_x2_x4",
+    interface = "SPIx4",
+    deps = [":vreteno_board_pnr"],
     tags = ["manual"],
 )
