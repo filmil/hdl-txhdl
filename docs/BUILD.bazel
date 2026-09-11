@@ -432,7 +432,7 @@ genrule(
     srcs = ["counter.dt"],
     outs = ["counter_timing.tex"],
     cmd = "$(location //tools/dt2tikz) $(location counter.dt)" +
-          " --order clk,n,phase,msb > $@",
+          " --order clk,n,phase,msb --color > $@",
     tools = ["//tools/dt2tikz"],
 )
 

@@ -6,7 +6,8 @@ its FST as well; turns the FST into a signals database (vcdcvt, which
 reads FST by the file's extension) and the
 chosen signals into drawtiming text (sqlite2drawtiming), both prebuilt
 tools pinned in //:multitool.lock.json; and draws the text as TikZ
-(//tools/dt2tikz). Produces out_NAME.txt, NAME.dt and NAME_timing.tex.
+(//tools/dt2tikz), in colour. Produces out_NAME.txt, NAME.dt and
+NAME_timing.tex.
 """
 
 def waveform(name, example, signals):
@@ -40,7 +41,7 @@ def waveform(name, example, signals):
         srcs = [name + ".dt", name + ".fst.names"],
         outs = [name + "_timing.tex"],
         cmd = "$(location //tools/dt2tikz) $(location " + name + ".dt)" +
-              " --order " + order +
+              " --order " + order + " --color" +
               " --names $(location " + name + ".fst.names)" +
               " --signals '" + ",".join(signals) + "' > $@",
         tools = ["//tools/dt2tikz"],
