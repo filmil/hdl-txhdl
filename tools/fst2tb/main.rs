@@ -121,8 +121,12 @@ fn main() {
         "  -- The clock: rising at even ticks, one tick per nanosecond.\n\
            clock : process\n  begin\n",
     );
+    // The first edge is at time zero, where the inputs for it are
+    // applied too: a few deltas first, so the wires that follow those
+    // inputs have settled when the edge comes.
     o.push_str(&format!(
-        "    for i in 0 to {} loop\n      {clock} <= '1'; wait for 1 ns;\n\
+        "    for i in 1 to 8 loop wait for 0 ns; end loop;\n\
+         for i in 0 to {} loop\n      {clock} <= '1'; wait for 1 ns;\n\
          {clock} <= '0'; wait for 1 ns;\n    end loop;\n    wait;\n\
          end process;\n\n",
         last / 2 + 1
