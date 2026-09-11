@@ -4,15 +4,19 @@
 
 A lowering that is only printed is a claim. From this section on, a
 lowered unit is also run, and against the same stimulus the Rust
-simulation had. The build does it: the example is run with
-\code{TXHDL\_VHDL} set, so beside its trace it writes the unit's VHDL,
-which \code{\#[lower]} renders from the same statements as the
-Verilog, and a ports file; \code{//tools/fst2tb} reads the trace and
-the ports and writes a testbench that replays the trace's inputs into
-the entity and asserts, tick by tick, that the entity's registers and
-outputs are what the trace holds; and \code{vhdl\_test} from
-\code{rules\_nvc} simulates it under \code{nvc}, built from source,
-hermetically. The test passes only if every comparison held.
+simulation had, twice. The build does it: the example is run with
+\code{TXHDL\_VHDL} and \code{TXHDL\_VERILOG} set, so beside its
+trace it writes the unit's VHDL and its Verilog, which
+\code{\#[lower]} renders from the same statements, and a ports file;
+\code{//tools/fst2tb} reads the trace and the ports and writes a
+testbench, in VHDL and again in Verilog, that replays the trace's
+inputs into the entity and asserts, tick by tick, that the entity's
+registers and outputs are what the trace holds; \code{vhdl\_test}
+from \code{rules\_nvc} simulates the VHDL under \code{nvc}, and a
+\code{cc\_test} over \code{rules\_verilator} simulates the Verilog
+under Verilator, both built from source, hermetically. Each test
+passes only if every comparison held, so both emitters are checked,
+and a defect in either shows as a disagreement in one of the two.
 
 The testbench's timing is the model of time, made literal. One tick is
 one nanosecond and the clock rises at even ticks. An input the trace
@@ -47,3 +51,16 @@ they are registered state, and the take and the offer are outputs
 checked as any wire is, the offer's data only under its valid. The
 change moved the FIFO's, the join's and the arbiter's traces by the
 buffer's latency and changed nothing else about them.
+
+The Verilog check earned its place on its first run. Every unit's
+VHDL had agreed with its trace, and the same units' Verilog, from the
+same statements, did not, twice, in the RISC-V core alone. An unsized
+number in a branch of a conditional inside a concatenation is thirty-two
+bits wide in Verilog, so every field above it moved; and signedness in
+Verilog is decided by the whole expression, so an arithmetic shift
+inside an unsigned conditional chain shifted logically, and one
+\code{srai} came out wrong. Neither is a defect VHDL can have, and
+neither showed until the Verilog was simulated. Both are fixed in the
+emitter, a number sized by the other branch and the shift
+self-determined inside \code{\$unsigned}, and a wire the core had
+named \code{byte}, a keyword in SystemVerilog, was renamed.

@@ -166,10 +166,11 @@ read: registers, memories, wires and channel ports; \code{when!},
 \code{case!} and \code{select!}; slices, concatenation and
 extension; a \code{let} as a wire named for it. The macro builds an
 expression tree, \code{netlist::Expr}, and two emitters render the
-unit, Verilog and VHDL-2008. The VHDL is what closes the loop: the build simulates
-a lowered unit under \code{nvc}, with a testbench
-\code{//tools/fst2tb} generates from the trace the Rust run wrote, and
-the test passes only if registers and outputs agree at every tick.
+unit, Verilog and VHDL-2008. Both close the loop: the build simulates
+a lowered unit's VHDL under \code{nvc} and its Verilog under
+Verilator, each with a testbench \code{//tools/fst2tb} generates from
+the trace the Rust run wrote, and each test passes only if registers
+and outputs agree at every tick.
 What neither emitter reads yet is a unit's second process and a
 falling-edge wait. Memories lower, and a unit with channels is
 checked as any other, since the runtime's channel is a buffer with a
