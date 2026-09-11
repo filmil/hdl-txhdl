@@ -47,4 +47,5 @@ fn main() {
     }
     stop();
     print!("{}", Counter::verilog("counter"));
+    txhdl::netlist::write_vhdl_from_env(&Counter::lowered("counter"));
 }

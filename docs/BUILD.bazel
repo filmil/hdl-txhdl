@@ -375,16 +375,12 @@ API = {
 genrule(
     name = "example_outputs",
     outs = [
-        "out_blinky.txt",
-        "out_case.txt",
         "out_config.txt",
         "out_fifo.txt",
         "out_arbiter.txt",
         "out_trace.txt",
     ],
     cmd = " && ".join([
-        "$(location //lib/examples:ex_blinky) > $(RULEDIR)/out_blinky.txt",
-        "$(location //lib/examples:ex_case) > $(RULEDIR)/out_case.txt",
         "$(location //lib/examples:ex_config) fpga > $(RULEDIR)/out_config.txt",
         "$(location //lib/examples:ex_config) asic >> $(RULEDIR)/out_config.txt",
         "$(location //lib/examples:ex_fifo) > $(RULEDIR)/out_fifo.txt",
@@ -392,8 +388,6 @@ genrule(
         "$(location //lib/examples:ex_trace) > $(RULEDIR)/out_trace.txt",
     ]),
     tools = [
-        "//lib/examples:ex_blinky",
-        "//lib/examples:ex_case",
         "//lib/examples:ex_config",
         "//lib/examples:ex_fifo",
         "//lib/examples:ex_arbiter",
@@ -436,7 +430,32 @@ genrule(
     tools = ["//tools/dt2tikz"],
 )
 
-# Every later example has a waveform: run, converted and drawn.
+# Every later example has a waveform: run, converted and drawn. The
+# lowered ones are also simulated against their own trace.
+waveform(
+    name = "blinky",
+    example = "//lib/examples:ex_blinky",
+    lowered = ("blinky", "blinky"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//blinky/count=>count",
+        "//led=>led",
+    ],
+)
+
+waveform(
+    name = "case",
+    example = "//lib/examples:ex_case",
+    lowered = ("sequencer", "sequencer"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//go=>go",
+        "//sequencer/state=>state",
+        "//sequencer/count=>count",
+        "//observed=>observed",
+    ],
+)
+
 waveform(
     name = "join",
     example = "//lib/examples:ex_join",
@@ -529,6 +548,10 @@ latex_document(
         ":example_outputs",
         ":counter_dt",
         ":counter_timing",
+        ":blinky_run",
+        ":blinky_timing",
+        ":case_run",
+        ":case_timing",
         ":join_run",
         ":join_timing",
         ":inflight_run",
@@ -561,6 +584,7 @@ latex_document(
 waveform(
     name = "cheat",
     example = "//lib/examples:ex_cheat",
+    lowered = ("counter", "counter"),
     signals = [
         "//clocks/clk=>clk",
         "//enable=>enable",

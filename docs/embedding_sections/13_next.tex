@@ -172,8 +172,14 @@ calls. A unit with state lowers as well: \code{\#[lower]} reads a
 drives, and the blinky comes out as a module per build, its periods
 baked in from the configuration; \code{case!} lowers to a chain of
 comparisons with each variant's literal, and a channel to a
-valid/ready handshake whose wait guards the drives. A unit's second
-process, the falling edge and memories are what remains.
+valid/ready handshake whose wait guards the drives. And the lowering
+is checked: the same statements render to VHDL, a testbench generated
+from the Rust trace replays it into the entity under \code{nvc}, and
+the counter, the blinky and the sequencer agree with their traces at
+every tick, while a deliberately broken one fails. A unit's second
+process, the falling edge, memories, and a runtime channel that is a
+cycle-accurate handshake, so that units with channels can be checked
+too, are what remains.
 
 \subsection{What it does not need}
 

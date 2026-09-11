@@ -3,6 +3,7 @@
 //! how fast the clock is and how fast to blink. The LED is a square
 //! wave: on for the first half of the period, off for the second.
 use std::marker::PhantomData;
+use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{signal, Clock, DefaultClock, Out, Reg, Running, Unit};
 use txhdl::funcs::{eq, lt};
 use txhdl::types::{Bit, U};
@@ -66,6 +67,12 @@ fn main() {
     // testbench keeps the reading end, and no unit has to hold either.
     let (drive, led) = signal::<Bit, DefaultClock>();
     let mut blinky = Blinky::<Sim>::default();
+    if let Some(mut w) = Wave::from_env() {
+        w.clock::<DefaultClock>();
+        w.add("led", &led);
+        w.add("blinky", &blinky);
+        w.start();
+    }
     let mut sim = Running::new(blinky.run((), drive));
 
     // Watch the LED for two periods. The output, one character per
@@ -79,6 +86,7 @@ fn main() {
         wave.push(if led.get().to_bool() { '#' } else { '_' });
     }
     println!("{}: period {} cycles", Sim::NAME, Sim::PERIOD);
+    stop();
     println!("led: {wave}");
     // The board build is not run: a period of a hundred million cycles
     // has nothing to show in a line of text. Its number is reported.
@@ -93,4 +101,5 @@ fn main() {
     // of the config, and each lowering has its own.
     print!("\n{}", Blinky::<Sim>::verilog("blinky_sim"));
     print!("\n{}", Blinky::<Board>::verilog("blinky_board"));
+    txhdl::netlist::write_vhdl_from_env(&Blinky::<Sim>::lowered("blinky"));
 }

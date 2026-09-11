@@ -3,6 +3,7 @@
 //! `go`, loads a count, runs it down and reports done, then waits again.
 //! The arms are Rust patterns and the first that matches wins, so an
 //! arm with a guard sits above the plain arm for the same state.
+use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Reg, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{case, lower, Trace, Value};
@@ -46,6 +47,13 @@ fn main() {
     let (go, go_in) = signal::<Bit, DefaultClock>();
     let (drive, observed) = signal::<State, DefaultClock>();
     let mut seq = Sequencer::default();
+    if let Some(mut w) = Wave::from_env() {
+        w.clock::<DefaultClock>();
+        w.add("go", &go_in);
+        w.add("observed", &observed);
+        w.add("sequencer", &seq);
+        w.start();
+    }
     let mut sim = Running::new(seq.run(go_in, drive));
     let mut trace = Vec::new();
     for cycle in 0..10 {
@@ -55,9 +63,11 @@ fn main() {
     }
     // Prints, one state per cycle:
     //   Idle Load Run Run Run Run Done Idle Idle Idle
+    stop();
     println!("{}", trace.join(" "));
 
     // The state machine, lowered: each arm a condition on the state
     // register, in order, the first that holds winning.
     print!("\n{}", Sequencer::verilog("sequencer"));
+    txhdl::netlist::write_vhdl_from_env(&Sequencer::lowered("sequencer"));
 }

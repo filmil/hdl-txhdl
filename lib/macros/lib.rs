@@ -1223,24 +1223,38 @@ fn width_of(ts: &[TokenTree]) -> Option<usize> {
 // ---------------------------------------------------------------------
 // #[lower]
 
-fn hole(holes: &mut Vec<String>, rust: String) -> String {
-    holes.push(rust);
-    "{}".to_string()
+/// The Rust source of an `Expr` for a name.
+fn ename(n: &str) -> String {
+    format!("E::Name(\"{n}\".to_string())")
 }
 
-/// Translate a Rust expression, in the subset a unit body uses, to
-/// Verilog text with `{}` holes; `holes` collects the Rust expressions
-/// that fill them at run time. `subst` maps `let` names to what they
-/// stand for.
-fn tr(
-    ts: &[TokenTree],
-    subst: &[(String, String)],
-    holes: &mut Vec<String>,
-) -> Result<String, String> {
+/// The Rust source of an `Expr::Bin`.
+fn ebin(op: &str, a: &str, b: &str) -> String {
+    format!("E::Bin(\"{op}\", Box::new({a}), Box::new({b}))")
+}
+
+/// The plain name a drive targets: `x` or `self.x`.
+fn target_name(ts: &[TokenTree]) -> Result<String, String> {
+    match ts {
+        [TokenTree::Ident(id)] => Ok(id.to_string()),
+        [TokenTree::Ident(s), TokenTree::Punct(_), TokenTree::Ident(f)]
+            if s.to_string() == "self" =>
+        {
+            Ok(f.to_string())
+        }
+        _ => Err("a drive's target must be a name or `self.field`".into()),
+    }
+}
+
+/// Translate a Rust expression, in the subset a unit body uses, into
+/// the Rust source that builds its `Expr` when `lowered()` runs.
+/// Constants of the configuration are left as the Rust expressions they
+/// are, so they are evaluated then. `subst` maps `let` names to the
+/// source of what they stand for.
+fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
     if ts.is_empty() {
         return Err("empty expression".into());
     }
-    // Infix: split at the lowest-precedence operator at depth 0.
     let infix: &[&str] =
         &["||", "&&", "==", "!=", "<=", ">=", "<", ">", "+", "-"];
     for op in infix {
@@ -1259,26 +1273,24 @@ fn tr(
                 let generic =
                     (*op == "<" || *op == ">") && (prev == ":" || prev == "U");
                 if !generic {
-                    let l = tr(&ts[..i], subst, holes)?;
-                    let r = tr(&ts[i + n..], subst, holes)?;
-                    return Ok(format!("({l} {op} {r})"));
+                    let l = tr(&ts[..i], subst)?;
+                    let r = tr(&ts[i + n..], subst)?;
+                    return Ok(ebin(op, &l, &r));
                 }
             }
             i += 1;
         }
     }
-    // `e as T`: the cast is Rust's business.
     if let Some(p) = ts.iter().position(
         |t| matches!(t, TokenTree::Ident(id) if id.to_string() == "as"),
     ) {
-        return tr(&ts[..p], subst, holes);
+        return tr(&ts[..p], subst);
     }
     if let TokenTree::Punct(p) = &ts[0] {
         if p.as_char() == '!' {
-            return Ok(format!("(!{})", tr(&ts[1..], subst, holes)?));
+            return Ok(format!("E::Not(Box::new({}))", tr(&ts[1..], subst)?));
         }
     }
-    // A postfix method: `recv.m(args)` at the end.
     let end = ts.len();
     if end >= 3 {
         if let (
@@ -1290,23 +1302,33 @@ fn tr(
             if dot.as_char() == '.' {
                 let args = split_commas(g);
                 let m = m.to_string();
-                let l = tr(&ts[..end - 3], subst, holes)?;
+                let recv = &ts[..end - 3];
+                // A channel's parts are named after the channel.
+                if matches!(m.as_str(), "peek" | "ready" | "recv") {
+                    let ch = target_name(recv)?;
+                    let part = match m.as_str() {
+                        "peek" => "valid",
+                        "ready" => "ready",
+                        _ => "data",
+                    };
+                    return Ok(ename(&format!("{ch}_{part}")));
+                }
+                let l = tr(recv, subst)?;
                 let mut a = Vec::new();
                 for x in &args {
-                    a.push(tr(x, subst, holes)?);
+                    a.push(tr(x, subst)?);
                 }
                 return Ok(match m.as_str() {
-                    "wrapping_add" => format!("({l} + {})", a[0]),
-                    "wrapping_sub" => format!("({l} - {})", a[0]),
-                    "and" => format!("({l} & {})", a[0]),
-                    "or" => format!("({l} | {})", a[0]),
-                    "not" => format!("(~{l})"),
-                    "bit" => format!("{l}[{}]", a[0]),
-                    "raw" | "to_bool" | "get" => l,
-                    "is_some" | "unwrap_or_default" => l,
-                    "peek" => format!("{l}_valid"),
-                    "ready" => format!("{l}_ready"),
-                    "recv" => format!("{l}_data"),
+                    "wrapping_add" => ebin("+", &l, &a[0]),
+                    "wrapping_sub" => ebin("-", &l, &a[0]),
+                    "and" => ebin("&", &l, &a[0]),
+                    "or" => ebin("|", &l, &a[0]),
+                    "not" => format!("E::Not(Box::new({l}))"),
+                    "bit" => {
+                        format!("E::Index(Box::new({l}), Box::new({}))", a[0])
+                    }
+                    "raw" | "to_bool" | "get" | "is_some"
+                    | "unwrap_or_default" => l,
                     other => {
                         return Err(format!("method `{other}` is not lowered"))
                     }
@@ -1326,9 +1348,11 @@ fn tr(
                 .iter()
                 .find(|(k, _)| *k == n)
                 .map(|(_, v)| v.clone())
-                .unwrap_or(n))
+                .unwrap_or_else(|| ename(&n)))
         }
-        [TokenTree::Literal(l)] => Ok(l.to_string().replace('_', "")),
+        [TokenTree::Literal(l)] => {
+            Ok(format!("E::Num({})", l.to_string().replace('_', "")))
+        }
         [TokenTree::Group(g)]
             if matches!(
                 g.delimiter(),
@@ -1336,12 +1360,12 @@ fn tr(
             ) =>
         {
             let inner: Vec<TokenTree> = g.stream().into_iter().collect();
-            tr(&inner, subst, holes)
+            tr(&inner, subst)
         }
         [TokenTree::Ident(s), TokenTree::Punct(_), TokenTree::Ident(f)]
             if s.to_string() == "self" =>
         {
-            Ok(f.to_string())
+            Ok(ename(&f.to_string()))
         }
         _ => {
             let last_group = matches!(ts.last(), Some(TokenTree::Group(_)));
@@ -1351,15 +1375,18 @@ fn tr(
                 {
                     let mut v = Vec::new();
                     for x in split_commas(g) {
-                        v.push(tr(&x, subst, holes)?);
+                        v.push(tr(&x, subst)?);
                     }
                     return Ok(match f.to_string().as_str() {
-                        "eq" => format!("({} == {})", v[0], v[1]),
-                        "ne" => format!("({} != {})", v[0], v[1]),
-                        "lt" => format!("({} < {})", v[0], v[1]),
-                        "gt" => format!("({} > {})", v[0], v[1]),
-                        "mux" => format!("({} ? {} : {})", v[0], v[1], v[2]),
-                        "is_zero" => format!("({} == 0)", v[0]),
+                        "eq" => ebin("==", &v[0], &v[1]),
+                        "ne" => ebin("!=", &v[0], &v[1]),
+                        "lt" => ebin("<", &v[0], &v[1]),
+                        "gt" => ebin(">", &v[0], &v[1]),
+                        "mux" => format!(
+                            "E::Cond(Box::new({}), Box::new({}), Box::new({}))",
+                            v[0], v[1], v[2]
+                        ),
+                        "is_zero" => ebin("==", &v[0], "E::Num(0)"),
                         other => {
                             return Err(format!(
                                 "function `{other}` is not lowered"
@@ -1369,20 +1396,19 @@ fn tr(
                 }
             }
             if text == "Bit::One" {
-                return Ok("1'b1".into());
+                return Ok("E::Bits(1, \"1\".to_string())".into());
             }
             if text == "Bit::Zero" {
-                return Ok("1'b0".into());
+                return Ok("E::Bits(1, \"0\".to_string())".into());
             }
             if let Some(TokenTree::Group(g)) = ts.last() {
                 if text.starts_with("Bit::from_bool") {
                     let inner: Vec<TokenTree> =
                         g.stream().into_iter().collect();
-                    return tr(&inner, subst, holes);
+                    return tr(&inner, subst);
                 }
                 if text.starts_with("U::from") || text.starts_with("U::<") {
-                    let rust = g.stream().to_string();
-                    return Ok(hole(holes, format!("(({rust}) as u128)")));
+                    return Ok(format!("E::Num(({}) as u128)", g.stream()));
                 }
             }
             if text.contains("::") && !last_group {
@@ -1391,9 +1417,9 @@ fn tr(
                     c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()
                 });
                 return Ok(if upper {
-                    hole(holes, format!("(({text}) as u128)"))
+                    format!("E::Num(({text}) as u128)")
                 } else {
-                    hole(holes, format!("::txhdl::netlist::literal({text})"))
+                    format!("::txhdl::netlist::lit({text})")
                 });
             }
             Err(format!("cannot lower `{text}`"))
@@ -1422,7 +1448,6 @@ fn pattern_cond(
     pt: &[TokenTree],
     v: &str,
     subst: &[(String, String)],
-    holes: &mut Vec<String>,
 ) -> Result<String, String> {
     let guard_at = pt.iter().position(
         |t| matches!(t, TokenTree::Ident(id) if id.to_string() == "if"),
@@ -1438,20 +1463,24 @@ fn pattern_cond(
             _ => alts.last_mut().unwrap().push(t.clone()),
         }
     }
-    let mut conds = Vec::new();
+    let mut cond: Option<String> = None;
     for a in &alts {
         let text: String =
             a.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("");
-        if text == "_" {
-            conds.push("1'b1".to_string());
+        let c = if text == "_" {
+            "E::Bits(1, \"1\".to_string())".to_string()
         } else {
-            let lit = hole(holes, format!("::txhdl::netlist::literal({text})"));
-            conds.push(format!("({v} == {lit})"));
-        }
+            ebin("==", v, &format!("::txhdl::netlist::lit({text})"))
+        };
+        cond = Some(match cond {
+            None => c,
+            Some(prev) => ebin("||", &prev, &c),
+        });
     }
-    let mut cond = conds.join(" || ");
+    let mut cond =
+        cond.unwrap_or_else(|| "E::Bits(1, \"1\".to_string())".to_string());
     if let Some(g) = guard {
-        cond = format!("({cond}) && {}", tr(g, subst, holes)?);
+        cond = ebin("&&", &cond, &tr(g, subst)?);
     }
     Ok(cond)
 }
@@ -1551,7 +1580,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             None => inner,
         };
         ports.push(format!(
-            "(\"{pname}\", ::txhdl::comp::trace::Kind::{kind}, \
+            "(\"{pname}\".to_string(), ::txhdl::comp::trace::Kind::{kind}, \
              <{inner} as ::txhdl::types::Value>::WIDTH)"
         ));
     }
@@ -1575,7 +1604,6 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut clock = String::new();
     let mut guard: Option<String> = None;
     let mut subst: Vec<(String, String)> = Vec::new();
-    let mut holes: Vec<String> = Vec::new();
     let mut stmts: Vec<String> = Vec::new();
     for st in statements(lbody) {
         let ts: Vec<TokenTree> = st.into_iter().collect();
@@ -1608,14 +1636,12 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             };
             clock = format!("<{c} as ::txhdl::comp::Clock>::NAME");
             let body = &parts[1][2..]; // past the `||` of the closure
-            let cond = match tr(body, &subst, &mut holes) {
+            let cond = match tr(body, &subst) {
                 Ok(c) => c,
                 Err(m) => return err(ts[0].span(), &m),
             };
             guard = Some(cond.clone());
-            stmts.push(format!(
-                "::txhdl::netlist::Stmt::Guard(format!(\"{cond}\"))"
-            ));
+            stmts.push(format!("S::Guard({cond})"));
             continue;
         }
         // let v = rx.wait().await: a receive is the wait, and its guard.
@@ -1626,16 +1652,14 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             let TokenTree::Ident(rx) = &ts[3] else {
                 return err(ts[3].span(), "expected a channel");
             };
-            let cond = format!("{rx}_valid");
+            let cond = ename(&format!("{rx}_valid"));
             guard = Some(cond.clone());
+            stmts.push(format!("S::Guard({cond})"));
             stmts.push(format!(
-                "::txhdl::netlist::Stmt::Guard(format!(\"{cond}\"))"
+                "S::Drive(\"{rx}_ready\".to_string(), \
+                 E::Bits(1, \"1\".to_string()))"
             ));
-            stmts.push(format!(
-                "::txhdl::netlist::Stmt::Drive(\
-                 \"{rx}_ready\".to_string(), format!(\"1'b1\"))"
-            ));
-            subst.push((n.to_string(), format!("{rx}_data")));
+            subst.push((n.to_string(), ename(&format!("{rx}_data"))));
             continue;
         }
         let is_macro = matches!(
@@ -1655,10 +1679,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             let TokenTree::Ident(rx) = &ts[3] else {
                 return err(ts[0].span(), "expected `let v = rx.recv()`");
             };
-            stmts.push(format!(
-                "::txhdl::netlist::Stmt::Drive(\
-                 \"{rx}_ready\".to_string(), format!(\"{g}\"))"
-            ));
+            stmts.push(format!("S::Drive(\"{rx}_ready\".to_string(), {g})"));
         }
         if text.starts_with("let") {
             // `let a = e` or `let (a, b) = (e1, e2)`, bound pairwise.
@@ -1674,7 +1695,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
             for (n, e) in names.iter().zip(&exprs) {
                 let name = n[0].to_string();
-                match tr(e, &subst, &mut holes) {
+                match tr(e, &subst) {
                     Ok(v) => subst.push((name, v)),
                     Err(m) => return err(ts[0].span(), &m),
                 }
@@ -1690,7 +1711,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 return err(ts[0].span(), "expected `value =>`");
             };
             let vt: Vec<TokenTree> = value.into_iter().collect();
-            let v = match tr(&vt, &subst, &mut holes) {
+            let v = match tr(&vt, &subst) {
                 Ok(v) => v,
                 Err(m) => return err(ts[0].span(), &m),
             };
@@ -1705,7 +1726,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     return err(at[j].span(), "expected `pattern => { .. }`");
                 };
                 let pt: Vec<TokenTree> = pat.into_iter().collect();
-                let cond = match pattern_cond(&pt, &v, &subst, &mut holes) {
+                let cond = match pattern_cond(&pt, &v, &subst) {
                     Ok(c) => c,
                     Err(m) => return err(at[j].span(), &m),
                 };
@@ -1722,22 +1743,17 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     };
                     let lt: Vec<TokenTree> = lhs.into_iter().collect();
                     let rt: Vec<TokenTree> = rhs.into_iter().collect();
-                    let l = match tr(&lt, &subst, &mut holes) {
+                    let l = match target_name(&lt) {
                         Ok(l) => l,
                         Err(m) => return err(body.span(), &m),
                     };
-                    let r = match tr(&rt, &subst, &mut holes) {
+                    let r = match tr(&rt, &subst) {
                         Ok(r) => r,
                         Err(m) => return err(body.span(), &m),
                     };
-                    drives.push(format!(
-                        "(\"{l}\".to_string(), format!(\"{r}\"))"
-                    ));
+                    drives.push(format!("(\"{l}\".to_string(), {r})"));
                 }
-                arms.push(format!(
-                    "(format!(\"{cond}\"), vec![{}])",
-                    drives.join(", ")
-                ));
+                arms.push(format!("({cond}, vec![{}])", drives.join(", ")));
                 j = k2 + 1;
                 if let Some(TokenTree::Punct(p)) = at.get(j) {
                     if p.as_char() == ',' {
@@ -1745,10 +1761,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 }
             }
-            stmts.push(format!(
-                "::txhdl::netlist::Stmt::Case(vec![{}])",
-                arms.join(", ")
-            ));
+            stmts.push(format!("S::Case(vec![{}])", arms.join(", ")));
             continue;
         }
         if text.starts_with("when!") {
@@ -1760,7 +1773,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 return err(ts[0].span(), "expected `cond =>`");
             };
             let ct: Vec<TokenTree> = cond.into_iter().collect();
-            let c = match tr(&ct, &subst, &mut holes) {
+            let c = match tr(&ct, &subst) {
                 Ok(c) => c,
                 Err(m) => return err(ts[0].span(), &m),
             };
@@ -1788,25 +1801,20 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         };
                         let lt: Vec<TokenTree> = lhs.into_iter().collect();
                         let rt: Vec<TokenTree> = rhs.into_iter().collect();
-                        let l = match tr(&lt, &subst, &mut holes) {
+                        let l = match target_name(&lt) {
                             Ok(l) => l,
                             Err(m) => return err(g.span(), &m),
                         };
-                        let r = match tr(&rt, &subst, &mut holes) {
+                        let r = match tr(&rt, &subst) {
                             Ok(r) => r,
                             Err(m) => return err(g.span(), &m),
                         };
-                        drives.push(format!(
-                            "(\"{l}\".to_string(), format!(\"{r}\"))"
-                        ));
+                        drives.push(format!("(\"{l}\".to_string(), {r})"));
                     }
                 }
                 arms.push(format!("vec![{}]", drives.join(", ")));
             }
-            stmts.push(format!(
-                "::txhdl::netlist::Stmt::When(format!(\"{c}\"), {}, {})",
-                arms[0], arms[1]
-            ));
+            stmts.push(format!("S::When({c}, {}, {})", arms[0], arms[1]));
             continue;
         }
         // tx.send(e): data driven, valid asserted with the guard.
@@ -1825,22 +1833,20 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                             "send needs a wait before it",
                         );
                     };
-                    let tx = match tr(&ts[..end], &subst, &mut holes) {
+                    let tx = match target_name(&ts[..end]) {
                         Ok(t) => t,
                         Err(m) => return err(ts[0].span(), &m),
                     };
                     let at: Vec<TokenTree> = g.stream().into_iter().collect();
-                    let e = match tr(&at, &subst, &mut holes) {
+                    let e = match tr(&at, &subst) {
                         Ok(e) => e,
                         Err(m) => return err(ts[0].span(), &m),
                     };
                     stmts.push(format!(
-                        "::txhdl::netlist::Stmt::Drive(\
-                         \"{tx}_data\".to_string(), format!(\"{e}\"))"
+                        "S::Drive(\"{tx}_data\".to_string(), {e})"
                     ));
                     stmts.push(format!(
-                        "::txhdl::netlist::Stmt::Drive(\
-                         \"{tx}_valid\".to_string(), format!(\"{gd}\"))"
+                        "S::Drive(\"{tx}_valid\".to_string(), {gd})"
                     ));
                     continue;
                 }
@@ -1855,18 +1861,17 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             ) = (&ts[end], &ts[end + 1], &ts[end + 2])
             {
                 if dot.as_char() == '.' && m.to_string() == "set" {
-                    let target = match tr(&ts[..end], &subst, &mut holes) {
+                    let target = match target_name(&ts[..end]) {
                         Ok(t) => t,
                         Err(m) => return err(ts[0].span(), &m),
                     };
                     let at: Vec<TokenTree> = g.stream().into_iter().collect();
-                    let e = match tr(&at, &subst, &mut holes) {
+                    let e = match tr(&at, &subst) {
                         Ok(e) => e,
                         Err(m) => return err(ts[0].span(), &m),
                     };
                     stmts.push(format!(
-                        "::txhdl::netlist::Stmt::Drive(\
-                         \"{target}\".to_string(), format!(\"{e}\"))"
+                        "S::Drive(\"{target}\".to_string(), {e})"
                     ));
                     continue;
                 }
@@ -1877,42 +1882,28 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     if clock.is_empty() {
         return err(body.span(), "run must start by waiting for `C::rising()`");
     }
-    // Number the holes in order of appearance, so every format! can
-    // name its own.
-    let mut k = 0;
-    let mut numbered = Vec::new();
-    for s in &stmts {
-        let mut out = String::new();
-        let mut rest = s.as_str();
-        while let Some(p) = rest.find("{}") {
-            out.push_str(&rest[..p]);
-            out.push_str(&format!("{{h{k}}}"));
-            k += 1;
-            rest = &rest[p + 2..];
-        }
-        out.push_str(rest);
-        numbered.push(out);
-    }
-    let lets: String = holes
-        .iter()
-        .enumerate()
-        .map(|(i, h)| format!("let h{i} = {h};"))
-        .collect::<Vec<_>>()
-        .join("\n");
     let generated_text = format!(
         "impl{generics} {unit} {{\n\
-         /// The Verilog of this unit, as `#[lower]` read it from `run`.\n\
-         #[allow(unused_variables)]\n\
+         /// This unit as `#[lower]` read it from `run`; `.verilog()` and\n\
+         /// `.vhdl()` render it.\n\
+         #[allow(unused_variables, clippy::all)]\n\
+         pub fn lowered(name: &str) -> ::txhdl::netlist::Lowered {{\n\
+         use ::txhdl::netlist::{{Expr as E, Stmt as S}};\n\
+         ::txhdl::netlist::Lowered {{\n\
+         name: name.to_string(),\n\
+         clock: {clock},\n\
+         fields: <Self as ::txhdl::netlist::Fields>::fields(),\n\
+         ports: vec![{ports}],\n\
+         body: vec![{stmts}],\n\
+         }}\n}}\n\
+         /// The Verilog of this unit.\n\
          pub fn verilog(name: &str) -> String {{\n\
-         {lets}\n\
-         let fields = <Self as ::txhdl::netlist::Fields>::fields();\n\
-         let ports: &[(&str, ::txhdl::comp::trace::Kind, usize)] =\n\
-         &[{ports}];\n\
-         let body = vec![{stmts}];\n\
-         ::txhdl::netlist::unit_verilog(name, {clock}, &fields, ports, &body)\n\
-         }}\n}}",
+         Self::lowered(name).verilog() }}\n\
+         /// The VHDL of this unit.\n\
+         pub fn vhdl(name: &str) -> String {{ Self::lowered(name).vhdl() }}\n\
+         }}",
         ports = ports.join(", "),
-        stmts = numbered.join(",\n"),
+        stmts = stmts.join(",\n"),
     );
     if let Ok(dir) = std::env::var("TXHDL_MACRO_DUMP") {
         let _ = std::fs::write(

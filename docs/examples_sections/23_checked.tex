@@ -1,0 +1,43 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Lowering, Checked}
+\label{sec:x-checked}
+
+A lowering that is only printed is a claim. From this section on, a
+lowered unit is also run, and against the same stimulus the Rust
+simulation had. The build does it: the example is run with
+\code{TXHDL\_VHDL} set, so beside its trace it writes the unit's VHDL,
+which \code{\#[lower]} renders from the same statements as the
+Verilog, and a ports file; \code{//tools/fst2tb} reads the trace and
+the ports and writes a testbench that replays the trace's inputs into
+the entity and asserts, tick by tick, that the entity's registers and
+outputs are what the trace holds; and \code{vhdl\_test} from
+\code{rules\_nvc} simulates it under \code{nvc}, built from source,
+hermetically. The test passes only if every comparison held.
+
+The testbench's timing is the model of time, made literal. One tick is
+one nanosecond and the clock rises at even ticks. An input the trace
+holds at tick $2k$ was set before that edge, so it is applied at
+$2k-1$. A register the trace holds at $2k$ took its value at that
+edge, so it is checked at $2k+1$, through a VHDL-2008 external name.
+A wire the Rust process drove at $2k$ was computed from the registers
+as they stood before that edge, so it is checked at $2k-1$, where the
+entity's continuous assignment shows the same value. That last rule
+is a fact about the runtime worth knowing: a wire a process drives
+inside its iteration lags the hardware's continuous assignment by the
+process's own step.
+
+The counter of the cheat sheet, the blinky and the sequencer pass.
+A negative control was run once: the counter's adder changed to add
+two makes the test fail at the first tick, so a pass means something.
+
+The stage of Section~\ref{sec:x-stage} is not checked, and the reason
+is a finding. The runtime's channel is a mailbox: an offer sits until
+taken, and the consumer takes it in the same step it is offered, so
+\code{valid} is never high at a tick's end and \code{ready} means the
+slot is empty. The lowering's channel is a valid/ready handshake held
+across edges. The two describe the same design but not the same
+signals per tick, so a trace of one is not a check of the other. To
+check a unit with channels, the runtime's channel has to become a
+handshake that is cycle-accurate, valid held until ready is seen at an
+edge; that is the next change to the runtime, and it will change the
+FIFO's and the arbiter's traces.

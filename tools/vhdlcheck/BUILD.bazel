@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The smallest VHDL test there is, so the hermetic simulator is known to
+# work before a lowered design is asked to.
+load("@rules_nvc//nvc:rules.bzl", "vhdl_test")
+
+vhdl_test(
+    name = "hello_test",
+    srcs = ["hello.vhdl"],
+    deps = [],
+    entities = ["hello_tb"],
+)

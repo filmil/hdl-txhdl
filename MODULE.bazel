@@ -75,3 +75,8 @@ crate.from_specs(
     lockfile = "//:cargo-bazel-lock.json",
 )
 use_repo(crate, "crates")
+
+# VHDL simulation, hermetic (nvc is built from source through the
+# registry): the lowered designs are simulated against the traces the Rust
+# simulation wrote.
+bazel_dep(name = "rules_nvc", version = "4.5.2")

@@ -24,7 +24,17 @@ compares the count with 15 and 8, the board build with 99999999 and
 50000000. Both modules are at the end of Listing~\ref{lst:x-blinky-out}.
 The comparison had to be written \code{lt(n, U::from(C::HALF))} rather
 than on the raw integers for the macro to read it, which is the first
-place the lowering pushed back on the source.
+place the lowering pushed back on the source. The simulation build's
+lowering is also simulated, in VHDL under \code{nvc}, against the
+trace the Rust run wrote, Section~\ref{sec:x-checked};
+Figure~\ref{fig:x-blinky} is that trace.
+
+\begin{figure}[htbp]
+\centering
+\input{blinky_timing.tex}
+\caption{The blinky's simulation build: the count and the LED it drives.}
+\label{fig:x-blinky}
+\end{figure}
 
 \lstinputlisting[caption={\code{ex\_blinky.rs}. Run with \code{bazel run //lib/examples:ex\_blinky}.},label={lst:x-blinky}]{lib/examples/ex_blinky.rs}
 

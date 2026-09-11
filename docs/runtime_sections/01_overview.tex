@@ -139,9 +139,17 @@ behavioural half has begun: \code{\#[pipeline]} lowers an \code{async
 fn} of awaited operators, and \code{\#[lower]} lowers a unit's
 \code{run} loop, with \code{netlist::unit\_verilog} assembling the
 module from the unit's fields, the ports of \code{run} and the
-statements the macro read, \code{case!} and channels included. What
-neither reads yet is a unit's second process, a falling-edge wait, and
-a memory.
+statements the macro read, \code{case!} and channels included. The
+macro builds an expression tree, \code{netlist::Expr}, and a
+\code{Lowered} unit around it, and two emitters render it, Verilog
+and VHDL-2008. The VHDL is what closes the loop: the build simulates
+a lowered unit under \code{nvc}, with a testbench
+\code{//tools/fst2tb} generates from the trace the Rust run wrote, and
+the test passes only if registers and outputs agree at every tick.
+What neither emitter reads yet is a unit's second process, a
+falling-edge wait, and a memory; and a unit with channels cannot be
+checked until the runtime's channel is a cycle-accurate handshake
+rather than a mailbox.
 
 \subsection{Building it}
 

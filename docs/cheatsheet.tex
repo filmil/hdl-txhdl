@@ -68,7 +68,7 @@ two per cycle, so a falling edge is a tick of its own.
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,frame=none,backgroundcolor=\color{tint},xleftmargin=2pt]{lib/examples/ex_cheat.rs}
 
 \head{Its netlist}
-What \code{Counter::verilog("counter")} printed when the build ran it:
+What \code{Counter::verilog("counter")} printed when the build ran it; the same lowering, as VHDL, is simulated by \code{nvc} against the waveform on the right, in the build:
 \lstinputlisting[style=ascii,frame=none,backgroundcolor=\color{tint},xleftmargin=2pt]{out_cheat.txt}
 
 \columnbreak

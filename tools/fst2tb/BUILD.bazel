@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Writes a VHDL testbench from the trace a Rust simulation wrote: it
+# replays the recorded inputs into the lowered entity and checks its
+# registers and outputs against the recorded values, tick by tick.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "fst2tb",
+    srcs = ["main.rs"],
+    edition = "2021",
+    deps = ["@crates//:wellen"],
+)

@@ -15,7 +15,16 @@ cycle. The sequencer is lowered too, at the end of its output:
 each arm a comparison of the state register with its variant's
 literal, which the \code{Value} derive supplies, guards joined with
 \code{\&\&} and alternatives with \code{||}, in the order written, so
-the first arm that holds wins as it does in the macro.
+the first arm that holds wins as it does in the macro. The lowering is
+simulated against the trace, Section~\ref{sec:x-checked}, and
+Figure~\ref{fig:x-case} is the trace.
+
+\begin{figure}[htbp]
+\centering
+\input{case_timing.tex}
+\caption{The sequencer: \code{go} for one cycle, then the states and the count.}
+\label{fig:x-case}
+\end{figure}
 
 \lstinputlisting[caption={\code{ex\_case.rs}. Run with \code{bazel run //lib/examples:ex\_case}.},label={lst:x-case}]{lib/examples/ex_case.rs}
 

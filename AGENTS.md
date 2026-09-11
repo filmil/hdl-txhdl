@@ -56,6 +56,10 @@ the same change, or the change is not finished.
    A concept with no example is a concept nobody has checked, and
    `fragments/eng-standards.md` in the SOP requires that every piece
    of specification has a test that passes.
+   A lowered example is also simulated against its own trace: give
+   `waveform()` in `docs/BUILD.bazel` a `lowered = (entity, unit)`, and
+   the example calls `netlist::write_vhdl_from_env`; the test
+   `//docs:<name>_sim_<entity>_tb_test` must pass.
 3. **The documents.** Add a section for the example to
    `docs/examples_sections/`, with a paragraph on what it shows and a
    `\lstinputlisting` of the file; if it prints, add it to the
@@ -113,7 +117,7 @@ repository has had that happen twice.
 # Verification
 
 * `bazel build //...` is green.
-* `bazel test //...` exits 0 or 4; 4 means no test target exists yet.
+* `bazel test //...` exits 0: the lowered units agree with their traces.
 * Every PDF builds, every face is Type 1, every `\ref` and `\cite`
   resolves, and no listing line overflows its frame.
 * `CLAUDE.md` and `GEMINI.md` are symlinks to this file.

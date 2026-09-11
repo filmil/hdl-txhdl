@@ -10,14 +10,40 @@ tools pinned in //:multitool.lock.json; and draws the text as TikZ
 NAME_timing.tex.
 """
 
-def waveform(name, example, signals):
+load("@rules_nvc//nvc:rules.bzl", "vhdl_test")
+
+def waveform(name, example, signals, lowered = None):
+    """`lowered = (entity, unit)` also takes the example's VHDL and
+    simulates it against the trace: NAME.vhd and NAME.vhd.ports from
+    the run, NAME_tb.vhd from fst2tb, and a vhdl_test NAME_sim."""
+    outs = ["out_" + name + ".txt", name + ".fst", name + ".fst.names"]
+    env = "TXHDL_FST=$(RULEDIR)/" + name + ".fst"
+    if lowered:
+        outs += [name + ".vhd", name + ".vhd.ports"]
+        env += " TXHDL_VHDL=$(RULEDIR)/" + name + ".vhd"
     native.genrule(
         name = name + "_run",
-        outs = ["out_" + name + ".txt", name + ".fst", name + ".fst.names"],
-        cmd = "TXHDL_FST=$(RULEDIR)/" + name + ".fst $(location " + example + ")" +
+        outs = outs,
+        cmd = env + " $(location " + example + ")" +
               " > $(RULEDIR)/out_" + name + ".txt",
         tools = [example],
     )
+    if lowered:
+        entity, unit = lowered
+        native.genrule(
+            name = name + "_tbgen",
+            srcs = [name + ".fst", name + ".vhd.ports"],
+            outs = [name + "_tb.vhd"],
+            cmd = "$(location //tools/fst2tb) $(location " + name + ".fst)" +
+                  " $(location " + name + ".vhd.ports) " + entity + " " + unit + " > $@",
+            tools = ["//tools/fst2tb"],
+        )
+        vhdl_test(
+            name = name + "_sim",
+            srcs = [name + ".vhd", name + "_tb.vhd"],
+            deps = [],
+            entities = [entity + "_tb"],
+        )
     native.genrule(
         name = name + "_db",
         srcs = [name + ".fst"],
