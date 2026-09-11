@@ -5,7 +5,7 @@
 
 A transaction-centric hardware description language.
 
-This project is collaboration between Filip (filmil) and Dragisa (dj3maj)
+This project is collaboration between Filip (filmil) and Dragiša (dj3maj)
 
 The specification is `spec/language.md`.
 `docs/` holds the analysis and the decisions behind it, and
