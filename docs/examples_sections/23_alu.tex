@@ -1,0 +1,30 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An ALU}
+\label{sec:x-alu}
+
+The operators a datapath needs beyond arithmetic: shifts, bitwise
+logic, and the signed and unsigned compares, each a plain function on
+\code{U<N>} and each lowered to the operator of the same name, with
+\code{sra} as an arithmetic shift and the signed compare as
+\code{\$signed} in Verilog and \code{signed} in VHDL. \code{op} selects
+with \code{case!} over an enum, the result is the register \code{r} so
+the \code{case!} can drive it, and the output wire \code{y} shows it.
+A compare yields a \code{Bit}; \code{zext} makes it the datapath's
+width, and the lowering drops the call, since the target's width is
+the extension.
+The testbench drives ten operations from a table, one per cycle, and
+the lowering is simulated against that trace,
+Section~\ref{sec:x-checked}. Concatenation and sign extension are on
+\code{U<N>} too, \code{concat::<K, M>} and \code{sext::<M>}, with the
+result width stated as \code{mul::<M>} states it.
+
+\begin{figure}[htbp]
+\centering
+\input{alu_timing.tex}
+\caption{The ALU: an operation per cycle, the result a cycle later.}
+\label{fig:x-alu}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_alu.rs}. Run with \code{bazel run //lib/examples:ex\_alu}.},label={lst:x-alu}]{lib/examples/ex_alu.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_alu} printed when the build ran it: the table, then the lowering.},label={lst:x-alu-out}]{out_alu.txt}

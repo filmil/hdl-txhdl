@@ -566,6 +566,8 @@ latex_document(
         ":stage_timing",
         ":packet_run",
         ":packet_timing",
+        ":alu_run",
+        ":alu_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -577,6 +579,20 @@ latex_document(
     main = "cover.tex",
     data = [":vendored_tex"],
     deps = ["housestyle.tex"],
+)
+
+waveform(
+    name = "alu",
+    example = "//lib/examples:ex_alu",
+    lowered = ("alu", "alu"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//op=>op",
+        "//a=>a",
+        "//b=>b",
+        "//alu/r=>r",
+        "//y=>y",
+    ],
 )
 
 # The cheat sheet: one page, landscape, with its own example's listing,

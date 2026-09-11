@@ -135,6 +135,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An ALU, lowered:  bazel run //lib/examples:ex_alu
+rust_binary(
+    name = "ex_alu",
+    srcs = ["ex_alu.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # The cheat sheet's counter:  bazel run //lib/examples:ex_cheat
 rust_binary(
     name = "ex_cheat",
@@ -170,5 +179,6 @@ filegroup(
         "ex_stage.rs",
         "ex_packet.rs",
         "ex_cheat.rs",
+        "ex_alu.rs",
     ],
 )
