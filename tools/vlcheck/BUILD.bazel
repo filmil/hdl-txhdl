@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+# Does the hermetic Verilator simulate a testbench with timing? The
+# smallest one, run as a test; //docs builds the real ones the same way.
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
+load("@rules_verilog//verilog:defs.bzl", "verilog_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["main.cc"])
+
+verilog_library(
+    name = "hello_tb_v",
+    srcs = ["hello_tb.v"],
+    top_module = "hello_tb",
+)
+
+verilator_cc_library(
+    name = "hello_tb_verilated",
+    module = ":hello_tb_v",
+    timing = True,
+    vopts = ["--main", "-Wno-fatal"],
+)
+
+cc_test(
+    name = "hello_test",
+    srcs = ["main.cc"],
+    deps = [":hello_tb_verilated"],
+)
