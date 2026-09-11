@@ -137,4 +137,8 @@ repository has had that happen twice.
 * `bazel test //...` exits 0: the lowered units agree with their traces.
 * Every PDF builds, every face is Type 1, every `\ref` and `\cite`
   resolves, and no listing line overflows its frame.
+* Every page that holds a figure or a table was rendered and looked at:
+  no float crosses into the other column or the margin, no float lies on
+  another or on the text, and no label sits on a line or on another
+  label. The build cannot see any of these.
 * `CLAUDE.md` and `GEMINI.md` are symlinks to this file.

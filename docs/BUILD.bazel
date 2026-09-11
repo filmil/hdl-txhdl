@@ -721,7 +721,7 @@ genrule(
         srcs = [name + ".dt", name + ".fst.names"],
         outs = ["paper_" + name + "_timing.tex"],
         cmd = "$(location //tools/dt2tikz) $(location " + name + ".dt)" +
-              " --order " + order + " --color --width 8.4" + extra +
+              " --order " + order + " --only --color --width 7.0" + extra +
               " --names $(location " + name + ".fst.names)" +
               " --signals '" + signals + "' > $@",
         tools = ["//tools/dt2tikz"],
@@ -743,8 +743,8 @@ genrule(
         ),
         (
             "vreteno",
-            "clk,rst,pc,instr,done,rd,val",
-            "//clocks/clk=>clk,//rst=>rst,//cpu/pc=>pc,//instr=>instr," +
+            "clk,rst,pc,done,rd,val",
+            "//clocks/clk=>clk,//rst=>rst,//cpu/pc=>pc," +
             "//wb/done=>done,//wb/rd=>rd,//wb/val=>val",
             " --until 22",
         ),

@@ -9,11 +9,13 @@
 //! a period, all at the current time.
 //!
 //! Usage: dt2tikz IN.dt [--order a,b,..] [--color] [--width CM]
-//!        [--until TICKS] [--names FILE --signals 'path=>alias,..']
+//!        [--until TICKS] [--only] [--names FILE --signals 'path=>alias,..']
 //!        > OUT.tex
 //!
 //! `--until` cuts the diagram at that tick: a long run, a processor's
-//! program, shows its opening cycles and not the whole.
+//! program, shows its opening cycles and not the whole. `--only` draws
+//! the signals of `--order` and no others, for a figure that must fit
+//! a column.
 //!
 //! `--names` is the sidecar the FST writer leaves beside its file: one
 //! line per enum-valued signal, its path, a tab, and its variants by
@@ -36,6 +38,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args.first().expect("usage: dt2tikz IN.dt [--order a,b]");
     let color = args.iter().any(|a| a == "--color");
+    let only = args.iter().any(|a| a == "--only");
     let x_max: f64 = match args.iter().position(|a| a == "--width") {
         Some(p) => args[p + 1].parse().expect("--width needs centimetres"),
         None => X_MAX,
@@ -127,7 +130,9 @@ fn main() {
             .into_iter()
             .filter(|n| hist.contains_key(n))
             .collect();
-        order.append(&mut rest);
+        if !only {
+            order.append(&mut rest);
+        }
     }
     // Spread the ticks so the widest bus label fits its shortest
     // interval, within the width of the page; and draw one interval
