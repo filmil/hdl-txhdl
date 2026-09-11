@@ -446,6 +446,14 @@ impl<T: Copy + Default + 'static, const N: usize, C: Clock> Default
     }
 }
 
+/// A second handle on the same memory: what a testbench keeps to read
+/// a register file or a data memory while the unit runs.
+impl<T: Copy, const N: usize, C: Clock> Clone for Mem<T, N, C> {
+    fn clone(&self) -> Self {
+        Mem(self.0.clone(), PhantomData)
+    }
+}
+
 impl<T: Copy + Default + 'static, const N: usize, C: Clock> Mem<T, N, C> {
     /// A memory with its first words given: a program, a table. What
     /// a ROM is at elaboration, and what a testbench loads.
@@ -1100,6 +1108,7 @@ pub mod trace {
         }
     }
     /// A channel is two signals: the transaction and its valid bit.
+    #[rustfmt::skip]
     impl<T: Value + super::Transaction + 'static, C: Clock> Traceable
         for Rx<T, C>
     {
@@ -1107,6 +1116,7 @@ pub mod trace {
             channel(&self.0, scope, Kind::Rx)
         }
     }
+    #[rustfmt::skip]
     impl<T: Value + super::Transaction + 'static, C: Clock> Traceable
         for Tx<T, C>
     {
