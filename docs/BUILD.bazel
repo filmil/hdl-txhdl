@@ -631,6 +631,7 @@ waveform(
         "//rst=>rst",
         "//cpu/pc=>pc",
         "//instr=>instr",
+        "//wb/done=>done",
         "//wb/rd=>rd",
         "//wb/val=>val",
         "//halt=>halt",
