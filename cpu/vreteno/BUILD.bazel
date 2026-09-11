@@ -40,6 +40,17 @@ rust_binary(
     ],
 )
 
+# The core against the model, every cycle.
+rust_test(
+    name = "lockstep",
+    srcs = ["tests/lockstep.rs"],
+    edition = "2021",
+    deps = [
+        ":vreteno32",
+        "//lib:txhdl",
+    ],
+)
+
 filegroup(
     name = "sources",
     srcs = glob(["src/*.rs", "tests/*.rs"]),
