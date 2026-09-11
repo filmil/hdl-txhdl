@@ -12,7 +12,7 @@ tools pinned in //:multitool.lock.json; and draws the text as TikZ
 def waveform(name, example, signals):
     native.genrule(
         name = name + "_run",
-        outs = ["out_" + name + ".txt", name + ".fst"],
+        outs = ["out_" + name + ".txt", name + ".fst", name + ".fst.names"],
         cmd = "TXHDL_FST=$(RULEDIR)/" + name + ".fst $(location " + example + ")" +
               " > $(RULEDIR)/out_" + name + ".txt",
         tools = [example],
@@ -37,9 +37,11 @@ def waveform(name, example, signals):
     order = ",".join([s.split("=>")[-1] for s in signals])
     native.genrule(
         name = name + "_timing",
-        srcs = [name + ".dt"],
+        srcs = [name + ".dt", name + ".fst.names"],
         outs = [name + "_timing.tex"],
         cmd = "$(location //tools/dt2tikz) $(location " + name + ".dt)" +
-              " --order " + order + " > $@",
+              " --order " + order +
+              " --names $(location " + name + ".fst.names)" +
+              " --signals '" + ",".join(signals) + "' > $@",
         tools = ["//tools/dt2tikz"],
     )

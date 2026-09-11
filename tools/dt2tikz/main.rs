@@ -8,7 +8,13 @@
 //! comment, and any other line is `name=value;name=value...` ending in
 //! a period, all at the current time.
 //!
-//! Usage: dt2tikz IN.dt [--order name,name,...] > OUT.tex
+//! Usage: dt2tikz IN.dt [--order a,b,..] [--color] [--width CM]
+//!        [--names FILE --signals 'path=>alias,..'] > OUT.tex
+//!
+//! `--names` is the sidecar the FST writer leaves beside its file: one
+//! line per enum-valued signal, its path, a tab, and its variants by
+//! index; `--signals` says which alias each path has here, so such a
+//! signal is labelled by name rather than by number.
 //!
 //! Rows appear in the order the signals first appear in the text, or in
 //! the order given, which is how the document asks for them.
@@ -25,16 +31,50 @@ const PITCH: f64 = 0.95; // row pitch
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args.first().expect("usage: dt2tikz IN.dt [--order a,b]");
-    let wanted: Vec<String> = match args.get(1).map(|s| s.as_str()) {
-        Some("--order") => args
-            .get(2)
+    let color = args.iter().any(|a| a == "--color");
+    let x_max: f64 = match args.iter().position(|a| a == "--width") {
+        Some(p) => args[p + 1].parse().expect("--width needs centimetres"),
+        None => X_MAX,
+    };
+    let wanted: Vec<String> = match args.iter().position(|a| a == "--order") {
+        Some(p) => args
+            .get(p + 1)
             .expect("--order needs a list")
             .split(',')
             .map(|s| s.to_string())
             .collect(),
-        _ => Vec::new(),
+        None => Vec::new(),
     };
     let text = std::fs::read_to_string(path).expect("read");
+    // Alias -> variant names, from the sidecar and the signal list.
+    let mut enum_names: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    if let Some(p) = args.iter().position(|a| a == "--names") {
+        let sidecar = std::fs::read_to_string(&args[p + 1]).unwrap_or_default();
+        let sigs = args
+            .iter()
+            .position(|a| a == "--signals")
+            .map(|q| args[q + 1].clone())
+            .unwrap_or_default();
+        let alias_of: std::collections::HashMap<String, String> = sigs
+            .split(',')
+            .filter_map(|s| s.split_once("=>"))
+            .map(|(p, a)| {
+                (p.trim_start_matches('/').replace('/', "."), a.to_string())
+            })
+            .collect();
+        for line in sidecar.lines() {
+            let Some((path, names)) = line.split_once('\t') else {
+                continue;
+            };
+            if let Some(alias) = alias_of.get(path) {
+                enum_names.insert(
+                    alias.clone(),
+                    names.split(',').map(|s| s.to_string()).collect(),
+                );
+            }
+        }
+    }
     let mut order: Vec<String> = Vec::new();
     let mut hist: BTreeMap<String, Vec<(u64, String)>> = BTreeMap::new();
     let mut t: u64 = 0;
@@ -80,7 +120,7 @@ fn main() {
     // past the last change, so the last value has room too.
     let mut widest = 0.0f64;
     let mut shortest = u64::MAX;
-    for h in hist.values() {
+    for (name, h) in &hist {
         if h.iter().all(|(_, v)| v.len() == 1) {
             continue;
         }
@@ -89,7 +129,7 @@ fn main() {
             if t1 > *t0 && k + 1 < h.len() {
                 shortest = shortest.min(t1 - t0);
             }
-            widest = widest.max(pretty(v).len() as f64);
+            widest = widest.max(label_for(name, v, &enum_names).len() as f64);
         }
     }
     let tail = if shortest == u64::MAX { 1 } else { shortest };
@@ -98,8 +138,8 @@ fn main() {
     if shortest != u64::MAX && shortest > 0 {
         xs = xs.max((CHAR * widest + PAD) / shortest as f64);
     }
-    if end * xs > X_MAX {
-        xs = X_MAX / end;
+    if end * xs > x_max {
+        xs = x_max / end;
     }
     let mut o = String::new();
     writeln!(
@@ -107,12 +147,28 @@ fn main() {
         "\\begin{{tikzpicture}}[font=\\scriptsize\\ttfamily, line width=0.5pt]"
     )
     .unwrap();
+    let palette = [
+        "blue!70!black",
+        "red!70!black",
+        "green!50!black",
+        "orange!80!black",
+        "violet",
+        "teal",
+        "brown",
+    ];
     for (i, name) in order.iter().enumerate() {
         let y0 = -(i as f64) * PITCH;
+        let col = if color {
+            palette[i % palette.len()]
+        } else {
+            "black"
+        };
+        let lw = if color { "line width=0.9pt, " } else { "" };
         let h = &hist[name];
         writeln!(
             o,
-            "\\node[anchor=east, font=\\scriptsize] at (-0.15, {:.2}) {{{}}};",
+            "\\node[anchor=east, font=\\scriptsize\\bfseries, {col}] \
+             at (-0.15, {:.2}) {{{}}};",
             y0 + H / 2.0,
             tex(name)
         )
@@ -135,7 +191,8 @@ fn main() {
                     if (py - y).abs() > 1e-9 {
                         writeln!(
                             o,
-                            "\\draw ({x0:.2},{py:.2}) -- ({x0:.2},{y:.2});"
+                            "\\draw[{lw}{col}] ({x0:.2},{py:.2}) \
+                             -- ({x0:.2},{y:.2});"
                         )
                         .unwrap();
                     }
@@ -143,7 +200,8 @@ fn main() {
                 let style = if dashed { "[dashed]" } else { "" };
                 writeln!(
                     o,
-                    "\\draw{style} ({x0:.2},{y:.2}) -- ({x1:.2},{y:.2});"
+                    "\\draw[{lw}{col}]{style} ({x0:.2},{y:.2}) \
+                     -- ({x1:.2},{y:.2});"
                 )
                 .unwrap();
                 prev_y = Some(y);
@@ -153,11 +211,23 @@ fn main() {
                     if k == 0 { x0 } else { x0 + d },
                     x1 - if k + 1 < h.len() { d } else { 0.0 },
                 );
-                writeln!(o, "\\draw ({a:.2},{y0:.2}) -- ({b:.2},{y0:.2});")
+                if color {
+                    writeln!(
+                        o,
+                        "\\fill[{col}!12] ({a:.2},{y0:.2}) \
+                         rectangle ({b:.2},{:.2});",
+                        y0 + H
+                    )
                     .unwrap();
+                }
                 writeln!(
                     o,
-                    "\\draw ({a:.2},{:.2}) -- ({b:.2},{:.2});",
+                    "\\draw[{lw}{col}] ({a:.2},{y0:.2}) -- ({b:.2},{y0:.2});"
+                )
+                .unwrap();
+                writeln!(
+                    o,
+                    "\\draw[{lw}{col}] ({a:.2},{:.2}) -- ({b:.2},{:.2});",
                     y0 + H,
                     y0 + H
                 )
@@ -165,25 +235,26 @@ fn main() {
                 if k > 0 {
                     writeln!(
                         o,
-                        "\\draw ({:.2},{y0:.2}) -- ({a:.2},{:.2});",
+                        "\\draw[{lw}{col}] ({:.2},{y0:.2}) -- ({a:.2},{:.2});",
                         x0 - d,
                         y0 + H
                     )
                     .unwrap();
                     writeln!(
                         o,
-                        "\\draw ({:.2},{:.2}) -- ({a:.2},{y0:.2});",
+                        "\\draw[{lw}{col}] ({:.2},{:.2}) -- ({a:.2},{y0:.2});",
                         x0 - d,
                         y0 + H
                     )
                     .unwrap();
                 }
+                let label = label_for(name, v, &enum_names);
                 writeln!(
                     o,
                     "\\node at ({:.2},{:.2}) {{{}}};",
                     (a + b) / 2.0,
                     y0 + H / 2.0,
-                    tex(&pretty(v))
+                    tex(&label)
                 )
                 .unwrap();
             }
@@ -217,6 +288,23 @@ fn main() {
     .unwrap();
     writeln!(o, "\\end{{tikzpicture}}").unwrap();
     print!("{o}");
+}
+
+/// A bus value's label: its variant's name when it has one, else its
+/// bits or hex.
+fn label_for(
+    name: &str,
+    v: &str,
+    enum_names: &std::collections::HashMap<String, Vec<String>>,
+) -> String {
+    match enum_names.get(name) {
+        Some(ns) => usize::from_str_radix(v, 2)
+            .ok()
+            .and_then(|i| ns.get(i))
+            .cloned()
+            .unwrap_or_else(|| pretty(v)),
+        None => pretty(v),
+    }
 }
 
 /// A bus value: hex when it is binary and long enough to be unreadable.

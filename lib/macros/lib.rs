@@ -257,8 +257,10 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
             .zip(&types)
             .map(|(n, t)| {
                 format!(
-                    "(\"{n}\", <{t} as ::txhdl::types::Value>::WIDTH, \
-                     ::txhdl::types::Value::vcd(self.{n})),"
+                    "::txhdl::types::Part {{ name: \"{n}\", \
+                     width: <{t} as ::txhdl::types::Value>::WIDTH, \
+                     bits: ::txhdl::types::Value::vcd(self.{n}), \
+                     names: <{t} as ::txhdl::types::Value>::names() }},"
                 )
             })
             .collect::<Vec<_>>()
@@ -268,7 +270,7 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
              const WIDTH: usize = {width};\n\
              fn vcd(self) -> String {{\n\
              let mut s = String::new(); {parts} s }}\n\
-             fn parts(self) -> Vec<(&'static str, usize, String)> {{\n\
+             fn parts(self) -> Vec<::txhdl::types::Part> {{\n\
              vec![{fields}] }}\n}}",
             b = item.bounds,
             n = item.name,
@@ -278,6 +280,11 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
         let variants = variant_names(body);
         let n = variants.len().max(2);
         let width = (usize::BITS - (n - 1).leading_zeros()) as usize;
+        let names = variants
+            .iter()
+            .map(|v| format!("\"{v}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         let arms = variants
             .iter()
             .enumerate()
@@ -288,7 +295,9 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
             "impl{b} ::txhdl::types::Value for {n}{a} {{\n\
              const WIDTH: usize = {width};\n\
              fn vcd(self) -> String {{ let i = match self {{ {arms} }};\n\
-             format!(\"{{:0w$b}}\", i, w = {width}) }}\n}}",
+             format!(\"{{:0w$b}}\", i, w = {width}) }}\n\
+             fn names() -> Option<&'static [&'static str]> {{\n\
+             Some(&[{names}]) }}\n}}",
             b = item.bounds,
             n = item.name,
             a = item.args

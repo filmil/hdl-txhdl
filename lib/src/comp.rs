@@ -979,6 +979,9 @@ pub mod trace {
         pub kind: Kind,
         pub cell: usize,
         pub sample: Box<dyn Fn() -> String>,
+        /// For an enum, its variants by index, so a viewer can name
+        /// the value.
+        pub names: Option<&'static [&'static str]>,
     }
 
     thread_local! {
@@ -993,6 +996,18 @@ pub mod trace {
         cell: usize,
         sample: Box<dyn Fn() -> String>,
     ) {
+        probe_named(scope, width, kind, cell, sample, None)
+    }
+
+    /// Register a signal with the names of its values, if it has them.
+    pub fn probe_named(
+        scope: &Scope,
+        width: usize,
+        kind: Kind,
+        cell: usize,
+        sample: Box<dyn Fn() -> String>,
+        names: Option<&'static [&'static str]>,
+    ) {
         PROBES.with(|p| {
             p.borrow_mut().push(Probe {
                 path: scope.0.clone(),
@@ -1000,6 +1015,7 @@ pub mod trace {
                 kind,
                 cell,
                 sample,
+                names,
             })
         })
     }
@@ -1023,7 +1039,7 @@ pub mod trace {
             let r = self.0.clone();
             let cell = Rc::as_ptr(&self.0) as usize;
             let f = Box::new(move || r.cur.get().vcd());
-            probe(scope, T::WIDTH, Kind::Reg, cell, f);
+            probe_named(scope, T::WIDTH, Kind::Reg, cell, f, T::names());
             let r = self.0.clone();
             parts(scope, Kind::Reg, cell, move || r.cur.get());
         }
@@ -1037,10 +1053,11 @@ pub mod trace {
         cell: usize,
         get: impl Fn() -> T + Clone + 'static,
     ) {
-        for (i, (name, width, _)) in get().parts().into_iter().enumerate() {
+        for (i, part) in get().parts().into_iter().enumerate() {
             let g = get.clone();
-            let f = Box::new(move || g().parts()[i].2.clone());
-            probe(&scope.child(name), width, kind, cell, f);
+            let f = Box::new(move || g().parts()[i].bits.clone());
+            let s = scope.child(part.name);
+            probe_named(&s, part.width, kind, cell, f, part.names);
         }
     }
     impl<T: Value + 'static, C: Clock> Traceable for In<T, C> {
@@ -1048,7 +1065,7 @@ pub mod trace {
             let c = self.0.clone();
             let cell = Rc::as_ptr(&self.0) as usize;
             let f = Box::new(move || c.0.get().vcd());
-            probe(scope, T::WIDTH, Kind::In, cell, f)
+            probe_named(scope, T::WIDTH, Kind::In, cell, f, T::names())
         }
     }
     impl<T: Value + 'static, C: Clock> Traceable for Out<T, C> {
@@ -1056,7 +1073,7 @@ pub mod trace {
             let c = self.0.clone();
             let cell = Rc::as_ptr(&self.0) as usize;
             let f = Box::new(move || c.0.get().vcd());
-            probe(scope, T::WIDTH, Kind::Out, cell, f)
+            probe_named(scope, T::WIDTH, Kind::Out, cell, f, T::names())
         }
     }
     /// A channel is two signals: the transaction and its valid bit.
@@ -1083,7 +1100,8 @@ pub mod trace {
         let (a, b) = (c.clone(), c.clone());
         let data = Box::new(move || a.0.get().0.vcd());
         let valid = Box::new(move || b.0.get().1.vcd());
-        probe(&scope.child("data"), T::WIDTH, kind, cell, data);
+        let d = scope.child("data");
+        probe_named(&d, T::WIDTH, kind, cell, data, T::names());
         probe(&scope.child("valid"), 1, kind, cell, valid);
         let d = c.clone();
         parts(&scope.child("data"), kind, cell, move || d.0.get().0);
@@ -1319,6 +1337,17 @@ pub mod trace {
                 file_type: FstFileType::Verilog,
             };
             let mut h = open_fst(&self.path, &info).expect("open FST");
+            // The names of enum values, beside the file: the format's
+            // writer has no enum tables, and a viewer or a drawing can
+            // read this instead.
+            let names: String = probes
+                .iter()
+                .filter_map(|p| {
+                    p.names.map(|n| format!("{}\t{}\n", p.path, n.join(",")))
+                })
+                .collect();
+            std::fs::write(format!("{}.names", self.path), names)
+                .expect("names");
             h.scope("clocks", "", FstScopeType::Module).expect("scope");
             let mut cids = Vec::new();
             for (name, _) in &self.clocks {

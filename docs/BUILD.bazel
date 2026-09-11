@@ -556,12 +556,62 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# The cheat sheet: one page, landscape, with its own example's listing,
+# netlist and coloured waveform, and a PNG of it through ghostscript.
+waveform(
+    name = "cheat",
+    example = "//lib/examples:ex_cheat",
+    signals = [
+        "//clocks/clk=>clk",
+        "//enable=>enable",
+        "//counter/n=>n",
+        "//tick=>tick",
+    ],
+)
+
+genrule(
+    name = "cheat_timing_color",
+    srcs = ["cheat.dt", "cheat.fst.names"],
+    outs = ["cheat_timing_color.tex"],
+    cmd = "$(location //tools/dt2tikz) $(location cheat.dt)" +
+          " --order clk,enable,n,tick --color --width 7.0" +
+          " --names $(location cheat.fst.names)" +
+          " --signals '//clocks/clk=>clk,//enable=>enable,//counter/n=>n,//tick=>tick' > $@",
+    tools = ["//tools/dt2tikz"],
+)
+
+latex_document(
+    name = "cheatsheet",
+    main = "cheatsheet.tex",
+    data = [
+        ":vendored_tex",
+        ":cheat_run",
+        ":cheat_timing_color",
+        "//lib/examples:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
+genrule(
+    name = "cheatsheet_png",
+    srcs = [":cheatsheet"],
+    outs = ["cheatsheet.png"],
+    cmd = "$(location @hermetic_latex_ghostscript//:gs.sh) -dBATCH -dNOPAUSE -q" +
+          " -sDEVICE=png16m -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4" +
+          " -sOutputFile=$@ $(location :cheatsheet)",
+    tools = [
+        "@hermetic_latex_ghostscript//:files",
+        "@hermetic_latex_ghostscript//:gs.sh",
+    ],
+)
+
 # Every document in sequence, one file, with a bookmark per document.
 combined_pdf(
     name = "all",
     out = "txhdl.pdf",
     bookmarks = [
         "TxHDL Documents",
+        "TxHDL cheat sheet",
         "TxHDL: Unifying a Dataflow and a Transaction HDL",
         "Deleting a Language: Embedding TxHDL in Rust",
         "The TxHDL Runtime",
@@ -569,6 +619,7 @@ combined_pdf(
     ],
     parts = [
         ":cover",
+        ":cheatsheet",
         ":article",
         ":embedding",
         ":runtime",

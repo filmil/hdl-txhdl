@@ -115,7 +115,7 @@ jobs:
         run: |
           set -eu
           mkdir -p dist/release
-          find -L bazel-bin -type f \( -name '*.pdf' -o -name '*.html' \) -print0 |
+          find -L bazel-bin -type f \( -name '*.pdf' -o -name '*.html' -o -name '*.png' \) -print0 |
             while IFS= read -r -d '' f; do
               rel="${f#bazel-bin/}"
               cp "$f" "dist/release/$(printf '%s' "$rel" | tr '/' '-')"

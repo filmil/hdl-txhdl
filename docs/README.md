@@ -27,6 +27,7 @@ Five documents are typeset here, and `cover.tex` names them all:
 `runtime.tex` with `runtime_sections/` is the runtime library verbatim, `//docs:runtime`;
 `examples.tex` with `examples_sections/` is every example with its output, `//docs:examples`;
 `cover.tex` is the cover, `//docs:cover`;
+`cheatsheet.tex` is the one-page cheat sheet, `//docs:cheatsheet` and `//docs:cheatsheet_png`;
 `//docs:all` concatenates them all, in that order, into `txhdl.pdf`.
 `housestyle.tex` is the preamble they all share, so they cannot drift apart
 in font, listing style or figure style.

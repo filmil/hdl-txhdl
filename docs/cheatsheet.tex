@@ -1,0 +1,102 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% The TxHDL cheat sheet: one page, landscape. Built by //docs:cheatsheet,
+% and as a PNG by //docs:cheatsheet_png.
+\documentclass[10pt]{article}
+\usepackage[paperwidth=11in,paperheight=8.5in,margin=0.4in,top=0.35in,bottom=0.35in]{geometry}
+\usepackage{multicol}
+\newcommand{\listingsize}{\fontsize{6.2}{7.2}\selectfont}
+\input{housestyle}
+\pagestyle{empty}
+\setlength{\columnsep}{16pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{2pt}
+\definecolor{bar}{RGB}{20,60,150}
+\definecolor{tint}{RGB}{232,238,250}
+
+% A section head: a coloured bar.
+\newcommand{\head}[1]{\vspace{4pt}\noindent\colorbox{bar}{\parbox{\dimexpr\linewidth-2\fboxsep}{\color{white}\bfseries\small #1}}\vspace{2pt}\par}
+
+\begin{document}
+\small
+
+\noindent\colorbox{bar}{\parbox{\dimexpr\textwidth-2\fboxsep}{\color{white}
+{\LARGE\bfseries TxHDL cheat sheet}\hfill{\small a hardware description language that is a Rust library; every construct Rust already has was deleted, and this is what is left}}}
+\vspace{4pt}
+
+\begin{multicols}{3}
+
+\head{The rule}
+\textbf{Delete every construct Rust provides.} A transaction is a
+\code{struct}; a unit is a \code{struct} that implements
+\code{Unit<In, Out>}; a pipeline is an \code{async fn}; a
+configuration is a trait with associated types and constants; a
+clock is a type. \code{rustc} is the parser, and the type checker
+finds two drivers on a wire (a move error), a clock-domain crossing
+without a \code{Crossing} (a type error) and a cycle count in a
+combinational body (no \code{.await} to write).
+
+\head{Time}
+A process \textbf{waits for an event, then reads state}. The waits
+are \code{C::rising()}, \code{C::falling()}, \code{rx.wait()} and
+\code{until(C::rising, || cond)}. Reads are plain: \code{reg.get()}
+is what the last edge latched. Drives commit at the end of the tick.
+\textbf{Every \code{.await} is a cycle boundary}; events that share an
+edge are written \code{parallel!(a, b).await}. Time runs in ticks,
+two per cycle, so a falling edge is a tick of its own.
+
+\head{Vocabulary}
+\begin{tabular}{@{}p{0.47\linewidth}p{0.5\linewidth}@{}}
+\code{Bit}, \code{Logic}, \code{U<N>}, \code{I<N>} & values; \code{Logic} is IEEE 1164's nine \\
+\code{\#[derive(Transaction)]} & a struct that moves over a channel \\
+\code{Reg<T, C>} & state, in clock \code{C}; \code{get}, \code{set} \\
+\code{signal()} $\to$ \code{(Out, In)} & a wire's two ends; \code{Out} is not \code{Clone} \\
+\code{chan()} $\to$ \code{(Tx, Rx)} & a channel; \code{send}, \code{ready}, \code{wait} \\
+\code{Crossing<T, A, B>} & the only way between clocks \\
+\code{interface!} & members and roles, a struct per role \\
+\code{when!(c => \{ r <= v \})} & a predicated drive; not a branch \\
+\code{case!(v => \{ p => \{..\} \})} & many arms, first match wins \\
+\code{pipeline::drive(f, rx, tx)} & one invocation of \code{f} per cycle \\
+\code{config! \{ Fpga: C for Top<Fpga> \{..\} \}} & a build, as one item \\
+\code{\#[derive(Trace)]}, \code{Wave} & signals named from fields; VCD or FST \\
+\code{\#[lower]}, \code{\#[pipeline(..)]} & Verilog from \code{run} or an \code{async fn} \\
+\end{tabular}
+
+\columnbreak
+
+\head{A unit}
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,frame=none,backgroundcolor=\color{tint},xleftmargin=2pt]{lib/examples/ex_cheat.rs}
+
+\head{Its netlist}
+What \code{Counter::verilog("counter")} printed when the build ran it:
+\lstinputlisting[style=ascii,frame=none,backgroundcolor=\color{tint},xleftmargin=2pt]{out_cheat.txt}
+
+\columnbreak
+
+\head{Its waveform}
+Drawn by the build from the FST the example wrote, time in ticks:
+\code{enable} drops at cycle 10, \code{n} counts while it is high,
+\code{tick} marks 7.
+\begin{center}
+\input{cheat_timing_color.tex}
+\end{center}
+
+\head{Build and run}
+\begin{lstlisting}[style=ascii,frame=none,backgroundcolor=\color{tint},xleftmargin=2pt]
+bazel build //...                 # everything, hermetically
+bazel run //lib/examples:ex_cheat # prints the netlist
+TXHDL_FST=c.fst bazel run \
+  //lib/examples:ex_cheat         # and writes the waveform
+bazel build //docs/...            # the five documents
+\end{lstlisting}
+
+\head{Documents}
+\code{//docs:cover} names them: \code{article} (the merge),
+\code{embedding} (the language), \code{runtime} (the library,
+verbatim), \code{examples} (one per concept, with what each printed
+and its waveform), and \code{all} (every one, in order). Every listing
+is included from the tree at build time; every claim about Rust was
+compiled first.
+
+\end{multicols}
+\end{document}

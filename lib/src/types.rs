@@ -288,12 +288,25 @@ pub mod logic {
 pub trait Value: Copy {
     const WIDTH: usize;
     fn vcd(self) -> String;
-    /// The named parts of a compound value, each with its width and
-    /// bits, so a waveform can show a struct one field per signal.
-    /// Empty for a scalar.
-    fn parts(self) -> Vec<(&'static str, usize, String)> {
+    /// The named parts of a compound value, each with its width, its
+    /// bits and, for an enum, the names of its variants, so a waveform
+    /// can show a struct one field per signal. Empty for a scalar.
+    fn parts(self) -> Vec<Part> {
         Vec::new()
     }
+    /// The variants of an enum, by index, so a viewer can name a value
+    /// rather than number it. None for anything else.
+    fn names() -> Option<&'static [&'static str]> {
+        None
+    }
+}
+
+/// One field of a compound value in a trace.
+pub struct Part {
+    pub name: &'static str,
+    pub width: usize,
+    pub bits: String,
+    pub names: Option<&'static [&'static str]>,
 }
 
 impl Value for Bit {

@@ -30,6 +30,9 @@ all under `//docs`:
   build produced by running it.
   The runtime appears there only through its public interface, which
   `//tools/api` extracts from the source at build time.
+* `//docs:cheatsheet` is the one-page cheat sheet, also as a PNG
+  (`//docs:cheatsheet_png`); it shows `ex_cheat.rs`, its netlist and
+  its waveform, all produced by the build.
 * `//docs:all` is every document above in that order, one PDF with a
   bookmark per document.
 
