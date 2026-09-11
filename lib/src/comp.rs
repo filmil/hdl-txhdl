@@ -15,7 +15,7 @@ use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 // ---------------------------------------------------------------------
 // Clocks
@@ -160,7 +160,7 @@ impl<T: Copy> Reg<T> {
     /// that latched the value. In the prototype it yields to the
     /// executor once, so one poll of a unit is one clock cycle, and a
     /// process that loops advances one iteration per cycle.
-    pub async fn get(&self) -> T { tick().await; self.0.get() }
+    pub async fn get(&self) -> T { edge(self as *const Self as usize).await; self.0.get() }
 
     /// Observe the register without waiting. Not synthesisable, and
     /// allowed for the reason `assert!` is: it reads and drives nothing.
@@ -241,19 +241,21 @@ macro_rules! config {
 
 /// Run two processes concurrently. A unit does not terminate, so this
 /// completes only if both do.
-pub struct Join2<A, B> { a: A, b: B, da: bool, db: bool }
+pub struct Join2<A, B> { a: A, b: B, da: bool, db: bool, wa: Waker, wb: Waker }
 
 pub fn join2<A: Future<Output = ()>, B: Future<Output = ()>>(a: A, b: B) -> Join2<A, B> {
-    Join2 { a, b, da: false, db: false }
+    Join2 { a, b, da: false, db: false, wa: process(), wb: process() }
 }
 
 impl<A: Future<Output = ()>, B: Future<Output = ()>> Future for Join2<A, B> {
     type Output = ();
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<()> {
         // Safety: neither field is moved out, and `self` is pinned.
         let t = unsafe { self.get_unchecked_mut() };
-        if !t.da && unsafe { Pin::new_unchecked(&mut t.a) }.poll(cx).is_ready() { t.da = true }
-        if !t.db && unsafe { Pin::new_unchecked(&mut t.b) }.poll(cx).is_ready() { t.db = true }
+        // Each side is a process of its own, so each gets its own edges.
+        let (mut ca, mut cb) = (Context::from_waker(&t.wa), Context::from_waker(&t.wb));
+        if !t.da && unsafe { Pin::new_unchecked(&mut t.a) }.poll(&mut ca).is_ready() { t.da = true }
+        if !t.db && unsafe { Pin::new_unchecked(&mut t.b) }.poll(&mut cb).is_ready() { t.db = true }
         if t.da && t.db { Poll::Ready(()) } else { Poll::Pending }
     }
 }
@@ -264,9 +266,11 @@ impl<A: Future<Output = ()>, B: Future<Output = ()>> Future for Join2<A, B> {
 pub async fn join_all<F: Future<Output = ()>>(fs: impl IntoIterator<Item = F>) {
     let mut fs: Vec<Pin<Box<F>>> = fs.into_iter().map(Box::pin).collect();
     let mut done = vec![false; fs.len()];
-    std::future::poll_fn(|cx| {
+    let ws: Vec<Waker> = fs.iter().map(|_| process()).collect();
+    std::future::poll_fn(|_cx| {
         for (i, f) in fs.iter_mut().enumerate() {
-            if !done[i] && f.as_mut().poll(cx).is_ready() { done[i] = true }
+            let mut c = Context::from_waker(&ws[i]);
+            if !done[i] && f.as_mut().poll(&mut c).is_ready() { done[i] = true }
         }
         if done.iter().all(|d| *d) { Poll::Ready(()) } else { Poll::Pending }
     }).await
@@ -275,38 +279,91 @@ pub async fn join_all<F: Future<Output = ()>>(fs: impl IntoIterator<Item = F>) {
 // ---------------------------------------------------------------------
 // The clock edge
 
-/// Yields to the executor exactly once. Every wait in the prototype is
-/// built from this: a register read, an operator with latency, a count
-/// of cycles. One poll of the top unit is therefore one clock cycle.
-pub struct Tick(bool);
+/// The prototype's clock. One poll of the top unit is one cycle, and the
+/// executor counts them here. Every wait is built from [`Tick`]: an
+/// operator with latency, a count of cycles, and a register read.
+///
+/// A process samples every register at one edge, so a register read is
+/// the wait for the edge and reading a second register after it is
+/// free. The rule the executor keeps is: a register gives each process
+/// one value per edge. Reading a register the process has already read
+/// this cycle waits for the next edge, which is what makes a loop that
+/// re-reads its registers advance one iteration per cycle. Processes
+/// are told apart by their waker, which [`join2`] and [`join_all`]
+/// give each child fresh, so the rule holds per process and not per
+/// unit.
+mod clock {
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+    thread_local! {
+        pub static CYCLE: Cell<u64> = const { Cell::new(0) };
+        pub static NEXT: Cell<usize> = const { Cell::new(1) };
+        /// Per process: the last cycle it crossed an edge in.
+        pub static EDGE: RefCell<HashMap<usize, u64>> = RefCell::new(HashMap::new());
+        /// Per process and register: the last cycle it was read in.
+        pub static READ: RefCell<HashMap<(usize, usize), u64>> = RefCell::new(HashMap::new());
+    }
+}
 
-pub fn tick() -> Tick { Tick(false) }
+/// A wait for a clock edge. With a key, the read of one register, keyed
+/// by the register; without one, an operator's cycle, which always
+/// waits.
+pub struct Tick { key: Option<usize>, started: bool }
+
+/// One cycle, unconditionally. Operators and `cycles(n)` use this.
+pub fn tick() -> Tick { Tick { key: None, started: false } }
+
+/// The edge a register read waits for. Free if this process has
+/// crossed an edge this cycle and not read this register since.
+fn edge(key: usize) -> Tick { Tick { key: Some(key), started: false } }
 
 impl Future for Tick {
     type Output = ();
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        if self.0 { Poll::Ready(()) } else { self.0 = true; cx.waker().wake_by_ref(); Poll::Pending }
+        let p = cx.waker().data() as usize;
+        let now = clock::CYCLE.with(|c| c.get());
+        if let Some(k) = self.key {
+            let after_edge = clock::EDGE.with(|e| e.borrow().get(&p) == Some(&now));
+            let unread = clock::READ.with(|r| r.borrow().get(&(p, k)) != Some(&now));
+            if after_edge && unread {
+                clock::READ.with(|r| r.borrow_mut().insert((p, k), now));
+                return Poll::Ready(());
+            }
+        }
+        if !self.started {
+            self.started = true;
+            return Poll::Pending;
+        }
+        clock::EDGE.with(|e| e.borrow_mut().insert(p, now));
+        if let Some(k) = self.key { clock::READ.with(|r| r.borrow_mut().insert((p, k), now)); }
+        Poll::Ready(())
     }
 }
 
+/// A waker that names a process. It never wakes anything, because the
+/// executor polls everything every cycle; its data is the process id.
+fn process() -> Waker {
+    fn nop(_: *const ()) {}
+    fn clone(p: *const ()) -> RawWaker { RawWaker::new(p, &VT) }
+    static VT: RawWakerVTable = RawWakerVTable::new(clone, nop, nop, nop);
+    let id = clock::NEXT.with(|n| { let i = n.get(); n.set(i + 1); i });
+    unsafe { Waker::from_raw(RawWaker::new(id as *const (), &VT)) }
+}
+
+/// Advance the clock by one cycle.
+fn next_cycle() { clock::CYCLE.with(|c| c.set(c.get() + 1)) }
+
 // ---------------------------------------------------------------------
 // Driving a design
-
-fn noop_waker() -> std::task::Waker {
-    use std::task::{RawWaker, RawWakerVTable, Waker};
-    fn nop(_: *const ()) {}
-    fn clone(_: *const ()) -> RawWaker { RawWaker::new(std::ptr::null(), &VT) }
-    static VT: RawWakerVTable = RawWakerVTable::new(clone, nop, nop, nop);
-    unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VT)) }
-}
 
 /// Run a future for a number of cycles: one poll per cycle. Returns
 /// whether it completed, which a unit never does, because a unit loops.
 pub fn run_for<F: Future<Output = ()>>(f: F, cycles: usize) -> bool {
     let mut f = Box::pin(f);
-    let w = noop_waker();
+    let w = process();
     let mut cx = Context::from_waker(&w);
     for _ in 0..cycles {
+        next_cycle();
         if f.as_mut().poll(&mut cx).is_ready() { return true }
     }
     false
@@ -320,18 +377,19 @@ pub fn step<F: Future<Output = ()>>(f: F) -> bool { run_for(f, 1) }
 /// before starting it, because starting it borrows the top.
 pub struct Running<F: Future<Output = ()>> {
     f: Pin<Box<F>>,
+    w: Waker,
     done: bool,
 }
 
 impl<F: Future<Output = ()>> Running<F> {
-    pub fn new(f: F) -> Self { Running { f: Box::pin(f), done: false } }
+    pub fn new(f: F) -> Self { Running { f: Box::pin(f), w: process(), done: false } }
 
     /// Advance one cycle. Returns whether the design has finished, which
     /// a unit never does.
     pub fn cycle(&mut self) -> bool {
         if self.done { return true }
-        let w = noop_waker();
-        let mut cx = Context::from_waker(&w);
+        next_cycle();
+        let mut cx = Context::from_waker(&self.w);
         self.done = self.f.as_mut().poll(&mut cx).is_ready();
         self.done
     }

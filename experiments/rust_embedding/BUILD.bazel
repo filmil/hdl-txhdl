@@ -28,6 +28,7 @@ MACROS = ["//lib:txhdl_macros"]
         "probe_domain",
         "probe_funcs",
         "probe_hierarchy",
+        "probe_case",
         "probe_if",
         "probe_interface_macro",
         "probe_interface_proc",
@@ -70,6 +71,8 @@ rust_binary(
         "probe_interface_incomplete",  # the macro's own message
         "probe_interface_twodrivers",  # the macro's own message
         "probe_when_bad",              # the macro's own message
+        "probe_case_bad",              # the macro's own message
+        "probe_case_binding",          # E0425: a pattern tests, it does not bind
     ]
 ]
 

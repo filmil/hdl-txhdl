@@ -328,3 +328,92 @@ pub fn when(input: TokenStream) -> TokenStream {
     out.push('}');
     out.parse().unwrap()
 }
+
+
+// ---------------------------------------------------------------------
+// case!
+
+/// `case!(value => { pattern => { lhs <= rhs; ... }, ... })`
+///
+/// `when!` with many arms. Each arm is a Rust pattern, guards and `_`
+/// included, and the first arm that matches wins, which is `match`'s
+/// rule. Every arm exists in the hardware at once, the same as
+/// `when!`; the ordering lowers to a priority chain of predicated
+/// drives, and the predicate of each arm is its pattern and the failure
+/// of every arm above it.
+///
+/// The scrutinee is a value, so a register is read first and the value
+/// is what is matched. Arm bodies take the same `lhs <= rhs` statements
+/// as `when!`, and nothing else.
+#[proc_macro]
+pub fn case(input: TokenStream) -> TokenStream {
+    let toks: Vec<TokenTree> = input.into_iter().collect();
+
+    // The value runs up to `=>`.
+    let (value, i) = match up_to_arrow(&toks, 0) {
+        Some(x) => x,
+        None => return err(Span::call_site(), "expected `=>` after the value"),
+    };
+    let arms = match toks.get(i) {
+        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace && toks.len() == i + 1 => g.clone(),
+        _ => return err(Span::call_site(), "expected `{ pattern => { ... }, ... }` after `=>`"),
+    };
+
+    let mut out = String::from("{ let __s = ");
+    out.push_str(&value.to_string());
+    out.push_str(";\nlet mut __done = false;\n");
+
+    // Arms: `pattern => { ... }` separated by `,`.
+    let atoks: Vec<TokenTree> = arms.stream().into_iter().collect();
+    let mut j = 0;
+    let mut n = 0;
+    while j < atoks.len() {
+        let (pat, k) = match up_to_arrow(&atoks, j) {
+            Some(x) => x,
+            None => return err(atoks[j].span(), "expected `pattern => { ... }`"),
+        };
+        let body = match atoks.get(k) {
+            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => g.clone(),
+            Some(t) => return err(t.span(), "expected `{ ... }` after `=>`"),
+            None => return err(arms.span(), "expected `{ ... }` after `=>`"),
+        };
+        j = k + 1;
+        if let Some(TokenTree::Punct(p)) = atoks.get(j) {
+            if p.as_char() == ',' { j += 1 }
+        }
+        n += 1;
+        out.push_str(&format!(
+            "{{ let __c: ::txhdl::types::Bit = ::txhdl::types::Bit::from_bool(!__done && matches!(__s, {}));\n",
+            pat
+        ));
+        for st in statements(&body) {
+            let span = st.clone().into_iter().next().map(|t| t.span()).unwrap_or(body.span());
+            let Some((lhs, rhs)) = split_becomes(st) else {
+                return err(span, "expected `register <= value`");
+            };
+            out.push_str(&format!("({}).set_if(__c, {});\n", lhs, rhs));
+        }
+        out.push_str("__done = __done || __c.to_bool(); }\n");
+    }
+    if n == 0 { return err(arms.span(), "expected at least one arm") }
+    out.push_str("let _ = __done; }");
+    out.parse().unwrap()
+}
+
+/// Tokens from `from` up to the first `=>`, and the index after it.
+fn up_to_arrow(toks: &[TokenTree], from: usize) -> Option<(TokenStream, usize)> {
+    let mut i = from;
+    let mut acc = Vec::new();
+    while i < toks.len() {
+        if let TokenTree::Punct(p) = &toks[i] {
+            if p.as_char() == '=' && p.spacing() == proc_macro::Spacing::Joint {
+                if let Some(TokenTree::Punct(q)) = toks.get(i + 1) {
+                    if q.as_char() == '>' { return Some((acc.into_iter().collect(), i + 2)) }
+                }
+            }
+        }
+        acc.push(toks[i].clone());
+        i += 1;
+    }
+    None
+}

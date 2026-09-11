@@ -4,7 +4,7 @@
 
 Every claim in this paper about what Rust does is a probe that was built.
 The probes are one file per question in \code{experiments/rust\_embedding},
-and nine of them are expected to fail, so they are tagged \code{manual}
+and twelve of them are expected to fail, so they are tagged \code{manual}
 and stay out of the default build. A failing probe is kept rather than deleted,
 because the failure is the answer.
 
@@ -66,6 +66,15 @@ Probe & Question & Answer \\
 \code{probe\_when\_bad}
   & A drive with no arrow?
   & \textbf{Refused:} \code{expected `register <= value`} \\
+\code{probe\_case}
+  & Does \code{case!} take Rust patterns, with guards and alternatives?
+  & \textbf{Yes}, tested with \code{matches!}; the first arm that matches wins \\
+\code{probe\_case\_bad}
+  & A drive with no arrow in an arm?
+  & \textbf{Refused:} the same message as \code{when!}, from the shared parser \\
+\code{probe\_case\_binding}
+  & May an arm's pattern bind, as \code{Op::Load(v)}?
+  & \textbf{No.} \code{error[E0425]: cannot find value `v`}; \code{matches!} scopes its bindings \\
 \code{probe\_slice}
   & May a slice bound be a const parameter, or a run-time offset?
   & \textbf{Yes} to both, with the width static \\

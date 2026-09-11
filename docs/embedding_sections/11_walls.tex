@@ -79,6 +79,44 @@ a list of drives and reinterpreting a plain \code{if}, and it is the
 elaboration decision of Section~\ref{sec:e-elaboration} rather than a
 macro's.
 
+\subsubsection{Many arms}
+\label{sec:e-case}
+
+\code{when!} has two arms. A state machine has one per state, and
+\code{match} is the Rust spelling, so it hits the same wall as
+\code{if} for the same reason. \code{case!} is \code{when!} with many
+arms, and it keeps \code{match}'s one rule that matters: the first arm
+that matches wins.
+
+\begin{lstlisting}[caption={\code{case!} on a state register. The arms are Rust patterns, guards and alternatives included, and the first match wins, so the guarded arm sits above the plain one for the same state. The full sequencer is Listing~\ref{app:ex-case}.},label={lst:case}]
+let s = self.state.get().await;
+let n = self.count.get().await;
+case!(s => {
+    State::Idle if go.to_bool() => { self.state <= State::Load },
+    State::Load => { self.count <= 3; self.state <= State::Run },
+    State::Run if n == U::from(0) => { self.state <= State::Done },
+    State::Run => { self.count <= n.wrapping_sub(1) },
+    State::Done | State::Idle => { self.state <= State::Idle },
+});
+\end{lstlisting}
+
+Every arm exists in the hardware at once, as with \code{when!}. The
+ordering lowers to a priority chain: the predicate of an arm is its
+pattern and the failure of every arm above it, and the macro emits
+exactly that, one predicated drive per statement and a running
+\emph{done} bit. Each pattern is tested with \code{matches!}, so
+anything Rust accepts as a pattern is accepted here, with one limit that
+compiling found. A pattern may test and may not bind: \code{matches!}
+scopes its bindings to itself, and the arm's body is outside it, so
+\code{Op::Load(v)} leaves \code{v} undefined in the body. Probe~10e
+keeps that error. A payload is read from the value by a function
+instead, which is also how the hardware does it: the field is a slice of
+the register, and the pattern is the decoder on the rest.
+
+A statement without an arrow is refused with the message of
+Listing~\ref{lst:when-err}, because the arms share \code{when!}'s
+statement parser.
+
 \subsection{Bit slicing}
 
 \code{w[0..8]} cannot work, because \code{Index} returns a reference to
