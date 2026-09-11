@@ -3,19 +3,23 @@
 # ISA, the reference model and the programs; the binary runs the
 # demonstration and writes its waveform; the test runs the core
 # against the model in lockstep.
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
 rust_library(
     name = "vreteno32",
     srcs = [
+        "src/core.rs",
         "src/isa.rs",
         "src/lib.rs",
         "src/model.rs",
+        "src/program.rs",
     ],
     crate_name = "vreteno32",
     edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
 # The encoders against the decoder.
@@ -23,6 +27,17 @@ rust_test(
     name = "isa_test",
     crate = ":vreteno32",
     edition = "2021",
+)
+
+# Run the demonstration:  bazel run //cpu/vreteno
+rust_binary(
+    name = "vreteno",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    deps = [
+        ":vreteno32",
+        "//lib:txhdl",
+    ],
 )
 
 filegroup(
