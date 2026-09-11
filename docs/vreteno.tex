@@ -320,6 +320,54 @@ concatenation of ambiguous type, a slice of an expression and a
 temporary named with a leading underscore, all failed to analyze or
 differed at their first tick, which is the test doing its work.
 
+\section{Synthesis}
+\label{sec:v-synth}
+
+The Verilog synthesizes, and the build does it: \code{bazel build
+//cpu/vreteno:vreteno\_synth} runs Vivado, which \code{rules\_vivado}
+installs itself from the AMD archive into a cache the machine's
+workspaces share, so the toolchain is as hermetic as nvc and
+Verilator are, once per machine rather than per workspace. The target
+is an Artix-7, \code{xc7a200tfbg484-2}, with a clock constraint of
+ten nanoseconds and no pins, since the question is whether the
+netlist synthesizes and to what, not where it goes on a board.
+Synthesis took two minutes and finished with no error, no critical
+warning and no warning.
+
+\begin{table}[htbp]
+\caption{The core on an Artix-7, after synthesis.}
+\label{tab:v-synth}
+\centering
+\begin{tabular}{@{}lr@{}}
+\toprule
+Resource & Used \\
+\midrule
+LUTs, as logic & 1075 \\
+LUTs, as distributed RAM & 560 \\
+Flip-flops & 103 \\
+Block RAM tiles & 1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The memories answer the question Section~\ref{sec:v-next} used to
+ask. The instruction memory, written by nothing and holding the
+program from its \code{initial} block, became a read-only memory in
+one block RAM tile, 1024 words by 27 bits, the tool having dropped
+the bit columns the program never sets. The data memory, written by
+the store and read combinationally by the load, became distributed
+RAM, 128 primitives of 256 by 1, since a block RAM's read port is
+registered and a combinational read of it would have to wait a cycle;
+the register file, 32 by 32 with one write port and two reads, became
+twelve of the small distributed primitives, which is what a register
+file of that size is on this family. The flip-flops are the five
+registers: two program counters, the instruction register, the valid
+bit and the halt bit. So a memory the runtime reads plainly is a
+distributed RAM when it is written and a block RAM when it is not;
+to put the data memory in block RAM the core would have to read it
+a cycle ahead, which is a pipeline stage, and that is where a third
+stage would go.
+
 \section{What Comes Next}
 \label{sec:v-next}
 
@@ -332,13 +380,13 @@ not change, since it compares architectural state when an
 instruction retires. This is the step to take when the core has a
 netlist and a clock period to shorten, and not before.
 
-Synthesis. The netlist is Verilog and VHDL that simulates; whether
-it synthesizes, and to what, is the next question, and the first
-answer will come from an open toolchain on an FPGA, with the
-instruction memory as a block RAM initialised from the program. The
-lowering will need to say what a memory's read port is, since a
-combinational read of a block RAM is not what the runtime's plain
-read means to every tool.
+Place and route, and a board. Section~\ref{sec:v-synth} synthesizes
+with a clock constraint and no pins; the ruleset places, routes and
+programs a flash as well, and the first board is the Artix-7 the part
+was chosen for. Timing at ten nanoseconds is the number to learn
+first, and the combinational read of the data memory through the
+load's extension into the register file write is where it will be
+lost if it is.
 
 Traps and the rest of the privileged architecture, and the
 multiplication extension, are the instruction set's next steps, and

@@ -111,7 +111,16 @@ The two waveform converters are pinned in `multitool.lock.json`.
 bazel build //...              # the library, every example, every document
 bazel run //lib/examples:ex_config -- asic
 bazel build //docs/...         # -> bazel-bin/docs/{cover,article,embedding,runtime,examples,txhdl}.pdf
+bazel build //cpu/vreteno:vreteno_synth   # the core through Vivado, hermetic; manual
 ```
+
+Vivado is hermetic through `rules_vivado`: the `vivado.install` tag in
+`MODULE.bazel` names the AMD installer archive and the shared install
+cache at `/data/cache/vivado-install`, and the key of that cache entry
+is the URL and the selection with no `sha256`, exactly as the other
+workspaces on this machine state them, so the installation is shared
+rather than redone. A cold install elsewhere needs about 300 GB of
+transient disk.
 
 Before finishing a document change, run the readability pass from the
 `prose-readability` skill, then render every page that holds a figure
