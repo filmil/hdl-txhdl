@@ -32,12 +32,14 @@ examples~\cite{examples}, and the cover~\cite{cover} lists all of them.}%
 \begin{abstract}
 Vreteno is a 32-bit RISC-V core, the RV32I base integer set, written
 in TxHDL: the first design large enough to ask whether the language
-scales past its examples. This is its third form: a two-stage
+scales past its examples. This is its fourth form: a three-stage
 pipeline, one process in which a fetch stage reads the instruction
-memory into an instruction register while an execute stage runs the
-instruction before it, with one bubble per taken branch or jump,
-written in the subset the lowering reads, so that the same file
-simulates and is a netlist. It is checked twice. In lockstep against
+memory into an instruction register, an execute stage runs the
+instruction before it and reads the data memory into a register at
+its edge, and a writeback stage extends a load, writes the register
+file and retires, with the one hazard closed by forwarding and one
+bubble per taken branch or jump, written in the subset the lowering
+reads, so that the same file simulates and is a netlist. It is checked twice. In lockstep against
 a reference model of the instruction set written as a plain program:
 the model steps when the core retires an instruction, and after
 every cycle the program counter, the thirty-one registers and the
@@ -72,19 +74,23 @@ this size can be tested to a standard the small examples cannot reach;
 and what the lowering must grow to before such a design becomes a
 netlist.
 
-The plan had three steps, and this document covers all three. The
-core was written first as a single-cycle machine in simulation form
-and checked against a reference model, so the design was known
-correct before anything else was asked of it. Then it became the
-pipeline of two stages it is now, and the lockstep check is what
-kept that refactoring honest: the test changed in one place, the
-core in one file, and the same programs passed. Last, the lowering
+The plan had three steps, and this document covers all three and a
+fourth. The core was written first as a single-cycle machine in
+simulation form and checked against a reference model, so the design
+was known correct before anything else was asked of it. Then it
+became a pipeline of two stages, and the lockstep check is what kept
+that refactoring honest: the test changed in one place, the core in
+one file, and the same programs passed. Last, the lowering
 grew until the core was a netlist, and the core was rewritten in the
 subset the lowering reads, with the lockstep check again holding the
 rewrite to the same behaviour; and the netlist simulates, under nvc,
 against the trace the Rust core wrote, which is the check the smaller
 examples~\cite{examples} pass. What the lowering had to grow for
-this is stated in Section~\ref{sec:v-netlist}.
+this is stated in Section~\ref{sec:v-netlist}. Then, with the
+netlist synthesized and its memories and its timing known, the core
+became the pipeline of three stages it is now, so that the data
+memory could be a block RAM, and the lockstep check held that
+refactoring too.
 
 \section{The Instruction Set as Bits}
 \label{sec:v-isa}
@@ -127,44 +133,58 @@ model.},label={lst:v-model}]{cpu/vreteno/src/model.rs}
 Listing~\ref{lst:v-core} is the core. It is one unit whose state is
 the fetch stage's program counter; an instruction register with the
 program counter it was fetched at and a valid bit, which together
-are the boundary between the two stages; a halt bit; and three
-memories: the register file, the instruction memory, loaded from the
-program with \code{Mem::with}, and the data memory. Its input is the
-reset and its outputs are the halt, the word executed, and a
+are the boundary between fetch and execute; the writeback registers,
+the boundary between execute and writeback, which hold whether an
+instruction is there, its program counter, its destination, its
+value if it is not a load, the raw word read for a load with the
+lane and the width to take from it, and whether it halts; the halt
+itself; and six memories: the register file, the instruction memory,
+loaded from the program with \code{Mem::with}, and the data memory
+as four memories of a byte, one per lane of the word. Its input is
+the reset and its outputs are the halt, the word executed, and a
 \code{Writeback} value: whether an instruction retired this cycle,
 the register it wrote and what it wrote, which is what the waveform
 decodes field by field and the lockstep test steps the model on.
 
 The process is one \code{loop} with one wait, the rising edge, and
-everything after the wait is one cycle of both stages at once. The
-fetch stage is a plain read of the instruction memory at its program
-counter. The execute stage takes the instruction register: the
-decode, the fields of the word by \code{slice} and the five
+everything after the wait is one cycle of all three stages at once.
+The fetch stage is a plain read of the instruction memory at its
+program counter. The execute stage takes the instruction register:
+the decode, the fields of the word by \code{slice} and the five
 immediates assembled by \code{concat} and \code{sext}, as the manual
 draws them; two plain reads of the register file; the execute, an
 ALU shared by the register and immediate forms and a branch
-condition, each a function of its inputs; and the writeback, a
-deferred write to the register file and a deferred write to the data
-memory. A store of a byte or a half reads the word, merges the lanes
-and writes it back, which one read port and one write port allow
-within a cycle. Register zero is never written.
+condition, each a function of its inputs; the store, which writes
+the lanes of the word a byte, a half or a word covers and reads
+nothing; and the load's read, the four lanes at the address into
+the writeback stage's register at the edge, which is the synchronous
+read a block RAM has. The writeback stage takes the byte or the half
+out of that word by the lane and the width the load carried, extends
+it, and writes the register file, or writes the value execute
+computed; an instruction retires there.
 
-The two stages meet at the end of the cycle, in the deferred drives
-of the fetch's state. When the execute stage's next program counter
-is the one after its own, the word the fetch stage read this cycle
-is the right one and moves into the instruction register, valid,
-with the fetch counter advanced by four. When it is not, on a taken
-branch or a jump, that word is the wrong one: the instruction
-register is marked empty, the fetch counter takes the target, and
-the next cycle executes nothing, which is the one-cycle penalty a
-two-stage machine pays for resolving branches in its second stage.
+The one hazard a third stage brings is closed in one place. An
+instruction in execute may read a register the one in writeback has
+not yet written; the operand reads check the writeback stage's
+destination and take its value instead, the forwarding path, and
+since the register file is written at the end of writeback, an
+instruction two behind reads what it wrote. No stall is ever needed.
+Register zero reads as zero before that check, so a writeback to
+nowhere forwards nothing.
+
+The stages meet at the end of the cycle, in the deferred drives of
+the fetch's state and the writeback's. When the execute stage's next
+program counter is the one after its own, the word the fetch stage
+read this cycle is the right one and moves into the instruction
+register, valid, with the fetch counter advanced by four. When it is
+not, on a taken branch or a jump, that word is the wrong one: the
+instruction register is marked empty, the fetch counter takes the
+target, and the next cycle executes nothing, which is the one-cycle
+penalty a machine pays for resolving branches in its second stage.
 Reset empties the instruction register and restarts the fetch at
-zero; a halt empties it too and parks the fetch counter on the
-halting instruction, as the model's counter parks, so the two
-agree there as well. Because the stages are two readers of the same
-registers within one process, no forwarding is needed: an
-instruction writes the register file at the end of its cycle, and
-the next reads it at the start of the next.
+zero; a halting instruction stops the fetch and parks its counter on
+itself, as the model's counter parks, and sets the halt a cycle
+later when it retires, so the two agree there as well.
 
 This is the lowerable form, and it reads as a netlist does: every
 name after the wait is a function of the state and the inputs, and
@@ -172,15 +192,16 @@ nothing branches. \code{select!} chooses among values, the ALU by
 \code{f3}, the branch condition, the loaded and the stored word, the
 writeback value, the target and whether the core knows the opcode;
 \code{when!} and \code{case!} choose among drives, the register file
-and data memory writes under their enables, and the fetch's state by
-reset, halt, redirect or advance, in that priority. Register zero
+and the four lanes' writes under their enables, the writeback
+registers under execute's run, and the fetch's state by reset, halt,
+redirect or advance, in that priority. Register zero
 reads as zero rather than being protected from writes, since a mask
 on a read is a multiplexer and a guard on every arm is not. The
 first form of this file, single-cycle and with Rust \code{match}es,
 is in the history; the lockstep test passed each form, which is what
 made rewriting it safe.
 
-\lstinputlisting[caption={\code{core.rs}: the two-stage
+\lstinputlisting[caption={\code{core.rs}: the three-stage
 core.},label={lst:v-core}]{cpu/vreteno/src/core.rs}
 
 \section{The Programs}
@@ -282,14 +303,15 @@ the build ran it.},label={lst:v-out}]{out_vreteno.txt}
 \label{sec:v-netlist}
 
 The Verilog at the end of Listing~\ref{lst:v-out} is the core as
-hardware: five registers, three memories, the instruction memory
+hardware: fifteen registers, six memories, the instruction memory
 holding the program, a wire per \code{let} of the loop, three
-temporaries, and one clocked block of fifteen lines. The VHDL the run
-wrote beside it says the same, and the build simulates that VHDL
-under nvc against the trace the Rust core wrote, the testbench
-replaying the reset and checking every register and every output at
-every tick, sixty-six ticks and eight signals; the netlist agrees.
-The test is \code{//docs:vreteno\_sim\_vreteno\_tb\_test}.
+temporaries, and one clocked block of fifty lines. The VHDL the run
+wrote beside it says the same, and the build simulates both against
+the trace the Rust core wrote, the VHDL under nvc and the Verilog
+under Verilator, the testbench replaying the reset and checking every
+register and every output at every tick; the netlist agrees. The
+tests are \code{//docs:vreteno\_sim\_vreteno\_tb\_test} and
+\code{//docs:vreteno\_vsim\_test}.
 
 The lowering grew in five ways for this, each stated and checked in
 the examples document~\cite{examples} before the core used it. A
@@ -331,8 +353,10 @@ Verilator are, once per machine rather than per workspace. The target
 is an Artix-7, \code{xc7a200tfbg484-2}, with a clock constraint of
 ten nanoseconds and no pins, since the question is whether the
 netlist synthesizes and to what, not where it goes on a board.
-Synthesis took two minutes and finished with no error, no critical
-warning and no warning.
+Synthesis took two minutes and finished with no error and no
+critical warning; its two warnings are that the writeback stage's
+program counter, which only the lockstep test reads, was removed as
+unused, and an advisory on floorplanning.
 
 \begin{table}[htbp]
 \caption{The core on an Artix-7, after synthesis.}
@@ -342,44 +366,47 @@ warning and no warning.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1075 \\
-LUTs, as distributed RAM & 560 \\
-Flip-flops & 103 \\
-Block RAM tiles & 1 \\
+LUTs, as logic & 992 \\
+LUTs, as distributed RAM & 48 \\
+Flip-flops & 149 \\
+Block RAM tiles & 3 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The memories answer the question Section~\ref{sec:v-next} used to
-ask. The instruction memory, written by nothing and holding the
-program from its \code{initial} block, became a read-only memory in
-one block RAM tile, 1024 words by 27 bits, the tool having dropped
-the bit columns the program never sets. The data memory, written by
-the store and read combinationally by the load, became distributed
-RAM, 128 primitives of 256 by 1, since a block RAM's read port is
-registered and a combinational read of it would have to wait a cycle;
-the register file, 32 by 32 with one write port and two reads, became
-twelve of the small distributed primitives, which is what a register
-file of that size is on this family. The flip-flops are the five
-registers: two program counters, the instruction register, the valid
-bit and the halt bit. So a memory the runtime reads plainly is a
-distributed RAM when it is written and a block RAM when it is not;
-to put the data memory in block RAM the core would have to read it
-a cycle ahead, which is a pipeline stage, and that is where a third
-stage would go.
+The memories are where the third stage shows. The instruction
+memory, written by nothing and holding the program from its
+\code{initial} block, is a read-only memory in one block RAM tile,
+1024 words by 27 bits, the tool having dropped the bit columns the
+program never sets. The data memory's four lanes are four block RAMs
+of 1024 by 8, two tiles, each written by the store on its port and
+read by the load into the writeback register on the other: the
+synchronous read a block RAM has, which is what the third stage was
+for. With two stages the data memory had been 560 LUTs of
+distributed RAM, since the load read it combinationally and the
+store read it to merge a byte; the lanes removed the store's read
+and the stage registered the load's, and the LUT count fell by a
+third. The register file, 32 by 32 with one write port and two
+reads, is twelve of the small distributed primitives, which is what
+a register file of that size is on this family. The flip-flops are
+the fifteen registers of the source less one, the writeback stage's
+program counter, which only the lockstep test reads and synthesis
+removed as unused, with a warning that says so.
 
 The netlist is also placed and routed, \code{bazel build
 //cpu/vreteno:vreteno\_pnr}, with the same constraint and no pins,
 so the bitstream is a stub and the reports are the point. The routed
-design meets ten nanoseconds with 0.263~ns of slack over 5931
-endpoints, and hold with 0.178~ns. The critical path is 9.514~ns,
-of which routing is three quarters, through eleven levels of logic:
-from a register through the decode and the ALU into the register
-file's write port, which is the path Section~\ref{sec:v-next} named
-before the run, the data memory's read and the load's extension
-being on it. So the core runs at 100~MHz on this part with a
-quarter of a nanosecond to spare, and a third stage is what would
-buy more.
+design meets ten nanoseconds with 0.361~ns of slack, and hold with
+0.097~ns. The critical path is 9.074~ns, of which routing is five
+eighths, through ten levels of logic: from a data memory lane's read
+port, through the forwarding path into the ALU, to the instruction
+memory's address, which is a load followed at once by a jump through
+what it loaded. With two stages the slack had been 0.263~ns on a
+path from a register through the decode and the ALU into the
+register file's write, and the third stage took the data memory's
+read off that path and put the load's data on the forwarding path
+instead; the core runs at 100~MHz on this part either way, with a
+third of a nanosecond to spare now.
 
 \subsection{The board}
 
@@ -394,8 +421,8 @@ clock has locked, and four LEDs, lit when driven low, showing the
 core halted, a heartbeat, the reset released and the clock locked.
 The constraints name the board's pins as the project's other designs
 for it do, so the bitstream is real: the routed design meets
-100~MHz with 0.309~ns of slack, in 1526 LUTs, 132 flip-flops, one
-block RAM tile and the MMCM, with no critical warning.
+100~MHz with 0.285~ns of slack, in 977 LUTs, 178 flip-flops, three
+block RAM tiles and the MMCM, with no critical warning.
 \code{bazel run //cpu/vreteno:vreteno\_board\_flash} writes it into
 the board's QSPI flash over the programming cable. What the board
 should show, once it does: the clock LED at once, the running LED
@@ -422,6 +449,11 @@ netlist and a clock period to shorten, and not before.
 The board, programmed. Its bitstream is built and the flash target
 writes it; what its LEDs should show is stated above, and the first
 thing to do with the board in hand is to see that they do.
+
+More clock. The path that sets the timing now is a load followed at
+once by a jump through what it loaded; a stall on that one case, or
+a fourth stage, would let the clock rise, and the lockstep test is
+the check for either.
 
 Traps and the rest of the privileged architecture, and the
 multiplication extension, are the instruction set's next steps, and

@@ -48,11 +48,12 @@ source runs as a cycle-accurate simulation, writes a waveform, and
 lowers to a netlist in Verilog and VHDL, and the build simulates that
 netlist under nvc and Verilator against the trace the simulation
 wrote, so a design that passes is right in three forms at once. The
-largest design so far is Vreteno, a two-stage RV32I core: written in
+largest design so far is Vreteno, a three-stage RV32I core: written in
 the subset the lowering reads, checked in lockstep against a
 reference model, checked as a netlist against its own trace, and
-synthesized, placed and routed on an Artix-7 at 100~MHz in 1635
-LUTs. This paper presents the system and its results.
+synthesized, placed and routed on an Artix-7 at 100~MHz in 1040
+LUTs, its data memory in block RAM. This paper presents the system
+and its results.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -379,11 +380,14 @@ instruction memory at the program counter into an instruction
 register, with its program counter and a valid bit. The execute stage
 decodes the fields of the word in that register with \code{slice},
 \code{concat} and \code{sext}, reads two operands from the register
-file, computes with the ALU of Listing~\ref{lst:p-alu} or the
-load-store unit, writes the register file and the data memory, and,
-on a taken branch or a jump, redirects the fetch and squashes the
-word fetched that cycle, which is the one-cycle penalty. The whole is
-written in the subset the lowering reads, Listing~\ref{lst:p-fetch}
+file, computes with the ALU of Listing~\ref{lst:p-alu}, stores into
+the lanes of the data memory, reads it into the writeback registers
+at its edge, and, on a taken branch or a jump, redirects the fetch
+and squashes the word fetched that cycle, which is the one-cycle
+penalty. The writeback stage extends a loaded word, writes the
+register file and retires; an operand the writeback stage is about
+to write is forwarded into execute, so no stall is needed. The whole
+is written in the subset the lowering reads, Listing~\ref{lst:p-fetch}
 being the fetch's drives, so the one file simulates and is a netlist.
 
 \begin{figure}[htbp]
@@ -396,7 +400,8 @@ being the fetch's drives, so the one file simulates and is a netlist.
   \node[art] (regs) at (2.3,-1.5) {register\\file};
   \node[box] (alu) at (5.2,-3) {ALU, branch,\\load, store};
   \node[art] (dmem) at (2.3,-3) {data\\memory};
-  \node[box] (wb) at (0,-3) {writeback};
+  \node[box, fill=tint] (wbr) at (0,-3) {\code{wb\_*}};
+  \node[box] (wb) at (0,-4.4) {writeback};
   \draw[flow] (pc) -- (imem);
   \draw[flow] (imem) -- (ir);
   \draw[flow] (ir) -- (dec);
@@ -404,18 +409,21 @@ being the fetch's drives, so the one file simulates and is a netlist.
   \draw[flow] (regs.east) -- ++(0.55,0) |- ([yshift=3mm]alu.west);
   \draw[flow] (dec) -- (alu);
   \draw[flow] (alu) -- (dmem);
-  \draw[flow] (dmem) -- (wb);
-  \draw[flow] (wb.north) -- (wb.north |- regs.west) -- (regs.west);
+  \draw[flow] (dmem) -- (wbr);
+  \draw[flow] (wbr) -- (wb);
+  \draw[flow] (wb.east) -| node[lbl, pos=0.3, below] {forward} (alu.south);
+  \draw[flow] (wbr.north) -- (wbr.north |- regs.west) -- (regs.west);
   \draw[flow, red!70!black] (alu.east) -- ++(0.7,0) |- ([yshift=6mm]pc.north) -- (pc.north);
   \node[font=\scriptsize, text=red!70!black, anchor=west] at (7.0,-1.5) {redirect};
   \begin{scope}[on background layer]
     \node[draw, dashed, gray, fit=(pc)(imem), inner sep=3pt, label={[gray, font=\scriptsize]below left:fetch}] {};
-    \node[draw, dashed, gray, fit=(dec)(regs)(alu)(dmem)(wb), inner sep=3pt, label={[gray, font=\scriptsize]below:execute}] {};
+    \node[draw, dashed, gray, fit=(dec)(regs)(alu)(dmem)(wbr), inner sep=3pt, label={[gray, font=\scriptsize]below left:execute}] {};
   \end{scope}
 \end{tikzpicture}
-\caption{Vreteno: two stages in one process. The instruction register
-is the boundary; a taken branch or jump redirects the fetch and costs
-one bubble.}
+\caption{Vreteno: three stages in one process. The instruction
+register and the writeback registers are the boundaries; a taken
+branch or jump redirects the fetch and costs one bubble; the value
+in writeback is forwarded into execute.}
 \label{fig:p-core}
 \end{figure}
 
@@ -435,12 +443,13 @@ Table~\ref{tab:p-synth}, on an Artix-7 with a clock constraint of ten
 nanoseconds, by Vivado, which the build installs itself from the
 vendor's archive into a cache the machine shares. The instruction
 memory became a read-only memory in one block RAM tile, the data
-memory and the register file distributed RAM, since their reads are
-combinational, and the flip-flops are the five registers. Placed and
-routed with the same constraint, the core meets ten nanoseconds with
-0.263~ns to spare; the critical path runs from a register through
-the decode and the ALU into the register file's write, three quarters
-of it routing. Fig.~\ref{fig:p-vreteno} is the opening of the
+memory's four byte lanes four block RAMs in two, since the third
+stage registers their read, and the register file distributed RAM.
+Placed and routed with the same constraint, the core meets ten
+nanoseconds with 0.361~ns to spare; the critical path runs from a
+data memory's read through the forwarding path and the ALU to the
+instruction memory's address, a load followed by a jump through what
+it loaded. Fig.~\ref{fig:p-vreteno} is the opening of the
 demonstration, from the trace.
 
 \begin{table}[htbp]
@@ -451,11 +460,11 @@ demonstration, from the trace.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1075 \\
-LUTs, as distributed RAM & 560 \\
-Flip-flops & 103 \\
-Block RAM tiles & 1 \\
-Errors, critical warnings, warnings & 0 \\
+LUTs, as logic & 992 \\
+LUTs, as distributed RAM & 48 \\
+Flip-flops & 149 \\
+Block RAM tiles & 3 \\
+Errors, critical warnings & 0 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -519,10 +528,11 @@ is small enough to fit on one page, the runtime simulates it with a
 stated model of time, the lowering turns it into Verilog and VHDL,
 and the build holds the three to one behaviour under two simulators.
 A RISC-V core written in it runs, lowers, is checked against its own
-trace, and runs at 100~MHz on an Artix-7, whose bitstream, with a
-clock, a reset and four LEDs around the core, is built. The next
-steps are the board in hand, and a third pipeline stage for the
-memories the block RAM wants registered.
+trace, and runs at 100~MHz on an Artix-7 with its data memory in
+block RAM, whose bitstream, with a clock, a reset and four LEDs
+around the core, is built. The next steps are the board in hand, and
+the clock: the path that limits it is a load followed by a jump
+through what it loaded.
 
 \begin{thebibliography}{10}
 
