@@ -9,6 +9,12 @@ crate has no dependencies. \code{\#[derive(Transaction)]} and
 enum, its width and its bits for a trace, and \code{\#[derive(Trace)]}
 registers every field of a unit under its field name; both read the
 item's generic parameters so a generic unit can derive them.
+\code{\#[pipeline(op = latency, ..)]} is the first of the lowering: on
+an \code{async fn} of awaited operator calls it keeps the function and
+emits a \code{NAME\_verilog()} beside it, each operator a stage of the
+stated latency and each value delayed to meet the operator that uses
+it. Its grammar is the one \code{mac} needs and no wider, and it
+refuses the rest with its own message.
 \code{interface!} takes an interface and any number of roles, checks
 that every role names every member once and that no member is driven
 twice, and emits a struct per role plus a constructor that splits each

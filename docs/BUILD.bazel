@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-load("@rules_latex_host//latex:defs.bzl", "latex_document")
+load("@rules_latex_host//latex:defs.bzl", "combined_pdf", "latex_document")
 load(":waveform.bzl", "waveform")
 
 package(default_visibility = ["//visibility:public"])
@@ -485,6 +485,16 @@ waveform(
     ],
 )
 
+waveform(
+    name = "lower",
+    example = "//lib/examples:ex_lower",
+    signals = [
+        "//clocks/clk=>clk",
+        "//triple/data=>triple",
+        "//result/data=>result",
+    ],
+)
+
 # The examples: every file under //lib/examples verbatim, the output of
 # the ones that run, and the runtime's public interface.
 latex_document(
@@ -503,6 +513,8 @@ latex_document(
         ":netlist_timing",
         ":edges_run",
         ":edges_timing",
+        ":lower_run",
+        ":lower_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -514,4 +526,24 @@ latex_document(
     main = "cover.tex",
     data = [":vendored_tex"],
     deps = ["housestyle.tex"],
+)
+
+# Every document in sequence, one file, with a bookmark per document.
+combined_pdf(
+    name = "all",
+    out = "txhdl.pdf",
+    bookmarks = [
+        "TxHDL Documents",
+        "TxHDL: Unifying a Dataflow and a Transaction HDL",
+        "Deleting a Language: Embedding TxHDL in Rust",
+        "The TxHDL Runtime",
+        "TxHDL by Example",
+    ],
+    parts = [
+        ":cover",
+        ":article",
+        ":embedding",
+        ":runtime",
+        ":examples",
+    ],
 )

@@ -158,6 +158,18 @@ registers and nothing else. That gap is the argument for the
 proc-macro route restated from the other side: the structure is
 already recoverable at run time, and the behaviour is not.
 
+The experiment below has since been run, in its first form. A
+\code{\#[pipeline(mul = 1, add = 1)]} attribute keeps an \code{async
+fn} as written and emits its Verilog beside it, each awaited operator
+a stage of the stated latency and each early value delayed to meet the
+operator that uses it. The same \code{mac} with \code{mul = 1} is two
+stages with \code{c} delayed once; with \code{mul = 3} it is four
+stages with \code{c} delayed three times; the source of the two is
+identical, and the function still runs in simulation. That is the
+answer the experiment was to give, for a grammar of awaited operator
+calls; \code{when!}, \code{case!} and the bodies of \code{run} are what
+remains.
+
 \subsection{What it does not need}
 
 A parser, a type checker, a module system, generics, a package manager or

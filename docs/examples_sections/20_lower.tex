@@ -1,0 +1,42 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{One Pipeline, Lowered Twice}
+\label{sec:x-lower}
+
+The embedding article closes by stating one experiment: lower the same
+\code{mac} twice, with two multiplier latencies, and see whether the
+async form survives it. This is that experiment, and the first of the
+behavioural lowering. \code{\#[pipeline(mul = 1, add = 1)]} on an
+\code{async fn} keeps the function exactly as written, so simulation
+runs it, and emits its Verilog beside it as \code{mac\_verilog()}.
+Every awaited operator is a stage of the latency the attribute gives
+it. A value that is ready before the operator that uses it, here
+\code{c}, which arrives with the inputs and is needed after the
+multiplier, is delayed by as many registers as it must wait, which is
+what the merged language's \code{pipe} keyword existed to make the
+designer write. The two lowerings differ in exactly the multiplier's
+depth and the length of that delay, and the source of the two is
+identical. Listing~\ref{lst:x-lower-out} is what the example printed:
+both Verilog modules, then the simulation of the function through
+\code{pipeline::drive}, whose figure is Figure~\ref{fig:x-lower}. The
+runtime's \code{mul} takes one cycle, so the waveform is the first
+lowering's; the second is a different implementation of the same
+function, and that is the point.
+
+What the macro reads is small on purpose: parameters of type
+\code{U<N>}, statements of the form \code{let x = op(args).await}, a
+tail expression of the same form, literals as \code{U::<W>::from(n)},
+and macro calls such as \code{println!}, which it skips as not
+hardware. Anything else is a compile error with the macro's own
+message. Widening the grammar toward \code{when!}, \code{case!} and the
+bodies of \code{run} is the rest of the lowering.
+
+\begin{figure}[htbp]
+\centering
+\input{lower_timing.tex}
+\caption{The function the two modules implement, simulated: a triple in every cycle, its \code{a * b + c} out two cycles later.}
+\label{fig:x-lower}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_lower.rs}. Run with \code{bazel run //lib/examples:ex\_lower}.},label={lst:x-lower}]{lib/examples/ex_lower.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_lower} printed when the build ran it: the two lowerings, then the simulation.},label={lst:x-lower-out}]{out_lower.txt}

@@ -863,3 +863,320 @@ fn up_to_arrow(
     }
     None
 }
+
+// ---------------------------------------------------------------------
+// #[pipeline(op = latency, ..)]
+
+/// One value in a pipeline being lowered: its Verilog name, its width,
+/// and the stage at which it is ready.
+struct Val {
+    name: String,
+    width: usize,
+    ready: usize,
+}
+
+/// A call in the body: `let x = op(args).await`, or the tail expression.
+struct Call {
+    dest: Option<String>,
+    op: String,
+    args: Vec<Arg>,
+}
+
+enum Arg {
+    Name(String),
+    Lit(u128, Option<usize>),
+}
+
+fn parse_call(ts: &[TokenTree]) -> Result<Call, String> {
+    let mut i = 0;
+    let mut dest = None;
+    if let Some(TokenTree::Ident(id)) = ts.get(i) {
+        if id.to_string() == "let" {
+            let TokenTree::Ident(d) = &ts[i + 1] else {
+                return Err("expected a name after let".into());
+            };
+            dest = Some(d.to_string());
+            match ts.get(i + 2) {
+                Some(TokenTree::Punct(p)) if p.as_char() == '=' => {}
+                _ => return Err("expected `=`".into()),
+            }
+            i += 3;
+        }
+    }
+    let TokenTree::Ident(op) = &ts[i] else {
+        return Err("expected an operator call".into());
+    };
+    let Some(TokenTree::Group(g)) = ts.get(i + 1) else {
+        return Err("expected the operator's arguments".into());
+    };
+    match (ts.get(i + 2), ts.get(i + 3)) {
+        (Some(TokenTree::Punct(p)), Some(TokenTree::Ident(a)))
+            if p.as_char() == '.' && a.to_string() == "await" => {}
+        _ => return Err("an operator call must be awaited".into()),
+    }
+    let mut args = Vec::new();
+    for a in split_commas(g) {
+        args.push(parse_arg(&a)?);
+    }
+    Ok(Call {
+        dest,
+        op: op.to_string(),
+        args,
+    })
+}
+
+fn split_commas(g: &Group) -> Vec<Vec<TokenTree>> {
+    let mut out = vec![Vec::new()];
+    for t in g.stream() {
+        match &t {
+            TokenTree::Punct(p) if p.as_char() == ',' => out.push(Vec::new()),
+            _ => out.last_mut().unwrap().push(t),
+        }
+    }
+    out.retain(|v| !v.is_empty());
+    out
+}
+
+/// `name`, `LIT`, `U::from(LIT)` or `U::<W>::from(LIT)`.
+fn parse_arg(ts: &[TokenTree]) -> Result<Arg, String> {
+    match ts {
+        [TokenTree::Ident(id)] if id.to_string() != "U" => {
+            Ok(Arg::Name(id.to_string()))
+        }
+        [TokenTree::Literal(l)] => Ok(Arg::Lit(
+            l.to_string()
+                .replace('_', "")
+                .parse()
+                .map_err(|_| "a literal")?,
+            None,
+        )),
+        _ => {
+            let text: String = ts
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join("");
+            let width = text
+                .strip_prefix("U::<")
+                .and_then(|r| r.split_once('>'))
+                .and_then(|(w, _)| w.parse().ok());
+            let lit = text
+                .rsplit_once("from(")
+                .and_then(|(_, r)| r.strip_suffix(')'))
+                .and_then(|l| l.replace('_', "").parse().ok())
+                .ok_or_else(|| format!("cannot lower the argument `{text}`"))?;
+            Ok(Arg::Lit(lit, width))
+        }
+    }
+}
+
+/// `#[pipeline(mul = 1, add = 1)]` on an `async fn`: the function stays
+/// as written for simulation, and a `NAME_verilog()` beside it returns
+/// its lowering. Every awaited operator is a stage of the latency the
+/// attribute gives it; a value used later than it is ready is delayed
+/// by registers to meet the operator, which is what a stage boundary
+/// stored. The body may contain `let x = op(args).await;` statements,
+/// a tail `op(args).await`, and macro calls such as `println!`, which
+/// are skipped.
+#[proc_macro_attribute]
+pub fn pipeline(attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Latencies.
+    let mut latency: Vec<(String, usize)> = Vec::new();
+    let atoks: Vec<TokenTree> = attr.into_iter().collect();
+    let mut i = 0;
+    while i + 2 < atoks.len() + 1 && i < atoks.len() {
+        let (TokenTree::Ident(op), Some(TokenTree::Literal(n))) =
+            (&atoks[i], atoks.get(i + 2))
+        else {
+            return err(Span::call_site(), "expected `op = latency`");
+        };
+        latency.push((op.to_string(), n.to_string().parse().unwrap_or(0)));
+        i += 4;
+    }
+    // The function: `[pub] async fn NAME(params) -> U<R> { body }`.
+    let toks: Vec<TokenTree> = item.clone().into_iter().collect();
+    let mut i = 0;
+    while !matches!(&toks[i], TokenTree::Ident(id) if id.to_string() == "fn") {
+        i += 1;
+    }
+    let name = toks[i + 1].to_string();
+    let TokenTree::Group(params) = &toks[i + 2] else {
+        return err(Span::call_site(), "expected parameters");
+    };
+    let mut vals: Vec<Val> = Vec::new();
+    let mut ports = Vec::new();
+    for p in split_commas(params) {
+        let (TokenTree::Ident(pname), Some(w)) = (&p[0], width_of(&p[2..]))
+        else {
+            return err(p[0].span(), "a parameter must be `name: U<N>`");
+        };
+        ports.push(format!("input [{}:0] {}", w - 1, pname));
+        vals.push(Val {
+            name: pname.to_string(),
+            width: w,
+            ready: 0,
+        });
+    }
+    let Some(ret) = width_of(&toks[i + 4..]) else {
+        return err(Span::call_site(), "the return type must be `U<N>`");
+    };
+    let TokenTree::Group(body) = toks.last().unwrap() else {
+        return err(Span::call_site(), "expected a body");
+    };
+    // The body: operator calls, in order.
+    let mut calls = Vec::new();
+    for st in statements(body) {
+        let ts: Vec<TokenTree> = st.into_iter().collect();
+        let is_macro = matches!(
+            (&ts[0], ts.get(1)),
+            (TokenTree::Ident(_), Some(TokenTree::Punct(p)))
+                if p.as_char() == '!'
+        );
+        if is_macro {
+            continue; // println! and friends: not hardware
+        }
+        match parse_call(&ts) {
+            Ok(c) => calls.push(c),
+            Err(m) => return err(ts[0].span(), &m),
+        }
+    }
+    // Schedule and emit.
+    let mut regs: Vec<String> = Vec::new();
+    let mut seq: Vec<String> = Vec::new();
+    let mut comb: Vec<String> = Vec::new();
+    let mut last = String::new();
+    let mut temp = 0;
+    for c in &calls {
+        let Some(&(_, lat)) = latency.iter().find(|(o, _)| *o == c.op) else {
+            return err(
+                Span::call_site(),
+                &format!("no latency given for `{}`", c.op),
+            );
+        };
+        // Resolve the arguments and the stage they meet at.
+        let mut operands: Vec<(String, usize, usize)> = Vec::new();
+        for a in &c.args {
+            match a {
+                Arg::Name(n) => {
+                    let Some(v) = vals.iter().find(|v| v.name == *n) else {
+                        return err(
+                            Span::call_site(),
+                            &format!("`{n}` is not a value here"),
+                        );
+                    };
+                    operands.push((v.name.clone(), v.width, v.ready));
+                }
+                Arg::Lit(l, w) => {
+                    let w = w.unwrap_or(ret);
+                    operands.push((format!("{w}'d{l}"), w, 0));
+                }
+            }
+        }
+        let meet = operands.iter().map(|o| o.2).max().unwrap_or(0);
+        let mut names = Vec::new();
+        for (n, w, ready) in &operands {
+            let mut cur = n.clone();
+            if n.contains("'d") {
+                names.push(cur);
+                continue;
+            }
+            // Delay a value that is ready early until the operands meet.
+            for k in *ready..meet {
+                let next = format!("{n}_d{}", k + 1);
+                regs.push(format!("  reg [{}:0] {next};", w - 1));
+                seq.push(format!("    {next} <= {cur};"));
+                cur = next;
+            }
+            names.push(cur);
+        }
+        let sym = match c.op.as_str() {
+            "mul" => "*",
+            "add" => "+",
+            "sub" => "-",
+            other => {
+                return err(
+                    Span::call_site(),
+                    &format!("unknown operator `{other}`"),
+                )
+            }
+        };
+        let width = if c.op == "mul" {
+            operands.iter().map(|o| o.1).sum()
+        } else {
+            operands.iter().map(|o| o.1).max().unwrap_or(ret)
+        };
+        let dest = c.dest.clone().unwrap_or_else(|| {
+            temp += 1;
+            format!("t{temp}")
+        });
+        let expr = names.join(&format!(" {sym} "));
+        let mut cur = expr;
+        for k in 0..lat {
+            let next = if k + 1 == lat {
+                dest.clone()
+            } else {
+                format!("{dest}_s{}", k + 1)
+            };
+            regs.push(format!("  reg [{}:0] {next};", width - 1));
+            seq.push(format!("    {next} <= {cur};"));
+            cur = next;
+        }
+        if lat == 0 {
+            comb.push(format!("  wire [{}:0] {dest} = {cur};", width - 1));
+        }
+        vals.push(Val {
+            name: dest.clone(),
+            width,
+            ready: meet + lat,
+        });
+        last = dest;
+    }
+    let depth = vals.last().map(|v| v.ready).unwrap_or(0);
+    let mut v = String::new();
+    v.push_str(&format!(
+        "// {name}: {} stages, lowered by #[pipeline]\n\
+         module {name}(input clk, {}, output [{}:0] out);\n",
+        depth,
+        ports.join(", "),
+        ret - 1
+    ));
+    for r in &regs {
+        v.push_str(r);
+        v.push('\n');
+    }
+    for c in &comb {
+        v.push_str(c);
+        v.push('\n');
+    }
+    if !seq.is_empty() {
+        v.push_str("  always @(posedge clk) begin\n");
+        for s in &seq {
+            v.push_str(s);
+            v.push('\n');
+        }
+        v.push_str("  end\n");
+    }
+    v.push_str(&format!("  assign out = {last};\nendmodule\n"));
+    let mut out = item;
+    let extra: TokenStream = format!(
+        "/// The Verilog of `{name}`, as `#[pipeline]` lowered it.\n\
+         pub fn {name}_verilog() -> String {{ String::from(r#\"{v}\"#) }}"
+    )
+    .parse()
+    .unwrap();
+    out.extend(extra);
+    out
+}
+
+/// The `N` of a `U<N>` type, from its tokens.
+fn width_of(ts: &[TokenTree]) -> Option<usize> {
+    let text: String = ts
+        .iter()
+        .map(|t| t.to_string())
+        .collect::<Vec<_>>()
+        .join("");
+    let r = text
+        .trim_start_matches(|c| c == '-' || c == '>')
+        .trim_start_matches("U<");
+    r.split('>').next()?.trim().parse().ok()
+}

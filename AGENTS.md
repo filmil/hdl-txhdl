@@ -30,6 +30,8 @@ all under `//docs`:
   build produced by running it.
   The runtime appears there only through its public interface, which
   `//tools/api` extracts from the source at build time.
+* `//docs:all` is every document above in that order, one PDF with a
+  bookmark per document.
 
 `docs/` holds the analysis behind every decision.
 `experiments/rust_embedding/` holds the probes: one compiled question
@@ -91,7 +93,7 @@ Nothing has to be installed beyond `bazelisk`.
 ```sh
 bazel build //...              # the library, every example, every document
 bazel run //lib/examples:ex_config -- asic
-bazel build //docs/...         # -> bazel-bin/docs/{cover,article,embedding,runtime,examples}.pdf
+bazel build //docs/...         # -> bazel-bin/docs/{cover,article,embedding,runtime,examples,txhdl}.pdf
 ```
 
 Before finishing a document change, run the readability pass from the

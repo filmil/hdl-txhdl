@@ -26,4 +26,6 @@ pub mod netlist;
 pub mod pipeline;
 pub mod types;
 
-pub use txhdl_macros::{case, interface, when, Bus, Trace, Transaction, Value};
+pub use txhdl_macros::{
+    case, interface, pipeline, when, Bus, Trace, Transaction, Value,
+};

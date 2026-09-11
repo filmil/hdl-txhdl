@@ -26,7 +26,8 @@ Five documents are typeset here, and `cover.tex` names them all:
 `embedding.tex` with `embedding_sections/` is the language, `//docs:embedding`;
 `runtime.tex` with `runtime_sections/` is the runtime library verbatim, `//docs:runtime`;
 `examples.tex` with `examples_sections/` is every example with its output, `//docs:examples`;
-`cover.tex` is the cover, `//docs:cover`.
+`cover.tex` is the cover, `//docs:cover`;
+`//docs:all` concatenates them all, in that order, into `txhdl.pdf`.
 `housestyle.tex` is the preamble they all share, so they cannot drift apart
 in font, listing style or figure style.
 The examples document shows the runtime only through its public interface,

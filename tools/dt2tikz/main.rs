@@ -15,7 +15,10 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-const XS: f64 = 0.30; // cm per tick
+const XS_MIN: f64 = 0.30; // cm per tick, at least
+const X_MAX: f64 = 16.0; // cm, the widest a diagram may be
+const CHAR: f64 = 0.17; // cm per character of a bus label
+const PAD: f64 = 0.45; // cm around a bus label, crossovers included
 const H: f64 = 0.55; // signal height
 const PITCH: f64 = 0.95; // row pitch
 
@@ -72,7 +75,32 @@ fn main() {
             .collect();
         order.append(&mut rest);
     }
-    let end = t.max(1) as f64;
+    // Spread the ticks so the widest bus label fits its shortest
+    // interval, within the width of the page; and draw one interval
+    // past the last change, so the last value has room too.
+    let mut widest = 0.0f64;
+    let mut shortest = u64::MAX;
+    for h in hist.values() {
+        if h.iter().all(|(_, v)| v.len() == 1) {
+            continue;
+        }
+        for (k, (t0, v)) in h.iter().enumerate() {
+            let t1 = h.get(k + 1).map(|(t1, _)| *t1).unwrap_or(t);
+            if t1 > *t0 && k + 1 < h.len() {
+                shortest = shortest.min(t1 - t0);
+            }
+            widest = widest.max(pretty(v).len() as f64);
+        }
+    }
+    let tail = if shortest == u64::MAX { 1 } else { shortest };
+    let end = (t + tail).max(1) as f64;
+    let mut xs = XS_MIN;
+    if shortest != u64::MAX && shortest > 0 {
+        xs = xs.max((CHAR * widest + PAD) / shortest as f64);
+    }
+    if end * xs > X_MAX {
+        xs = X_MAX / end;
+    }
     let mut o = String::new();
     writeln!(
         o,
@@ -92,11 +120,11 @@ fn main() {
         let onebit = h.iter().all(|(_, v)| v.len() == 1);
         let mut prev_y: Option<f64> = None;
         for (k, (t0, v)) in h.iter().enumerate() {
-            let x0 = *t0 as f64 * XS;
+            let x0 = *t0 as f64 * xs;
             let x1 = h
                 .get(k + 1)
-                .map(|(t1, _)| *t1 as f64 * XS)
-                .unwrap_or(end * XS);
+                .map(|(t1, _)| *t1 as f64 * xs)
+                .unwrap_or(end * xs);
             if onebit {
                 let (y, dashed) = match v.as_str() {
                     "1" => (y0 + H, false),
@@ -165,7 +193,7 @@ fn main() {
     let yb = -(order.len() as f64) * PITCH + PITCH - H - 0.15;
     let mut tick = 0u64;
     while (tick as f64) <= end {
-        let x = tick as f64 * XS;
+        let x = tick as f64 * xs;
         writeln!(
             o,
             "\\draw[gray!50] ({x:.2},{:.2}) -- ({x:.2},{:.2});",
@@ -184,7 +212,7 @@ fn main() {
     writeln!(
         o,
         "\\draw[gray!50] (0,{yb:.2}) -- ({:.2},{yb:.2});",
-        end * XS
+        end * xs
     )
     .unwrap();
     writeln!(o, "\\end{{tikzpicture}}").unwrap();
