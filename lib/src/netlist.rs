@@ -445,7 +445,10 @@ impl Lowered {
         1
     }
     /// The ports as a sidecar for a testbench generator: one per line,
-    /// `name direction width`, the clock first.
+    /// `name direction width`, the clock first. A channel's three
+    /// wires carry their side, `rxin`, `rxout`, `txin` or `txout`,
+    /// since the trace names them by side and a channel's inputs are
+    /// registered where a wire's are not.
     pub fn ports_file(&self) -> String {
         let mut out = format!("{} in 1\n", self.clock);
         for (n, k, w) in &self.ports {
@@ -453,10 +456,12 @@ impl Lowered {
                 Kind::Out => out.push_str(&format!("{n} out {w}\n")),
                 Kind::In => out.push_str(&format!("{n} in {w}\n")),
                 Kind::Tx => out.push_str(&format!(
-                    "{n}_data out {w}\n{n}_valid out 1\n{n}_ready in 1\n"
+                    "{n}_data txout {w}\n{n}_valid txout 1\n\
+                     {n}_ready txin 1\n"
                 )),
                 Kind::Rx => out.push_str(&format!(
-                    "{n}_data in {w}\n{n}_valid in 1\n{n}_ready out 1\n"
+                    "{n}_data rxin {w}\n{n}_valid rxin 1\n\
+                     {n}_ready rxout 1\n"
                 )),
                 Kind::Reg | Kind::Mem => {}
             }

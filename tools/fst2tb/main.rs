@@ -12,7 +12,13 @@
 //! edge, so it is checked at 2k-1, where the entity's continuous
 //! assignment shows the same value; and from the inputs of that edge,
 //! so at 2k-1 the inputs are applied first, a delta passes, and the
-//! checks follow.
+//! checks follow. A channel's inputs, the head of the buffer on the
+//! receiving side and the room on the sending side, are registered
+//! state of the channel: the trace at 2k holds them as that edge left
+//! them, which is what the entity sees during the cycle after it, so
+//! they are applied at 2k+1. A sender's data is checked only at ticks
+//! where the trace has its valid high, since under a low valid the
+//! trace holds the last offer and the entity computes the wire anyway.
 //!
 //! Usage: fst2tb FILE.fst FILE.vhd.ports ENTITY UNIT > tb.vhd
 //! where UNIT is the name the Rust testbench gave the unit in the trace.
@@ -70,9 +76,17 @@ fn main() {
         .find(|p| p.1 == "in" && p.0 == "clk")
         .map(|p| p.0.clone())
         .unwrap_or("clk".into());
+    // Directions: in, out, reg, and a channel's rxin, rxout, txin,
+    // txout. A channel's wire is traced under the channel by its side.
+    let is_in = |d: &str| d == "in" || d == "rxin" || d == "txin";
+    let is_out = |d: &str| d == "out" || d == "rxout" || d == "txout";
+    let registered = |d: &str| d == "rxin" || d == "txin";
     let trace_name = |port: &str, dir: &str| -> String {
         if dir == "reg" {
             format!("{unit}.{port}")
+        } else if dir.starts_with("rx") || dir.starts_with("tx") {
+            let (ch, part) = port.rsplit_once('_').unwrap_or((port, ""));
+            format!("{ch}.{}_{part}", &dir[..2])
         } else {
             port.to_string()
         }
@@ -106,6 +120,7 @@ fn main() {
             o.push_str(&format!("  signal {n} : {} := {init};\n", ty(*w)));
         }
     }
+    let _ = is_out;
     o.push_str(&format!(
         "  signal errors : natural := 0;\nbegin\n\
            uut : entity work.{entity} port map ("
@@ -149,7 +164,8 @@ fn main() {
             .filter(|s| !s.is_empty())
             .cloned()
     };
-    // Inputs for the edge at tick 0 are applied before any wait.
+    // Inputs for the edge at tick 0 are applied before any wait; a
+    // registered input starts as the channel does, empty.
     for (n, d, w) in &ports {
         if d == "in" && *n != clock {
             if let Some(v) = val(&trace_name(n, d), 0) {
@@ -167,8 +183,9 @@ fn main() {
         // take effect and one for the wires that follow them, then
         // the checks.
         for (n, d, w) in &ports {
-            if d == "in" && *n != clock {
-                if let Some(v) = val(&trace_name(n, d), t + 2) {
+            if is_in(d) && *n != clock {
+                let at = if registered(d) { t } else { t + 2 };
+                if let Some(v) = val(&trace_name(n, d), at) {
                     o.push_str(&format!("    {n} <= {};\n", lit(*w, &v)));
                 }
             }
@@ -188,7 +205,16 @@ fn main() {
             }
         }
         for (n, d, w) in &ports {
-            if d == "out" {
+            if is_out(d) {
+                // A sender's data means nothing under a low valid: the
+                // trace holds the last offer, the entity computes the
+                // wire regardless, so it is checked only when offered.
+                if d == "txout" && n.ends_with("_data") {
+                    let valid = trace_name(&n.replace("_data", "_valid"), d);
+                    if val(&valid, t + 2).as_deref() != Some("1") {
+                        continue;
+                    }
+                }
                 if let Some(v) = val(&trace_name(n, d), t + 2) {
                     o.push_str(&format!(
                         "    expect(\"{n}\", {n} = {}, now);\n",
