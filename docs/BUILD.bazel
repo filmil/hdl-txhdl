@@ -595,6 +595,35 @@ waveform(
     ],
 )
 
+# Vreteno: the RV32I core, its run and the opening cycles of its
+# waveform, in its own document.
+waveform(
+    name = "vreteno",
+    example = "//cpu/vreteno:vreteno",
+    until = 30,
+    signals = [
+        "//clocks/clk=>clk",
+        "//rst=>rst",
+        "//cpu/pc=>pc",
+        "//instr=>instr",
+        "//wb/rd=>rd",
+        "//wb/val=>val",
+        "//halt=>halt",
+    ],
+)
+
+latex_document(
+    name = "vreteno",
+    main = "vreteno.tex",
+    data = [
+        ":vendored_tex",
+        ":vreteno_run",
+        ":vreteno_timing",
+        "//cpu/vreteno:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # The cheat sheet: one page, landscape, with its own example's listing,
 # netlist and coloured waveform, and a PNG of it through ghostscript.
 waveform(
@@ -656,6 +685,7 @@ combined_pdf(
         "Deleting a Language: Embedding TxHDL in Rust",
         "The TxHDL Runtime",
         "TxHDL by Example",
+        "Vreteno: An RV32I Core in TxHDL",
     ],
     parts = [
         ":cover",
@@ -664,5 +694,6 @@ combined_pdf(
         ":embedding",
         ":runtime",
         ":examples",
+        ":vreteno",
     ],
 )

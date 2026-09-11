@@ -1,0 +1,268 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% Vreteno: an RV32I core in TxHDL, the first large design. Built by
+% //docs:vreteno. One column, because it is mostly listings.
+\documentclass[journal,onecolumn,9pt]{IEEEtran}
+
+% One column: 80 columns fit at the body size, so nothing is reduced.
+\newcommand{\listingsize}{\normalsize}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{Vreteno: An RV32I Core in TxHDL}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{This document holds the Vreteno core, a RISC-V RV32I processor
+written in TxHDL under \code{//cpu/vreteno} of the project repository,
+included verbatim at build time with the reference model it is checked
+against, the programs it runs, and the trace and waveform the build
+produced by running it. The language is described in the embedding
+article~\cite{embedding}, the runtime in its own
+document~\cite{runtime}, the smaller designs in the
+examples~\cite{examples}, and the cover~\cite{cover} lists all of them.}%
+\thanks{\buildstamp}}
+
+\markboth{Vreteno: An RV32I Core in TxHDL}{Filmar and Janković: Vreteno}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Vreteno is a 32-bit RISC-V core, the RV32I base integer set, written
+in TxHDL: the first design large enough to ask whether the language
+scales past its examples. This is its first form, a single-cycle
+core in simulation, one process that fetches, decodes, executes and
+writes back on every rising edge. It is checked in lockstep against
+a reference model of the instruction set written as a plain program:
+after every cycle the program counter, the thirty-one registers and
+the halt must agree, and at the halt the data memory must. The
+demonstration program and sixty-four random ones pass, and a
+deliberately broken shift fails at its first use. Every listing here
+is the file in the tree, and the trace and the figure are what the
+build produced when it ran the core.
+\end{abstract}
+
+\begin{IEEEkeywords}
+RISC-V, RV32I, processor, hardware description languages, Rust,
+lockstep testing.
+\end{IEEEkeywords}
+
+{\footnotesize\tableofcontents}
+
+\section{What Vreteno Is}
+\label{sec:v-what}
+
+\emph{Vreteno} is the Serbian word for a spindle: the part that turns
+and on which the rest is wound. The core is the first design in TxHDL
+with more than a handful of registers, and it exists to find out three
+things: whether the language's constructs, a unit with registers and
+memories, one process, waits, reads and deferred drives, are enough to
+write a processor without stepping outside them; whether a design of
+this size can be tested to a standard the small examples cannot reach;
+and what the lowering must grow to before such a design becomes a
+netlist.
+
+The plan has three steps, and this document is the first. The core is
+written in simulation form and checked against a reference model, so
+the design is known correct before anything else is asked of it. Next
+the core becomes a pipeline, two or three stages, and the lockstep
+check is what keeps that refactoring honest. Last, the lowering grows
+until the core is a netlist that simulates, under nvc, against the
+same traces, which is the check the smaller
+examples~\cite{examples} already pass.
+
+\section{The Instruction Set as Bits}
+\label{sec:v-isa}
+
+Listing~\ref{lst:v-isa} is RV32I as encoders and a decoder. An
+encoder per mnemonic builds the word, the six formats being six
+functions of their fields; the decoder takes a word apart into its
+mnemonic, its registers and its immediate, sign-extended. The core
+does not use this decoder: it decodes on its own, in
+Section~\ref{sec:v-core}, from the fields of the word with the
+language's \code{slice}, \code{concat} and \code{sext}. So there are
+two decoders, written differently, and the lockstep test compares
+what they lead to; a defect in either shows up as a disagreement. The
+disassembler is for traces a person reads, such as
+Listing~\ref{lst:v-out}. A unit test checks each format's encoder
+against the decoder.
+
+\lstinputlisting[caption={\code{isa.rs}: the encoders, the decoder,
+the disassembler.},label={lst:v-isa}]{cpu/vreteno/src/isa.rs}
+
+\section{The Reference Model}
+\label{sec:v-model}
+
+Listing~\ref{lst:v-model} is the instruction set as a program. Its
+state is the architectural state and nothing else: the program
+counter, the registers, a data memory, and whether it has halted.
+One \code{step} is one instruction, written against the decoder in
+the plainest Rust that says what the manual says. It is the oracle:
+the core is right when it agrees with this, cycle by cycle. The data
+memory begins at \code{DATA\_BASE}, and a load or store outside it is
+a fault, so a wild address in a random program is caught rather than
+wrapped.
+
+\lstinputlisting[caption={\code{model.rs}: the reference
+model.},label={lst:v-model}]{cpu/vreteno/src/model.rs}
+
+\section{The Core}
+\label{sec:v-core}
+
+Listing~\ref{lst:v-core} is the core. It is one unit whose state is a
+program counter, a halt bit, and three memories: the register file,
+the instruction memory, loaded from the program with
+\code{Mem::with}, and the data memory. Its input is the reset and its
+outputs are the halt, the word fetched, and a \code{Writeback} value,
+the register written this cycle and what was written, which is what
+the waveform decodes field by field.
+
+The process is one \code{loop} with one wait, the rising edge, and
+everything after the wait is one cycle: the fetch, a plain read of
+the instruction memory at the program counter; the decode, the fields
+of the word by \code{slice} and the five immediates assembled by
+\code{concat} and \code{sext}, as the manual draws them; two plain
+reads of the register file; the execute, an ALU shared by the
+register and immediate forms and a branch condition, each a function
+of its inputs; and the writeback, a deferred write to the register
+file, a deferred write to the data memory, and a deferred drive of
+the program counter. A store of a byte or a half reads the word,
+merges the lanes and writes it back, which one read port and one
+write port allow within a cycle. Register zero is never written, and
+the reset takes the same path as an instruction: it is the first case
+of the selection, and drives the program counter to zero.
+
+This is the simulation form. The decode and the selection are Rust
+\code{match}es over the fields, which the lowering does not reach
+yet, and the ALU is a function that returns a value rather than a
+\code{case!} that drives one. The state, the waits and the drives are
+the language's, so the lockstep test and the waveform are real, and
+the lowering, when it comes, is a change to this file and not a
+rewrite: the \code{match}es become \code{case!} arms over enums, and
+the functions become the operators they already call.
+
+\lstinputlisting[caption={\code{core.rs}: the single-cycle
+core.},label={lst:v-core}]{cpu/vreteno/src/core.rs}
+
+\section{The Programs}
+\label{sec:v-programs}
+
+Listing~\ref{lst:v-program} holds the programs. \code{Asm} is the
+smallest assembler that has labels: a branch to a label not yet
+placed is emitted as a placeholder and patched when the label is,
+which is all a forward branch needs. The demonstration program sums
+one to ten in a loop, calls a function that doubles the sum and
+returns through \code{jalr}, stores and loads every width so the sign
+extension of \code{lb} and \code{lh} and the zero extension of
+\code{lbu} and \code{lhu} are exercised, uses the upper immediates,
+the arithmetic shift and both compares, and ends in \code{ebreak}
+with 110 in \code{x10} and at the first data word.
+
+The random generator writes straight-line programs of a given length
+from a seed: every register operation, aligned stores and loads
+within the first data words through \code{x2}, which it keeps at the
+data base, and now and then a forward branch over one or two words,
+so both outcomes of every branch condition occur. Nothing in it can
+loop, so every program halts.
+
+\lstinputlisting[caption={\code{program.rs}: the assembler, the
+demonstration, the random
+programs.},label={lst:v-program}]{cpu/vreteno/src/program.rs}
+
+\section{The Lockstep Test}
+\label{sec:v-lockstep}
+
+Listing~\ref{lst:v-lockstep} is the test, \code{bazel test
+//cpu/vreteno:lockstep}. It builds the core with the program, keeps
+handles on its program counter, register file, data memory and halt
+bit, which \code{Reg} and \code{Mem} give out as clones, holds the
+reset for one cycle, and then runs the core and the model a cycle and
+a step at a time. After each, the program counter, the thirty-one
+registers and the halt must agree, and the failure names the cycle
+and the instruction; at the halt every word of data memory must
+agree too. The demonstration program passes with the values the
+comments promise, and sixty-four random programs of two hundred
+instructions each pass, which covers every instruction the generator
+emits many times over with operands it did not choose.
+
+A test that cannot fail proves nothing, so the negative control was
+run: with the arithmetic shift in the ALU replaced by the logical
+one, the demonstration fails at its \code{srai}, naming the register,
+the cycle and the instruction, and the random programs fail within a
+few cycles of their first \code{sra}. The control was then removed.
+
+\lstinputlisting[caption={\code{lockstep.rs}: the core against the
+model.},label={lst:v-lockstep}]{cpu/vreteno/tests/lockstep.rs}
+
+\section{The Run}
+\label{sec:v-run}
+
+Listing~\ref{lst:v-main} runs the demonstration program and prints a
+line per cycle, the program counter, the disassembly of the word
+fetched and the register written; Listing~\ref{lst:v-out} is what it
+printed when the build ran it. The loop is visible as the three
+instructions that repeat ten times, the call as the jump to
+\code{0x5c} and the return to \code{0x20}, and the loads as the sign
+and zero extensions of the same byte and half. Figure~\ref{fig:v-wave}
+is the opening of the same run, the reset and the first dozen
+instructions, drawn from the waveform the run wrote; the whole run
+is in the FST beside it, for a viewer.
+
+\lstinputlisting[caption={\code{main.rs}: the run and the
+waveform.},label={lst:v-main}]{cpu/vreteno/src/main.rs}
+
+\begin{figure}[htbp]
+\centering
+\input{vreteno_timing.tex}
+\caption{The opening cycles: reset, then an instruction per edge;
+\code{rd} and \code{val} are the writeback, \code{rd} zero when
+nothing was written.}
+\label{fig:v-wave}
+\end{figure}
+
+\lstinputlisting[style=ascii,caption={What \code{vreteno} printed when
+the build ran it.},label={lst:v-out}]{out_vreteno.txt}
+
+\section{What Comes Next}
+\label{sec:v-next}
+
+The pipeline. A two-stage core, fetch and execute, keeps the same
+outputs and the same test, with the instruction register the
+boundary between the stages and the branch resolved a cycle late;
+three stages add a writeback register and the forwarding it needs.
+The lockstep test compares architectural state, so a pipeline that
+retires one instruction per cycle after its fill passes the same
+test with the model stepped when the core retires, which is the
+change the test needs and the only one.
+
+The lowering. The core uses \code{match} over fields where a lowered
+unit would use \code{case!} over enums, functions where it would use
+operators in arms, and memories, which the lowering does not emit
+yet. Each is a change the examples document already has a
+precedent for or a stated next step toward. When the core lowers,
+the same trace that checks the model checks the netlist.
+
+\begin{thebibliography}{10}
+
+\bibitem{embedding}
+F.~Filmar and D.~Janković, ``Deleting a language: Embedding TxHDL in
+Rust,'' project repository \code{HDL/txhdl}, \code{//docs:embedding},
+2026.
+
+\bibitem{runtime}
+F.~Filmar and D.~Janković, ``The TxHDL runtime,'' project repository
+\code{HDL/txhdl}, \code{//docs:runtime}, 2026.
+
+\bibitem{examples}
+F.~Filmar and D.~Janković, ``TxHDL by example,'' project repository
+\code{HDL/txhdl}, \code{//docs:examples}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}
