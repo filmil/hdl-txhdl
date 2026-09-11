@@ -58,20 +58,56 @@ mutable borrow at a time. The two facts collide directly.
 The repair is that a register is a cell, and a process takes a shared
 reference.
 
-\begin{lstlisting}[caption={The repair. A register is a cell several processes reach, which is what a register is.},label={lst:reg}]
-pub struct Reg<T: Copy> { v: core::cell::Cell<T> }
+\begin{lstlisting}[caption={The repair. A register is a cell several processes reach, which is what a register is. Reading one is \code{async}; driving one is not.},label={lst:reg}]
+pub struct Reg<T: Copy>(Cell<T>);
 
 impl<T: Copy> Reg<T> {
-    pub fn get(&self) -> T { self.v.get() }
-    pub fn set(&self, x: T) { self.v.set(x) }
+    pub async fn get(&self) -> T { tick().await; self.0.get() }
+    pub fn set(&self, x: T) { self.0.set(x) }
+    pub fn peek(&self) -> T { self.0.get() }   // testbench only
 }
 
-async fn port_a(&self) { self.hits_a.set(self.hits_a.get() + 1); }
+async fn port_a(&self) {
+    loop {
+        let hits = self.hits_a.get().await;
+        self.hits_a.set(hits + 1);
+    }
+}
 \end{lstlisting}
 
 \code{run} still takes \code{\&mut self}, and the processes it starts take
 \code{\&self}. That compiles, and it also describes the hardware better: a
 register is a thing several processes reach, which is what a register is.
+
+\subsection{A register read is the wait, and a process loops}
+\label{sec:e-regread}
+
+Listing~\ref{lst:reg} makes two claims that earlier drafts did not, and
+both follow from what a register is.
+
+\textbf{Reading a register is \code{async}.} A wire has no clock edge, so
+\code{In::get} is plain and returns at once. A register holds the value
+latched at the last edge, so reading it is waiting for that edge, and
+\code{Reg::get} is \code{async} to say so. Driving a register states the
+next value and waits for nothing, so \code{set} is plain. The
+\code{.await} on a read is the mark the lowering turns into the
+register; the value alive across it is what gets stored. \code{peek}
+reads without waiting, and exists for testbenches, for the reason
+\code{assert!} exists: it observes and drives nothing, and synthesis
+skips it.
+
+\textbf{A process loops.} A unit runs for as long as the clock does, so
+every leaf \code{run} is a \code{loop}, and each iteration contains a
+register read. That read is where the iteration waits for the edge, so
+one iteration is one cycle. A parent whose \code{run} only joins its
+children needs no loop of its own: the children loop, the join never
+completes, and the parent is continuous through them.
+
+The prototype enforces this in the only way a simulation can. A register
+read yields to the executor once, so one poll of the top unit is one
+cycle, and a loop that reads no register and awaits no operator never
+yields and spins. That is the right behaviour, because such a loop is a
+combinational loop in the hardware, which is the thing that was wrong.
 
 \begin{pitfall}
 This is the constraint most likely to surprise somebody writing a unit for

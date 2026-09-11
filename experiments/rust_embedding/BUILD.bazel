@@ -69,6 +69,7 @@ rust_binary(
         "probe_domain_cross",          # E0308: domains do not unify
         "probe_interface_incomplete",  # the macro's own message
         "probe_interface_twodrivers",  # the macro's own message
+        "probe_when_bad",              # the macro's own message
     ]
 ]
 

@@ -7,10 +7,15 @@ pub struct DualPort { pub cells: Reg<U<32>>, pub hits_a: Reg<U<32>>, pub hits_b:
 
 impl DualPort {
     async fn port_a(&self) {
-        self.hits_a.set(self.hits_a.get().wrapping_add(U::new(1)));
-        self.cells.set(self.cells.get().wrapping_add(U::new(1)));
+        loop {
+            let (h, c) = (self.hits_a.get().await, self.cells.get().await);
+            self.hits_a.set(h.wrapping_add(U::new(1)));
+            self.cells.set(c.wrapping_add(U::new(1)));
+        }
     }
-    async fn port_b(&self) { self.hits_b.set(self.hits_b.get().wrapping_add(U::new(1))) }
+    async fn port_b(&self) {
+        loop { let h = self.hits_b.get().await; self.hits_b.set(h.wrapping_add(U::new(1))) }
+    }
 }
 
 impl Module<(), ()> for DualPort {

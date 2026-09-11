@@ -7,11 +7,11 @@
 //! - [`types`]: `Bit`, `Logic`, `U<N>`, `I<N>`, `logic::Vec<N>`,
 //!   the `Transaction` marker and the `Tag` policy.
 //! - [`comp`]: units, wires and their ends, interfaces, clocks,
-//!   configurations, `join2`, `mux`, `when!`, and the executor.
+//!   configurations, `join2`, `mux`, and the executor.
 //! - [`pipeline`]: operators that may take a cycle. All `async`.
 //! - [`funcs`]: operators that cannot. All plain `fn`.
-//! - `#[derive(Transaction)]`, `#[derive(Bus)]` and `interface!`,
-//!   re-exported from `txhdl_macros`.
+//! - `#[derive(Transaction)]`, `#[derive(Bus)]`, `interface!` and
+//!   `when!`, re-exported from `txhdl_macros`.
 //!
 //! This is a simulation-shaped prototype: values exist while it runs.
 //! The lowering to hardware is the experiment the article states, and
@@ -22,4 +22,4 @@ pub mod funcs;
 pub mod pipeline;
 pub mod types;
 
-pub use txhdl_macros::{interface, Bus, Transaction};
+pub use txhdl_macros::{interface, when, Bus, Transaction};

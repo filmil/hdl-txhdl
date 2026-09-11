@@ -14,17 +14,27 @@ pub struct DualPort {
 }
 
 impl DualPort {
+    /// A process loops, because a unit runs for as long as the clock
+    /// does. Each iteration reads a register, and that read is the wait
+    /// for the edge, so one iteration is one cycle.
     async fn port_a(&self) {
-        when!(self.enable.get() => {
-            self.hits_a => self.hits_a.get().wrapping_add(U::new(1));
-            self.cells  => self.cells.get().wrapping_add(U::new(1))
-        } else {
-            self.hits_a => U::new(0)
-        });
+        loop {
+            let enable = self.enable.get().await;
+            let (hits, cells) = (self.hits_a.get().await, self.cells.get().await);
+            when!(enable => {
+                self.hits_a <= hits.wrapping_add(1);
+                self.cells <= cells.wrapping_add(1)
+            } else {
+                self.hits_a <= 0
+            });
+        }
     }
 
     async fn port_b(&self) {
-        self.hits_b.set(self.hits_b.get().wrapping_add(U::new(1)));
+        loop {
+            let hits = self.hits_b.get().await;
+            self.hits_b.set(hits.wrapping_add(1));
+        }
     }
 }
 
@@ -36,9 +46,9 @@ impl Module<(), ()> for DualPort {
 
 pub fn build() -> DualPort {
     DualPort {
-        cells: Reg::new(U::new(0)),
-        hits_a: Reg::new(U::new(0)),
-        hits_b: Reg::new(U::new(0)),
+        cells: Reg::new(0),
+        hits_a: Reg::new(0),
+        hits_b: Reg::new(0),
         enable: Reg::new(Bit::One),
     }
 }

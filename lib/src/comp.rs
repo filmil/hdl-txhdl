@@ -62,7 +62,7 @@ impl<T: Transaction, C: Clock> Clone for Rx<T, C> {
 }
 
 impl<T: Copy, C: Clock> Out<T, C> {
-    pub fn set(&self, v: T) { self.0 .0.set(v) }
+    pub fn set(&self, v: impl Into<T>) { self.0 .0.set(v.into()) }
 }
 impl<T: Copy, C: Clock> In<T, C> {
     pub fn get(&self) -> T { self.0 .0.get() }
@@ -140,15 +140,39 @@ impl<T: Copy + Default, A: Clock, B: Clock> Crossing<T, A, B> {
 /// A register. Interior mutability, so two processes of one unit may
 /// both hold `&self` and still drive it. That is the repair for the
 /// fact that two processes cannot both take `&mut self`.
+///
+/// A register is the cycle boundary, and its interface says so. `set`
+/// is a drive and is plain: it states the next value. `get` is `async`:
+/// the value a register holds is the one latched at the clock edge, so
+/// reading it is where a process waits for that edge, and the `.await`
+/// is the mark the lowering will turn into the register. A wire has no
+/// edge, which is why [`In::get`] is not `async` and this is.
 pub struct Reg<T: Copy>(Cell<T>);
 
+impl<T: Copy + Default> Default for Reg<T> {
+    fn default() -> Self { Reg(Cell::new(T::default())) }
+}
+
 impl<T: Copy> Reg<T> {
-    pub const fn new(v: T) -> Self { Reg(Cell::new(v)) }
-    pub fn get(&self) -> T { self.0.get() }
-    pub fn set(&self, v: T) { self.0.set(v) }
-    /// A predicated write: a multiplexer on the enable, not a branch.
-    pub fn set_if(&self, pred: Bit, v: T) {
-        if pred.to_bool() { self.0.set(v) }
+    pub fn new(v: impl Into<T>) -> Self { Reg(Cell::new(v.into())) }
+
+    /// Read the register. Awaiting this is waiting for the clock edge
+    /// that latched the value. In the prototype it yields to the
+    /// executor once, so one poll of a unit is one clock cycle, and a
+    /// process that loops advances one iteration per cycle.
+    pub async fn get(&self) -> T { tick().await; self.0.get() }
+
+    /// Observe the register without waiting. Not synthesisable, and
+    /// allowed for the reason `assert!` is: it reads and drives nothing.
+    /// For testbenches and reports, never for a design.
+    pub fn peek(&self) -> T { self.0.get() }
+
+    /// Drive the next value. A drive is plain: nothing is waited for.
+    pub fn set(&self, v: impl Into<T>) { self.0.set(v.into()) }
+
+    /// A predicated drive: a multiplexer on the enable, not a branch.
+    pub fn set_if(&self, pred: Bit, v: impl Into<T>) {
+        if pred.to_bool() { self.0.set(v.into()) }
     }
 }
 
@@ -158,27 +182,6 @@ impl<T: Copy> Reg<T> {
 /// The multiplexer. Both arms exist in the hardware; the condition picks.
 pub fn mux<T: Copy>(c: Bit, a: T, b: T) -> T {
     if c.to_bool() { a } else { b }
-}
-
-/// Predicated register writes that read as a conditional. Not `if_!`,
-/// because `if` branches and this does not: both arms are in the
-/// hardware at once. `when` is what Chisel and SpinalHDL call it.
-///
-/// A `macro_rules!` macro matches a grammar, so this one predicates a
-/// list of writes and cannot reach inside an arbitrary block. That limit
-/// is the argument for elaborating through a procedural macro.
-#[macro_export]
-macro_rules! when {
-    ($c:expr => { $($rt:expr => $vt:expr);* $(;)? }
-             else { $($re:expr => $ve:expr);* $(;)? }) => {{
-        let __c: $crate::types::Bit = $c;
-        $( $rt.set_if(__c, $vt); )*
-        $( $re.set_if(__c.not(), $ve); )*
-    }};
-    ($c:expr => { $($rt:expr => $vt:expr);* $(;)? }) => {{
-        let __c: $crate::types::Bit = $c;
-        $( $rt.set_if(__c, $vt); )*
-    }};
 }
 
 // ---------------------------------------------------------------------
@@ -200,9 +203,37 @@ pub trait Module<In, Out> {
 /// the whole of what `main` needs. A design with sub-configurations
 /// names them as associated types of its own.
 pub trait Config {
-    type Top: Module<(), ()>;
+    type Top: Module<(), ()> + Default;
     const NAME: &'static str;
-    fn top() -> Self::Top;
+    /// The top unit, built from its `Default`. A design that needs
+    /// anything else overrides this; most do not, because a register's
+    /// default is its reset value and a socket's is its implementation.
+    fn top() -> Self::Top { Default::default() }
+}
+
+/// Declare a build. Writes the config type, its design-specific
+/// configuration impl, and its `Config` impl, so a build is one item.
+///
+/// ```ignore
+/// config! { Fpga: TopConfig for Top<Fpga> {
+///     type Filter = SixteenTaps;
+///     const CLK_HZ: u64 = 100_000_000;
+/// } }
+/// ```
+///
+/// The body is spliced into `impl $design for $name` unchanged, so it is
+/// ordinary associated items and the macro never has to parse them.
+#[macro_export]
+macro_rules! config {
+    ($name:ident : $design:ident for $top:ty { $($body:tt)* }) => {
+        #[derive(Default)]
+        pub struct $name;
+        impl $design for $name { $($body)* }
+        impl $crate::comp::Config for $name {
+            type Top = $top;
+            const NAME: &'static str = stringify!($name);
+        }
+    };
 }
 
 // ---------------------------------------------------------------------
@@ -227,9 +258,35 @@ impl<A: Future<Output = ()>, B: Future<Output = ()>> Future for Join2<A, B> {
     }
 }
 
-/// Run every process in an iterator, for an array of instances.
+/// Run every process in an iterator concurrently, for an array of
+/// instances. Polls all of them each cycle, because a process loops and
+/// a sequential join would never reach the second one.
 pub async fn join_all<F: Future<Output = ()>>(fs: impl IntoIterator<Item = F>) {
-    for f in fs { f.await }
+    let mut fs: Vec<Pin<Box<F>>> = fs.into_iter().map(Box::pin).collect();
+    let mut done = vec![false; fs.len()];
+    std::future::poll_fn(|cx| {
+        for (i, f) in fs.iter_mut().enumerate() {
+            if !done[i] && f.as_mut().poll(cx).is_ready() { done[i] = true }
+        }
+        if done.iter().all(|d| *d) { Poll::Ready(()) } else { Poll::Pending }
+    }).await
+}
+
+// ---------------------------------------------------------------------
+// The clock edge
+
+/// Yields to the executor exactly once. Every wait in the prototype is
+/// built from this: a register read, an operator with latency, a count
+/// of cycles. One poll of the top unit is therefore one clock cycle.
+pub struct Tick(bool);
+
+pub fn tick() -> Tick { Tick(false) }
+
+impl Future for Tick {
+    type Output = ();
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        if self.0 { Poll::Ready(()) } else { self.0 = true; cx.waker().wake_by_ref(); Poll::Pending }
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -243,19 +300,30 @@ fn noop_waker() -> std::task::Waker {
     unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VT)) }
 }
 
-/// One cycle: one poll of a future. The prototype's whole executor.
-pub fn step<F: Future<Output = ()>>(f: F) -> bool {
+/// Run a future for a number of cycles: one poll per cycle. Returns
+/// whether it completed, which a unit never does, because a unit loops.
+pub fn run_for<F: Future<Output = ()>>(f: F, cycles: usize) -> bool {
     let mut f = Box::pin(f);
     let w = noop_waker();
     let mut cx = Context::from_waker(&w);
-    f.as_mut().poll(&mut cx).is_ready()
+    for _ in 0..cycles {
+        if f.as_mut().poll(&mut cx).is_ready() { return true }
+    }
+    false
 }
 
-/// Elaborate the design a configuration names. A real one emits a
-/// netlist; this one runs a cycle and reports, which is enough for a
-/// `main` to reach the design through nothing but the configuration.
-pub fn elaborate<C: Config>() -> C::Top {
+/// One cycle.
+pub fn step<F: Future<Output = ()>>(f: F) -> bool { run_for(f, 1) }
+
+/// Elaborate the design a configuration names and run it for a number
+/// of cycles. A real one emits a netlist; this one simulates, which is
+/// enough for a `main` to reach the design through nothing but the
+/// configuration and observe it with `Reg::peek`.
+pub fn simulate<C: Config>(cycles: usize) -> C::Top {
     let mut top = C::top();
-    step(top.run((), ()));
+    run_for(top.run((), ()), cycles);
     top
 }
+
+/// Elaborate and run one cycle.
+pub fn elaborate<C: Config>() -> C::Top { simulate::<C>(1) }

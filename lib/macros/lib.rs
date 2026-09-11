@@ -224,3 +224,107 @@ pub fn interface(input: TokenStream) -> TokenStream {
     emit(&iface, &members, &roles)
 }
 
+
+// ---------------------------------------------------------------------
+// when!
+
+/// Split a token stream on the first `<=` at depth zero. `<=` arrives as
+/// `<` with joint spacing followed by `=`.
+fn split_becomes(ts: TokenStream) -> Option<(TokenStream, TokenStream)> {
+    let toks: Vec<TokenTree> = ts.into_iter().collect();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < toks.len() {
+        match &toks[i] {
+            TokenTree::Punct(p) if p.as_char() == '<' && p.spacing() == proc_macro::Spacing::Joint => {
+                if let Some(TokenTree::Punct(q)) = toks.get(i + 1) {
+                    if q.as_char() == '=' && depth == 0 {
+                        let lhs: TokenStream = toks[..i].iter().cloned().collect();
+                        let rhs: TokenStream = toks[i + 2..].iter().cloned().collect();
+                        return Some((lhs, rhs));
+                    }
+                }
+            }
+            TokenTree::Punct(p) if p.as_char() == '<' => depth += 1,
+            TokenTree::Punct(p) if p.as_char() == '>' => depth -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Split a brace group's contents on `;` at depth zero.
+fn statements(g: &Group) -> Vec<TokenStream> {
+    let mut out = Vec::new();
+    let mut cur = Vec::new();
+    for tt in g.stream() {
+        match &tt {
+            TokenTree::Punct(p) if p.as_char() == ';' => {
+                if !cur.is_empty() { out.push(cur.drain(..).collect()) }
+            }
+            _ => cur.push(tt),
+        }
+    }
+    if !cur.is_empty() { out.push(cur.into_iter().collect()) }
+    out
+}
+
+/// `when!(cond => { lhs <= rhs; ... } else { lhs <= rhs; ... })`
+///
+/// Predicated register drives that read as a conditional. Both arms exist
+/// in the hardware at once and the condition selects, which is why the
+/// name is `when` and not `if`. The arrow points into the register: the
+/// register becomes the value.
+///
+/// Procedural rather than `macro_rules!` because an `expr` fragment may
+/// be followed only by `=>`, `,` or `;`, so `lhs <= rhs` cannot be
+/// matched declaratively at all.
+#[proc_macro]
+pub fn when(input: TokenStream) -> TokenStream {
+    let toks: Vec<TokenTree> = input.into_iter().collect();
+
+    // The condition runs up to `=>`.
+    let mut i = 0;
+    let mut cond = Vec::new();
+    loop {
+        match toks.get(i) {
+            None => return err(Span::call_site(), "expected `=>` after the condition"),
+            Some(TokenTree::Punct(p)) if p.as_char() == '=' && p.spacing() == proc_macro::Spacing::Joint => {
+                if let Some(TokenTree::Punct(q)) = toks.get(i + 1) {
+                    if q.as_char() == '>' { i += 2; break }
+                }
+                cond.push(toks[i].clone()); i += 1;
+            }
+            Some(t) => { cond.push(t.clone()); i += 1 }
+        }
+    }
+    let cond: TokenStream = cond.into_iter().collect();
+
+    let then = match toks.get(i) {
+        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => { i += 1; g.clone() }
+        _ => return err(Span::call_site(), "expected `{ ... }` after `=>`"),
+    };
+    let otherwise = match (toks.get(i), toks.get(i + 1)) {
+        (Some(TokenTree::Ident(kw)), Some(TokenTree::Group(g)))
+            if kw.to_string() == "else" && g.delimiter() == Delimiter::Brace => Some(g.clone()),
+        (None, _) => None,
+        (Some(t), _) => return err(t.span(), "expected `else { ... }` or the end"),
+    };
+
+    let mut out = String::from("{ let __c: ::txhdl::types::Bit = ");
+    out.push_str(&cond.to_string());
+    out.push_str(";\n");
+    for (arm, pred) in [(Some(&then), "__c"), (otherwise.as_ref(), "__c.not()")] {
+        let Some(g) = arm else { continue };
+        for st in statements(g) {
+            let span = st.clone().into_iter().next().map(|t| t.span()).unwrap_or(g.span());
+            let Some((lhs, rhs)) = split_becomes(st) else {
+                return err(span, "expected `register <= value`");
+            };
+            out.push_str(&format!("({}).set_if({pred}, {});\n", lhs, rhs));
+        }
+    }
+    out.push('}');
+    out.parse().unwrap()
+}

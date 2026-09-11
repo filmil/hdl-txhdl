@@ -66,7 +66,17 @@ assert!(v.to_u().is_none());
 \end{lstlisting}
 
 Same-width arithmetic, resizing to a stated width and slicing all compile
-on stable, because each result width is a standalone const parameter. A
-widening multiply does not, for the reason
-Section~\ref{sec:e-probes} gives: its result width is
-\code{\{A + B\}}, and that is the one thing stable Rust will not accept.
+on stable, because each result width is a standalone const parameter. So
+does a multiply whose result width is \emph{stated}, \code{a.mul::<64>(b)},
+because \code{64} is standalone too. What does not compile is a multiply
+whose result width is \emph{computed}, \code{U<\{A + B\}>}, for the
+reason Section~\ref{sec:e-probes} gives: that is the one thing stable
+Rust will not accept, so the width is written by the caller rather than
+derived.
+
+A number is written as a number. \code{U<N>} converts from every unsigned
+primitive and from \code{i32}, and its arithmetic and every drive take
+anything that converts, so \code{acc.wrapping\_add(1)} and
+\code{reg.set(0)} say what they mean. \code{i32} is there because an
+integer literal with no other constraint is an \code{i32}, and a literal
+is the common case; a negative one is a bug, and debug builds say so.

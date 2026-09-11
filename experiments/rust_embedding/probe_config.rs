@@ -4,10 +4,10 @@
 use txhdl::comp::{Config, Module, Reg};
 use txhdl::types::{Tag, U};
 
-pub trait MacOp { fn new() -> Self; fn mul(&self, a: U<32>, b: U<32>) -> U<64>; }
+pub trait MacOp: Default { fn mul(&self, a: U<32>, b: U<32>) -> U<64>; }
+#[derive(Default)]
 pub struct DspSliceMac;
 impl MacOp for DspSliceMac {
-    fn new() -> Self { DspSliceMac }
     fn mul(&self, a: U<32>, b: U<32>) -> U<64> { U::new(a.raw() * b.raw()) }
 }
 
@@ -21,18 +21,24 @@ pub trait Build: Config {
     const CLK_HZ: u64;
 }
 
+#[derive(Default)]
 pub struct Filter<B: Build> { pub mac: B::Mac, pub acc: Reg<U<64>> }
+#[derive(Default)]
 pub struct Top<B: Build> { pub filter: Filter<B> }
 
 impl<B: Build> Module<(), ()> for Top<B> {
     async fn run(&mut self, _i: (), _o: ()) {
-        for i in 0..B::TAPS {
-            self.filter.acc.set(self.filter.acc.get().wrapping_add(self.filter.mac.mul(U::new(i as u128), U::new(2))));
-        }
         let _elastic = <B::Domain as Tag>::HANDSHAKE;
+        loop {
+            for i in 0..B::TAPS {
+                let acc = self.filter.acc.get().await;
+                self.filter.acc.set(acc.wrapping_add(self.filter.mac.mul(U::new(i as u128), U::new(2))));
+            }
+        }
     }
 }
 
+#[derive(Default)]
 pub struct Fpga;
 impl Build for Fpga {
     type Mac = DspSliceMac; type Domain = Elastic;
@@ -41,7 +47,6 @@ impl Build for Fpga {
 impl Config for Fpga {
     type Top = Top<Fpga>;
     const NAME: &'static str = "fpga";
-    fn top() -> Self::Top { Top { filter: Filter { mac: DspSliceMac::new(), acc: Reg::new(U::new(0)) } } }
 }
 
 /// A const context accepts nothing but a true constant.

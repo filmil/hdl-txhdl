@@ -4,9 +4,9 @@
 use txhdl::comp::{Config, Module, Reg};
 use txhdl::types::U;
 
-pub trait Generator { fn new() -> Self; fn next(&self) -> U<32>; }
-pub struct Counter; impl Generator for Counter { fn new() -> Self { Counter } fn next(&self) -> U<32> { U::new(1) } }
-pub struct Lfsr;    impl Generator for Lfsr    { fn new() -> Self { Lfsr }    fn next(&self) -> U<32> { U::new(0x9E37) } }
+pub trait Generator: Default { fn next(&self) -> U<32>; }
+#[derive(Default)] pub struct Counter; impl Generator for Counter { fn next(&self) -> U<32> { U::new(1) } }
+#[derive(Default)] pub struct Lfsr;    impl Generator for Lfsr    { fn next(&self) -> U<32> { U::new(0x9E37) } }
 
 pub trait ProducerConfig { type Gen: Generator; const DEPTH: usize; }
 pub trait ConsumerConfig { const DEPTH: usize; const CHECKSUM: bool; }
@@ -16,34 +16,31 @@ pub trait TopConfig: Config { type P: ProducerConfig; type C: ConsumerConfig; }
 pub type ProducerOf<T> = <T as TopConfig>::P;
 pub type ConsumerOf<T> = <T as TopConfig>::C;
 
-pub struct Producer<PC: ProducerConfig> { pub gen: PC::Gen }
-pub struct Consumer<CC: ConsumerConfig> { pub seen: Reg<U<32>>, _c: core::marker::PhantomData<CC> }
-pub struct Top<TC: TopConfig> { pub producer: Producer<TC::P>, pub consumer: Consumer<TC::C> }
+#[derive(Default)] pub struct Producer<PC: ProducerConfig> { pub gen: PC::Gen }
+#[derive(Default)] pub struct Consumer<CC: ConsumerConfig> { pub seen: Reg<U<32>>, _c: core::marker::PhantomData<CC> }
+#[derive(Default)] pub struct Top<TC: TopConfig> { pub producer: Producer<TC::P>, pub consumer: Consumer<TC::C> }
 
 impl<TC: TopConfig> Module<(), ()> for Top<TC> {
     async fn run(&mut self, _i: (), _o: ()) {
         let _ = (<ProducerOf<TC> as ProducerConfig>::DEPTH, <ConsumerOf<TC> as ConsumerConfig>::DEPTH);
-        self.consumer.seen.set(self.producer.gen.next());
+        loop {
+            let seen = self.consumer.seen.get().await;
+            self.consumer.seen.set(seen.wrapping_add(self.producer.gen.next()));
+        }
     }
 }
 
-pub struct FastProducer;  impl ProducerConfig for FastProducer  { type Gen = Lfsr;    const DEPTH: usize = 16; }
-pub struct SmallProducer; impl ProducerConfig for SmallProducer { type Gen = Counter; const DEPTH: usize = 2; }
+#[derive(Default)] pub struct FastProducer;  impl ProducerConfig for FastProducer  { type Gen = Lfsr;    const DEPTH: usize = 16; }
+#[derive(Default)] pub struct SmallProducer; impl ProducerConfig for SmallProducer { type Gen = Counter; const DEPTH: usize = 2; }
 /// Written once, used by both builds. Same knob name as the producer's.
-pub struct CheckedConsumer; impl ConsumerConfig for CheckedConsumer { const DEPTH: usize = 64; const CHECKSUM: bool = true; }
+#[derive(Default)] pub struct CheckedConsumer; impl ConsumerConfig for CheckedConsumer { const DEPTH: usize = 64; const CHECKSUM: bool = true; }
 
-pub struct Fpga;
+#[derive(Default)] pub struct Fpga;
 impl TopConfig for Fpga { type P = FastProducer; type C = CheckedConsumer; }
-impl Config for Fpga {
-    type Top = Top<Fpga>; const NAME: &'static str = "fpga";
-    fn top() -> Self::Top { Top { producer: Producer { gen: Lfsr::new() }, consumer: Consumer { seen: Reg::new(U::new(0)), _c: core::marker::PhantomData } } }
-}
-pub struct Tiny;
+impl Config for Fpga { type Top = Top<Fpga>; const NAME: &'static str = "fpga"; }
+#[derive(Default)] pub struct Tiny;
 impl TopConfig for Tiny { type P = SmallProducer; type C = CheckedConsumer; }
-impl Config for Tiny {
-    type Top = Top<Tiny>; const NAME: &'static str = "tiny";
-    fn top() -> Self::Top { Top { producer: Producer { gen: Counter::new() }, consumer: Consumer { seen: Reg::new(U::new(0)), _c: core::marker::PhantomData } } }
-}
+impl Config for Tiny { type Top = Top<Tiny>; const NAME: &'static str = "tiny"; }
 
 /// The long spelling, and the aliased one. Both compile-time: an array
 /// length accepts nothing else.

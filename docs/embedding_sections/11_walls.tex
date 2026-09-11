@@ -43,28 +43,41 @@ let chosen = mux(reset, Sig(0), self.count.get());
 A statement form has to predicate whatever is written inside it, and that
 is what real logic needs.
 
-\begin{lstlisting}[caption={The statement form. It reads as a conditional and lowers to predicated writes.},label={lst:when}]
+\begin{lstlisting}[caption={The statement form. It reads as a conditional and lowers to predicated drives. The arrow points into the register: the register becomes the value.},label={lst:when}]
 when!(enable => {
-    self.count => Sig(self.count.get().0 + 1);
-    self.flag  => Sig(1)
+    self.count <= count.wrapping_add(1);
+    self.flag  <= Bit::One
 } else {
-    self.count => Sig(0);
-    self.flag  => Sig(0)
+    self.count <= 0;
+    self.flag  <= Bit::Zero
 });
 \end{lstlisting}
 
-Probe~10 compiles both. The limit is in the second: a
-\code{macro\_rules!} macro matches a grammar, so this one predicates a
-list of register writes and nothing else. It cannot reach inside an
-arbitrary block and rewrite the statements it finds there, because
-\code{macro\_rules!} cannot see into a block it did not parse itself.
+Probe~10 compiles both. The arrow is \code{<=}, VHDL's signal
+assignment, because it points into the register and says that the
+register becomes the value. It is also the reason \code{when!} is a
+procedural macro. The first version was \code{macro\_rules!} and spelled
+the arrow \code{=>}, not by choice: an \code{expr} fragment may be
+followed only by \code{=>}, \code{,} or \code{;}, so \code{lhs <= rhs}
+cannot be matched declaratively at all. That is the third place
+\code{macro\_rules!} ran out, after the two in
+Section~\ref{sec:e-wiring}, and each time the reason was the same: a
+declarative macro matches a grammar, and the grammar it can match is not
+the one the design wants to write.
 
-Widening that grammar case by case ends up specifying a small language
-inside the macro, which is the thing the embedding set out to avoid. A
-proc macro reads the item's real syntax tree and can reinterpret a plain
-\code{if}, which is why Section~\ref{sec:e-elaboration} recommends one.
-This is the strongest single argument for that recommendation, and it
-arrived from writing the macro rather than from reasoning about it.
+The procedural version splits each statement on the first \code{<=} at
+depth zero, so the left side may be any path, and refuses a statement
+that has none:
+
+\begin{lstlisting}[style=ascii,caption={A drive without an arrow. The macro's own message, not a type error three expansions later.},label={lst:when-err}]
+error: expected `register <= value`
+\end{lstlisting}
+
+What it still does not do is reach inside an arbitrary block and rewrite
+the statements it finds there. That is the difference between predicating
+a list of drives and reinterpreting a plain \code{if}, and it is the
+elaboration decision of Section~\ref{sec:e-elaboration} rather than a
+macro's.
 
 \subsection{Bit slicing}
 

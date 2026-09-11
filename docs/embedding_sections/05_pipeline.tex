@@ -93,3 +93,8 @@ Three things, and none of them is free.
 One thing improves. TxHDL had a \code{stall} statement for a stage that
 cannot proceed. A stall is now an await that has not completed, which is
 the mechanism rather than a construct layered on top of it.
+
+\code{mac} does not loop, and should not. It is an operation, invoked
+once per item; the unit that calls it is what loops, per
+Section~\ref{sec:e-regread}, and awaiting \code{mac} inside that loop is
+what makes each call one item in flight.

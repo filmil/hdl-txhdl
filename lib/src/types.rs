@@ -104,9 +104,15 @@ impl<const N: usize> U<N> {
     pub fn bit(self, i: usize) -> Bit { Bit::from_bool((self.0 >> i) & 1 == 1) }
 
     /// Same-width, wrapping. The result width is a standalone parameter,
-    /// so this is stable Rust.
-    pub fn wrapping_add(self, o: Self) -> Self { Self::new(self.0.wrapping_add(o.0)) }
-    pub fn wrapping_sub(self, o: Self) -> Self { Self::new(self.0.wrapping_sub(o.0)) }
+    /// so this is stable Rust. The operand is anything that converts, so
+    /// a literal is written as a literal.
+    pub fn wrapping_add(self, o: impl Into<Self>) -> Self { Self::new(self.0.wrapping_add(o.into().0)) }
+    pub fn wrapping_sub(self, o: impl Into<Self>) -> Self { Self::new(self.0.wrapping_sub(o.into().0)) }
+
+    /// A multiply with the result width stated: `a.mul::<64>(b)`. The
+    /// width is a standalone parameter, so this is stable; `U<{A + B}>`
+    /// would not be.
+    pub fn mul<const M: usize>(self, o: impl Into<Self>) -> U<M> { U::<M>::new(self.0 * o.into().0) }
 
     /// Resize to a stated width. `M` is standalone, so stable.
     pub fn resize<const M: usize>(self) -> U<M> { U::<M>::new(self.0) }
@@ -123,8 +129,24 @@ impl<const N: usize> U<N> {
     }
 }
 
-impl<const N: usize> From<u128> for U<N> {
-    fn from(v: u128) -> Self { Self::new(v) }
+// Conversions from the primitive integers, so a value is written as a
+// number and the width comes from the context. `i32` is included because
+// an integer literal with no other constraint is an `i32`, and a literal
+// is the common case; a negative one is a bug, and is caught in debug.
+macro_rules! from_int {
+    ($($t:ty),*) => { $(
+        impl<const N: usize> From<$t> for U<N> {
+            fn from(v: $t) -> Self { Self::new(v as u128) }
+        }
+    )* };
+}
+from_int!(u8, u16, u32, u64, u128, usize);
+
+impl<const N: usize> From<i32> for U<N> {
+    fn from(v: i32) -> Self {
+        debug_assert!(v >= 0, "a negative literal into an unsigned U<{N}>");
+        Self::new(v as u128)
+    }
 }
 
 /// An N-bit signed value, two's complement.

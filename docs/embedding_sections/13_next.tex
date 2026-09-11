@@ -47,6 +47,32 @@ Rust functions on values, evaluated to produce combinational logic, with
 registers explicit. It has no \code{async}, so the sequencing half of
 this paper is as far from RHDL as from Chisel.
 
+\textbf{XLS}~\cite{xls} is the one to weigh most carefully, because it
+is a working toolchain that has done what Section~\ref{sec:e-next} calls
+the next experiment. Its front end, DSLX, is a dataflow language with
+Rust's surface syntax: \code{fn}, \code{let}, \code{match}, structs,
+enums and parametric types, read by a parser of its own. A DSLX function
+is scheduled into a pipeline by the compiler, with the stage boundaries
+chosen to meet a clock period rather than placed by the designer, which
+is what Section~\ref{sec:e-pipeline} asks of an \code{async fn}. A DSLX
+\code{proc} is a process with state and channels, sending and receiving
+in a loop, which is the sequenced half of this paper under another
+name. XLS emits Verilog, and it has been used in silicon.
+
+That makes XLS the nearest ancestor of the behavioural half, nearer than
+Calyx, and it also makes it the counterexample to this paper. XLS is the
+path the project's second thesis~\cite{theses} chose: a new language,
+shaped like Rust, with its own toolchain. The merged specification of
+the companion paper~\cite{merge} is on that path. This paper leaves it,
+and XLS is the standing evidence that the path it leaves works. The
+argument for leaving it is therefore not that a separate language cannot
+be made to lower; XLS shows it can. It is that the type system, the
+module system, the generics, the package manager and the editor arrive
+already written when the host is Rust itself, and that a DSLX-shaped
+language has to rebuild each of them. Whether that trade is worth the
+one wall of Section~\ref{sec:e-walls} is the question the next
+experiment answers.
+
 What is not near. Bluespec~\cite{nikhil2004} schedules guarded atomic
 rules, which is a different model of concurrency from processes that
 await. High-level synthesis from C or C++ starts from sequential code and

@@ -4,7 +4,7 @@
 
 Every claim in this paper about what Rust does is a probe that was built.
 The probes are one file per question in \code{experiments/rust\_embedding},
-and eight of them are expected to fail, so they are tagged \code{manual}
+and nine of them are expected to fail, so they are tagged \code{manual}
 and stay out of the default build. A failing probe is kept rather than deleted,
 because the failure is the answer.
 
@@ -61,8 +61,11 @@ Probe & Question & Answer \\
   & Can operator latency replace a hand-placed stage boundary?
   & \textbf{Yes.} An \code{async} operator in \code{crate::pipeline} is awaited, and the depth follows from the operators used \\
 \code{probe\_if}
-  & Does \code{when!} work as expression and as statement?
-  & \textbf{Yes}, with the statement form restricted to a list of predicated writes \\
+  & Does \code{when!} work, with \code{<=} into the register?
+  & \textbf{Yes}, as a procedural macro; \code{macro\_rules!} cannot follow an \code{expr} with \code{<=} \\
+\code{probe\_when\_bad}
+  & A drive with no arrow?
+  & \textbf{Refused:} \code{expected `register <= value`} \\
 \code{probe\_slice}
   & May a slice bound be a const parameter, or a run-time offset?
   & \textbf{Yes} to both, with the width static \\

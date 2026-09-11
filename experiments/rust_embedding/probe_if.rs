@@ -8,15 +8,16 @@ use txhdl::when;
 pub struct Unit { pub count: Reg<U<32>>, pub flag: Reg<Bit> }
 
 impl Unit {
-    pub fn step(&self, enable: Bit, reset: Bit) {
+    pub async fn step(&self, enable: Bit, reset: Bit) {
+        let count = self.count.get().await;
         when!(enable => {
-            self.count => self.count.get().wrapping_add(U::new(1));
-            self.flag  => Bit::One
+            self.count <= count.wrapping_add(U::new(1));
+            self.flag <= Bit::One
         } else {
-            self.count => U::new(0);
-            self.flag  => Bit::Zero
+            self.count <= U::new(0);
+            self.flag <= Bit::Zero
         });
-        self.count.set(mux(reset, U::new(0), self.count.get()));
+        self.count.set(mux(reset, U::new(0), self.count.get().await));
     }
 }
 

@@ -33,6 +33,37 @@ $ bazel run //experiments/rust_embedding:probe_main -- asic
 elaborated config 'asic' at 400 MHz
 \end{lstlisting}
 
+\subsection{A build is one item}
+
+Written out, a build was a unit struct, an \code{impl} of the design's
+own configuration trait, and an \code{impl Config} whose \code{fn top}
+constructed the entire hierarchy field by field. Most of that is
+mechanical, and the constructor is the part that grows with the design.
+
+Two changes to the runtime remove it, and a macro removes the rest.
+\code{Config::top} builds the top from its \code{Default}, because a
+register's default is its reset value and a socket's is its
+implementation, so a unit that derives \code{Default} needs no
+constructor at all. A configuration is a unit struct that derives
+\code{Default} too, because a unit generic over it derives
+\code{Default} and the derive asks that of every parameter. Then
+\code{config!} writes the struct and both impls:
+
+\begin{lstlisting}[caption={A build is one item. The body is spliced into the design's own configuration impl unchanged, so the macro never parses it.},label={lst:config-macro}]
+config! { Fpga: TopConfig for Top<Fpga> {
+    type Filter = SixteenTaps;
+    const CLK_HZ: u64 = 100_000_000;
+} }
+
+config! { Asic: TopConfig for Top<Asic> {
+    type Filter = SixtyFourTaps;
+    const CLK_HZ: u64 = 400_000_000;
+} }
+\end{lstlisting}
+
+The example in the appendix went from 81 lines to 55 under this change,
+and every line removed was one that repeated a field name.
+
 Three things follow, and the third is the one that matters.
 
 The config gains \code{type Top} and \code{fn top()}, so it says which

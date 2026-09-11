@@ -25,7 +25,7 @@ pub fn wire_up() -> (Tx<MacRequest>, Rx<MacRequest>, Rx<MacRequest>) {
 
 pub fn exchange() -> Option<MacRequest> {
     let (tx, rx, tap) = wire_up();
-    tx.send(MacRequest { addr: U::new(0x1000), count: U::new(4) });
+    tx.send(MacRequest { addr: 0x1000.into(), count: 4.into() });
     let _ = tap.recv(); // fanout: the tap sees the same offer
     rx.recv()
 }

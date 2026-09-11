@@ -53,12 +53,18 @@ existed to remove. Sections~\ref{sec:e-time} and~\ref{sec:e-pipeline},
 where an \code{async fn} is a sequence, a pipeline and a process
 according to how it is driven, and where an operator's latency is the
 mapping's decision rather than the designer's, are the contribution.
-Their nearest ancestors are Calyx~\cite{calyx} and
-Filament~\cite{filament}, not Chisel, and Section~\ref{sec:e-related}
-places them.
+Their nearest ancestors are XLS~\cite{xls}, whose DSLX is a
+Rust-shaped language that the compiler schedules into pipelines, and
+Calyx~\cite{calyx} and Filament~\cite{filament}, not Chisel;
+Section~\ref{sec:e-related} places them, and says why XLS is also the
+counterexample.
 
 That half is also the half that does not exist yet. Every probe in this
-paper type-checks; none lowers an \code{async fn} to a register.
+paper type-checks; none \term{lowers} an \code{async fn}, which is to
+say none translates it into the registers, wires and control that a
+synthesis tool accepts. Lowering is the compiler's word for going down
+the abstraction ladder, and it is what turns a value that is alive
+across an \code{.await} into a register that the source never named.
 Section~\ref{sec:e-next} states the one experiment that would settle
 whether the contribution is real.
 
