@@ -331,7 +331,8 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
         .map(|(n, t)| {
             format!(
                 "(\"{n}\", <{t} as ::txhdl::netlist::Port>::KIND, \
-                 <{t} as ::txhdl::netlist::Port>::WIDTH),"
+                 <{t} as ::txhdl::netlist::Port>::WIDTH, \
+                 <{t} as ::txhdl::netlist::Port>::DEPTH),"
             )
         })
         .collect::<Vec<_>>()
@@ -342,7 +343,8 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
          {calls} }}\n}}\n\
          impl{b} ::txhdl::netlist::Fields for {n}{a} {{\n\
          fn fields() -> Vec<(&'static str, \
-         Option<::txhdl::comp::trace::Kind>, usize)> {{ vec![{fields}] }}\n}}\n\
+         Option<::txhdl::comp::trace::Kind>, usize, usize)> {{ \
+         vec![{fields}] }}\n}}\n\
          impl{b} ::txhdl::netlist::Port for {n}{a} {{}}",
         b = item.bounds,
         n = item.name,
@@ -1234,6 +1236,31 @@ fn ebin(op: &str, a: &str, b: &str) -> String {
 }
 
 /// The plain name a drive targets: `x` or `self.x`.
+/// A drive's target as the Rust source of a `Target`: a name, or
+/// `self.m.at(addr)`, a word of a memory.
+fn target_expr(
+    ts: &[TokenTree],
+    subst: &[(String, String)],
+) -> Result<String, String> {
+    if ts.len() >= 4 {
+        let end = ts.len() - 3;
+        if let (
+            TokenTree::Punct(dot),
+            TokenTree::Ident(m),
+            TokenTree::Group(g),
+        ) = (&ts[end], &ts[end + 1], &ts[end + 2])
+        {
+            if dot.as_char() == '.' && m.to_string() == "at" {
+                let mem = target_name(&ts[..end])?;
+                let at: Vec<TokenTree> = g.stream().into_iter().collect();
+                let a = tr(&at, subst)?;
+                return Ok(format!("T::Word(\"{mem}\".to_string(), {a})"));
+            }
+        }
+    }
+    Ok(format!("T::Name(\"{}\".to_string())", target_name(ts)?))
+}
+
 fn target_name(ts: &[TokenTree]) -> Result<String, String> {
     match ts {
         [TokenTree::Ident(id)] => Ok(id.to_string()),
@@ -1330,7 +1357,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     "and" => ebin("&", &l, &a[0]),
                     "or" => ebin("|", &l, &a[0]),
                     "not" => format!("E::Not(Box::new({l}))"),
-                    "bit" => {
+                    "bit" | "read" => {
                         format!("E::Index(Box::new({l}), Box::new({}))", a[0])
                     }
                     "raw" | "to_bool" | "get" | "is_some" | "zext"
@@ -1701,7 +1728,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             guard = Some(cond.clone());
             stmts.push(format!("S::Guard({cond})"));
             stmts.push(format!(
-                "S::Drive(\"{rx}_ready\".to_string(), \
+                "S::Drive(T::Name(\"{rx}_ready\".to_string()), \
                  E::Bits(1, \"1\".to_string()))"
             ));
             subst.push((n.to_string(), ename(&format!("{rx}_data"))));
@@ -1724,7 +1751,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             let TokenTree::Ident(rx) = &ts[3] else {
                 return err(ts[0].span(), "expected `let v = rx.recv()`");
             };
-            stmts.push(format!("S::Drive(\"{rx}_ready\".to_string(), {g})"));
+            stmts.push(format!(
+                "S::Drive(T::Name(\"{rx}_ready\".to_string()), {g})"
+            ));
         }
         if text.starts_with("let") {
             // `let a = e` or `let (a, b) = (e1, e2)`, bound pairwise.
@@ -1788,7 +1817,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     };
                     let lt: Vec<TokenTree> = lhs.into_iter().collect();
                     let rt: Vec<TokenTree> = rhs.into_iter().collect();
-                    let l = match target_name(&lt) {
+                    let l = match target_expr(&lt, &subst) {
                         Ok(l) => l,
                         Err(m) => return err(body.span(), &m),
                     };
@@ -1796,7 +1825,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         Ok(r) => r,
                         Err(m) => return err(body.span(), &m),
                     };
-                    drives.push(format!("(\"{l}\".to_string(), {r})"));
+                    drives.push(format!("({l}, {r})"));
                 }
                 arms.push(format!("({cond}, vec![{}])", drives.join(", ")));
                 j = k2 + 1;
@@ -1846,7 +1875,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         };
                         let lt: Vec<TokenTree> = lhs.into_iter().collect();
                         let rt: Vec<TokenTree> = rhs.into_iter().collect();
-                        let l = match target_name(&lt) {
+                        let l = match target_expr(&lt, &subst) {
                             Ok(l) => l,
                             Err(m) => return err(g.span(), &m),
                         };
@@ -1854,7 +1883,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                             Ok(r) => r,
                             Err(m) => return err(g.span(), &m),
                         };
-                        drives.push(format!("(\"{l}\".to_string(), {r})"));
+                        drives.push(format!("({l}, {r})"));
                     }
                 }
                 arms.push(format!("vec![{}]", drives.join(", ")));
@@ -1888,10 +1917,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         Err(m) => return err(ts[0].span(), &m),
                     };
                     stmts.push(format!(
-                        "S::Drive(\"{tx}_data\".to_string(), {e})"
+                        "S::Drive(T::Name(\"{tx}_data\".to_string()), {e})"
                     ));
                     stmts.push(format!(
-                        "S::Drive(\"{tx}_valid\".to_string(), {gd})"
+                        "S::Drive(T::Name(\"{tx}_valid\".to_string()), {gd})"
                     ));
                     continue;
                 }
@@ -1916,7 +1945,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         Err(m) => return err(ts[0].span(), &m),
                     };
                     stmts.push(format!(
-                        "S::Drive(\"{target}\".to_string(), {e})"
+                        "S::Drive(T::Name(\"{target}\".to_string()), {e})"
                     ));
                     continue;
                 }
@@ -1933,7 +1962,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          /// `.vhdl()` render it.\n\
          #[allow(unused_variables, clippy::all)]\n\
          pub fn lowered(name: &str) -> ::txhdl::netlist::Lowered {{\n\
-         use ::txhdl::netlist::{{Expr as E, Stmt as S}};\n\
+         use ::txhdl::netlist::{{Expr as E, Stmt as S, Target as T}};\n\
          ::txhdl::netlist::Lowered {{\n\
          name: name.to_string(),\n\
          clock: {clock},\n\

@@ -147,6 +147,8 @@ fn range(w: usize) -> String {
 pub trait Port {
     const KIND: Option<Kind> = None;
     const WIDTH: usize = 0;
+    /// Words, for a memory; zero for everything else.
+    const DEPTH: usize = 0;
 }
 impl<T: Value + Copy + 'static, C: Clock> Port for Reg<T, C> {
     const KIND: Option<Kind> = Some(Kind::Reg);
@@ -172,7 +174,13 @@ impl<T: Value + crate::types::Transaction + 'static, C: Clock> Port
     const KIND: Option<Kind> = Some(Kind::Rx);
     const WIDTH: usize = T::WIDTH;
 }
-impl<T: Copy, const N: usize, C: Clock> Port for Mem<T, N, C> {}
+impl<T: Value + Copy + 'static, const N: usize, C: Clock> Port
+    for Mem<T, N, C>
+{
+    const KIND: Option<Kind> = Some(Kind::Mem);
+    const WIDTH: usize = T::WIDTH;
+    const DEPTH: usize = N;
+}
 impl<T> Port for PhantomData<T> {}
 macro_rules! plain {
     ($($t:ty),*) => { $( impl Port for $t {} )* };
@@ -181,9 +189,10 @@ plain!(u8, u16, u32, u64, u128, usize, bool, &'static str);
 plain!(crate::types::Bit, crate::types::Logic);
 impl<const N: usize> Port for crate::types::U<N> {}
 
-/// A unit's fields by name, kind and width. Derived with `Trace`.
+/// A unit's fields by name, kind, width and depth. Derived with
+/// `Trace`.
 pub trait Fields {
-    fn fields() -> Vec<(&'static str, Option<Kind>, usize)>;
+    fn fields() -> Vec<(&'static str, Option<Kind>, usize, usize)>;
 }
 
 /// A value as an expression: its width and bits.
@@ -230,16 +239,24 @@ impl Expr {
     }
 }
 
+/// Where a drive lands: a register or a wire by name, or a word of a
+/// memory, `m.at(addr)`.
+#[derive(Clone, Debug)]
+pub enum Target {
+    Name(String),
+    Word(String, Expr),
+}
+
 /// One statement of a lowered `run` body, as `#[lower]` emits it.
 pub enum Stmt {
     /// `target.set(expr)` or `target <= expr`: a register takes it at
-    /// the edge, a wire is assigned it.
-    Drive(String, Expr),
+    /// the edge, a wire is assigned it, a word of a memory is written.
+    Drive(Target, Expr),
     /// `when!(cond => { drives } else { drives })`.
-    When(Expr, Vec<(String, Expr)>, Vec<(String, Expr)>),
+    When(Expr, Vec<(Target, Expr)>, Vec<(Target, Expr)>),
     /// `case!(value => { pattern => { drives }, .. })`: arms in order,
     /// each a condition on the value, the first that holds wins.
-    Case(Vec<(Expr, Vec<(String, Expr)>)>),
+    Case(Vec<(Expr, Vec<(Target, Expr)>)>),
     /// The wait the loop makes: every register drive after it happens
     /// only at an edge at which the condition holds.
     Guard(Expr),
@@ -251,7 +268,7 @@ pub enum Stmt {
 pub struct Lowered {
     pub name: String,
     pub clock: &'static str,
-    pub fields: Vec<(&'static str, Option<Kind>, usize)>,
+    pub fields: Vec<(&'static str, Option<Kind>, usize, usize)>,
     pub ports: Vec<(String, Kind, usize)>,
     pub body: Vec<Stmt>,
 }
@@ -260,11 +277,17 @@ impl Lowered {
     fn is_reg(&self, t: &str) -> bool {
         self.fields
             .iter()
-            .any(|(n, k, _)| *n == t && *k == Some(Kind::Reg))
+            .any(|(n, k, _, _)| *n == t && *k == Some(Kind::Reg))
     }
-    /// The width of a register or port, or of a channel's part.
+    fn is_mem(&self, t: &str) -> bool {
+        self.fields
+            .iter()
+            .any(|(n, k, _, _)| *n == t && *k == Some(Kind::Mem))
+    }
+    /// The width of a register, a memory's word, or a port, or of a
+    /// channel's part.
     fn width(&self, n: &str) -> usize {
-        for (f, k, w) in &self.fields {
+        for (f, k, w, _) in &self.fields {
             if *f == n && k.is_some() {
                 return *w;
             }
@@ -302,12 +325,14 @@ impl Lowered {
                 Kind::Rx => out.push_str(&format!(
                     "{n}_data in {w}\n{n}_valid in 1\n{n}_ready out 1\n"
                 )),
-                Kind::Reg => {}
+                Kind::Reg | Kind::Mem => {}
             }
         }
-        for (n, k, w) in &self.fields {
-            if *k == Some(Kind::Reg) {
-                out.push_str(&format!("{n} reg {w}\n"));
+        for (n, k, w, d) in &self.fields {
+            match k {
+                Some(Kind::Reg) => out.push_str(&format!("{n} reg {w}\n")),
+                Some(Kind::Mem) => out.push_str(&format!("{n} mem {w} {d}\n")),
+                _ => {}
             }
         }
         out
@@ -330,13 +355,26 @@ impl Lowered {
                     "input {}{n}_data, input {n}_valid, output {n}_ready",
                     range(*w)
                 )),
-                Kind::Reg => {}
+                Kind::Reg | Kind::Mem => {}
             }
         }
         writeln!(out, "module {name}(\n  {}\n);", plist.join(",\n  ")).unwrap();
-        for (n, k, w) in &self.fields {
-            if *k == Some(Kind::Reg) {
-                writeln!(out, "  reg {}{n};", range(*w)).unwrap();
+        for (n, k, w, d) in &self.fields {
+            match k {
+                Some(Kind::Reg) => {
+                    writeln!(out, "  reg {}{n};", range(*w)).unwrap()
+                }
+                // A memory, zero at the start as the runtime's is.
+                Some(Kind::Mem) => writeln!(
+                    out,
+                    "  reg {}{n} [0:{}];\n  integer {n}_i;\n  \
+                     initial for ({n}_i = 0; {n}_i < {d}; {n}_i = {n}_i + 1) \
+                     {n}[{n}_i] = 0;",
+                    range(*w),
+                    d - 1
+                )
+                .unwrap(),
+                _ => {}
             }
         }
         let mut seq: Vec<String> = Vec::new();
@@ -345,12 +383,16 @@ impl Lowered {
         let drive = |seq: &mut Vec<String>,
                      comb: &mut Vec<String>,
                      ind: &str,
-                     t: &str,
-                     e: &Expr| {
-            if self.is_reg(t) {
-                seq.push(format!("{ind}{t} <= {};", vexpr(e)));
-            } else {
-                comb.push(format!("  assign {t} = {};", vexpr(e)));
+                     t: &Target,
+                     e: &Expr| match t {
+            Target::Word(m, a) => {
+                seq.push(format!("{ind}{m}[{}] <= {};", vexpr(a), vexpr(e)))
+            }
+            Target::Name(t) if self.is_reg(t) => {
+                seq.push(format!("{ind}{t} <= {};", vexpr(e)))
+            }
+            Target::Name(t) => {
+                comb.push(format!("  assign {t} = {};", vexpr(e)))
             }
         };
         for st in &self.body {
@@ -433,7 +475,7 @@ impl Lowered {
                     plist.push(format!("{n}_valid : in std_logic"));
                     plist.push(format!("{n}_ready : out std_logic"));
                 }
-                Kind::Reg => {}
+                Kind::Reg | Kind::Mem => {}
             }
         }
         let mut out = String::new();
@@ -448,14 +490,27 @@ impl Lowered {
         )
         .unwrap();
         writeln!(out, "architecture rtl of {name} is").unwrap();
-        for (n, k, w) in &self.fields {
-            if *k == Some(Kind::Reg) {
-                let init = if *w == 1 {
-                    "'0'".to_string()
-                } else {
-                    "(others => '0')".to_string()
-                };
-                writeln!(out, "  signal {n} : {} := {init};", ty(*w)).unwrap();
+        for (n, k, w, d) in &self.fields {
+            let init = if *w == 1 {
+                "'0'".to_string()
+            } else {
+                "(others => '0')".to_string()
+            };
+            match k {
+                Some(Kind::Reg) => {
+                    writeln!(out, "  signal {n} : {} := {init};", ty(*w))
+                        .unwrap()
+                }
+                // A memory: an array type of its own, zero at the start.
+                Some(Kind::Mem) => writeln!(
+                    out,
+                    "  type {n}_t is array (0 to {}) of {};\n  \
+                     signal {n} : {n}_t := (others => {init});",
+                    d - 1,
+                    ty(*w)
+                )
+                .unwrap(),
+                _ => {}
             }
         }
         writeln!(out, "begin").unwrap();
@@ -470,8 +525,7 @@ impl Lowered {
                 e => hval(e, w, self),
             }
         };
-        let assign = |t: &str, e: &Expr| -> String {
-            let w = self.width(t);
+        let assign = |t: &str, w: usize, e: &Expr| -> String {
             match e {
                 Expr::Cond(c, a, b) => format!(
                     "{t} <= {} when {} else {};",
@@ -493,12 +547,17 @@ impl Lowered {
         let drive = |seq: &mut Vec<String>,
                      comb: &mut Vec<String>,
                      ind: &str,
-                     t: &str,
-                     e: &Expr| {
-            if self.is_reg(t) {
-                seq.push(format!("{ind}{}", assign(t, e)));
-            } else {
-                comb.push(format!("  {}", assign(t, e)));
+                     t: &Target,
+                     e: &Expr| match t {
+            Target::Word(m, a) => {
+                let word = format!("{m}(to_integer({}))", hval(a, 0, self));
+                seq.push(format!("{ind}{}", assign(&word, self.width(m), e)));
+            }
+            Target::Name(t) if self.is_reg(t) => {
+                seq.push(format!("{ind}{}", assign(t, self.width(t), e)))
+            }
+            Target::Name(t) => {
+                comb.push(format!("  {}", assign(t, self.width(t), e)))
             }
         };
         for st in &self.body {
@@ -660,7 +719,13 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
             hval(b, 0, l)
         ),
         Expr::Not(a) => format!("(not {})", hval(a, w, l)),
-        Expr::Index(a, i) => format!("{}({})", hval(a, 0, l), vexpr(i)),
+        // A word of a memory, or a bit of a value.
+        Expr::Index(a, i) => match &**a {
+            Expr::Name(m) if l.is_mem(m) => {
+                format!("{m}(to_integer({}))", hval(i, 0, l))
+            }
+            _ => format!("{}({})", hval(a, 0, l), vexpr(i)),
+        },
         e if e.is_bool() => format!("({})", hbool(e, l)),
         Expr::Cond(c, a, b) => {
             format!(
