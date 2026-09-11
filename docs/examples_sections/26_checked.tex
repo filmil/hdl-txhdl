@@ -33,14 +33,17 @@ the scratchpad and the decoder pass.
 A negative control was run once: the counter's adder changed to add
 two makes the test fail at the first tick, so a pass means something.
 
-The stage of Section~\ref{sec:x-stage} is not checked, and the reason
-is a finding. The runtime's channel is a mailbox: an offer sits until
-taken, and the consumer takes it in the same step it is offered, so
-\code{valid} is never high at a tick's end and \code{ready} means the
-slot is empty. The lowering's channel is a valid/ready handshake held
-across edges. The two describe the same design but not the same
-signals per tick, so a trace of one is not a check of the other. To
-check a unit with channels, the runtime's channel has to become a
-handshake that is cycle-accurate, valid held until ready is seen at an
-edge; that is the next change to the runtime, and it will change the
-FIFO's and the arbiter's traces.
+The stage of Section~\ref{sec:x-stage} passes too, and that closes a
+finding. The runtime's channel was a mailbox: an offer sat until
+taken, and the consumer took it in the same step it was offered, so
+\code{valid} was never high at a tick's end and \code{ready} meant
+the slot was empty, while the lowering's channel was a valid/ready
+handshake held across edges; a trace of one was not a check of the
+other. The runtime's channel is now an elastic buffer of two with the
+handshake registered on both sides, as the runtime document states,
+and the netlist's port is what that buffer shows: the head and the
+room are inputs the testbench applies a step later than a wire, since
+they are registered state, and the take and the offer are outputs
+checked as any wire is, the offer's data only under its valid. The
+change moved the FIFO's, the join's and the arbiter's traces by the
+buffer's latency and changed nothing else about them.

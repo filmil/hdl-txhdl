@@ -52,7 +52,7 @@ mentions neither number, and its testbench steps by
 \textbf{A process waits, then reads.} The waits are events:
 \code{C::rising()} and \code{C::falling()}, the next edge of a clock;
 \code{rx.wait()}, the next rising edge of the channel's clock at which
-a transaction is offered, taken; and \code{until(C::rising, || cond)},
+the channel holds a transaction, taken; and \code{until(C::rising, || cond)},
 or the same with \code{falling}, the next such edge at which a
 condition on state holds. Reads are plain: \code{Reg::get} returns
 what the last edge latched, a wire's \code{get} returns what it
@@ -60,6 +60,22 @@ carries, a memory's \code{read} is its asynchronous port. Drives are
 deferred: \code{Reg::set} and \code{Mem::write} take effect at the end
 of the step, so a read after a drive in the same iteration still sees
 what the edge latched.
+
+\textbf{A channel is an elastic buffer of two.} A send is an offer:
+\code{valid} and \code{data} high this step, the transaction in the
+buffer at the end of it; \code{ready} says whether there is room, as
+the edge left it. A receive is a take: \code{ready} high this step,
+the head of the buffer gone at the end of it; \code{peek} is the head
+as the edge left it. Both commit as a register drive does, so what a
+process sees of a channel does not depend on which process ran first
+in the step, and two units that both run every cycle pass one
+transaction per cycle with \code{valid} and \code{ready} registered
+on both sides and no combinational path between them. That is what a
+lowered unit's channel port sees and drives, which is why a unit with
+channels can be checked as a netlist against its trace. A channel's
+trace is its six wires by side: \code{rx\_data}, \code{rx\_valid} and
+\code{rx\_ready} on the receiver's, \code{tx\_data}, \code{tx\_valid}
+and \code{tx\_ready} on the sender's.
 
 \textbf{Every \code{.await} is a cycle boundary.} A process that has
 crossed an edge at this step cannot cross it again, so a second wait
@@ -146,10 +162,11 @@ and VHDL-2008. The VHDL is what closes the loop: the build simulates
 a lowered unit under \code{nvc}, with a testbench
 \code{//tools/fst2tb} generates from the trace the Rust run wrote, and
 the test passes only if registers and outputs agree at every tick.
-What neither emitter reads yet is a unit's second process, a
-falling-edge wait, and a memory; and a unit with channels cannot be
-checked until the runtime's channel is a cycle-accurate handshake
-rather than a mailbox.
+What neither emitter reads yet is a unit's second process and a
+falling-edge wait. Memories lower, and a unit with channels is
+checked as any other, since the runtime's channel is a buffer with a
+registered handshake and the netlist's port is what that buffer
+shows.
 
 \subsection{Building it}
 

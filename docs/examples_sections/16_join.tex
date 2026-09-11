@@ -6,16 +6,17 @@ An adder needs a word from each of two channels, so its event is
 both arrivals: \code{parallel!(a.wait(), b.wait()).await}, which
 completes when both waits have, with the two words. Producer A offers
 every cycle and producer B every other one. A's word is taken when it
-arrives and held inside the group until B's arrives, A's channel holds
-the next offer meanwhile, and so A runs at B's rate with no code for
-the backpressure. Figure~\ref{fig:x-join} shows it: \code{a\_valid}
-stays high through the cycle A waits, and a sum lands on every edge B
-delivers.
+arrives and held inside the group until B's arrives, A's channel
+buffers the next offers meanwhile, two deep, and when it is full A
+sees \code{ready} low and waits, and so A runs at B's rate with no
+code for the backpressure. Figure~\ref{fig:x-join} shows it:
+\code{a\_valid} stays high while the channel holds a word, and a sum
+lands on every edge B delivers.
 
 \begin{figure}[htbp]
 \centering
 \input{join_timing.tex}
-\caption{The join. A's offer is taken at once and held; B's arrives every other cycle; the sum follows B.}
+\caption{The join. A's channel holds a word for the group while B's arrives every other cycle; the sum follows B.}
 \label{fig:x-join}
 \end{figure}
 

@@ -13,7 +13,13 @@ guard; a send drives \code{data} and asserts \code{valid} under it.
 What comes out, Listing~\ref{lst:x-stage-out}, is a combinational
 stage with a handshake and one register, which is what the source
 says, and Figure~\ref{fig:x-stage} is the same stage simulated, with
-the source offering every other cycle.
+the source offering every other cycle. The stage is simulated as a
+netlist against this trace, Section~\ref{sec:x-checked}: the
+channel's buffer on each side is what the testbench replays, the head
+and the room as inputs, the take and the offer as outputs, and the
+sender's data is checked only under its valid, since under a low
+valid the trace holds the last offer and the entity computes the wire
+anyway.
 
 \begin{figure}[htbp]
 \centering

@@ -176,10 +176,10 @@ valid/ready handshake whose wait guards the drives. And the lowering
 is checked: the same statements render to VHDL, a testbench generated
 from the Rust trace replays it into the entity under \code{nvc}, and
 the counter, the blinky and the sequencer agree with their traces at
-every tick, while a deliberately broken one fails. A unit's second
-process, the falling edge, memories, and a runtime channel that is a
-cycle-accurate handshake, so that units with channels can be checked
-too, are what remains.
+every tick, while a deliberately broken one fails. Memories lower,
+and the runtime's channel is an elastic buffer with the handshake
+registered on both sides, so a unit with channels is checked as any
+other; a unit's second process and the falling edge are what remains.
 
 \subsection{What it does not need}
 
