@@ -368,6 +368,19 @@ to put the data memory in block RAM the core would have to read it
 a cycle ahead, which is a pipeline stage, and that is where a third
 stage would go.
 
+The netlist is also placed and routed, \code{bazel build
+//cpu/vreteno:vreteno\_pnr}, with the same constraint and no pins,
+so the bitstream is a stub and the reports are the point. The routed
+design meets ten nanoseconds with 0.263~ns of slack over 5931
+endpoints, and hold with 0.178~ns. The critical path is 9.514~ns,
+of which routing is three quarters, through eleven levels of logic:
+from a register through the decode and the ALU into the register
+file's write port, which is the path Section~\ref{sec:v-next} named
+before the run, the data memory's read and the load's extension
+being on it. So the core runs at 100~MHz on this part with a
+quarter of a nanosecond to spare, and a third stage is what would
+buy more.
+
 \section{What Comes Next}
 \label{sec:v-next}
 
@@ -380,13 +393,12 @@ not change, since it compares architectural state when an
 instruction retires. This is the step to take when the core has a
 netlist and a clock period to shorten, and not before.
 
-Place and route, and a board. Section~\ref{sec:v-synth} synthesizes
-with a clock constraint and no pins; the ruleset places, routes and
-programs a flash as well, and the first board is the Artix-7 the part
-was chosen for. Timing at ten nanoseconds is the number to learn
-first, and the combinational read of the data memory through the
-load's extension into the register file write is where it will be
-lost if it is.
+A board. Section~\ref{sec:v-synth} places and routes with a clock
+constraint and no pins; the ruleset programs a flash as well, and the
+first board is the Artix-7 the part was chosen for, which needs pin
+constraints, a reset from a button and something for the halt to
+light. Timing is known: ten nanoseconds with a quarter of one to
+spare, and the path that sets it.
 
 Traps and the rest of the privileged architecture, and the
 multiplication extension, are the instruction set's next steps, and

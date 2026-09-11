@@ -61,7 +61,13 @@ filegroup(
 # Vivado first, about 300 GB of transient disk and an hour or two.
 #
 #   bazel build //cpu/vreteno:vreteno_synth
-load("@rules_vivado//build/vivado:rules.bzl", "vivado_project", "vivado_synthesis")
+load(
+    "@rules_vivado//build/vivado:rules.bzl",
+    "vivado_place_and_route2",
+    "vivado_project",
+    "vivado_synthesis",
+    "vivado_synthesis2",
+)
 
 vivado_project(
     name = "vreteno_project",
@@ -75,5 +81,33 @@ vivado_project(
 vivado_synthesis(
     name = "vreteno_synth",
     project = ":vreteno_project",
+    tags = ["manual"],
+)
+
+# Implementation: synthesis again through the newer rule, which writes
+# its timing summary, then place and route with the timing summary,
+# the utilization and the DRC report of the routed design. The
+# constraints name the clock and no pins, so the bitstream is a stub;
+# the reports are the point.
+#
+#   bazel build //cpu/vreteno:vreteno_pnr
+filegroup(
+    name = "vreteno_xdc",
+    srcs = ["vreteno.xdc"],
+)
+
+vivado_synthesis2(
+    name = "vreteno_synth2",
+    srcs = ["//docs:vreteno.v"],
+    part = "xc7a200tfbg484-2",
+    top = "vreteno",
+    xdcs = [":vreteno_xdc"],
+    tags = ["manual"],
+)
+
+vivado_place_and_route2(
+    name = "vreteno_pnr",
+    synthesis = ":vreteno_synth2",
+    xdcs = [":vreteno_xdc"],
     tags = ["manual"],
 )
