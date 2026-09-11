@@ -466,17 +466,38 @@ impl<T: Copy + Default + 'static, const N: usize, C: Clock> Mem<T, N, C> {
     }
 }
 
+/// One word of a memory, addressed: what [`Mem::at`] gives out and a
+/// predicated drive lands on, so `when!` and `case!` write a memory as
+/// they write a register, `self.m.at(addr) <= value`.
+pub struct Slot<T: Copy>(Rc<MemCell<T>>, usize);
+
+impl<T: Copy + 'static> Slot<T> {
+    /// Drive the word. Plain and deferred, like a register drive.
+    pub fn set(&self, v: impl Into<T>) {
+        self.0.next.set(Some((self.1, v.into())));
+        commit(self.0.clone());
+    }
+    pub fn set_if(&self, pred: Bit, v: impl Into<T>) {
+        if pred.to_bool() {
+            self.set(v)
+        }
+    }
+}
+
 impl<T: Copy + 'static, const N: usize, C: Clock> Mem<T, N, C> {
+    /// The word at an address, as a drive's target.
+    pub fn at(&self, addr: impl Into<usize>) -> Slot<T> {
+        Slot(self.0.clone(), addr.into())
+    }
     /// The write port. Plain and deferred, like a register drive; one
     /// write per step, which is what one port is.
-    pub fn write(&self, addr: usize, v: impl Into<T>) {
-        self.0.next.set(Some((addr, v.into())));
-        commit(self.0.clone());
+    pub fn write(&self, addr: impl Into<usize>, v: impl Into<T>) {
+        self.at(addr).set(v)
     }
     /// The read port. Plain, like a wire, and as many reads as a cycle
     /// wants: a register file reads two.
-    pub fn read(&self, addr: usize) -> T {
-        self.0.words[addr % N].get()
+    pub fn read(&self, addr: impl Into<usize>) -> T {
+        self.0.words[addr.into() % N].get()
     }
 }
 
@@ -999,6 +1020,8 @@ pub mod trace {
         In,
         Tx,
         Rx,
+        /// A memory: state with an address, untraced.
+        Mem,
     }
 
     /// One traced signal: where it is, how wide, what it is, which

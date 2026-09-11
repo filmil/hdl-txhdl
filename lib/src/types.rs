@@ -199,6 +199,13 @@ macro_rules! from_int {
 }
 from_int!(u8, u16, u32, u64, u128, usize);
 
+/// A value as an address: what a memory's `read` and `at` take.
+impl<const N: usize> From<U<N>> for usize {
+    fn from(v: U<N>) -> usize {
+        v.0 as usize
+    }
+}
+
 impl<const N: usize> From<i32> for U<N> {
     fn from(v: i32) -> Self {
         debug_assert!(v >= 0, "a negative literal into an unsigned U<{N}>");

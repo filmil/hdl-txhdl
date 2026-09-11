@@ -52,10 +52,10 @@ fn main() {
     }
     stop();
     println!();
-    for x in [10, 11, 12, 13, 14, 15, 17, 18, 19, 20] {
+    for x in [10usize, 11, 12, 13, 14, 15, 17, 18, 19, 20] {
         println!("x{x:<2} = {:#010x}", regs.read(x).raw());
     }
-    for a in 0..3 {
+    for a in 0..3usize {
         println!("mem[{a}] = {:#010x}", dmem.read(a).raw());
     }
 }
