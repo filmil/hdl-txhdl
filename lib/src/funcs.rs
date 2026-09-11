@@ -16,6 +16,27 @@ pub fn is_zero<const N: usize>(x: U<N>) -> Bit {
     Bit::from_bool(x.raw() == 0)
 }
 
+pub fn shl<const N: usize>(a: U<N>, k: usize) -> U<N> {
+    a.shl(k)
+}
+pub fn shr<const N: usize>(a: U<N>, k: usize) -> U<N> {
+    a.shr(k)
+}
+pub fn sra<const N: usize>(a: U<N>, k: usize) -> U<N> {
+    a.sra(k)
+}
+pub fn band<const N: usize>(a: U<N>, b: U<N>) -> U<N> {
+    a.and(b)
+}
+pub fn bor<const N: usize>(a: U<N>, b: U<N>) -> U<N> {
+    a.or(b)
+}
+pub fn bxor<const N: usize>(a: U<N>, b: U<N>) -> U<N> {
+    a.xor(b)
+}
+pub fn lt_signed<const N: usize>(a: U<N>, b: U<N>) -> Bit {
+    a.lt_signed(b)
+}
 pub fn lt<const N: usize>(a: U<N>, b: U<N>) -> Bit {
     Bit::from_bool(a.raw() < b.raw())
 }

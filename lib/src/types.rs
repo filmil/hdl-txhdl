@@ -37,6 +37,12 @@ impl Bit {
     pub fn or(self, o: Bit) -> Self {
         Self::from_bool(self.to_bool() || o.to_bool())
     }
+    /// The bit as an `M`-bit value, `0` or `1`: what a compare yields
+    /// into a datapath. Lowered as the bare compare; the target's width
+    /// extends it.
+    pub fn zext<const M: usize>(self) -> U<M> {
+        U::from(self.to_bool() as u8)
+    }
 }
 
 /// Nine valued, in IEEE 1164 order. `Default` is `U`: a signal nobody
@@ -197,6 +203,84 @@ impl<const N: usize> From<i32> for U<N> {
     fn from(v: i32) -> Self {
         debug_assert!(v >= 0, "a negative literal into an unsigned U<{N}>");
         Self::new(v as u128)
+    }
+}
+
+/// The operators a datapath needs beyond arithmetic: shifts, bitwise
+/// logic, concatenation, extension and signed comparison. Each is a
+/// plain function of its inputs and lowers to the operator of the
+/// same name; a width that is the sum of two others is stated, as
+/// `mul::<M>` states it, because that sum needs nightly Rust to write.
+impl<const N: usize> U<N> {
+    pub fn shl(self, k: usize) -> Self {
+        if k >= N {
+            Self::new(0)
+        } else {
+            Self::new(self.0 << k)
+        }
+    }
+    /// A logical shift right.
+    pub fn shr(self, k: usize) -> Self {
+        if k >= N {
+            Self::new(0)
+        } else {
+            Self::new(self.0 >> k)
+        }
+    }
+    /// An arithmetic shift right: the top bit fills in.
+    pub fn sra(self, k: usize) -> Self {
+        let k = k.min(N);
+        let top = self.bit(N - 1).to_bool();
+        let shifted = self.0 >> k;
+        let fill = if top && k > 0 {
+            ((1u128 << k) - 1) << (N - k)
+        } else {
+            0
+        };
+        Self::new(shifted | fill)
+    }
+    pub fn and(self, o: Self) -> Self {
+        Self::new(self.0 & o.0)
+    }
+    pub fn or(self, o: Self) -> Self {
+        Self::new(self.0 | o.0)
+    }
+    pub fn xor(self, o: Self) -> Self {
+        Self::new(self.0 ^ o.0)
+    }
+    pub fn not(self) -> Self {
+        Self::new(!self.0)
+    }
+    /// `self` above `low`: `M` is `N + K`, stated.
+    pub fn concat<const K: usize, const M: usize>(self, low: U<K>) -> U<M> {
+        U::<M>::new((self.0 << K) | low.0)
+    }
+    /// Sign extension to `M` bits.
+    pub fn sext<const M: usize>(self) -> U<M> {
+        let top = self.bit(N - 1).to_bool();
+        if top && M > N {
+            let ones = ((1u128 << (M - N)) - 1) << N;
+            U::<M>::new(self.0 | ones)
+        } else {
+            U::<M>::new(self.0)
+        }
+    }
+    /// Zero extension or truncation; `resize` by another name.
+    pub fn zext<const M: usize>(self) -> U<M> {
+        self.resize::<M>()
+    }
+    /// Signed less-than, both as two's complement of `N` bits.
+    pub fn lt_signed(self, o: Self) -> Bit {
+        Bit::from_bool(self.to_i().raw() < o.to_i().raw())
+    }
+    pub fn to_i(self) -> I<N> {
+        I::<N>::new(self.0 as i128)
+    }
+    pub fn from_i(v: I<N>) -> Self {
+        Self::new(v.raw() as u128)
+    }
+    pub fn eq(self, o: Self) -> Bit {
+        Bit::from_bool(self.0 == o.0)
     }
 }
 
