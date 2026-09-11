@@ -1515,6 +1515,29 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
         {
             Ok(ename(&f.to_string()))
         }
+        // A struct literal, `Name { f: e, .. }`: its fields concatenated
+        // in the order written, which must be the declaration's, the
+        // first field highest, as `#[derive(Value)]` lays them out.
+        [TokenTree::Ident(_), TokenTree::Group(g)]
+            if g.delimiter() == Delimiter::Brace =>
+        {
+            let mut acc: Option<String> = None;
+            for f in split_commas(g) {
+                let Some(c) = f.iter().position(
+                    |t| matches!(t, TokenTree::Punct(p) if p.as_char() == ':'),
+                ) else {
+                    return Err(
+                        "a struct literal's field is `name: value`".into()
+                    );
+                };
+                let e = tr(&f[c + 1..], subst)?;
+                acc = Some(match acc {
+                    None => e,
+                    Some(a) => format!("E::Cat(Box::new({a}), Box::new({e}))"),
+                });
+            }
+            acc.ok_or_else(|| "an empty struct literal".to_string())
+        }
         _ => {
             let last_group = matches!(ts.last(), Some(TokenTree::Group(_)));
             if ts.len() == 2 {
@@ -1783,6 +1806,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     }
+    let pnames: Vec<String> = pairs.iter().map(|(n, _, _)| n.clone()).collect();
     let mut ports: Vec<String> = Vec::new();
     for (pname, ty, span) in pairs {
         if ty == "()" {
@@ -1831,6 +1855,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut guard: Option<String> = None;
     let mut subst: Vec<(String, String)> = Vec::new();
     let mut stmts: Vec<String> = Vec::new();
+    // `let` names that became wires of the netlist, with what drives
+    // each; a name bound twice gets a numbered second wire.
+    let mut wires: Vec<(String, String)> = Vec::new();
     for st in statements(lbody) {
         let ts: Vec<TokenTree> = st.into_iter().collect();
         let text: String = ts
@@ -1923,10 +1950,30 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
             for (n, e) in names.iter().zip(&exprs) {
                 let name = n[0].to_string();
-                match tr(e, &subst) {
-                    Ok(v) => subst.push((name, v)),
+                let v = match tr(e, &subst) {
+                    Ok(v) => v,
                     Err(m) => return err(ts[0].span(), &m),
+                };
+                // A read of a port or a register, or a number, is an
+                // alias; anything computed is a wire named for the let.
+                let alias = v.starts_with("E::Name(")
+                    || v.starts_with("E::Num(")
+                    || v.starts_with("E::Bits(")
+                    || v.starts_with("::txhdl::netlist::lit(");
+                if alias || name == "_" {
+                    subst.push((name, v));
+                    continue;
                 }
+                let mut w = name.clone();
+                if pnames.contains(&w) {
+                    w.push_str("_w");
+                }
+                let taken = wires.iter().filter(|(x, _)| *x == w).count();
+                if taken > 0 {
+                    w = format!("{w}_{}", taken + 1);
+                }
+                wires.push((w.clone(), v));
+                subst.push((name, ename(&w)));
             }
             continue;
         }
@@ -2122,7 +2169,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          clock: {clock},\n\
          fields: <Self as ::txhdl::netlist::Fields>::fields(),\n\
          ports: vec![{ports}],\n\
+         wires: vec![{wires}],\n\
          body: vec![{stmts}],\n\
+         init: Vec::new(),\n\
          }}\n}}\n\
          /// The Verilog of this unit.\n\
          pub fn verilog(name: &str) -> String {{\n\
@@ -2131,6 +2180,11 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          pub fn vhdl(name: &str) -> String {{ Self::lowered(name).vhdl() }}\n\
          }}",
         ports = ports.join(", "),
+        wires = wires
+            .iter()
+            .map(|(n, e)| format!("(\"{n}\".to_string(), {e})"))
+            .collect::<Vec<_>>()
+            .join(",\n"),
         stmts = stmts.join(",\n"),
     );
     if let Ok(dir) = std::env::var("TXHDL_MACRO_DUMP") {

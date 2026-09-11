@@ -279,10 +279,110 @@ pub struct Lowered {
     pub clock: &'static str,
     pub fields: Vec<(&'static str, Option<Kind>, usize, usize)>,
     pub ports: Vec<(String, Kind, usize)>,
+    /// The `let` names of the loop that are computed, each a wire
+    /// driven by its expression; a read of a port or register is an
+    /// alias and not here.
+    pub wires: Vec<(String, Expr)>,
     pub body: Vec<Stmt>,
+    /// A memory's first words, as `Mem::with` gave them: a program.
+    pub init: Vec<(String, Vec<u128>)>,
 }
 
 impl Lowered {
+    /// Give a memory its first words, as `Mem::with` gave them at run
+    /// time; the netlist cannot see those, so the example says them
+    /// again here.
+    pub fn init(&mut self, mem: &str, words: &[u128]) {
+        self.init.push((mem.to_string(), words.to_vec()));
+    }
+    /// Verilog cannot part-select an expression, so every slice of
+    /// one is hoisted into a wire of its own, `slN`, declared before
+    /// the body that uses it.
+    #[allow(clippy::type_complexity)]
+    fn hoisted(
+        &self,
+    ) -> (Vec<Stmt>, Vec<(String, Expr)>, Vec<(String, usize, Expr)>) {
+        let mut temps: Vec<(String, usize, Expr)> = Vec::new();
+        fn go(
+            e: &Expr,
+            l: &Lowered,
+            t: &mut Vec<(String, usize, Expr)>,
+        ) -> Expr {
+            let b = |x: &Expr, t: &mut Vec<(String, usize, Expr)>| {
+                Box::new(go(x, l, t))
+            };
+            match e {
+                Expr::Slice(a, lo, len) => {
+                    let a = go(a, l, t);
+                    let plain = matches!(&a, Expr::Name(_))
+                        || matches!(&a, Expr::Index(m, _)
+                            if matches!(&**m, Expr::Name(n) if l.is_mem(n)));
+                    if plain {
+                        return Expr::Slice(Box::new(a), *lo, *len);
+                    }
+                    // The same expression sliced twice is one wire.
+                    let same = format!("{a:?}");
+                    let found =
+                        t.iter().find(|(_, _, e)| format!("{e:?}") == same);
+                    let name = match found {
+                        Some((n, _, _)) => n.clone(),
+                        None => {
+                            let n = format!("sl{}", t.len());
+                            t.push((n.clone(), l.ewidth(&a), a));
+                            n
+                        }
+                    };
+                    Expr::Slice(Box::new(Expr::Name(name)), *lo, *len)
+                }
+                Expr::Bin(op, a, c) => Expr::Bin(op, b(a, t), b(c, t)),
+                Expr::Not(a) => Expr::Not(b(a, t)),
+                Expr::Cond(c, a, d) => Expr::Cond(b(c, t), b(a, t), b(d, t)),
+                Expr::Index(a, i) => Expr::Index(b(a, t), b(i, t)),
+                Expr::Cat(a, c) => Expr::Cat(b(a, t), b(c, t)),
+                Expr::Sext(a, m) => Expr::Sext(b(a, t), *m),
+                Expr::Zext(a, m) => Expr::Zext(b(a, t), *m),
+                e => e.clone(),
+            }
+        }
+        let target = |x: &Target, t: &mut Vec<(String, usize, Expr)>| match x {
+            Target::Word(m, a) => Target::Word(m.clone(), go(a, self, t)),
+            n => n.clone(),
+        };
+        let drives = |d: &[(Target, Expr)],
+                      t: &mut Vec<(String, usize, Expr)>| {
+            d.iter()
+                .map(|(x, e)| (target(x, t), go(e, self, t)))
+                .collect::<Vec<_>>()
+        };
+        let wires = self
+            .wires
+            .iter()
+            .map(|(n, e)| (n.clone(), go(e, self, &mut temps)))
+            .collect();
+        let body = self
+            .body
+            .iter()
+            .map(|st| match st {
+                Stmt::Drive(x, e) => {
+                    Stmt::Drive(target(x, &mut temps), go(e, self, &mut temps))
+                }
+                Stmt::When(c, a, b) => Stmt::When(
+                    go(c, self, &mut temps),
+                    drives(a, &mut temps),
+                    drives(b, &mut temps),
+                ),
+                Stmt::Case(arms) => Stmt::Case(
+                    arms.iter()
+                        .map(|(c, d)| {
+                            (go(c, self, &mut temps), drives(d, &mut temps))
+                        })
+                        .collect(),
+                ),
+                Stmt::Guard(c) => Stmt::Guard(go(c, self, &mut temps)),
+            })
+            .collect();
+        (body, wires, temps)
+    }
     fn is_reg(&self, t: &str) -> bool {
         self.fields
             .iter()
@@ -314,9 +414,12 @@ impl Lowered {
             Expr::Sext(_, m) | Expr::Zext(_, m) => *m,
         }
     }
-    /// The width of a register, a memory's word, or a port, or of a
+    /// The width of a register, a memory's word, a port, a wire, or a
     /// channel's part.
     fn width(&self, n: &str) -> usize {
+        if let Some((_, e)) = self.wires.iter().find(|(w, _)| w == n) {
+            return self.ewidth(e);
+        }
         for (f, k, w, _) in &self.fields {
             if *f == n && k.is_some() {
                 return *w;
@@ -395,18 +498,43 @@ impl Lowered {
                 Some(Kind::Reg) => {
                     writeln!(out, "  reg {}{n};", range(*w)).unwrap()
                 }
-                // A memory, zero at the start as the runtime's is.
-                Some(Kind::Mem) => writeln!(
-                    out,
-                    "  reg {}{n} [0:{}];\n  integer {n}_i;\n  \
-                     initial for ({n}_i = 0; {n}_i < {d}; {n}_i = {n}_i + 1) \
-                     {n}[{n}_i] = 0;",
-                    range(*w),
-                    d - 1
-                )
-                .unwrap(),
+                // A memory, zero at the start as the runtime's is, then
+                // its first words if the example gave them.
+                Some(Kind::Mem) => {
+                    writeln!(
+                        out,
+                        "  reg {}{n} [0:{}];\n  integer {n}_i;\n  \
+                         initial for ({n}_i = 0; {n}_i < {d}; \
+                         {n}_i = {n}_i + 1) \
+                         {n}[{n}_i] = 0;",
+                        range(*w),
+                        d - 1
+                    )
+                    .unwrap();
+                    for (m, words) in &self.init {
+                        if m != n {
+                            continue;
+                        }
+                        writeln!(out, "  initial begin").unwrap();
+                        for (i, v) in words.iter().enumerate() {
+                            if *v != 0 {
+                                writeln!(out, "    {n}[{i}] = {w}'h{v:x};")
+                                    .unwrap();
+                            }
+                        }
+                        writeln!(out, "  end").unwrap();
+                    }
+                }
                 _ => {}
             }
+        }
+        let (body, wires, temps) = self.hoisted();
+        for (n, e) in &wires {
+            writeln!(out, "  wire {}{n};", range(self.ewidth(e))).unwrap();
+        }
+        for (t, w, e) in &temps {
+            writeln!(out, "  wire {}{t} = {};", range(*w), vexpr(e, l))
+                .unwrap();
         }
         let mut seq: Vec<String> = Vec::new();
         let mut comb: Vec<String> = Vec::new();
@@ -428,7 +556,10 @@ impl Lowered {
                 comb.push(format!("  assign {t} = {};", vexpr(e, l)))
             }
         };
-        for st in &self.body {
+        for (n, e) in &wires {
+            comb.push(format!("  assign {n} = {};", vexpr(e, l)));
+        }
+        for st in &body {
             match st {
                 Stmt::Guard(c) => {
                     guard = true;
@@ -523,6 +654,21 @@ impl Lowered {
         )
         .unwrap();
         writeln!(out, "architecture rtl of {name} is").unwrap();
+        // A conditional inside an expression, and a truth value as a
+        // bit: functions, since VHDL-2008 has neither as an operator.
+        out.push_str(
+            "  function mux(c : boolean; a, b : unsigned) \
+             return unsigned is\n  \
+             begin if c then return a; else return b; end if; \
+             end function;\n  \
+             function mux(c : boolean; a, b : std_logic) \
+             return std_logic is\n  \
+             begin if c then return a; else return b; end if; \
+             end function;\n  \
+             function tobit(c : boolean) return std_logic is\n  \
+             begin if c then return '1'; else return '0'; end if; \
+             end function;\n",
+        );
         for (n, k, w, d) in &self.fields {
             let init = if *w == 1 {
                 "'0'".to_string()
@@ -534,17 +680,39 @@ impl Lowered {
                     writeln!(out, "  signal {n} : {} := {init};", ty(*w))
                         .unwrap()
                 }
-                // A memory: an array type of its own, zero at the start.
-                Some(Kind::Mem) => writeln!(
-                    out,
-                    "  type {n}_t is array (0 to {}) of {};\n  \
-                     signal {n} : {n}_t := (others => {init});",
-                    d - 1,
-                    ty(*w)
-                )
-                .unwrap(),
+                // A memory: an array type of its own, zero at the start,
+                // then its first words if the example gave them.
+                Some(Kind::Mem) => {
+                    let mut words = String::new();
+                    for (m, ws) in &self.init {
+                        if m != n {
+                            continue;
+                        }
+                        for (i, v) in ws.iter().enumerate() {
+                            if *v != 0 {
+                                let b = format!("{v:0w$b}", w = *w);
+                                words.push_str(&format!("{i} => \"{b}\", "));
+                            }
+                        }
+                    }
+                    writeln!(
+                        out,
+                        "  type {n}_t is array (0 to {}) of {};\n  \
+                         signal {n} : {n}_t := ({words}others => {init});",
+                        d - 1,
+                        ty(*w)
+                    )
+                    .unwrap()
+                }
                 _ => {}
             }
+        }
+        let (body, wires, temps) = self.hoisted();
+        for (n, e) in &wires {
+            writeln!(out, "  signal {n} : {};", ty(self.ewidth(e))).unwrap();
+        }
+        for (t, w, _) in &temps {
+            writeln!(out, "  signal {t} : {};", ty(*w)).unwrap();
         }
         writeln!(out, "begin").unwrap();
         let mut seq: Vec<String> = Vec::new();
@@ -593,7 +761,13 @@ impl Lowered {
                 comb.push(format!("  {}", assign(t, self.width(t), e)))
             }
         };
-        for st in &self.body {
+        for (t, w, e) in &temps {
+            comb.push(format!("  {}", assign(t, *w, e)));
+        }
+        for (n, e) in &wires {
+            comb.push(format!("  {}", assign(n, self.ewidth(e), e)));
+        }
+        for st in &body {
             match st {
                 Stmt::Guard(c) => {
                     guard = true;
@@ -715,9 +889,15 @@ fn vexpr(e: &Expr, l: &Lowered) -> String {
 /// An expression in VHDL, as a truth value.
 fn hbool(e: &Expr, l: &Lowered) -> String {
     match e {
+        // A one-bit literal is a truth value outright.
+        Expr::Bits(1, b) => (if b == "1" { "true" } else { "false" }).into(),
         Expr::Bin(op @ ("&&" | "||"), a, b) => {
             let w = if *op == "&&" { "and" } else { "or" };
             format!("({} {w} {})", hbool(a, l), hbool(b, l))
+        }
+        // Bitwise operators and shifts yield bits, not truth values.
+        Expr::Bin("&" | "|" | "^" | "<<" | ">>" | ">>>" | "+" | "-", ..) => {
+            format!("({} = '1')", hval(e, 1, l))
         }
         Expr::Bin("<s", a, b) => {
             format!("(signed({}) < signed({}))", hval(a, 0, l), hval(b, 0, l))
@@ -728,11 +908,9 @@ fn hbool(e: &Expr, l: &Lowered) -> String {
                 "!=" => "/=",
                 o => o,
             };
-            // A one-bit name against a number is a comparison with a bit.
-            let w = match (&**a, &**b) {
-                (Expr::Name(n), _) | (_, Expr::Name(n)) => l.width(n),
-                _ => 0,
-            };
+            // Both sides at the width either side has: a one-bit name
+            // against a number is a comparison with a bit.
+            let w = l.ewidth(a).max(l.ewidth(b));
             format!("({} {vop} {})", hval(a, w, l), hval(b, w, l))
         }
         Expr::Not(a) => format!("(not {})", hbool(a, l)),
@@ -747,7 +925,7 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
         Expr::Num(k) if w == 1 => format!("'{}'", if *k == 0 { 0 } else { 1 }),
         Expr::Num(k) => k.to_string(),
         Expr::Bits(bw, b) if *bw == 1 => format!("'{b}'"),
-        Expr::Bits(_, b) => format!("\"{b}\""),
+        Expr::Bits(_, b) => format!("unsigned'(\"{b}\")"),
         Expr::Bin(op @ ("+" | "-"), a, b) => {
             format!("({} {op} {})", hval(a, w, l), hval(b, w, l))
         }
@@ -757,6 +935,14 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
                 "|" => "or",
                 _ => "xor",
             };
+            // At the operands' own width: a bit and a truth value are
+            // both std_logic there.
+            let w = if w == 0 {
+                l.ewidth(e)
+            } else {
+                w.min(l.ewidth(e).max(1))
+            };
+            let w = if l.ewidth(e) == 1 { 1 } else { w };
             format!("({} {vop} {})", hval(a, w, l), hval(b, w, l))
         }
         Expr::Bin("<<", a, b) => {
@@ -782,7 +968,10 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
         Expr::Slice(a, lo, len) => {
             format!("{}({} downto {})", hval(a, 0, l), lo + len - 1, lo)
         }
-        Expr::Cat(a, b) => format!("({} & {})", hval(a, 0, l), hval(b, 0, l)),
+        // Qualified, since every array type in scope has a `&` too.
+        Expr::Cat(a, b) => {
+            format!("unsigned'({} & {})", hval(a, 0, l), hval(b, 0, l))
+        }
         Expr::Sext(a, m) => {
             format!("unsigned(resize(signed({}), {m}))", hval(a, 0, l))
         }
@@ -794,14 +983,25 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
             }
             _ => format!("{}({})", hval(a, 0, l), vexpr(i, l)),
         },
-        e if e.is_bool() => format!("({})", hbool(e, l)),
+        // A truth value as a bit, or as a word of that width.
+        e if e.is_bool() && w > 1 => format!(
+            "mux({}, to_unsigned(1, {w}), to_unsigned(0, {w}))",
+            hbool(e, l)
+        ),
+        e if e.is_bool() => format!("tobit({})", hbool(e, l)),
+        // A conditional inside an expression is the mux function; a
+        // number in a branch takes the other branch's width.
         Expr::Cond(c, a, b) => {
-            format!(
-                "{} when {} else {}",
-                hval(a, w, l),
-                hbool(c, l),
-                hval(b, w, l)
-            )
+            let w = if w == 0 {
+                l.ewidth(a).max(l.ewidth(b))
+            } else {
+                w
+            };
+            let side = |x: &Expr| match x {
+                Expr::Num(k) if w > 1 => format!("to_unsigned({k}, {w})"),
+                x => hval(x, w, l),
+            };
+            format!("mux({}, {}, {})", hbool(c, l), side(a), side(b))
         }
         Expr::Bin(op, a, b) => {
             format!("({} {op} {})", hval(a, w, l), hval(b, w, l))
