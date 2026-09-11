@@ -3,7 +3,7 @@
 //! side for an offer it has room for, the read side for a word and a
 //! consumer able to take it. The producer port is in one clock and the
 //! consumer port in another, and the two clocks stand in a stated
-//! relation: `ClkW` has period 2, `ClkR` period 3 and phase 1, in the
+//! relation: `ClkW` has period 4, `ClkR` period 6 and phase 2, in the
 //! unit the design shares. Each pointer lives in its own domain and
 //! crosses to the other through a `Crossing`, which is what makes the
 //! memory read on the consumer side safe; the memory itself is written
@@ -17,13 +17,13 @@ use txhdl::types::U;
 pub struct ClkW;
 impl Clock for ClkW {
     const NAME: &'static str = "clk_w";
-    const PERIOD: u64 = 2;
+    const PERIOD: u64 = 4;
 }
 pub struct ClkR;
 impl Clock for ClkR {
     const NAME: &'static str = "clk_r";
-    const PERIOD: u64 = 3;
-    const PHASE: u64 = 1;
+    const PERIOD: u64 = 6;
+    const PHASE: u64 = 2;
 }
 
 /// A pointer that lives in `A` and is read in `B`. The `Out` is driven
@@ -81,7 +81,7 @@ impl<const N: usize, W: Clock, R: Clock> Fifo<N, W, R> {
     /// side counts the word as soon as its synchroniser sees it.
     async fn write(&self, push: Rx<U<8>, W>) {
         loop {
-            until::<W>(|| push.peek().is_some() && !self.full()).await;
+            until(W::rising, || push.peek().is_some() && !self.full()).await;
             let w = self.wptr.get();
             let v = push.recv().unwrap_or_default();
             self.mem.write(w.raw() as usize, v);
@@ -93,7 +93,7 @@ impl<const N: usize, W: Clock, R: Clock> Fifo<N, W, R> {
     /// Waits for a word to give and a consumer able to take it.
     async fn read(&self, pop: Tx<U<8>, R>) {
         loop {
-            until::<R>(|| !self.empty() && pop.ready().to_bool()).await;
+            until(R::rising, || !self.empty() && pop.ready().to_bool()).await;
             let r = self.rptr.get();
             pop.send(self.mem.read(r.raw() as usize));
             self.rptr.set(r.wrapping_add(1));
@@ -124,7 +124,7 @@ pub struct Producer {
 impl Module<(), Tx<U<8>, ClkW>> for Producer {
     async fn run(&mut self, _i: (), push: Tx<U<8>, ClkW>) {
         loop {
-            until::<ClkW>(|| push.ready().to_bool()).await;
+            until(ClkW::rising, || push.ready().to_bool()).await;
             let n = self.n.get();
             push.send(n);
             self.n.set(n.wrapping_add(1));
@@ -160,7 +160,7 @@ fn main() {
         join2(producer.run((), push_tx), fifo.run(push_rx, pop_tx)),
         consumer.run(pop_rx, ()),
     ));
-    for _ in 0..20 {
+    for _ in 0..40 {
         sim.step();
     }
 }

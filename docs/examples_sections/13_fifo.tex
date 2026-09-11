@@ -3,8 +3,9 @@
 \label{sec:x-fifo}
 
 The producer port is in one clock and the consumer port in another,
-and the two stand in a stated relation: the write clock has period 2,
-the read clock period 3 and phase 1, in the unit the design shares.
+and the two stand in a stated relation: the write clock has period 4,
+the read clock period 6 and phase 2, in ticks, the unit the design
+shares.
 Each side waits for its own event: the write side, with \code{until},
 for an offer it has room for; the read side for a word to give and a
 consumer able to take it. The pointers are read after the wait, at

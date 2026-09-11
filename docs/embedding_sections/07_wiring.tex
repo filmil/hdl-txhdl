@@ -204,18 +204,22 @@ on nothing else about them. The frequency in hertz is a physical fact
 and belongs to the configuration, as Section~\ref{sec:e-main} put it
 there. The ratio of the two periods and the offset between their edges
 are what a FIFO between them is built against, and those are stated on
-the clock: a period and a phase, in a unit common to every clock of
-the design. A clock with period 3 and phase 1 has edges at 1, 4, 7 and
-so on. The defaults are 1 and 0, so a single-clock design mentions
-neither. This is the same statement SDC makes with \code{create\_clock
--period -waveform}, and it was chosen for that reason: it is the form a
-constraint file already takes.
+the clock: a period and a phase, in ticks, a unit common to every
+clock of the design. A clock with period 4 and phase 2 rises at 2, 6,
+10 and falls at 4, 8, 12: the falling edge is half a period after the
+rising one, which is why the default clock has period 2 rather than 1,
+so that its falling edge is a tick of its own. The defaults are 2 and
+0, so a single-clock design mentions neither. This is the same
+statement SDC makes with \code{create\_clock -period -waveform}, and it
+was chosen for that reason: it is the form a constraint file already
+takes.
 
 A register is then in a clock, \code{Reg<T, C>}, with the same default
-as a wire, and a process in that clock waits for \code{C::edge()}. The
-executor runs time in steps and each clock has an edge at the steps its
-period and phase name; the waits built on the edge, a channel's
-\code{wait} and \code{until}, are in the channel's or the named clock,
+as a wire, and a process in that clock waits for \code{C::rising()} or
+\code{C::falling()}. The executor runs time in ticks and each clock has
+its edges at the ticks its period and phase name; the waits built on
+an edge, a channel's \code{wait} on the rising edge and \code{until} on
+whichever edge it is given, are in the channel's or the named clock,
 Section~\ref{sec:e-regread}. An operator's cycle is a cycle of whatever
 clock the process last crossed an edge of, which is the only sense a
 latency has in a process.
@@ -232,10 +236,10 @@ clock and read by the other, and the pointer discipline is what makes
 that safe. It is why the runtime has a \code{Mem<T, N, C>} as a type
 rather than an array of registers: a memory's read port is a wire, and
 the discipline is the designer's. The FIFO is \code{ex\_fifo.rs} in the
-examples document~\cite{examples}, with a producer clock of period 2
-and a consumer clock of period 3 and phase 1; its trace shows the
-producer stalled on \emph{full} twice in twenty steps, which is the
-backpressure crossing the domains the other way.
+examples document~\cite{examples}, with a producer clock of period 4
+and a consumer clock of period 6 and phase 2; its trace shows the
+producer with nothing to push at the edge the FIFO is full, which is
+the backpressure crossing the domains the other way.
 
 \subsection{Where the ends go}
 

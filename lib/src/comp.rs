@@ -32,22 +32,47 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 /// states, in the same terms.
 pub trait Clock: 'static {
     const NAME: &'static str;
-    /// Time steps between rising edges.
-    const PERIOD: u64 = 1;
-    /// Time step of the first rising edge.
+    /// Ticks between rising edges. Two per cycle for the default clock,
+    /// so that its falling edge is a tick of its own.
+    const PERIOD: u64 = 2;
+    /// The tick of the first rising edge.
     const PHASE: u64 = 0;
     /// The next rising edge of this clock: the wait a process makes
     /// once per iteration. State is read after it, plainly.
-    fn edge() -> Tick
+    fn rising() -> Tick
     where
         Self: Sized,
     {
-        edge::<Self>()
+        rising::<Self>()
     }
-    /// Whether this clock has a rising edge at time step `t`.
-    fn edge_at(t: u64) -> bool {
+    /// The next falling edge, half a period after a rising one.
+    fn falling() -> Tick
+    where
+        Self: Sized,
+    {
+        falling::<Self>()
+    }
+    /// Whether this clock has a rising edge at tick `t`.
+    fn rising_at(t: u64) -> bool {
         t >= Self::PHASE && (t - Self::PHASE) % Self::PERIOD == 0
     }
+    /// Whether this clock has a falling edge at tick `t`.
+    fn falling_at(t: u64) -> bool {
+        let f = Self::PHASE + Self::PERIOD / 2;
+        t >= f && (t - f) % Self::PERIOD == 0
+    }
+    /// Whether this clock is high at tick `t`: from a rising edge up to
+    /// the falling one.
+    fn high_at(t: u64) -> bool {
+        t >= Self::PHASE && (t - Self::PHASE) % Self::PERIOD < Self::PERIOD / 2
+    }
+}
+
+/// Which edge of a clock a wait is for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Edge {
+    Rising,
+    Falling,
 }
 
 /// The one clock a single-clock design has. Named, because it is a
@@ -139,11 +164,11 @@ impl<T: Transaction, C: Clock> Rx<T, C> {
         }
     }
     /// Wait for a transaction: the next edge of the channel's clock at
-    /// which one is offered, and take it. An event, like `C::edge()`
+    /// which one is offered, and take it. An event, like `C::rising()`
     /// and `until`; state is read after it.
     pub async fn wait(&self) -> T {
         loop {
-            edge::<C>().await;
+            rising::<C>().await;
             if let Some(v) = self.recv() {
                 return v;
             }
@@ -224,7 +249,7 @@ impl<T: Copy + Default, A: Clock, B: Clock> Crossing<T, A, B> {
     /// `run` joins it with the others.
     pub async fn run(&self) {
         loop {
-            edge::<B>().await;
+            rising::<B>().await;
             self.to.set(self.from.get())
         }
     }
@@ -286,7 +311,7 @@ impl<T: Copy + 'static, C: Clock> Reg<T, C> {
 
     /// Read the register: the value latched at the last edge. Plain,
     /// because reading is not waiting; the wait is the edge the process
-    /// made before it, `C::edge()`, a channel's `wait`, or `until`.
+    /// made before it, `C::rising()`, a channel's `wait`, or `until`.
     pub fn get(&self) -> T {
         self.0.cur.get()
     }
@@ -589,11 +614,12 @@ impl_join!(A 0, B 1, C 2, D 3, E 4, G 5);
 // ---------------------------------------------------------------------
 // The clock edge
 
-/// The prototype's time. One poll of the top unit is one time step, and
-/// each clock has an edge at the steps its period and phase say. Every
-/// wait is built from [`Tick`]: an edge of a named clock, an operator's
-/// cycle in the clock its process is in, and the waits built on those,
-/// a channel's `wait` and `until`.
+/// The prototype's time. One poll of the top unit is one tick, and each
+/// clock has a rising edge at the ticks its period and phase say and a
+/// falling edge half a period later. Every wait is built from [`Tick`]:
+/// a rising or falling edge of a named clock, an operator's cycle in
+/// the clock its process is in, and the waits built on those, a
+/// channel's `wait` and `until`.
 ///
 /// A process waits for an event and then reads state; reads are plain.
 /// Every `.await` is a cycle boundary: a process that has crossed an
@@ -622,8 +648,12 @@ mod clock {
         pub phase: u64,
     }
     impl Clk {
-        pub fn edge_at(&self, t: u64) -> bool {
-            t >= self.phase && (t - self.phase) % self.period == 0
+        pub fn edge_at(&self, t: u64, e: super::Edge) -> bool {
+            let at = match e {
+                super::Edge::Rising => self.phase,
+                super::Edge::Falling => self.phase + self.period / 2,
+            };
+            t >= at && (t - at) % self.period == 0
         }
     }
     /// What the executor knows of a process: the clock it is in and the
@@ -685,31 +715,46 @@ pub fn now() -> u64 {
     clock::TIME.with(|t| t.get())
 }
 
-/// A wait for a clock edge: of a named clock, or, for an operator's
-/// cycle, of whatever clock the process is in.
+/// A wait for a clock edge: rising or falling, of a named clock, or,
+/// for an operator's cycle, the rising edge of whatever clock the
+/// process is in.
 pub struct Tick {
     clk: Option<clock::Clk>,
+    edge: Edge,
 }
 
 /// One cycle of the process's clock, unconditionally. Operators and
 /// `cycles(n)` use this.
 pub fn tick() -> Tick {
-    Tick { clk: None }
-}
-
-/// The next edge of clock `C`. The wait a process makes once per
-/// iteration before it reads state; `C::edge()` is the same thing.
-pub fn edge<C: Clock>() -> Tick {
     Tick {
-        clk: Some(clk_of::<C>()),
+        clk: None,
+        edge: Edge::Rising,
     }
 }
 
-/// The next edge of `C` at which `cond` holds. The condition reads
-/// state, plainly, and is asked once per edge.
-pub async fn until<C: Clock>(mut cond: impl FnMut() -> bool) {
+/// The next rising edge of clock `C`. The wait a process makes once
+/// per iteration before it reads state; `C::rising()` is the same.
+pub fn rising<C: Clock>() -> Tick {
+    Tick {
+        clk: Some(clk_of::<C>()),
+        edge: Edge::Rising,
+    }
+}
+
+/// The next falling edge of clock `C`; `C::falling()` is the same.
+pub fn falling<C: Clock>() -> Tick {
+    Tick {
+        clk: Some(clk_of::<C>()),
+        edge: Edge::Falling,
+    }
+}
+
+/// The next edge, of the kind `edge` makes, at which `cond` holds:
+/// `until(C::rising, || ..)` or `until(C::falling, || ..)`. The
+/// condition reads state, plainly, and is asked once per edge.
+pub async fn until(edge: impl Fn() -> Tick, mut cond: impl FnMut() -> bool) {
     loop {
-        edge::<C>().await;
+        edge().await;
         if cond() {
             return;
         }
@@ -733,7 +778,7 @@ impl Future for Tick {
             .map(|q| q.clk == clk && q.edge == now)
             .unwrap_or(false);
         let grouped = clock::PARALLEL.with(|g| g.get()) > 0;
-        if !crossed && clk.edge_at(now) {
+        if !crossed && clk.edge_at(now, self.edge) {
             clock::PROCS.with(|m| {
                 m.borrow_mut().insert(p, clock::Proc { clk, edge: now })
             });
@@ -842,8 +887,8 @@ impl<F: Future<Output = ()>> Running<F> {
         }
     }
 
-    /// Run the current time step, then advance. Returns whether the
-    /// design has finished, which a unit never does.
+    /// Run the current tick, then advance. Returns whether the design
+    /// has finished, which a unit never does.
     pub fn step(&mut self) -> bool {
         if self.done {
             return true;
@@ -852,6 +897,16 @@ impl<F: Future<Output = ()>> Running<F> {
         self.done = self.f.as_mut().poll(&mut cx).is_ready();
         advance();
         self.done
+    }
+
+    /// One cycle of the default clock: its period in ticks.
+    pub fn cycle(&mut self) -> bool {
+        for _ in 0..DefaultClock::PERIOD {
+            if self.step() {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -1044,9 +1099,9 @@ pub mod trace {
     }
 
     /// A VCD writer. Add what to watch, then `start`; from then on every
-    /// step writes its changes. Time is two ticks per step: a clock
-    /// rises at the step's edge and falls one tick later, when the
-    /// values the step drove have committed.
+    /// tick writes its changes, at the tick's end, when the values the
+    /// tick drove have committed. A clock is a level, high from its
+    /// rising edge to its falling one.
     pub struct Vcd {
         out: Box<dyn Write>,
         clocks: Vec<(String, fn(u64) -> bool)>,
@@ -1067,9 +1122,10 @@ pub mod trace {
             let f = std::fs::File::create(&path).expect("TXHDL_VCD file");
             Some(Vcd::new(std::io::BufWriter::new(f)))
         }
-        /// Trace a clock, as a one-bit signal that pulses at each edge.
+        /// Trace a clock, as the one-bit signal it is: high from a
+        /// rising edge to the falling one.
         pub fn clock<C: Clock>(&mut self) {
-            self.clocks.push((C::NAME.to_string(), C::edge_at));
+            self.clocks.push((C::NAME.to_string(), C::high_at));
         }
         /// Trace something under a name of the testbench's choosing.
         pub fn add(&mut self, name: &str, t: &impl Traceable) {
@@ -1109,23 +1165,21 @@ pub mod trace {
             }
             writeln!(o, "$end").unwrap();
             let clocks = std::mem::take(&mut self.clocks);
+            let mut clast: Vec<bool> = vec![false; clocks.len()];
             let mut out = self.out;
             clock::TRACER.with(|tr| {
                 *tr.borrow_mut() = Some(Box::new(move |t: u64| {
-                    let edges: Vec<bool> =
-                        clocks.iter().map(|(_, e)| e(t)).collect();
-                    if edges.iter().any(|e| *e) {
-                        writeln!(out, "#{}", 2 * t).unwrap();
-                        for (e, id) in edges.iter().zip(&cids) {
-                            if *e {
-                                writeln!(out, "1{id}").unwrap();
-                            }
-                        }
-                    }
-                    writeln!(out, "#{}", 2 * t + 1).unwrap();
-                    for (e, id) in edges.iter().zip(&cids) {
-                        if *e {
-                            writeln!(out, "0{id}").unwrap();
+                    // The tick's end: the clocks as they stand and every
+                    // value the tick's drives committed.
+                    writeln!(out, "#{t}").unwrap();
+                    for (i, ((_, high), id)) in
+                        clocks.iter().zip(&cids).enumerate()
+                    {
+                        let h = high(t);
+                        if h != clast[i] {
+                            writeln!(out, "{}{id}", if h { 1 } else { 0 })
+                                .unwrap();
+                            clast[i] = h;
                         }
                     }
                     for (i, (p, id)) in probes.iter().zip(&pids).enumerate() {

@@ -68,7 +68,7 @@ impl<T: Copy, C: Clock> Reg<T, C> {
 
 async fn port_a(&self) {
     loop {
-        DefaultClock::edge().await;    // the wait
+        DefaultClock::rising().await;    // the wait
         let hits = self.hits_a.get();  // a read at that edge
         self.hits_a.set(hits + 1);
     }
@@ -86,9 +86,10 @@ Listing~\ref{lst:reg} makes three claims that earlier drafts did not,
 and the first took three drafts of its own to get right.
 
 \textbf{Waiting and reading are different things.} A process waits for
-an event: the next edge of a clock, \code{C::edge()}; a transaction on
-a channel, \code{rx.wait()}; or an edge at which a condition on state
-holds, \code{until::<C>(|| ..)}. Once its event has happened it reads
+an event: the next edge of a clock, \code{C::rising()} or
+\code{C::falling()}; a transaction on a channel, \code{rx.wait()}; or
+an edge at which a condition on state holds, \code{until(C::rising,
+|| ..)} and the same with \code{falling}. Once its event has happened it reads
 state, plainly. \code{Reg::get} returns what the last edge latched and
 waits for nothing, and so does a wire's \code{In::get}. The two drafts
 before this one made the register read the wait, \code{get} being

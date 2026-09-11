@@ -24,7 +24,7 @@ pub struct Producer {
 impl Module<(), ()> for Producer {
     async fn run(&mut self, _i: (), _o: ()) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let n = self.n.get();
             self.out.set(n);
             self.n.set(n.wrapping_add(1));
@@ -41,7 +41,7 @@ pub struct Consumer {
 impl Module<(), ()> for Consumer {
     async fn run(&mut self, _i: (), _o: ()) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let total = self.total.get();
             self.total.set(total.wrapping_add(self.inp.get()));
         }
@@ -88,6 +88,6 @@ fn main() {
     }
     let mut sim = Running::new(top.run((), ()));
     for _ in 0..6 {
-        sim.step();
+        sim.cycle();
     }
 }

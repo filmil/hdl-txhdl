@@ -1,0 +1,25 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Both Edges}
+\label{sec:x-edges}
+
+A clock has a rising edge and, half a period later, a falling one,
+and a process may wait for either: \code{C::rising()},
+\code{C::falling()}, or \code{until(C::falling, || cond)} for a
+condition asked at each falling edge. Time runs in ticks so that the
+falling edge is a tick of its own; the default clock has period 2. One
+process drives a count on the rising edge, another captures it on the
+falling edge, and a third waits at falling edges until the count
+reaches four and says so once. Figure~\ref{fig:x-edges} shows the
+capture trailing the count by half a cycle, which is the whole
+difference between the two edges.
+
+\begin{figure}[htbp]
+\centering
+\input{edges_timing.tex}
+\caption{Both edges. The count changes after rising edges, the capture after falling ones, half a cycle later.}
+\label{fig:x-edges}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_edges.rs}. Run with \code{bazel run //lib/examples:ex\_edges}.},label={lst:x-edges}]{lib/examples/ex_edges.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_edges} printed when the build ran it.},label={lst:x-edges-out}]{out_edges.txt}

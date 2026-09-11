@@ -1,6 +1,6 @@
 // Probe 5. A unit's `run` joins one async fn per process. The processes
 // take `&self` and share state through the library's `Reg`.
-use txhdl::comp::{join2, Module, Reg, edge, DefaultClock};
+use txhdl::comp::{join2, Module, Reg, rising, DefaultClock};
 use txhdl::types::U;
 
 pub struct DualPort { pub cells: Reg<U<32>>, pub hits_a: Reg<U<32>>, pub hits_b: Reg<U<32>> }
@@ -8,14 +8,14 @@ pub struct DualPort { pub cells: Reg<U<32>>, pub hits_a: Reg<U<32>>, pub hits_b:
 impl DualPort {
     async fn port_a(&self) {
         loop {
-            edge::<DefaultClock>().await;
+            rising::<DefaultClock>().await;
             let (h, c) = (self.hits_a.get(), self.cells.get());
             self.hits_a.set(h.wrapping_add(U::new(1)));
             self.cells.set(c.wrapping_add(U::new(1)));
         }
     }
     async fn port_b(&self) {
-        loop { edge::<DefaultClock>().await; let h = self.hits_b.get(); self.hits_b.set(h.wrapping_add(U::new(1))) }
+        loop { rising::<DefaultClock>().await; let h = self.hits_b.get(); self.hits_b.set(h.wrapping_add(U::new(1))) }
     }
 }
 

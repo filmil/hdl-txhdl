@@ -20,7 +20,7 @@ pub struct Pe {
 impl Module<(), Out<U<32>>> for Producer {
     async fn run(&mut self, _i: (), out: Out<U<32>>) {
         loop {
-            DefaultClock::edge().await; // the wait
+            DefaultClock::rising().await; // the wait
             let n = self.n.get(); // a read at that edge
             out.set(n); // a wire: no wait
             self.n.set(n.wrapping_add(1));
@@ -31,7 +31,7 @@ impl Module<(), Out<U<32>>> for Producer {
 impl Module<In<U<32>>, ()> for Consumer {
     async fn run(&mut self, inp: In<U<32>>, _o: ()) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let total = self.total.get();
             self.total.set(total.wrapping_add(inp.get()));
         }
@@ -41,7 +41,7 @@ impl Module<In<U<32>>, ()> for Consumer {
 impl Module<U<32>, ()> for Pe {
     async fn run(&mut self, i: U<32>, _o: ()) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let acc = self.acc.get();
             self.acc.set(acc.wrapping_add(i));
         }

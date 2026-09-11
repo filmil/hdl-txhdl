@@ -99,6 +99,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Both edges of a clock:  bazel run //lib/examples:ex_edges
+rust_binary(
+    name = "ex_edges",
+    srcs = ["ex_edges.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A waveform:  bazel run //lib/examples:ex_trace > counter.vcd
 rust_binary(
     name = "ex_trace",
@@ -120,5 +129,6 @@ filegroup(
         "ex_join.rs",
         "ex_inflight.rs",
         "ex_netlist.rs",
+        "ex_edges.rs",
     ],
 )

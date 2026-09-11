@@ -73,7 +73,7 @@ where
     let mut flying: VecDeque<(Pin<Box<Fut>>, Waker, Option<O>)> =
         VecDeque::new();
     loop {
-        C::edge().await;
+        C::rising().await;
         if let Some(x) = input.recv() {
             flying.push_back((Box::pin(f(x)), process_in::<C>(), None));
         }

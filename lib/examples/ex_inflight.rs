@@ -40,7 +40,7 @@ pub struct Source {
 impl Module<(), Tx<Pair>> for Source {
     async fn run(&mut self, _i: (), out: Tx<Pair>) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let n = self.n.get();
             if out.ready().to_bool() {
                 out.send(Pair { a: n, b: n });
@@ -84,6 +84,6 @@ fn main() {
         sink.run(r_rx, ()),
     ));
     for _ in 0..6 {
-        sim.step();
+        sim.cycle();
     }
 }

@@ -474,6 +474,17 @@ waveform(
     ],
 )
 
+waveform(
+    name = "edges",
+    example = "//lib/examples:ex_edges",
+    signals = [
+        "//clocks/clk=>clk",
+        "//edges/count=>count",
+        "//edges/captured=>captured",
+        "//edges/seen_four=>seen_four",
+    ],
+)
+
 # The examples: every file under //lib/examples verbatim, the output of
 # the ones that run, and the runtime's public interface.
 latex_document(
@@ -490,6 +501,8 @@ latex_document(
         ":inflight_timing",
         ":netlist_run",
         ":netlist_timing",
+        ":edges_run",
+        ":edges_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),

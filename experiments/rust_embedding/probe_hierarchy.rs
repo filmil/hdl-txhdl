@@ -1,7 +1,7 @@
 // Probe 12. A unit with submodules, against the library. Children are
 // disjoint fields, so both may be borrowed mutably at once; the wire
 // between them is handed to each as its `run` argument.
-use txhdl::comp::{join2, join_all, signal, DefaultClock, In, Module, Out, Reg, edge};
+use txhdl::comp::{join2, join_all, signal, DefaultClock, In, Module, Out, Reg, rising};
 use txhdl::types::U;
 
 pub struct Producer { pub n: Reg<U<32>> }
@@ -10,17 +10,17 @@ pub struct Pe { pub acc: Reg<U<32>> }
 
 impl Module<(), Out<U<32>>> for Producer {
     async fn run(&mut self, _i: (), out: Out<U<32>>) {
-        loop { edge::<DefaultClock>().await; let n = self.n.get(); out.set(n); self.n.set(n.wrapping_add(U::new(1))) }
+        loop { rising::<DefaultClock>().await; let n = self.n.get(); out.set(n); self.n.set(n.wrapping_add(U::new(1))) }
     }
 }
 impl Module<In<U<32>>, ()> for Consumer {
     async fn run(&mut self, inp: In<U<32>>, _o: ()) {
-        loop { edge::<DefaultClock>().await; let t = self.total.get(); self.total.set(t.wrapping_add(inp.get())) }
+        loop { rising::<DefaultClock>().await; let t = self.total.get(); self.total.set(t.wrapping_add(inp.get())) }
     }
 }
 impl Module<U<32>, ()> for Pe {
     async fn run(&mut self, i: U<32>, _o: ()) {
-        loop { edge::<DefaultClock>().await; let a = self.acc.get(); self.acc.set(a.wrapping_add(i)) }
+        loop { rising::<DefaultClock>().await; let a = self.acc.get(); self.acc.set(a.wrapping_add(i)) }
     }
 }
 

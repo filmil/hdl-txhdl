@@ -14,10 +14,11 @@ as the index of its variant. Registers, the ends of wires and
 channels, and crossings register themselves; plain values in a unit
 are constants and register nothing.
 
-Time in the file is two ticks per step: a clock rises at the step's
-edge and falls one tick later, when the values the step drove have
-committed, so a register's change is seen after the edge that caused
-it. Figure~\ref{fig:x-trace} is the file, drawn. The build made it:
+Time in the file is in ticks, two per cycle of the default clock: a
+clock rises at one tick and falls at the next, and a value a rising
+edge drove is written at that tick's end, so a register's change is
+seen after the edge that caused it. Figure~\ref{fig:x-trace} is the
+file, drawn. The build made it:
 \code{vcdcvt} turned the VCD into a signals database,
 \code{sqlite2drawtiming} wrote the four chosen signals in drawtiming's
 text form, Listing~\ref{lst:x-trace-dt}, and \code{//tools/dt2tikz}
@@ -29,8 +30,8 @@ every platform they ship for.
 \centering
 \input{counter_timing.tex}
 \caption{The counter's waveform, drawn from the VCD the build wrote.
-Time in ticks, two per step; \code{n} counts, and \code{phase} and
-\code{msb} follow its top bit one step after it is latched.}
+Time in ticks, two per cycle; \code{n} counts, and \code{phase} and
+\code{msb} follow its top bit one cycle after it is latched.}
 \label{fig:x-trace}
 \end{figure}
 

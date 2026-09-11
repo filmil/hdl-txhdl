@@ -30,7 +30,7 @@ pub struct Blinky<C: BlinkyConfig> {
 impl<C: BlinkyConfig> Module<(), Out<Bit>> for Blinky<C> {
     async fn run(&mut self, _i: (), led: Out<Bit>) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let n = self.count.get();
             let wrap = eq(n, U::from(C::PERIOD - 1));
             when!(wrap => {
@@ -74,7 +74,7 @@ fn main() {
     //   led: ########________########________
     let mut wave = String::new();
     for _ in 0..(2 * Sim::PERIOD) {
-        sim.step();
+        sim.cycle();
         wave.push(if led.get().to_bool() { '#' } else { '_' });
     }
     println!("{}: period {} cycles", Sim::NAME, Sim::PERIOD);

@@ -1,7 +1,7 @@
 // Probe 10. `when!` and `mux` from the library. The statement form
 // predicates a list of register writes; the expression form is a
 // function, because there is nothing to predicate.
-use txhdl::comp::{mux, Reg, edge, DefaultClock};
+use txhdl::comp::{mux, Reg, rising, DefaultClock};
 use txhdl::types::{Bit, U};
 use txhdl::when;
 
@@ -9,7 +9,7 @@ pub struct Unit { pub count: Reg<U<32>>, pub flag: Reg<Bit> }
 
 impl Unit {
     pub async fn step(&self, enable: Bit, reset: Bit) {
-        edge::<DefaultClock>().await;
+        rising::<DefaultClock>().await;
         let count = self.count.get();
         when!(enable => {
             self.count <= count.wrapping_add(U::new(1));

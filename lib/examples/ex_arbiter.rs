@@ -43,7 +43,7 @@ impl Producer {
 impl Module<(), Tx<Packet>> for Producer {
     async fn run(&mut self, _i: (), out: Tx<Packet>) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let (seq, gap) = (self.seq.get(), self.gap.get());
             let due = Bit::from_bool(gap.raw() == 0);
             let offer = out.ready().and(due);
@@ -71,7 +71,7 @@ pub struct Arbiter {
 impl Module<(Rx<Packet>, Rx<Packet>), Tx<Packet>> for Arbiter {
     async fn run(&mut self, (a, b): (Rx<Packet>, Rx<Packet>), out: Tx<Packet>) {
         loop {
-            until::<DefaultClock>(|| {
+            until(DefaultClock::rising, || {
                 (a.peek().is_some() || b.peek().is_some())
                     && out.ready().to_bool()
             })
@@ -120,6 +120,6 @@ fn main() {
         join2(arb.run((a_rx, b_rx), out_tx), cons.run(out_rx, ())),
     ));
     for _ in 0..12 {
-        sim.step();
+        sim.cycle();
     }
 }

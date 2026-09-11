@@ -24,7 +24,10 @@ pub fn verilog(name: &str, top: &impl Traceable) -> String {
     // Every scope that holds something, plus every ancestor.
     let mut modules: BTreeMap<String, Vec<&Probe>> = BTreeMap::new();
     for p in &probes {
-        modules.entry(scope_of(&p.path).to_string()).or_default().push(p);
+        modules
+            .entry(scope_of(&p.path).to_string())
+            .or_default()
+            .push(p);
         let mut s = scope_of(&p.path);
         while let Some((parent, _)) = s.rsplit_once('.') {
             modules.entry(parent.to_string()).or_default();
@@ -68,9 +71,8 @@ pub fn verilog(name: &str, top: &impl Traceable) -> String {
                 continue;
             }
             let first = child_of(path, scope_of(&e[0].path));
-            let spans_children = e
-                .iter()
-                .any(|q| child_of(path, scope_of(&q.path)) != first);
+            let spans_children =
+                e.iter().any(|q| child_of(path, scope_of(&q.path)) != first);
             if spans_children {
                 seen.push(p.cell);
                 let w = range(p.width);

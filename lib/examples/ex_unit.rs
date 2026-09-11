@@ -19,7 +19,7 @@ impl DualPort {
     /// it needs at that edge, plainly, so one iteration is one cycle.
     async fn port_a(&self) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let (enable, hits, cells) =
                 (self.enable.get(), self.hits_a.get(), self.cells.get());
             when!(enable => {
@@ -33,7 +33,7 @@ impl DualPort {
 
     async fn port_b(&self) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let hits = self.hits_b.get();
             self.hits_b.set(hits.wrapping_add(1));
         }

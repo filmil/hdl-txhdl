@@ -25,7 +25,7 @@ pub struct Sequencer {
 impl Module<In<Bit>, Out<State>> for Sequencer {
     async fn run(&mut self, go: In<Bit>, observed: Out<State>) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let (s, n) = (self.state.get(), self.count.get());
             let go = go.get();
             case!(s => {
@@ -49,7 +49,7 @@ fn main() {
     let mut trace = Vec::new();
     for cycle in 0..10 {
         go.set(Bit::from_bool(cycle == 0));
-        sim.step();
+        sim.cycle();
         trace.push(format!("{:?}", observed.get()));
     }
     // Prints, one state per cycle:

@@ -40,17 +40,20 @@ crate is what that experiment would be written against.
 The executor is the one part of the runtime a reader cannot recover
 from the signatures, so it is stated here before the code.
 
-\textbf{Time runs in steps.} One poll of the top unit is one time step.
-Every clock is a type with a period and a phase in that unit, and has a
-rising edge at every step \code{t} with \code{t >= PHASE} and
-\code{(t - PHASE) \% PERIOD == 0}. The default clock has period 1 and
-phase 0, so in a single-clock design a step is a cycle and nothing
-mentions either number.
+\textbf{Time runs in ticks.} One poll of the top unit is one tick.
+Every clock is a type with a period and a phase in ticks, and has a
+rising edge at every tick \code{t} with \code{t >= PHASE} and
+\code{(t - PHASE) \% PERIOD == 0}, and a falling edge half a period
+later. The default clock has period 2 and phase 0, so its cycle is two
+ticks and its falling edge is a tick of its own; a single-clock design
+mentions neither number, and its testbench steps by
+\code{Running::cycle}.
 
 \textbf{A process waits, then reads.} The waits are events:
-\code{C::edge()}, the next edge of a clock; \code{rx.wait()}, the next
-edge of the channel's clock at which a transaction is offered, taken;
-and \code{until::<C>(|| cond)}, the next edge of \code{C} at which a
+\code{C::rising()} and \code{C::falling()}, the next edge of a clock;
+\code{rx.wait()}, the next rising edge of the channel's clock at which
+a transaction is offered, taken; and \code{until(C::rising, || cond)},
+or the same with \code{falling}, the next such edge at which a
 condition on state holds. Reads are plain: \code{Reg::get} returns
 what the last edge latched, a wire's \code{get} returns what it
 carries, a memory's \code{read} is its asynchronous port. Drives are
@@ -108,8 +111,9 @@ and nothing is named at construction. Registers, wire ends, channel
 ends and crossings register themselves, plain values register nothing,
 and \code{\#[derive(Value)]} gives a struct or a fieldless enum of the
 design's own its width and bits. \code{Vcd} is the sink: the executor
-calls it at the end of every step, after the drives have committed,
-and it writes what changed. FST would be the same probes with another
+calls it at the end of every tick, after the drives have committed,
+and it writes what changed; a clock is written as the level it is,
+high from its rising edge to its falling one. FST would be the same probes with another
 writer, which is the reason the registry and the writer are separate.
 The examples document draws a VCD through \code{vcdcvt} and
 \code{sqlite2drawtiming}, prebuilt tools pinned by checksum, and

@@ -4,6 +4,7 @@
 //! holds itself. `#[derive(Trace)]` registers a unit's fields;
 //! `#[derive(Value)]` says how a value of the design's own looks in a
 //! trace. The sink is VCD, written here to stdout, which Surfer opens.
+//! Time is in ticks, two per cycle of the default clock.
 use txhdl::comp::trace::Vcd;
 use txhdl::comp::{
     mux, signal, Clock, DefaultClock, Module, Out, Reg, Running,
@@ -29,7 +30,7 @@ pub struct Counter {
 impl Module<(), Out<Bit>> for Counter {
     async fn run(&mut self, _i: (), msb: Out<Bit>) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let n = self.n.get();
             let high = n.bit(2);
             self.n.set(n.wrapping_add(1));
@@ -52,7 +53,7 @@ fn main() {
 
     let mut sim = Running::new(counter.run((), drive));
     for _ in 0..10 {
-        sim.step();
+        sim.cycle();
     }
     txhdl::comp::trace::stop();
 }

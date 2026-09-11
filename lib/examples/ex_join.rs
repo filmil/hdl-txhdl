@@ -35,7 +35,7 @@ impl Producer {
 impl Module<(), Tx<U<8>>> for Producer {
     async fn run(&mut self, _i: (), out: Tx<U<8>>) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let (seq, gap) = (self.seq.get(), self.gap.get());
             let due = gap.raw() == 0 && out.ready().to_bool();
             self.gap.set(U::from((gap.raw() as u8 + 1) % self.period));
@@ -104,6 +104,6 @@ fn main() {
         join2(adder.run((a_rx, b_rx), s_tx), cons.run(s_rx, ())),
     ));
     for _ in 0..8 {
-        sim.step();
+        sim.cycle();
     }
 }

@@ -53,7 +53,7 @@ impl<TC: TopConfig> Module<(), ()> for Top<TC> {
     /// and the accumulator takes their sum at the end of the cycle.
     async fn run(&mut self, _i: (), _o: ()) {
         loop {
-            DefaultClock::edge().await;
+            DefaultClock::rising().await;
             let mut acc = self.filter.acc.get();
             for i in 0..<FilterOf<TC> as FilterConfig>::TAPS {
                 acc = acc.wrapping_add(self.filter.mac.mul(i.into(), 2.into()));
@@ -94,8 +94,9 @@ config! { Asic: TopConfig for Top<Asic> {
 /// first cycle is spent reaching the first edge, hence the `+ 1`.
 fn report<C: TopConfig<Top = Top<C>>>() {
     let taps = <FilterOf<C> as FilterConfig>::TAPS;
-    // One cycle is enough: every tap is computed at the first edge.
-    let top = simulate::<C>(1);
+    // One cycle, two ticks, is enough: every tap is computed at the
+    // first edge.
+    let top = simulate::<C>(2);
     println!(
         "{}: {} taps at {} MHz, acc after one cycle = {}",
         C::NAME,
