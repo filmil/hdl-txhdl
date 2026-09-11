@@ -11,7 +11,7 @@ large enough to need a contract, a protocol body, a tag and a binding.
 TxHDL writes the protocol well and cannot state the tag, the contract or the
 binding.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={The multiply accumulate unit as TxHDL states it today. The protocol reads well; the tag, the contract and the binding cannot be written at all.},label={lst:mac-txhdl}]
 module MacUnit {
     port host: MacBus.slave;
     port mem:  MemBus.master;
@@ -47,7 +47,7 @@ module MacUnit {
 LHDL states the contract, the tag and the binding, and has no way to write
 the loop. The listing below is where an LHDL author stops.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={The same unit as LHDL states it today. This is where an LHDL author stops: nothing here reads \code{count} words one after another.},label={lst:mac-lhdl}]
 interface MacOp {
     addr  : uint<32>;
     count : uint<8>;
@@ -75,7 +75,7 @@ is the form \code{await} exists to replace.
 
 \subsection{Merged}
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={The same unit, merged. Nine differences from the first listing, one per decision in Table~\ref{tab:syntax}.},label={lst:mac-merged}]
 transaction MacRequest { addr: u32, count: u8 }
 transaction MacResponse { acc: u64 }
 

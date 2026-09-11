@@ -16,7 +16,7 @@ each socket, what each generic parameter is, and what the physical numbers
 are. A trait with associated types and associated constants holds all
 three.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={A config is a struct. Associated types hold the sockets and the domains, associated constants the parameters and the physical numbers.},label={lst:config}]
 pub trait Config {
     type Mac: MacOp;          // a socket
     type Clock: Tag;          // a domain
@@ -45,7 +45,7 @@ it breaks whenever the hierarchy is rearranged.
 A nested unit is generic over the same config, so the choice reaches it
 without anyone naming a path.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={The path in a binding disappears. A nested unit is generic over the same config, so rearranging the hierarchy cannot invalidate anything.},label={lst:nesting}]
 pub struct Filter<C: Config> { pub mac: C::Mac, pub acc: u64 }
 pub struct Top<C: Config>    { pub filter: Filter<C> }
 
@@ -64,7 +64,7 @@ had to do.
 That claim is easy to make and easy to get wrong, so it was compiled. An
 array length is a context that accepts nothing but a true constant:
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={Proof that the config's numbers are compile-time: an array length accepts nothing else.},label={lst:const}]
 pub const FPGA_TAPS: usize = <Fpga as Config>::TAPS;
 pub const TAP_BUFFER: [u64; FPGA_TAPS] = [0; FPGA_TAPS];
 \end{lstlisting}
@@ -79,7 +79,7 @@ It does not work on a block. An attribute on an expression is an unstable
 feature, and the probe reports \code{error[E0658]}. A tag is therefore a
 type with associated constants, and a unit is generic over it.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={A tag is a type with associated constants, because an attribute on a block is not stable.},label={lst:tag}]
 pub struct MemFetch;
 impl Tag for MemFetch {
     const HANDSHAKE: bool = true;

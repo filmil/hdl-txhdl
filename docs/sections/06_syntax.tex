@@ -23,7 +23,7 @@ TxHDL declares state with \code{var} and combinational logic with
 make that distinction at all. Rust settles it with one keyword that neither
 source has.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={A binding and a place. \code{mut} is the whole of the distinction that \code{wire} and \code{var} used to draw.},label={lst:mut}]
 let sum = a + b;            // a binding. Always a + b. A wire.
 let mut count: u8 = 0;      // a place. Holds its value. A register.
 \end{lstlisting}

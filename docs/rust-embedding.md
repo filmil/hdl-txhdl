@@ -46,9 +46,9 @@ Everything below is a plain Rust struct, trait or function.
 
 | Was | Is now |
 |---|---|
-| `transaction T { .. }` | `struct T { .. }` plus `impl Transaction for T` |
+| `transaction T { .. }` | `struct T { .. }` plus `#[derive(Transaction)]` |
 | `module M { .. }` | `struct M { .. }`, a unit, plus `impl Module for M` |
-| `bus B { .. }` | `struct B { .. }` plus `impl Bus for B` |
+| `bus B { .. }` | `struct B { .. }` plus `#[derive(Bus)]` |
 | `interface I { .. }` | `struct I { .. }` of `Signal` fields |
 | `modport R { .. }` | `trait R`, implemented for the interface |
 | `channel c: T` | a field of type `Chan<T>` |

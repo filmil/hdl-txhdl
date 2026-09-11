@@ -10,7 +10,7 @@ once, each at a different point in the body. Nothing about the body
 differs. The difference is the rate at which invocations start, and that
 belongs at the call site.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={A pipeline, a sequence and a parallel process, all at once. The await is the stage boundary, and \code{p} crosses it without being declared.},label={lst:pipeline}]
 async fn mac(a: U<32>, b: U<32>, prev: U<64>) -> U<64> {
     let p = mul(a, b);
     tick().await;              // stage boundary

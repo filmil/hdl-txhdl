@@ -4,7 +4,7 @@
 # question from that document's section 8. A probe that does not build is
 # an answer, not a defect, so probes expected to fail carry a comment
 # saying so and are not part of //... by default.
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_proc_macro")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -67,4 +67,28 @@ rust_library(
     name = "probe_config",
     srcs = ["probe_config.rs"],
     edition = "2021",
+)
+
+# Probe 7: does an `impl` compile above the `struct` it is for?
+rust_library(
+    name = "probe_item_order",
+    srcs = ["probe_item_order.rs"],
+    edition = "2021",
+)
+
+# The derive macro for the marker traits. Written without syn or quote, so
+# it needs no crate registry.
+rust_proc_macro(
+    name = "txhdl_derive",
+    srcs = ["derive/lib.rs"],
+    crate_name = "txhdl_derive",
+    edition = "2021",
+)
+
+# Probe 8: does a derive read as "kind before data" and still compile?
+rust_library(
+    name = "probe_derive",
+    srcs = ["probe_derive.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_derive"],
 )

@@ -5,7 +5,7 @@
 A unit is a struct that implements \code{crate::comp::Module}. The trait
 has one method.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={The unit trait. Inputs and outputs are type parameters, so one struct may implement it more than once.},label={lst:module}]
 #[allow(async_fn_in_trait)]
 pub trait Module<In, Out> {
     async fn run(&mut self, inputs: In, outputs: Out);
@@ -22,7 +22,7 @@ more than once, with different shapes, so a unit that works on 32-bit and
 Synthesis calls \code{run}. A unit with more than one concurrent process
 starts one async function per process and joins them.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={Parallelism written down. A unit with one process writes no join.},label={lst:join}]
 impl Module<Ins, Outs> for DualPort {
     async fn run(&mut self, _i: Ins, _o: Outs) {
         join2(self.port_a(), self.port_b()).await;
@@ -43,7 +43,7 @@ not write one.
 The obvious way to write the two processes does not compile, and finding
 that out cost ten lines.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={What does not compile, and the error it gives. This is the code a Rust programmer writes first.},label={lst:e0499}]
 async fn port_a(&mut self) { /* ... */ }
 async fn port_b(&mut self) { /* ... */ }
 
@@ -58,7 +58,7 @@ mutable borrow at a time. The two facts collide directly.
 The repair is that a register is a cell, and a process takes a shared
 reference.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={The repair. A register is a cell several processes reach, which is what a register is.},label={lst:reg}]
 pub struct Reg<T: Copy> { v: core::cell::Cell<T> }
 
 impl<T: Copy> Reg<T> {

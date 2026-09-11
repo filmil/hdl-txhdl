@@ -15,7 +15,7 @@ becomes a \term{unit} and \code{mod} keeps its meaning as a namespace.
 
 Two Rust modules hold everything the language still needs.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={The vocabulary that survives the reduction. Two Rust modules, and everything else is a plain struct, trait or function.},label={lst:vocab}]
 crate::types::Transaction   // data that moves between units
 crate::types::Tag           // a domain and its policy
 
@@ -40,9 +40,9 @@ outright.}
 \toprule
 Was & Is now \\
 \midrule
-\code{transaction T}   & \code{struct T} plus \code{impl Transaction} \\
+\code{transaction T}   & \code{struct T} plus \code{\#[derive(Transaction)]} \\
 \code{module M}        & \code{struct M}, a unit, plus \code{impl Module} \\
-\code{bus B}           & \code{struct B} plus \code{impl Bus} \\
+\code{bus B}           & \code{struct B} plus \code{\#[derive(Bus)]} \\
 \code{interface I}     & \code{struct I} of \code{Signal} fields \\
 \code{modport R}       & \code{trait R}, implemented for the interface \\
 \code{channel c: T}    & a field of type \code{Chan<T>} \\
@@ -63,10 +63,22 @@ Was & Is now \\
 A transaction is a struct that implements a marker trait. Nothing else
 about it is special.
 
-\begin{lstlisting}
-pub struct MacRequest { pub addr: u32, pub count: u8 }
-impl Transaction for MacRequest {}
+\begin{lstlisting}[caption={A transaction is a struct and a derive. Nothing else about it is special.},label={lst:transaction}]
+#[derive(Transaction)]
+pub struct MacRequest {
+    pub addr: u32,
+    pub count: u8,
+}
 \end{lstlisting}
+
+An \code{impl} may legally precede the \code{struct} it is for, because
+items in a Rust module are not order dependent, and writing
+\code{impl Transaction for MacRequest} above the struct would put the kind
+before the data the way \code{transaction MacRequest \{ .. \}} used to.
+The derive reads the same way and stays idiomatic. It also scales, because
+a struct collects several markers before long, and it has somewhere to
+grow: the layout type that Section~\ref{sec:e-costs} needs for structural
+compatibility is work for this derive to do later.
 
 An interface splits into two Rust items, and that split fixes a defect the
 earlier analysis reported~\cite{unification}. LHDL's \code{interface} did
@@ -74,7 +86,7 @@ two jobs at once, a bundle of wires and a socket an implementation fills,
 which is why its grammar and its examples never agreed. Here the bundle is
 a struct and the role is a trait.
 
-\begin{lstlisting}
+\begin{lstlisting}[caption={An interface splits in two: the bundle of wires is a struct, and the role is a trait. That split is what stops one item doing two jobs.},label={lst:interface}]
 // The wires. No direction on any of them.
 pub struct Wishbone {
     pub adr: Signal<u32>,
