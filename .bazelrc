@@ -6,3 +6,7 @@ build --workspace_status_command=tools/workspace_status.sh
 
 # Vivado from the Bazel-installed toolchain, not Docker or the host.
 build --@rules_vivado//:vivado_mode=hermetic
+
+# Shared caches on the hdlfactory hosts, where the file exists; a no-op
+# elsewhere. The repository cache there already holds the installer.
+try-import /data/cache/ci.bazelrc

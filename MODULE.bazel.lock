@@ -904,6 +904,39 @@
           }
         }
       }
+    },
+    "@@rules_vivado+//:extensions.bzl%vivado": {
+      "general": {
+        "bzlTransitiveDigest": "3OZAD7ChRclbYIKDLdZkEt6JbY+hpdFcELMcEdeCC4w=",
+        "usagesDigest": "R2ET3rEbd/mCT0uWgrZQG1EBhW/HDoZMdcpAIVEnhdw=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "vivado_hermetic": {
+            "repoRuleId": "@@rules_vivado+//internal:vivado_installation.bzl%vivado_installation",
+            "attributes": {
+              "urls": [
+                "file:///data/tools/archives/FPGAs_AdaptiveSoCs_Unified_SDI_2025.2_1114_2157_1.tar"
+              ],
+              "sha256": "",
+              "strip_prefix": "",
+              "product": "Vivado",
+              "edition": "Vivado ML Standard",
+              "modules": [
+                "Artix-7"
+              ],
+              "install_options": [],
+              "eulas": [
+                "XilinxEULA",
+                "3rdPartyEULA"
+              ],
+              "install_cache": "/data/cache/vivado-install",
+              "install_timeout": 14400,
+              "keep_installer": false,
+              "vivado_version": "2025.2"
+            }
+          }
+        }
+      }
     }
   },
   "facts": {
