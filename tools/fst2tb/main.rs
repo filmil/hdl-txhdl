@@ -161,7 +161,8 @@ fn main() {
             if d == "reg" {
                 if let Some(v) = val(&trace_name(n, d), t) {
                     o.push_str(&format!(
-                        "    expect(\"{n}\", << signal .{entity}_tb.uut.{n} : {} >> \
+                        "    expect(\"{n}\", \
+                         << signal .{entity}_tb.uut.{n} : {} >> \
                          = {}, now);\n",
                         ty(*w),
                         lit(*w, &v)
