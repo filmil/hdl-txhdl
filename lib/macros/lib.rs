@@ -1320,6 +1320,12 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 }
                 return Ok(match m.as_str() {
                     "wrapping_add" => ebin("+", &l, &a[0]),
+                    "shl" => ebin("<<", &l, &a[0]),
+                    "shr" => ebin(">>", &l, &a[0]),
+                    "sra" => ebin(">>>", &l, &a[0]),
+                    "xor" => ebin("^", &l, &a[0]),
+                    "lt_signed" => ebin("<s", &l, &a[0]),
+                    "eq" => ebin("==", &l, &a[0]),
                     "wrapping_sub" => ebin("-", &l, &a[0]),
                     "and" => ebin("&", &l, &a[0]),
                     "or" => ebin("|", &l, &a[0]),
@@ -1327,7 +1333,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     "bit" => {
                         format!("E::Index(Box::new({l}), Box::new({}))", a[0])
                     }
-                    "raw" | "to_bool" | "get" | "is_some"
+                    "raw" | "to_bool" | "get" | "is_some" | "zext"
                     | "unwrap_or_default" => l,
                     other => {
                         return Err(format!("method `{other}` is not lowered"))
@@ -1379,6 +1385,13 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     }
                     return Ok(match f.to_string().as_str() {
                         "eq" => ebin("==", &v[0], &v[1]),
+                        "shl" => ebin("<<", &v[0], &v[1]),
+                        "shr" => ebin(">>", &v[0], &v[1]),
+                        "sra" => ebin(">>>", &v[0], &v[1]),
+                        "band" => ebin("&", &v[0], &v[1]),
+                        "bor" => ebin("|", &v[0], &v[1]),
+                        "bxor" => ebin("^", &v[0], &v[1]),
+                        "lt_signed" => ebin("<s", &v[0], &v[1]),
                         "ne" => ebin("!=", &v[0], &v[1]),
                         "lt" => ebin("<", &v[0], &v[1]),
                         "gt" => ebin(">", &v[0], &v[1]),
@@ -1546,19 +1559,51 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let TokenTree::Group(params) = &bt[r + 1] else {
         return err(body.span(), "expected run's parameters");
     };
-    let mut ports: Vec<String> = Vec::new();
+    // A port is `name: In<T>`; a side with several ports is a tuple,
+    // `(a, b): (In<X>, In<Y>)`, paired name by name.
+    let mut pairs: Vec<(String, String, Span)> = Vec::new();
     for p in split_commas(params).into_iter().skip(1) {
-        let TokenTree::Ident(pname) = &p[0] else {
-            return err(
-                p[0].span(),
-                "a port must be `name: Out<T>` or `name: In<T>`",
-            );
+        let Some(colon) = p.iter().position(
+            |t| matches!(t, TokenTree::Punct(c) if c.as_char() == ':'),
+        ) else {
+            return err(p[0].span(), "a port must be `name: Out<T>`");
         };
-        let ty: String = p[2..]
-            .iter()
-            .map(|t| t.to_string())
-            .collect::<Vec<_>>()
-            .join("");
+        let text = |ts: &[TokenTree]| -> String {
+            ts.iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join("")
+        };
+        match (&p[0], &p[colon + 1]) {
+            (TokenTree::Ident(n), _) => {
+                pairs.push((n.to_string(), text(&p[colon + 1..]), n.span()));
+            }
+            (TokenTree::Group(names), TokenTree::Group(tys))
+                if names.delimiter() == Delimiter::Parenthesis
+                    && tys.delimiter() == Delimiter::Parenthesis =>
+            {
+                let ns = split_commas(names);
+                let ts = split_commas(tys);
+                if ns.len() != ts.len() {
+                    return err(names.span(), "ports and types differ");
+                }
+                for (n, t) in ns.iter().zip(ts.iter()) {
+                    let TokenTree::Ident(n) = &n[0] else {
+                        return err(n[0].span(), "a port is a name");
+                    };
+                    pairs.push((n.to_string(), text(t), n.span()));
+                }
+            }
+            _ => {
+                return err(
+                    p[0].span(),
+                    "a port must be `name: Out<T>` or `name: In<T>`",
+                )
+            }
+        }
+    }
+    let mut ports: Vec<String> = Vec::new();
+    for (pname, ty, span) in pairs {
         if ty == "()" {
             continue;
         }
@@ -1571,7 +1616,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         } else if let Some(x) = ty.strip_prefix("Rx<") {
             ("Rx", x)
         } else {
-            return err(p[0].span(), "a port must be an Out, In, Tx or Rx");
+            return err(span, "a port must be an Out, In, Tx or Rx");
         };
         // The transaction type: up to the clock argument, if any.
         let inner = inner.strip_suffix('>').unwrap_or(inner);

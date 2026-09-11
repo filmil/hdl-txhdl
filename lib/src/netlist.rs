@@ -221,7 +221,7 @@ impl Expr {
             Expr::Bin(op, _, _) => {
                 matches!(
                     *op,
-                    "&&" | "||" | "==" | "!=" | "<" | ">" | "<=" | ">="
+                    "&&" | "||" | "==" | "!=" | "<" | ">" | "<=" | ">=" | "<s"
                 )
             }
             Expr::Not(a) => a.is_bool(),
@@ -479,9 +479,14 @@ impl Lowered {
                     hbool(c, self),
                     sized(b, w)
                 ),
-                e if e.is_bool() => {
+                e if e.is_bool() && w == 1 => {
                     format!("{t} <= '1' when {} else '0';", hbool(e, self))
                 }
+                e if e.is_bool() => format!(
+                    "{t} <= to_unsigned(1, {w}) when {} \
+                     else to_unsigned(0, {w});",
+                    hbool(e, self)
+                ),
                 e => format!("{t} <= {};", sized(e, w)),
             }
         };
@@ -572,6 +577,12 @@ fn vexpr(e: &Expr) -> String {
         Expr::Name(n) => n.clone(),
         Expr::Num(k) => k.to_string(),
         Expr::Bits(w, b) => format!("{w}'b{b}"),
+        Expr::Bin("<s", a, b) => {
+            format!("($signed({}) < $signed({}))", vexpr(a), vexpr(b))
+        }
+        Expr::Bin(">>>", a, b) => {
+            format!("($signed({}) >>> {})", vexpr(a), vexpr(b))
+        }
         Expr::Bin(op, a, b) => format!("({} {op} {})", vexpr(a), vexpr(b)),
         Expr::Not(a) if a.is_bool() => format!("(!{})", vexpr(a)),
         Expr::Not(a) => format!("(~{})", vexpr(a)),
@@ -588,6 +599,9 @@ fn hbool(e: &Expr, l: &Lowered) -> String {
         Expr::Bin(op @ ("&&" | "||"), a, b) => {
             let w = if *op == "&&" { "and" } else { "or" };
             format!("({} {w} {})", hbool(a, l), hbool(b, l))
+        }
+        Expr::Bin("<s", a, b) => {
+            format!("(signed({}) < signed({}))", hval(a, 0, l), hval(b, 0, l))
         }
         Expr::Bin(op, a, b) => {
             let vop = match *op {
@@ -618,10 +632,33 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
         Expr::Bin(op @ ("+" | "-"), a, b) => {
             format!("({} {op} {})", hval(a, w, l), hval(b, w, l))
         }
-        Expr::Bin(op @ ("&" | "|"), a, b) => {
-            let vop = if *op == "&" { "and" } else { "or" };
+        Expr::Bin(op @ ("&" | "|" | "^"), a, b) => {
+            let vop = match *op {
+                "&" => "and",
+                "|" => "or",
+                _ => "xor",
+            };
             format!("({} {vop} {})", hval(a, w, l), hval(b, w, l))
         }
+        Expr::Bin("<<", a, b) => {
+            format!(
+                "shift_left({}, to_integer({}))",
+                hval(a, w, l),
+                hval(b, 0, l)
+            )
+        }
+        Expr::Bin(">>", a, b) => {
+            format!(
+                "shift_right({}, to_integer({}))",
+                hval(a, w, l),
+                hval(b, 0, l)
+            )
+        }
+        Expr::Bin(">>>", a, b) => format!(
+            "unsigned(shift_right(signed({}), to_integer({})))",
+            hval(a, w, l),
+            hval(b, 0, l)
+        ),
         Expr::Not(a) => format!("(not {})", hval(a, w, l)),
         Expr::Index(a, i) => format!("{}({})", hval(a, 0, l), vexpr(i)),
         e if e.is_bool() => format!("({})", hbool(e, l)),
