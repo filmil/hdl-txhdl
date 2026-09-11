@@ -128,8 +128,13 @@ unit, a \code{reg} per register, ports where a unit holds one end of
 a wire whose other end is elsewhere, and instances with their ports
 connected. It sees fields only, so a unit whose ports are parameters
 of \code{run} yields its registers and nothing else, and it writes no
-behaviour. It is the structural half of the lowering; the behavioural
-half is the experiment the article states.
+behaviour. That is the structural half of the lowering. The
+behavioural half has begun: \code{\#[pipeline]} lowers an \code{async
+fn} of awaited operators, and \code{\#[lower]} lowers a unit's
+\code{run} loop, with \code{netlist::unit\_verilog} assembling the
+module from the unit's fields, the ports of \code{run} and the
+statements the macro read. What neither reads yet is \code{case!},
+channels and the second process of a unit.
 
 \subsection{Building it}
 

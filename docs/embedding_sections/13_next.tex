@@ -167,8 +167,11 @@ stages with \code{c} delayed once; with \code{mul = 3} it is four
 stages with \code{c} delayed three times; the source of the two is
 identical, and the function still runs in simulation. That is the
 answer the experiment was to give, for a grammar of awaited operator
-calls; \code{when!}, \code{case!} and the bodies of \code{run} are what
-remains.
+calls. A unit with state lowers as well: \code{\#[lower]} reads a
+\code{run} loop of one edge wait, register reads, \code{when!} and
+drives, and the blinky comes out as a module per build, its periods
+baked in from the configuration. \code{case!}, channels and a unit's
+second process are what remains.
 
 \subsection{What it does not need}
 

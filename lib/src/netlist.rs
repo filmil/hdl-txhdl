@@ -9,8 +9,11 @@
 //! lowering, which the proc-macro route closes by reading the
 //! `Module` impl. Behaviour is not here at all; the bodies are empty.
 use crate::comp::trace::{collect, Kind, Probe, Traceable};
+use crate::comp::{Clock, In, Mem, Out, Reg, Rx, Tx};
+use crate::types::Value;
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::marker::PhantomData;
 
 /// The Verilog skeleton of `top`.
 pub fn verilog(name: &str, top: &impl Traceable) -> String {
@@ -133,4 +136,141 @@ fn range(w: usize) -> String {
     } else {
         String::new()
     }
+}
+
+// ---------------------------------------------------------------------
+// Lowering a unit: what `#[lower]` needs at run time
+
+/// What a field of a unit is to a netlist: state or an end of a wire,
+/// with a width, or nothing. Every type a unit may hold implements it,
+/// and `#[derive(Trace)]` gives a unit its `Fields` from them.
+pub trait Port {
+    const KIND: Option<Kind> = None;
+    const WIDTH: usize = 0;
+}
+impl<T: Value + Copy + 'static, C: Clock> Port for Reg<T, C> {
+    const KIND: Option<Kind> = Some(Kind::Reg);
+    const WIDTH: usize = T::WIDTH;
+}
+impl<T: Value + Copy + 'static, C: Clock> Port for Out<T, C> {
+    const KIND: Option<Kind> = Some(Kind::Out);
+    const WIDTH: usize = T::WIDTH;
+}
+impl<T: Value + Copy + 'static, C: Clock> Port for In<T, C> {
+    const KIND: Option<Kind> = Some(Kind::In);
+    const WIDTH: usize = T::WIDTH;
+}
+impl<T: Value + crate::types::Transaction + 'static, C: Clock> Port
+    for Tx<T, C>
+{
+    const KIND: Option<Kind> = Some(Kind::Tx);
+    const WIDTH: usize = T::WIDTH;
+}
+impl<T: Value + crate::types::Transaction + 'static, C: Clock> Port
+    for Rx<T, C>
+{
+    const KIND: Option<Kind> = Some(Kind::Rx);
+    const WIDTH: usize = T::WIDTH;
+}
+impl<T: Copy, const N: usize, C: Clock> Port for Mem<T, N, C> {}
+impl<T> Port for PhantomData<T> {}
+macro_rules! plain {
+    ($($t:ty),*) => { $( impl Port for $t {} )* };
+}
+plain!(u8, u16, u32, u64, u128, usize, bool, &'static str);
+plain!(crate::types::Bit, crate::types::Logic);
+impl<const N: usize> Port for crate::types::U<N> {}
+
+/// A unit's fields by name, kind and width. Derived with `Trace`.
+pub trait Fields {
+    fn fields() -> Vec<(&'static str, Option<Kind>, usize)>;
+}
+
+/// A value as a sized Verilog literal, `W'b...`.
+pub fn literal<V: Value>(v: V) -> String {
+    format!("{}'b{}", V::WIDTH, v.vcd())
+}
+
+/// One statement of a lowered `run` body, as `#[lower]` emits it.
+pub enum Stmt {
+    /// `target.set(expr)` or `target <= expr`: a register takes it at
+    /// the edge, a wire is assigned it.
+    Drive(String, String),
+    /// `when!(cond => { drives } else { drives })`.
+    When(String, Vec<(String, String)>, Vec<(String, String)>),
+}
+
+/// The Verilog of one unit: its ports from `run`'s signature, its
+/// registers from its fields, and its body from the statements
+/// `#[lower]` read out of `run`.
+pub fn unit_verilog(
+    name: &str,
+    clock: &str,
+    fields: &[(&'static str, Option<Kind>, usize)],
+    ports: &[(&str, Kind, usize)],
+    body: &[Stmt],
+) -> String {
+    let is_reg = |t: &str| {
+        fields
+            .iter()
+            .any(|(n, k, _)| *n == t && *k == Some(Kind::Reg))
+    };
+    let mut out = String::new();
+    let mut plist = vec![format!("input {clock}")];
+    for (n, k, w) in ports {
+        let dir = match k {
+            Kind::Out | Kind::Tx => "output",
+            _ => "input",
+        };
+        plist.push(format!("{dir} {}{n}", range(*w)));
+    }
+    writeln!(out, "module {name}({});", plist.join(", ")).unwrap();
+    for (n, k, w) in fields {
+        if *k == Some(Kind::Reg) {
+            writeln!(out, "  reg {}{n};", range(*w)).unwrap();
+        }
+    }
+    let mut seq: Vec<String> = Vec::new();
+    let mut comb: Vec<String> = Vec::new();
+    let drive = |seq: &mut Vec<String>,
+                 comb: &mut Vec<String>,
+                 indent: &str,
+                 t: &str,
+                 e: &str| {
+        if is_reg(t) {
+            seq.push(format!("{indent}{t} <= {e};"));
+        } else {
+            comb.push(format!("  assign {t} = {e};"));
+        }
+    };
+    for st in body {
+        match st {
+            Stmt::Drive(t, e) => drive(&mut seq, &mut comb, "    ", t, e),
+            Stmt::When(c, then, otherwise) => {
+                seq.push(format!("    if ({c}) begin"));
+                for (t, e) in then {
+                    drive(&mut seq, &mut comb, "      ", t, e);
+                }
+                if !otherwise.is_empty() {
+                    seq.push("    end else begin".into());
+                    for (t, e) in otherwise {
+                        drive(&mut seq, &mut comb, "      ", t, e);
+                    }
+                }
+                seq.push("    end".into());
+            }
+        }
+    }
+    if !seq.is_empty() {
+        writeln!(out, "  always @(posedge {clock}) begin").unwrap();
+        for l in &seq {
+            writeln!(out, "{l}").unwrap();
+        }
+        writeln!(out, "  end").unwrap();
+    }
+    for l in &comb {
+        writeln!(out, "{l}").unwrap();
+    }
+    writeln!(out, "endmodule").unwrap();
+    out
 }

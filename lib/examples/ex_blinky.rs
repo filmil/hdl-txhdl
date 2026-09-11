@@ -4,9 +4,9 @@
 //! wave: on for the first half of the period, off for the second.
 use std::marker::PhantomData;
 use txhdl::comp::{signal, Clock, DefaultClock, Module, Out, Reg, Running};
-use txhdl::funcs::eq;
+use txhdl::funcs::{eq, lt};
 use txhdl::types::{Bit, U};
-use txhdl::when;
+use txhdl::{lower, when, Trace};
 
 /// What a blinky needs from its build. The period follows from the two
 /// rates, at compile time.
@@ -18,7 +18,7 @@ pub trait BlinkyConfig: Default {
     const HALF: u64 = Self::PERIOD / 2;
 }
 
-#[derive(Default)]
+#[derive(Default, Trace)]
 pub struct Blinky<C: BlinkyConfig> {
     pub count: Reg<U<32>>,
     _c: PhantomData<C>,
@@ -27,6 +27,7 @@ pub struct Blinky<C: BlinkyConfig> {
 /// One register read per iteration, so one iteration is one cycle. The
 /// LED is derived from the count rather than held in a second register,
 /// which is also how a blinky is built.
+#[lower]
 impl<C: BlinkyConfig> Module<(), Out<Bit>> for Blinky<C> {
     async fn run(&mut self, _i: (), led: Out<Bit>) {
         loop {
@@ -38,7 +39,7 @@ impl<C: BlinkyConfig> Module<(), Out<Bit>> for Blinky<C> {
             } else {
                 self.count <= n.wrapping_add(1)
             });
-            led.set(Bit::from_bool(n.raw() < C::HALF as u128));
+            led.set(lt(n, U::from(C::HALF)));
         }
     }
 }
@@ -87,4 +88,9 @@ fn main() {
         Board::PERIOD,
         Sim::NAME
     );
+
+    // The same unit, lowered for each build: the period is a constant
+    // of the config, and each lowering has its own.
+    print!("\n{}", Blinky::<Sim>::verilog("blinky_sim"));
+    print!("\n{}", Blinky::<Board>::verilog("blinky_board"));
 }

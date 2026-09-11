@@ -12,6 +12,20 @@ splits the wire, the blinky takes the driving end by value as its
 output, and the testbench keeps the reading end and prints it once per
 cycle.
 
+The blinky is also the first unit with state to be lowered.
+\code{\#[lower]} on its \code{Module} impl reads the \code{run} loop,
+one \code{rising().await}, a register read, a \code{when!} and a drive,
+and writes \code{Blinky::verilog(name)} beside it. The registers and
+their widths come from the struct, through the same \code{Trace} derive
+that names signals for a waveform, and the constants of the
+configuration are evaluated when \code{verilog} runs, so the two
+builds lower to two modules from one unit: the simulation build
+compares the count with 15 and 8, the board build with 99999999 and
+50000000. Both modules are at the end of Listing~\ref{lst:x-blinky-out}.
+The comparison had to be written \code{lt(n, U::from(C::HALF))} rather
+than on the raw integers for the macro to read it, which is the first
+place the lowering pushed back on the source.
+
 \lstinputlisting[caption={\code{ex\_blinky.rs}. Run with \code{bazel run //lib/examples:ex\_blinky}.},label={lst:x-blinky}]{lib/examples/ex_blinky.rs}
 
 \lstinputlisting[style=ascii,caption={What \code{ex\_blinky} printed when the build ran it.},label={lst:x-blinky-out}]{out_blinky.txt}

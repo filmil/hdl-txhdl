@@ -16,6 +16,12 @@ pub fn is_zero<const N: usize>(x: U<N>) -> Bit {
     Bit::from_bool(x.raw() == 0)
 }
 
+pub fn lt<const N: usize>(a: U<N>, b: U<N>) -> Bit {
+    Bit::from_bool(a.raw() < b.raw())
+}
+pub fn gt<const N: usize>(a: U<N>, b: U<N>) -> Bit {
+    Bit::from_bool(a.raw() > b.raw())
+}
 pub fn eq<const N: usize>(a: U<N>, b: U<N>) -> Bit {
     Bit::from_bool(a.raw() == b.raw())
 }
