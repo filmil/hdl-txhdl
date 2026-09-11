@@ -23,7 +23,7 @@ hermetic_latex = use_extension(
 # the document and passed through `data`, which the ruleset documents as the
 # way to supply a class or style file. That removes the fetch entirely.
 hermetic_latex.toolchain()
-use_repo(hermetic_latex, "hermetic_latex")
+use_repo(hermetic_latex, "hermetic_latex", "hermetic_latex_ghostscript")
 
 register_toolchains("@hermetic_latex//:all")
 
@@ -55,3 +55,23 @@ bazel_dep(name = "rules_multitool", version = "1.11.1")
 multitool = use_extension("@rules_multitool//multitool:extension.bzl", "multitool")
 multitool.hub(lockfile = "//:multitool.lock.json")
 use_repo(multitool, "multitool")
+
+# The one external crate: an FST writer, so a waveform is a compressed
+# binary the tools read as they read VCD. Pinned by a lockfile;
+# `CARGO_BAZEL_REPIN=1 bazel sync --only=crates` regenerates it.
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.spec(
+    package = "fst-writer",
+    version = "0.3.1",
+)
+# The reference reader, for checking what the writer wrote.
+crate.spec(
+    package = "wellen",
+    version = "0.25.6",
+)
+crate.from_specs(
+    name = "crates",
+    cargo_lockfile = "//:Cargo.lock",
+    lockfile = "//:cargo-bazel-lock.json",
+)
+use_repo(crate, "crates")

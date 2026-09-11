@@ -5,8 +5,8 @@
 //! multiplier and another in its adder, and a result lands every cycle
 //! from the third on. Nobody placed a stage boundary; the two awaits
 //! are the boundaries, and each invocation prints where it is.
-use txhdl::comp::trace::Vcd;
-use txhdl::comp::{chan, join2, now, Clock, DefaultClock, Module, Reg, Rx, Tx};
+use txhdl::comp::trace::{stop, Wave};
+use txhdl::comp::{chan, join2, now, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::pipeline::{add, drive, mul};
 use txhdl::types::U;
 use txhdl::Transaction;
@@ -37,7 +37,7 @@ pub struct Source {
     pub n: Reg<U<8>>,
 }
 
-impl Module<(), Tx<Pair>> for Source {
+impl Unit<(), Tx<Pair>> for Source {
     async fn run(&mut self, _i: (), out: Tx<Pair>) {
         loop {
             DefaultClock::rising().await;
@@ -57,7 +57,7 @@ pub struct Sink {
     pub seen: Reg<U<32>>,
 }
 
-impl Module<Rx<U<64>>, ()> for Sink {
+impl Unit<Rx<U<64>>, ()> for Sink {
     async fn run(&mut self, inp: Rx<U<64>>, _o: ()) {
         loop {
             let v = inp.wait().await;
@@ -73,7 +73,7 @@ fn main() {
     let (r_tx, r_rx) = chan::<U<64>, _>();
     let mut source = Source::default();
     let mut sink = Sink::default();
-    if let Some(mut vcd) = Vcd::from_env() {
+    if let Some(mut vcd) = Wave::from_env() {
         vcd.clock::<DefaultClock>();
         vcd.add("pair", &p_rx);
         vcd.add("result", &r_rx);
@@ -86,4 +86,5 @@ fn main() {
     for _ in 0..6 {
         sim.cycle();
     }
+    stop();
 }

@@ -9,8 +9,8 @@
 //! memory read on the consumer side safe; the memory itself is written
 //! by the producer clock and read without a wait, as a dual-port RAM is.
 use txhdl::comp::{
-    chan, join2, now, until, Clock, Crossing, In, Mem, Module, Out, Reg,
-    Running, Rx, Tx,
+    chan, join2, now, until, Clock, Crossing, In, Mem, Out, Reg, Running, Rx,
+    Tx, Unit,
 };
 use txhdl::types::U;
 
@@ -102,7 +102,7 @@ impl<const N: usize, W: Clock, R: Clock> Fifo<N, W, R> {
     }
 }
 
-impl<const N: usize, W: Clock, R: Clock> Module<Rx<U<8>, W>, Tx<U<8>, R>>
+impl<const N: usize, W: Clock, R: Clock> Unit<Rx<U<8>, W>, Tx<U<8>, R>>
     for Fifo<N, W, R>
 {
     /// Four processes: the two sides and the two synchronisers.
@@ -121,7 +121,7 @@ pub struct Producer {
     n: Reg<U<8>, ClkW>,
 }
 
-impl Module<(), Tx<U<8>, ClkW>> for Producer {
+impl Unit<(), Tx<U<8>, ClkW>> for Producer {
     async fn run(&mut self, _i: (), push: Tx<U<8>, ClkW>) {
         loop {
             until(ClkW::rising, || push.ready().to_bool()).await;
@@ -139,7 +139,7 @@ pub struct Consumer {
     seen: Reg<U<8>, ClkR>,
 }
 
-impl Module<Rx<U<8>, ClkR>, ()> for Consumer {
+impl Unit<Rx<U<8>, ClkR>, ()> for Consumer {
     async fn run(&mut self, pop: Rx<U<8>, ClkR>, _o: ()) {
         loop {
             let v = pop.wait().await;

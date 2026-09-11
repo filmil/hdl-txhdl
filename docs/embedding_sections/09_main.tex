@@ -8,7 +8,7 @@ somewhere already exists.
 
 \begin{lstlisting}[caption={A design is a program. The config names the top unit as well as filling it, so \code{main} needs nothing else.},label={lst:main}]
 pub trait Config {
-    type Top: Module<(), ()>;
+    type Top: Unit<(), ()>;
     const NAME: &'static str;
     const CLK_HZ: u64;
     fn top() -> Self::Top;

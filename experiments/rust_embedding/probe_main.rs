@@ -1,13 +1,13 @@
 // Probe 13. A design is a program: `fn main()` reaches the top unit
 // through nothing but a configuration. Against the library's `Config`
 // and `elaborate`.
-use txhdl::comp::{elaborate, Config, Module, Reg, rising, DefaultClock};
+use txhdl::comp::{elaborate, Config, Unit, Reg, rising, DefaultClock};
 use txhdl::types::U;
 
 #[derive(Default)]
 pub struct Top<const TAPS: usize> { pub acc: Reg<U<64>> }
 
-impl<const TAPS: usize> Module<(), ()> for Top<TAPS> {
+impl<const TAPS: usize> Unit<(), ()> for Top<TAPS> {
     async fn run(&mut self, _i: (), _o: ()) {
         loop { for i in 0..TAPS { rising::<DefaultClock>().await; let a = self.acc.get(); self.acc.set(a.wrapping_add(U::new(i as u128 * 2))) } }
     }

@@ -495,6 +495,30 @@ waveform(
     ],
 )
 
+waveform(
+    name = "stage",
+    example = "//lib/examples:ex_stage",
+    signals = [
+        "//clocks/clk=>clk",
+        "//a/data=>a",
+        "//b/data=>b",
+        "//stage/count=>count",
+    ],
+)
+
+waveform(
+    name = "packet",
+    example = "//lib/examples:ex_packet",
+    signals = [
+        "//clocks/clk=>clk",
+        "//link/data/src=>src",
+        "//link/data/dst=>dst",
+        "//link/data/kind=>kind",
+        "//link/data/len=>len",
+        "//listener/last/kind=>last_kind",
+    ],
+)
+
 # The examples: every file under //lib/examples verbatim, the output of
 # the ones that run, and the runtime's public interface.
 latex_document(
@@ -515,6 +539,10 @@ latex_document(
         ":edges_timing",
         ":lower_run",
         ":lower_timing",
+        ":stage_run",
+        ":stage_timing",
+        ":packet_run",
+        ":packet_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),

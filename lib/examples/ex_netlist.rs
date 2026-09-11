@@ -7,9 +7,9 @@
 //! is the gap the proc-macro lowering closes. The bodies are empty:
 //! this is the structure, and behaviour is the next experiment. The
 //! design is also run, so it has a waveform.
-use txhdl::comp::trace::Vcd;
+use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{
-    join2, signal, Clock, DefaultClock, In, Module, Out, Reg, Running,
+    join2, signal, Clock, DefaultClock, In, Out, Reg, Running, Unit,
 };
 use txhdl::netlist;
 use txhdl::types::U;
@@ -21,7 +21,7 @@ pub struct Producer {
     pub out: Out<U<8>>,
 }
 
-impl Module<(), ()> for Producer {
+impl Unit<(), ()> for Producer {
     async fn run(&mut self, _i: (), _o: ()) {
         loop {
             DefaultClock::rising().await;
@@ -38,7 +38,7 @@ pub struct Consumer {
     pub inp: In<U<8>>,
 }
 
-impl Module<(), ()> for Consumer {
+impl Unit<(), ()> for Consumer {
     async fn run(&mut self, _i: (), _o: ()) {
         loop {
             DefaultClock::rising().await;
@@ -72,7 +72,7 @@ impl Default for Top {
     }
 }
 
-impl Module<(), ()> for Top {
+impl Unit<(), ()> for Top {
     async fn run(&mut self, _i: (), _o: ()) {
         join2(self.producer.run((), ()), self.consumer.run((), ())).await;
     }
@@ -81,7 +81,7 @@ impl Module<(), ()> for Top {
 fn main() {
     let mut top = Top::default();
     print!("{}", netlist::verilog("top", &top));
-    if let Some(mut vcd) = Vcd::from_env() {
+    if let Some(mut vcd) = Wave::from_env() {
         vcd.clock::<DefaultClock>();
         vcd.add("top", &top);
         vcd.start();
@@ -90,4 +90,5 @@ fn main() {
     for _ in 0..6 {
         sim.cycle();
     }
+    stop();
 }

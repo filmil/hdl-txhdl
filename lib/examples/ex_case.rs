@@ -3,11 +3,11 @@
 //! `go`, loads a count, runs it down and reports done, then waits again.
 //! The arms are Rust patterns and the first that matches wins, so an
 //! arm with a guard sits above the plain arm for the same state.
-use txhdl::case;
-use txhdl::comp::{signal, Clock, DefaultClock, In, Module, Out, Reg, Running};
+use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Reg, Running, Unit};
 use txhdl::types::{Bit, U};
+use txhdl::{case, lower, Trace, Value};
 
-#[derive(Copy, Clone, Default, PartialEq, Debug)]
+#[derive(Value, Copy, Clone, Default, PartialEq, Debug)]
 pub enum State {
     #[default]
     Idle,
@@ -16,13 +16,14 @@ pub enum State {
     Done,
 }
 
-#[derive(Default)]
+#[derive(Trace, Default)]
 pub struct Sequencer {
     pub state: Reg<State>,
     pub count: Reg<U<8>>,
 }
 
-impl Module<In<Bit>, Out<State>> for Sequencer {
+#[lower]
+impl Unit<In<Bit>, Out<State>> for Sequencer {
     async fn run(&mut self, go: In<Bit>, observed: Out<State>) {
         loop {
             DefaultClock::rising().await;
@@ -55,4 +56,8 @@ fn main() {
     // Prints, one state per cycle:
     //   Idle Load Run Run Run Run Done Idle Idle Idle
     println!("{}", trace.join(" "));
+
+    // The state machine, lowered: each arm a condition on the state
+    // register, in order, the first that holds winning.
+    print!("\n{}", Sequencer::verilog("sequencer"));
 }

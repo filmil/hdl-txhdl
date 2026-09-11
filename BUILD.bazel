@@ -1,1 +1,2 @@
 exports_files(["rustfmt.toml"])
+exports_files(["Cargo.lock", "cargo-bazel-lock.json"])

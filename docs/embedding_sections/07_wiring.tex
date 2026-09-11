@@ -245,11 +245,11 @@ the backpressure crossing the domains the other way.
 
 A unit does not store a reference to the interface. It is handed its port
 when \code{run} is called, which is what the inputs and outputs of
-\code{Module} are for, and what makes wiring a call rather than a graph of
+\code{Unit} are for, and what makes wiring a call rather than a graph of
 back-references.
 
 \begin{lstlisting}[caption={The parent creates the interface and hands each child the end it takes.},label={lst:wire-up}]
-impl Module<(), ()> for Top {
+impl Unit<(), ()> for Top {
     async fn run(&mut self, _i: (), _o: ()) {
         let (m, t) = Wishbone::new();
         join2(

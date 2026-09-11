@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Reads a waveform with wellen, the reader Surfer uses, and prints its
+# time table and signals. For checking what the runtime's FST writer
+# wrote, independently of the document pipeline's converter.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "fstcheck",
+    srcs = ["main.rs"],
+    edition = "2021",
+    deps = [
+        "@crates//:fst-writer",
+        "@crates//:wellen",
+    ],
+)

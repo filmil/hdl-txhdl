@@ -24,7 +24,9 @@ file, drawn. The build made it:
 text form, Listing~\ref{lst:x-trace-dt}, and \code{//tools/dt2tikz}
 drew that text, so the figure cannot differ from what the example
 wrote. The two converters are prebuilt tools pinned by checksum for
-every platform they ship for.
+every platform they ship for. This example writes VCD, so the file can
+be shown; the examples after it write FST, which the same converter
+reads, through the runtime's second sink.
 
 \begin{figure}[htbp]
 \centering

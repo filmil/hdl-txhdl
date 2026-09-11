@@ -11,7 +11,7 @@ that is, the channel's reading end with a \code{wait}; the
 knowing which it is; \code{Crossing}, the only way between two clocks
 and a process of the unit that owns it; registers and memories, read
 plainly and driven with a commit at the end of the step; \code{mux};
-the \code{Module} trait, whose \code{run} takes the unit's inputs and
+the \code{Unit} trait, whose \code{run} takes the unit's inputs and
 outputs as type parameters; configurations and the \code{config!}
 macro; \code{join2} and \code{join\_all}, which give each child its
 own process identity; \code{parallel!}, which keeps its futures in one

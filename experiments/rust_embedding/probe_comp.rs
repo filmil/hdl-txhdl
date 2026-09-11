@@ -1,6 +1,6 @@
 // Probe 3. Do `Bus`, `Chan`, `Signal`, `Member` and `Tag` hold together,
 // and can a unit be generic over a tag? Against the library.
-use txhdl::comp::{chan, signal, DefaultClock, In, Module, Out, Reg, Rx, Tx, rising};
+use txhdl::comp::{chan, signal, DefaultClock, In, Unit, Out, Reg, Rx, Tx, rising};
 use txhdl::types::{Tag, Transaction, U};
 
 #[derive(Clone, Copy, Default)]
@@ -19,7 +19,7 @@ pub struct MacUnit<T: Tag> {
     _t: core::marker::PhantomData<T>,
 }
 
-impl<T: Tag> Module<U<32>, ()> for MacUnit<T> {
+impl<T: Tag> Unit<U<32>, ()> for MacUnit<T> {
     async fn run(&mut self, addr: U<32>, _o: ()) {
         let _elastic = T::HANDSHAKE;
         loop {

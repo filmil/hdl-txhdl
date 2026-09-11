@@ -1,7 +1,7 @@
 // Probe 6. A configuration is a struct implementing a trait with
 // associated types and constants, and the constants are compile-time.
 // Against the library's `Config`.
-use txhdl::comp::{Config, Module, Reg, rising, DefaultClock};
+use txhdl::comp::{Config, Unit, Reg, rising, DefaultClock};
 use txhdl::types::{Tag, U};
 
 pub trait MacOp: Default { fn mul(&self, a: U<32>, b: U<32>) -> U<64>; }
@@ -26,7 +26,7 @@ pub struct Filter<B: Build> { pub mac: B::Mac, pub acc: Reg<U<64>> }
 #[derive(Default)]
 pub struct Top<B: Build> { pub filter: Filter<B> }
 
-impl<B: Build> Module<(), ()> for Top<B> {
+impl<B: Build> Unit<(), ()> for Top<B> {
     async fn run(&mut self, _i: (), _o: ()) {
         let _elastic = <B::Domain as Tag>::HANDSHAKE;
         loop {

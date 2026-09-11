@@ -6,8 +6,8 @@
 //! it arrives and held in the group until B's does, A's channel holds
 //! the next offer meanwhile, and so A runs at B's rate without a line
 //! of code for it.
-use txhdl::comp::trace::Vcd;
-use txhdl::comp::{chan, join2, now, Clock, DefaultClock, Module, Reg, Rx, Tx};
+use txhdl::comp::trace::{stop, Wave};
+use txhdl::comp::{chan, join2, now, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::parallel;
 use txhdl::types::U;
 use txhdl::Trace;
@@ -32,7 +32,7 @@ impl Producer {
     }
 }
 
-impl Module<(), Tx<U<8>>> for Producer {
+impl Unit<(), Tx<U<8>>> for Producer {
     async fn run(&mut self, _i: (), out: Tx<U<8>>) {
         loop {
             DefaultClock::rising().await;
@@ -54,7 +54,7 @@ pub struct Adder {
     pub sums: Reg<U<8>>,
 }
 
-impl Module<(Rx<U<8>>, Rx<U<8>>), Tx<U<8>>> for Adder {
+impl Unit<(Rx<U<8>>, Rx<U<8>>), Tx<U<8>>> for Adder {
     async fn run(&mut self, (a, b): (Rx<U<8>>, Rx<U<8>>), out: Tx<U<8>>) {
         loop {
             let (x, y) = parallel!(a.wait(), b.wait()).await;
@@ -72,7 +72,7 @@ pub struct Consumer {
     pub seen: Reg<U<8>>,
 }
 
-impl Module<Rx<U<8>>, ()> for Consumer {
+impl Unit<Rx<U<8>>, ()> for Consumer {
     async fn run(&mut self, inp: Rx<U<8>>, _o: ()) {
         loop {
             let s = inp.wait().await;
@@ -91,7 +91,7 @@ fn main() {
     let mut pb = Producer::new("B", 2);
     let mut adder = Adder::default();
     let mut cons = Consumer::default();
-    if let Some(mut vcd) = Vcd::from_env() {
+    if let Some(mut vcd) = Wave::from_env() {
         vcd.clock::<DefaultClock>();
         vcd.add("a", &a_rx);
         vcd.add("b", &b_rx);
@@ -106,4 +106,5 @@ fn main() {
     for _ in 0..8 {
         sim.cycle();
     }
+    stop();
 }

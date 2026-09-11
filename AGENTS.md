@@ -89,6 +89,11 @@ reference and was wrong twice in eleven claims.
 
 Everything is hermetic.
 Nothing has to be installed beyond `bazelisk`.
+The one external crate, `fst-writer`, comes through `crate_universe`
+and is pinned by `Cargo.lock` and `cargo-bazel-lock.json`; change the
+`crate.spec` in `MODULE.bazel` and run
+`CARGO_BAZEL_REPIN=1 bazel build //lib:txhdl` to repin.
+The two waveform converters are pinned in `multitool.lock.json`.
 
 ```sh
 bazel build //...              # the library, every example, every document

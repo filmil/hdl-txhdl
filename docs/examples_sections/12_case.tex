@@ -10,7 +10,12 @@ edge and then reads the state and the count at it. A sequencer waits
 for \code{go},
 loads a count, runs it down, reports done and waits again; the
 testbench raises \code{go} for one cycle and prints the state per
-cycle.
+cycle. The sequencer is lowered too, at the end of its output:
+\code{\#[lower]} turns \code{case!} into a chain of \code{else if}s,
+each arm a comparison of the state register with its variant's
+literal, which the \code{Value} derive supplies, guards joined with
+\code{\&\&} and alternatives with \code{||}, in the order written, so
+the first arm that holds wins as it does in the macro.
 
 \lstinputlisting[caption={\code{ex\_case.rs}. Run with \code{bazel run //lib/examples:ex\_case}.},label={lst:x-case}]{lib/examples/ex_case.rs}
 

@@ -15,7 +15,7 @@ emits a \code{NAME\_verilog()} beside it, each operator a stage of the
 stated latency and each value delayed to meet the operator that uses
 it. Its grammar is the one \code{mac} needs and no wider, and it
 refuses the rest with its own message. \code{\#[lower]} on an
-\code{impl Module<In, Out> for Unit} does the same for a unit with
+\code{impl Unit<In, Out> for Unit} does the same for a unit with
 state: it reads a \code{run} loop that waits for one rising edge,
 reads registers into names, predicates drives with \code{when!} and
 drives registers and output ports, and writes \code{Unit::verilog(name)}
@@ -23,7 +23,11 @@ beside the impl. Ports come from \code{run}'s signature, registers
 and widths from the struct through the \code{Trace} derive, which now
 also derives \code{Fields} and \code{Port}, and the configuration's
 constants are evaluated when \code{verilog} runs, so a generic unit
-lowers once per build.
+lowers once per build. It reads \code{case!} as a chain of
+\code{else if}s on the value, and channels as a valid/ready handshake:
+\code{until} or a channel's \code{wait} is the guard on every register
+drive after it, a receive asserts \code{ready} under the guard, a send
+drives \code{data} and asserts \code{valid} under it.
 \code{interface!} takes an interface and any number of roles, checks
 that every role names every member once and that no member is driven
 twice, and emits a struct per role plus a constructor that splits each

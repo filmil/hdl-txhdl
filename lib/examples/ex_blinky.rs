@@ -3,7 +3,7 @@
 //! how fast the clock is and how fast to blink. The LED is a square
 //! wave: on for the first half of the period, off for the second.
 use std::marker::PhantomData;
-use txhdl::comp::{signal, Clock, DefaultClock, Module, Out, Reg, Running};
+use txhdl::comp::{signal, Clock, DefaultClock, Out, Reg, Running, Unit};
 use txhdl::funcs::{eq, lt};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, when, Trace};
@@ -28,7 +28,7 @@ pub struct Blinky<C: BlinkyConfig> {
 /// LED is derived from the count rather than held in a second register,
 /// which is also how a blinky is built.
 #[lower]
-impl<C: BlinkyConfig> Module<(), Out<Bit>> for Blinky<C> {
+impl<C: BlinkyConfig> Unit<(), Out<Bit>> for Blinky<C> {
     async fn run(&mut self, _i: (), led: Out<Bit>) {
         loop {
             DefaultClock::rising().await;

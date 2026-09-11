@@ -355,7 +355,7 @@ pub trait Bus {}
 /// with different shapes. Synthesis calls `run`; a unit with several
 /// processes starts one `async fn` per process and joins them.
 #[allow(async_fn_in_trait)]
-pub trait Module<In, Out> {
+pub trait Unit<In, Out> {
     async fn run(&mut self, inputs: In, outputs: Out);
 }
 
@@ -363,7 +363,7 @@ pub trait Module<In, Out> {
 /// the whole of what `main` needs. A design with sub-configurations
 /// names them as associated types of its own.
 pub trait Config {
-    type Top: Module<(), ()> + Default;
+    type Top: Unit<(), ()> + Default;
     const NAME: &'static str;
     /// The top unit, built from its `Default`. A design that needs
     /// anything else overrides this; most do not, because a register's
@@ -1023,7 +1023,24 @@ pub mod trace {
             let r = self.0.clone();
             let cell = Rc::as_ptr(&self.0) as usize;
             let f = Box::new(move || r.cur.get().vcd());
-            probe(scope, T::WIDTH, Kind::Reg, cell, f)
+            probe(scope, T::WIDTH, Kind::Reg, cell, f);
+            let r = self.0.clone();
+            parts(scope, Kind::Reg, cell, move || r.cur.get());
+        }
+    }
+
+    /// A compound value is also one signal per field, under the value's
+    /// name, so a viewer shows a struct as its fields.
+    fn parts<T: Value + 'static>(
+        scope: &Scope,
+        kind: Kind,
+        cell: usize,
+        get: impl Fn() -> T + Clone + 'static,
+    ) {
+        for (i, (name, width, _)) in get().parts().into_iter().enumerate() {
+            let g = get.clone();
+            let f = Box::new(move || g().parts()[i].2.clone());
+            probe(&scope.child(name), width, kind, cell, f);
         }
     }
     impl<T: Value + 'static, C: Clock> Traceable for In<T, C> {
@@ -1068,6 +1085,8 @@ pub mod trace {
         let valid = Box::new(move || b.0.get().1.vcd());
         probe(&scope.child("data"), T::WIDTH, kind, cell, data);
         probe(&scope.child("valid"), 1, kind, cell, valid);
+        let d = c.clone();
+        parts(&scope.child("data"), kind, cell, move || d.0.get().0);
     }
     impl<T: Value + Default + 'static, A: Clock, B: Clock> Traceable
         for Crossing<T, A, B>
@@ -1195,8 +1214,14 @@ pub mod trace {
         }
     }
 
-    /// Stop recording, so the sink is dropped and flushed.
+    /// Stop recording, so the sink is finished and flushed. A VCD needs
+    /// only dropping; an FST is told to write its tail first.
     pub fn stop() {
+        clock::TRACER.with(|tr| {
+            if let Some(f) = tr.borrow_mut().as_mut() {
+                f(u64::MAX)
+            }
+        });
         clock::TRACER.with(|tr| *tr.borrow_mut() = None)
     }
 
@@ -1250,6 +1275,197 @@ pub mod trace {
                 writeln!(o, "$scope module {name} $end").unwrap();
                 child.write(o, probes, ids);
                 writeln!(o, "$upscope $end").unwrap();
+            }
+        }
+    }
+
+    /// An FST writer: the same probes as [`Vcd`], compressed, which the
+    /// viewer and the converters read as readily as VCD. `Wave::from_env`
+    /// picks it when `TXHDL_FST` names a file. A compound value is one
+    /// bit vector, and one signal per field beside it; the format's
+    /// string variables are not in the writer used.
+    pub struct Fst {
+        path: String,
+        clocks: Vec<(String, fn(u64) -> bool)>,
+    }
+
+    impl Fst {
+        pub fn new(path: impl Into<String>) -> Self {
+            Fst {
+                path: path.into(),
+                clocks: Vec::new(),
+            }
+        }
+        pub fn clock<C: Clock>(&mut self) {
+            self.clocks.push((C::NAME.to_string(), C::high_at));
+        }
+        pub fn add(&mut self, name: &str, t: &impl Traceable) {
+            t.trace(&Scope::new(name))
+        }
+        /// Write the header and start recording. `stop` finishes the
+        /// file; a process that ends without it loses the tail.
+        pub fn start(self) {
+            use fst_writer::{
+                open_fst, FstFileType, FstInfo, FstScopeType, FstSignalType,
+                FstVarDirection, FstVarType,
+            };
+            let probes: Vec<Probe> =
+                PROBES.with(|p| std::mem::take(&mut *p.borrow_mut()));
+            let info = FstInfo {
+                start_time: 0,
+                timescale_exponent: -9,
+                version: "txhdl".to_string(),
+                date: String::new(),
+                file_type: FstFileType::Verilog,
+            };
+            let mut h = open_fst(&self.path, &info).expect("open FST");
+            h.scope("clocks", "", FstScopeType::Module).expect("scope");
+            let mut cids = Vec::new();
+            for (name, _) in &self.clocks {
+                let id = h
+                    .var(
+                        name,
+                        FstSignalType::bit_vec(1),
+                        FstVarType::Wire,
+                        FstVarDirection::Implicit,
+                        None,
+                    )
+                    .expect("var");
+                cids.push(id);
+            }
+            h.up_scope().expect("upscope");
+            let mut tree = Node::default();
+            for (i, p) in probes.iter().enumerate() {
+                tree.insert(&p.path, i);
+            }
+            let mut pids = vec![None; probes.len()];
+            tree.declare(&mut h, &probes, &mut pids);
+            let mut body = h.finish().expect("header");
+            body.time_change(0).expect("time");
+            let mut last: Vec<String> = Vec::new();
+            for (p, id) in probes.iter().zip(&pids) {
+                let v = (p.sample)();
+                body.signal_change(id.unwrap(), v.as_bytes())
+                    .expect("change");
+                last.push(v);
+            }
+            for id in &cids {
+                body.signal_change(*id, b"0").expect("change");
+            }
+            let mut clast = vec![false; self.clocks.len()];
+            let clocks = self.clocks;
+            let mut body = Some(body);
+            // The time table's length, and the last time in it. A table
+            // of exactly twelve entries comes out unreadable from the
+            // writer used (its issue is filed), so one empty step is
+            // added at the end when it would have that many.
+            let mut entries: u64 = 1;
+            let mut last_t: u64 = 0;
+            clock::TRACER.with(|tr| {
+                *tr.borrow_mut() = Some(Box::new(move |t: u64| {
+                    let Some(b) = body.as_mut() else { return };
+                    if t == u64::MAX {
+                        if entries == 12 {
+                            b.time_change(last_t + 1).expect("time");
+                        }
+                        body.take().unwrap().finish().expect("finish");
+                        return;
+                    }
+                    // The table already holds time 0, from the
+                    // initial values; the first tick adds nothing new.
+                    if t != last_t {
+                        b.time_change(t).expect("time");
+                        entries += 1;
+                        last_t = t;
+                    }
+                    let it = clocks.iter().zip(&cids).enumerate();
+                    for (i, ((_, high), id)) in it {
+                        let hi = high(t);
+                        if hi != clast[i] {
+                            let v: &[u8] = if hi { b"1" } else { b"0" };
+                            b.signal_change(*id, v).expect("change");
+                            clast[i] = hi;
+                        }
+                    }
+                    for (i, (p, id)) in probes.iter().zip(&pids).enumerate() {
+                        let v = (p.sample)();
+                        if v != last[i] {
+                            b.signal_change(id.unwrap(), v.as_bytes())
+                                .expect("change");
+                            last[i] = v;
+                        }
+                    }
+                }))
+            });
+        }
+    }
+
+    impl Node {
+        fn declare<W: std::io::Write + std::io::Seek>(
+            &self,
+            h: &mut fst_writer::FstHeaderWriter<W>,
+            probes: &[Probe],
+            ids: &mut [Option<fst_writer::FstSignalId>],
+        ) {
+            use fst_writer::{
+                FstScopeType, FstSignalType, FstVarDirection, FstVarType,
+            };
+            for &i in &self.vars {
+                let leaf = probes[i].path.rsplit('.').next().unwrap();
+                let tpe = match probes[i].kind {
+                    Kind::Reg => FstVarType::Reg,
+                    _ => FstVarType::Wire,
+                };
+                let id = h
+                    .var(
+                        leaf,
+                        FstSignalType::bit_vec(probes[i].width as u32),
+                        tpe,
+                        FstVarDirection::Implicit,
+                        None,
+                    )
+                    .expect("var");
+                ids[i] = Some(id);
+            }
+            for (name, child) in &self.children {
+                h.scope(name, "", FstScopeType::Module).expect("scope");
+                child.declare(h, probes, ids);
+                h.up_scope().expect("upscope");
+            }
+        }
+    }
+
+    /// Either sink, chosen by the environment: `TXHDL_FST` names an FST
+    /// file, `TXHDL_VCD` a VCD one. An example names what to watch on
+    /// whichever it gets, and calls [`stop`] when it is done.
+    pub enum Wave {
+        Vcd(Vcd),
+        Fst(Fst),
+    }
+
+    impl Wave {
+        pub fn from_env() -> Option<Wave> {
+            if let Ok(p) = std::env::var("TXHDL_FST") {
+                return Some(Wave::Fst(Fst::new(p)));
+            }
+            Vcd::from_env().map(Wave::Vcd)
+        }
+        pub fn clock<C: Clock>(&mut self) {
+            match self {
+                Wave::Vcd(v) => v.clock::<C>(),
+                Wave::Fst(f) => f.clock::<C>(),
+            }
+        }
+        pub fn add(&mut self, name: &str, t: &impl Traceable) {
+            match self {
+                Wave::Vcd(v) => v.add(name, t),
+                Wave::Fst(f) => f.add(name, t),
+            }
+        }
+        pub fn start(self) {
+            match self {
+                Wave::Vcd(v) => v.start(),
+                Wave::Fst(f) => f.start(),
             }
         }
     }

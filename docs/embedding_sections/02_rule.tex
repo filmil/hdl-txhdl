@@ -19,7 +19,7 @@ Four Rust modules hold everything the language still needs.
 crate::types::Transaction   // data that moves between units
 crate::types::Tag           // a domain and its policy
 
-crate::comp::Module         // a unit
+crate::comp::Unit         // a unit
 crate::comp::Bus            // a bundle of channels
 crate::comp::Chan           // one channel of a bus
 crate::comp::Signal         // one wire, in a clock domain
@@ -48,7 +48,7 @@ outright.}
 Was & Is now \\
 \midrule
 \code{transaction T}   & \code{struct T} plus \code{\#[derive(Transaction)]} \\
-\code{module M}        & \code{struct M}, a unit, plus \code{impl Module} \\
+\code{module M}        & \code{struct M}, a unit, plus \code{impl Unit} \\
 \code{bus B}           & \code{struct B} plus \code{\#[derive(Bus)]} \\
 \code{interface I}     & \code{struct I} of \code{Signal} fields \\
 \code{modport R}       & \code{trait R}, implemented for the interface \\

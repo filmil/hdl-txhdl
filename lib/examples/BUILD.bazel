@@ -117,6 +117,24 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A unit between two channels, lowered:  bazel run //lib/examples:ex_stage
+rust_binary(
+    name = "ex_stage",
+    srcs = ["ex_stage.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# A compound value in a waveform:  bazel run //lib/examples:ex_packet
+rust_binary(
+    name = "ex_packet",
+    srcs = ["ex_packet.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A waveform:  bazel run //lib/examples:ex_trace > counter.vcd
 rust_binary(
     name = "ex_trace",
@@ -140,5 +158,7 @@ filegroup(
         "ex_netlist.rs",
         "ex_edges.rs",
         "ex_lower.rs",
+        "ex_stage.rs",
+        "ex_packet.rs",
     ],
 )

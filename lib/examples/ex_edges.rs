@@ -7,10 +7,8 @@
 //! later; a third waits at falling edges until the count reaches four
 //! and says so once. The waveform shows the capture trailing the
 //! count by half a cycle.
-use txhdl::comp::trace::Vcd;
-use txhdl::comp::{
-    join2, now, until, Clock, DefaultClock, Module, Reg, Running,
-};
+use txhdl::comp::trace::{stop, Wave};
+use txhdl::comp::{join2, now, until, Clock, DefaultClock, Reg, Running, Unit};
 use txhdl::types::U;
 use txhdl::Trace;
 
@@ -48,7 +46,7 @@ impl Edges {
     }
 }
 
-impl Module<(), ()> for Edges {
+impl Unit<(), ()> for Edges {
     async fn run(&mut self, _i: (), _o: ()) {
         join2(join2(self.count(), self.capture()), self.watch()).await;
     }
@@ -56,7 +54,7 @@ impl Module<(), ()> for Edges {
 
 fn main() {
     let mut edges = Edges::default();
-    if let Some(mut vcd) = Vcd::from_env() {
+    if let Some(mut vcd) = Wave::from_env() {
         vcd.clock::<DefaultClock>();
         vcd.add("edges", &edges);
         vcd.start();
@@ -65,4 +63,5 @@ fn main() {
     for _ in 0..8 {
         sim.cycle();
     }
+    stop();
 }

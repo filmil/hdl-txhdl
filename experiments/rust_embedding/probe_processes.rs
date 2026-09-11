@@ -1,6 +1,6 @@
 // Probe 5. A unit's `run` joins one async fn per process. The processes
 // take `&self` and share state through the library's `Reg`.
-use txhdl::comp::{join2, Module, Reg, rising, DefaultClock};
+use txhdl::comp::{join2, Unit, Reg, rising, DefaultClock};
 use txhdl::types::U;
 
 pub struct DualPort { pub cells: Reg<U<32>>, pub hits_a: Reg<U<32>>, pub hits_b: Reg<U<32>> }
@@ -19,6 +19,6 @@ impl DualPort {
     }
 }
 
-impl Module<(), ()> for DualPort {
+impl Unit<(), ()> for DualPort {
     async fn run(&mut self, _i: (), _o: ()) { join2(self.port_a(), self.port_b()).await }
 }

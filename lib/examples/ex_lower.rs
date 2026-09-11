@@ -10,8 +10,8 @@
 //! The async fn is also run through `pipeline::drive`, so it has a
 //! waveform; the runtime's `mul` takes one cycle, so the waveform is
 //! the first lowering's.
-use txhdl::comp::trace::Vcd;
-use txhdl::comp::{chan, join2, now, Clock, DefaultClock, Module, Reg, Rx, Tx};
+use txhdl::comp::trace::{stop, Wave};
+use txhdl::comp::{chan, join2, now, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::pipeline::{add, drive, mul};
 use txhdl::types::U;
 use txhdl::{pipeline, Transaction, Value};
@@ -43,7 +43,7 @@ pub struct Source {
     pub n: Reg<U<8>>,
 }
 
-impl Module<(), Tx<Triple>> for Source {
+impl Unit<(), Tx<Triple>> for Source {
     async fn run(&mut self, _i: (), out: Tx<Triple>) {
         loop {
             DefaultClock::rising().await;
@@ -63,7 +63,7 @@ impl Module<(), Tx<Triple>> for Source {
 #[derive(Default)]
 pub struct Sink;
 
-impl Module<Rx<U<64>>, ()> for Sink {
+impl Unit<Rx<U<64>>, ()> for Sink {
     async fn run(&mut self, inp: Rx<U<64>>, _o: ()) {
         loop {
             let v = inp.wait().await;
@@ -80,7 +80,7 @@ fn main() {
     let (r_tx, r_rx) = chan::<U<64>, _>();
     let mut source = Source::default();
     let mut sink = Sink;
-    if let Some(mut vcd) = Vcd::from_env() {
+    if let Some(mut vcd) = Wave::from_env() {
         vcd.clock::<DefaultClock>();
         vcd.add("triple", &t_rx);
         vcd.add("result", &r_rx);
@@ -98,4 +98,5 @@ fn main() {
         sim.cycle();
     }
     let _ = mac3;
+    stop();
 }

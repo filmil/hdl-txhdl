@@ -6,9 +6,7 @@
 //! trace. The sink is VCD, written here to stdout, which Surfer opens.
 //! Time is in ticks, two per cycle of the default clock.
 use txhdl::comp::trace::Vcd;
-use txhdl::comp::{
-    mux, signal, Clock, DefaultClock, Module, Out, Reg, Running,
-};
+use txhdl::comp::{mux, signal, Clock, DefaultClock, Out, Reg, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{Trace, Value};
 
@@ -27,7 +25,7 @@ pub struct Counter {
     pub phase: Reg<Phase>,
 }
 
-impl Module<(), Out<Bit>> for Counter {
+impl Unit<(), Out<Bit>> for Counter {
     async fn run(&mut self, _i: (), msb: Out<Bit>) {
         loop {
             DefaultClock::rising().await;

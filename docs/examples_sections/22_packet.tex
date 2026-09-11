@@ -1,0 +1,29 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Compound Value in a Waveform}
+\label{sec:x-packet}
+
+A packet is a struct of four fields, one of them an enum, and a
+transaction that moves over a channel. In a trace a compound value is
+one bit vector, its fields concatenated, and beside it one signal per
+field under the value's name: the \code{Value} derive supplies the
+parts, and a register or a channel that holds the value registers them
+too. A viewer then shows \code{src}, \code{dst}, \code{kind} and
+\code{len} as themselves, with the enum as its variant's index, and
+Figure~\ref{fig:x-packet} shows exactly that. The file is FST when
+\code{TXHDL\_FST} names one, which is what the document build asks
+for now: \code{Wave::from\_env} picks FST or VCD by the variable set,
+and \code{vcdcvt} reads either by the file's extension. The FST writer
+used has bit vectors and reals and no string variables, so a value
+keeps its bits rather than a name; that is the limit the per-field
+signals work around.
+
+\begin{figure}[htbp]
+\centering
+\input{packet_timing.tex}
+\caption{The packet's fields, each a signal of its own, and the listener's copy of the kind.}
+\label{fig:x-packet}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_packet.rs}. Run with \code{bazel run //lib/examples:ex\_packet}.},label={lst:x-packet}]{lib/examples/ex_packet.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_packet} printed when the build ran it.},label={lst:x-packet-out}]{out_packet.txt}

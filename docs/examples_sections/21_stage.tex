@@ -1,0 +1,27 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Unit Between Two Channels, Lowered}
+\label{sec:x-stage}
+
+The lowering meets the handshake. A stage waits, with \code{until},
+until a word is offered on its input and its consumer can take one,
+then passes the word on incremented and counts it. In the lowering a
+channel port is a valid/ready handshake around its data: an
+\code{Rx<T>} is \code{data} and \code{valid} in and \code{ready} out,
+a \code{Tx<T>} the reverse. The wait becomes the guard on every
+register drive after it; a receive asserts \code{ready} under the
+guard; a send drives \code{data} and asserts \code{valid} under it.
+What comes out, Listing~\ref{lst:x-stage-out}, is a combinational
+stage with a handshake and one register, which is what the source
+says, and Figure~\ref{fig:x-stage} is the same stage simulated, with
+the source offering every other cycle.
+
+\begin{figure}[htbp]
+\centering
+\input{stage_timing.tex}
+\caption{The stage: a word in every other cycle, the same word plus one out in the same cycle, the count of words passed.}
+\label{fig:x-stage}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_stage.rs}. Run with \code{bazel run //lib/examples:ex\_stage}.},label={lst:x-stage}]{lib/examples/ex_stage.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_stage} printed when the build ran it: the simulation, then the lowering.},label={lst:x-stage-out}]{out_stage.txt}

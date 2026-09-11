@@ -170,8 +170,10 @@ answer the experiment was to give, for a grammar of awaited operator
 calls. A unit with state lowers as well: \code{\#[lower]} reads a
 \code{run} loop of one edge wait, register reads, \code{when!} and
 drives, and the blinky comes out as a module per build, its periods
-baked in from the configuration. \code{case!}, channels and a unit's
-second process are what remains.
+baked in from the configuration; \code{case!} lowers to a chain of
+comparisons with each variant's literal, and a channel to a
+valid/ready handshake whose wait guards the drives. A unit's second
+process, the falling edge and memories are what remains.
 
 \subsection{What it does not need}
 

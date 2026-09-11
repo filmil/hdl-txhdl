@@ -2,7 +2,7 @@
 \section{A Unit with Two Processes}
 \label{sec:x-unit}
 
-A unit is a struct that implements \code{Module}. Its \code{run}
+A unit is a struct that implements \code{Unit}. Its \code{run}
 starts one \code{async fn} per process and joins them, which is what
 says they run in parallel. The processes take \code{\&self} and share
 state through registers, because two of them cannot both take

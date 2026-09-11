@@ -3,7 +3,7 @@
 //! config type and both impls; `Default` builds the top, because a
 //! register's default is its reset value and a socket's is its
 //! implementation. `main` reaches the top through nothing but the config.
-use txhdl::comp::{simulate, Clock, Config, DefaultClock, Module, Reg};
+use txhdl::comp::{simulate, Clock, Config, DefaultClock, Reg, Unit};
 use txhdl::config;
 use txhdl::types::U;
 
@@ -46,7 +46,7 @@ pub struct Top<TC: TopConfig> {
     pub filter: Filter<TC::Filter>,
 }
 
-impl<TC: TopConfig> Module<(), ()> for Top<TC> {
+impl<TC: TopConfig> Unit<(), ()> for Top<TC> {
     /// A unit runs for as long as the clock does, so this loops. One
     /// wait per cycle, and every tap is computed at that edge: the taps
     /// are parallel hardware, `TAPS` multipliers into one adder chain,

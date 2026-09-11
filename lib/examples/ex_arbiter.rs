@@ -8,7 +8,7 @@
 //! saw the previous cycle's turn and granted A twice in a row. Producer
 //! A offers every cycle, producer B every third one.
 use txhdl::comp::{
-    chan, join2, now, until, Clock, DefaultClock, Module, Reg, Rx, Tx,
+    chan, join2, now, until, Clock, DefaultClock, Reg, Rx, Tx, Unit,
 };
 use txhdl::types::{Bit, U};
 use txhdl::{when, Transaction};
@@ -40,7 +40,7 @@ impl Producer {
     }
 }
 
-impl Module<(), Tx<Packet>> for Producer {
+impl Unit<(), Tx<Packet>> for Producer {
     async fn run(&mut self, _i: (), out: Tx<Packet>) {
         loop {
             DefaultClock::rising().await;
@@ -68,7 +68,7 @@ pub struct Arbiter {
     pub turn: Reg<Bit>,
 }
 
-impl Module<(Rx<Packet>, Rx<Packet>), Tx<Packet>> for Arbiter {
+impl Unit<(Rx<Packet>, Rx<Packet>), Tx<Packet>> for Arbiter {
     async fn run(&mut self, (a, b): (Rx<Packet>, Rx<Packet>), out: Tx<Packet>) {
         loop {
             until(DefaultClock::rising, || {
@@ -97,7 +97,7 @@ pub struct Consumer {
     pub taken: Reg<U<8>>,
 }
 
-impl Module<Rx<Packet>, ()> for Consumer {
+impl Unit<Rx<Packet>, ()> for Consumer {
     async fn run(&mut self, inp: Rx<Packet>, _o: ()) {
         loop {
             inp.wait().await;

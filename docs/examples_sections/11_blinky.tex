@@ -13,7 +13,7 @@ output, and the testbench keeps the reading end and prints it once per
 cycle.
 
 The blinky is also the first unit with state to be lowered.
-\code{\#[lower]} on its \code{Module} impl reads the \code{run} loop,
+\code{\#[lower]} on its \code{Unit} impl reads the \code{run} loop,
 one \code{rising().await}, a register read, a \code{when!} and a drive,
 and writes \code{Blinky::verilog(name)} beside it. The registers and
 their widths come from the struct, through the same \code{Trace} derive

@@ -2,12 +2,12 @@
 \section{Units, Processes and Parallelism}
 \label{sec:e-units}
 
-A unit is a struct that implements \code{crate::comp::Module}. The trait
+A unit is a struct that implements \code{crate::comp::Unit}. The trait
 has one method.
 
 \begin{lstlisting}[caption={The unit trait. Inputs and outputs are type parameters, so one struct may implement it more than once.},label={lst:module}]
 #[allow(async_fn_in_trait)]
-pub trait Module<In, Out> {
+pub trait Unit<In, Out> {
     async fn run(&mut self, inputs: In, outputs: Out);
 }
 \end{lstlisting}
@@ -23,7 +23,7 @@ Synthesis calls \code{run}. A unit with more than one concurrent process
 starts one async function per process and joins them.
 
 \begin{lstlisting}[caption={Parallelism written down. A unit with one process writes no join.},label={lst:join}]
-impl Module<Ins, Outs> for DualPort {
+impl Unit<Ins, Outs> for DualPort {
     async fn run(&mut self, _i: Ins, _o: Outs) {
         join2(self.port_a(), self.port_b()).await;
     }
@@ -267,10 +267,10 @@ which would make the long spelling something nobody writes.
 
 Wiring is not a stored back-reference. A child is handed the ports it
 needs when its \code{run} is called, and that is what the inputs and
-outputs of \code{Module} are for.
+outputs of \code{Unit} are for.
 
 \begin{lstlisting}[caption={Instantiating two submodules and wiring them. Both children receive the same bus; neither holds a reference to the other.},label={lst:hier-run}]
-impl<TC: TopConfig> Module<(), ()> for Top<TC> {
+impl<TC: TopConfig> Unit<(), ()> for Top<TC> {
     async fn run(&mut self, _i: (), _o: ()) {
         join2(
             self.producer.run((), ProducerOut { out: &self.link }),

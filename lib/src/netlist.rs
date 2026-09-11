@@ -7,7 +7,7 @@
 //! unit that takes its ports as parameters of `run` yields only its
 //! registers: that is the gap between a structural netlist and the
 //! lowering, which the proc-macro route closes by reading the
-//! `Module` impl. Behaviour is not here at all; the bodies are empty.
+//! `Unit` impl. Behaviour is not here at all; the bodies are empty.
 use crate::comp::trace::{collect, Kind, Probe, Traceable};
 use crate::comp::{Clock, In, Mem, Out, Reg, Rx, Tx};
 use crate::types::Value;
@@ -198,6 +198,12 @@ pub enum Stmt {
     Drive(String, String),
     /// `when!(cond => { drives } else { drives })`.
     When(String, Vec<(String, String)>, Vec<(String, String)>),
+    /// `case!(value => { pattern => { drives }, .. })`: arms in order,
+    /// each a condition on the value, the first that holds wins.
+    Case(Vec<(String, Vec<(String, String)>)>),
+    /// The wait the loop makes: every register drive after it happens
+    /// only at an edge at which the condition holds.
+    Guard(String),
 }
 
 /// The Verilog of one unit: its ports from `run`'s signature, its
@@ -218,13 +224,23 @@ pub fn unit_verilog(
     let mut out = String::new();
     let mut plist = vec![format!("input {clock}")];
     for (n, k, w) in ports {
-        let dir = match k {
-            Kind::Out | Kind::Tx => "output",
-            _ => "input",
-        };
-        plist.push(format!("{dir} {}{n}", range(*w)));
+        match k {
+            Kind::Out => plist.push(format!("output {}{n}", range(*w))),
+            Kind::In => plist.push(format!("input {}{n}", range(*w))),
+            // A channel is a valid/ready handshake around its data.
+            Kind::Tx => plist.push(format!(
+                "output {}{n}_data, output {n}_valid, input {n}_ready",
+                range(*w)
+            )),
+            Kind::Rx => plist.push(format!(
+                "input {}{n}_data, input {n}_valid, output {n}_ready",
+                range(*w)
+            )),
+            Kind::Reg => {}
+        }
     }
-    writeln!(out, "module {name}({});", plist.join(", ")).unwrap();
+    // One port per line, so a long list stays readable.
+    writeln!(out, "module {name}(\n  {}\n);", plist.join(",\n  ")).unwrap();
     for (n, k, w) in fields {
         if *k == Some(Kind::Reg) {
             writeln!(out, "  reg {}{n};", range(*w)).unwrap();
@@ -232,6 +248,7 @@ pub fn unit_verilog(
     }
     let mut seq: Vec<String> = Vec::new();
     let mut comb: Vec<String> = Vec::new();
+    let mut guard: Option<String> = None;
     let drive = |seq: &mut Vec<String>,
                  comb: &mut Vec<String>,
                  indent: &str,
@@ -245,7 +262,14 @@ pub fn unit_verilog(
     };
     for st in body {
         match st {
-            Stmt::Drive(t, e) => drive(&mut seq, &mut comb, "    ", t, e),
+            Stmt::Guard(c) => {
+                guard = Some(c.clone());
+                seq.push(format!("    if ({c}) begin"));
+            }
+            Stmt::Drive(t, e) => {
+                let ind = if guard.is_some() { "      " } else { "    " };
+                drive(&mut seq, &mut comb, ind, t, e)
+            }
             Stmt::When(c, then, otherwise) => {
                 seq.push(format!("    if ({c}) begin"));
                 for (t, e) in then {
@@ -259,9 +283,25 @@ pub fn unit_verilog(
                 }
                 seq.push("    end".into());
             }
+            Stmt::Case(arms) => {
+                for (i, (c, drives)) in arms.iter().enumerate() {
+                    let kw = if i == 0 { "if" } else { "end else if" };
+                    seq.push(format!("    {kw} ({c}) begin"));
+                    for (t, e) in drives {
+                        drive(&mut seq, &mut comb, "      ", t, e);
+                    }
+                }
+                if !arms.is_empty() {
+                    seq.push("    end".into());
+                }
+            }
         }
     }
-    if !seq.is_empty() {
+    if guard.is_some() {
+        seq.push("    end".into());
+    }
+    let has_drives = seq.iter().any(|l| l.contains("<="));
+    if has_drives {
         writeln!(out, "  always @(posedge {clock}) begin").unwrap();
         for l in &seq {
             writeln!(out, "{l}").unwrap();

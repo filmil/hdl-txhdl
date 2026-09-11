@@ -288,6 +288,12 @@ pub mod logic {
 pub trait Value: Copy {
     const WIDTH: usize;
     fn vcd(self) -> String;
+    /// The named parts of a compound value, each with its width and
+    /// bits, so a waveform can show a struct one field per signal.
+    /// Empty for a scalar.
+    fn parts(self) -> Vec<(&'static str, usize, String)> {
+        Vec::new()
+    }
 }
 
 impl Value for Bit {

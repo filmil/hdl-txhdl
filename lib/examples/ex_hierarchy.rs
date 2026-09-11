@@ -3,7 +3,7 @@
 //! fields; each child is handed its end when `run` is called. The
 //! children are disjoint fields, so both may be borrowed mutably at once.
 use txhdl::comp::{
-    join2, join_all, signal, Clock, DefaultClock, In, Module, Out, Reg,
+    join2, join_all, signal, Clock, DefaultClock, In, Out, Reg, Unit,
 };
 use txhdl::types::U;
 
@@ -17,7 +17,7 @@ pub struct Pe {
     pub acc: Reg<U<32>>,
 }
 
-impl Module<(), Out<U<32>>> for Producer {
+impl Unit<(), Out<U<32>>> for Producer {
     async fn run(&mut self, _i: (), out: Out<U<32>>) {
         loop {
             DefaultClock::rising().await; // the wait
@@ -28,7 +28,7 @@ impl Module<(), Out<U<32>>> for Producer {
     }
 }
 
-impl Module<In<U<32>>, ()> for Consumer {
+impl Unit<In<U<32>>, ()> for Consumer {
     async fn run(&mut self, inp: In<U<32>>, _o: ()) {
         loop {
             DefaultClock::rising().await;
@@ -38,7 +38,7 @@ impl Module<In<U<32>>, ()> for Consumer {
     }
 }
 
-impl Module<U<32>, ()> for Pe {
+impl Unit<U<32>, ()> for Pe {
     async fn run(&mut self, i: U<32>, _o: ()) {
         loop {
             DefaultClock::rising().await;
@@ -54,7 +54,7 @@ pub struct Top {
     pub pes: [Pe; 4],
 }
 
-impl Module<(), ()> for Top {
+impl Unit<(), ()> for Top {
     async fn run(&mut self, _i: (), _o: ()) {
         let (tx, rx) = signal::<U<32>, _>();
         // Every child loops, so every child is joined at once.

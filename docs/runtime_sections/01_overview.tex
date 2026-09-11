@@ -114,7 +114,13 @@ design's own its width and bits. \code{Vcd} is the sink: the executor
 calls it at the end of every tick, after the drives have committed,
 and it writes what changed; a clock is written as the level it is,
 high from its rising edge to its falling one. FST would be the same probes with another
-writer, which is the reason the registry and the writer are separate.
+writer, and there is one now: \code{Fst}, over the \code{fst-writer}
+crate, the project's first external dependency, pinned by lockfile
+through \code{crate\_universe}. \code{Wave::from\_env} chooses the sink
+by the environment, \code{TXHDL\_FST} or \code{TXHDL\_VCD}, and
+\code{stop} finishes the file. A compound value is one bit vector and
+one signal per field beside it, from \code{Value::parts}; the writer
+has no string variables, so a value keeps its bits.
 The examples document draws a VCD through \code{vcdcvt} and
 \code{sqlite2drawtiming}, prebuilt tools pinned by checksum, and
 \code{//tools/dt2tikz}, which turns drawtiming's text into TikZ.
@@ -133,8 +139,9 @@ behavioural half has begun: \code{\#[pipeline]} lowers an \code{async
 fn} of awaited operators, and \code{\#[lower]} lowers a unit's
 \code{run} loop, with \code{netlist::unit\_verilog} assembling the
 module from the unit's fields, the ports of \code{run} and the
-statements the macro read. What neither reads yet is \code{case!},
-channels and the second process of a unit.
+statements the macro read, \code{case!} and channels included. What
+neither reads yet is a unit's second process, a falling-edge wait, and
+a memory.
 
 \subsection{Building it}
 
