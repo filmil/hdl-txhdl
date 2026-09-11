@@ -438,6 +438,87 @@ pub async fn join_all<F: Future<Output = ()>>(fs: impl IntoIterator<Item = F>) {
     .await
 }
 
+/// Several waits at once. `parallel!(a, b, ..)` polls every future each
+/// step and completes when all have, with their outputs as a tuple, so
+/// two register reads inside it are one wait for one edge, and the
+/// executor knows it: a read polled inside `parallel!` after another
+/// read has crossed the edge is free. The same two reads written one
+/// after the other are two waits, because every `.await` is a cycle
+/// boundary and this is the one way to say that two are not.
+///
+/// `join2` and `join_all` are the process-level counterpart: they give
+/// each child its own process. `parallel!` stays in one.
+#[macro_export]
+macro_rules! parallel {
+    ($($f:expr),+ $(,)?) => {
+        $crate::comp::Join(($($crate::comp::MaybeDone::Pending($f),)+))
+    };
+}
+
+/// One future inside a [`Join`]: still running, finished with its
+/// output held, or its output already taken.
+pub enum MaybeDone<F: Future> {
+    Pending(F),
+    Done(F::Output),
+    Taken,
+}
+
+impl<F: Future> MaybeDone<F> {
+    /// Poll if still pending. Returns whether the output is ready.
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> bool {
+        // Safety: the pending future is never moved once polled here.
+        let this = unsafe { self.get_unchecked_mut() };
+        if let MaybeDone::Pending(f) = this {
+            match unsafe { Pin::new_unchecked(f) }.poll(cx) {
+                Poll::Ready(v) => *this = MaybeDone::Done(v),
+                Poll::Pending => return false,
+            }
+        }
+        true
+    }
+    fn take(self: Pin<&mut Self>) -> F::Output {
+        let this = unsafe { self.get_unchecked_mut() };
+        match std::mem::replace(this, MaybeDone::Taken) {
+            MaybeDone::Done(v) => v,
+            _ => panic!("parallel!: output taken before it was ready"),
+        }
+    }
+}
+
+/// The future `parallel!` builds: a tuple of [`MaybeDone`].
+pub struct Join<T>(pub T);
+
+macro_rules! impl_join {
+    ($($F:ident $i:tt),+) => {
+        impl<$($F: Future),+> Future for Join<($(MaybeDone<$F>,)+)> {
+            type Output = ($($F::Output,)+);
+            fn poll(
+                self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Self::Output> {
+                // Safety: the tuple is never moved out while pinned.
+                let t = unsafe { &mut self.get_unchecked_mut().0 };
+                clock::PARALLEL.with(|p| p.set(p.get() + 1));
+                let mut all = true;
+                $( all &= unsafe { Pin::new_unchecked(&mut t.$i) }.poll(cx); )+
+                clock::PARALLEL.with(|p| p.set(p.get() - 1));
+                if all {
+                    Poll::Ready((
+                        $( unsafe { Pin::new_unchecked(&mut t.$i) }.take(), )+
+                    ))
+                } else {
+                    Poll::Pending
+                }
+            }
+        }
+    };
+}
+impl_join!(A 0, B 1);
+impl_join!(A 0, B 1, C 2);
+impl_join!(A 0, B 1, C 2, D 3);
+impl_join!(A 0, B 1, C 2, D 3, E 4);
+impl_join!(A 0, B 1, C 2, D 3, E 4, G 5);
+
 // ---------------------------------------------------------------------
 // The clock edge
 
@@ -447,18 +528,18 @@ pub async fn join_all<F: Future<Output = ()>>(fs: impl IntoIterator<Item = F>) {
 /// the register's clock, an operator's cycle waits for the next edge of
 /// the clock its process is in.
 ///
-/// A process samples every register at one edge, so a register read is
-/// the wait for the edge and reading a second register after it is
-/// free. The rule the executor keeps is: a register gives each process
-/// one value per edge. Reading a register the process has already read
-/// at this edge waits for the next one, which is what makes a loop that
-/// re-reads its registers advance one iteration per cycle. Processes
-/// are told apart by their waker, which [`join2`] and [`join_all`]
-/// give each child fresh, so the rule holds per process and not per
-/// unit. A process is in the domain of the last edge it crossed; the
-/// executor does not check that it stays there, and a register of
-/// another domain read without a [`Crossing`] is a hazard the prototype
-/// runs rather than refuses.
+/// Every `.await` is a cycle boundary. A register read waits for the
+/// next edge of the register's clock, and so does a second read written
+/// after it. Reads that share one edge are written inside `parallel!`,
+/// and that is the one case the executor treats specially: a read polled
+/// inside a `parallel!` whose process has already crossed the edge at
+/// this step is free, so the whole group is one wait. Processes are
+/// told apart by their waker, which [`join2`] and [`join_all`] give
+/// each child fresh, so the rule holds per process and not per unit. A
+/// process is in the domain of the last edge it crossed; the executor
+/// does not check that it stays there, and a register of another domain
+/// read without a [`Crossing`] is a hazard the prototype runs rather
+/// than refuses.
 mod clock {
     use std::any::TypeId;
     use std::cell::{Cell, RefCell};
@@ -487,6 +568,8 @@ mod clock {
     thread_local! {
         pub static TIME: Cell<u64> = const { Cell::new(0) };
         pub static NEXT: Cell<usize> = const { Cell::new(1) };
+        /// How many `parallel!` groups are being polled right now.
+        pub static PARALLEL: Cell<u32> = const { Cell::new(0) };
         pub static PROCS: RefCell<HashMap<usize, Proc>> =
             RefCell::new(HashMap::new());
         /// Per process and register: the last time step it was read at.
@@ -525,8 +608,9 @@ pub fn tick() -> Tick {
     }
 }
 
-/// The edge a register read waits for. Free if this process has
-/// crossed an edge of `C` at this step and not read this register since.
+/// The edge a register read waits for. Free only inside `parallel!`,
+/// once another read in the group has crossed the edge of `C` at this
+/// step, and only once per register.
 fn edge<C: Clock>(key: usize) -> Tick {
     Tick {
         key: Some(key),
@@ -549,10 +633,11 @@ impl Future for Tick {
         let crossed = proc_
             .map(|q| q.clk == clk && q.edge == now)
             .unwrap_or(false);
+        let grouped = clock::PARALLEL.with(|g| g.get()) > 0;
         if let Some(k) = self.key {
             let unread =
                 clock::READ.with(|r| r.borrow().get(&(p, k)) != Some(&now));
-            if crossed && unread {
+            if grouped && crossed && unread {
                 clock::READ.with(|r| r.borrow_mut().insert((p, k), now));
                 return Poll::Ready(());
             }

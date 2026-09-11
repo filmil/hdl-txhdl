@@ -7,7 +7,7 @@
 //! - [`types`]: `Bit`, `Logic`, `U<N>`, `I<N>`, `logic::Vec<N>`,
 //!   the `Transaction` marker and the `Tag` policy.
 //! - [`comp`]: units, wires and their ends, interfaces, clocks,
-//!   configurations, `join2`, `mux`, and the executor.
+//!   configurations, `join2` and `parallel!`, `mux`, and the executor.
 //! - [`pipeline`]: operators that may take a cycle. All `async`.
 //! - [`funcs`]: operators that cannot. All plain `fn`.
 //! - `#[derive(Transaction)]`, `#[derive(Bus)]`, `interface!`,

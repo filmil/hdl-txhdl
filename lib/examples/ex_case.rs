@@ -4,6 +4,7 @@
 //! The arms are Rust patterns and the first that matches wins, so an
 //! arm with a guard sits above the plain arm for the same state.
 use txhdl::case;
+use txhdl::parallel;
 use txhdl::comp::{signal, DefaultClock, In, Module, Out, Reg, Running};
 use txhdl::types::{Bit, U};
 
@@ -25,8 +26,7 @@ pub struct Sequencer {
 impl Module<In<Bit>, Out<State>> for Sequencer {
     async fn run(&mut self, go: In<Bit>, observed: Out<State>) {
         loop {
-            let s = self.state.get().await;
-            let n = self.count.get().await;
+            let (s, n) = parallel!(self.state.get(), self.count.get()).await;
             let go = go.get();
             case!(s => {
                 State::Idle if go.to_bool() => { self.state <= State::Load },

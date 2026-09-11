@@ -53,20 +53,27 @@ latched at the last edge of that clock, so reading is waiting for the
 edge. Driving it is plain: \code{set} states the next value and waits
 for nothing. A wire has no edge, so reading a wire is plain too.
 
-\textbf{One value per register per edge.} A process samples every
-register at one edge, so after a process has crossed an edge, reading
-a second register is free. Reading a register the process has already
-read at this edge waits for the next edge, which is what makes a
-\code{loop} that re-reads its registers advance one iteration per
-cycle. The first version of the executor charged a cycle for every
-read, so an iteration that read two registers took two cycles; the
-sequencer example exposed it and the rule above replaced it.
+\textbf{Every \code{.await} is a cycle boundary.} A second register
+read written after a first waits for the next edge, as an operator
+does. Reads that share one edge are written inside \code{parallel!},
+which polls its futures together and returns their outputs as a tuple;
+that is the one case the executor treats specially. A read polled
+inside a \code{parallel!} whose process has already crossed the edge
+at this step is free, and only once per register, so the group is one
+wait and a \code{loop} advances one iteration per group. The first
+version of the executor charged a cycle for every read, so an
+iteration that read two registers took two cycles; the second made a
+sequential read free, which was right in effect and said nothing in the
+source. \code{parallel!} says it.
 
 \textbf{A process is its waker.} The executor tells processes apart by
 the data pointer of the waker they are polled with. \code{join2} and
 \code{join\_all} give each child a fresh one, so the rule above holds
 per process rather than per unit, and two processes of one unit that
 read the same register each get their own value per edge.
+\code{parallel!} keeps its futures in the one process, which is the
+difference between the two: \code{join2} forks, \code{parallel!} does
+not.
 
 \textbf{An operator's cycle is in the process's clock.} An operator in
 \code{txhdl::pipeline} waits one edge of whatever clock the process

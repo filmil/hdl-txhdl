@@ -11,7 +11,8 @@ lets \code{interface!} split a member without knowing which it is;
 memories; \code{mux}; the \code{Module} trait, whose \code{run} takes
 the unit's inputs and outputs as type parameters; configurations and
 the \code{config!} macro; \code{join2} and \code{join\_all}, which give
-each child its own process identity; and the executor, whose rules
-Section~\ref{sec:r-time} states.
+each child its own process identity; \code{parallel!}, which keeps its
+futures in one process and returns their outputs together; and the
+executor, whose rules Section~\ref{sec:r-time} states.
 
 \lstinputlisting[caption={\code{lib/src/comp.rs}.},label={lst:r-comp}]{lib/src/comp.rs}

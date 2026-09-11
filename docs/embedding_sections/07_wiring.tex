@@ -215,8 +215,8 @@ A register is then in a clock, \code{Reg<T, C>}, with the same default
 as a wire, and reading it waits for the edge of its own clock. The
 executor runs time in steps and each clock has an edge at the steps its
 period and phase name; a process waits at a register read until the
-next edge of that register's clock. Section~\ref{sec:e-regread}'s
-rule, one value per register per edge, holds per clock. An operator's
+next edge of that register's clock, and a \code{parallel!} of reads
+waits for one edge, Section~\ref{sec:e-regread}. An operator's
 cycle is a cycle of whatever clock the process last crossed an edge of,
 which is the only sense a latency has in a process.
 

@@ -104,17 +104,30 @@ children needs no loop of its own: the children loop, the join never
 completes, and the parent is continuous through them.
 
 The prototype enforces this in the only way a simulation can, and the
-rule it keeps took two attempts. The first version made every register
-read yield once, so an iteration that read three registers took three
-cycles, which no hardware does: a process samples every register at the
-same edge. The rule now is that a register gives each process one value
-per edge. The first read in an iteration waits for the edge; a read of a
-different register after it is free; a read of a register the process
-has already read this cycle waits for the next edge, which is what makes
-a loop that re-reads its registers advance one iteration per cycle.
-Processes are told apart by their waker, which \code{join2} and
-\code{join\_all} give each child fresh, so the rule holds per process
-rather than per unit. A loop that reads no register and awaits no
+rule it keeps took three attempts. The first version made every
+register read yield once, so an iteration that read three registers
+took three cycles, which no hardware does: a process samples every
+register at the same edge. The second made a second read after the
+edge free, which was right in effect and invisible in the source: two
+\code{.await}s in a row meant two cycles everywhere in the language
+except here, and a reader had to know an executor rule to tell. The
+rule now is that every \code{.await} is a cycle boundary, and reads
+that share an edge say so:
+
+\begin{lstlisting}[caption={Reads at one edge are written inside \code{parallel!}. Written one after the other, the same two reads would be two cycles, as any two awaits are.},label={lst:parallel}]
+let (s, n) = parallel!(self.state.get(), self.count.get()).await;
+\end{lstlisting}
+
+\code{parallel!} polls its futures together and returns their outputs
+as a tuple, so the group is one wait, and it is the one thing the
+executor treats specially: a read polled inside it after another read
+in the group has crossed the edge is free. A loop then advances one
+iteration per iteration's wait. Processes are told apart by their
+waker, which \code{join2} and \code{join\_all} give each child
+fresh, so a register gives each process its own value at each edge.
+\code{join2} and \code{parallel!} are the two sides of one idea: the
+first gives each of its futures a process, the second keeps them in
+one, and a unit uses both. A loop that reads no register and awaits no
 operator never yields and spins. That is the right behaviour, because
 such a loop is a combinational loop in the hardware, which is the thing
 that was wrong.

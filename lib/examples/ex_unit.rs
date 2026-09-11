@@ -3,6 +3,7 @@
 //! registers, and `run` joins them, which is what states that they run
 //! in parallel. `when!` predicates writes; it does not branch.
 use txhdl::comp::{join2, Module, Reg};
+use txhdl::parallel;
 use txhdl::types::{Bit, U};
 use txhdl::when;
 
@@ -15,13 +16,17 @@ pub struct DualPort {
 
 impl DualPort {
     /// A process loops, because a unit runs for as long as the clock
-    /// does. Each iteration reads a register, and that read is the wait
-    /// for the edge, so one iteration is one cycle.
+    /// does. Each iteration waits for the edge once, reading all three
+    /// registers at it inside `parallel!`, so one iteration is one
+    /// cycle. Written one after the other they would be three waits.
     async fn port_a(&self) {
         loop {
-            let enable = self.enable.get().await;
-            let (hits, cells) =
-                (self.hits_a.get().await, self.cells.get().await);
+            let (enable, hits, cells) = parallel!(
+                self.enable.get(),
+                self.hits_a.get(),
+                self.cells.get()
+            )
+            .await;
             when!(enable => {
                 self.hits_a <= hits.wrapping_add(1);
                 self.cells <= cells.wrapping_add(1)
