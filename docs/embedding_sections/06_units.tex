@@ -79,3 +79,72 @@ the first time, because the code that fails is the code a Rust programmer
 would write first. It should be in the library's documentation and in the
 error message, not only in a paper.
 \end{pitfall}
+
+
+\subsection{A unit that contains units}
+\label{sec:e-hierarchy}
+
+A submodule is a field. A bus that joins two submodules is a field too,
+owned by whichever unit contains both of its ends.
+
+\begin{lstlisting}[caption={Submodules and the wire between them are fields of the parent.},label={lst:hier}]
+pub struct Top<C: Config> {
+    pub producer: Producer,
+    pub consumer: Consumer,
+    pub link: DataBus,
+    pub pes: [Pe; 4],
+}
+\end{lstlisting}
+
+Wiring is not a stored back-reference. A child is handed the ports it
+needs when its \code{run} is called, and that is what the inputs and
+outputs of \code{Module} are for.
+
+\begin{lstlisting}[caption={Instantiating two submodules and wiring them. Both children receive the same bus; neither holds a reference to the other.},label={lst:hier-run}]
+impl<C: Config> Module<(), ()> for Top<C> {
+    async fn run(&mut self, _i: (), _o: ()) {
+        join2(
+            self.producer.run((), ProducerOut { out: &self.link }),
+            self.consumer.run(ConsumerIn { inp: &self.link }, ()),
+        ).await;
+    }
+}
+\end{lstlisting}
+
+\subsection{Why the borrow rule does not bite here}
+
+Section~\ref{sec:e-units} showed that two processes of one unit cannot
+both take \code{\&mut self}. Listing~\ref{lst:hier-run} appears to do
+exactly that and compiles, which is worth explaining rather than leaving
+as an inconsistency.
+
+The two cases are not the same. A process is a method on the unit, so it
+borrows the whole of \code{self} and two of them collide. A submodule is a
+\emph{field}, and Rust permits simultaneous mutable borrows of disjoint
+fields, so \code{\&mut self.producer} and \code{\&mut self.consumer} coexist
+legally. The bus between them is borrowed shared by both, which is what a
+wire is.
+
+\begin{rulebox}[Where interior mutability is needed]
+State that two processes of one unit both drive. Not submodules, which are
+disjoint fields, and not the buses between them, which are shared by
+design.
+\end{rulebox}
+
+\subsection{Arrays of instances}
+
+An array of identical submodules is an array, and joining them is a join
+over an iterator.
+
+\begin{lstlisting}[caption={An instance array. The replication count is a Rust array length, so a config can set it.},label={lst:hier-array}]
+join_all(
+    self.pes.iter_mut()
+        .enumerate()
+        .map(|(i, pe)| pe.run(i as u32, ()))
+).await;
+\end{lstlisting}
+
+TxHDL wrote this as \code{instance pe[16]} with a \code{connect} loop
+beside it. Here the replication is an array length and the connection is
+what each element is passed, so a config may set the count through an
+associated constant and nothing else changes.

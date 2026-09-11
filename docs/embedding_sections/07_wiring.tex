@@ -1,0 +1,134 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Signals, Ports and Interfaces}
+\label{sec:e-wiring}
+
+These three were the muddiest part of the merged specification, and LHDL's
+version of them is where its grammar and its examples disagreed most. The
+embedding settles them, and the settlement is one idea.
+
+\begin{rulebox}[Direction is not a property of a wire]
+The same wire is driven at one end and read at the other. Direction
+belongs to the end, not to the wire, so a unit never holds a wire. It
+holds an end.
+\end{rulebox}
+
+\subsection{A signal has two ends}
+
+Creating a signal yields its ends separately, the way
+\code{std::sync::mpsc} yields a sender and a receiver.
+
+\begin{lstlisting}[caption={A signal is created as a pair. \code{T} is a struct, so a wire may be a bundle without a second concept for the bundled case.},label={lst:split}]
+pub fn signal<T: Copy + Default>() -> (Out<T>, In<T>);
+
+let (tx, rx) = signal::<Beat>();
+\end{lstlisting}
+
+\code{Out<T>} has \code{set} and no \code{get}. \code{In<T>} has \code{get}
+and no \code{set}. A unit given the reading end cannot drive, and the
+compiler says so in the plainest possible terms:
+\code{error[E0599]: no method named `set` found for struct `In`}.
+
+\subsection{Cardinality is the opposite of mpsc, and the types say so}
+
+A channel in software has many senders and one receiver. A wire has one
+driver and many readers. The library inverts the derive accordingly.
+
+\begin{table}[H]
+\caption{Why \code{In} is \code{Clone} and \code{Out} is not.}
+\label{tab:cardinality}
+\centering
+\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & Sender or driver & Receiver or reader \\
+\midrule
+\code{mpsc} & \code{Clone}     & unique \\
+a wire      & unique           & \code{Clone} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+That one line of derive buys the oldest error message in hardware design.
+A second driver on a net would be a second \code{Out}, \code{signal}
+returns exactly one, and \code{Out} is not \code{Clone}, so there is no
+way to make another.
+
+\begin{lstlisting}[caption={Two drivers on one wire. The classic multiple-driver error is a move error.},label={lst:twodrivers}]
+let (tx, _rx) = signal::<u32>();
+let a = Driver { out: tx };
+let b = Driver { out: tx };
+// error[E0382]: use of moved value: `tx`
+\end{lstlisting}
+
+Nothing in the language had to define that rule. Fanout, meanwhile, is
+\code{rx.clone()} and costs nothing, because reading a wire is free.
+
+\subsection{An interface is a struct of ends}
+
+An interface is a named group. Its members are signals and channels, and
+it holds no direction, because its members do not.
+
+A \term{role} is the pairing that says which end of each member this side
+takes. A \term{port} is what a unit is handed: an interface's ends,
+selected by a role.
+
+\begin{lstlisting}[caption={An interface and the two roles over it. Each role names the end it takes for every member.},label={lst:iface}]
+pub struct Wishbone {
+    pub adr: Signal<U<32>>,
+    pub ack: Signal<Bit>,
+    pub dat: Chan<Beat>,
+}
+
+pub struct InitiatorPort {
+    pub adr: Out<U<32>>,
+    pub ack: In<Bit>,
+    pub dat: Tx<Beat>,
+}
+
+pub struct TargetPort {
+    pub adr: In<U<32>>,
+    pub ack: Out<Bit>,
+    pub dat: Rx<Beat>,
+}
+\end{lstlisting}
+
+The two role structs are mechanical: each field is the same member with
+the other end. A derive writes them, which is what the \code{modport}
+keyword used to do, and it cannot get them out of step with the interface
+because it reads the interface to make them.
+
+\subsection{Where the ends go}
+
+A unit does not store a reference to the interface. It is handed its port
+when \code{run} is called, which is what the inputs and outputs of
+\code{Module} are for, and what makes wiring a call rather than a graph of
+back-references.
+
+\begin{lstlisting}[caption={The parent creates the interface and hands each child the end it takes.},label={lst:wire-up}]
+impl Module<(), ()> for Top {
+    async fn run(&mut self, _i: (), _o: ()) {
+        join2(
+            self.cpu.run(self.bus.initiator(), ()),
+            self.ram.run(self.bus.target(), ()),
+        ).await;
+    }
+}
+\end{lstlisting}
+
+\begin{table*}[t]
+\caption{The four concepts, and what each one is responsible for. Reading
+down the table is the life of a wire.}
+\label{tab:wiring}
+\centering
+\footnotesize
+\begin{tabular}{@{}llll@{}}
+\toprule
+Concept & Is & Knows about direction & Held by \\
+\midrule
+\code{Signal<T>}, \code{Chan<T>} & one wire, or one handshaked channel & no & nobody \\
+\code{Out<T>} / \code{In<T>}, \code{Tx<T>} / \code{Rx<T>} & one end of one member & yes, by which methods exist & a unit \\
+interface & a named group of members & no & the unit containing both ends \\
+role and port & a group of ends, one per member & yes, by construction & passed to \code{run} \\
+\bottomrule
+\end{tabular}
+\end{table*}

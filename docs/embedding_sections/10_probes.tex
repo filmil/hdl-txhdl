@@ -4,7 +4,7 @@
 
 Every claim in this paper about what Rust does is a probe that was built.
 The probes are one file per question in \code{experiments/rust\_embedding},
-and three of them are expected to fail, so they are tagged \code{manual}
+and five of them are expected to fail, so they are tagged \code{manual}
 and stay out of the default build. A failing probe is kept rather than deleted,
 because the failure is the answer.
 
@@ -69,11 +69,32 @@ Probe & Question & Answer \\
 \code{probe\_slice\_dyn}
   & May the slice \emph{width} be a run-time value?
   & \textbf{No.} \code{error[E0435]: attempt to use a non-constant value in a constant} \\
+\code{probe\_hierarchy}
+  & How is a unit with submodules instantiated and wired?
+  & Submodules and their buses are fields; ports are passed to \code{run}. Disjoint fields, so the borrow rule of probe 5b does not apply \\
+\code{probe\_main}
+  & Can \code{fn main()} instantiate the top through a config?
+  & \textbf{Yes}, and it runs: \code{bazel run ... -- asic} prints \code{elaborated config 'asic' at 400 MHz} \\
+\code{probe\_ports}
+  & Can direction be enforced rather than documented?
+  & \textbf{Yes}, by which methods an end exposes \\
+\code{probe\_ports\_bad}
+  & Can a unit drive an input?
+  & \textbf{No.} \code{error[E0599]: no method named `set` found for struct `In`} \\
+\code{probe\_values}
+  & Do \code{Bit}, \code{Logic}, \code{U<N>}, \code{I<N>} work on stable?
+  & \textbf{Yes}, including the IEEE 1164 resolution table and \code{U} as the default of an undriven wire \\
+\code{probe\_signal\_split}
+  & Can a signal yield its two ends separately, as \code{mpsc} does?
+  & \textbf{Yes}, with \code{In} clonable for fanout and \code{Out} unique \\
+\code{probe\_two\_drivers}
+  & Can a wire have two drivers?
+  & \textbf{No.} \code{error[E0382]: use of moved value} \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
-\subsection{The three that changed the design}
+\subsection{The four that changed the design}
 
 \textbf{Arbitrary-width arithmetic needs nightly.} A hardware library wants
 to write that multiplying an $A$-bit value by a $B$-bit value gives an
@@ -94,6 +115,12 @@ failed.
 Writing \code{when!} showed where the macro route stops, and that is the
 strongest argument for the recommendation in
 Section~\ref{sec:e-elaboration}. Section~\ref{sec:e-walls} states it.
+
+\textbf{One driver per wire comes free.} It was not designed in.
+\code{signal} returns one \code{Out} and \code{Out} is not \code{Clone},
+so a second driver is a value that cannot be made, and the oldest error
+message in hardware design arrives as \code{error[E0382]: use of moved
+value}. Section~\ref{sec:e-wiring} states the cardinality this rests on.
 
 \subsection{On method}
 

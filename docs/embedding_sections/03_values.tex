@@ -1,0 +1,69 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Values}
+\label{sec:e-values}
+
+Rust's integers are the wrong types for hardware, and the reason is not
+width. It is that \code{u32} has no way to say that nobody has driven this
+wire yet.
+
+\code{crate::types} therefore defines its own, paralleling the primitives
+rather than reusing them.
+
+\subsection{Two values and nine}
+
+\code{Bit} is two valued, and it is what synthesis maps. Its default is
+\code{Zero}, because a synthesised register leaves reset at a defined
+value.
+
+\code{Logic} is nine valued, in the order IEEE 1164 gives
+\code{std\_ulogic}. Its default is \code{U}, uninitialised, and that
+difference is the whole reason the type exists.
+
+\begin{lstlisting}[caption={The two value types. An undriven wire is \code{U}, not zero.},label={lst:bitlogic}]
+pub enum Bit { Zero, One }
+
+pub enum Logic {
+    U,        // uninitialised
+    X,        // forcing unknown
+    Zero, One,
+    Z,        // high impedance
+    W,        // weak unknown
+    L, H,     // weak 0, weak 1
+    DontCare,
+}
+\end{lstlisting}
+
+Narrowing is fallible, and that is the point. \code{Logic::to\_bit}
+returns nothing for \code{U}, \code{X} or \code{Z}, so a design that turns
+an unknown into a number has to say so rather than do it quietly.
+
+\subsection{Resolution, not a rule of our own}
+
+Two drivers on one wire are resolved by the IEEE 1164 table, which the
+library implements rather than paraphrases.
+
+\begin{lstlisting}[caption={Resolution. Contention gives \code{X}; a pull-up against high impedance gives \code{H}.},label={lst:resolve}]
+Logic::One.resolve(Logic::Zero)   // X
+Logic::Z.resolve(Logic::H)        // H
+\end{lstlisting}
+
+Reusing the standard table costs nothing and means an engineer who knows
+VHDL already knows what this does.
+
+\subsection{Numbers}
+
+\code{U<N>} and \code{I<N>} are the numeric vectors, and
+\code{LogicVec<N>} is a vector of \code{Logic} for when unknowns must
+propagate. Converting between them is where the two worlds meet:
+\code{LogicVec::to\_u} returns nothing unless every bit is defined.
+
+\begin{lstlisting}[caption={An undriven vector is unknown, and says so.},label={lst:undriven}]
+let v = LogicVec::<8>::default();   // eight U's
+assert!(v.to_u().is_none());
+\end{lstlisting}
+
+Same-width arithmetic, resizing to a stated width and slicing all compile
+on stable, because each result width is a standalone const parameter. A
+widening multiply does not, for the reason
+Section~\ref{sec:e-probes} gives: its result width is
+\code{\{A + B\}}, and that is the one thing stable Rust will not accept.

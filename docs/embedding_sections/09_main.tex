@@ -1,0 +1,50 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Top Is a Program}
+\label{sec:e-main}
+
+Section~\ref{sec:e-hierarchy} put units inside units. The outermost one
+has to be reached from somewhere, and in an embedded language that
+somewhere already exists.
+
+\begin{lstlisting}[caption={A design is a program. The config names the top unit as well as filling it, so \code{main} needs nothing else.},label={lst:main}]
+pub trait Config {
+    type Top: Module<(), ()>;
+    const NAME: &'static str;
+    const CLK_HZ: u64;
+    fn top() -> Self::Top;
+}
+
+fn main() {
+    let which = std::env::args().nth(1)
+        .unwrap_or_else(|| "fpga".to_string());
+    match which.as_str() {
+        "asic" => elaborate::<Asic>(),
+        _      => elaborate::<Fpga>(),
+    }
+}
+\end{lstlisting}
+
+There is no separate elaboration entry point and no build description
+language. Probe~13 is a binary rather than a library for that reason, and
+running it prints what it elaborated:
+
+\begin{lstlisting}[style=ascii,caption={Running the design. Each arm of the match is monomorphised separately, so both builds are compiled and either can be asked for.},label={lst:run}]
+$ bazel run //experiments/rust_embedding:probe_main -- asic
+elaborated config 'asic' at 400 MHz
+\end{lstlisting}
+
+Three things follow, and the third is the one that matters.
+
+The config gains \code{type Top} and \code{fn top()}, so it says which
+design to elaborate as well as what to fill it with. A config is then the
+whole of what a build is, which is what the configuration facet was for.
+
+Selecting a build is an ordinary argument. Each arm names a different type
+and is compiled separately, so asking for a build that does not exist is a
+compile error rather than a missing file.
+
+And the toolchain becomes a library rather than a program that reads
+source. \code{elaborate} is a function the design calls, so a project may
+wrap it, run two configs and compare them, generate a report, or drive a
+simulation from a test, using whatever Rust already offers. None of that
+needed designing.

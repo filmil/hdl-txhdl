@@ -4,7 +4,7 @@
 # question from that document's section 8. A probe that does not build is
 # an answer, not a defect, so probes expected to fail carry a comment
 # saying so and are not part of //... by default.
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_proc_macro")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -118,6 +118,61 @@ rust_library(
 rust_library(
     name = "probe_slice_dyn",
     srcs = ["probe_slice_dyn.rs"],
+    edition = "2021",
+    tags = ["manual"],
+)
+
+# Probe 12: a unit with submodules, wiring and an instance array.
+rust_library(
+    name = "probe_hierarchy",
+    srcs = ["probe_hierarchy.rs"],
+    edition = "2021",
+)
+
+# Probe 13: `fn main()` instantiates the top unit through a config. A
+# binary rather than a library, so it links and runs:
+#   bazel run //experiments/rust_embedding:probe_main -- asic
+rust_binary(
+    name = "probe_main",
+    srcs = ["probe_main.rs"],
+    edition = "2021",
+)
+
+# Probe 14: signals, interfaces, roles and ports, with direction enforced
+# by the type system.
+rust_library(
+    name = "probe_ports",
+    srcs = ["probe_ports.rs"],
+    edition = "2021",
+)
+
+# Probe 14b: driving an input. Expected to fail.
+rust_library(
+    name = "probe_ports_bad",
+    srcs = ["probe_ports_bad.rs"],
+    edition = "2021",
+    tags = ["manual"],
+)
+
+# Probe 15: the value types. Bit, Logic (IEEE 1164), U<N>, I<N>,
+# LogicVec<N>, with resolution and X propagation.
+rust_library(
+    name = "probe_values",
+    srcs = ["probe_values.rs"],
+    edition = "2021",
+)
+
+# Probe 16: Signal<T> as a channel with two ends, mpsc style.
+rust_library(
+    name = "probe_signal_split",
+    srcs = ["probe_signal_split.rs"],
+    edition = "2021",
+)
+
+# Probe 16b: two drivers on one wire. Expected to fail.
+rust_library(
+    name = "probe_two_drivers",
+    srcs = ["probe_two_drivers.rs"],
     edition = "2021",
     tags = ["manual"],
 )

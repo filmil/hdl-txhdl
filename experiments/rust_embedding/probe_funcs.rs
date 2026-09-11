@@ -13,6 +13,10 @@ pub mod funcs {
         a as u64 * b as u64
     }
 
+    pub async fn add(a: u64, b: u64) -> u64 {
+        a.wrapping_add(b)
+    }
+
     pub async fn div(a: u32, b: u32) -> u32 {
         if b == 0 { 0 } else { a / b }
     }
@@ -27,14 +31,14 @@ pub mod funcs {
     }
 }
 
-use funcs::{low_half, mul, select};
+use funcs::{add, low_half, mul, select};
 
 /// Two stages, and neither boundary was placed by hand. `p` is live
 /// across the await that `mul` introduces, so the async state machine
 /// holds it, which is the work a `pipe` declaration used to ask for.
 pub async fn mac(a: u32, b: u32, prev: u64) -> u64 {
     let p = mul(a, b).await;
-    prev + p
+    add(prev, p).await
 }
 
 /// Three operators, three awaits, and the depth follows from the
@@ -42,7 +46,17 @@ pub async fn mac(a: u32, b: u32, prev: u64) -> u64 {
 pub async fn weighted(a: u32, b: u32, c: u32, d: u32) -> u64 {
     let x = mul(a, b).await;
     let y = mul(c, d).await;
-    x + y
+    add(x, y).await
+}
+
+/// Why there is no `impl Add`. An operator has to return a value, and an
+/// operation whose latency the mapping decides cannot. Providing `+`
+/// would mean providing it only for the zero-latency case, and a design
+/// that wrote `a + b` would have silently chosen a combinational adder.
+/// Awaiting is not a claim that a cycle is spent; it is a refusal to
+/// decide here.
+pub async fn chain(a: u64, b: u64, c: u64) -> u64 {
+    add(add(a, b).await, c).await
 }
 
 /// Timeless: combinational only, so there is no `.await` to write and no

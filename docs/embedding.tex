@@ -36,9 +36,14 @@ spelled \code{.await} and a plain \code{fn} has none. And a pipeline, a
 sequence and a set of parallel processes are one construct, an \code{async
 fn}, differing only in how they are driven; the live-range analysis that a
 \code{pipe} declaration existed to feed is what an async state machine does
-already. Every claim here was compiled rather than argued, and two of those
-compilations changed the design: arbitrary-width arithmetic needs nightly
-Rust, and a unit's parallel processes cannot take \code{\&mut self}. One
+already. Every claim here was compiled rather than argued, across sixteen probes,
+and four of those compilations changed the design. Arbitrary-width
+arithmetic needs nightly Rust. A unit's parallel processes cannot take
+\code{\&mut self}. A \code{macro\_rules!} conditional cannot reach inside
+a block, which is the strongest argument for elaborating through a
+procedural macro. And one driver per wire turns out to be free: a signal
+yields its two ends separately, the driving end is not \code{Clone}, so
+the oldest error message in hardware design arrives as a move error. One
 wall remains, and it is the reason the merged language was designed with
 its own parser: \code{if} on a signal cannot work, because a signal has no
 value while the program runs.
@@ -53,14 +58,17 @@ high-level synthesis, async, language design.
 
 \input{embedding_sections/01_introduction}
 \input{embedding_sections/02_rule}
-\input{embedding_sections/03_time}
-\input{embedding_sections/04_pipeline}
-\input{embedding_sections/05_units}
-\input{embedding_sections/06_binding}
-\input{embedding_sections/07_probes}
-\input{embedding_sections/08_walls}
-\input{embedding_sections/09_elaboration}
-\input{embedding_sections/10_conclusion}
+\input{embedding_sections/03_values}
+\input{embedding_sections/04_time}
+\input{embedding_sections/05_pipeline}
+\input{embedding_sections/06_units}
+\input{embedding_sections/07_wiring}
+\input{embedding_sections/08_binding}
+\input{embedding_sections/09_main}
+\input{embedding_sections/10_probes}
+\input{embedding_sections/11_walls}
+\input{embedding_sections/12_elaboration}
+\input{embedding_sections/13_conclusion}
 
 \begin{thebibliography}{10}
 
