@@ -133,6 +133,7 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             let sh = alu_b.slice::<0, 5>();
             let sub =
                 alt.and(eq(opcode, U::from(0x33u8)).or(eq(f3, U::from(5u8))));
+            // begin{alu}
             let alu = select!(f3.raw() => {
                 0 => mux(sub, a.wrapping_sub(alu_b), a.wrapping_add(alu_b)),
                 1 => shl(a, sh.raw() as usize),
@@ -147,6 +148,7 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                 6 => bor(a, alu_b),
                 _ => band(a, alu_b),
             });
+            // end{alu}
             // The branch condition.
             let taken = select!(f3.raw() => {
                 0 => eq(a, b),
@@ -230,6 +232,7 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             // the model's does.
             when!(wrote => { self.regs.at(rd) <= wval });
             when!(store => { self.dmem.at(daddr) <= stored });
+            // begin{fetch}
             case!(rst => {
                 Bit::One => {
                     self.pc <= U::from(0u8);
@@ -251,6 +254,7 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                     self.valid <= Bit::One
                 },
             });
+            // end{fetch}
             self.halted.set(stop);
             halt.set(stop);
             instr.set(mux(run, ir, U::from(0u32)));

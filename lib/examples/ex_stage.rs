@@ -13,6 +13,7 @@ use txhdl::comp::{
 use txhdl::types::U;
 use txhdl::{lower, Trace};
 
+// begin{unit}
 #[derive(Trace, Default)]
 pub struct Stage {
     pub count: Reg<U<8>>,
@@ -33,6 +34,7 @@ impl Unit<Rx<U<8>>, Tx<U<8>>> for Stage {
         }
     }
 }
+// end{unit}
 
 /// Offers a counting sequence every other cycle.
 #[derive(Default)]

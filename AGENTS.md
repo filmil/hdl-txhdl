@@ -14,7 +14,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and six documents describe it,
+The language is a library, `//lib`, and eight documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -33,6 +33,9 @@ all under `//docs`:
 * `//docs:vreteno` is the first large design, the Vreteno RV32I core
   under `//cpu/vreteno`, with its reference model, its lockstep test
   and its waveform.
+* `//docs:paper` is the expository paper: the system as it is and its
+  results, with diagrams, for a reader meeting TxHDL for the first
+  time; no history.
 * `//docs:cheatsheet` is the one-page cheat sheet, also as a PNG
   (`//docs:cheatsheet_png`); it shows `ex_cheat.rs`, its netlist and
   its waveform, all produced by the build.

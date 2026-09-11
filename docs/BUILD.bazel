@@ -714,6 +714,59 @@ genrule(
     tools = ["//tools/dt2tikz"],
 )
 
+# The paper's waveforms, at column width.
+[
+    genrule(
+        name = "paper_" + name + "_timing",
+        srcs = [name + ".dt", name + ".fst.names"],
+        outs = ["paper_" + name + "_timing.tex"],
+        cmd = "$(location //tools/dt2tikz) $(location " + name + ".dt)" +
+              " --order " + order + " --color --width 8.4" + extra +
+              " --names $(location " + name + ".fst.names)" +
+              " --signals '" + signals + "' > $@",
+        tools = ["//tools/dt2tikz"],
+    )
+    for name, order, signals, extra in [
+        (
+            "cheat",
+            "clk,enable,n,tick",
+            "//clocks/clk=>clk,//enable=>enable,//counter/n=>n,//tick=>tick",
+            "",
+        ),
+        (
+            "stage",
+            "clk,inp_valid,inp,inp_ready,out_valid,out,count",
+            "//clocks/clk=>clk,//inp/rx_valid=>inp_valid,//inp/rx_data=>inp," +
+            "//inp/rx_ready=>inp_ready,//out/tx_valid=>out_valid," +
+            "//out/tx_data=>out,//stage/count=>count",
+            "",
+        ),
+        (
+            "vreteno",
+            "clk,rst,pc,instr,done,rd,val",
+            "//clocks/clk=>clk,//rst=>rst,//cpu/pc=>pc,//instr=>instr," +
+            "//wb/done=>done,//wb/rd=>rd,//wb/val=>val",
+            " --until 22",
+        ),
+    ]
+]
+
+latex_document(
+    name = "paper",
+    main = "paper.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":cheat_run",
+        ":paper_cheat_timing",
+        ":paper_stage_timing",
+        ":paper_vreteno_timing",
+        "//lib/examples:sources",
+        "//cpu/vreteno:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 latex_document(
     name = "cheatsheet",
     main = "cheatsheet.tex",
@@ -752,6 +805,7 @@ combined_pdf(
         "The TxHDL Runtime",
         "TxHDL by Example",
         "Vreteno: An RV32I Core in TxHDL",
+        "TxHDL: A Hardware Description Language That Is a Rust Library",
     ],
     parts = [
         ":cover",
@@ -761,5 +815,6 @@ combined_pdf(
         ":runtime",
         ":examples",
         ":vreteno",
+        ":paper",
     ],
 )

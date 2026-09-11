@@ -1,0 +1,541 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% TxHDL, presented: the system as it is and what it does. Built by
+% //docs:paper. Two columns; no history.
+\documentclass[journal,9pt]{IEEEtran}
+
+% Two columns: listings at 6pt fit 70 columns.
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\definecolor{tint}{RGB}{232,238,250}
+\tikzset{
+  box/.style={draw, rounded corners=2pt, minimum height=6mm, inner sep=3pt, align=center, font=\small},
+  art/.style={draw, fill=tint, rounded corners=2pt, minimum height=6mm, inner sep=3pt, align=center, font=\small},
+  chk/.style={draw, fill=green!12, rounded corners=2pt, minimum height=6mm, inner sep=3pt, align=center, font=\small},
+  flow/.style={-{Stealth[length=2mm]}, thick},
+  lbl/.style={font=\scriptsize, fill=white, inner sep=1pt},
+}
+
+\title{TxHDL: A Hardware Description Language\\That Is a Rust Library}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{This paper presents TxHDL as it stands: the language, its
+runtime, the traces and netlists it produces, the checks that hold
+them together, and the Vreteno RV32I core built with it. Every
+listing is included from the project repository \code{HDL/txhdl} at
+build time, every waveform is drawn from a trace the build produced,
+and every number is from a run the build made. The companion
+documents~\cite{cover} hold the rest.}%
+\thanks{\buildstamp}}
+
+\markboth{TxHDL}{Filmar and Janković: TxHDL}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+TxHDL is a hardware description language with no grammar of its own.
+A design is a Rust program: a unit is a struct, its state is a field,
+its behaviour is an \code{async fn} that waits for clock edges, and a
+value that lives across a wait is a register the source never named.
+The language is a library and a few macros; the parser, the type
+checker, the module system and the tooling are Rust's. The same
+source runs as a cycle-accurate simulation, writes a waveform, and
+lowers to a netlist in Verilog and VHDL, and the build simulates that
+netlist under nvc and Verilator against the trace the simulation
+wrote, so a design that passes is right in three forms at once. The
+largest design so far is Vreteno, a two-stage RV32I core: written in
+the subset the lowering reads, checked in lockstep against a
+reference model, checked as a netlist against its own trace, and
+synthesized on an Artix-7 in 1635 LUTs. This paper presents the
+system and its results.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Hardware description languages, embedded domain-specific languages,
+Rust, RISC-V, high-level synthesis.
+\end{IEEEkeywords}
+
+\section{Introduction}
+\label{sec:p-intro}
+
+\IEEEPARstart{A}{} hardware description language usually arrives with
+a parser, a type checker, a module system and an editor of its own,
+each written once more. TxHDL does not. It starts from a
+specification of a language shaped like Rust and deletes every
+construct Rust already provides: structs, generics, traits, modules,
+functions, \code{async} and \code{await}. What remains is the part
+that means hardware, and it fits in a library of five modules and a
+handful of macros. A design is an ordinary Rust crate, compiled by
+\code{rustc}, and the type checker finds two drivers on a wire, a
+clock-domain crossing without a synchroniser, and a cycle count in a
+combinational body, as type errors.
+
+That library is also a runtime. A design runs as a simulation with a
+stated model of time, one process per unit, and writes a waveform in
+FST or VCD. It is also the input of a lowering: an attribute on a
+unit reads its \code{run} loop and emits Verilog and VHDL, and the
+build simulates the netlist against the trace the Rust simulation
+wrote, under two simulators, so the three forms of a design are held
+to one behaviour. Fig.~\ref{fig:p-system} shows the whole.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \node[art] (src) at (0,1.3) {a design\\Rust source};
+  \node[box] (sim) at (0,0) {simulation\\the runtime};
+  \node[art] (fst) at (2.8,0) {trace\\FST};
+  \node[chk] (tb) at (5.9,0) {testbench\\from the trace};
+  \node[box] (low) at (0,-1.3) {lowering\\\code{\#[lower]}};
+  \node[art] (net) at (2.8,-1.3) {netlist\\Verilog, VHDL};
+  \node[chk] (nvc) at (5.9,-1.3) {nvc, Verilator\\agree at every tick};
+  \node[box] (syn) at (2.8,-2.6) {Vivado\\synthesis};
+  \draw[flow] (src) -- (sim);
+  \draw[flow] (src.west) -- ++(-0.35,0) |- (low.west);
+  \draw[flow] (sim) -- (fst);
+  \draw[flow] (fst) -- (tb);
+  \draw[flow] (tb) -- (nvc);
+  \draw[flow] (low) -- (net);
+  \draw[flow] (net) -- (nvc);
+  \draw[flow] (net) -- (syn);
+\end{tikzpicture}
+\caption{One source, three forms. The runtime simulates it and writes a
+trace; the lowering emits its netlist; a testbench generated from the
+trace replays it into the netlist under nvc and Verilator, and the
+build fails unless every register and output agrees at every tick.}
+\label{fig:p-system}
+\end{figure}
+
+The paper presents the system in that order. Section~\ref{sec:p-lang}
+is the language: what a unit is, how time is modelled, how units are
+wired, and how control flow on a signal is spelled.
+Section~\ref{sec:p-sim} is the simulation and its traces.
+Section~\ref{sec:p-lower} is the lowering and the checks that close
+the loop. Section~\ref{sec:p-vreteno} is Vreteno, an RV32I core
+written in the language, from a reference model to synthesis.
+Section~\ref{sec:p-results} gathers the numbers.
+
+\section{The Language}
+\label{sec:p-lang}
+
+\subsection{A unit}
+
+Listing~\ref{lst:p-counter} is a complete unit: a counter that ticks
+an output once every eight cycles while enabled. It is the unit on
+the project's cheat sheet, and it shows everything a unit has. The
+struct holds the state, one register of three bits. The
+\code{Unit<In, Out>} trait names the ports as type parameters, and
+\code{run} takes them as arguments: an input wire and an output wire
+here, channels or tuples of either elsewhere. The body is one
+\code{loop}. Its first statement waits for the rising edge of the
+default clock; then it reads, plainly, the register and the input;
+then it drives, with \code{when!} a predicated register drive and
+with \code{set} an output wire. The attribute \code{\#[lower]} says
+the unit lowers, Section~\ref{sec:p-lower}, and \code{derive(Trace)}
+names its fields in a waveform.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={A unit: state, ports, one loop that waits, reads and drives. From \code{ex\_cheat.rs}.},label={lst:p-counter}]{lib/examples/ex_cheat.rs}
+
+Values are \code{Bit}, IEEE 1164's nine-valued \code{Logic}, and the
+sized vectors \code{U<N>} and \code{I<N>}, with the operators a
+datapath needs as plain functions: arithmetic, shifts, bitwise logic,
+\code{slice}, \code{concat}, \code{sext} and \code{zext}, and the
+compares. A struct of values with \code{derive(Value)} is a value with
+a width, and a transaction that moves over a channel is such a struct
+with \code{derive(Transaction)}. There is no width arithmetic in the
+type system, since stable Rust has none; a width that is the sum of
+two others is stated, as \code{concat::<K, M>} states it.
+
+\subsection{Time}
+
+Time runs in ticks. A clock is a type with a period and a phase in
+ticks, and its rising edge is an event a process waits for. The
+executor polls every process once per tick and then commits the
+drives; a process that has crossed an edge at this tick cannot cross
+it again, so a second wait written after a first waits for the next
+edge. Fig.~\ref{fig:p-time} draws the rule. A process waits, then
+reads: a register's \code{get} returns what the last edge latched, a
+wire's \code{get} what it carries, a memory's \code{read} its
+asynchronous port. Drives are deferred: \code{set} takes effect at the
+end of the tick, so a read after a drive in the same iteration still
+sees what the edge latched, as it does in hardware. The default clock
+has period two, so its falling edge is a tick of its own and can be
+waited for as well.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1.05cm, y=0.6cm]
+  \foreach \t in {0,2,4} {
+    \draw[dashed, gray] (\t+1,-0.4) -- (\t+1,4.6);
+    \node[font=\tiny, gray] at (\t+1,4.85) {commit};
+  }
+  \draw[thick, blue!70!black] (0,3) -- (0,4) -- (1,4) -- (1,3) -- (2,3) -- (2,4) -- (3,4) -- (3,3) -- (4,3) -- (4,4) -- (5,4) -- (5,3) -- (6,3) -- (6,4) -- (6.6,4);
+  \node[left, font=\scriptsize] at (-0.1,3.5) {clk};
+  \foreach \t in {0,...,6} { \node[font=\scriptsize] at (\t,2.2) {\t}; }
+  \node[font=\scriptsize, left] at (-0.1,2.2) {tick};
+  \node[left, font=\scriptsize] at (-0.1,0.9) {process};
+  \foreach \t in {0,2,4} {
+    \fill[green!50!black] (\t,0.9) circle (1.5pt);
+    \node[font=\tiny, green!50!black] at (\t,1.5) {wait};
+    \draw[-{Stealth[length=1.2mm]}, green!50!black] (\t+0.1,0.9) -- (\t+0.9,0.9);
+    \node[font=\tiny] at (\t+0.5,0.3) {read, drive};
+  }
+\end{tikzpicture}
+\caption{The model of time. A process waits for an edge, reads state
+as that edge left it, and drives; the drives commit at the end of the
+tick. One wait per edge: the next wait is the next edge.}
+\label{fig:p-time}
+\end{figure}
+
+\subsection{Wires and channels}
+
+A wire is created once and split into two ends, \code{Out} and
+\code{In}; \code{Out} is not \code{Clone}, so a second driver is a
+value that cannot be made, and the oldest error in hardware design
+arrives as a move error. A channel is a transaction plus the
+handshake the language supplies, split into \code{Tx} and \code{Rx}.
+Its runtime form is an elastic buffer of two, Fig.~\ref{fig:p-chan}:
+a send is an offer, \code{valid} and \code{data} this tick and the
+transaction in the buffer at the end of it, allowed when there is
+room; a receive is a take, \code{ready} this tick and the head gone
+at the end of it. Both commit as register drives do, so two units
+that run every cycle pass one transaction per cycle with
+\code{valid} and \code{ready} registered on both sides, and no
+combinational path joins them. A receiver's \code{wait} is an event
+like an edge: the next edge at which the channel holds a transaction.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \node[box] (tx) at (0,0) {sender\\\code{Tx<T>}};
+  \node[draw, fill=tint, minimum width=18mm, minimum height=9mm] (buf) at (3.2,0) {};
+  \draw (buf.north) -- (buf.south);
+  \node[font=\tiny] at (3.2,-0.65) {a buffer of two};
+  \node[box] (rx) at (6.4,0) {receiver\\\code{Rx<T>}};
+  \draw[flow] ([yshift=2mm]tx.east) -- ([yshift=2mm]buf.west);
+  \node[font=\tiny] at (1.6,0.55) {offer: valid, data};
+  \draw[flow, dashed] ([yshift=-2mm]buf.west) -- ([yshift=-2mm]tx.east);
+  \node[font=\tiny] at (1.6,-0.55) {room: ready};
+  \draw[flow] ([yshift=2mm]buf.east) -- ([yshift=2mm]rx.west);
+  \node[font=\tiny] at (4.8,0.55) {head: valid, data};
+  \draw[flow, dashed] ([yshift=-2mm]rx.west) -- ([yshift=-2mm]buf.east);
+  \node[font=\tiny] at (4.8,-0.55) {take: ready};
+\end{tikzpicture}
+\caption{A channel. The sender offers into a two-entry buffer and reads
+whether there is room; the receiver takes from its head. Every wire is
+registered at the buffer, so neither side sees the other's logic.}
+\label{fig:p-chan}
+\end{figure}
+
+A clock-domain crossing is a type, \code{Crossing<T, A, B>}, and the
+only way a value in clock \code{A} becomes one in clock \code{B}; a
+wire whose ends are in different clocks does not type-check. An
+interface is declared once with its members and its roles, and
+\code{interface!} emits a struct per role with the directions the
+role has, so a bus master, a target and a monitor are three views of
+one declaration.
+
+\subsection{Control flow on a signal}
+
+A signal has no value while the Rust program runs, so it cannot be
+the condition of an \code{if}. Three macros spell what hardware means
+instead, and each is named for what it is rather than for the Rust it
+resembles. \code{when!(c => \{ r <= v \})} is a predicated drive: both
+arms exist, a multiplexer chooses, nothing branches. \code{case!} is
+\code{when!} with many arms, Rust patterns with guards and
+alternatives, the first match winning, so a state machine is one
+\code{case!} over its state register. \code{select!} chooses among
+values rather than drives, \code{match} on a value by another name,
+and lowers to a chain of multiplexers; \code{mux} is its two-arm
+case. Listing~\ref{lst:p-alu} is the Vreteno core's ALU, a
+\code{select!} over the function code.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=alu-alu,float,caption={\code{select!}: the ALU of the Vreteno core, one value chosen by the function code. From \code{core.rs}.},label={lst:p-alu}]{cpu/vreteno/src/core.rs}
+
+\subsection{Pipelines and configurations}
+
+An \code{async fn} of awaited operators is a pipeline: each operator
+takes the cycles its implementation takes, a value alive across an
+await is a register, and the depth follows from the operators rather
+than from the source. \code{\#[pipeline(mul = 3, add = 1)]} emits the
+Verilog of such a function with the stated latencies, and the same
+function with \code{mul = 1} is two stages shorter without an edit. A
+configuration is a trait with associated types and constants, a
+build is a type alias, and a design is generic over its
+configuration; \code{main} names the build, and elaboration is the
+program running.
+
+\section{Simulation and Traces}
+\label{sec:p-sim}
+
+\code{Running::new(unit.run(inputs, outputs))} is a design under
+test, stepped a tick or a cycle at a time while the testbench reads
+its wires between steps; \code{Reg} and \code{Mem} give out second
+handles for that. \code{Wave::from\_env} names what to watch, by the
+field names \code{derive(Trace)} registered, and writes an FST or a
+VCD where the environment points; a compound value is one vector and
+one signal per field beside it, and an enum is written with its
+variant names. Fig.~\ref{fig:p-counter} is the counter of
+Listing~\ref{lst:p-counter}, drawn by the build from the trace the
+run wrote, through the project's converters and a TikZ generator; no
+figure in this paper was drawn by hand.
+
+\begin{figure}[htbp]
+\centering
+\input{paper_cheat_timing.tex}
+\caption{The counter, from its trace: \code{enable} drops at cycle 10,
+\code{n} counts while it is high, \code{tick} marks seven.}
+\label{fig:p-counter}
+\end{figure}
+
+\section{From Source to Netlist}
+\label{sec:p-lower}
+
+\subsection{The lowering}
+
+\code{\#[lower]} reads a unit's \code{run} loop as it is written and
+builds a netlist from it, without a second language: a loop of one
+edge wait, register and port reads into names, \code{when!},
+\code{case!} and \code{select!}, the datapath operators, memories
+written through \code{at} and read by index, and channel ports as a
+valid/ready handshake whose wait guards the drives. A \code{let} that
+computes is a wire named for it, so the netlist reads as the source
+does. What the macro does not read it refuses with a message that
+names the construct, and the subset it reads is also plain Rust: a
+unit that lowers is the unit that simulates, one file.
+Listing~\ref{lst:p-netlist} is what the counter became.
+
+\lstinputlisting[style=ascii,caption={The counter's Verilog, as the build printed it. The VHDL says the same.},label={lst:p-netlist}]{out_cheat.txt}
+
+\subsection{The checks}
+
+A netlist that is only printed is a claim. The build simulates it,
+twice. The example is run with two environment variables set, so
+beside its trace it writes the unit's VHDL and Verilog; a generator
+reads the trace and the unit's ports and writes a testbench, in VHDL
+and again in Verilog, that replays the trace's inputs into the entity
+and asserts, tick by tick, that its registers and outputs are what
+the trace holds; nvc simulates the VHDL and Verilator the Verilog,
+both built from source by the build; and each test passes only if
+every comparison held. The testbench's timing is the model of time
+made literal: an input the trace holds at tick $2k$ is applied at
+$2k-1$, a register is checked at $2k+1$, a wire at $2k-1$, and a
+channel's registered inputs a tick later than a wire's.
+Table~\ref{tab:p-checked} lists the units that pass;
+Fig.~\ref{fig:p-stage} is one of them, a stage between two channels,
+whose handshake on both sides is what its testbench replays.
+
+\begin{table}[htbp]
+\caption{Lowered units simulated against their traces.}
+\label{tab:p-checked}
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+Unit & What it shows & Under \\
+\midrule
+counter & a register, \code{when!}, an output & nvc, Verilator \\
+blinky & a configuration's constants baked in & nvc, Verilator \\
+sequencer & \code{case!} on a state enum, guards & nvc, Verilator \\
+ALU & ten operators by \code{case!} & nvc, Verilator \\
+scratchpad & a memory written and read & nvc, Verilator \\
+decoder & \code{slice}, \code{concat}, \code{sext}, \code{select!} & nvc, Verilator \\
+stage & two channels, the handshake & nvc, Verilator \\
+Vreteno & the whole core, 66 ticks & nvc, Verilator \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\input{paper_stage_timing.tex}
+\caption{A stage between two channels, from its trace: a word offered
+every other cycle is taken, passed on incremented in the same cycle,
+and counted. The netlist agrees at every tick.}
+\label{fig:p-stage}
+\end{figure}
+
+The second simulator earned its place on its first run. Every unit's
+VHDL had agreed with its trace; the same units' Verilog, from the
+same statements, had two defects VHDL cannot have, an unsized number
+inside a concatenation and a shift made logical by Verilog's
+whole-expression signedness, and neither showed until the Verilog was
+simulated. Both were found by the core and fixed in the emitter.
+
+\section{Vreteno}
+\label{sec:p-vreteno}
+
+Vreteno is a 32-bit RISC-V core, the RV32I base integer set, and the
+largest design in the language. Fig.~\ref{fig:p-core} is its
+structure. It is one unit and one process. The fetch stage reads the
+instruction memory at the program counter into an instruction
+register, with its program counter and a valid bit. The execute stage
+decodes the fields of the word in that register with \code{slice},
+\code{concat} and \code{sext}, reads two operands from the register
+file, computes with the ALU of Listing~\ref{lst:p-alu} or the
+load-store unit, writes the register file and the data memory, and,
+on a taken branch or a jump, redirects the fetch and squashes the
+word fetched that cycle, which is the one-cycle penalty. The whole is
+written in the subset the lowering reads, Listing~\ref{lst:p-fetch}
+being the fetch's drives, so the one file simulates and is a netlist.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \node[box] (pc) at (0,0) {\code{pc}};
+  \node[art] (imem) at (2.3,0) {instruction\\memory};
+  \node[box, fill=tint] (ir) at (5.2,0) {\code{ir}, \code{ir\_pc}, \code{valid}};
+  \node[box] (dec) at (5.2,-1.5) {decode,\\immediates};
+  \node[art] (regs) at (2.3,-1.5) {register\\file};
+  \node[box] (alu) at (5.2,-3) {ALU, branch,\\load, store};
+  \node[art] (dmem) at (2.3,-3) {data\\memory};
+  \node[box] (wb) at (0,-3) {writeback};
+  \draw[flow] (pc) -- (imem);
+  \draw[flow] (imem) -- (ir);
+  \draw[flow] (ir) -- (dec);
+  \draw[flow] (dec) -- (regs);
+  \draw[flow] (regs) -- (alu.west |- regs.east) -- (alu);
+  \draw[flow] (dec) -- (alu);
+  \draw[flow] (alu) -- (dmem);
+  \draw[flow] (dmem) -- (wb);
+  \draw[flow] (wb.north) -- (wb.north |- regs.west) -- (regs.west);
+  \draw[flow, red!70!black] (alu.east) -- ++(0.45,0) |- (pc.north) node[lbl, pos=0.25, right] {redirect};
+  \begin{scope}[on background layer]
+    \node[draw, dashed, gray, fit=(pc)(imem), inner sep=3pt, label={[gray, font=\scriptsize]left:fetch}] {};
+    \node[draw, dashed, gray, fit=(dec)(regs)(alu)(dmem)(wb), inner sep=3pt, label={[gray, font=\scriptsize]below:execute}] {};
+  \end{scope}
+\end{tikzpicture}
+\caption{Vreteno: two stages in one process. The instruction register
+is the boundary; a taken branch or jump redirects the fetch and costs
+one bubble.}
+\label{fig:p-core}
+\end{figure}
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=fetch-fetch,float,caption={The fetch's drives: reset, halt, redirect or advance, in that priority, one \code{case!}. From \code{core.rs}.},label={lst:p-fetch}]{cpu/vreteno/src/core.rs}
+
+The core is checked three ways. A reference model of the instruction
+set, written as a plain program over the architectural state, runs in
+lockstep with it: the model steps when the core retires an
+instruction, and after every cycle the program counter, the
+thirty-one registers and the halt must agree, and at the halt the
+data memory must. The demonstration program and sixty-four random
+programs of two hundred instructions pass, and a broken shift or a
+branch that does not squash fails at its first use. The netlist is
+checked as every lowered unit is, under nvc and Verilator, with the
+program in its instruction memory. And the Verilog is synthesized,
+Table~\ref{tab:p-synth}, on an Artix-7 with a clock constraint of ten
+nanoseconds, by Vivado, which the build installs itself from the
+vendor's archive into a cache the machine shares. The instruction
+memory became a read-only memory in one block RAM tile, the data
+memory and the register file distributed RAM, since their reads are
+combinational, and the flip-flops are the five registers.
+Fig.~\ref{fig:p-vreteno} is the opening of the demonstration, from
+the trace.
+
+\begin{table}[htbp]
+\caption{Vreteno on an Artix-7, after synthesis.}
+\label{tab:p-synth}
+\centering
+\begin{tabular}{@{}lr@{}}
+\toprule
+Resource & Used \\
+\midrule
+LUTs, as logic & 1075 \\
+LUTs, as distributed RAM & 560 \\
+Flip-flops & 103 \\
+Block RAM tiles & 1 \\
+Errors, critical warnings, warnings & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\input{paper_vreteno_timing.tex}
+\caption{Vreteno's first cycles, from its trace: reset, then an
+instruction per edge, the writeback decoded into its register and
+value, and the first bubble after the first taken branch.}
+\label{fig:p-vreteno}
+\end{figure}
+
+\section{Results}
+\label{sec:p-results}
+
+What the system does, in numbers from the build that produced this
+paper. The runtime is five Rust modules and one macro crate, with one
+external crate, an FST writer. Twenty-four examples compile, each one
+concept, and every one that runs writes a waveform the examples
+document draws. Eight lowered units, Table~\ref{tab:p-checked}, are
+simulated as VHDL under nvc and as Verilog under Verilator against
+the traces their Rust simulations wrote, and agree at every tick;
+twenty tests run under \code{bazel test //...}, and every one of them
+is hermetic, the simulators built from source and the synthesis tool
+installed by the build. Vreteno is 268 lines of core, checked in
+lockstep against a 169-line model on a demonstration program and
+sixty-four random ones, checked as a netlist on 66 ticks and eight
+signals, and synthesized in two minutes to the figures of
+Table~\ref{tab:p-synth}. Eight documents describe the system, this
+one included, and each is built by the same command that builds the
+designs, with every listing included from the tree and every figure
+drawn from a trace, so none can drift from the code.
+
+\section{Related Systems}
+\label{sec:p-related}
+
+Chisel~\cite{bachrach2012} and SpinalHDL embed a hardware language in
+Scala with the same structural architecture: a module is a class, a
+bundle has directions, \code{when} and \code{Mux} are control flow on
+a signal, and elaboration is the program running. TxHDL's structural
+half is that architecture in Rust, where a second driver is a move
+error and a configuration is a type. Its behavioural half, an
+\code{async fn} that is a sequence, a pipeline or a process according
+to how it is driven, has no counterpart in Chisel; its nearest
+relatives are XLS~\cite{xls}, whose Rust-shaped DSLX the compiler
+schedules into pipelines, and Calyx~\cite{calyx}, whose \code{seq}
+and \code{par} are an \code{await} and a \code{parallel!} seen from
+the other side. RHDL~\cite{rhdl} embeds a hardware language in Rust
+with the clock domain as a type parameter, which TxHDL takes
+directly. What sets TxHDL apart from all of them is not any one
+construct but the loop the build closes: one source, three forms,
+and a test that fails when they disagree.
+
+\section{Conclusion}
+\label{sec:p-conclusion}
+
+A hardware description language can be a Rust library. The language
+is small enough to fit on one page, the runtime simulates it with a
+stated model of time, the lowering turns it into Verilog and VHDL,
+and the build holds the three to one behaviour under two simulators.
+A RISC-V core written in it runs, lowers, is checked against its own
+trace and synthesizes. The next steps are a place-and-route on a
+board, a third pipeline stage for the memories the block RAM wants
+registered, and the parts of a unit the lowering does not yet read:
+a second process and the falling edge.
+
+\begin{thebibliography}{10}
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\bibitem{bachrach2012}
+J.~Bachrach et al., ``Chisel: Constructing hardware in a Scala embedded
+language,'' in \emph{Proc. 49th Design Automation Conference}, 2012.
+
+\bibitem{xls}
+Google, ``XLS: Accelerated HW synthesis,'' \code{github.com/google/xls}.
+
+\bibitem{calyx}
+R.~Nigam et al., ``A compiler infrastructure for accelerator
+generators,'' in \emph{Proc. ASPLOS}, 2021.
+
+\bibitem{rhdl}
+S.~Roantree, ``RHDL: A hardware description language embedded in Rust,''
+\code{github.com/samitbasu/rhdl}.
+
+\end{thebibliography}
+
+\end{document}
