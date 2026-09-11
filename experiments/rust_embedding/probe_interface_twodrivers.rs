@@ -1,14 +1,15 @@
-// Probe 19c. Two roles both driving one member. Expected to fail with the
-// macro's message, which names both roles; without the check it would
-// still fail, as E0382 on the second move of the driver.
-use txhdl_interface::interface;
-use wire::{Chan, Member, Signal};
+// Probe 19c. Two roles driving one member. Expected to fail with the
+// macro's message naming both roles.
+use txhdl::comp::{Chan, Signal};
+use txhdl::interface;
+use txhdl::types::U;
+use txhdl::Transaction;
+
+#[derive(Clone, Copy, Default, Transaction)]
+pub struct Beat { pub data: U<32> }
 
 interface! {
-    Bad {
-        adr: Signal<u32>,
-        dat: Chan<u32>,
-    }
+    Bad { adr: Signal<U<32>>, dat: Chan<Beat> }
     role A { out adr, out dat }
-    role B { out adr, in dat }     // adr driven twice
+    role B { out adr, in dat }
 }

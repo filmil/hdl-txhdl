@@ -1,41 +1,23 @@
-// Probe 8. Does a derive give the "kind before data" reading that putting
-// the impl first was reaching for, while staying idiomatic Rust?
+// Probe 8. The derives, from the runtime's own macro crate. The bounds
+// hold only if the derives emitted the impls.
+use txhdl::comp::Bus as BusTrait;
+use txhdl::types::Transaction as TransactionTrait;
+use txhdl::{Bus, Transaction};
 
-pub mod types {
-    pub trait Transaction {}
-}
+#[derive(Clone, Copy, Default, Transaction)]
+pub struct MacRequest { pub addr: u32, pub count: u8 }
 
-pub mod comp {
-    pub trait Bus {}
-}
-
-use txhdl_derive::{Bus, Transaction};
-
-#[derive(Transaction)]
-pub struct MacRequest {
-    pub addr: u32,
-    pub count: u8,
-}
-
-#[derive(Transaction)]
-pub struct MacResponse {
-    pub acc: u64,
-}
+#[derive(Clone, Copy, Default, Transaction)]
+pub struct MacResponse { pub acc: u64 }
 
 #[derive(Bus)]
-pub struct MemBus {
-    pub req: MacRequest,
-}
+pub struct MemBus { pub req: MacRequest }
 
-/// Proof the impls exist: these bounds only hold if the derives ran.
-fn needs_transaction<T: types::Transaction>(_t: &T) {}
-fn needs_bus<B: comp::Bus>(_b: &B) {}
+fn needs_transaction<T: TransactionTrait>(_t: &T) {}
+fn needs_bus<B: BusTrait>(_b: &B) {}
 
 pub fn check() {
-    let r = MacRequest { addr: 0, count: 1 };
-    let s = MacResponse { acc: 0 };
-    let b = MemBus { req: MacRequest { addr: 1, count: 2 } };
-    needs_transaction(&r);
-    needs_transaction(&s);
-    needs_bus(&b);
+    needs_transaction(&MacRequest { addr: 0, count: 1 });
+    needs_transaction(&MacResponse { acc: 0 });
+    needs_bus(&MemBus { req: MacRequest { addr: 1, count: 2 } });
 }

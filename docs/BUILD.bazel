@@ -331,6 +331,12 @@ latex_document(
 latex_document(
     name = "embedding",
     main = "embedding.tex",
-    data = [":vendored_tex"],
+    # The appendix includes the runtime and its examples verbatim from
+    # the tree, so a listing there cannot differ from the code.
+    data = [
+        ":vendored_tex",
+        "//lib:sources",
+        "//lib/examples:sources",
+    ],
     deps = ["housestyle.tex"] + glob(["embedding_sections/*.tex"]),
 )

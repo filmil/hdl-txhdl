@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The prototypical runtime: what the language is, once everything Rust
+# provides has been deleted. Every concept the article introduces lives
+# here, and every one is exercised by a compiled example under
+# //lib/examples that the article's appendix includes verbatim.
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_proc_macro")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_proc_macro(
+    name = "txhdl_macros",
+    srcs = ["macros/lib.rs"],
+    crate_name = "txhdl_macros",
+    edition = "2021",
+)
+
+rust_library(
+    name = "txhdl",
+    srcs = [
+        "src/lib.rs",
+        "src/comp.rs",
+        "src/funcs.rs",
+        "src/pipeline.rs",
+        "src/types.rs",
+    ],
+    crate_name = "txhdl",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+)
+
+# The sources, for the article's appendix to include verbatim.
+filegroup(
+    name = "sources",
+    srcs = [
+        "macros/lib.rs",
+        "src/comp.rs",
+        "src/funcs.rs",
+        "src/lib.rs",
+        "src/pipeline.rs",
+        "src/types.rs",
+    ],
+)

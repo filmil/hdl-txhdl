@@ -164,16 +164,34 @@ Nesting costs nothing at elaboration. A child's constant is still a
 compile-time value reached through the parent, so it may still size an
 array:
 
-\begin{lstlisting}[caption={A child's constant, reached through the parent, still sizes an array.},label={lst:nestedconst}]
+\begin{lstlisting}[caption={A child's constant, reached through the parent, still sizes an array. This is the long spelling.},label={lst:nestedconst}]
 pub const DEPTH: usize =
     <<Fpga as TopConfig>::P as ProducerConfig>::DEPTH;
 pub static BUF: [u32; DEPTH] = [0; DEPTH];
 \end{lstlisting}
 
-The spelling in that last listing is the one real cost: reaching two
-levels down needs a fully qualified path, and three levels reads worse
-again. A type alias per level is the usual repair, and a derive on the
-configuration could emit them.
+The spelling in Listing~\ref{lst:nestedconst} is the one real cost of
+nesting: reaching two levels down needs a fully qualified path, and three
+levels reads worse again. The repair is one type alias per level of the
+tree, written once beside the trait, so it serves every build rather than
+one.
+
+\begin{lstlisting}[caption={The repair. A generic alias per level, and a per-build alias where one build is being talked about. Both compile in probe~17.},label={lst:nestedalias}]
+pub type ProducerOf<T> = <T as TopConfig>::P;
+pub type ConsumerOf<T> = <T as TopConfig>::C;
+
+// One qualification, not two, for any build.
+pub const DEPTH: usize =
+    <ProducerOf<Fpga> as ProducerConfig>::DEPTH;
+
+// None at all, where one build is meant.
+pub type FpgaProducer = ProducerOf<Fpga>;
+pub const D: usize = <FpgaProducer as ProducerConfig>::DEPTH;
+pub static BUF: [u32; D] = [0; D];
+\end{lstlisting}
+
+A derive on the configuration trait could emit the per-level aliases,
+which would make the long spelling something nobody writes.
 
 Wiring is not a stored back-reference. A child is handed the ports it
 needs when its \code{run} is called, and that is what the inputs and

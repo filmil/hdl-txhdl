@@ -1,15 +1,15 @@
-// Probe 19b. A role that forgets a member. The macro_rules! version
-// compiled this silently. The proc macro must refuse it and say which
-// role and which member.
-use txhdl_interface::interface;
-use wire::{Beat, Chan, Member, Signal};
+// Probe 19b. A role that forgets a member. Expected to fail with the
+// macro's own message naming the role and the member.
+use txhdl::comp::{Chan, Signal};
+use txhdl::interface;
+use txhdl::types::{Bit, U};
+use txhdl::Transaction;
+
+#[derive(Clone, Copy, Default, Transaction)]
+pub struct Beat { pub data: U<32> }
 
 interface! {
-    Wishbone {
-        adr: Signal<u32>,
-        ack: Signal<bool>,
-        dat: Chan<Beat>,
-    }
+    Wishbone { adr: Signal<U<32>>, ack: Signal<Bit>, dat: Chan<Beat> }
     role Initiator { out adr, in ack, out dat }
-    role Target    { in adr,  out ack }       // dat is missing
+    role Target    { in adr,  out ack }          // dat is missing
 }

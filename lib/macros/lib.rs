@@ -1,26 +1,45 @@
-// The `interface!` procedural macro.
-//
-// What it does that the macro_rules! version could not:
-//   - any number of roles, not exactly two;
-//   - `in` as the direction keyword, because a proc macro sees raw
-//     tokens and a keyword is just an identifier to it;
-//   - a check that every role names every member exactly once, with a
-//     compile error naming the member and the role when it does not.
-//
-// Written against `proc_macro` alone, without syn or quote, so it needs
-// no crate registry. The grammar is small enough to parse by hand:
-//
-//   interface! {
-//       Name { member: Type, ... }
-//       role RoleA { dir member, ... }
-//       role RoleB { dir member, ... }
-//       ...
-//   }
-
+// SPDX-License-Identifier: Apache-2.0
+//! The macros of the runtime: two derives and `interface!`. Written
+//! against `proc_macro` alone, without syn or quote, because the
+//! grammars are small and a crate registry would be the larger cost.
 extern crate proc_macro;
-use proc_macro::{Delimiter, Group, Ident, Punct, Span, TokenStream, TokenTree};
+use proc_macro::{Delimiter, Group, Ident, Span, TokenStream, TokenTree};
 
-struct Member { name: String, ty: String }
+fn type_name(input: TokenStream) -> String {
+    let mut seen_kw = false;
+    for tt in input {
+        if let TokenTree::Ident(id) = tt {
+            let s = id.to_string();
+            if seen_kw {
+                return s;
+            }
+            if s == "struct" || s == "enum" || s == "union" {
+                seen_kw = true;
+            }
+        }
+    }
+    panic!("expected a struct, enum or union")
+}
+
+fn marker(input: TokenStream, trait_path: &str) -> TokenStream {
+    let name = type_name(input);
+    format!("impl {trait_path} for {name} {{}}").parse().unwrap()
+}
+
+#[proc_macro_derive(Transaction)]
+pub fn derive_transaction(input: TokenStream) -> TokenStream {
+    marker(input, "::txhdl::types::Transaction")
+}
+
+#[proc_macro_derive(Bus)]
+pub fn derive_bus(input: TokenStream) -> TokenStream {
+    marker(input, "::txhdl::comp::Bus")
+}
+
+// ---------------------------------------------------------------------
+// interface!
+
+struct Field { name: String, ty: String }
 struct Role { name: String, ends: Vec<(String, String)> } // (dir, member)
 
 fn err(span: Span, msg: &str) -> TokenStream {
@@ -49,7 +68,7 @@ fn expect_brace(it: &mut impl Iterator<Item = TokenTree>, what: &str) -> Result<
 
 /// `name: Type, name: Type, ...`. A type may contain `<` and `>`, and a
 /// comma inside them does not end the member, so angle depth is tracked.
-fn parse_members(g: Group) -> Result<Vec<Member>, TokenStream> {
+fn parse_members(g: Group) -> Result<Vec<Field>, TokenStream> {
     let mut out = Vec::new();
     let mut it = g.stream().into_iter().peekable();
     while it.peek().is_some() {
@@ -74,7 +93,7 @@ fn parse_members(g: Group) -> Result<Vec<Member>, TokenStream> {
         if ty.is_empty() {
             return Err(err(name.span(), "member has no type"));
         }
-        out.push(Member { name: name.to_string(), ty });
+        out.push(Field { name: name.to_string(), ty });
     }
     Ok(out)
 }
@@ -98,7 +117,7 @@ fn parse_role(name: Ident, g: Group) -> Result<Role, TokenStream> {
     Ok(Role { name: name.to_string(), ends })
 }
 
-fn check(iface: &Ident, members: &[Member], roles: &[Role]) -> Result<(), TokenStream> {
+fn check(iface: &Ident, members: &[Field], roles: &[Role]) -> Result<(), TokenStream> {
     if roles.is_empty() {
         return Err(err(iface.span(), "an interface needs at least one role"));
     }
@@ -137,7 +156,7 @@ fn check(iface: &Ident, members: &[Member], roles: &[Role]) -> Result<(), TokenS
     Ok(())
 }
 
-fn emit(iface: &Ident, members: &[Member], roles: &[Role]) -> TokenStream {
+fn emit(iface: &Ident, members: &[Field], roles: &[Role]) -> TokenStream {
     let mut s = String::new();
     s.push_str(&format!("pub struct {iface};\n"));
 
@@ -146,7 +165,7 @@ fn emit(iface: &Ident, members: &[Member], roles: &[Role]) -> TokenStream {
         for (dir, mname) in &r.ends {
             let ty = &members.iter().find(|m| &m.name == mname).unwrap().ty;
             let end = if dir == "out" { "Driver" } else { "Reader" };
-            s.push_str(&format!("    pub {mname}: <{ty} as Member>::{end},\n"));
+            s.push_str(&format!("    pub {mname}: <{ty} as ::txhdl::comp::Member>::{end},\n"));
         }
         s.push_str("}\n");
     }
@@ -159,7 +178,11 @@ fn emit(iface: &Ident, members: &[Member], roles: &[Role]) -> TokenStream {
     let tuple: Vec<&str> = roles.iter().map(|r| r.name.as_str()).collect();
     s.push_str(&format!("impl {iface} {{\n    pub fn new() -> ({}) {{\n", tuple.join(", ")));
     for m in members {
-        s.push_str(&format!("        let {} = <{} as Member>::new().split();\n", m.name, m.ty));
+        // Fully qualified call syntax, so the caller need not have `Member`
+        // in scope for the generated code to resolve.
+        s.push_str(&format!(
+            "        let {} = ::txhdl::comp::Member::split(<{} as ::txhdl::comp::Member>::new());\n",
+            m.name, m.ty));
     }
     s.push_str("        (\n");
     for r in roles {
@@ -201,6 +224,3 @@ pub fn interface(input: TokenStream) -> TokenStream {
     emit(&iface, &members, &roles)
 }
 
-// Silence unused-import warnings for items only some paths use.
-#[allow(dead_code)]
-fn _unused(_: Punct) {}

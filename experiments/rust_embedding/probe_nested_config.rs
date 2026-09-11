@@ -1,142 +1,54 @@
-// Probe 17. Nested configuration.
-//
-// Probe 6 gave one config for a whole design, with a nested unit generic
-// over the same config. That works while every choice is global. It stops
-// working as soon as two children want a knob of the same name, and it
-// makes a child's configuration unreusable outside its parent.
-//
-// The fix is that a config is a tree: a parent's config names its
-// children's configs as associated types. A child then has a
-// configuration of its own, which can be written once and used by several
-// parents.
+// Probe 17. Nested configuration: a parent's config names its children's
+// as associated types, so two children may share a knob name and a
+// child's config is reusable. Against the library's `Config`.
+use txhdl::comp::{Config, Module, Reg};
+use txhdl::types::U;
 
-pub trait Generator { fn new() -> Self; fn next(&self) -> u32; }
+pub trait Generator { fn new() -> Self; fn next(&self) -> U<32>; }
+pub struct Counter; impl Generator for Counter { fn new() -> Self { Counter } fn next(&self) -> U<32> { U::new(1) } }
+pub struct Lfsr;    impl Generator for Lfsr    { fn new() -> Self { Lfsr }    fn next(&self) -> U<32> { U::new(0x9E37) } }
 
-pub struct Counter;
-impl Generator for Counter {
-    fn new() -> Self { Counter }
-    fn next(&self) -> u32 { 1 }
-}
+pub trait ProducerConfig { type Gen: Generator; const DEPTH: usize; }
+pub trait ConsumerConfig { const DEPTH: usize; const CHECKSUM: bool; }
+pub trait TopConfig: Config { type P: ProducerConfig; type C: ConsumerConfig; }
 
-pub struct Lfsr;
-impl Generator for Lfsr {
-    fn new() -> Self { Lfsr }
-    fn next(&self) -> u32 { 0x9E37 }
-}
+/// One alias per level of the tree, written once beside the trait.
+pub type ProducerOf<T> = <T as TopConfig>::P;
+pub type ConsumerOf<T> = <T as TopConfig>::C;
 
-// --- each unit declares the configuration it needs --------------------
+pub struct Producer<PC: ProducerConfig> { pub gen: PC::Gen }
+pub struct Consumer<CC: ConsumerConfig> { pub seen: Reg<U<32>>, _c: core::marker::PhantomData<CC> }
+pub struct Top<TC: TopConfig> { pub producer: Producer<TC::P>, pub consumer: Consumer<TC::C> }
 
-pub trait ProducerConfig {
-    type Gen: Generator;
-    /// Note the name.
-    const DEPTH: usize;
-}
-
-pub trait ConsumerConfig {
-    /// The same name, a different unit, and no collision, because the two
-    /// live in different traits.
-    const DEPTH: usize;
-    const CHECKSUM: bool;
-}
-
-/// The parent's configuration names its children's, rather than holding
-/// their fields.
-pub trait TopConfig {
-    type P: ProducerConfig;
-    type C: ConsumerConfig;
-    const NAME: &'static str;
-}
-
-// --- units are generic over their own config only ---------------------
-
-pub struct Producer<PC: ProducerConfig> {
-    pub gen: PC::Gen,
-    pub buf: [u32; 4],
-}
-
-impl<PC: ProducerConfig> Producer<PC> {
-    pub fn new() -> Self { Producer { gen: PC::Gen::new(), buf: [0; 4] } }
-    pub fn depth(&self) -> usize { PC::DEPTH }
-    pub fn step(&self) -> u32 { self.gen.next() }
-}
-
-pub struct Consumer<CC: ConsumerConfig> {
-    pub seen: u32,
-    pub _c: core::marker::PhantomData<CC>,
-}
-
-impl<CC: ConsumerConfig> Consumer<CC> {
-    pub fn new() -> Self { Consumer { seen: 0, _c: core::marker::PhantomData } }
-    pub fn depth(&self) -> usize { CC::DEPTH }
-    pub fn checks(&self) -> bool { CC::CHECKSUM }
-}
-
-/// The parent reaches each child's config through its own, and never
-/// mentions a child's knobs.
-pub struct Top<TC: TopConfig> {
-    pub producer: Producer<TC::P>,
-    pub consumer: Consumer<TC::C>,
-}
-
-impl<TC: TopConfig> Top<TC> {
-    pub fn new() -> Self {
-        Top { producer: Producer::<TC::P>::new(), consumer: Consumer::<TC::C>::new() }
+impl<TC: TopConfig> Module<(), ()> for Top<TC> {
+    async fn run(&mut self, _i: (), _o: ()) {
+        let _ = (<ProducerOf<TC> as ProducerConfig>::DEPTH, <ConsumerOf<TC> as ConsumerConfig>::DEPTH);
+        self.consumer.seen.set(self.producer.gen.next());
     }
-    pub fn name(&self) -> &'static str { TC::NAME }
 }
 
-// --- configurations, written once and reused --------------------------
-
-pub struct FastProducer;
-impl ProducerConfig for FastProducer {
-    type Gen = Lfsr;
-    const DEPTH: usize = 16;
-}
-
-pub struct SmallProducer;
-impl ProducerConfig for SmallProducer {
-    type Gen = Counter;
-    const DEPTH: usize = 2;
-}
-
-/// One child configuration, used by both builds below. That reuse is what
-/// the flat version could not express.
-pub struct CheckedConsumer;
-impl ConsumerConfig for CheckedConsumer {
-    const DEPTH: usize = 64;      // same name as ProducerConfig::DEPTH
-    const CHECKSUM: bool = true;
-}
+pub struct FastProducer;  impl ProducerConfig for FastProducer  { type Gen = Lfsr;    const DEPTH: usize = 16; }
+pub struct SmallProducer; impl ProducerConfig for SmallProducer { type Gen = Counter; const DEPTH: usize = 2; }
+/// Written once, used by both builds. Same knob name as the producer's.
+pub struct CheckedConsumer; impl ConsumerConfig for CheckedConsumer { const DEPTH: usize = 64; const CHECKSUM: bool = true; }
 
 pub struct Fpga;
-impl TopConfig for Fpga {
-    type P = FastProducer;
-    type C = CheckedConsumer;
-    const NAME: &'static str = "fpga";
+impl TopConfig for Fpga { type P = FastProducer; type C = CheckedConsumer; }
+impl Config for Fpga {
+    type Top = Top<Fpga>; const NAME: &'static str = "fpga";
+    fn top() -> Self::Top { Top { producer: Producer { gen: Lfsr::new() }, consumer: Consumer { seen: Reg::new(U::new(0)), _c: core::marker::PhantomData } } }
 }
-
 pub struct Tiny;
-impl TopConfig for Tiny {
-    type P = SmallProducer;
-    type C = CheckedConsumer;   // reused, unchanged
-    const NAME: &'static str = "tiny";
+impl TopConfig for Tiny { type P = SmallProducer; type C = CheckedConsumer; }
+impl Config for Tiny {
+    type Top = Top<Tiny>; const NAME: &'static str = "tiny";
+    fn top() -> Self::Top { Top { producer: Producer { gen: Counter::new() }, consumer: Consumer { seen: Reg::new(U::new(0)), _c: core::marker::PhantomData } } }
 }
 
-// --- the two builds ---------------------------------------------------
-
-pub type FpgaBuild = Top<Fpga>;
-pub type TinyBuild = Top<Tiny>;
-
-/// The two DEPTHs coexist and differ, which is the point.
-pub fn depths<TC: TopConfig>() -> (usize, usize) {
-    let t = Top::<TC>::new();
-    (t.producer.depth(), t.consumer.depth())
-}
-
-pub fn check() -> ((usize, usize), (usize, usize)) {
-    (depths::<Fpga>(), depths::<Tiny>())   // ((16, 64), (2, 64))
-}
-
-/// Compile-time, so a child's constant may still size an array in the
-/// parent.
-pub const FPGA_PRODUCER_DEPTH: usize = <<Fpga as TopConfig>::P as ProducerConfig>::DEPTH;
-pub static FPGA_BUF: [u32; FPGA_PRODUCER_DEPTH] = [0; FPGA_PRODUCER_DEPTH];
+/// The long spelling, and the aliased one. Both compile-time: an array
+/// length accepts nothing else.
+pub const LONG: usize = <<Fpga as TopConfig>::P as ProducerConfig>::DEPTH;
+pub const SHORT: usize = <ProducerOf<Fpga> as ProducerConfig>::DEPTH;
+pub type FpgaProducer = ProducerOf<Fpga>;
+pub const SHORTER: usize = <FpgaProducer as ProducerConfig>::DEPTH;
+pub static BUF: [u32; SHORTER] = [0; SHORTER];

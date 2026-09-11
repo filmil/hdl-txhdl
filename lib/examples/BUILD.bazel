@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# One compiled example per concept in the runtime. The article's appendix
+# includes each file verbatim, so a listing there is also a build target
+# here, and a concept with no example is a concept nobody has checked.
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+
+package(default_visibility = ["//visibility:public"])
+
+EXAMPLES = [
+    "ex_values",
+    "ex_transaction",
+    "ex_interface",
+    "ex_unit",
+    "ex_pipeline",
+    "ex_clock",
+    "ex_hierarchy",
+]
+
+[
+    rust_library(
+        name = name,
+        srcs = [name + ".rs"],
+        edition = "2021",
+        deps = ["//lib:txhdl"],
+        proc_macro_deps = ["//lib:txhdl_macros"],
+    )
+    for name in EXAMPLES
+]
+
+# A design is a program:  bazel run //lib/examples:ex_config -- asic
+rust_binary(
+    name = "ex_config",
+    srcs = ["ex_config.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+)
+
+filegroup(
+    name = "sources",
+    srcs = [n + ".rs" for n in EXAMPLES] + ["ex_config.rs"],
+)

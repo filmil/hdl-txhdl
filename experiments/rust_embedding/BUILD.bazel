@@ -1,254 +1,83 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Compiled probes for docs/rust-embedding.md. Each target answers one
-# question from that document's section 8. A probe that does not build is
-# an answer, not a defect, so probes expected to fail carry a comment
-# saying so and are not part of //... by default.
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro")
+# question, against the runtime library at //lib. A probe that does not
+# build is an answer, not a defect: those are tagged `manual`, stay out of
+# //..., and their error messages are the evidence.
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
 
 package(default_visibility = ["//visibility:public"])
 
-rust_library(
-    name = "probe_widths",
-    srcs = ["probe_widths.rs"],
+DEPS = ["//lib:txhdl"]
+MACROS = ["//lib:txhdl_macros"]
+
+# Expected to compile.
+[
+    rust_library(
+        name = name,
+        srcs = [name + ".rs"],
+        edition = "2021",
+        deps = DEPS,
+        proc_macro_deps = MACROS,
+    )
+    for name in [
+        "probe_comp",
+        "probe_config",
+        "probe_derive",
+        "probe_design",
+        "probe_domain",
+        "probe_funcs",
+        "probe_hierarchy",
+        "probe_if",
+        "probe_interface_macro",
+        "probe_interface_proc",
+        "probe_item_order",
+        "probe_nested_config",
+        "probe_ports",
+        "probe_processes",
+        "probe_signal_split",
+        "probe_slice",
+        "probe_values",
+    ]
+]
+
+# A design is a program:  bazel run //experiments/rust_embedding:probe_main -- asic
+rust_binary(
+    name = "probe_main",
+    srcs = ["probe_main.rs"],
     edition = "2021",
-    tags = ["manual"],
+    deps = DEPS,
 )
 
-# Probe 1b: the same question on nightly. Select with
+# Expected to fail. Each comment says why, and the error it gives.
+[
+    rust_library(
+        name = name,
+        srcs = [name + ".rs"],
+        edition = "2021",
+        deps = DEPS,
+        proc_macro_deps = MACROS,
+        tags = ["manual"],
+    )
+    for name in [
+        "probe_widths",                # generic parameters in const ops
+        "probe_attr_block",            # E0658: attributes on expressions
+        "probe_slice_dyn",             # E0435: run-time width is the type
+        "probe_processes_mut",         # E0499: two &mut self
+        "probe_two_drivers",           # E0382: Out is not Clone
+        "probe_ports_bad",             # E0599: In has no set
+        "probe_domain_cross",          # E0308: domains do not unify
+        "probe_interface_incomplete",  # the macro's own message
+        "probe_interface_twodrivers",  # the macro's own message
+    ]
+]
+
+# Expected to compile, on nightly only:
 #   --@rules_rust//rust/toolchain/channel=nightly
 rust_library(
     name = "probe_widths_nightly",
     srcs = ["probe_widths_nightly.rs"],
     edition = "2021",
-    tags = ["manual"],
-)
-
-# Probe 2: the design itself, on stable.
-rust_library(
-    name = "probe_design",
-    srcs = ["probe_design.rs"],
-    edition = "2021",
-)
-
-# Probe 3: the crate::comp vocabulary, on stable.
-rust_library(
-    name = "probe_comp",
-    srcs = ["probe_comp.rs"],
-    edition = "2021",
-)
-
-# Probe 4: an attribute on a block expression. Expected to fail on stable.
-rust_library(
-    name = "probe_attr_block",
-    srcs = ["probe_attr_block.rs"],
-    edition = "2021",
-    tags = ["manual"],
-)
-
-# Probe 5: processes joined inside `run`.
-rust_library(
-    name = "probe_processes",
-    srcs = ["probe_processes.rs"],
-    edition = "2021",
-)
-
-# Probe 5b: the same processes taking `&mut self`. Expected to fail; the
-# failure is why probe 5 uses interior mutability.
-rust_library(
-    name = "probe_processes_mut",
-    srcs = ["probe_processes_mut.rs"],
-    edition = "2021",
-    tags = ["manual"],
-)
-
-# Probe 6: `config` as a struct implementing a Config trait.
-rust_library(
-    name = "probe_config",
-    srcs = ["probe_config.rs"],
-    edition = "2021",
-)
-
-# Probe 7: does an `impl` compile above the `struct` it is for?
-rust_library(
-    name = "probe_item_order",
-    srcs = ["probe_item_order.rs"],
-    edition = "2021",
-)
-
-# The derive macro for the marker traits. Written without syn or quote, so
-# it needs no crate registry.
-rust_proc_macro(
-    name = "txhdl_derive",
-    srcs = ["derive/lib.rs"],
-    crate_name = "txhdl_derive",
-    edition = "2021",
-)
-
-# Probe 8: does a derive read as "kind before data" and still compile?
-rust_library(
-    name = "probe_derive",
-    srcs = ["probe_derive.rs"],
-    edition = "2021",
-    proc_macro_deps = [":txhdl_derive"],
-)
-
-# Probe 9: operator latency instead of a hand-placed stage boundary.
-rust_library(
-    name = "probe_funcs",
-    srcs = ["probe_funcs.rs"],
-    edition = "2021",
-)
-
-# Probe 10: `if` on a signal, as the macro `if_!`.
-rust_library(
-    name = "probe_if",
-    srcs = ["probe_if.rs"],
-    edition = "2021",
-)
-
-# Probe 11: bit slice bounds, static and variable.
-rust_library(
-    name = "probe_slice",
-    srcs = ["probe_slice.rs"],
-    edition = "2021",
-)
-
-# Probe 11b: a run-time width. Expected to fail.
-rust_library(
-    name = "probe_slice_dyn",
-    srcs = ["probe_slice_dyn.rs"],
-    edition = "2021",
-    tags = ["manual"],
-)
-
-# Probe 12: a unit with submodules, wiring and an instance array.
-rust_library(
-    name = "probe_hierarchy",
-    srcs = ["probe_hierarchy.rs"],
-    edition = "2021",
-)
-
-# Probe 13: `fn main()` instantiates the top unit through a config. A
-# binary rather than a library, so it links and runs:
-#   bazel run //experiments/rust_embedding:probe_main -- asic
-rust_binary(
-    name = "probe_main",
-    srcs = ["probe_main.rs"],
-    edition = "2021",
-)
-
-# Probe 14: signals, interfaces, roles and ports, with direction enforced
-# by the type system.
-rust_library(
-    name = "probe_ports",
-    srcs = ["probe_ports.rs"],
-    edition = "2021",
-)
-
-# Probe 14b: driving an input. Expected to fail.
-rust_library(
-    name = "probe_ports_bad",
-    srcs = ["probe_ports_bad.rs"],
-    edition = "2021",
-    tags = ["manual"],
-)
-
-# Probe 15: the value types. Bit, Logic (IEEE 1164), U<N>, I<N>,
-# LogicVec<N>, with resolution and X propagation.
-rust_library(
-    name = "probe_values",
-    srcs = ["probe_values.rs"],
-    edition = "2021",
-)
-
-# Probe 16: Signal<T> as a channel with two ends, mpsc style.
-rust_library(
-    name = "probe_signal_split",
-    srcs = ["probe_signal_split.rs"],
-    edition = "2021",
-)
-
-# Probe 16b: two drivers on one wire. Expected to fail.
-rust_library(
-    name = "probe_two_drivers",
-    srcs = ["probe_two_drivers.rs"],
-    edition = "2021",
-    tags = ["manual"],
-)
-
-# Probe 17: nested configuration. A config is a tree, so a child has a
-# configuration of its own and two children may share a knob name.
-rust_library(
-    name = "probe_nested_config",
-    srcs = ["probe_nested_config.rs"],
-    edition = "2021",
-)
-
-# Probe 18: an interface! macro that generates the role views.
-rust_library(
-    name = "probe_interface_macro",
-    srcs = ["probe_interface_macro.rs"],
-    edition = "2021",
-)
-
-# The wire types the interface macro emits code against.
-rust_library(
-    name = "wire",
-    srcs = ["wire.rs"],
-    edition = "2021",
-)
-
-# The interface! proc macro. Any number of roles, `in` as a keyword, and
-# a completeness check. Without syn or quote, so no crate registry.
-rust_proc_macro(
-    name = "txhdl_interface",
-    srcs = ["interface_macro/lib.rs"],
-    crate_name = "txhdl_interface",
-    edition = "2021",
-)
-
-# Probe 19: the proc macro, three roles.
-rust_library(
-    name = "probe_interface_proc",
-    srcs = ["probe_interface_proc.rs"],
-    edition = "2021",
-    deps = [":wire"],
-    proc_macro_deps = [":txhdl_interface"],
-)
-
-# Probe 19b: a role that omits a member. Expected to fail, with the
-# macro's own message.
-rust_library(
-    name = "probe_interface_incomplete",
-    srcs = ["probe_interface_incomplete.rs"],
-    edition = "2021",
-    deps = [":wire"],
-    proc_macro_deps = [":txhdl_interface"],
-    tags = ["manual"],
-)
-
-# Probe 19c: two roles driving one member. Expected to fail.
-rust_library(
-    name = "probe_interface_twodrivers",
-    srcs = ["probe_interface_twodrivers.rs"],
-    edition = "2021",
-    deps = [":wire"],
-    proc_macro_deps = [":txhdl_interface"],
-    tags = ["manual"],
-)
-
-# Probe 20: a clock domain in the signal's type, after RHDL.
-rust_library(
-    name = "probe_domain",
-    srcs = ["probe_domain.rs"],
-    edition = "2021",
-)
-
-# Probe 20b: a domain crossing without a crossing. Expected to fail.
-rust_library(
-    name = "probe_domain_cross",
-    srcs = ["probe_domain_cross.rs"],
-    edition = "2021",
+    deps = DEPS,
     tags = ["manual"],
 )
