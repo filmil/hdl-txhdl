@@ -144,6 +144,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A memory, lowered:  bazel run //lib/examples:ex_mem
+rust_binary(
+    name = "ex_mem",
+    srcs = ["ex_mem.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # The cheat sheet's counter:  bazel run //lib/examples:ex_cheat
 rust_binary(
     name = "ex_cheat",
@@ -180,5 +189,6 @@ filegroup(
         "ex_packet.rs",
         "ex_cheat.rs",
         "ex_alu.rs",
+        "ex_mem.rs",
     ],
 )

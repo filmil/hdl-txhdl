@@ -590,6 +590,8 @@ latex_document(
         ":packet_timing",
         ":alu_run",
         ":alu_timing",
+        ":mem_run",
+        ":mem_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -617,6 +619,20 @@ waveform(
         "//b=>b",
         "//alu/r=>r",
         "//y=>y",
+    ],
+)
+
+waveform(
+    name = "mem",
+    example = "//lib/examples:ex_mem",
+    lowered = ("scratch", "scratch"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//we=>we",
+        "//waddr=>waddr",
+        "//wdata=>wdata",
+        "//raddr=>raddr",
+        "//q=>q",
     ],
 )
 

@@ -1,0 +1,29 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Memory}
+\label{sec:x-mem}
+
+A \code{Mem<T, N>} is state with an address: one write port, deferred
+like a register drive, and as many plain reads as a cycle wants.
+\code{self.m.at(addr)} names a word as a drive's target, so
+\code{when!} and \code{case!} write a memory as they write a
+register; \code{self.m.read(addr)} is the read, and the output here is
+that read as a wire, so it shows the word as it stood before the
+edge, and a read of the word being written sees the old value. The
+lowering declares a memory as an array, zero at the start as the
+runtime's is, writes a word in the clocked block, and reads one as an
+index. A memory is not traced, so the waveform shows the ports, and
+the lowering is simulated against them, Section~\ref{sec:x-checked}.
+This is the memory the Vreteno core's register file and data memory
+are made of.
+
+\begin{figure}[htbp]
+\centering
+\input{mem_timing.tex}
+\caption{The scratchpad: four writes, the reads that follow, and a
+read of the word being written.}
+\label{fig:x-mem}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_mem.rs}. Run with \code{bazel run //lib/examples:ex\_mem}.},label={lst:x-mem}]{lib/examples/ex_mem.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_mem} printed when the build ran it: the table, then the lowering.},label={lst:x-mem-out}]{out_mem.txt}

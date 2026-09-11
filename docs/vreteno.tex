@@ -276,11 +276,13 @@ instruction retires. This is the step to take when the core has a
 netlist and a clock period to shorten, and not before.
 
 The lowering. The core uses \code{match} over fields where a lowered
-unit would use \code{case!} over enums, functions where it would use
-operators in arms, and memories, which the lowering does not emit
-yet. Each is a change the examples document already has a
-precedent for or a stated next step toward. When the core lowers,
-the same trace that checks the model checks the netlist.
+unit would use \code{case!} over enums, and functions where it would
+use operators in arms. Its memories lower already: a \code{Mem} is an
+array in the netlist, written through \code{at} and read by index,
+which the examples document~\cite{examples} shows checked under nvc.
+The decode and the selection are what remain, and each has a
+precedent there. When the core lowers, the same trace that checks
+the model checks the netlist.
 
 \begin{thebibliography}{10}
 
