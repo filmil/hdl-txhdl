@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+# Vreteno: an RV32I core in TxHDL. The library holds the core, the
+# ISA, the reference model and the programs; the binary runs the
+# demonstration and writes its waveform; the test runs the core
+# against the model in lockstep.
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "vreteno32",
+    srcs = [
+        "src/isa.rs",
+        "src/lib.rs",
+        "src/model.rs",
+    ],
+    crate_name = "vreteno32",
+    edition = "2021",
+)
+
+# The encoders against the decoder.
+rust_test(
+    name = "isa_test",
+    crate = ":vreteno32",
+    edition = "2021",
+)
+
+filegroup(
+    name = "sources",
+    srcs = glob(["src/*.rs", "tests/*.rs"]),
+)
