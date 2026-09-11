@@ -66,3 +66,16 @@ The second thesis' argument applies here unchanged. If a toolchain is
 affordable to build, it is worth building the one that buys the most, and a
 front end over Rust's syntax tree buys the type system, the module system,
 the generics, the package manager and the editor tooling along with it.
+
+\textbf{What was built.} \code{\#[lower]} is the proc macro
+elaboration, with one departure from the recommendation as stated.
+It does not reinterpret \code{if} or \code{match}; it reads a subset
+that is also plain Rust, \code{when!}, \code{case!} and
+\code{select!} among registers, wires, memories and channel ports,
+and refuses the rest with a message of its own. So the cost above,
+code that looks like Rust and does not mean Rust, was not paid: a
+unit that lowers is the unit that simulates, one file, and the
+runtime~\cite{runtime} and examples~\cite{examples} documents state
+what the subset is and check every piece of it against a trace under
+\code{nvc}. The RISC-V core~\cite{vreteno} is written in that subset
+whole.

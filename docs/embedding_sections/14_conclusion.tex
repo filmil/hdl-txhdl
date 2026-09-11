@@ -6,8 +6,8 @@ A companion paper merged two hardware description languages and gave the
 result a syntax shaped after Rust. This paper removed every construct Rust
 already provides and asked what was left.
 
-Seventeen of twenty constructs go. What remains is two Rust modules of
-traits and types, not a grammar.
+Seventeen of twenty constructs go. What remains is five Rust modules
+of traits and types and a crate of macros, not a grammar.
 
 Two deletions are worth more than the count suggests. The rule that a
 timeless body may not count cycles needs no enforcement, because a cycle
@@ -26,8 +26,9 @@ processes reach, describes a register better than the version that failed.
 
 One wall stands. A signal has no value while the program runs, so it cannot
 be the condition of an \code{if}. That is what a separate grammar was
-buying, and a macro front end over Rust's own syntax tree is the way to buy
-it back.
+buying, and a macro front end over Rust's own syntax tree was the way
+to buy it back; \code{when!}, \code{case!} and \code{select!} are
+that front end, and \code{\#[lower]} reads them.
 
 Half of what this paper builds is Chisel, in Rust, and the paper says so.
 The structural half was settled in 2012, and rebuilding it buys better
@@ -38,9 +39,12 @@ The other half is the bet. An \code{async fn} that is a sequence, a
 pipeline or a process according to how it is driven, with operator
 latency the mapping's decision, is not something Chisel can express, and
 it is what both source languages existed to provide. Nineteen probes
-show that Rust accepts it. None shows that it lowers to a register.
-Section~\ref{sec:e-next} states the single experiment that would, and it
-is the next thing to do.
+show that Rust accepts it, and the experiment of
+Section~\ref{sec:e-next} shows that it lowers: an \code{async fn} to
+a pipeline whose depth follows its operators' latencies, a unit to a
+module, and a RISC-V core~\cite{vreteno} to a netlist that simulates
+against the trace of its own source. What the lowering does not read
+yet is stated there, and it is the next thing to do.
 
 The project's second thesis declined embedding on the grounds that a full
 toolchain had become affordable. That argument has not weakened. It now

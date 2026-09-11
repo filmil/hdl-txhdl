@@ -117,6 +117,22 @@ A statement without an arrow is refused with the message of
 Listing~\ref{lst:when-err}, because the arms share \code{when!}'s
 statement parser.
 
+\subsubsection{Many values}
+\label{sec:e-select}
+
+\code{when!} and \code{case!} choose among drives. A datapath also
+chooses among values, an ALU's result by its function code, and
+\code{match} on a signal hits the wall a third time. \code{select!}
+is \code{match} on a value by another name: the first pattern that
+matches chooses, a pattern may carry a guard, and the last arm is the
+default. It is a \code{macro\_rules!} of one line that expands to
+\code{match}, so it runs as Rust runs it; the name says what the
+hardware is, a chain of multiplexers in priority order, which is what
+the lowering makes of it. \code{mux} is its two-arm case. Both
+\code{case!} and \code{select!} take an integer literal as a
+pattern, so an opcode is matched as the manual writes it; the RISC-V
+core~\cite{vreteno} is written with them and nothing else.
+
 \subsection{Bit slicing}
 
 \code{w[0..8]} cannot work, because \code{Index} returns a reference to

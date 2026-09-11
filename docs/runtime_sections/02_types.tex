@@ -21,7 +21,13 @@ policy, as a type; which clock edge moves the data is a
 \section{\code{txhdl::netlist}}
 \label{sec:r-netlist}
 
-The structural netlist, Section~\ref{sec:r-overview}. It is short
-because the walk it needs already exists for the waveform.
+The lowering's target, Section~\ref{sec:r-lowering}: \code{Expr},
+\code{Target} and \code{Stmt}, which \code{\#[lower]} builds; the
+\code{Lowered} unit that holds them with its fields, ports, wires and
+memory contents; the two emitters, \code{verilog} and \code{vhdl},
+with the width inference an extension needs and the hoisting of a
+slice of an expression into a wire; the ports sidecar a testbench
+generator reads; and, first in the file, the structural skeleton from
+the trace walk, which sees fields only.
 
 \lstinputlisting[caption={\code{lib/src/netlist.rs}.},label={lst:r-netlist}]{lib/src/netlist.rs}

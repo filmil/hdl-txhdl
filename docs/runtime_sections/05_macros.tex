@@ -17,17 +17,27 @@ it. Its grammar is the one \code{mac} needs and no wider, and it
 refuses the rest with its own message. \code{\#[lower]} on an
 \code{impl Unit<In, Out> for Unit} does the same for a unit with
 state: it reads a \code{run} loop that waits for one rising edge,
-reads registers into names, predicates drives with \code{when!} and
-drives registers and output ports, and writes \code{Unit::verilog(name)}
-beside the impl. Ports come from \code{run}'s signature, registers
-and widths from the struct through the \code{Trace} derive, which now
-also derives \code{Fields} and \code{Port}, and the configuration's
-constants are evaluated when \code{verilog} runs, so a generic unit
-lowers once per build. It reads \code{case!} as a chain of
-\code{else if}s on the value, and channels as a valid/ready handshake:
-\code{until} or a channel's \code{wait} is the guard on every register
-drive after it, a receive asserts \code{ready} under the guard, a send
-drives \code{data} and asserts \code{valid} under it.
+reads registers and ports into names, predicates drives with
+\code{when!} and \code{case!}, chooses values with \code{select!},
+and drives registers, words of memories and output ports, and writes
+\code{Unit::lowered(name)}, \code{verilog} and \code{vhdl} beside
+the impl. Ports come from \code{run}'s signature, a side of several
+written as a tuple; registers, memories and widths come from the
+struct through the \code{Trace} derive, which also derives
+\code{Fields} and \code{Port}; and the configuration's constants are
+evaluated when \code{lowered} runs, so a generic unit lowers once per
+build. A \code{let} that computes is a wire named for it, a read of a
+port or register an alias. It reads \code{case!} and \code{select!}
+as chains on the value, with an enum variant, an integer or \code{\_}
+as a pattern and a guard joined by \code{\&\&}; \code{slice},
+\code{concat}, \code{sext} and \code{zext} by their turbofish; a
+struct literal as the concatenation of its fields; \code{self.m.at(a)}
+on the left of a drive as a word of a memory and \code{self.m.read(a)}
+as an index; and channels as a valid/ready handshake: \code{until} or
+a channel's \code{wait} is the guard on every register drive after
+it, a receive asserts \code{ready} under the guard, a send drives
+\code{data} and asserts \code{valid} under it. What it does not read
+it refuses with a message that names the construct.
 \code{interface!} takes an interface and any number of roles, checks
 that every role names every member once and that no member is driven
 twice, and emits a struct per role plus a constructor that splits each

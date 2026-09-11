@@ -23,9 +23,12 @@ It separates structure, the wires and groups that compute, from control,
 a program that says when groups run. Its control has \code{seq}, which
 runs groups one after another, and \code{par}, which runs them at once.
 Section~\ref{sec:e-units} arrives at the same two operators from the other
-direction: an \code{await} is a \code{seq} boundary, and \code{join!} is
-\code{par}. Calyx lowers both to a state machine driving the groups, and
-that lowering is the one this paper has not yet done.
+direction: an \code{await} is a \code{seq} boundary, and
+\code{parallel!} is \code{par}. Calyx lowers both to a state machine
+driving the groups; this paper's lowering, Section~\ref{sec:e-next},
+reads a loop of one wait and lowers it to a module, and has not lowered
+a sequence of several waits, which is where Calyx's control program
+would be needed.
 
 \textbf{Filament}~\cite{filament} types each signal with the interval of
 cycles over which it is valid, so that composing two components with
@@ -149,8 +152,8 @@ to meet them rather than to avoid them.
 Since this section was first written the runtime has gained a
 waveform: a probe registry named from the fields of units and a VCD
 writer, so a design is watched in Surfer rather than in printed
-traces. FST is the same probes with another writer, and the first
-external crate the project would take. The same walk now writes a
+traces, and an FST writer over the same probes, the project's first
+external crate. The same walk now writes a
 structural netlist as well, a Verilog skeleton with modules,
 registers, ports and wires and no behaviour; it sees fields only, so a
 unit that takes its ports as parameters of \code{run} shows its
@@ -175,11 +178,18 @@ comparisons with each variant's literal, and a channel to a
 valid/ready handshake whose wait guards the drives. And the lowering
 is checked: the same statements render to VHDL, a testbench generated
 from the Rust trace replays it into the entity under \code{nvc}, and
-the counter, the blinky and the sequencer agree with their traces at
-every tick, while a deliberately broken one fails. Memories lower,
-and the runtime's channel is an elastic buffer with the handshake
-registered on both sides, so a unit with channels is checked as any
-other; a unit's second process and the falling edge are what remains.
+the counter, the blinky, the sequencer, an ALU, a scratchpad, an
+immediate decoder and a stage between two channels agree with their
+traces at every tick, while a deliberately broken one fails. Memories
+lower, and the runtime's channel is an elastic buffer with the
+handshake registered on both sides, which is the backpressure of the
+list above made real rather than assumed, so a unit with channels is
+checked as any other. The largest thing lowered is a two-stage RV32I
+core~\cite{vreteno}, written in the subset the lowering reads,
+checked in lockstep against a reference model and, as a netlist,
+against its own trace. Of the three things known to be hard, control
+flow across an await and resource sharing remain, and so do a unit's
+second process and the falling edge.
 
 \subsection{What it does not need}
 

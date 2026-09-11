@@ -11,7 +11,7 @@ differ from the code, and the rule the project keeps is that a concept
 enters the runtime, a compiled example and these documents in the same
 change, or the change is not finished.
 
-The crate is small on purpose. Four modules and one procedural macro
+The crate is small on purpose. Five modules and one procedural macro
 crate hold everything:
 
 \begin{itemize}
@@ -25,14 +25,20 @@ crate hold everything:
 \item \code{txhdl::pipeline}: operators that take a cycle, all
   \code{async}.
 \item \code{txhdl::funcs}: operators that cannot, all plain \code{fn}.
-\item \code{txhdl\_macros}: the two derives, \code{interface!},
-  \code{when!} and \code{case!}, without \code{syn} or \code{quote}.
+\item \code{txhdl::netlist}: the lowering's target, an expression
+  tree, statements, a \code{Lowered} unit and its two emitters,
+  Verilog and VHDL; and the structural skeleton from the trace walk.
+\item \code{txhdl\_macros}: the four derives, \code{interface!},
+  \code{when!} and \code{case!}, \code{\#[pipeline]} and
+  \code{\#[lower]}, without \code{syn} or \code{quote}; and
+  \code{select!}, a \code{macro\_rules!} in the crate root.
 \end{itemize}
 
-The whole crate is a simulation-shaped prototype: values exist while it
+The crate is a simulation-shaped prototype: values exist while it
 runs, wires are shared cells, and a testbench may look at anything.
-The lowering to hardware is the experiment the article states, and this
-crate is what that experiment would be written against.
+The lowering to hardware is the experiment the article states, and
+this crate is what it was written against; the experiment has been
+run, Section~\ref{sec:r-lowering}.
 
 \subsection{The model of time}
 \label{sec:r-time}
@@ -129,19 +135,20 @@ and \code{\#[derive(Value)]} gives a struct or a fieldless enum of the
 design's own its width and bits. \code{Vcd} is the sink: the executor
 calls it at the end of every tick, after the drives have committed,
 and it writes what changed; a clock is written as the level it is,
-high from its rising edge to its falling one. FST would be the same probes with another
-writer, and there is one now: \code{Fst}, over the \code{fst-writer}
-crate, the project's first external dependency, pinned by lockfile
-through \code{crate\_universe}. \code{Wave::from\_env} chooses the sink
+high from its rising edge to its falling one. \code{Fst} is the
+same probes with another writer, over the \code{fst-writer} crate,
+the project's first external dependency, pinned by lockfile through
+\code{crate\_universe}. \code{Wave::from\_env} chooses the sink
 by the environment, \code{TXHDL\_FST} or \code{TXHDL\_VCD}, and
 \code{stop} finishes the file. A compound value is one bit vector and
 one signal per field beside it, from \code{Value::parts}; the writer
 has no string variables, so a value keeps its bits.
-The examples document draws a VCD through \code{vcdcvt} and
+The examples document draws the FST through \code{vcdcvt} and
 \code{sqlite2drawtiming}, prebuilt tools pinned by checksum, and
 \code{//tools/dt2tikz}, which turns drawtiming's text into TikZ.
 
 \subsection{Netlists}
+\label{sec:r-lowering}
 
 The probe registry records, for every signal, its kind and the shared
 cell it is on, so the two ends of one wire match. \code{netlist::verilog}
@@ -151,14 +158,15 @@ a wire whose other end is elsewhere, and instances with their ports
 connected. It sees fields only, so a unit whose ports are parameters
 of \code{run} yields its registers and nothing else, and it writes no
 behaviour. That is the structural half of the lowering. The
-behavioural half has begun: \code{\#[pipeline]} lowers an \code{async
-fn} of awaited operators, and \code{\#[lower]} lowers a unit's
-\code{run} loop, with \code{netlist::unit\_verilog} assembling the
-module from the unit's fields, the ports of \code{run} and the
-statements the macro read, \code{case!} and channels included. The
-macro builds an expression tree, \code{netlist::Expr}, and a
-\code{Lowered} unit around it, and two emitters render it, Verilog
-and VHDL-2008. The VHDL is what closes the loop: the build simulates
+behavioural half is the rest: \code{\#[pipeline]} lowers an
+\code{async fn} of awaited operators, and \code{\#[lower]} lowers a
+unit's \code{run} loop into a \code{Lowered} unit built from the
+unit's fields, the ports of \code{run} and the statements the macro
+read: registers, memories, wires and channel ports; \code{when!},
+\code{case!} and \code{select!}; slices, concatenation and
+extension; a \code{let} as a wire named for it. The macro builds an
+expression tree, \code{netlist::Expr}, and two emitters render the
+unit, Verilog and VHDL-2008. The VHDL is what closes the loop: the build simulates
 a lowered unit under \code{nvc}, with a testbench
 \code{//tools/fst2tb} generates from the trace the Rust run wrote, and
 the test passes only if registers and outputs agree at every tick.

@@ -142,8 +142,10 @@ arbiter whose priority order was fixed before it waited saw the
 previous cycle's turn and granted one side twice. The order belongs
 after the wait, which is why its event is \code{until} on either input
 offering and its choice is a plain read at that edge, and why there is
-no \code{select!}: the first of several channel waits with a
-state-dependent priority is \code{until} with an \code{||} in it.
+no wait that selects among channels: the first of several channel
+waits with a state-dependent priority is \code{until} with an
+\code{||} in it. The \code{select!} the library does have is not a
+wait; it chooses a value by pattern, Section~\ref{sec:e-select}.
 
 \begin{pitfall}
 This is the constraint most likely to surprise somebody writing a unit for

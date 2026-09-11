@@ -59,14 +59,18 @@ Calyx~\cite{calyx} and Filament~\cite{filament}, not Chisel;
 Section~\ref{sec:e-related} places them, and says why XLS is also the
 counterexample.
 
-That half is also the half that does not exist yet. Every probe in this
-paper type-checks; none \term{lowers} an \code{async fn}, which is to
-say none translates it into the registers, wires and control that a
-synthesis tool accepts. Lowering is the compiler's word for going down
-the abstraction ladder, and it is what turns a value that is alive
-across an \code{.await} into a register that the source never named.
-Section~\ref{sec:e-next} states the one experiment that would settle
-whether the contribution is real.
+That half was, when this paper was first written, the half that did
+not exist. Every probe type-checked; none \term{lowered} an
+\code{async fn}, which is to say none translated it into the
+registers, wires and control that a synthesis tool accepts. Lowering
+is the compiler's word for going down the abstraction ladder, and it
+is what turns a value that is alive across an \code{.await} into a
+register that the source never named. Section~\ref{sec:e-next} states
+the experiment that was to settle whether the contribution is real,
+and what it found when it was run: an \code{async fn} lowers to a
+pipeline, a unit's \code{run} loop to a module, and a RISC-V
+core~\cite{vreteno} to a netlist that simulates against the trace of
+its own source.
 
 \subsection{Everything here was compiled}
 
