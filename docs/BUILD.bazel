@@ -592,6 +592,8 @@ latex_document(
         ":alu_timing",
         ":mem_run",
         ":mem_timing",
+        ":imm_run",
+        ":imm_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -633,6 +635,20 @@ waveform(
         "//wdata=>wdata",
         "//raddr=>raddr",
         "//q=>q",
+    ],
+)
+
+waveform(
+    name = "imm",
+    example = "//lib/examples:ex_imm",
+    lowered = ("decoder", "dec"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//ir=>ir",
+        "//dec/value=>value",
+        "//dec/dest=>dest",
+        "//imm=>imm",
+        "//rd=>rd",
     ],
 )
 

@@ -1,0 +1,34 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Immediate Decoder}
+\label{sec:x-imm}
+
+The bit operations a decoder is made of: \code{slice::<LO, LEN>}
+takes a field out of a word, \code{concat::<K, M>} puts one value
+above another with the result width stated, and \code{sext::<M>} and
+\code{zext::<M>} extend by the top bit or by zeros. Each lowers to the
+form the target language has, a part select, a concatenation, a
+replication of the top bit in Verilog and \code{resize} in VHDL. The
+five immediates of RV32I are those operations as the manual draws
+them, and \code{select!} chooses the one the opcode calls for.
+
+\code{select!} is \code{match} on a value: the first pattern that
+matches chooses, a pattern may carry an \code{if} guard, and the last
+arm is the default. The name says what the hardware is, a chain of
+multiplexers in priority order, which is what the lowering makes of
+it; \code{case!} is the same choice among drives, \code{select!} the
+same choice among values. Both take an integer literal as a pattern,
+so an opcode can be matched as the manual writes it. The decoder is
+checked under nvc against its trace, Section~\ref{sec:x-checked}, and
+it is the decode of the Vreteno core, lifted out.
+
+\begin{figure}[htbp]
+\centering
+\input{imm_timing.tex}
+\caption{The decoder: a word of each format, and its immediate and
+destination a cycle later.}
+\label{fig:x-imm}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_imm.rs}. Run with \code{bazel run //lib/examples:ex\_imm}.},label={lst:x-imm}]{lib/examples/ex_imm.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_imm} printed when the build ran it: the words, then the lowering.},label={lst:x-imm-out}]{out_imm.txt}
