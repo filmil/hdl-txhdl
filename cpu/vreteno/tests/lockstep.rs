@@ -14,17 +14,32 @@ use vreteno32::program::{demo, random};
 /// cycle; returns the model at the halt.
 fn lockstep(program: &[u32], what: &str) -> Model {
     let mut cpu = Vreteno::with(program);
-    let (pc, ir_pc, valid, regs, dmem, halted) = (
+    let (pc, ir_pc, valid, regs, halted) = (
         cpu.pc.clone(),
         cpu.ir_pc.clone(),
         cpu.valid.clone(),
         cpu.regs.clone(),
-        cpu.dmem.clone(),
         cpu.halted.clone(),
     );
-    // The architectural program counter, as Vreteno::arch_pc has it.
+    let lanes = (
+        cpu.dmem0.clone(),
+        cpu.dmem1.clone(),
+        cpu.dmem2.clone(),
+        cpu.dmem3.clone(),
+    );
+    let word = move |a: usize| -> u32 {
+        (lanes.0.read(a).raw() as u32)
+            | (lanes.1.read(a).raw() as u32) << 8
+            | (lanes.2.read(a).raw() as u32) << 16
+            | (lanes.3.read(a).raw() as u32) << 24
+    };
+    let (wb_valid, wb_pc) = (cpu.wb_valid.clone(), cpu.wb_pc.clone());
+    // The architectural program counter, as Vreteno::arch_pc has it:
+    // the oldest instruction not yet retired.
     let arch_pc = move || {
-        if valid.get().to_bool() {
+        if wb_valid.get().to_bool() {
+            wb_pc.get()
+        } else if valid.get().to_bool() {
             ir_pc.get()
         } else {
             pc.get()
@@ -66,7 +81,7 @@ fn lockstep(program: &[u32], what: &str) -> Model {
         );
         if model.halted.is_some() {
             for (a, &w) in model.mem.iter().enumerate() {
-                assert_eq!(dmem.read(a).raw() as u32, w, "mem[{a}] {here}");
+                assert_eq!(word(a), w, "mem[{a}] {here}");
             }
             // A pipeline retires at most one per cycle; the difference
             // is the bubbles, one per taken branch and jump.

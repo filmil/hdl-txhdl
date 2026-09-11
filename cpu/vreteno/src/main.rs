@@ -13,8 +13,19 @@ use vreteno32::program::demo;
 fn main() {
     let program = demo();
     let mut cpu = Vreteno::with(&program);
-    let (ir_pc, regs, dmem) =
-        (cpu.ir_pc.clone(), cpu.regs.clone(), cpu.dmem.clone());
+    let (ir_pc, regs) = (cpu.ir_pc.clone(), cpu.regs.clone());
+    let lanes = (
+        cpu.dmem0.clone(),
+        cpu.dmem1.clone(),
+        cpu.dmem2.clone(),
+        cpu.dmem3.clone(),
+    );
+    let word = move |a: usize| -> u32 {
+        (lanes.0.read(a).raw() as u32)
+            | (lanes.1.read(a).raw() as u32) << 8
+            | (lanes.2.read(a).raw() as u32) << 16
+            | (lanes.3.read(a).raw() as u32) << 24
+    };
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
     let (instr_out, instr) = signal::<U<32>, DefaultClock>();
@@ -58,7 +69,7 @@ fn main() {
         println!("x{x:<2} = {:#010x}", regs.read(x).raw());
     }
     for a in 0..3usize {
-        println!("mem[{a}] = {:#010x}", dmem.read(a).raw());
+        println!("mem[{a}] = {:#010x}", word(a));
     }
     // The netlist, with the program in its instruction memory, which
     // the lowering cannot see: Mem::with gave it at run time.
