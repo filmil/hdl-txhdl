@@ -273,6 +273,14 @@ pub struct Reg<T: Copy, C: Clock = DefaultClock>(
     PhantomData<C>,
 );
 
+/// A second handle on the same register: what a testbench keeps to
+/// read a unit's state while the unit runs.
+impl<T: Copy, C: Clock> Clone for Reg<T, C> {
+    fn clone(&self) -> Self {
+        Reg(self.0.clone(), PhantomData)
+    }
+}
+
 /// What a register holds: the latched value and the pending drive.
 struct RegCell<T: Copy> {
     cur: Cell<T>,
@@ -405,19 +413,21 @@ macro_rules! config {
 /// safe only under a discipline the type system does not check, which
 /// is what an asynchronous FIFO's pointers are for.
 pub struct Mem<T: Copy, const N: usize, C: Clock = DefaultClock>(
-    Rc<MemCell<T, N>>,
+    Rc<MemCell<T>>,
     PhantomData<C>,
 );
 
-struct MemCell<T: Copy, const N: usize> {
-    words: [Cell<T>; N],
+/// On the heap, so a large memory is not built on the stack.
+struct MemCell<T: Copy> {
+    words: Vec<Cell<T>>,
     next: Cell<Option<(usize, T)>>,
 }
 
-impl<T: Copy, const N: usize> Commit for MemCell<T, N> {
+impl<T: Copy> Commit for MemCell<T> {
     fn apply(&self) {
         if let Some((a, v)) = self.next.take() {
-            self.words[a % N].set(v)
+            let n = self.words.len();
+            self.words[a % n].set(v)
         }
     }
 }
@@ -428,11 +438,23 @@ impl<T: Copy + Default + 'static, const N: usize, C: Clock> Default
     fn default() -> Self {
         Mem(
             Rc::new(MemCell {
-                words: std::array::from_fn(|_| Cell::new(T::default())),
+                words: (0..N).map(|_| Cell::new(T::default())).collect(),
                 next: Cell::new(None),
             }),
             PhantomData,
         )
+    }
+}
+
+impl<T: Copy + Default + 'static, const N: usize, C: Clock> Mem<T, N, C> {
+    /// A memory with its first words given: a program, a table. What
+    /// a ROM is at elaboration, and what a testbench loads.
+    pub fn with(words: &[T]) -> Self {
+        let m = Self::default();
+        for (i, w) in words.iter().enumerate().take(N) {
+            m.0.words[i].set(*w);
+        }
+        m
     }
 }
 
@@ -443,7 +465,8 @@ impl<T: Copy + 'static, const N: usize, C: Clock> Mem<T, N, C> {
         self.0.next.set(Some((addr, v.into())));
         commit(self.0.clone());
     }
-    /// The read port. Plain, like a wire.
+    /// The read port. Plain, like a wire, and as many reads as a cycle
+    /// wants: a register file reads two.
     pub fn read(&self, addr: usize) -> T {
         self.0.words[addr % N].get()
     }
