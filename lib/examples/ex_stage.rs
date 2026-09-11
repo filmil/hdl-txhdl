@@ -75,8 +75,8 @@ fn main() {
     let mut sink = Sink;
     if let Some(mut vcd) = Wave::from_env() {
         vcd.clock::<DefaultClock>();
-        vcd.add("a", &a_rx);
-        vcd.add("b", &b_rx);
+        vcd.add("inp", &a_rx);
+        vcd.add("out", &b_rx);
         vcd.add("stage", &stage);
         vcd.start();
     }
@@ -89,4 +89,5 @@ fn main() {
     }
     print!("\n{}", Stage::verilog("stage"));
     stop();
+    txhdl::netlist::write_vhdl_from_env(&Stage::lowered("stage"));
 }

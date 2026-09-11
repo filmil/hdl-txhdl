@@ -482,11 +482,11 @@ waveform(
     example = "//lib/examples:ex_join",
     signals = [
         "//clocks/clk=>clk",
-        "//a/valid=>a_valid",
-        "//a/data=>a",
-        "//b/valid=>b_valid",
-        "//b/data=>b",
-        "//sum/data=>sum",
+        "//a/rx_valid=>a_valid",
+        "//a/rx_data=>a",
+        "//b/rx_valid=>b_valid",
+        "//b/rx_data=>b",
+        "//sum/rx_data=>sum",
         "//adder/sums=>sums",
     ],
 )
@@ -498,8 +498,8 @@ waveform(
     # bits never show; the data rows say it all.
     signals = [
         "//clocks/clk=>clk",
-        "//pair/data=>pair",
-        "//result/data=>result",
+        "//pair/rx_data=>pair",
+        "//result/rx_data=>result",
     ],
 )
 
@@ -530,18 +530,23 @@ waveform(
     example = "//lib/examples:ex_lower",
     signals = [
         "//clocks/clk=>clk",
-        "//triple/data=>triple",
-        "//result/data=>result",
+        "//triple/rx_data=>triple",
+        "//result/rx_data=>result",
     ],
 )
 
 waveform(
     name = "stage",
     example = "//lib/examples:ex_stage",
+    lowered = ("stage", "stage"),
     signals = [
         "//clocks/clk=>clk",
-        "//a/data=>a",
-        "//b/data=>b",
+        "//inp/rx_valid=>inp_valid",
+        "//inp/rx_data=>inp",
+        "//inp/rx_ready=>inp_ready",
+        "//out/tx_valid=>out_valid",
+        "//out/tx_data=>out",
+        "//out/tx_ready=>out_ready",
         "//stage/count=>count",
     ],
 )
@@ -551,10 +556,10 @@ waveform(
     example = "//lib/examples:ex_packet",
     signals = [
         "//clocks/clk=>clk",
-        "//link/data/src=>src",
-        "//link/data/dst=>dst",
-        "//link/data/kind=>kind",
-        "//link/data/len=>len",
+        "//link/rx_data/src=>src",
+        "//link/rx_data/dst=>dst",
+        "//link/rx_data/kind=>kind",
+        "//link/rx_data/len=>len",
         "//listener/last/kind=>last_kind",
     ],
 )
