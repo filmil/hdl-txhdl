@@ -243,49 +243,60 @@ impl<T: Copy + Default, A: Clock, B: Clock> Crossing<T, A, B> {
 /// reading it is where a process waits for that edge, and the `.await`
 /// is the mark the lowering will turn into the register. A wire has no
 /// edge, which is why [`In::get`] is not `async` and this is.
-pub struct Reg<T: Copy, C: Clock = DefaultClock> {
+pub struct Reg<T: Copy, C: Clock = DefaultClock>(
+    Rc<RegCell<T>>,
+    PhantomData<C>,
+);
+
+/// What a register holds: the latched value and the pending drive.
+struct RegCell<T: Copy> {
     cur: Cell<T>,
     next: Cell<Option<T>>,
-    _c: PhantomData<C>,
 }
 
-impl<T: Copy + Default, C: Clock> Default for Reg<T, C> {
+/// A drive scheduled for the end of the step.
+trait Commit {
+    fn apply(&self);
+}
+
+impl<T: Copy> Commit for RegCell<T> {
+    fn apply(&self) {
+        if let Some(v) = self.next.take() {
+            self.cur.set(v)
+        }
+    }
+}
+
+impl<T: Copy + Default + 'static, C: Clock> Default for Reg<T, C> {
     fn default() -> Self {
         Reg::new(T::default())
     }
 }
 
-impl<T: Copy, C: Clock> Reg<T, C> {
+impl<T: Copy + 'static, C: Clock> Reg<T, C> {
     pub fn new(v: impl Into<T>) -> Self {
-        Reg {
-            cur: Cell::new(v.into()),
-            next: Cell::new(None),
-            _c: PhantomData,
-        }
-    }
-
-    /// Take the pending drive, at the end of the step.
-    fn apply(p: *const ()) {
-        // Safety: scheduled by `set` on a live register within this step.
-        let r = unsafe { &*(p as *const Self) };
-        if let Some(v) = r.next.take() {
-            r.cur.set(v)
-        }
+        Reg(
+            Rc::new(RegCell {
+                cur: Cell::new(v.into()),
+                next: Cell::new(None),
+            }),
+            PhantomData,
+        )
     }
 
     /// Read the register: the value latched at the last edge. Plain,
     /// because reading is not waiting; the wait is the edge the process
     /// made before it, `C::edge()`, a channel's `wait`, or `until`.
     pub fn get(&self) -> T {
-        self.cur.get()
+        self.0.cur.get()
     }
 
     /// Drive the next value. Plain, and deferred: the register takes it
     /// at the end of the step, so a read after a drive in the same
     /// iteration still sees the value the edge latched, as in hardware.
     pub fn set(&self, v: impl Into<T>) {
-        self.next.set(Some(v.into()));
-        commit(self as *const Self as *const (), Self::apply);
+        self.0.next.set(Some(v.into()));
+        commit(self.0.clone());
     }
 
     /// A predicated drive: a multiplexer on the enable, not a branch.
@@ -368,39 +379,48 @@ macro_rules! config {
 /// memory read from another clock domain is legal in the hardware and
 /// safe only under a discipline the type system does not check, which
 /// is what an asynchronous FIFO's pointers are for.
-pub struct Mem<T: Copy, const N: usize, C: Clock = DefaultClock> {
+pub struct Mem<T: Copy, const N: usize, C: Clock = DefaultClock>(
+    Rc<MemCell<T, N>>,
+    PhantomData<C>,
+);
+
+struct MemCell<T: Copy, const N: usize> {
     words: [Cell<T>; N],
     next: Cell<Option<(usize, T)>>,
-    _c: PhantomData<C>,
 }
 
-impl<T: Copy + Default, const N: usize, C: Clock> Default for Mem<T, N, C> {
+impl<T: Copy, const N: usize> Commit for MemCell<T, N> {
+    fn apply(&self) {
+        if let Some((a, v)) = self.next.take() {
+            self.words[a % N].set(v)
+        }
+    }
+}
+
+impl<T: Copy + Default + 'static, const N: usize, C: Clock> Default
+    for Mem<T, N, C>
+{
     fn default() -> Self {
-        Mem {
-            words: std::array::from_fn(|_| Cell::new(T::default())),
-            next: Cell::new(None),
-            _c: PhantomData,
-        }
+        Mem(
+            Rc::new(MemCell {
+                words: std::array::from_fn(|_| Cell::new(T::default())),
+                next: Cell::new(None),
+            }),
+            PhantomData,
+        )
     }
 }
 
-impl<T: Copy, const N: usize, C: Clock> Mem<T, N, C> {
-    fn apply(p: *const ()) {
-        // Safety: as for `Reg::apply`.
-        let m = unsafe { &*(p as *const Self) };
-        if let Some((a, v)) = m.next.take() {
-            m.words[a % N].set(v)
-        }
-    }
+impl<T: Copy + 'static, const N: usize, C: Clock> Mem<T, N, C> {
     /// The write port. Plain and deferred, like a register drive; one
     /// write per step, which is what one port is.
     pub fn write(&self, addr: usize, v: impl Into<T>) {
-        self.next.set(Some((addr, v.into())));
-        commit(self as *const Self as *const (), Self::apply);
+        self.0.next.set(Some((addr, v.into())));
+        commit(self.0.clone());
     }
     /// The read port. Plain, like a wire.
     pub fn read(&self, addr: usize) -> T {
-        self.words[addr % N].get()
+        self.0.words[addr % N].get()
     }
 }
 
@@ -628,14 +648,17 @@ mod clock {
         pub static DONE: RefCell<HashMap<(usize, usize), u64>> =
             RefCell::new(HashMap::new());
         /// Drives scheduled this step, applied when it ends.
-        pub static COMMITS: RefCell<Vec<(*const (), fn(*const ()))>> =
+        pub static COMMITS: RefCell<Vec<std::rc::Rc<dyn super::Commit>>> =
             RefCell::new(Vec::new());
+        /// The trace sink, told the step number when a step ends.
+        pub static TRACER: RefCell<Option<Box<dyn FnMut(u64)>>> =
+            RefCell::new(None);
     }
 }
 
 /// Schedule a drive for the end of the step.
-fn commit(p: *const (), apply: fn(*const ())) {
-    clock::COMMITS.with(|c| c.borrow_mut().push((p, apply)))
+fn commit(c: Rc<dyn Commit>) {
+    clock::COMMITS.with(|v| v.borrow_mut().push(c))
 }
 
 /// Enter a `parallel!` group for one poll. Returns what to hand back to
@@ -753,9 +776,15 @@ fn process() -> Waker {
 /// End the step: apply every drive scheduled in it, then advance time.
 fn advance() {
     let drives = clock::COMMITS.with(|c| std::mem::take(&mut *c.borrow_mut()));
-    for (p, apply) in drives {
-        apply(p)
+    for d in drives {
+        d.apply()
     }
+    let t = now();
+    clock::TRACER.with(|tr| {
+        if let Some(f) = tr.borrow_mut().as_mut() {
+            f(t)
+        }
+    });
     clock::TIME.with(|t| t.set(t.get() + 1))
 }
 
@@ -828,4 +857,292 @@ pub fn simulate<C: Config>(steps: usize) -> C::Top {
 /// Elaborate and run one cycle.
 pub fn elaborate<C: Config>() -> C::Top {
     simulate::<C>(1)
+}
+
+// ---------------------------------------------------------------------
+// Tracing
+
+/// Waveforms. A signal's name is the field it lives in, the hierarchy
+/// is the nesting of units, and a testbench names what it holds when it
+/// adds it. `#[derive(Trace)]` on a unit registers every field; the
+/// ends of wires and channels, registers and crossings know how to
+/// register themselves, and plain values register nothing. The sink is
+/// VCD, which Surfer and GTKWave open; FST would be the same probes
+/// with another writer.
+pub mod trace {
+    use super::{clock, now, Clock, Crossing, In, Mem, Out, Reg, Rx, Tx};
+    use crate::types::Value;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::io::Write;
+    use std::marker::PhantomData;
+
+    /// A place in the hierarchy: a dotted path.
+    pub struct Scope(String);
+
+    impl Scope {
+        pub fn new(name: &str) -> Self {
+            Scope(name.to_string())
+        }
+        pub fn child(&self, name: &str) -> Scope {
+            Scope(format!("{}.{}", self.0, name))
+        }
+        pub fn path(&self) -> &str {
+            &self.0
+        }
+    }
+
+    /// One traced signal: where it is, how wide, and how to read it.
+    pub struct Probe {
+        pub path: String,
+        pub width: usize,
+        pub sample: Box<dyn Fn() -> String>,
+    }
+
+    thread_local! {
+        static PROBES: RefCell<Vec<Probe>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Register a signal. What the `Traceable` impls call.
+    pub fn probe(scope: &Scope, width: usize, sample: Box<dyn Fn() -> String>) {
+        PROBES.with(|p| {
+            p.borrow_mut().push(Probe {
+                path: scope.0.clone(),
+                width,
+                sample,
+            })
+        })
+    }
+
+    /// Something with signals to register under a scope.
+    pub trait Traceable {
+        fn trace(&self, scope: &Scope);
+    }
+
+    impl<T: Value + 'static, C: Clock> Traceable for Reg<T, C> {
+        fn trace(&self, scope: &Scope) {
+            let r = self.0.clone();
+            probe(scope, T::WIDTH, Box::new(move || r.cur.get().vcd()))
+        }
+    }
+    impl<T: Value + 'static, C: Clock> Traceable for In<T, C> {
+        fn trace(&self, scope: &Scope) {
+            let c = self.0.clone();
+            probe(scope, T::WIDTH, Box::new(move || c.0.get().vcd()))
+        }
+    }
+    impl<T: Value + 'static, C: Clock> Traceable for Out<T, C> {
+        fn trace(&self, scope: &Scope) {
+            let c = self.0.clone();
+            probe(scope, T::WIDTH, Box::new(move || c.0.get().vcd()))
+        }
+    }
+    /// A channel is two signals: the transaction and its valid bit.
+    impl<T: Value + super::Transaction + 'static, C: Clock> Traceable for Rx<T, C> {
+        fn trace(&self, scope: &Scope) {
+            let (c, d) = (self.0.clone(), self.0.clone());
+            probe(
+                &scope.child("data"),
+                T::WIDTH,
+                Box::new(move || c.0.get().0.vcd()),
+            );
+            probe(
+                &scope.child("valid"),
+                1,
+                Box::new(move || d.0.get().1.vcd()),
+            );
+        }
+    }
+    impl<T: Value + super::Transaction + 'static, C: Clock> Traceable for Tx<T, C> {
+        fn trace(&self, scope: &Scope) {
+            let (c, d) = (self.0.clone(), self.0.clone());
+            probe(
+                &scope.child("data"),
+                T::WIDTH,
+                Box::new(move || c.0.get().0.vcd()),
+            );
+            probe(
+                &scope.child("valid"),
+                1,
+                Box::new(move || d.0.get().1.vcd()),
+            );
+        }
+    }
+    impl<T: Value + Default + 'static, A: Clock, B: Clock> Traceable
+        for Crossing<T, A, B>
+    {
+        fn trace(&self, scope: &Scope) {
+            self.from.trace(&scope.child("from"));
+            self.to.trace(&scope.child("to"));
+        }
+    }
+    /// A memory is not traced; its ports are.
+    impl<T: Copy, const N: usize, C: Clock> Traceable for Mem<T, N, C> {
+        fn trace(&self, _: &Scope) {}
+    }
+    /// Plain values in a unit are constants, and register nothing.
+    macro_rules! untraced {
+        ($($t:ty),*) => {
+            $( impl Traceable for $t {
+                fn trace(&self, _: &Scope) {}
+            } )*
+        };
+    }
+    untraced!(u8, u16, u32, u64, u128, usize, bool, &'static str);
+    untraced!(crate::types::Bit, crate::types::Logic);
+    impl<const N: usize> Traceable for crate::types::U<N> {
+        fn trace(&self, _: &Scope) {}
+    }
+    impl<T> Traceable for PhantomData<T> {
+        fn trace(&self, _: &Scope) {}
+    }
+
+    /// A VCD writer. Add what to watch, then `start`; from then on every
+    /// step writes its changes. Time is two ticks per step: a clock
+    /// rises at the step's edge and falls one tick later, when the
+    /// values the step drove have committed.
+    pub struct Vcd {
+        out: Box<dyn Write>,
+        clocks: Vec<(String, fn(u64) -> bool)>,
+    }
+
+    impl Vcd {
+        pub fn new(out: impl Write + 'static) -> Self {
+            Vcd {
+                out: Box::new(out),
+                clocks: Vec::new(),
+            }
+        }
+        /// Trace a clock, as a one-bit signal that pulses at each edge.
+        pub fn clock<C: Clock>(&mut self) {
+            self.clocks.push((C::NAME.to_string(), C::edge_at));
+        }
+        /// Trace something under a name of the testbench's choosing.
+        pub fn add(&mut self, name: &str, t: &impl Traceable) {
+            t.trace(&Scope::new(name))
+        }
+        /// Write the header and start recording.
+        pub fn start(mut self) {
+            let probes: Vec<Probe> =
+                PROBES.with(|p| std::mem::take(&mut *p.borrow_mut()));
+            let ids: Vec<String> =
+                (0..self.clocks.len() + probes.len()).map(id).collect();
+            let (cids, pids) = ids.split_at(self.clocks.len());
+            let (cids, pids) = (cids.to_vec(), pids.to_vec());
+            let o = &mut self.out;
+            writeln!(o, "$timescale 1ns $end").unwrap();
+            writeln!(o, "$scope module clocks $end").unwrap();
+            for ((name, _), id) in self.clocks.iter().zip(&cids) {
+                writeln!(o, "$var wire 1 {id} {name} $end").unwrap();
+            }
+            writeln!(o, "$upscope $end").unwrap();
+            let mut tree = Node::default();
+            for (i, p) in probes.iter().enumerate() {
+                tree.insert(&p.path, i);
+            }
+            tree.write(o, &probes, &pids);
+            writeln!(o, "$enddefinitions $end").unwrap();
+            // Initial values.
+            let mut last: Vec<String> = Vec::new();
+            writeln!(o, "$dumpvars").unwrap();
+            for id in &cids {
+                writeln!(o, "0{id}").unwrap();
+            }
+            for (p, id) in probes.iter().zip(&pids) {
+                let v = (p.sample)();
+                write_value(o, p.width, &v, id);
+                last.push(v);
+            }
+            writeln!(o, "$end").unwrap();
+            let clocks = std::mem::take(&mut self.clocks);
+            let mut out = self.out;
+            clock::TRACER.with(|tr| {
+                *tr.borrow_mut() = Some(Box::new(move |t: u64| {
+                    let edges: Vec<bool> =
+                        clocks.iter().map(|(_, e)| e(t)).collect();
+                    if edges.iter().any(|e| *e) {
+                        writeln!(out, "#{}", 2 * t).unwrap();
+                        for (e, id) in edges.iter().zip(&cids) {
+                            if *e {
+                                writeln!(out, "1{id}").unwrap();
+                            }
+                        }
+                    }
+                    writeln!(out, "#{}", 2 * t + 1).unwrap();
+                    for (e, id) in edges.iter().zip(&cids) {
+                        if *e {
+                            writeln!(out, "0{id}").unwrap();
+                        }
+                    }
+                    for (i, (p, id)) in probes.iter().zip(&pids).enumerate() {
+                        let v = (p.sample)();
+                        if v != last[i] {
+                            write_value(&mut out, p.width, &v, id);
+                            last[i] = v;
+                        }
+                    }
+                }))
+            });
+            let _ = now;
+        }
+    }
+
+    /// Stop recording, so the sink is dropped and flushed.
+    pub fn stop() {
+        clock::TRACER.with(|tr| *tr.borrow_mut() = None)
+    }
+
+    fn write_value(o: &mut dyn Write, width: usize, v: &str, id: &str) {
+        if width == 1 {
+            writeln!(o, "{v}{id}").unwrap()
+        } else {
+            writeln!(o, "b{v} {id}").unwrap()
+        }
+    }
+
+    /// A VCD identifier: printable ASCII from `!`, base 94.
+    fn id(mut i: usize) -> String {
+        let mut s = String::new();
+        loop {
+            s.insert(0, (b'!' + (i % 94) as u8) as char);
+            i /= 94;
+            if i == 0 {
+                return s;
+            }
+        }
+    }
+
+    /// The scope tree, built from dotted paths.
+    #[derive(Default)]
+    struct Node {
+        children: BTreeMap<String, Node>,
+        vars: Vec<usize>,
+    }
+
+    impl Node {
+        fn insert(&mut self, path: &str, i: usize) {
+            let mut node = self;
+            let parts: Vec<&str> = path.split('.').collect();
+            for part in &parts[..parts.len() - 1] {
+                node = node.children.entry(part.to_string()).or_default();
+            }
+            node.vars.push(i);
+        }
+        fn write(&self, o: &mut dyn Write, probes: &[Probe], ids: &[String]) {
+            for &i in &self.vars {
+                let leaf = probes[i].path.rsplit('.').next().unwrap();
+                writeln!(
+                    o,
+                    "$var wire {} {} {leaf} $end",
+                    probes[i].width, ids[i]
+                )
+                .unwrap();
+            }
+            for (name, child) in &self.children {
+                writeln!(o, "$scope module {name} $end").unwrap();
+                child.write(o, probes, ids);
+                writeln!(o, "$upscope $end").unwrap();
+            }
+        }
+    }
 }

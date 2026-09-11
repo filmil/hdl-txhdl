@@ -7,9 +7,11 @@ associated constants for the numbers, and a build is one item:
 \code{config!} writes the config type and both of its impls.
 \code{Default} builds the top, because a register's default is its
 reset value and a socket's is its implementation, and \code{main}
-reaches the design through nothing but the config. Two builds differ
-in a filter length and a clock rate, and the program was run with each
-in turn.
+reaches the design through nothing but the config. The filter's taps
+are parallel hardware: one wait per cycle, and every product and the
+sum computed at that edge, so the accumulator has the whole sum after
+one cycle. Two builds differ in a filter length and a clock rate, and
+the program was run with each in turn.
 
 \lstinputlisting[caption={\code{ex\_config.rs}. Run with \code{bazel run //lib/examples:ex\_config -- asic}.},label={lst:x-config}]{lib/examples/ex_config.rs}
 

@@ -15,8 +15,9 @@ the \code{Module} trait, whose \code{run} takes the unit's inputs and
 outputs as type parameters; configurations and the \code{config!}
 macro; \code{join2} and \code{join\_all}, which give each child its
 own process identity; \code{parallel!}, which keeps its futures in one
-process and returns their outputs together; and the executor with its
+process and returns their outputs together; the executor with its
 waits, \code{edge}, \code{until} and \code{tick}, whose rules
-Section~\ref{sec:r-time} states.
+Section~\ref{sec:r-time} states; and \code{trace}, the probe registry
+and the VCD writer.
 
 \lstinputlisting[caption={\code{lib/src/comp.rs}.},label={lst:r-comp}]{lib/src/comp.rs}

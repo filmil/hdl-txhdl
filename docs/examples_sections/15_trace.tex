@@ -1,0 +1,39 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Waveform}
+\label{sec:x-trace}
+
+Every example so far printed its trace as text. This one writes a
+waveform, in VCD, which Surfer and GTKWave open. A signal's name is
+the field it lives in: \code{\#[derive(Trace)]} on a unit registers
+each field under its own name, a nested unit gives the hierarchy, and
+the testbench names what it holds itself when it adds it,
+\code{vcd.add("msb", \&msb)}. Nothing is named twice and nothing is
+named at construction. \code{\#[derive(Value)]} says how a value of
+the design's own appears: a struct as its fields concatenated, an enum
+as the index of its variant. Registers, the ends of wires and
+channels, and crossings register themselves; plain values in a unit
+are constants and register nothing.
+
+Time in the file is two ticks per step: a clock rises at the step's
+edge and falls one tick later, when the values the step drove have
+committed, so a register's change is seen after the edge that caused
+it. Figure~\ref{fig:x-trace} is the file, drawn. The build made it:
+\code{vcdcvt} turned the VCD into a signals database,
+\code{sqlite2drawtiming} wrote the four chosen signals in drawtiming's
+text form, Listing~\ref{lst:x-trace-dt}, and \code{//tools/dt2tikz}
+drew that text, so the figure cannot differ from what the example
+wrote. The two converters are prebuilt tools pinned by checksum for
+every platform they ship for.
+
+\begin{figure}[htbp]
+\centering
+\input{counter_timing.tex}
+\caption{The counter's waveform, drawn from the VCD the build wrote.
+Time in ticks, two per step; \code{n} counts, and \code{phase} and
+\code{msb} follow its top bit one step after it is latched.}
+\label{fig:x-trace}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_trace.rs}.},label={lst:x-trace}]{lib/examples/ex_trace.rs}
+
+\lstinputlisting[style=ascii,caption={The drawtiming text \code{sqlite2drawtiming} wrote from the VCD: a line of dots is a tick, a stanza is the signals that changed at that time.},label={lst:x-trace-dt}]{counter.dt}

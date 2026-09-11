@@ -72,6 +72,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A waveform:  bazel run //lib/examples:ex_trace > counter.vcd
+rust_binary(
+    name = "ex_trace",
+    srcs = ["ex_trace.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 filegroup(
     name = "sources",
     srcs = [n + ".rs" for n in EXAMPLES] + [
@@ -80,5 +89,6 @@ filegroup(
         "ex_case.rs",
         "ex_fifo.rs",
         "ex_arbiter.rs",
+        "ex_trace.rs",
     ],
 )

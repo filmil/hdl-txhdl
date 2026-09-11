@@ -46,3 +46,12 @@ rust.toolchain(
 use_repo(rust, "rust_toolchains")
 
 register_toolchains("@rust_toolchains//:all")
+
+# Prebuilt tools, fetched by checksum for every platform they ship for.
+# vcdcvt and sqlite2drawtiming turn a VCD into a signals database and
+# the database into drawtiming text; //tools/dt2tikz draws that text.
+bazel_dep(name = "rules_multitool", version = "1.11.1")
+
+multitool = use_extension("@rules_multitool//multitool:extension.bzl", "multitool")
+multitool.hub(lockfile = "//:multitool.lock.json")
+use_repo(multitool, "multitool")

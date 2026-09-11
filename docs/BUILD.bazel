@@ -378,6 +378,7 @@ genrule(
         "out_config.txt",
         "out_fifo.txt",
         "out_arbiter.txt",
+        "out_trace.txt",
     ],
     cmd = " && ".join([
         "$(location //lib/examples:ex_blinky) > $(RULEDIR)/out_blinky.txt",
@@ -386,6 +387,7 @@ genrule(
         "$(location //lib/examples:ex_config) asic >> $(RULEDIR)/out_config.txt",
         "$(location //lib/examples:ex_fifo) > $(RULEDIR)/out_fifo.txt",
         "$(location //lib/examples:ex_arbiter) > $(RULEDIR)/out_arbiter.txt",
+        "$(location //lib/examples:ex_trace) > $(RULEDIR)/out_trace.txt",
     ]),
     tools = [
         "//lib/examples:ex_blinky",
@@ -393,7 +395,42 @@ genrule(
         "//lib/examples:ex_config",
         "//lib/examples:ex_fifo",
         "//lib/examples:ex_arbiter",
+        "//lib/examples:ex_trace",
     ],
+)
+
+# The waveform of the trace example, drawn: VCD to a signals database
+# (vcdcvt), the database to drawtiming text for the chosen signals
+# (sqlite2drawtiming), the text to TikZ (//tools/dt2tikz). The two
+# converters are prebuilt tools pinned in //:multitool.lock.json.
+genrule(
+    name = "counter_db",
+    srcs = ["out_trace.txt"],
+    outs = ["counter.db"],
+    cmd = "$(location @multitool//tools/vcdcvt) -logtostderr" +
+          " -in $(location out_trace.txt) -format sqlite -out $@",
+    tools = ["@multitool//tools/vcdcvt"],
+)
+
+genrule(
+    name = "counter_dt",
+    srcs = ["counter.db"],
+    outs = ["counter.dt"],
+    cmd = "$(location @multitool//tools/sqlite2drawtiming) -logtostderr" +
+          " -in $(location counter.db) -ndots 1" +
+          " -signal '//clocks/clk=>clk'" +
+          " -signal '//counter/n=>n'" +
+          " -signal '//counter/phase=>phase'" +
+          " -signal '//msb=>msb' > $@",
+    tools = ["@multitool//tools/sqlite2drawtiming"],
+)
+
+genrule(
+    name = "counter_timing",
+    srcs = ["counter.dt"],
+    outs = ["counter_timing.tex"],
+    cmd = "$(location //tools/dt2tikz) $(location counter.dt) > $@",
+    tools = ["//tools/dt2tikz"],
 )
 
 # The examples: every file under //lib/examples verbatim, the output of
@@ -404,6 +441,8 @@ latex_document(
     data = [
         ":vendored_tex",
         ":example_outputs",
+        ":counter_dt",
+        ":counter_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://raw.githubusercontent.com/theoremlp/rules_multitool/main/lockfile.schema.json",
+  "vcdcvt": {
+    "binaries": [
+      {
+        "kind": "file",
+        "url": "https://github.com/filmil/go-vcd-parser/releases/download/v0.4.0/vcdcvt-linux-amd64",
+        "sha256": "ac9e0f9ebf40fceab75d2c81b928dc086a11db0418dc311c1497ed29386b411d",
+        "os": "linux",
+        "cpu": "x86_64"
+      },
+      {
+        "kind": "file",
+        "url": "https://github.com/filmil/go-vcd-parser/releases/download/v0.4.0/vcdcvt-linux-arm64",
+        "sha256": "f7ad7504901c35e4c198dac3fd3ba5cf7903bf47d2a5e88a9664a1170af52b5e",
+        "os": "linux",
+        "cpu": "arm64"
+      },
+      {
+        "kind": "file",
+        "url": "https://github.com/filmil/go-vcd-parser/releases/download/v0.4.0/vcdcvt-darwin-amd64",
+        "sha256": "b38bc10ee6eac2a4dd97810e3815216fe2290b46e61cc8686bd1047ec73e8547",
+        "os": "macos",
+        "cpu": "x86_64"
+      },
+      {
+        "kind": "file",
+        "url": "https://github.com/filmil/go-vcd-parser/releases/download/v0.4.0/vcdcvt-darwin-arm64",
+        "sha256": "0dbde3a6be6000c4c4320411775d9735966711b45701592dbde30f804665e458",
+        "os": "macos",
+        "cpu": "arm64"
+      }
+    ]
+  },
+  "sqlite2drawtiming": {
+    "binaries": [
+      {
+        "kind": "file",
+        "url": "https://github.com/filmil/go-vcd-parser/releases/download/v0.4.0/sqlite2drawtiming-linux-amd64",
+        "sha256": "6dab988c31d006e46bb7137cf4001fcfa74d6f58d6714121fb29f6ba355d2a2c",
+        "os": "linux",
+        "cpu": "x86_64"
+      },
+      {
+        "kind": "file",
+        "url": "https://github.com/filmil/go-vcd-parser/releases/download/v0.4.0/sqlite2drawtiming-linux-arm64",
+        "sha256": "350af573defca320251486476376db09b353a6b2b83401f378e87ae2c14b1305",
+        "os": "linux",
+        "cpu": "arm64"
+      },
+      {
+        "kind": "file",
+        "url": "https://github.com/filmil/go-vcd-parser/releases/download/v0.4.0/sqlite2drawtiming-darwin-amd64",
+        "sha256": "e4667eb07cd85140b8d0c4dcc42ad1e22c1aa92f1b59c0562fc9891a9fa3645a",
+        "os": "macos",
+        "cpu": "x86_64"
+      },
+      {
+        "kind": "file",
+        "url": "https://github.com/filmil/go-vcd-parser/releases/download/v0.4.0/sqlite2drawtiming-darwin-arm64",
+        "sha256": "269991ebfd92aa0e03ff5c48df4d86da7a07dea1a23c6a8c43212a928aa6672f",
+        "os": "macos",
+        "cpu": "arm64"
+      }
+    ]
+  }
+}

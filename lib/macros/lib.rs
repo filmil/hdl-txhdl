@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The macros of the runtime: two derives and `interface!`. Written
+//! The macros of the runtime: four derives, `interface!`, `when!` and
+//! `case!`. Written
 //! against `proc_macro` alone, without syn or quote, because the
 //! grammars are small and a crate registry would be the larger cost.
 extern crate proc_macro;
@@ -36,6 +37,280 @@ pub fn derive_transaction(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Bus)]
 pub fn derive_bus(input: TokenStream) -> TokenStream {
     marker(input, "::txhdl::comp::Bus")
+}
+
+// ---------------------------------------------------------------------
+// derive(Value), derive(Trace)
+
+/// A struct or enum item, as far as the derives need it: name, generic
+/// parameters with and without their bounds, and the body.
+struct Item {
+    kind: String,
+    name: String,
+    bounds: String,
+    args: String,
+    body: Option<Group>,
+}
+
+fn parse_item(input: TokenStream) -> Item {
+    let toks: Vec<TokenTree> = input.into_iter().collect();
+    let mut i = 0;
+    while i < toks.len() {
+        if let TokenTree::Ident(id) = &toks[i] {
+            let s = id.to_string();
+            if s == "struct" || s == "enum" {
+                break;
+            }
+        }
+        i += 1;
+    }
+    let kind = toks[i].to_string();
+    let name = toks[i + 1].to_string();
+    i += 2;
+    let (mut bounds, mut args) = (String::new(), String::new());
+    if let Some(TokenTree::Punct(p)) = toks.get(i) {
+        if p.as_char() == '<' {
+            // Collect the generic parameters up to the matching `>`.
+            let mut depth = 0;
+            let mut params: Vec<Vec<TokenTree>> = vec![Vec::new()];
+            loop {
+                let t = &toks[i];
+                i += 1;
+                match t {
+                    TokenTree::Punct(p) if p.as_char() == '<' => {
+                        depth += 1;
+                        if depth > 1 {
+                            params.last_mut().unwrap().push(t.clone())
+                        }
+                    }
+                    TokenTree::Punct(p) if p.as_char() == '>' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        params.last_mut().unwrap().push(t.clone())
+                    }
+                    TokenTree::Punct(p) if p.as_char() == ',' && depth == 1 => {
+                        params.push(Vec::new())
+                    }
+                    _ => params.last_mut().unwrap().push(t.clone()),
+                }
+            }
+            let mut names = Vec::new();
+            let mut full = Vec::new();
+            for p in params.into_iter().filter(|p| !p.is_empty()) {
+                let text: String = p
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                full.push(text);
+                let name = match &p[0] {
+                    TokenTree::Ident(id) if id.to_string() == "const" => {
+                        p[1].to_string()
+                    }
+                    TokenTree::Punct(q) if q.as_char() == '\'' => {
+                        format!("'{}", p[1])
+                    }
+                    t => t.to_string(),
+                };
+                names.push(name);
+            }
+            bounds = format!("<{}>", full.join(", "));
+            args = format!("<{}>", names.join(", "));
+        }
+    }
+    let body = toks[i..].iter().find_map(|t| match t {
+        TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => {
+            Some(g.clone())
+        }
+        _ => None,
+    });
+    Item {
+        kind,
+        name,
+        bounds,
+        args,
+        body,
+    }
+}
+
+/// The field names of a braced struct body, in order.
+fn field_names(body: &Group) -> Vec<String> {
+    let toks: Vec<TokenTree> = body.stream().into_iter().collect();
+    let mut names = Vec::new();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < toks.len() {
+        match &toks[i] {
+            TokenTree::Punct(p) if p.as_char() == '<' => depth += 1,
+            TokenTree::Punct(p) if p.as_char() == '>' => depth -= 1,
+            TokenTree::Ident(id) if depth == 0 => {
+                if let Some(TokenTree::Punct(p)) = toks.get(i + 1) {
+                    if p.as_char() == ':' {
+                        let next_is_path = matches!(
+                            toks.get(i + 2),
+                            Some(TokenTree::Punct(q)) if q.as_char() == ':'
+                        );
+                        if !next_is_path {
+                            names.push(id.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    names
+}
+
+/// The field types of a braced struct body, as text, in order.
+fn field_types(body: &Group) -> Vec<String> {
+    let toks: Vec<TokenTree> = body.stream().into_iter().collect();
+    let mut types = Vec::new();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < toks.len() {
+        match &toks[i] {
+            TokenTree::Punct(p) if p.as_char() == '<' => depth += 1,
+            TokenTree::Punct(p) if p.as_char() == '>' => depth -= 1,
+            TokenTree::Punct(p) if p.as_char() == ':' && depth == 0 => {
+                let path = matches!(
+                    toks.get(i + 1),
+                    Some(TokenTree::Punct(q)) if q.as_char() == ':'
+                );
+                if !path
+                    && !matches!(toks.get(i - 1), Some(TokenTree::Punct(_)))
+                {
+                    // From here to the next `,` at depth 0 is the type.
+                    let mut j = i + 1;
+                    let mut d = 0i32;
+                    let mut ty = Vec::new();
+                    while j < toks.len() {
+                        match &toks[j] {
+                            TokenTree::Punct(p) if p.as_char() == '<' => d += 1,
+                            TokenTree::Punct(p) if p.as_char() == '>' => d -= 1,
+                            TokenTree::Punct(p)
+                                if p.as_char() == ',' && d == 0 =>
+                            {
+                                break
+                            }
+                            _ => {}
+                        }
+                        ty.push(toks[j].to_string());
+                        j += 1;
+                    }
+                    types.push(ty.join(" "));
+                    i = j;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    types
+}
+
+/// The variant names of a fieldless enum.
+fn variant_names(body: &Group) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut skip = false;
+    for t in body.stream() {
+        match t {
+            TokenTree::Punct(p) if p.as_char() == '#' => skip = true,
+            TokenTree::Group(_) if skip => skip = false,
+            TokenTree::Ident(id) => names.push(id.to_string()),
+            _ => {}
+        }
+    }
+    names
+}
+
+/// `#[derive(Value)]`: a struct of values is their concatenation, most
+/// significant field first; a fieldless enum is the index of its
+/// variant, as wide as it needs to be.
+#[proc_macro_derive(Value)]
+pub fn derive_value(input: TokenStream) -> TokenStream {
+    let item = parse_item(input);
+    let Some(body) = &item.body else {
+        return err(Span::call_site(), "Value needs a braced struct or enum");
+    };
+    let out = if item.kind == "struct" {
+        let names = field_names(body);
+        let types = field_types(body);
+        let width = types
+            .iter()
+            .map(|t| format!("<{t} as ::txhdl::types::Value>::WIDTH"))
+            .collect::<Vec<_>>()
+            .join(" + ");
+        let parts = names
+            .iter()
+            .map(|n| {
+                format!("s.push_str(&::txhdl::types::Value::vcd(self.{n}));")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "impl{b} ::txhdl::types::Value for {n}{a} {{\n\
+             const WIDTH: usize = {width};\n\
+             fn vcd(self) -> String {{\n\
+             let mut s = String::new(); {parts} s }}\n}}",
+            b = item.bounds,
+            n = item.name,
+            a = item.args
+        )
+    } else {
+        let variants = variant_names(body);
+        let n = variants.len().max(2);
+        let width = (usize::BITS - (n - 1).leading_zeros()) as usize;
+        let arms = variants
+            .iter()
+            .enumerate()
+            .map(|(i, v)| format!("{name}::{v} => {i}usize,", name = item.name))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "impl{b} ::txhdl::types::Value for {n}{a} {{\n\
+             const WIDTH: usize = {width};\n\
+             fn vcd(self) -> String {{ let i = match self {{ {arms} }};\n\
+             format!(\"{{:0w$b}}\", i, w = {width}) }}\n}}",
+            b = item.bounds,
+            n = item.name,
+            a = item.args
+        )
+    };
+    out.parse().unwrap()
+}
+
+/// `#[derive(Trace)]`: every field is registered under its own name.
+#[proc_macro_derive(Trace)]
+pub fn derive_trace(input: TokenStream) -> TokenStream {
+    let item = parse_item(input);
+    let Some(body) = &item.body else {
+        return err(Span::call_site(), "Trace needs a braced struct");
+    };
+    let calls = field_names(body)
+        .iter()
+        .map(|n| {
+            format!(
+                "::txhdl::comp::trace::Traceable::trace(\
+                 &self.{n}, &scope.child(\"{n}\"));"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "impl{b} ::txhdl::comp::trace::Traceable for {n}{a} {{\n\
+         fn trace(&self, scope: &::txhdl::comp::trace::Scope) {{\n\
+         {calls} }}\n}}",
+        b = item.bounds,
+        n = item.name,
+        a = item.args
+    )
+    .parse()
+    .unwrap()
 }
 
 // ---------------------------------------------------------------------

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Draws drawtiming text as a TikZ picture. The text is what
+# sqlite2drawtiming writes from a signals database; drawtiming itself
+# needs ImageMagick, and the documents already load TikZ.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "dt2tikz",
+    srcs = ["main.rs"],
+    edition = "2021",
+)

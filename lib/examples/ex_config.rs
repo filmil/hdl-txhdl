@@ -47,17 +47,18 @@ pub struct Top<TC: TopConfig> {
 }
 
 impl<TC: TopConfig> Module<(), ()> for Top<TC> {
-    /// A unit runs for as long as the clock does, so this loops. Each
-    /// tap waits for the edge and reads the accumulator at it, so one
-    /// tap is one cycle.
+    /// A unit runs for as long as the clock does, so this loops. One
+    /// wait per cycle, and every tap is computed at that edge: the taps
+    /// are parallel hardware, `TAPS` multipliers into one adder chain,
+    /// and the accumulator takes their sum at the end of the cycle.
     async fn run(&mut self, _i: (), _o: ()) {
         loop {
+            DefaultClock::edge().await;
+            let mut acc = self.filter.acc.get();
             for i in 0..<FilterOf<TC> as FilterConfig>::TAPS {
-                DefaultClock::edge().await;
-                let acc = self.filter.acc.get();
-                let p = self.filter.mac.mul(i.into(), 2.into());
-                self.filter.acc.set(acc.wrapping_add(p));
+                acc = acc.wrapping_add(self.filter.mac.mul(i.into(), 2.into()));
             }
+            self.filter.acc.set(acc);
         }
     }
 }
@@ -93,9 +94,10 @@ config! { Asic: TopConfig for Top<Asic> {
 /// first cycle is spent reaching the first edge, hence the `+ 1`.
 fn report<C: TopConfig<Top = Top<C>>>() {
     let taps = <FilterOf<C> as FilterConfig>::TAPS;
-    let top = simulate::<C>(taps + 1);
+    // One cycle is enough: every tap is computed at the first edge.
+    let top = simulate::<C>(1);
     println!(
-        "{}: {} taps at {} MHz, acc = {}",
+        "{}: {} taps at {} MHz, acc after one cycle = {}",
         C::NAME,
         taps,
         C::CLK_HZ / 1_000_000,

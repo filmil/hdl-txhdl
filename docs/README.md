@@ -31,6 +31,9 @@ Five documents are typeset here, and `cover.tex` names them all:
 in font, listing style or figure style.
 The examples document shows the runtime only through its public interface,
 which `//tools/api` extracts from the source at build time.
+Its waveform figure is drawn by the build: `vcdcvt` and `sqlite2drawtiming`
+(prebuilt, pinned in `//:multitool.lock.json`) turn the VCD an example wrote
+into drawtiming text, and `//tools/dt2tikz` draws that text as TikZ.
 The class and package files it needs are vendored under `//third_party`, and
 a `genrule` here copies them into this package, because LaTeX cannot read
 them where they live.

@@ -281,6 +281,67 @@ pub mod logic {
     }
 }
 
+/// A value a trace can show: a fixed width and its bits as a string,
+/// most significant first, in VCD's alphabet `0`, `1`, `x`, `z`.
+/// Derived for a struct of values, most significant field first, and
+/// for a fieldless enum, as the index of the variant.
+pub trait Value: Copy {
+    const WIDTH: usize;
+    fn vcd(self) -> String;
+}
+
+impl Value for Bit {
+    const WIDTH: usize = 1;
+    fn vcd(self) -> String {
+        if self.to_bool() {
+            "1".into()
+        } else {
+            "0".into()
+        }
+    }
+}
+impl Value for bool {
+    const WIDTH: usize = 1;
+    fn vcd(self) -> String {
+        Bit::from_bool(self).vcd()
+    }
+}
+impl Value for Logic {
+    const WIDTH: usize = 1;
+    fn vcd(self) -> String {
+        match self {
+            Logic::Zero | Logic::L => "0",
+            Logic::One | Logic::H => "1",
+            Logic::Z => "z",
+            _ => "x",
+        }
+        .into()
+    }
+}
+impl<const N: usize> Value for U<N> {
+    const WIDTH: usize = N;
+    fn vcd(self) -> String {
+        format!("{:0width$b}", self.0, width = N)
+    }
+}
+impl<const N: usize> Value for I<N> {
+    const WIDTH: usize = N;
+    fn vcd(self) -> String {
+        let mask = if N >= 128 {
+            u128::MAX
+        } else {
+            (1u128 << N) - 1
+        };
+        format!("{:0width$b}", (self.0 as u128) & mask, width = N)
+    }
+}
+impl<const N: usize> Value for logic::Vec<N> {
+    const WIDTH: usize = N;
+    fn vcd(self) -> String {
+        (0..N).rev().map(|i| self.get(i).vcd()).collect()
+    }
+}
+
 /// Marker: a struct that moves between units over a channel. Derived
 /// with `#[derive(Transaction)]`, which also asks for `Copy` and
 /// `Default` so the channel can hold one.

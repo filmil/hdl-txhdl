@@ -98,6 +98,23 @@ shared cells behind every wire, channel and register, with the deferred
 drives that commit at the end of a step, are how a simulation shares
 state; the lowering would replace them with nets and flops.
 
+\subsection{Tracing}
+
+A design can be watched as a waveform. \code{comp::trace} holds a
+registry of probes, each a dotted path, a width and a closure that
+reads the signal; \code{\#[derive(Trace)]} on a unit registers every
+field under its field name, so the hierarchy is the nesting of units
+and nothing is named at construction. Registers, wire ends, channel
+ends and crossings register themselves, plain values register nothing,
+and \code{\#[derive(Value)]} gives a struct or a fieldless enum of the
+design's own its width and bits. \code{Vcd} is the sink: the executor
+calls it at the end of every step, after the drives have committed,
+and it writes what changed. FST would be the same probes with another
+writer, which is the reason the registry and the writer are separate.
+The examples document draws a VCD through \code{vcdcvt} and
+\code{sqlite2drawtiming}, prebuilt tools pinned by checksum, and
+\code{//tools/dt2tikz}, which turns drawtiming's text into TikZ.
+
 \subsection{Building it}
 
 \begin{lstlisting}[style=ascii,caption={The runtime and everything written against it, built hermetically.},label={lst:r-build}]

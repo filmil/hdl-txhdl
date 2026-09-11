@@ -5,6 +5,10 @@
 The procedural macros, written against \code{proc\_macro} alone so the
 crate has no dependencies. \code{\#[derive(Transaction)]} and
 \code{\#[derive(Bus)]} emit one empty \code{impl} each.
+\code{\#[derive(Value)]} gives a struct of values, or a fieldless
+enum, its width and its bits for a trace, and \code{\#[derive(Trace)]}
+registers every field of a unit under its field name; both read the
+item's generic parameters so a generic unit can derive them.
 \code{interface!} takes an interface and any number of roles, checks
 that every role names every member once and that no member is driven
 twice, and emits a struct per role plus a constructor that splits each
