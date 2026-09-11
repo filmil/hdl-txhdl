@@ -599,6 +599,8 @@ latex_document(
         ":mem_timing",
         ":imm_run",
         ":imm_timing",
+        ":twoproc_run",
+        ":twoproc_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -654,6 +656,19 @@ waveform(
         "//dec/dest=>dest",
         "//imm=>imm",
         "//rd=>rd",
+    ],
+)
+
+waveform(
+    name = "twoproc",
+    example = "//lib/examples:ex_twoproc",
+    lowered = ("sampler", "sampler"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//enable=>enable",
+        "//sampler/n=>n",
+        "//sampler/half=>half",
+        "//q=>q",
     ],
 )
 

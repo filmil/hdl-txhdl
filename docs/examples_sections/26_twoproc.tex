@@ -1,0 +1,30 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Two Processes, One per Edge}
+\label{sec:x-twoproc}
+
+A unit may have several processes: \code{run} is \code{join2} of two
+loops, each with a wait of its own, and each is a process in the
+runtime and a clocked block in the netlist. The sampler here counts
+on the rising edge while enabled and copies the count on the falling
+edge, half a cycle later; the output shows the copy. The two loops
+share the unit through a plain reference, \code{this}, since two
+closures cannot both hold \code{\&mut self}, and the lowering reads
+\code{this.field} as it reads \code{self.field}. The falling-edge
+wait, \code{C::falling()}, lowers to a block on the negative edge in
+Verilog and \code{falling\_edge} in VHDL; a register such a block
+drives is listed as one in the ports sidecar, and the testbench checks
+it after the falling edge rather than the rising one. The lowering is
+simulated against the trace under both simulators,
+Section~\ref{sec:x-checked}.
+
+\begin{figure}[htbp]
+\centering
+\input{twoproc_timing.tex}
+\caption{Two processes: \code{n} advances on the rising edge, \code{half}
+copies it on the falling one, and \code{q} follows \code{half}.}
+\label{fig:x-twoproc}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_twoproc.rs}. Run with \code{bazel run //lib/examples:ex\_twoproc}.},label={lst:x-twoproc}]{lib/examples/ex_twoproc.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_twoproc} printed when the build ran it: the output per cycle, then the lowering with its two blocks.},label={lst:x-twoproc-out}]{out_twoproc.txt}
