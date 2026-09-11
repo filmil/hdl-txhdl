@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Vreteno: a single-cycle RV32I core. One process, one edge per
-//! instruction: fetch from the instruction memory, decode the fields
-//! of the word, execute, write the register file and the data memory,
-//! and drive the next program counter. Simulation form: the decode
-//! and the selection are Rust `match`es over the fields, which the
-//! lowering does not reach yet; the state, the waits and the drives
-//! are the language's, so the lockstep test and the waveform are
-//! real, and lowering is a later change to this file and not a
-//! rewrite.
+//! Vreteno: a two-stage RV32I core. One process, and on every edge
+//! two things at once: the fetch stage reads the instruction memory
+//! at the program counter into the instruction register, and the
+//! execute stage decodes the fields of the word in that register,
+//! executes, writes the register file and the data memory, and, on a
+//! taken branch or a jump, redirects the fetch and squashes the word
+//! it fetched this cycle, which is the one-cycle penalty. Simulation
+//! form: the decode and the selection are Rust `match`es over the
+//! fields, which the lowering does not reach yet; the state, the
+//! waits and the drives are the language's, so the lockstep test and
+//! the waveform are real, and lowering is a later change to this
+//! file and not a rewrite.
 use txhdl::comp::{Clock, DefaultClock, In, Mem, Out, Reg, Unit};
 use txhdl::funcs::{band, bor, bxor, eq, lt, lt_signed, shl, shr, sra};
 use txhdl::types::{Bit, U};
@@ -19,21 +22,31 @@ pub const IMEM_WORDS: usize = 1024;
 pub const DMEM_WORDS: usize = 1024;
 pub const DATA_BASE: u32 = crate::model::DATA_BASE;
 
-/// What the core wrote back this cycle: the register and the value,
-/// `rd` zero when nothing was written. An output, so the waveform
-/// shows it, decoded field by field.
+/// What the core retired this cycle: `done` when an instruction
+/// completed, and the register and the value it wrote, `rd` zero when
+/// it wrote nothing. An output, so the waveform shows it, decoded
+/// field by field, and the lockstep test steps the model on `done`.
 #[derive(Value, Clone, Copy, Default, PartialEq, Debug)]
 pub struct Writeback {
+    pub done: Bit,
     pub rd: U<5>,
     pub val: U<32>,
 }
 
-/// The core's outputs: halted, the instruction fetched, the writeback.
+/// The core's outputs: halted, the instruction executed, the
+/// writeback.
 pub type Outputs = (Out<Bit>, Out<U<32>>, Out<Writeback>);
 
+/// The state: the fetch stage's program counter; the instruction
+/// register, its program counter and whether it holds an
+/// instruction, which is the boundary between the stages; the halt;
+/// and the three memories.
 #[derive(Trace, Default)]
 pub struct Vreteno {
     pub pc: Reg<U<32>>,
+    pub ir: Reg<U<32>>,
+    pub ir_pc: Reg<U<32>>,
+    pub valid: Reg<Bit>,
     pub halted: Reg<Bit>,
     pub regs: Mem<U<32>, 32>,
     pub imem: Mem<U<32>, IMEM_WORDS>,
@@ -83,16 +96,32 @@ impl Vreteno {
     fn data_word(&self, addr: U<32>) -> usize {
         (addr.raw() as u32).wrapping_sub(DATA_BASE) as usize / 4
     }
+
+    /// The architectural program counter: that of the instruction
+    /// about to execute, or the fetch's when the stage is empty. What
+    /// the model's program counter is compared against.
+    pub fn arch_pc(&self) -> U<32> {
+        if self.valid.get().to_bool() {
+            self.ir_pc.get()
+        } else {
+            self.pc.get()
+        }
+    }
 }
 
 impl Unit<In<Bit>, Outputs> for Vreteno {
     async fn run(&mut self, rst: In<Bit>, (halt, instr, wb): Outputs) {
         loop {
             DefaultClock::rising().await;
-            let (rst, pc, halted) =
-                (rst.get(), self.pc.get(), self.halted.get());
-            let ir = self.imem.read(pc.raw() as usize / 4);
-            // The fields of the word.
+            let rst = rst.get();
+            let (fetch_pc, halted) = (self.pc.get(), self.halted.get());
+            let (ir, pc, valid) =
+                (self.ir.get(), self.ir_pc.get(), self.valid.get());
+            // The fetch stage: the word at the program counter, into
+            // the instruction register unless the execute stage
+            // redirects below.
+            let fetched = self.imem.read(fetch_pc.raw() as usize / 4);
+            // The execute stage: the fields of the word.
             let opcode = ir.slice::<0, 7>();
             let rd = ir.slice::<7, 5>();
             let f3 = ir.slice::<12, 3>();
@@ -128,13 +157,10 @@ impl Unit<In<Bit>, Outputs> for Vreteno {
             let mut next = pc4;
             let mut write: Option<U<32>> = None;
             let mut stop = Bit::Zero;
+            let run = !rst.to_bool() && !halted.to_bool() && valid.to_bool();
             match opcode.raw() as u32 {
-                _ if rst.to_bool() => {
-                    next = U::from(0u8);
-                }
-                _ if halted.to_bool() => {
-                    next = pc;
-                    stop = Bit::One;
+                _ if !run => {
+                    stop = halted;
                 }
                 0x37 => write = Some(imm_u),
                 0x17 => write = Some(pc.wrapping_add(imm_u)),
@@ -210,11 +236,34 @@ impl Unit<In<Bit>, Outputs> for Vreteno {
                     self.regs.write(rd.raw() as usize, v);
                 }
             }
-            self.pc.set(next);
+            // A redirect: the next instruction is not the one the
+            // fetch stage read this cycle, so that word is squashed
+            // and the fetch restarts at the target.
+            let redirect = run && next != pc4;
+            if rst.to_bool() {
+                self.pc.set(U::from(0u8));
+                self.valid.set(Bit::Zero);
+            } else if stop.to_bool() {
+                // Halted: the program counter parks on the halting
+                // instruction, as the model's does.
+                if run {
+                    self.pc.set(pc);
+                }
+                self.valid.set(Bit::Zero);
+            } else if redirect {
+                self.pc.set(next);
+                self.valid.set(Bit::Zero);
+            } else {
+                self.pc.set(fetch_pc.wrapping_add(U::from(4u8)));
+                self.ir.set(fetched);
+                self.ir_pc.set(fetch_pc);
+                self.valid.set(Bit::One);
+            }
             self.halted.set(stop);
             halt.set(stop);
-            instr.set(ir);
+            instr.set(if run { ir } else { U::from(0u8) });
             wb.set(Writeback {
+                done: Bit::from_bool(run),
                 rd: if wrote { rd } else { U::from(0u8) },
                 val: write.unwrap_or_default(),
             });

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The core against the model, every cycle: the program counter, the
-//! thirty-one registers and the halt, and the data memory at the end.
-//! The demonstration program and a batch of random ones.
+//! The core against the model, every cycle: the model steps when the
+//! core retires an instruction, and then the program counter, the
+//! thirty-one registers and the halt must agree, and the data memory
+//! at the end. The demonstration program and a batch of random ones.
 use txhdl::comp::{signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use vreteno32::core::{Vreteno, Writeback};
@@ -13,30 +14,44 @@ use vreteno32::program::{demo, random};
 /// cycle; returns the model at the halt.
 fn lockstep(program: &[u32], what: &str) -> Model {
     let mut cpu = Vreteno::with(program);
-    let (pc, regs, dmem, halted) = (
+    let (pc, ir_pc, valid, regs, dmem, halted) = (
         cpu.pc.clone(),
+        cpu.ir_pc.clone(),
+        cpu.valid.clone(),
         cpu.regs.clone(),
         cpu.dmem.clone(),
         cpu.halted.clone(),
     );
+    // The architectural program counter, as Vreteno::arch_pc has it.
+    let arch_pc = move || {
+        if valid.get().to_bool() {
+            ir_pc.get()
+        } else {
+            pc.get()
+        }
+    };
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (halt_out, _halt) = signal::<Bit, DefaultClock>();
     let (instr_out, instr) = signal::<U<32>, DefaultClock>();
-    let (wb_out, _wb) = signal::<Writeback, DefaultClock>();
+    let (wb_out, wb) = signal::<Writeback, DefaultClock>();
     let mut sim = Running::new(cpu.run(rst, (halt_out, instr_out, wb_out)));
     rst_out.set(Bit::One);
     sim.cycle();
     rst_out.set(Bit::Zero);
     let mut model = Model::default();
+    let mut retired = 0;
     for cycle in 0..4096 {
         let at = model.pc;
         sim.cycle();
-        model.step(program);
+        if wb.get().done.to_bool() {
+            model.step(program);
+            retired += 1;
+        }
         let here = format!(
             "{what}, cycle {cycle}, pc {at:#x}: {}",
             disasm(instr.get().raw() as u32)
         );
-        assert_eq!(pc.get().raw() as u32, model.pc, "pc after {here}");
+        assert_eq!(arch_pc().raw() as u32, model.pc, "pc after {here}");
         for x in 1..32 {
             assert_eq!(
                 regs.read(x).raw() as u32,
@@ -53,6 +68,9 @@ fn lockstep(program: &[u32], what: &str) -> Model {
             for (a, &w) in model.mem.iter().enumerate() {
                 assert_eq!(dmem.read(a).raw() as u32, w, "mem[{a}] {here}");
             }
+            // A pipeline retires at most one per cycle; the difference
+            // is the bubbles, one per taken branch and jump.
+            assert!(retired <= cycle + 1, "{what}: retired {retired}");
             return model;
         }
     }

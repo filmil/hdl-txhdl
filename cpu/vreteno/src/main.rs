@@ -11,7 +11,8 @@ use vreteno32::program::demo;
 fn main() {
     let program = demo();
     let mut cpu = Vreteno::with(&program);
-    let (pc, regs, dmem) = (cpu.pc.clone(), cpu.regs.clone(), cpu.dmem.clone());
+    let (ir_pc, regs, dmem) =
+        (cpu.ir_pc.clone(), cpu.regs.clone(), cpu.dmem.clone());
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
     let (instr_out, instr) = signal::<U<32>, DefaultClock>();
@@ -31,9 +32,13 @@ fn main() {
     rst_out.set(Bit::Zero);
     println!("{:>4} {:>6}  {:<22} {}", "t", "pc", "instruction", "writes");
     for _ in 0..80 {
-        let at = pc.get().raw() as u32;
+        let at = ir_pc.get().raw() as u32;
         sim.cycle();
         let w = wb.get();
+        if !w.done.to_bool() {
+            println!("{:>4} {:>6}  (bubble)", now(), "");
+            continue;
+        }
         let wrote = if w.rd.raw() != 0 {
             format!("x{} = {:#x}", w.rd.raw(), w.val.raw())
         } else {
