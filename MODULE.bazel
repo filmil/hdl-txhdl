@@ -89,3 +89,19 @@ bazel_dep(name = "rules_verilog", version = "1.4.3")
 bazel_dep(name = "rules_cc", version = "0.2.22")
 
 register_toolchains("@rules_verilator//verilator:verilator_toolchain")
+
+# Synthesis, hermetic: rules_vivado installs Vivado itself, from the AMD
+# installer archive named here, into Bazel's install cache, and every
+# machine that builds this workspace gets the same toolchain. AMD's
+# download needs a login, so the archive is served from a local path;
+# `.bazelrc` selects the mode. A cold install moves the archive three
+# times and needs about 300 GB free at its peak; see the ruleset's
+# docs/vivado-toolchain.md.
+bazel_dep(name = "rules_vivado", version = "3.10.2")
+
+vivado = use_extension("@rules_vivado//:extensions.bzl", "vivado")
+vivado.install(
+    urls = ["file:///data/tools/archives/FPGAs_AdaptiveSoCs_Unified_SDI_2025.2_1114_2157_1.tar"],
+    sha256 = "cd1021b04166e43c0d59cbbded7b1687dda5e9dad890b82492f872b2fe32a725",
+    modules = ["Artix-7"],
+)

@@ -55,3 +55,25 @@ filegroup(
     name = "sources",
     srcs = glob(["src/*.rs", "tests/*.rs"]),
 )
+
+# Synthesis of the core's Verilog, as the document build wrote it, on an
+# Artix-7 part, with the hermetic Vivado. Manual: a cold run installs
+# Vivado first, about 300 GB of transient disk and an hour or two.
+#
+#   bazel build //cpu/vreteno:vreteno_synth
+load("@rules_vivado//build/vivado:rules.bzl", "vivado_project", "vivado_synthesis")
+
+vivado_project(
+    name = "vreteno_project",
+    srcs = ["//docs:vreteno.v"],
+    part = "xc7a200tfbg484-2",
+    top_level = "vreteno",
+    xdcs = ["vreteno.xdc"],
+    tags = ["manual"],
+)
+
+vivado_synthesis(
+    name = "vreteno_synth",
+    project = ":vreteno_project",
+    tags = ["manual"],
+)
