@@ -1,0 +1,55 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Pipeline Is an Async Function}
+\label{sec:e-pipeline}
+
+A pipeline and a sequence are one construct driven two ways.
+
+A sequence runs one invocation to completion before starting the next. A
+pipeline starts a new invocation every cycle, so several are in flight at
+once, each at a different point in the body. Nothing about the body
+differs. The difference is the rate at which invocations start, and that
+belongs at the call site.
+
+\begin{lstlisting}
+async fn mac(a: U<32>, b: U<32>, prev: U<64>) -> U<64> {
+    let p = mul(a, b);
+    tick().await;              // stage boundary
+    prev + p
+}
+\end{lstlisting}
+
+Three constructs go, and one of them takes a compiler pass with it.
+
+\subsection{The pipe declaration disappears}
+
+LHDL's \code{pipe} declared a value that crosses a stage boundary, so that
+live-range analysis would know to hold it. TxHDL had the same notion under
+a different name.
+
+In an async function, a local that is live across an \code{.await} is held
+in the state machine the compiler generates, because that is what an async
+function is. \code{p} in the listing above crosses \code{tick().await} and
+needs no declaration. The analysis the \code{pipe} keyword existed to feed
+is one that \code{rustc} performs already.
+
+\subsection{What this does not settle}
+
+Three things, and none of them is free.
+
+\begin{itemize}
+  \item \term{Named stages are gone.} A boundary is an await, not a named
+        block. A name becomes a comment.
+  \item \term{The initiation interval moves to the call site.} It was
+        implied by the choice of keyword and is now an argument where the
+        body is driven. That is a fair trade and not a saving.
+  \item \term{Resource sharing has to be proved.} A real pipeline shares
+        one multiplier across every item in flight, while several
+        concurrent invocations each appear to want their own. They are the
+        same code at the same await index, so the lowering can share them.
+        That is a claim about the compiler being written, not about Rust,
+        and it is the largest piece of unfinished work in this proposal.
+\end{itemize}
+
+One thing improves. TxHDL had a \code{stall} statement for a stage that
+cannot proceed. A stall is now an await that has not completed, which is
+the mechanism rather than a construct layered on top of it.

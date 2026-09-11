@@ -1,0 +1,43 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Model of Time Enforces Itself}
+\label{sec:e-time}
+
+The merged specification spends a section on one rule. A timeless body may
+not count cycles; a sequenced body counts them exactly as written. It gives
+the two bodies two keywords, \code{flow} and \code{seq}, and states that a
+cycle count inside a \code{flow} is a compile error.
+
+Embedded in Rust, that rule needs no enforcement, because it cannot be
+broken.
+
+A cycle count is spelled \code{.await}. A plain \code{fn} is not
+\code{async}, so it has no \code{.await} to write, so it cannot state a
+cycle count. The compiler rejects the attempt already, with its own error
+about awaiting outside an async context, and the specification says
+nothing.
+
+\begin{lstlisting}
+// Timeless. There is no .await to write.
+fn mul(a: u32, b: u32) -> u64 {
+    a as u64 * b as u64
+}
+
+// Sequenced. Counts cycles exactly as written.
+async fn main(&mut self) {
+    loop {
+        let req = self.host.request.recv().await;
+        cycles(BAUD_TICKS).await;
+    }
+}
+\end{lstlisting}
+
+Two constructs are deleted, and a rule that needed a paragraph of
+specification and a compiler check becomes a fact about the type system.
+
+This is the clearest case of the reduction paying for itself, and it is
+worth saying why it works rather than treating it as luck. The original
+rule and Rust's rule are the same rule. LHDL's eighth thesis~\cite{theses}
+argued that a designer should state intent and leave the mapping to time to
+the implementation. Rust's \code{async} exists to mark exactly the place
+where a computation gives up control and resumes later. Both are drawing
+the same line, so one of them can be deleted.

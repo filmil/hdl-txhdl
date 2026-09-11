@@ -1,0 +1,82 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{What Was Compiled}
+\label{sec:e-probes}
+
+Every claim in this paper about what Rust does is a probe that was built.
+The probes are one file per question in \code{experiments/rust\_embedding},
+and two of them are expected to fail, so they are tagged \code{manual} and
+stay out of the default build. A failing probe is kept rather than deleted,
+because the failure is the answer.
+
+\begin{table*}[t]
+\caption{The probes and what they answered. Rust 1.90.0 stable unless
+stated. Two results changed the design rather than confirming it.}
+\label{tab:probes}
+\centering
+\footnotesize
+\begin{tabular}{@{}llp{74mm}@{}}
+\toprule
+Probe & Question & Answer \\
+\midrule
+\code{probe\_widths}
+  & Does \code{U<\{A + B\}>} compile?
+  & \textbf{No.} \code{error: generic parameters may not be used in const operations} \\
+\code{probe\_widths\_nightly}
+  & Does it compile on nightly?
+  & \textbf{Yes}, with \code{generic\_const\_exprs}, and \code{mul(a, b)} resolves to \code{U<64>} at the call site \\
+\code{probe\_design}
+  & Is \code{async fn} in a trait usable?
+  & \textbf{Yes}, warning that auto trait bounds such as \code{Send} cannot be stated \\
+\code{probe\_design}
+  & Inputs and outputs as type parameters?
+  & \textbf{Yes.} One struct implements \code{Module} twice with different shapes \\
+\code{probe\_design}
+  & Interface as struct, modport as trait?
+  & \textbf{Yes}, including a unit generic over the role rather than the bus \\
+\code{probe\_comp}
+  & Do \code{Bus}, \code{Port}, \code{Signal}, \code{Chan} hold together?
+  & \textbf{Yes}, and construction compiles \\
+\code{probe\_comp}
+  & Is a \code{Tag} type parameter workable?
+  & \textbf{Yes}, with the policy as associated constants readable in the body \\
+\code{probe\_attr\_block}
+  & Is \code{\#[tag(..)]} on a block stable?
+  & \textbf{No.} \code{error[E0658]: attributes on expressions are experimental} \\
+\code{probe\_processes}
+  & Can \code{run} join two processes?
+  & \textbf{Yes}, with processes taking \code{\&self} and registers as cells \\
+\code{probe\_processes\_mut}
+  & Can they take \code{\&mut self}?
+  & \textbf{No.} \code{error[E0499]: cannot borrow *self as mutable more than once at a time} \\
+\code{probe\_config}
+  & Is a config a struct with associated types and constants?
+  & \textbf{Yes}, and its constants work in an array length, so they are genuinely compile-time \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{The two that changed the design}
+
+\textbf{Arbitrary-width arithmetic needs nightly.} A hardware library wants
+to write that multiplying an $A$-bit value by a $B$-bit value gives an
+$A+B$-bit one. Stating that in a signature needs arithmetic over const
+generic parameters, and stable Rust refuses it. The choices are nightly
+with \code{generic\_const\_exprs}, or one function per width pair, which
+compiles on stable and does not scale. This is the largest single
+constraint on the proposal, and it was a guess until it was built.
+
+\textbf{Parallel processes cannot take a mutable borrow.}
+Section~\ref{sec:e-units} gives the collision and the repair. The point
+here is that ten lines of Rust found a constraint that reading the language
+reference had not suggested, and that the repair, a register being a cell
+several processes reach, is a better model of a register than the one that
+failed.
+
+\subsection{On method}
+
+The first draft of this work argued from the language rules and was wrong
+twice in eleven claims. Both errors were in the direction of optimism, and
+both were cheap to find. A design document for an embedded language should
+include its probes, and the probes should be part of the build, so that a
+Rust release that changes an answer breaks something visible rather than
+quietly invalidating a paragraph.

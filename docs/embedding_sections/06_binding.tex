@@ -1,0 +1,94 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Late Binding, Tags and Configuration}
+\label{sec:e-binding}
+
+The merged language has a whole facet for deciding what is bound to what.
+It holds \code{config}, \code{bind}, \code{domain}, \code{blackbox} and
+\code{foreign}, and it exists so that changing a target edits one file and
+leaves a verified design alone.
+
+Embedded in Rust, the facet keeps its job and loses its syntax.
+
+\subsection{A config is a struct}
+
+A config gathers every choice a build makes: which implementation fills
+each socket, what each generic parameter is, and what the physical numbers
+are. A trait with associated types and associated constants holds all
+three.
+
+\begin{lstlisting}
+pub trait Config {
+    type Mac: MacOp;          // a socket
+    type Clock: Tag;          // a domain
+    const TAPS: usize;        // a generic parameter
+    const CLK_HZ: u64;        // a physical number
+}
+
+pub struct Fpga;
+impl Config for Fpga {
+    type Mac = DspSliceMac;
+    type Clock = Elastic;
+    const TAPS: usize = 16;
+    const CLK_HZ: u64 = 100_000_000;
+}
+\end{lstlisting}
+
+The design is generic over the config rather than over one parameter per
+choice, so adding a knob does not change every unit's signature.
+
+\subsection{The path in a binding disappears}
+
+\code{bind top.filter.mac => DspSliceMac} names a path through the
+instance hierarchy. That path is the part most likely to go stale, because
+it breaks whenever the hierarchy is rearranged.
+
+A nested unit is generic over the same config, so the choice reaches it
+without anyone naming a path.
+
+\begin{lstlisting}
+pub struct Filter<C: Config> { pub mac: C::Mac, pub acc: u64 }
+pub struct Top<C: Config>    { pub filter: Filter<C> }
+
+// The configuration facet, entire.
+pub type FpgaBuild = Top<Fpga>;
+pub type AsicBuild = Top<Asic>;
+\end{lstlisting}
+
+Rearranging the hierarchy cannot invalidate a binding, because there is no
+binding to invalidate. The compiler checks that each implementation
+satisfies its contract, which is what the specification said \code{bind}
+had to do.
+
+\subsection{The numbers are compile-time}
+
+That claim is easy to make and easy to get wrong, so it was compiled. An
+array length is a context that accepts nothing but a true constant:
+
+\begin{lstlisting}
+pub const FPGA_TAPS: usize = <Fpga as Config>::TAPS;
+pub const TAP_BUFFER: [u64; FPGA_TAPS] = [0; FPGA_TAPS];
+\end{lstlisting}
+
+\subsection{Tags are types, and not for the reason expected}
+
+A tag names a synchronisation domain and its policy. The natural spelling
+is an attribute, \code{\#[tag(MemFetch, handshake, capacity = 8)]}, and it
+is the spelling the merged specification chose.
+
+It does not work on a block. An attribute on an expression is an unstable
+feature, and the probe reports \code{error[E0658]}. A tag is therefore a
+type with associated constants, and a unit is generic over it.
+
+\begin{lstlisting}
+pub struct MemFetch;
+impl Tag for MemFetch {
+    const HANDSHAKE: bool = true;
+    const CAPACITY: usize = 8;
+}
+
+pub struct MacUnit<T: Tag> { /* ... */ }
+\end{lstlisting}
+
+That was going to be the design regardless, because a type parameter is
+what lets a config choose the domain. The probe turned a preference into a
+reason.

@@ -1,0 +1,69 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{What Rust Cannot Do}
+\label{sec:e-walls}
+
+One wall is left, and it is the one a separate parser was buying.
+
+\subsection{Control flow on a signal}
+
+A signal is a node in a graph. It has no value while the Rust program runs,
+so it cannot be a condition.
+
+\begin{lstlisting}
+if cond { a } else { b }   // cond must be a bool.
+                           // A signal is not a bool.
+\end{lstlisting}
+
+\code{if} and \code{match} take a \code{bool} and a pattern, and neither
+can be overloaded. The ways out are a function, \code{mux(cond, a, b)}, or
+a macro, and both read worse than the construct they replace. A page of
+control-heavy logic is where the embedding is plainly worse than a language
+with its own grammar.
+
+Section~\ref{sec:e-elaboration} gives the one approach that removes this,
+and what it costs to take it.
+
+\subsection{Bit slicing}
+
+A smaller version of the same thing. \code{w[0..8]} cannot work, because
+\code{Index} returns a reference to something that already exists and a
+slice of a signal is a new node. It becomes \code{w.slice::<0, 8>()}, which
+states the same thing less well.
+
+\section{What the Embedding Costs}
+\label{sec:e-costs}
+
+\subsection{Structural typing on data changes shape}
+
+The merged specification resolved one of its four conflicts by making
+transaction compatibility structural: two transactions with matching fields
+are compatible whatever they are called~\cite{unification}. Rust is
+nominally typed.
+
+A derive can recover it by generating an associated layout type, so that
+compatibility becomes a bound rather than a name comparison. It recovers it
+positionally, though, so the rule becomes ``the same field types in the
+same order'' rather than ``the same fields''. That is a real change to a
+decision already taken, and unlike everything else in this paper it has not
+been compiled.
+
+\subsection{A thesis is inverted}
+
+The project's second thesis~\cite{theses} names making the language a valid
+program in an existing language as one direction, and then takes the other,
+on the grounds that a full toolchain has become affordable to build. This
+paper takes the direction the thesis declined.
+
+The thesis is the rationale section of the merged specification, so it
+should be rewritten rather than quietly contradicted. Its argument survives
+the change of direction, and only its conclusion moves: a toolchain is
+still being built, but it buys a front end over Rust's own syntax tree
+rather than a lexer and a parser, and the type system, the module system,
+the generics and the tooling arrive already written.
+
+\subsection{Smaller frictions}
+
+\code{concat!} is a \code{std} macro, so the bit concatenation macro needs
+another name. \code{async fn} in a public trait warns that auto trait
+bounds cannot be stated, which is harmless while elaboration is single
+threaded and would matter if it ever were not.

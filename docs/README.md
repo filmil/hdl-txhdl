@@ -18,10 +18,15 @@ Those reasons live here.
 |---|---|
 | `unification-analysis.md` | What each language is, what conflicts, what each contributes, and every defect found in the two sources |
 | `syntax-decisions.md` | The Rust-shaped surface syntax chosen for the merged language, one decision per conflict, with a worked example |
-| `document-build-plan.md` | How the article is built, what was tried before, and why two TeX packages are vendored |
+| `document-build-plan.md` | How the articles are built, what was tried before, and why the TeX packages are vendored |
+| `rust-embedding.md` | Working notes on embedding the language in Rust, with every probe result in full |
 
-`article.tex` and `sections/` are the article itself, built by
+`article.tex` with `sections/` is the first article, built by
 `//docs:article`.
+`embedding.tex` with `embedding_sections/` is the second, built by
+`//docs:embedding`.
+`housestyle.tex` is the preamble both share, so the two cannot drift apart
+in font, listing style or figure style.
 The class and package files it needs are vendored under `//third_party`, and
 a `genrule` here copies them into this package, because LaTeX cannot read
 them where they live.

@@ -1,0 +1,67 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Decision That Governs the Rest}
+\label{sec:e-elaboration}
+
+Two ways to turn this Rust into hardware. They are not compatible, and
+almost everything else follows from the choice.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=6mm]
+  % Positions are computed from the boxes rather than from a fixed drop.
+  % The two middle boxes have multi-line text, so a fixed `below=16mm of
+  % src` put the bottom box on top of them: the build stayed green and the
+  % figure was wrong.
+  \node[boxf,text width=62mm,align=left] (src) {%
+    \centerline{\textbf{Rust source}}\\[2pt]
+    units, buses, transactions, tags, config};
+
+  \node[boxf,text width=27mm,align=left,below=10mm of src.south west,
+        anchor=north west] (rt) {%
+    \centerline{\textbf{Runtime}}\\[2pt]
+    the program runs and builds a netlist};
+
+  \node[boxf,text width=27mm,align=left,below=10mm of src.south east,
+        anchor=north east] (pm) {%
+    \centerline{\textbf{Proc macro}}\\[2pt]
+    the macro reads the source and emits hardware};
+
+  % Below whichever of the two hangs lower.
+  \node[box,text width=62mm,align=center] (out)
+    at ($(src.south)!1!(rt.south |- pm.south) + (0,-12mm)$)
+    {\textbf{Netlist, then Verilog or VHDL}};
+
+  \draw[fl] (src.south west) ++(8mm,0) -- (rt.north);
+  \draw[fl] (src.south east) ++(-8mm,0) -- (pm.north);
+  \draw[fl] (rt.south) -- (rt.south |- out.north);
+  \draw[fl] (pm.south) -- (pm.south |- out.north);
+\end{tikzpicture}
+\caption{The two elaboration models. Only the right-hand one can
+reinterpret \code{if} on a signal, because only it sees the source.}
+\label{fig:elaboration}
+\end{figure}
+
+\textbf{Runtime elaboration.} The program runs, builds a netlist through
+side effects, and emits Verilog. Chisel~\cite{bachrach2012} works this way.
+The whole of Rust is available for generating hardware and no macro is
+needed. \code{if} on a signal stays impossible, so
+Section~\ref{sec:e-walls} stands, and errors arrive when the generator runs
+rather than when it compiles.
+
+\textbf{Proc macro elaboration.} An attribute on the unit parses the item's
+own source and emits hardware from it. \code{if} and \code{match} on
+signals can be reinterpreted structurally, which removes
+Section~\ref{sec:e-walls} entirely, and mistakes are compile errors. The
+cost is real and should be stated plainly: the code looks like Rust and
+does not mean Rust, and a reader who assumes Rust semantics inside a unit
+will be wrong.
+
+\begin{rulebox}[Recommendation]
+Proc macro elaboration. Control flow on a signal is the largest remaining
+cost of embedding, and this is the only approach that removes it.
+\end{rulebox}
+
+The second thesis' argument applies here unchanged. If a toolchain is
+affordable to build, it is worth building the one that buys the most, and a
+front end over Rust's syntax tree buys the type system, the module system,
+the generics, the package manager and the editor tooling along with it.

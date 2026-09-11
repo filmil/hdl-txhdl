@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Compiled probes for docs/rust-embedding.md. Each target answers one
+# question from that document's section 8. A probe that does not build is
+# an answer, not a defect, so probes expected to fail carry a comment
+# saying so and are not part of //... by default.
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "probe_widths",
+    srcs = ["probe_widths.rs"],
+    edition = "2021",
+    tags = ["manual"],
+)
+
+# Probe 1b: the same question on nightly. Select with
+#   --@rules_rust//rust/toolchain/channel=nightly
+rust_library(
+    name = "probe_widths_nightly",
+    srcs = ["probe_widths_nightly.rs"],
+    edition = "2021",
+    tags = ["manual"],
+)
+
+# Probe 2: the design itself, on stable.
+rust_library(
+    name = "probe_design",
+    srcs = ["probe_design.rs"],
+    edition = "2021",
+)
+
+# Probe 3: the crate::comp vocabulary, on stable.
+rust_library(
+    name = "probe_comp",
+    srcs = ["probe_comp.rs"],
+    edition = "2021",
+)
+
+# Probe 4: an attribute on a block expression. Expected to fail on stable.
+rust_library(
+    name = "probe_attr_block",
+    srcs = ["probe_attr_block.rs"],
+    edition = "2021",
+    tags = ["manual"],
+)
+
+# Probe 5: processes joined inside `run`.
+rust_library(
+    name = "probe_processes",
+    srcs = ["probe_processes.rs"],
+    edition = "2021",
+)
+
+# Probe 5b: the same processes taking `&mut self`. Expected to fail; the
+# failure is why probe 5 uses interior mutability.
+rust_library(
+    name = "probe_processes_mut",
+    srcs = ["probe_processes_mut.rs"],
+    edition = "2021",
+    tags = ["manual"],
+)
+
+# Probe 6: `config` as a struct implementing a Config trait.
+rust_library(
+    name = "probe_config",
+    srcs = ["probe_config.rs"],
+    edition = "2021",
+)

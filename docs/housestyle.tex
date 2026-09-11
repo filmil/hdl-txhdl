@@ -1,0 +1,142 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% The house preamble, shared by every document in this directory. Loaded
+% after \documentclass, before \title. Keeping it in one file is what
+% stops two articles drifting apart in font, listing style or figure
+% style.
+% Computer Modern. IEEEtran selects Times (ptm) by default, so the face has
+% to be chosen explicitly.
+%
+% Latin Modern is the Computer Modern variety used here, and the choice is
+% forced rather than aesthetic. Under T1 encoding, plain `cmr` has no Type 1
+% outlines unless cm-super is installed, and it is not in the pinned
+% distribution, so pdflatex falls back to EC bitmaps and every glyph in the
+% PDF becomes a Type 3 font. That was measured: the first build produced a
+% document with 10 Type 3 fonts and no Type 1. Latin Modern is Computer
+% Modern redrawn with a full T1 repertoire and real .pfb outlines, so the
+% same design comes out scalable.
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+% microtype is not in the pinned TeX distribution. emergencystretch alone
+% keeps the two-column measure from producing overfull lines.
+\setlength{\emergencystretch}{3em}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{booktabs}
+\usepackage{array}
+% enumitem is not in the pinned TeX distribution; the list spacing below
+% does what \setlist would have done.
+\usepackage{float}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc}
+\usepackage[hidelinks,bookmarks=true]{hyperref}
+
+% Numbered, definition-style box for a rule the reader is meant to apply.
+\theoremstyle{definition}
+\newtheorem{rulebox}{Rule}
+\newtheorem{example}{Example}
+
+% Unnumbered asides.
+\theoremstyle{remark}
+\newtheorem*{tip}{Tip}
+\newtheorem*{pitfall}{Pitfall}
+
+% Tighter lists, in place of enumitem's \setlist.
+\setlength{\topsep}{2pt}
+\setlength{\itemsep}{1pt}
+\setlength{\parsep}{0pt}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\term}[1]{\emph{#1}}
+
+% Syntax highlighting. Four roles, distinguishable in colour and still
+% distinguishable in greyscale, because an IEEE article gets printed: the
+% keyword is the only bold role, the comment is the only italic one, and the
+% two remaining roles differ in lightness as well as in hue.
+\definecolor{kwblue}{RGB}{20,60,150}
+\definecolor{cmtgreen}{RGB}{90,120,90}
+\definecolor{strred}{RGB}{150,50,40}
+\definecolor{numgray}{gray}{0.45}
+\definecolor{framegray}{gray}{0.70}
+\definecolor{bgshade}{gray}{0.97}
+% A darker fill for figure cells. The listing background has to stay very
+% light to keep code readable; a figure cell has to be clearly shaded or the
+% distinction it draws is invisible in print.
+\definecolor{cellshade}{gray}{0.90}
+
+% `'` is deliberately not a string delimiter: the language uses it for loop
+% labels, as Rust does, so treating it as a quote would swallow the rest of
+% the line.
+\lstdefinestyle{txhdl}{
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\bfseries\color{kwblue},
+  commentstyle=\itshape\color{cmtgreen},
+  stringstyle=\color{strred},
+  numberstyle=\tiny\color{numgray},
+  morekeywords={mod,use,pub,const,type,struct,enum,trait,impl,fn,async,let,mut,
+    match,if,else,loop,while,for,in,break,continue,return,as,await,
+    module,bus,channel,transaction,protocol,pipeline,flow,seq,config,
+    port,stage,pipe,instance,connect,bind,tag,domain,blackbox,foreign,
+    property,role,signal,handler,true,false,
+    sequence,interface,modport,implements,package,import,var,wire,func,proc,
+    case,default,next,fork,branch,join,state,fsm},
+  morecomment=[l]{//},
+  morestring=[b]",
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  breaklines=true,
+  breakatwhitespace=true,
+  % Framed, so a listing is bounded rather than floating in the column.
+  frame=single,
+  rulecolor=\color{framegray},
+  framesep=3pt,
+  backgroundcolor=\color{bgshade},
+  xleftmargin=3pt,
+  xrightmargin=3pt,
+  aboveskip=6pt,
+  belowskip=6pt,
+}
+
+% Figures drawn as text. Framed the same way, and with the highlighting
+% switched off, because a box-and-arrow diagram is not code and half its
+% words turning blue reads as an accident. Setting a style adds keys rather
+% than clearing the ones already set, so the three roles are neutralised by
+% hand rather than by leaving them out.
+\lstdefinestyle{ascii}{
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\ttfamily,
+  commentstyle=\ttfamily,
+  stringstyle=\ttfamily,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{framegray},
+  framesep=3pt,
+  backgroundcolor=\color{bgshade},
+  xleftmargin=3pt,
+  xrightmargin=3pt,
+  aboveskip=6pt,
+  belowskip=6pt,
+}
+\lstset{style=txhdl}
+
+% House TikZ styles. `shorten` lives on the arrow styles rather than on each
+% arrow, so every arrow in the document gets the gap, including ones added
+% later. TikZ clips a path at a node's border, so without it an arrowhead
+% butts against the box with no gap at all. Keep `node distance` well above
+% twice the shorten, or the arrow shrinks to nothing.
+\tikzset{
+  box/.style={draw,rounded corners=2pt,align=center,inner sep=4pt,
+              font=\footnotesize},
+  boxf/.style={box,fill=bgshade},
+  lbl/.style={font=\scriptsize\itshape,align=center},
+  fl/.style={-{Stealth[length=4pt]},shorten >=2.5pt,shorten <=2.5pt},
+  fld/.style={fl,dashed},
+}
+

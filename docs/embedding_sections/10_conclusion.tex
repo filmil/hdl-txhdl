@@ -1,0 +1,36 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Conclusion}
+\label{sec:e-conclusion}
+
+A companion paper merged two hardware description languages and gave the
+result a syntax shaped after Rust. This paper removed every construct Rust
+already provides and asked what was left.
+
+Seventeen of twenty constructs go. What remains is two Rust modules of
+traits and types, not a grammar.
+
+Two deletions are worth more than the count suggests. The rule that a
+timeless body may not count cycles needs no enforcement, because a cycle
+count is spelled \code{.await} and a plain function has none: a paragraph
+of specification and a compiler check become a fact about the type system.
+And a pipeline, a sequence and a set of parallel processes turn out to be
+one construct driven three ways, so \code{pipeline}, \code{stage} and
+\code{pipe} all go, and the live-range analysis the last of them existed to
+feed is what an async state machine does already.
+
+Two results were negative and were worth more still, because neither was
+visible from the language reference. Arbitrary-width arithmetic does not
+work on stable Rust. A unit's parallel processes cannot take a mutable
+borrow of the unit, and the repair, a register being a cell that several
+processes reach, describes a register better than the version that failed.
+
+One wall stands. A signal has no value while the program runs, so it cannot
+be the condition of an \code{if}. That is what a separate grammar was
+buying, and a macro front end over Rust's own syntax tree is the way to buy
+it back.
+
+The project's second thesis declined this direction on the grounds that a
+full toolchain had become affordable. That argument has not weakened. It
+now points the other way: if a toolchain is affordable, build the one that
+arrives with a type system, a module system, generics and a package manager
+already written.

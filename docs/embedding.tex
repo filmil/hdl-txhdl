@@ -1,0 +1,115 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% The second TxHDL article: embedding the language in Rust.
+% Built by //docs:embedding. See docs/document-build-plan.md.
+\documentclass[journal,9pt]{IEEEtran}
+
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{Deleting a Language: Embedding TxHDL in Rust}
+
+\author{Filip Filmar and Dragisa Jankovic%
+\thanks{This article follows the TxHDL merge reported in the companion
+paper. It asks what remains of the language once every construct Rust
+already provides is removed. Every claim about Rust in it was compiled;
+the probes are in the project repository under
+\code{experiments/rust\_embedding}.}%
+\thanks{\buildstamp}}
+
+\markboth{TxHDL Embedded in Rust}{Filmar and Jankovic: Deleting a Language}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A companion paper merged two hardware description languages into one and
+gave the result a Rust-shaped syntax. This paper asks the next question: if
+the syntax is already Rust, why is there a separate language at all. We
+remove every construct that Rust provides and keep only what is left. Of
+the twenty non-Rust constructs in the merged specification, seventeen go.
+Two results are worth the exercise on their own. The rule that a timeless
+body may not count cycles needs no enforcement, because a cycle count is
+spelled \code{.await} and a plain \code{fn} has none. And a pipeline, a
+sequence and a set of parallel processes are one construct, an \code{async
+fn}, differing only in how they are driven; the live-range analysis that a
+\code{pipe} declaration existed to feed is what an async state machine does
+already. Every claim here was compiled rather than argued, and two of those
+compilations changed the design: arbitrary-width arithmetic needs nightly
+Rust, and a unit's parallel processes cannot take \code{\&mut self}. One
+wall remains, and it is the reason the merged language was designed with
+its own parser: \code{if} on a signal cannot work, because a signal has no
+value while the program runs.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Hardware description languages, embedded domain-specific languages, Rust,
+high-level synthesis, async, language design.
+\end{IEEEkeywords}
+
+{\footnotesize\tableofcontents}
+
+\input{embedding_sections/01_introduction}
+\input{embedding_sections/02_rule}
+\input{embedding_sections/03_time}
+\input{embedding_sections/04_pipeline}
+\input{embedding_sections/05_units}
+\input{embedding_sections/06_binding}
+\input{embedding_sections/07_probes}
+\input{embedding_sections/08_walls}
+\input{embedding_sections/09_elaboration}
+\input{embedding_sections/10_conclusion}
+
+\begin{thebibliography}{10}
+
+\bibitem{merge}
+F.~Filmar and D.~Jankovic, ``TxHDL: Unifying a dataflow and a transaction
+hardware description language,'' project repository \code{HDL/txhdl},
+\code{docs/article.tex}, 2026.
+
+\bibitem{unification}
+``Unifying LHDL and TxHDL,'' project repository \code{HDL/txhdl},
+\code{docs/unification-analysis.md}, 2026. States what each source language
+contributes and resolves the four conflicts of meaning.
+
+\bibitem{syntax}
+``Surface syntax for the merged language,'' project repository
+\code{HDL/txhdl}, \code{docs/syntax-decisions.md}, 2026. Settles the
+spelling of every construct, biased toward Rust.
+
+\bibitem{theses}
+F.~Filmar, ``Some theses for a modern hardware definition language,''
+project repository \code{HDL/txhdl}, \code{filmil/theses.md}, 2026.
+
+\bibitem{embedding}
+``Embedding TxHDL in Rust,'' project repository \code{HDL/txhdl},
+\code{docs/rust-embedding.md}, 2026. The working notes this article is
+drawn from, with the probe results in full.
+
+\bibitem{build}
+``Building the specification documents,'' project repository
+\code{HDL/txhdl}, \code{docs/document-build-plan.md}, 2026.
+
+\bibitem{bachrach2012}
+J.~Bachrach \emph{et al.}, ``Chisel: Constructing hardware in a Scala
+embedded language,'' in \emph{Proc. Design Automation Conf.}, 2012, pp.
+1216--1225.
+
+\bibitem{nikhil2004}
+R.~Nikhil, ``Bluespec System Verilog: efficient, correct RTL from high level
+specifications,'' in \emph{Proc. MEMOCODE}, 2004, pp. 69--70.
+
+\bibitem{carloni2001}
+L.~P. Carloni, K.~L. McMillan, and A.~L. Sangiovanni-Vincentelli, ``Theory
+of latency-insensitive design,'' \emph{IEEE Trans. Computer-Aided Design},
+vol.~20, no.~9, pp. 1059--1076, 2001.
+
+\bibitem{rust}
+N.~D. Matsakis and F.~S. Klock, ``The Rust language,'' \emph{Ada Letters},
+vol.~34, no.~3, pp. 103--104, 2014.
+
+\end{thebibliography}
+
+\end{document}

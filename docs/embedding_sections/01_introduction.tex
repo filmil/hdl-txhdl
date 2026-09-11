@@ -1,0 +1,48 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Introduction}
+\label{sec:e-intro}
+
+\IEEEPARstart{A}{} companion paper~\cite{merge} took two hardware
+description languages that had been developed independently for one
+project, showed that they did not compete, and merged them. LHDL described
+dataflow and left time to the compiler. TxHDL described transactions over
+buses and let a module block for as many cycles as a protocol took. Four
+questions needed a decision about meaning, and the analysis behind
+them~\cite{unification} resolved all four.
+
+The merged language was then given a surface syntax biased toward
+Rust~\cite{syntax}, construct by construct, because Rust is familiar and
+because following it removed six defects that the two sources had rather
+than restating them.
+
+This paper asks the question that arrangement invites. If the syntax is
+already Rust, why is there a separate language at all?
+
+\subsection{The experiment}
+
+Take the merged specification and delete every construct that Rust already
+provides. Rename every construct whose name collides with a Rust concept,
+so that nothing means two things. Keep what is left, and see how small it
+is.
+
+The answer is that seventeen of the twenty non-Rust constructs go, and what
+remains is a library rather than a keyword list.
+
+Two of the deletions pay for the exercise on their own, and
+Sections~\ref{sec:e-time} and~\ref{sec:e-pipeline} state them. A third
+result is negative and matters as much: Section~\ref{sec:e-walls} gives the
+one thing an embedded language cannot do, which is the thing a separate
+parser was buying.
+
+\subsection{Everything here was compiled}
+
+The first draft of this work argued about what Rust would accept. That was
+replaced. A Rust toolchain is now part of the repository's hermetic build,
+and every claim in this paper is a probe that was compiled, one per
+question. Section~\ref{sec:e-probes} reports what each one answered, and
+keeps the two that failed, because a failure is an answer.
+
+Two of those compilations changed the design rather than confirming it.
+Arbitrary-width arithmetic does not work on stable Rust. A unit's parallel
+processes cannot take a mutable borrow of the unit. Neither was visible
+from the language reference; both were visible in ten lines of code.

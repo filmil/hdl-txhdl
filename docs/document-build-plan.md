@@ -176,11 +176,22 @@ Two channels, so the figure survives being photocopied.
 
 | Target | Output |
 |---|---|
-| `//docs:article` | the specification as an IEEE two-column PDF |
+| `//docs:article` | the merged specification, as an IEEE two-column PDF |
+| `//docs:embedding` | embedding the language in Rust, same format |
+
+Both load `docs/housestyle.tex`, which holds the font choice, the listing
+style and the TikZ styles.
+A second document that copied the preamble would drift from the first one
+within a month.
 
 `.forgejo/workflows/release.yml` gathers every `*.pdf` and `*.html` under
 `bazel-bin/` into `dist/release/`, so the article is attached to the rolling
 `nightly` release and to every dated release cut by hand.
+
+`//experiments/rust_embedding` holds the Rust probes behind
+`docs/rust-embedding.md`. Three of its targets are tagged `manual`: two
+are expected to fail, and one needs a nightly toolchain flag.
+`experiments/README.md` says how to run them.
 
 `bazel test //...` exits 4 today, because no test target exists yet.
 The build workflow treats that one exit code as success and fails on every

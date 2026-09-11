@@ -1,0 +1,95 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Rule, and What It Leaves}
+\label{sec:e-rule}
+
+\begin{rulebox}[The reduction]
+Delete every construct Rust already provides. Rename every construct whose
+name collides with a Rust concept. What remains is the library.
+\end{rulebox}
+
+The renaming clause does one job in practice. A hardware \term{module} and
+a Rust \code{mod} are different things with one name, so the hardware one
+becomes a \term{unit} and \code{mod} keeps its meaning as a namespace.
+
+\subsection{The vocabulary that remains}
+
+Two Rust modules hold everything the language still needs.
+
+\begin{lstlisting}
+crate::types::Transaction   // data that moves between units
+crate::types::Tag           // a domain and its policy
+
+crate::comp::Module         // a unit
+crate::comp::Bus            // a bundle of channels
+crate::comp::Chan           // one channel of a bus
+crate::comp::Signal         // one wire
+crate::comp::Port           // an attachment to a bus, in a role
+crate::comp::Role           // the type-level tag for a modport
+\end{lstlisting}
+
+Everything else is a plain Rust struct, trait or function.
+Table~\ref{tab:reduction} states the mapping.
+
+\begin{table}[H]
+\caption{What each construct becomes. Seventeen of twenty are deleted
+outright.}
+\label{tab:reduction}
+\centering
+\footnotesize
+\begin{tabular}{@{}ll@{}}
+\toprule
+Was & Is now \\
+\midrule
+\code{transaction T}   & \code{struct T} plus \code{impl Transaction} \\
+\code{module M}        & \code{struct M}, a unit, plus \code{impl Module} \\
+\code{bus B}           & \code{struct B} plus \code{impl Bus} \\
+\code{interface I}     & \code{struct I} of \code{Signal} fields \\
+\code{modport R}       & \code{trait R}, implemented for the interface \\
+\code{channel c: T}    & a field of type \code{Chan<T>} \\
+\code{port p}          & a field of type \code{Port<B, R>} \\
+\code{flow f}          & \code{fn f} \\
+\code{seq s}           & \code{async fn} \\
+\code{pipeline stage pipe} & \code{async fn} and \code{.await} \\
+\code{tag T}           & \code{struct T} plus \code{impl Tag}, as a parameter \\
+\code{config bind}     & a \code{type} alias \\
+\code{domain D}        & a type parameter \\
+\code{assert assume cover} & Rust's own macros \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Transactions, interfaces and modports}
+
+A transaction is a struct that implements a marker trait. Nothing else
+about it is special.
+
+\begin{lstlisting}
+pub struct MacRequest { pub addr: u32, pub count: u8 }
+impl Transaction for MacRequest {}
+\end{lstlisting}
+
+An interface splits into two Rust items, and that split fixes a defect the
+earlier analysis reported~\cite{unification}. LHDL's \code{interface} did
+two jobs at once, a bundle of wires and a socket an implementation fills,
+which is why its grammar and its examples never agreed. Here the bundle is
+a struct and the role is a trait.
+
+\begin{lstlisting}
+// The wires. No direction on any of them.
+pub struct Wishbone {
+    pub adr: Signal<u32>,
+    pub ack: Signal<bool>,
+}
+
+// A role. Direction lives here, not in the struct.
+pub trait Initiator {
+    fn drive_adr(&mut self, v: u32);
+    fn read_ack(&self) -> bool;
+}
+
+impl Initiator for Wishbone { /* ... */ }
+\end{lstlisting}
+
+A unit may then be generic over the role it attaches in rather than over a
+concrete bus, which is what late binding needs and
+Section~\ref{sec:e-binding} develops.

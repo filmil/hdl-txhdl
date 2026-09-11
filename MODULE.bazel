@@ -26,3 +26,23 @@ hermetic_latex.toolchain()
 use_repo(hermetic_latex, "hermetic_latex")
 
 register_toolchains("@hermetic_latex//:all")
+
+# Rust, so that claims about what the language can express are compiled
+# rather than argued. docs/rust-embedding.md section 8 lists what is being
+# checked. The toolchain is fetched by the ruleset, so nothing is installed
+# on the machine.
+bazel_dep(name = "rules_rust", version = "0.74.0")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    versions = [
+        # Stable and nightly both, because the open question is which of
+        # the two the numeric library needs.
+        "1.90.0",
+        "nightly/2026-08-01",
+    ],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")

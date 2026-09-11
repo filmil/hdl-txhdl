@@ -1,0 +1,81 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Units, Processes and Parallelism}
+\label{sec:e-units}
+
+A unit is a struct that implements \code{crate::comp::Module}. The trait
+has one method.
+
+\begin{lstlisting}
+#[allow(async_fn_in_trait)]
+pub trait Module<In, Out> {
+    async fn run(&mut self, inputs: In, outputs: Out);
+}
+\end{lstlisting}
+
+Inputs and outputs are type parameters rather than associated types, and
+that choice buys something concrete: one struct may implement the trait
+more than once, with different shapes, so a unit that works on 32-bit and
+64-bit streams is one implementation and not two.
+
+\subsection{Parallelism is stated, not implied}
+
+Synthesis calls \code{run}. A unit with more than one concurrent process
+starts one async function per process and joins them.
+
+\begin{lstlisting}
+impl Module<Ins, Outs> for DualPort {
+    async fn run(&mut self, _i: Ins, _o: Outs) {
+        join2(self.port_a(), self.port_b()).await;
+    }
+}
+\end{lstlisting}
+
+This replaces a rule with a construct. TxHDL said that several sequence
+blocks in one module run concurrently, which was a property of having
+declared them. It also contradicted itself: the specification stated that a
+module holds one sequence, while three of its own modules declared
+two~\cite{unification}. Here there is no rule to contradict. Parallelism is
+a \code{join}, written where it happens, and a unit with one process does
+not write one.
+
+\subsection{Processes cannot take a mutable borrow}
+
+The obvious way to write the two processes does not compile, and finding
+that out cost ten lines.
+
+\begin{lstlisting}
+async fn port_a(&mut self) { /* ... */ }
+async fn port_b(&mut self) { /* ... */ }
+
+// error[E0499]: cannot borrow `*self` as mutable
+//               more than once at a time
+join2(self.port_a(), self.port_b()).await;
+\end{lstlisting}
+
+Hardware processes share state: they drive registers. Rust permits one
+mutable borrow at a time. The two facts collide directly.
+
+The repair is that a register is a cell, and a process takes a shared
+reference.
+
+\begin{lstlisting}
+pub struct Reg<T: Copy> { v: core::cell::Cell<T> }
+
+impl<T: Copy> Reg<T> {
+    pub fn get(&self) -> T { self.v.get() }
+    pub fn set(&self, x: T) { self.v.set(x) }
+}
+
+async fn port_a(&self) { self.hits_a.set(self.hits_a.get() + 1); }
+\end{lstlisting}
+
+\code{run} still takes \code{\&mut self}, and the processes it starts take
+\code{\&self}. That compiles, and it also describes the hardware better: a
+register is a thing several processes reach, which is what a register is.
+
+\begin{pitfall}
+This is the constraint most likely to surprise somebody writing a unit for
+the first time, because the code that fails is the code a Rust programmer
+would write first. It should be in the library's documentation and in the
+error message, not only in a paper.
+\end{pitfall}

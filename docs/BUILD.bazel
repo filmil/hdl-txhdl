@@ -322,5 +322,15 @@ latex_document(
     name = "article",
     main = "article.tex",
     data = [":vendored_tex"],
-    deps = glob(["sections/*.tex"]),
+    deps = ["housestyle.tex"] + glob(["sections/*.tex"]),
+)
+
+# The second article: what is left of the language once every construct
+# Rust already provides is deleted. Shares the house preamble, so the two
+# documents cannot drift apart in font, listing style or figure style.
+latex_document(
+    name = "embedding",
+    main = "embedding.tex",
+    data = [":vendored_tex"],
+    deps = ["housestyle.tex"] + glob(["embedding_sections/*.tex"]),
 )
