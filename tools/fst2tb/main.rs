@@ -10,7 +10,9 @@
 //! edge, so it is checked at 2k+1. A wire the Rust process drove at
 //! tick 2k was computed from the registers as they stood before that
 //! edge, so it is checked at 2k-1, where the entity's continuous
-//! assignment shows the same value.
+//! assignment shows the same value; and from the inputs of that edge,
+//! so at 2k-1 the inputs are applied first, a delta passes, and the
+//! checks follow.
 //!
 //! Usage: fst2tb FILE.fst FILE.vhd.ports ENTITY UNIT > tb.vhd
 //! where UNIT is the name the Rust testbench gave the unit in the trace.
@@ -157,6 +159,17 @@ fn main() {
         // outputs and inputs for the next edge against the trace at 2k+2.
         o.push_str("    wait for 1 ns;\n");
         let odd = t + 1;
+        // The inputs first, then two deltas, one for the inputs to
+        // take effect and one for the wires that follow them, then
+        // the checks.
+        for (n, d, w) in &ports {
+            if d == "in" && *n != clock {
+                if let Some(v) = val(&trace_name(n, d), t + 2) {
+                    o.push_str(&format!("    {n} <= {};\n", lit(*w, &v)));
+                }
+            }
+        }
+        o.push_str("    wait for 0 ns;\n    wait for 0 ns;\n");
         for (n, d, w) in &ports {
             if d == "reg" {
                 if let Some(v) = val(&trace_name(n, d), t) {
@@ -177,13 +190,6 @@ fn main() {
                         "    expect(\"{n}\", {n} = {}, now);\n",
                         lit(*w, &v)
                     ));
-                }
-            }
-        }
-        for (n, d, w) in &ports {
-            if d == "in" && *n != clock {
-                if let Some(v) = val(&trace_name(n, d), t + 2) {
-                    o.push_str(&format!("    {n} <= {};\n", lit(*w, &v)));
                 }
             }
         }
