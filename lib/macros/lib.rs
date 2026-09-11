@@ -23,7 +23,9 @@ fn type_name(input: TokenStream) -> String {
 
 fn marker(input: TokenStream, trait_path: &str) -> TokenStream {
     let name = type_name(input);
-    format!("impl {trait_path} for {name} {{}}").parse().unwrap()
+    format!("impl {trait_path} for {name} {{}}")
+        .parse()
+        .unwrap()
 }
 
 #[proc_macro_derive(Transaction)]
@@ -39,30 +41,57 @@ pub fn derive_bus(input: TokenStream) -> TokenStream {
 // ---------------------------------------------------------------------
 // interface!
 
-struct Field { name: String, ty: String }
-struct Role { name: String, ends: Vec<(String, String)> } // (dir, member)
+struct Field {
+    name: String,
+    ty: String,
+}
+struct Role {
+    name: String,
+    ends: Vec<(String, String)>,
+} // (dir, member)
 
 fn err(span: Span, msg: &str) -> TokenStream {
     let msg = msg.replace('"', "\\\"");
-    let mut ts: TokenStream = format!("compile_error!(\"{msg}\");").parse().unwrap();
+    let mut ts: TokenStream =
+        format!("compile_error!(\"{msg}\");").parse().unwrap();
     // Attach the span so the error points at the declaration.
-    ts = ts.into_iter().map(|mut tt| { tt.set_span(span); tt }).collect();
+    ts = ts
+        .into_iter()
+        .map(|mut tt| {
+            tt.set_span(span);
+            tt
+        })
+        .collect();
     ts
 }
 
-fn expect_ident(it: &mut impl Iterator<Item = TokenTree>, what: &str) -> Result<Ident, TokenStream> {
+fn expect_ident(
+    it: &mut impl Iterator<Item = TokenTree>,
+    what: &str,
+) -> Result<Ident, TokenStream> {
     match it.next() {
         Some(TokenTree::Ident(i)) => Ok(i),
         Some(other) => Err(err(other.span(), &format!("expected {what}"))),
-        None => Err(err(Span::call_site(), &format!("expected {what}, found end of input"))),
+        None => Err(err(
+            Span::call_site(),
+            &format!("expected {what}, found end of input"),
+        )),
     }
 }
 
-fn expect_brace(it: &mut impl Iterator<Item = TokenTree>, what: &str) -> Result<Group, TokenStream> {
+fn expect_brace(
+    it: &mut impl Iterator<Item = TokenTree>,
+    what: &str,
+) -> Result<Group, TokenStream> {
     match it.next() {
         Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => Ok(g),
-        Some(other) => Err(err(other.span(), &format!("expected {{ ... }} for {what}"))),
-        None => Err(err(Span::call_site(), &format!("expected {{ ... }} for {what}, found end of input"))),
+        Some(other) => {
+            Err(err(other.span(), &format!("expected {{ ... }} for {what}")))
+        }
+        None => Err(err(
+            Span::call_site(),
+            &format!("expected {{ ... }} for {what}, found end of input"),
+        )),
     }
 }
 
@@ -75,17 +104,30 @@ fn parse_members(g: Group) -> Result<Vec<Field>, TokenStream> {
         let name = expect_ident(&mut it, "a member name")?;
         match it.next() {
             Some(TokenTree::Punct(p)) if p.as_char() == ':' => {}
-            Some(other) => return Err(err(other.span(), "expected `:` after member name")),
-            None => return Err(err(name.span(), "expected `:` after member name")),
+            Some(other) => {
+                return Err(err(other.span(), "expected `:` after member name"))
+            }
+            None => {
+                return Err(err(name.span(), "expected `:` after member name"))
+            }
         }
         let mut ty = String::new();
         let mut depth = 0i32;
         loop {
             match it.peek() {
                 None => break,
-                Some(TokenTree::Punct(p)) if p.as_char() == ',' && depth == 0 => { it.next(); break; }
-                Some(TokenTree::Punct(p)) if p.as_char() == '<' => { depth += 1; }
-                Some(TokenTree::Punct(p)) if p.as_char() == '>' => { depth -= 1; }
+                Some(TokenTree::Punct(p))
+                    if p.as_char() == ',' && depth == 0 =>
+                {
+                    it.next();
+                    break;
+                }
+                Some(TokenTree::Punct(p)) if p.as_char() == '<' => {
+                    depth += 1;
+                }
+                Some(TokenTree::Punct(p)) if p.as_char() == '>' => {
+                    depth -= 1;
+                }
                 _ => {}
             }
             ty.push_str(&it.next().unwrap().to_string());
@@ -93,7 +135,10 @@ fn parse_members(g: Group) -> Result<Vec<Field>, TokenStream> {
         if ty.is_empty() {
             return Err(err(name.span(), "member has no type"));
         }
-        out.push(Field { name: name.to_string(), ty });
+        out.push(Field {
+            name: name.to_string(),
+            ty,
+        });
     }
     Ok(out)
 }
@@ -106,18 +151,30 @@ fn parse_role(name: Ident, g: Group) -> Result<Role, TokenStream> {
         let dir = expect_ident(&mut it, "`in` or `out`")?;
         let d = dir.to_string();
         if d != "in" && d != "out" {
-            return Err(err(dir.span(), &format!("direction must be `in` or `out`, found `{d}`")));
+            return Err(err(
+                dir.span(),
+                &format!("direction must be `in` or `out`, found `{d}`"),
+            ));
         }
         let m = expect_ident(&mut it, "a member name after the direction")?;
         ends.push((d, m.to_string()));
         if let Some(TokenTree::Punct(p)) = it.peek() {
-            if p.as_char() == ',' { it.next(); }
+            if p.as_char() == ',' {
+                it.next();
+            }
         }
     }
-    Ok(Role { name: name.to_string(), ends })
+    Ok(Role {
+        name: name.to_string(),
+        ends,
+    })
 }
 
-fn check(iface: &Ident, members: &[Field], roles: &[Role]) -> Result<(), TokenStream> {
+fn check(
+    iface: &Ident,
+    members: &[Field],
+    roles: &[Role],
+) -> Result<(), TokenStream> {
     if roles.is_empty() {
         return Err(err(iface.span(), "an interface needs at least one role"));
     }
@@ -125,18 +182,33 @@ fn check(iface: &Ident, members: &[Field], roles: &[Role]) -> Result<(), TokenSt
         for m in members {
             let n = r.ends.iter().filter(|(_, x)| x == &m.name).count();
             if n == 0 {
-                return Err(err(iface.span(), &format!(
-                    "role `{}` does not say which end of `{}` it takes", r.name, m.name)));
+                return Err(err(
+                    iface.span(),
+                    &format!(
+                        "role `{}` does not say which end of `{}` it takes",
+                        r.name, m.name
+                    ),
+                ));
             }
             if n > 1 {
-                return Err(err(iface.span(), &format!(
-                    "role `{}` names `{}` {} times", r.name, m.name, n)));
+                return Err(err(
+                    iface.span(),
+                    &format!(
+                        "role `{}` names `{}` {} times",
+                        r.name, m.name, n
+                    ),
+                ));
             }
         }
         for (_, x) in &r.ends {
             if !members.iter().any(|m| &m.name == x) {
-                return Err(err(iface.span(), &format!(
-                    "role `{}` names `{}`, which is not a member of `{}`", r.name, x, iface)));
+                return Err(err(
+                    iface.span(),
+                    &format!(
+                        "role `{}` names `{}`, which is not a member of `{}`",
+                        r.name, x, iface
+                    ),
+                ));
             }
         }
     }
@@ -144,13 +216,20 @@ fn check(iface: &Ident, members: &[Field], roles: &[Role]) -> Result<(), TokenSt
     // catch this too, as a move error on the second `Driver`, but this
     // message names both roles and the member; E0382 names a temporary.
     for m in members {
-        let drivers: Vec<&str> = roles.iter()
+        let drivers: Vec<&str> = roles
+            .iter()
             .filter(|r| r.ends.iter().any(|(d, x)| d == "out" && x == &m.name))
             .map(|r| r.name.as_str())
             .collect();
         if drivers.len() > 1 {
-            return Err(err(iface.span(), &format!(
-                "member `{}` is driven by more than one role: {}", m.name, drivers.join(", "))));
+            return Err(err(
+                iface.span(),
+                &format!(
+                    "member `{}` is driven by more than one role: {}",
+                    m.name,
+                    drivers.join(", ")
+                ),
+            ));
         }
     }
     Ok(())
@@ -165,7 +244,9 @@ fn emit(iface: &Ident, members: &[Field], roles: &[Role]) -> TokenStream {
         for (dir, mname) in &r.ends {
             let ty = &members.iter().find(|m| &m.name == mname).unwrap().ty;
             let end = if dir == "out" { "Driver" } else { "Reader" };
-            s.push_str(&format!("    pub {mname}: <{ty} as ::txhdl::comp::Member>::{end},\n"));
+            s.push_str(&format!(
+                "    pub {mname}: <{ty} as ::txhdl::comp::Member>::{end},\n"
+            ));
         }
         s.push_str("}\n");
     }
@@ -176,12 +257,16 @@ fn emit(iface: &Ident, members: &[Field], roles: &[Role]) -> TokenStream {
     // role driving the same member is a use of a moved value even if the
     // check above were removed.
     let tuple: Vec<&str> = roles.iter().map(|r| r.name.as_str()).collect();
-    s.push_str(&format!("impl {iface} {{\n    pub fn new() -> ({}) {{\n", tuple.join(", ")));
+    s.push_str(&format!(
+        "impl {iface} {{\n    pub fn new() -> ({}) {{\n",
+        tuple.join(", ")
+    ));
     for m in members {
         // Fully qualified call syntax, so the caller need not have `Member`
         // in scope for the generated code to resolve.
         s.push_str(&format!(
-            "        let {} = ::txhdl::comp::Member::split(<{} as ::txhdl::comp::Member>::new());\n",
+            "        let {} = ::txhdl::comp::Member::split(\
+             <{} as ::txhdl::comp::Member>::new());\n",
             m.name, m.ty));
     }
     s.push_str("        (\n");
@@ -203,27 +288,46 @@ fn emit(iface: &Ident, members: &[Field], roles: &[Role]) -> TokenStream {
 #[proc_macro]
 pub fn interface(input: TokenStream) -> TokenStream {
     let mut it = input.into_iter();
-    let iface = match expect_ident(&mut it, "an interface name") { Ok(i) => i, Err(e) => return e };
-    let body = match expect_brace(&mut it, "the interface members") { Ok(g) => g, Err(e) => return e };
-    let members = match parse_members(body) { Ok(m) => m, Err(e) => return e };
+    let iface = match expect_ident(&mut it, "an interface name") {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+    let body = match expect_brace(&mut it, "the interface members") {
+        Ok(g) => g,
+        Err(e) => return e,
+    };
+    let members = match parse_members(body) {
+        Ok(m) => m,
+        Err(e) => return e,
+    };
 
     let mut roles = Vec::new();
     loop {
         match it.next() {
             None => break,
             Some(TokenTree::Ident(kw)) if kw.to_string() == "role" => {
-                let name = match expect_ident(&mut it, "a role name") { Ok(i) => i, Err(e) => return e };
-                let g = match expect_brace(&mut it, "the role's ends") { Ok(g) => g, Err(e) => return e };
-                match parse_role(name, g) { Ok(r) => roles.push(r), Err(e) => return e }
+                let name = match expect_ident(&mut it, "a role name") {
+                    Ok(i) => i,
+                    Err(e) => return e,
+                };
+                let g = match expect_brace(&mut it, "the role's ends") {
+                    Ok(g) => g,
+                    Err(e) => return e,
+                };
+                match parse_role(name, g) {
+                    Ok(r) => roles.push(r),
+                    Err(e) => return e,
+                }
             }
             Some(other) => return err(other.span(), "expected `role`"),
         }
     }
 
-    if let Err(e) = check(&iface, &members, &roles) { return e; }
+    if let Err(e) = check(&iface, &members, &roles) {
+        return e;
+    }
     emit(&iface, &members, &roles)
 }
-
 
 // ---------------------------------------------------------------------
 // when!
@@ -236,11 +340,16 @@ fn split_becomes(ts: TokenStream) -> Option<(TokenStream, TokenStream)> {
     let mut i = 0;
     while i < toks.len() {
         match &toks[i] {
-            TokenTree::Punct(p) if p.as_char() == '<' && p.spacing() == proc_macro::Spacing::Joint => {
+            TokenTree::Punct(p)
+                if p.as_char() == '<'
+                    && p.spacing() == proc_macro::Spacing::Joint =>
+            {
                 if let Some(TokenTree::Punct(q)) = toks.get(i + 1) {
                     if q.as_char() == '=' && depth == 0 {
-                        let lhs: TokenStream = toks[..i].iter().cloned().collect();
-                        let rhs: TokenStream = toks[i + 2..].iter().cloned().collect();
+                        let lhs: TokenStream =
+                            toks[..i].iter().cloned().collect();
+                        let rhs: TokenStream =
+                            toks[i + 2..].iter().cloned().collect();
                         return Some((lhs, rhs));
                     }
                 }
@@ -261,12 +370,16 @@ fn statements(g: &Group) -> Vec<TokenStream> {
     for tt in g.stream() {
         match &tt {
             TokenTree::Punct(p) if p.as_char() == ';' => {
-                if !cur.is_empty() { out.push(cur.drain(..).collect()) }
+                if !cur.is_empty() {
+                    out.push(cur.drain(..).collect())
+                }
             }
             _ => cur.push(tt),
         }
     }
-    if !cur.is_empty() { out.push(cur.into_iter().collect()) }
+    if !cur.is_empty() {
+        out.push(cur.into_iter().collect())
+    }
     out
 }
 
@@ -289,36 +402,66 @@ pub fn when(input: TokenStream) -> TokenStream {
     let mut cond = Vec::new();
     loop {
         match toks.get(i) {
-            None => return err(Span::call_site(), "expected `=>` after the condition"),
-            Some(TokenTree::Punct(p)) if p.as_char() == '=' && p.spacing() == proc_macro::Spacing::Joint => {
-                if let Some(TokenTree::Punct(q)) = toks.get(i + 1) {
-                    if q.as_char() == '>' { i += 2; break }
-                }
-                cond.push(toks[i].clone()); i += 1;
+            None => {
+                return err(
+                    Span::call_site(),
+                    "expected `=>` after the condition",
+                )
             }
-            Some(t) => { cond.push(t.clone()); i += 1 }
+            Some(TokenTree::Punct(p))
+                if p.as_char() == '='
+                    && p.spacing() == proc_macro::Spacing::Joint =>
+            {
+                if let Some(TokenTree::Punct(q)) = toks.get(i + 1) {
+                    if q.as_char() == '>' {
+                        i += 2;
+                        break;
+                    }
+                }
+                cond.push(toks[i].clone());
+                i += 1;
+            }
+            Some(t) => {
+                cond.push(t.clone());
+                i += 1
+            }
         }
     }
     let cond: TokenStream = cond.into_iter().collect();
 
     let then = match toks.get(i) {
-        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => { i += 1; g.clone() }
+        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
+            i += 1;
+            g.clone()
+        }
         _ => return err(Span::call_site(), "expected `{ ... }` after `=>`"),
     };
     let otherwise = match (toks.get(i), toks.get(i + 1)) {
         (Some(TokenTree::Ident(kw)), Some(TokenTree::Group(g)))
-            if kw.to_string() == "else" && g.delimiter() == Delimiter::Brace => Some(g.clone()),
+            if kw.to_string() == "else"
+                && g.delimiter() == Delimiter::Brace =>
+        {
+            Some(g.clone())
+        }
         (None, _) => None,
-        (Some(t), _) => return err(t.span(), "expected `else { ... }` or the end"),
+        (Some(t), _) => {
+            return err(t.span(), "expected `else { ... }` or the end")
+        }
     };
 
     let mut out = String::from("{ let __c: ::txhdl::types::Bit = ");
     out.push_str(&cond.to_string());
     out.push_str(";\n");
-    for (arm, pred) in [(Some(&then), "__c"), (otherwise.as_ref(), "__c.not()")] {
+    for (arm, pred) in [(Some(&then), "__c"), (otherwise.as_ref(), "__c.not()")]
+    {
         let Some(g) = arm else { continue };
         for st in statements(g) {
-            let span = st.clone().into_iter().next().map(|t| t.span()).unwrap_or(g.span());
+            let span = st
+                .clone()
+                .into_iter()
+                .next()
+                .map(|t| t.span())
+                .unwrap_or(g.span());
             let Some((lhs, rhs)) = split_becomes(st) else {
                 return err(span, "expected `register <= value`");
             };
@@ -328,7 +471,6 @@ pub fn when(input: TokenStream) -> TokenStream {
     out.push('}');
     out.parse().unwrap()
 }
-
 
 // ---------------------------------------------------------------------
 // case!
@@ -355,8 +497,17 @@ pub fn case(input: TokenStream) -> TokenStream {
         None => return err(Span::call_site(), "expected `=>` after the value"),
     };
     let arms = match toks.get(i) {
-        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace && toks.len() == i + 1 => g.clone(),
-        _ => return err(Span::call_site(), "expected `{ pattern => { ... }, ... }` after `=>`"),
+        Some(TokenTree::Group(g))
+            if g.delimiter() == Delimiter::Brace && toks.len() == i + 1 =>
+        {
+            g.clone()
+        }
+        _ => {
+            return err(
+                Span::call_site(),
+                "expected `{ pattern => { ... }, ... }` after `=>`",
+            )
+        }
     };
 
     let mut out = String::from("{ let __s = ");
@@ -370,24 +521,36 @@ pub fn case(input: TokenStream) -> TokenStream {
     while j < atoks.len() {
         let (pat, k) = match up_to_arrow(&atoks, j) {
             Some(x) => x,
-            None => return err(atoks[j].span(), "expected `pattern => { ... }`"),
+            None => {
+                return err(atoks[j].span(), "expected `pattern => { ... }`")
+            }
         };
         let body = match atoks.get(k) {
-            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => g.clone(),
+            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
+                g.clone()
+            }
             Some(t) => return err(t.span(), "expected `{ ... }` after `=>`"),
             None => return err(arms.span(), "expected `{ ... }` after `=>`"),
         };
         j = k + 1;
         if let Some(TokenTree::Punct(p)) = atoks.get(j) {
-            if p.as_char() == ',' { j += 1 }
+            if p.as_char() == ',' {
+                j += 1
+            }
         }
         n += 1;
         out.push_str(&format!(
-            "{{ let __c: ::txhdl::types::Bit = ::txhdl::types::Bit::from_bool(!__done && matches!(__s, {}));\n",
+            "{{ let __c: ::txhdl::types::Bit = \
+             ::txhdl::types::Bit::from_bool(!__done && matches!(__s, {}));\n",
             pat
         ));
         for st in statements(&body) {
-            let span = st.clone().into_iter().next().map(|t| t.span()).unwrap_or(body.span());
+            let span = st
+                .clone()
+                .into_iter()
+                .next()
+                .map(|t| t.span())
+                .unwrap_or(body.span());
             let Some((lhs, rhs)) = split_becomes(st) else {
                 return err(span, "expected `register <= value`");
             };
@@ -395,20 +558,27 @@ pub fn case(input: TokenStream) -> TokenStream {
         }
         out.push_str("__done = __done || __c.to_bool(); }\n");
     }
-    if n == 0 { return err(arms.span(), "expected at least one arm") }
+    if n == 0 {
+        return err(arms.span(), "expected at least one arm");
+    }
     out.push_str("let _ = __done; }");
     out.parse().unwrap()
 }
 
 /// Tokens from `from` up to the first `=>`, and the index after it.
-fn up_to_arrow(toks: &[TokenTree], from: usize) -> Option<(TokenStream, usize)> {
+fn up_to_arrow(
+    toks: &[TokenTree],
+    from: usize,
+) -> Option<(TokenStream, usize)> {
     let mut i = from;
     let mut acc = Vec::new();
     while i < toks.len() {
         if let TokenTree::Punct(p) = &toks[i] {
             if p.as_char() == '=' && p.spacing() == proc_macro::Spacing::Joint {
                 if let Some(TokenTree::Punct(q)) = toks.get(i + 1) {
-                    if q.as_char() == '>' { return Some((acc.into_iter().collect(), i + 2)) }
+                    if q.as_char() == '>' {
+                        return Some((acc.into_iter().collect(), i + 2));
+                    }
                 }
             }
         }

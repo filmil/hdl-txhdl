@@ -18,9 +18,25 @@ pub enum Bit {
 }
 
 impl Bit {
-    pub fn from_bool(b: bool) -> Self { if b { Bit::One } else { Bit::Zero } }
-    pub fn to_bool(self) -> bool { matches!(self, Bit::One) }
-    pub fn not(self) -> Self { Self::from_bool(!self.to_bool()) }
+    pub fn from_bool(b: bool) -> Self {
+        if b {
+            Bit::One
+        } else {
+            Bit::Zero
+        }
+    }
+    pub fn to_bool(self) -> bool {
+        matches!(self, Bit::One)
+    }
+    pub fn not(self) -> Self {
+        Self::from_bool(!self.to_bool())
+    }
+    pub fn and(self, o: Bit) -> Self {
+        Self::from_bool(self.to_bool() && o.to_bool())
+    }
+    pub fn or(self, o: Bit) -> Self {
+        Self::from_bool(self.to_bool() || o.to_bool())
+    }
 }
 
 /// Nine valued, in IEEE 1164 order. `Default` is `U`: a signal nobody
@@ -43,16 +59,28 @@ pub enum Logic {
 impl Logic {
     const fn index(self) -> usize {
         match self {
-            Logic::U => 0, Logic::X => 1, Logic::Zero => 2, Logic::One => 3,
-            Logic::Z => 4, Logic::W => 5, Logic::L => 6, Logic::H => 7,
+            Logic::U => 0,
+            Logic::X => 1,
+            Logic::Zero => 2,
+            Logic::One => 3,
+            Logic::Z => 4,
+            Logic::W => 5,
+            Logic::L => 6,
+            Logic::H => 7,
             Logic::DontCare => 8,
         }
     }
 
     const fn from_index(i: usize) -> Self {
         match i {
-            0 => Logic::U, 1 => Logic::X, 2 => Logic::Zero, 3 => Logic::One,
-            4 => Logic::Z, 5 => Logic::W, 6 => Logic::L, 7 => Logic::H,
+            0 => Logic::U,
+            1 => Logic::X,
+            2 => Logic::Zero,
+            3 => Logic::One,
+            4 => Logic::Z,
+            5 => Logic::W,
+            6 => Logic::L,
+            7 => Logic::H,
             _ => Logic::DontCare,
         }
     }
@@ -60,15 +88,15 @@ impl Logic {
     /// The IEEE 1164 resolution table, for two drivers on one wire.
     pub fn resolve(self, other: Logic) -> Logic {
         const T: [[usize; 9]; 9] = [
-            [0,1,1,1,1,1,1,1,1],
-            [1,1,1,1,1,1,1,1,1],
-            [1,1,2,1,2,2,2,2,1],
-            [1,1,1,3,3,3,3,3,1],
-            [1,1,2,3,4,5,6,7,1],
-            [1,1,2,3,5,5,5,5,1],
-            [1,1,2,3,6,5,6,5,1],
-            [1,1,2,3,7,5,5,7,1],
-            [1,1,1,1,1,1,1,1,1],
+            [0, 1, 1, 1, 1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1],
+            [1, 1, 2, 1, 2, 2, 2, 2, 1],
+            [1, 1, 1, 3, 3, 3, 3, 3, 1],
+            [1, 1, 2, 3, 4, 5, 6, 7, 1],
+            [1, 1, 2, 3, 5, 5, 5, 5, 1],
+            [1, 1, 2, 3, 6, 5, 6, 5, 1],
+            [1, 1, 2, 3, 7, 5, 5, 7, 1],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1],
         ];
         Logic::from_index(T[self.index()][other.index()])
     }
@@ -85,10 +113,15 @@ impl Logic {
     }
 
     pub fn from_bit(b: Bit) -> Self {
-        match b { Bit::Zero => Logic::Zero, Bit::One => Logic::One }
+        match b {
+            Bit::Zero => Logic::Zero,
+            Bit::One => Logic::One,
+        }
     }
 
-    pub fn is_defined(self) -> bool { self.to_bit().is_some() }
+    pub fn is_defined(self) -> bool {
+        self.to_bit().is_some()
+    }
 }
 
 /// An N-bit unsigned value.
@@ -97,25 +130,43 @@ pub struct U<const N: usize>(u128);
 
 impl<const N: usize> U<N> {
     pub const WIDTH: usize = N;
-    const MASK: u128 = if N >= 128 { u128::MAX } else { (1u128 << N) - 1 };
+    const MASK: u128 = if N >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << N) - 1
+    };
 
-    pub const fn new(v: u128) -> Self { U(v & Self::MASK) }
-    pub const fn raw(self) -> u128 { self.0 }
-    pub fn bit(self, i: usize) -> Bit { Bit::from_bool((self.0 >> i) & 1 == 1) }
+    pub const fn new(v: u128) -> Self {
+        U(v & Self::MASK)
+    }
+    pub const fn raw(self) -> u128 {
+        self.0
+    }
+    pub fn bit(self, i: usize) -> Bit {
+        Bit::from_bool((self.0 >> i) & 1 == 1)
+    }
 
     /// Same-width, wrapping. The result width is a standalone parameter,
     /// so this is stable Rust. The operand is anything that converts, so
     /// a literal is written as a literal.
-    pub fn wrapping_add(self, o: impl Into<Self>) -> Self { Self::new(self.0.wrapping_add(o.into().0)) }
-    pub fn wrapping_sub(self, o: impl Into<Self>) -> Self { Self::new(self.0.wrapping_sub(o.into().0)) }
+    pub fn wrapping_add(self, o: impl Into<Self>) -> Self {
+        Self::new(self.0.wrapping_add(o.into().0))
+    }
+    pub fn wrapping_sub(self, o: impl Into<Self>) -> Self {
+        Self::new(self.0.wrapping_sub(o.into().0))
+    }
 
     /// A multiply with the result width stated: `a.mul::<64>(b)`. The
     /// width is a standalone parameter, so this is stable; `U<{A + B}>`
     /// would not be.
-    pub fn mul<const M: usize>(self, o: impl Into<Self>) -> U<M> { U::<M>::new(self.0 * o.into().0) }
+    pub fn mul<const M: usize>(self, o: impl Into<Self>) -> U<M> {
+        U::<M>::new(self.0 * o.into().0)
+    }
 
     /// Resize to a stated width. `M` is standalone, so stable.
-    pub fn resize<const M: usize>(self) -> U<M> { U::<M>::new(self.0) }
+    pub fn resize<const M: usize>(self) -> U<M> {
+        U::<M>::new(self.0)
+    }
 
     /// A slice. Offset and width are const parameters; an offset may
     /// also be a run-time value through [`U::slice_at`], but a width may
@@ -160,8 +211,12 @@ impl<const N: usize> I<N> {
         let shift = 128 - N;
         I((v << shift) >> shift)
     }
-    pub const fn raw(self) -> i128 { self.0 }
-    pub fn wrapping_add(self, o: Self) -> Self { Self::new(self.0.wrapping_add(o.0)) }
+    pub const fn raw(self) -> i128 {
+        self.0
+    }
+    pub fn wrapping_add(self, o: Self) -> Self {
+        Self::new(self.0.wrapping_add(o.0))
+    }
 }
 
 /// The logic-valued vector, in its own module so the type is just
@@ -174,13 +229,21 @@ pub mod logic {
     pub struct Vec<const N: usize>([Logic; N]);
 
     impl<const N: usize> Default for Vec<N> {
-        fn default() -> Self { Vec([Logic::U; N]) }
+        fn default() -> Self {
+            Vec([Logic::U; N])
+        }
     }
 
     impl<const N: usize> Vec<N> {
-        pub fn get(&self, i: usize) -> Logic { self.0[i] }
-        pub fn set(&mut self, i: usize, v: Logic) { self.0[i] = v }
-        pub fn all_defined(&self) -> bool { self.0.iter().all(|l| l.is_defined()) }
+        pub fn get(&self, i: usize) -> Logic {
+            self.0[i]
+        }
+        pub fn set(&mut self, i: usize, v: Logic) {
+            self.0[i] = v
+        }
+        pub fn all_defined(&self) -> bool {
+            self.0.iter().all(|l| l.is_defined())
+        }
 
         /// To a number, if every bit is defined. A design that ignores
         /// the `None` is a design that would have synthesised an X.
@@ -194,19 +257,25 @@ pub mod logic {
 
         pub fn from_u(v: U<N>) -> Self {
             let mut out = [Logic::Zero; N];
-            for i in 0..N { out[i] = Logic::from_bit(v.bit(i)) }
+            for i in 0..N {
+                out[i] = Logic::from_bit(v.bit(i))
+            }
             Vec(out)
         }
 
         pub fn resolve(&self, other: &Self) -> Self {
             let mut out = [Logic::U; N];
-            for i in 0..N { out[i] = self.0[i].resolve(other.0[i]) }
+            for i in 0..N {
+                out[i] = self.0[i].resolve(other.0[i])
+            }
             Vec(out)
         }
 
         pub fn from_bits(bits: [Bit; N]) -> Self {
             let mut out = [Logic::Zero; N];
-            for i in 0..N { out[i] = Logic::from_bit(bits[i]) }
+            for i in 0..N {
+                out[i] = Logic::from_bit(bits[i])
+            }
             Vec(out)
         }
     }
@@ -216,6 +285,12 @@ pub mod logic {
 /// with `#[derive(Transaction)]`, which also asks for `Copy` and
 /// `Default` so the channel can hold one.
 pub trait Transaction: Copy + Default {}
+
+/// A bare word is a transaction. A struct of fields is the usual case,
+/// and derives it.
+impl<const N: usize> Transaction for U<N> {}
+impl<const N: usize> Transaction for I<N> {}
+impl Transaction for Bit {}
 
 /// A synchronisation domain and its policy, as a type. How data moves:
 /// whether the domain is elastic, and how many transactions it tracks

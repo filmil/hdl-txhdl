@@ -27,7 +27,10 @@ interface! {
 pub fn transfer() -> (U<32>, Bit, Option<Beat>, U<32>) {
     let (m, t, mon) = Wishbone::new();
     m.adr.set(0x1000);
-    m.dat.send(Beat { data: 7.into(), last: true });
+    m.dat.send(Beat {
+        data: 7.into(),
+        last: true,
+    });
     t.ack.set(Bit::One);
     (t.adr.get(), m.ack.get(), t.dat.recv(), mon.adr.get())
 }

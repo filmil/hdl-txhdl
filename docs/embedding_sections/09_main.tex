@@ -61,7 +61,8 @@ config! { Asic: TopConfig for Top<Asic> {
 } }
 \end{lstlisting}
 
-The example in the appendix went from 81 lines to 55 under this change,
+The example, \code{ex\_config.rs} in the examples
+document~\cite{examples}, lost a third of its lines under this change,
 and every line removed was one that repeated a field name.
 
 Three things follow, and the third is the one that matters.
@@ -84,16 +85,14 @@ needed designing.
 
 The first design anyone writes for a board is an LED that blinks, so it
 is the first design to write with the vocabulary above, and it is
-Listing~\ref{app:ex-blinky} in the appendix. It uses one register, one
-wire and one \code{when!}, and nothing that was not already defined,
-with one exception. Its \code{main} wants to watch the wire once per
-cycle to print a waveform, and \code{simulate} runs a design to the end
-and returns the top. \code{Running} is the one addition: it holds the
-unit's future and advances it one cycle per call, so a testbench can
-read the wires between cycles. The printed wave is sixteen cycles wide,
-eight high and eight low, and its first sample is low because nothing has
-driven the wire before the first register read completes, which is the
-cycle a reset would occupy.
+\code{ex\_blinky.rs} in the examples document~\cite{examples}. It uses
+one register, one wire and one \code{when!}, and nothing that was not
+already defined, with one exception. Its \code{main} wants to watch the
+wire once per cycle to print a waveform, and \code{simulate} runs a
+design to the end and returns the top. \code{Running} is the one
+addition: it holds the unit's future and advances it one time step per
+call, so a testbench can read the wires between steps. The printed wave
+is sixteen cycles wide, eight high and eight low.
 
 Three things in the blinky are worth noticing. The LED is derived from
 the count in the same iteration that reads it, so the example holds one

@@ -8,7 +8,13 @@ use txhdl::comp::{signal, DefaultClock, In, Module, Out, Reg, Running};
 use txhdl::types::{Bit, U};
 
 #[derive(Copy, Clone, Default, PartialEq, Debug)]
-pub enum State { #[default] Idle, Load, Run, Done }
+pub enum State {
+    #[default]
+    Idle,
+    Load,
+    Run,
+    Done,
+}
 
 #[derive(Default)]
 pub struct Sequencer {
@@ -35,19 +41,18 @@ impl Module<In<Bit>, Out<State>> for Sequencer {
 }
 
 fn main() {
-    // Raise `go` for the first two cycles, since the first is the reset
-    // cycle in which nothing has been read yet, then watch the state.
+    // Raise `go` for one cycle, then watch the state.
     let (go, go_in) = signal::<Bit, DefaultClock>();
     let (drive, observed) = signal::<State, DefaultClock>();
     let mut seq = Sequencer::default();
     let mut sim = Running::new(seq.run(go_in, drive));
     let mut trace = Vec::new();
     for cycle in 0..10 {
-        go.set(Bit::from_bool(cycle < 2));
-        sim.cycle();
+        go.set(Bit::from_bool(cycle == 0));
+        sim.step();
         trace.push(format!("{:?}", observed.get()));
     }
     // Prints, one state per cycle:
-    //   Idle Idle Load Run Run Run Run Done Idle Idle
+    //   Idle Load Run Run Run Run Done Idle Idle Idle
     println!("{}", trace.join(" "));
 }

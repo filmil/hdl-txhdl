@@ -14,12 +14,22 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and two articles describe it:
+The language is a library, `//lib`, and five documents describe it,
+all under `//docs`:
 
+* `//docs:cover` names every document and says which to read for what.
+  A new document is added there in the same change that creates it.
 * `//docs:article` states the merge of the two languages this one came
   from.
-* `//docs:embedding` states the embedding in Rust, and its appendix
-  holds the runtime library and its examples verbatim.
+* `//docs:embedding` states the embedding in Rust: the exposition of
+  the language.
+* `//docs:runtime` holds the runtime library verbatim, with the model
+  of time its executor keeps stated in prose.
+  Runtime internals belong here and nowhere else.
+* `//docs:examples` holds every example verbatim, with the output the
+  build produced by running it.
+  The runtime appears there only through its public interface, which
+  `//tools/api` extracts from the source at build time.
 
 `docs/` holds the analysis behind every decision.
 `experiments/rust_embedding/` holds the probes: one compiled question
@@ -41,15 +51,26 @@ the same change, or the change is not finished.
    A concept with no example is a concept nobody has checked, and
    `fragments/eng-standards.md` in the SOP requires that every piece
    of specification has a test that passes.
-3. **The appendix.** Add a `\lstinputlisting` of the example to
-   `docs/embedding_sections/15_appendix.tex`, and of any new runtime
-   file to the runtime section above it.
-   The appendix includes the files from the tree at build time, so it
-   cannot drift from the code, and it must not be written by hand.
+3. **The documents.** Add a section for the example to
+   `docs/examples_sections/`, with a paragraph on what it shows and a
+   `\lstinputlisting` of the file; if it prints, add it to the
+   `example_outputs` genrule in `docs/BUILD.bazel` and include the
+   output after the listing.
+   A new runtime file gets a section in `docs/runtime_sections/` and an
+   entry in the `API` table of `docs/BUILD.bazel`.
+   The documents include the files from the tree at build time, so they
+   cannot drift from the code, and a listing must not be written by
+   hand.
+   The examples document may show the runtime only through its public
+   interface; how a thing works inside is said in the runtime document.
 
 The order is the order to work in.
 Write the runtime, write the example against it, build both, then
 include them.
+Format with
+`bazel run @rules_rust//:rustfmt --@rules_rust//:rustfmt.toml=//:rustfmt.toml -- //lib/...`
+before including: the documents set source at 80 columns and never
+break a line, so a longer line overflows its frame.
 A listing that was typed into the article rather than included from a
 file is a defect, because it is the one copy nothing checks.
 
@@ -68,9 +89,9 @@ Everything is hermetic.
 Nothing has to be installed beyond `bazelisk`.
 
 ```sh
-bazel build //...              # the library, every example, both articles
+bazel build //...              # the library, every example, every document
 bazel run //lib/examples:ex_config -- asic
-bazel build //docs:embedding   # -> bazel-bin/docs/embedding.pdf
+bazel build //docs/...         # -> bazel-bin/docs/{cover,article,embedding,runtime,examples}.pdf
 ```
 
 Before finishing a document change, run the readability pass from the
@@ -83,6 +104,6 @@ repository has had that happen twice.
 
 * `bazel build //...` is green.
 * `bazel test //...` exits 0 or 4; 4 means no test target exists yet.
-* Both PDFs build, every face is Type 1, every `\ref` and `\cite`
-  resolves.
+* Every PDF builds, every face is Type 1, every `\ref` and `\cite`
+  resolves, and no listing line overflows its frame.
 * `CLAUDE.md` and `GEMINI.md` are symlinks to this file.

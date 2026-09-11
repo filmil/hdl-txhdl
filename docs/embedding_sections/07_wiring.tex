@@ -143,14 +143,19 @@ it stops. Both point the same way as Section~\ref{sec:e-elaboration}.
 Following RHDL~\cite{rhdl}, a signal names the clock domain it is in as a
 second type parameter.
 
-\begin{lstlisting}[caption={A signal knows its clock. \code{Clock} is a marker trait, and the default is a named clock rather than an absence of one.},label={lst:clock}]
-pub trait Clock { const NAME: &'static str; }
+\begin{lstlisting}[caption={A signal knows its clock. \code{Clock} is a trait with a name and, from Section~\ref{sec:e-phase}, a period and a phase; the default is a named clock rather than an absence of one.},label={lst:clock}]
+pub trait Clock: 'static {
+    const NAME: &'static str;
+    const PERIOD: u64 = 1;   // time steps between edges
+    const PHASE: u64 = 0;    // time step of the first edge
+}
 
 pub struct DefaultClock;
 impl Clock for DefaultClock { const NAME: &'static str = "clk"; }
 
 pub struct Out<T, C: Clock = DefaultClock>(..);
 pub struct In<T, C: Clock = DefaultClock>(..);
+pub struct Reg<T, C: Clock = DefaultClock>(..);
 \end{lstlisting}
 
 The default is the decision worth explaining. It is not \code{()}, and
@@ -190,6 +195,45 @@ clock may carry several tags, an elastic one and a raw one side by side,
 and the configuration maps each tag onto a clock. The two are kept apart
 because merging them would force every elastic domain to be its own
 clock.
+
+\subsubsection{Two clocks stand in a stated relation}
+\label{sec:e-phase}
+
+A design with two clocks depends on how they stand to each other, and
+on nothing else about them. The frequency in hertz is a physical fact
+and belongs to the configuration, as Section~\ref{sec:e-main} put it
+there. The ratio of the two periods and the offset between their edges
+are what a FIFO between them is built against, and those are stated on
+the clock: a period and a phase, in a unit common to every clock of
+the design. A clock with period 3 and phase 1 has edges at 1, 4, 7 and
+so on. The defaults are 1 and 0, so a single-clock design mentions
+neither. This is the same statement SDC makes with \code{create\_clock
+-period -waveform}, and it was chosen for that reason: it is the form a
+constraint file already takes.
+
+A register is then in a clock, \code{Reg<T, C>}, with the same default
+as a wire, and reading it waits for the edge of its own clock. The
+executor runs time in steps and each clock has an edge at the steps its
+period and phase name; a process waits at a register read until the
+next edge of that register's clock. Section~\ref{sec:e-regread}'s
+rule, one value per register per edge, holds per clock. An operator's
+cycle is a cycle of whatever clock the process last crossed an edge of,
+which is the only sense a latency has in a process.
+
+One thing the executor does not do is check that a process stays in
+its domain. A process in one clock that reads a register of another
+without a \code{Crossing} is a hazard, and the prototype runs it rather
+than refusing it, because the register's type says which clock it is in
+and the process's type says nothing. That is also the hazard an
+asynchronous FIFO commits on purpose: its memory is written by one
+clock and read by the other, and the pointer discipline is what makes
+that safe. It is why the runtime has a \code{Mem<T, N, C>} as a type
+rather than an array of registers: a memory's read port is a wire, and
+the discipline is the designer's. The FIFO is \code{ex\_fifo.rs} in the
+examples document~\cite{examples}, with a producer clock of period 2
+and a consumer clock of period 3 and phase 1; its trace shows the
+producer stalled on \emph{full} twice in twenty steps, which is the
+backpressure crossing the domains the other way.
 
 \subsection{Where the ends go}
 

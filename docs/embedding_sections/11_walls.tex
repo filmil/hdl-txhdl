@@ -88,7 +88,7 @@ macro's.
 arms, and it keeps \code{match}'s one rule that matters: the first arm
 that matches wins.
 
-\begin{lstlisting}[caption={\code{case!} on a state register. The arms are Rust patterns, guards and alternatives included, and the first match wins, so the guarded arm sits above the plain one for the same state. The full sequencer is Listing~\ref{app:ex-case}.},label={lst:case}]
+\begin{lstlisting}[caption={\code{case!} on a state register. The arms are Rust patterns, guards and alternatives included, and the first match wins, so the guarded arm sits above the plain one for the same state. The full sequencer is \code{ex\_case.rs} in the examples document~\cite{examples}.},label={lst:case}]
 let s = self.state.get().await;
 let n = self.count.get().await;
 case!(s => {

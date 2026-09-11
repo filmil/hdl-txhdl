@@ -1,0 +1,12 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Pipeline}
+\label{sec:x-pipeline}
+
+A pipeline is an \code{async fn}. The operators in
+\code{txhdl::pipeline} each take a cycle, so the depth of \code{mac}
+follows from the two it awaits and nobody places a stage boundary. The
+plain \code{fn} beside it has no \code{.await} to write, so it cannot
+count cycles, and that is the whole of the rule that a combinational
+body is timeless.
+
+\lstinputlisting[caption={\code{ex\_pipeline.rs}.},label={lst:x-pipeline}]{lib/examples/ex_pipeline.rs}

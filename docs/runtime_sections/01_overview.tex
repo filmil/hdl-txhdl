@@ -1,0 +1,106 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{What the Runtime Is}
+\label{sec:r-overview}
+
+The embedding article~\cite{embedding} argues that a hardware
+description language embedded in Rust needs no parser and no keywords,
+and that what remains is a library. The crate \code{txhdl} is that
+library, and this document is the crate. Every file below is included
+from the tree when the document is built, so a listing here cannot
+differ from the code, and the rule the project keeps is that a concept
+enters the runtime, a compiled example and these documents in the same
+change, or the change is not finished.
+
+The crate is small on purpose. Four modules and one procedural macro
+crate hold everything:
+
+\begin{itemize}
+\item \code{txhdl::types}: two-valued \code{Bit}, nine-valued
+  \code{Logic}, the numeric vectors \code{U<N>} and \code{I<N>},
+  \code{logic::Vec<N>}, and the two marker traits \code{Transaction}
+  and \code{Tag}.
+\item \code{txhdl::comp}: clocks, wires and channels and their ends,
+  interfaces, crossings, registers and memories, units, configurations,
+  and the executor.
+\item \code{txhdl::pipeline}: operators that take a cycle, all
+  \code{async}.
+\item \code{txhdl::funcs}: operators that cannot, all plain \code{fn}.
+\item \code{txhdl\_macros}: the two derives, \code{interface!},
+  \code{when!} and \code{case!}, without \code{syn} or \code{quote}.
+\end{itemize}
+
+The whole crate is a simulation-shaped prototype: values exist while it
+runs, wires are shared cells, and a testbench may look at anything.
+The lowering to hardware is the experiment the article states, and this
+crate is what that experiment would be written against.
+
+\subsection{The model of time}
+\label{sec:r-time}
+
+The executor is the one part of the runtime a reader cannot recover
+from the signatures, so it is stated here before the code.
+
+\textbf{Time runs in steps.} One poll of the top unit is one time step.
+Every clock is a type with a period and a phase in that unit, and has a
+rising edge at every step \code{t} with \code{t >= PHASE} and
+\code{(t - PHASE) \% PERIOD == 0}. The default clock has period 1 and
+phase 0, so in a single-clock design a step is a cycle and nothing
+mentions either number.
+
+\textbf{A register read is the wait.} A register is in a clock, and
+reading it is \code{async} because the value it holds is the one
+latched at the last edge of that clock, so reading is waiting for the
+edge. Driving it is plain: \code{set} states the next value and waits
+for nothing. A wire has no edge, so reading a wire is plain too.
+
+\textbf{One value per register per edge.} A process samples every
+register at one edge, so after a process has crossed an edge, reading
+a second register is free. Reading a register the process has already
+read at this edge waits for the next edge, which is what makes a
+\code{loop} that re-reads its registers advance one iteration per
+cycle. The first version of the executor charged a cycle for every
+read, so an iteration that read two registers took two cycles; the
+sequencer example exposed it and the rule above replaced it.
+
+\textbf{A process is its waker.} The executor tells processes apart by
+the data pointer of the waker they are polled with. \code{join2} and
+\code{join\_all} give each child a fresh one, so the rule above holds
+per process rather than per unit, and two processes of one unit that
+read the same register each get their own value per edge.
+
+\textbf{An operator's cycle is in the process's clock.} An operator in
+\code{txhdl::pipeline} waits one edge of whatever clock the process
+last crossed an edge of, which is the only sense a latency has inside
+a process. A process that has crossed no edge yet is in the default
+clock.
+
+\textbf{What the executor does not check.} A process that reads a
+register of another clock without a \code{Crossing} is a hazard, and
+the prototype runs it. The register's type says its clock; the
+process has no type that says one. The asynchronous FIFO example
+commits this hazard on purpose, on its memory, under the pointer
+discipline that makes it safe.
+
+\subsection{What is prototype only}
+
+Three things in the code exist for the simulation and would not be
+lowered. \code{Reg::peek} reads a register without waiting; it exists
+for testbenches, for the reason \code{assert!} exists, and a design
+must not use it. \code{Running} and \code{simulate} drive a design from
+a \code{main}, and \code{now} reports the time step for traces. And the
+shared cells behind every wire, channel and register are how a
+simulation shares state; the lowering would replace them with nets.
+
+\subsection{Building it}
+
+\begin{lstlisting}[style=ascii,caption={The runtime and everything written against it, built hermetically.},label={lst:r-build}]
+bazel build //lib/...                 # the crate and the macros
+bazel build //lib/examples/...        # every example
+bazel run //lib/examples:ex_fifo      # one that prints a trace
+bazel run @rules_rust//:rustfmt \
+  --@rules_rust//:rustfmt.toml=//:rustfmt.toml -- //lib/...
+\end{lstlisting}
+
+The last line formats the tree at 80 columns, which is the width these
+documents include a file at. A line longer than that overflows its
+frame, visibly, rather than wrapping.

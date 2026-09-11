@@ -1,0 +1,81 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% TxHDL by example: one compiled example per concept, included verbatim,
+% with its output where it has one. Built by //docs:examples.
+\documentclass[journal,onecolumn,9pt]{IEEEtran}
+
+% One column: listings at 7pt hold 80 columns with room to spare.
+\newcommand{\listingsize}{\scriptsize}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{TxHDL by Example}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{This document holds the examples written against the TxHDL
+runtime, one per concept, each a build target under
+\code{//lib/examples} of the project repository and included verbatim
+at build time. The examples that print are run at build time too, and
+what they print is included after them. The language is described in
+the embedding article~\cite{embedding}; the runtime is a second
+document~\cite{runtime}, and appears here only through its public
+interface; the cover document~\cite{cover} lists all of them.}%
+\thanks{\buildstamp}}
+
+\markboth{TxHDL by Example}{Filmar and Janković: TxHDL by Example}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+One example per concept of TxHDL, from values to an asynchronous FIFO
+between two clocks. Each is a file that compiles, and a listing here is
+that file, included when the document is built. The examples that run
+are run by the build as well, and their output follows the listing, so
+the trace under the FIFO is the trace the FIFO produced. The runtime
+the examples are written against is shown only through its public
+interface, extracted from the source by the build; its implementation
+is the runtime document's business.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Hardware description languages, embedded domain-specific languages, Rust,
+examples.
+\end{IEEEkeywords}
+
+{\footnotesize\tableofcontents}
+
+\input{examples_sections/01_reading}
+\input{examples_sections/02_interface}
+\input{examples_sections/03_values}
+\input{examples_sections/04_transaction}
+\input{examples_sections/05_interface}
+\input{examples_sections/06_unit}
+\input{examples_sections/07_pipeline}
+\input{examples_sections/08_clock}
+\input{examples_sections/09_hierarchy}
+\input{examples_sections/10_config}
+\input{examples_sections/11_blinky}
+\input{examples_sections/12_case}
+\input{examples_sections/13_fifo}
+
+\begin{thebibliography}{10}
+
+\bibitem{embedding}
+F.~Filmar and D.~Janković, ``Deleting a language: Embedding TxHDL in
+Rust,'' project repository \code{HDL/txhdl}, \code{//docs:embedding},
+2026.
+
+\bibitem{runtime}
+F.~Filmar and D.~Janković, ``The TxHDL runtime,'' project repository
+\code{HDL/txhdl}, \code{//docs:runtime}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}

@@ -35,11 +35,17 @@ pub async fn sub<const N: usize>(a: U<N>, b: U<N>) -> U<N> {
 
 pub async fn div(a: U<32>, b: U<32>) -> U<32> {
     tick().await;
-    if b.raw() == 0 { U::new(0) } else { U::new(a.raw() / b.raw()) }
+    if b.raw() == 0 {
+        U::new(0)
+    } else {
+        U::new(a.raw() / b.raw())
+    }
 }
 
 /// Wait a stated number of cycles. This is the one place a design counts
 /// them, and it is honoured exactly: a baud interval comes from the wire.
 pub async fn cycles(n: usize) {
-    for _ in 0..n { tick().await }
+    for _ in 0..n {
+        tick().await
+    }
 }

@@ -20,7 +20,8 @@ impl DualPort {
     async fn port_a(&self) {
         loop {
             let enable = self.enable.get().await;
-            let (hits, cells) = (self.hits_a.get().await, self.cells.get().await);
+            let (hits, cells) =
+                (self.hits_a.get().await, self.cells.get().await);
             when!(enable => {
                 self.hits_a <= hits.wrapping_add(1);
                 self.cells <= cells.wrapping_add(1)

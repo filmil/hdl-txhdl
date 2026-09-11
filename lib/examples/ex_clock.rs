@@ -27,11 +27,20 @@ pub struct Probe<C: Clock> {
 }
 
 impl<C: Clock> Probe<C> {
-    pub fn which(&self) -> &'static str { C::NAME }
+    pub fn which(&self) -> &'static str {
+        C::NAME
+    }
 }
 
 pub fn build() -> (Counter, Crossing<U<32>, DefaultClock, Clk400>, Dsp) {
     let (tx, rx) = signal::<U<32>, DefaultClock>();
     let (xing, rx400) = Crossing::<U<32>, DefaultClock, Clk400>::new(rx);
-    (Counter { out: tx, n: Reg::new(0) }, xing, Dsp { inp: rx400 })
+    (
+        Counter {
+            out: tx,
+            n: Reg::new(0),
+        },
+        xing,
+        Dsp { inp: rx400 },
+    )
 }

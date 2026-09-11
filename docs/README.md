@@ -21,12 +21,16 @@ Those reasons live here.
 | `document-build-plan.md` | How the articles are built, what was tried before, and why the TeX packages are vendored |
 | `rust-embedding.md` | Working notes on embedding the language in Rust, with every probe result in full |
 
-`article.tex` with `sections/` is the first article, built by
-`//docs:article`.
-`embedding.tex` with `embedding_sections/` is the second, built by
-`//docs:embedding`.
-`housestyle.tex` is the preamble both share, so the two cannot drift apart
+Five documents are typeset here, and `cover.tex` names them all:
+`article.tex` with `sections/` is the merge, `//docs:article`;
+`embedding.tex` with `embedding_sections/` is the language, `//docs:embedding`;
+`runtime.tex` with `runtime_sections/` is the runtime library verbatim, `//docs:runtime`;
+`examples.tex` with `examples_sections/` is every example with its output, `//docs:examples`;
+`cover.tex` is the cover, `//docs:cover`.
+`housestyle.tex` is the preamble they all share, so they cannot drift apart
 in font, listing style or figure style.
+The examples document shows the runtime only through its public interface,
+which `//tools/api` extracts from the source at build time.
 The class and package files it needs are vendored under `//third_party`, and
 a `genrule` here copies them into this package, because LaTeX cannot read
 them where they live.

@@ -1,0 +1,14 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Unit with Two Processes}
+\label{sec:x-unit}
+
+A unit is a struct that implements \code{Module}. Its \code{run}
+starts one \code{async fn} per process and joins them, which is what
+says they run in parallel. The processes take \code{\&self} and share
+state through registers, because two of them cannot both take
+\code{\&mut self}. Each process loops, each iteration reads a
+register, and that read is the wait for the clock edge. \code{when!}
+predicates the drives inside it; it does not branch, and the arrow
+points into the register that becomes the value.
+
+\lstinputlisting[caption={\code{ex\_unit.rs}.},label={lst:x-unit}]{lib/examples/ex_unit.rs}

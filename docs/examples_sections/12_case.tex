@@ -1,0 +1,15 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A State Machine}
+\label{sec:x-case}
+
+\code{case!} is \code{when!} with many arms, and a state machine is
+what it is for. The arms are Rust patterns, guards and alternatives
+included, and the first that matches wins, so the guarded arm for
+\code{Run} sits above the plain one. A sequencer waits for \code{go},
+loads a count, runs it down, reports done and waits again; the
+testbench raises \code{go} for one cycle and prints the state per
+cycle.
+
+\lstinputlisting[caption={\code{ex\_case.rs}. Run with \code{bazel run //lib/examples:ex\_case}.},label={lst:x-case}]{lib/examples/ex_case.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_case} printed when the build ran it.},label={lst:x-case-out}]{out_case.txt}

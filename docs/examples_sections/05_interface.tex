@@ -1,0 +1,12 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Interface}
+\label{sec:x-interface}
+
+An interface is declared once, with its members and its roles, and
+the roles are generated: one struct each, holding the end of every
+member that the role takes, and a constructor that splits each member
+between them. A role that omits a member, or two roles that both drive
+one, are refused by the macro with a message that names them; those
+two refusals are probes in the language article, not examples here.
+
+\lstinputlisting[caption={\code{ex\_interface.rs}.},label={lst:x-interface}]{lib/examples/ex_interface.rs}

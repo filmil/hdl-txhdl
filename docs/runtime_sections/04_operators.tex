@@ -1,0 +1,15 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{\code{txhdl::pipeline} and \code{txhdl::funcs}}
+\label{sec:r-operators}
+
+Two modules that hold the same kind of thing, operators, and differ in
+one property: whether the operator takes a cycle. An operator in
+\code{pipeline} is \code{async} and awaits one edge of the process's
+clock, so a pipeline's depth follows from the operators it awaits and
+nobody places a stage boundary. An operator in \code{funcs} is a plain
+\code{fn}, has no \code{.await} to write, and cannot count cycles, which
+is the whole enforcement of the rule that a combinational body is
+timeless.
+
+\lstinputlisting[caption={\code{lib/src/pipeline.rs}.},label={lst:r-pipeline}]{lib/src/pipeline.rs}
+\lstinputlisting[caption={\code{lib/src/funcs.rs}.},label={lst:r-funcs}]{lib/src/funcs.rs}

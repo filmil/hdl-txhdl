@@ -1,0 +1,76 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% The TxHDL runtime: the library that is the language, included verbatim.
+% Built by //docs:runtime. One column, because it is mostly listings.
+\documentclass[journal,onecolumn,9pt]{IEEEtran}
+
+% One column: listings at 7pt hold 80 columns with room to spare.
+\newcommand{\listingsize}{\scriptsize}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{The TxHDL Runtime}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{This document holds the runtime library of TxHDL, the crate
+\code{txhdl} at \code{//lib} of the project repository, included
+verbatim from the tree at build time. The language it implements is
+described in the embedding article~\cite{embedding}; the examples
+written against it are a third document~\cite{examples}; the cover
+document~\cite{cover} lists all of them.}%
+\thanks{\buildstamp}}
+
+\markboth{The TxHDL Runtime}{Filmar and Janković: The TxHDL Runtime}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+TxHDL is a hardware description language embedded in Rust, and once
+every construct Rust provides has been deleted from it, what is left is
+a library. This document is that library. It states the model of time
+the executor keeps, which is the one part of the runtime a reader
+cannot recover from the signatures alone, and then includes each source
+file of the crate in full. Nothing here has been lowered to hardware;
+the prototype simulates, and it is what the lowering experiment would
+be written against.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Hardware description languages, embedded domain-specific languages, Rust,
+runtime, simulation.
+\end{IEEEkeywords}
+
+{\footnotesize\tableofcontents}
+
+\input{runtime_sections/01_overview}
+\input{runtime_sections/02_types}
+\input{runtime_sections/03_comp}
+\input{runtime_sections/04_operators}
+\input{runtime_sections/05_macros}
+
+\begin{thebibliography}{10}
+
+\bibitem{embedding}
+F.~Filmar and D.~Janković, ``Deleting a language: Embedding TxHDL in
+Rust,'' project repository \code{HDL/txhdl}, \code{//docs:embedding},
+2026.
+
+\bibitem{examples}
+F.~Filmar and D.~Janković, ``TxHDL by example,'' project repository
+\code{HDL/txhdl}, \code{//docs:examples}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\bibitem{merge}
+F.~Filmar and D.~Janković, ``TxHDL: Unifying a dataflow and a transaction
+hardware description language,'' project repository \code{HDL/txhdl},
+\code{//docs:article}, 2026.
+
+\end{thebibliography}
+
+\end{document}

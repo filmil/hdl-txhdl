@@ -1,0 +1,11 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Transaction}
+\label{sec:x-transaction}
+
+A transaction is a struct and a derive. The derive emits one empty
+\code{impl}; the trait asks for \code{Copy} and \code{Default} so a
+channel can hold one. A channel is created as a pair, a sending end
+that is not \code{Clone} and a receiving end that is, and the sending
+end offers a transaction that the receiving end takes.
+
+\lstinputlisting[caption={\code{ex\_transaction.rs}.},label={lst:x-transaction}]{lib/examples/ex_transaction.rs}

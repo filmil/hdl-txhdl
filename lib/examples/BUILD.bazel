@@ -54,7 +54,16 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An asynchronous FIFO between two clocks:  bazel run //lib/examples:ex_fifo
+rust_binary(
+    name = "ex_fifo",
+    srcs = ["ex_fifo.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 filegroup(
     name = "sources",
-    srcs = [n + ".rs" for n in EXAMPLES] + ["ex_config.rs", "ex_blinky.rs", "ex_case.rs"],
+    srcs = [n + ".rs" for n in EXAMPLES] + ["ex_config.rs", "ex_blinky.rs", "ex_case.rs", "ex_fifo.rs"],
 )

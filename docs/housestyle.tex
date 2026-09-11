@@ -69,11 +69,19 @@
 % distinction it draws is invisible in print.
 \definecolor{cellshade}{gray}{0.90}
 
+% The listing size is the document's choice, because it depends on the
+% column: a two-column article sets `\listingsize` to 6pt and keeps its
+% listings within 70 columns, a one-column document sets 7pt and includes
+% source files at 80. Lines are never broken; a line that does not fit
+% overflows the frame, which is visible, rather than wrapping, which is
+% not.
+\providecommand{\listingsize}{\scriptsize}
+
 % `'` is deliberately not a string delimiter: the language uses it for loop
 % labels, as Rust does, so treating it as a quote would swallow the rest of
 % the line.
 \lstdefinestyle{txhdl}{
-  basicstyle=\ttfamily\scriptsize,
+  basicstyle=\ttfamily\listingsize,
   keywordstyle=\bfseries\color{kwblue},
   commentstyle=\itshape\color{cmtgreen},
   stringstyle=\color{strred},
@@ -90,8 +98,7 @@
   showstringspaces=false,
   columns=fullflexible,
   keepspaces=true,
-  breaklines=true,
-  breakatwhitespace=true,
+  breaklines=false,
   % Framed, so a listing is bounded rather than floating in the column.
   frame=single,
   rulecolor=\color{framegray},
@@ -115,7 +122,7 @@
 % than clearing the ones already set, so the three roles are neutralised by
 % hand rather than by leaving them out.
 \lstdefinestyle{ascii}{
-  basicstyle=\ttfamily\scriptsize,
+  basicstyle=\ttfamily\listingsize,
   keywordstyle=\ttfamily,
   commentstyle=\ttfamily,
   stringstyle=\ttfamily,

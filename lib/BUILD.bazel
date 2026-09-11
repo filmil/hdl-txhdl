@@ -42,3 +42,11 @@ filegroup(
         "src/types.rs",
     ],
 )
+
+exports_files([
+    "src/types.rs",
+    "src/comp.rs",
+    "src/pipeline.rs",
+    "src/funcs.rs",
+    "macros/lib.rs",
+])

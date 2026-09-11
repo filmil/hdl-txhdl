@@ -1,0 +1,23 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Public Interface}
+\label{sec:x-interface}
+
+What the examples may use. Each listing is the doc comments and
+signatures of the public items of one runtime file, with every body
+dropped and every private field hidden, produced by \code{//tools/api}
+from the source when this document is built. Anything not here is not
+interface, and an example that needed it would be a defect in the
+runtime rather than in the example.
+
+\subsection{\code{txhdl::types}}
+\lstinputlisting[caption={The public interface of \code{txhdl::types}.},label={lst:x-api-types}]{api_types.rs}
+
+\subsection{\code{txhdl::comp}}
+\lstinputlisting[caption={The public interface of \code{txhdl::comp}.},label={lst:x-api-comp}]{api_comp.rs}
+
+\subsection{\code{txhdl::pipeline} and \code{txhdl::funcs}}
+\lstinputlisting[caption={The public interface of \code{txhdl::pipeline}.},label={lst:x-api-pipeline}]{api_pipeline.rs}
+\lstinputlisting[caption={The public interface of \code{txhdl::funcs}.},label={lst:x-api-funcs}]{api_funcs.rs}
+
+\subsection{\code{txhdl\_macros}}
+\lstinputlisting[caption={The public interface of \code{txhdl\_macros}: the derives and the three macros, by their entry points.},label={lst:x-api-macros}]{api_macros.rs}

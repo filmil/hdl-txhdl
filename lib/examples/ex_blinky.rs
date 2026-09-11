@@ -32,7 +32,11 @@ impl<C: BlinkyConfig> Module<(), Out<Bit>> for Blinky<C> {
         loop {
             let n = self.count.get().await;
             let wrap = eq(n, U::from(C::PERIOD - 1));
-            when!(wrap => { self.count <= 0 } else { self.count <= n.wrapping_add(1) });
+            when!(wrap => {
+                self.count <= 0
+            } else {
+                self.count <= n.wrapping_add(1)
+            });
             led.set(Bit::from_bool(n.raw() < C::HALF as u128));
         }
     }
@@ -62,20 +66,21 @@ fn main() {
     let mut blinky = Blinky::<Sim>::default();
     let mut sim = Running::new(blinky.run((), drive));
 
-    // Watch the LED for two periods. The first sample is low: nothing
-    // has driven the wire until the first register read completes,
-    // which is what a reset cycle looks like.
-    //
-    // The output, one character per cycle:
+    // Watch the LED for two periods. The output, one character per
+    // cycle:
     //
     //   sim: period 16 cycles
-    //   led: _########________########_______
+    //   led: ########________########________
     let mut wave = String::new();
     for _ in 0..(2 * Sim::PERIOD) {
-        sim.cycle();
+        sim.step();
         wave.push(if led.get().to_bool() { '#' } else { '_' });
     }
     println!("{}: period {} cycles", Sim::NAME, Sim::PERIOD);
     println!("led: {wave}");
-    println!("{}: period {} cycles, which is why it is not the one simulated", Board::NAME, Board::PERIOD);
+    println!(
+        "{}: period {} cycles, which is why it is not the one simulated",
+        Board::NAME,
+        Board::PERIOD
+    );
 }

@@ -326,17 +326,90 @@ latex_document(
 )
 
 # The second article: what is left of the language once every construct
-# Rust already provides is deleted. Shares the house preamble, so the two
+# Rust already provides is deleted. Shares the house preamble, so the
 # documents cannot drift apart in font, listing style or figure style.
 latex_document(
     name = "embedding",
     main = "embedding.tex",
-    # The appendix includes the runtime and its examples verbatim from
-    # the tree, so a listing there cannot differ from the code.
+    data = [":vendored_tex"],
+    deps = ["housestyle.tex"] + glob(["embedding_sections/*.tex"]),
+)
+
+# The runtime: the library included verbatim from the tree, so a listing
+# there cannot differ from the code.
+latex_document(
+    name = "runtime",
+    main = "runtime.tex",
     data = [
         ":vendored_tex",
         "//lib:sources",
-        "//lib/examples:sources",
     ],
-    deps = ["housestyle.tex"] + glob(["embedding_sections/*.tex"]),
+    deps = ["housestyle.tex"] + glob(["runtime_sections/*.tex"]),
+)
+
+# The public interface of each runtime file, extracted from the source.
+# The examples document shows the runtime through nothing else.
+API = {
+    "api_types.rs": "//lib:src/types.rs",
+    "api_comp.rs": "//lib:src/comp.rs",
+    "api_pipeline.rs": "//lib:src/pipeline.rs",
+    "api_funcs.rs": "//lib:src/funcs.rs",
+    "api_macros.rs": "//lib:macros/lib.rs",
+}
+
+[
+    genrule(
+        name = out.replace(".rs", ""),
+        srcs = [src],
+        outs = [out],
+        cmd = "$(location //tools/api) $(location " + src + ") > $@",
+        tools = ["//tools/api"],
+    )
+    for out, src in API.items()
+]
+
+# What the examples that print printed. Run by the build, so the output
+# under a listing is the output of the listing beside it.
+genrule(
+    name = "example_outputs",
+    outs = [
+        "out_blinky.txt",
+        "out_case.txt",
+        "out_config.txt",
+        "out_fifo.txt",
+    ],
+    cmd = " && ".join([
+        "$(location //lib/examples:ex_blinky) > $(RULEDIR)/out_blinky.txt",
+        "$(location //lib/examples:ex_case) > $(RULEDIR)/out_case.txt",
+        "$(location //lib/examples:ex_config) fpga > $(RULEDIR)/out_config.txt",
+        "$(location //lib/examples:ex_config) asic >> $(RULEDIR)/out_config.txt",
+        "$(location //lib/examples:ex_fifo) > $(RULEDIR)/out_fifo.txt",
+    ]),
+    tools = [
+        "//lib/examples:ex_blinky",
+        "//lib/examples:ex_case",
+        "//lib/examples:ex_config",
+        "//lib/examples:ex_fifo",
+    ],
+)
+
+# The examples: every file under //lib/examples verbatim, the output of
+# the ones that run, and the runtime's public interface.
+latex_document(
+    name = "examples",
+    main = "examples.tex",
+    data = [
+        ":vendored_tex",
+        ":example_outputs",
+        "//lib/examples:sources",
+    ] + API.keys(),
+    deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
+)
+
+# The cover: every document, what it is for, where it is built.
+latex_document(
+    name = "cover",
+    main = "cover.tex",
+    data = [":vendored_tex"],
+    deps = ["housestyle.tex"],
 )

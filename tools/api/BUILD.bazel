@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Extracts the public interface of a Rust source file: doc comments and
+# signatures of public items, bodies dropped. The examples document shows
+# the runtime only through this, so it cannot leak an implementation detail
+# and cannot drift from the source.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "api",
+    srcs = ["main.rs"],
+    edition = "2021",
+)

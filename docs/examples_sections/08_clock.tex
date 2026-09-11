@@ -1,0 +1,12 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Clock in the Type}
+\label{sec:x-clock}
+
+A wire and a register name the clock they are in as a type parameter,
+and the default is the one clock a single-clock design has, so such a
+design never mentions one. A two-clock design names exactly the second.
+A \code{Crossing} is the only way from one to the other, which is what
+makes forgetting one a type error. A unit that does not care which
+clock it is in is generic over \code{C: Clock}.
+
+\lstinputlisting[caption={\code{ex\_clock.rs}.},label={lst:x-clock}]{lib/examples/ex_clock.rs}

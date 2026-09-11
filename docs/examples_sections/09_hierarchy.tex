@@ -1,0 +1,12 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Unit that Contains Units}
+\label{sec:x-hierarchy}
+
+Submodules and the wire between them are fields. The parent creates
+the wire, hands each child the end it takes when it calls the child's
+\code{run}, and joins the children. They are disjoint fields, so both
+may be borrowed mutably at once. An array of instances is joined with
+\code{join\_all}, which polls all of them each step, because a child
+loops and a sequential join would never reach the second.
+
+\lstinputlisting[caption={\code{ex\_hierarchy.rs}.},label={lst:x-hierarchy}]{lib/examples/ex_hierarchy.rs}

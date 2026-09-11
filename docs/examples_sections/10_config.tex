@@ -1,0 +1,16 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Configuration}
+\label{sec:x-config}
+
+A configuration is a trait with associated types for the sockets and
+associated constants for the numbers, and a build is one item:
+\code{config!} writes the config type and both of its impls.
+\code{Default} builds the top, because a register's default is its
+reset value and a socket's is its implementation, and \code{main}
+reaches the design through nothing but the config. Two builds differ
+in a filter length and a clock rate, and the program was run with each
+in turn.
+
+\lstinputlisting[caption={\code{ex\_config.rs}. Run with \code{bazel run //lib/examples:ex\_config -- asic}.},label={lst:x-config}]{lib/examples/ex_config.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_config} printed when the build ran it.},label={lst:x-config-out}]{out_config.txt}

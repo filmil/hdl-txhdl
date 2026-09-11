@@ -1,0 +1,19 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{\code{txhdl::types}}
+\label{sec:r-types}
+
+Values, and the two markers. \code{Bit} is two valued, \code{Logic} is
+IEEE 1164's nine, and \code{U<N>} and \code{I<N>} are the numeric
+vectors, with the width a const parameter. A width that is an
+expression of other widths, \code{U<\{A + B\}>}, needs nightly Rust,
+which is the largest constraint the embedding found, and the
+prototype declares each width by hand instead. The conversions from
+Rust integers are what let a literal be written where a value is
+expected, and the narrowing ones are checked in debug builds.
+
+\code{Transaction} marks a struct that moves over a channel, and a
+bare word is one too. \code{Tag} is a synchronisation domain and its
+policy, as a type; which clock edge moves the data is a
+\code{Clock}, in the next module.
+
+\lstinputlisting[caption={\code{lib/src/types.rs}.},label={lst:r-types}]{lib/src/types.rs}

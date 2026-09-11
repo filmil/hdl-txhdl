@@ -1,0 +1,117 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% The cover: what documents TxHDL has, and which to read for what.
+% Built by //docs:cover.
+\documentclass[journal,onecolumn,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\scriptsize}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{TxHDL Documents}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{This is the cover document of TxHDL. It names every document
+the project produces, says what each is for, and says where each is
+built. When a document is added, it is added here.}%
+\thanks{\buildstamp}}
+
+\markboth{TxHDL Documents}{Filmar and Janković: TxHDL Documents}
+
+\begin{document}
+\maketitle
+
+\section{The Language and Its Documents}
+
+TxHDL is a hardware description language embedded in Rust. It began as
+two languages, LHDL and TxHDL, developed independently for the same
+project; they were merged into one with a Rust-shaped syntax, and the
+merged language was then reduced by deleting every construct Rust
+already provides, until what remained was a library. The documents
+follow that history, and a reader who wants the current state of the
+language reads the last three.
+
+Every document is built by Bazel from the project repository,
+\code{HDL/txhdl}, against a hermetic \LaTeX{} toolchain, so
+\code{bazel build //docs/...} on any machine produces all of them.
+The release workflow publishes every PDF nightly, and on request.
+
+\section{The Documents}
+
+\begin{table}[h]
+\caption{Every document, what it is for, and where it is built.}
+\label{tab:documents}
+\centering
+\begin{tabular}{@{}lp{95mm}l@{}}
+\toprule
+Document & What it is for & Target \\
+\midrule
+TxHDL: Unifying a Dataflow and a Transaction HDL
+  & The merge. What each source language contributed, the four conflicts
+    of meaning and how each was resolved, and the merged language as it
+    stood before the embedding. Historical now, and the record of why
+    the language has the shape it has.
+  & \code{//docs:article} \\
+\addlinespace
+Deleting a Language: Embedding TxHDL in Rust
+  & The language as it is. The rule that every construct Rust provides
+    is deleted, what is left, and every claim about Rust compiled as a
+    probe. The exposition; read this first.
+  & \code{//docs:embedding} \\
+\addlinespace
+The TxHDL Runtime
+  & The library that is the language, included verbatim from the tree,
+    with the model of time its executor keeps stated in prose. For
+    somebody changing the runtime, or asking what a construct does
+    inside.
+  & \code{//docs:runtime} \\
+\addlinespace
+TxHDL by Example
+  & One compiled example per concept, from values to an asynchronous
+    FIFO between two clocks, each with the output the build produced
+    when it ran it. The runtime appears only through its public
+    interface. For somebody writing a design.
+  & \code{//docs:examples} \\
+\addlinespace
+TxHDL Documents
+  & This document.
+  & \code{//docs:cover} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{The Working Notes}
+
+Under \code{docs/} in the repository, in Markdown, are the notes the
+articles were written from. They are not typeset, and they are kept
+because a decision is worth nothing if the reasons for it are lost.
+
+\begin{itemize}
+\item \code{unification-analysis.md}: what each source language is, what
+  conflicts, what each contributes, and every defect found in the two
+  sources.
+\item \code{syntax-decisions.md}: the Rust-shaped surface syntax of the
+  merged language, one decision per conflict.
+\item \code{rust-embedding.md}: the working notes of the embedding, with
+  every probe result in full.
+\item \code{document-build-plan.md}: how the documents are built, what
+  was tried before, and why the \TeX{} packages are vendored.
+\end{itemize}
+
+\section{How the Documents Are Kept True}
+
+Three rules keep the documents and the code from drifting apart, and
+they are stated in the repository's \code{AGENTS.md} so that every
+change is held to them.
+
+A concept lives in three places or it does not exist: the runtime, a
+compiled example, and these documents, in the same change. A listing
+of a source file is included from the tree at build time, never typed
+into a document, because a typed copy is the one copy nothing checks.
+And a claim about what Rust accepts is a probe that was compiled before
+it was written down, kept even when the answer was no, because the
+error message is the evidence.
+
+\end{document}

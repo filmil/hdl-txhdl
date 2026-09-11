@@ -4,6 +4,8 @@
 % Built by //docs:embedding. See docs/document-build-plan.md.
 \documentclass[journal,9pt]{IEEEtran}
 
+% Two columns: listings at 6pt fit 70 columns.
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
 \input{housestyle}
 
 \InputIfFileExists{buildstamp.tex}{}{}
@@ -16,7 +18,10 @@
 paper. It asks what remains of the language once every construct Rust
 already provides is removed. Every claim about Rust in it was compiled;
 the probes are in the project repository under
-\code{experiments/rust\_embedding}.}%
+\code{experiments/rust\_embedding}. The runtime library the article
+describes and the examples written against it are two further
+documents~\cite{runtime,examples}; the cover document~\cite{cover}
+lists them all.}%
 \thanks{\buildstamp}}
 
 \markboth{TxHDL Embedded in Rust}{Filmar and Janković: Deleting a Language}
@@ -76,8 +81,6 @@ high-level synthesis, async, language design.
 \input{embedding_sections/13_next}
 \input{embedding_sections/14_conclusion}
 
-\input{embedding_sections/15_appendix}
-
 \begin{thebibliography}{10}
 
 \bibitem{merge}
@@ -107,6 +110,20 @@ drawn from, with the probe results in full.
 \bibitem{build}
 ``Building the specification documents,'' project repository
 \code{HDL/txhdl}, \code{docs/document-build-plan.md}, 2026.
+
+\bibitem{runtime}
+F.~Filmar and D.~Janković, ``The TxHDL runtime,'' project repository
+\code{HDL/txhdl}, \code{//docs:runtime}, 2026. The library, included
+verbatim, with the model of time it implements.
+
+\bibitem{examples}
+F.~Filmar and D.~Janković, ``TxHDL by example,'' project repository
+\code{HDL/txhdl}, \code{//docs:examples}, 2026. One compiled example
+per concept, with its output where it has one.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
 
 \bibitem{bachrach2012}
 J.~Bachrach \emph{et al.}, ``Chisel: Constructing hardware in a Scala
