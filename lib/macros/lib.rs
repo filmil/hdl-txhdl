@@ -267,7 +267,8 @@ fn emit(iface: &Ident, members: &[Field], roles: &[Role]) -> TokenStream {
         s.push_str(&format!(
             "        let {} = ::txhdl::comp::Member::split(\
              <{} as ::txhdl::comp::Member>::new());\n",
-            m.name, m.ty));
+            m.name, m.ty
+        ));
     }
     s.push_str("        (\n");
     for r in roles {

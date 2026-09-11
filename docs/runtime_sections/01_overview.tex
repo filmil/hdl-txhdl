@@ -47,33 +47,34 @@ rising edge at every step \code{t} with \code{t >= PHASE} and
 phase 0, so in a single-clock design a step is a cycle and nothing
 mentions either number.
 
-\textbf{A register read is the wait.} A register is in a clock, and
-reading it is \code{async} because the value it holds is the one
-latched at the last edge of that clock, so reading is waiting for the
-edge. Driving it is plain: \code{set} states the next value and waits
-for nothing. A wire has no edge, so reading a wire is plain too.
+\textbf{A process waits, then reads.} The waits are events:
+\code{C::edge()}, the next edge of a clock; \code{rx.wait()}, the next
+edge of the channel's clock at which a transaction is offered, taken;
+and \code{until::<C>(|| cond)}, the next edge of \code{C} at which a
+condition on state holds. Reads are plain: \code{Reg::get} returns
+what the last edge latched, a wire's \code{get} returns what it
+carries, a memory's \code{read} is its asynchronous port. Drives are
+deferred: \code{Reg::set} and \code{Mem::write} take effect at the end
+of the step, so a read after a drive in the same iteration still sees
+what the edge latched.
 
-\textbf{Every \code{.await} is a cycle boundary.} A second register
-read written after a first waits for the next edge, as an operator
-does. Reads that share one edge are written inside \code{parallel!},
-which polls its futures together and returns their outputs as a tuple;
-that is the one case the executor treats specially. A read polled
-inside a \code{parallel!} whose process has already crossed the edge
-at this step is free, and only once per register, so the group is one
-wait and a \code{loop} advances one iteration per group. The first
-version of the executor charged a cycle for every read, so an
-iteration that read two registers took two cycles; the second made a
-sequential read free, which was right in effect and said nothing in the
-source. \code{parallel!} says it.
+\textbf{Every \code{.await} is a cycle boundary.} A process that has
+crossed an edge at this step cannot cross it again, so a second wait
+written after a first waits for the next edge, as an operator does.
+Waits that share one edge are written inside \code{parallel!}, which
+polls its futures together and returns their outputs as a tuple; that
+is the one case the executor treats specially. Once one wait of the
+group has crossed the edge at this step, the others in the group are
+free, each once, so the group is one wait. State read before a wait,
+at the top of a loop, is read in the previous step and before that
+step's drives commit; state is read after the wait.
 
 \textbf{A process is its waker.} The executor tells processes apart by
 the data pointer of the waker they are polled with. \code{join2} and
 \code{join\_all} give each child a fresh one, so the rule above holds
-per process rather than per unit, and two processes of one unit that
-read the same register each get their own value per edge.
-\code{parallel!} keeps its futures in the one process, which is the
-difference between the two: \code{join2} forks, \code{parallel!} does
-not.
+per process rather than per unit. \code{parallel!} keeps its futures in
+the one process, which is the difference between the two: \code{join2}
+forks, \code{parallel!} does not.
 
 \textbf{An operator's cycle is in the process's clock.} An operator in
 \code{txhdl::pipeline} waits one edge of whatever clock the process
@@ -90,13 +91,12 @@ discipline that makes it safe.
 
 \subsection{What is prototype only}
 
-Three things in the code exist for the simulation and would not be
-lowered. \code{Reg::peek} reads a register without waiting; it exists
-for testbenches, for the reason \code{assert!} exists, and a design
-must not use it. \code{Running} and \code{simulate} drive a design from
-a \code{main}, and \code{now} reports the time step for traces. And the
-shared cells behind every wire, channel and register are how a
-simulation shares state; the lowering would replace them with nets.
+Two things in the code exist for the simulation and would not be
+lowered. \code{Running} and \code{simulate} drive a design from a
+\code{main}, and \code{now} reports the time step for traces. And the
+shared cells behind every wire, channel and register, with the deferred
+drives that commit at the end of a step, are how a simulation shares
+state; the lowering would replace them with nets and flops.
 
 \subsection{Building it}
 

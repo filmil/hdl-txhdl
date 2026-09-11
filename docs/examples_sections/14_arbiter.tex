@@ -1,0 +1,20 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Round-Robin Arbiter}
+\label{sec:x-arbiter}
+
+Two producers, one consumer, and a wait on either of two inputs. The
+arbiter's event is \code{until} on a condition that either input
+offers and the output is ready; its turn register is read after the
+wait, at that edge, and says which side is served when both offer.
+The side served passes the turn. The first draft read the turn before
+the wait, to fix the order of a race between the two channel waits,
+and that read happened in the previous step, before the step's own
+drive of the turn had committed: it saw the previous cycle's turn and
+granted A twice in a row. The wait comes first; state is read after
+it. Producer A offers every cycle and producer B every third one,
+which the trace shows: A and B alternate while B has something to
+offer, and A alone is granted in between.
+
+\lstinputlisting[caption={\code{ex\_arbiter.rs}. Run with \code{bazel run //lib/examples:ex\_arbiter}.},label={lst:x-arbiter}]{lib/examples/ex_arbiter.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_arbiter} printed when the build ran it.},label={lst:x-arbiter-out}]{out_arbiter.txt}

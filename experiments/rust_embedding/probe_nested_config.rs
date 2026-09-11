@@ -1,7 +1,7 @@
 // Probe 17. Nested configuration: a parent's config names its children's
 // as associated types, so two children may share a knob name and a
 // child's config is reusable. Against the library's `Config`.
-use txhdl::comp::{Config, Module, Reg};
+use txhdl::comp::{Config, Module, Reg, edge, DefaultClock};
 use txhdl::types::U;
 
 pub trait Generator: Default { fn next(&self) -> U<32>; }
@@ -24,7 +24,8 @@ impl<TC: TopConfig> Module<(), ()> for Top<TC> {
     async fn run(&mut self, _i: (), _o: ()) {
         let _ = (<ProducerOf<TC> as ProducerConfig>::DEPTH, <ConsumerOf<TC> as ConsumerConfig>::DEPTH);
         loop {
-            let seen = self.consumer.seen.get().await;
+            edge::<DefaultClock>().await;
+            let seen = self.consumer.seen.get();
             self.consumer.seen.set(seen.wrapping_add(self.producer.gen.next()));
         }
     }

@@ -58,18 +58,18 @@ mutable borrow at a time. The two facts collide directly.
 The repair is that a register is a cell, and a process takes a shared
 reference.
 
-\begin{lstlisting}[caption={The repair. A register is a cell several processes reach, which is what a register is. Reading one is \code{async}; driving one is not.},label={lst:reg}]
-pub struct Reg<T: Copy>(Cell<T>);
+\begin{lstlisting}[caption={The repair. A register is a cell several processes reach, which is what a register is. Reading and driving it are plain; the wait is the edge.},label={lst:reg}]
+pub struct Reg<T: Copy, C: Clock = DefaultClock> { .. }
 
-impl<T: Copy> Reg<T> {
-    pub async fn get(&self) -> T { tick().await; self.0.get() }
-    pub fn set(&self, x: T) { self.0.set(x) }
-    pub fn peek(&self) -> T { self.0.get() }   // testbench only
+impl<T: Copy, C: Clock> Reg<T, C> {
+    pub fn get(&self) -> T;      // what the last edge latched
+    pub fn set(&self, x: T);     // taken at the end of the step
 }
 
 async fn port_a(&self) {
     loop {
-        let hits = self.hits_a.get().await;
+        DefaultClock::edge().await;    // the wait
+        let hits = self.hits_a.get();  // a read at that edge
         self.hits_a.set(hits + 1);
     }
 }
@@ -79,58 +79,70 @@ async fn port_a(&self) {
 \code{\&self}. That compiles, and it also describes the hardware better: a
 register is a thing several processes reach, which is what a register is.
 
-\subsection{A register read is the wait, and a process loops}
+\subsection{A process waits, then reads, and it loops}
 \label{sec:e-regread}
 
-Listing~\ref{lst:reg} makes two claims that earlier drafts did not, and
-both follow from what a register is.
+Listing~\ref{lst:reg} makes three claims that earlier drafts did not,
+and the first took three drafts of its own to get right.
 
-\textbf{Reading a register is \code{async}.} A wire has no clock edge, so
-\code{In::get} is plain and returns at once. A register holds the value
-latched at the last edge, so reading it is waiting for that edge, and
-\code{Reg::get} is \code{async} to say so. Driving a register states the
-next value and waits for nothing, so \code{set} is plain. The
-\code{.await} on a read is the mark the lowering turns into the
-register; the value alive across it is what gets stored. \code{peek}
-reads without waiting, and exists for testbenches, for the reason
-\code{assert!} exists: it observes and drives nothing, and synthesis
-skips it.
+\textbf{Waiting and reading are different things.} A process waits for
+an event: the next edge of a clock, \code{C::edge()}; a transaction on
+a channel, \code{rx.wait()}; or an edge at which a condition on state
+holds, \code{until::<C>(|| ..)}. Once its event has happened it reads
+state, plainly. \code{Reg::get} returns what the last edge latched and
+waits for nothing, and so does a wire's \code{In::get}. The two drafts
+before this one made the register read the wait, \code{get} being
+\code{async}, on the argument that the \code{.await} on a read was the
+mark the lowering turns into a register. It was also the only wait
+there was, so a process that wanted to react to a channel and then
+look at a pointer had no way to say it: a second \code{.await} for the
+pointer was a second edge, and a group of the two gave the pointer
+from before the channel's edge. Separating the wait from the read
+removed the problem and left the mark where it belongs: the edge is
+the cycle boundary, and everything read after it is what the hardware
+reads at that edge.
+
+\textbf{Driving is deferred.} \code{set} states the next value, and the
+register takes it at the end of the step, so a read after a drive in
+the same iteration still sees what the edge latched. That is what a
+register does, and a testbench that reads a register between steps
+sees the committed value without a second kind of read.
 
 \textbf{A process loops.} A unit runs for as long as the clock does, so
 every leaf \code{run} is a \code{loop}, and each iteration contains a
-register read. That read is where the iteration waits for the edge, so
-one iteration is one cycle. A parent whose \code{run} only joins its
-children needs no loop of its own: the children loop, the join never
-completes, and the parent is continuous through them.
+wait. A parent whose \code{run} only joins its children needs no loop
+of its own: the children loop, the join never completes, and the
+parent is continuous through them.
 
-The prototype enforces this in the only way a simulation can, and the
-rule it keeps took three attempts. The first version made every
-register read yield once, so an iteration that read three registers
-took three cycles, which no hardware does: a process samples every
-register at the same edge. The second made a second read after the
-edge free, which was right in effect and invisible in the source: two
-\code{.await}s in a row meant two cycles everywhere in the language
-except here, and a reader had to know an executor rule to tell. The
-rule now is that every \code{.await} is a cycle boundary, and reads
-that share an edge say so:
+The prototype enforces this in the only way a simulation can. Every
+\code{.await} is a cycle boundary: a process that has crossed an edge
+at this step cannot cross it again, so a second wait written after a
+first waits for the next edge. Waits that share an edge say so:
 
-\begin{lstlisting}[caption={Reads at one edge are written inside \code{parallel!}. Written one after the other, the same two reads would be two cycles, as any two awaits are.},label={lst:parallel}]
-let (s, n) = parallel!(self.state.get(), self.count.get()).await;
+\begin{lstlisting}[caption={Two events at one edge are written inside \code{parallel!}. Written one after the other, they would be two edges, as any two awaits are.},label={lst:parallel}]
+let (x, y) = parallel!(rx_a.wait(), rx_b.wait()).await;
 \end{lstlisting}
 
 \code{parallel!} polls its futures together and returns their outputs
-as a tuple, so the group is one wait, and it is the one thing the
-executor treats specially: a read polled inside it after another read
-in the group has crossed the edge is free. A loop then advances one
-iteration per iteration's wait. Processes are told apart by their
-waker, which \code{join2} and \code{join\_all} give each child
-fresh, so a register gives each process its own value at each edge.
-\code{join2} and \code{parallel!} are the two sides of one idea: the
-first gives each of its futures a process, the second keeps them in
-one, and a unit uses both. A loop that reads no register and awaits no
-operator never yields and spins. That is the right behaviour, because
-such a loop is a combinational loop in the hardware, which is the thing
-that was wrong.
+as a tuple, and it is the one thing the executor treats specially: once
+one wait of the group has crossed the edge at this step, the others in
+the group are free, each once. \code{join2} and \code{parallel!} are the
+two sides of one idea: the first gives each of its futures a process,
+the second keeps them in one, and a unit uses both. Processes are told
+apart by their waker, which \code{join2} and \code{join\_all} give each
+child fresh. A loop that awaits nothing never yields and spins. That is
+the right behaviour, because such a loop is a combinational loop in
+the hardware, which is the thing that was wrong.
+
+One consequence is worth stating because the arbiter example ran into
+it. State read before the wait, at the top of a loop, is read in the
+previous step, before that step's own drives have committed. An
+arbiter whose priority order was fixed before it waited saw the
+previous cycle's turn and granted one side twice. The order belongs
+after the wait, which is why its event is \code{until} on either input
+offering and its choice is a plain read at that edge, and why there is
+no \code{select!}: the first of several channel waits with a
+state-dependent priority is \code{until} with an \code{||} in it.
 
 \begin{pitfall}
 This is the constraint most likely to surprise somebody writing a unit for

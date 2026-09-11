@@ -212,19 +212,21 @@ neither. This is the same statement SDC makes with \code{create\_clock
 constraint file already takes.
 
 A register is then in a clock, \code{Reg<T, C>}, with the same default
-as a wire, and reading it waits for the edge of its own clock. The
+as a wire, and a process in that clock waits for \code{C::edge()}. The
 executor runs time in steps and each clock has an edge at the steps its
-period and phase name; a process waits at a register read until the
-next edge of that register's clock, and a \code{parallel!} of reads
-waits for one edge, Section~\ref{sec:e-regread}. An operator's
-cycle is a cycle of whatever clock the process last crossed an edge of,
-which is the only sense a latency has in a process.
+period and phase name; the waits built on the edge, a channel's
+\code{wait} and \code{until}, are in the channel's or the named clock,
+Section~\ref{sec:e-regread}. An operator's cycle is a cycle of whatever
+clock the process last crossed an edge of, which is the only sense a
+latency has in a process.
 
 One thing the executor does not do is check that a process stays in
 its domain. A process in one clock that reads a register of another
 without a \code{Crossing} is a hazard, and the prototype runs it rather
 than refusing it, because the register's type says which clock it is in
-and the process's type says nothing. That is also the hazard an
+and the process's type says nothing. A \code{Crossing} is itself a
+process, run by the unit that owns it: it samples at every edge of the
+destination clock, which is what a synchroniser does. That is also the hazard an
 asynchronous FIFO commits on purpose: its memory is written by one
 clock and read by the other, and the pointer discipline is what makes
 that safe. It is why the runtime has a \code{Mem<T, N, C>} as a type

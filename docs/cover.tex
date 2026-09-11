@@ -4,7 +4,8 @@
 % Built by //docs:cover.
 \documentclass[journal,onecolumn,9pt]{IEEEtran}
 
-\newcommand{\listingsize}{\scriptsize}
+% One column: 80 columns fit at the body size, so nothing is reduced.
+\newcommand{\listingsize}{\normalsize}
 \input{housestyle}
 
 \InputIfFileExists{buildstamp.tex}{}{}
@@ -44,7 +45,7 @@ The release workflow publishes every PDF nightly, and on request.
 \caption{Every document, what it is for, and where it is built.}
 \label{tab:documents}
 \centering
-\begin{tabular}{@{}lp{95mm}l@{}}
+\begin{tabular}{@{}p{46mm}p{92mm}l@{}}
 \toprule
 Document & What it is for & Target \\
 \midrule

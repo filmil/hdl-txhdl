@@ -3,7 +3,7 @@
 //! how fast the clock is and how fast to blink. The LED is a square
 //! wave: on for the first half of the period, off for the second.
 use std::marker::PhantomData;
-use txhdl::comp::{signal, DefaultClock, Module, Out, Reg, Running};
+use txhdl::comp::{signal, Clock, DefaultClock, Module, Out, Reg, Running};
 use txhdl::funcs::eq;
 use txhdl::types::{Bit, U};
 use txhdl::when;
@@ -30,7 +30,8 @@ pub struct Blinky<C: BlinkyConfig> {
 impl<C: BlinkyConfig> Module<(), Out<Bit>> for Blinky<C> {
     async fn run(&mut self, _i: (), led: Out<Bit>) {
         loop {
-            let n = self.count.get().await;
+            DefaultClock::edge().await;
+            let n = self.count.get();
             let wrap = eq(n, U::from(C::PERIOD - 1));
             when!(wrap => {
                 self.count <= 0
@@ -78,9 +79,12 @@ fn main() {
     }
     println!("{}: period {} cycles", Sim::NAME, Sim::PERIOD);
     println!("led: {wave}");
+    // The board build is not run: a period of a hundred million cycles
+    // has nothing to show in a line of text. Its number is reported.
     println!(
-        "{}: period {} cycles, which is why it is not the one simulated",
+        "{}: period {} cycles, too long to print; {} is the build run here",
         Board::NAME,
-        Board::PERIOD
+        Board::PERIOD,
+        Sim::NAME
     );
 }

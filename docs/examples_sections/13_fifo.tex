@@ -5,15 +5,18 @@
 The producer port is in one clock and the consumer port in another,
 and the two stand in a stated relation: the write clock has period 2,
 the read clock period 3 and phase 1, in the unit the design shares.
-Each pointer lives in its own domain and reaches the other side through
-a \code{Crossing} that the reading process steps at its own edge, which
-is what a synchroniser does. The memory is written by the producer
-clock and read by the consumer clock without a wait, as a dual-port
-RAM's read port is; the pointer discipline is what makes that safe.
-The channel's own handshake is the backpressure: the producer offers
-only when the channel is ready, the FIFO takes only when not full, and
-the trace shows the producer stalled on \emph{full} twice in twenty
-steps.
+Each side waits for its own event: the write side, with \code{until},
+for an offer it has room for; the read side for a word to give and a
+consumer able to take it. The pointers are read after the wait, at
+that edge. Each pointer lives in its own domain and reaches the other
+side through a \code{Crossing}, which runs as a process of the FIFO
+and samples at every edge of the destination clock, which is what a
+synchroniser does. The memory is written by the producer clock and
+read by the consumer clock without a wait, as a dual-port RAM's read
+port is; the pointer discipline is what makes that safe. The channel's
+own handshake is the backpressure: the producer waits until the
+channel is ready, the consumer waits for a word, and the trace shows
+the producer with nothing to do at the step the FIFO is full.
 
 \lstinputlisting[caption={\code{ex\_fifo.rs}. Run with \code{bazel run //lib/examples:ex\_fifo}.},label={lst:x-fifo}]{lib/examples/ex_fifo.rs}
 

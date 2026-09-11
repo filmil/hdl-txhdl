@@ -19,7 +19,7 @@ nothing.
 \begin{lstlisting}[caption={The model of time, enforced by the type system. The first function has no \code{.await} to write, so it cannot state a cycle count.},label={lst:time}]
 // Timeless: combinational. There is no .await to write.
 fn narrow(v: U<64>, low: bool) -> U<32> {
-    select(low, low_half(v), high_half(v))
+    mux(low, low_half(v), high_half(v))
 }
 
 // Sequenced. Counts cycles exactly as written.

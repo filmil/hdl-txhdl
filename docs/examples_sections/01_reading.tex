@@ -10,12 +10,13 @@ and the ones that print are run with \code{bazel run
 //lib/examples:ex\_\emph{name}}.
 
 The examples use the runtime crate \code{txhdl}, and this document
-shows the crate only through its public interface,
-Section~\ref{sec:x-interface}, which the build extracts from the
-source. What a function does inside is the runtime document's
-business~\cite{runtime}; what it is for and how it is called is here.
+shows the crate only through its public interface, which the build
+extracts from the source and which is the last section,
+Section~\ref{sec:x-interface}, for looking things up. What a function
+does inside is the runtime document's business~\cite{runtime}; what it
+is for and how it is called is here.
 
 The order is the order of the language: values, then a transaction,
 then an interface, then a unit with processes, a pipeline, clocks, a
-hierarchy, a configuration, and then three complete designs, a
-blinky, a state machine and an asynchronous FIFO.
+hierarchy, a configuration, and then four complete designs, a
+blinky, a state machine, an asynchronous FIFO and an arbiter.

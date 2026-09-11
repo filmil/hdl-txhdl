@@ -377,6 +377,7 @@ genrule(
         "out_case.txt",
         "out_config.txt",
         "out_fifo.txt",
+        "out_arbiter.txt",
     ],
     cmd = " && ".join([
         "$(location //lib/examples:ex_blinky) > $(RULEDIR)/out_blinky.txt",
@@ -384,12 +385,14 @@ genrule(
         "$(location //lib/examples:ex_config) fpga > $(RULEDIR)/out_config.txt",
         "$(location //lib/examples:ex_config) asic >> $(RULEDIR)/out_config.txt",
         "$(location //lib/examples:ex_fifo) > $(RULEDIR)/out_fifo.txt",
+        "$(location //lib/examples:ex_arbiter) > $(RULEDIR)/out_arbiter.txt",
     ]),
     tools = [
         "//lib/examples:ex_blinky",
         "//lib/examples:ex_case",
         "//lib/examples:ex_config",
         "//lib/examples:ex_fifo",
+        "//lib/examples:ex_arbiter",
     ],
 )
 

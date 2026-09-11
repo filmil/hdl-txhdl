@@ -4,15 +4,19 @@
 
 The composition module: everything a unit is made of, and the executor
 that runs it. In order of appearance: clocks with their period and
-phase; a wire and a channel, each split into a driving end that is not
-\code{Clone} and a reading end that is; the \code{Member} trait that
-lets \code{interface!} split a member without knowing which it is;
-\code{Crossing}, the only way between two clocks; registers and
-memories; \code{mux}; the \code{Module} trait, whose \code{run} takes
-the unit's inputs and outputs as type parameters; configurations and
-the \code{config!} macro; \code{join2} and \code{join\_all}, which give
-each child its own process identity; \code{parallel!}, which keeps its
-futures in one process and returns their outputs together; and the
-executor, whose rules Section~\ref{sec:r-time} states.
+phase, and the edge wait a process makes; a wire and a channel, each
+split into a driving end that is not \code{Clone} and a reading end
+that is, the channel's reading end with a \code{wait}; the
+\code{Member} trait that lets \code{interface!} split a member without
+knowing which it is; \code{Crossing}, the only way between two clocks
+and a process of the unit that owns it; registers and memories, read
+plainly and driven with a commit at the end of the step; \code{mux};
+the \code{Module} trait, whose \code{run} takes the unit's inputs and
+outputs as type parameters; configurations and the \code{config!}
+macro; \code{join2} and \code{join\_all}, which give each child its
+own process identity; \code{parallel!}, which keeps its futures in one
+process and returns their outputs together; and the executor with its
+waits, \code{edge}, \code{until} and \code{tick}, whose rules
+Section~\ref{sec:r-time} states.
 
 \lstinputlisting[caption={\code{lib/src/comp.rs}.},label={lst:r-comp}]{lib/src/comp.rs}

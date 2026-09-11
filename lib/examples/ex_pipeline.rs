@@ -2,7 +2,8 @@
 //! A pipeline is an async fn. Nobody places the stage boundary: it is
 //! wherever an operator with latency is awaited. A plain fn cannot
 //! count cycles, because it has no `.await` to write.
-use txhdl::funcs::{high_half, low_half, select};
+use txhdl::comp::mux;
+use txhdl::funcs::{high_half, low_half};
 use txhdl::pipeline::{add, mul};
 use txhdl::types::{Bit, U};
 
@@ -17,5 +18,5 @@ pub async fn mac(a: U<32>, b: U<32>, prev: U<64>) -> U<64> {
 /// Timeless. Everything it calls is from `funcs`, so there is nothing
 /// to await and no cycle count can be stated.
 pub fn narrow(v: U<64>, low: Bit) -> U<32> {
-    select(low, low_half(v), high_half(v))
+    mux(low, low_half(v), high_half(v))
 }

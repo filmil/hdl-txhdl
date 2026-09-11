@@ -12,14 +12,6 @@ pub fn high_half(x: U<64>) -> U<32> {
     x.slice::<32, 32>()
 }
 
-pub fn select<T: Copy>(c: Bit, a: T, b: T) -> T {
-    if c.to_bool() {
-        a
-    } else {
-        b
-    }
-}
-
 pub fn is_zero<const N: usize>(x: U<N>) -> Bit {
     Bit::from_bool(x.raw() == 0)
 }

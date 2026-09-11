@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-//! An asynchronous FIFO. The producer port is in one clock and the
+//! An asynchronous FIFO. Each side waits for its own event: the write
+//! side for an offer it has room for, the read side for a word and a
+//! consumer able to take it. The producer port is in one clock and the
 //! consumer port in another, and the two clocks stand in a stated
 //! relation: `ClkW` has period 2, `ClkR` period 3 and phase 1, in the
 //! unit the design shares. Each pointer lives in its own domain and
@@ -7,11 +9,10 @@
 //! memory read on the consumer side safe; the memory itself is written
 //! by the producer clock and read without a wait, as a dual-port RAM is.
 use txhdl::comp::{
-    chan, join2, now, Clock, Crossing, In, Mem, Module, Out, Reg, Running, Rx,
-    Tx,
+    chan, join2, now, until, Clock, Crossing, In, Mem, Module, Out, Reg,
+    Running, Rx, Tx,
 };
-use txhdl::types::{Bit, U};
-use txhdl::when;
+use txhdl::types::U;
 
 pub struct ClkW;
 impl Clock for ClkW {
@@ -26,9 +27,9 @@ impl Clock for ClkR {
 }
 
 /// A pointer that lives in `A` and is read in `B`. The `Out` is driven
-/// by the pointer's own process, the `Crossing` is stepped by the
-/// reading process at its own edge, which is what a synchroniser does,
-/// and the `In` is what that process reads.
+/// by the pointer's own process, the `Crossing` runs as a process of
+/// its own and samples at every edge of `B`, which is what a
+/// synchroniser does, and the `In` is what the reading process reads.
 pub struct Synced<A: Clock, B: Clock> {
     out: Out<U<8>, A>,
     x: Crossing<U<8>, A, B>,
@@ -68,35 +69,35 @@ impl<const N: usize, W: Clock, R: Clock> Default for Fifo<N, W, R> {
 }
 
 impl<const N: usize, W: Clock, R: Clock> Fifo<N, W, R> {
+    fn full(&self) -> bool {
+        self.wptr.get().wrapping_sub(self.rptr_w.inp.get()) == U::from(N as u8)
+    }
+    fn empty(&self) -> bool {
+        self.rptr.get() == self.wptr_r.inp.get()
+    }
+
+    /// Waits for an offer it has room for, then takes it. The pointer
+    /// crosses as the value it will have after this write, so the read
+    /// side counts the word as soon as its synchroniser sees it.
     async fn write(&self, push: Rx<U<8>, W>) {
         loop {
-            let w = self.wptr.get().await;
-            self.rptr_w.x.step();
-            let r = self.rptr_w.inp.get();
-            let full = Bit::from_bool(w.wrapping_sub(r) == U::from(N as u8));
-            let offer = push.peek();
-            let take = full.not().and(Bit::from_bool(offer.is_some()));
-            when!(take => { self.wptr <= w.wrapping_add(1) });
-            if take.to_bool() {
-                self.mem.write(w.raw() as usize, offer.unwrap_or_default());
-                push.recv();
-            }
-            self.wptr_r.out.set(w);
+            until::<W>(|| push.peek().is_some() && !self.full()).await;
+            let w = self.wptr.get();
+            let v = push.recv().unwrap_or_default();
+            self.mem.write(w.raw() as usize, v);
+            self.wptr.set(w.wrapping_add(1));
+            self.wptr_r.out.set(w.wrapping_add(1));
         }
     }
 
+    /// Waits for a word to give and a consumer able to take it.
     async fn read(&self, pop: Tx<U<8>, R>) {
         loop {
-            let r = self.rptr.get().await;
-            self.wptr_r.x.step();
-            let w = self.wptr_r.inp.get();
-            let empty = Bit::from_bool(r == w);
-            let give = empty.not().and(pop.ready());
-            when!(give => { self.rptr <= r.wrapping_add(1) });
-            if give.to_bool() {
-                pop.send(self.mem.read(r.raw() as usize))
-            }
-            self.rptr_w.out.set(r);
+            until::<R>(|| !self.empty() && pop.ready().to_bool()).await;
+            let r = self.rptr.get();
+            pop.send(self.mem.read(r.raw() as usize));
+            self.rptr.set(r.wrapping_add(1));
+            self.rptr_w.out.set(r.wrapping_add(1));
         }
     }
 }
@@ -104,8 +105,13 @@ impl<const N: usize, W: Clock, R: Clock> Fifo<N, W, R> {
 impl<const N: usize, W: Clock, R: Clock> Module<Rx<U<8>, W>, Tx<U<8>, R>>
     for Fifo<N, W, R>
 {
+    /// Four processes: the two sides and the two synchronisers.
     async fn run(&mut self, push: Rx<U<8>, W>, pop: Tx<U<8>, R>) {
-        join2(self.write(push), self.read(pop)).await;
+        join2(
+            join2(self.write(push), self.read(pop)),
+            join2(self.wptr_r.x.run(), self.rptr_w.x.run()),
+        )
+        .await;
     }
 }
 
@@ -118,15 +124,11 @@ pub struct Producer {
 impl Module<(), Tx<U<8>, ClkW>> for Producer {
     async fn run(&mut self, _i: (), push: Tx<U<8>, ClkW>) {
         loop {
-            let n = self.n.get().await;
-            let ready = push.ready();
-            when!(ready => { self.n <= n.wrapping_add(1) });
-            if ready.to_bool() {
-                push.send(n);
-                println!("t={:>2} {}: push {}", now(), ClkW::NAME, n.raw())
-            } else {
-                println!("t={:>2} {}: full", now(), ClkW::NAME)
-            }
+            until::<ClkW>(|| push.ready().to_bool()).await;
+            let n = self.n.get();
+            push.send(n);
+            self.n.set(n.wrapping_add(1));
+            println!("t={:>2} {}: push {}", now(), ClkW::NAME, n.raw());
         }
     }
 }
@@ -140,14 +142,10 @@ pub struct Consumer {
 impl Module<Rx<U<8>, ClkR>, ()> for Consumer {
     async fn run(&mut self, pop: Rx<U<8>, ClkR>, _o: ()) {
         loop {
-            let seen = self.seen.get().await;
-            match pop.recv() {
-                Some(v) => {
-                    self.seen.set(seen.wrapping_add(1));
-                    println!("t={:>2} {}: pop  {}", now(), ClkR::NAME, v.raw())
-                }
-                None => println!("t={:>2} {}: empty", now(), ClkR::NAME),
-            }
+            let v = pop.wait().await;
+            let seen = self.seen.get();
+            self.seen.set(seen.wrapping_add(1));
+            println!("t={:>2} {}: pop  {}", now(), ClkR::NAME, v.raw());
         }
     }
 }

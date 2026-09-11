@@ -36,6 +36,14 @@ pub trait Clock: 'static {
     const PERIOD: u64 = 1;
     /// Time step of the first rising edge.
     const PHASE: u64 = 0;
+    /// The next rising edge of this clock: the wait a process makes
+    /// once per iteration. State is read after it, plainly.
+    fn edge() -> Tick
+    where
+        Self: Sized,
+    {
+        edge::<Self>()
+    }
     /// Whether this clock has a rising edge at time step `t`.
     fn edge_at(t: u64) -> bool {
         t >= Self::PHASE && (t - Self::PHASE) % Self::PERIOD == 0
@@ -130,6 +138,17 @@ impl<T: Transaction, C: Clock> Rx<T, C> {
             None
         }
     }
+    /// Wait for a transaction: the next edge of the channel's clock at
+    /// which one is offered, and take it. An event, like `C::edge()`
+    /// and `until`; state is read after it.
+    pub async fn wait(&self) -> T {
+        loop {
+            edge::<C>().await;
+            if let Some(v) = self.recv() {
+                return v;
+            }
+        }
+    }
     /// Take the pending transaction, if any. Taking is the accept.
     pub fn recv(&self) -> Option<T> {
         let (v, valid) = self.0 .0.get();
@@ -200,8 +219,14 @@ impl<T: Copy + Default, A: Clock, B: Clock> Crossing<T, A, B> {
         let (to, rx) = signal::<T, B>();
         (Crossing { from, to }, rx)
     }
-    pub fn step(&self) {
-        self.to.set(self.from.get())
+    /// The synchroniser: samples the source at every edge of the
+    /// destination clock. A process of the unit that owns the crossing;
+    /// `run` joins it with the others.
+    pub async fn run(&self) {
+        loop {
+            edge::<B>().await;
+            self.to.set(self.from.get())
+        }
     }
 }
 
@@ -218,44 +243,55 @@ impl<T: Copy + Default, A: Clock, B: Clock> Crossing<T, A, B> {
 /// reading it is where a process waits for that edge, and the `.await`
 /// is the mark the lowering will turn into the register. A wire has no
 /// edge, which is why [`In::get`] is not `async` and this is.
-pub struct Reg<T: Copy, C: Clock = DefaultClock>(Cell<T>, PhantomData<C>);
+pub struct Reg<T: Copy, C: Clock = DefaultClock> {
+    cur: Cell<T>,
+    next: Cell<Option<T>>,
+    _c: PhantomData<C>,
+}
 
 impl<T: Copy + Default, C: Clock> Default for Reg<T, C> {
     fn default() -> Self {
-        Reg(Cell::new(T::default()), PhantomData)
+        Reg::new(T::default())
     }
 }
 
 impl<T: Copy, C: Clock> Reg<T, C> {
     pub fn new(v: impl Into<T>) -> Self {
-        Reg(Cell::new(v.into()), PhantomData)
+        Reg {
+            cur: Cell::new(v.into()),
+            next: Cell::new(None),
+            _c: PhantomData,
+        }
     }
 
-    /// Read the register. Awaiting this is waiting for the clock edge
-    /// that latched the value. In the prototype it yields to the
-    /// executor once, so one poll of a unit is one clock cycle, and a
-    /// process that loops advances one iteration per cycle.
-    pub async fn get(&self) -> T {
-        edge::<C>(self as *const Self as usize).await;
-        self.0.get()
+    /// Take the pending drive, at the end of the step.
+    fn apply(p: *const ()) {
+        // Safety: scheduled by `set` on a live register within this step.
+        let r = unsafe { &*(p as *const Self) };
+        if let Some(v) = r.next.take() {
+            r.cur.set(v)
+        }
     }
 
-    /// Observe the register without waiting. Not synthesisable, and
-    /// allowed for the reason `assert!` is: it reads and drives nothing.
-    /// For testbenches and reports, never for a design.
-    pub fn peek(&self) -> T {
-        self.0.get()
+    /// Read the register: the value latched at the last edge. Plain,
+    /// because reading is not waiting; the wait is the edge the process
+    /// made before it, `C::edge()`, a channel's `wait`, or `until`.
+    pub fn get(&self) -> T {
+        self.cur.get()
     }
 
-    /// Drive the next value. A drive is plain: nothing is waited for.
+    /// Drive the next value. Plain, and deferred: the register takes it
+    /// at the end of the step, so a read after a drive in the same
+    /// iteration still sees the value the edge latched, as in hardware.
     pub fn set(&self, v: impl Into<T>) {
-        self.0.set(v.into())
+        self.next.set(Some(v.into()));
+        commit(self as *const Self as *const (), Self::apply);
     }
 
     /// A predicated drive: a multiplexer on the enable, not a branch.
     pub fn set_if(&self, pred: Bit, v: impl Into<T>) {
         if pred.to_bool() {
-            self.0.set(v.into())
+            self.set(v)
         }
     }
 }
@@ -332,28 +368,39 @@ macro_rules! config {
 /// memory read from another clock domain is legal in the hardware and
 /// safe only under a discipline the type system does not check, which
 /// is what an asynchronous FIFO's pointers are for.
-pub struct Mem<T: Copy, const N: usize, C: Clock = DefaultClock>(
-    [Cell<T>; N],
-    PhantomData<C>,
-);
+pub struct Mem<T: Copy, const N: usize, C: Clock = DefaultClock> {
+    words: [Cell<T>; N],
+    next: Cell<Option<(usize, T)>>,
+    _c: PhantomData<C>,
+}
 
 impl<T: Copy + Default, const N: usize, C: Clock> Default for Mem<T, N, C> {
     fn default() -> Self {
-        Mem(
-            std::array::from_fn(|_| Cell::new(T::default())),
-            PhantomData,
-        )
+        Mem {
+            words: std::array::from_fn(|_| Cell::new(T::default())),
+            next: Cell::new(None),
+            _c: PhantomData,
+        }
     }
 }
 
 impl<T: Copy, const N: usize, C: Clock> Mem<T, N, C> {
-    /// The write port. Plain, like a register drive.
+    fn apply(p: *const ()) {
+        // Safety: as for `Reg::apply`.
+        let m = unsafe { &*(p as *const Self) };
+        if let Some((a, v)) = m.next.take() {
+            m.words[a % N].set(v)
+        }
+    }
+    /// The write port. Plain and deferred, like a register drive; one
+    /// write per step, which is what one port is.
     pub fn write(&self, addr: usize, v: impl Into<T>) {
-        self.0[addr % N].set(v.into())
+        self.next.set(Some((addr, v.into())));
+        commit(self as *const Self as *const (), Self::apply);
     }
     /// The read port. Plain, like a wire.
     pub fn read(&self, addr: usize) -> T {
-        self.0[addr % N].get()
+        self.words[addr % N].get()
     }
 }
 
@@ -439,12 +486,12 @@ pub async fn join_all<F: Future<Output = ()>>(fs: impl IntoIterator<Item = F>) {
 }
 
 /// Several waits at once. `parallel!(a, b, ..)` polls every future each
-/// step and completes when all have, with their outputs as a tuple, so
-/// two register reads inside it are one wait for one edge, and the
-/// executor knows it: a read polled inside `parallel!` after another
-/// read has crossed the edge is free. The same two reads written one
-/// after the other are two waits, because every `.await` is a cycle
-/// boundary and this is the one way to say that two are not.
+/// step and completes when all have, with their outputs as a tuple. Two
+/// waits inside it share an edge, and the executor knows it: a wait
+/// polled inside a group after another wait of the group has crossed
+/// the edge is free. The same two waits written one after the other are
+/// two edges, because every `.await` is a cycle boundary and a group is
+/// the one way to say that two are not.
 ///
 /// `join2` and `join_all` are the process-level counterpart: they give
 /// each child its own process. `parallel!` stays in one.
@@ -498,10 +545,10 @@ macro_rules! impl_join {
             ) -> Poll<Self::Output> {
                 // Safety: the tuple is never moved out while pinned.
                 let t = unsafe { &mut self.get_unchecked_mut().0 };
-                clock::PARALLEL.with(|p| p.set(p.get() + 1));
+                let saved = enter_group();
                 let mut all = true;
                 $( all &= unsafe { Pin::new_unchecked(&mut t.$i) }.poll(cx); )+
-                clock::PARALLEL.with(|p| p.set(p.get() - 1));
+                leave_group(saved);
                 if all {
                     Poll::Ready((
                         $( unsafe { Pin::new_unchecked(&mut t.$i) }.take(), )+
@@ -524,22 +571,24 @@ impl_join!(A 0, B 1, C 2, D 3, E 4, G 5);
 
 /// The prototype's time. One poll of the top unit is one time step, and
 /// each clock has an edge at the steps its period and phase say. Every
-/// wait is built from [`Tick`]: a register read waits for the edge of
-/// the register's clock, an operator's cycle waits for the next edge of
-/// the clock its process is in.
+/// wait is built from [`Tick`]: an edge of a named clock, an operator's
+/// cycle in the clock its process is in, and the waits built on those,
+/// a channel's `wait` and `until`.
 ///
-/// Every `.await` is a cycle boundary. A register read waits for the
-/// next edge of the register's clock, and so does a second read written
-/// after it. Reads that share one edge are written inside `parallel!`,
-/// and that is the one case the executor treats specially: a read polled
-/// inside a `parallel!` whose process has already crossed the edge at
-/// this step is free, so the whole group is one wait. Processes are
-/// told apart by their waker, which [`join2`] and [`join_all`] give
-/// each child fresh, so the rule holds per process and not per unit. A
-/// process is in the domain of the last edge it crossed; the executor
-/// does not check that it stays there, and a register of another domain
-/// read without a [`Crossing`] is a hazard the prototype runs rather
-/// than refuses.
+/// A process waits for an event and then reads state; reads are plain.
+/// Every `.await` is a cycle boundary: a process that has crossed an
+/// edge at this step cannot cross it again, so a second wait written
+/// after a first waits for the next edge. Waits that share one edge are
+/// written inside `parallel!`, and that is the one case
+/// the executor treats specially: once one wait of the group has
+/// crossed the edge at this step, the others in the group are free,
+/// each once. Drives are deferred to the end of the step, so a read
+/// after a drive still sees what the edge latched. Processes are told
+/// apart by their waker, which [`join2`] and [`join_all`] give each
+/// child fresh. A process is in the domain of the last edge it crossed;
+/// the executor does not check that it stays there, and state of
+/// another domain read without a [`Crossing`] is a hazard the prototype
+/// runs rather than refuses.
 mod clock {
     use std::any::TypeId;
     use std::cell::{Cell, RefCell};
@@ -568,14 +617,36 @@ mod clock {
     thread_local! {
         pub static TIME: Cell<u64> = const { Cell::new(0) };
         pub static NEXT: Cell<usize> = const { Cell::new(1) };
-        /// How many `parallel!` groups are being polled right now.
+        /// How many `parallel!` groups are being polled.
         pub static PARALLEL: Cell<u32> = const { Cell::new(0) };
+        /// The step at which the innermost group crossed its edge.
+        pub static GROUP_EDGE: Cell<Option<u64>> = const { Cell::new(None) };
         pub static PROCS: RefCell<HashMap<usize, Proc>> =
             RefCell::new(HashMap::new());
-        /// Per process and register: the last time step it was read at.
-        pub static READ: RefCell<HashMap<(usize, usize), u64>> =
+        /// Per process and wait: the last step it completed at, so a
+        /// wait in a group completes once per edge.
+        pub static DONE: RefCell<HashMap<(usize, usize), u64>> =
             RefCell::new(HashMap::new());
+        /// Drives scheduled this step, applied when it ends.
+        pub static COMMITS: RefCell<Vec<(*const (), fn(*const ()))>> =
+            RefCell::new(Vec::new());
     }
+}
+
+/// Schedule a drive for the end of the step.
+fn commit(p: *const (), apply: fn(*const ())) {
+    clock::COMMITS.with(|c| c.borrow_mut().push((p, apply)))
+}
+
+/// Enter a `parallel!` group for one poll. Returns what to hand back to
+/// `leave_group`.
+fn enter_group() -> Option<u64> {
+    clock::PARALLEL.with(|p| p.set(p.get() + 1));
+    clock::GROUP_EDGE.with(|g| g.replace(None))
+}
+fn leave_group(saved: Option<u64>) {
+    clock::PARALLEL.with(|p| p.set(p.get() - 1));
+    clock::GROUP_EDGE.with(|g| g.set(saved));
 }
 
 fn clk_of<C: Clock>() -> clock::Clk {
@@ -591,30 +662,34 @@ pub fn now() -> u64 {
     clock::TIME.with(|t| t.get())
 }
 
-/// A wait for a clock edge. With a key, the read of one register, keyed
-/// by the register and waiting on its clock; without one, an operator's
-/// cycle in whatever clock the process is in.
+/// A wait for a clock edge: of a named clock, or, for an operator's
+/// cycle, of whatever clock the process is in.
 pub struct Tick {
-    key: Option<usize>,
     clk: Option<clock::Clk>,
 }
 
 /// One cycle of the process's clock, unconditionally. Operators and
 /// `cycles(n)` use this.
 pub fn tick() -> Tick {
+    Tick { clk: None }
+}
+
+/// The next edge of clock `C`. The wait a process makes once per
+/// iteration before it reads state; `C::edge()` is the same thing.
+pub fn edge<C: Clock>() -> Tick {
     Tick {
-        key: None,
-        clk: None,
+        clk: Some(clk_of::<C>()),
     }
 }
 
-/// The edge a register read waits for. Free only inside `parallel!`,
-/// once another read in the group has crossed the edge of `C` at this
-/// step, and only once per register.
-fn edge<C: Clock>(key: usize) -> Tick {
-    Tick {
-        key: Some(key),
-        clk: Some(clk_of::<C>()),
+/// The next edge of `C` at which `cond` holds. The condition reads
+/// state, plainly, and is asked once per edge.
+pub async fn until<C: Clock>(mut cond: impl FnMut() -> bool) {
+    loop {
+        edge::<C>().await;
+        if cond() {
+            return;
+        }
     }
 }
 
@@ -622,6 +697,7 @@ impl Future for Tick {
     type Output = ();
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         let p = cx.waker().data() as usize;
+        let key = &*self as *const Tick as usize;
         let now = now();
         let proc_ = clock::PROCS.with(|m| m.borrow().get(&p).copied());
         // An operator's cycle is in the process's own clock; a process
@@ -634,23 +710,27 @@ impl Future for Tick {
             .map(|q| q.clk == clk && q.edge == now)
             .unwrap_or(false);
         let grouped = clock::PARALLEL.with(|g| g.get()) > 0;
-        if let Some(k) = self.key {
-            let unread =
-                clock::READ.with(|r| r.borrow().get(&(p, k)) != Some(&now));
-            if grouped && crossed && unread {
-                clock::READ.with(|r| r.borrow_mut().insert((p, k), now));
-                return Poll::Ready(());
+        if !crossed && clk.edge_at(now) {
+            clock::PROCS.with(|m| {
+                m.borrow_mut().insert(p, clock::Proc { clk, edge: now })
+            });
+            if grouped {
+                clock::GROUP_EDGE.with(|g| g.set(Some(now)));
             }
+            clock::DONE.with(|d| d.borrow_mut().insert((p, key), now));
+            return Poll::Ready(());
         }
-        if !clk.edge_at(now) || crossed {
-            return Poll::Pending;
+        // Inside a group whose edge was crossed at this step, the other
+        // waits of the group complete at it too, each once.
+        let group_here =
+            grouped && clock::GROUP_EDGE.with(|g| g.get()) == Some(now);
+        let fresh =
+            clock::DONE.with(|d| d.borrow().get(&(p, key)) != Some(&now));
+        if group_here && crossed && fresh {
+            clock::DONE.with(|d| d.borrow_mut().insert((p, key), now));
+            return Poll::Ready(());
         }
-        clock::PROCS
-            .with(|m| m.borrow_mut().insert(p, clock::Proc { clk, edge: now }));
-        if let Some(k) = self.key {
-            clock::READ.with(|r| r.borrow_mut().insert((p, k), now));
-        }
-        Poll::Ready(())
+        Poll::Pending
     }
 }
 
@@ -670,8 +750,12 @@ fn process() -> Waker {
     unsafe { Waker::from_raw(RawWaker::new(id as *const (), &VT)) }
 }
 
-/// Advance time by one step.
+/// End the step: apply every drive scheduled in it, then advance time.
 fn advance() {
+    let drives = clock::COMMITS.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    for (p, apply) in drives {
+        apply(p)
+    }
     clock::TIME.with(|t| t.set(t.get() + 1))
 }
 

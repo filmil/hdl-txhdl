@@ -2,7 +2,9 @@
 //! A unit that contains units. Submodules and the wire between them are
 //! fields; each child is handed its end when `run` is called. The
 //! children are disjoint fields, so both may be borrowed mutably at once.
-use txhdl::comp::{join2, join_all, signal, In, Module, Out, Reg};
+use txhdl::comp::{
+    join2, join_all, signal, Clock, DefaultClock, In, Module, Out, Reg,
+};
 use txhdl::types::U;
 
 pub struct Producer {
@@ -18,7 +20,8 @@ pub struct Pe {
 impl Module<(), Out<U<32>>> for Producer {
     async fn run(&mut self, _i: (), out: Out<U<32>>) {
         loop {
-            let n = self.n.get().await; // the wait for the edge
+            DefaultClock::edge().await; // the wait
+            let n = self.n.get(); // a read at that edge
             out.set(n); // a wire: no wait
             self.n.set(n.wrapping_add(1));
         }
@@ -28,7 +31,8 @@ impl Module<(), Out<U<32>>> for Producer {
 impl Module<In<U<32>>, ()> for Consumer {
     async fn run(&mut self, inp: In<U<32>>, _o: ()) {
         loop {
-            let total = self.total.get().await;
+            DefaultClock::edge().await;
+            let total = self.total.get();
             self.total.set(total.wrapping_add(inp.get()));
         }
     }
@@ -37,7 +41,8 @@ impl Module<In<U<32>>, ()> for Consumer {
 impl Module<U<32>, ()> for Pe {
     async fn run(&mut self, i: U<32>, _o: ()) {
         loop {
-            let acc = self.acc.get().await;
+            DefaultClock::edge().await;
+            let acc = self.acc.get();
             self.acc.set(acc.wrapping_add(i));
         }
     }

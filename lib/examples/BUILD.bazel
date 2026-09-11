@@ -63,7 +63,22 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A round-robin arbiter:  bazel run //lib/examples:ex_arbiter
+rust_binary(
+    name = "ex_arbiter",
+    srcs = ["ex_arbiter.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 filegroup(
     name = "sources",
-    srcs = [n + ".rs" for n in EXAMPLES] + ["ex_config.rs", "ex_blinky.rs", "ex_case.rs", "ex_fifo.rs"],
+    srcs = [n + ".rs" for n in EXAMPLES] + [
+        "ex_config.rs",
+        "ex_blinky.rs",
+        "ex_case.rs",
+        "ex_fifo.rs",
+        "ex_arbiter.rs",
+    ],
 )

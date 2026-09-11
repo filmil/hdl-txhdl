@@ -2,8 +2,7 @@
 //! A unit with two processes. They take `&self`, share state through
 //! registers, and `run` joins them, which is what states that they run
 //! in parallel. `when!` predicates writes; it does not branch.
-use txhdl::comp::{join2, Module, Reg};
-use txhdl::parallel;
+use txhdl::comp::{join2, Clock, DefaultClock, Module, Reg};
 use txhdl::types::{Bit, U};
 use txhdl::when;
 
@@ -16,17 +15,13 @@ pub struct DualPort {
 
 impl DualPort {
     /// A process loops, because a unit runs for as long as the clock
-    /// does. Each iteration waits for the edge once, reading all three
-    /// registers at it inside `parallel!`, so one iteration is one
-    /// cycle. Written one after the other they would be three waits.
+    /// does. Each iteration waits for the edge once and then reads what
+    /// it needs at that edge, plainly, so one iteration is one cycle.
     async fn port_a(&self) {
         loop {
-            let (enable, hits, cells) = parallel!(
-                self.enable.get(),
-                self.hits_a.get(),
-                self.cells.get()
-            )
-            .await;
+            DefaultClock::edge().await;
+            let (enable, hits, cells) =
+                (self.enable.get(), self.hits_a.get(), self.cells.get());
             when!(enable => {
                 self.hits_a <= hits.wrapping_add(1);
                 self.cells <= cells.wrapping_add(1)
@@ -38,7 +33,8 @@ impl DualPort {
 
     async fn port_b(&self) {
         loop {
-            let hits = self.hits_b.get().await;
+            DefaultClock::edge().await;
+            let hits = self.hits_b.get();
             self.hits_b.set(hits.wrapping_add(1));
         }
     }

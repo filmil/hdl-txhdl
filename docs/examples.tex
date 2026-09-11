@@ -4,8 +4,8 @@
 % with its output where it has one. Built by //docs:examples.
 \documentclass[journal,onecolumn,9pt]{IEEEtran}
 
-% One column: listings at 7pt hold 80 columns with room to spare.
-\newcommand{\listingsize}{\scriptsize}
+% One column: 80 columns fit at the body size, so nothing is reduced.
+\newcommand{\listingsize}{\normalsize}
 \input{housestyle}
 
 \InputIfFileExists{buildstamp.tex}{}{}
@@ -48,7 +48,6 @@ examples.
 {\footnotesize\tableofcontents}
 
 \input{examples_sections/01_reading}
-\input{examples_sections/02_interface}
 \input{examples_sections/03_values}
 \input{examples_sections/04_transaction}
 \input{examples_sections/05_interface}
@@ -60,6 +59,8 @@ examples.
 \input{examples_sections/11_blinky}
 \input{examples_sections/12_case}
 \input{examples_sections/13_fifo}
+\input{examples_sections/14_arbiter}
+\input{examples_sections/15_interface}
 
 \begin{thebibliography}{10}
 

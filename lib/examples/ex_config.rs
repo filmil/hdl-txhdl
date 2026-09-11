@@ -3,7 +3,7 @@
 //! config type and both impls; `Default` builds the top, because a
 //! register's default is its reset value and a socket's is its
 //! implementation. `main` reaches the top through nothing but the config.
-use txhdl::comp::{simulate, Config, Module, Reg};
+use txhdl::comp::{simulate, Clock, Config, DefaultClock, Module, Reg};
 use txhdl::config;
 use txhdl::types::U;
 
@@ -48,12 +48,13 @@ pub struct Top<TC: TopConfig> {
 
 impl<TC: TopConfig> Module<(), ()> for Top<TC> {
     /// A unit runs for as long as the clock does, so this loops. Each
-    /// tap reads the accumulator, and that read is the wait for the
-    /// edge, so one tap is one cycle.
+    /// tap waits for the edge and reads the accumulator at it, so one
+    /// tap is one cycle.
     async fn run(&mut self, _i: (), _o: ()) {
         loop {
             for i in 0..<FilterOf<TC> as FilterConfig>::TAPS {
-                let acc = self.filter.acc.get().await;
+                DefaultClock::edge().await;
+                let acc = self.filter.acc.get();
                 let p = self.filter.mac.mul(i.into(), 2.into());
                 self.filter.acc.set(acc.wrapping_add(p));
             }
@@ -98,7 +99,7 @@ fn report<C: TopConfig<Top = Top<C>>>() {
         C::NAME,
         taps,
         C::CLK_HZ / 1_000_000,
-        top.filter.acc.peek().raw()
+        top.filter.acc.get().raw()
     );
 }
 
