@@ -6,8 +6,8 @@ One wall is left, and it is the one a separate parser was buying.
 
 \subsection{Control flow on a signal}
 
-A signal is a node in a graph. It has no value while the Rust program runs,
-so it cannot be a condition.
+A signal is a node in a graph. It has no value while the Rust program
+runs, so it cannot be a condition.
 
 \begin{lstlisting}[caption={The wall. A signal has no value while the program runs, so it cannot be a condition.},label={lst:wall}]
 if cond { a } else { b }   // cond must be a bool.
@@ -15,20 +15,95 @@ if cond { a } else { b }   // cond must be a bool.
 \end{lstlisting}
 
 \code{if} and \code{match} take a \code{bool} and a pattern, and neither
-can be overloaded. The ways out are a function, \code{mux(cond, a, b)}, or
-a macro, and both read worse than the construct they replace. A page of
-control-heavy logic is where the embedding is plainly worse than a language
-with its own grammar.
+can be overloaded. Control flow on a signal needs another spelling.
 
-Section~\ref{sec:e-elaboration} gives the one approach that removes this,
-and what it costs to take it.
+\subsubsection{The name is not \code{if\_!}}
+
+The obvious macro name is \code{if\_!}, and it should be rejected for a
+better reason than the trailing underscore. \code{if} branches: one arm
+runs and the other does not. This does not branch. Both arms exist in the
+hardware at once and a multiplexer picks between them, so area is paid for
+both and a side effect in the arm not chosen still has to be suppressed. A
+reader who brings Rust's \code{if} semantics to a construct named after it
+is misled about the one thing that matters most.
+
+\code{when!} is what Chisel~\cite{bachrach2012} and SpinalHDL call it, so
+the engineers who will read it already know what it means, and it claims
+nothing it does not do.
+
+\subsubsection{Two forms, and where the limit is}
+
+An expression needs no macro at all. \code{mux} is the operation, and a
+function says so.
+
+\begin{lstlisting}[caption={The expression form is a function. There is nothing to predicate.},label={lst:mux}]
+let chosen = mux(reset, Sig(0), self.count.get());
+\end{lstlisting}
+
+A statement form has to predicate whatever is written inside it, and that
+is what real logic needs.
+
+\begin{lstlisting}[caption={The statement form. It reads as a conditional and lowers to predicated writes.},label={lst:when}]
+when!(enable => {
+    self.count => Sig(self.count.get().0 + 1);
+    self.flag  => Sig(1)
+} else {
+    self.count => Sig(0);
+    self.flag  => Sig(0)
+});
+\end{lstlisting}
+
+Probe~10 compiles both. The limit is in the second: a
+\code{macro\_rules!} macro matches a grammar, so this one predicates a
+list of register writes and nothing else. It cannot reach inside an
+arbitrary block and rewrite the statements it finds there, because
+\code{macro\_rules!} cannot see into a block it did not parse itself.
+
+Widening that grammar case by case ends up specifying a small language
+inside the macro, which is the thing the embedding set out to avoid. A
+proc macro reads the item's real syntax tree and can reinterpret a plain
+\code{if}, which is why Section~\ref{sec:e-elaboration} recommends one.
+This is the strongest single argument for that recommendation, and it
+arrived from writing the macro rather than from reasoning about it.
 
 \subsection{Bit slicing}
 
-A smaller version of the same thing. \code{w[0..8]} cannot work, because
-\code{Index} returns a reference to something that already exists and a
-slice of a signal is a new node. It becomes \code{w.slice::<0, 8>()}, which
-states the same thing less well.
+\code{w[0..8]} cannot work, because \code{Index} returns a reference to
+something that already exists and a slice of a signal is a new node. It
+becomes \code{w.slice::<0, 8>()}.
+
+The bounds do not all have to be literals, and the rule is not the one a
+first reading suggests.
+
+\begin{table}[H]
+\caption{What a slice bound may be. The width is the type, so it is the
+one that cannot vary.}
+\label{tab:slice}
+\centering
+\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+Form & Offset & Width \\
+\midrule
+\code{w.slice::<0, 8>()}        & literal          & literal \\
+\code{w.slice::<LO, LEN>()}     & const parameter  & const parameter \\
+\code{w.slice\_at::<8>(i)}      & \textbf{run time} & static \\
+\code{w.slice\_var(i, n)}       & run time         & \textbf{rejected} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A generic function may slice without knowing the numbers, because a const
+generic parameter is a compile-time value and not a literal. An offset may
+be a run-time value, which synthesises to a barrel shifter feeding a
+fixed-width slice.
+
+A width may not. The width is the type, and a type cannot depend on a
+value that exists only at run time: probe~11b gives
+\code{error[E0435]: attempt to use a non-constant value in a constant}.
+That is not a Rust limitation to work around. A signal whose bit width is
+decided at run time is not a thing hardware has, so the compiler is
+refusing to express something that could not be built.
 
 \section{What the Embedding Costs}
 \label{sec:e-costs}

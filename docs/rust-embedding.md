@@ -92,9 +92,10 @@ each at a different point in the body.
 That difference belongs at the call site.
 
 ```rust
+use crate::funcs::mul;
+
 async fn mac(a: U<32>, b: U<32>, prev: U<64>) -> U<64> {
-    let p = mul(a, b);
-    tick().await;              // stage boundary
+    let p = mul(a, b).await;   // the multiplier's own latency
     prev + p
 }
 ```

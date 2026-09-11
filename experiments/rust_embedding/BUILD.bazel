@@ -92,3 +92,32 @@ rust_library(
     edition = "2021",
     proc_macro_deps = [":txhdl_derive"],
 )
+
+# Probe 9: operator latency instead of a hand-placed stage boundary.
+rust_library(
+    name = "probe_funcs",
+    srcs = ["probe_funcs.rs"],
+    edition = "2021",
+)
+
+# Probe 10: `if` on a signal, as the macro `if_!`.
+rust_library(
+    name = "probe_if",
+    srcs = ["probe_if.rs"],
+    edition = "2021",
+)
+
+# Probe 11: bit slice bounds, static and variable.
+rust_library(
+    name = "probe_slice",
+    srcs = ["probe_slice.rs"],
+    edition = "2021",
+)
+
+# Probe 11b: a run-time width. Expected to fail.
+rust_library(
+    name = "probe_slice_dyn",
+    srcs = ["probe_slice_dyn.rs"],
+    edition = "2021",
+    tags = ["manual"],
+)

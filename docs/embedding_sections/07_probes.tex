@@ -4,8 +4,8 @@
 
 Every claim in this paper about what Rust does is a probe that was built.
 The probes are one file per question in \code{experiments/rust\_embedding},
-and two of them are expected to fail, so they are tagged \code{manual} and
-stay out of the default build. A failing probe is kept rather than deleted,
+and three of them are expected to fail, so they are tagged \code{manual}
+and stay out of the default build. A failing probe is kept rather than deleted,
 because the failure is the answer.
 
 \begin{table*}[t]
@@ -51,11 +51,29 @@ Probe & Question & Answer \\
 \code{probe\_config}
   & Is a config a struct with associated types and constants?
   & \textbf{Yes}, and its constants work in an array length, so they are genuinely compile-time \\
+\code{probe\_item\_order}
+  & May an \code{impl} precede the \code{struct} it is for?
+  & \textbf{Yes.} Items in a module are not order dependent, including generically and for types declared later \\
+\code{probe\_derive}
+  & Does a derive give the same reading and stay idiomatic?
+  & \textbf{Yes}, in about thirty lines needing neither \code{syn} nor \code{quote} \\
+\code{probe\_funcs}
+  & Can operator latency replace a hand-placed stage boundary?
+  & \textbf{Yes.} An \code{async} operator in \code{crate::funcs} is awaited, and the depth follows from the operators used \\
+\code{probe\_if}
+  & Does \code{when!} work as expression and as statement?
+  & \textbf{Yes}, with the statement form restricted to a list of predicated writes \\
+\code{probe\_slice}
+  & May a slice bound be a const parameter, or a run-time offset?
+  & \textbf{Yes} to both, with the width static \\
+\code{probe\_slice\_dyn}
+  & May the slice \emph{width} be a run-time value?
+  & \textbf{No.} \code{error[E0435]: attempt to use a non-constant value in a constant} \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
-\subsection{The two that changed the design}
+\subsection{The three that changed the design}
 
 \textbf{Arbitrary-width arithmetic needs nightly.} A hardware library wants
 to write that multiplying an $A$-bit value by a $B$-bit value gives an
@@ -71,6 +89,11 @@ here is that ten lines of Rust found a constraint that reading the language
 reference had not suggested, and that the repair, a register being a cell
 several processes reach, is a better model of a register than the one that
 failed.
+
+\textbf{A \code{macro\_rules!} conditional cannot reach inside a block.}
+Writing \code{when!} showed where the macro route stops, and that is the
+strongest argument for the recommendation in
+Section~\ref{sec:e-elaboration}. Section~\ref{sec:e-walls} states it.
 
 \subsection{On method}
 

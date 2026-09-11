@@ -17,9 +17,9 @@ about awaiting outside an async context, and the specification says
 nothing.
 
 \begin{lstlisting}[caption={The model of time, enforced by the type system. The first function has no \code{.await} to write, so it cannot state a cycle count.},label={lst:time}]
-// Timeless. There is no .await to write.
-fn mul(a: u32, b: u32) -> u64 {
-    a as u64 * b as u64
+// Timeless: combinational. There is no .await to write.
+fn narrow(v: U<64>, low: bool) -> U<32> {
+    select(low, low_half(v), high_half(v))
 }
 
 // Sequenced. Counts cycles exactly as written.
@@ -33,6 +33,11 @@ async fn main(&mut self) {
 
 Two constructs are deleted, and a rule that needed a paragraph of
 specification and a compiler check becomes a fact about the type system.
+
+The division is not between cheap operations and expensive ones. It is
+between operations that finish inside a cycle and operations that do not.
+A multiply is \code{async} for that reason, and
+Section~\ref{sec:e-pipeline} shows what follows from it.
 
 This is the clearest case of the reduction paying for itself, and it is
 worth saying why it works rather than treating it as luck. The original

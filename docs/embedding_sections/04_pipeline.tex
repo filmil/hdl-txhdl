@@ -10,13 +10,32 @@ once, each at a different point in the body. Nothing about the body
 differs. The difference is the rate at which invocations start, and that
 belongs at the call site.
 
-\begin{lstlisting}[caption={A pipeline, a sequence and a parallel process, all at once. The await is the stage boundary, and \code{p} crosses it without being declared.},label={lst:pipeline}]
+\begin{lstlisting}[caption={A pipeline, a sequence and a parallel process, all at once. Nobody placed the stage boundary: it is where an operator with latency is awaited.},label={lst:pipeline}]
+use crate::funcs::mul;
+
 async fn mac(a: U<32>, b: U<32>, prev: U<64>) -> U<64> {
-    let p = mul(a, b);
-    tick().await;              // stage boundary
+    let p = mul(a, b).await;   // the multiplier's own latency
     prev + p
 }
 \end{lstlisting}
+
+\subsection{Nobody places the stage boundary}
+
+An earlier draft of this listing wrote \code{tick().await} to say where
+the register goes. That was wrong, and wrong in a way the project has
+already ruled on: the eighth thesis~\cite{theses} asks the language to
+stop making a designer place registers by hand, and a hand-placed tick is
+exactly that under a new name.
+
+Operators that have latency are \code{async} instead, and they live in
+\code{crate::funcs}. A multiply takes as long as the mapping decides, so
+\code{mul} is awaited and the caller never learns the number. A
+combinational operator is a plain \code{fn} and can be awaited by nobody.
+
+The pipeline's depth then follows from the operators the design used. Two
+multiplies in sequence give two boundaries, and rebinding \code{mul} to a
+single-cycle implementation removes them, without an edit to
+Listing~\ref{lst:pipeline}.
 
 Three constructs go, and one of them takes a compiler pass with it.
 
@@ -28,8 +47,8 @@ a different name.
 
 In an async function, a local that is live across an \code{.await} is held
 in the state machine the compiler generates, because that is what an async
-function is. \code{p} in the listing above crosses \code{tick().await} and
-needs no declaration. The analysis the \code{pipe} keyword existed to feed
+function is. \code{p} in Listing~\ref{lst:pipeline} crosses the await inside
+\code{mul} and needs no declaration. The analysis the \code{pipe} keyword existed to feed
 is one that \code{rustc} performs already.
 
 \subsection{What this does not settle}
