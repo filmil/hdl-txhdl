@@ -12,10 +12,12 @@ NAME_timing.tex.
 
 load("@rules_nvc//nvc:rules.bzl", "vhdl_test")
 
-def waveform(name, example, signals, lowered = None):
+def waveform(name, example, signals, lowered = None, until = None):
     """`lowered = (entity, unit)` also takes the example's VHDL and
     simulates it against the trace: NAME.vhd and NAME.vhd.ports from
-    the run, NAME_tb.vhd from fst2tb, and a vhdl_test NAME_sim."""
+    the run, NAME_tb.vhd from fst2tb, and a vhdl_test NAME_sim.
+    `until` cuts the figure at that tick, for a run too long to draw
+    whole."""
     outs = ["out_" + name + ".txt", name + ".fst", name + ".fst.names"]
     env = "TXHDL_FST=$(RULEDIR)/" + name + ".fst"
     if lowered:
@@ -62,12 +64,13 @@ def waveform(name, example, signals, lowered = None):
         tools = ["@multitool//tools/sqlite2drawtiming"],
     )
     order = ",".join([s.split("=>")[-1] for s in signals])
+    cut = " --until %d" % until if until else ""
     native.genrule(
         name = name + "_timing",
         srcs = [name + ".dt", name + ".fst.names"],
         outs = [name + "_timing.tex"],
         cmd = "$(location //tools/dt2tikz) $(location " + name + ".dt)" +
-              " --order " + order + " --color" +
+              " --order " + order + " --color" + cut +
               " --names $(location " + name + ".fst.names)" +
               " --signals '" + ",".join(signals) + "' > $@",
         tools = ["//tools/dt2tikz"],

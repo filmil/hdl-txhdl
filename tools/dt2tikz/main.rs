@@ -9,7 +9,11 @@
 //! a period, all at the current time.
 //!
 //! Usage: dt2tikz IN.dt [--order a,b,..] [--color] [--width CM]
-//!        [--names FILE --signals 'path=>alias,..'] > OUT.tex
+//!        [--until TICKS] [--names FILE --signals 'path=>alias,..']
+//!        > OUT.tex
+//!
+//! `--until` cuts the diagram at that tick: a long run, a processor's
+//! program, shows its opening cycles and not the whole.
 //!
 //! `--names` is the sidecar the FST writer leaves beside its file: one
 //! line per enum-valued signal, its path, a tab, and its variants by
@@ -36,6 +40,10 @@ fn main() {
         Some(p) => args[p + 1].parse().expect("--width needs centimetres"),
         None => X_MAX,
     };
+    let until: Option<u64> = args
+        .iter()
+        .position(|a| a == "--until")
+        .map(|p| args[p + 1].parse().expect("--until needs ticks"));
     let wanted: Vec<String> = match args.iter().position(|a| a == "--order") {
         Some(p) => args
             .get(p + 1)
@@ -102,6 +110,12 @@ fn main() {
                 _ => h.push((t, value)),
             }
         }
+    }
+    if let Some(u) = until {
+        for h in hist.values_mut() {
+            h.retain(|(t0, _)| *t0 < u);
+        }
+        t = t.min(u);
     }
     if !wanted.is_empty() {
         let mut rest: Vec<String> = order
