@@ -1096,7 +1096,9 @@ pub mod trace {
             let c = self.0.clone();
             let cell = Rc::as_ptr(&self.0) as usize;
             let f = Box::new(move || c.0.get().vcd());
-            probe_named(scope, T::WIDTH, Kind::In, cell, f, T::names())
+            probe_named(scope, T::WIDTH, Kind::In, cell, f, T::names());
+            let c = self.0.clone();
+            parts(scope, Kind::In, cell, move || c.0.get());
         }
     }
     impl<T: Value + 'static, C: Clock> Traceable for Out<T, C> {
@@ -1104,7 +1106,9 @@ pub mod trace {
             let c = self.0.clone();
             let cell = Rc::as_ptr(&self.0) as usize;
             let f = Box::new(move || c.0.get().vcd());
-            probe_named(scope, T::WIDTH, Kind::Out, cell, f, T::names())
+            probe_named(scope, T::WIDTH, Kind::Out, cell, f, T::names());
+            let c = self.0.clone();
+            parts(scope, Kind::Out, cell, move || c.0.get());
         }
     }
     /// A channel is two signals: the transaction and its valid bit.
