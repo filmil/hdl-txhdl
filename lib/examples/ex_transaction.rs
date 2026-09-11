@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A transaction is a struct and a derive. A channel carries one.
-use txhdl::comp::{chan, DefaultClock, Rx, Tx};
+use txhdl::comp::{chan, settle, DefaultClock, Rx, Tx};
 use txhdl::types::U;
 use txhdl::Transaction;
 
@@ -29,6 +29,7 @@ pub fn exchange() -> Option<MacRequest> {
         addr: 0x1000.into(),
         count: 4.into(),
     });
-    let _ = tap.recv(); // fanout: the tap sees the same offer
+    settle(); // the offer is in the channel at the next edge
+    let _ = tap.peek(); // fanout: the tap sees the same head
     rx.recv()
 }

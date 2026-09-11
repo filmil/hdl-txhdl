@@ -94,9 +94,65 @@ pub struct Signal<T: Copy + Default, C: Clock = DefaultClock>(
     PhantomData<C>,
 );
 
+/// A channel's state. An elastic buffer of two entries, so a sender
+/// and a receiver that both run every cycle pass one transaction per
+/// cycle with `valid` and `ready` registered on both sides and no
+/// combinational path between the units; and the two wires of the
+/// current step, the offer and the take, each stamped with the step
+/// it belongs to, since a wire not driven this step is low. A send
+/// and a receive commit at the end of the step, as a register drive
+/// does, so what a process sees is the buffer as the edge left it,
+/// whichever process ran first.
+struct ChanCell<T: Copy> {
+    head: Cell<Option<T>>,
+    tail: Cell<Option<T>>,
+    push: Cell<Option<T>>,
+    pop: Cell<bool>,
+    offered: Cell<T>,
+    offer_at: Cell<u64>,
+    take_at: Cell<u64>,
+}
+
+impl<T: Copy + Default> ChanCell<T> {
+    fn new() -> Self {
+        ChanCell {
+            head: Cell::new(None),
+            tail: Cell::new(None),
+            push: Cell::new(None),
+            pop: Cell::new(false),
+            offered: Cell::new(T::default()),
+            offer_at: Cell::new(u64::MAX),
+            take_at: Cell::new(u64::MAX),
+        }
+    }
+    /// Whether the sender offered at this step: the `valid` wire.
+    fn offering(&self) -> bool {
+        self.offer_at.get() == now()
+    }
+    /// Whether the receiver took at this step: the `ready` wire.
+    fn taking(&self) -> bool {
+        self.take_at.get() == now()
+    }
+}
+
+impl<T: Copy> Commit for ChanCell<T> {
+    fn apply(&self) {
+        if self.pop.take() {
+            self.head.set(self.tail.take());
+        }
+        if let Some(v) = self.push.take() {
+            if self.head.get().is_none() {
+                self.head.set(Some(v));
+            } else {
+                self.tail.set(Some(v));
+            }
+        }
+    }
+}
+
 /// One channel: a transaction plus the handshake the compiler supplies.
 pub struct Chan<T: Transaction, C: Clock = DefaultClock>(
-    Rc<Cellf<(T, bool)>>,
+    Rc<ChanCell<T>>,
     PhantomData<C>,
 );
 
@@ -106,12 +162,12 @@ pub struct Out<T: Copy, C: Clock = DefaultClock>(Rc<Cellf<T>>, PhantomData<C>);
 pub struct In<T: Copy, C: Clock = DefaultClock>(Rc<Cellf<T>>, PhantomData<C>);
 /// The sending end of a channel. Not `Clone`.
 pub struct Tx<T: Transaction, C: Clock = DefaultClock>(
-    Rc<Cellf<(T, bool)>>,
+    Rc<ChanCell<T>>,
     PhantomData<C>,
 );
 /// The receiving end of a channel. `Clone`.
 pub struct Rx<T: Transaction, C: Clock = DefaultClock>(
-    Rc<Cellf<(T, bool)>>,
+    Rc<ChanCell<T>>,
     PhantomData<C>,
 );
 
@@ -137,35 +193,32 @@ impl<T: Copy, C: Clock> In<T, C> {
     }
 }
 impl<T: Transaction, C: Clock> Tx<T, C> {
-    /// Offer a transaction. The channel holds one until it is received,
-    /// so the sender asks `ready` first; sending over an offer that has
-    /// not been taken is the bug the handshake exists to prevent.
+    /// Offer a transaction: `valid` high and `data` this step, into
+    /// the channel at the end of it. The sender asks `ready` first;
+    /// sending into a channel with no room is the bug the handshake
+    /// exists to prevent.
     pub fn send(&self, v: T) {
-        assert!(
-            self.ready().to_bool(),
-            "send on a channel whose last offer was not received"
-        );
-        self.0 .0.set((v, true))
+        assert!(self.ready().to_bool(), "send on a channel with no room");
+        self.0.offered.set(v);
+        self.0.offer_at.set(now());
+        self.0.push.set(Some(v));
+        commit(self.0.clone());
     }
-    /// Whether the channel can take an offer: the backpressure.
+    /// Whether the channel has room for an offer at this step: the
+    /// backpressure, as the edge left it.
     pub fn ready(&self) -> Bit {
-        Bit::from_bool(!self.0 .0.get().1)
+        Bit::from_bool(self.0.tail.get().is_none())
     }
 }
 impl<T: Transaction, C: Clock> Rx<T, C> {
-    /// The pending transaction, if any, left in place. The valid side
-    /// of the handshake.
+    /// The transaction at the channel's head, if any, left in place:
+    /// `valid` and `data` as the edge left them.
     pub fn peek(&self) -> Option<T> {
-        let (v, valid) = self.0 .0.get();
-        if valid {
-            Some(v)
-        } else {
-            None
-        }
+        self.0.head.get()
     }
     /// Wait for a transaction: the next edge of the channel's clock at
-    /// which one is offered, and take it. An event, like `C::rising()`
-    /// and `until`; state is read after it.
+    /// which the channel holds one, and take it. An event, like
+    /// `C::rising()` and `until`; state is read after it.
     pub async fn wait(&self) -> T {
         loop {
             rising::<C>().await;
@@ -174,15 +227,17 @@ impl<T: Transaction, C: Clock> Rx<T, C> {
             }
         }
     }
-    /// Take the pending transaction, if any. Taking is the accept.
+    /// Take the transaction at the head, if any: `ready` high this
+    /// step, the head gone at the end of it. One take per step.
     pub fn recv(&self) -> Option<T> {
-        let (v, valid) = self.0 .0.get();
-        if valid {
-            self.0 .0.set((v, false));
-            Some(v)
-        } else {
-            None
+        let v = self.0.head.get()?;
+        if self.0.pop.get() {
+            return None;
         }
+        self.0.pop.set(true);
+        self.0.take_at.set(now());
+        commit(self.0.clone());
+        Some(v)
     }
 }
 
@@ -211,10 +266,7 @@ impl<T: Transaction, C: Clock> Member for Chan<T, C> {
     type Driver = Tx<T, C>;
     type Reader = Rx<T, C>;
     fn new() -> Self {
-        Chan(
-            Rc::new(Cellf(Cell::new((T::default(), false)))),
-            PhantomData,
-        )
+        Chan(Rc::new(ChanCell::new()), PhantomData)
     }
     fn split(self) -> (Tx<T, C>, Rx<T, C>) {
         (Tx(self.0.clone(), PhantomData), Rx(self.0, PhantomData))
@@ -921,6 +973,13 @@ pub fn step<F: Future<Output = ()>>(f: F) -> bool {
     run_for(f, 1)
 }
 
+/// One step with no process: the drives made so far commit. What a
+/// value-level example calls between a send and a receive, since a
+/// channel, like a register, shows a drive at the next edge.
+pub fn settle() {
+    advance()
+}
+
 /// A design being run one time step at a time, so a testbench can look
 /// at its wires between steps. Clone the reading ends you want to watch
 /// before starting it, because starting it borrows the top.
@@ -1151,20 +1210,39 @@ pub mod trace {
             channel(&self.0, scope, Kind::Tx)
         }
     }
-    fn channel<T: Value + Copy + 'static>(
-        c: &Rc<super::Cellf<(T, bool)>>,
+    /// A channel is six signals: on the receiver's side the head of
+    /// the buffer, `rx_data` and `rx_valid`, and the take, `rx_ready`;
+    /// on the sender's side the offer, `tx_data` and `tx_valid`, and
+    /// the room, `tx_ready`. Each side is what a lowered unit's port
+    /// of that kind sees and drives.
+    fn channel<T: Value + Copy + Default + 'static>(
+        c: &Rc<super::ChanCell<T>>,
         scope: &Scope,
         kind: Kind,
     ) {
         let cell = Rc::as_ptr(c) as usize;
-        let (a, b) = (c.clone(), c.clone());
-        let data = Box::new(move || a.0.get().0.vcd());
-        let valid = Box::new(move || b.0.get().1.vcd());
-        let d = scope.child("data");
-        probe_named(&d, T::WIDTH, kind, cell, data, T::names());
-        probe(&scope.child("valid"), 1, kind, cell, valid);
-        let d = c.clone();
-        parts(&scope.child("data"), kind, cell, move || d.0.get().0);
+        let head =
+            |c: &Rc<super::ChanCell<T>>| c.head.get().unwrap_or_default();
+        let (a, b, d) = (c.clone(), c.clone(), c.clone());
+        let rx_data = Box::new(move || head(&a).vcd());
+        let rx_valid = Box::new(move || b.head.get().is_some().vcd());
+        let rx_ready = Box::new(move || d.taking().vcd());
+        let s = scope.child("rx_data");
+        probe_named(&s, T::WIDTH, kind, cell, rx_data, T::names());
+        probe(&scope.child("rx_valid"), 1, kind, cell, rx_valid);
+        probe(&scope.child("rx_ready"), 1, kind, cell, rx_ready);
+        let p = c.clone();
+        parts(&scope.child("rx_data"), kind, cell, move || head(&p));
+        let (a, b, d) = (c.clone(), c.clone(), c.clone());
+        let tx_data = Box::new(move || a.offered.get().vcd());
+        let tx_valid = Box::new(move || b.offering().vcd());
+        let tx_ready = Box::new(move || d.tail.get().is_none().vcd());
+        let s = scope.child("tx_data");
+        probe_named(&s, T::WIDTH, kind, cell, tx_data, T::names());
+        probe(&scope.child("tx_valid"), 1, kind, cell, tx_valid);
+        probe(&scope.child("tx_ready"), 1, kind, cell, tx_ready);
+        let p = c.clone();
+        parts(&scope.child("tx_data"), kind, cell, move || p.offered.get());
     }
     impl<T: Value + Default + 'static, A: Clock, B: Clock> Traceable
         for Crossing<T, A, B>

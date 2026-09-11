@@ -455,7 +455,7 @@ impl<const N: usize> Value for logic::Vec<N> {
 /// Marker: a struct that moves between units over a channel. Derived
 /// with `#[derive(Transaction)]`, which also asks for `Copy` and
 /// `Default` so the channel can hold one.
-pub trait Transaction: Copy + Default {}
+pub trait Transaction: Copy + Default + 'static {}
 
 /// A bare word is a transaction. A struct of fields is the usual case,
 /// and derives it.

@@ -2,7 +2,7 @@
 //! An interface is declared once. The roles are generated, and a role
 //! that omits a member, or two roles that both drive one, are refused
 //! by the macro with a message naming them.
-use txhdl::comp::{Chan, Signal};
+use txhdl::comp::{settle, Chan, Signal};
 use txhdl::interface;
 use txhdl::types::{Bit, U};
 use txhdl::Transaction;
@@ -32,5 +32,6 @@ pub fn transfer() -> (U<32>, Bit, Option<Beat>, U<32>) {
         last: true,
     });
     t.ack.set(Bit::One);
+    settle(); // the beat is in the channel at the next edge
     (t.adr.get(), m.ack.get(), t.dat.recv(), mon.adr.get())
 }
