@@ -171,11 +171,12 @@ a lowered unit's VHDL under \code{nvc} and its Verilog under
 Verilator, each with a testbench \code{//tools/fst2tb} generates from
 the trace the Rust run wrote, and each test passes only if registers
 and outputs agree at every tick.
-What neither emitter reads yet is a unit's second process and a
-falling-edge wait. Memories lower, and a unit with channels is
-checked as any other, since the runtime's channel is a buffer with a
-registered handshake and the netlist's port is what that buffer
-shows.
+A unit's processes are its loops, one or several under
+\code{join2}, each on the rising or the falling edge of its clock,
+and each a clocked block; memories lower; and a unit with channels
+is checked as any other, since the runtime's channel is a buffer
+with a registered handshake and the netlist's port is what that
+buffer shows. What the macro does not read it refuses by name.
 
 \subsection{Building it}
 

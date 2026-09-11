@@ -51,8 +51,8 @@ wrote, so a design that passes is right in three forms at once. The
 largest design so far is Vreteno, a two-stage RV32I core: written in
 the subset the lowering reads, checked in lockstep against a
 reference model, checked as a netlist against its own trace, and
-synthesized on an Artix-7 in 1635 LUTs. This paper presents the
-system and its results.
+synthesized, placed and routed on an Artix-7 at 100~MHz in 1635
+LUTs. This paper presents the system and its results.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -298,9 +298,11 @@ figure in this paper was drawn by hand.
 
 \subsection{The lowering}
 
-\code{\#[lower]} reads a unit's \code{run} loop as it is written and
-builds a netlist from it, without a second language: a loop of one
-edge wait, register and port reads into names, \code{when!},
+\code{\#[lower]} reads a unit's \code{run} as it is written and
+builds a netlist from it, without a second language: one loop, or
+several under \code{join2}, each a process on the rising or the
+falling edge of its clock and a clocked block of its own; register
+and port reads into names, \code{when!},
 \code{case!} and \code{select!}, the datapath operators, memories
 written through \code{at} and read by index, and channel ports as a
 valid/ready handshake whose wait guards the drives. A \code{let} that
@@ -339,6 +341,7 @@ whose handshake on both sides is what its testbench replays.
 Unit & What it shows & Under \\
 \midrule
 counter & a register, \code{when!}, an output & nvc, Verilator \\
+sampler & two processes, one per edge & nvc, Verilator \\
 blinky & a configuration's constants baked in & nvc, Verilator \\
 sequencer & \code{case!} on a state enum, guards & nvc, Verilator \\
 ALU & ten operators by \code{case!} & nvc, Verilator \\
@@ -433,9 +436,12 @@ nanoseconds, by Vivado, which the build installs itself from the
 vendor's archive into a cache the machine shares. The instruction
 memory became a read-only memory in one block RAM tile, the data
 memory and the register file distributed RAM, since their reads are
-combinational, and the flip-flops are the five registers.
-Fig.~\ref{fig:p-vreteno} is the opening of the demonstration, from
-the trace.
+combinational, and the flip-flops are the five registers. Placed and
+routed with the same constraint, the core meets ten nanoseconds with
+0.263~ns to spare; the critical path runs from a register through
+the decode and the ALU into the register file's write, three quarters
+of it routing. Fig.~\ref{fig:p-vreteno} is the opening of the
+demonstration, from the trace.
 
 \begin{table}[htbp]
 \caption{Vreteno on an Artix-7, after synthesis.}
@@ -469,18 +475,18 @@ writeback decoded into its register and value, and the first bubble,
 
 What the system does, in numbers from the build that produced this
 paper. The runtime is five Rust modules and one macro crate, with one
-external crate, an FST writer. Twenty-four examples compile, each one
+external crate, an FST writer. Twenty-five examples compile, each one
 concept, and every one that runs writes a waveform the examples
-document draws. Eight lowered units, Table~\ref{tab:p-checked}, are
+document draws. Nine lowered units, Table~\ref{tab:p-checked}, are
 simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
-twenty tests run under \code{bazel test //...}, and every one of them
+twenty-two tests run under \code{bazel test //...}, and every one of them
 is hermetic, the simulators built from source and the synthesis tool
 installed by the build. Vreteno is 268 lines of core, checked in
 lockstep against a 169-line model on a demonstration program and
 sixty-four random ones, checked as a netlist on 66 ticks and eight
-signals, and synthesized in two minutes to the figures of
-Table~\ref{tab:p-synth}. Eight documents describe the system, this
+signals, synthesized in two minutes to the figures of
+Table~\ref{tab:p-synth}, and placed and routed at 100~MHz. Eight documents describe the system, this
 one included, and each is built by the same command that builds the
 designs, with every listing included from the tree and every figure
 drawn from a trace, so none can drift from the code.
@@ -513,10 +519,9 @@ is small enough to fit on one page, the runtime simulates it with a
 stated model of time, the lowering turns it into Verilog and VHDL,
 and the build holds the three to one behaviour under two simulators.
 A RISC-V core written in it runs, lowers, is checked against its own
-trace and synthesizes. The next steps are a place-and-route on a
-board, a third pipeline stage for the memories the block RAM wants
-registered, and the parts of a unit the lowering does not yet read:
-a second process and the falling edge.
+trace, and runs at 100~MHz on an Artix-7. The next steps are a
+board, and a third pipeline stage for the memories the block RAM
+wants registered.
 
 \begin{thebibliography}{10}
 
