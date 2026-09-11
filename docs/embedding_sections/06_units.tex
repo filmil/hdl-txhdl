@@ -87,21 +87,100 @@ error message, not only in a paper.
 A submodule is a field. A bus that joins two submodules is a field too,
 owned by whichever unit contains both of its ends.
 
-\begin{lstlisting}[caption={Submodules and the wire between them are fields of the parent.},label={lst:hier}]
-pub struct Top<C: Config> {
-    pub producer: Producer,
-    pub consumer: Consumer,
+\begin{lstlisting}[caption={Submodules and the wire between them are fields of the parent. Each child is generic over its own configuration, not the parent's.},label={lst:hier}]
+pub struct Top<TC: TopConfig> {
+    pub producer: Producer<TC::P>,
+    pub consumer: Consumer<TC::C>,
     pub link: DataBus,
     pub pes: [Pe; 4],
 }
 \end{lstlisting}
+
+\subsection{Configurations nest}
+\label{sec:e-nestedconfig}
+
+Section~\ref{sec:e-binding} gives a design one configuration and makes
+every unit generic over it. That holds while every choice is global. It
+stops holding as soon as a submodule has choices of its own, and
+Listing~\ref{lst:hier} is where that shows.
+
+A configuration is a tree. A unit declares the configuration \emph{it}
+needs, and a parent's configuration names its children's rather than
+holding their fields.
+
+\begin{lstlisting}[caption={Each unit declares what it needs. The parent names its children's configurations and never mentions their knobs.},label={lst:nestedcfg}]
+pub trait ProducerConfig {
+    type Gen: Generator;
+    const DEPTH: usize;
+}
+
+pub trait ConsumerConfig {
+    const DEPTH: usize;        // the same name, a different unit
+    const CHECKSUM: bool;
+}
+
+pub trait TopConfig {
+    type P: ProducerConfig;
+    type C: ConsumerConfig;
+    const NAME: &'static str;
+}
+\end{lstlisting}
+
+Two things follow, and both were the reason to do it.
+
+\textbf{Two children may want a knob of the same name.} Both
+\code{DEPTH}s above exist, differ, and never meet, because each belongs
+to its own trait. A flat configuration would have had to rename one of
+them after the fact, which is a rename in a design that had nothing wrong
+with it.
+
+\textbf{A child's configuration is reusable.} It is written once and
+named by whichever parents want it, so two builds may differ in one
+subsystem and share the rest.
+
+\begin{lstlisting}[caption={Two builds. The consumer's configuration is written once and used by both; only the producer differs.},label={lst:nestedbuilds}]
+pub struct CheckedConsumer;
+impl ConsumerConfig for CheckedConsumer {
+    const DEPTH: usize = 64;
+    const CHECKSUM: bool = true;
+}
+
+pub struct Fpga;
+impl TopConfig for Fpga {
+    type P = FastProducer;
+    type C = CheckedConsumer;
+    const NAME: &'static str = "fpga";
+}
+
+pub struct Tiny;
+impl TopConfig for Tiny {
+    type P = SmallProducer;
+    type C = CheckedConsumer;   // reused, unchanged
+    const NAME: &'static str = "tiny";
+}
+\end{lstlisting}
+
+Nesting costs nothing at elaboration. A child's constant is still a
+compile-time value reached through the parent, so it may still size an
+array:
+
+\begin{lstlisting}[caption={A child's constant, reached through the parent, still sizes an array.},label={lst:nestedconst}]
+pub const DEPTH: usize =
+    <<Fpga as TopConfig>::P as ProducerConfig>::DEPTH;
+pub static BUF: [u32; DEPTH] = [0; DEPTH];
+\end{lstlisting}
+
+The spelling in that last listing is the one real cost: reaching two
+levels down needs a fully qualified path, and three levels reads worse
+again. A type alias per level is the usual repair, and a derive on the
+configuration could emit them.
 
 Wiring is not a stored back-reference. A child is handed the ports it
 needs when its \code{run} is called, and that is what the inputs and
 outputs of \code{Module} are for.
 
 \begin{lstlisting}[caption={Instantiating two submodules and wiring them. Both children receive the same bus; neither holds a reference to the other.},label={lst:hier-run}]
-impl<C: Config> Module<(), ()> for Top<C> {
+impl<TC: TopConfig> Module<(), ()> for Top<TC> {
     async fn run(&mut self, _i: (), _o: ()) {
         join2(
             self.producer.run((), ProducerOut { out: &self.link }),

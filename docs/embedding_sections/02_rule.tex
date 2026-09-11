@@ -13,7 +13,7 @@ becomes a \term{unit} and \code{mod} keeps its meaning as a namespace.
 
 \subsection{The vocabulary that remains}
 
-Three Rust modules hold everything the language still needs.
+Four Rust modules hold everything the language still needs.
 
 \begin{lstlisting}[caption={The vocabulary that survives the reduction. Two Rust modules, and everything else is a plain struct, trait or function.},label={lst:vocab}]
 crate::types::Transaction   // data that moves between units
@@ -22,12 +22,14 @@ crate::types::Tag           // a domain and its policy
 crate::comp::Module         // a unit
 crate::comp::Bus            // a bundle of channels
 crate::comp::Chan           // one channel of a bus
-crate::comp::Signal         // one wire
+crate::comp::Signal         // one wire, in a clock domain
+crate::comp::Clock          // a clock domain, as a type
 crate::comp::Port           // an attachment to a bus, in a role
 crate::comp::Role           // the type-level tag for a modport
 
-crate::funcs::*             // operators. async when they have latency,
-                            // a plain fn when they are combinational
+crate::pipeline::*          // operators that may take a cycle. async,
+                            // and a pipeline stage once awaited
+crate::funcs::*             // operators that cannot. plain fn
 \end{lstlisting}
 
 Everything else is a plain Rust struct, trait or function.

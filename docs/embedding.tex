@@ -46,7 +46,12 @@ yields its two ends separately, the driving end is not \code{Clone}, so
 the oldest error message in hardware design arrives as a move error. One
 wall remains, and it is the reason the merged language was designed with
 its own parser: \code{if} on a signal cannot work, because a signal has no
-value while the program runs.
+value while the program runs. Half of the result is Chisel's architecture
+in Rust, and is presented as such. The other half, sequencing through
+\code{async}, is the contribution, its nearest ancestors are Calyx and
+Filament rather than Chisel, and it is the half that has not yet been
+lowered to hardware. The paper closes by stating the one experiment that
+would settle whether it can be.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -68,7 +73,8 @@ high-level synthesis, async, language design.
 \input{embedding_sections/10_probes}
 \input{embedding_sections/11_walls}
 \input{embedding_sections/12_elaboration}
-\input{embedding_sections/13_conclusion}
+\input{embedding_sections/13_next}
+\input{embedding_sections/14_conclusion}
 
 \begin{thebibliography}{10}
 
@@ -104,6 +110,18 @@ drawn from, with the probe results in full.
 J.~Bachrach \emph{et al.}, ``Chisel: Constructing hardware in a Scala
 embedded language,'' in \emph{Proc. Design Automation Conf.}, 2012, pp.
 1216--1225.
+
+\bibitem{calyx}
+R.~Nigam, S.~Thomas, Z.~Li, and A.~Sampson, ``A compiler infrastructure
+for accelerator generators,'' in \emph{Proc. ASPLOS}, 2021, pp. 804--817.
+
+\bibitem{filament}
+R.~Nigam, P.~Kumar, and A.~Sampson, ``Modular hardware design with
+timeline types,'' \emph{Proc. ACM Program. Lang.}, vol.~7, no. PLDI, 2023.
+
+\bibitem{rhdl}
+S.~Basu, ``RHDL: a hardware description language embedded in Rust,''
+software, \code{https://github.com/samitbasu/rhdl}, 2023 onwards.
 
 \bibitem{nikhil2004}
 R.~Nikhil, ``Bluespec System Verilog: efficient, correct RTL from high level

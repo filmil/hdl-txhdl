@@ -36,6 +36,12 @@ impl Config for Fpga {
 The design is generic over the config rather than over one parameter per
 choice, so adding a knob does not change every unit's signature.
 
+This listing shows one configuration for a whole design, which is the
+shape to use while every choice is global. A submodule with choices of its
+own gets a configuration of its own, and the parent's names it;
+Section~\ref{sec:e-nestedconfig} gives that form and the two things it
+buys.
+
 \subsection{The path in a binding disappears}
 
 \code{bind top.filter.mac => DspSliceMac} names a path through the

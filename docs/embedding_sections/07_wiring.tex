@@ -63,39 +63,133 @@ let b = Driver { out: tx };
 Nothing in the language had to define that rule. Fanout, meanwhile, is
 \code{rx.clone()} and costs nothing, because reading a wire is free.
 
-\subsection{An interface is a struct of ends}
+\subsection{An interface is declared, not written out}
 
 An interface is a named group. Its members are signals and channels, and
-it holds no direction, because its members do not.
+it holds no direction, because its members do not. A \term{role} pairs
+each member with the end this side takes, and a \term{port} is what a unit
+is handed.
 
-A \term{role} is the pairing that says which end of each member this side
-takes. A \term{port} is what a unit is handed: an interface's ends,
-selected by a role.
+Written by hand, that is one struct for the interface and one more per
+role, with every member repeated in each. It is mechanical, and it is also
+where an interface and its roles drift apart. So it is declared.
 
-\begin{lstlisting}[caption={An interface and the two roles over it. Each role names the end it takes for every member.},label={lst:iface}]
-pub struct Wishbone {
-    pub adr: Signal<U<32>>,
-    pub ack: Signal<Bit>,
-    pub dat: Chan<Beat>,
-}
-
-pub struct InitiatorPort {
-    pub adr: Out<U<32>>,
-    pub ack: In<Bit>,
-    pub dat: Tx<Beat>,
-}
-
-pub struct TargetPort {
-    pub adr: In<U<32>>,
-    pub ack: Out<Bit>,
-    pub dat: Rx<Beat>,
+\begin{lstlisting}[caption={The whole of an interface and its two roles. Everything else is generated.},label={lst:iface}]
+interface! {
+    Wishbone {
+        adr: Signal<U<32>>,
+        ack: Signal<Bit>,
+        dat: Chan<Beat>,
+    }
+    role Initiator { out adr, in ack, out dat }
+    role Target    { in adr,  out ack, in dat }
+    role Monitor   { in adr,  in ack,  in dat }
 }
 \end{lstlisting}
 
-The two role structs are mechanical: each field is the same member with
-the other end. A derive writes them, which is what the \code{modport}
-keyword used to do, and it cannot get them out of step with the interface
-because it reads the interface to make them.
+That expands to the interface, a port struct per role with each member's
+end already the right type, and a constructor yielding one port for each.
+\code{interface!} is a procedural macro, and the reason it is not a
+\code{macro\_rules!} one is the next subsection.
+
+\begin{lstlisting}[caption={Using it. Driving the wrong end is a missing method, not a convention.},label={lst:iface-use}]
+let (m, t) = Wishbone::new();
+
+m.adr.set(0x1000);   // Initiator drives adr
+t.ack.set(true);     // Target drives ack
+let a = t.adr.get(); // and reads it at the other end
+\end{lstlisting}
+
+The macro never learns what kind a member is. Every member implements one
+trait, \code{Member}, with \code{Driver} and \code{Reader} associated
+types and a \code{split} that consumes the member and returns both ends.
+A \code{Signal} splits into \code{Out} and \code{In}; a \code{Chan} splits
+into \code{Tx} and \code{Rx}. The macro writes
+\code{<Ty as Member>::Driver} and lets the trait decide, so adding a third
+kind of member changes no macro.
+
+Constructing the interface yields every port at once, which is what keeps
+the guarantee of Section~\ref{sec:e-wiring}. In the constructor a reader
+is cloned, because readers fan out, and a driver is moved. Three roles
+may all read \code{adr}; two may not both drive it.
+
+\subsubsection{Why it is a procedural macro}
+
+It was a \code{macro\_rules!} macro first, and that version compiled
+with three defects that a declaration should not be able to have. It
+spelled the direction \code{inp}, because \code{in} is a keyword and a
+pattern cannot match one as a word. It fixed the number of roles at two.
+And a role that forgot a member compiled, silently, into a port without
+that member.
+
+A procedural macro reads the declaration as data rather than matching it
+as a pattern, and all three go. \code{in} is an identifier to it. Roles
+are a list. And it checks, before emitting anything, that every role
+names every member exactly once and that no member is driven twice:
+
+\begin{lstlisting}[style=ascii,caption={What the declaration cannot be. Both are the macro's own messages; the second would otherwise arrive as a move error naming a temporary.},label={lst:iface-errors}]
+error: role `Target` does not say which end of `dat` it takes
+error: member `adr` is driven by more than one role: A, B
+\end{lstlisting}
+
+The macro is under two hundred lines and uses neither \code{syn} nor
+\code{quote}, because the grammar is four productions. The
+\code{macro\_rules!} version is kept as probe~18, as the record of where
+that route stopped, and Section~\ref{sec:e-walls} gives the other place
+it stops. Both point the same way as Section~\ref{sec:e-elaboration}.
+
+\subsection{The clock is in the type}
+
+Following RHDL~\cite{rhdl}, a signal names the clock domain it is in as a
+second type parameter.
+
+\begin{lstlisting}[caption={A signal knows its clock. \code{Clock} is a marker trait, and the default is a named clock rather than an absence of one.},label={lst:clock}]
+pub trait Clock { const NAME: &'static str; }
+
+pub struct DefaultClock;
+impl Clock for DefaultClock { const NAME: &'static str = "clk"; }
+
+pub struct Out<T, C: Clock = DefaultClock>(..);
+pub struct In<T, C: Clock = DefaultClock>(..);
+\end{lstlisting}
+
+The default is the decision worth explaining. It is not \code{()}, and
+it is not ``no clock''. It is \emph{the} clock: the one a single-clock
+design has, which is most designs. A single-clock design then never
+mentions a domain, \code{In<u32>} is a complete type, and a two-clock
+design names exactly the second clock. \code{()} would say nothing is
+there, and a register cannot live in nothing.
+
+The default is also a domain like any other. It does not unify with
+\code{Clk400}, so a signal from the default clock handed to a port in
+another is refused, and so is any other pairing:
+
+\begin{lstlisting}[style=ascii,caption={A domain crossing without a crossing. Both are refused, the second showing the default is not a wildcard.},label={lst:clock-err}]
+expected `In<u32, Clk400>`, found `In<u32, Clk100>`
+expected `In<u32, Clk400>`, found `In<u32>`
+\end{lstlisting}
+
+The only path between clocks is a \code{Crossing<T, A, B>}, which takes
+an \code{In<T, A>} and yields an \code{In<T, B>}. A real one is a
+synchroniser or an asynchronous FIFO. The point is not what it contains
+but that it is the only thing that can produce a signal in the other
+domain, so a crossing cannot be forgotten. That is the failure the merged
+specification handled by having the compiler notice two tags differ;
+here the type system notices.
+
+A unit that does not care which clock it is in says so by being generic
+over \code{C: Clock}, which is the Rust way of saying it and costs the
+unit nothing.
+
+\subsubsection{Clocks and tags are different things}
+
+Section~\ref{sec:e-binding} gave a \code{Tag}: a synchronisation domain
+with a policy, handshake and capacity. That is LHDL's idea, and it is
+about how data moves. A \code{Clock} is about which edge moves it. One
+clock may carry several tags, an elastic one and a raw one side by side,
+and the configuration maps each tag onto a clock. The two are kept apart
+because merging them would force every elastic domain to be its own
+clock.
 
 \subsection{Where the ends go}
 
@@ -107,9 +201,10 @@ back-references.
 \begin{lstlisting}[caption={The parent creates the interface and hands each child the end it takes.},label={lst:wire-up}]
 impl Module<(), ()> for Top {
     async fn run(&mut self, _i: (), _o: ()) {
+        let (m, t) = Wishbone::new();
         join2(
-            self.cpu.run(self.bus.initiator(), ()),
-            self.ram.run(self.bus.target(), ()),
+            self.cpu.run(m, ()),
+            self.ram.run(t, ()),
         ).await;
     }
 }

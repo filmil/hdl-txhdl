@@ -53,12 +53,15 @@ VHDL already knows what this does.
 \subsection{Numbers}
 
 \code{U<N>} and \code{I<N>} are the numeric vectors, and
-\code{LogicVec<N>} is a vector of \code{Logic} for when unknowns must
-propagate. Converting between them is where the two worlds meet:
-\code{LogicVec::to\_u} returns nothing unless every bit is defined.
+\code{logic::Vec<N>} is a vector of \code{Logic} for when unknowns must
+propagate. It lives in its own module so that the type is just
+\code{Vec}: \code{logic::Vec<8>} says what it is without repeating the
+word, and \code{std::vec::Vec} is untouched, because nothing is imported
+unqualified. Converting between them is where the two worlds meet:
+\code{logic::Vec::to\_u} returns nothing unless every bit is defined.
 
 \begin{lstlisting}[caption={An undriven vector is unknown, and says so.},label={lst:undriven}]
-let v = LogicVec::<8>::default();   // eight U's
+let v = logic::Vec::<8>::default();   // eight U's
 assert!(v.to_u().is_none());
 \end{lstlisting}
 

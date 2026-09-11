@@ -29,8 +29,21 @@ be the condition of an \code{if}. That is what a separate grammar was
 buying, and a macro front end over Rust's own syntax tree is the way to buy
 it back.
 
-The project's second thesis declined this direction on the grounds that a
-full toolchain had become affordable. That argument has not weakened. It
-now points the other way: if a toolchain is affordable, build the one that
+Half of what this paper builds is Chisel, in Rust, and the paper says so.
+The structural half was settled in 2012, and rebuilding it buys better
+error messages and a configuration that is a type. Those are worth having
+and would not justify a new toolchain on their own.
+
+The other half is the bet. An \code{async fn} that is a sequence, a
+pipeline or a process according to how it is driven, with operator
+latency the mapping's decision, is not something Chisel can express, and
+it is what both source languages existed to provide. Nineteen probes
+show that Rust accepts it. None shows that it lowers to a register.
+Section~\ref{sec:e-next} states the single experiment that would, and it
+is the next thing to do.
+
+The project's second thesis declined embedding on the grounds that a full
+toolchain had become affordable. That argument has not weakened. It now
+points the other way: if a toolchain is affordable, build the one that
 arrives with a type system, a module system, generics and a package manager
-already written.
+already written, and spend the effort on the part nobody has built.

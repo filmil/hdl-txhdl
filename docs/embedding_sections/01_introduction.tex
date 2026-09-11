@@ -34,6 +34,34 @@ result is negative and matters as much: Section~\ref{sec:e-walls} gives the
 one thing an embedded language cannot do, which is the thing a separate
 parser was buying.
 
+\subsection{What here is Chisel, and what is not}
+
+Half of this paper rebuilds Chisel~\cite{bachrach2012} in Rust, and it
+should say so before the reader works it out. A unit as a struct,
+interfaces with directed roles, \code{mux} and \code{when!}, generators
+through host-language parameters, and elaboration by running the program:
+that is Chisel's architecture, and Sections~\ref{sec:e-units}
+to~\ref{sec:e-binding} restate it. What Rust adds there is that one
+driver per wire becomes a compile-time move error where Chisel raises an
+elaboration-time exception. That is a better error, earlier, and not a
+different design.
+
+The other half is not Chisel. Chisel has no \code{async}, no
+\code{await} and no sequencing; every multi-cycle protocol in it is a
+state machine written by hand, which is the thing both source languages
+existed to remove. Sections~\ref{sec:e-time} and~\ref{sec:e-pipeline},
+where an \code{async fn} is a sequence, a pipeline and a process
+according to how it is driven, and where an operator's latency is the
+mapping's decision rather than the designer's, are the contribution.
+Their nearest ancestors are Calyx~\cite{calyx} and
+Filament~\cite{filament}, not Chisel, and Section~\ref{sec:e-related}
+places them.
+
+That half is also the half that does not exist yet. Every probe in this
+paper type-checks; none lowers an \code{async fn} to a register.
+Section~\ref{sec:e-next} states the one experiment that would settle
+whether the contribution is real.
+
 \subsection{Everything here was compiled}
 
 The first draft of this work argued about what Rust would accept. That was

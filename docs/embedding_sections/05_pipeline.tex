@@ -11,7 +11,7 @@ differs. The difference is the rate at which invocations start, and that
 belongs at the call site.
 
 \begin{lstlisting}[caption={A pipeline, a sequence and a parallel process, all at once. Nobody placed the stage boundary: it is where an operator with latency is awaited.},label={lst:pipeline}]
-use crate::funcs::{add, mul};
+use crate::pipeline::{add, mul};
 
 async fn mac(a: U<32>, b: U<32>, prev: U<64>) -> U<64> {
     let p = mul(a, b).await;   // the multiplier's latency
@@ -28,7 +28,11 @@ stop making a designer place registers by hand, and a hand-placed tick is
 exactly that under a new name.
 
 Operators that have latency are \code{async} instead, and they live in
-\code{crate::funcs}. A multiply takes as long as the mapping decides, so
+\code{crate::pipeline}, because each of them is a pipeline stage the
+moment it is awaited. Combinational operators live in
+\code{crate::funcs}, so the module a design imports from already says
+whether the operation can cost time. A multiply takes as long as the
+mapping decides, so
 \code{mul} is awaited and the caller never learns the number. An adder is
 the same: \code{add} is awaited too, because whether an addition costs a
 cycle is a question about the adder and the clock, not about the design.

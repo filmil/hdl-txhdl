@@ -4,7 +4,7 @@
 
 Every claim in this paper about what Rust does is a probe that was built.
 The probes are one file per question in \code{experiments/rust\_embedding},
-and five of them are expected to fail, so they are tagged \code{manual}
+and eight of them are expected to fail, so they are tagged \code{manual}
 and stay out of the default build. A failing probe is kept rather than deleted,
 because the failure is the answer.
 
@@ -59,7 +59,7 @@ Probe & Question & Answer \\
   & \textbf{Yes}, in about thirty lines needing neither \code{syn} nor \code{quote} \\
 \code{probe\_funcs}
   & Can operator latency replace a hand-placed stage boundary?
-  & \textbf{Yes.} An \code{async} operator in \code{crate::funcs} is awaited, and the depth follows from the operators used \\
+  & \textbf{Yes.} An \code{async} operator in \code{crate::pipeline} is awaited, and the depth follows from the operators used \\
 \code{probe\_if}
   & Does \code{when!} work as expression and as statement?
   & \textbf{Yes}, with the statement form restricted to a list of predicated writes \\
@@ -90,6 +90,27 @@ Probe & Question & Answer \\
 \code{probe\_two\_drivers}
   & Can a wire have two drivers?
   & \textbf{No.} \code{error[E0382]: use of moved value} \\
+\code{probe\_nested\_config}
+  & Can a submodule have a configuration of its own?
+  & \textbf{Yes.} A parent's config names its children's, so two children may share a knob name and a child's config is reusable \\
+\code{probe\_interface\_macro}
+  & Can \code{macro\_rules!} generate the role views?
+  & \textbf{Yes}, for exactly two roles, spelling \code{in} as \code{inp}, and a role that omits a member compiles silently \\
+\code{probe\_interface\_proc}
+  & Can a procedural macro do it properly?
+  & \textbf{Yes.} Any number of roles, \code{in} as written, under two hundred lines, no \code{syn} \\
+\code{probe\_interface\_incomplete}
+  & A role that omits a member?
+  & \textbf{Refused:} \code{role `Target` does not say which end of `dat` it takes} \\
+\code{probe\_interface\_twodrivers}
+  & Two roles driving one member?
+  & \textbf{Refused:} \code{member `adr` is driven by more than one role: A, B} \\
+\code{probe\_domain}
+  & Can the clock domain be a type parameter with a named default?
+  & \textbf{Yes.} A single-clock design never mentions one; a two-clock design names the second \\
+\code{probe\_domain\_cross}
+  & A crossing without a \code{Crossing}?
+  & \textbf{Refused:} \code{expected In<u32, Clk400>, found In<u32, Clk100>}, and the default is not a wildcard \\
 \bottomrule
 \end{tabular}
 \end{table*}

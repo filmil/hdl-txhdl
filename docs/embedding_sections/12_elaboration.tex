@@ -42,7 +42,8 @@ reinterpret \code{if} on a signal, because only it sees the source.}
 \end{figure}
 
 \textbf{Runtime elaboration.} The program runs, builds a netlist through
-side effects, and emits Verilog. Chisel~\cite{bachrach2012} works this way.
+side effects, and emits Verilog. Chisel~\cite{bachrach2012} works this way,
+and for the structural half of this design it would work here unchanged.
 The whole of Rust is available for generating hardware and no macro is
 needed. \code{if} on a signal stays impossible, so
 Section~\ref{sec:e-walls} stands, and errors arrive when the generator runs

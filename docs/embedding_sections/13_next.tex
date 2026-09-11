@@ -1,0 +1,127 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Related Work}
+\label{sec:e-related}
+
+Three systems bound this design, and it is closer to each than to the
+others.
+
+\textbf{Chisel}~\cite{bachrach2012} is the structural half. A hardware
+module is a class in a general-purpose language, a bundle of wires has a
+direction per field through \code{Flipped}, control flow on a signal is
+\code{when} and \code{Mux}, and elaboration is the program running and
+recording a graph. Sections~\ref{sec:e-units} to~\ref{sec:e-binding} are
+that architecture in Rust, and they should be read as a port rather than
+a proposal. SpinalHDL follows the same shape in the same host language.
+Two things differ, both because of the host. Rust's ownership makes a
+second driver on a wire a move error at compile time, where Chisel
+detects it at elaboration. And Rust's trait system lets a configuration be
+a type, so a build is a type alias and a binding path cannot go stale.
+
+\textbf{Calyx}~\cite{calyx} is the nearest ancestor of the behavioural
+half, and it is an intermediate representation rather than a language.
+It separates structure, the wires and groups that compute, from control,
+a program that says when groups run. Its control has \code{seq}, which
+runs groups one after another, and \code{par}, which runs them at once.
+Section~\ref{sec:e-units} arrives at the same two operators from the other
+direction: an \code{await} is a \code{seq} boundary, and \code{join!} is
+\code{par}. Calyx lowers both to a state machine driving the groups, and
+that lowering is the one this paper has not yet done.
+
+\textbf{Filament}~\cite{filament} types each signal with the interval of
+cycles over which it is valid, so that composing two components with
+different latencies is checked rather than simulated. That is what an
+\code{async} operator whose latency the mapping decides is reaching for.
+Filament makes the latency part of the type and checks it statically;
+this paper defers it to the mapping and would learn it at elaboration.
+Filament's is the stronger guarantee, and the price is that latency has
+to be stated in the type. Whether an \code{async fn} can be given a
+timeline type after the fact is an open question.
+
+\textbf{RHDL}~\cite{rhdl} is the nearest thing in Rust, and the source
+of one decision here. It embeds a hardware description language in Rust
+with the clock domain as a type parameter of the signal, so that a
+crossing without a synchroniser is a type error. Section~\ref{sec:e-wiring}
+takes that directly, and departs from it only in what the default domain
+means. RHDL's structural model is Chisel's; its behavioural model is
+Rust functions on values, evaluated to produce combinational logic, with
+registers explicit. It has no \code{async}, so the sequencing half of
+this paper is as far from RHDL as from Chisel.
+
+What is not near. Bluespec~\cite{nikhil2004} schedules guarded atomic
+rules, which is a different model of concurrency from processes that
+await. High-level synthesis from C or C++ starts from sequential code and
+infers a pipeline, which is the same ambition as
+Section~\ref{sec:e-pipeline}, from a language that has no way to say
+where a boundary is allowed to fall.
+
+Prior work on lowering coroutines or \code{async} functions to hardware
+exists and has not been surveyed for this paper. That is a gap, and it is
+the first thing to close before Section~\ref{sec:e-next} is attempted,
+because somebody may already have found where it breaks.
+
+\section{What Comes Next}
+\label{sec:e-next}
+
+Nineteen probes prove that the design type-checks. Chisel is a working
+compiler with a decade of use. The gap between those two facts is the
+whole of what remains, and it should be closed in one place rather than
+widened with more probes.
+
+\subsection{The experiment}
+
+Lower one function to a netlist.
+
+\begin{lstlisting}[caption={The function to lower. Two operators, two awaits, one value live across a boundary.},label={lst:next-mac}]
+async fn mac(a: U<32>, b: U<32>, prev: U<64>) -> U<64> {
+    let p = mul(a, b).await;
+    add(prev, p).await
+}
+\end{lstlisting}
+
+The lowering has to produce, from that source and nothing else, a
+two-stage pipeline in Verilog: a multiplier, a register holding \code{p}
+across the boundary, an adder, and a valid signal that follows the data
+through. It has to do so twice, once with \code{mul} bound to a
+three-cycle implementation and once to a single-cycle one, and the second
+netlist has to have one register fewer than the first without any edit to
+Listing~\ref{lst:next-mac}.
+
+That is the whole claim of Section~\ref{sec:e-pipeline} stated as a
+test. If it passes, the behavioural half is real. If it cannot be made to
+pass, the paper has rebuilt Chisel in Rust with better error messages,
+which is worth having and is not what the project set out to do.
+
+\subsection{What it needs}
+
+A procedural macro on the function that reads its body as a syntax tree,
+finds the awaits, and splits the body at each one into a stage. The
+locals live across each split are the registers. The operators awaited
+are instances whose latency is looked up in the configuration. The result
+is a graph, and emitting Verilog from a graph is the part Chisel has
+already shown to be routine.
+
+Three things are known to be hard, and the experiment should be designed
+to meet them rather than to avoid them.
+
+\begin{itemize}
+  \item \term{Control flow across an await.} A \code{when!} whose arms
+        contain awaits is a pipeline whose stages are conditional. Calyx
+        handles this with \code{if} in the control program; the lowering
+        needs an equivalent, and it is the first place the async model
+        might not fit.
+  \item \term{Resource sharing.} Section~\ref{sec:e-pipeline} claims that
+        concurrent invocations at the same await index share one
+        operator. The lowering has to actually do that, or the claim is
+        withdrawn.
+  \item \term{Backpressure.} A stage that cannot proceed is an await that
+        has not completed. The valid signal has to run backwards as well
+        as forwards for that to be true in hardware, which is the elastic
+        pipeline of Carloni~\cite{carloni2001}, and it has to be generated
+        rather than assumed.
+\end{itemize}
+
+\subsection{What it does not need}
+
+A parser, a type checker, a module system, generics, a package manager or
+an editor. That list is the argument for embedding, and it is why the
+experiment is a macro of a few hundred lines rather than a compiler.

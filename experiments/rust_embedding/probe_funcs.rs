@@ -5,10 +5,11 @@
 // requiring. Instead the operators that have latency are async, and the
 // stage boundaries are wherever the design awaits one.
 
-pub mod funcs {
-    /// Operators whose latency is an implementation choice rather than
-    /// the caller's. The caller awaits; how many cycles that costs is
-    /// decided when the design is mapped.
+/// Operators that may take a cycle. Every one of them is a pipeline
+/// stage when it is awaited, which is why they live here and not beside
+/// the combinational ones: the module a design imports from says whether
+/// the operation can cost time.
+pub mod pipeline {
     pub async fn mul(a: u32, b: u32) -> u64 {
         a as u64 * b as u64
     }
@@ -20,10 +21,18 @@ pub mod funcs {
     pub async fn div(a: u32, b: u32) -> u32 {
         if b == 0 { 0 } else { a / b }
     }
+}
 
-    /// Combinational, so not async. Nothing here can span a cycle.
+/// Operators that cannot. A plain `fn` has no `.await` to write, so
+/// nothing here can span a cycle, and the import says so at the call
+/// site.
+pub mod funcs {
     pub fn low_half(x: u64) -> u32 {
         x as u32
+    }
+
+    pub fn high_half(x: u64) -> u32 {
+        (x >> 32) as u32
     }
 
     pub fn select(c: bool, a: u32, b: u32) -> u32 {
@@ -31,7 +40,8 @@ pub mod funcs {
     }
 }
 
-use funcs::{add, low_half, mul, select};
+use funcs::{low_half, select};
+use pipeline::{add, mul};
 
 /// Two stages, and neither boundary was placed by hand. `p` is live
 /// across the await that `mul` introduces, so the async state machine
@@ -59,8 +69,8 @@ pub async fn chain(a: u64, b: u64, c: u64) -> u64 {
     add(add(a, b).await, c).await
 }
 
-/// Timeless: combinational only, so there is no `.await` to write and no
-/// cycle count can be stated.
+/// Timeless: everything it calls comes from `funcs`, so there is no
+/// `.await` to write and no cycle count can be stated.
 pub fn narrow(v: u64, take_low: bool) -> u32 {
-    select(take_low, low_half(v), low_half(v >> 32))
+    select(take_low, low_half(v), funcs::high_half(v))
 }

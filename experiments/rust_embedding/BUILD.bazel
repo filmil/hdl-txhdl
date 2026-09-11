@@ -176,3 +176,79 @@ rust_library(
     edition = "2021",
     tags = ["manual"],
 )
+
+# Probe 17: nested configuration. A config is a tree, so a child has a
+# configuration of its own and two children may share a knob name.
+rust_library(
+    name = "probe_nested_config",
+    srcs = ["probe_nested_config.rs"],
+    edition = "2021",
+)
+
+# Probe 18: an interface! macro that generates the role views.
+rust_library(
+    name = "probe_interface_macro",
+    srcs = ["probe_interface_macro.rs"],
+    edition = "2021",
+)
+
+# The wire types the interface macro emits code against.
+rust_library(
+    name = "wire",
+    srcs = ["wire.rs"],
+    edition = "2021",
+)
+
+# The interface! proc macro. Any number of roles, `in` as a keyword, and
+# a completeness check. Without syn or quote, so no crate registry.
+rust_proc_macro(
+    name = "txhdl_interface",
+    srcs = ["interface_macro/lib.rs"],
+    crate_name = "txhdl_interface",
+    edition = "2021",
+)
+
+# Probe 19: the proc macro, three roles.
+rust_library(
+    name = "probe_interface_proc",
+    srcs = ["probe_interface_proc.rs"],
+    edition = "2021",
+    deps = [":wire"],
+    proc_macro_deps = [":txhdl_interface"],
+)
+
+# Probe 19b: a role that omits a member. Expected to fail, with the
+# macro's own message.
+rust_library(
+    name = "probe_interface_incomplete",
+    srcs = ["probe_interface_incomplete.rs"],
+    edition = "2021",
+    deps = [":wire"],
+    proc_macro_deps = [":txhdl_interface"],
+    tags = ["manual"],
+)
+
+# Probe 19c: two roles driving one member. Expected to fail.
+rust_library(
+    name = "probe_interface_twodrivers",
+    srcs = ["probe_interface_twodrivers.rs"],
+    edition = "2021",
+    deps = [":wire"],
+    proc_macro_deps = [":txhdl_interface"],
+    tags = ["manual"],
+)
+
+# Probe 20: a clock domain in the signal's type, after RHDL.
+rust_library(
+    name = "probe_domain",
+    srcs = ["probe_domain.rs"],
+    edition = "2021",
+)
+
+# Probe 20b: a domain crossing without a crossing. Expected to fail.
+rust_library(
+    name = "probe_domain_cross",
+    srcs = ["probe_domain_cross.rs"],
+    edition = "2021",
+    tags = ["manual"],
+)

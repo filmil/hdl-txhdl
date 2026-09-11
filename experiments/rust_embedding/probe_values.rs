@@ -5,7 +5,10 @@
 //              because X and Z are how a design says "unknown" and
 //              "nobody is driving".
 //   U<N>, I<N> numeric vectors, unsigned and signed.
-//   LogicVec<N> a vector of Logic, for when X must propagate.
+//   logic::Vec<N> a vector of Logic, for when X must propagate. It lives
+//              in its own module so that `Vec` is the name it deserves:
+//              `logic::Vec<8>` reads, and it never collides with
+//              `std::vec::Vec`, which is only ever reached unqualified.
 //
 // Everything here compiles on stable. The one operation that does not is
 // noted at the bottom, and it is the same `{A + B}` limit probe 1 found.
@@ -139,43 +142,63 @@ pub mod types {
         pub fn wrapping_add(self, o: Self) -> Self { Self::new(self.0.wrapping_add(o.0)) }
     }
 
-    /// A vector of Logic, for when X and Z must propagate.
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub struct LogicVec<const N: usize>([Logic; N]);
+    /// The logic-valued vector. Its own module, so the type is just
+    /// `Vec`: `logic::Vec<8>` says what it is without repeating the word.
+    /// `std::vec::Vec` is unaffected, because nothing here is imported
+    /// unqualified.
+    /// The logic-valued vector. Its own module, so the type is just
+    /// `Vec`: `logic::Vec<8>` says what it is without repeating the word.
+    /// `std::vec::Vec` is unaffected, because nothing here is imported
+    /// unqualified.
+    pub mod logic {
+        use super::{Logic, U};
 
-    impl<const N: usize> Default for LogicVec<N> {
-        fn default() -> Self { LogicVec([Logic::U; N]) }
-    }
+        /// A vector of Logic, for when X and Z must propagate.
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub struct Vec<const N: usize>([Logic; N]);
 
-    impl<const N: usize> LogicVec<N> {
-        pub fn get(&self, i: usize) -> Logic { self.0[i] }
-        pub fn set(&mut self, i: usize, v: Logic) { self.0[i] = v }
+        impl<const N: usize> Default for Vec<N> {
+            fn default() -> Self { Vec([Logic::U; N]) }
+        }
 
-        pub fn all_defined(&self) -> bool { self.0.iter().all(|l| l.is_defined()) }
+        impl<const N: usize> Vec<N> {
+            pub fn get(&self, i: usize) -> Logic { self.0[i] }
+            pub fn set(&mut self, i: usize, v: Logic) { self.0[i] = v }
 
-        /// To a number, if every bit is defined. A design that ignores
-        /// the None is a design that would have synthesised an X.
-        pub fn to_u(&self) -> Option<U<N>> {
-            let mut acc: u128 = 0;
-            for i in (0..N).rev() {
-                acc = (acc << 1) | (self.0[i].to_bit()?.to_bool() as u128);
+            pub fn all_defined(&self) -> bool {
+                self.0.iter().all(|l| l.is_defined())
             }
-            Some(U::<N>::new(acc))
-        }
 
-        pub fn from_u(v: U<N>) -> Self {
-            let mut out = [Logic::Zero; N];
-            for i in 0..N { out[i] = Logic::from_bit(v.bit(i)) }
-            LogicVec(out)
-        }
+            /// To a number, if every bit is defined. A design that
+            /// ignores the None is a design that would have synthesised
+            /// an X.
+            pub fn to_u(&self) -> Option<U<N>> {
+                let mut acc: u128 = 0;
+                for i in (0..N).rev() {
+                    acc = (acc << 1) | (self.0[i].to_bit()?.to_bool() as u128);
+                }
+                Some(U::<N>::new(acc))
+            }
 
-        /// Resolution, bit by bit, for a wire with two drivers.
-        pub fn resolve(&self, other: &Self) -> Self {
-            let mut out = [Logic::U; N];
-            for i in 0..N { out[i] = self.0[i].resolve(other.0[i]) }
-            LogicVec(out)
+            pub fn from_u(v: U<N>) -> Self {
+                let mut out = [Logic::Zero; N];
+                for i in 0..N {
+                    out[i] = Logic::from_bit(v.bit(i))
+                }
+                Vec(out)
+            }
+
+            /// Resolution, bit by bit, for a wire with two drivers.
+            pub fn resolve(&self, other: &Self) -> Self {
+                let mut out = [Logic::U; N];
+                for i in 0..N {
+                    out[i] = self.0[i].resolve(other.0[i])
+                }
+                Vec(out)
+            }
         }
     }
+
 }
 
 use types::*;
@@ -191,9 +214,12 @@ pub fn field(w: U<32>) -> U<4> { w.slice::<12, 4>() }
 pub fn signed() -> I<8> { I::<8>::new(-1).wrapping_add(I::<8>::new(1)) }
 
 /// An undriven signal is U, not zero, and it stays unknown through a
-/// conversion rather than quietly becoming a number.
+/// conversion rather than quietly becoming a number. `logic::Vec` is
+/// named without stutter and does not shadow `std::vec::Vec`, which this
+/// function also uses, to show that the two coexist.
 pub fn undriven_is_unknown() -> bool {
-    let v = LogicVec::<8>::default();
+    let v = logic::Vec::<8>::default();
+    let _also_a_vec: std::vec::Vec<u8> = vec![1, 2, 3];
     v.to_u().is_none() && !v.all_defined()
 }
 
