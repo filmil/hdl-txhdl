@@ -85,20 +85,26 @@ needed designing.
 The first design anyone writes for a board is an LED that blinks, so it
 is the first design to write with the vocabulary above, and it is
 Listing~\ref{app:ex-blinky} in the appendix. It uses one register, one
-wire, one \code{when!} and a config, and nothing that was not already
-defined, with one exception. Its \code{main} wants to watch the wire
-once per cycle to print a waveform, and \code{simulate} runs a design to
-the end and returns the top. \code{Running} is the one addition: it holds
-the top's future and advances it one cycle per call, so a testbench can
+wire and one \code{when!}, and nothing that was not already defined,
+with one exception. Its \code{main} wants to watch the wire once per
+cycle to print a waveform, and \code{simulate} runs a design to the end
+and returns the top. \code{Running} is the one addition: it holds the
+unit's future and advances it one cycle per call, so a testbench can
 read the wires between cycles. The printed wave is sixteen cycles wide,
 eight high and eight low, and its first sample is low because nothing has
 driven the wire before the first register read completes, which is the
 cycle a reset would occupy.
 
-Two things in the blinky are worth noticing. The LED is derived from the
-count in the same iteration that reads it, so the example holds one
+Three things in the blinky are worth noticing. The LED is derived from
+the count in the same iteration that reads it, so the example holds one
 register where a Verilog blinky often holds two, and the derivation is a
-wire rather than a second \code{Reg}. And the period is an associated
+wire rather than a second \code{Reg}. The period is an associated
 constant computed from two others, \code{CLK\_HZ / BLINK\_HZ}, so the
 board build and the simulation build differ in two numbers and the
-arithmetic is the compiler's.
+arithmetic is the compiler's. And there is no top. The wire is split in
+\code{main}, the blinky takes the driving end by value as its output,
+the testbench keeps the reading end, and no unit has to hold a port
+across its own construction. \code{config!} does not appear either,
+because \code{Config} names a top with no ports for \code{simulate} to
+run, and a blinky has a port; its config is a plain trait with two
+constants and a name.
