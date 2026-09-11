@@ -150,7 +150,13 @@ Since this section was first written the runtime has gained a
 waveform: a probe registry named from the fields of units and a VCD
 writer, so a design is watched in Surfer rather than in printed
 traces. FST is the same probes with another writer, and the first
-external crate the project would take.
+external crate the project would take. The same walk now writes a
+structural netlist as well, a Verilog skeleton with modules,
+registers, ports and wires and no behaviour; it sees fields only, so a
+unit that takes its ports as parameters of \code{run} shows its
+registers and nothing else. That gap is the argument for the
+proc-macro route restated from the other side: the structure is
+already recoverable at run time, and the behaviour is not.
 
 \subsection{What it does not need}
 

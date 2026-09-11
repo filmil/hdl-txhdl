@@ -1,0 +1,30 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Structural Netlist}
+\label{sec:x-netlist}
+
+The same walk that names signals for a waveform can emit a
+structural netlist. \code{netlist::verilog} collects the probes of a
+design and writes a Verilog skeleton: a module per unit, a \code{reg}
+per register, a port on each unit that holds one end of a wire whose
+other end is elsewhere, a \code{wire} in the parent that holds both
+below it, and an instance per child with its ports connected. The
+units here hold their ports as fields, which is what makes them
+visible; a unit that takes its ports as parameters of \code{run} shows
+its registers and nothing else. That is the gap between a structural
+netlist and the lowering, and the proc-macro route the article argues
+for closes it by reading the \code{Module} impl. The bodies are
+empty. Behaviour, the bodies of \code{run}, \code{when!} and
+\code{case!}, is the next experiment, and the first target is the
+\code{mac} of Section~\ref{sec:x-inflight} lowered twice with two
+multiplier latencies. The design is also run, so it has a waveform.
+
+\begin{figure}[htbp]
+\centering
+\input{netlist_timing.tex}
+\caption{The design whose skeleton is Listing~\ref{lst:x-netlist-out}, running: the producer counts, the wire carries the count, the consumer sums it.}
+\label{fig:x-netlist}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_netlist.rs}. Run with \code{bazel run //lib/examples:ex\_netlist}.},label={lst:x-netlist}]{lib/examples/ex_netlist.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_netlist} printed when the build ran it.},label={lst:x-netlist-out}]{out_netlist.txt}

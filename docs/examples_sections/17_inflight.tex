@@ -1,0 +1,27 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Several Invocations in Flight}
+\label{sec:x-inflight}
+
+The embedding article claims that a pipeline is an \code{async fn}
+driven by starting an invocation every cycle, and this is the claim
+run. \code{mac} has two awaits, a multiply and an add, so it takes two
+cycles; \code{pipeline::drive} starts one invocation at every edge at
+which a pair is offered, polls every invocation in flight as a process
+of its own, and sends each result as its invocation completes, oldest
+first. Each invocation prints where it is, and the trace shows what a
+pipeline is: at every edge from the second, one invocation is in its
+multiplier and another in its adder, and from the third a result lands
+every cycle. Nobody placed a stage boundary; the two awaits are the
+boundaries. Figure~\ref{fig:x-inflight} shows the pairs going in and
+the results coming out two edges later.
+
+\begin{figure}[htbp]
+\centering
+\input{inflight_timing.tex}
+\caption{The pipeline: a pair in every cycle, a result out every cycle from the third, two invocations in flight.}
+\label{fig:x-inflight}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_inflight.rs}. Run with \code{bazel run //lib/examples:ex\_inflight}.},label={lst:x-inflight}]{lib/examples/ex_inflight.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_inflight} printed when the build ran it.},label={lst:x-inflight-out}]{out_inflight.txt}

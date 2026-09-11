@@ -8,7 +8,10 @@
 //! comment, and any other line is `name=value;name=value...` ending in
 //! a period, all at the current time.
 //!
-//! Usage: dt2tikz IN.dt > OUT.tex
+//! Usage: dt2tikz IN.dt [--order name,name,...] > OUT.tex
+//!
+//! Rows appear in the order the signals first appear in the text, or in
+//! the order given, which is how the document asks for them.
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -17,8 +20,18 @@ const H: f64 = 0.55; // signal height
 const PITCH: f64 = 0.95; // row pitch
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: dt2tikz IN.dt");
-    let text = std::fs::read_to_string(&path).expect("read");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let path = args.first().expect("usage: dt2tikz IN.dt [--order a,b]");
+    let wanted: Vec<String> = match args.get(1).map(|s| s.as_str()) {
+        Some("--order") => args
+            .get(2)
+            .expect("--order needs a list")
+            .split(',')
+            .map(|s| s.to_string())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let text = std::fs::read_to_string(path).expect("read");
     let mut order: Vec<String> = Vec::new();
     let mut hist: BTreeMap<String, Vec<(u64, String)>> = BTreeMap::new();
     let mut t: u64 = 0;
@@ -46,6 +59,18 @@ fn main() {
                 _ => h.push((t, value)),
             }
         }
+    }
+    if !wanted.is_empty() {
+        let mut rest: Vec<String> = order
+            .iter()
+            .filter(|n| !wanted.contains(n))
+            .cloned()
+            .collect();
+        order = wanted
+            .into_iter()
+            .filter(|n| hist.contains_key(n))
+            .collect();
+        order.append(&mut rest);
     }
     let end = t.max(1) as f64;
     let mut o = String::new();

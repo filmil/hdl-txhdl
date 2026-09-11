@@ -757,6 +757,17 @@ impl Future for Tick {
     }
 }
 
+/// A process started at this step's edge of `C`: an invocation of a
+/// pipeline, whose first wait is then the next edge and not this one.
+pub(crate) fn process_in<C: Clock>() -> Waker {
+    let w = process();
+    let p = w.data() as usize;
+    let clk = clk_of::<C>();
+    clock::PROCS
+        .with(|m| m.borrow_mut().insert(p, clock::Proc { clk, edge: now() }));
+    w
+}
+
 /// A waker that names a process. It never wakes anything, because the
 /// executor polls everything every cycle; its data is the process id.
 fn process() -> Waker {
@@ -876,6 +887,7 @@ pub mod trace {
     use std::collections::BTreeMap;
     use std::io::Write;
     use std::marker::PhantomData;
+    use std::rc::Rc;
 
     /// A place in the hierarchy: a dotted path.
     pub struct Scope(String);
@@ -892,10 +904,25 @@ pub mod trace {
         }
     }
 
-    /// One traced signal: where it is, how wide, and how to read it.
+    /// What a probe is on: state, or one end of a wire or channel. A
+    /// netlist needs the kind; a waveform does not.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Kind {
+        Reg,
+        Out,
+        In,
+        Tx,
+        Rx,
+    }
+
+    /// One traced signal: where it is, how wide, what it is, which
+    /// shared cell it is on (so the two ends of one wire match), and
+    /// how to read it.
     pub struct Probe {
         pub path: String,
         pub width: usize,
+        pub kind: Kind,
+        pub cell: usize,
         pub sample: Box<dyn Fn() -> String>,
     }
 
@@ -904,14 +931,31 @@ pub mod trace {
     }
 
     /// Register a signal. What the `Traceable` impls call.
-    pub fn probe(scope: &Scope, width: usize, sample: Box<dyn Fn() -> String>) {
+    pub fn probe(
+        scope: &Scope,
+        width: usize,
+        kind: Kind,
+        cell: usize,
+        sample: Box<dyn Fn() -> String>,
+    ) {
         PROBES.with(|p| {
             p.borrow_mut().push(Probe {
                 path: scope.0.clone(),
                 width,
+                kind,
+                cell,
                 sample,
             })
         })
+    }
+
+    /// Run a walk on an empty registry and hand back what it
+    /// registered, leaving whatever was there before. The netlist uses
+    /// it.
+    pub fn collect(name: &str, t: &impl Traceable) -> Vec<Probe> {
+        let saved = PROBES.with(|p| std::mem::take(&mut *p.borrow_mut()));
+        t.trace(&Scope::new(name));
+        PROBES.with(|p| std::mem::replace(&mut *p.borrow_mut(), saved))
     }
 
     /// Something with signals to register under a scope.
@@ -922,51 +966,53 @@ pub mod trace {
     impl<T: Value + 'static, C: Clock> Traceable for Reg<T, C> {
         fn trace(&self, scope: &Scope) {
             let r = self.0.clone();
-            probe(scope, T::WIDTH, Box::new(move || r.cur.get().vcd()))
+            let cell = Rc::as_ptr(&self.0) as usize;
+            let f = Box::new(move || r.cur.get().vcd());
+            probe(scope, T::WIDTH, Kind::Reg, cell, f)
         }
     }
     impl<T: Value + 'static, C: Clock> Traceable for In<T, C> {
         fn trace(&self, scope: &Scope) {
             let c = self.0.clone();
-            probe(scope, T::WIDTH, Box::new(move || c.0.get().vcd()))
+            let cell = Rc::as_ptr(&self.0) as usize;
+            let f = Box::new(move || c.0.get().vcd());
+            probe(scope, T::WIDTH, Kind::In, cell, f)
         }
     }
     impl<T: Value + 'static, C: Clock> Traceable for Out<T, C> {
         fn trace(&self, scope: &Scope) {
             let c = self.0.clone();
-            probe(scope, T::WIDTH, Box::new(move || c.0.get().vcd()))
+            let cell = Rc::as_ptr(&self.0) as usize;
+            let f = Box::new(move || c.0.get().vcd());
+            probe(scope, T::WIDTH, Kind::Out, cell, f)
         }
     }
     /// A channel is two signals: the transaction and its valid bit.
-    impl<T: Value + super::Transaction + 'static, C: Clock> Traceable for Rx<T, C> {
+    impl<T: Value + super::Transaction + 'static, C: Clock> Traceable
+        for Rx<T, C>
+    {
         fn trace(&self, scope: &Scope) {
-            let (c, d) = (self.0.clone(), self.0.clone());
-            probe(
-                &scope.child("data"),
-                T::WIDTH,
-                Box::new(move || c.0.get().0.vcd()),
-            );
-            probe(
-                &scope.child("valid"),
-                1,
-                Box::new(move || d.0.get().1.vcd()),
-            );
+            channel(&self.0, scope, Kind::Rx)
         }
     }
-    impl<T: Value + super::Transaction + 'static, C: Clock> Traceable for Tx<T, C> {
+    impl<T: Value + super::Transaction + 'static, C: Clock> Traceable
+        for Tx<T, C>
+    {
         fn trace(&self, scope: &Scope) {
-            let (c, d) = (self.0.clone(), self.0.clone());
-            probe(
-                &scope.child("data"),
-                T::WIDTH,
-                Box::new(move || c.0.get().0.vcd()),
-            );
-            probe(
-                &scope.child("valid"),
-                1,
-                Box::new(move || d.0.get().1.vcd()),
-            );
+            channel(&self.0, scope, Kind::Tx)
         }
+    }
+    fn channel<T: Value + Copy + 'static>(
+        c: &Rc<super::Cellf<(T, bool)>>,
+        scope: &Scope,
+        kind: Kind,
+    ) {
+        let cell = Rc::as_ptr(c) as usize;
+        let (a, b) = (c.clone(), c.clone());
+        let data = Box::new(move || a.0.get().0.vcd());
+        let valid = Box::new(move || b.0.get().1.vcd());
+        probe(&scope.child("data"), T::WIDTH, kind, cell, data);
+        probe(&scope.child("valid"), 1, kind, cell, valid);
     }
     impl<T: Value + Default + 'static, A: Clock, B: Clock> Traceable
         for Crossing<T, A, B>
@@ -1012,6 +1058,14 @@ pub mod trace {
                 out: Box::new(out),
                 clocks: Vec::new(),
             }
+        }
+        /// A writer on the file `TXHDL_VCD` names, or none. An example
+        /// that prints keeps printing; the document build sets the
+        /// variable and takes the file as well.
+        pub fn from_env() -> Option<Vcd> {
+            let path = std::env::var("TXHDL_VCD").ok()?;
+            let f = std::fs::File::create(&path).expect("TXHDL_VCD file");
+            Some(Vcd::new(std::io::BufWriter::new(f)))
         }
         /// Trace a clock, as a one-bit signal that pulses at each edge.
         pub fn clock<C: Clock>(&mut self) {

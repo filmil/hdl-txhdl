@@ -98,3 +98,17 @@ the mechanism rather than a construct layered on top of it.
 once per item; the unit that calls it is what loops, per
 Section~\ref{sec:e-regread}, and awaiting \code{mac} inside that loop is
 what makes each call one item in flight.
+
+\subsection{It has been run}
+
+The claim above was written before anything ran it. The runtime now
+has \code{pipeline::drive}, which starts an invocation of an
+\code{async fn} at every edge at which an input is offered and polls
+every invocation in flight as a process of its own, and the examples
+document runs a two-await \code{mac} through it. At every edge from
+the second, one invocation is in its multiplier and another in its
+adder; from the third, a result lands every cycle. The stage boundaries
+were the awaits, and nobody placed them. Resource sharing, the item
+above that had to be proved, is still not: the prototype gives each
+invocation its own multiplier, and it is the lowering that would share
+one.

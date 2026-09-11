@@ -1,0 +1,24 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Two Events at One Edge}
+\label{sec:x-join}
+
+An adder needs a word from each of two channels, so its event is
+both arrivals: \code{parallel!(a.wait(), b.wait()).await}, which
+completes when both waits have, with the two words. Producer A offers
+every cycle and producer B every other one. A's word is taken when it
+arrives and held inside the group until B's arrives, A's channel holds
+the next offer meanwhile, and so A runs at B's rate with no code for
+the backpressure. Figure~\ref{fig:x-join} shows it: \code{a\_valid}
+stays high through the cycle A waits, and a sum lands on every edge B
+delivers.
+
+\begin{figure}[htbp]
+\centering
+\input{join_timing.tex}
+\caption{The join. A's offer is taken at once and held; B's arrives every other cycle; the sum follows B.}
+\label{fig:x-join}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_join.rs}. Run with \code{bazel run //lib/examples:ex\_join}.},label={lst:x-join}]{lib/examples/ex_join.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_join} printed when the build ran it.},label={lst:x-join-out}]{out_join.txt}

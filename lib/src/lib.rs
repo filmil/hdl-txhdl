@@ -14,6 +14,7 @@
 //!   `#[derive(Trace)]`, `interface!`, `when!` and `case!`, re-exported
 //!   from `txhdl_macros`.
 //! - [`comp::trace`]: names for signals and a VCD writer.
+//! - [`netlist`]: a structural Verilog skeleton from the same walk.
 //!
 //! This is a simulation-shaped prototype: values exist while it runs.
 //! The lowering to hardware is the experiment the article states, and
@@ -21,6 +22,7 @@
 
 pub mod comp;
 pub mod funcs;
+pub mod netlist;
 pub mod pipeline;
 pub mod types;
 

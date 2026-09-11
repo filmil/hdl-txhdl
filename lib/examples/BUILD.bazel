@@ -72,6 +72,33 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Two events at one edge:  bazel run //lib/examples:ex_join
+rust_binary(
+    name = "ex_join",
+    srcs = ["ex_join.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# Several invocations in flight:  bazel run //lib/examples:ex_inflight
+rust_binary(
+    name = "ex_inflight",
+    srcs = ["ex_inflight.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# A structural netlist:  bazel run //lib/examples:ex_netlist
+rust_binary(
+    name = "ex_netlist",
+    srcs = ["ex_netlist.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A waveform:  bazel run //lib/examples:ex_trace > counter.vcd
 rust_binary(
     name = "ex_trace",
@@ -90,5 +117,8 @@ filegroup(
         "ex_fifo.rs",
         "ex_arbiter.rs",
         "ex_trace.rs",
+        "ex_join.rs",
+        "ex_inflight.rs",
+        "ex_netlist.rs",
     ],
 )

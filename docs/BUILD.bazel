@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 load("@rules_latex_host//latex:defs.bzl", "latex_document")
+load(":waveform.bzl", "waveform")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -355,6 +356,7 @@ API = {
     "api_pipeline.rs": "//lib:src/pipeline.rs",
     "api_funcs.rs": "//lib:src/funcs.rs",
     "api_macros.rs": "//lib:macros/lib.rs",
+    "api_netlist.rs": "//lib:src/netlist.rs",
 }
 
 [
@@ -429,8 +431,47 @@ genrule(
     name = "counter_timing",
     srcs = ["counter.dt"],
     outs = ["counter_timing.tex"],
-    cmd = "$(location //tools/dt2tikz) $(location counter.dt) > $@",
+    cmd = "$(location //tools/dt2tikz) $(location counter.dt)" +
+          " --order clk,n,phase,msb > $@",
     tools = ["//tools/dt2tikz"],
+)
+
+# Every later example has a waveform: run, converted and drawn.
+waveform(
+    name = "join",
+    example = "//lib/examples:ex_join",
+    signals = [
+        "//clocks/clk=>clk",
+        "//a/valid=>a_valid",
+        "//a/data=>a",
+        "//b/valid=>b_valid",
+        "//b/data=>b",
+        "//sum/data=>sum",
+        "//adder/sums=>sums",
+    ],
+)
+
+waveform(
+    name = "inflight",
+    example = "//lib/examples:ex_inflight",
+    # The pipeline takes a pair in the step it is offered, so the valid
+    # bits never show; the data rows say it all.
+    signals = [
+        "//clocks/clk=>clk",
+        "//pair/data=>pair",
+        "//result/data=>result",
+    ],
+)
+
+waveform(
+    name = "netlist",
+    example = "//lib/examples:ex_netlist",
+    signals = [
+        "//clocks/clk=>clk",
+        "//top/producer/n=>n",
+        "//top/producer/out=>out",
+        "//top/consumer/total=>total",
+    ],
 )
 
 # The examples: every file under //lib/examples verbatim, the output of
@@ -443,6 +484,12 @@ latex_document(
         ":example_outputs",
         ":counter_dt",
         ":counter_timing",
+        ":join_run",
+        ":join_timing",
+        ":inflight_run",
+        ":inflight_timing",
+        ":netlist_run",
+        ":netlist_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),

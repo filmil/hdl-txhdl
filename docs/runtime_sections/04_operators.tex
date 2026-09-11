@@ -11,5 +11,13 @@ nobody places a stage boundary. An operator in \code{funcs} is a plain
 is the whole enforcement of the rule that a combinational body is
 timeless.
 
+\code{drive} is what makes an \code{async fn} a pipeline rather than
+a sequence: at every edge at which an input is offered it starts an
+invocation, it polls every invocation in flight as a process of its
+own, each started as having crossed the edge it began at so its first
+wait is the next edge, and it sends each result as its invocation
+completes, oldest first. Several invocations are in flight at once,
+each at a different await.
+
 \lstinputlisting[caption={\code{lib/src/pipeline.rs}.},label={lst:r-pipeline}]{lib/src/pipeline.rs}
 \lstinputlisting[caption={\code{lib/src/funcs.rs}.},label={lst:r-funcs}]{lib/src/funcs.rs}

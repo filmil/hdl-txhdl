@@ -115,6 +115,18 @@ The examples document draws a VCD through \code{vcdcvt} and
 \code{sqlite2drawtiming}, prebuilt tools pinned by checksum, and
 \code{//tools/dt2tikz}, which turns drawtiming's text into TikZ.
 
+\subsection{Netlists}
+
+The probe registry records, for every signal, its kind and the shared
+cell it is on, so the two ends of one wire match. \code{netlist::verilog}
+walks a design through it and writes a Verilog skeleton: a module per
+unit, a \code{reg} per register, ports where a unit holds one end of
+a wire whose other end is elsewhere, and instances with their ports
+connected. It sees fields only, so a unit whose ports are parameters
+of \code{run} yields its registers and nothing else, and it writes no
+behaviour. It is the structural half of the lowering; the behavioural
+half is the experiment the article states.
+
 \subsection{Building it}
 
 \begin{lstlisting}[style=ascii,caption={The runtime and everything written against it, built hermetically.},label={lst:r-build}]
