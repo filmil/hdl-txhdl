@@ -166,13 +166,13 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             let word = self.dmem.read(daddr);
             let bsh = addr.slice::<0, 2>().concat::<3, 5>(U::<3>::from(0u8));
             let hsh = addr.slice::<1, 1>().concat::<4, 5>(U::<4>::from(0u8));
-            let byte = shr(word, bsh.raw() as usize).slice::<0, 8>();
+            let octet = shr(word, bsh.raw() as usize).slice::<0, 8>();
             let half = shr(word, hsh.raw() as usize).slice::<0, 16>();
             let loaded = select!(f3.raw() => {
-                0 => byte.sext::<32>(),
+                0 => octet.sext::<32>(),
                 1 => half.sext::<32>(),
                 2 => word,
-                4 => byte.zext::<32>(),
+                4 => octet.zext::<32>(),
                 _ => half.zext::<32>(),
             });
             let bmask = shl(U::<32>::from(0xffu32), bsh.raw() as usize);
