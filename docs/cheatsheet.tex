@@ -87,16 +87,21 @@ bazel build //...                 # everything, hermetically
 bazel run //lib/examples:ex_cheat # prints the netlist
 TXHDL_FST=c.fst bazel run \
   //lib/examples:ex_cheat         # and writes the waveform
-bazel build //docs/...            # the five documents
+bazel build //docs/...            # every document
 \end{lstlisting}
 
 \head{Documents}
 \code{//docs:cover} names them: \code{article} (the merge),
 \code{embedding} (the language), \code{runtime} (the library,
 verbatim), \code{examples} (one per concept, with what each printed
-and its waveform), and \code{all} (every one, in order). Every listing
+and its waveform), \code{vreteno} (the RV32I core), and \code{all}
+(every one, in order). Every listing
 is included from the tree at build time; every claim about Rust was
 compiled first.
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+{\footnotesize\buildstamp}
 
 \end{multicols}
 \end{document}

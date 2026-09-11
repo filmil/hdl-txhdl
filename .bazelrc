@@ -1,2 +1,5 @@
 common --registry=https://raw.githubusercontent.com/filmil/bazel-registry/main
 common --registry=https://bcr.bazel.build
+
+# Every document is stamped with the commit it was built from.
+build --workspace_status_command=tools/workspace_status.sh

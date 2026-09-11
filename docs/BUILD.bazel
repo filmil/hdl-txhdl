@@ -319,10 +319,27 @@ genrule(
 # The specification as an IEEE two-column article, set in Computer Modern.
 # Built against the hermetic LaTeX toolchain registered in MODULE.bazel, so
 # nothing has to be installed on the machine running the build.
+# The build stamp: the commit and the day, from Bazel's workspace status
+# (tools/workspace_status.sh), as \buildstamp for every document. A
+# build outside Bazel has no file and falls back to a draft note.
+genrule(
+    name = "buildstamp",
+    outs = ["buildstamp.tex"],
+    cmd = "c=$$(grep '^STABLE_GIT_COMMIT ' bazel-out/stable-status.txt | cut -d' ' -f2);" +
+          " t=$$(grep '^BUILD_TIMESTAMP ' bazel-out/volatile-status.txt | cut -d' ' -f2);" +
+          " d=$$(date -u -d @$$t +%Y-%m-%d);" +
+          " printf '\\\\newcommand{\\\\buildstamp}{Built by Bazel from commit" +
+          " \\\\code{%s} on %s.}\\n' \"$$c\" \"$$d\" > $@",
+    stamp = 1,
+)
+
 latex_document(
     name = "article",
     main = "article.tex",
-    data = [":vendored_tex"],
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+    ],
     deps = ["housestyle.tex"] + glob(["sections/*.tex"]),
 )
 
@@ -332,7 +349,10 @@ latex_document(
 latex_document(
     name = "embedding",
     main = "embedding.tex",
-    data = [":vendored_tex"],
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+    ],
     deps = ["housestyle.tex"] + glob(["embedding_sections/*.tex"]),
 )
 
@@ -342,6 +362,7 @@ latex_document(
     name = "runtime",
     main = "runtime.tex",
     data = [
+        ":buildstamp",
         ":vendored_tex",
         "//lib:sources",
     ],
@@ -544,6 +565,7 @@ latex_document(
     name = "examples",
     main = "examples.tex",
     data = [
+        ":buildstamp",
         ":vendored_tex",
         ":example_outputs",
         ":counter_dt",
@@ -577,7 +599,10 @@ latex_document(
 latex_document(
     name = "cover",
     main = "cover.tex",
-    data = [":vendored_tex"],
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+    ],
     deps = ["housestyle.tex"],
 )
 
@@ -616,6 +641,7 @@ latex_document(
     name = "vreteno",
     main = "vreteno.tex",
     data = [
+        ":buildstamp",
         ":vendored_tex",
         ":vreteno_run",
         ":vreteno_timing",
@@ -653,6 +679,7 @@ latex_document(
     name = "cheatsheet",
     main = "cheatsheet.tex",
     data = [
+        ":buildstamp",
         ":vendored_tex",
         ":cheat_run",
         ":cheat_timing_color",
