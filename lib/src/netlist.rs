@@ -214,7 +214,16 @@ pub enum Expr {
     Bin(&'static str, Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
     Cond(Box<Expr>, Box<Expr>, Box<Expr>),
+    /// A bit of a value, or a word of a memory.
     Index(Box<Expr>, Box<Expr>),
+    /// `slice::<LO, LEN>`: bits `LO + LEN - 1` down to `LO`.
+    Slice(Box<Expr>, usize, usize),
+    /// `concat`: the first above the second.
+    Cat(Box<Expr>, Box<Expr>),
+    /// `sext::<M>` and `zext::<M>`: to `M` bits, by the top bit or by
+    /// zeros.
+    Sext(Box<Expr>, usize),
+    Zext(Box<Expr>, usize),
 }
 
 impl Expr {
@@ -284,6 +293,27 @@ impl Lowered {
             .iter()
             .any(|(n, k, _, _)| *n == t && *k == Some(Kind::Mem))
     }
+    /// The width of an expression, as far as the netlist can tell:
+    /// what an extension's replication needs.
+    fn ewidth(&self, e: &Expr) -> usize {
+        match e {
+            Expr::Name(n) => self.width(n),
+            Expr::Num(_) => 0,
+            Expr::Bits(w, _) => *w,
+            Expr::Bin(..) if e.is_bool() => 1,
+            Expr::Bin(_, a, b) | Expr::Cond(_, a, b) => {
+                self.ewidth(a).max(self.ewidth(b))
+            }
+            Expr::Not(a) => self.ewidth(a),
+            Expr::Index(a, _) => match &**a {
+                Expr::Name(m) if self.is_mem(m) => self.width(m),
+                _ => 1,
+            },
+            Expr::Slice(_, _, len) => *len,
+            Expr::Cat(a, b) => self.ewidth(a) + self.ewidth(b),
+            Expr::Sext(_, m) | Expr::Zext(_, m) => *m,
+        }
+    }
     /// The width of a register, a memory's word, or a port, or of a
     /// channel's part.
     fn width(&self, n: &str) -> usize {
@@ -341,6 +371,7 @@ impl Lowered {
     /// The Verilog.
     pub fn verilog(&self) -> String {
         let (name, clock) = (&self.name, self.clock);
+        let l = self;
         let mut out = String::new();
         let mut plist = vec![format!("input {clock}")];
         for (n, k, w) in &self.ports {
@@ -385,28 +416,30 @@ impl Lowered {
                      ind: &str,
                      t: &Target,
                      e: &Expr| match t {
-            Target::Word(m, a) => {
-                seq.push(format!("{ind}{m}[{}] <= {};", vexpr(a), vexpr(e)))
-            }
+            Target::Word(m, a) => seq.push(format!(
+                "{ind}{m}[{}] <= {};",
+                vexpr(a, l),
+                vexpr(e, l)
+            )),
             Target::Name(t) if self.is_reg(t) => {
-                seq.push(format!("{ind}{t} <= {};", vexpr(e)))
+                seq.push(format!("{ind}{t} <= {};", vexpr(e, l)))
             }
             Target::Name(t) => {
-                comb.push(format!("  assign {t} = {};", vexpr(e)))
+                comb.push(format!("  assign {t} = {};", vexpr(e, l)))
             }
         };
         for st in &self.body {
             match st {
                 Stmt::Guard(c) => {
                     guard = true;
-                    seq.push(format!("    if ({}) begin", vexpr(c)));
+                    seq.push(format!("    if ({}) begin", vexpr(c, l)));
                 }
                 Stmt::Drive(t, e) => {
                     let ind = if guard { "      " } else { "    " };
                     drive(&mut seq, &mut comb, ind, t, e)
                 }
                 Stmt::When(c, then, otherwise) => {
-                    seq.push(format!("    if ({}) begin", vexpr(c)));
+                    seq.push(format!("    if ({}) begin", vexpr(c, l)));
                     for (t, e) in then {
                         drive(&mut seq, &mut comb, "      ", t, e);
                     }
@@ -421,7 +454,7 @@ impl Lowered {
                 Stmt::Case(arms) => {
                     for (i, (c, drives)) in arms.iter().enumerate() {
                         let kw = if i == 0 { "if" } else { "end else if" };
-                        seq.push(format!("    {kw} ({}) begin", vexpr(c)));
+                        seq.push(format!("    {kw} ({}) begin", vexpr(c, l)));
                         for (t, e) in drives {
                             drive(&mut seq, &mut comb, "      ", t, e);
                         }
@@ -630,25 +663,52 @@ pub fn write_vhdl_from_env(l: &Lowered) {
     }
 }
 
+/// The top bit of an expression, in Verilog: what a sign extension
+/// replicates. A slice's is a bit of what it slices, since Verilog
+/// does not index an expression.
+fn vtop(e: &Expr, l: &Lowered) -> String {
+    match e {
+        Expr::Slice(a, lo, len) => format!("{}[{}]", vexpr(a, l), lo + len - 1),
+        Expr::Cat(a, _) => vtop(a, l),
+        _ => format!("{}[{}]", vexpr(e, l), l.ewidth(e).max(1) - 1),
+    }
+}
+
 /// An expression in Verilog.
-fn vexpr(e: &Expr) -> String {
+fn vexpr(e: &Expr, l: &Lowered) -> String {
     match e {
         Expr::Name(n) => n.clone(),
         Expr::Num(k) => k.to_string(),
         Expr::Bits(w, b) => format!("{w}'b{b}"),
         Expr::Bin("<s", a, b) => {
-            format!("($signed({}) < $signed({}))", vexpr(a), vexpr(b))
+            format!("($signed({}) < $signed({}))", vexpr(a, l), vexpr(b, l))
         }
         Expr::Bin(">>>", a, b) => {
-            format!("($signed({}) >>> {})", vexpr(a), vexpr(b))
+            format!("($signed({}) >>> {})", vexpr(a, l), vexpr(b, l))
         }
-        Expr::Bin(op, a, b) => format!("({} {op} {})", vexpr(a), vexpr(b)),
-        Expr::Not(a) if a.is_bool() => format!("(!{})", vexpr(a)),
-        Expr::Not(a) => format!("(~{})", vexpr(a)),
+        Expr::Bin(op, a, b) => {
+            format!("({} {op} {})", vexpr(a, l), vexpr(b, l))
+        }
+        Expr::Not(a) if a.is_bool() => format!("(!{})", vexpr(a, l)),
+        Expr::Not(a) => format!("(~{})", vexpr(a, l)),
         Expr::Cond(c, a, b) => {
-            format!("({} ? {} : {})", vexpr(c), vexpr(a), vexpr(b))
+            format!("({} ? {} : {})", vexpr(c, l), vexpr(a, l), vexpr(b, l))
         }
-        Expr::Index(a, i) => format!("{}[{}]", vexpr(a), vexpr(i)),
+        Expr::Index(a, i) => format!("{}[{}]", vexpr(a, l), vexpr(i, l)),
+        Expr::Slice(a, lo, len) => {
+            format!("{}[{}:{}]", vexpr(a, l), lo + len - 1, lo)
+        }
+        Expr::Cat(a, b) => format!("{{{}, {}}}", vexpr(a, l), vexpr(b, l)),
+        Expr::Sext(a, m) => match l.ewidth(a) {
+            n if n >= *m || n == 0 => vexpr(a, l),
+            n => {
+                format!("{{{{{}{{{}}}}}, {}}}", m - n, vtop(a, l), vexpr(a, l))
+            }
+        },
+        Expr::Zext(a, m) => match l.ewidth(a) {
+            n if n >= *m || n == 0 => vexpr(a, l),
+            n => format!("{{{{{}{{1'b0}}}}, {}}}", m - n, vexpr(a, l)),
+        },
     }
 }
 
@@ -719,12 +779,20 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
             hval(b, 0, l)
         ),
         Expr::Not(a) => format!("(not {})", hval(a, w, l)),
+        Expr::Slice(a, lo, len) => {
+            format!("{}({} downto {})", hval(a, 0, l), lo + len - 1, lo)
+        }
+        Expr::Cat(a, b) => format!("({} & {})", hval(a, 0, l), hval(b, 0, l)),
+        Expr::Sext(a, m) => {
+            format!("unsigned(resize(signed({}), {m}))", hval(a, 0, l))
+        }
+        Expr::Zext(a, m) => format!("resize({}, {m})", hval(a, 0, l)),
         // A word of a memory, or a bit of a value.
         Expr::Index(a, i) => match &**a {
             Expr::Name(m) if l.is_mem(m) => {
                 format!("{m}(to_integer({}))", hval(i, 0, l))
             }
-            _ => format!("{}({})", hval(a, 0, l), vexpr(i)),
+            _ => format!("{}({})", hval(a, 0, l), vexpr(i, l)),
         },
         e if e.is_bool() => format!("({})", hbool(e, l)),
         Expr::Cond(c, a, b) => {

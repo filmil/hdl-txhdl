@@ -967,15 +967,49 @@ fn parse_call(ts: &[TokenTree]) -> Result<Call, String> {
 }
 
 fn split_commas(g: &Group) -> Vec<Vec<TokenTree>> {
+    let toks: Vec<TokenTree> = g.stream().into_iter().collect();
+    let mask = turbofish(&toks);
     let mut out = vec![Vec::new()];
-    for t in g.stream() {
+    for (i, t) in toks.into_iter().enumerate() {
         match &t {
-            TokenTree::Punct(p) if p.as_char() == ',' => out.push(Vec::new()),
+            TokenTree::Punct(p) if p.as_char() == ',' && !mask[i] => {
+                out.push(Vec::new())
+            }
             _ => out.last_mut().unwrap().push(t),
         }
     }
     out.retain(|v| !v.is_empty());
     out
+}
+
+/// Which tokens lie inside a turbofish, `::<` to its `>`: neither
+/// operators nor separators, whatever they look like.
+fn turbofish(ts: &[TokenTree]) -> Vec<bool> {
+    let mut mask = vec![false; ts.len()];
+    let mut depth = 0usize;
+    for i in 0..ts.len() {
+        if let TokenTree::Punct(p) = &ts[i] {
+            let after_colons = i > 0
+                && matches!(
+                    &ts[i - 1],
+                    TokenTree::Punct(q) if q.as_char() == ':'
+                );
+            if p.as_char() == '<' && (after_colons || depth > 0) {
+                depth += 1;
+                mask[i] = true;
+                continue;
+            }
+            if p.as_char() == '>' && depth > 0 {
+                depth -= 1;
+                mask[i] = true;
+                continue;
+            }
+        }
+        if depth > 0 {
+            mask[i] = true;
+        }
+    }
+    mask
 }
 
 /// `name`, `LIT`, `U::from(LIT)` or `U::<W>::from(LIT)`.
@@ -1282,12 +1316,25 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
     if ts.is_empty() {
         return Err("empty expression".into());
     }
+    // `select!(v => { pat => e, .. })`: a chain of conditions.
+    if let [TokenTree::Ident(m), TokenTree::Punct(bang), TokenTree::Group(g)] =
+        ts
+    {
+        if m.to_string() == "select" && bang.as_char() == '!' {
+            return tr_select(g, subst);
+        }
+    }
+    let mask = turbofish(ts);
     let infix: &[&str] =
         &["||", "&&", "==", "!=", "<=", ">=", "<", ">", "+", "-"];
     for op in infix {
         let n = op.len();
         let mut i = 1;
         while i + n <= ts.len() {
+            if mask[i] {
+                i += 1;
+                continue;
+            }
             let here: String =
                 ts[i..i + n].iter().map(|t| t.to_string()).collect();
             let all_punct = ts[i..i + n]
@@ -1319,6 +1366,74 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
         }
     }
     let end = ts.len();
+    // A method with a turbofish: `x.slice::<LO, LEN>()`, `x.sext::<M>()`,
+    // `x.zext::<M>()`, `x.concat::<K, M>(low)`.
+    if end >= 9 {
+        if let (TokenTree::Group(g), TokenTree::Punct(gt)) =
+            (&ts[end - 1], &ts[end - 2])
+        {
+            if gt.as_char() == '>' && g.delimiter() == Delimiter::Parenthesis {
+                let mut depth = 0;
+                let mut lt = None;
+                for j in (0..end - 2).rev() {
+                    if let TokenTree::Punct(p) = &ts[j] {
+                        match p.as_char() {
+                            '>' => depth += 1,
+                            '<' if depth == 0 => {
+                                lt = Some(j);
+                                break;
+                            }
+                            '<' => depth -= 1,
+                            _ => {}
+                        }
+                    }
+                }
+                if let Some(lt) = lt.filter(|&lt| lt >= 4) {
+                    if let (
+                        TokenTree::Punct(c1),
+                        TokenTree::Punct(c2),
+                        TokenTree::Ident(m),
+                        TokenTree::Punct(dot),
+                    ) = (&ts[lt - 1], &ts[lt - 2], &ts[lt - 3], &ts[lt - 4])
+                    {
+                        if c1.as_char() == ':'
+                            && c2.as_char() == ':'
+                            && dot.as_char() == '.'
+                        {
+                            let l = tr(&ts[..lt - 4], subst)?;
+                            let ks: Vec<String> = ts[lt + 1..end - 2]
+                                .iter()
+                                .filter(|t| !matches!(t, TokenTree::Punct(_)))
+                                .map(|t| t.to_string())
+                                .collect();
+                            let args = split_commas(g);
+                            return Ok(match m.to_string().as_str() {
+                                "slice" => format!(
+                                    "E::Slice(Box::new({l}), {}, {})",
+                                    ks[0], ks[1]
+                                ),
+                                "sext" => {
+                                    format!("E::Sext(Box::new({l}), {})", ks[0])
+                                }
+                                "zext" | "resize" => {
+                                    format!("E::Zext(Box::new({l}), {})", ks[0])
+                                }
+                                "concat" => format!(
+                                    "E::Cat(Box::new({l}), Box::new({}))",
+                                    tr(&args[0], subst)?
+                                ),
+                                other => {
+                                    return Err(format!(
+                                        "method `{other}::<..>` is not lowered"
+                                    ))
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
     if end >= 3 {
         if let (
             TokenTree::Punct(dot),
@@ -1447,7 +1562,11 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                         g.stream().into_iter().collect();
                     return tr(&inner, subst);
                 }
-                if text.starts_with("U::from") || text.starts_with("U::<") {
+                // A sized literal keeps its width; a bare one is a number.
+                if text.starts_with("U::<") {
+                    return Ok(format!("::txhdl::netlist::lit({text})"));
+                }
+                if text.starts_with("U::from") {
                     return Ok(format!("E::Num(({}) as u128)", g.stream()));
                 }
             }
@@ -1465,6 +1584,38 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             Err(format!("cannot lower `{text}`"))
         }
     }
+}
+
+/// `select!(v => { pat => e, .., _ => e })` as a chain of conditions:
+/// the first arm's condition selects its value, else the next, down
+/// to the last arm, whose value is the default.
+fn tr_select(g: &Group, subst: &[(String, String)]) -> Result<String, String> {
+    let ct: Vec<TokenTree> = g.stream().into_iter().collect();
+    let Some((value, i)) = up_to_arrow(&ct, 0) else {
+        return Err("select! needs `value =>`".into());
+    };
+    let vt: Vec<TokenTree> = value.into_iter().collect();
+    let v = tr(&vt, subst)?;
+    let Some(TokenTree::Group(arms)) = ct.get(i) else {
+        return Err("select! needs `{ pattern => value, .. }`".into());
+    };
+    let mut chain: Vec<(String, String)> = Vec::new();
+    for arm in split_commas(arms) {
+        let Some((pat, k)) = up_to_arrow(&arm, 0) else {
+            return Err("a select! arm is `pattern => value`".into());
+        };
+        let pt: Vec<TokenTree> = pat.into_iter().collect();
+        let c = pattern_cond(&pt, &v, subst)?;
+        let e = tr(&arm[k..], subst)?;
+        chain.push((c, e));
+    }
+    let Some((_, mut acc)) = chain.pop() else {
+        return Err("select! needs an arm".into());
+    };
+    for (c, e) in chain.into_iter().rev() {
+        acc = format!("E::Cond(Box::new({c}), Box::new({e}), Box::new({acc}))");
+    }
+    Ok(acc)
 }
 
 /// The first `,` at angle depth 0 of a type's text.
@@ -1507,8 +1658,11 @@ fn pattern_cond(
     for a in &alts {
         let text: String =
             a.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("");
+        let digit = text.chars().next().is_some_and(|c| c.is_ascii_digit());
         let c = if text == "_" {
             "E::Bits(1, \"1\".to_string())".to_string()
+        } else if digit {
+            ebin("==", v, &format!("E::Num(({text}) as u128)"))
         } else {
             ebin("==", v, &format!("::txhdl::netlist::lit({text})"))
         };
