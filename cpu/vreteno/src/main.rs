@@ -13,7 +13,7 @@ use vreteno32::program::demo;
 fn main() {
     let program = demo();
     let mut cpu = Vreteno::with(&program);
-    let (ir_pc, regs) = (cpu.ir_pc.clone(), cpu.regs.clone());
+    let (wb_pc, regs) = (cpu.wb_pc.clone(), cpu.regs.clone());
     let lanes = (
         cpu.dmem0.clone(),
         cpu.dmem1.clone(),
@@ -44,12 +44,17 @@ fn main() {
     sim.cycle();
     rst_out.set(Bit::Zero);
     println!("{:>4} {:>6}  {:<22} {}", "t", "pc", "instruction", "writes");
-    for _ in 0..80 {
-        let at = ir_pc.get().raw() as u32;
+    for _ in 0..200 {
+        let at = wb_pc.get().raw() as u32;
         sim.cycle();
         let w = wb.get();
         if !w.done.to_bool() {
             println!("{:>4} {:>6}  (bubble)", now(), "");
+            // The halt follows the halting instruction by a cycle, a
+            // bubble.
+            if halt.get().to_bool() {
+                break;
+            }
             continue;
         }
         let wrote = if w.rd.raw() != 0 {
@@ -59,13 +64,10 @@ fn main() {
         };
         let text = disasm(instr.get().raw() as u32);
         println!("{:>4} {at:#06x}  {text:<22} {wrote}", now());
-        if halt.get().to_bool() {
-            break;
-        }
     }
     stop();
     println!();
-    for x in [10usize, 11, 12, 13, 14, 15, 17, 18, 19, 20] {
+    for x in [10usize, 11, 12, 13, 14, 15, 17, 18, 19, 20, 23, 24, 25] {
         println!("x{x:<2} = {:#010x}", regs.read(x).raw());
     }
     for a in 0..3usize {
