@@ -784,7 +784,7 @@ genrule(
     tools = ["//tools/dt2tikz"],
 )
 
-# The paper's waveforms, at column width.
+# The paper's and the tutorial's waveforms, at column width.
 [
     genrule(
         name = "paper_" + name + "_timing",
@@ -809,6 +809,13 @@ genrule(
             "//clocks/clk=>clk,//inp/rx_valid=>inp_valid,//inp/rx_data=>inp," +
             "//inp/rx_ready=>inp_ready,//out/tx_valid=>out_valid," +
             "//out/tx_data=>out,//stage/count=>count",
+            "",
+        ),
+        (
+            "case",
+            "clk,go,state,count,observed",
+            "//clocks/clk=>clk,//go=>go,//sequencer/state=>state," +
+            "//sequencer/count=>count,//observed=>observed",
             "",
         ),
         (
@@ -871,11 +878,11 @@ latex_document(
         ":buildstamp",
         ":vendored_tex",
         ":cheat_run",
-        ":cheat_timing",
+        ":paper_cheat_timing",
         ":case_run",
-        ":case_timing",
+        ":paper_case_timing",
         ":stage_run",
-        ":stage_timing",
+        ":paper_stage_timing",
         "//lib/examples:sources",
     ],
     deps = ["housestyle.tex"],

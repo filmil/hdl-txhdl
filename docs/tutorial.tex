@@ -4,10 +4,11 @@
 % the first time. Built by //docs:tutorial. Every listing is included
 % from the tree, and every printout and figure is what the build made
 % by running the example, so the tutorial cannot say what the code
-% does not do. One column, because it is mostly listings.
-\documentclass[journal,onecolumn,9pt]{IEEEtran}
+% does not do. Two columns, as the paper is; the listings are set at
+% the paper's size, and the waveforms are drawn at column width.
+\documentclass[journal,9pt]{IEEEtran}
 
-\newcommand{\listingsize}{\normalsize}
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
 \input{housestyle}
 
 \InputIfFileExists{buildstamp.tex}{}{}
@@ -116,7 +117,7 @@ stop when the enable drops.
 
 \begin{figure}[htbp]
 \centering
-\input{cheat_timing.tex}
+\input{paper_cheat_timing.tex}
 \caption{The counter, from its trace: \code{enable} drops at cycle
 10, \code{n} counts while it is high, \code{tick} marks the sevens.}
 \label{fig:t-counter}
@@ -181,7 +182,7 @@ nothing else.
 
 \begin{figure}[htbp]
 \centering
-\input{case_timing.tex}
+\input{paper_case_timing.tex}
 \caption{The sequencer: \code{go} for a cycle, then \code{Load},
 three cycles of \code{Run}, \code{Done}, and back to \code{Idle}.}
 \label{fig:t-case}
@@ -225,7 +226,7 @@ sides of the stage.
 
 \begin{figure}[htbp]
 \centering
-\input{stage_timing.tex}
+\input{paper_stage_timing.tex}
 \caption{The stage: a word offered on \code{inp} every other cycle,
 taken, and passed on incremented on \code{out} a cycle later.}
 \label{fig:t-stage}
