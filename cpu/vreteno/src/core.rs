@@ -36,10 +36,9 @@ use txhdl::funcs::{
 use txhdl::types::{Bit, U};
 use txhdl::{case, lower, select, when, Trace, Value};
 
-/// Words of instruction memory and of data memory. Data memory is at
-/// `DATA_BASE`, as the model has it.
+/// Words of instruction memory. The data memory is a device on the
+/// bus, `crate::dmem`, at `DATA_BASE` as the model has it.
 pub const IMEM_WORDS: usize = 1024;
-pub const DMEM_WORDS: usize = 1024;
 pub const DATA_BASE: u32 = crate::model::DATA_BASE;
 
 /// What the core retired this cycle: `done` when an instruction
@@ -308,7 +307,6 @@ pub struct Vreteno {
     pub wb_ir: Reg<U<32>>,
     pub wb_rd: Reg<U<5>>,
     pub wb_alu: Reg<U<32>>,
-    pub wb_ld: Reg<U<32>>,
     pub wb_f3: Reg<U<3>>,
     pub wb_lane: Reg<U<2>>,
     pub wb_load: Reg<Bit>,
@@ -323,7 +321,6 @@ pub struct Vreteno {
     pub mip: Reg<U<32>>,
     pub mtval: Reg<U<32>>,
     pub wb_dev: Reg<U<32>>,
-    pub wb_is_dev: Reg<Bit>,
     pub dev_wait: Reg<Bit>,
     /// Three of the cycle's decisions, kept as wires so that a trace
     /// shows them: whether the instruction in execute is stalled, whether
@@ -340,10 +337,6 @@ pub struct Vreteno {
     pub m_neg_r: Reg<Bit>,
     pub regs: Mem<U<32>, 32>,
     pub imem: Mem<U<32>, IMEM_WORDS>,
-    pub dmem0: Mem<U<8>, DMEM_WORDS>,
-    pub dmem1: Mem<U<8>, DMEM_WORDS>,
-    pub dmem2: Mem<U<8>, DMEM_WORDS>,
-    pub dmem3: Mem<U<8>, DMEM_WORDS>,
 }
 
 impl Vreteno {
@@ -360,14 +353,6 @@ impl Vreteno {
     /// instruction not yet retired, in writeback, else in execute,
     /// else the fetch's. What the model's program counter is compared
     /// against.
-    pub fn data_word(&self, at: usize) -> u32 {
-        let lane = |m: &Mem<U<8>, DMEM_WORDS>| m.read(at).raw() as u32;
-        lane(&self.dmem0)
-            | lane(&self.dmem1) << 8
-            | lane(&self.dmem2) << 16
-            | lane(&self.dmem3) << 24
-    }
-
     pub fn arch_pc(&self) -> U<32> {
         if self.wb_valid.get().to_bool() {
             self.wb_pc.get()
@@ -405,8 +390,7 @@ impl
             let (wb_valid, wb_rd, wb_alu) =
                 (self.wb_valid.get(), self.wb_rd.get(), self.wb_alu.get());
             let wb_ir = self.wb_ir.get();
-            let (wb_ld, wb_f3, wb_lane) =
-                (self.wb_ld.get(), self.wb_f3.get(), self.wb_lane.get());
+            let (wb_f3, wb_lane) = (self.wb_f3.get(), self.wb_lane.get());
             let (wb_load, wb_stop, halted) =
                 (self.wb_load.get(), self.wb_stop.get(), self.halted.get());
             let (mstatus, mtvec, mscratch) =
@@ -414,7 +398,7 @@ impl
             let (mepc, mcause) = (self.mepc.get(), self.mcause.get());
             let (mie_r, mip, mtval) =
                 (self.mie.get(), self.mip.get(), self.mtval.get());
-            let (wb_dev, wb_is_dev) = (self.wb_dev.get(), self.wb_is_dev.get());
+            let wb_dev = self.wb_dev.get();
             let dev_wait = self.dev_wait.get();
             // The bus's answer, taken whenever it comes.
             let resp_valid = Bit::from_bool(resp.peek().is_some());
@@ -427,11 +411,8 @@ impl
             // lane and the width the execute stage read with it,
             // extended; else the value execute computed. Written to the
             // register file, and forwarded to execute below.
-            // A load's word: the data memory's, read into its register at
-            // the edge, or a device's, read into another, so that the
-            // memory's register stays the block RAM's own.
-            let wb_src = mux(wb_is_dev, wb_dev, wb_ld);
-            let loaded = extended(wb_f3, wb_lane, wb_src);
+            // A load's word: what the bus answered, in its register.
+            let loaded = extended(wb_f3, wb_lane, wb_dev);
             let wb_val = mux(wb_load, loaded, wb_alu);
             // A device load sits in writeback while its wait is on, and
             // retires the cycle after its answer has landed.
@@ -506,7 +487,8 @@ impl
             }));
             let is_load = eq(opcode, U::from(0x03u8));
             let is_store = eq(opcode, U::from(0x23u8));
-            let is_dev = is_zero(addr.slice::<13, 19>()).not();
+            // Everything from the data memory up is on the bus.
+            let is_dev = is_zero(addr.slice::<12, 20>()).not();
             let here = valid.and(rst.not()).and(stopped.not());
             // A load or a store waits for room on the bus whatever its
             // address, so that the fetch's hold does not hang on the
@@ -539,17 +521,8 @@ impl
             let alu = alu(f3, sub, a, alu_b);
             // The branch condition.
             let taken = branch(f3, a, b);
-            // Loads and stores: the word, the lane within it. A load
-            // takes the raw word into the writeback stage, which is the
-            // synchronous read a block RAM has; a store merges its byte
-            // or half into the word and writes it here.
-            let daddr = addr.wrapping_sub(U::from(DATA_BASE)).slice::<2, 10>();
-            let word = self
-                .dmem3
-                .read(daddr)
-                .concat::<8, 16>(self.dmem2.read(daddr))
-                .concat::<8, 24>(self.dmem1.read(daddr))
-                .concat::<8, 32>(self.dmem0.read(daddr));
+            // Loads and stores go out on the bus: the lane within the
+            // word, what each lane takes on a store, and which lanes.
             let lane = addr.slice::<0, 2>();
             // What each lane takes on a store, and which lanes take it.
             let sdata = store_data(f3, b);
@@ -661,19 +634,6 @@ impl
             // and marked empty.
             when!(wb_write => { self.regs.at(wb_rd) <= wb_val });
             self.halted.set(halted.or(wb_stop));
-            let store_mem = store.and(is_dev.not());
-            when!(store_mem.and(en.bit(0)) => {
-                self.dmem0.at(daddr) <= sdata.slice::<0, 8>()
-            });
-            when!(store_mem.and(en.bit(1)) => {
-                self.dmem1.at(daddr) <= sdata.slice::<8, 8>()
-            });
-            when!(store_mem.and(en.bit(2)) => {
-                self.dmem2.at(daddr) <= sdata.slice::<16, 8>()
-            });
-            when!(store_mem.and(en.bit(3)) => {
-                self.dmem3.at(daddr) <= sdata.slice::<24, 8>()
-            });
             // The bus: a request is the address, the data in its lanes,
             // the lanes a store covers, and whether it is a store. The
             // load's wait is a register.
@@ -801,8 +761,6 @@ impl
                     self.wb_ir <= ir;
                     self.wb_rd <= mux(wrote, rd, U::from(0u8));
                     self.wb_alu <= wval;
-                    self.wb_ld <= word;
-                    self.wb_is_dev <= is_dev.and(is_load);
                     self.wb_f3 <= f3;
                     self.wb_lane <= lane;
                     self.wb_load <= is_load.and(run);

@@ -60,15 +60,17 @@ module vreteno_board(
   // line; the external line has nothing on this board to raise it yet;
   // the serial port's line goes to the board's USB serial bridge.
   wire [68:0] req_tx_data, req_rx_data, treq_tx_data, treq_rx_data;
-  wire [68:0] ureq_tx_data, ureq_rx_data;
+  wire [68:0] ureq_tx_data, ureq_rx_data, dreq_tx_data, dreq_rx_data;
   wire req_tx_valid, req_tx_ready, req_rx_valid, req_rx_ready;
   wire treq_tx_valid, treq_tx_ready, treq_rx_valid, treq_rx_ready;
   wire ureq_tx_valid, ureq_tx_ready, ureq_rx_valid, ureq_rx_ready;
+  wire dreq_tx_valid, dreq_tx_ready, dreq_rx_valid, dreq_rx_ready;
   wire [31:0] resp_tx_data, resp_rx_data, tresp_tx_data, tresp_rx_data;
-  wire [31:0] uresp_tx_data, uresp_rx_data;
+  wire [31:0] uresp_tx_data, uresp_rx_data, dresp_tx_data, dresp_rx_data;
   wire resp_tx_valid, resp_tx_ready, resp_rx_valid, resp_rx_ready;
   wire tresp_tx_valid, tresp_tx_ready, tresp_rx_valid, tresp_rx_ready;
   wire uresp_tx_valid, uresp_tx_ready, uresp_rx_valid, uresp_rx_ready;
+  wire dresp_tx_valid, dresp_tx_ready, dresp_rx_valid, dresp_rx_ready;
   wire tirq, uirq;
   vreteno core (.clk(clk), .rst(rst), .irq(uirq), .tirq(tirq),
     .resp_data(resp_rx_data), .resp_valid(resp_rx_valid), .resp_ready(resp_rx_ready),
@@ -79,14 +81,25 @@ module vreteno_board(
     .rx_data(req_rx_data), .rx_valid(req_rx_valid), .rx_ready(req_rx_ready));
   router rtr (.clk(clk),
     .req_data(req_rx_data), .req_valid(req_rx_valid), .req_ready(req_rx_ready),
+    .mem_resp_data(dresp_rx_data), .mem_resp_valid(dresp_rx_valid), .mem_resp_ready(dresp_rx_ready),
     .timer_resp_data(tresp_rx_data), .timer_resp_valid(tresp_rx_valid), .timer_resp_ready(tresp_rx_ready),
     .uart_resp_data(uresp_rx_data), .uart_resp_valid(uresp_rx_valid), .uart_resp_ready(uresp_rx_ready),
+    .mem_req_data(dreq_tx_data), .mem_req_valid(dreq_tx_valid), .mem_req_ready(dreq_tx_ready),
     .timer_req_data(treq_tx_data), .timer_req_valid(treq_tx_valid), .timer_req_ready(treq_tx_ready),
     .uart_req_data(ureq_tx_data), .uart_req_valid(ureq_tx_valid), .uart_req_ready(ureq_tx_ready),
     .resp_data(resp_tx_data), .resp_valid(resp_tx_valid), .resp_ready(resp_tx_ready));
   chan32 resp_chan (.clk(clk),
     .tx_data(resp_tx_data), .tx_valid(resp_tx_valid), .tx_ready(resp_tx_ready),
     .rx_data(resp_rx_data), .rx_valid(resp_rx_valid), .rx_ready(resp_rx_ready));
+  chan69 dreq_chan (.clk(clk),
+    .tx_data(dreq_tx_data), .tx_valid(dreq_tx_valid), .tx_ready(dreq_tx_ready),
+    .rx_data(dreq_rx_data), .rx_valid(dreq_rx_valid), .rx_ready(dreq_rx_ready));
+  dmem mem (.clk(clk),
+    .req_data(dreq_rx_data), .req_valid(dreq_rx_valid), .req_ready(dreq_rx_ready),
+    .resp_data(dresp_tx_data), .resp_valid(dresp_tx_valid), .resp_ready(dresp_tx_ready));
+  chan32 dresp_chan (.clk(clk),
+    .tx_data(dresp_tx_data), .tx_valid(dresp_tx_valid), .tx_ready(dresp_tx_ready),
+    .rx_data(dresp_rx_data), .rx_valid(dresp_rx_valid), .rx_ready(dresp_rx_ready));
   chan69 treq_chan (.clk(clk),
     .tx_data(treq_tx_data), .tx_valid(treq_tx_valid), .tx_ready(treq_tx_ready),
     .rx_data(treq_rx_data), .rx_valid(treq_rx_valid), .rx_ready(treq_rx_ready));

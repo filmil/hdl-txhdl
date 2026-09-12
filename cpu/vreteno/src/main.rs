@@ -8,6 +8,7 @@ use txhdl::comp::{chan, join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::buffer::Buffer;
 use vreteno32::core::{Vreteno, Writeback};
+use vreteno32::dmem::Dmem;
 use vreteno32::isa::disasm;
 use vreteno32::program::demo;
 use vreteno32::router::Router;
@@ -19,11 +20,12 @@ fn main() {
     let program = demo();
     let mut cpu = Vreteno::with(&program);
     let (wb_pc, regs) = (cpu.wb_pc.clone(), cpu.regs.clone());
+    let mut dmem = Dmem::default();
     let lanes = (
-        cpu.dmem0.clone(),
-        cpu.dmem1.clone(),
-        cpu.dmem2.clone(),
-        cpu.dmem3.clone(),
+        dmem.lane0.clone(),
+        dmem.lane1.clone(),
+        dmem.lane2.clone(),
+        dmem.lane3.clone(),
     );
     let word = move |a: usize| -> u32 {
         (lanes.0.read(a).raw() as u32)
@@ -45,6 +47,8 @@ fn main() {
     let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
     let (req_tx, req_rx) = chan::<U<69>, DefaultClock>();
     let (resp_tx, resp_rx) = chan::<U<32>, DefaultClock>();
+    let (dreq_tx, dreq_rx) = chan::<U<69>, DefaultClock>();
+    let (dresp_tx, dresp_rx) = chan::<U<32>, DefaultClock>();
     let (treq_tx, treq_rx) = chan::<U<69>, DefaultClock>();
     let (tresp_tx, tresp_rx) = chan::<U<32>, DefaultClock>();
     let (ureq_tx, ureq_rx) = chan::<U<69>, DefaultClock>();
@@ -65,11 +69,14 @@ fn main() {
         w.add("uirq", &uirq);
         w.add("resp", &resp_rx);
         w.add("req", &req_rx);
+        w.add("dreq", &dreq_rx);
+        w.add("dresp", &dresp_rx);
         w.add("treq", &treq_rx);
         w.add("tresp", &tresp_rx);
         w.add("ureq", &ureq_rx);
         w.add("uresp", &uresp_rx);
         w.add("cpu", &cpu);
+        w.add("dmem", &dmem);
         w.add("router", &router);
         w.add("timer", &timer);
         w.add("uart", &uart);
@@ -84,12 +91,17 @@ fn main() {
     let (rst_t, rst_u) = (rst.clone(), rst.clone());
     let mut sim = Running::new(join2(
         join2(
-            timer.run((rst_t, treq_rx), (tresp_tx, tirq_out)),
-            uart.run((rst_u, rx, ureq_rx), (uresp_tx, tx_out, uirq_out)),
+            join2(
+                timer.run((rst_t, treq_rx), (tresp_tx, tirq_out)),
+                uart.run((rst_u, rx, ureq_rx), (uresp_tx, tx_out, uirq_out)),
+            ),
+            dmem.run(dreq_rx, dresp_tx),
         ),
         join2(
-            router
-                .run((req_rx, tresp_rx, uresp_rx), (treq_tx, ureq_tx, resp_tx)),
+            router.run(
+                (req_rx, dresp_rx, tresp_rx, uresp_rx),
+                (dreq_tx, treq_tx, ureq_tx, resp_tx),
+            ),
             cpu.run(
                 (rst, irq, tirq, resp_rx),
                 (halt_out, instr_out, wb_out, req_tx),
@@ -176,10 +188,15 @@ fn main() {
     // baud rate; and the two channels as hardware, at the widths of the
     // request and the response, for the board to put between them.
     let mut router = Router::lowered("router");
+    router.trace_as("mem_req", "dreq");
+    router.trace_as("mem_resp", "dresp");
     router.trace_as("timer_req", "treq");
     router.trace_as("timer_resp", "tresp");
     router.trace_as("uart_req", "ureq");
     router.trace_as("uart_resp", "uresp");
+    let mut dmem = Dmem::lowered("dmem");
+    dmem.trace_as("req", "dreq");
+    dmem.trace_as("resp", "dresp");
     let mut timer = Timer::lowered("timer");
     timer.trace_as("req", "treq");
     timer.trace_as("resp", "tresp");
@@ -191,12 +208,13 @@ fn main() {
     let req_chan = Buffer::<69>::lowered("chan69");
     let resp_chan = Buffer::<32>::lowered("chan32");
     txhdl::netlist::write_netlists_from_env(&[
-        &lowered, &router, &timer, &uart4, &uart, &req_chan, &resp_chan,
+        &lowered, &router, &dmem, &timer, &uart4, &uart, &req_chan, &resp_chan,
     ]);
     print!(
-        "\n{}\n{}\n{}\n{}",
+        "\n{}\n{}\n{}\n{}\n{}",
         lowered.verilog(),
         router.verilog(),
+        dmem.verilog(),
         timer.verilog(),
         uart.verilog()
     );

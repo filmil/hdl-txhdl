@@ -12,6 +12,7 @@ rust_library(
     srcs = [
         "src/bus.rs",
         "src/core.rs",
+        "src/dmem.rs",
         "src/isa.rs",
         "src/lib.rs",
         "src/model.rs",

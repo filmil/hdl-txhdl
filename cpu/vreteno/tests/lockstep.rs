@@ -7,6 +7,7 @@
 use txhdl::comp::{chan, join2, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use vreteno32::core::{Vreteno, Writeback};
+use vreteno32::dmem::Dmem;
 use vreteno32::isa::{decode, disasm, Kind, CAUSE_MEXT, CAUSE_MTIMER};
 use vreteno32::model::{Halt, Model};
 use vreteno32::program::{demo, random};
@@ -26,11 +27,12 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         cpu.regs.clone(),
         cpu.halted.clone(),
     );
+    let mut dmem = Dmem::default();
     let lanes = (
-        cpu.dmem0.clone(),
-        cpu.dmem1.clone(),
-        cpu.dmem2.clone(),
-        cpu.dmem3.clone(),
+        dmem.lane0.clone(),
+        dmem.lane1.clone(),
+        dmem.lane2.clone(),
+        dmem.lane3.clone(),
     );
     let word = move |a: usize| -> u32 {
         (lanes.0.read(a).raw() as u32)
@@ -78,6 +80,8 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
     let (req_tx, req_rx) = chan::<U<69>, DefaultClock>();
     let (resp_tx, resp_rx) = chan::<U<32>, DefaultClock>();
+    let (dreq_tx, dreq_rx) = chan::<U<69>, DefaultClock>();
+    let (dresp_tx, dresp_rx) = chan::<U<32>, DefaultClock>();
     let (treq_tx, treq_rx) = chan::<U<69>, DefaultClock>();
     let (tresp_tx, tresp_rx) = chan::<U<32>, DefaultClock>();
     let (ureq_tx, ureq_rx) = chan::<U<69>, DefaultClock>();
@@ -91,12 +95,17 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let (rst_t, rst_u) = (rst.clone(), rst.clone());
     let mut sim = Running::new(join2(
         join2(
-            timer.run((rst_t, treq_rx), (tresp_tx, tirq_out)),
-            uart.run((rst_u, rx, ureq_rx), (uresp_tx, tx_out, uirq_out)),
+            join2(
+                timer.run((rst_t, treq_rx), (tresp_tx, tirq_out)),
+                uart.run((rst_u, rx, ureq_rx), (uresp_tx, tx_out, uirq_out)),
+            ),
+            dmem.run(dreq_rx, dresp_tx),
         ),
         join2(
-            router
-                .run((req_rx, tresp_rx, uresp_rx), (treq_tx, ureq_tx, resp_tx)),
+            router.run(
+                (req_rx, dresp_rx, tresp_rx, uresp_rx),
+                (dreq_tx, treq_tx, ureq_tx, resp_tx),
+            ),
             cpu.run(
                 (rst, irq, tirq, resp_rx),
                 (halt_out, instr_out, wb_out, req_tx),

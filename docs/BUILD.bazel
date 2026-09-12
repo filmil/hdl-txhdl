@@ -785,6 +785,7 @@ waveform(
     lowered = [
         ("vreteno", "cpu"),
         ("router", "router"),
+        ("dmem", "dmem"),
         ("timer", "timer"),
         ("uart4", "uart"),
     ],

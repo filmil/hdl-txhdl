@@ -3,6 +3,7 @@
 //! checked against and the programs it runs.
 pub mod bus;
 pub mod core;
+pub mod dmem;
 pub mod isa;
 pub mod model;
 pub mod program;
