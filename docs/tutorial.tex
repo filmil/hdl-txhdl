@@ -279,6 +279,27 @@ A value of your own, an enum or a struct with \code{\#[derive(Value)]},
 shows in a trace by its variant name or field by field, as
 \code{state} did in Fig.~\ref{fig:t-case}.
 
+One more thing you will want to watch: a signal inside the unit that
+is neither a register nor a port. A \code{let} in the loop lives
+only in the step, so the trace cannot see it. Keep it as a field of
+type \code{Wire<T>} instead, drive it with \code{set} where the
+\code{let} was, and read it back with \code{get} in the same step:
+it shows in the trace under the unit's name, and in the netlist it is
+exactly the wire the \code{let} would have been, so the hardware
+does not change. The divider in the examples document~\cite{examples}
+keeps its two decisions that way, and the Vreteno core keeps its
+stall, its interrupt and its redirect so.
+
+A unit runs in a plain \code{\#[test]} too, with the same
+\code{signal}, \code{Running::new} and \code{cycle} as in a
+\code{main}. The runtime's clock and executor are per thread, so the
+tests of a crate run in parallel as Rust runs them, each with a time
+of its own. Compare the unit's registers after a cycle, not its
+output wires, which a process sets during the step from the state
+before it. A \code{\#[test]} is the place for assertions about
+values; the netlist check needs a trace, and comes from the
+\code{waveform()} entry of Step Seven.
+
 \section{Step Six: From Rust to Hardware}
 \label{sec:t-netlist}
 
