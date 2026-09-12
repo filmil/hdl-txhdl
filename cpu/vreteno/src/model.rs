@@ -3,8 +3,9 @@
 //! written against the decoder and nothing else. The core is checked
 //! against it, in lockstep, every cycle.
 use crate::isa::{
-    decode, Kind, CAUSE_ECALL, CAUSE_ILLEGAL, CAUSE_MEXT, CSR_MCAUSE, CSR_MEPC,
-    CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT,
+    decode, Kind, CAUSE_ECALL, CAUSE_ILLEGAL, CAUSE_MEXT, CAUSE_MTIMER,
+    CSR_MCAUSE, CSR_MEPC, CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS,
+    CSR_MTVAL, CSR_MTVEC, MEXT, MTIMER, TIMER_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -42,6 +43,11 @@ pub struct Model {
     pub x: [u32; 32],
     pub mem: Vec<u32>,
     pub csr: Csr,
+    /// The timer's count, which is the core's: the model has no clock,
+    /// so the caller sets it before each step, as it stood when the
+    /// instruction executed. The compare register is the model's own.
+    pub mtime: u64,
+    pub mtimecmp: u64,
     pub halted: Option<Halt>,
 }
 
@@ -52,6 +58,8 @@ impl Default for Model {
             x: [0; 32],
             mem: vec![0; DATA_BYTES as usize / 4],
             csr: Csr::default(),
+            mtime: 0,
+            mtimecmp: 0,
             halted: None,
         }
     }
@@ -61,18 +69,44 @@ const MIE: u32 = 1 << 3;
 const MPIE: u32 = 1 << 7;
 
 impl Model {
-    /// A word of data memory, by byte address; `None` outside it.
+    /// A word of data memory, or of the timer, by byte address; `None`
+    /// outside both.
     fn word(&self, addr: u32) -> Option<u32> {
+        let t = addr.wrapping_sub(TIMER_BASE);
+        if t < 16 {
+            let v = if t < 8 { self.mtime } else { self.mtimecmp };
+            return Some((v >> (8 * (t & 4))) as u32);
+        }
         let off = addr.wrapping_sub(DATA_BASE);
         (off < DATA_BYTES).then(|| self.mem[(off / 4) as usize])
     }
 
+    /// A store's word. The count is the core's, so a store to it is
+    /// the core's business and the next step brings the new count.
     fn set_word(&mut self, addr: u32, v: u32) -> bool {
+        let t = addr.wrapping_sub(TIMER_BASE);
+        if t < 16 {
+            if t >= 8 {
+                let shift = 8 * (t & 4);
+                self.mtimecmp = (self.mtimecmp & !(0xffff_ffff << shift))
+                    | (v as u64) << shift;
+            }
+            return true;
+        }
         let off = addr.wrapping_sub(DATA_BASE);
         if off < DATA_BYTES {
             self.mem[(off / 4) as usize] = v;
         }
         off < DATA_BYTES
+    }
+
+    /// The timer's pending bit: the count has reached the compare.
+    fn mtip(&self) -> u32 {
+        if self.mtime >= self.mtimecmp {
+            MTIMER
+        } else {
+            0
+        }
     }
 
     fn csr_read(&self, addr: u32) -> Option<u32> {
@@ -83,7 +117,7 @@ impl Model {
             CSR_MEPC => self.csr.mepc,
             CSR_MCAUSE => self.csr.mcause,
             CSR_MIE => self.csr.mie,
-            CSR_MIP => self.csr.mip,
+            CSR_MIP => self.csr.mip | self.mtip(),
             CSR_MTVAL => self.csr.mtval,
             _ => return None,
         })
@@ -102,7 +136,7 @@ impl Model {
             CSR_MSCRATCH => self.csr.mscratch = v,
             CSR_MEPC => self.csr.mepc = v & !1,
             CSR_MCAUSE => self.csr.mcause = v,
-            CSR_MIE => self.csr.mie = v & MEXT,
+            CSR_MIE => self.csr.mie = v & (MEXT | MTIMER),
             CSR_MIP => self.csr.mip = v & MEXT,
             CSR_MTVAL => self.csr.mtval = v,
             _ => {}
@@ -122,17 +156,28 @@ impl Model {
         self.pc = self.csr.mtvec;
     }
 
-    /// Whether an interrupt would be taken before the next instruction:
-    /// pending, enabled in `mie`, and interrupts enabled in `mstatus`.
-    pub fn interrupt(&self) -> bool {
-        self.csr.mip & self.csr.mie & MEXT != 0 && self.csr.mstatus & MIE != 0
+    /// The interrupt that would be taken before the next instruction,
+    /// if any: the external one first, then the timer's, each pending
+    /// and enabled in `mie`, with interrupts enabled in `mstatus`.
+    pub fn interrupt(&self) -> Option<u32> {
+        if self.csr.mstatus & MIE == 0 {
+            return None;
+        }
+        let pending = (self.csr.mip | self.mtip()) & self.csr.mie;
+        if pending & MEXT != 0 {
+            Some(CAUSE_MEXT)
+        } else if pending & MTIMER != 0 {
+            Some(CAUSE_MTIMER)
+        } else {
+            None
+        }
     }
 
     /// One instruction, or the interrupt taken instead of it when
-    /// `interrupt` says so: the caller decides, since the core decides
-    /// on the pending bit as it stood a cycle earlier. Does nothing once
-    /// halted.
-    pub fn step(&mut self, imem: &[u32], interrupt: bool) {
+    /// `interrupt` names one: the caller decides, since the core decides
+    /// on the pending bits and the count as they stood a cycle earlier.
+    /// Does nothing once halted.
+    pub fn step(&mut self, imem: &[u32], interrupt: Option<u32>) {
         if self.halted.is_some() {
             return;
         }
@@ -140,8 +185,8 @@ impl Model {
             self.halted = Some(Halt::Fault(self.pc));
             return;
         };
-        if interrupt {
-            self.trap(CAUSE_MEXT, 0);
+        if let Some(cause) = interrupt {
+            self.trap(cause, 0);
             return;
         }
         let d = decode(w);

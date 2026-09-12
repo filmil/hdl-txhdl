@@ -19,8 +19,9 @@
 //! same file simulates and lowers, and the netlist is simulated
 //! against the trace the simulation wrote.
 use crate::isa::{
-    CAUSE_ECALL, CAUSE_ILLEGAL, CAUSE_MEXT, CSR_MCAUSE, CSR_MEPC, CSR_MIE,
-    CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT,
+    CAUSE_ECALL, CAUSE_ILLEGAL, CAUSE_MEXT, CAUSE_MTIMER, CSR_MCAUSE, CSR_MEPC,
+    CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT,
+    MTIMER, TIMER_BASE,
 };
 use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
 use txhdl::funcs::{
@@ -85,6 +86,10 @@ pub struct Vreteno {
     pub mie: Reg<U<32>>,
     pub mip: Reg<U<32>>,
     pub mtval: Reg<U<32>>,
+    pub mtime: Reg<U<64>>,
+    pub mtimecmp: Reg<U<64>>,
+    pub wb_dev: Reg<U<32>>,
+    pub wb_is_dev: Reg<Bit>,
     pub m_busy: Reg<Bit>,
     pub m_count: Reg<U<6>>,
     pub m_hi: Reg<U<33>>,
@@ -160,6 +165,8 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
             let (mepc, mcause) = (self.mepc.get(), self.mcause.get());
             let (mie_r, mip, mtval) =
                 (self.mie.get(), self.mip.get(), self.mtval.get());
+            let (mtime, mtimecmp) = (self.mtime.get(), self.mtimecmp.get());
+            let (wb_dev, wb_is_dev) = (self.wb_dev.get(), self.wb_is_dev.get());
             let (m_busy, m_count) = (self.m_busy.get(), self.m_count.get());
             let (m_hi, m_lo, m_d) =
                 (self.m_hi.get(), self.m_lo.get(), self.m_d.get());
@@ -171,12 +178,16 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
             let ld_bsh = wb_lane.concat::<3, 5>(U::<3>::from(0u8));
             let ld_hsh =
                 wb_lane.slice::<1, 1>().concat::<4, 5>(U::<4>::from(0u8));
-            let ld_octet = shr(wb_ld, ld_bsh.raw() as usize).slice::<0, 8>();
-            let ld_half = shr(wb_ld, ld_hsh.raw() as usize).slice::<0, 16>();
+            // A load's word: the data memory's, read into its register at
+            // the edge, or the timer's, read into another, so that the
+            // memory's register stays the block RAM's own.
+            let wb_src = mux(wb_is_dev, wb_dev, wb_ld);
+            let ld_octet = shr(wb_src, ld_bsh.raw() as usize).slice::<0, 8>();
+            let ld_half = shr(wb_src, ld_hsh.raw() as usize).slice::<0, 16>();
             let loaded = select!(wb_f3.raw() => {
                 0 => ld_octet.sext::<32>(),
                 1 => ld_half.sext::<32>(),
-                2 => wb_ld,
+                2 => wb_src,
                 4 => ld_octet.zext::<32>(),
                 _ => ld_half.zext::<32>(),
             });
@@ -240,7 +251,10 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
             // when it is pending, enabled, and interrupts are enabled; an
             // M instruction under one does not start, so it cannot hold
             // the stall the interrupt waits for.
-            let int_ok = mstatus.bit(3).and(mie_r.bit(11)).and(mip.bit(11));
+            let mtip = lt(mtime, mtimecmp).not();
+            let ext_ok = mie_r.bit(11).and(mip.bit(11));
+            let tim_ok = mie_r.bit(7).and(mtip);
+            let int_ok = mstatus.bit(3).and(ext_ok.or(tim_ok));
             let stall_m = m_here.and(int_ok.not()).and(m_done.not());
             let stall = stall_ld.or(stall_m);
             let a = mux(
@@ -327,6 +341,18 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
                 .concat::<8, 32>(self.dmem0.read(daddr));
             let lane = addr.slice::<0, 2>();
             let upper = addr.bit(1);
+            // The timer: four words at TIMER_BASE, the count and the
+            // compare, low half then high. A load reads one, a store
+            // writes one through the lanes as a memory word is written,
+            // and the count runs from the reset.
+            let is_dev = eq(addr.slice::<4, 28>(), U::from(TIMER_BASE >> 4));
+            let dev_sel = addr.slice::<2, 2>();
+            let dev_word = select!(dev_sel.raw() => {
+                0 => mtime.slice::<0, 32>(),
+                1 => mtime.slice::<32, 32>(),
+                2 => mtimecmp.slice::<0, 32>(),
+                _ => mtimecmp.slice::<32, 32>(),
+            });
             // What each lane takes on a store: its byte of the word for
             // a word, the half's byte for a half, the byte for a byte;
             // and whether it takes it at all.
@@ -379,7 +405,7 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
                 0x341 => mepc,
                 0x342 => mcause,
                 0x304 => mie_r,
-                0x344 => mip,
+                0x344 => mux(mtip, bor(mip, U::<32>::from(MTIMER)), mip),
                 0x343 => mtval,
                 _ => U::<32>::from(0u32),
             });
@@ -412,7 +438,11 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
             let trap = run.and(is_ecall.or(known.not())).or(int_take);
             let cause = mux(
                 int_take,
-                U::<32>::from(CAUSE_MEXT),
+                mux(
+                    ext_ok,
+                    U::<32>::from(CAUSE_MEXT),
+                    U::<32>::from(CAUSE_MTIMER),
+                ),
                 mux(
                     is_ecall,
                     U::<32>::from(CAUSE_ECALL),
@@ -473,10 +503,37 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
             // and marked empty.
             when!(wb_write => { self.regs.at(wb_rd) <= wb_val });
             self.halted.set(halted.or(wb_stop));
-            when!(store.and(en0) => { self.dmem0.at(daddr) <= b0 });
-            when!(store.and(en1) => { self.dmem1.at(daddr) <= d1 });
-            when!(store.and(en2) => { self.dmem2.at(daddr) <= d2 });
-            when!(store.and(en3) => { self.dmem3.at(daddr) <= d3 });
+            let store_mem = store.and(is_dev.not());
+            when!(store_mem.and(en0) => { self.dmem0.at(daddr) <= b0 });
+            when!(store_mem.and(en1) => { self.dmem1.at(daddr) <= d1 });
+            when!(store_mem.and(en2) => { self.dmem2.at(daddr) <= d2 });
+            when!(store_mem.and(en3) => { self.dmem3.at(daddr) <= d3 });
+            // The timer counts, and a store to one of its words puts the
+            // lanes the store covers into that word.
+            let dev_new = mux(en3, d3, dev_word.slice::<24, 8>())
+                .concat::<8, 16>(mux(en2, d2, dev_word.slice::<16, 8>()))
+                .concat::<8, 24>(mux(en1, d1, dev_word.slice::<8, 8>()))
+                .concat::<8, 32>(mux(en0, b0, dev_word.slice::<0, 8>()));
+            let store_dev = store.and(is_dev);
+            self.mtime.set(mux(
+                rst,
+                U::<64>::from(0u32),
+                mtime.wrapping_add(U::<64>::from(1u32)),
+            ));
+            when!(store_dev.and(eq(dev_sel, U::from(0u8))) => {
+                self.mtime <= mtime.slice::<32, 32>().concat::<32, 64>(dev_new)
+            });
+            when!(store_dev.and(eq(dev_sel, U::from(1u8))) => {
+                self.mtime <= dev_new.concat::<32, 64>(mtime.slice::<0, 32>())
+            });
+            when!(store_dev.and(eq(dev_sel, U::from(2u8))) => {
+                self.mtimecmp <=
+                    mtimecmp.slice::<32, 32>().concat::<32, 64>(dev_new)
+            });
+            when!(store_dev.and(eq(dev_sel, U::from(3u8))) => {
+                self.mtimecmp <=
+                    dev_new.concat::<32, 64>(mtimecmp.slice::<0, 32>())
+            });
             // The CSRs: written by a CSR instruction, by a trap, by mret.
             // The three never coincide in one instruction.
             when!(csr_write.and(eq(f12, U::from(CSR_MSTATUS))) => {
@@ -495,7 +552,7 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
                 self.mcause <= csr_new
             });
             when!(csr_write.and(eq(f12, U::from(CSR_MIE))) => {
-                self.mie <= band(csr_new, U::<32>::from(MEXT))
+                self.mie <= band(csr_new, U::<32>::from(MEXT | MTIMER))
             });
             when!(csr_write.and(eq(f12, U::from(CSR_MTVAL))) => {
                 self.mtval <= csr_new
@@ -593,6 +650,8 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
                 self.wb_rd <= mux(wrote, rd, U::from(0u8));
                 self.wb_alu <= wval;
                 self.wb_ld <= word;
+                self.wb_dev <= dev_word;
+                self.wb_is_dev <= is_dev;
                 self.wb_f3 <= f3;
                 self.wb_lane <= lane;
                 self.wb_load <= is_load.and(run);

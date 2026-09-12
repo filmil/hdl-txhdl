@@ -81,8 +81,12 @@ pub const CSR_MTVAL: u32 = 0x343;
 pub const CAUSE_ILLEGAL: u32 = 2;
 pub const CAUSE_ECALL: u32 = 11;
 pub const CAUSE_MEXT: u32 = 0x8000_000b;
-/// The external interrupt's bit in `mie` and `mip`.
+pub const CAUSE_MTIMER: u32 = 0x8000_0007;
+/// The external and the timer interrupt's bits in `mie` and `mip`.
 pub const MEXT: u32 = 1 << 11;
+pub const MTIMER: u32 = 1 << 7;
+/// The timer's four words: mtime low and high, mtimecmp low and high.
+pub const TIMER_BASE: u32 = 0x2000;
 
 /// A decoded instruction: the mnemonic and its fields, the immediate
 /// already extended to a signed word.
