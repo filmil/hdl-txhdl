@@ -741,7 +741,7 @@ the build ran it.},label={lst:v-out}]{out_vreteno.txt}
 \label{sec:v-netlist}
 
 The Verilog at the end of Listing~\ref{lst:v-out} is the core as
-hardware: thirty-four registers, six memories, the instruction
+hardware: its registers, two memories, the instruction
 memory holding the program, a wire per \code{let} of the loop, three
 temporaries, and one clocked block of a hundred and eighteen lines;
 the timer's, after it, is three registers and a block of eighteen.
@@ -808,8 +808,9 @@ program counter, which only the lockstep test reads, was removed as
 unused, and an advisory on floorplanning.
 
 \begin{table}[htbp]
-\caption{The core on an Artix-7, after synthesis; the timer, a unit
-of its own, is not in it, and is in the board's figures below.}
+\caption{The core on an Artix-7, after synthesis; the data memory,
+the timer and the serial port, units of their own, are not in it,
+and are in the board's figures below.}
 \label{tab:v-synth}
 \centering
 \begin{tabular}{@{}lr@{}}
