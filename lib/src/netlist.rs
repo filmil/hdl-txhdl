@@ -299,6 +299,10 @@ pub struct Lowered {
     pub procs: Vec<Process>,
     /// A memory's first words, as `Mem::with` gave them: a program.
     pub init: Vec<(String, Vec<u128>)>,
+    /// A port's trace scope when it is not the port's own name: a
+    /// channel two units share under one name in the run has a port
+    /// name of its own on each side.
+    pub aliases: Vec<(String, String)>,
 }
 
 impl Lowered {
@@ -335,6 +339,17 @@ impl Lowered {
     /// again here.
     pub fn init(&mut self, mem: &str, words: &[u128]) {
         self.init.push((mem.to_string(), words.to_vec()));
+    }
+    /// Say under which trace scope a port is found, when the run named
+    /// the wire or channel otherwise than the port.
+    pub fn trace_as(&mut self, port: &str, scope: &str) {
+        self.aliases.push((port.to_string(), scope.to_string()));
+    }
+    fn scope_col(&self, port: &str) -> String {
+        match self.aliases.iter().find(|(p, _)| p == port) {
+            Some((_, s)) => format!(" {s}"),
+            None => String::new(),
+        }
     }
     /// Verilog cannot part-select an expression, so every slice of
     /// one is hoisted into a wire of its own, `slN`, declared before
@@ -509,16 +524,17 @@ impl Lowered {
             out.push_str(&format!("{c} in 1\n"));
         }
         for (n, k, w) in &self.ports {
+            let s = self.scope_col(n);
             match k {
-                Kind::Out => out.push_str(&format!("{n} out {w}\n")),
-                Kind::In => out.push_str(&format!("{n} in {w}\n")),
+                Kind::Out => out.push_str(&format!("{n} out {w}{s}\n")),
+                Kind::In => out.push_str(&format!("{n} in {w}{s}\n")),
                 Kind::Tx => out.push_str(&format!(
-                    "{n}_data txout {w}\n{n}_valid txout 1\n\
-                     {n}_ready txin 1\n"
+                    "{n}_data txout {w}{s}\n{n}_valid txout 1{s}\n\
+                     {n}_ready txin 1{s}\n"
                 )),
                 Kind::Rx => out.push_str(&format!(
-                    "{n}_data rxin {w}\n{n}_valid rxin 1\n\
-                     {n}_ready rxout 1\n"
+                    "{n}_data rxin {w}{s}\n{n}_valid rxin 1{s}\n\
+                     {n}_ready rxout 1{s}\n"
                 )),
                 Kind::Reg | Kind::Mem | Kind::Wire => {}
             }

@@ -1490,7 +1490,10 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 let m = m.to_string();
                 let recv = &ts[..end - 3];
                 // A channel's parts are named after the channel.
-                if matches!(m.as_str(), "peek" | "ready" | "recv") {
+                if matches!(
+                    m.as_str(),
+                    "peek" | "ready" | "recv" | "recv_if" | "head"
+                ) {
                     let ch = target_name(recv)?;
                     let part = match m.as_str() {
                         "peek" => "valid",
@@ -2022,6 +2025,39 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     "S::Drive(T::Name(\"{rx}_ready\".to_string()), {g})"
                 ));
             }
+            // A receive under a condition of its own: ready is the
+            // condition, and the take happens when it holds and a
+            // transaction is offered.
+            if text.contains(".recv_if(") {
+                let TokenTree::Ident(rx) = &ts[3] else {
+                    return err(
+                        ts[0].span(),
+                        "expected `let v = rx.recv_if(c)`",
+                    );
+                };
+                let after = ts
+                    .iter()
+                    .position(|t| match t {
+                        TokenTree::Ident(i) => i.to_string() == "recv_if",
+                        _ => false,
+                    })
+                    .and_then(|i| ts.get(i + 1));
+                let Some(TokenTree::Group(g)) = after else {
+                    return err(ts[0].span(), "expected `rx.recv_if(c)`");
+                };
+                let ct: Vec<TokenTree> = g.stream().into_iter().collect();
+                let c = match tr(&ct, &subst) {
+                    Ok(c) => c,
+                    Err(m) => return err(ts[0].span(), &m),
+                };
+                // Ready is the take: the condition and a transaction
+                // offered, which is what the runtime records.
+                let v = ename(&format!("{rx}_valid"));
+                stmts.push(format!(
+                    "S::Drive(T::Name(\"{rx}_ready\".to_string()), \
+                     E::Bin(\"&\", Box::new({c}), Box::new({v})))"
+                ));
+            }
             if text.starts_with("let") {
                 // `let a = e` or `let (a, b) = (e1, e2)`, bound pairwise.
                 let (names, exprs): (Vec<Vec<TokenTree>>, Vec<Vec<TokenTree>>) =
@@ -2296,6 +2332,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          wires: vec![{wires}],\n\
          procs: vec![{procs}],\n\
          init: Vec::new(),\n\
+         aliases: Vec::new(),\n\
          }}\n}}\n\
          /// The Verilog of this unit.\n\
          pub fn verilog(name: &str) -> String {{\n\

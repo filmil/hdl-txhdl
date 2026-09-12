@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-//! A tap between two channels, lowered: it takes every word offered,
-//! with no wait before the receive, so its ready is simply high; and
-//! it sends on only the odd ones, a send under `when!`, so its valid is
-//! the condition. A unit that runs every cycle and talks over channels
-//! by predicate rather than by waiting, which is how a core drives a
-//! bus. Checked under nvc and Verilator against its trace.
+//! A tap between two channels, lowered: it takes a word whenever one
+//! is offered and there is room to pass it on, a receive under a
+//! condition, `recv_if`, so its ready is the condition and the offer;
+//! and it sends on only the odd ones, a send under `when!`, so its
+//! valid is the arm's condition. A unit that runs every cycle and
+//! talks over channels by predicate rather than by waiting, which is
+//! how a core drives a bus. Checked under nvc and Verilator against
+//! its trace.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, join2, now, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
@@ -23,9 +25,11 @@ impl Unit<Rx<U<8>>, Tx<U<8>>> for Tap {
         loop {
             DefaultClock::rising().await;
             let offered = Bit::from_bool(inp.peek().is_some());
-            let v = inp.recv().unwrap_or_default();
-            let odd = offered.and(v.bit(0));
-            when!(offered => { self.seen <= self.seen.get().wrapping_add(1) });
+            let room = out.ready();
+            let v = inp.recv_if(room).unwrap_or_default();
+            let taken = offered.and(room);
+            let odd = taken.and(v.bit(0));
+            when!(taken => { self.seen <= self.seen.get().wrapping_add(1) });
             when!(odd => {
                 out.send(v);
                 self.passed <= self.passed.get().wrapping_add(1)

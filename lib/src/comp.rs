@@ -239,6 +239,21 @@ impl<T: Transaction, C: Clock> Rx<T, C> {
         commit(self.0.clone());
         Some(v)
     }
+    /// The head's data, as the edge left it, or the default when there
+    /// is none: what a process looks at before deciding to take.
+    pub fn head(&self) -> T {
+        self.0.head.get().unwrap_or_default()
+    }
+    /// Take the head only under a condition: `ready` is the condition,
+    /// which is what a process that runs every cycle says when it can
+    /// take a transaction only if it has somewhere to put it.
+    pub fn recv_if(&self, c: Bit) -> Option<T> {
+        if c.to_bool() {
+            self.recv()
+        } else {
+            None
+        }
+    }
 }
 
 /// What every member of an interface can do. `split` consumes the member

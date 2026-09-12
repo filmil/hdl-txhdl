@@ -7,22 +7,26 @@ is offered and there is room, then receives and sends, and the
 lowering makes the wait's condition the guard of every drive, the
 \code{ready} of the receive and the \code{valid} of the send. A unit
 that runs every cycle, as a processor core does, talks over its
-channels differently. It receives with no wait before the receive,
-which takes whatever is offered at every edge, so its \code{ready}
-is its \code{valid}, the take itself, which is what the runtime
-records as ready; and it sends under \code{when!}, so the channel's
-\code{valid} is the arm's condition, or its negation in the
-\code{else} arm, and the data is driven whatever the condition, since
-data under a low \code{valid} means nothing. The tap takes every
-word, counts them, and passes on the odd ones, counted too. This is
-the form the Vreteno core's bus takes.
+channels differently. It receives with no wait before the receive.
+A plain \code{recv} takes whatever is offered at every edge, so its
+\code{ready} is its \code{valid}, the take itself, which is what
+the runtime records as ready. A \code{recv\_if} takes only under a
+condition, here that the output has room, so its \code{ready} is
+the condition and the offer together. It sends under \code{when!},
+so the channel's \code{valid} is the arm's condition, or its
+negation in the \code{else} arm, and the data is driven whatever
+the condition, since data under a low \code{valid} means nothing.
+The tap takes every word it has room for, counts them, and passes
+on the odd ones, counted too. This is the form the Vreteno core's
+bus and router take.
 
 \begin{figure}[htbp]
 \centering
 \input{tap_timing.tex}
-\caption{The tap: every word offered is taken, \code{inp\_ready}
-with \code{inp\_valid}; the odd ones go out, \code{out\_valid}
-the condition.}
+\caption{The tap: a word offered is taken when there is room,
+\code{inp\_ready} with \code{inp\_valid} here, since the sink
+always takes; the odd ones go out, \code{out\_valid} the
+condition.}
 \label{fig:x-tap}
 \end{figure}
 
