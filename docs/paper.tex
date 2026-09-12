@@ -49,11 +49,11 @@ lowers to a netlist in Verilog and VHDL, and the build simulates that
 netlist under nvc and Verilator against the trace the simulation
 wrote, so a design that passes is right in three forms at once. The
 largest design so far is Vreteno, a three-stage RV32IM core with
-machine-mode traps and an interrupt line: written in the subset the
-lowering reads, checked
+machine-mode traps, an interrupt line and a timer: written in the
+subset the lowering reads, checked
 in lockstep against a reference model, checked as a netlist against
 its own trace, and synthesized, placed and routed on an Artix-7 at
-100~MHz in 1950 LUTs, its data memory in block RAM. This paper presents the system
+100~MHz in 2169 LUTs, its data memory in block RAM. This paper presents the system
 and its results.
 \end{abstract}
 
@@ -351,7 +351,7 @@ scratchpad & a memory written and read & nvc, Verilator \\
 decoder & \code{slice}, \code{concat}, \code{sext}, \code{select!} & nvc, Verilator \\
 stage & two channels, the handshake & nvc, Verilator \\
 MAC & \code{mul::<M>}, a product at a stated width & nvc, Verilator \\
-Vreteno & the whole core, 366 ticks & nvc, Verilator \\
+Vreteno & the whole core, 452 ticks & nvc, Verilator \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -397,7 +397,9 @@ saves and clears the interrupt enable in \code{mstatus}, and
 redirects to \code{mtvec} as a taken branch redirects; \code{mret}
 returns; an interrupt line, pending in \code{mip} and enabled in
 \code{mie}, is taken in place of the instruction in execute, which
-retires writing nothing; the six CSR instructions read and write the
+retires writing nothing; a timer, four words in the address map
+beside the memory, raises the second interrupt when its count
+reaches its compare; the six CSR instructions read and write the
 eight control registers. Multiply and divide are one sequencer over
 the
 magnitudes, a multiply one step in the part's DSP blocks and a
@@ -466,10 +468,10 @@ memory became a read-only memory in one block RAM tile, the data
 memory's four byte lanes four block RAMs in two, since the third
 stage registers their read, and the register file distributed RAM.
 Placed and routed with the same constraint, the core meets ten
-nanoseconds with 0.534~ns to spare; the critical path is the
-multiplier, from the sequencer's registers into the pair through four
-DSP blocks and a carry chain, and the next is a branch on a
-register. Fig.~\ref{fig:p-vreteno} is the opening of the
+nanoseconds with 0.719~ns to spare; the critical path runs from the
+writeback's destination register through the forwarding path, the
+address add and the timer's decode to its compare register, a store
+to the timer of what the instruction before it computed. Fig.~\ref{fig:p-vreteno} is the opening of the
 demonstration, from the trace.
 
 \begin{table}[htbp]
@@ -480,9 +482,9 @@ demonstration, from the trace.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1902 \\
+LUTs, as logic & 2121 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 449 \\
+Flip-flops & 609 \\
 Block RAM tiles & 3 \\
 DSP blocks & 4 \\
 Errors, critical warnings & 0 \\
@@ -494,9 +496,8 @@ Errors, critical warnings & 0 \\
 \centering
 \input{paper_vreteno_timing.tex}
 \caption{Vreteno's first cycles, from its trace: reset, then an
-instruction per edge with the fetch counter running ahead, the
-writeback decoded into its register and value, and the first bubble,
-\code{done} low, after the first taken branch.}
+instruction per edge with the fetch counter running ahead, and the
+writeback decoded into its register and value.}
 \label{fig:p-vreteno}
 \end{figure}
 
@@ -512,10 +513,10 @@ simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
 twenty-four tests run under \code{bazel test //...}, and every one of them
 is hermetic, the simulators built from source and the synthesis tool
-installed by the build. Vreteno is 643 lines of core, checked in
-lockstep against a 304-line model on a demonstration program and
+installed by the build. Vreteno is 702 lines of core, checked in
+lockstep against a 349-line model on a demonstration program and
 sixty-four random ones, with interrupts raised at random, checked as
-a netlist on 366 ticks and eight signals, synthesized in two minutes to the figures of
+a netlist on 452 ticks and eight signals, synthesized in two minutes to the figures of
 Table~\ref{tab:p-synth}, and placed and routed at 100~MHz. Eight documents describe the system, this
 one included, and each is built by the same command that builds the
 designs, with every listing included from the tree and every figure
@@ -552,8 +553,9 @@ A RISC-V core written in it runs, lowers, is checked against its own
 trace, and runs at 100~MHz on an Artix-7 with its data memory in
 block RAM, whose bitstream, with a clock, a reset and four LEDs
 around the core, is built. The next steps are the board in hand and
-a timer on the data bus; the path that limits the clock is the
-multiplier's carry chain, with a branch on a register close behind.
+a bus of the core's own, with the timer as its first device; the
+path that limits the clock is a store to the timer of a forwarded
+value, with the multiplier's carry chain close behind.
 
 \begin{thebibliography}{10}
 
