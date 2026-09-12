@@ -593,7 +593,9 @@ impl Lowered {
         }
         let (procs, wires, temps) = self.hoisted();
         for (n, e) in &wires {
-            writeln!(out, "  wire {}{n};", range(self.ewidth(e))).unwrap();
+            let w = self.ewidth(e);
+            assert!(w > 0, "wire `{n}` has no width: size its literals");
+            writeln!(out, "  wire {}{n};", range(w)).unwrap();
         }
         for (t, w, e) in &temps {
             writeln!(out, "  wire {}{t} = {};", range(*w), vexpr(e, l))
@@ -783,7 +785,9 @@ impl Lowered {
         }
         let (procs, wires, temps) = self.hoisted();
         for (n, e) in &wires {
-            writeln!(out, "  signal {n} : {};", ty(self.ewidth(e))).unwrap();
+            let w = self.ewidth(e);
+            assert!(w > 0, "wire `{n}` has no width: size its literals");
+            writeln!(out, "  signal {n} : {};", ty(w)).unwrap();
         }
         for (t, w, _) in &temps {
             writeln!(out, "  signal {t} : {};", ty(*w)).unwrap();
