@@ -20,6 +20,12 @@
 //! where the trace has its valid high, since under a low valid the
 //! trace holds the last offer and the entity computes the wire anyway.
 //!
+//! Form: in VHDL, one procedure holds a tick, the inputs and the
+//! expected values as its arguments, and the replay is one call per
+//! cycle, in procedures of thirty-two cycles; nvc's heap for one
+//! design unit is finite, and a statement per check for a long trace
+//! is more than it holds.
+//!
 //! Usage: fst2tb FILE.fst FILE.vhd.ports ENTITY UNIT [--verilog] > tb
 //! where UNIT is the name the Rust testbench gave the unit in the trace;
 //! `--verilog` writes the same testbench in Verilog, for Verilator.
@@ -272,6 +278,17 @@ fn main() {
          report what & \" differs at \" & time'image(at) severity error;\n\
          errors <= errors + 1;\n      end if;\n    end procedure;\n",
     );
+    // A register is reached by its external name, declared once as an
+    // alias: a name per check would be most of the unit, and nvc's
+    // heap for one unit is finite.
+    for (n, d, w) in &ports {
+        if d == "reg" || d == "regf" {
+            o.push_str(&format!(
+                "    alias r_{n} is << signal .{entity}_tb.uut.{n} : {} >>;\n",
+                ty(*w)
+            ));
+        }
+    }
     // Inputs for the edge at tick 0 are applied before any wait; a
     // registered input starts as the channel does, empty.
     let mut first = String::new();
@@ -282,74 +299,104 @@ fn main() {
             }
         }
     }
+    // One cycle is one call of `tick`, with the inputs and the expected
+    // values as arguments: a statement per check would be thousands of
+    // statements for a long trace, more than nvc's heap for one unit
+    // holds, and a call with thirty arguments is one statement. An
+    // expected value comes with whether to check it, since the trace
+    // may not hold one, and a sender's data is checked only under its
+    // valid.
+    let zeros = |w: usize| lit(w, &"0".repeat(w));
+    let mut params: Vec<String> = Vec::new();
+    let mut tick = String::from("      wait for 1 ns;\n");
+    for (n, d, w) in &ports {
+        if is_in(d) && *n != clock {
+            params.push(format!("{n}_i : {}", ty(*w)));
+            tick.push_str(&format!("      {n} <= {n}_i;\n"));
+        }
+    }
+    tick.push_str("      wait for 0 ns;\n      wait for 0 ns;\n");
+    for (n, d, w) in &ports {
+        if is_reg(d) {
+            params.push(format!("{n}_e : {}; {n}_c : boolean", ty(*w)));
+            tick.push_str(&format!(
+                "      if {n}_c then expect(\"{n}\", r_{n} = {n}_e, now); \
+                 end if;\n"
+            ));
+        }
+    }
+    for (n, d, w) in &ports {
+        if is_out(d) {
+            params.push(format!("{n}_e : {}; {n}_c : boolean", ty(*w)));
+            tick.push_str(&format!(
+                "      if {n}_c then expect(\"{n}\", {n} = {n}_e, now); \
+                 end if;\n"
+            ));
+        }
+    }
+    tick.push_str("      wait for 1 ns;\n");
+    o.push_str(&format!(
+        "    procedure tb_tick({}) is\n    begin\n{tick}    end procedure;\n",
+        params.join("; ")
+    ));
     // The replay is cut into procedures of a few dozen cycles, called
     // in order: nvc will not compile one process of thousands of
     // statements, and a procedure declared in the process may wait and
     // drive its signals as the process does.
     let mut parts: Vec<String> = Vec::new();
     let mut body = String::new();
+    let mut last_in: Vec<String> = ports
+        .iter()
+        .filter(|(n, d, _)| is_in(d) && *n != clock)
+        .map(|(_, _, w)| zeros(*w))
+        .collect();
     let mut t = 0usize;
     while t + 2 <= last {
         if t % 64 == 0 && !body.is_empty() {
             parts.push(std::mem::take(&mut body));
         }
-        let o = &mut body;
-        // At tick 2k+1: check registers against the trace at 2k, and
-        // outputs and inputs for the next edge against the trace at 2k+2.
-        o.push_str("    wait for 1 ns;\n");
-        let odd = t + 1;
-        // The inputs first, then two deltas, one for the inputs to
-        // take effect and one for the wires that follow them, then
-        // the checks.
+        // At tick 2k+1: the inputs for the next edge, from the trace at
+        // 2k+2, or at 2k for a registered input; the registers against
+        // the trace at 2k, or 2k+1 for a falling-edge one, which takes
+        // its value at that instant; the outputs against 2k+2.
+        let mut args: Vec<String> = Vec::new();
+        let mut i = 0;
         for (n, d, w) in &ports {
             if is_in(d) && *n != clock {
                 let at = if registered(d) { t } else { t + 2 };
                 if let Some(v) = val(&trace_name(n, d), at) {
-                    o.push_str(&format!("    {n} <= {};\n", lit(*w, &v)));
+                    last_in[i] = lit(*w, &v);
                 }
+                args.push(last_in[i].clone());
+                i += 1;
             }
         }
-        o.push_str("    wait for 0 ns;\n    wait for 0 ns;\n");
-        // A rising-edge register took its value at 2k; a falling-edge
-        // one takes it at 2k+1, this instant, and the two deltas above
-        // have let it, so it is checked against the trace at 2k+1.
+        let expected =
+            |args: &mut Vec<String>, w: usize, v: Option<String>| match v {
+                Some(v) => args.push(format!("{}, true", lit(w, &v))),
+                None => args.push(format!("{}, false", zeros(w))),
+            };
         for (n, d, w) in &ports {
             let at = match d.as_str() {
                 "reg" => t,
                 "regf" => t + 1,
                 _ => continue,
             };
-            if let Some(v) = val(&trace_name(n, d), at) {
-                o.push_str(&format!(
-                    "    expect(\"{n}\", \
-                     << signal .{entity}_tb.uut.{n} : {} >> \
-                     = {}, now);\n",
-                    ty(*w),
-                    lit(*w, &v)
-                ));
-            }
+            expected(&mut args, *w, val(&trace_name(n, d), at));
         }
         for (n, d, w) in &ports {
             if is_out(d) {
-                // A sender's data means nothing under a low valid: the
-                // trace holds the last offer, the entity computes the
-                // wire regardless, so it is checked only when offered.
+                let mut v = val(&trace_name(n, d), t + 2);
                 if d == "txout" && n.ends_with("_data") {
                     let valid = trace_name(&n.replace("_data", "_valid"), d);
                     if val(&valid, t + 2).as_deref() != Some("1") {
-                        continue;
+                        v = None;
                     }
                 }
-                if let Some(v) = val(&trace_name(n, d), t + 2) {
-                    o.push_str(&format!(
-                        "    expect(\"{n}\", {n} = {}, now);\n",
-                        lit(*w, &v)
-                    ));
-                }
+                expected(&mut args, *w, v);
             }
         }
-        o.push_str("    wait for 1 ns;\n");
-        let _ = odd;
+        body.push_str(&format!("      tb_tick({});\n", args.join(", ")));
         t += 2;
     }
     if !body.is_empty() {
