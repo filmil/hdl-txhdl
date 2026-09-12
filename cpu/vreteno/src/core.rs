@@ -15,9 +15,13 @@
 //!
 //! Written in the subset `#[lower]` reads: every value is a function
 //! of the state and the inputs, `select!` chooses among values and
-//! `when!` and `case!` among drives, and nothing branches. So the
-//! same file simulates and lowers, and the netlist is simulated
-//! against the trace the simulation wrote.
+//! `when!` and `case!` among drives, and nothing branches. The pieces
+//! that are functions of their operands alone, the immediates, the
+//! ALU, the branch condition, the load's extension, the store's lanes,
+//! the CSR access and the sequencer's result, are functions under
+//! `#[lower]`, inlined where the step calls them. So the same file
+//! simulates and lowers, and the netlist is simulated against the
+//! trace the simulation wrote.
 use crate::isa::{
     CAUSE_ECALL, CAUSE_ILLEGAL, CAUSE_MEXT, CAUSE_MTIMER, CSR_MCAUSE, CSR_MEPC,
     CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT,
@@ -47,6 +51,236 @@ pub struct Writeback {
     pub done: Bit,
     pub rd: U<5>,
     pub val: U<32>,
+}
+
+// The pieces of the step that are functions of their operands alone,
+// each under `#[lower]`, inlined by the lowering where the step calls
+// it.
+
+/// The I immediate: the top twelve bits, sign-extended.
+#[lower]
+fn imm_i(ir: U<32>) -> U<32> {
+    ir.slice::<20, 12>().sext::<32>()
+}
+
+/// The S immediate, a store's offset, in two pieces.
+#[lower]
+fn imm_s(ir: U<32>) -> U<32> {
+    ir.slice::<25, 7>()
+        .concat::<5, 12>(ir.slice::<7, 5>())
+        .sext::<32>()
+}
+
+/// The B immediate, a branch's offset, in four pieces and even.
+#[lower]
+fn imm_b(ir: U<32>) -> U<32> {
+    ir.slice::<31, 1>()
+        .concat::<1, 2>(ir.slice::<7, 1>())
+        .concat::<6, 8>(ir.slice::<25, 6>())
+        .concat::<4, 12>(ir.slice::<8, 4>())
+        .concat::<1, 13>(U::<1>::from(0u8))
+        .sext::<32>()
+}
+
+/// The U immediate: the top twenty bits, in place.
+#[lower]
+fn imm_u(ir: U<32>) -> U<32> {
+    ir.slice::<12, 20>().concat::<12, 32>(U::<12>::from(0u8))
+}
+
+/// The J immediate, a jump's offset, in four pieces and even.
+#[lower]
+fn imm_j(ir: U<32>) -> U<32> {
+    ir.slice::<31, 1>()
+        .concat::<8, 9>(ir.slice::<12, 8>())
+        .concat::<1, 10>(ir.slice::<20, 1>())
+        .concat::<10, 20>(ir.slice::<21, 10>())
+        .concat::<1, 21>(U::<1>::from(0u8))
+        .sext::<32>()
+}
+
+// begin{alu}
+/// The ALU: ten operations by `f3`, with `sub` telling subtract from
+/// add and the arithmetic shift from the logical.
+#[lower]
+fn alu(f3: U<3>, sub: Bit, a: U<32>, b: U<32>) -> U<32> {
+    let sh = b.slice::<0, 5>();
+    select!(f3.raw() => {
+        0 => mux(sub, a.wrapping_sub(b), a.wrapping_add(b)),
+        1 => shl(a, sh.raw() as usize),
+        2 => lt_signed(a, b).zext(),
+        3 => lt(a, b).zext(),
+        4 => bxor(a, b),
+        5 => mux(sub, sra(a, sh.raw() as usize), shr(a, sh.raw() as usize)),
+        6 => bor(a, b),
+        _ => band(a, b),
+    })
+}
+// end{alu}
+
+/// Whether a branch is taken, by `f3`.
+#[lower]
+fn branch(f3: U<3>, a: U<32>, b: U<32>) -> Bit {
+    select!(f3.raw() => {
+        0 => eq(a, b),
+        1 => eq(a, b).not(),
+        4 => lt_signed(a, b),
+        5 => lt_signed(a, b).not(),
+        6 => lt(a, b),
+        _ => lt(a, b).not(),
+    })
+}
+
+/// A loaded word's byte or half, by the lane and the width the load
+/// read with, extended; or the word itself.
+#[lower]
+fn extended(f3: U<3>, lane: U<2>, word: U<32>) -> U<32> {
+    let bsh = lane.concat::<3, 5>(U::<3>::from(0u8));
+    let hsh = lane.slice::<1, 1>().concat::<4, 5>(U::<4>::from(0u8));
+    let octet = shr(word, bsh.raw() as usize).slice::<0, 8>();
+    let half = shr(word, hsh.raw() as usize).slice::<0, 16>();
+    select!(f3.raw() => {
+        0 => octet.sext::<32>(),
+        1 => half.sext::<32>(),
+        2 => word,
+        4 => octet.zext::<32>(),
+        _ => half.zext::<32>(),
+    })
+}
+
+/// What each lane takes on a store, the highest lane first: its byte
+/// of the word for a word, the half's byte for a half, the byte for a
+/// byte.
+#[lower]
+fn store_data(f3: U<3>, b: U<32>) -> U<32> {
+    let b0 = b.slice::<0, 8>();
+    let b1 = b.slice::<8, 8>();
+    let b2 = b.slice::<16, 8>();
+    let b3 = b.slice::<24, 8>();
+    let d1 = select!(f3.raw() => { 0 => b0, _ => b1 });
+    let d2 = select!(f3.raw() => { 2 => b2, _ => b0 });
+    let d3 = select!(f3.raw() => { 0 => b0, 2 => b3, _ => b1 });
+    d3.concat::<8, 16>(d2)
+        .concat::<8, 24>(d1)
+        .concat::<8, 32>(b0)
+}
+
+/// Which lanes a store writes, the highest lane first: one for a
+/// byte, two for a half, all four for a word.
+#[lower]
+fn store_lanes(f3: U<3>, lane: U<2>) -> U<4> {
+    let upper = lane.bit(1);
+    let en0 = select!(f3.raw() => {
+        0 => eq(lane, U::from(0u8)),
+        1 => upper.not(),
+        _ => Bit::One,
+    });
+    let en1 = select!(f3.raw() => {
+        0 => eq(lane, U::from(1u8)),
+        1 => upper.not(),
+        _ => Bit::One,
+    });
+    let en2 = select!(f3.raw() => {
+        0 => eq(lane, U::from(2u8)),
+        1 => upper,
+        _ => Bit::One,
+    });
+    let en3 = select!(f3.raw() => {
+        0 => eq(lane, U::from(3u8)),
+        1 => upper,
+        _ => Bit::One,
+    });
+    en3.zext::<1>()
+        .concat::<1, 2>(en2.zext::<1>())
+        .concat::<1, 3>(en1.zext::<1>())
+        .concat::<1, 4>(en0.zext::<1>())
+}
+
+/// A CSR read, by its number; `mip` is the pending register as the
+/// core shows it, with the timer's line in it.
+#[lower]
+fn csr_read(
+    f12: U<12>,
+    mstatus: U<32>,
+    mtvec: U<32>,
+    mscratch: U<32>,
+    mepc: U<32>,
+    mcause: U<32>,
+    mie: U<32>,
+    mip: U<32>,
+    mtval: U<32>,
+) -> U<32> {
+    select!(f12.raw() => {
+        0x300 => mstatus,
+        0x305 => mtvec,
+        0x340 => mscratch,
+        0x341 => mepc,
+        0x342 => mcause,
+        0x304 => mie,
+        0x344 => mip,
+        0x343 => mtval,
+        _ => U::<32>::from(0u32),
+    })
+}
+
+/// Whether a CSR number is one of the eight the core has.
+#[lower]
+fn csr_known(f12: U<12>) -> Bit {
+    select!(f12.raw() => {
+        0x300 | 0x305 | 0x340 | 0x341 | 0x342 | 0x304 | 0x344
+        | 0x343 => Bit::One,
+        _ => Bit::Zero,
+    })
+}
+
+/// A CSR's new value: replaced, set or cleared by the source, which
+/// is a register or a five-bit immediate.
+#[lower]
+fn csr_value(f3: U<3>, old: U<32>, src: U<32>) -> U<32> {
+    select!(f3.raw() => {
+        1 | 5 => src,
+        2 | 6 => bor(old, src),
+        _ => band(old, src.not()),
+    })
+}
+
+/// Whether an M operation takes its first operand as signed: every
+/// one but the unsigned multiply-highs, divide and remainder.
+#[lower]
+fn m_signed_a(f3: U<3>) -> Bit {
+    eq(f3, U::from(0u8))
+        .or(eq(f3, U::from(1u8)))
+        .or(eq(f3, U::from(2u8)))
+        .or(eq(f3, U::from(4u8)))
+        .or(eq(f3, U::from(6u8)))
+}
+
+/// Whether an M operation takes its second operand as signed.
+#[lower]
+fn m_signed_b(f3: U<3>) -> Bit {
+    eq(f3, U::from(0u8))
+        .or(eq(f3, U::from(1u8)))
+        .or(eq(f3, U::from(4u8)))
+        .or(eq(f3, U::from(6u8)))
+}
+
+/// An M result from the sequencer's registers, with the signs put
+/// back: a product or a quotient is negated when the signs differed,
+/// a remainder takes the dividend's sign, and a quotient by zero is
+/// all ones.
+#[lower]
+fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
+    let mag = hi.slice::<0, 32>().concat::<32, 64>(lo);
+    let p = mux(neg_q, U::<64>::from(0u32).wrapping_sub(mag), mag);
+    let q = mux(neg_q, U::<32>::from(0u32).wrapping_sub(lo), lo);
+    let rem = hi.slice::<0, 32>();
+    let r = mux(neg_r, U::<32>::from(0u32).wrapping_sub(rem), rem);
+    select!(f3.raw() => {
+        0 => p.slice::<0, 32>(),
+        1 | 2 | 3 => p.slice::<32, 32>(),
+        4 | 5 => q,
+        _ => r,
+    })
 }
 
 /// The data memory is four memories of a byte, one per lane of the
@@ -193,22 +427,11 @@ impl
             // lane and the width the execute stage read with it,
             // extended; else the value execute computed. Written to the
             // register file, and forwarded to execute below.
-            let ld_bsh = wb_lane.concat::<3, 5>(U::<3>::from(0u8));
-            let ld_hsh =
-                wb_lane.slice::<1, 1>().concat::<4, 5>(U::<4>::from(0u8));
             // A load's word: the data memory's, read into its register at
-            // the edge, or the timer's, read into another, so that the
+            // the edge, or a device's, read into another, so that the
             // memory's register stays the block RAM's own.
             let wb_src = mux(wb_is_dev, wb_dev, wb_ld);
-            let ld_octet = shr(wb_src, ld_bsh.raw() as usize).slice::<0, 8>();
-            let ld_half = shr(wb_src, ld_hsh.raw() as usize).slice::<0, 16>();
-            let loaded = select!(wb_f3.raw() => {
-                0 => ld_octet.sext::<32>(),
-                1 => ld_half.sext::<32>(),
-                2 => wb_src,
-                4 => ld_octet.zext::<32>(),
-                _ => ld_half.zext::<32>(),
-            });
+            let loaded = extended(wb_f3, wb_lane, wb_src);
             let wb_val = mux(wb_load, loaded, wb_alu);
             // A device load sits in writeback while its wait is on, and
             // retires the cycle after its answer has landed.
@@ -226,27 +449,11 @@ impl
             let rs2 = ir.slice::<20, 5>();
             let alt = ir.bit(30);
             // The five immediates, each a sign-extended word.
-            let imm_i = ir.slice::<20, 12>().sext::<32>();
-            let imm_s = ir
-                .slice::<25, 7>()
-                .concat::<5, 12>(ir.slice::<7, 5>())
-                .sext::<32>();
-            let imm_b = ir
-                .slice::<31, 1>()
-                .concat::<1, 2>(ir.slice::<7, 1>())
-                .concat::<6, 8>(ir.slice::<25, 6>())
-                .concat::<4, 12>(ir.slice::<8, 4>())
-                .concat::<1, 13>(U::<1>::from(0u8))
-                .sext::<32>();
-            let imm_u =
-                ir.slice::<12, 20>().concat::<12, 32>(U::<12>::from(0u8));
-            let imm_j = ir
-                .slice::<31, 1>()
-                .concat::<8, 9>(ir.slice::<12, 8>())
-                .concat::<1, 10>(ir.slice::<20, 1>())
-                .concat::<10, 20>(ir.slice::<21, 10>())
-                .concat::<1, 21>(U::<1>::from(0u8))
-                .sext::<32>();
+            let imm_i = imm_i(ir);
+            let imm_s = imm_s(ir);
+            let imm_b = imm_b(ir);
+            let imm_u = imm_u(ir);
+            let imm_j = imm_j(ir);
             // The operands: register zero reads as zero, and a register
             // the writeback stage is about to write reads as the value it
             // will write, which is the forwarding path. A load is the
@@ -325,52 +532,13 @@ impl
             // 30 means subtract or arithmetic shift, except that an
             // immediate may have it set and mean nothing by it.
             let alu_b = mux(eq(opcode, U::from(0x13u8)), imm_i, b);
-            let sh = alu_b.slice::<0, 5>();
             let sub =
                 alt.and(eq(opcode, U::from(0x33u8)).or(eq(f3, U::from(5u8))));
-            // The multiply and divide, from the sequencer's registers,
-            // with the signs put back: a product or a quotient is
-            // negated when the signs differed, a remainder takes the
-            // dividend's sign, and a quotient by zero is all ones.
-            let m_mag = m_hi.slice::<0, 32>().concat::<32, 64>(m_lo);
-            let m_p =
-                mux(m_neg_q, U::<64>::from(0u32).wrapping_sub(m_mag), m_mag);
-            let m_q =
-                mux(m_neg_q, U::<32>::from(0u32).wrapping_sub(m_lo), m_lo);
-            let m_rem = m_hi.slice::<0, 32>();
-            let m_r =
-                mux(m_neg_r, U::<32>::from(0u32).wrapping_sub(m_rem), m_rem);
-            let m_res = select!(f3.raw() => {
-                0 => m_p.slice::<0, 32>(),
-                1 | 2 | 3 => m_p.slice::<32, 32>(),
-                4 | 5 => m_q,
-                _ => m_r,
-            });
-            // begin{alu}
-            let alu = select!(f3.raw() => {
-                0 => mux(sub, a.wrapping_sub(alu_b), a.wrapping_add(alu_b)),
-                1 => shl(a, sh.raw() as usize),
-                2 => lt_signed(a, alu_b).zext(),
-                3 => lt(a, alu_b).zext(),
-                4 => bxor(a, alu_b),
-                5 => mux(
-                    sub,
-                    sra(a, sh.raw() as usize),
-                    shr(a, sh.raw() as usize)
-                ),
-                6 => bor(a, alu_b),
-                _ => band(a, alu_b),
-            });
-            // end{alu}
+            // The multiply and divide, from the sequencer's registers.
+            let m_res = m_result(f3, m_hi, m_lo, m_neg_q, m_neg_r);
+            let alu = alu(f3, sub, a, alu_b);
             // The branch condition.
-            let taken = select!(f3.raw() => {
-                0 => eq(a, b),
-                1 => eq(a, b).not(),
-                4 => lt_signed(a, b),
-                5 => lt_signed(a, b).not(),
-                6 => lt(a, b),
-                _ => lt(a, b).not(),
-            });
+            let taken = branch(f3, a, b);
             // Loads and stores: the word, the lane within it. A load
             // takes the raw word into the writeback stage, which is the
             // synchronous read a block RAM has; a store merges its byte
@@ -383,35 +551,9 @@ impl
                 .concat::<8, 24>(self.dmem1.read(daddr))
                 .concat::<8, 32>(self.dmem0.read(daddr));
             let lane = addr.slice::<0, 2>();
-            let upper = addr.bit(1);
-            // What each lane takes on a store: its byte of the word for
-            // a word, the half's byte for a half, the byte for a byte;
-            // and whether it takes it at all.
-            let (b0, b1) = (b.slice::<0, 8>(), b.slice::<8, 8>());
-            let (b2, b3) = (b.slice::<16, 8>(), b.slice::<24, 8>());
-            let d1 = select!(f3.raw() => { 0 => b0, _ => b1 });
-            let d2 = select!(f3.raw() => { 2 => b2, _ => b0 });
-            let d3 = select!(f3.raw() => { 0 => b0, 2 => b3, _ => b1 });
-            let en0 = select!(f3.raw() => {
-                0 => eq(lane, U::from(0u8)),
-                1 => upper.not(),
-                _ => Bit::One,
-            });
-            let en1 = select!(f3.raw() => {
-                0 => eq(lane, U::from(1u8)),
-                1 => upper.not(),
-                _ => Bit::One,
-            });
-            let en2 = select!(f3.raw() => {
-                0 => eq(lane, U::from(2u8)),
-                1 => upper,
-                _ => Bit::One,
-            });
-            let en3 = select!(f3.raw() => {
-                0 => eq(lane, U::from(3u8)),
-                1 => upper,
-                _ => Bit::One,
-            });
+            // What each lane takes on a store, and which lanes take it.
+            let sdata = store_data(f3, b);
+            let en = store_lanes(f3, lane);
 
             // What the instruction does: the value it writes back, if
             // any, where it goes next, and whether the core knows it.
@@ -428,28 +570,14 @@ impl
             let f12 = ir.slice::<20, 12>();
             let is_sys = eq(opcode, U::from(0x73u8));
             let csr_op = is_sys.and(is_zero(f3).not());
-            let csr_old = select!(f12.raw() => {
-                0x300 => mstatus,
-                0x305 => mtvec,
-                0x340 => mscratch,
-                0x341 => mepc,
-                0x342 => mcause,
-                0x304 => mie_r,
-                0x344 => mux(tirq, bor(mip, U::<32>::from(MTIMER)), mip),
-                0x343 => mtval,
-                _ => U::<32>::from(0u32),
-            });
-            let csr_known = select!(f12.raw() => {
-                0x300 | 0x305 | 0x340 | 0x341 | 0x342 | 0x304 | 0x344
-                | 0x343 => Bit::One,
-                _ => Bit::Zero,
-            });
+            let mip_now = mux(tirq, bor(mip, U::<32>::from(MTIMER)), mip);
+            let csr_old = csr_read(
+                f12, mstatus, mtvec, mscratch, mepc, mcause, mie_r, mip_now,
+                mtval,
+            );
+            let csr_known = csr_known(f12);
             let csr_src = mux(f3.bit(2), rs1.zext::<32>(), a);
-            let csr_new = select!(f3.raw() => {
-                1 | 5 => csr_src,
-                2 | 6 => bor(csr_old, csr_src),
-                _ => band(csr_old, csr_src.not()),
-            });
+            let csr_new = csr_value(f3, csr_old, csr_src);
             let sys0 = is_sys.and(is_zero(f3));
             let is_ecall = sys0.and(eq(f12, U::from(0u8)));
             let is_ebreak = sys0.and(eq(f12, U::from(1u8)));
@@ -534,25 +662,24 @@ impl
             when!(wb_write => { self.regs.at(wb_rd) <= wb_val });
             self.halted.set(halted.or(wb_stop));
             let store_mem = store.and(is_dev.not());
-            when!(store_mem.and(en0) => { self.dmem0.at(daddr) <= b0 });
-            when!(store_mem.and(en1) => { self.dmem1.at(daddr) <= d1 });
-            when!(store_mem.and(en2) => { self.dmem2.at(daddr) <= d2 });
-            when!(store_mem.and(en3) => { self.dmem3.at(daddr) <= d3 });
+            when!(store_mem.and(en.bit(0)) => {
+                self.dmem0.at(daddr) <= sdata.slice::<0, 8>()
+            });
+            when!(store_mem.and(en.bit(1)) => {
+                self.dmem1.at(daddr) <= sdata.slice::<8, 8>()
+            });
+            when!(store_mem.and(en.bit(2)) => {
+                self.dmem2.at(daddr) <= sdata.slice::<16, 8>()
+            });
+            when!(store_mem.and(en.bit(3)) => {
+                self.dmem3.at(daddr) <= sdata.slice::<24, 8>()
+            });
             // The bus: a request is the address, the data in its lanes,
             // the lanes a store covers, and whether it is a store. The
             // load's wait is a register.
             let req_word = addr
-                .concat::<32, 64>(
-                    d3.concat::<8, 16>(d2)
-                        .concat::<8, 24>(d1)
-                        .concat::<8, 32>(b0),
-                )
-                .concat::<4, 68>(
-                    en3.zext::<1>()
-                        .concat::<1, 2>(en2.zext::<1>())
-                        .concat::<1, 3>(en1.zext::<1>())
-                        .concat::<1, 4>(en0.zext::<1>()),
-                )
+                .concat::<32, 64>(sdata)
+                .concat::<4, 68>(en)
                 .concat::<1, 69>(store.zext::<1>());
             when!(send_load.or(store.and(is_dev)) => { req.send(req_word) });
             when!(resp_valid => { self.wb_dev <= resp_data });
@@ -609,15 +736,8 @@ impl
             // shifting the pair left, subtracting the divisor from the
             // high half when it fits, and shifting the fit in as the
             // quotient bit.
-            let m_signed_a = eq(f3, U::from(0u8))
-                .or(eq(f3, U::from(1u8)))
-                .or(eq(f3, U::from(2u8)))
-                .or(eq(f3, U::from(4u8)))
-                .or(eq(f3, U::from(6u8)));
-            let m_signed_b = eq(f3, U::from(0u8))
-                .or(eq(f3, U::from(1u8)))
-                .or(eq(f3, U::from(4u8)))
-                .or(eq(f3, U::from(6u8)));
+            let m_signed_a = m_signed_a(f3);
+            let m_signed_b = m_signed_b(f3);
             let m_neg_a = m_signed_a.and(a.bit(31));
             let m_neg_b = m_signed_b.and(b.bit(31));
             let m_abs_a = mux(m_neg_a, U::<32>::from(0u32).wrapping_sub(a), a);
