@@ -20,6 +20,7 @@ rust_library(
     srcs = [
         "src/lib.rs",
         "src/comp.rs",
+        "src/foreign.rs",
         "src/funcs.rs",
         "src/netlist.rs",
         "src/pipeline.rs",
@@ -38,6 +39,7 @@ filegroup(
     srcs = [
         "macros/lib.rs",
         "src/comp.rs",
+        "src/foreign.rs",
         "src/funcs.rs",
         "src/lib.rs",
         "src/pipeline.rs",
@@ -49,6 +51,7 @@ filegroup(
 exports_files([
     "src/types.rs",
     "src/comp.rs",
+    "src/foreign.rs",
     "src/pipeline.rs",
     "src/funcs.rs",
     "src/netlist.rs",

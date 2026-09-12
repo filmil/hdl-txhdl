@@ -379,6 +379,7 @@ API = {
     "api_funcs.rs": "//lib:src/funcs.rs",
     "api_macros.rs": "//lib:macros/lib.rs",
     "api_netlist.rs": "//lib:src/netlist.rs",
+    "api_foreign.rs": "//lib:src/foreign.rs",
     "api_buffer.rs": "//lib/parts:src/buffer.rs",
 }
 
@@ -613,6 +614,8 @@ latex_document(
         ":wire_timing",
         ":fn_run",
         ":fn_timing",
+        ":foreign_run",
+        ":foreign_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -729,6 +732,21 @@ waveform(
         "//div/counting=>counting",
         "//div/wrap=>wrap",
         "//tick=>tick",
+    ],
+)
+
+waveform(
+    name = "foreign",
+    example = "//lib/examples:ex_foreign",
+    signals = [
+        "//clocks/clk=>clk",
+        "//inp/rx_valid=>inp_valid",
+        "//inp/rx_data=>inp",
+        "//out/rx_data=>out",
+        "//vinp/rx_valid=>vinp_valid",
+        "//vinp/rx_data=>vinp",
+        "//vout/rx_data=>vout",
+        "//stage/count=>count",
     ],
 )
 

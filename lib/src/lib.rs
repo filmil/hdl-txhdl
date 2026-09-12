@@ -22,6 +22,7 @@
 //! this crate is what that experiment would be written against.
 
 pub mod comp;
+pub mod foreign;
 pub mod funcs;
 pub mod netlist;
 pub mod pipeline;

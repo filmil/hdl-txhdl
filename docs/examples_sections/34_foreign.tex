@@ -1,0 +1,40 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Verilog Module as a Unit}
+\label{sec:x-foreign}
+
+A design is seldom all one language. A module that already exists in
+Verilog, a vendor's or a colleague's, should sit in a TxHDL design as
+a unit and be simulated with it, not rewritten. \code{verilog\_unit()}
+in the build does that: Verilator compiles the module into a C++
+model, a small tool writes a C shim over the model and the Rust that
+makes a \code{Unit} of it, an \code{In} or \code{Out} per port and an
+\code{Rx} or \code{Tx} per \code{x\_data}, \code{x\_valid},
+\code{x\_ready} trio, and the crate named holds that unit. Once per
+rising edge the unit gives the model its inputs as the edge left
+them, lets it settle, makes the transfers the module agrees to on its
+channels, pulses its clock and reads its outputs: a registered unit
+like any other, which goes first in the join order like any unit
+with wires out. The runtime document~\cite{runtime} states the
+shim's four calls.
+
+The example co-runs the stage of Section~\ref{sec:x-stage} with its
+own Verilog. The build lowers the stage, Verilator makes a unit of
+the Verilog, and two pipelines run side by side on the same offers,
+the Rust stage in one and the Verilog in the other; the two sinks
+must take the same words at the same ticks, and the run asserts
+they did. That is the lowering checked live, against the runtime,
+rather than by replaying a trace as Section~\ref{sec:x-lower} does.
+Fig.~\ref{fig:x-foreign} shows the two pipelines in step.
+
+\begin{figure}[htbp]
+\centering
+\input{foreign_timing.tex}
+\caption{The stage and its Verilog, side by side: the same words in
+on \code{inp} and \code{vinp}, the same words out, plus one, on
+\code{out} and \code{vout}, at the same ticks.}
+\label{fig:x-foreign}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_foreign.rs}. Run with \code{bazel run //lib/examples:ex\_foreign}.},label={lst:x-foreign}]{lib/examples/ex_foreign.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_foreign} printed when the build ran it: each word as both sides took it.},label={lst:x-foreign-out}]{out_foreign.txt}

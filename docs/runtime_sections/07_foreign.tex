@@ -1,0 +1,29 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{\code{txhdl::foreign}}
+\label{sec:r-foreign}
+
+A module written in Verilog as a unit. Verilator compiles the module
+into a C++ model, and \code{//tools/vshim} writes two things from the
+module's port list: a C shim over the model, and the Rust that makes
+a \code{Unit} of it. The shim is four calls and a handle: settle the
+combinational logic on the inputs as they stand, pulse the clock,
+set an input port by index, read a port by index, values as four
+words of thirty-two bits, so a port up to 128 bits wide crosses.
+\code{Model} holds the handle and the shim's functions and frees the
+model when dropped. The generated unit has an \code{In} or
+\code{Out} per port and an \code{Rx} or \code{Tx} per \code{x\_data},
+\code{x\_valid}, \code{x\_ready} trio, and its step, once per rising
+edge, is: the inputs in as the edge left them, a channel's head and
+its offer, and the room the runtime has for the module's sends; a
+settle; the transfers the module agrees to, a take where it says
+ready and an offer stands, a send where it says valid and there is
+room; the edge; and the outputs out. So the module is a registered
+unit, its outputs seen a step later, and goes first in the join
+order as the timer of the core does. What it cannot do is lower: the
+lowering carries it as nothing, and a netlist that holds one is the
+board top's business, by hand, as the core's is.
+\code{verilog\_unit()} in \code{lib/foreign.bzl} builds the model,
+the shim and the crate from the one Verilog file; the examples
+document~\cite{examples} co-runs a unit with its own Verilog.
+
+\lstinputlisting[caption={\code{lib/src/foreign.rs}.},label={lst:r-foreign}]{lib/src/foreign.rs}

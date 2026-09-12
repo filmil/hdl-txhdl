@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Writes the C shim over a Verilated module and the Rust unit that
+# drives it, from the module's port list: see lib/foreign.bzl.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "vshim",
+    srcs = ["main.rs"],
+    edition = "2021",
+)
