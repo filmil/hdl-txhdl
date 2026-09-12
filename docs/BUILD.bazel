@@ -601,6 +601,8 @@ latex_document(
         ":imm_timing",
         ":twoproc_run",
         ":twoproc_timing",
+        ":mul_run",
+        ":mul_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -656,6 +658,20 @@ waveform(
         "//dec/dest=>dest",
         "//imm=>imm",
         "//rd=>rd",
+    ],
+)
+
+waveform(
+    name = "mul",
+    example = "//lib/examples:ex_mul",
+    lowered = ("mac", "mac"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//a=>a",
+        "//b=>b",
+        "//clear=>clear",
+        "//mac/acc=>acc",
+        "//sum=>sum",
     ],
 )
 

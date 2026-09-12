@@ -1422,6 +1422,16 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                                     "E::Cat(Box::new({l}), Box::new({}))",
                                     tr(&args[0], subst)?
                                 ),
+                                // Both operands at the result's width,
+                                // so the product is that wide in either
+                                // target language.
+                                "mul" => format!(
+                                    "E::Bin(\"*\", \
+                                     Box::new(E::Zext(Box::new({l}), {0})), \
+                                     Box::new(E::Zext(Box::new({1}), {0})))",
+                                    ks[0],
+                                    tr(&args[0], subst)?
+                                ),
                                 other => {
                                     return Err(format!(
                                         "method `{other}::<..>` is not lowered"

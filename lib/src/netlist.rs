@@ -210,7 +210,8 @@ pub enum Expr {
     Num(u128),
     /// A sized value, from an enum variant or a `Bit`.
     Bits(usize, String),
-    /// `+ - & | && || == != < > <= >=`, spelled as Verilog spells them.
+    /// `+ - * & | && || == != < > <= >=`, spelled as Verilog spells
+    /// them.
     Bin(&'static str, Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
     Cond(Box<Expr>, Box<Expr>, Box<Expr>),
@@ -996,7 +997,10 @@ fn hbool(e: &Expr, l: &Lowered) -> String {
             format!("({} {w} {})", hbool(a, l), hbool(b, l))
         }
         // Bitwise operators and shifts yield bits, not truth values.
-        Expr::Bin("&" | "|" | "^" | "<<" | ">>" | ">>>" | "+" | "-", ..) => {
+        Expr::Bin(
+            "&" | "|" | "^" | "<<" | ">>" | ">>>" | "+" | "-" | "*",
+            ..,
+        ) => {
             format!("({} = '1')", hval(e, 1, l))
         }
         Expr::Bin("<s", a, b) => {
@@ -1018,6 +1022,15 @@ fn hbool(e: &Expr, l: &Lowered) -> String {
     }
 }
 
+/// A shift count in VHDL: an integer, which a literal already is and
+/// a value is converted to.
+fn hint(e: &Expr, l: &Lowered) -> String {
+    match e {
+        Expr::Num(k) => k.to_string(),
+        e => format!("to_integer({})", hval(e, 0, l)),
+    }
+}
+
 /// An expression in VHDL, as a value of width `w`.
 fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
     match e {
@@ -1028,6 +1041,12 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
         Expr::Bits(_, b) => format!("unsigned'(\"{b}\")"),
         Expr::Bin(op @ ("+" | "-"), a, b) => {
             format!("({} {op} {})", hval(a, w, l), hval(b, w, l))
+        }
+        // A product is twice as wide as its operands in VHDL; the
+        // lowering states its width, so the product is cut to it.
+        Expr::Bin("*", a, b) => {
+            let w = if w == 0 { l.ewidth(e) } else { w };
+            format!("resize(({} * {}), {w})", hval(a, w, l), hval(b, w, l))
         }
         Expr::Bin(op @ ("&" | "|" | "^"), a, b) => {
             let vop = match *op {
@@ -1046,23 +1065,15 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
             format!("({} {vop} {})", hval(a, w, l), hval(b, w, l))
         }
         Expr::Bin("<<", a, b) => {
-            format!(
-                "shift_left({}, to_integer({}))",
-                hval(a, w, l),
-                hval(b, 0, l)
-            )
+            format!("shift_left({}, {})", hval(a, w, l), hint(b, l))
         }
         Expr::Bin(">>", a, b) => {
-            format!(
-                "shift_right({}, to_integer({}))",
-                hval(a, w, l),
-                hval(b, 0, l)
-            )
+            format!("shift_right({}, {})", hval(a, w, l), hint(b, l))
         }
         Expr::Bin(">>>", a, b) => format!(
-            "unsigned(shift_right(signed({}), to_integer({})))",
+            "unsigned(shift_right(signed({}), {}))",
             hval(a, w, l),
-            hval(b, 0, l)
+            hint(b, l)
         ),
         Expr::Not(a) => format!("(not {})", hval(a, w, l)),
         Expr::Slice(a, lo, len) => {

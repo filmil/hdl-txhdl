@@ -166,7 +166,7 @@ impl<const N: usize> U<N> {
     /// width is a standalone parameter, so this is stable; `U<{A + B}>`
     /// would not be.
     pub fn mul<const M: usize>(self, o: impl Into<Self>) -> U<M> {
-        U::<M>::new(self.0 * o.into().0)
+        U::<M>::new(self.0.wrapping_mul(o.into().0))
     }
 
     /// Resize to a stated width. `M` is standalone, so stable.

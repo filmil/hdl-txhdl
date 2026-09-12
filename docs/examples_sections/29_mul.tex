@@ -1,0 +1,29 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Multiply-Accumulate}
+\label{sec:x-mul}
+
+\code{mul::<M>} is a product with its width stated. Rust cannot write
+a width that is the sum of two others on stable, so the product does
+not infer its width from its operands as the target languages do; it
+takes it as \code{concat} does. The lowering extends both operands
+to that width and multiplies there, which in Verilog is a
+\code{*} whose result is the operands' width and in VHDL a
+\code{resize} of a product twice as wide, so the two agree with the
+Rust value, which wraps. The unit sums the products of the pairs it
+is given, a cycle behind, and clears on request; it is checked under
+nvc and Verilator against its trace, as Section~\ref{sec:x-checked}
+describes. The Vreteno core does not use it: its multiply is a
+sequencer of shifts and adds, thirty-two steps, which is a choice
+about hardware rather than about the language.
+
+\begin{figure}[htbp]
+\centering
+\input{mul_timing.tex}
+\caption{The multiply-accumulate: a pair per cycle, the sum a cycle
+behind, and a clear at either end.}
+\label{fig:x-mul}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_mul.rs}. Run with \code{bazel run //lib/examples:ex\_mul}.},label={lst:x-mul}]{lib/examples/ex_mul.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_mul} printed when the build ran it: the pairs and the sums, then the lowering.},label={lst:x-mul-out}]{out_mul.txt}
