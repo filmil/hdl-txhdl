@@ -477,10 +477,10 @@ memory became a read-only memory in one block RAM tile, the data
 memory's four byte lanes four block RAMs in two, since the third
 stage registers their read, and the register file distributed RAM.
 Placed and routed with the same constraint, the core meets ten
-nanoseconds with 0.129~ns to spare; the critical path runs from the
-register file's read through the branch compare to the instruction
-memory's address, a branch on a register, and is three quarters
-routing. Fig.~\ref{fig:p-vreteno} is the opening of the
+nanoseconds with 0.776~ns to spare; the critical path runs from the
+instruction register through the register file's read and the
+jump's add to the instruction memory's address, a jump through a
+register, and is three quarters routing. Fig.~\ref{fig:p-vreteno} is the opening of the
 demonstration, from the trace.
 
 \begin{table}[htbp]
@@ -491,9 +491,9 @@ demonstration, from the trace.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 2004 \\
+LUTs, as logic & 1822 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 486 \\
+Flip-flops & 481 \\
 Block RAM tiles & 3 \\
 DSP blocks & 4 \\
 Errors, critical warnings & 0 \\
@@ -523,7 +523,7 @@ simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
 thirty-seven tests run under \code{bazel test //...}, and every one of them
 is hermetic, the simulators built from source and the synthesis tool
-installed by the build. Vreteno is 725 lines of core, 98 of timer,
+installed by the build. Vreteno is 737 lines of core, 98 of timer,
 62 of router and 89 of serial port, checked in lockstep against a
 364-line model on a demonstration program and sixty-four random
 ones, with interrupts raised at random, checked as a netlist on 732
@@ -566,8 +566,7 @@ trace, and runs at 100~MHz on an Artix-7 with its data memory in
 block RAM, whose bitstream, with a clock, a reset and four LEDs
 around the core, is built. The next steps are the board in hand and
 the serial port's receive side; the path that limits the clock is a
-branch on a register, with the multiplier's carry chain close
-behind.
+jump through a register.
 
 \begin{thebibliography}{10}
 

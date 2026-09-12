@@ -328,14 +328,19 @@ of the examples document does~\cite{examples}: a receive with no
 wait before it, which takes the response whenever it comes, and a
 send under \code{when!}, whose \code{valid} is the condition. A
 store to the bus goes out when the bus has room and the instruction
-runs on; a load goes out, sets the wait bit and stalls, the third
-use of the stall, until the response is offered, which is two cycles
-later for the timer, and then runs with the response in the
-writeback's register beside the one the data memory's read lands in,
-so that the memory's register stays the block RAM's own. An
-interrupt taken while a load waits is taken when the response has
-come, which the wait bit then drops, and the load is made again
-after the handler.
+runs on; a load goes out, sets the wait bit and moves on to
+writeback, which holds it, and the whole pipeline behind it, until
+the response has landed in a register of its own there, beside the
+one the data memory's read lands in, so that the memory's register
+stays the block RAM's own. The hold is the third use of the stall,
+and it is a register's say: an earlier form stalled the load in
+execute on the decode of its address, and that decode, the address
+add and the fetch's multiplexer were the path that limited the
+clock. A load or a store also waits for room on the bus whatever its
+address, so that the fetch's hold never hangs on the address; the
+devices keep up, so there is always room. A load that has gone out
+is not taken by an interrupt: the interrupt waits for the next
+instruction, so a device is never read twice for one load.
 
 The bus has two devices, and a router between the core and them,
 Listing~\ref{lst:v-router}. One request channel comes in, and a
@@ -704,9 +709,9 @@ of its own, is not in it, and is in the board's figures below.}
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 2004 \\
+LUTs, as logic & 1822 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 486 \\
+Flip-flops & 481 \\
 Block RAM tiles & 3 \\
 DSP blocks & 4 \\
 \bottomrule
@@ -741,18 +746,18 @@ instruction.
 The netlist is also placed and routed, \code{bazel build
 //cpu/vreteno:vreteno\_pnr}, with the same constraint and no pins,
 so the bitstream is a stub and the reports are the point. The routed
-design meets ten nanoseconds with 0.129~ns of slack, and hold with
-0.110~ns. The critical path is 9.283~ns, of which routing is three
-quarters, through thirteen levels of logic: from the register file's
-read, through the branch compare, to the instruction memory's
-address, a branch on a register, which was the critical path two
-forms ago and is again now that the timer's registers have left the
-core; the slack on it has moved by half a nanosecond between runs of
-the same path, which is what placement does to a path that is three
-quarters routing. The multiplier, four DSP blocks and a carry chain
-from the sequencer's registers into the pair, is the next path. With two stages the slack
-had been 0.263~ns, on a path from a register through the decode and
-the ALU into the register file's write. With three stages and the
+design meets ten nanoseconds with 0.776~ns of slack, and hold with
+0.101~ns. The critical path is 8.693~ns, of which routing is three
+quarters, through ten levels of logic: from the instruction
+register's source field, through the register file's read and the
+jump's add, to the instruction memory's address, a jump through a
+register. Before the device load's wait moved into writeback the
+slack was 0.129~ns, on a path from the same read through the
+address add and the decode of whether the address is a device's
+into the fetch's hold: the fetch waited on the address. Now the
+hold is a register's, and the path is gone. With two stages the
+slack had been 0.263~ns, on a path from a register through the
+decode and the ALU into the register file's write. With three stages and the
 load forwarded it was 0.361~ns, on a load followed at once by a jump
 through what it loaded. With the traps, whose return and handler
 addresses widened the fetch's multiplexer, that path missed by
