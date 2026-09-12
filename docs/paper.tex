@@ -48,11 +48,11 @@ source runs as a cycle-accurate simulation, writes a waveform, and
 lowers to a netlist in Verilog and VHDL, and the build simulates that
 netlist under nvc and Verilator against the trace the simulation
 wrote, so a design that passes is right in three forms at once. The
-largest design so far is Vreteno, a three-stage RV32I core: written in
-the subset the lowering reads, checked in lockstep against a
-reference model, checked as a netlist against its own trace, and
-synthesized, placed and routed on an Artix-7 at 100~MHz in 1040
-LUTs, its data memory in block RAM. This paper presents the system
+largest design so far is Vreteno, a three-stage RV32I core with
+machine-mode traps: written in the subset the lowering reads, checked
+in lockstep against a reference model, checked as a netlist against
+its own trace, and synthesized, placed and routed on an Artix-7 at
+100~MHz in 1297 LUTs, its data memory in block RAM. This paper presents the system
 and its results.
 \end{abstract}
 
@@ -349,7 +349,7 @@ ALU & ten operators by \code{case!} & nvc, Verilator \\
 scratchpad & a memory written and read & nvc, Verilator \\
 decoder & \code{slice}, \code{concat}, \code{sext}, \code{select!} & nvc, Verilator \\
 stage & two channels, the handshake & nvc, Verilator \\
-Vreteno & the whole core, 66 ticks & nvc, Verilator \\
+Vreteno & the whole core, 180 ticks & nvc, Verilator \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -386,9 +386,17 @@ at its edge, and, on a taken branch or a jump, redirects the fetch
 and squashes the word fetched that cycle, which is the one-cycle
 penalty. The writeback stage extends a loaded word, writes the
 register file and retires; an operand the writeback stage is about
-to write is forwarded into execute, so no stall is needed. The whole
-is written in the subset the lowering reads, Listing~\ref{lst:p-fetch}
-being the fetch's drives, so the one file simulates and is a netlist.
+to write is forwarded into execute, except a loaded one, which lands
+at the edge and would be too late: the instruction that wants it
+waits one cycle, the only stall there is. The core
+has machine-mode traps: an \code{ecall} or a word it does not know
+saves its address and cause in \code{mepc} and \code{mcause},
+saves and clears the interrupt enable in \code{mstatus}, and
+redirects to \code{mtvec} as a taken branch redirects; \code{mret}
+returns; the six CSR instructions read and write the five control
+registers. The whole is written in the subset the lowering reads,
+Listing~\ref{lst:p-fetch} being the fetch's drives, so the one file
+simulates and is a netlist.
 
 \begin{figure}[htbp]
 \centering
@@ -422,21 +430,24 @@ being the fetch's drives, so the one file simulates and is a netlist.
 \end{tikzpicture}
 \caption{Vreteno: three stages in one process. The instruction
 register and the writeback registers are the boundaries; a taken
-branch or jump redirects the fetch and costs one bubble; the value
-in writeback is forwarded into execute.}
+branch, jump or trap redirects the fetch and costs one bubble; the
+value in writeback is forwarded into execute, a loaded one by a
+stall of one cycle instead.}
 \label{fig:p-core}
 \end{figure}
 
-\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=fetch-fetch,float,caption={The fetch's drives: reset, halt, redirect or advance, in that priority, one \code{case!}. From \code{core.rs}.},label={lst:p-fetch}]{cpu/vreteno/src/core.rs}
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=fetch-fetch,float,caption={The fetch's drives: the next counter as two candidates, the early conditions folded into each and the late redirect choosing between them; the instruction register under a \code{case!}. From \code{core.rs}.},label={lst:p-fetch}]{cpu/vreteno/src/core.rs}
 
 The core is checked three ways. A reference model of the instruction
 set, written as a plain program over the architectural state, runs in
 lockstep with it: the model steps when the core retires an
 instruction, and after every cycle the program counter, the
-thirty-one registers and the halt must agree, and at the halt the
-data memory must. The demonstration program and sixty-four random
-programs of two hundred instructions pass, and a broken shift or a
-branch that does not squash fails at its first use. The netlist is
+thirty-one registers, the control registers and the halt must agree,
+and at the halt the data memory must. The demonstration program,
+which traps twice, and sixty-four random programs of two hundred
+instructions, with traps among them, pass; a broken shift, a branch
+that does not squash, or a return from a trap with the wrong status
+fails at its first use. The netlist is
 checked as every lowered unit is, under nvc and Verilator, with the
 program in its instruction memory. And the Verilog is synthesized,
 Table~\ref{tab:p-synth}, on an Artix-7 with a clock constraint of ten
@@ -446,7 +457,7 @@ memory became a read-only memory in one block RAM tile, the data
 memory's four byte lanes four block RAMs in two, since the third
 stage registers their read, and the register file distributed RAM.
 Placed and routed with the same constraint, the core meets ten
-nanoseconds with 0.361~ns to spare; the critical path runs from a
+nanoseconds with 0.737~ns to spare; the critical path runs from a
 data memory's read through the forwarding path and the ALU to the
 instruction memory's address, a load followed by a jump through what
 it loaded. Fig.~\ref{fig:p-vreteno} is the opening of the
@@ -460,9 +471,9 @@ demonstration, from the trace.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 992 \\
+LUTs, as logic & 1249 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 149 \\
+Flip-flops & 305 \\
 Block RAM tiles & 3 \\
 Errors, critical warnings & 0 \\
 \bottomrule
@@ -491,9 +502,9 @@ simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
 twenty-two tests run under \code{bazel test //...}, and every one of them
 is hermetic, the simulators built from source and the synthesis tool
-installed by the build. Vreteno is 268 lines of core, checked in
-lockstep against a 169-line model on a demonstration program and
-sixty-four random ones, checked as a netlist on 66 ticks and eight
+installed by the build. Vreteno is 490 lines of core, checked in
+lockstep against a 246-line model on a demonstration program and
+sixty-four random ones, checked as a netlist on 180 ticks and eight
 signals, synthesized in two minutes to the figures of
 Table~\ref{tab:p-synth}, and placed and routed at 100~MHz. Eight documents describe the system, this
 one included, and each is built by the same command that builds the
@@ -530,9 +541,9 @@ and the build holds the three to one behaviour under two simulators.
 A RISC-V core written in it runs, lowers, is checked against its own
 trace, and runs at 100~MHz on an Artix-7 with its data memory in
 block RAM, whose bitstream, with a clock, a reset and four LEDs
-around the core, is built. The next steps are the board in hand, and
-the clock: the path that limits it is a load followed by a jump
-through what it loaded.
+around the core, is built. The next steps are the board in hand and
+the multiplication extension; the path that limits the clock is now
+a branch on what the instruction before it computed.
 
 \begin{thebibliography}{10}
 

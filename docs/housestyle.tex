@@ -120,7 +120,9 @@
 % switched off, because a box-and-arrow diagram is not code and half its
 % words turning blue reads as an accident. Setting a style adds keys rather
 % than clearing the ones already set, so the three roles are neutralised by
-% hand rather than by leaving them out.
+% hand rather than by leaving them out. Program output is printed in this
+% style too, and a netlist's assignment can run past the frame, so a line
+% that does not fit is broken and the rest indented; source never is.
 \lstdefinestyle{ascii}{
   basicstyle=\ttfamily\listingsize,
   keywordstyle=\ttfamily,
@@ -128,6 +130,8 @@
   stringstyle=\ttfamily,
   columns=fullflexible,
   keepspaces=true,
+  breaklines=true,
+  breakindent=2em,
   frame=single,
   rulecolor=\color{framegray},
   framesep=3pt,
