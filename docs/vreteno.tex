@@ -789,13 +789,13 @@ pin the board's USB serial bridge listens to, and the external
 interrupt line tied low, since nothing on the board raises it yet.
 The constraints name the board's pins as the project's other designs
 for it do, so the bitstream is real: the routed design meets
-100~MHz with 0.285~ns of slack, in 2158 LUTs and 998 flip-flops
+100~MHz with 0.903~ns of slack, in 1992 LUTs and 927 flip-flops
 for the core, the router, the timer, the serial port and the six
 buffers together, three block RAM tiles, four DSP blocks and the
 MMCM, with no critical warning and no combinational loop, which the
-first board top with the units wired port to port had. The LUT count
-did not move when the router and the port came in; the flip-flops
-grew by the buffers' and the port's registers.
+first board top with the units wired port to port had. The wait's
+move into writeback took the board's slack from 0.285~ns to this,
+and a tenth of the LUTs with it.
 \code{bazel run //cpu/vreteno:vreteno\_board\_flash} writes it into
 the board's QSPI flash over the programming cable. What the board
 should show, once it does: the clock LED at once, the running LED
