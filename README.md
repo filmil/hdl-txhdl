@@ -11,6 +11,12 @@ The specification is `spec/language.md`.
 `docs/` holds the analysis and the decisions behind it, and
 `docs/README.md` says what is in there.
 
+## Mirror
+
+The mainline is mirrored to GitHub, `filmil/txhdl`, by the `mirror` workflow.
+It runs on every push to `main` and every six hours, and needs the Actions secret `GITHUB_MIRROR_TOKEN`, a fine-grained token with write access to that repository's contents.
+The instance's own push mirror does the same from the server; either is enough.
+
 ## Building
 
 Everything is built by Bazel, and Bazel provisions every tool it uses.

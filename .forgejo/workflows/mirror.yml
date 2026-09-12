@@ -1,0 +1,43 @@
+# Mirror the mainline to GitHub, so that a second copy exists if this
+# instance is unreachable.
+#
+# Runs on every push to main, every six hours, and on request. It pushes
+# main and the tags; it never forces and never deletes, so a branch that
+# exists only on GitHub is left alone. Nothing runs without the secret:
+# GITHUB_MIRROR_TOKEN is a fine-grained GitHub token with read and write
+# access to the contents of filmil/txhdl and nothing else, set in this
+# repository's Actions secrets.
+#
+# The instance's own push mirror (Settings, Repository, Mirror Settings)
+# does the same from the server itself, without the runner; if that is
+# set up, this workflow is redundant and can go.
+name: mirror
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  mirror:
+    runs-on: docker
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push main and the tags to GitHub
+        env:
+          TOKEN: ${{ secrets.GITHUB_MIRROR_TOKEN }}
+        run: |
+          set -eu
+          if [ -z "$TOKEN" ]; then
+            echo "GITHUB_MIRROR_TOKEN is not set; nothing to do" >&2
+            exit 1
+          fi
+          git remote add github "https://x-access-token:${TOKEN}@github.com/filmil/txhdl.git"
+          git push github HEAD:refs/heads/main
+          git push github --tags
