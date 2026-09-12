@@ -1,0 +1,386 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% TxHDL, step by step: a tutorial for somebody meeting the language for
+% the first time. Built by //docs:tutorial. Every listing is included
+% from the tree, and every printout and figure is what the build made
+% by running the example, so the tutorial cannot say what the code
+% does not do. One column, because it is mostly listings.
+\documentclass[journal,onecolumn,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\normalsize}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{TxHDL, Step by Step}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{This is the tutorial: for somebody who has written some Rust,
+has not written hardware, and wants to write a unit, run it, see its
+waveform, and get a netlist out, in that order. Every listing is
+included from the project repository \code{HDL/txhdl} at build time
+and every printout is what the build produced by running it. The
+language itself is stated in the embedding article~\cite{embedding},
+the runtime in its own document~\cite{runtime}, every example in the
+examples document~\cite{examples}, and the cover~\cite{cover} lists
+all of them.}%
+\thanks{\buildstamp}}
+
+\markboth{TxHDL, Step by Step}{Filmar and Janković: TxHDL, Step by Step}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+TxHDL is a hardware description language that is a Rust library. A
+design is a struct whose state is registers, its behaviour an
+\code{async fn} that waits for a clock edge, reads, and drives; the
+same file simulates under Rust, writes a waveform, and lowers to
+Verilog and VHDL that the build checks against the simulation. This
+tutorial takes you from nothing to that, in six steps, each on one
+small example the build runs: a counter, the model of time, the three
+ways of choosing, channels between units, the waveform, and the
+netlist with its checks. It ends with how to add an example of your
+own, which is how everything here was added.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Hardware description languages, Rust, tutorial, simulation, Verilog,
+VHDL.
+\end{IEEEkeywords}
+
+\section{Before You Start}
+\label{sec:t-start}
+
+You need one thing installed: \code{bazelisk}, which fetches the
+right Bazel. Everything else, the Rust toolchain, the simulators, the
+\LaTeX{} that made this page, comes through the build. Clone the
+repository and build it:
+
+\begin{lstlisting}[style=ascii]
+bazel build //...
+bazel test  //...
+\end{lstlisting}
+
+The first build fetches toolchains and takes a while; the second is
+seconds. If both finish, you have everything this tutorial uses.
+
+Three sentences on what you are about to read. A \emph{unit} is a
+struct of registers with an \code{async fn run} that is its process.
+A process \emph{waits} for an edge of a clock, \emph{reads} its
+registers and inputs, and \emph{drives} its registers and outputs; the
+drives land at the end of the step, so the whole cycle reads as
+plain Rust with one rule about time. And a unit written in a subset
+the lowering reads is also a netlist, from the same file.
+
+\section{Step One: A Counter}
+\label{sec:t-counter}
+
+Listing~\ref{lst:t-counter} is the whole of a unit. It counts to
+eight while enabled and raises \code{tick} on the last count. Read it
+top to bottom.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={The counter: a register, a wait, two reads, a predicated drive and an output. From \code{ex\_cheat.rs}.},label={lst:t-counter}]{lib/examples/ex_cheat.rs}
+
+The struct holds the state: one register, \code{n}, three bits wide.
+\code{Reg<T>} is a register of any value type; \code{U<3>} is an
+unsigned of three bits. \code{\#[derive(Trace)]} lets a waveform find
+the field by its name, and \code{Default} gives every register its
+zero.
+
+The \code{impl} names the unit's ports in its type: one input, a
+\code{Bit} called \code{enable}, and one output, a \code{Bit} called
+\code{tick}. \code{In} and \code{Out} are the two ends of a wire; the
+testbench holds the other ends. \code{\#[lower]} on the \code{impl}
+is what makes the file a netlist as well; leave it off and the unit
+still simulates.
+
+The body is one \code{loop}, and the first line of the loop is the
+wait: \code{DefaultClock::rising().await}. Everything after it is one
+cycle. The two \code{get}s read the register and the input as the
+edge left them. \code{when!} is a predicated drive: \emph{when}
+\code{en} holds, \code{n} becomes \code{n + 1} at the end of the
+step, and the arrow \code{<=} points into the register to say so.
+\code{tick.set} drives the output, this cycle, from the value the
+register had at the top. Nothing here branches, and nothing is
+assigned twice; that is the shape every unit has.
+
+Now run it. \code{bazel run //lib/examples:ex\_cheat} runs the
+\code{main} below the unit, which you will read in
+Section~\ref{sec:t-testbench}, and prints Listing~\ref{lst:t-counter-out}:
+the counter's Verilog, which is Step Six. Fig.~\ref{fig:t-counter}
+is its waveform, drawn by the build from the run: \code{n} counts
+while \code{enable} is high, \code{tick} marks the sevens, and both
+stop when the enable drops.
+
+\begin{figure}[htbp]
+\centering
+\input{cheat_timing.tex}
+\caption{The counter, from its trace: \code{enable} drops at cycle
+10, \code{n} counts while it is high, \code{tick} marks the sevens.}
+\label{fig:t-counter}
+\end{figure}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_cheat} printed: the counter's Verilog, from the same file.},label={lst:t-counter-out}]{out_cheat.txt}
+
+\section{Step Two: Time}
+\label{sec:t-time}
+
+Everything you need to know about time fits on this page, and the
+figure above shows it. Time is in \emph{ticks}. The default clock has
+a period of two ticks and rises at the even ones, so a cycle is two
+ticks and every rising edge is an even number on the axis.
+
+A \emph{register} takes its value at an edge. When the loop drives
+\code{self.n <= n + 1}, nothing changes yet; the drive is remembered,
+and at the end of the step every drive lands at once. So a register
+read after the wait is the value as the edge left it, and a register
+driven after the wait shows the new value in the next cycle. That is
+why \code{tick} is computed from \code{n} before the drive: the
+output in a cycle is a function of the state at the start of it,
+which is what hardware does, and what the netlist will do.
+
+A \emph{wire} is what \code{set} drives: an output, or a \code{let}
+inside the loop, which the lowering keeps as a named wire. A wire has
+no memory; it is a function of the state and the inputs of this
+cycle.
+
+The one rule: \textbf{every \code{.await} is a cycle boundary.} A
+process that has crossed an edge at this step cannot cross it again,
+so a second wait written after the first waits for the next edge. If
+you want two events at one edge, you write them in
+\code{parallel!}, and the examples document has one that does. State
+read before a wait, at the top of the loop, is state read in the
+previous cycle; read after the wait, always.
+
+\section{Step Three: Choosing}
+\label{sec:t-choosing}
+
+Hardware has no \code{if}. Both arms of a choice exist at once and a
+condition selects, which is why the three ways of choosing have their
+own names, so that the file reads as the hardware does. \code{when!}
+you have seen: a drive under a condition, with an optional
+\code{else}. \code{case!} is \code{when!} with many arms, and it is
+what a state machine is made of. Listing~\ref{lst:t-case} is a
+sequencer that waits for \code{go}, loads a count, runs it down and
+reports done.
+
+\lstinputlisting[caption={A state machine with \code{case!}: each arm is a Rust pattern, guards included, and the first that matches wins. \code{ex\_case.rs}.},label={lst:t-case}]{lib/examples/ex_case.rs}
+
+The arms are Rust patterns. An arm with a guard, \code{State::Run if
+n == 0}, sits above the plain arm for the same state, and the first
+arm that matches wins, exactly as \code{match} would. The state is an
+enum of your own: \code{\#[derive(Value)]} gives it a width, two
+bits for four variants, and a look in a waveform.
+Fig.~\ref{fig:t-case} shows it running: \code{go} for one cycle,
+then the states one per edge, and \code{count} running down. The
+printout, Listing~\ref{lst:t-case-out}, is the same run as text, and
+then the state machine's Verilog: every arm is there, in order, and
+nothing else.
+
+\begin{figure}[htbp]
+\centering
+\input{case_timing.tex}
+\caption{The sequencer: \code{go} for a cycle, then \code{Load},
+three cycles of \code{Run}, \code{Done}, and back to \code{Idle}.}
+\label{fig:t-case}
+\end{figure}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_case} printed: one state per cycle, then the lowering.},label={lst:t-case-out}]{out_case.txt}
+
+The third way is \code{select!}, which chooses a \emph{value} rather
+than a drive: \code{select!(f3.raw() => \{ 0 => a + b, 1 => a << b,
+.. \})} is a multiplexer, and the Vreteno core's ALU is one of
+these. \code{mux(c, a, b)} is the two-way form. You choose between
+values with \code{select!} and \code{mux}, between drives with
+\code{when!} and \code{case!}, and that is the whole vocabulary of
+choice.
+
+\section{Step Four: Talking Between Units}
+\label{sec:t-channels}
+
+Two units talk over a \emph{channel}. A channel carries a
+\emph{transaction}, a value with the trait \code{Transaction}, which
+any \code{U<N>} has and a struct of values gets by deriving it. It
+has two ends: \code{Tx}, on which a unit \code{send}s, and \code{Rx},
+on which a unit \code{recv}s. Between them the runtime keeps an
+elastic buffer of two, so a send lands in the next cycle and a
+receiver never sees a word before the edge after it was offered.
+Listing~\ref{lst:t-stage} is a unit between two channels: it waits
+\code{until} a word is offered and there is room to pass it on, then
+receives it, sends it on incremented, and counts.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={A stage between two channels: \code{until} is the wait, and its condition guards everything after it. From \code{ex\_stage.rs}.},label={lst:t-stage}]{lib/examples/ex_stage.rs}
+
+\code{until(clock, condition)} is a wait like \code{rising}, one that
+passes only at an edge at which the condition holds. \code{peek} is
+the head of the channel as the edge left it, \code{ready} whether
+there is room on the other channel, \code{recv} the take, \code{send}
+the offer. In the netlist a channel is a \code{valid}, a \code{ready}
+and the data, and the lowering makes the wait's condition the guard
+of every drive, the \code{ready} of the receive and the \code{valid}
+of the send. Fig.~\ref{fig:t-stage} shows the handshake on both
+sides of the stage.
+
+\begin{figure}[htbp]
+\centering
+\input{stage_timing.tex}
+\caption{The stage: a word offered on \code{inp} every other cycle,
+taken, and passed on incremented on \code{out} a cycle later.}
+\label{fig:t-stage}
+\end{figure}
+
+A unit that runs every cycle, as a processor core does, cannot wait
+\code{until}. It talks by predicate instead: it receives with no wait
+before the receive, which takes whatever is offered, and sends under
+\code{when!}, whose condition becomes the channel's \code{valid}.
+Listing~\ref{lst:t-tap} is that form: a tap that takes every word and
+passes on the odd ones.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={A tap: a receive with no wait, and a send under \code{when!}. From \code{ex\_tap.rs}.},label={lst:t-tap}]{lib/examples/ex_tap.rs}
+
+One thing to know before you wire two units with plain wires rather
+than a channel: a wire between units carries no promise about which
+of the two sees the other's value in the same step. A channel does.
+When you need a wire between units, drive it from a register and run
+the unit that drives it first; the Vreteno document has the one
+case where that was needed, and the reasons.
+
+\section{Step Five: Running and Watching}
+\label{sec:t-testbench}
+
+The \code{main} of an example is its testbench. Listing~\ref{lst:t-main}
+is the counter's: it makes the two wires with \code{signal}, keeping
+the ends the unit does not take; starts a waveform if the build asked
+for one; runs the unit with \code{Running::new}; and then drives
+\code{enable} and steps the design one cycle at a time with
+\code{sim.cycle()}, which is where a testbench looks at wires and
+registers between steps.
+
+\lstinputlisting[linerange={32-48},caption={The counter's testbench: wires, a waveform, the unit running, twelve cycles. From \code{ex\_cheat.rs}.},label={lst:t-main}]{lib/examples/ex_cheat.rs}
+
+The waveform is the part you will use most. \code{Wave::from\_env()}
+returns a writer when \code{TXHDL\_FST} or \code{TXHDL\_VCD} names a
+file, so the same binary runs silent or writes a trace, and the build
+sets the variable when it draws a figure. You name what to watch:
+the clock, each wire by a name of your choosing, and a unit by name,
+which brings every field it derives \code{Trace} for, under that
+name. Then \code{start()}, and every step from there on is written
+until \code{stop()}. Open the file in any waveform viewer, or let the
+build draw it: every figure in this tutorial is a
+\code{waveform()} entry in \code{docs/BUILD.bazel} that names the
+example and the signals, and the build runs the example, converts the
+trace and draws the picture, so a figure can never disagree with the
+code.
+
+A value of your own, an enum or a struct with \code{\#[derive(Value)]},
+shows in a trace by its variant name or field by field, as
+\code{state} did in Fig.~\ref{fig:t-case}.
+
+\section{Step Six: From Rust to Hardware}
+\label{sec:t-netlist}
+
+You have seen the counter's Verilog in Listing~\ref{lst:t-counter-out}.
+It came from \code{Counter::verilog("counter")}, and
+\code{Counter::lowered("counter")} is the netlist itself, which the
+runtime can also write as VHDL. Both come from the same \code{run}
+you read in Step One: \code{\#[lower]} reads the loop, and the
+lowering rewrites what it finds. A register is a register. A wire
+named by \code{let} is a wire of that name. \code{when!} and
+\code{case!} are predicated assignments in the clocked block.
+\code{select!} and \code{mux} are conditional expressions. The wait
+is the clock edge of the block, and an \code{until} is a guard on
+everything after it. A memory, \code{Mem<T, N>}, is an array,
+written through \code{at} and read by index.
+
+That is the subset: a loop of one wait, then reads, \code{let}s that
+are functions of what was read, and drives. Inside it you have the
+operators of the value types, \code{slice}, \code{concat},
+\code{sext} and \code{zext} for taking words apart and putting them
+together, and \code{mul::<M>} for a product at a stated width. What
+you do not have inside a lowered loop is what hardware does not
+have: \code{if}, a Rust \code{match}, a function call the lowering
+does not know, or a loop with a variable count. The macro says so at
+compile time, with a message that names the construct.
+
+The lowering is checked, not trusted. For every lowered example the
+build runs the Rust simulation, keeps its trace, writes the VHDL and
+the Verilog, and generates a testbench from the trace that replays
+the inputs into the netlist and asserts every register and every
+output at every tick; then it simulates the VHDL under nvc and the
+Verilog under Verilator, both built from source by the build. The
+tests are \code{//docs:cheat\_sim\_counter\_tb\_test} and
+\code{//docs:cheat\_vsim\_test} for the counter, and there is a pair
+for every unit in this tutorial. When you write a unit that lowers,
+the same two tests appear for it the moment you add it to the build,
+which is Step Seven.
+
+\section{Step Seven: Adding Your Own}
+\label{sec:t-adding}
+
+Every example you have read was added the same way, and it is the
+way to add yours.
+
+\begin{enumerate}
+\item Write \code{lib/examples/ex\_\emph{name}.rs}: the unit, and a
+  \code{main} that runs it, prints what is worth reading, and, if
+  the unit lowers, writes its netlist with
+  \code{txhdl::netlist::write\_vhdl\_from\_env} and prints its
+  Verilog. Copy \code{ex\_cheat.rs} and change it.
+\item Add a \code{rust\_binary} for it in
+  \code{lib/examples/BUILD.bazel}, next to the others, and add the
+  file to the \code{sources} filegroup there. Now \code{bazel run
+  //lib/examples:ex\_\emph{name}} runs it.
+\item Add a \code{waveform()} entry in \code{docs/BUILD.bazel}
+  naming the example and the signals to draw; give it
+  \code{lowered = (entity, unit)} if the unit lowers. That makes the
+  figure, the printout, and the two netlist tests.
+\item Write a section for it in \code{docs/examples\_sections},
+  include it from \code{docs/examples.tex}, and add the run and the
+  figure to the examples document's \code{data}. Build the document
+  and look at the page.
+\end{enumerate}
+
+The rule behind the four steps is in the repository's
+\code{AGENTS.md}: a concept lives in three places, the runtime, an
+example, and a document, or it is not finished. The example is the
+test.
+
+\section{Where Next}
+\label{sec:t-next}
+
+The examples document~\cite{examples} has thirty of these, one per
+concept, in the order of the language, with the runtime's public
+interface at the end for looking things up. The embedding
+article~\cite{embedding} states the language: the rule that every
+construct Rust provides is deleted, and what is left. The runtime
+document~\cite{runtime} is the library itself, verbatim, with the
+model of time stated in prose, for when you want to know what a
+construct does inside. And the Vreteno document is a RISC-V core
+written in the subset you have just read, checked every cycle against
+a reference model, lowered, and placed and routed at 100~MHz, which
+is what the six steps add up to.
+
+\begin{thebibliography}{10}
+
+\bibitem{embedding}
+F.~Filmar and D.~Janković, ``Deleting a language: Embedding TxHDL in
+Rust,'' project repository \code{HDL/txhdl}, \code{//docs:embedding},
+2026.
+
+\bibitem{runtime}
+F.~Filmar and D.~Janković, ``The TxHDL runtime,'' project repository
+\code{HDL/txhdl}, \code{//docs:runtime}, 2026.
+
+\bibitem{examples}
+F.~Filmar and D.~Janković, ``TxHDL by example,'' project repository
+\code{HDL/txhdl}, \code{//docs:examples}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}

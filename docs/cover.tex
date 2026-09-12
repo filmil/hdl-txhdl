@@ -32,7 +32,8 @@ project; they were merged into one with a Rust-shaped syntax, and the
 merged language was then reduced by deleting every construct Rust
 already provides, until what remained was a library. The documents
 follow that history, and a reader who wants the current state of the
-language reads the last three.
+language reads the last three; a reader who wants to start writing
+reads the tutorial.
 
 Every document is built by Bazel from the project repository,
 \code{HDL/txhdl}, against a hermetic \LaTeX{} toolchain, so
@@ -90,6 +91,14 @@ TxHDL: A Hardware Description Language That Is a Rust Library
     checks, and the Vreteno core through synthesis. No history. For
     somebody meeting TxHDL for the first time.
   & \code{//docs:paper} \\
+\addlinespace
+TxHDL, Step by Step
+  & The tutorial. Six steps on six examples the build runs: a counter,
+    the model of time, the three ways of choosing, channels between
+    units, the waveform, and the netlist with its checks; then how to
+    add an example of your own. For somebody who has written some Rust
+    and no hardware.
+  & \code{//docs:tutorial} \\
 \addlinespace
 TxHDL Documents
   & This document.

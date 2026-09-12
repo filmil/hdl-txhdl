@@ -863,6 +863,24 @@ genrule(
     ],
 )
 
+# The tutorial: six steps on the examples, for a beginner.
+latex_document(
+    name = "tutorial",
+    main = "tutorial.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":cheat_run",
+        ":cheat_timing",
+        ":case_run",
+        ":case_timing",
+        ":stage_run",
+        ":stage_timing",
+        "//lib/examples:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # Every document in sequence, one file, with a bookmark per document.
 combined_pdf(
     name = "all",
@@ -870,16 +888,18 @@ combined_pdf(
     bookmarks = [
         "TxHDL Documents",
         "TxHDL cheat sheet",
+        "TxHDL, Step by Step",
         "TxHDL: Unifying a Dataflow and a Transaction HDL",
         "Deleting a Language: Embedding TxHDL in Rust",
         "The TxHDL Runtime",
         "TxHDL by Example",
-        "Vreteno: An RV32I Core in TxHDL",
+        "Vreteno: An RV32IM Core in TxHDL",
         "TxHDL: A Hardware Description Language That Is a Rust Library",
     ],
     parts = [
         ":cover",
         ":cheatsheet",
+        ":tutorial",
         ":article",
         ":embedding",
         ":runtime",
