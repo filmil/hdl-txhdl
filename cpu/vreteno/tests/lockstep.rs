@@ -80,6 +80,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let (halt_out, _halt) = signal::<Bit, DefaultClock>();
     let (instr_out, _instr) = signal::<U<32>, DefaultClock>();
     let (ir, in_execute) = (cpu.ir.clone(), cpu.valid.clone());
+    let stall = cpu.stall.clone();
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
     // The timer first, since the core reads its line in the same step.
     let (rst_t, rst_u) = (rst.clone(), rst.clone());
@@ -107,8 +108,11 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let mut noise = seed.unwrap_or(0).wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
     // Whether the core, deciding on its registers as they stand before
     // this cycle, takes the interrupt in place of the instruction in
-    // execute; the model is told so when that instruction retires,
-    // which is the cycle after its last cycle in execute.
+    // execute; the model is told so when that instruction retires. The
+    // decision is the one of the instruction's last cycle in execute,
+    // the cycle it is not stalled, which the core's stall wire says
+    // once the cycle has run: an instruction may sit stalled behind a
+    // device load's wait for cycles in which the registers move on.
     let mut taken: Option<u32> = None;
     let mut taken_before: Option<u32> = None;
     // What the bus answered a load from a device is in the core's own
@@ -138,22 +142,23 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         // which it retires, which is the next instruction's execute
         // cycle, so it is read before that cycle.
         answer = wb_dev.get().raw() as u32;
-        if executing {
-            line = pending.get().to_bool();
-            let ext =
-                mip.get().bit(11).to_bool() && mie.get().bit(11).to_bool();
-            let tim = line && mie.get().bit(7).to_bool();
-            taken = if !mstatus.get().bit(3).to_bool() {
-                None
-            } else if ext {
-                Some(CAUSE_MEXT)
-            } else if tim {
-                Some(CAUSE_MTIMER)
-            } else {
-                None
-            };
-        }
+        let line_now = pending.get().to_bool();
+        let ext = mip.get().bit(11).to_bool() && mie.get().bit(11).to_bool();
+        let tim = line_now && mie.get().bit(7).to_bool();
+        let taken_now = if !mstatus.get().bit(3).to_bool() {
+            None
+        } else if ext {
+            Some(CAUSE_MEXT)
+        } else if tim {
+            Some(CAUSE_MTIMER)
+        } else {
+            None
+        };
         sim.cycle();
+        if executing && !stall.get().to_bool() {
+            line = line_now;
+            taken = taken_now;
+        }
         if wb.get().done.to_bool() {
             model.dev_word = answer;
             model.tirq = line_before;
@@ -187,6 +192,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         // CSRs are compared except in the cycle a system instruction,
         // or an illegal word, executed: they agree again a cycle later.
         let system = executing
+            && !stall.get().to_bool()
             && (taken.is_some()
                 || matches!(
                     decode(executed).kind,

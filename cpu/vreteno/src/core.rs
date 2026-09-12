@@ -210,7 +210,10 @@ impl
                 _ => ld_half.zext::<32>(),
             });
             let wb_val = mux(wb_load, loaded, wb_alu);
-            let wb_write = wb_valid.and(is_zero(wb_rd).not());
+            // A device load sits in writeback while its wait is on, and
+            // retires the cycle after its answer has landed.
+            let wb_here = wb_valid.and(dev_wait.not());
+            let wb_write = wb_here.and(is_zero(wb_rd).not());
             // The fetch stage: the word at the program counter, into
             // the instruction register unless the execute stage
             // redirects below.
@@ -278,8 +281,8 @@ impl
             let stall_m = m_here.and(int_ok.not()).and(m_done.not());
             // A load or store to the bus, which is everything above the
             // data memory. A store goes out when the bus has room; a
-            // load goes out, waits for the answer, and runs when it is
-            // there, the answer taken into the writeback's register.
+            // load goes out and moves on to writeback, which holds it
+            // until the answer has landed in its register there.
             let a = mux(
                 is_zero(rs1),
                 U::<32>::from(0u32),
@@ -295,15 +298,19 @@ impl
                 _ => imm_i,
             }));
             let is_load = eq(opcode, U::from(0x03u8));
+            let is_store = eq(opcode, U::from(0x23u8));
             let is_dev = is_zero(addr.slice::<13, 19>()).not();
             let here = valid.and(rst.not()).and(stopped.not());
-            let dev_load = here.and(is_load).and(is_dev);
-            let dev_store = here.and(eq(opcode, U::from(0x23u8))).and(is_dev);
-            let send_load = dev_load.and(dev_wait.not()).and(req.ready());
-            let stall_dev = dev_load
-                .and(mux(dev_wait, resp_valid.not(), Bit::One))
-                .or(dev_store.and(req.ready().not()));
-            self.stall.set(stall_ld.or(stall_m).or(stall_dev));
+            // A load or a store waits for room on the bus whatever its
+            // address, so that the fetch's hold does not hang on the
+            // address's decode, which was the path that limited the
+            // clock; there is room whenever the devices keep up, and
+            // they do. A device load's wait for its answer is a
+            // register, so the hold for it is state too.
+            let stall_bus =
+                here.and(is_load.or(is_store)).and(req.ready().not());
+            self.stall
+                .set(stall_ld.or(stall_m).or(stall_bus).or(dev_wait));
             let stall = self.stall.get();
             let pc4 = pc.wrapping_add(U::from(4u8));
             // Live: an instruction in execute that is not stalled. It
@@ -312,6 +319,7 @@ impl
             self.int_take.set(live.and(int_ok));
             let int_take = self.int_take.get();
             let run = live.and(int_take.not());
+            let send_load = run.and(is_load).and(is_dev);
 
             // The ALU, shared by the register and immediate forms; bit
             // 30 means subtract or arithmetic shift, except that an
@@ -547,6 +555,7 @@ impl
                 )
                 .concat::<1, 69>(store.zext::<1>());
             when!(send_load.or(store.and(is_dev)) => { req.send(req_word) });
+            when!(resp_valid => { self.wb_dev <= resp_data });
             case!(rst => {
                 Bit::One => { self.dev_wait <= Bit::Zero },
                 _ if send_load.to_bool() => { self.dev_wait <= Bit::One },
@@ -665,23 +674,26 @@ impl
             });
             // The writeback stage gets the instruction, or the interrupt
             // in its place, which retires as a trap does: nothing written.
-            when!(live => {
-                self.wb_valid <= Bit::One;
-                self.wb_pc <= pc;
-                self.wb_ir <= ir;
-                self.wb_rd <= mux(wrote, rd, U::from(0u8));
-                self.wb_alu <= wval;
-                self.wb_ld <= word;
-                self.wb_dev <= resp_data;
-                self.wb_is_dev <= is_dev.and(is_load);
-                self.wb_f3 <= f3;
-                self.wb_lane <= lane;
-                self.wb_load <= is_load.and(run);
-                self.wb_stop <= is_ebreak.and(run)
-            } else {
-                self.wb_valid <= Bit::Zero;
-                self.wb_rd <= U::from(0u8);
-                self.wb_stop <= Bit::Zero
+            case!(live => {
+                Bit::One => {
+                    self.wb_valid <= Bit::One;
+                    self.wb_pc <= pc;
+                    self.wb_ir <= ir;
+                    self.wb_rd <= mux(wrote, rd, U::from(0u8));
+                    self.wb_alu <= wval;
+                    self.wb_ld <= word;
+                    self.wb_is_dev <= is_dev.and(is_load);
+                    self.wb_f3 <= f3;
+                    self.wb_lane <= lane;
+                    self.wb_load <= is_load.and(run);
+                    self.wb_stop <= is_ebreak.and(run)
+                },
+                _ if dev_wait.to_bool() => {},
+                _ => {
+                    self.wb_valid <= Bit::Zero;
+                    self.wb_rd <= U::from(0u8);
+                    self.wb_stop <= Bit::Zero
+                },
             });
             // begin{fetch}
             // The fetch's next counter: zero on reset, parked on the
@@ -714,11 +726,11 @@ impl
             // end{fetch}
             self.stopped.set(stop);
             halt.set(halted);
-            instr.set(mux(wb_valid, wb_ir, U::<32>::from(0u32)));
+            instr.set(mux(wb_here, wb_ir, U::<32>::from(0u32)));
             wb.set(Writeback {
-                done: wb_valid,
+                done: wb_here,
                 rd: wb_rd,
-                val: mux(wb_valid, wb_val, U::<32>::from(0u32)),
+                val: mux(wb_here, wb_val, U::<32>::from(0u32)),
             });
         }
     }
