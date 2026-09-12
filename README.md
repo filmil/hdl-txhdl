@@ -34,6 +34,28 @@ The first build fetches a Debian rootfs, a Zig toolchain, graphviz built
 from source and a TeX installation, which is roughly 950 actions.
 Later builds reuse them.
 
+## The board
+
+The Vreteno core's board, an Alinx AX7A200, sits on `srv.filmar.us`
+with its programming cable and its serial bridge, and is programmed
+from here over ssh.
+Vivado's `hw_server` and the cable's libraries come out of the hermetic
+Vivado into a bundle; the first command uploads it, starts it there and
+tunnels its port back as `localhost:3122`; the second has Vivado connect
+to the tunnel and write the FPGA; the third watches the serial port
+there for a while and types a reply once the board has said a line.
+Start the watcher before programming, since the board speaks at once.
+
+```sh
+bazel run //cpu/vreteno/board/remote:hw_server -- --server=srv.filmar.us
+bazel run //cpu/vreteno/board/remote:serial -- --server=srv.filmar.us --seconds=60 --reply=yes &
+bazel run //cpu/vreteno:vreteno_board_prog -- --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+```
+
+The board answers `OK`, then echoes `yes`.
+`//cpu/vreteno:vreteno_board_flash` writes the QSPI flash the same way,
+so the design survives a power cycle.
+
 ## Releases
 
 `release` publishes the rendered documents.
