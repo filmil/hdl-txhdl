@@ -611,6 +611,8 @@ latex_document(
         ":buffer_timing",
         ":wire_run",
         ":wire_timing",
+        ":fn_run",
+        ":fn_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -727,6 +729,19 @@ waveform(
         "//div/counting=>counting",
         "//div/wrap=>wrap",
         "//tick=>tick",
+    ],
+)
+
+waveform(
+    name = "fn",
+    example = "//lib/examples:ex_fn",
+    lowered = ("gray", "gray"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//step=>step",
+        "//gray/n=>n",
+        "//code=>code",
+        "//wrap=>wrap",
     ],
 )
 

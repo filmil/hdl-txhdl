@@ -78,4 +78,10 @@ unit that lowers is the unit that simulates, one file, and the
 runtime~\cite{runtime} and examples~\cite{examples} documents state
 what the subset is and check every piece of it against a trace under
 \code{nvc}. The RISC-V core~\cite{vreteno} is written in that subset
-whole.
+whole. A function under \code{\#[lower]} is the one addition since:
+combinational, a few \code{let}s and a value, plain Rust for the
+simulation and inlined at every call in a lowered unit of the same
+file. The macro reads the file for it, which
+\code{Span::local\_file} names, since a proc macro sees one item at
+a time. So a step can be short and its pieces named; the core's
+serial port is written so.

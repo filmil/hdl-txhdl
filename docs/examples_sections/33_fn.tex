@@ -1,0 +1,28 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Function, Inlined}
+\label{sec:x-fn}
+
+The step of a unit is one loop body, and a long one reads as a wall.
+A function under \code{\#[lower]} takes a piece of it out under a
+name. It is combinational, a few \code{let}s and a value; it is plain
+Rust for the simulation; and it is inlined at every call in a
+lowered unit of the same file, its parameters bound to the arguments
+and its \code{let}s to expressions of their own. The lowering reads
+the file for it, since a proc macro sees one item at a time. What it
+can inline is what the step could have said in place, and nothing
+else: no register, no port, no \code{when!}. The counter here keeps
+its two pieces of arithmetic so, the Gray code of the count and
+whether the count is about to wrap, and the netlist is the one the
+step would have made with them written in.
+
+\begin{figure}[htbp]
+\centering
+\input{fn_timing.tex}
+\caption{The counter: \code{code} is the Gray code of \code{n}, from
+a function; \code{wrap} is the step that will wrap it.}
+\label{fig:x-fn}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_fn.rs}. Run with \code{bazel run //lib/examples:ex\_fn}.},label={lst:x-fn}]{lib/examples/ex_fn.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_fn} printed when the build ran it: the counts, then the lowering, the functions written in.},label={lst:x-fn-out}]{out_fn.txt}

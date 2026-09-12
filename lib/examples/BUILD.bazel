@@ -192,6 +192,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A function under #[lower], inlined:  bazel run //lib/examples:ex_fn
+rust_binary(
+    name = "ex_fn",
+    srcs = ["ex_fn.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A tap between channels, sends under when!:  bazel run //lib/examples:ex_tap
 rust_binary(
     name = "ex_tap",
@@ -253,5 +262,6 @@ filegroup(
         "ex_tap.rs",
         "ex_buffer.rs",
         "ex_wire.rs",
+        "ex_fn.rs",
     ],
 )

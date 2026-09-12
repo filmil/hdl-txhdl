@@ -354,6 +354,7 @@ MAC & \code{mul::<M>}, a product at a stated width & nvc, Verilator \\
 tap & a send under \code{when!}, a receive with no wait & nvc, Verilator \\
 buffer & the channel as hardware, against the runtime's & nvc, Verilator \\
 divider & internal wires kept as fields, seen and checked & nvc, Verilator \\
+Gray counter & functions under \code{\#[lower]}, inlined & nvc, Verilator \\
 Vreteno & the whole core, 732 ticks & nvc, Verilator \\
 router & the bus fanned out by address, the same run & nvc, Verilator \\
 timer & a device on the core's bus, the same run & nvc, Verilator \\
@@ -516,12 +517,12 @@ writeback decoded into its register and value.}
 What the system does, in numbers from the build that produced this
 paper. The runtime is five Rust modules, one macro crate and one
 crate of parts, with one
-external crate, an FST writer. Twenty-nine examples compile, each one
+external crate, an FST writer. Thirty examples compile, each one
 concept, and every one that runs writes a waveform the examples
-document draws. Sixteen lowered units, Table~\ref{tab:p-checked}, are
+document draws. Seventeen lowered units, Table~\ref{tab:p-checked}, are
 simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
-thirty-seven tests run under \code{bazel test //...}, and every one of them
+thirty-nine tests run under \code{bazel test //...}, and every one of them
 is hermetic, the simulators built from source and the synthesis tool
 installed by the build. Vreteno is 737 lines of core, 98 of timer,
 62 of router and 89 of serial port, checked in lockstep against a

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The macros of the runtime: four derives, `interface!`, `when!` and
-//! `case!`. Written
+//! The macros of the runtime: four derives, `interface!`, `when!`,
+//! `case!` and `#[lower]`, on a unit's impl and on a function it
+//! inlines. Written
 //! against `proc_macro` alone, without syn or quote, because the
 //! grammars are small and a crate registry would be the larger cost.
 extern crate proc_macro;
@@ -1346,6 +1347,165 @@ fn target_name(ts: &[TokenTree]) -> Result<String, String> {
 /// Constants of the configuration are left as the Rust expressions they
 /// are, so they are evaluated then. `subst` maps `let` names to the
 /// source of what they stand for.
+/// A function under `#[lower]`: combinational, a few `let`s and a
+/// value, plain Rust for the simulation and inlined at every call in
+/// a lowered unit of the same file. Kept as text, not tokens: a
+/// token is a handle into the compiler's bridge for one invocation
+/// of the macro, and one kept past it hangs the compiler when it is
+/// dropped.
+#[derive(Clone)]
+struct Helper {
+    name: String,
+    params: Vec<String>,
+    lets: Vec<(String, String)>,
+    value: String,
+}
+
+fn punct_at(ts: &[TokenTree], i: usize, c: char) -> bool {
+    matches!(ts.get(i), Some(TokenTree::Punct(p)) if p.as_char() == c)
+}
+
+fn is_ident(t: &TokenTree, s: &str) -> bool {
+    matches!(t, TokenTree::Ident(id) if id.to_string() == s)
+}
+
+/// Tokens as text, to be parsed again inside a later invocation.
+fn text_of(ts: &[TokenTree]) -> String {
+    ts.iter()
+        .map(|t| t.to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+thread_local! {
+    /// The functions of the file the unit being lowered is in.
+    static HELPERS: std::cell::RefCell<Vec<Helper>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The functions under `#[lower]` in a file. The macro reads the file,
+/// which is what `Span::local_file` names, since a proc macro sees one
+/// item at a time and a function's body is not in the unit's. A
+/// function is `fn name(a: A, ..) -> R { let x = e; ..; value }`, with
+/// or without `pub` and generics; its parameters are taken by name.
+fn find_helpers(file: Option<std::path::PathBuf>) -> Vec<Helper> {
+    let Some(text) = file.and_then(|p| std::fs::read_to_string(p).ok()) else {
+        return Vec::new();
+    };
+    let Ok(stream) = text.parse::<TokenStream>() else {
+        return Vec::new();
+    };
+    let ts: Vec<TokenTree> = stream.into_iter().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 1 < ts.len() {
+        let marked = matches!(&ts[i], TokenTree::Punct(p) if p.as_char() == '#')
+            && matches!(&ts[i + 1], TokenTree::Group(g)
+                if g.delimiter() == Delimiter::Bracket
+                    && g.stream().to_string() == "lower");
+        if !marked {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 2;
+        if ts.get(j).is_some_and(|t| is_ident(t, "pub")) {
+            j += 1;
+            if matches!(ts.get(j), Some(TokenTree::Group(g))
+                if g.delimiter() == Delimiter::Parenthesis)
+            {
+                j += 1;
+            }
+        }
+        if !ts.get(j).is_some_and(|t| is_ident(t, "fn")) {
+            i += 1;
+            continue;
+        }
+        let Some(TokenTree::Ident(name)) = ts.get(j + 1) else {
+            i += 1;
+            continue;
+        };
+        j += 2;
+        if matches!(ts.get(j), Some(TokenTree::Punct(p)) if p.as_char() == '<')
+        {
+            let mut depth = 0;
+            while j < ts.len() {
+                match &ts[j] {
+                    TokenTree::Punct(p) if p.as_char() == '<' => depth += 1,
+                    TokenTree::Punct(p) if p.as_char() == '>' => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+        }
+        let Some(TokenTree::Group(params)) = ts.get(j) else {
+            i += 1;
+            continue;
+        };
+        let params: Vec<String> = split_commas(params)
+            .iter()
+            .filter_map(|p| match p.first() {
+                Some(TokenTree::Ident(n)) => Some(n.to_string()),
+                _ => None,
+            })
+            .collect();
+        let brace = |t: &TokenTree| {
+            matches!(t, TokenTree::Group(g)
+                if g.delimiter() == Delimiter::Brace)
+        };
+        let Some(k) = ts[j..].iter().position(brace) else {
+            break;
+        };
+        let TokenTree::Group(body) = &ts[j + k] else {
+            break;
+        };
+        let mut lets = Vec::new();
+        let mut value = String::new();
+        for st in statements(body) {
+            let st: Vec<TokenTree> = st.into_iter().collect();
+            if st.len() > 3 && is_ident(&st[0], "let") {
+                lets.push((st[1].to_string(), text_of(&st[3..])));
+            } else {
+                value = text_of(&st);
+            }
+        }
+        out.push(Helper {
+            name: name.to_string(),
+            params,
+            lets,
+            value,
+        });
+        i = j + k + 1;
+    }
+    out
+}
+
+/// A call of a function under `#[lower]`, inlined: its parameters
+/// bound to the arguments, its `let`s to expressions of their own,
+/// and its value the call's.
+fn inline_helper(h: &Helper, args: &[String]) -> Result<String, String> {
+    if args.len() != h.params.len() {
+        return Err(format!("`{}` takes {} arguments", h.name, h.params.len()));
+    }
+    let mut s: Vec<(String, String)> =
+        h.params.iter().cloned().zip(args.iter().cloned()).collect();
+    let toks = |text: &str| -> Result<Vec<TokenTree>, String> {
+        text.parse::<TokenStream>()
+            .map(|t| t.into_iter().collect())
+            .map_err(|_| format!("cannot parse `{text}` in `{}`", h.name))
+    };
+    for (n, e) in &h.lets {
+        let v = tr(&toks(e)?, &s)?;
+        s.push((n.clone(), v));
+    }
+    if h.value.is_empty() {
+        return Err(format!("`{}` has no value", h.name));
+    }
+    tr(&toks(&h.value)?, &s)
+}
+
 fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
     if ts.is_empty() {
         return Err("empty expression".into());
@@ -1541,6 +1701,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             let n = id.to_string();
             Ok(subst
                 .iter()
+                .rev()
                 .find(|(k, _)| *k == n)
                 .map(|(_, v)| v.clone())
                 .unwrap_or_else(|| ename(&n)))
@@ -1587,15 +1748,33 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
         }
         _ => {
             let last_group = matches!(ts.last(), Some(TokenTree::Group(_)));
-            if ts.len() == 2 {
-                if let (TokenTree::Ident(f), TokenTree::Group(g)) =
-                    (&ts[0], &ts[1])
+            // A call, `f(args)` or `f::<K>(args)`: one of the runtime's
+            // functions, or a function under `#[lower]` in this file,
+            // which is inlined.
+            let turbo = punct_at(ts, 1, ':')
+                && punct_at(ts, 2, ':')
+                && punct_at(ts, 3, '<');
+            let call = match (ts.first(), ts.last()) {
+                (Some(TokenTree::Ident(f)), Some(TokenTree::Group(g)))
+                    if g.delimiter() == Delimiter::Parenthesis
+                        && (ts.len() == 2 || turbo) =>
                 {
+                    Some((f.to_string(), g.clone()))
+                }
+                _ => None,
+            };
+            if let Some((f, g)) = call {
+                let helper = HELPERS
+                    .with(|h| h.borrow().iter().find(|x| x.name == f).cloned());
+                if helper.is_some() || ts.len() == 2 {
                     let mut v = Vec::new();
-                    for x in split_commas(g) {
+                    for x in split_commas(&g) {
                         v.push(tr(&x, subst)?);
                     }
-                    return Ok(match f.to_string().as_str() {
+                    if let Some(h) = helper {
+                        return inline_helper(&h, &v);
+                    }
+                    return Ok(match f.as_str() {
                         "eq" => ebin("==", &v[0], &v[1]),
                         "shl" => ebin("<<", &v[0], &v[1]),
                         "shr" => ebin(">>", &v[0], &v[1]),
@@ -1760,6 +1939,22 @@ fn pattern_cond(
 #[proc_macro_attribute]
 pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let toks: Vec<TokenTree> = item.clone().into_iter().collect();
+    // On a function: the function is plain Rust for the simulation,
+    // and the lowered units of its file inline it, see `find_helpers`.
+    let first = toks.iter().find_map(|t| match t {
+        TokenTree::Ident(id)
+            if id.to_string() == "fn" || id.to_string() == "impl" =>
+        {
+            Some(id.to_string())
+        }
+        _ => None,
+    });
+    if first.as_deref() == Some("fn") {
+        return item;
+    }
+    HELPERS.with(|h| {
+        *h.borrow_mut() = find_helpers(Span::call_site().local_file())
+    });
     // Past any attributes and doc comments, to `impl`.
     let Some(at) = toks.iter().position(
         |t| matches!(t, TokenTree::Ident(id) if id.to_string() == "impl"),
