@@ -334,7 +334,12 @@ $2k-1$, a register is checked at $2k+1$, a wire at $2k-1$, and a
 channel's registered inputs a tick later than a wire's.
 Table~\ref{tab:p-checked} lists the units that pass;
 Fig.~\ref{fig:p-stage} is one of them, a stage between two channels,
-whose handshake on both sides is what its testbench replays.
+whose handshake on both sides is what its testbench replays. A unit
+is also checked live: a Verilog or VHDL module becomes a unit of the
+runtime, Verilator in process or nvc as a child process behind it,
+and the examples document runs the stage beside its own Verilog and
+its own VHDL in three pipelines on the same offers, which take the
+same words at the same ticks.
 
 \begin{table}[htbp]
 \caption{Lowered units simulated against their traces.}

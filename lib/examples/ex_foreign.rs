@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-//! A Verilog module as a unit, co-run with the Rust it came from. The
-//! stage of `ex_stage` is lowered to Verilog by the build, Verilator
-//! makes a C++ model of it, and `verilog_unit()` in the build makes a
-//! unit of that: `stage_verilog::Stage`, with the same ports. Here it
-//! sits in a second pipeline beside the Rust stage, fed the same
-//! offers, and the two sinks must take the same words at the same
-//! ticks: the lowering checked live, side by side, rather than by
-//! replaying a trace. A module written by hand in Verilog goes in the
-//! same way.
+//! A foreign module as a unit, co-run with the Rust it came from. The
+//! stage of `ex_stage` is lowered to Verilog and to VHDL by the build;
+//! Verilator makes a C++ model of the Verilog and `verilog_unit()`
+//! makes a unit of that, `stage_verilog::Stage`, and `vhdl_unit()`
+//! makes one of the VHDL, `stage_vhdl::Stage`, with nvc running as a
+//! child process behind it. Here the three sit in three pipelines,
+//! fed the same offers, and the three sinks must take the same words
+//! at the same ticks: the lowering checked live, side by side, in
+//! both languages, rather than by replaying a trace. A module written
+//! by hand goes in the same way.
 use stage_verilog::Stage as StageV;
+use stage_vhdl::Stage as StageH;
 use std::cell::RefCell;
 use std::rc::Rc;
 use txhdl::comp::trace::{stop, Wave};
@@ -81,11 +83,16 @@ fn main() {
     let (b_tx, b_rx) = chan::<U<8>, _>();
     let (c_tx, c_rx) = chan::<U<8>, _>();
     let (d_tx, d_rx) = chan::<U<8>, _>();
+    let (e_tx, e_rx) = chan::<U<8>, _>();
+    let (f_tx, f_rx) = chan::<U<8>, _>();
     let (mut source, mut stage, mut sink) =
         (Source::default(), Stage::default(), Sink::default());
     let (mut vsource, mut vstage, mut vsink) =
         (Source::default(), StageV::default(), Sink::default());
-    let (took, vtook) = (sink.took.clone(), vsink.took.clone());
+    let (mut hsource, mut hstage, mut hsink) =
+        (Source::default(), StageH::default(), Sink::default());
+    let (took, vtook, htook) =
+        (sink.took.clone(), vsink.took.clone(), hsink.took.clone());
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         w.add("inp", &a_rx);
@@ -93,32 +100,41 @@ fn main() {
         w.add("stage", &stage);
         w.add("vinp", &c_rx);
         w.add("vout", &d_rx);
+        w.add("hinp", &e_rx);
+        w.add("hout", &f_rx);
         w.start();
     }
-    // Two pipelines, the Rust stage in one and its Verilog in the
-    // other; the foreign unit before the sink that reads it, as any
-    // unit with wires out.
+    // Three pipelines, the Rust stage, its Verilog and its VHDL; a
+    // foreign unit before the sink that reads it, as any unit with
+    // wires out.
     let mut sim = Running::new(join2(
         join2(
             join2(source.run((), a_tx), stage.run(a_rx, b_tx)),
             sink.run(b_rx, ()),
         ),
         join2(
-            join2(vsource.run((), c_tx), vstage.run(c_rx, d_tx)),
-            vsink.run(d_rx, ()),
+            join2(
+                join2(vsource.run((), c_tx), vstage.run(c_rx, d_tx)),
+                vsink.run(d_rx, ()),
+            ),
+            join2(
+                join2(hsource.run((), e_tx), hstage.run(e_rx, f_tx)),
+                hsink.run(f_rx, ()),
+            ),
         ),
     ));
     for _ in 0..12 {
         sim.cycle();
     }
     stop();
-    let (took, vtook) = (took.borrow(), vtook.borrow());
-    for (r, v) in took.iter().zip(vtook.iter()) {
+    let (took, vtook, htook) = (took.borrow(), vtook.borrow(), htook.borrow());
+    for ((r, v), h) in took.iter().zip(vtook.iter()).zip(htook.iter()) {
         println!(
-            "t={:>2} rust took {:>3}    t={:>2} verilog took {:>3}",
-            r.0, r.1, v.0, v.1
+            "t={:>2} rust {:>3}   t={:>2} verilog {:>3}   t={:>2} vhdl {:>3}",
+            r.0, r.1, v.0, v.1, h.0, h.1
         );
     }
     assert_eq!(*took, *vtook, "the Verilog stage and the Rust one differ");
-    println!("{} words, the same on both sides", took.len());
+    assert_eq!(*took, *htook, "the VHDL stage and the Rust one differ");
+    println!("{} words, the same on all three sides", took.len());
 }

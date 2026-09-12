@@ -23,7 +23,23 @@ order as the timer of the core does. What it cannot do is lower: the
 lowering carries it as nothing, and a netlist that holds one is the
 board top's business, by hand, as the core's is.
 \code{verilog\_unit()} in \code{lib/foreign.bzl} builds the model,
-the shim and the crate from the one Verilog file; the examples
-document~\cite{examples} co-runs a unit with its own Verilog.
+the shim and the crate from the one Verilog file.
+
+A VHDL entity goes the same way with nvc as the engine, run as a
+child process, since nvc is a program and not a library. The tool
+writes a testbench around the entity that reads a line per step
+from its standard input, a command and the inputs as hex, applies
+them, settles or pulses the clock, and writes the outputs back as
+one line; the build analyses and elaborates the two and makes the
+script that runs nvc on them, an executable of the build's own,
+since a test target cannot be depended on; and \code{Cosim} starts
+the script in the runfiles, where its paths hold, and speaks the
+lines, a settle and an edge each one exchange. The same generated
+unit drives either engine, since both answer to set, get, settle
+and edge; a step costs a pipe's round trip under nvc, some tens of
+microseconds, and nothing under Verilator. \code{vhdl\_unit()}
+builds the testbench, the script and the crate. The examples
+document~\cite{examples} co-runs a unit with its own Verilog and
+its own VHDL at once.
 
 \lstinputlisting[caption={\code{lib/src/foreign.rs}.},label={lst:r-foreign}]{lib/src/foreign.rs}

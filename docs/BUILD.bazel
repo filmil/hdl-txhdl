@@ -743,9 +743,10 @@ waveform(
         "//inp/rx_valid=>inp_valid",
         "//inp/rx_data=>inp",
         "//out/rx_data=>out",
-        "//vinp/rx_valid=>vinp_valid",
         "//vinp/rx_data=>vinp",
         "//vout/rx_data=>vout",
+        "//hinp/rx_data=>hinp",
+        "//hout/rx_data=>hout",
         "//stage/count=>count",
     ],
 )

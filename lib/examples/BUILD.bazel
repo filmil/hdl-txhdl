@@ -4,7 +4,7 @@
 # includes each file verbatim, so a listing there is also a build target
 # here, and a concept with no example is a concept nobody has checked.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
-load("//lib:foreign.bzl", "verilog_unit")
+load("//lib:foreign.bzl", "verilog_unit", "vhdl_unit")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -217,12 +217,30 @@ verilog_unit(
     top = "stage",
 )
 
+# The stage's VHDL, the same way, with nvc as a child process.
+genrule(
+    name = "stage_vhd",
+    outs = [
+        "stage.vhd",
+        "stage.vhd.ports",
+    ],
+    cmd = "TXHDL_VHDL=$(location stage.vhd) $(location :ex_stage) > /dev/null",
+    tools = [":ex_stage"],
+)
+
+vhdl_unit(
+    name = "stage_vhdl",
+    src = ":stage.vhd",
+    entity = "stage",
+)
+
 rust_binary(
     name = "ex_foreign",
     srcs = ["ex_foreign.rs"],
     edition = "2021",
     deps = [
         ":stage_verilog",
+        ":stage_vhdl",
         "//lib:txhdl",
     ],
     proc_macro_deps = ["//lib:txhdl_macros"],
