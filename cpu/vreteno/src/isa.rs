@@ -72,10 +72,17 @@ pub const CSR_MTVEC: u32 = 0x305;
 pub const CSR_MSCRATCH: u32 = 0x340;
 pub const CSR_MEPC: u32 = 0x341;
 pub const CSR_MCAUSE: u32 = 0x342;
+pub const CSR_MIE: u32 = 0x304;
+pub const CSR_MIP: u32 = 0x344;
+pub const CSR_MTVAL: u32 = 0x343;
 
-/// The causes the core raises.
+/// The causes the core raises: two exceptions, and the external
+/// interrupt, whose cause has the top bit set.
 pub const CAUSE_ILLEGAL: u32 = 2;
 pub const CAUSE_ECALL: u32 = 11;
+pub const CAUSE_MEXT: u32 = 0x8000_000b;
+/// The external interrupt's bit in `mie` and `mip`.
+pub const MEXT: u32 = 1 << 11;
 
 /// A decoded instruction: the mnemonic and its fields, the immediate
 /// already extended to a signed word.

@@ -19,8 +19,8 @@
 //! same file simulates and lowers, and the netlist is simulated
 //! against the trace the simulation wrote.
 use crate::isa::{
-    CAUSE_ECALL, CAUSE_ILLEGAL, CSR_MCAUSE, CSR_MEPC, CSR_MSCRATCH,
-    CSR_MSTATUS, CSR_MTVEC,
+    CAUSE_ECALL, CAUSE_ILLEGAL, CAUSE_MEXT, CSR_MCAUSE, CSR_MEPC, CSR_MIE,
+    CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT,
 };
 use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
 use txhdl::funcs::{
@@ -82,6 +82,9 @@ pub struct Vreteno {
     pub mscratch: Reg<U<32>>,
     pub mepc: Reg<U<32>>,
     pub mcause: Reg<U<32>>,
+    pub mie: Reg<U<32>>,
+    pub mip: Reg<U<32>>,
+    pub mtval: Reg<U<32>>,
     pub m_busy: Reg<Bit>,
     pub m_count: Reg<U<6>>,
     pub m_hi: Reg<U<33>>,
@@ -131,15 +134,17 @@ impl Vreteno {
 }
 
 #[lower]
-impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
+impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
+    for Vreteno
+{
     async fn run(
         &mut self,
-        rst: In<Bit>,
+        (rst, irq): (In<Bit>, In<Bit>),
         (halt, instr, wb): (Out<Bit>, Out<U<32>>, Out<Writeback>),
     ) {
         loop {
             DefaultClock::rising().await;
-            let rst = rst.get();
+            let (rst, irq) = (rst.get(), irq.get());
             let (fetch_pc, stopped) = (self.pc.get(), self.stopped.get());
             let (ir, pc, valid) =
                 (self.ir.get(), self.ir_pc.get(), self.valid.get());
@@ -153,6 +158,8 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             let (mstatus, mtvec, mscratch) =
                 (self.mstatus.get(), self.mtvec.get(), self.mscratch.get());
             let (mepc, mcause) = (self.mepc.get(), self.mcause.get());
+            let (mie_r, mip, mtval) =
+                (self.mie.get(), self.mip.get(), self.mtval.get());
             let (m_busy, m_count) = (self.m_busy.get(), self.m_count.get());
             let (m_hi, m_lo, m_d) =
                 (self.m_hi.get(), self.m_lo.get(), self.m_d.get());
@@ -229,7 +236,12 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             let is_m = eq(opcode, U::from(0x33u8)).and(eq(f7, U::from(1u8)));
             let m_here = valid.and(rst.not()).and(stopped.not()).and(is_m);
             let m_done = m_busy.and(eq(m_count, U::from(32u8)));
-            let stall_m = m_here.and(m_done.not());
+            // An interrupt is taken instead of the instruction in execute
+            // when it is pending, enabled, and interrupts are enabled; an
+            // M instruction under one does not start, so it cannot hold
+            // the stall the interrupt waits for.
+            let int_ok = mstatus.bit(3).and(mie_r.bit(11)).and(mip.bit(11));
+            let stall_m = m_here.and(int_ok.not()).and(m_done.not());
             let stall = stall_ld.or(stall_m);
             let a = mux(
                 is_zero(rs1),
@@ -242,7 +254,11 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                 mux(fwd_b, wb_alu, self.regs.read(rs2)),
             );
             let pc4 = pc.wrapping_add(U::from(4u8));
-            let run = rst.not().and(stopped.not()).and(valid).and(stall.not());
+            // Live: an instruction in execute that is not stalled. It
+            // runs unless the interrupt takes its place.
+            let live = rst.not().and(stopped.not()).and(valid).and(stall.not());
+            let int_take = live.and(int_ok);
+            let run = live.and(int_take.not());
 
             // The ALU, shared by the register and immediate forms; bit
             // 30 means subtract or arithmetic shift, except that an
@@ -362,10 +378,14 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                 0x340 => mscratch,
                 0x341 => mepc,
                 0x342 => mcause,
+                0x304 => mie_r,
+                0x344 => mip,
+                0x343 => mtval,
                 _ => U::<32>::from(0u32),
             });
             let csr_known = select!(f12.raw() => {
-                0x300 | 0x305 | 0x340 | 0x341 | 0x342 => Bit::One,
+                0x300 | 0x305 | 0x340 | 0x341 | 0x342 | 0x304 | 0x344
+                | 0x343 => Bit::One,
                 _ => Bit::Zero,
             });
             let csr_src = mux(f3.bit(2), rs1.zext::<32>(), a);
@@ -385,19 +405,25 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                     .or(is_mret),
                 _ => Bit::Zero,
             });
-            // A trap: ecall, or a word the core does not know. The cause
-            // and the address go to the CSRs, the interrupt enable is
-            // saved and cleared, and the handler is the redirect.
-            let trap = run.and(is_ecall.or(known.not()));
+            // A trap: ecall, a word the core does not know, or the
+            // interrupt. The cause, the address and the trap value go to
+            // the CSRs, the interrupt enable is saved and cleared, and
+            // the handler is the redirect.
+            let trap = run.and(is_ecall.or(known.not())).or(int_take);
             let cause = mux(
-                is_ecall,
-                U::<32>::from(CAUSE_ECALL),
-                U::<32>::from(CAUSE_ILLEGAL),
+                int_take,
+                U::<32>::from(CAUSE_MEXT),
+                mux(
+                    is_ecall,
+                    U::<32>::from(CAUSE_ECALL),
+                    U::<32>::from(CAUSE_ILLEGAL),
+                ),
             );
-            let mie = mstatus.bit(3);
+            let tval = mux(run.and(known.not()), ir, U::<32>::from(0u32));
+            let mie_bit = mstatus.bit(3);
             let mpie = mstatus.bit(7);
             let trap_status =
-                mux(mie, U::<32>::from(0x80u32), U::<32>::from(0u32));
+                mux(mie_bit, U::<32>::from(0x80u32), U::<32>::from(0u32));
             let mret_status =
                 mux(mpie, U::<32>::from(0x88u32), U::<32>::from(0x80u32));
             let csr_write = run.and(csr_op).and(csr_known);
@@ -468,9 +494,22 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             when!(csr_write.and(eq(f12, U::from(CSR_MCAUSE))) => {
                 self.mcause <= csr_new
             });
+            when!(csr_write.and(eq(f12, U::from(CSR_MIE))) => {
+                self.mie <= band(csr_new, U::<32>::from(MEXT))
+            });
+            when!(csr_write.and(eq(f12, U::from(CSR_MTVAL))) => {
+                self.mtval <= csr_new
+            });
+            // The pending bit: set by the line, cleared by software,
+            // and the write wins when both fall in one cycle.
+            when!(irq => { self.mip <= bor(mip, U::<32>::from(MEXT)) });
+            when!(csr_write.and(eq(f12, U::from(CSR_MIP))) => {
+                self.mip <= band(csr_new, U::<32>::from(MEXT))
+            });
             when!(trap => {
                 self.mepc <= pc;
                 self.mcause <= cause;
+                self.mtval <= tval;
                 self.mstatus <= trap_status
             });
             when!(run.and(is_mret) => { self.mstatus <= mret_status });
@@ -498,14 +537,22 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             let m_differ =
                 m_neg_a.and(m_neg_b.not()).or(m_neg_a.not().and(m_neg_b));
             let m_is_div = f3.bit(2);
-            let m_start = m_here.and(m_busy.not()).and(stall_ld.not());
+            let m_start = m_here
+                .and(m_busy.not())
+                .and(stall_ld.not())
+                .and(int_ok.not());
             let m_step = m_busy.and(m_done.not());
             let m_prod = m_lo.zext::<64>().mul::<64>(m_d.zext::<64>());
             let m_t =
                 m_hi.slice::<0, 32>().concat::<1, 33>(m_lo.slice::<31, 1>());
             let m_fits = lt(m_t, m_d.zext::<33>()).not();
+            // An interrupt taken while the sequencer runs cancels it:
+            // the instruction starts it again when the handler returns,
+            // on the registers as they are then, and the sequencer never
+            // steps under an instruction other than its own.
             case!(rst => {
                 Bit::One => { self.m_busy <= Bit::Zero },
+                _ if int_take.to_bool() => { self.m_busy <= Bit::Zero },
                 _ if m_start.to_bool() => {
                     self.m_busy <= Bit::One;
                     self.m_count <= mux(m_is_div, U::from(0u8), U::from(31u8));
@@ -537,7 +584,9 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                 _ if run.and(is_m).to_bool() => { self.m_busy <= Bit::Zero },
                 _ => {},
             });
-            when!(run => {
+            // The writeback stage gets the instruction, or the interrupt
+            // in its place, which retires as a trap does: nothing written.
+            when!(live => {
                 self.wb_valid <= Bit::One;
                 self.wb_pc <= pc;
                 self.wb_ir <= ir;
@@ -546,8 +595,8 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                 self.wb_ld <= word;
                 self.wb_f3 <= f3;
                 self.wb_lane <= lane;
-                self.wb_load <= is_load;
-                self.wb_stop <= is_ebreak
+                self.wb_load <= is_load.and(run);
+                self.wb_stop <= is_ebreak.and(run)
             } else {
                 self.wb_valid <= Bit::Zero;
                 self.wb_rd <= U::from(0u8);
@@ -560,14 +609,15 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             // hold are known early and the redirect late, so the two
             // candidates fold the early conditions in and the redirect
             // chooses last, one multiplexer from the instruction memory.
-            let redirect = run.and(jump);
+            let redirect = run.and(jump).or(int_take);
             let park = run.and(stop);
             let hold = stall.or(stop.and(run.not()));
             let zero = U::<32>::from(0u32);
             let advance =
                 mux(hold, fetch_pc, fetch_pc.wrapping_add(U::from(4u8)));
             let go = mux(rst, zero, mux(park, pc, advance));
-            let jmp = mux(rst, zero, mux(park, pc, target));
+            let jmp =
+                mux(rst, zero, mux(park, pc, mux(int_take, mtvec, target)));
             self.pc.set(mux(redirect, jmp, go));
             case!(rst => {
                 Bit::One => { self.valid <= Bit::Zero },

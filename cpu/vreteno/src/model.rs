@@ -3,8 +3,8 @@
 //! written against the decoder and nothing else. The core is checked
 //! against it, in lockstep, every cycle.
 use crate::isa::{
-    decode, Kind, CAUSE_ECALL, CAUSE_ILLEGAL, CSR_MCAUSE, CSR_MEPC,
-    CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVEC,
+    decode, Kind, CAUSE_ECALL, CAUSE_ILLEGAL, CAUSE_MEXT, CSR_MCAUSE, CSR_MEPC,
+    CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -30,6 +30,9 @@ pub struct Csr {
     pub mscratch: u32,
     pub mepc: u32,
     pub mcause: u32,
+    pub mie: u32,
+    pub mip: u32,
+    pub mtval: u32,
 }
 
 /// The architectural state, and only that.
@@ -79,8 +82,17 @@ impl Model {
             CSR_MSCRATCH => self.csr.mscratch,
             CSR_MEPC => self.csr.mepc,
             CSR_MCAUSE => self.csr.mcause,
+            CSR_MIE => self.csr.mie,
+            CSR_MIP => self.csr.mip,
+            CSR_MTVAL => self.csr.mtval,
             _ => return None,
         })
+    }
+
+    /// The external interrupt line, seen high: pending until software
+    /// clears it in `mip`.
+    pub fn raise(&mut self) {
+        self.csr.mip |= MEXT;
     }
 
     fn csr_write(&mut self, addr: u32, v: u32) {
@@ -90,22 +102,37 @@ impl Model {
             CSR_MSCRATCH => self.csr.mscratch = v,
             CSR_MEPC => self.csr.mepc = v & !1,
             CSR_MCAUSE => self.csr.mcause = v,
+            CSR_MIE => self.csr.mie = v & MEXT,
+            CSR_MIP => self.csr.mip = v & MEXT,
+            CSR_MTVAL => self.csr.mtval = v,
             _ => {}
         }
     }
 
-    /// A trap: the cause and the instruction's address are saved, the
-    /// interrupt enable is saved and cleared, and the handler is next.
-    fn trap(&mut self, cause: u32) {
+    /// A trap: the cause, the instruction's address and the trap value
+    /// are saved, the interrupt enable is saved and cleared, and the
+    /// handler is next. The trap value is the word for an illegal
+    /// instruction and zero otherwise.
+    fn trap(&mut self, cause: u32, tval: u32) {
         self.csr.mepc = self.pc;
         self.csr.mcause = cause;
+        self.csr.mtval = tval;
         let mie = self.csr.mstatus & MIE != 0;
         self.csr.mstatus = if mie { MPIE } else { 0 };
         self.pc = self.csr.mtvec;
     }
 
-    /// One instruction. Does nothing once halted.
-    pub fn step(&mut self, imem: &[u32]) {
+    /// Whether an interrupt would be taken before the next instruction:
+    /// pending, enabled in `mie`, and interrupts enabled in `mstatus`.
+    pub fn interrupt(&self) -> bool {
+        self.csr.mip & self.csr.mie & MEXT != 0 && self.csr.mstatus & MIE != 0
+    }
+
+    /// One instruction, or the interrupt taken instead of it when
+    /// `interrupt` says so: the caller decides, since the core decides
+    /// on the pending bit as it stood a cycle earlier. Does nothing once
+    /// halted.
+    pub fn step(&mut self, imem: &[u32], interrupt: bool) {
         if self.halted.is_some() {
             return;
         }
@@ -113,6 +140,10 @@ impl Model {
             self.halted = Some(Halt::Fault(self.pc));
             return;
         };
+        if interrupt {
+            self.trap(CAUSE_MEXT, 0);
+            return;
+        }
         let d = decode(w);
         let a = self.x[d.rs1 as usize];
         let b = self.x[d.rs2 as usize];
@@ -233,11 +264,11 @@ impl Model {
                 return;
             }
             Ecall => {
-                self.trap(CAUSE_ECALL);
+                self.trap(CAUSE_ECALL, 0);
                 return;
             }
             Illegal => {
-                self.trap(CAUSE_ILLEGAL);
+                self.trap(CAUSE_ILLEGAL, w);
                 return;
             }
             Mret => {
@@ -247,7 +278,7 @@ impl Model {
             }
             Csrrw | Csrrs | Csrrc | Csrrwi | Csrrsi | Csrrci => {
                 let Some(old) = self.csr_read(imm) else {
-                    self.trap(CAUSE_ILLEGAL);
+                    self.trap(CAUSE_ILLEGAL, w);
                     return;
                 };
                 let src = match d.kind {

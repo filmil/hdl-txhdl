@@ -50,7 +50,8 @@ module vreteno_board(
   wire halt;
   wire [31:0] instr;
   wire [37:0] wb;
-  vreteno core (.clk(clk), .rst(rst), .halt(halt), .instr(instr), .wb(wb));
+  // The interrupt line: nothing on this board raises it yet.
+  vreteno core (.clk(clk), .rst(rst), .irq(1'b0), .halt(halt), .instr(instr), .wb(wb));
 
   // The heartbeat: bit 25 of a counter at 100 MHz toggles three times a
   // second.
