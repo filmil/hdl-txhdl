@@ -220,10 +220,11 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             let fwd_a = wb_write.and(eq(wb_rd, rs1));
             let fwd_b = wb_write.and(eq(wb_rd, rs2));
             let stall_ld = valid.and(wb_load).and(fwd_a.or(fwd_b));
-            // The M extension is a sequencer: a multiply is thirty-two
-            // shift-and-add steps, a division thirty-two restoring steps,
-            // over the magnitudes, and the instruction stalls in execute
-            // until the count is up. One set of registers serves both.
+            // The M extension is a sequencer: a multiply is one step in
+            // the part's multipliers, a division thirty-two restoring
+            // steps, over the magnitudes, and the instruction stalls in
+            // execute until the count is up. One set of registers serves
+            // both.
             let f7 = ir.slice::<25, 7>();
             let is_m = eq(opcode, U::from(0x33u8)).and(eq(f7, U::from(1u8)));
             let m_here = valid.and(rst.not()).and(stopped.not()).and(is_m);
@@ -474,12 +475,13 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             });
             when!(run.and(is_mret) => { self.mstatus <= mret_status });
             // The sequencer. It starts when an M instruction is in execute
-            // with its operands ready, steps thirty-two times, and is
-            // released when the instruction runs. A multiply shifts the
-            // pair right, adding the multiplicand into the high half when
-            // the low bit is set; a division shifts the pair left,
-            // subtracting the divisor from the high half when it fits,
-            // and the fit is the quotient bit shifted in.
+            // with its operands ready, and is released when the
+            // instruction runs. A multiply is one step: the product of
+            // the magnitudes, from the registers into the pair, which the
+            // part's DSP blocks make; a division is thirty-two, each
+            // shifting the pair left, subtracting the divisor from the
+            // high half when it fits, and shifting the fit in as the
+            // quotient bit.
             let m_signed_a = eq(f3, U::from(0u8))
                 .or(eq(f3, U::from(1u8)))
                 .or(eq(f3, U::from(2u8)))
@@ -498,8 +500,7 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             let m_is_div = f3.bit(2);
             let m_start = m_here.and(m_busy.not()).and(stall_ld.not());
             let m_step = m_busy.and(m_done.not());
-            let m_sum =
-                mux(m_lo.bit(0), m_hi.wrapping_add(m_d.zext::<33>()), m_hi);
+            let m_prod = m_lo.zext::<64>().mul::<64>(m_d.zext::<64>());
             let m_t =
                 m_hi.slice::<0, 32>().concat::<1, 33>(m_lo.slice::<31, 1>());
             let m_fits = lt(m_t, m_d.zext::<33>()).not();
@@ -507,7 +508,7 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                 Bit::One => { self.m_busy <= Bit::Zero },
                 _ if m_start.to_bool() => {
                     self.m_busy <= Bit::One;
-                    self.m_count <= U::from(0u8);
+                    self.m_count <= mux(m_is_div, U::from(0u8), U::from(31u8));
                     self.m_hi <= U::from(0u8);
                     self.m_lo <= m_abs_a;
                     self.m_d <= m_abs_b;
@@ -520,10 +521,8 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                 },
                 _ if m_step.and(m_is_div.not()).to_bool() => {
                     self.m_count <= m_count.wrapping_add(U::from(1u8));
-                    self.m_hi <= shr(m_sum, 1);
-                    self.m_lo <= m_sum
-                        .slice::<0, 1>()
-                        .concat::<31, 32>(m_lo.slice::<1, 31>())
+                    self.m_hi <= m_prod.slice::<32, 32>().zext::<33>();
+                    self.m_lo <= m_prod.slice::<0, 32>()
                 },
                 _ if m_step.to_bool() => {
                     self.m_count <= m_count.wrapping_add(U::from(1u8));

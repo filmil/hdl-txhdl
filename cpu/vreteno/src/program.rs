@@ -101,7 +101,8 @@ pub fn demo() -> Vec<u32> {
     a.emit(sltu(19, 7, 0)); // x19 = 0: big unsigned
     a.emit(xori(20, 7, -1)); // x20 = 1
 
-    // The M extension: each takes thirty-three cycles in the core.
+    // The M extension: a multiply takes three cycles in the core, a
+    // divide thirty-three.
     a.emit(mul(26, 10, 7)); // x26 = 110 * -2 = -220
     a.emit(mulh(27, 7, 7)); // x27 = high word of 4 = 0
     a.emit(mulhu(28, 7, 7)); // x28 = high word of 0xfffffffe^2

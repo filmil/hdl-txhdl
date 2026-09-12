@@ -44,8 +44,8 @@ fn main() {
     sim.cycle();
     rst_out.set(Bit::Zero);
     println!("{:>4} {:>6}  {:<22} {}", "t", "pc", "instruction", "writes");
-    // A run of bubbles prints as one line with its count: a multiply
-    // or a divide is thirty-three of them.
+    // A run of bubbles prints as one line with its count: a divide is
+    // thirty-three of them, a multiply three.
     let mut bubbles: Option<(u64, u32)> = None;
     let mut flush = |bubbles: &mut Option<(u64, u32)>| {
         if let Some((from, n)) = bubbles.take() {
