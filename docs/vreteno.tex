@@ -285,6 +285,16 @@ of the sequencer multiplied by thirty-two shifts and adds, and the
 change to the multiplier was one step's arm and the count it starts
 from.
 
+Three of the cycle's decisions, whether the instruction in execute
+is stalled, whether an interrupt takes its place and whether the
+fetch is redirected, are wires kept as fields, \code{Wire<Bit>} of
+the runtime: the process sets each and reads it back in the step, the
+trace shows them under the core's name beside the registers, and the
+netlist declares them from the fields, so the testbench that checks
+the core checks them too. Any \code{let} of the loop can be made
+one, at no cost in hardware, which is how an internal signal is
+looked at.
+
 The interrupt is the second input of the core, and it is taken in
 execute as a trap is. The line sets the pending bit of \code{mip}
 at the edge, and a write to \code{mip} clears it, the write winning

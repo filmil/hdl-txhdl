@@ -23,7 +23,9 @@ use crate::isa::{
     CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT,
     MTIMER,
 };
-use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{
+    mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit, Wire,
+};
 use txhdl::funcs::{
     band, bor, bxor, eq, is_zero, lt, lt_signed, shl, shr, sra,
 };
@@ -89,6 +91,12 @@ pub struct Vreteno {
     pub wb_dev: Reg<U<32>>,
     pub wb_is_dev: Reg<Bit>,
     pub dev_wait: Reg<Bit>,
+    /// Three of the cycle's decisions, kept as wires so that a trace
+    /// shows them: whether the instruction in execute is stalled, whether
+    /// an interrupt takes its place, and whether the fetch is redirected.
+    pub stall: Wire<Bit>,
+    pub int_take: Wire<Bit>,
+    pub redirect: Wire<Bit>,
     pub m_busy: Reg<Bit>,
     pub m_count: Reg<U<6>>,
     pub m_hi: Reg<U<33>>,
@@ -295,12 +303,14 @@ impl
             let stall_dev = dev_load
                 .and(mux(dev_wait, resp_valid.not(), Bit::One))
                 .or(dev_store.and(req.ready().not()));
-            let stall = stall_ld.or(stall_m).or(stall_dev);
+            self.stall.set(stall_ld.or(stall_m).or(stall_dev));
+            let stall = self.stall.get();
             let pc4 = pc.wrapping_add(U::from(4u8));
             // Live: an instruction in execute that is not stalled. It
             // runs unless the interrupt takes its place.
             let live = rst.not().and(stopped.not()).and(valid).and(stall.not());
-            let int_take = live.and(int_ok);
+            self.int_take.set(live.and(int_ok));
+            let int_take = self.int_take.get();
             let run = live.and(int_take.not());
 
             // The ALU, shared by the register and immediate forms; bit
@@ -680,7 +690,8 @@ impl
             // hold are known early and the redirect late, so the two
             // candidates fold the early conditions in and the redirect
             // chooses last, one multiplexer from the instruction memory.
-            let redirect = run.and(jump).or(int_take);
+            self.redirect.set(run.and(jump).or(int_take));
+            let redirect = self.redirect.get();
             let park = run.and(stop);
             let hold = stall.or(stop.and(run.not()));
             let zero = U::<32>::from(0u32);
