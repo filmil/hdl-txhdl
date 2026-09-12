@@ -931,9 +931,10 @@ port; \code{bazel run //cpu/vreteno:vreteno\_board\_prog} then has
 Vivado connect to that port and write the FPGA, which the next power
 cycle forgets, and \code{vreteno\_board\_flash} the same way writes
 the QSPI flash, which it does not. The serial port is watched the
-same way: \code{bazel run //cpu/vreteno/board/remote:serial} runs a
-small program on the far machine, over ssh and under a timeout that
-frees the port whatever happens here, which prints what the board
+same way: \code{bazel run //cpu/vreteno/board/remote:serial} uploads
+a small program, one static binary in Go on the standard library
+alone, and runs it on the far machine over ssh and under a timeout
+that frees the port whatever happens here; it prints what the board
 says for a while and may type a reply once the board has said a
 line. So the run on the board is the run in the runtime, ordered the
 other way round: the watcher first, then the programming, and the
@@ -943,9 +944,10 @@ The board did what the runs did. Programmed over the tunnel, it said
 OK and a newline on the serial port at 115\,200 baud, the watcher
 typed \code{yes}, and the board echoed the three bytes: six bytes on
 the line, the same six the lockstep test's model had recorded. The
-LEDs are on the other machine and were not looked at. Holding the
-reset puts the halt LED out; releasing it says OK and waits for
-three keys again.
+LEDs were looked at on the board itself, by an author with a camera:
+they do what the top says, and the photographs and the video are the
+record. Holding the reset puts the halt LED out; releasing it says OK
+and waits for three keys again.
 
 \lstinputlisting[caption={\code{board/vreteno\_board.v}: the board
 top, by hand.},label={lst:v-board}]{cpu/vreteno/board/vreteno_board.v}

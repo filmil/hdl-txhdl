@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Watches the board's serial port on the machine it is attached to,
 # for a while, printing what comes, and types a reply once the board
-# has said a line; the watcher runs there over ssh, under a timeout
-# that frees the port whatever happens here.
+# has said a line; the watcher, one static binary, is uploaded and
+# runs there over ssh, under a timeout that frees the port whatever
+# happens here.
 #
 #   serial [--server=HOST] [--port=/dev/ttyUSB0] [--baud=115200]
 #          [--seconds=30] [--reply=]
@@ -42,7 +43,10 @@ done
   echo "--server=HOST is required, or TXHDL_BOARD_SERVER in the environment" >&2
   exit 2
 }
-script="$(rlocation _main/cpu/vreteno/board/remote/serial.py)"
+watcher="$(rlocation _main/cpu/vreteno/board/remote/serial_bin_/serial_bin)"
+dir='~/txhdl_hw_server'
+# The last upload is read-only, as the build made it; it goes first.
+ssh -o BatchMode=yes "$server" "mkdir -p $dir && rm -f $dir/serial"
+scp -q -o BatchMode=yes "$watcher" "$server:$dir/serial"
 ssh -o BatchMode=yes "$server" \
-  "timeout --signal=TERM --kill-after=5 $((seconds + 10)) python3 - '$port' '$baud' '$seconds' '$reply'" \
-  < "$script"
+  "timeout --signal=TERM --kill-after=5 $((seconds + 10)) $dir/serial '$port' '$baud' '$seconds' '$reply'"

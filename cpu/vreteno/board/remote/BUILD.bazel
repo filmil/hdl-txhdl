@@ -7,6 +7,7 @@
 # and uploads, and an ssh tunnel brings its port here, where the
 # programming target's Vivado connects to it. The serial port is
 # watched the same way, by a script run there over ssh.
+load("@rules_go//go:def.bzl", "go_binary")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_vivado//build/vivado:rules.bzl", "vivado_extract")
 
@@ -44,15 +45,24 @@ sh_binary(
     tags = ["manual"],
 )
 
+# The watcher itself, one static binary for the server.
+go_binary(
+    name = "serial_bin",
+    srcs = ["serial.go"],
+    pure = "on",
+    tags = ["manual"],
+)
+
 # Watches the board's serial port on the server for a while, and may
-# type a reply once the board has said a line.
+# type a reply once the board has said a line: uploads the watcher and
+# runs it there.
 #
 #   bazel run //cpu/vreteno/board/remote:serial -- --seconds=60 --reply=yes
 sh_binary(
     name = "serial",
     srcs = ["serial.sh"],
     data = [
-        "serial.py",
+        ":serial_bin",
         "@bazel_tools//tools/bash/runfiles",
     ],
     tags = ["manual"],
