@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# Parts: units the language provides as hardware, written in the
+# language's own lowerable subset. The channel buffer is the first.
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+rust_library(
+    name = "txhdl_parts",
+    srcs = [
+        "src/buffer.rs",
+        "src/lib.rs",
+    ],
+    crate_name = "txhdl_parts",
+    edition = "2021",
+    visibility = ["//visibility:public"],
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# The sources by name, for the documents' API extraction.
+exports_files(glob(["src/*.rs"]))
+
+filegroup(
+    name = "sources",
+    srcs = glob(["src/*.rs"]),
+    visibility = ["//visibility:public"],
+)

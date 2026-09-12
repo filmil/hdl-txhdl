@@ -1,0 +1,29 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{\code{txhdl\_parts}}
+\label{sec:r-parts}
+
+What the language provides as hardware, written in its own lowerable
+subset and checked as every unit is. A unit's channel port is one
+side of a channel: the lowering makes of it a valid, a ready and the
+data, and the testbench that checks the unit plays the channel's
+other side from the trace. The channel itself, the elastic buffer of
+two between two units, is not in either unit, so two lowered units
+wired port to port would have no buffer between them, and their
+handshakes would form a combinational loop, which a placer refuses.
+\code{Buffer<W>} is the channel as hardware, one per channel of a run
+wherever two lowered units meet, on a board or in a larger netlist.
+
+Its rules are the runtime's, from Section~\ref{sec:r-comp}, with no
+freedom taken. A take moves the tail into the head. A push goes into
+the head if it is empty after that, else into the tail. \code{ready}
+on the sending side is the tail being empty as the edge left it,
+\code{valid} on the receiving side the head being full, and the data
+is the head; all three are registers, so two units on a channel have
+no combinational path between them. That the part is the runtime's
+channel bit for bit is checked by the examples
+document~\cite{examples}, which drives one with a pattern of offers
+and takes, does the same on a runtime channel, and asserts after
+every cycle that the two agree; the part's netlist is then checked
+against that trace under both simulators.
+
+\lstinputlisting[caption={\code{lib/parts/src/buffer.rs}.},label={lst:r-buffer}]{lib/parts/src/buffer.rs}

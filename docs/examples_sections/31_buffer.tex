@@ -1,0 +1,41 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Channel as Hardware}
+\label{sec:x-buffer}
+
+Every lowered unit with a channel port has been checked against its
+trace with the testbench playing the channel's other side. Between
+two lowered units on a board there is no testbench, and there is no
+channel either: each unit's port is one side of a handshake, and
+wiring the sides together makes a combinational loop, since a
+receiver that takes whatever is offered says \code{ready} when it
+sees \code{valid}. The channel, the elastic buffer of two, must be a
+piece of hardware of its own, and \code{Buffer} in
+\code{txhdl\_parts} is that piece, written in the lowerable subset
+with the runtime's rules and nothing else.
+
+The example is its check. Each cycle the testbench sets the buffer's
+three inputs, an offer and its word and a take, from a pattern that
+fills the buffer, holds the sender back, drains it, and offers and
+takes in the same cycle both empty and full; it does the same offer
+and take on a runtime channel; and after the cycle it asserts that the
+buffer's \code{ready}, \code{valid} and head are the channel's. The
+buffer's state is what is compared, as the edge leaves it, since a
+unit's output wires are set in the step from the state before it and
+show the same a step later, which is the netlist check's business:
+the netlist is checked against this trace under nvc and Verilator as
+every lowered unit is. So the two checks together say that a channel
+between two lowered units on a board does what the channel between
+the two units in the run did.
+
+\begin{figure}[htbp]
+\centering
+\input{buffer_timing.tex}
+\caption{The buffer: offers while there is room, takes every other
+cycle, then both; \code{head\_full} and \code{tail\_full} are its
+two slots.}
+\label{fig:x-buffer}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_buffer.rs}. Run with \code{bazel run //lib/examples:ex\_buffer}.},label={lst:x-buffer}]{lib/examples/ex_buffer.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_buffer} printed when the build ran it: the pattern and the buffer's state after each cycle, then the lowering.},label={lst:x-buffer-out}]{out_buffer.txt}
