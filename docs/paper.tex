@@ -354,8 +354,10 @@ MAC & \code{mul::<M>}, a product at a stated width & nvc, Verilator \\
 tap & a send under \code{when!}, a receive with no wait & nvc, Verilator \\
 buffer & the channel as hardware, against the runtime's & nvc, Verilator \\
 divider & internal wires kept as fields, seen and checked & nvc, Verilator \\
-Vreteno & the whole core, 458 ticks & nvc, Verilator \\
+Vreteno & the whole core, 732 ticks & nvc, Verilator \\
+router & the bus fanned out by address, the same run & nvc, Verilator \\
 timer & a device on the core's bus, the same run & nvc, Verilator \\
+serial port & a device on the core's bus, the same run & nvc, Verilator \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -402,10 +404,11 @@ redirects to \code{mtvec} as a taken branch redirects; \code{mret}
 returns; an interrupt line, pending in \code{mip} and enabled in
 \code{mie}, is taken in place of the instruction in execute, which
 retires writing nothing; a bus of two channels, a request out and
-the word read back, on which a timer of sixty lines is the first
-device and raises the second interrupt when its count reaches its
-compare, the channels between them being the runtime's buffer of two
-as hardware; the six CSR instructions read and write the
+the word read back, through a router that decodes a device per
+address range, on which a timer of sixty lines raises the second
+interrupt when its count reaches its compare and a serial port says
+what the program writes, the channels between them all being the
+runtime's buffer of two as hardware; the six CSR instructions read and write the
 eight control registers. Multiply and divide are one sequencer over
 the
 magnitudes, a multiply one step in the part's DSP blocks and a
@@ -515,18 +518,19 @@ paper. The runtime is five Rust modules, one macro crate and one
 crate of parts, with one
 external crate, an FST writer. Twenty-nine examples compile, each one
 concept, and every one that runs writes a waveform the examples
-document draws. Fourteen lowered units, Table~\ref{tab:p-checked}, are
+document draws. Sixteen lowered units, Table~\ref{tab:p-checked}, are
 simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
-thirty-three tests run under \code{bazel test //...}, and every one of them
+thirty-seven tests run under \code{bazel test //...}, and every one of them
 is hermetic, the simulators built from source and the synthesis tool
-installed by the build. Vreteno is 714 lines of core and 96 of
-timer, checked in lockstep against a 354-line model on a
-demonstration program and
-sixty-four random ones, with interrupts raised at random, checked as
-a netlist on 458 ticks and eight signals, synthesized in two minutes to the figures of
-Table~\ref{tab:p-synth}, and placed and routed at 100~MHz. Nine documents describe the system, this
-one included, and each is built by the same command that builds the
+installed by the build. Vreteno is 725 lines of core, 98 of timer,
+62 of router and 89 of serial port, checked in lockstep against a
+364-line model on a demonstration program and sixty-four random
+ones, with interrupts raised at random, checked as a netlist on 732
+ticks with every register compared at each, synthesized in two
+minutes to the figures of Table~\ref{tab:p-synth}, and placed and
+routed at 100~MHz. Nine documents describe the system, this one
+included, and each is built by the same command that builds the
 designs, with every listing included from the tree and every figure
 drawn from a trace, so none can drift from the code.
 
@@ -561,9 +565,9 @@ A RISC-V core written in it runs, lowers, is checked against its own
 trace, and runs at 100~MHz on an Artix-7 with its data memory in
 block RAM, whose bitstream, with a clock, a reset and four LEDs
 around the core, is built. The next steps are the board in hand and
-more devices on the bus, a serial port first; the
-path that limits the clock is a branch on a register, with the
-multiplier's carry chain close behind.
+the serial port's receive side; the path that limits the clock is a
+branch on a register, with the multiplier's carry chain close
+behind.
 
 \begin{thebibliography}{10}
 

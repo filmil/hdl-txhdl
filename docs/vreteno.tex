@@ -50,8 +50,10 @@ multipliers and a division thirty-two, which stalls the instruction
 in execute; with an interrupt line, taken in place of the
 instruction in execute when \code{mie}, \code{mip} and
 \code{mstatus} allow; and with a bus, a request channel out and a
-response channel back, on which a timer, a unit of its own, is the
-first device and the second interrupt. It is checked twice. In lockstep against a reference model of the instruction set
+response channel back through a router, on which a timer, a unit of
+its own, is the first device and the second interrupt, and a serial
+port the second device, on which the demonstration says OK. It is
+checked twice. In lockstep against a reference model of the instruction set
 written as a plain program: the model steps when the core retires an
 instruction, and after every cycle the program counter, the
 thirty-one registers, the control registers and the halt must agree,
@@ -125,7 +127,7 @@ registers the core has, \code{mstatus}, \code{mtvec},
 \code{mscratch}, \code{mepc} and \code{mcause}, and the two
 causes it raises, are constants beside them, with \code{mie},
 \code{mip}, \code{mtval}, the external and the timer interrupt's
-bits and causes, and the timer's address. The M extension is the
+bits and causes, and the timer's and the serial port's addresses. The M extension is the
 register format with \code{funct7} one: the four multiplies, which
 differ in which operand is signed and which half of the product they
 keep, and the two divides and two remainders, signed and unsigned. A
@@ -168,10 +170,12 @@ timer is four words at \code{TIMER\_BASE}, the count and the
 compare, each in two halves, read and written as memory is; its
 pending bit is its line, read in \code{mip} but not stored there,
 and its interrupt comes after the external one's. The model has no
-clock and no bus, so neither the count nor the line is its own: the
-caller sets \code{mtime} and \code{tirq} before each step to what
-the timer answered and what the core saw, a store to the count is
-left to the timer, and the compare is the model's state. Which
+clock and no bus, so what a device answers is not its own. The caller
+sets \code{dev\_word} before a step to what the bus answered the
+core's load, and \code{tirq} to the line as the core saw it. A store
+to a device is the device's business; the model keeps what it can
+check at the end, the timer's compare and the bytes given to the
+serial port. Which
 interrupt that step takes, if any, is the caller's word too, since
 the core decides on the bits as they stood a cycle earlier, and the
 lockstep test carries the core's decision across. Only
@@ -333,8 +337,19 @@ interrupt taken while a load waits is taken when the response has
 come, which the wait bit then drops, and the load is made again
 after the handler.
 
-The timer, Listing~\ref{lst:v-timer}, is the first device, in
-sixty lines of the same subset. It takes every request offered,
+The bus has two devices, and a router between the core and them,
+Listing~\ref{lst:v-router}. One request channel comes in, and a
+channel goes out per device, chosen by bits 15 to 12 of the address:
+two is the timer and three the serial port. The devices' responses
+merge back into one channel. The router takes a request only when
+the channel it goes to has room. That is a receive under a condition
+of its own, \code{recv\_if}, whose \code{ready} is the condition
+and the offer together. An address above the data memory that is no
+device's is a hole; the router answers a load from it with zero and
+swallows a store to it. Responses come one at a time, since the core
+waits for each load's answer before it makes another request. The
+timer, Listing~\ref{lst:v-timer}, is the first device, in sixty
+lines of the same subset. It takes every request offered,
 answers a read in the cycle after with the word addressed, or zero
 for an address that is not its own, writes the lanes a write covers
 into its word, counts from the reset one a cycle, and raises its
@@ -356,8 +371,27 @@ the run writes one at each width, \code{chan69} and \code{chan32},
 beside the core and the timer, and the board puts them between the
 two.
 
+\lstinputlisting[caption={\code{router.rs}: the router, one request
+channel fanned out by address and the responses merged
+back.},label={lst:v-router}]{cpu/vreteno/src/router.rs}
+
 \lstinputlisting[caption={\code{timer.rs}: the timer, a device on
 the bus.},label={lst:v-timer}]{cpu/vreteno/src/timer.rs}
+
+The serial port, Listing~\ref{lst:v-uart}, is the second device,
+its transmit side. A byte written to its first word goes out on a
+line as a start bit, the eight bits least significant first, and a
+stop bit, each \code{DIV} cycles long. Its second word is the
+status, whose bit 0 is busy while a frame is going out. A byte
+written while busy is dropped, so a program polls the status first.
+\code{DIV} is a parameter of the unit: 868 for 115\,200 baud at
+100~MHz on the board, and 4 in the runs that are checked, so that a
+byte takes forty cycles rather than nine thousand. The two are the
+same unit lowered twice. The run decodes its own line as a terminal
+would and prints what the demonstration said.
+
+\lstinputlisting[caption={\code{uart.rs}: the serial port, a device
+on the bus.},label={lst:v-uart}]{cpu/vreteno/src/uart.rs}
 
 The stages meet at the end of the cycle, in the deferred drives of
 the fetch's state and the writeback's. When the execute stage's next
@@ -427,7 +461,10 @@ and returned from to the word it interrupted; an exception has
 back. The program then writes \code{mscratch} by immediate and
 reads it back into \code{x24}, so that two is in \code{x23} and
 five in \code{x24} at the end, and two in \code{x8}: the line,
-raised once, and the timer. Between the shifts
+raised once, and the timer. Before the traps it writes OK and a
+newline to the serial port, a byte at a time. Each byte waits for a
+load of the status to say the port is free, the polling loop every
+program writes for a port like this. Between the shifts
 and the traps it multiplies and divides, five of the eight
 instructions, on the sum and on minus two: minus 220 into
 \code{x26}, minus 55 into \code{x29}, and the remainder minus two
@@ -512,13 +549,15 @@ while the instruction is in execute, and tells the model, when the
 instruction retires a cycle later, whether the interrupt was taken
 in its place; the model raises its own pending bit in the cycle the
 line is high, as the core does at its edge. The timer's line and
-count go across the same way: the test reads the timer's pending
-register while the instruction is in execute, and the count when
-the core's wait bit rises, which is the cycle the timer answers, and
-hands both to the model with the instruction; so a load of the count
-agrees, and the timer's interrupt is decided on the same bit in
-both. The compare lands in the timer a cycle after the core's store,
-so it is checked at the halt, as the memory is.
+the bus's answers go across the same way. The test reads the timer's
+pending register while the instruction is in execute, and the core's
+register for a load's answer before the cycle in which the load
+retires, and hands both to the model with the instruction. So a load
+from a device agrees on what the device said, and the timer's
+interrupt is decided on the same bit in both. The compare lands in
+the timer a cycle after the core's store, so it is checked at the
+halt, as the memory is. So are the serial port's count of bytes and
+its last byte, against the bytes the model was given.
 
 The control registers are compared with one allowance. The core
 writes them in execute, when the instruction is in its second stage;
@@ -548,7 +587,9 @@ its bubble, and the loads as the sign and zero extensions of the same
 byte and half. The one load stall is the bubble after \code{lw},
 where the next instruction adds to what it loaded; each multiply is
 a run of three and each divide a run of thirty-three, which the run
-prints as one line with the count. The line's interrupt is the
+prints as one line with the count, and the last line of the printout
+is what the port said, decoded from its line. The line's interrupt
+is the
 first jump to the handler at \code{0xb4}, out of the loop, with
 cause eleven and the top bit in \code{x23} and one counted into
 \code{x8}, and the return to the instruction it interrupted. The
@@ -621,15 +662,18 @@ The netlist was checked as the model was: a testbench that could not
 fail would prove nothing. The register file is not traced, so the
 testbench cannot see it, but every write to it shows in the
 writeback output the next tick, and every read shows in the program
-counter and the outputs that follow; the four hundred and
-fifty-eight ticks of the demonstration exercise every instruction of
+counter and the outputs that follow; the seven hundred and
+thirty-two ticks of the demonstration exercise every instruction of
 the program through both, the two traps and their returns included,
 since a wrong \code{mepc} or \code{mtvec} is a wrong program
 counter, and every register of the sequencer at every step of three
 multiplies and two divides, since the whole unit is traced. The
-timer is checked from the same trace as an entity of its own, its
-channels' six wires and its line among the signals, so the bus is
-checked from both ends. The checks that failed on the way, a truth value rendered
+router, the timer and the serial port are checked from the same
+trace as entities of their own, each channel's six wires and each
+line among the signals, so the bus is checked from every end. One
+channel has a name on each side, and the run traces it under one of
+them; a port traced under another name than its own says so in the
+ports file. The checks that failed on the way, a truth value rendered
 ambiguously, a bitwise \code{and} rendered as a comparison, a
 concatenation of ambiguous type, a slice of an expression and a
 temporary named with a leading underscore, all failed to analyze or
@@ -734,23 +778,29 @@ clock brought down to the 100~MHz the core meets through an MMCM,
 the reset button synchronised into that clock and held until the
 clock has locked, and four LEDs, lit when driven low, showing the
 core halted, a heartbeat, the reset released and the clock locked;
-the timer beside the core with a channel buffer each way between
-them, and the external interrupt line tied low, since nothing on the
-board raises it yet.
+the router, the timer and the serial port beside the core with a
+channel buffer each way between every two, the port's line on the
+pin the board's USB serial bridge listens to, and the external
+interrupt line tied low, since nothing on the board raises it yet.
 The constraints name the board's pins as the project's other designs
 for it do, so the bitstream is real: the routed design meets
-100~MHz with 0.502~ns of slack, in 2158 LUTs and 717 flip-flops
-for the core, the timer and the two buffers together, three block
-RAM tiles, four DSP blocks and the MMCM, with no critical warning
-and no combinational loop, which the first board top with the units
-wired port to port had.
+100~MHz with 0.285~ns of slack, in 2158 LUTs and 998 flip-flops
+for the core, the router, the timer, the serial port and the six
+buffers together, three block RAM tiles, four DSP blocks and the
+MMCM, with no critical warning and no combinational loop, which the
+first board top with the units wired port to port had. The LUT count
+did not move when the router and the port came in; the flip-flops
+grew by the buffers' and the port's registers.
 \code{bazel run //cpu/vreteno:vreteno\_board\_flash} writes it into
 the board's QSPI flash over the programming cable. What the board
 should show, once it does: the clock LED at once, the running LED
-while the button is up, the heartbeat at three a second, and the
-halt LED lit a few hundred nanoseconds after the reset is released,
-since the demonstration program halts in ninety cycles; holding the
-reset puts it out, and releasing it lights it again.
+while the button is up, the heartbeat at three a second, OK and a
+newline on a terminal at 115\,200 baud on the board's serial bridge,
+and the halt LED. The halt comes some two hundred microseconds after
+the reset is released, since the program waits for the port to take
+each of its three bytes before it goes on to the traps. Holding the
+reset puts the halt LED out; releasing it says OK and lights it
+again.
 
 \lstinputlisting[caption={\code{board/vreteno\_board.v}: the board
 top, by hand.},label={lst:v-board}]{cpu/vreteno/board/vreteno_board.v}
@@ -771,11 +821,11 @@ second register in the middle of its carry chain, one more step of
 the sequencer, would. The lockstep test is the check for either,
 since it compares architectural state when an instruction retires.
 
-More on the bus. The timer is one device; a second wants an
-arbiter, or an address decode with a device per range, and the data
-memory could go out onto the bus too, at the cost of the cycle a
-response takes. A serial port is the device that would let the board
-say something. Each begins in the model, as everything here has, is
+More on the bus. The router decodes a device per range and the data
+memory could go out onto it too, at the cost of the cycle a response
+takes; the serial port has a transmit side only, and a receive side
+is the next device, with the line's other direction and an interrupt
+of its own. Each begins in the model, as everything here has, is
 added to the core under the lockstep test, and is checked as a
 netlist by the same trace.
 
