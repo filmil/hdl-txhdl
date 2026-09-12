@@ -35,6 +35,8 @@ Later builds reuse them.
 
 `release` publishes the rendered documents.
 It runs every night and overwrites the rolling `nightly` release.
+When the `A_GITHUB_MIRROR_TOKEN` secret is set, the same release goes to
+the GitHub mirror too, under the same tag; without it that step is skipped.
 Running it by hand instead cuts a `release-YYYYMMDD-HHMMSS` release that
 nothing later overwrites:
 

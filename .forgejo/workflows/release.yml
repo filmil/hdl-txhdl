@@ -8,6 +8,11 @@
 # The nightly is a moving target, so somebody who wants "the current
 # documents" always has one link. A dispatched release is a fixed point that
 # nothing later overwrites, which is what makes it worth cutting by hand.
+#
+# The same assets go to the GitHub mirror as a release of the same name,
+# when able: the step needs A_GITHUB_MIRROR_TOKEN, the token the mirror
+# workflow pushes with, and skips without it. The Forgejo release is the
+# release; the copy is the spare, and its failure does not fail the run.
 name: release
 
 on:
@@ -140,3 +145,53 @@ jobs:
           release-dir: dist/release
           override: ${{ steps.tag.outputs.override }}
           token: ${{ secrets.FORGEJO_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # The copy on GitHub. The commit goes first, so the release has
+      # something to point at; the mirror workflow pushes main on every
+      # push, so this is usually a no-op. The rolling release is remade
+      # from scratch, its old release and tag deleted, since GitHub does
+      # not move a release to a new commit; a stamped release is new by
+      # construction. The API is spoken with curl alone, since the runner
+      # has nothing else; the release id is the first "id" in the reply.
+      - name: Copy the release to GitHub
+        if: steps.decide.outputs.proceed == 'true'
+        continue-on-error: true
+        env:
+          TOKEN: ${{ secrets.A_GITHUB_MIRROR_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          OVERRIDE: ${{ steps.tag.outputs.override }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          if [ -z "$TOKEN" ]; then
+            echo "A_GITHUB_MIRROR_TOKEN is not set; no copy to GitHub" >&2
+            exit 0
+          fi
+          api="https://api.github.com/repos/filmil/txhdl"
+          auth="Authorization: Bearer $TOKEN"
+          accept="Accept: application/vnd.github+json"
+          release_id() { sed -n 's/^ *"id": *\([0-9]*\),.*/\1/p' | head -1; }
+          git remote add github "https://x-access-token:${TOKEN}@github.com/filmil/txhdl.git"
+          git push github "HEAD:refs/heads/main" ||
+            echo "main not pushed; the mirror may have it already" >&2
+          if [ "$OVERRIDE" = "true" ]; then
+            old=$(curl -sS -H "$auth" -H "$accept" "$api/releases/tags/$TAG" | release_id)
+            if [ -n "$old" ]; then
+              curl -fsS -X DELETE -H "$auth" -H "$accept" "$api/releases/$old"
+              echo "deleted the old release $old of $TAG"
+            fi
+            curl -sS -X DELETE -H "$auth" -H "$accept" "$api/git/refs/tags/$TAG" > /dev/null || true
+          fi
+          body=$(printf '{"tag_name":"%s","target_commitish":"%s","name":"%s","prerelease":%s}' \
+            "$TAG" "$SHA" "$TAG" "$OVERRIDE")
+          id=$(curl -fsS -X POST -H "$auth" -H "$accept" "$api/releases" -d "$body" | release_id)
+          [ -n "$id" ] || { echo "GitHub gave no release id" >&2; exit 1; }
+          for f in dist/release/*; do
+            name=$(basename "$f")
+            curl -fsS -X POST -H "$auth" -H "$accept" \
+              -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/filmil/txhdl/releases/$id/assets?name=$name" \
+              --data-binary "@$f" > /dev/null
+            echo "uploaded $name"
+          done
+          echo "released $TAG on GitHub as release $id"
