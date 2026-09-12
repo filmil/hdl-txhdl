@@ -87,6 +87,9 @@ pub const MEXT: u32 = 1 << 11;
 pub const MTIMER: u32 = 1 << 7;
 /// The timer's four words: mtime low and high, mtimecmp low and high.
 pub const TIMER_BASE: u32 = 0x2000;
+/// The serial port's two words: a byte to send, and the status, whose
+/// bit 0 is busy.
+pub const UART_BASE: u32 = 0x3000;
 
 /// A decoded instruction: the mnemonic and its fields, the immediate
 /// already extended to a signed word.

@@ -74,7 +74,7 @@ impl Asm {
 /// counts interrupts in x8, two by the end. It
 /// leaves 110 in x10 and at the first data word, the second trap's
 /// cause in x23, 5 in x24, 0xfe01 in x25, -220 in x26, -55 in x29
-/// and -2 in x30.
+/// and -2 in x30, and has written OK and a newline to the serial port.
 pub fn demo() -> Vec<u32> {
     let mut a = Asm::default();
     let (top, done, double) = (a.label(), a.label(), a.label());
@@ -125,6 +125,19 @@ pub fn demo() -> Vec<u32> {
     a.emit(mulhu(28, 7, 7)); // x28 = high word of 0xfffffffe^2
     a.emit(div(29, 10, 7)); // x29 = 110 / -2 = -55
     a.emit(rem(30, 7, 5)); // x30 = -2 rem 10 = -2
+
+    // The serial port: three bytes, each written once the port is not
+    // busy, which a load of the status says.
+    a.emit(lui(1, UART_BASE >> 12)); // x1 = the port; the call is done
+    for byte in b"OK\n" {
+        let wait = a.label();
+        a.place(wait);
+        a.emit(lw(21, 1, 4)); // x21 = status
+        a.emit(andi(21, 21, 1)); // busy?
+        a.to(wait, |o| bne(21, 0, o)); // then ask again
+        a.emit(addi(21, 0, *byte as i32)); // the byte
+        a.emit(sw(21, 1, 0)); // out it goes
+    }
 
     // Traps: an ecall, an illegal word, each returning to the word
     // after it; then the CSRs.

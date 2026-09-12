@@ -5,7 +5,7 @@
 use crate::isa::{
     decode, Kind, CAUSE_ECALL, CAUSE_ILLEGAL, CAUSE_MEXT, CAUSE_MTIMER,
     CSR_MCAUSE, CSR_MEPC, CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS,
-    CSR_MTVAL, CSR_MTVEC, MEXT, MTIMER, TIMER_BASE,
+    CSR_MTVAL, CSR_MTVEC, MEXT, MTIMER, TIMER_BASE, UART_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -43,11 +43,13 @@ pub struct Model {
     pub x: [u32; 32],
     pub mem: Vec<u32>,
     pub csr: Csr,
-    /// The timer's count, which is the core's: the model has no clock,
-    /// so the caller sets it before each step, as it stood when the
-    /// instruction executed. The compare register is the model's own.
-    pub mtime: u64,
+    /// What the bus answered the core's last load from a device: the
+    /// model has neither a clock nor a bus, so the caller sets it
+    /// before the step of a device load. The timer's compare and the
+    /// bytes the serial port was given are the model's own.
+    pub dev_word: u32,
     pub mtimecmp: u64,
+    pub uart: Vec<u8>,
     /// The timer's line as the core saw it, set by the caller with the
     /// count; the timer is a device on the bus, so its pending bit is
     /// what the line says, not what the model could compute.
@@ -62,8 +64,9 @@ impl Default for Model {
             x: [0; 32],
             mem: vec![0; DATA_BYTES as usize / 4],
             csr: Csr::default(),
-            mtime: 0,
+            dev_word: 0,
             mtimecmp: 0,
+            uart: Vec::new(),
             tirq: false,
             halted: None,
         }
@@ -74,20 +77,20 @@ const MIE: u32 = 1 << 3;
 const MPIE: u32 = 1 << 7;
 
 impl Model {
-    /// A word of data memory, or of the timer, by byte address; `None`
-    /// outside both.
+    /// A word of data memory by byte address, or, above it, the word
+    /// the bus answered the core with, which the caller handed over;
+    /// `None` below the data memory.
     fn word(&self, addr: u32) -> Option<u32> {
-        let t = addr.wrapping_sub(TIMER_BASE);
-        if t < 16 {
-            let v = if t < 8 { self.mtime } else { self.mtimecmp };
-            return Some((v >> (8 * (t & 4))) as u32);
+        if addr >= TIMER_BASE {
+            return Some(self.dev_word);
         }
         let off = addr.wrapping_sub(DATA_BASE);
         (off < DATA_BYTES).then(|| self.mem[(off / 4) as usize])
     }
 
-    /// A store's word. The count is the core's, so a store to it is
-    /// the core's business and the next step brings the new count.
+    /// A store's word. Above the data memory the store is a device's
+    /// business; the model keeps what it can check at the end, the
+    /// timer's compare and the bytes given to the serial port.
     fn set_word(&mut self, addr: u32, v: u32) -> bool {
         let t = addr.wrapping_sub(TIMER_BASE);
         if t < 16 {
@@ -96,6 +99,13 @@ impl Model {
                 self.mtimecmp = (self.mtimecmp & !(0xffff_ffff << shift))
                     | (v as u64) << shift;
             }
+            return true;
+        }
+        if addr == UART_BASE {
+            self.uart.push(v as u8);
+            return true;
+        }
+        if addr >= TIMER_BASE {
             return true;
         }
         let off = addr.wrapping_sub(DATA_BASE);

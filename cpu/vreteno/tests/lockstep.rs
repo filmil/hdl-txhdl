@@ -10,7 +10,9 @@ use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::isa::{decode, disasm, Kind, CAUSE_MEXT, CAUSE_MTIMER};
 use vreteno32::model::{Halt, Model};
 use vreteno32::program::{demo, random};
+use vreteno32::router::Router;
 use vreteno32::timer::Timer;
+use vreteno32::uart::Uart;
 
 /// Runs `program` on both until the core halts, checking after every
 /// cycle; returns the model at the halt.
@@ -48,9 +50,12 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     ];
     let (mip, mie, mstatus) =
         (cpu.mip.clone(), cpu.mie.clone(), cpu.mstatus.clone());
+    let mut router = Router::default();
     let mut timer = Timer::default();
-    let (mtime, mtimecmp) = (timer.mtime.clone(), timer.mtimecmp.clone());
-    let (pending, dev_wait) = (timer.pending.clone(), cpu.dev_wait.clone());
+    let mut uart = Uart::<4>::default();
+    let mtimecmp = timer.mtimecmp.clone();
+    let (pending, wb_dev) = (timer.pending.clone(), cpu.wb_dev.clone());
+    let (uart_sent, uart_last) = (uart.sent.clone(), uart.last.clone());
     // The architectural program counter, as Vreteno::arch_pc has it:
     // the oldest instruction not yet retired.
     let arch_pc = move || {
@@ -65,19 +70,31 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
+    let (tx_out, _tx) = signal::<Bit, DefaultClock>();
     let (req_tx, req_rx) = chan::<U<69>, DefaultClock>();
     let (resp_tx, resp_rx) = chan::<U<32>, DefaultClock>();
+    let (treq_tx, treq_rx) = chan::<U<69>, DefaultClock>();
+    let (tresp_tx, tresp_rx) = chan::<U<32>, DefaultClock>();
+    let (ureq_tx, ureq_rx) = chan::<U<69>, DefaultClock>();
+    let (uresp_tx, uresp_rx) = chan::<U<32>, DefaultClock>();
     let (halt_out, _halt) = signal::<Bit, DefaultClock>();
     let (instr_out, _instr) = signal::<U<32>, DefaultClock>();
     let (ir, in_execute) = (cpu.ir.clone(), cpu.valid.clone());
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
     // The timer first, since the core reads its line in the same step.
-    let rst_t = rst.clone();
+    let (rst_t, rst_u) = (rst.clone(), rst.clone());
     let mut sim = Running::new(join2(
-        timer.run((rst_t, req_rx), (resp_tx, tirq_out)),
-        cpu.run(
-            (rst, irq, tirq, resp_rx),
-            (halt_out, instr_out, wb_out, req_tx),
+        join2(
+            timer.run((rst_t, treq_rx), (tresp_tx, tirq_out)),
+            uart.run((rst_u, ureq_rx), (uresp_tx, tx_out)),
+        ),
+        join2(
+            router
+                .run((req_rx, tresp_rx, uresp_rx), (treq_tx, ureq_tx, resp_tx)),
+            cpu.run(
+                (rst, irq, tirq, resp_rx),
+                (halt_out, instr_out, wb_out, req_tx),
+            ),
         ),
     ));
     rst_out.set(Bit::One);
@@ -94,18 +111,14 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     // which is the cycle after its last cycle in execute.
     let mut taken: Option<u32> = None;
     let mut taken_before: Option<u32> = None;
-    // The timer's count as the timer answered it: a load's request goes
-    // out at the end of one cycle and the timer answers with the count
-    // of the next, which is when the core's wait bit has just risen.
-    // The count is handed to the model with the instruction, since the
-    // model has no clock of its own, and the timer's line as the core
-    // registered it goes with it.
-    let mut count = 0u64;
-    let mut count_before = 0u64;
-    let mut waiting = false;
+    // What the bus answered a load from a device is in the core's own
+    // register for it when the load retires, and is handed to the model
+    // with the instruction, since the model has no bus; the timer's line
+    // as the timer registered it goes with it.
     let mut line = false;
     let mut line_before = false;
-    for cycle in 0..4096 {
+    let mut answer = 0u32;
+    for cycle in 0..8192 {
         let at = model.pc;
         let raised = match seed {
             None => cycle == 40,
@@ -121,10 +134,10 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         // the illegal word is zero too, so the flag is kept apart.
         let executing = in_execute.get().to_bool();
         let executed = if executing { ir.get().raw() as u32 } else { 0 };
-        if dev_wait.get().to_bool() && !waiting {
-            count = mtime.get().raw() as u64;
-        }
-        waiting = dev_wait.get().to_bool();
+        // The register holds the load's answer until the cycle in
+        // which it retires, which is the next instruction's execute
+        // cycle, so it is read before that cycle.
+        answer = wb_dev.get().raw() as u32;
         if executing {
             line = pending.get().to_bool();
             let ext =
@@ -142,13 +155,12 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         }
         sim.cycle();
         if wb.get().done.to_bool() {
-            model.mtime = count_before;
+            model.dev_word = answer;
             model.tirq = line_before;
             model.step(program, taken_before);
             retired += 1;
         }
         taken_before = taken;
-        count_before = count;
         line_before = line;
         // The line sets the pending bit at this edge in both.
         if raised {
@@ -214,6 +226,16 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
                 model.mtimecmp,
                 "mtimecmp at the halt, {here}"
             );
+            // The serial port took every byte the model has, in order;
+            // the port keeps the count and the last.
+            assert_eq!(
+                uart_sent.get().raw() as usize,
+                model.uart.len(),
+                "bytes to the serial port, {here}"
+            );
+            if let Some(&last) = model.uart.last() {
+                assert_eq!(uart_last.get().raw() as u8, last, "last byte");
+            }
             for (a, &w) in model.mem.iter().enumerate() {
                 assert_eq!(word(a), w, "mem[{a}] {here}");
             }
@@ -223,7 +245,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
             return model;
         }
     }
-    panic!("{what}: no halt in 4096 cycles");
+    panic!("{what}: no halt in 8192 cycles");
 }
 
 #[test]
@@ -239,6 +261,7 @@ fn demo_program() {
     assert_eq!(m.x[23], 2, "the second trap's cause");
     assert_eq!(m.x[24], 5, "mscratch through the CSR instructions");
     assert_eq!(m.x[8], 2, "the line's and the timer's interrupt, counted");
+    assert_eq!(m.uart, b"OK\n", "what the demonstration said");
     assert_eq!(m.x[25], 0xfe01, "the use right after the load");
     assert_eq!(m.x[26], (-220i32) as u32, "mul");
     assert_eq!(m.x[28], 0xfffffffc, "mulhu");

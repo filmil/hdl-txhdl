@@ -6,4 +6,6 @@ pub mod core;
 pub mod isa;
 pub mod model;
 pub mod program;
+pub mod router;
 pub mod timer;
+pub mod uart;

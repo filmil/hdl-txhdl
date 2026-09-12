@@ -748,7 +748,12 @@ waveform(
 waveform(
     name = "vreteno",
     example = "//cpu/vreteno:vreteno",
-    lowered = [("vreteno", "cpu"), ("timer", "timer")],
+    lowered = [
+        ("vreteno", "cpu"),
+        ("router", "router"),
+        ("timer", "timer"),
+        ("uart4", "uart"),
+    ],
     until = 30,
     signals = [
         "//clocks/clk=>clk",
