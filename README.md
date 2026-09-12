@@ -19,8 +19,6 @@ Nothing has to be installed first beyond `bazelisk`.
 ```sh
 bazel build //...                 # every document
 bazel test  //...
-bazel build //spec:language-pdf   # the specification as a PDF
-bazel build //spec:language-html  # the specification as a web page
 ```
 
 The first build fetches a Debian rootfs, a Zig toolchain, graphviz built

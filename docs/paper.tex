@@ -25,7 +25,7 @@
 \author{Filip Filmar and Dragiša Janković%
 \thanks{This paper presents TxHDL as it stands: the language, its
 runtime, the traces and netlists it produces, the checks that hold
-them together, and the Vreteno RV32I core built with it. Every
+them together, and the Vreteno RV32IM core built with it. Every
 listing is included from the project repository \code{HDL/txhdl} at
 build time, every waveform is drawn from a trace the build produced,
 and every number is from a run the build made. The companion
@@ -48,11 +48,11 @@ source runs as a cycle-accurate simulation, writes a waveform, and
 lowers to a netlist in Verilog and VHDL, and the build simulates that
 netlist under nvc and Verilator against the trace the simulation
 wrote, so a design that passes is right in three forms at once. The
-largest design so far is Vreteno, a three-stage RV32I core with
+largest design so far is Vreteno, a three-stage RV32IM core with
 machine-mode traps: written in the subset the lowering reads, checked
 in lockstep against a reference model, checked as a netlist against
 its own trace, and synthesized, placed and routed on an Artix-7 at
-100~MHz in 1297 LUTs, its data memory in block RAM. This paper presents the system
+100~MHz in 1864 LUTs, its data memory in block RAM. This paper presents the system
 and its results.
 \end{abstract}
 
@@ -116,7 +116,7 @@ is the language: what a unit is, how time is modelled, how units are
 wired, and how control flow on a signal is spelled.
 Section~\ref{sec:p-sim} is the simulation and its traces.
 Section~\ref{sec:p-lower} is the lowering and the checks that close
-the loop. Section~\ref{sec:p-vreteno} is Vreteno, an RV32I core
+the loop. Section~\ref{sec:p-vreteno} is Vreteno, an RV32IM core
 written in the language, from a reference model to synthesis.
 Section~\ref{sec:p-results} gathers the numbers.
 
@@ -349,7 +349,8 @@ ALU & ten operators by \code{case!} & nvc, Verilator \\
 scratchpad & a memory written and read & nvc, Verilator \\
 decoder & \code{slice}, \code{concat}, \code{sext}, \code{select!} & nvc, Verilator \\
 stage & two channels, the handshake & nvc, Verilator \\
-Vreteno & the whole core, 180 ticks & nvc, Verilator \\
+MAC & \code{mul::<M>}, a product at a stated width & nvc, Verilator \\
+Vreteno & the whole core, 520 ticks & nvc, Verilator \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -373,8 +374,8 @@ simulated. Both were found by the core and fixed in the emitter.
 \section{Vreteno}
 \label{sec:p-vreteno}
 
-Vreteno is a 32-bit RISC-V core, the RV32I base integer set, and the
-largest design in the language. Fig.~\ref{fig:p-core} is its
+Vreteno is a 32-bit RISC-V core, the RV32I base integer set with the
+M extension, and the largest design in the language. Fig.~\ref{fig:p-core} is its
 structure. It is one unit and one process. The fetch stage reads the
 instruction memory at the program counter into an instruction
 register, with its program counter and a valid bit. The execute stage
@@ -394,7 +395,11 @@ saves its address and cause in \code{mepc} and \code{mcause},
 saves and clears the interrupt enable in \code{mstatus}, and
 redirects to \code{mtvec} as a taken branch redirects; \code{mret}
 returns; the six CSR instructions read and write the five control
-registers. The whole is written in the subset the lowering reads,
+registers. Multiply and divide are one sequencer of thirty-two
+shift-and-add or restoring steps over the magnitudes, the signs put
+back at the end, and the instruction stalls for them: small, slow,
+and off the critical path. The whole is written in the subset the
+lowering reads,
 Listing~\ref{lst:p-fetch} being the fetch's drives, so the one file
 simulates and is a netlist.
 
@@ -457,10 +462,9 @@ memory became a read-only memory in one block RAM tile, the data
 memory's four byte lanes four block RAMs in two, since the third
 stage registers their read, and the register file distributed RAM.
 Placed and routed with the same constraint, the core meets ten
-nanoseconds with 0.737~ns to spare; the critical path runs from a
-data memory's read through the forwarding path and the ALU to the
-instruction memory's address, a load followed by a jump through what
-it loaded. Fig.~\ref{fig:p-vreteno} is the opening of the
+nanoseconds with 1.013~ns to spare; the critical path runs from the
+register file's read through the branch compare to the instruction
+memory's address, a branch on a register. Fig.~\ref{fig:p-vreteno} is the opening of the
 demonstration, from the trace.
 
 \begin{table}[htbp]
@@ -471,9 +475,9 @@ demonstration, from the trace.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1249 \\
+LUTs, as logic & 1816 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 305 \\
+Flip-flops & 413 \\
 Block RAM tiles & 3 \\
 Errors, critical warnings & 0 \\
 \bottomrule
@@ -495,16 +499,16 @@ writeback decoded into its register and value, and the first bubble,
 
 What the system does, in numbers from the build that produced this
 paper. The runtime is five Rust modules and one macro crate, with one
-external crate, an FST writer. Twenty-five examples compile, each one
+external crate, an FST writer. Twenty-six examples compile, each one
 concept, and every one that runs writes a waveform the examples
-document draws. Nine lowered units, Table~\ref{tab:p-checked}, are
+document draws. Ten lowered units, Table~\ref{tab:p-checked}, are
 simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
-twenty-two tests run under \code{bazel test //...}, and every one of them
+twenty-four tests run under \code{bazel test //...}, and every one of them
 is hermetic, the simulators built from source and the synthesis tool
-installed by the build. Vreteno is 490 lines of core, checked in
-lockstep against a 246-line model on a demonstration program and
-sixty-four random ones, checked as a netlist on 180 ticks and eight
+installed by the build. Vreteno is 594 lines of core, checked in
+lockstep against a 273-line model on a demonstration program and
+sixty-four random ones, checked as a netlist on 520 ticks and eight
 signals, synthesized in two minutes to the figures of
 Table~\ref{tab:p-synth}, and placed and routed at 100~MHz. Eight documents describe the system, this
 one included, and each is built by the same command that builds the
@@ -542,8 +546,8 @@ A RISC-V core written in it runs, lowers, is checked against its own
 trace, and runs at 100~MHz on an Artix-7 with its data memory in
 block RAM, whose bitstream, with a clock, a reset and four LEDs
 around the core, is built. The next steps are the board in hand and
-the multiplication extension; the path that limits the clock is now
-a branch on what the instruction before it computed.
+a multiplier in the DSP blocks; the path that limits the clock is a
+branch on what the instruction before it computed.
 
 \begin{thebibliography}{10}
 

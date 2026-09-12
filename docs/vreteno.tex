@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: Apache-2.0
 %
-% Vreteno: an RV32I core in TxHDL, the first large design. Built by
+% Vreteno: an RV32IM core in TxHDL, the first large design. Built by
 % //docs:vreteno. One column, because it is mostly listings.
 \documentclass[journal,onecolumn,9pt]{IEEEtran}
 
@@ -11,10 +11,10 @@
 \InputIfFileExists{buildstamp.tex}{}{}
 \providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
 
-\title{Vreteno: An RV32I Core in TxHDL}
+\title{Vreteno: An RV32IM Core in TxHDL}
 
 \author{Filip Filmar and Dragiša Janković%
-\thanks{This document holds the Vreteno core, a RISC-V RV32I processor
+\thanks{This document holds the Vreteno core, a RISC-V RV32IM processor
 written in TxHDL under \code{//cpu/vreteno} of the project repository,
 included verbatim at build time with the reference model it is checked
 against, the programs it runs, and the trace and waveform the build
@@ -24,15 +24,16 @@ document~\cite{runtime}, the smaller designs in the
 examples~\cite{examples}, and the cover~\cite{cover} lists all of them.}%
 \thanks{\buildstamp}}
 
-\markboth{Vreteno: An RV32I Core in TxHDL}{Filmar and Janković: Vreteno}
+\markboth{Vreteno: An RV32IM Core in TxHDL}{Filmar and Janković: Vreteno}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Vreteno is a 32-bit RISC-V core, the RV32I base integer set, written
-in TxHDL: the first design large enough to ask whether the language
-scales past its examples. This is its fourth form: a three-stage
+Vreteno is a 32-bit RISC-V core, the RV32I base integer set and the
+M extension, written in TxHDL: the first design large enough to ask
+whether the language scales past its examples. This is its fifth
+form: a three-stage
 pipeline, one process in which a fetch stage reads the instruction
 memory into an instruction register, an execute stage runs the
 instruction before it and reads the data memory into a register at
@@ -43,8 +44,9 @@ bubble per taken branch or jump, written in the subset the lowering
 reads, so that the same file simulates and is a netlist, and with
 machine-mode traps: an environment call or a word the core does not
 know saves its address and its cause in the control registers and
-enters the handler, which returns through \code{mret}. It is checked
-twice. In lockstep against a reference model of the instruction set
+enters the handler, which returns through \code{mret}; and with
+multiply and divide as one sequencer of thirty-two steps, which
+stalls the instruction in execute. It is checked twice. In lockstep against a reference model of the instruction set
 written as a plain program: the model steps when the core retires an
 instruction, and after every cycle the program counter, the
 thirty-one registers, the control registers and the halt must agree,
@@ -60,7 +62,7 @@ build produced when it ran the core.
 \end{abstract}
 
 \begin{IEEEkeywords}
-RISC-V, RV32I, processor, hardware description languages, Rust,
+RISC-V, RV32IM, processor, hardware description languages, Rust,
 lockstep testing.
 \end{IEEEkeywords}
 
@@ -100,7 +102,7 @@ refactoring too.
 \section{The Instruction Set as Bits}
 \label{sec:v-isa}
 
-Listing~\ref{lst:v-isa} is RV32I as encoders and a decoder. An
+Listing~\ref{lst:v-isa} is RV32IM as encoders and a decoder. An
 encoder per mnemonic builds the word, the six formats being six
 functions of their fields; the decoder takes a word apart into its
 mnemonic, its registers and its immediate, sign-extended. The core
@@ -116,8 +118,11 @@ and a function code and differ in their upper twelve bits; in the
 six CSR forms those bits name the register. The five machine-mode
 registers the core has, \code{mstatus}, \code{mtvec},
 \code{mscratch}, \code{mepc} and \code{mcause}, and the two
-causes it raises, are constants beside them. A unit test checks each
-format's encoder against the decoder.
+causes it raises, are constants beside them. The M extension is the
+register format with \code{funct7} one: the four multiplies, which
+differ in which operand is signed and which half of the product they
+keep, and the two divides and two remainders, signed and unsigned. A
+unit test checks each format's encoder against the decoder.
 
 \lstinputlisting[caption={\code{isa.rs}: the encoders, the decoder,
 the disassembler.},label={lst:v-isa}]{cpu/vreteno/src/isa.rs}
@@ -146,7 +151,12 @@ bit, and the saved bit is set. A CSR instruction reads the register
 its upper twelve bits name into \code{rd} and writes it, replaced,
 set or cleared by a register or by a five-bit immediate; a name the
 model does not have is an illegal word, and traps. Only
-\code{ebreak} halts.
+\code{ebreak} halts. The M extension is Rust's arithmetic on the
+right types: a product's low word is the same whatever the signs, the
+high word is the top of a 64-bit product of the operands extended
+as the instruction says, and a division is the wrapping one, which
+gives the manual's answer for the one overflow; division by zero,
+which Rust would refuse, is spelled out, all ones and the dividend.
 
 \lstinputlisting[caption={\code{model.rs}: the reference
 model.},label={lst:v-model}]{cpu/vreteno/src/model.rs}
@@ -162,8 +172,9 @@ the boundary between execute and writeback, which hold whether an
 instruction is there, its program counter, its destination, its
 value if it is not a load, the raw word read for a load with the
 lane and the width to take from it, the word itself, and whether it
-halts; the halt itself; the five control registers; and six
-memories: the register file, the instruction memory,
+halts; the halt itself; the five control registers; the sequencer's
+seven, a busy bit, a count, the two halves of the pair it shifts, the
+multiplicand or divisor, and two sign bits; and six memories: the register file, the instruction memory,
 loaded from the program with \code{Mem::with}, and the data memory
 as four memories of a byte, one per lane of the word. Its input is
 the reset and its outputs are the halt, the word executed, and a
@@ -223,6 +234,27 @@ drives the one register named, with the old value as its result
 through the ordinary writeback. The model's CSR step is one function
 over an enum; the core's is five \code{when!}s under one enable,
 which is what five registers with one write each are.
+
+The M extension is a sequencer, and the second use of the stall. A
+multiply or a divide in execute starts it: the operands' magnitudes
+go into the pair and the multiplicand or divisor register, the signs
+into two bits, and the instruction stalls, the fetch holding with it.
+Thirty-two steps follow, one a cycle. A multiply shifts the pair
+right and adds the multiplicand into the high half when the low bit
+was set, which leaves the 64-bit product in the pair; a division
+shifts the pair left, subtracts the divisor from the high half when
+it fits, and shifts the fit in as the quotient bit, which leaves the
+quotient in the low half and the remainder in the high. On the
+thirty-third cycle the instruction runs: the result is the pair with
+the signs put back, the product or quotient negated when the signs
+differed, the remainder given the dividend's sign, a quotient by
+zero left as the all-ones the steps produce, and it goes through the
+ordinary writeback. One set of registers serves both, and the
+hardware is an adder, a subtractor, a compare and some multiplexers,
+which is small and slow: thirty-three cycles for any of the eight
+instructions. A multiplier in the part's DSP blocks would be one
+cycle, and is the next step for the clock and the throughput both;
+the sequencer is the form that costs nothing on the critical path.
 
 The stages meet at the end of the cycle, in the deferred drives of
 the fetch's state and the writeback's. When the execute stage's next
@@ -284,13 +316,18 @@ illegal, enter the handler. The handler reads \code{mepc}, steps it
 past the word that trapped, writes it back, reads the cause into
 \code{x23} and returns. The program then writes \code{mscratch} by
 immediate and reads it back into \code{x24}, so that two is in
-\code{x23} and five in \code{x24} at the end.
+\code{x23} and five in \code{x24} at the end. Between the shifts
+and the traps it multiplies and divides, five of the eight
+instructions, on the sum and on minus two: minus 220 into
+\code{x26}, minus 55 into \code{x29}, and the remainder minus two
+into \code{x30}.
 
 The random generator writes straight-line programs of a given length
 from a seed: every register operation, aligned stores and loads
 within the first data words through \code{x2}, which it keeps at the
 data base, now and then a forward branch over one or two words, so
-both outcomes of every branch condition occur, the six CSR forms on
+both outcomes of every branch condition occur, the M extension in
+half the places an \code{or} would go, the six CSR forms on
 \code{mscratch}, \code{mcause} and \code{mepc}, and now and then
 an \code{ecall} or an illegal word, which the handler placed after
 the \code{ebreak} returns from to the word after; \code{x31} is
@@ -360,8 +397,10 @@ build ran it. The loop is visible as the three instructions that
 repeat ten times with a bubble after each taken \code{bne}, the call
 as the jump to \code{0x5c} and the return to \code{0x20}, each with
 its bubble, and the loads as the sign and zero extensions of the same
-byte and half. The one stall is the bubble after \code{lw}, where
-the next instruction adds to what it loaded. The two traps are the
+byte and half. The one load stall is the bubble after \code{lw},
+where the next instruction adds to what it loaded, and each multiply
+or divide is a run of thirty-three, which the run prints as one line
+with the count. The two traps are the
 jumps to the handler at
 \code{0x7c}, the first from the \code{ecall} with eleven read into
 \code{x23}, the second from the illegal word with two, each with its
@@ -396,9 +435,9 @@ the build ran it.},label={lst:v-out}]{out_vreteno.txt}
 \label{sec:v-netlist}
 
 The Verilog at the end of Listing~\ref{lst:v-out} is the core as
-hardware: twenty-one registers, six memories, the instruction
+hardware: twenty-eight registers, six memories, the instruction
 memory holding the program, a wire per \code{let} of the loop, three
-temporaries, and one clocked block of sixty-nine lines. The VHDL the run
+temporaries, and one clocked block of ninety-one lines. The VHDL the run
 wrote beside it says the same, and the build simulates both against
 the trace the Rust core wrote, the VHDL under nvc and the Verilog
 under Verilator, the testbench replaying the reset and checking every
@@ -427,10 +466,12 @@ The netlist was checked as the model was: a testbench that could not
 fail would prove nothing. The register file is not traced, so the
 testbench cannot see it, but every write to it shows in the
 writeback output the next tick, and every read shows in the program
-counter and the outputs that follow; the hundred and eighty ticks of the
-demonstration exercise every instruction of the program through
-both, the two traps and their returns included, since a wrong
-\code{mepc} or \code{mtvec} is a wrong program counter. The checks that failed on the way, a truth value rendered
+counter and the outputs that follow; the five hundred and twenty
+ticks of the demonstration exercise every instruction of the program
+through both, the two traps and their returns included, since a
+wrong \code{mepc} or \code{mtvec} is a wrong program counter, and
+every register of the sequencer at every step of five multiplies and
+divides, since the whole unit is traced. The checks that failed on the way, a truth value rendered
 ambiguously, a bitwise \code{and} rendered as a comparison, a
 concatenation of ambiguous type, a slice of an expression and a
 temporary named with a leading underscore, all failed to analyze or
@@ -460,9 +501,9 @@ unused, and an advisory on floorplanning.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1249 \\
+LUTs, as logic & 1816 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 305 \\
+Flip-flops & 413 \\
 Block RAM tiles & 3 \\
 \bottomrule
 \end{tabular}
@@ -483,7 +524,7 @@ and the stage registered the load's, and the LUT count fell by a
 third. The register file, 32 by 32 with one write port and two
 reads, is twelve of the small distributed primitives, which is what
 a register file of that size is on this family. The flip-flops are
-the twenty-one registers of the source less one, the writeback
+the twenty-eight registers of the source less one, the writeback
 stage's program counter, which only the lockstep test reads and
 synthesis removed as unused, with a warning that says so, and less
 the bits a mask makes constant: \code{mstatus} has two bits that
@@ -495,24 +536,25 @@ instruction.
 The netlist is also placed and routed, \code{bazel build
 //cpu/vreteno:vreteno\_pnr}, with the same constraint and no pins,
 so the bitstream is a stub and the reports are the point. The routed
-design meets ten nanoseconds with 0.737~ns of slack, and hold with
-0.079~ns. The critical path is 8.732~ns, of which routing is three
-quarters, through twelve levels of logic: from the writeback stage's
-destination register, through the forwarding compare into the
-operand and the branch compare, to the instruction memory's address,
-which is a branch on what the instruction before it computed. With
-two stages the slack had been 0.263~ns, on a path from a register
-through the decode and the ALU into the register file's write. With
-three stages and the load forwarded it was 0.361~ns, on a load
-followed at once by a jump through what it loaded. With the traps,
-whose return and handler addresses widened the fetch's multiplexer,
-that path missed by 0.36~ns. That is what the stall of
-Section~\ref{sec:v-core} was for: it took the data memory's read
-and the load's extension off the forwarding path, and the slack
-doubled. The tool had an opinion of its own on the way. Left to
-itself it moved three of the four data memory lanes into
-distributed RAM to shorten that path, so the constraints file pins
-the lanes to block RAM, where the third stage put them.
+design meets ten nanoseconds with 1.013~ns of slack, and hold with
+0.110~ns. The critical path is 8.456~ns, of which routing is three
+quarters, through nine levels of logic: from the register file's
+read, through the branch compare, to the instruction memory's
+address, which is a branch on a register. With two stages the slack
+had been 0.263~ns, on a path from a register through the decode and
+the ALU into the register file's write. With three stages and the
+load forwarded it was 0.361~ns, on a load followed at once by a jump
+through what it loaded. With the traps, whose return and handler
+addresses widened the fetch's multiplexer, that path missed by
+0.36~ns. That is what the stall of Section~\ref{sec:v-core} was
+for: it took the data memory's read and the load's extension off the
+forwarding path, and the slack tripled. The sequencer of the M
+extension adds nothing to the path, since its result is a register
+and its steps are a cycle each. The tool had an opinion of its own
+on the way. Left to itself it moved three of the four data memory
+lanes into distributed RAM to shorten the load's path, so the
+constraints file pins the lanes to block RAM, where the third stage
+put them.
 
 \subsection{The board}
 
@@ -527,7 +569,7 @@ clock has locked, and four LEDs, lit when driven low, showing the
 core halted, a heartbeat, the reset released and the clock locked.
 The constraints name the board's pins as the project's other designs
 for it do, so the bitstream is real: the routed design meets
-100~MHz with 0.744~ns of slack, in 1348 LUTs, 309 flip-flops, three
+100~MHz with 1.151~ns of slack, in 1787 LUTs, 415 flip-flops, three
 block RAM tiles and the MMCM, with no critical warning.
 \code{bazel run //cpu/vreteno:vreteno\_board\_flash} writes it into
 the board's QSPI flash over the programming cable. What the board
@@ -543,29 +585,22 @@ top, by hand.},label={lst:v-board}]{cpu/vreteno/board/vreteno_board.v}
 \section{What Comes Next}
 \label{sec:v-next}
 
-A third stage. Splitting execute from writeback would shorten the
-critical path, the register file read through the ALU into the
-register file write, and would bring the first hazard: an
-instruction reading a register the one before it has not yet
-written, which needs forwarding or a stall. The lockstep test would
-not change, since it compares architectural state when an
-instruction retires. This is the step to take when the core has a
-netlist and a clock period to shorten, and not before.
-
 The board, programmed. Its bitstream is built and the flash target
 writes it; what its LEDs should show is stated above, and the first
 thing to do with the board in hand is to see that they do.
 
-More clock. The stall took the load off the critical path; what
-sets the timing now is stated in Section~\ref{sec:v-synth}, and a
-fourth stage, or a register file read a cycle earlier, would let
-the clock rise, the lockstep test being the check for either.
+More clock, and more throughput. What sets the timing now is stated
+in Section~\ref{sec:v-synth}, and a fourth stage, or a register file
+read a cycle earlier, would let the clock rise; a multiplier in the
+DSP blocks, pipelined over two cycles, would turn thirty-three cycles
+into two. The lockstep test is the check for any of these, since it
+compares architectural state when an instruction retires.
 
-The multiplication extension, and the rest of the privileged
-architecture: \code{mtval}, the timer and external interrupts, which
-need a way in from outside the core. Each begins in the model, is
-added to the core under the lockstep test, and is checked as a
-netlist by the same trace, as the traps were.
+The rest of the privileged architecture: \code{mtval}, the timer and
+external interrupts, which need a way in from outside the core. Each
+begins in the model, is added to the core under the lockstep test,
+and is checked as a netlist by the same trace, as the traps and the M
+extension were.
 
 \begin{thebibliography}{10}
 

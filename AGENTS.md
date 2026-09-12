@@ -30,7 +30,7 @@ all under `//docs`:
   build produced by running it.
   The runtime appears there only through its public interface, which
   `//tools/api` extracts from the source at build time.
-* `//docs:vreteno` is the first large design, the Vreteno RV32I core
+* `//docs:vreteno` is the first large design, the Vreteno RV32IM core
   under `//cpu/vreteno`, with its reference model, its lockstep test
   and its waveform.
 * `//docs:paper` is the expository paper: the system as it is and its
