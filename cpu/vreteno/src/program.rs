@@ -70,14 +70,15 @@ impl Asm {
 /// an ecall and an illegal word reach and return from, the CSRs,
 /// a use of a word the instruction before it loaded, which stalls a
 /// cycle, the multiplies and divides, then `ebreak`. Interrupts are
-/// enabled from the start and the handler counts them in x8. It
+/// enabled from the start, the timer is set to 150, and the handler
+/// counts interrupts in x8, two by the end. It
 /// leaves 110 in x10 and at the first data word, the second trap's
 /// cause in x23, 5 in x24, 0xfe01 in x25, -220 in x26, -55 in x29
 /// and -2 in x30.
 pub fn demo() -> Vec<u32> {
     let mut a = Asm::default();
     let (top, done, double) = (a.label(), a.label(), a.label());
-    let (handler, sync) = (a.label(), a.label());
+    let (handler, sync, count) = (a.label(), a.label(), a.label());
     a.emit(lui(2, DATA_BASE >> 12)); // x2 = data base
 
     // Interrupts: the handler's address into mtvec, the external
@@ -87,7 +88,11 @@ pub fn demo() -> Vec<u32> {
     a.emit(csrrw(0, CSR_MTVEC, 21)); // mtvec = x21
     a.emit(lui(9, 1)); // x9 = 0x1000
     a.emit(srli(9, 9, 1)); // x9 = 0x800, the external interrupt's bit
-    a.emit(csrrw(0, CSR_MIE, 9)); // mie = MEXT
+    a.emit(lui(4, TIMER_BASE >> 12)); // x4 = the timer
+    a.emit(addi(3, 0, 150)); // x3 = 150
+    a.emit(sw(3, 4, 8)); // mtimecmp = 150: a timer interrupt then
+    a.emit(ori(9, 9, 0x80)); // x9 = MEXT | MTIMER
+    a.emit(csrrw(0, CSR_MIE, 9)); // mie = both
     a.emit(csrrsi(0, CSR_MSTATUS, 8)); // mstatus.MIE = 1
     a.emit(addi(5, 0, 10)); // x5 = 10, the count
     a.emit(addi(10, 0, 0)); // x10 = 0, the sum
@@ -134,7 +139,14 @@ pub fn demo() -> Vec<u32> {
     a.place(handler);
     a.emit(csrrs(23, CSR_MCAUSE, 0)); // x23 = mcause
     a.to(sync, |o| bge(23, 0, o)); // an exception: cause positive
-    a.emit(csrrc(0, CSR_MIP, 9)); // an interrupt: clear it,
+    a.emit(csrrc(0, CSR_MIP, 9)); // an interrupt: clear the line's bit,
+    a.emit(andi(22, 23, 0xff)); // x22 = which interrupt
+    a.emit(addi(3, 0, 7)); // x3 = the timer's
+    a.to(count, |o| bne(22, 3, o)); // the line's: nothing more
+    a.emit(lw(22, 4, 0)); // the timer's: x22 = mtime
+    a.emit(addi(22, 22, 1000)); // the next one well past the end
+    a.emit(sw(22, 4, 8)); // mtimecmp = x22
+    a.place(count);
     a.emit(addi(8, 8, 1)); // count it,
     a.emit(mret()); // and return to the interrupted word
     a.place(sync);
@@ -169,7 +181,9 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     // Interrupts enabled from the start; the line is the test's.
     a.emit(lui(31, 1));
     a.emit(srli(31, 31, 1));
-    a.emit(csrrw(0, CSR_MIE, 31));
+    a.emit(ori(31, 31, 0x80));
+    a.emit(csrrw(0, CSR_MIE, 31)); // the line and the timer
+    a.emit(lui(30, TIMER_BASE >> 12)); // x30 = the timer, kept
     a.emit(csrrsi(0, CSR_MSTATUS, 8));
     while a.words.len() < len {
         let r = next();
@@ -212,10 +226,17 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
             18 => and(rd, rs1, rs2),
             19 => lui(rd, (r >> 12) as u32 & 0xfffff),
             20 => auipc(rd, (r >> 12) as u32 & 0xfffff),
-            21 => sw(rs2, 2, off),
+            // Half of the stores and loads of a word go to the timer.
+            21 => match r >> 60 & 1 {
+                0 => sw(rs2, 2, off),
+                _ => sw(rs2, 30, (amt as i32 & 3) * 4),
+            },
             22 => sh(rs2, 2, off + (amt as i32 & 2)),
             23 => sb(rs2, 2, off + (amt as i32 & 3)),
-            24 => lw(rd, 2, off),
+            24 => match r >> 60 & 1 {
+                0 => lw(rd, 2, off),
+                _ => lw(rd, 30, (amt as i32 & 3) * 4),
+            },
             25 => lh(rd, 2, off + (amt as i32 & 2)),
             26 => lb(rd, 2, off + (amt as i32 & 3)),
             27 => lhu(rd, 2, off + (amt as i32 & 2)),
@@ -257,16 +278,21 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
                 for _ in 0..skip {
                     let r = next();
                     let rd = (r >> 8 & 31) as u32;
-                    let rd = if rd == 2 { 3 } else { rd };
+                    let rd = if rd == 2 || rd == 30 || rd == 31 {
+                        3
+                    } else {
+                        rd
+                    };
                     a.emit(addi(rd, (r >> 16 & 31) as u32, 1));
                 }
                 a.place(l);
                 continue;
             }
         };
-        // x2 stays the data base, so the loads and stores stay in range,
-        // and x31 is the handler's own.
-        if (rd == 2 || rd == 31) && !matches!(r & 31, 21..=23 | 30) {
+        // x2 stays the data base and x30 the timer's, so the loads and
+        // stores stay in range, and x31 is the handler's own.
+        if (rd == 2 || rd == 30 || rd == 31) && !matches!(r & 31, 21..=23 | 30)
+        {
             continue;
         }
         a.emit(w);
@@ -280,6 +306,11 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     a.emit(lui(31, 1));
     a.emit(srli(31, 31, 1)); // 0x800, the external interrupt's bit
     a.emit(csrrc(0, CSR_MIP, 31));
+    a.emit(lw(31, 30, 4)); // and the timer's next: the count plus 64,
+    a.emit(sw(31, 30, 12)); // high word first, since a program may
+    a.emit(lw(31, 30, 0)); // have stored anything into the count
+    a.emit(addi(31, 31, 64));
+    a.emit(sw(31, 30, 8));
     a.emit(mret());
     a.place(sync);
     a.emit(csrrs(31, CSR_MEPC, 0));

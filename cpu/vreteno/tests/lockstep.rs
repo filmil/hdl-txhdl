@@ -7,7 +7,7 @@
 use txhdl::comp::{signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use vreteno32::core::{Vreteno, Writeback};
-use vreteno32::isa::{decode, disasm, Kind};
+use vreteno32::isa::{decode, disasm, Kind, CAUSE_MEXT, CAUSE_MTIMER};
 use vreteno32::model::{Halt, Model};
 use vreteno32::program::{demo, random};
 
@@ -47,6 +47,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     ];
     let (mip, mie, mstatus) =
         (cpu.mip.clone(), cpu.mie.clone(), cpu.mstatus.clone());
+    let (mtime, mtimecmp) = (cpu.mtime.clone(), cpu.mtimecmp.clone());
     // The architectural program counter, as Vreteno::arch_pc has it:
     // the oldest instruction not yet retired.
     let arch_pc = move || {
@@ -78,8 +79,13 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     // this cycle, takes the interrupt in place of the instruction in
     // execute; the model is told so when that instruction retires,
     // which is the cycle after its last cycle in execute.
-    let mut taken = false;
-    let mut taken_before = false;
+    let mut taken: Option<u32> = None;
+    let mut taken_before: Option<u32> = None;
+    // The timer's count as the core had it when the instruction
+    // executed, handed to the model with the instruction, since the
+    // model has no clock of its own.
+    let mut count = 0u64;
+    let mut count_before = 0u64;
     for cycle in 0..4096 {
         let at = model.pc;
         let raised = match seed {
@@ -97,16 +103,29 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         let executing = in_execute.get().to_bool();
         let executed = if executing { ir.get().raw() as u32 } else { 0 };
         if executing {
-            taken = mip.get().bit(11).to_bool()
-                && mie.get().bit(11).to_bool()
-                && mstatus.get().bit(3).to_bool();
+            count = mtime.get().raw() as u64;
+            let ext =
+                mip.get().bit(11).to_bool() && mie.get().bit(11).to_bool();
+            let tim = count >= mtimecmp.get().raw() as u64
+                && mie.get().bit(7).to_bool();
+            taken = if !mstatus.get().bit(3).to_bool() {
+                None
+            } else if ext {
+                Some(CAUSE_MEXT)
+            } else if tim {
+                Some(CAUSE_MTIMER)
+            } else {
+                None
+            };
         }
         sim.cycle();
         if wb.get().done.to_bool() {
+            model.mtime = count_before;
             model.step(program, taken_before);
             retired += 1;
         }
         taken_before = taken;
+        count_before = count;
         // The line sets the pending bit at this edge in both.
         if raised {
             model.raise();
@@ -132,7 +151,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         // CSRs are compared except in the cycle a system instruction,
         // or an illegal word, executed: they agree again a cycle later.
         let system = executing
-            && (taken
+            && (taken.is_some()
                 || matches!(
                     decode(executed).kind,
                     Kind::Csrrw
@@ -144,6 +163,9 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
                         | Kind::Ecall
                         | Kind::Mret
                         | Kind::Illegal
+                        | Kind::Sb
+                        | Kind::Sh
+                        | Kind::Sw
                 ));
         let want = [
             model.csr.mstatus,
@@ -159,6 +181,13 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
             if !system {
                 assert_eq!(r.get().raw() as u32, w, "{name} after {here}");
             }
+        }
+        if !system {
+            assert_eq!(
+                mtimecmp.get().raw() as u64,
+                model.mtimecmp,
+                "mtimecmp after {here}"
+            );
         }
         if model.halted.is_some() {
             for (a, &w) in model.mem.iter().enumerate() {
@@ -185,7 +214,7 @@ fn demo_program() {
     assert_eq!(m.x[14], 65534);
     assert_eq!(m.x[23], 2, "the second trap's cause");
     assert_eq!(m.x[24], 5, "mscratch through the CSR instructions");
-    assert_eq!(m.x[8], 1, "the one interrupt, counted by the handler");
+    assert_eq!(m.x[8], 2, "the line's and the timer's interrupt, counted");
     assert_eq!(m.x[25], 0xfe01, "the use right after the load");
     assert_eq!(m.x[26], (-220i32) as u32, "mul");
     assert_eq!(m.x[28], 0xfffffffc, "mulhu");

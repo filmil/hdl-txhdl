@@ -52,7 +52,7 @@ fn main() {
     // A run of bubbles prints as one line with its count: a divide is
     // thirty-three of them, a multiply three.
     let mut bubbles: Option<(u64, u32)> = None;
-    let mut flush = |bubbles: &mut Option<(u64, u32)>| {
+    let flush = |bubbles: &mut Option<(u64, u32)>| {
         if let Some((from, n)) = bubbles.take() {
             if n == 1 {
                 println!("{from:>4} {:>6}  (bubble)", "");
