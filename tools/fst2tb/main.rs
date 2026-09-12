@@ -24,11 +24,12 @@
 //! where the trace has its valid high, since under a low valid the
 //! trace holds the last offer and the entity computes the wire anyway.
 //!
-//! Form: in VHDL, one procedure holds a tick, the inputs and the
-//! expected values as its arguments, and the replay is one call per
-//! cycle, in procedures of thirty-two cycles; nvc's heap for one
-//! design unit is finite, and a statement per check for a long trace
-//! is more than it holds.
+//! Form: in VHDL, one procedure holds a tick; a cycle's inputs and
+//! expected values are one string of bits, a frame, and the replay is
+//! a constant array of frames and a loop over it. nvc's heap for one
+//! design unit is finite, and a statement per check, or a call per
+//! cycle with an argument per signal, is more than it holds for a run
+//! of a few hundred cycles; an array of literals is data.
 //!
 //! Usage: fst2tb FILE.fst FILE.vhd.ports ENTITY UNIT [--verilog] > tb
 //! where UNIT is the name the Rust testbench gave the unit in the trace;
@@ -43,6 +44,10 @@ fn main() {
     // `entity NAME`; the one asked for is taken, or everything when the
     // file has no sections.
     let mut section: Option<String> = None;
+    // A fourth field names the trace scope a port is found under, when
+    // it is not the port's own name: a channel two units share under
+    // one name in the run, with a port name of their own on each side.
+    let mut scopes: Vec<(String, String)> = Vec::new();
     let ports: Vec<(String, String, usize)> = std::fs::read_to_string(ports)
         .expect("ports")
         .lines()
@@ -55,7 +60,15 @@ fn main() {
             if section.as_deref().is_some_and(|s| s != entity) {
                 return None;
             }
-            (f.len() == 3).then(|| {
+            // A memory's line has a depth as its fourth field and is not
+            // a port; a port's fourth field is its scope.
+            if f.len() == 4 && f[1] == "mem" {
+                return None;
+            }
+            if f.len() == 4 {
+                scopes.push((f[0].to_string(), f[3].to_string()));
+            }
+            (f.len() == 3 || f.len() == 4).then(|| {
                 (f[0].to_string(), f[1].to_string(), f[2].parse().unwrap())
             })
         })
@@ -109,14 +122,21 @@ fn main() {
     let registered = |d: &str| d == "rxin" || d == "txin";
     let is_reg = |d: &str| d == "reg" || d == "regf";
     let inside = |d: &str| d == "reg" || d == "regf" || d == "wire";
+    let scope_of = |port: &str| -> Option<String> {
+        scopes
+            .iter()
+            .find(|(p, _)| p == port)
+            .map(|(_, s)| s.clone())
+    };
     let trace_name = |port: &str, dir: &str| -> String {
         if inside(dir) {
             format!("{unit}.{port}")
         } else if dir.starts_with("rx") || dir.starts_with("tx") {
             let (ch, part) = port.rsplit_once('_').unwrap_or((port, ""));
+            let ch = scope_of(port).unwrap_or_else(|| ch.to_string());
             format!("{ch}.{}_{part}", &dir[..2])
         } else {
-            port.to_string()
+            scope_of(port).unwrap_or_else(|| port.to_string())
         }
     };
     let lit = |w: usize, bits: &str| {
@@ -323,15 +343,29 @@ fn main() {
             }
         }
     }
-    // One cycle is one call of `tick`, with the inputs and the expected
-    // values as arguments: a statement per check would be thousands of
-    // statements for a long trace, more than nvc's heap for one unit
-    // holds, and a call with thirty arguments is one statement. An
-    // expected value comes with whether to check it, since the trace
-    // may not hold one, and a sender's data is checked only under its
-    // valid.
-    let zeros = |w: usize| lit(w, &"0".repeat(w));
-    let mut params: Vec<String> = Vec::new();
+    // One cycle is one frame: a string of the inputs and the expected
+    // values as bits, each expected value followed by whether to check
+    // it, since the trace may not hold one, and a sender's data is
+    // checked only under its valid. The frames are one constant array
+    // of string literals, and one procedure replays a frame, reading
+    // its fields at fixed offsets. A statement per check, or a call
+    // with eighty arguments per cycle, grew past nvc's heap for one
+    // unit once a run passed a few hundred cycles; an array of
+    // literals is data, and the unit stays small whatever the run's
+    // length.
+    let mut width = 0usize;
+    let mut take = |w: usize| -> (usize, usize) {
+        let r = (width + 1, width + w);
+        width += w;
+        r
+    };
+    let conv = |w: usize, (a, b): (usize, usize)| {
+        if w == 1 {
+            format!("bit1(f({a}))")
+        } else {
+            format!("bits(f({a} to {b}))")
+        }
+    };
     // The tick sits just before the odd tick: the inputs for the next
     // rising edge are applied, every wire settles however deep, and
     // the checks come before the falling edge at the odd tick itself,
@@ -339,76 +373,89 @@ fn main() {
     let mut tick = String::from("      wait for 900 ps;\n");
     for (n, d, w) in &ports {
         if is_in(d) && *n != clock {
-            params.push(format!("{n}_i : {}", ty(*w)));
-            tick.push_str(&format!("      {n} <= {n}_i;\n"));
+            let v = take(*w);
+            tick.push_str(&format!("      {n} <= {};\n", conv(*w, v)));
         }
     }
     tick.push_str("      wait for 50 ps;\n");
     for (n, d, w) in &ports {
         if is_reg(d) {
-            params.push(format!("{n}_e : {}; {n}_c : boolean", ty(*w)));
+            let v = take(*w);
+            let (c, _) = take(1);
             tick.push_str(&format!(
-                "      if {n}_c then expect(\"{n}\", r_{n} = {n}_e, now); \
-                 end if;\n"
+                "      if f({c}) = '1' then expect(\"{n}\", r_{n} = {}, \
+                 now); end if;\n",
+                conv(*w, v)
             ));
         }
     }
     for (n, d, w) in &ports {
         if is_out(d) {
-            params.push(format!("{n}_e : {}; {n}_c : boolean", ty(*w)));
+            let v = take(*w);
+            let (c, _) = take(1);
             let sig = if d == "wire" {
                 format!("r_{n}")
             } else {
                 n.clone()
             };
             tick.push_str(&format!(
-                "      if {n}_c then expect(\"{n}\", {sig} = {n}_e, now); \
-                 end if;\n"
+                "      if f({c}) = '1' then expect(\"{n}\", {sig} = {}, \
+                 now); end if;\n",
+                conv(*w, v)
             ));
         }
     }
     tick.push_str("      wait for 1050 ps;\n");
+    drop(take);
+    o.push_str(
+        "    function bits(s : string) return unsigned is\n\
+         variable v : unsigned(s'length - 1 downto 0);\n    begin\n\
+         for i in 0 to s'length - 1 loop\n\
+         if s(s'left + i) = '1' then v(v'left - i) := '1';\n\
+         else v(v'left - i) := '0'; end if;\n\
+         end loop;\n      return v;\n    end function;\n\
+         function bit1(c : character) return std_logic is\n    begin\n\
+         if c = '1' then return '1'; else return '0'; end if;\n\
+         end function;\n",
+    );
     o.push_str(&format!(
-        "    procedure tb_tick({}) is\n    begin\n{tick}    end procedure;\n",
-        params.join("; ")
+        "    procedure tb_tick(f : string) is\n    begin\n{tick}    \
+         end procedure;\n"
     ));
-    // The replay is cut into procedures of a few dozen cycles, called
-    // in order: nvc will not compile one process of thousands of
-    // statements, and a procedure declared in the process may wait and
-    // drive its signals as the process does.
-    let mut parts: Vec<String> = Vec::new();
-    let mut body = String::new();
+    let mut frames: Vec<String> = Vec::new();
     let mut last_in: Vec<String> = ports
         .iter()
         .filter(|(n, d, _)| is_in(d) && *n != clock)
-        .map(|(_, _, w)| zeros(*w))
+        .map(|(_, _, w)| "0".repeat(*w))
         .collect();
     let mut t = 0usize;
     while t + 2 <= last {
-        if t % 64 == 0 && !body.is_empty() {
-            parts.push(std::mem::take(&mut body));
-        }
         // At tick 2k+1: the inputs for the next edge, from the trace at
         // 2k+2, or at 2k for a registered input; the registers against
         // the trace at 2k, or 2k+1 for a falling-edge one, which takes
         // its value at that instant; the outputs against 2k+2.
-        let mut args: Vec<String> = Vec::new();
+        let mut f = String::new();
         let mut i = 0;
-        for (n, d, w) in &ports {
+        for (n, d, _) in &ports {
             if is_in(d) && *n != clock {
                 let at = if registered(d) { t } else { t + 2 };
                 if let Some(v) = val(&trace_name(n, d), at) {
-                    last_in[i] = lit(*w, &v);
+                    last_in[i] = v;
                 }
-                args.push(last_in[i].clone());
+                f.push_str(&last_in[i]);
                 i += 1;
             }
         }
-        let expected =
-            |args: &mut Vec<String>, w: usize, v: Option<String>| match v {
-                Some(v) => args.push(format!("{}, true", lit(w, &v))),
-                None => args.push(format!("{}, false", zeros(w))),
-            };
+        let expected = |f: &mut String, w: usize, v: Option<String>| match v {
+            Some(v) => {
+                f.push_str(&v);
+                f.push('1');
+            }
+            None => {
+                f.push_str(&"0".repeat(w));
+                f.push('0');
+            }
+        };
         for (n, d, w) in &ports {
             let at = match d.as_str() {
                 "reg" => Some(t),
@@ -416,7 +463,7 @@ fn main() {
                 _ => continue,
             };
             let v = at.and_then(|at| val(&trace_name(n, d), at));
-            expected(&mut args, *w, v);
+            expected(&mut f, *w, v);
         }
         for (n, d, w) in &ports {
             if is_out(d) {
@@ -427,24 +474,32 @@ fn main() {
                         v = None;
                     }
                 }
-                expected(&mut args, *w, v);
+                expected(&mut f, *w, v);
             }
         }
-        body.push_str(&format!("      tb_tick({});\n", args.join(", ")));
+        debug_assert_eq!(f.len(), width);
+        frames.push(f);
         t += 2;
     }
-    if !body.is_empty() {
-        parts.push(body);
-    }
-    for (i, part) in parts.iter().enumerate() {
-        o.push_str(&format!(
-            "    procedure part{i} is\n    begin\n{part}    end procedure;\n"
-        ));
+    o.push_str(&format!(
+        "    type frame_array is array (natural range <>) of \
+         string(1 to {width});\n"
+    ));
+    if !frames.is_empty() {
+        o.push_str("    constant frames : frame_array := (\n");
+        for (i, f) in frames.iter().enumerate() {
+            let sep = if i + 1 < frames.len() { "," } else { "" };
+            o.push_str(&format!("      {i} => \"{f}\"{sep}\n"));
+        }
+        o.push_str("    );\n");
     }
     o.push_str("  begin\n");
     o.push_str(&first);
-    for i in 0..parts.len() {
-        o.push_str(&format!("    part{i};\n"));
+    if !frames.is_empty() {
+        o.push_str(
+            "    for i in frames'range loop\n      tb_tick(frames(i));\n    \
+             end loop;\n",
+        );
     }
     o.push_str(
         "    wait for 1 ns;\n    if errors = 0 then\n\
