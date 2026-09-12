@@ -15,7 +15,8 @@ module vreteno_board(
   output led2,
   output led3,
   output led4,
-  output uart_tx
+  output uart_tx,
+  input uart_rx
 );
   // The clock: 200 MHz in, 100 MHz out, through an MMCM.
   wire clk200;
@@ -68,8 +69,8 @@ module vreteno_board(
   wire resp_tx_valid, resp_tx_ready, resp_rx_valid, resp_rx_ready;
   wire tresp_tx_valid, tresp_tx_ready, tresp_rx_valid, tresp_rx_ready;
   wire uresp_tx_valid, uresp_tx_ready, uresp_rx_valid, uresp_rx_ready;
-  wire tirq;
-  vreteno core (.clk(clk), .rst(rst), .irq(1'b0), .tirq(tirq),
+  wire tirq, uirq;
+  vreteno core (.clk(clk), .rst(rst), .irq(uirq), .tirq(tirq),
     .resp_data(resp_rx_data), .resp_valid(resp_rx_valid), .resp_ready(resp_rx_ready),
     .halt(halt), .instr(instr), .wb(wb),
     .req_data(req_tx_data), .req_valid(req_tx_valid), .req_ready(req_tx_ready));
@@ -99,10 +100,10 @@ module vreteno_board(
   chan69 ureq_chan (.clk(clk),
     .tx_data(ureq_tx_data), .tx_valid(ureq_tx_valid), .tx_ready(ureq_tx_ready),
     .rx_data(ureq_rx_data), .rx_valid(ureq_rx_valid), .rx_ready(ureq_rx_ready));
-  uart port (.clk(clk), .rst(rst),
+  uart port (.clk(clk), .rst(rst), .rx(uart_rx),
     .req_data(ureq_rx_data), .req_valid(ureq_rx_valid), .req_ready(ureq_rx_ready),
     .resp_data(uresp_tx_data), .resp_valid(uresp_tx_valid), .resp_ready(uresp_tx_ready),
-    .tx(uart_tx));
+    .tx(uart_tx), .irq(uirq));
   chan32 uresp_chan (.clk(clk),
     .tx_data(uresp_tx_data), .tx_valid(uresp_tx_valid), .tx_ready(uresp_tx_ready),
     .rx_data(uresp_rx_data), .rx_valid(uresp_rx_valid), .rx_ready(uresp_rx_ready));

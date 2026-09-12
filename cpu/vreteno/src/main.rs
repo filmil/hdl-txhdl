@@ -11,48 +11,9 @@ use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::isa::disasm;
 use vreteno32::program::demo;
 use vreteno32::router::Router;
+use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
-
-/// A terminal on the serial line: it waits for the start bit, samples
-/// the eight bits least significant first in the middle of each, and
-/// takes the stop bit as the end of the frame. One bit is `DIV`
-/// cycles long, as in the port the run wires.
-#[derive(Default)]
-struct Terminal {
-    said: String,
-    frame: u32,
-    bit: u32,
-    phase: u32,
-    in_frame: bool,
-}
-
-impl Terminal {
-    const DIV: u32 = 4;
-
-    fn see(&mut self, line: bool) {
-        if !self.in_frame {
-            if !line {
-                self.in_frame = true;
-                (self.frame, self.bit, self.phase) = (0, 0, 0);
-            }
-            return;
-        }
-        self.phase += 1;
-        let middle = self.phase % Self::DIV == Self::DIV / 2;
-        if self.phase < Self::DIV || !middle {
-            return;
-        }
-        if self.bit < 8 {
-            self.frame |= (line as u32) << self.bit;
-        }
-        self.bit += 1;
-        if self.bit == 9 {
-            self.said.push(self.frame as u8 as char);
-            self.in_frame = false;
-        }
-    }
-}
 
 fn main() {
     let program = demo();
@@ -75,10 +36,13 @@ fn main() {
     // The bus: a request channel out of the core into the router, a
     // response channel back, and a channel each way from the router to
     // each device, the timer with its interrupt line and the serial
-    // port with its line out. The port's bits are four cycles each
-    // here, so a byte takes forty.
+    // port with its two lines and its interrupt, which the core's line
+    // carries. The port's bits are four cycles each here, so a byte
+    // takes forty.
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
+    let (rx_out, rx) = signal::<Bit, DefaultClock>();
+    let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
     let (req_tx, req_rx) = chan::<U<69>, DefaultClock>();
     let (resp_tx, resp_rx) = chan::<U<32>, DefaultClock>();
     let (treq_tx, treq_rx) = chan::<U<69>, DefaultClock>();
@@ -97,6 +61,8 @@ fn main() {
         w.add("irq", &irq);
         w.add("tirq", &tirq);
         w.add("tx", &tx);
+        w.add("rx", &rx);
+        w.add("uirq", &uirq);
         w.add("resp", &resp_rx);
         w.add("req", &req_rx);
         w.add("treq", &treq_rx);
@@ -119,7 +85,7 @@ fn main() {
     let mut sim = Running::new(join2(
         join2(
             timer.run((rst_t, treq_rx), (tresp_tx, tirq_out)),
-            uart.run((rst_u, ureq_rx), (uresp_tx, tx_out)),
+            uart.run((rst_u, rx, ureq_rx), (uresp_tx, tx_out, uirq_out)),
         ),
         join2(
             router
@@ -148,10 +114,13 @@ fn main() {
             }
         }
     };
-    let mut term = Terminal::default();
-    for cycle in 0..400 {
+    // The terminal answers the core's line with three bytes, which
+    // the program echoes; the port's interrupt joins the line.
+    let mut term = Terminal::new(b"yes");
+    for cycle in 0..1200 {
         let at = wb_pc.get().raw() as u32;
-        irq_out.set(Bit::from_bool(cycle == irq_at));
+        irq_out.set(Bit::from_bool(cycle == irq_at).or(uirq.get()));
+        rx_out.set(Bit::from_bool(term.level()));
         sim.cycle();
         term.see(tx.get().to_bool());
         let w = wb.get();
@@ -179,7 +148,8 @@ fn main() {
     // The last byte is still going out when the core halts; let the
     // port finish its frame.
     let mut grace = 0;
-    while term.in_frame && grace < 64 {
+    while term.busy() && grace < 64 {
+        rx_out.set(Bit::from_bool(term.level()));
         sim.cycle();
         term.see(tx.get().to_bool());
         grace += 1;
@@ -216,6 +186,7 @@ fn main() {
     let mut uart4 = Uart::<4>::lowered("uart4");
     uart4.trace_as("req", "ureq");
     uart4.trace_as("resp", "uresp");
+    uart4.trace_as("irq", "uirq");
     let uart = Uart::<868>::lowered("uart");
     let req_chan = Buffer::<69>::lowered("chan69");
     let resp_chan = Buffer::<32>::lowered("chan32");

@@ -11,9 +11,11 @@ set_property -dict { PACKAGE_PIN M13 IOSTANDARD LVCMOS33 } [get_ports { led2 }]
 set_property -dict { PACKAGE_PIN K14 IOSTANDARD LVCMOS33 } [get_ports { led3 }]
 set_property -dict { PACKAGE_PIN K13 IOSTANDARD LVCMOS33 } [get_ports { led4 }]
 
-# The serial port's line out, to the board's USB serial bridge; the pin
-# is the one filmil/a200t_examples names for uart1_txd.
+# The serial port's lines, to and from the board's USB serial bridge;
+# the pins are the ones filmil/a200t_examples names for uart1_txd and
+# uart1_rxd.
 set_property -dict { PACKAGE_PIN L15 IOSTANDARD LVCMOS33 } [get_ports { uart_tx }]
+set_property -dict { PACKAGE_PIN L14 IOSTANDARD LVCMOS33 } [get_ports { uart_rx }]
 set_property CONFIG_VOLTAGE 3.3 [current_design]
 set_property CFGBVS VCCO [current_design]
 # The flash is written over a 4-bit SPI bus.

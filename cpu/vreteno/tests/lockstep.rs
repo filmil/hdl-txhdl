@@ -11,6 +11,7 @@ use vreteno32::isa::{decode, disasm, Kind, CAUSE_MEXT, CAUSE_MTIMER};
 use vreteno32::model::{Halt, Model};
 use vreteno32::program::{demo, random};
 use vreteno32::router::Router;
+use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
 
@@ -70,7 +71,9 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
-    let (tx_out, _tx) = signal::<Bit, DefaultClock>();
+    let (tx_out, tx) = signal::<Bit, DefaultClock>();
+    let (rx_out, rx) = signal::<Bit, DefaultClock>();
+    let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
     let (req_tx, req_rx) = chan::<U<69>, DefaultClock>();
     let (resp_tx, resp_rx) = chan::<U<32>, DefaultClock>();
     let (treq_tx, treq_rx) = chan::<U<69>, DefaultClock>();
@@ -87,7 +90,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let mut sim = Running::new(join2(
         join2(
             timer.run((rst_t, treq_rx), (tresp_tx, tirq_out)),
-            uart.run((rst_u, ureq_rx), (uresp_tx, tx_out)),
+            uart.run((rst_u, rx, ureq_rx), (uresp_tx, tx_out, uirq_out)),
         ),
         join2(
             router
@@ -122,9 +125,14 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let mut line = false;
     let mut line_before = false;
     let mut answer = 0u32;
+    // The terminal on the port's lines: it answers the demonstration's
+    // line with three bytes, which the program echoes; a random program
+    // gets nothing typed. The port's interrupt joins the core's line,
+    // as it does on the board.
+    let mut term = Terminal::new(if seed.is_none() { b"yes" } else { b"" });
     for cycle in 0..8192 {
         let at = model.pc;
-        let raised = match seed {
+        let pulse = match seed {
             None => cycle == 40,
             Some(_) => {
                 noise ^= noise << 13;
@@ -133,7 +141,9 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
                 noise & 15 == 0
             }
         };
+        let raised = pulse || uirq.get().to_bool();
         irq_out.set(Bit::from_bool(raised));
+        rx_out.set(Bit::from_bool(term.level()));
         // The word about to execute this cycle, or zero on a bubble;
         // the illegal word is zero too, so the flag is kept apart.
         let executing = in_execute.get().to_bool();
@@ -155,6 +165,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
             None
         };
         sim.cycle();
+        term.see(tx.get().to_bool());
         if executing && !stall.get().to_bool() {
             line = line_now;
             taken = taken_now;
@@ -267,7 +278,7 @@ fn demo_program() {
     assert_eq!(m.x[23], 2, "the second trap's cause");
     assert_eq!(m.x[24], 5, "mscratch through the CSR instructions");
     assert_eq!(m.x[8], 2, "the line's and the timer's interrupt, counted");
-    assert_eq!(m.uart, b"OK\n", "what the demonstration said");
+    assert_eq!(m.uart, b"OK\nyes", "what the demonstration said and echoed");
     assert_eq!(m.x[25], 0xfe01, "the use right after the load");
     assert_eq!(m.x[26], (-220i32) as u32, "mul");
     assert_eq!(m.x[28], 0xfffffffc, "mulhu");

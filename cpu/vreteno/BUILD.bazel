@@ -17,6 +17,7 @@ rust_library(
         "src/model.rs",
         "src/program.rs",
         "src/router.rs",
+        "src/term.rs",
         "src/timer.rs",
         "src/uart.rs",
     ],

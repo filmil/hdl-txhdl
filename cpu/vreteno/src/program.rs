@@ -69,12 +69,14 @@ impl Asm {
 /// extension they imply, the upper immediates, a trap handler that
 /// an ecall and an illegal word reach and return from, the CSRs,
 /// a use of a word the instruction before it loaded, which stalls a
-/// cycle, the multiplies and divides, then `ebreak`. Interrupts are
-/// enabled from the start, the timer is set to 150, and the handler
-/// counts interrupts in x8, two by the end. It
-/// leaves 110 in x10 and at the first data word, the second trap's
-/// cause in x23, 5 in x24, 0xfe01 in x25, -220 in x26, -55 in x29
-/// and -2 in x30, and has written OK and a newline to the serial port.
+/// cycle, the multiplies and divides, a line said on the serial port
+/// and three bytes echoed from it, then `ebreak`. Interrupts are
+/// enabled from the start, the timer's at once and set to 150, the
+/// line's after the echo, since the port's byte raises it too; the
+/// handler counts interrupts in x8, two by the end. It leaves 110 in
+/// x10 and at the first data word, the second trap's cause in x23, 5
+/// in x24, 0xfe01 in x25, -220 in x26, -55 in x29 and -2 in x30, and
+/// has written OK, a newline and the three bytes to the serial port.
 pub fn demo() -> Vec<u32> {
     let mut a = Asm::default();
     let (top, done, double) = (a.label(), a.label(), a.label());
@@ -91,8 +93,9 @@ pub fn demo() -> Vec<u32> {
     a.emit(lui(4, TIMER_BASE >> 12)); // x4 = the timer
     a.emit(addi(3, 0, 150)); // x3 = 150
     a.emit(sw(3, 4, 8)); // mtimecmp = 150: a timer interrupt then
-    a.emit(ori(9, 9, 0x80)); // x9 = MEXT | MTIMER
-    a.emit(csrrw(0, CSR_MIE, 9)); // mie = both
+    a.emit(ori(9, 9, 0x80)); // x9 = MEXT | MTIMER, the handler's mask
+    a.emit(addi(22, 0, 0x80)); // x22 = MTIMER
+    a.emit(csrrw(0, CSR_MIE, 22)); // mie = the timer's, for now
     a.emit(csrrsi(0, CSR_MSTATUS, 8)); // mstatus.MIE = 1
     a.emit(addi(5, 0, 10)); // x5 = 10, the count
     a.emit(addi(10, 0, 0)); // x10 = 0, the sum
@@ -138,6 +141,24 @@ pub fn demo() -> Vec<u32> {
         a.emit(addi(21, 0, *byte as i32)); // the byte
         a.emit(sw(21, 1, 0)); // out it goes
     }
+    // The port's other side: three bytes typed at the terminal, each
+    // taken once the status says one has come, and echoed once the
+    // port is free. Then the line's interrupt is enabled: the bytes
+    // raised it too, and it is pending by now.
+    for _ in 0..3 {
+        let (came, free) = (a.label(), a.label());
+        a.place(came);
+        a.emit(lw(21, 1, 4)); // x21 = status
+        a.emit(andi(21, 21, 2)); // a byte received?
+        a.to(came, |o| beq(21, 0, o)); // else ask again
+        a.emit(lw(20, 1, 8)); // x20 = the byte, which clears the bit
+        a.place(free);
+        a.emit(lw(21, 1, 4)); // x21 = status
+        a.emit(andi(21, 21, 1)); // busy?
+        a.to(free, |o| bne(21, 0, o)); // then ask again
+        a.emit(sw(20, 1, 0)); // the byte, back out
+    }
+    a.emit(csrrw(0, CSR_MIE, 9)); // mie = both
 
     // Traps: an ecall, an illegal word, each returning to the word
     // after it; then the CSRs.

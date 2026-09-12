@@ -1,26 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The serial port, transmit side: a device on the bus that takes a
-//! byte written to its first word and shifts it out on a line, a start
-//! bit, eight data bits least significant first and a stop bit, each
-//! `DIV` cycles long; its second word is the status, bit 0 busy while
-//! a byte is going out. A byte written while busy is dropped, so a
-//! program polls the status first. The line rests high. `DIV` is 868
-//! for 115200 baud at 100 MHz, and 4 in the runs that are checked, so
+//! The serial port: a device on the bus with a line each way. A byte
+//! written to its first word goes out on the line as a start bit,
+//! eight data bits least significant first and a stop bit, each
+//! `DIV` cycles long; a frame coming in on the other line, sampled in
+//! the middle of each bit, lands in its third word, and the port's
+//! interrupt line is high until the word is read. The second word is
+//! the status: bit 0 busy while a byte is going out, bit 1 a byte
+//! received and not yet read. A byte written while busy is dropped,
+//! and a byte received before the last was read replaces it, so a
+//! program polls the status. The lines rest high. `DIV` is 868 for
+//! 115200 baud at 100 MHz, and 4 in the runs that are checked, so
 //! that a byte takes forty cycles rather than nine thousand.
 use crate::bus::{REQ_ADDR, REQ_WDATA};
 use crate::isa::UART_BASE;
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
 use txhdl::funcs::{eq, is_zero};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, when, Trace};
+use txhdl::{lower, select, when, Trace};
 
 // The pieces of the step, each a function of its own, inlined by the
 // lowering where the step calls it.
 
-/// Whether an address is one of this device's eight bytes.
+/// Whether an address is one of this device's sixteen bytes.
 #[lower]
 fn hit(addr: U<32>) -> Bit {
-    eq(addr.slice::<3, 29>(), U::from(UART_BASE >> 3))
+    eq(addr.slice::<4, 28>(), U::from(UART_BASE >> 4))
 }
 
 /// The frame a byte goes out as, least significant bit first: a start
@@ -45,11 +49,33 @@ fn last_cycle<const DIV: u32>(tick: U<32>) -> Bit {
     eq(tick, U::<32>::from(DIV - 1))
 }
 
-/// What a load reads: the status at the second word, the last byte
-/// at the first.
+/// Whether the current bit's middle cycle has come, where the line is
+/// sampled.
 #[lower]
-fn word(sel: Bit, busy: Bit, last: U<8>) -> U<32> {
-    mux(sel, busy.zext::<32>(), last.zext::<32>())
+fn middle<const DIV: u32>(tick: U<32>) -> Bit {
+    eq(tick, U::<32>::from(DIV / 2))
+}
+
+/// A frame coming in, one more bit taken at the top: bit 0 of the
+/// byte comes first and ends up lowest.
+#[lower]
+fn taken_in(shift: U<8>, line: Bit) -> U<8> {
+    line.zext::<1>().concat::<7, 8>(shift.slice::<1, 7>())
+}
+
+/// What a load reads, by the word: the last byte sent, the status,
+/// the byte received.
+#[lower]
+fn word(sel: U<2>, busy: Bit, ready: Bit, last: U<8>, data: U<8>) -> U<32> {
+    let status = U::<30>::from(0u32)
+        .concat::<1, 31>(ready.zext::<1>())
+        .concat::<1, 32>(busy.zext::<1>());
+    select!(sel.raw() => {
+        0 => last.zext::<32>(),
+        1 => status,
+        2 => data.zext::<32>(),
+        _ => U::<32>::from(0u32),
+    })
 }
 
 #[derive(Trace, Default)]
@@ -63,16 +89,30 @@ pub struct Uart<const DIV: u32> {
     /// The last byte accepted, and how many were.
     pub last: Reg<U<8>>,
     pub sent: Reg<U<8>>,
+    /// The line in, as the edge left it: one register between the
+    /// pin and the logic.
+    pub line: Reg<Bit>,
+    /// The frame coming in, the bits left of it, start and stop
+    /// included, and the cycles into the current bit.
+    pub rx_shift: Reg<U<8>>,
+    pub rx_bits: Reg<U<4>>,
+    pub rx_tick: Reg<U<32>>,
+    /// The byte received, whether it has not been read yet, and how
+    /// many came.
+    pub rx_data: Reg<U<8>>,
+    pub rx_ready: Reg<Bit>,
+    pub received: Reg<U<8>>,
 }
 
 #[lower]
-impl<const DIV: u32> Unit<(In<Bit>, Rx<U<69>>), (Tx<U<32>>, Out<Bit>)>
+impl<const DIV: u32>
+    Unit<(In<Bit>, In<Bit>, Rx<U<69>>), (Tx<U<32>>, Out<Bit>, Out<Bit>)>
     for Uart<DIV>
 {
     async fn run(
         &mut self,
-        (rst, req): (In<Bit>, Rx<U<69>>),
-        (resp, tx): (Tx<U<32>>, Out<Bit>),
+        (rst, rx, req): (In<Bit>, In<Bit>, Rx<U<69>>),
+        (resp, tx, irq): (Tx<U<32>>, Out<Bit>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -80,20 +120,25 @@ impl<const DIV: u32> Unit<(In<Bit>, Rx<U<69>>), (Tx<U<32>>, Out<Bit>)>
             let (shift, bits, tick) =
                 (self.shift.get(), self.bits.get(), self.tick.get());
             let (last, sent) = (self.last.get(), self.sent.get());
+            let (line, rx_shift) = (self.line.get(), self.rx_shift.get());
+            let (rx_bits, rx_tick) = (self.rx_bits.get(), self.rx_tick.get());
+            let (rx_data, rx_ready) = (self.rx_data.get(), self.rx_ready.get());
+            let received = self.received.get();
             let busy = is_zero(bits).not();
             // Every request is taken; the ones for this device are the
-            // ones whose address falls in its eight bytes.
+            // ones whose address falls in its sixteen bytes.
             let offered = Bit::from_bool(req.peek().is_some());
             let r = req.recv().unwrap_or_default();
             let addr = r.slice::<REQ_ADDR, 32>();
             let mine = hit(addr);
-            let sel = addr.bit(2);
+            let sel = addr.slice::<2, 2>();
             let we = r.bit(0);
             let write = offered.and(we).and(mine);
             let read = offered.and(we.not());
+            let read_rx = read.and(mine).and(eq(sel, U::from(2u8)));
             // A byte written while idle starts a frame, ten bits of DIV
             // cycles each.
-            let start = write.and(sel.not()).and(busy.not());
+            let start = write.and(eq(sel, U::from(0u8))).and(busy.not());
             let octet = r.slice::<REQ_WDATA, 8>();
             let done = last_cycle::<DIV>(tick);
             when!(rst => {
@@ -116,9 +161,56 @@ impl<const DIV: u32> Unit<(In<Bit>, Rx<U<69>>), (Tx<U<32>>, Out<Bit>)>
                 self.shift <= shifted(shift)
             });
             when!(read => {
-                resp.send(mux(mine, word(sel, busy, last), U::<32>::from(0u32)))
+                resp.send(mux(
+                    mine,
+                    word(sel, busy, rx_ready, last, rx_data),
+                    U::<32>::from(0u32)
+                ))
             });
             tx.set(mux(busy, shift.bit(0), Bit::One));
+            // The receive side. A low on the resting line is a start
+            // bit; from then on the line is sampled in the middle of
+            // each bit, ten of them: a high where the start bit should
+            // be is a false start and the frame is dropped, the eight
+            // bits in between are taken into the shift register, and a
+            // high at the stop bit lands the byte, which the read of
+            // the third word takes.
+            self.line.set(rx.get());
+            let receiving = is_zero(rx_bits).not();
+            let rx_last = last_cycle::<DIV>(rx_tick);
+            let sample = rst.not().and(receiving).and(middle::<DIV>(rx_tick));
+            let at_start = eq(rx_bits, U::from(10u8));
+            let at_stop = eq(rx_bits, U::from(1u8));
+            when!(rst => {
+                self.rx_bits <= U::from(0u8);
+                self.rx_tick <= U::from(0u8);
+                self.rx_ready <= Bit::Zero
+            });
+            when!(rst.not().and(receiving.not()).and(line.not()) => {
+                self.rx_bits <= U::from(10u8);
+                self.rx_tick <= U::from(0u8)
+            });
+            when!(rst.not().and(receiving).and(rx_last.not()) => {
+                self.rx_tick <= rx_tick.wrapping_add(U::<32>::from(1u32))
+            });
+            when!(rst.not().and(receiving).and(rx_last) => {
+                self.rx_tick <= U::from(0u8);
+                self.rx_bits <= rx_bits.wrapping_sub(U::from(1u8))
+            });
+            when!(sample.and(at_start).and(line) => {
+                self.rx_bits <= U::from(0u8)
+            });
+            when!(sample.and(at_start.not()).and(at_stop.not()) => {
+                self.rx_shift <= taken_in(rx_shift, line)
+            });
+            when!(read_rx => { self.rx_ready <= Bit::Zero });
+            when!(sample.and(at_stop) => { self.rx_bits <= U::from(0u8) });
+            when!(sample.and(at_stop).and(line) => {
+                self.rx_data <= rx_shift;
+                self.rx_ready <= Bit::One;
+                self.received <= received.wrapping_add(U::from(1u8))
+            });
+            irq.set(rx_ready);
         }
     }
 }
