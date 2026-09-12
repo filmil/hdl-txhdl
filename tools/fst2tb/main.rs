@@ -270,19 +270,30 @@ fn main() {
         "    procedure expect(what : string; ok : boolean; at : time) is\n\
          begin\n      if not ok then\n\
          report what & \" differs at \" & time'image(at) severity error;\n\
-         errors <= errors + 1;\n      end if;\n    end procedure;\n  begin\n",
+         errors <= errors + 1;\n      end if;\n    end procedure;\n",
     );
     // Inputs for the edge at tick 0 are applied before any wait; a
     // registered input starts as the channel does, empty.
+    let mut first = String::new();
     for (n, d, w) in &ports {
         if d == "in" && *n != clock {
             if let Some(v) = val(&trace_name(n, d), 0) {
-                o.push_str(&format!("    {n} <= {};\n", lit(*w, &v)));
+                first.push_str(&format!("    {n} <= {};\n", lit(*w, &v)));
             }
         }
     }
+    // The replay is cut into procedures of a few dozen cycles, called
+    // in order: nvc will not compile one process of thousands of
+    // statements, and a procedure declared in the process may wait and
+    // drive its signals as the process does.
+    let mut parts: Vec<String> = Vec::new();
+    let mut body = String::new();
     let mut t = 0usize;
     while t + 2 <= last {
+        if t % 64 == 0 && !body.is_empty() {
+            parts.push(std::mem::take(&mut body));
+        }
+        let o = &mut body;
         // At tick 2k+1: check registers against the trace at 2k, and
         // outputs and inputs for the next edge against the trace at 2k+2.
         o.push_str("    wait for 1 ns;\n");
@@ -340,6 +351,19 @@ fn main() {
         o.push_str("    wait for 1 ns;\n");
         let _ = odd;
         t += 2;
+    }
+    if !body.is_empty() {
+        parts.push(body);
+    }
+    for (i, part) in parts.iter().enumerate() {
+        o.push_str(&format!(
+            "    procedure part{i} is\n    begin\n{part}    end procedure;\n"
+        ));
+    }
+    o.push_str("  begin\n");
+    o.push_str(&first);
+    for i in 0..parts.len() {
+        o.push_str(&format!("    part{i};\n"));
     }
     o.push_str(
         "    wait for 1 ns;\n    if errors = 0 then\n\
