@@ -75,6 +75,7 @@ filegroup(
 load(
     "@rules_vivado//build/vivado:rules.bzl",
     "vivado_place_and_route2",
+    "vivado_program_device",
     "vivado_program_flash",
     "vivado_project",
     "vivado_synthesis",
@@ -154,11 +155,30 @@ vivado_place_and_route2(
     tags = ["manual"],
 )
 
+# Program the board where it is, on srv.filmar.us: the daemon brings
+# hw_server up there and a tunnel here, //cpu/vreteno/board/remote
+# says how; then Vivado connects to the tunnel. Bring the tunnel up
+# first, since the daemon is started beside the connection, not before
+# it:
+#
+#   bazel run //cpu/vreteno/board/remote:hw_server -- --server=srv.filmar.us
+#   bazel run //cpu/vreteno:vreteno_board_prog -- \
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+#
+# This writes the FPGA itself, which the next power cycle forgets.
+vivado_program_device(
+    name = "vreteno_board_prog",
+    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
+    prog_daemon_args = ["--server=srv.filmar.us"],
+    deps = [":vreteno_board_pnr"],
+    tags = ["manual"],
+)
+
 # Write the bitstream into the board's QSPI flash, a Micron MT25QL256
-# over a 4-bit bus, as the a200t examples do:
+# over a 4-bit bus, as the a200t examples do; the same tunnel:
 #
 #   bazel run //cpu/vreteno:vreteno_board_flash -- \
-#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/<serial>'
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
 vivado_program_flash(
     name = "vreteno_board_flash",
     size = 32,
