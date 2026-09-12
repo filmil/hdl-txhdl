@@ -43,9 +43,10 @@ show that Rust accepts it, and the experiment of
 Section~\ref{sec:e-next} shows that it lowers: an \code{async fn} to
 a pipeline whose depth follows its operators' latencies, a unit to a
 module, and a RISC-V core~\cite{vreteno} to a netlist that simulates
-against the trace of its own source, and runs at 100~MHz on an
-Artix-7. What the lowering does not read yet is stated there, and it
-is the next thing to do.
+against the trace of its own source, runs at 100~MHz on an Artix-7,
+and has run on the board, where it said what its simulation said:
+the language is proven on hardware. What the lowering does not read
+yet is stated there, and it is the next thing to do.
 
 The project's second thesis declined embedding on the grounds that a full
 toolchain had become affordable. That argument has not weakened. It now

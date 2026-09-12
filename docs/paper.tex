@@ -57,9 +57,11 @@ machine-mode traps, an interrupt line and a bus with its data
 memory, a timer and a serial port on it: written in the subset the
 lowering reads, checked
 in lockstep against a reference model, checked as a netlist against
-its own trace, and synthesized, placed and routed on an Artix-7 at
-100~MHz in 2041 LUTs, its data memory a device in block RAM. This paper presents the system
-and its results.
+its own trace, synthesized, placed and routed on an Artix-7 at
+100~MHz in 2041 LUTs, its data memory a device in block RAM, and run
+on the board, where it said on its serial port what the simulation
+had said. The language is proven on hardware. This paper presents
+the system and its results.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -560,8 +562,12 @@ memory, 98 of timer,
 364-line model on a demonstration program and sixty-four random
 ones, with interrupts raised at random, checked as a netlist on 732
 ticks with every register compared at each, synthesized in two
-minutes to the figures of Table~\ref{tab:p-synth}, and placed and
-routed at 100~MHz. Nine documents describe the system, this one
+minutes to the figures of Table~\ref{tab:p-synth}, placed and
+routed at 100~MHz, and programmed into the board, where it said OK on
+its serial port and echoed the three bytes typed back, the six bytes
+its simulation had produced: the language is proven on hardware, end
+to end, from a Rust source to a board that answers. Nine documents
+describe the system, this one
 included, and each is built by the same command that builds the
 designs, with every listing included from the tree and every figure
 drawn from a trace, so none can drift from the code.
@@ -594,10 +600,10 @@ is small enough to fit on one page, the runtime simulates it with a
 stated model of time, the lowering turns it into Verilog and VHDL,
 and the build holds the three to one behaviour under two simulators.
 A RISC-V core written in it runs, lowers, is checked against its own
-trace, and runs at 100~MHz on an Artix-7 with its data memory in
-block RAM, whose bitstream, with a clock, a reset and four LEDs
-around the core, is built. The next step is the board in hand; the
-path that limits the clock is a jump through a register.
+trace, runs at 100~MHz on an Artix-7 with its data memory in block
+RAM, and has run on the board, saying on its serial port what its
+simulation said: the language is proven on hardware. The path that
+limits the clock is a jump through a register.
 
 \begin{thebibliography}{10}
 

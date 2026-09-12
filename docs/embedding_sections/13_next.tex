@@ -184,11 +184,12 @@ traces at every tick, while a deliberately broken one fails. Memories
 lower, and the runtime's channel is an elastic buffer with the
 handshake registered on both sides, which is the backpressure of the
 list above made real rather than assumed, so a unit with channels is
-checked as any other. The largest thing lowered is a two-stage RV32I
+checked as any other. The largest thing lowered is a three-stage RV32IM
 core~\cite{vreteno}, written in the subset the lowering reads,
 checked in lockstep against a reference model and, as a netlist,
-against its own trace, and placed and routed at 100~MHz on an
-Artix-7; and a unit's processes are its loops, on either edge, each a
+against its own trace, placed and routed at 100~MHz on an Artix-7,
+and run on the board, where it said what its simulation said; and a
+unit's processes are its loops, on either edge, each a
 clocked block of its own. Of the three things known to be hard,
 control flow across an await and resource sharing remain.
 

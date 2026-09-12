@@ -3,7 +3,9 @@
 
 # TxHDL
 
-A transaction-centric hardware description language.
+A transaction-centric hardware description language, proven on
+hardware: the Vreteno RISC-V core written in it runs on an Artix-7
+board and says on its serial port what its simulation says.
 
 This project is collaboration between Filip (filmil) and Dragiša (dj3maj)
 The authors used a large language model, Claude, as an assistant in
