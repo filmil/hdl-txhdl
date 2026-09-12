@@ -69,8 +69,9 @@ impl Asm {
 /// extension they imply, the upper immediates, a trap handler that
 /// an ecall and an illegal word reach and return from, the CSRs,
 /// a use of a word the instruction before it loaded, which stalls a
-/// cycle, then `ebreak`. It leaves 110 in x10 and at the first data
-/// word, the second trap's cause in x23, 5 in x24 and 0xfe01 in x25.
+/// cycle, the multiplies and divides, then `ebreak`. It leaves 110 in
+/// x10 and at the first data word, the second trap's cause in x23, 5
+/// in x24, 0xfe01 in x25, -220 in x26, -55 in x29 and -2 in x30.
 pub fn demo() -> Vec<u32> {
     let mut a = Asm::default();
     let (top, done, double) = (a.label(), a.label(), a.label());
@@ -100,6 +101,13 @@ pub fn demo() -> Vec<u32> {
     a.emit(sltu(19, 7, 0)); // x19 = 0: big unsigned
     a.emit(xori(20, 7, -1)); // x20 = 1
 
+    // The M extension: each takes thirty-three cycles in the core.
+    a.emit(mul(26, 10, 7)); // x26 = 110 * -2 = -220
+    a.emit(mulh(27, 7, 7)); // x27 = high word of 4 = 0
+    a.emit(mulhu(28, 7, 7)); // x28 = high word of 0xfffffffe^2
+    a.emit(div(29, 10, 7)); // x29 = 110 / -2 = -55
+    a.emit(rem(30, 7, 5)); // x30 = -2 rem 10 = -2
+
     // Traps: the handler's address into mtvec, an ecall, an illegal
     // word, each returning to the word after it; then the CSRs.
     a.abs(handler, |h| addi(21, 0, h as i32)); // x21 = the handler
@@ -123,9 +131,10 @@ pub fn demo() -> Vec<u32> {
     a.words
 }
 
-/// A random straight-line program: register operations, aligned
-/// stores and loads within the first data words, a forward branch
-/// now and then, CSR operations on mscratch, an ecall or an illegal
+/// A random straight-line program: register operations, the M
+/// extension among them, aligned stores and loads within the first
+/// data words, a forward branch now and then, CSR operations on
+/// mscratch, an ecall or an illegal
 /// word now and then, which a handler after the end returns from,
 /// and `ebreak` at the end. `seed` is the whole of it.
 pub fn random(seed: u64, len: usize) -> Vec<u32> {
@@ -167,7 +176,18 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
             14 => xor(rd, rs1, rs2),
             15 => srl(rd, rs1, rs2),
             16 => sra(rd, rs1, rs2),
-            17 => or(rd, rs1, rs2),
+            // Half of the time an M instruction, by the function code.
+            17 => match r >> 60 & 15 {
+                0 => mul(rd, rs1, rs2),
+                1 => mulh(rd, rs1, rs2),
+                2 => mulhsu(rd, rs1, rs2),
+                3 => mulhu(rd, rs1, rs2),
+                4 => div(rd, rs1, rs2),
+                5 => divu(rd, rs1, rs2),
+                6 => rem(rd, rs1, rs2),
+                7 => remu(rd, rs1, rs2),
+                _ => or(rd, rs1, rs2),
+            },
             18 => and(rd, rs1, rs2),
             19 => lui(rd, (r >> 12) as u32 & 0xfffff),
             20 => auipc(rd, (r >> 12) as u32 & 0xfffff),

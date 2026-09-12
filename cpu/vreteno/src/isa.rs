@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-//! RV32I as bits: the encoders a program is written with, and the
+//! RV32IM as bits: the encoders a program is written with, and the
 //! decoder the reference model reads with. The core decodes on its
 //! own, from the fields of the word, so the two decoders check each
 //! other.
 
-/// Every RV32I instruction the core runs, by mnemonic.
+/// Every RV32IM instruction the core runs, by mnemonic.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     Lui,
@@ -44,6 +44,14 @@ pub enum Kind {
     Sra,
     Or,
     And,
+    Mul,
+    Mulh,
+    Mulhsu,
+    Mulhu,
+    Div,
+    Divu,
+    Rem,
+    Remu,
     Fence,
     Ecall,
     Ebreak,
@@ -246,6 +254,31 @@ pub fn or(rd: u32, rs1: u32, rs2: u32) -> u32 {
 pub fn and(rd: u32, rs1: u32, rs2: u32) -> u32 {
     r(OP_OP, rd, 7, rs1, rs2, 0)
 }
+// The M extension: the same format, funct7 = 1.
+pub fn mul(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(OP_OP, rd, 0, rs1, rs2, 1)
+}
+pub fn mulh(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(OP_OP, rd, 1, rs1, rs2, 1)
+}
+pub fn mulhsu(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(OP_OP, rd, 2, rs1, rs2, 1)
+}
+pub fn mulhu(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(OP_OP, rd, 3, rs1, rs2, 1)
+}
+pub fn div(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(OP_OP, rd, 4, rs1, rs2, 1)
+}
+pub fn divu(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(OP_OP, rd, 5, rs1, rs2, 1)
+}
+pub fn rem(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(OP_OP, rd, 6, rs1, rs2, 1)
+}
+pub fn remu(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(OP_OP, rd, 7, rs1, rs2, 1)
+}
 pub fn fence() -> u32 {
     i(OP_FENCE, 0, 0, 0, 0)
 }
@@ -357,6 +390,14 @@ pub fn decode(w: u32) -> Decoded {
             (5, 0x20) => d(Sra, 0),
             (6, 0) => d(Or, 0),
             (7, 0) => d(And, 0),
+            (0, 1) => d(Mul, 0),
+            (1, 1) => d(Mulh, 0),
+            (2, 1) => d(Mulhsu, 0),
+            (3, 1) => d(Mulhu, 0),
+            (4, 1) => d(Div, 0),
+            (5, 1) => d(Divu, 0),
+            (6, 1) => d(Rem, 0),
+            (7, 1) => d(Remu, 0),
             _ => d(Illegal, 0),
         },
         OP_FENCE => d(Fence, 0),
@@ -402,7 +443,8 @@ pub fn disasm(w: u32) -> String {
         Addi | Slti | Sltiu | Xori | Ori | Andi | Slli | Srli | Srai => {
             format!("{m} x{rd}, x{rs1}, {imm}")
         }
-        Add | Sub | Sll | Slt | Sltu | Xor | Srl | Sra | Or | And => {
+        Add | Sub | Sll | Slt | Sltu | Xor | Srl | Sra | Or | And | Mul
+        | Mulh | Mulhsu | Mulhu | Div | Divu | Rem | Remu => {
             format!("{m} x{rd}, x{rs1}, x{rs2}")
         }
         Fence | Ecall | Ebreak | Mret => m,
@@ -431,6 +473,9 @@ mod tests {
             (lh(9, 2, 6), Kind::Lh, Some(9), Some(2), None, 6),
             (srai(1, 1, 31), Kind::Srai, Some(1), Some(1), None, 31),
             (sra(1, 2, 3), Kind::Sra, Some(1), Some(2), Some(3), 0),
+            (mul(4, 5, 6), Kind::Mul, Some(4), Some(5), Some(6), 0),
+            (mulhsu(4, 5, 6), Kind::Mulhsu, Some(4), Some(5), Some(6), 0),
+            (remu(4, 5, 6), Kind::Remu, Some(4), Some(5), Some(6), 0),
             (ebreak(), Kind::Ebreak, None, None, None, 0),
             (mret(), Kind::Mret, None, None, None, 0),
             (

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The reference: RV32I as a program, one `step` per instruction,
+//! The reference: RV32IM as a program, one `step` per instruction,
 //! written against the decoder and nothing else. The core is checked
 //! against it, in lockstep, every cycle.
 use crate::isa::{
@@ -200,6 +200,33 @@ impl Model {
             Sra => rd = Some(((a as i32) >> sh) as u32),
             Or => rd = Some(a | b),
             And => rd = Some(a & b),
+            // The M extension. A product's low word is the same for
+            // every signedness; the high word depends on it. Division
+            // by zero and the one overflow are what the manual says,
+            // which is what Rust's wrapping division says too, except
+            // for the zero, which Rust would refuse.
+            Mul => rd = Some(a.wrapping_mul(b)),
+            Mulh => {
+                rd = Some(((a as i32 as i64 * b as i32 as i64) >> 32) as u32)
+            }
+            Mulhsu => rd = Some(((a as i32 as i64 * b as i64) >> 32) as u32),
+            Mulhu => rd = Some(((a as u64 * b as u64) >> 32) as u32),
+            Div => {
+                rd = Some(if b == 0 {
+                    u32::MAX
+                } else {
+                    (a as i32).wrapping_div(b as i32) as u32
+                })
+            }
+            Divu => rd = Some(if b == 0 { u32::MAX } else { a / b }),
+            Rem => {
+                rd = Some(if b == 0 {
+                    a
+                } else {
+                    (a as i32).wrapping_rem(b as i32) as u32
+                })
+            }
+            Remu => rd = Some(if b == 0 { a } else { a % b }),
             Fence => {}
             Ebreak => {
                 self.halted = Some(Halt::Break);

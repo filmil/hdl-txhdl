@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Vreteno: a three-stage RV32I core. One process, and on every edge
+//! Vreteno: a three-stage RV32IM core. One process, and on every edge
 //! three things at once: the fetch stage reads the instruction memory
 //! at the program counter into the instruction register; the execute
 //! stage decodes the fields of the word in that register, executes,
@@ -82,6 +82,13 @@ pub struct Vreteno {
     pub mscratch: Reg<U<32>>,
     pub mepc: Reg<U<32>>,
     pub mcause: Reg<U<32>>,
+    pub m_busy: Reg<Bit>,
+    pub m_count: Reg<U<6>>,
+    pub m_hi: Reg<U<33>>,
+    pub m_lo: Reg<U<32>>,
+    pub m_d: Reg<U<32>>,
+    pub m_neg_q: Reg<Bit>,
+    pub m_neg_r: Reg<Bit>,
     pub regs: Mem<U<32>, 32>,
     pub imem: Mem<U<32>, IMEM_WORDS>,
     pub dmem0: Mem<U<8>, DMEM_WORDS>,
@@ -146,6 +153,10 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             let (mstatus, mtvec, mscratch) =
                 (self.mstatus.get(), self.mtvec.get(), self.mscratch.get());
             let (mepc, mcause) = (self.mepc.get(), self.mcause.get());
+            let (m_busy, m_count) = (self.m_busy.get(), self.m_count.get());
+            let (m_hi, m_lo, m_d) =
+                (self.m_hi.get(), self.m_lo.get(), self.m_d.get());
+            let (m_neg_q, m_neg_r) = (self.m_neg_q.get(), self.m_neg_r.get());
             // The writeback stage: a loaded word's byte or half, by the
             // lane and the width the execute stage read with it,
             // extended; else the value execute computed. Written to the
@@ -208,7 +219,17 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             // core ever waits.
             let fwd_a = wb_write.and(eq(wb_rd, rs1));
             let fwd_b = wb_write.and(eq(wb_rd, rs2));
-            let stall = valid.and(wb_load).and(fwd_a.or(fwd_b));
+            let stall_ld = valid.and(wb_load).and(fwd_a.or(fwd_b));
+            // The M extension is a sequencer: a multiply is thirty-two
+            // shift-and-add steps, a division thirty-two restoring steps,
+            // over the magnitudes, and the instruction stalls in execute
+            // until the count is up. One set of registers serves both.
+            let f7 = ir.slice::<25, 7>();
+            let is_m = eq(opcode, U::from(0x33u8)).and(eq(f7, U::from(1u8)));
+            let m_here = valid.and(rst.not()).and(stopped.not()).and(is_m);
+            let m_done = m_busy.and(eq(m_count, U::from(32u8)));
+            let stall_m = m_here.and(m_done.not());
+            let stall = stall_ld.or(stall_m);
             let a = mux(
                 is_zero(rs1),
                 U::<32>::from(0u32),
@@ -229,6 +250,24 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             let sh = alu_b.slice::<0, 5>();
             let sub =
                 alt.and(eq(opcode, U::from(0x33u8)).or(eq(f3, U::from(5u8))));
+            // The multiply and divide, from the sequencer's registers,
+            // with the signs put back: a product or a quotient is
+            // negated when the signs differed, a remainder takes the
+            // dividend's sign, and a quotient by zero is all ones.
+            let m_mag = m_hi.slice::<0, 32>().concat::<32, 64>(m_lo);
+            let m_p =
+                mux(m_neg_q, U::<64>::from(0u32).wrapping_sub(m_mag), m_mag);
+            let m_q =
+                mux(m_neg_q, U::<32>::from(0u32).wrapping_sub(m_lo), m_lo);
+            let m_rem = m_hi.slice::<0, 32>();
+            let m_r =
+                mux(m_neg_r, U::<32>::from(0u32).wrapping_sub(m_rem), m_rem);
+            let m_res = select!(f3.raw() => {
+                0 => m_p.slice::<0, 32>(),
+                1 | 2 | 3 => m_p.slice::<32, 32>(),
+                4 | 5 => m_q,
+                _ => m_r,
+            });
             // begin{alu}
             let alu = select!(f3.raw() => {
                 0 => mux(sub, a.wrapping_sub(alu_b), a.wrapping_add(alu_b)),
@@ -372,7 +411,7 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                 0x17 => pc.wrapping_add(imm_u),
                 0x6f | 0x67 => pc4,
                 0x73 => csr_old,
-                _ => alu,
+                _ => mux(is_m, m_res, alu),
             });
             // Where the instruction goes next, other than on: a jump's
             // or a taken branch's target, the saved address on mret, the
@@ -434,6 +473,71 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                 self.mstatus <= trap_status
             });
             when!(run.and(is_mret) => { self.mstatus <= mret_status });
+            // The sequencer. It starts when an M instruction is in execute
+            // with its operands ready, steps thirty-two times, and is
+            // released when the instruction runs. A multiply shifts the
+            // pair right, adding the multiplicand into the high half when
+            // the low bit is set; a division shifts the pair left,
+            // subtracting the divisor from the high half when it fits,
+            // and the fit is the quotient bit shifted in.
+            let m_signed_a = eq(f3, U::from(0u8))
+                .or(eq(f3, U::from(1u8)))
+                .or(eq(f3, U::from(2u8)))
+                .or(eq(f3, U::from(4u8)))
+                .or(eq(f3, U::from(6u8)));
+            let m_signed_b = eq(f3, U::from(0u8))
+                .or(eq(f3, U::from(1u8)))
+                .or(eq(f3, U::from(4u8)))
+                .or(eq(f3, U::from(6u8)));
+            let m_neg_a = m_signed_a.and(a.bit(31));
+            let m_neg_b = m_signed_b.and(b.bit(31));
+            let m_abs_a = mux(m_neg_a, U::<32>::from(0u32).wrapping_sub(a), a);
+            let m_abs_b = mux(m_neg_b, U::<32>::from(0u32).wrapping_sub(b), b);
+            let m_differ =
+                m_neg_a.and(m_neg_b.not()).or(m_neg_a.not().and(m_neg_b));
+            let m_is_div = f3.bit(2);
+            let m_start = m_here.and(m_busy.not()).and(stall_ld.not());
+            let m_step = m_busy.and(m_done.not());
+            let m_sum =
+                mux(m_lo.bit(0), m_hi.wrapping_add(m_d.zext::<33>()), m_hi);
+            let m_t =
+                m_hi.slice::<0, 32>().concat::<1, 33>(m_lo.slice::<31, 1>());
+            let m_fits = lt(m_t, m_d.zext::<33>()).not();
+            case!(rst => {
+                Bit::One => { self.m_busy <= Bit::Zero },
+                _ if m_start.to_bool() => {
+                    self.m_busy <= Bit::One;
+                    self.m_count <= U::from(0u8);
+                    self.m_hi <= U::from(0u8);
+                    self.m_lo <= m_abs_a;
+                    self.m_d <= m_abs_b;
+                    self.m_neg_q <= mux(
+                        m_is_div,
+                        m_differ.and(is_zero(b).not()),
+                        m_differ
+                    );
+                    self.m_neg_r <= m_neg_a
+                },
+                _ if m_step.and(m_is_div.not()).to_bool() => {
+                    self.m_count <= m_count.wrapping_add(U::from(1u8));
+                    self.m_hi <= shr(m_sum, 1);
+                    self.m_lo <= m_sum
+                        .slice::<0, 1>()
+                        .concat::<31, 32>(m_lo.slice::<1, 31>())
+                },
+                _ if m_step.to_bool() => {
+                    self.m_count <= m_count.wrapping_add(U::from(1u8));
+                    self.m_hi <= mux(
+                        m_fits,
+                        m_t.wrapping_sub(m_d.zext::<33>()),
+                        m_t
+                    );
+                    self.m_lo <=
+                        m_lo.slice::<0, 31>().concat::<1, 32>(m_fits.zext())
+                },
+                _ if run.and(is_m).to_bool() => { self.m_busy <= Bit::Zero },
+                _ => {},
+            });
             when!(run => {
                 self.wb_valid <= Bit::One;
                 self.wb_pc <= pc;

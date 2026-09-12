@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Vreteno: an RV32I core in TxHDL. The library holds the core, the
+# Vreteno: an RV32IM core in TxHDL. The library holds the core, the
 # ISA, the reference model and the programs; the binary runs the
 # demonstration and writes its waveform; the test runs the core
 # against the model in lockstep.

@@ -147,6 +147,10 @@ fn demo_program() {
     assert_eq!(m.x[23], 2, "the second trap's cause");
     assert_eq!(m.x[24], 5, "mscratch through the CSR instructions");
     assert_eq!(m.x[25], 0xfe01, "the use right after the load");
+    assert_eq!(m.x[26], (-220i32) as u32, "mul");
+    assert_eq!(m.x[28], 0xfffffffc, "mulhu");
+    assert_eq!(m.x[29], (-55i32) as u32, "div");
+    assert_eq!(m.x[30], (-2i32) as u32, "rem");
 }
 
 #[test]
