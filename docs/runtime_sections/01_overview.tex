@@ -83,6 +83,14 @@ trace is its six wires by side: \code{rx\_data}, \code{rx\_valid} and
 \code{rx\_ready} on the receiver's, \code{tx\_data}, \code{tx\_valid}
 and \code{tx\_ready} on the sender's.
 
+\textbf{A wire kept as a field is a \code{let} with a name in the
+trace.} \code{Wire<T>} is driven with \code{set} in the step, may be
+read back with \code{get} in the same step, and holds nothing across
+the edge; a unit's trace shows it under the unit's name as it shows a
+register, and the lowering declares it from the field and drives it
+as the wire the \code{let} would have been, so an internal signal is
+seen in a waveform, and checked in the netlist, with no port for it.
+
 \textbf{Every \code{.await} is a cycle boundary.} A process that has
 crossed an edge at this step cannot cross it again, so a second wait
 written after a first waits for the next edge, as an operator does.

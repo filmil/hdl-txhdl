@@ -183,6 +183,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An internal signal kept as a wire, seen:  bazel run //lib/examples:ex_wire
+rust_binary(
+    name = "ex_wire",
+    srcs = ["ex_wire.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A tap between channels, sends under when!:  bazel run //lib/examples:ex_tap
 rust_binary(
     name = "ex_tap",
@@ -243,5 +252,6 @@ filegroup(
         "ex_mul.rs",
         "ex_tap.rs",
         "ex_buffer.rs",
+        "ex_wire.rs",
     ],
 )

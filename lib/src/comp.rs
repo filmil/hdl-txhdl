@@ -333,6 +333,36 @@ impl<T: Copy, C: Clock> Clone for Reg<T, C> {
     }
 }
 
+/// A wire a unit keeps as a field, for looking at: a `let` of the
+/// loop that has a name in the trace as well as in the netlist. The
+/// process drives it with `set` in the step and may read it back with
+/// `get` in the same step; it holds nothing across the edge. In the
+/// netlist it is the wire the `let` would have been; in a waveform
+/// it shows under the unit's name like a register, which is what an
+/// internal signal needs to be seen without a port for it.
+pub struct Wire<T: Copy, C: Clock = DefaultClock>(Rc<Cellf<T>>, PhantomData<C>);
+
+impl<T: Copy, C: Clock> Clone for Wire<T, C> {
+    fn clone(&self) -> Self {
+        Wire(self.0.clone(), PhantomData)
+    }
+}
+
+impl<T: Copy + Default, C: Clock> Default for Wire<T, C> {
+    fn default() -> Self {
+        Wire(Rc::new(Cellf(Cell::new(T::default()))), PhantomData)
+    }
+}
+
+impl<T: Copy, C: Clock> Wire<T, C> {
+    pub fn set(&self, v: impl Into<T>) {
+        self.0 .0.set(v.into())
+    }
+    pub fn get(&self) -> T {
+        self.0 .0.get()
+    }
+}
+
 /// What a register holds: the latched value and the pending drive.
 struct RegCell<T: Copy> {
     cur: Cell<T>,
@@ -1081,6 +1111,8 @@ pub mod trace {
         Rx,
         /// A memory: state with an address, untraced.
         Mem,
+        /// A wire kept as a field, for looking at.
+        Wire,
     }
 
     /// One traced signal: where it is, how wide, what it is, which
@@ -1184,6 +1216,17 @@ pub mod trace {
         }
     }
     impl<T: Value + 'static, C: Clock> Traceable for Out<T, C> {
+        fn trace(&self, scope: &Scope) {
+            let c = self.0.clone();
+            let cell = Rc::as_ptr(&self.0) as usize;
+            let f = Box::new(move || c.0.get().vcd());
+            probe_named(scope, T::WIDTH, Kind::Out, cell, f, T::names());
+            let c = self.0.clone();
+            parts(scope, Kind::Out, cell, move || c.0.get());
+        }
+    }
+    /// A wire field traces as an output does: a wire, under the unit.
+    impl<T: Value + 'static, C: Clock> Traceable for super::Wire<T, C> {
         fn trace(&self, scope: &Scope) {
             let c = self.0.clone();
             let cell = Rc::as_ptr(&self.0) as usize;

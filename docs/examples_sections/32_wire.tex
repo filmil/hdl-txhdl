@@ -1,0 +1,33 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Internal Signal, Seen}
+\label{sec:x-wire}
+
+A waveform shows a unit's registers, and the wires and channels the
+testbench holds; a \code{let} inside the loop is a wire in the
+netlist but nothing in the trace, since it lives only in the step. To
+see one there was a port to add, or a register to keep, or the
+netlist simulation to read. \code{Wire<T>} is a \code{let} kept as a
+field of the unit: the process drives it with \code{set} in the
+step, may read it back with \code{get} in the same step, and it holds
+nothing across the edge. In the trace it shows under the unit's name,
+as a register does, and in the netlist it is the wire the \code{let}
+would have been, declared from the field; so the testbench that
+checks the netlist reaches it inside the entity and checks it as an
+output, and an internal signal is under the same check as a port.
+
+The divider by three keeps its two decisions in wires, whether the
+input is being counted and whether the count wraps this cycle; the
+testbench sees only \code{pulse} and \code{tick}, and
+Fig.~\ref{fig:x-wire} shows the two decisions beside them.
+
+\begin{figure}[htbp]
+\centering
+\input{wire_timing.tex}
+\caption{The divider: \code{counting} and \code{wrap} are wires the
+unit keeps as fields, seen in the trace with no port for them.}
+\label{fig:x-wire}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_wire.rs}. Run with \code{bazel run //lib/examples:ex\_wire}.},label={lst:x-wire}]{lib/examples/ex_wire.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_wire} printed when the build ran it: the pulses and the output, then the lowering, the two wires declared from the fields.},label={lst:x-wire-out}]{out_wire.txt}

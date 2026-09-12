@@ -9,7 +9,7 @@
 //! lowering, which the proc-macro route closes by reading the
 //! `Unit` impl. Behaviour is not here at all; the bodies are empty.
 use crate::comp::trace::{collect, Kind, Probe, Traceable};
-use crate::comp::{Clock, In, Mem, Out, Reg, Rx, Tx};
+use crate::comp::{Clock, In, Mem, Out, Reg, Rx, Tx, Wire};
 use crate::types::Value;
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -156,6 +156,10 @@ impl<T: Value + Copy + 'static, C: Clock> Port for Reg<T, C> {
 }
 impl<T: Value + Copy + 'static, C: Clock> Port for Out<T, C> {
     const KIND: Option<Kind> = Some(Kind::Out);
+    const WIDTH: usize = T::WIDTH;
+}
+impl<T: Value + Copy + 'static, C: Clock> Port for Wire<T, C> {
+    const KIND: Option<Kind> = Some(Kind::Wire);
     const WIDTH: usize = T::WIDTH;
 }
 impl<T: Value + Copy + 'static, C: Clock> Port for In<T, C> {
@@ -516,7 +520,7 @@ impl Lowered {
                     "{n}_data rxin {w}\n{n}_valid rxin 1\n\
                      {n}_ready rxout 1\n"
                 )),
-                Kind::Reg | Kind::Mem => {}
+                Kind::Reg | Kind::Mem | Kind::Wire => {}
             }
         }
         for (n, k, w, d) in &self.fields {
@@ -526,6 +530,7 @@ impl Lowered {
                 }
                 Some(Kind::Reg) => out.push_str(&format!("{n} reg {w}\n")),
                 Some(Kind::Mem) => out.push_str(&format!("{n} mem {w} {d}\n")),
+                Some(Kind::Wire) => out.push_str(&format!("{n} wire {w}\n")),
                 _ => {}
             }
         }
@@ -551,7 +556,7 @@ impl Lowered {
                     "input {}{n}_data, input {n}_valid, output {n}_ready",
                     range(*w)
                 )),
-                Kind::Reg | Kind::Mem => {}
+                Kind::Reg | Kind::Mem | Kind::Wire => {}
             }
         }
         writeln!(out, "`timescale 1ns/1ps").unwrap();
@@ -561,6 +566,10 @@ impl Lowered {
                 // Zero at the start, as the runtime's register is.
                 Some(Kind::Reg) => {
                     writeln!(out, "  reg {}{n} = 0;", range(*w)).unwrap()
+                }
+                // A wire kept as a field: declared here, driven below.
+                Some(Kind::Wire) => {
+                    writeln!(out, "  wire {}{n};", range(*w)).unwrap()
                 }
                 // A memory, zero at the start as the runtime's is, then
                 // its first words if the example gave them.
@@ -716,7 +725,7 @@ impl Lowered {
                     plist.push(format!("{n}_valid : in std_logic"));
                     plist.push(format!("{n}_ready : out std_logic"));
                 }
-                Kind::Reg | Kind::Mem => {}
+                Kind::Reg | Kind::Mem | Kind::Wire => {}
             }
         }
         let mut out = String::new();
@@ -756,6 +765,9 @@ impl Lowered {
                 Some(Kind::Reg) => {
                     writeln!(out, "  signal {n} : {} := {init};", ty(*w))
                         .unwrap()
+                }
+                Some(Kind::Wire) => {
+                    writeln!(out, "  signal {n} : {};", ty(*w)).unwrap()
                 }
                 // A memory: an array type of its own, zero at the start,
                 // then its first words if the example gave them.

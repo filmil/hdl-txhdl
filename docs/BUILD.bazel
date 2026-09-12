@@ -609,6 +609,8 @@ latex_document(
         ":tap_timing",
         ":buffer_run",
         ":buffer_timing",
+        ":wire_run",
+        ":wire_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -711,6 +713,20 @@ waveform(
         "//rx_ready=>rx_ready",
         "//buffer/head_full=>head_full",
         "//buffer/tail_full=>tail_full",
+    ],
+)
+
+waveform(
+    name = "wire",
+    example = "//lib/examples:ex_wire",
+    lowered = ("divider", "div"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//pulse=>pulse",
+        "//div/n=>n",
+        "//div/counting=>counting",
+        "//div/wrap=>wrap",
+        "//tick=>tick",
     ],
 )
 

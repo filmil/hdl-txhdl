@@ -102,11 +102,15 @@ fn main() {
     // Directions: in, out, reg, and a channel's rxin, rxout, txin,
     // txout. A channel's wire is traced under the channel by its side.
     let is_in = |d: &str| d == "in" || d == "rxin" || d == "txin";
-    let is_out = |d: &str| d == "out" || d == "rxout" || d == "txout";
+    // A wire kept as a field is checked as an output is, but reached
+    // inside the entity, as a register is.
+    let is_out =
+        |d: &str| d == "out" || d == "rxout" || d == "txout" || d == "wire";
     let registered = |d: &str| d == "rxin" || d == "txin";
     let is_reg = |d: &str| d == "reg" || d == "regf";
+    let inside = |d: &str| d == "reg" || d == "regf" || d == "wire";
     let trace_name = |port: &str, dir: &str| -> String {
-        if is_reg(dir) {
+        if inside(dir) {
             format!("{unit}.{port}")
         } else if dir.starts_with("rx") || dir.starts_with("tx") {
             let (ch, part) = port.rsplit_once('_').unwrap_or((port, ""));
@@ -156,7 +160,7 @@ fn main() {
         let mut o = String::new();
         o.push_str(&format!("`timescale 1ns/1ps\nmodule {entity}_tb;\n"));
         for (n, d, w) in &ports {
-            if is_reg(d) {
+            if inside(d) {
                 continue;
             }
             if is_in(d) {
@@ -168,7 +172,7 @@ fn main() {
         o.push_str("  integer errors = 0;\n");
         let maps: Vec<String> = ports
             .iter()
-            .filter(|p| !is_reg(&p.1))
+            .filter(|p| !inside(&p.1))
             .map(|p| format!(".{0}({0})", p.0))
             .collect();
         o.push_str(&format!("  {entity} uut ({});\n", maps.join(", ")));
@@ -229,7 +233,12 @@ fn main() {
                         }
                     }
                     if let Some(v) = val(&trace_name(n, d), t + 2) {
-                        check(&mut o, n, n, *w, &v);
+                        let sig = if d == "wire" {
+                            format!("uut.{n}")
+                        } else {
+                            n.clone()
+                        };
+                        check(&mut o, n, &sig, *w, &v);
                     }
                 }
             }
@@ -255,7 +264,7 @@ fn main() {
          architecture sim of {entity}_tb is\n"
     ));
     for (n, d, w) in &ports {
-        if !is_reg(d) {
+        if !inside(d) {
             let init = if *w == 1 { "'0'" } else { "(others => '0')" };
             o.push_str(&format!("  signal {n} : {} := {init};\n", ty(*w)));
         }
@@ -267,7 +276,7 @@ fn main() {
     ));
     let maps: Vec<String> = ports
         .iter()
-        .filter(|p| !is_reg(&p.1))
+        .filter(|p| !inside(&p.1))
         .map(|p| format!("{0} => {0}", p.0))
         .collect();
     o.push_str(&format!("{});\n\n", maps.join(", ")));
@@ -297,7 +306,7 @@ fn main() {
     // alias: a name per check would be most of the unit, and nvc's
     // heap for one unit is finite.
     for (n, d, w) in &ports {
-        if d == "reg" || d == "regf" {
+        if inside(d) {
             o.push_str(&format!(
                 "    alias r_{n} is << signal .{entity}_tb.uut.{n} : {} >>;\n",
                 ty(*w)
@@ -347,8 +356,13 @@ fn main() {
     for (n, d, w) in &ports {
         if is_out(d) {
             params.push(format!("{n}_e : {}; {n}_c : boolean", ty(*w)));
+            let sig = if d == "wire" {
+                format!("r_{n}")
+            } else {
+                n.clone()
+            };
             tick.push_str(&format!(
-                "      if {n}_c then expect(\"{n}\", {n} = {n}_e, now); \
+                "      if {n}_c then expect(\"{n}\", {sig} = {n}_e, now); \
                  end if;\n"
             ));
         }
