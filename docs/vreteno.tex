@@ -392,8 +392,13 @@ written while busy is dropped, so a program polls the status first.
 \code{DIV} is a parameter of the unit: 868 for 115\,200 baud at
 100~MHz on the board, and 4 in the runs that are checked, so that a
 byte takes forty cycles rather than nine thousand. The two are the
-same unit lowered twice. The run decodes its own line as a terminal
-would and prints what the demonstration said.
+same unit lowered twice. The port's pieces, whether an address is
+its own, the frame a byte goes out as, the frame after a bit, a
+bit's last cycle and the word a load reads, are functions under
+\code{\#[lower]}, inlined where the step calls them, so the step is
+short and reads as what it does; the examples
+document~\cite{examples} states the form. The run decodes its own
+line as a terminal would and prints what the demonstration said.
 
 \lstinputlisting[caption={\code{uart.rs}: the serial port, a device
 on the bus.},label={lst:v-uart}]{cpu/vreteno/src/uart.rs}
