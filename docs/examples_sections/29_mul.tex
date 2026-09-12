@@ -12,9 +12,9 @@ to that width and multiplies there, which in Verilog is a
 Rust value, which wraps. The unit sums the products of the pairs it
 is given, a cycle behind, and clears on request; it is checked under
 nvc and Verilator against its trace, as Section~\ref{sec:x-checked}
-describes. The Vreteno core does not use it: its multiply is a
-sequencer of shifts and adds, thirty-two steps, which is a choice
-about hardware rather than about the language.
+describes. The Vreteno core's multiply is this operation at
+sixty-four bits, from two registers into two, which synthesis makes
+of the part's DSP blocks.
 
 \begin{figure}[htbp]
 \centering

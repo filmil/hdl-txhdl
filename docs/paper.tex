@@ -52,7 +52,7 @@ largest design so far is Vreteno, a three-stage RV32IM core with
 machine-mode traps: written in the subset the lowering reads, checked
 in lockstep against a reference model, checked as a netlist against
 its own trace, and synthesized, placed and routed on an Artix-7 at
-100~MHz in 1864 LUTs, its data memory in block RAM. This paper presents the system
+100~MHz in 1866 LUTs, its data memory in block RAM. This paper presents the system
 and its results.
 \end{abstract}
 
@@ -350,7 +350,7 @@ scratchpad & a memory written and read & nvc, Verilator \\
 decoder & \code{slice}, \code{concat}, \code{sext}, \code{select!} & nvc, Verilator \\
 stage & two channels, the handshake & nvc, Verilator \\
 MAC & \code{mul::<M>}, a product at a stated width & nvc, Verilator \\
-Vreteno & the whole core, 520 ticks & nvc, Verilator \\
+Vreteno & the whole core, 334 ticks & nvc, Verilator \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -395,10 +395,10 @@ saves its address and cause in \code{mepc} and \code{mcause},
 saves and clears the interrupt enable in \code{mstatus}, and
 redirects to \code{mtvec} as a taken branch redirects; \code{mret}
 returns; the six CSR instructions read and write the five control
-registers. Multiply and divide are one sequencer of thirty-two
-shift-and-add or restoring steps over the magnitudes, the signs put
-back at the end, and the instruction stalls for them: small, slow,
-and off the critical path. The whole is written in the subset the
+registers. Multiply and divide are one sequencer over the
+magnitudes, a multiply one step in the part's DSP blocks and a
+division thirty-two restoring steps, the signs put back at the end,
+and the instruction stalls for them, off the critical path. The whole is written in the subset the
 lowering reads,
 Listing~\ref{lst:p-fetch} being the fetch's drives, so the one file
 simulates and is a netlist.
@@ -462,7 +462,7 @@ memory became a read-only memory in one block RAM tile, the data
 memory's four byte lanes four block RAMs in two, since the third
 stage registers their read, and the register file distributed RAM.
 Placed and routed with the same constraint, the core meets ten
-nanoseconds with 1.013~ns to spare; the critical path runs from the
+nanoseconds with 0.617~ns to spare; the critical path runs from the
 register file's read through the branch compare to the instruction
 memory's address, a branch on a register. Fig.~\ref{fig:p-vreteno} is the opening of the
 demonstration, from the trace.
@@ -475,10 +475,11 @@ demonstration, from the trace.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1816 \\
+LUTs, as logic & 1818 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 413 \\
+Flip-flops & 412 \\
 Block RAM tiles & 3 \\
+DSP blocks & 4 \\
 Errors, critical warnings & 0 \\
 \bottomrule
 \end{tabular}
@@ -506,9 +507,9 @@ simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
 twenty-four tests run under \code{bazel test //...}, and every one of them
 is hermetic, the simulators built from source and the synthesis tool
-installed by the build. Vreteno is 594 lines of core, checked in
+installed by the build. Vreteno is 593 lines of core, checked in
 lockstep against a 273-line model on a demonstration program and
-sixty-four random ones, checked as a netlist on 520 ticks and eight
+sixty-four random ones, checked as a netlist on 334 ticks and eight
 signals, synthesized in two minutes to the figures of
 Table~\ref{tab:p-synth}, and placed and routed at 100~MHz. Eight documents describe the system, this
 one included, and each is built by the same command that builds the
@@ -546,8 +547,8 @@ A RISC-V core written in it runs, lowers, is checked against its own
 trace, and runs at 100~MHz on an Artix-7 with its data memory in
 block RAM, whose bitstream, with a clock, a reset and four LEDs
 around the core, is built. The next steps are the board in hand and
-a multiplier in the DSP blocks; the path that limits the clock is a
-branch on what the instruction before it computed.
+the rest of the privileged architecture; the path that limits the
+clock is a branch on what the instruction before it computed.
 
 \begin{thebibliography}{10}
 

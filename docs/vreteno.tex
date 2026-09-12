@@ -45,8 +45,9 @@ reads, so that the same file simulates and is a netlist, and with
 machine-mode traps: an environment call or a word the core does not
 know saves its address and its cause in the control registers and
 enters the handler, which returns through \code{mret}; and with
-multiply and divide as one sequencer of thirty-two steps, which
-stalls the instruction in execute. It is checked twice. In lockstep against a reference model of the instruction set
+the M extension on one sequencer, a multiply one step in the part's
+multipliers and a division thirty-two, which stalls the instruction
+in execute. It is checked twice. In lockstep against a reference model of the instruction set
 written as a plain program: the model steps when the core retires an
 instruction, and after every cycle the program counter, the
 thirty-one registers, the control registers and the halt must agree,
@@ -239,22 +240,24 @@ The M extension is a sequencer, and the second use of the stall. A
 multiply or a divide in execute starts it: the operands' magnitudes
 go into the pair and the multiplicand or divisor register, the signs
 into two bits, and the instruction stalls, the fetch holding with it.
-Thirty-two steps follow, one a cycle. A multiply shifts the pair
-right and adds the multiplicand into the high half when the low bit
-was set, which leaves the 64-bit product in the pair; a division
-shifts the pair left, subtracts the divisor from the high half when
-it fits, and shifts the fit in as the quotient bit, which leaves the
-quotient in the low half and the remainder in the high. On the
-thirty-third cycle the instruction runs: the result is the pair with
-the signs put back, the product or quotient negated when the signs
+A multiply is one step: the 64-bit product of the two registers,
+\code{mul::<64>} of the examples document's multiply-accumulate
+\cite{examples}, into the pair, which synthesis makes of the part's
+DSP blocks. A division is thirty-two steps, one a cycle, each shifting
+the pair left, subtracting the divisor from the high half when it
+fits, and shifting the fit in as the quotient bit, which leaves the
+quotient in the low half and the remainder in the high. When the
+count is up the instruction runs: the result is the pair with the
+signs put back, the product or quotient negated when the signs
 differed, the remainder given the dividend's sign, a quotient by
 zero left as the all-ones the steps produce, and it goes through the
-ordinary writeback. One set of registers serves both, and the
-hardware is an adder, a subtractor, a compare and some multiplexers,
-which is small and slow: thirty-three cycles for any of the eight
-instructions. A multiplier in the part's DSP blocks would be one
-cycle, and is the next step for the clock and the throughput both;
-the sequencer is the form that costs nothing on the critical path.
+ordinary writeback. So a multiply takes three cycles and a division
+thirty-three, and one set of registers serves both. The multiplier
+reads registers and writes registers, so it is a path of its own, a
+cycle long, and not on the one that sets the clock; the first form
+of the sequencer multiplied by thirty-two shifts and adds, and the
+change to the multiplier was one step's arm and the count it starts
+from.
 
 The stages meet at the end of the cycle, in the deferred drives of
 the fetch's state and the writeback's. When the execute stage's next
@@ -398,9 +401,9 @@ repeat ten times with a bubble after each taken \code{bne}, the call
 as the jump to \code{0x5c} and the return to \code{0x20}, each with
 its bubble, and the loads as the sign and zero extensions of the same
 byte and half. The one load stall is the bubble after \code{lw},
-where the next instruction adds to what it loaded, and each multiply
-or divide is a run of thirty-three, which the run prints as one line
-with the count. The two traps are the
+where the next instruction adds to what it loaded; each multiply is
+a run of three and each divide a run of thirty-three, which the run
+prints as one line with the count. The two traps are the
 jumps to the handler at
 \code{0x7c}, the first from the \code{ecall} with eleven read into
 \code{x23}, the second from the illegal word with two, each with its
@@ -466,12 +469,12 @@ The netlist was checked as the model was: a testbench that could not
 fail would prove nothing. The register file is not traced, so the
 testbench cannot see it, but every write to it shows in the
 writeback output the next tick, and every read shows in the program
-counter and the outputs that follow; the five hundred and twenty
-ticks of the demonstration exercise every instruction of the program
-through both, the two traps and their returns included, since a
-wrong \code{mepc} or \code{mtvec} is a wrong program counter, and
-every register of the sequencer at every step of five multiplies and
-divides, since the whole unit is traced. The checks that failed on the way, a truth value rendered
+counter and the outputs that follow; the three hundred and
+thirty-four ticks of the demonstration exercise every instruction of
+the program through both, the two traps and their returns included,
+since a wrong \code{mepc} or \code{mtvec} is a wrong program
+counter, and every register of the sequencer at every step of three
+multiplies and two divides, since the whole unit is traced. The checks that failed on the way, a truth value rendered
 ambiguously, a bitwise \code{and} rendered as a comparison, a
 concatenation of ambiguous type, a slice of an expression and a
 temporary named with a leading underscore, all failed to analyze or
@@ -501,10 +504,11 @@ unused, and an advisory on floorplanning.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1816 \\
+LUTs, as logic & 1818 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 413 \\
+Flip-flops & 412 \\
 Block RAM tiles & 3 \\
+DSP blocks & 4 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -536,11 +540,14 @@ instruction.
 The netlist is also placed and routed, \code{bazel build
 //cpu/vreteno:vreteno\_pnr}, with the same constraint and no pins,
 so the bitstream is a stub and the reports are the point. The routed
-design meets ten nanoseconds with 1.013~ns of slack, and hold with
-0.110~ns. The critical path is 8.456~ns, of which routing is three
-quarters, through nine levels of logic: from the register file's
+design meets ten nanoseconds with 0.617~ns of slack, and hold with
+0.077~ns. The critical path is 8.853~ns, of which routing is three
+quarters, through ten levels of logic: from the register file's
 read, through the branch compare, to the instruction memory's
-address, which is a branch on a register. With two stages the slack
+address, which is a branch on a register. The multiplier is the next
+path: four DSP blocks and a carry chain of thirteen, 8.7~ns of which
+logic is six sevenths, from the sequencer's registers into the pair,
+which is what the start cycle buys. With two stages the slack
 had been 0.263~ns, on a path from a register through the decode and
 the ALU into the register file's write. With three stages and the
 load forwarded it was 0.361~ns, on a load followed at once by a jump
@@ -550,7 +557,8 @@ addresses widened the fetch's multiplexer, that path missed by
 for: it took the data memory's read and the load's extension off the
 forwarding path, and the slack tripled. The sequencer of the M
 extension adds nothing to the path, since its result is a register
-and its steps are a cycle each. The tool had an opinion of its own
+and its steps are a cycle each, the multiplier's included, which
+runs from registers to registers. The tool had an opinion of its own
 on the way. Left to itself it moved three of the four data memory
 lanes into distributed RAM to shorten the load's path, so the
 constraints file pins the lanes to block RAM, where the third stage
@@ -569,8 +577,9 @@ clock has locked, and four LEDs, lit when driven low, showing the
 core halted, a heartbeat, the reset released and the clock locked.
 The constraints name the board's pins as the project's other designs
 for it do, so the bitstream is real: the routed design meets
-100~MHz with 1.151~ns of slack, in 1787 LUTs, 415 flip-flops, three
-block RAM tiles and the MMCM, with no critical warning.
+100~MHz with 1.184~ns of slack, on the multiplier's path this time,
+in 1796 LUTs, 414 flip-flops, three block RAM tiles, four DSP blocks
+and the MMCM, with no critical warning.
 \code{bazel run //cpu/vreteno:vreteno\_board\_flash} writes it into
 the board's QSPI flash over the programming cable. What the board
 should show, once it does: the clock LED at once, the running LED
@@ -589,12 +598,13 @@ The board, programmed. Its bitstream is built and the flash target
 writes it; what its LEDs should show is stated above, and the first
 thing to do with the board in hand is to see that they do.
 
-More clock, and more throughput. What sets the timing now is stated
-in Section~\ref{sec:v-synth}, and a fourth stage, or a register file
-read a cycle earlier, would let the clock rise; a multiplier in the
-DSP blocks, pipelined over two cycles, would turn thirty-three cycles
-into two. The lockstep test is the check for any of these, since it
-compares architectural state when an instruction retires.
+More clock. What sets the timing now is stated in
+Section~\ref{sec:v-synth}, and a fourth stage, or a register file
+read a cycle earlier, would let the clock rise; the multiply could
+also lose its start cycle by taking the product from the operands
+rather than from the registers, if the timing allows. The lockstep
+test is the check for any of these, since it compares architectural
+state when an instruction retires.
 
 The rest of the privileged architecture: \code{mtval}, the timer and
 external interrupts, which need a way in from outside the core. Each
