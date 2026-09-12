@@ -49,9 +49,9 @@ the M extension on one sequencer, a multiply one step in the part's
 multipliers and a division thirty-two, which stalls the instruction
 in execute; with an interrupt line, taken in place of the
 instruction in execute when \code{mie}, \code{mip} and
-\code{mstatus} allow; and with a timer, four words in the address
-map beside the memory, whose interrupt is the second. It is checked
-twice. In lockstep against a reference model of the instruction set
+\code{mstatus} allow; and with a bus, a request channel out and a
+response channel back, on which a timer, a unit of its own, is the
+first device and the second interrupt. It is checked twice. In lockstep against a reference model of the instruction set
 written as a plain program: the model steps when the core retires an
 instruction, and after every cycle the program counter, the
 thirty-one registers, the control registers and the halt must agree,
@@ -166,14 +166,14 @@ enabled in \code{mie} and interrupts are enabled in
 with the interrupt's cause, and returns to the same address. The
 timer is four words at \code{TIMER\_BASE}, the count and the
 compare, each in two halves, read and written as memory is; its
-pending bit is the count having reached the compare, which is read
-in \code{mip} but not stored there, and its interrupt comes after
-the line's. The model has no clock, so the count is not its own: the
-caller sets \code{mtime} before each step to what the core's was
-when the instruction executed, a store to the count is left to the
-core, and the compare is the model's state. Which interrupt that
-step takes, if any, is the caller's word too, since the core decides
-on the bits and the count as they stood a cycle earlier, and the
+pending bit is its line, read in \code{mip} but not stored there,
+and its interrupt comes after the external one's. The model has no
+clock and no bus, so neither the count nor the line is its own: the
+caller sets \code{mtime} and \code{tirq} before each step to what
+the timer answered and what the core saw, a store to the count is
+left to the timer, and the compare is the model's state. Which
+interrupt that step takes, if any, is the caller's word too, since
+the core decides on the bits as they stood a cycle earlier, and the
 lockstep test carries the core's decision across. Only
 \code{ebreak} halts. The
 M extension is Rust's arithmetic on the
@@ -199,9 +199,9 @@ value if it is not a load, the raw word read for a load with the
 lane and the width to take from it, the word itself, and whether it
 halts; the halt itself; the eight control registers; the sequencer's
 seven, a busy bit, a count, the two halves of the pair it shifts, the
-multiplicand or divisor, and two sign bits; the timer's count and
-compare, and the word a load read from the timer with whether it
-did; and six memories: the register file, the instruction memory,
+multiplicand or divisor, and two sign bits; the word a load read
+from the bus, whether it did, and whether a load is waiting on the
+bus; and six memories: the register file, the instruction memory,
 loaded from the program with \code{Mem::with}, and the data memory
 as four memories of a byte, one per lane of the word. Its input is
 the reset and its outputs are the halt, the word executed, and a
@@ -303,20 +303,51 @@ sequencer must never step under an instruction other than its own,
 which is a defect the random programs found. The board's line is
 tied low; the run and the test drive it.
 
-The timer is the first thing in the address map that is not memory.
-Its four words sit at \code{TIMER\_BASE}, a load or store whose
-address falls in those sixteen bytes goes to it rather than to the
-data memory, and a store writes the lanes it covers into the word,
-as a store to memory does. The count runs from the reset, one a
-cycle; the compare is what software sets; the count having reached
-the compare is the timer's pending bit, read in \code{mip} and
-taken as the line's interrupt is, after it. A load from the timer
-takes its word into a register of its own, beside the one the data
-memory's read lands in, and the writeback stage chooses between them:
-the memory's register stays the block RAM's own that way, with
-nothing in front of it, and the multiplexer sits on the writeback's
-path, which the stall took off the critical one. The timer sits in
-the core for now; putting it on a bus of its own is the step after.
+The bus is everything above the data memory in the address map, and
+it is two channels: a request out of the core, one word of the
+address, the data in its lanes, the lanes a store covers and whether
+it is a store; and a response back, the word read. A channel is
+what the language has for two units, registered on both sides and
+indifferent to which ran first in the step, so a device is a unit of
+its own, and the core's process talks to it by predicate, as the tap
+of the examples document does~\cite{examples}: a receive with no
+wait before it, which takes the response whenever it comes, and a
+send under \code{when!}, whose \code{valid} is the condition. A
+store to the bus goes out when the bus has room and the instruction
+runs on; a load goes out, sets the wait bit and stalls, the third
+use of the stall, until the response is offered, which is two cycles
+later for the timer, and then runs with the response in the
+writeback's register beside the one the data memory's read lands in,
+so that the memory's register stays the block RAM's own. An
+interrupt taken while a load waits is taken when the response has
+come, which the wait bit then drops, and the load is made again
+after the handler.
+
+The timer, Listing~\ref{lst:v-timer}, is the first device, in
+sixty lines of the same subset. It takes every request offered,
+answers a read in the cycle after with the word addressed, or zero
+for an address that is not its own, writes the lanes a write covers
+into its word, counts from the reset one a cycle, and raises its
+line while the count has reached the compare. The line is a wire,
+not a channel, and a wire between units carries no promise about the
+step, so the timer drives it from a register, and the run and the
+test poll the timer before the core: then the core reads in a cycle
+what the timer decided the cycle before, which is what the netlist
+does too. The timer's own netlist is checked as the core's is, from
+the same trace; the two entities share one run. Between two lowered
+units there is no testbench to play the channel, and no channel: a
+unit's port is one side of the handshake, and the sides wired
+together make a combinational loop, which the placer refused when
+the first board top did that. The channel itself is
+\code{Buffer} of \code{txhdl\_parts}, the runtime's elastic
+buffer of two written in the lowerable subset and checked against
+the runtime's channel in the examples document~\cite{examples};
+the run writes one at each width, \code{chan69} and \code{chan32},
+beside the core and the timer, and the board puts them between the
+two.
+
+\lstinputlisting[caption={\code{timer.rs}: the timer, a device on
+the bus.},label={lst:v-timer}]{cpu/vreteno/src/timer.rs}
 
 The stages meet at the end of the cycle, in the deferred drives of
 the fetch's state and the writeback's. When the execute stage's next
@@ -470,11 +501,14 @@ before the cycle, so the test reads that bit with the two enables
 while the instruction is in execute, and tells the model, when the
 instruction retires a cycle later, whether the interrupt was taken
 in its place; the model raises its own pending bit in the cycle the
-line is high, as the core does at its edge. The timer's count goes
-across the same way: the test reads the core's count while the
-instruction is in execute and hands it to the model with the
-instruction, so a load of the count agrees and the timer's interrupt
-is decided on the same number in both.
+line is high, as the core does at its edge. The timer's line and
+count go across the same way: the test reads the timer's pending
+register while the instruction is in execute, and the count when
+the core's wait bit rises, which is the cycle the timer answers, and
+hands both to the model with the instruction; so a load of the count
+agrees, and the timer's interrupt is decided on the same bit in
+both. The compare lands in the timer a cycle after the core's store,
+so it is checked at the halt, as the memory is.
 
 The control registers are compared with one allowance. The core
 writes them in execute, when the instruction is in its second stage;
@@ -544,10 +578,11 @@ the build ran it.},label={lst:v-out}]{out_vreteno.txt}
 \label{sec:v-netlist}
 
 The Verilog at the end of Listing~\ref{lst:v-out} is the core as
-hardware: thirty-five registers, six memories, the instruction
+hardware: thirty-four registers, six memories, the instruction
 memory holding the program, a wire per \code{let} of the loop, three
-temporaries, and one clocked block of a hundred and twenty-one
-lines. The VHDL the run
+temporaries, and one clocked block of a hundred and eighteen lines;
+the timer's, after it, is three registers and a block of eighteen.
+The VHDL the run
 wrote beside it says the same, and the build simulates both against
 the trace the Rust core wrote, the VHDL under nvc and the Verilog
 under Verilator, the testbench replaying the reset and checking every
@@ -577,11 +612,14 @@ fail would prove nothing. The register file is not traced, so the
 testbench cannot see it, but every write to it shows in the
 writeback output the next tick, and every read shows in the program
 counter and the outputs that follow; the four hundred and
-fifty-two ticks of the demonstration exercise every instruction of
+fifty-eight ticks of the demonstration exercise every instruction of
 the program through both, the two traps and their returns included,
 since a wrong \code{mepc} or \code{mtvec} is a wrong program
 counter, and every register of the sequencer at every step of three
-multiplies and two divides, since the whole unit is traced. The checks that failed on the way, a truth value rendered
+multiplies and two divides, since the whole unit is traced. The
+timer is checked from the same trace as an entity of its own, its
+channels' six wires and its line among the signals, so the bus is
+checked from both ends. The checks that failed on the way, a truth value rendered
 ambiguously, a bitwise \code{and} rendered as a comparison, a
 concatenation of ambiguous type, a slice of an expression and a
 temporary named with a leading underscore, all failed to analyze or
@@ -604,16 +642,17 @@ program counter, which only the lockstep test reads, was removed as
 unused, and an advisory on floorplanning.
 
 \begin{table}[htbp]
-\caption{The core on an Artix-7, after synthesis.}
+\caption{The core on an Artix-7, after synthesis; the timer, a unit
+of its own, is not in it, and is in the board's figures below.}
 \label{tab:v-synth}
 \centering
 \begin{tabular}{@{}lr@{}}
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 2121 \\
+LUTs, as logic & 2004 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 609 \\
+Flip-flops & 486 \\
 Block RAM tiles & 3 \\
 DSP blocks & 4 \\
 \bottomrule
@@ -635,7 +674,8 @@ and the stage registered the load's, and the LUT count fell by a
 third. The register file, 32 by 32 with one write port and two
 reads, is twelve of the small distributed primitives, which is what
 a register file of that size is on this family. The flip-flops are
-the thirty-five registers of the source less one, the writeback
+the core's thirty-four registers and the timer's three less one, the
+writeback
 stage's program counter, which only the lockstep test reads and
 synthesis removed as unused, with a warning that says so, and less
 the bits a mask makes constant: \code{mstatus} has two bits that
@@ -647,17 +687,16 @@ instruction.
 The netlist is also placed and routed, \code{bazel build
 //cpu/vreteno:vreteno\_pnr}, with the same constraint and no pins,
 so the bitstream is a stub and the reports are the point. The routed
-design meets ten nanoseconds with 0.719~ns of slack, and hold with
-0.135~ns. The critical path is 8.870~ns, of which routing is two
-thirds, through seventeen levels of logic: from the writeback
-stage's destination register, through the forwarding compare into
-the operand, the address add and the timer's decode, to the compare
-register's enable, which is a store to the timer of what the
-instruction before it computed. The multiplier, four DSP blocks and
-a carry chain from the sequencer's registers into the pair, and the
-branch on a register through the register file's read and the
-compare into the instruction memory's address, are the next two
-paths, and each was the critical one in an earlier form. With two stages the slack
+design meets ten nanoseconds with 0.129~ns of slack, and hold with
+0.110~ns. The critical path is 9.283~ns, of which routing is three
+quarters, through thirteen levels of logic: from the register file's
+read, through the branch compare, to the instruction memory's
+address, a branch on a register, which was the critical path two
+forms ago and is again now that the timer's registers have left the
+core; the slack on it has moved by half a nanosecond between runs of
+the same path, which is what placement does to a path that is three
+quarters routing. The multiplier, four DSP blocks and a carry chain
+from the sequencer's registers into the pair, is the next path. With two stages the slack
 had been 0.263~ns, on a path from a register through the decode and
 the ALU into the register file's write. With three stages and the
 load forwarded it was 0.361~ns, on a load followed at once by a jump
@@ -685,13 +724,16 @@ clock brought down to the 100~MHz the core meets through an MMCM,
 the reset button synchronised into that clock and held until the
 clock has locked, and four LEDs, lit when driven low, showing the
 core halted, a heartbeat, the reset released and the clock locked;
-the interrupt line is tied low, since nothing on the board raises it
-yet.
+the timer beside the core with a channel buffer each way between
+them, and the external interrupt line tied low, since nothing on the
+board raises it yet.
 The constraints name the board's pins as the project's other designs
 for it do, so the bitstream is real: the routed design meets
-100~MHz with 0.621~ns of slack, on the same path, in 2039 LUTs, 613
-flip-flops, three block RAM tiles, four DSP blocks and the MMCM,
-with no critical warning.
+100~MHz with 0.502~ns of slack, in 2158 LUTs and 717 flip-flops
+for the core, the timer and the two buffers together, three block
+RAM tiles, four DSP blocks and the MMCM, with no critical warning
+and no combinational loop, which the first board top with the units
+wired port to port had.
 \code{bazel run //cpu/vreteno:vreteno\_board\_flash} writes it into
 the board's QSPI flash over the programming cable. What the board
 should show, once it does: the clock LED at once, the running LED
@@ -711,24 +753,21 @@ writes it; what its LEDs should show is stated above, and the first
 thing to do with the board in hand is to see that they do.
 
 More clock. What sets the timing now is stated in
-Section~\ref{sec:v-synth}: a store to the timer of a forwarded
-value, which a bus with a registered address would take off the
-path, and which is one more reason for the bus; then the
-multiplier, which a second register in the middle of its carry
-chain, one more step of the sequencer, would shorten; then the
-branch on a register, which a fourth stage, or a register file read
-a cycle earlier, would. The lockstep test is the check for any of
-these, since it compares architectural state when an instruction
-retires.
+Section~\ref{sec:v-synth}: the branch on a register, three quarters
+routing, which a fourth stage, or a register file read a cycle
+earlier, would shorten, and which the bus took the timer's store off
+by taking the timer out of the core; then the multiplier, which a
+second register in the middle of its carry chain, one more step of
+the sequencer, would. The lockstep test is the check for either,
+since it compares architectural state when an instruction retires.
 
-A bus. The timer sits in the core, decoded from the address beside
-the data memory; the next device, whatever it is, should not. A bus
-of the core's own, a transaction of address, data and a strobe in
-the language's own terms, with the timer moved out onto it as its
-first device and the data memory perhaps its second, is the step
-that lets the core be one unit among several. It begins in the
-model, as everything here has, is added to the core under the
-lockstep test, and is checked as a netlist by the same trace.
+More on the bus. The timer is one device; a second wants an
+arbiter, or an address decode with a device per range, and the data
+memory could go out onto the bus too, at the cost of the cycle a
+response takes. A serial port is the device that would let the board
+say something. Each begins in the model, as everything here has, is
+added to the core under the lockstep test, and is checked as a
+netlist by the same trace.
 
 \begin{thebibliography}{10}
 
