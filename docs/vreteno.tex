@@ -212,6 +212,16 @@ the reset and its outputs are the halt, the word executed, and a
 \code{Writeback} value: whether an instruction retired this cycle,
 the register it wrote and what it wrote, which is what the waveform
 decodes field by field and the lockstep test steps the model on.
+The pieces of the step that are functions of their operands alone
+come first in the file, each a function under \code{\#[lower]} with
+a name and a sentence of its own: the five immediates, the ALU, the
+branch condition, a loaded word's extension, what a store puts on
+each lane and which lanes it writes, the CSR read, the CSR number
+check and the CSR's new value, the sequencer's signs and its result.
+The step calls them, and the lowering writes them in where it does,
+so the step is the pipeline's decisions and drives, some four
+hundred and seventy lines, and the netlist is the one it made when
+the pieces were written in place.
 
 The process is one \code{loop} with one wait, the rising edge, and
 everything after the wait is one cycle of all three stages at once.
@@ -714,7 +724,7 @@ of its own, is not in it, and is in the board's figures below.}
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1822 \\
+LUTs, as logic & 1890 \\
 LUTs, as distributed RAM & 48 \\
 Flip-flops & 481 \\
 Block RAM tiles & 3 \\
@@ -751,12 +761,17 @@ instruction.
 The netlist is also placed and routed, \code{bazel build
 //cpu/vreteno:vreteno\_pnr}, with the same constraint and no pins,
 so the bitstream is a stub and the reports are the point. The routed
-design meets ten nanoseconds with 0.776~ns of slack, and hold with
-0.101~ns. The critical path is 8.693~ns, of which routing is three
-quarters, through ten levels of logic: from the instruction
-register's source field, through the register file's read and the
-jump's add, to the instruction memory's address, a jump through a
-register. Before the device load's wait moved into writeback the
+design meets ten nanoseconds with 0.643~ns of slack, and hold with
+0.163~ns. The critical path is 8.753~ns, of which routing is three
+quarters, through twelve levels of logic: from the writeback's valid
+bit, through the forwarding into an operand and the jump's add, to
+the instruction memory's address, a jump through a register that the
+instruction before is still writing. With the step's pieces written
+in place rather than as functions the same logic had 0.776~ns on a
+path from the instruction register, and sixty LUTs fewer after
+synthesis: the synthesis and the placement move by that much on one
+netlist written two ways. Before the device load's wait moved into
+writeback the
 slack was 0.129~ns, on a path from the same read through the
 address add and the decode of whether the address is a device's
 into the fetch's hold: the fetch waited on the address. Now the
@@ -794,13 +809,14 @@ pin the board's USB serial bridge listens to, and the external
 interrupt line tied low, since nothing on the board raises it yet.
 The constraints name the board's pins as the project's other designs
 for it do, so the bitstream is real: the routed design meets
-100~MHz with 0.903~ns of slack, in 1992 LUTs and 927 flip-flops
+100~MHz with 0.688~ns of slack, in 1994 LUTs and 927 flip-flops
 for the core, the router, the timer, the serial port and the six
 buffers together, three block RAM tiles, four DSP blocks and the
 MMCM, with no critical warning and no combinational loop, which the
 first board top with the units wired port to port had. The wait's
-move into writeback took the board's slack from 0.285~ns to this,
-and a tenth of the LUTs with it.
+move into writeback took the board's slack from 0.285~ns to 0.903,
+and a tenth of the LUTs with it; the step's pieces as functions
+moved it by two tenths, as the core's.
 \code{bazel run //cpu/vreteno:vreteno\_board\_flash} writes it into
 the board's QSPI flash over the programming cable. What the board
 should show, once it does: the clock LED at once, the running LED

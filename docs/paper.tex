@@ -255,7 +255,9 @@ alternatives, the first match winning, so a state machine is one
 values rather than drives, \code{match} on a value by another name,
 and lowers to a chain of multiplexers; \code{mux} is its two-arm
 case. Listing~\ref{lst:p-alu} is the Vreteno core's ALU, a
-\code{select!} over the function code.
+\code{select!} over the function code, in a function under
+\code{\#[lower]}, which the lowering writes in where the step calls
+it.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=alu-alu,float,caption={\code{select!}: the ALU of the Vreteno core, one value chosen by the function code. From \code{core.rs}.},label={lst:p-alu}]{cpu/vreteno/src/core.rs}
 
@@ -478,10 +480,11 @@ memory became a read-only memory in one block RAM tile, the data
 memory's four byte lanes four block RAMs in two, since the third
 stage registers their read, and the register file distributed RAM.
 Placed and routed with the same constraint, the core meets ten
-nanoseconds with 0.776~ns to spare; the critical path runs from the
-instruction register through the register file's read and the
+nanoseconds with 0.643~ns to spare; the critical path runs from the
+writeback's valid bit through the forwarding into an operand and the
 jump's add to the instruction memory's address, a jump through a
-register, and is three quarters routing. Fig.~\ref{fig:p-vreteno} is the opening of the
+register the instruction before is still writing, and is three
+quarters routing. Fig.~\ref{fig:p-vreteno} is the opening of the
 demonstration, from the trace.
 
 \begin{table}[htbp]
@@ -492,7 +495,7 @@ demonstration, from the trace.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1822 \\
+LUTs, as logic & 1890 \\
 LUTs, as distributed RAM & 48 \\
 Flip-flops & 481 \\
 Block RAM tiles & 3 \\
@@ -524,7 +527,7 @@ simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
 thirty-nine tests run under \code{bazel test //...}, and every one of them
 is hermetic, the simulators built from source and the synthesis tool
-installed by the build. Vreteno is 737 lines of core, 98 of timer,
+installed by the build. Vreteno is 857 lines of core, 98 of timer,
 62 of router and 89 of serial port, checked in lockstep against a
 364-line model on a demonstration program and sixty-four random
 ones, with interrupts raised at random, checked as a netlist on 732
