@@ -365,6 +365,7 @@ latex_document(
         ":buildstamp",
         ":vendored_tex",
         "//lib:sources",
+        "//lib/parts:sources",
     ],
     deps = ["housestyle.tex"] + glob(["runtime_sections/*.tex"]),
 )
@@ -378,6 +379,7 @@ API = {
     "api_funcs.rs": "//lib:src/funcs.rs",
     "api_macros.rs": "//lib:macros/lib.rs",
     "api_netlist.rs": "//lib:src/netlist.rs",
+    "api_buffer.rs": "//lib/parts:src/buffer.rs",
 }
 
 [
@@ -603,6 +605,10 @@ latex_document(
         ":twoproc_timing",
         ":mul_run",
         ":mul_timing",
+        ":tap_run",
+        ":tap_timing",
+        ":buffer_run",
+        ":buffer_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -676,6 +682,39 @@ waveform(
 )
 
 waveform(
+    name = "tap",
+    example = "//lib/examples:ex_tap",
+    lowered = ("tap", "tap"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//inp/rx_valid=>inp_valid",
+        "//inp/rx_data=>inp",
+        "//inp/rx_ready=>inp_ready",
+        "//out/rx_valid=>out_valid",
+        "//out/rx_data=>out",
+        "//tap/seen=>seen",
+        "//tap/passed=>passed",
+    ],
+)
+
+waveform(
+    name = "buffer",
+    example = "//lib/examples:ex_buffer",
+    lowered = ("buffer8", "buffer"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//tx_valid=>tx_valid",
+        "//tx_data=>tx_data",
+        "//tx_ready=>tx_ready",
+        "//rx_valid=>rx_valid",
+        "//rx_data=>rx_data",
+        "//rx_ready=>rx_ready",
+        "//buffer/head_full=>head_full",
+        "//buffer/tail_full=>tail_full",
+    ],
+)
+
+waveform(
     name = "twoproc",
     example = "//lib/examples:ex_twoproc",
     lowered = ("sampler", "sampler"),
@@ -693,7 +732,7 @@ waveform(
 waveform(
     name = "vreteno",
     example = "//cpu/vreteno:vreteno",
-    lowered = ("vreteno", "cpu"),
+    lowered = [("vreteno", "cpu"), ("timer", "timer")],
     until = 30,
     signals = [
         "//clocks/clk=>clk",

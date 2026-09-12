@@ -171,6 +171,27 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The channel as hardware, a buffer of two:  bazel run //lib/examples:ex_buffer
+rust_binary(
+    name = "ex_buffer",
+    srcs = ["ex_buffer.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# A tap between channels, sends under when!:  bazel run //lib/examples:ex_tap
+rust_binary(
+    name = "ex_tap",
+    srcs = ["ex_tap.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Two processes, one per edge, lowered:  bazel run //lib/examples:ex_twoproc
 rust_binary(
     name = "ex_twoproc",
@@ -220,5 +241,7 @@ filegroup(
         "ex_imm.rs",
         "ex_twoproc.rs",
         "ex_mul.rs",
+        "ex_tap.rs",
+        "ex_buffer.rs",
     ],
 )

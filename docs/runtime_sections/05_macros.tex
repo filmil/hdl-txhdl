@@ -45,8 +45,9 @@ that every role names every member once and that no member is driven
 twice, and emits a struct per role plus a constructor that splits each
 member. \code{when!} and \code{case!} are predicated drives that read
 as a conditional: each statement inside them is \code{register <=
-value}, the arrow pointing into the register, and a statement without
-one is refused with the macro's own message. Both are procedural
+value}, the arrow pointing into the register, or in \code{when!} a
+channel's \code{send}, made under the predicate, and a statement
+that is neither is refused with the macro's own message. Both are procedural
 because a \code{macro\_rules!} \code{expr} fragment may be followed
 only by \code{=>}, \code{,} or \code{;}, so \code{lhs <= rhs} cannot be
 matched declaratively at all.

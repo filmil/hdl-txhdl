@@ -779,8 +779,21 @@ pub fn when(input: TokenStream) -> TokenStream {
                 .next()
                 .map(|t| t.span())
                 .unwrap_or(g.span());
+            // A send in an arm: made under the predicate, as the drive
+            // is; the lowering makes the channel's valid the predicate.
+            let text = st.to_string();
+            if text.ends_with(')') && text.contains(".send(") {
+                out.push_str(&format!(
+                    "if ({pred}).to_bool() {{ {}; }}\n",
+                    text
+                ));
+                continue;
+            }
             let Some((lhs, rhs)) = split_becomes(st) else {
-                return err(span, "expected `register <= value`");
+                return err(
+                    span,
+                    "expected `register <= value` or `tx.send(v)`",
+                );
             };
             out.push_str(&format!("({}).set_if({pred}, {});\n", lhs, rhs));
         }
@@ -1293,6 +1306,27 @@ fn target_expr(
         }
     }
     Ok(format!("T::Name(\"{}\".to_string())", target_name(ts)?))
+}
+
+/// `tx.send(e)` as a statement of a `when!` arm: the channel's name and
+/// the expression, or `None` when the statement is not a send.
+fn send_in_arm(
+    d: &[TokenTree],
+    subst: &[(String, String)],
+) -> Option<(String, String)> {
+    let end = d.len().checked_sub(3)?;
+    let (TokenTree::Punct(dot), TokenTree::Ident(m), TokenTree::Group(g)) =
+        (&d[end], &d[end + 1], &d[end + 2])
+    else {
+        return None;
+    };
+    if dot.as_char() != '.' || m.to_string() != "send" {
+        return None;
+    }
+    let tx = target_name(&d[..end]).ok()?;
+    let at: Vec<TokenTree> = g.stream().into_iter().collect();
+    let e = tr(&at, subst).ok()?;
+    Some((tx, e))
 }
 
 fn target_name(ts: &[TokenTree]) -> Result<String, String> {
@@ -1974,13 +2008,16 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 continue;
             }
             // A receive under the guard: ready is asserted with the guard.
+            // With no wait before it, the process takes whatever is
+            // offered at every edge, and ready is valid: the take, which
+            // is what the runtime's trace holds for ready.
             if text.contains(".recv()") {
-                let Some(g) = &guard else {
-                    return err(ts[0].span(), "recv needs a wait before it");
-                };
                 let TokenTree::Ident(rx) = &ts[3] else {
                     return err(ts[0].span(), "expected `let v = rx.recv()`");
                 };
+                let g = guard
+                    .clone()
+                    .unwrap_or_else(|| ename(&format!("{rx}_valid")));
                 stmts.push(format!(
                     "S::Drive(T::Name(\"{rx}_ready\".to_string()), {g})"
                 ));
@@ -2118,14 +2155,37 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     _ => None,
                 };
                 let mut arms = Vec::new();
-                for arm in [Some(then), otherwise] {
+                for (i, arm) in [Some(then), otherwise].into_iter().enumerate()
+                {
                     let mut drives = Vec::new();
                     if let Some(g) = arm {
                         for d in statements(g) {
+                            // tx.send(e) in an arm: the data is driven
+                            // whatever the condition, and valid is the
+                            // condition, or its negation in the else arm.
+                            let dt: Vec<TokenTree> =
+                                d.clone().into_iter().collect();
+                            if let Some((tx, e)) = send_in_arm(&dt, &subst) {
+                                let v = if i == 0 {
+                                    c.clone()
+                                } else {
+                                    format!("E::Not(Box::new({c}))")
+                                };
+                                stmts.push(format!(
+                                    "S::Drive(T::Name(\"{tx}_data\"\
+                                     .to_string()), {e})"
+                                ));
+                                stmts.push(format!(
+                                    "S::Drive(T::Name(\"{tx}_valid\"\
+                                     .to_string()), {v})"
+                                ));
+                                continue;
+                            }
                             let Some((lhs, rhs)) = split_becomes(d) else {
                                 return err(
                                     g.span(),
-                                    "expected `register <= value`",
+                                    "expected `register <= value` or \
+                                     `tx.send(v)`",
                                 );
                             };
                             let lt: Vec<TokenTree> = lhs.into_iter().collect();

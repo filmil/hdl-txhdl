@@ -918,13 +918,27 @@ impl Lowered {
 /// What an example calls so the build can simulate what the example
 /// lowered, under nvc and under Verilator.
 pub fn write_vhdl_from_env(l: &Lowered) {
+    write_netlists_from_env(&[l]);
+}
+
+/// Several units of one run into the same files: the VHDL and the
+/// Verilog one after another, and the ports file in sections, each
+/// opened by a line `entity NAME`, which the testbench generator reads
+/// for the entity it is asked for.
+pub fn write_netlists_from_env(units: &[&Lowered]) {
     if let Ok(p) = std::env::var("TXHDL_VHDL") {
-        std::fs::write(&p, l.vhdl()).expect("TXHDL_VHDL file");
-        std::fs::write(format!("{p}.ports"), l.ports_file())
+        let vhdl: Vec<String> = units.iter().map(|l| l.vhdl()).collect();
+        std::fs::write(&p, vhdl.join("\n")).expect("TXHDL_VHDL file");
+        let ports: Vec<String> = units
+            .iter()
+            .map(|l| format!("entity {}\n{}", l.name, l.ports_file()))
+            .collect();
+        std::fs::write(format!("{p}.ports"), ports.join(""))
             .expect("ports file");
     }
     if let Ok(p) = std::env::var("TXHDL_VERILOG") {
-        std::fs::write(&p, l.verilog()).expect("TXHDL_VERILOG file");
+        let v: Vec<String> = units.iter().map(|l| l.verilog()).collect();
+        std::fs::write(&p, v.join("\n")).expect("TXHDL_VERILOG file");
     }
 }
 
@@ -1085,6 +1099,12 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
         }
         Expr::Sext(a, m) => {
             format!("unsigned(resize(signed({}), {m}))", hval(a, 0, l))
+        }
+        // A bit is not an array in VHDL, so a bit is extended by
+        // putting zeros before it, and a bit extended to a bit is itself.
+        Expr::Zext(a, m) if l.ewidth(a) == 1 && *m == 1 => hval(a, 1, l),
+        Expr::Zext(a, m) if l.ewidth(a) == 1 => {
+            format!("unsigned'(to_unsigned(0, {}) & {})", m - 1, hval(a, 1, l))
         }
         Expr::Zext(a, m) => format!("resize({}, {m})", hval(a, 0, l)),
         // A word of a memory, or a bit of a value.

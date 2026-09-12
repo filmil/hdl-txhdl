@@ -11,11 +11,15 @@
 //! tick 2k was computed from the registers as they stood before that
 //! edge, so it is checked at 2k-1, where the entity's continuous
 //! assignment shows the same value; and from the inputs of that edge,
-//! so at 2k-1 the inputs are applied first, a delta passes, and the
-//! checks follow. A channel's inputs, the head of the buffer on the
-//! receiving side and the room on the sending side, are registered
-//! state of the channel: the trace at 2k holds them as that edge left
-//! them, which is what the entity sees during the cycle after it, so
+//! so the inputs are applied a tenth of a tick before 2k-1, every wire
+//! settles however deep, and the checks come just before 2k-1, ahead
+//! of the falling edge there, which is where the Verilog testbench
+//! checks too; a falling-edge register is therefore checked against
+//! the trace at 2k-1, the edge before. A channel's inputs, the head
+//! of the buffer on the receiving side and the room on the sending
+//! side, are registered state of the channel: the trace at 2k holds
+//! them as that edge left them, which is what the entity sees during
+//! the cycle after it, so
 //! they are applied at 2k+1. A sender's data is checked only at ticks
 //! where the trace has its valid high, since under a low valid the
 //! trace holds the last offer and the entity computes the wire anyway.
@@ -35,11 +39,22 @@ fn main() {
     let a: Vec<String> = std::env::args().collect();
     let (fst, ports, entity, unit) = (&a[1], &a[2], &a[3], &a[4]);
     let verilog = a.get(5).map(|s| s == "--verilog").unwrap_or(false);
+    // The ports file may hold several entities, each section opened by
+    // `entity NAME`; the one asked for is taken, or everything when the
+    // file has no sections.
+    let mut section: Option<String> = None;
     let ports: Vec<(String, String, usize)> = std::fs::read_to_string(ports)
         .expect("ports")
         .lines()
         .filter_map(|l| {
             let f: Vec<&str> = l.split_whitespace().collect();
+            if f.len() == 2 && f[0] == "entity" {
+                section = Some(f[1].to_string());
+                return None;
+            }
+            if section.as_deref().is_some_and(|s| s != entity) {
+                return None;
+            }
             (f.len() == 3).then(|| {
                 (f[0].to_string(), f[1].to_string(), f[2].parse().unwrap())
             })
@@ -308,14 +323,18 @@ fn main() {
     // valid.
     let zeros = |w: usize| lit(w, &"0".repeat(w));
     let mut params: Vec<String> = Vec::new();
-    let mut tick = String::from("      wait for 1 ns;\n");
+    // The tick sits just before the odd tick: the inputs for the next
+    // rising edge are applied, every wire settles however deep, and
+    // the checks come before the falling edge at the odd tick itself,
+    // as the Verilog testbench's do.
+    let mut tick = String::from("      wait for 900 ps;\n");
     for (n, d, w) in &ports {
         if is_in(d) && *n != clock {
             params.push(format!("{n}_i : {}", ty(*w)));
             tick.push_str(&format!("      {n} <= {n}_i;\n"));
         }
     }
-    tick.push_str("      wait for 0 ns;\n      wait for 0 ns;\n");
+    tick.push_str("      wait for 50 ps;\n");
     for (n, d, w) in &ports {
         if is_reg(d) {
             params.push(format!("{n}_e : {}; {n}_c : boolean", ty(*w)));
@@ -334,7 +353,7 @@ fn main() {
             ));
         }
     }
-    tick.push_str("      wait for 1 ns;\n");
+    tick.push_str("      wait for 1050 ps;\n");
     o.push_str(&format!(
         "    procedure tb_tick({}) is\n    begin\n{tick}    end procedure;\n",
         params.join("; ")
@@ -378,11 +397,12 @@ fn main() {
             };
         for (n, d, w) in &ports {
             let at = match d.as_str() {
-                "reg" => t,
-                "regf" => t + 1,
+                "reg" => Some(t),
+                "regf" => t.checked_sub(1),
                 _ => continue,
             };
-            expected(&mut args, *w, val(&trace_name(n, d), at));
+            let v = at.and_then(|at| val(&trace_name(n, d), at));
+            expected(&mut args, *w, v);
         }
         for (n, d, w) in &ports {
             if is_out(d) {

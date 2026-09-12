@@ -25,8 +25,8 @@ $2k-1$. A register the trace holds at $2k$ took its value at that
 edge, so it is checked at $2k+1$, through a VHDL-2008 external name.
 A wire the Rust process drove at $2k$ was computed from the registers
 as they stood before that edge, and from the inputs of that edge, so
-it is checked at $2k-1$ after those inputs are applied and a delta
-has passed, where the entity's continuous assignment shows the same
+it is checked at $2k-1$ after those inputs are applied and a few
+deltas have passed, one per level of wires, where the entity's continuous assignment shows the same
 value. That last rule
 is a fact about the runtime worth knowing: a wire a process drives
 inside its iteration lags the hardware's continuous assignment by the
