@@ -47,7 +47,9 @@ know saves its address and its cause in the control registers and
 enters the handler, which returns through \code{mret}; and with
 the M extension on one sequencer, a multiply one step in the part's
 multipliers and a division thirty-two, which stalls the instruction
-in execute. It is checked twice. In lockstep against a reference model of the instruction set
+in execute; and with an interrupt line, taken in place of the
+instruction in execute when \code{mie}, \code{mip} and
+\code{mstatus} allow. It is checked twice. In lockstep against a reference model of the instruction set
 written as a plain program: the model steps when the core retires an
 instruction, and after every cycle the program counter, the
 thirty-one registers, the control registers and the halt must agree,
@@ -119,7 +121,9 @@ and a function code and differ in their upper twelve bits; in the
 six CSR forms those bits name the register. The five machine-mode
 registers the core has, \code{mstatus}, \code{mtvec},
 \code{mscratch}, \code{mepc} and \code{mcause}, and the two
-causes it raises, are constants beside them. The M extension is the
+causes it raises, are constants beside them, with \code{mie},
+\code{mip}, \code{mtval}, the external interrupt's bit and its
+cause. The M extension is the
 register format with \code{funct7} one: the four multiplies, which
 differ in which operand is signed and which half of the product they
 keep, and the two divides and two remainders, signed and unsigned. A
@@ -133,7 +137,7 @@ the disassembler.},label={lst:v-isa}]{cpu/vreteno/src/isa.rs}
 
 Listing~\ref{lst:v-model} is the instruction set as a program. Its
 state is the architectural state and nothing else: the program
-counter, the registers, a data memory, the five control registers,
+counter, the registers, a data memory, the eight control registers,
 and whether it has halted. One \code{step} is one instruction,
 written against the decoder in the plainest Rust that says what the
 manual says. It is the oracle: the core is right when it agrees with
@@ -151,8 +155,17 @@ way back: the counter takes \code{mepc}, the enable takes the saved
 bit, and the saved bit is set. A CSR instruction reads the register
 its upper twelve bits name into \code{rd} and writes it, replaced,
 set or cleared by a register or by a five-bit immediate; a name the
-model does not have is an illegal word, and traps. Only
-\code{ebreak} halts. The M extension is Rust's arithmetic on the
+model does not have is an illegal word, and traps. \code{mtval}
+takes the illegal word itself, and zero for any other trap. The
+external interrupt is a bit in \code{mip}, which \code{raise}
+sets when the line is seen high and software clears; when it is set,
+enabled in \code{mie} and interrupts are enabled in
+\code{mstatus}, the next \code{step} traps instead of executing,
+with the interrupt's cause, and returns to the same address. Whether
+that step takes the interrupt is the caller's word, since the core
+decides on the bit as it stood a cycle earlier, and the lockstep test
+carries the core's decision across. Only \code{ebreak} halts. The
+M extension is Rust's arithmetic on the
 right types: a product's low word is the same whatever the signs, the
 high word is the top of a 64-bit product of the operands extended
 as the instruction says, and a division is the wrapping one, which
@@ -173,7 +186,7 @@ the boundary between execute and writeback, which hold whether an
 instruction is there, its program counter, its destination, its
 value if it is not a load, the raw word read for a load with the
 lane and the width to take from it, the word itself, and whether it
-halts; the halt itself; the five control registers; the sequencer's
+halts; the halt itself; the eight control registers; the sequencer's
 seven, a busy bit, a count, the two halves of the pair it shifts, the
 multiplicand or divisor, and two sign bits; and six memories: the register file, the instruction memory,
 loaded from the program with \code{Mem::with}, and the data memory
@@ -259,6 +272,24 @@ of the sequencer multiplied by thirty-two shifts and adds, and the
 change to the multiplier was one step's arm and the count it starts
 from.
 
+The interrupt is the second input of the core, and it is taken in
+execute as a trap is. The line sets the pending bit of \code{mip}
+at the edge, and a write to \code{mip} clears it, the write winning
+when both fall in one cycle. An instruction in execute that is not
+stalled is live; when the pending bit, its enable in \code{mie} and
+the enable in \code{mstatus} are all set, the interrupt takes the
+live instruction's place: it runs nothing, its address goes to
+\code{mepc} with the interrupt's cause, \code{mtval} takes zero,
+the status is saved and cleared as for any trap, and the fetch is
+redirected to \code{mtvec}. The instruction still passes through
+the writeback stage, writing nothing, so that it retires as a trap
+does and the lockstep test steps the model on it. A division in
+flight when an interrupt is taken is cancelled, and starts again
+when the handler returns, on the registers as they are then: the
+sequencer must never step under an instruction other than its own,
+which is a defect the random programs found. The board's line is
+tied low; the run and the test drive it.
+
 The stages meet at the end of the cycle, in the deferred drives of
 the fetch's state and the writeback's. When the execute stage's next
 program counter is the one after its own, the word the fetch stage
@@ -288,7 +319,7 @@ writeback value, the target, the old and the new CSR value and
 whether the core knows the opcode; \code{when!} and \code{case!}
 choose among drives, the register file and the four lanes' writes
 under their enables, the control registers under a CSR write, a
-trap or a return, the writeback registers under execute's run, and
+trap, the line or a return, the writeback registers under execute's run, and
 the instruction register by reset, halt or fetch, in that priority.
 Register zero reads as zero rather than being protected from writes, since a mask
 on a read is a multiplexer and a guard on every arm is not. The
@@ -314,12 +345,18 @@ the arithmetic shift and both compares, then traps twice and ends
 in \code{ebreak} with 110 in \code{x10} and at the first data word.
 The traps need a label's absolute address, which \code{abs} gives
 an encoder once the label is placed. The handler's address goes into
-\code{mtvec}; an \code{ecall} and then the word zero, which is
-illegal, enter the handler. The handler reads \code{mepc}, steps it
-past the word that trapped, writes it back, reads the cause into
-\code{x23} and returns. The program then writes \code{mscratch} by
-immediate and reads it back into \code{x24}, so that two is in
-\code{x23} and five in \code{x24} at the end. Between the shifts
+\code{mtvec} first of all, the external interrupt is enabled in
+\code{mie} and interrupts in \code{mstatus}, so that the line can
+be raised at any point of the run. An \code{ecall} and then the
+word of all ones, which is illegal, enter the handler. The handler
+reads the cause into \code{x23} and branches on its sign: an
+interrupt is cleared in \code{mip}, counted in \code{x8} and
+returned from to the word it interrupted; an exception has
+\code{mepc} read, stepped past the word that trapped and written
+back. The program then writes \code{mscratch} by immediate and
+reads it back into \code{x24}, so that two is in \code{x23} and
+five in \code{x24} at the end, and one in \code{x8} when the line
+was raised once. Between the shifts
 and the traps it multiplies and divides, five of the eight
 instructions, on the sum and on minus two: minus 220 into
 \code{x26}, minus 55 into \code{x29}, and the remainder minus two
@@ -331,11 +368,14 @@ within the first data words through \code{x2}, which it keeps at the
 data base, now and then a forward branch over one or two words, so
 both outcomes of every branch condition occur, the M extension in
 half the places an \code{or} would go, the six CSR forms on
-\code{mscratch}, \code{mcause} and \code{mepc}, and now and then
-an \code{ecall} or an illegal word, which the handler placed after
-the \code{ebreak} returns from to the word after; \code{x31} is
-the handler's and the program leaves it alone. Nothing in it can
-loop, so every program halts.
+\code{mscratch}, \code{mcause}, \code{mepc} and \code{mtval},
+and now and then an \code{ecall} or an illegal word, zero or all
+ones. Interrupts are enabled from the start. The handler placed
+after the \code{ebreak} branches on the cause's sign as the
+demonstration's does, clearing an interrupt and returning to the
+word it interrupted, and returning from an exception to the word
+after; \code{x31} is the handler's and the program leaves it alone.
+Nothing in it can loop, so every program halts.
 
 \lstinputlisting[caption={\code{program.rs}: the assembler, the
 demonstration, the random
@@ -352,7 +392,7 @@ clones, holds the reset for one cycle, and then runs the core a cycle
 at a time, stepping the model once whenever the writeback says an
 instruction retired. After each cycle the architectural program
 counter, that of the instruction about to execute or the fetch's
-when the stage is empty, the thirty-one registers, the five control
+when the stage is empty, the thirty-one registers, the eight control
 registers and the halt must agree, and the failure names the cycle
 and the instruction; at the halt every word of data memory must
 agree too, and the count of
@@ -373,15 +413,32 @@ forwarding path cut, it fails at the first instruction that reads
 what the one before it wrote. And with \code{mret} restoring the
 interrupt enable but leaving the previous-enable bit clear, where
 the manual sets it, the demonstration fails at its first
-\code{mret}, on \code{mstatus}. Every control was then removed.
-The single-cycle core passed the first; the pipeline passes them
-all.
+\code{mret}, on \code{mstatus}. With \code{mtval} written as
+zero for an illegal word, the demonstration fails on \code{mtval}
+at that word, which is why the word is all ones rather than zero.
+Every control was then removed. The single-cycle core passed the
+first; the pipeline passes them all. The random programs found a
+defect the controls did not look for: a division interrupted in the
+middle went on stepping under the handler's instructions, and one of
+them was a multiply, so the pair was overwritten and the quotient
+came back wrong nineteen steps short. The sequencer is cancelled by
+an interrupt now.
+
+The line is the test's. For the demonstration it is one pulse at
+cycle forty; for a random program it is high in one cycle of sixteen
+from the seed. The core decides on the pending bit as it stood
+before the cycle, so the test reads that bit with the two enables
+while the instruction is in execute, and tells the model, when the
+instruction retires a cycle later, whether the interrupt was taken
+in its place; the model raises its own pending bit in the cycle the
+line is high, as the core does at its edge.
 
 The control registers are compared with one allowance. The core
 writes them in execute, when the instruction is in its second stage;
 the model writes them when the instruction retires, a cycle later.
-So in the one cycle in which a CSR instruction, a call, a return or
-an illegal word is in execute the two disagree by design. The test
+So in the one cycle in which a CSR instruction, a call, a return,
+an illegal word or an interrupt is in execute the two disagree by
+design. The test
 skips the comparison in that cycle and requires it in every other,
 and the negative control above shows the allowance is narrow enough
 to catch a wrong status.
@@ -403,11 +460,13 @@ its bubble, and the loads as the sign and zero extensions of the same
 byte and half. The one load stall is the bubble after \code{lw},
 where the next instruction adds to what it loaded; each multiply is
 a run of three and each divide a run of thirty-three, which the run
-prints as one line with the count. The two traps are the
-jumps to the handler at
-\code{0x7c}, the first from the \code{ecall} with eleven read into
-\code{x23}, the second from the illegal word with two, each with its
-bubble, as the returns have theirs. Figure~\ref{fig:v-wave} is the
+prints as one line with the count. The interrupt is the jump to the
+handler at \code{0xa4} out of the loop, with the cause's top bit
+set in \code{x23} and one counted into \code{x8}, and the return
+to the instruction it interrupted; the two traps are the later jumps
+to the same handler, the first from the \code{ecall} with eleven
+read into \code{x23}, the second from the illegal word with two,
+each with its bubble, as the returns have theirs. Figure~\ref{fig:v-wave} is the
 opening of the same
 run, the reset, the first dozen instructions and the first bubble,
 drawn from the waveform the run wrote; \code{pc} there is the fetch
@@ -438,9 +497,9 @@ the build ran it.},label={lst:v-out}]{out_vreteno.txt}
 \label{sec:v-netlist}
 
 The Verilog at the end of Listing~\ref{lst:v-out} is the core as
-hardware: twenty-eight registers, six memories, the instruction
+hardware: thirty-one registers, six memories, the instruction
 memory holding the program, a wire per \code{let} of the loop, three
-temporaries, and one clocked block of ninety-one lines. The VHDL the run
+temporaries, and one clocked block of a hundred and six lines. The VHDL the run
 wrote beside it says the same, and the build simulates both against
 the trace the Rust core wrote, the VHDL under nvc and the Verilog
 under Verilator, the testbench replaying the reset and checking every
@@ -470,7 +529,7 @@ fail would prove nothing. The register file is not traced, so the
 testbench cannot see it, but every write to it shows in the
 writeback output the next tick, and every read shows in the program
 counter and the outputs that follow; the three hundred and
-thirty-four ticks of the demonstration exercise every instruction of
+sixty-six ticks of the demonstration exercise every instruction of
 the program through both, the two traps and their returns included,
 since a wrong \code{mepc} or \code{mtvec} is a wrong program
 counter, and every register of the sequencer at every step of three
@@ -504,9 +563,9 @@ unused, and an advisory on floorplanning.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1818 \\
+LUTs, as logic & 1902 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 412 \\
+Flip-flops & 449 \\
 Block RAM tiles & 3 \\
 DSP blocks & 4 \\
 \bottomrule
@@ -528,7 +587,7 @@ and the stage registered the load's, and the LUT count fell by a
 third. The register file, 32 by 32 with one write port and two
 reads, is twelve of the small distributed primitives, which is what
 a register file of that size is on this family. The flip-flops are
-the twenty-eight registers of the source less one, the writeback
+the thirty-one registers of the source less one, the writeback
 stage's program counter, which only the lockstep test reads and
 synthesis removed as unused, with a warning that says so, and less
 the bits a mask makes constant: \code{mstatus} has two bits that
@@ -540,14 +599,14 @@ instruction.
 The netlist is also placed and routed, \code{bazel build
 //cpu/vreteno:vreteno\_pnr}, with the same constraint and no pins,
 so the bitstream is a stub and the reports are the point. The routed
-design meets ten nanoseconds with 0.617~ns of slack, and hold with
-0.077~ns. The critical path is 8.853~ns, of which routing is three
-quarters, through ten levels of logic: from the register file's
-read, through the branch compare, to the instruction memory's
-address, which is a branch on a register. The multiplier is the next
-path: four DSP blocks and a carry chain of thirteen, 8.7~ns of which
-logic is six sevenths, from the sequencer's registers into the pair,
-which is what the start cycle buys. With two stages the slack
+design meets ten nanoseconds with 0.534~ns of slack, and hold with
+0.105~ns. The critical path is the multiplier: 9.109~ns from the
+sequencer's registers into the pair, four DSP blocks and a carry
+chain of thirteen, of which logic is four fifths, which is what the
+start cycle buys; the branch on a register, through the register
+file's read and the compare into the instruction memory's address,
+is the next path, and was the critical one before the multiplier
+took the DSP blocks. With two stages the slack
 had been 0.263~ns, on a path from a register through the decode and
 the ALU into the register file's write. With three stages and the
 load forwarded it was 0.361~ns, on a load followed at once by a jump
@@ -574,12 +633,14 @@ board needs and a core does not: the board's 200~MHz differential
 clock brought down to the 100~MHz the core meets through an MMCM,
 the reset button synchronised into that clock and held until the
 clock has locked, and four LEDs, lit when driven low, showing the
-core halted, a heartbeat, the reset released and the clock locked.
+core halted, a heartbeat, the reset released and the clock locked;
+the interrupt line is tied low, since nothing on the board raises it
+yet.
 The constraints name the board's pins as the project's other designs
 for it do, so the bitstream is real: the routed design meets
-100~MHz with 1.184~ns of slack, on the multiplier's path this time,
-in 1796 LUTs, 414 flip-flops, three block RAM tiles, four DSP blocks
-and the MMCM, with no critical warning.
+100~MHz with 0.956~ns of slack, on the branch's path, in 1841 LUTs,
+448 flip-flops, three block RAM tiles, four DSP blocks and the MMCM,
+with no critical warning.
 \code{bazel run //cpu/vreteno:vreteno\_board\_flash} writes it into
 the board's QSPI flash over the programming cable. What the board
 should show, once it does: the clock LED at once, the running LED
@@ -599,18 +660,21 @@ writes it; what its LEDs should show is stated above, and the first
 thing to do with the board in hand is to see that they do.
 
 More clock. What sets the timing now is stated in
-Section~\ref{sec:v-synth}, and a fourth stage, or a register file
-read a cycle earlier, would let the clock rise; the multiply could
-also lose its start cycle by taking the product from the operands
-rather than from the registers, if the timing allows. The lockstep
-test is the check for any of these, since it compares architectural
-state when an instruction retires.
+Section~\ref{sec:v-synth}: the multiplier, which a second register
+in the middle of its carry chain, one more step of the sequencer,
+would take off the path; then the branch on a register, which a
+fourth stage, or a register file read a cycle earlier, would
+shorten. The lockstep test is the check for any of these, since it
+compares architectural state when an instruction retires.
 
-The rest of the privileged architecture: \code{mtval}, the timer and
-external interrupts, which need a way in from outside the core. Each
-begins in the model, is added to the core under the lockstep test,
-and is checked as a netlist by the same trace, as the traps and the M
-extension were.
+A timer. The interrupt line is there; what raises it on the board
+is not. The manual's timer is a pair of memory-mapped registers
+outside the core, and its interrupt is a second bit in \code{mie}
+and \code{mip}; a device on the data bus is a first step outside
+the core's one address space. Each such step begins in the model, is
+added to the core under the lockstep test, and is checked as a
+netlist by the same trace, as the traps, the M extension and the
+interrupt were.
 
 \begin{thebibliography}{10}
 
