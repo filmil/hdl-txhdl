@@ -61,7 +61,7 @@ two per cycle, so a falling edge is a tick of its own.
 \code{pipeline::drive(f, rx, tx)} & one invocation of \code{f} per cycle \\
 \code{config! \{ Fpga: C for Top<Fpga> \{..\} \}} & a build, as one item \\
 \code{\#[derive(Trace)]}, \code{Wave} & signals named from fields; VCD or FST \\
-\code{\#[lower]}, \code{\#[pipeline(..)]} & a netlist from \code{run} or an \code{async fn}; on a \code{fn}, inlined where called \\
+\code{\#[lower]}, \code{\#[pipeline(..)]} & a netlist from \code{run} or an \code{async fn}; a \code{fn} inlined \\
 \end{tabular}
 
 \columnbreak
