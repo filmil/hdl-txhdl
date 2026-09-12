@@ -47,8 +47,27 @@ pub enum Kind {
     Fence,
     Ecall,
     Ebreak,
+    Mret,
+    Csrrw,
+    Csrrs,
+    Csrrc,
+    Csrrwi,
+    Csrrsi,
+    Csrrci,
     Illegal,
 }
+
+/// The control and status registers the core has: enough to take a
+/// trap and return from it. The rest are illegal.
+pub const CSR_MSTATUS: u32 = 0x300;
+pub const CSR_MTVEC: u32 = 0x305;
+pub const CSR_MSCRATCH: u32 = 0x340;
+pub const CSR_MEPC: u32 = 0x341;
+pub const CSR_MCAUSE: u32 = 0x342;
+
+/// The causes the core raises.
+pub const CAUSE_ILLEGAL: u32 = 2;
+pub const CAUSE_ECALL: u32 = 11;
 
 /// A decoded instruction: the mnemonic and its fields, the immediate
 /// already extended to a signed word.
@@ -236,6 +255,29 @@ pub fn ecall() -> u32 {
 pub fn ebreak() -> u32 {
     i(OP_SYSTEM, 0, 0, 0, 1)
 }
+pub fn mret() -> u32 {
+    i(OP_SYSTEM, 0, 0, 0, 0x302)
+}
+// The CSR instructions: a register form and an immediate form of each
+// of write, set and clear; `rd` takes the old value.
+pub fn csrrw(rd: u32, csr: u32, rs1: u32) -> u32 {
+    i(OP_SYSTEM, rd, 1, rs1, csr as i32)
+}
+pub fn csrrs(rd: u32, csr: u32, rs1: u32) -> u32 {
+    i(OP_SYSTEM, rd, 2, rs1, csr as i32)
+}
+pub fn csrrc(rd: u32, csr: u32, rs1: u32) -> u32 {
+    i(OP_SYSTEM, rd, 3, rs1, csr as i32)
+}
+pub fn csrrwi(rd: u32, csr: u32, zimm: u32) -> u32 {
+    i(OP_SYSTEM, rd, 5, zimm, csr as i32)
+}
+pub fn csrrsi(rd: u32, csr: u32, zimm: u32) -> u32 {
+    i(OP_SYSTEM, rd, 6, zimm, csr as i32)
+}
+pub fn csrrci(rd: u32, csr: u32, zimm: u32) -> u32 {
+    i(OP_SYSTEM, rd, 7, zimm, csr as i32)
+}
 
 /// The fields of a word, by the format its opcode names.
 pub fn decode(w: u32) -> Decoded {
@@ -318,8 +360,20 @@ pub fn decode(w: u32) -> Decoded {
             _ => d(Illegal, 0),
         },
         OP_FENCE => d(Fence, 0),
-        OP_SYSTEM if w == ecall() => d(Ecall, 0),
-        OP_SYSTEM if w == ebreak() => d(Ebreak, 0),
+        // The system instructions: the immediate is the CSR address,
+        // and an immediate form's operand sits in the rs1 field.
+        OP_SYSTEM => match (f3, w >> 20) {
+            (0, 0) => d(Ecall, 0),
+            (0, 1) => d(Ebreak, 0),
+            (0, 0x302) => d(Mret, 0),
+            (1, csr) => d(Csrrw, csr as i32),
+            (2, csr) => d(Csrrs, csr as i32),
+            (3, csr) => d(Csrrc, csr as i32),
+            (5, csr) => d(Csrrwi, csr as i32),
+            (6, csr) => d(Csrrsi, csr as i32),
+            (7, csr) => d(Csrrci, csr as i32),
+            _ => d(Illegal, 0),
+        },
         _ => d(Illegal, 0),
     }
 }
@@ -351,7 +405,9 @@ pub fn disasm(w: u32) -> String {
         Add | Sub | Sll | Slt | Sltu | Xor | Srl | Sra | Or | And => {
             format!("{m} x{rd}, x{rs1}, x{rs2}")
         }
-        Fence | Ecall | Ebreak => m,
+        Fence | Ecall | Ebreak | Mret => m,
+        Csrrw | Csrrs | Csrrc => format!("{m} x{rd}, {imm:#x}, x{rs1}"),
+        Csrrwi | Csrrsi | Csrrci => format!("{m} x{rd}, {imm:#x}, {rs1}"),
         Illegal => format!("illegal {w:#010x}"),
     }
 }
@@ -376,6 +432,23 @@ mod tests {
             (srai(1, 1, 31), Kind::Srai, Some(1), Some(1), None, 31),
             (sra(1, 2, 3), Kind::Sra, Some(1), Some(2), Some(3), 0),
             (ebreak(), Kind::Ebreak, None, None, None, 0),
+            (mret(), Kind::Mret, None, None, None, 0),
+            (
+                csrrw(5, CSR_MEPC, 6),
+                Kind::Csrrw,
+                Some(5),
+                Some(6),
+                None,
+                0x341,
+            ),
+            (
+                csrrsi(0, CSR_MSTATUS, 8),
+                Kind::Csrrsi,
+                Some(0),
+                Some(8),
+                None,
+                0x300,
+            ),
         ];
         for (w, kind, rd, rs1, rs2, imm) in cases {
             let d = decode(w);

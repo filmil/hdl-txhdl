@@ -2,7 +2,10 @@
 //! The reference: RV32I as a program, one `step` per instruction,
 //! written against the decoder and nothing else. The core is checked
 //! against it, in lockstep, every cycle.
-use crate::isa::{decode, Kind};
+use crate::isa::{
+    decode, Kind, CAUSE_ECALL, CAUSE_ILLEGAL, CSR_MCAUSE, CSR_MEPC,
+    CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVEC,
+};
 
 /// Where data memory begins and how much there is, in bytes. The
 /// program lives at zero, in its own memory; the two do not overlap
@@ -10,12 +13,23 @@ use crate::isa::{decode, Kind};
 pub const DATA_BASE: u32 = 0x1000;
 pub const DATA_BYTES: u32 = 4096;
 
-/// What stops the model: the program's own `ebreak`, or a fault.
+/// What stops the model: the program's own `ebreak`, or a fault. An
+/// illegal instruction and `ecall` do not stop it: they trap.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Halt {
     Break,
-    Illegal(u32),
     Fault(u32),
+}
+
+/// The control and status registers: the five the core has. mstatus
+/// holds two bits, MIE and MPIE; mtvec is a direct-mode base.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct Csr {
+    pub mstatus: u32,
+    pub mtvec: u32,
+    pub mscratch: u32,
+    pub mepc: u32,
+    pub mcause: u32,
 }
 
 /// The architectural state, and only that.
@@ -24,6 +38,7 @@ pub struct Model {
     pub pc: u32,
     pub x: [u32; 32],
     pub mem: Vec<u32>,
+    pub csr: Csr,
     pub halted: Option<Halt>,
 }
 
@@ -33,10 +48,14 @@ impl Default for Model {
             pc: 0,
             x: [0; 32],
             mem: vec![0; DATA_BYTES as usize / 4],
+            csr: Csr::default(),
             halted: None,
         }
     }
 }
+
+const MIE: u32 = 1 << 3;
+const MPIE: u32 = 1 << 7;
 
 impl Model {
     /// A word of data memory, by byte address; `None` outside it.
@@ -51,6 +70,38 @@ impl Model {
             self.mem[(off / 4) as usize] = v;
         }
         off < DATA_BYTES
+    }
+
+    fn csr_read(&self, addr: u32) -> Option<u32> {
+        Some(match addr {
+            CSR_MSTATUS => self.csr.mstatus,
+            CSR_MTVEC => self.csr.mtvec,
+            CSR_MSCRATCH => self.csr.mscratch,
+            CSR_MEPC => self.csr.mepc,
+            CSR_MCAUSE => self.csr.mcause,
+            _ => return None,
+        })
+    }
+
+    fn csr_write(&mut self, addr: u32, v: u32) {
+        match addr {
+            CSR_MSTATUS => self.csr.mstatus = v & (MIE | MPIE),
+            CSR_MTVEC => self.csr.mtvec = v & !3,
+            CSR_MSCRATCH => self.csr.mscratch = v,
+            CSR_MEPC => self.csr.mepc = v & !1,
+            CSR_MCAUSE => self.csr.mcause = v,
+            _ => {}
+        }
+    }
+
+    /// A trap: the cause and the instruction's address are saved, the
+    /// interrupt enable is saved and cleared, and the handler is next.
+    fn trap(&mut self, cause: u32) {
+        self.csr.mepc = self.pc;
+        self.csr.mcause = cause;
+        let mie = self.csr.mstatus & MIE != 0;
+        self.csr.mstatus = if mie { MPIE } else { 0 };
+        self.pc = self.csr.mtvec;
     }
 
     /// One instruction. Does nothing once halted.
@@ -150,13 +201,39 @@ impl Model {
             Or => rd = Some(a | b),
             And => rd = Some(a & b),
             Fence => {}
-            Ecall | Ebreak => {
+            Ebreak => {
                 self.halted = Some(Halt::Break);
                 return;
             }
-            Illegal => {
-                self.halted = Some(Halt::Illegal(w));
+            Ecall => {
+                self.trap(CAUSE_ECALL);
                 return;
+            }
+            Illegal => {
+                self.trap(CAUSE_ILLEGAL);
+                return;
+            }
+            Mret => {
+                let mpie = self.csr.mstatus & MPIE != 0;
+                self.csr.mstatus = MPIE | if mpie { MIE } else { 0 };
+                next = self.csr.mepc;
+            }
+            Csrrw | Csrrs | Csrrc | Csrrwi | Csrrsi | Csrrci => {
+                let Some(old) = self.csr_read(imm) else {
+                    self.trap(CAUSE_ILLEGAL);
+                    return;
+                };
+                let src = match d.kind {
+                    Csrrw | Csrrs | Csrrc => a,
+                    _ => d.rs1,
+                };
+                let v = match d.kind {
+                    Csrrw | Csrrwi => src,
+                    Csrrs | Csrrsi => old | src,
+                    _ => old & !src,
+                };
+                self.csr_write(imm, v);
+                rd = Some(old);
             }
         }
         if let Some(v) = rd {

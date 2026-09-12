@@ -9,13 +9,19 @@
 //! writeback stage extends a loaded word, writes the register file and
 //! retires. An instruction in execute that reads what the one in
 //! writeback has not yet written is given that value directly, the
-//! forwarding path, so no stall is ever needed.
+//! forwarding path, unless that value is a load's, which lands too
+//! late to forward: then the instruction waits one cycle, the one
+//! stall there is. A trap or an `mret` is a redirect like a jump's.
 //!
 //! Written in the subset `#[lower]` reads: every value is a function
 //! of the state and the inputs, `select!` chooses among values and
 //! `when!` and `case!` among drives, and nothing branches. So the
 //! same file simulates and lowers, and the netlist is simulated
 //! against the trace the simulation wrote.
+use crate::isa::{
+    CAUSE_ECALL, CAUSE_ILLEGAL, CSR_MCAUSE, CSR_MEPC, CSR_MSCRATCH,
+    CSR_MSTATUS, CSR_MTVEC,
+};
 use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
 use txhdl::funcs::{
     band, bor, bxor, eq, is_zero, lt, lt_signed, shl, shr, sra,
@@ -62,6 +68,7 @@ pub struct Vreteno {
     pub stopped: Reg<Bit>,
     pub wb_valid: Reg<Bit>,
     pub wb_pc: Reg<U<32>>,
+    pub wb_ir: Reg<U<32>>,
     pub wb_rd: Reg<U<5>>,
     pub wb_alu: Reg<U<32>>,
     pub wb_ld: Reg<U<32>>,
@@ -70,6 +77,11 @@ pub struct Vreteno {
     pub wb_load: Reg<Bit>,
     pub wb_stop: Reg<Bit>,
     pub halted: Reg<Bit>,
+    pub mstatus: Reg<U<32>>,
+    pub mtvec: Reg<U<32>>,
+    pub mscratch: Reg<U<32>>,
+    pub mepc: Reg<U<32>>,
+    pub mcause: Reg<U<32>>,
     pub regs: Mem<U<32>, 32>,
     pub imem: Mem<U<32>, IMEM_WORDS>,
     pub dmem0: Mem<U<8>, DMEM_WORDS>,
@@ -126,10 +138,14 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                 (self.ir.get(), self.ir_pc.get(), self.valid.get());
             let (wb_valid, wb_rd, wb_alu) =
                 (self.wb_valid.get(), self.wb_rd.get(), self.wb_alu.get());
+            let wb_ir = self.wb_ir.get();
             let (wb_ld, wb_f3, wb_lane) =
                 (self.wb_ld.get(), self.wb_f3.get(), self.wb_lane.get());
             let (wb_load, wb_stop, halted) =
                 (self.wb_load.get(), self.wb_stop.get(), self.halted.get());
+            let (mstatus, mtvec, mscratch) =
+                (self.mstatus.get(), self.mtvec.get(), self.mscratch.get());
+            let (mepc, mcause) = (self.mepc.get(), self.mcause.get());
             // The writeback stage: a loaded word's byte or half, by the
             // lane and the width the execute stage read with it,
             // extended; else the value execute computed. Written to the
@@ -183,21 +199,28 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
                 .sext::<32>();
             // The operands: register zero reads as zero, and a register
             // the writeback stage is about to write reads as the value it
-            // will write, which is the forwarding path.
+            // will write, which is the forwarding path. A load is the
+            // exception: its word lands at the edge and is extended in
+            // writeback, too long a path to forward through the ALU into
+            // the fetch, so an instruction that reads what the load in
+            // writeback will write waits one cycle and reads the register
+            // file, which has it by then. The stall is the one cycle the
+            // core ever waits.
             let fwd_a = wb_write.and(eq(wb_rd, rs1));
             let fwd_b = wb_write.and(eq(wb_rd, rs2));
+            let stall = valid.and(wb_load).and(fwd_a.or(fwd_b));
             let a = mux(
                 is_zero(rs1),
-                U::from(0u32),
-                mux(fwd_a, wb_val, self.regs.read(rs1)),
+                U::<32>::from(0u32),
+                mux(fwd_a, wb_alu, self.regs.read(rs1)),
             );
             let b = mux(
                 is_zero(rs2),
-                U::from(0u32),
-                mux(fwd_b, wb_val, self.regs.read(rs2)),
+                U::<32>::from(0u32),
+                mux(fwd_b, wb_alu, self.regs.read(rs2)),
             );
             let pc4 = pc.wrapping_add(U::from(4u8));
-            let run = rst.not().and(stopped.not()).and(valid);
+            let run = rst.not().and(stopped.not()).and(valid).and(stall.not());
 
             // The ALU, shared by the register and immediate forms; bit
             // 30 means subtract or arithmetic shift, except that an
@@ -281,36 +304,95 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             // any, where it goes next, and whether the core knows it.
             let writes = select!(opcode.raw() => {
                 0x37 | 0x17 | 0x6f | 0x67 | 0x03 | 0x13 | 0x33 => Bit::One,
+                0x73 => is_zero(f3).not(),
                 _ => Bit::Zero,
             });
             let is_load = eq(opcode, U::from(0x03u8));
+            // The system instructions. A CSR instruction reads one of
+            // the five registers and writes it, set or cleared or
+            // replaced, from a register or a five-bit immediate; ecall
+            // and an instruction the core does not know trap; mret
+            // returns; ebreak halts.
+            let f12 = ir.slice::<20, 12>();
+            let is_sys = eq(opcode, U::from(0x73u8));
+            let csr_op = is_sys.and(is_zero(f3).not());
+            let csr_old = select!(f12.raw() => {
+                0x300 => mstatus,
+                0x305 => mtvec,
+                0x340 => mscratch,
+                0x341 => mepc,
+                0x342 => mcause,
+                _ => U::<32>::from(0u32),
+            });
+            let csr_known = select!(f12.raw() => {
+                0x300 | 0x305 | 0x340 | 0x341 | 0x342 => Bit::One,
+                _ => Bit::Zero,
+            });
+            let csr_src = mux(f3.bit(2), rs1.zext::<32>(), a);
+            let csr_new = select!(f3.raw() => {
+                1 | 5 => csr_src,
+                2 | 6 => bor(csr_old, csr_src),
+                _ => band(csr_old, csr_src.not()),
+            });
+            let sys0 = is_sys.and(is_zero(f3));
+            let is_ecall = sys0.and(eq(f12, U::from(0u8)));
+            let is_ebreak = sys0.and(eq(f12, U::from(1u8)));
+            let is_mret = sys0.and(eq(f12, U::from(0x302u32)));
+            let known = select!(opcode.raw() => {
+                0x37 | 0x17 | 0x6f | 0x67 | 0x63 | 0x03 | 0x23 | 0x13 | 0x33
+                | 0x0f => Bit::One,
+                0x73 => csr_op.and(csr_known).or(is_ecall).or(is_ebreak)
+                    .or(is_mret),
+                _ => Bit::Zero,
+            });
+            // A trap: ecall, or a word the core does not know. The cause
+            // and the address go to the CSRs, the interrupt enable is
+            // saved and cleared, and the handler is the redirect.
+            let trap = run.and(is_ecall.or(known.not()));
+            let cause = mux(
+                is_ecall,
+                U::<32>::from(CAUSE_ECALL),
+                U::<32>::from(CAUSE_ILLEGAL),
+            );
+            let mie = mstatus.bit(3);
+            let mpie = mstatus.bit(7);
+            let trap_status =
+                mux(mie, U::<32>::from(0x80u32), U::<32>::from(0u32));
+            let mret_status =
+                mux(mpie, U::<32>::from(0x88u32), U::<32>::from(0x80u32));
+            let csr_write = run.and(csr_op).and(csr_known);
+            // Stopped: on ebreak, and then for good; the halt itself
+            // follows a cycle later, when the halting instruction
+            // retires.
+            let stop = mux(run, is_ebreak, stopped);
+            let wrote = run.and(writes).and(is_zero(rd).not()).and(trap.not());
+            let store = run.and(eq(opcode, U::from(0x23u8)));
             let wval = select!(opcode.raw() => {
                 0x37 => imm_u,
                 0x17 => pc.wrapping_add(imm_u),
                 0x6f | 0x67 => pc4,
+                0x73 => csr_old,
                 _ => alu,
             });
+            // Where the instruction goes next, other than on: a jump's
+            // or a taken branch's target, the saved address on mret, the
+            // handler on a trap, which is every arm that can trap. The
+            // jalr arm is first because it is last to settle: a loaded
+            // value forwarded into the add, and this select is on the
+            // critical path.
             let target = select!(opcode.raw() => {
-                0x6f => pc.wrapping_add(imm_j),
                 0x67 => a.wrapping_add(imm_i).and(U::<32>::from(1u32).not()),
-                _ => pc.wrapping_add(imm_b),
+                0x6f => pc.wrapping_add(imm_j),
+                0x63 => pc.wrapping_add(imm_b),
+                0x73 => mux(is_mret, mepc, mtvec),
+                _ => mtvec,
             });
             let jump = select!(opcode.raw() => {
                 0x6f | 0x67 => Bit::One,
                 0x63 => taken,
-                _ => Bit::Zero,
+                0x73 => is_mret.or(trap),
+                _ => trap,
             });
-            let known = select!(opcode.raw() => {
-                0x37 | 0x17 | 0x6f | 0x67 | 0x63 | 0x03 | 0x23 | 0x13 | 0x33
-                | 0x0f => Bit::One,
-                _ => Bit::Zero,
-            });
-            // Stopped: on ebreak, ecall or a word the core does not
-            // know, and then for good; the halt itself follows a cycle
-            // later, when the halting instruction retires.
-            let stop = mux(run, known.not(), stopped);
-            let wrote = run.and(writes).and(is_zero(rd).not());
-            let store = run.and(eq(opcode, U::from(0x23u8)));
 
             // The drives. The writeback stage writes the register file
             // and sets the halt. Execute hands the writeback stage what
@@ -318,58 +400,90 @@ impl Unit<In<Bit>, (Out<Bit>, Out<U<32>>, Out<Writeback>)> for Vreteno {
             // instruction is not the one the fetch stage read this
             // cycle, so that word is squashed and the fetch restarts at
             // the target; a halt parks the program counter on the
-            // halting instruction, as the model's does.
+            // halting instruction, as the model's does. The redirect is
+            // one mux on the way into the fetch's state, so the target,
+            // the last value to settle, passes through as little as
+            // possible; the word fetched under a redirect is written
+            // and marked empty.
             when!(wb_write => { self.regs.at(wb_rd) <= wb_val });
             self.halted.set(halted.or(wb_stop));
             when!(store.and(en0) => { self.dmem0.at(daddr) <= b0 });
             when!(store.and(en1) => { self.dmem1.at(daddr) <= d1 });
             when!(store.and(en2) => { self.dmem2.at(daddr) <= d2 });
             when!(store.and(en3) => { self.dmem3.at(daddr) <= d3 });
+            // The CSRs: written by a CSR instruction, by a trap, by mret.
+            // The three never coincide in one instruction.
+            when!(csr_write.and(eq(f12, U::from(CSR_MSTATUS))) => {
+                self.mstatus <= band(csr_new, U::<32>::from(0x88u32))
+            });
+            when!(csr_write.and(eq(f12, U::from(CSR_MTVEC))) => {
+                self.mtvec <= band(csr_new, U::<32>::from(3u32).not())
+            });
+            when!(csr_write.and(eq(f12, U::from(CSR_MSCRATCH))) => {
+                self.mscratch <= csr_new
+            });
+            when!(csr_write.and(eq(f12, U::from(CSR_MEPC))) => {
+                self.mepc <= band(csr_new, U::<32>::from(1u32).not())
+            });
+            when!(csr_write.and(eq(f12, U::from(CSR_MCAUSE))) => {
+                self.mcause <= csr_new
+            });
+            when!(trap => {
+                self.mepc <= pc;
+                self.mcause <= cause;
+                self.mstatus <= trap_status
+            });
+            when!(run.and(is_mret) => { self.mstatus <= mret_status });
             when!(run => {
                 self.wb_valid <= Bit::One;
                 self.wb_pc <= pc;
+                self.wb_ir <= ir;
                 self.wb_rd <= mux(wrote, rd, U::from(0u8));
                 self.wb_alu <= wval;
                 self.wb_ld <= word;
                 self.wb_f3 <= f3;
                 self.wb_lane <= lane;
                 self.wb_load <= is_load;
-                self.wb_stop <= known.not()
+                self.wb_stop <= is_ebreak
             } else {
                 self.wb_valid <= Bit::Zero;
                 self.wb_rd <= U::from(0u8);
                 self.wb_stop <= Bit::Zero
             });
             // begin{fetch}
+            // The fetch's next counter: zero on reset, parked on the
+            // halting instruction, held while halted or stalled, the
+            // target on a redirect, else the next word. Reset, park and
+            // hold are known early and the redirect late, so the two
+            // candidates fold the early conditions in and the redirect
+            // chooses last, one multiplexer from the instruction memory.
+            let redirect = run.and(jump);
+            let park = run.and(stop);
+            let hold = stall.or(stop.and(run.not()));
+            let zero = U::<32>::from(0u32);
+            let advance =
+                mux(hold, fetch_pc, fetch_pc.wrapping_add(U::from(4u8)));
+            let go = mux(rst, zero, mux(park, pc, advance));
+            let jmp = mux(rst, zero, mux(park, pc, target));
+            self.pc.set(mux(redirect, jmp, go));
             case!(rst => {
-                Bit::One => {
-                    self.pc <= U::from(0u8);
-                    self.valid <= Bit::Zero
-                },
-                _ if run.and(stop).to_bool() => {
-                    self.pc <= pc;
-                    self.valid <= Bit::Zero
-                },
+                Bit::One => { self.valid <= Bit::Zero },
+                _ if stall.to_bool() => {},
                 _ if stop.to_bool() => { self.valid <= Bit::Zero },
-                _ if run.and(jump).to_bool() => {
-                    self.pc <= target;
-                    self.valid <= Bit::Zero
-                },
                 _ => {
-                    self.pc <= fetch_pc.wrapping_add(U::from(4u8));
                     self.ir <= fetched;
                     self.ir_pc <= fetch_pc;
-                    self.valid <= Bit::One
+                    self.valid <= redirect.not()
                 },
             });
             // end{fetch}
             self.stopped.set(stop);
             halt.set(halted);
-            instr.set(mux(run, ir, U::from(0u32)));
+            instr.set(mux(wb_valid, wb_ir, U::<32>::from(0u32)));
             wb.set(Writeback {
                 done: wb_valid,
                 rd: wb_rd,
-                val: mux(wb_valid, wb_val, U::from(0u32)),
+                val: mux(wb_valid, wb_val, U::<32>::from(0u32)),
             });
         }
     }

@@ -14,3 +14,6 @@ set_property CONFIG_VOLTAGE 3.3 [current_design]
 set_property CFGBVS VCCO [current_design]
 # The flash is written over a 4-bit SPI bus.
 set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]
+
+# The core's data memory lanes stay in block RAM, as in vreteno.xdc.
+set_property RAM_STYLE BLOCK [get_cells -hierarchical -regexp {.*dmem[0-3]_reg.*}]
