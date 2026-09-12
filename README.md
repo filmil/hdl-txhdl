@@ -6,6 +6,9 @@
 A transaction-centric hardware description language.
 
 This project is collaboration between Filip (filmil) and Dragiša (dj3maj)
+The authors used a large language model, Claude, as an assistant in
+exploring the concepts and in writing and constructing the documents and
+the programs; every commit says so and carries its prompts verbatim.
 
 The specification is `spec/language.md`.
 `docs/` holds the analysis and the decisions behind it, and
