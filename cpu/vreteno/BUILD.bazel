@@ -155,13 +155,13 @@ vivado_place_and_route2(
     tags = ["manual"],
 )
 
-# Program the board where it is, on srv.filmar.us: the daemon brings
-# hw_server up there and a tunnel here, //cpu/vreteno/board/remote
-# says how; then Vivado connects to the tunnel. Bring the tunnel up
-# first, since the daemon is started beside the connection, not before
-# it:
+# Program the board where it is, on the machine .bazelrc names in
+# TXHDL_BOARD_SERVER: the daemon brings hw_server up there and a tunnel
+# here, //cpu/vreteno/board/remote says how; then Vivado connects to
+# the tunnel. Bring the tunnel up first, since the daemon is started
+# beside the connection, not before it:
 #
-#   bazel run //cpu/vreteno/board/remote:hw_server -- --server=srv.filmar.us
+#   bazel run //cpu/vreteno/board/remote:hw_server
 #   bazel run //cpu/vreteno:vreteno_board_prog -- \
 #       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
 #
@@ -169,7 +169,6 @@ vivado_place_and_route2(
 vivado_program_device(
     name = "vreteno_board_prog",
     prog_daemon = "//cpu/vreteno/board/remote:hw_server",
-    prog_daemon_args = ["--server=srv.filmar.us"],
     deps = [":vreteno_board_pnr"],
     tags = ["manual"],
 )

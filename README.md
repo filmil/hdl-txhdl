@@ -38,9 +38,10 @@ Later builds reuse them.
 
 ## The board
 
-The Vreteno core's board, an Alinx AX7A200, sits on `srv.filmar.us`
+The Vreteno core's board, an Alinx AX7A200, sits on another machine
 with its programming cable and its serial bridge, and is programmed
-from here over ssh.
+from here over ssh; `.bazelrc` names the machine in `TXHDL_BOARD_SERVER`,
+and `--server=HOST` on either command below overrides it.
 Vivado's `hw_server` and the cable's libraries come out of the hermetic
 Vivado into a bundle; the first command uploads it, starts it there and
 tunnels its port back as `localhost:3122`; the second has Vivado connect
@@ -49,8 +50,8 @@ there for a while and types a reply once the board has said a line.
 Start the watcher before programming, since the board speaks at once.
 
 ```sh
-bazel run //cpu/vreteno/board/remote:hw_server -- --server=srv.filmar.us
-bazel run //cpu/vreteno/board/remote:serial -- --server=srv.filmar.us --seconds=60 --reply=yes &
+bazel run //cpu/vreteno/board/remote:hw_server
+bazel run //cpu/vreteno/board/remote:serial -- --seconds=60 --reply=yes &
 bazel run //cpu/vreteno:vreteno_board_prog -- --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
 ```
 

@@ -5,8 +5,11 @@
 # has said a line; the watcher runs there over ssh, under a timeout
 # that frees the port whatever happens here.
 #
-#   serial --server=HOST [--port=/dev/ttyUSB0] [--baud=115200]
+#   serial [--server=HOST] [--port=/dev/ttyUSB0] [--baud=115200]
 #          [--seconds=30] [--reply=]
+#
+# The server is TXHDL_BOARD_SERVER from the environment, which .bazelrc
+# sets for `bazel run`, unless --server says otherwise.
 set -euo pipefail
 
 # --- begin runfiles.bash initialization v3 ---
@@ -20,7 +23,7 @@ source "${RUNFILES_DIR:-/dev/null}/$f" 2>/dev/null || \
   { echo>&2 "ERROR: cannot find $f"; exit 1; }; f=
 # --- end runfiles.bash initialization v3 ---
 
-server=""
+server="${TXHDL_BOARD_SERVER:-}"
 port=/dev/ttyUSB0
 baud=115200
 seconds=30
@@ -35,7 +38,10 @@ for a in "$@"; do
     *) echo "unknown argument: $a" >&2; exit 2 ;;
   esac
 done
-[[ -n "$server" ]] || { echo "--server=HOST is required" >&2; exit 2; }
+[[ -n "$server" ]] || {
+  echo "--server=HOST is required, or TXHDL_BOARD_SERVER in the environment" >&2
+  exit 2
+}
 script="$(rlocation _main/cpu/vreteno/board/remote/serial.py)"
 ssh -o BatchMode=yes "$server" \
   "timeout --signal=TERM --kill-after=5 $((seconds + 10)) python3 - '$port' '$baud' '$seconds' '$reply'" \

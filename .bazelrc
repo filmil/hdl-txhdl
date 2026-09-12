@@ -10,3 +10,9 @@ build --@rules_vivado//:vivado_mode=hermetic
 # Shared caches on the hdlfactory hosts, where the file exists; a no-op
 # elsewhere. The repository cache there already holds the installer.
 try-import /data/cache/ci.bazelrc
+
+# The machine the board is attached to, with its programming cable and
+# its serial bridge: the one place that names it. The remote programmer
+# and the serial watcher read it, and `--server=HOST` on their command
+# line overrides it.
+run --run_env=TXHDL_BOARD_SERVER=srv.filmar.us

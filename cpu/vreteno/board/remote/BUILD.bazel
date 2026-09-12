@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Programming the board where it is, on another machine. The board's
-# JTAG cable and serial bridge are on srv.filmar.us; Vivado's hw_server
+# Programming the board where it is, on another machine, the one
+# .bazelrc names in TXHDL_BOARD_SERVER. The board's JTAG cable and
+# serial bridge are there; Vivado's hw_server
 # runs there, from a bundle this build takes out of the hermetic Vivado
 # and uploads, and an ssh tunnel brings its port here, where the
 # programming target's Vivado connects to it. The serial port is
@@ -31,7 +32,7 @@ vivado_extract(
 # Uploads the bundle, starts hw_server on the server, and opens the
 # tunnel; does nothing that is already done.
 #
-#   bazel run //cpu/vreteno/board/remote:hw_server -- --server=srv.filmar.us
+#   bazel run //cpu/vreteno/board/remote:hw_server
 sh_binary(
     name = "hw_server",
     srcs = ["hw_server.sh"],
@@ -46,7 +47,7 @@ sh_binary(
 # Watches the board's serial port on the server for a while, and may
 # type a reply once the board has said a line.
 #
-#   bazel run //cpu/vreteno/board/remote:serial -- --server=srv.filmar.us --seconds=60 --reply=yes
+#   bazel run //cpu/vreteno/board/remote:serial -- --seconds=60 --reply=yes
 sh_binary(
     name = "serial",
     srcs = ["serial.sh"],

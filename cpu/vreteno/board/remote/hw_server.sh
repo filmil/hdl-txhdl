@@ -5,8 +5,11 @@
 # here can connect to localhost. Idempotent: a running server is left
 # running, a standing tunnel is left standing.
 #
-#   hw_server --server=HOST [--remote-port=3121] [--local-port=3122]
+#   hw_server [--server=HOST] [--remote-port=3121] [--local-port=3122]
 #             [--idle=600]
+#
+# The server is TXHDL_BOARD_SERVER from the environment, which .bazelrc
+# sets for `bazel run`, unless --server says otherwise.
 set -euo pipefail
 
 # --- begin runfiles.bash initialization v3 ---
@@ -20,7 +23,7 @@ source "${RUNFILES_DIR:-/dev/null}/$f" 2>/dev/null || \
   { echo>&2 "ERROR: cannot find $f"; exit 1; }; f=
 # --- end runfiles.bash initialization v3 ---
 
-server=""
+server="${TXHDL_BOARD_SERVER:-}"
 rport=3121
 lport=3122
 idle=600
@@ -33,7 +36,10 @@ for a in "$@"; do
     *) echo "unknown argument: $a" >&2; exit 2 ;;
   esac
 done
-[[ -n "$server" ]] || { echo "--server=HOST is required" >&2; exit 2; }
+[[ -n "$server" ]] || {
+  echo "--server=HOST is required, or TXHDL_BOARD_SERVER in the environment" >&2
+  exit 2
+}
 
 bin="$(rlocation _main/cpu/vreteno/board/remote/bin/hw_server)"
 remote_sh="$(rlocation _main/cpu/vreteno/board/remote/hw_server_remote.sh)"
