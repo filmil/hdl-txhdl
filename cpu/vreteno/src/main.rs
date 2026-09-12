@@ -27,23 +27,28 @@ fn main() {
             | (lanes.3.read(a).raw() as u32) << 24
     };
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
+    let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
     let (instr_out, instr) = signal::<U<32>, DefaultClock>();
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         w.add("rst", &rst);
+        w.add("irq", &irq);
         w.add("cpu", &cpu);
         w.add("instr", &instr);
         w.add("wb", &wb);
         w.add("halt", &halt);
         w.start();
     }
-    let mut sim = Running::new(cpu.run(rst, (halt_out, instr_out, wb_out)));
+    let mut sim =
+        Running::new(cpu.run((rst, irq), (halt_out, instr_out, wb_out)));
     rst_out.set(Bit::One);
     sim.cycle();
     rst_out.set(Bit::Zero);
     println!("{:>4} {:>6}  {:<22} {}", "t", "pc", "instruction", "writes");
+    // The interrupt line: one pulse, in the loop.
+    let irq_at = 40;
     // A run of bubbles prints as one line with its count: a divide is
     // thirty-three of them, a multiply three.
     let mut bubbles: Option<(u64, u32)> = None;
@@ -56,8 +61,9 @@ fn main() {
             }
         }
     };
-    for _ in 0..400 {
+    for cycle in 0..400 {
         let at = wb_pc.get().raw() as u32;
+        irq_out.set(Bit::from_bool(cycle == irq_at));
         sim.cycle();
         let w = wb.get();
         if !w.done.to_bool() {
@@ -85,7 +91,7 @@ fn main() {
     stop();
     println!();
     for x in [
-        10usize, 11, 12, 13, 14, 15, 17, 18, 19, 20, 23, 24, 25, 26, 29, 30,
+        8usize, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 23, 24, 25, 26, 29, 30,
     ] {
         println!("x{x:<2} = {:#010x}", regs.read(x).raw());
     }

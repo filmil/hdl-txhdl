@@ -69,14 +69,26 @@ impl Asm {
 /// extension they imply, the upper immediates, a trap handler that
 /// an ecall and an illegal word reach and return from, the CSRs,
 /// a use of a word the instruction before it loaded, which stalls a
-/// cycle, the multiplies and divides, then `ebreak`. It leaves 110 in
-/// x10 and at the first data word, the second trap's cause in x23, 5
-/// in x24, 0xfe01 in x25, -220 in x26, -55 in x29 and -2 in x30.
+/// cycle, the multiplies and divides, then `ebreak`. Interrupts are
+/// enabled from the start and the handler counts them in x8. It
+/// leaves 110 in x10 and at the first data word, the second trap's
+/// cause in x23, 5 in x24, 0xfe01 in x25, -220 in x26, -55 in x29
+/// and -2 in x30.
 pub fn demo() -> Vec<u32> {
     let mut a = Asm::default();
     let (top, done, double) = (a.label(), a.label(), a.label());
-    let handler = a.label();
+    let (handler, sync) = (a.label(), a.label());
     a.emit(lui(2, DATA_BASE >> 12)); // x2 = data base
+
+    // Interrupts: the handler's address into mtvec, the external
+    // interrupt enabled in mie, interrupts enabled in mstatus; the
+    // handler counts them in x8.
+    a.abs(handler, |h| addi(21, 0, h as i32)); // x21 = the handler
+    a.emit(csrrw(0, CSR_MTVEC, 21)); // mtvec = x21
+    a.emit(lui(9, 1)); // x9 = 0x1000
+    a.emit(srli(9, 9, 1)); // x9 = 0x800, the external interrupt's bit
+    a.emit(csrrw(0, CSR_MIE, 9)); // mie = MEXT
+    a.emit(csrrsi(0, CSR_MSTATUS, 8)); // mstatus.MIE = 1
     a.emit(addi(5, 0, 10)); // x5 = 10, the count
     a.emit(addi(10, 0, 0)); // x10 = 0, the sum
     a.emit(addi(6, 0, 0)); // x6 = 0, i
@@ -109,12 +121,10 @@ pub fn demo() -> Vec<u32> {
     a.emit(div(29, 10, 7)); // x29 = 110 / -2 = -55
     a.emit(rem(30, 7, 5)); // x30 = -2 rem 10 = -2
 
-    // Traps: the handler's address into mtvec, an ecall, an illegal
-    // word, each returning to the word after it; then the CSRs.
-    a.abs(handler, |h| addi(21, 0, h as i32)); // x21 = the handler
-    a.emit(csrrw(0, CSR_MTVEC, 21)); // mtvec = x21
+    // Traps: an ecall, an illegal word, each returning to the word
+    // after it; then the CSRs.
     a.emit(ecall()); // trap, cause 11
-    a.emit(0); // an illegal word: trap, cause 2
+    a.emit(0xffff_ffff); // an illegal word: trap, cause 2, mtval = it
     a.emit(csrrwi(0, CSR_MSCRATCH, 5)); // mscratch = 5
     a.emit(csrrs(24, CSR_MSCRATCH, 0)); // x24 = mscratch
     a.to(done, |o| jal(0, o));
@@ -122,10 +132,15 @@ pub fn demo() -> Vec<u32> {
     a.emit(add(10, 10, 10));
     a.emit(jalr(0, 1, 0)); // return
     a.place(handler);
+    a.emit(csrrs(23, CSR_MCAUSE, 0)); // x23 = mcause
+    a.to(sync, |o| bge(23, 0, o)); // an exception: cause positive
+    a.emit(csrrc(0, CSR_MIP, 9)); // an interrupt: clear it,
+    a.emit(addi(8, 8, 1)); // count it,
+    a.emit(mret()); // and return to the interrupted word
+    a.place(sync);
     a.emit(csrrs(22, CSR_MEPC, 0)); // x22 = mepc
     a.emit(addi(22, 22, 4)); // past the trapping word
     a.emit(csrrw(0, CSR_MEPC, 22)); // mepc = x22
-    a.emit(csrrs(23, CSR_MCAUSE, 0)); // x23 = mcause
     a.emit(mret());
     a.place(done);
     a.emit(ebreak());
@@ -147,10 +162,15 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
         s
     };
     let mut a = Asm::default();
-    let handler = a.label();
+    let (handler, sync) = (a.label(), a.label());
     a.emit(lui(2, DATA_BASE >> 12));
     a.abs(handler, |h| addi(31, 0, h as i32));
     a.emit(csrrw(0, CSR_MTVEC, 31));
+    // Interrupts enabled from the start; the line is the test's.
+    a.emit(lui(31, 1));
+    a.emit(srli(31, 31, 1));
+    a.emit(csrrw(0, CSR_MIE, 31));
+    a.emit(csrrsi(0, CSR_MSTATUS, 8));
     while a.words.len() < len {
         let r = next();
         let rd = (r >> 8 & 31) as u32;
@@ -209,16 +229,17 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
                 4 => csrrsi(rd, CSR_MSCRATCH, amt),
                 5 => csrrci(rd, CSR_MSCRATCH, amt),
                 6 => csrrs(rd, CSR_MCAUSE, 0),
-                _ => csrrs(rd, CSR_MEPC, 0),
+                _ => match r >> 63 & 1 {
+                    0 => csrrs(rd, CSR_MEPC, 0),
+                    _ => csrrs(rd, CSR_MTVAL, 0),
+                },
             },
-            // A trap: an ecall, or an illegal word.
-            30 => {
-                if r >> 60 & 1 == 0 {
-                    ecall()
-                } else {
-                    0
-                }
-            }
+            // A trap: an ecall, or an illegal word, zero or all ones.
+            30 => match r >> 60 & 3 {
+                0 | 1 => ecall(),
+                2 => 0,
+                _ => 0xffff_ffff,
+            },
             // A forward branch over the next one or two words.
             _ => {
                 let l = a.label();
@@ -251,8 +272,16 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
         a.emit(w);
     }
     a.emit(ebreak());
-    // The handler: return to the word after the one that trapped.
+    // The handler: an interrupt is cleared and returned from; an
+    // exception returns to the word after the one that trapped.
     a.place(handler);
+    a.emit(csrrs(31, CSR_MCAUSE, 0));
+    a.to(sync, |o| bge(31, 0, o));
+    a.emit(lui(31, 1));
+    a.emit(srli(31, 31, 1)); // 0x800, the external interrupt's bit
+    a.emit(csrrc(0, CSR_MIP, 31));
+    a.emit(mret());
+    a.place(sync);
     a.emit(csrrs(31, CSR_MEPC, 0));
     a.emit(addi(31, 31, 4));
     a.emit(csrrw(0, CSR_MEPC, 31));

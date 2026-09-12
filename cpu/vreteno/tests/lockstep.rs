@@ -13,7 +13,7 @@ use vreteno32::program::{demo, random};
 
 /// Runs `program` on both until the core halts, checking after every
 /// cycle; returns the model at the halt.
-fn lockstep(program: &[u32], what: &str) -> Model {
+fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let mut cpu = Vreteno::with(program);
     let (pc, ir_pc, valid, regs, halted) = (
         cpu.pc.clone(),
@@ -41,7 +41,12 @@ fn lockstep(program: &[u32], what: &str) -> Model {
         ("mscratch", cpu.mscratch.clone()),
         ("mepc", cpu.mepc.clone()),
         ("mcause", cpu.mcause.clone()),
+        ("mie", cpu.mie.clone()),
+        ("mip", cpu.mip.clone()),
+        ("mtval", cpu.mtval.clone()),
     ];
+    let (mip, mie, mstatus) =
+        (cpu.mip.clone(), cpu.mie.clone(), cpu.mstatus.clone());
     // The architectural program counter, as Vreteno::arch_pc has it:
     // the oldest instruction not yet retired.
     let arch_pc = move || {
@@ -54,28 +59,57 @@ fn lockstep(program: &[u32], what: &str) -> Model {
         }
     };
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
+    let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (halt_out, _halt) = signal::<Bit, DefaultClock>();
     let (instr_out, _instr) = signal::<U<32>, DefaultClock>();
     let (ir, in_execute) = (cpu.ir.clone(), cpu.valid.clone());
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
-    let mut sim = Running::new(cpu.run(rst, (halt_out, instr_out, wb_out)));
+    let mut sim =
+        Running::new(cpu.run((rst, irq), (halt_out, instr_out, wb_out)));
     rst_out.set(Bit::One);
     sim.cycle();
     rst_out.set(Bit::Zero);
     let mut model = Model::default();
     let mut retired = 0;
+    // The interrupt line, from the seed: high now and then for the
+    // random programs, one pulse in the loop for the demonstration.
+    let mut noise = seed.unwrap_or(0).wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+    // Whether the core, deciding on its registers as they stand before
+    // this cycle, takes the interrupt in place of the instruction in
+    // execute; the model is told so when that instruction retires,
+    // which is the cycle after its last cycle in execute.
+    let mut taken = false;
+    let mut taken_before = false;
     for cycle in 0..4096 {
         let at = model.pc;
-        // The word about to execute this cycle, or zero on a bubble.
-        let executed = if in_execute.get().to_bool() {
-            ir.get().raw() as u32
-        } else {
-            0
+        let raised = match seed {
+            None => cycle == 40,
+            Some(_) => {
+                noise ^= noise << 13;
+                noise ^= noise >> 7;
+                noise ^= noise << 17;
+                noise & 15 == 0
+            }
         };
+        irq_out.set(Bit::from_bool(raised));
+        // The word about to execute this cycle, or zero on a bubble;
+        // the illegal word is zero too, so the flag is kept apart.
+        let executing = in_execute.get().to_bool();
+        let executed = if executing { ir.get().raw() as u32 } else { 0 };
+        if executing {
+            taken = mip.get().bit(11).to_bool()
+                && mie.get().bit(11).to_bool()
+                && mstatus.get().bit(3).to_bool();
+        }
         sim.cycle();
         if wb.get().done.to_bool() {
-            model.step(program);
+            model.step(program, taken_before);
             retired += 1;
+        }
+        taken_before = taken;
+        // The line sets the pending bit at this edge in both.
+        if raised {
+            model.raise();
         }
         let here =
             format!("{what}, cycle {cycle}, pc {at:#x}: {}", disasm(executed));
@@ -97,24 +131,29 @@ fn lockstep(program: &[u32], what: &str) -> Model {
         // the model writes it when the instruction retires. So the
         // CSRs are compared except in the cycle a system instruction,
         // or an illegal word, executed: they agree again a cycle later.
-        let system = matches!(
-            decode(executed).kind,
-            Kind::Csrrw
-                | Kind::Csrrs
-                | Kind::Csrrc
-                | Kind::Csrrwi
-                | Kind::Csrrsi
-                | Kind::Csrrci
-                | Kind::Ecall
-                | Kind::Mret
-                | Kind::Illegal
-        );
+        let system = executing
+            && (taken
+                || matches!(
+                    decode(executed).kind,
+                    Kind::Csrrw
+                        | Kind::Csrrs
+                        | Kind::Csrrc
+                        | Kind::Csrrwi
+                        | Kind::Csrrsi
+                        | Kind::Csrrci
+                        | Kind::Ecall
+                        | Kind::Mret
+                        | Kind::Illegal
+                ));
         let want = [
             model.csr.mstatus,
             model.csr.mtvec,
             model.csr.mscratch,
             model.csr.mepc,
             model.csr.mcause,
+            model.csr.mie,
+            model.csr.mip,
+            model.csr.mtval,
         ];
         for ((name, r), w) in csrs.iter().zip(want) {
             if !system {
@@ -136,7 +175,7 @@ fn lockstep(program: &[u32], what: &str) -> Model {
 
 #[test]
 fn demo_program() {
-    let m = lockstep(&demo(), "demo");
+    let m = lockstep(&demo(), "demo", None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[10], 110);
     assert_eq!(m.mem[0], 110);
@@ -146,6 +185,7 @@ fn demo_program() {
     assert_eq!(m.x[14], 65534);
     assert_eq!(m.x[23], 2, "the second trap's cause");
     assert_eq!(m.x[24], 5, "mscratch through the CSR instructions");
+    assert_eq!(m.x[8], 1, "the one interrupt, counted by the handler");
     assert_eq!(m.x[25], 0xfe01, "the use right after the load");
     assert_eq!(m.x[26], (-220i32) as u32, "mul");
     assert_eq!(m.x[28], 0xfffffffc, "mulhu");
@@ -157,7 +197,7 @@ fn demo_program() {
 fn random_programs() {
     for seed in 0..64 {
         let p = random(seed, 200);
-        let m = lockstep(&p, &format!("random seed {seed}"));
+        let m = lockstep(&p, &format!("random seed {seed}"), Some(seed));
         assert_eq!(m.halted, Some(Halt::Break), "seed {seed} faulted");
     }
 }
