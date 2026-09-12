@@ -883,16 +883,17 @@ pins the board's USB serial bridge listens and talks on, and the
 port's interrupt as the core's external interrupt line.
 The constraints name the board's pins as the project's other designs
 for it do, so the bitstream is real: the routed design meets
-100~MHz with 1.074~ns of slack, in 2016 LUTs and 984 flip-flops
+100~MHz with 1.004~ns of slack, in 2025 LUTs and 982 flip-flops
 for the core, the router, the timer, the serial port with both its
-sides and the six buffers together, three block RAM tiles, four DSP
-blocks and the MMCM, with no critical warning and no combinational
-loop, which the first board top with the units wired port to port
-had. The wait's move into writeback took the board's slack from
-0.285~ns to 0.903, and a tenth of the LUTs with it; the step's
-pieces as functions moved it to 0.688, and the port's receive side,
-fifty-seven flip-flops, to this: placement moves a path of routing
-by tenths from run to run.
+sides and its buffer of eight, and the six channel buffers together,
+three block RAM tiles, four DSP blocks and the MMCM, with no
+critical warning and no combinational loop, which the first board
+top with the units wired port to port had. The port's buffer is six
+LUTs of distributed memory. The wait's move into writeback took the
+board's slack from 0.285~ns to 0.903, and a tenth of the LUTs with
+it; the step's pieces as functions moved it to 0.688, and the port's
+receive side to 1.074: placement moves a path of routing by tenths
+from run to run.
 \code{bazel run //cpu/vreteno:vreteno\_board\_flash} writes it into
 the board's QSPI flash over the programming cable. What the board
 should show, once it does: the clock LED at once, the running LED
