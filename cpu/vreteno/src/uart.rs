@@ -3,17 +3,19 @@
 //! written to its first word goes out on the line as a start bit,
 //! eight data bits least significant first and a stop bit, each
 //! `DIV` cycles long; a frame coming in on the other line, sampled in
-//! the middle of each bit, lands in its third word, and the port's
-//! interrupt line is high until the word is read. The second word is
-//! the status: bit 0 busy while a byte is going out, bit 1 a byte
-//! received and not yet read. A byte written while busy is dropped,
-//! and a byte received before the last was read replaces it, so a
-//! program polls the status. The lines rest high. `DIV` is 868 for
+//! the middle of each bit, lands in a buffer of eight behind its third
+//! word, where a load takes the oldest, and the port's interrupt line
+//! is high while the buffer holds any. The second word is the status:
+//! bit 0 busy while a byte is going out, bit 1 a byte received and
+//! not yet read, bit 2 the buffer full. A byte written while busy is
+//! dropped, and a byte received when the buffer is full is dropped
+//! and counted, so a program polls the status and keeps up. The
+//! lines rest high. `DIV` is 868 for
 //! 115200 baud at 100 MHz, and 4 in the runs that are checked, so
 //! that a byte takes forty cycles rather than nine thousand.
 use crate::bus::{REQ_ADDR, REQ_WDATA};
 use crate::isa::UART_BASE;
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
 use txhdl::funcs::{eq, is_zero};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, when, Trace};
@@ -64,10 +66,18 @@ fn taken_in(shift: U<8>, line: Bit) -> U<8> {
 }
 
 /// What a load reads, by the word: the last byte sent, the status,
-/// the byte received.
+/// the oldest byte received.
 #[lower]
-fn word(sel: U<2>, busy: Bit, ready: Bit, last: U<8>, data: U<8>) -> U<32> {
-    let status = U::<30>::from(0u32)
+fn word(
+    sel: U<2>,
+    busy: Bit,
+    ready: Bit,
+    full: Bit,
+    last: U<8>,
+    data: U<8>,
+) -> U<32> {
+    let status = U::<29>::from(0u32)
+        .concat::<1, 30>(full.zext::<1>())
         .concat::<1, 31>(ready.zext::<1>())
         .concat::<1, 32>(busy.zext::<1>());
     select!(sel.raw() => {
@@ -97,11 +107,14 @@ pub struct Uart<const DIV: u32> {
     pub rx_shift: Reg<U<8>>,
     pub rx_bits: Reg<U<4>>,
     pub rx_tick: Reg<U<32>>,
-    /// The byte received, whether it has not been read yet, and how
-    /// many came.
-    pub rx_data: Reg<U<8>>,
-    pub rx_ready: Reg<Bit>,
+    /// The bytes received and not yet read: a buffer of eight, the
+    /// index of the oldest and how many are held; how many came in
+    /// all, and how many found the buffer full and were dropped.
+    pub fifo: Mem<U<8>, 8>,
+    pub head: Reg<U<3>>,
+    pub count: Reg<U<4>>,
     pub received: Reg<U<8>>,
+    pub dropped: Reg<U<8>>,
 }
 
 #[lower]
@@ -122,8 +135,11 @@ impl<const DIV: u32>
             let (last, sent) = (self.last.get(), self.sent.get());
             let (line, rx_shift) = (self.line.get(), self.rx_shift.get());
             let (rx_bits, rx_tick) = (self.rx_bits.get(), self.rx_tick.get());
-            let (rx_data, rx_ready) = (self.rx_data.get(), self.rx_ready.get());
-            let received = self.received.get();
+            let (head, count) = (self.head.get(), self.count.get());
+            let (received, dropped) = (self.received.get(), self.dropped.get());
+            let rx_ready = is_zero(count).not();
+            let full = eq(count, U::from(8u8));
+            let rx_data = self.fifo.read(head);
             let busy = is_zero(bits).not();
             // Every request is taken; the ones for this device are the
             // ones whose address falls in its sixteen bytes.
@@ -163,7 +179,7 @@ impl<const DIV: u32>
             when!(read => {
                 resp.send(mux(
                     mine,
-                    word(sel, busy, rx_ready, last, rx_data),
+                    word(sel, busy, rx_ready, full, last, rx_data),
                     U::<32>::from(0u32)
                 ))
             });
@@ -173,8 +189,9 @@ impl<const DIV: u32>
             // each bit, ten of them: a high where the start bit should
             // be is a false start and the frame is dropped, the eight
             // bits in between are taken into the shift register, and a
-            // high at the stop bit lands the byte, which the read of
-            // the third word takes.
+            // high at the stop bit lands the byte in the buffer, whose
+            // oldest the read of the third word takes; the buffer full,
+            // the byte is dropped and counted.
             self.line.set(rx.get());
             let receiving = is_zero(rx_bits).not();
             let rx_last = last_cycle::<DIV>(rx_tick);
@@ -184,7 +201,8 @@ impl<const DIV: u32>
             when!(rst => {
                 self.rx_bits <= U::from(0u8);
                 self.rx_tick <= U::from(0u8);
-                self.rx_ready <= Bit::Zero
+                self.head <= U::from(0u8);
+                self.count <= U::from(0u8)
             });
             when!(rst.not().and(receiving.not()).and(line.not()) => {
                 self.rx_bits <= U::from(10u8);
@@ -203,12 +221,24 @@ impl<const DIV: u32>
             when!(sample.and(at_start.not()).and(at_stop.not()) => {
                 self.rx_shift <= taken_in(rx_shift, line)
             });
-            when!(read_rx => { self.rx_ready <= Bit::Zero });
             when!(sample.and(at_stop) => { self.rx_bits <= U::from(0u8) });
-            when!(sample.and(at_stop).and(line) => {
-                self.rx_data <= rx_shift;
-                self.rx_ready <= Bit::One;
+            let landed = sample.and(at_stop).and(line);
+            let push = landed.and(full.not());
+            let pop = read_rx.and(rx_ready).and(rst.not());
+            let tail = head.wrapping_add(count.slice::<0, 3>());
+            when!(push => {
+                self.fifo.at(tail) <= rx_shift;
                 self.received <= received.wrapping_add(U::from(1u8))
+            });
+            when!(landed.and(full) => {
+                self.dropped <= dropped.wrapping_add(U::from(1u8))
+            });
+            when!(pop => { self.head <= head.wrapping_add(U::from(1u8)) });
+            when!(rst.not().and(push).and(pop.not()) => {
+                self.count <= count.wrapping_add(U::from(1u8))
+            });
+            when!(rst.not().and(pop).and(push.not()) => {
+                self.count <= count.wrapping_sub(U::from(1u8))
             });
             irq.set(rx_ready);
         }

@@ -2,15 +2,15 @@
 //! A terminal on the serial line, for the run and the lockstep test:
 //! it reads what the core sends, a start bit, eight bits least
 //! significant first sampled in the middle of each, and a stop bit;
-//! and once the core has said a line, it types its reply, a byte at
-//! a time with a pause between, at the port's rate. One bit is `DIV`
+//! and once the core has said a line, it types its reply at the
+//! port's rate, the bytes back to back, ahead of the program that
+//! reads them, which the port's buffer allows. One bit is `DIV`
 //! cycles, as in the port the run and the test wire.
 
 /// Cycles per bit, the port's `DIV` in the runs that are checked.
 pub const DIV: u32 = 4;
 
-/// The pause before the reply and between its bytes, in cycles: time
-/// for the program to take a byte before the next one overwrites it.
+/// The pause before the reply, in cycles, as a typist's would be.
 const PAUSE: u32 = 20;
 
 #[derive(Default)]
@@ -76,7 +76,6 @@ impl Terminal {
                 Some((frame, at + 1))
             } else {
                 self.typed += 1;
-                self.pause = PAUSE;
                 None
             };
             return level;

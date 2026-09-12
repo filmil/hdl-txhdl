@@ -830,7 +830,7 @@ waveform(
         "//uart/line=>line",
         "//uart/rx_bits=>rx_bits",
         "//uart/rx_shift=>rx_shift",
-        "//uart/rx_ready=>rx_ready",
+        "//uart/count=>count",
         "//uirq=>uirq",
     ],
 )

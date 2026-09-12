@@ -401,13 +401,19 @@ other line is sampled in the middle of each bit, once a low on the
 resting line has said a start bit is there: a high where the start
 bit should be is a false start and the frame is dropped, the eight
 bits in between are shifted in, and a high at the stop bit lands the
-byte in the port's third word, where a load takes it. The port's
-interrupt line is high from the landing to the load; on the board
-it is the core's external interrupt, and the runs join it to the
-line they drive. Its second word is the status, bit 0 busy while a
-frame is going out and bit 1 a byte received and not yet read. A
-byte written while busy is dropped, and a byte received before the
-last was read replaces it, so a program polls the status.
+byte in a buffer of eight behind the port's third word, where a load
+takes the oldest. The buffer is a memory of eight bytes with the
+index of the oldest and a count, a push at the landing and a pop at
+the load, both in one cycle leaving the count where it was; so a
+terminal may type ahead of the program, as the terminal of the runs
+does, its bytes back to back. The port's interrupt line is high
+while the buffer holds any; on the board it is the core's external
+interrupt, and the runs join it to the line they drive. Its second
+word is the status, bit 0 busy while a frame is going out, bit 1 a
+byte received and not yet read, and bit 2 the buffer full. A byte
+written while busy is dropped, and a byte received when the buffer
+is full is dropped and counted, so a program polls the status and
+keeps up.
 \code{DIV} is a parameter of the unit: 868 for 115\,200 baud at
 100~MHz on the board, and 4 in the runs that are checked, so that a
 byte takes forty cycles rather than nine thousand. The two are the
@@ -432,7 +438,8 @@ the first are the program polling the status for the next byte. The second is th
 terminal's y coming in: the line falls, the port's register of it
 follows a cycle later, the bit count loads ten and counts down as
 the bits are shifted in at the middle of each, and at the stop bit
-the byte lands, the ready bit rises and with it the interrupt line.
+the byte lands in the buffer, whose count rises and with it the
+interrupt line.
 The third is the bus under the status poll and the write before the
 first: the core's request goes out and is taken, the router hands it
 to the port, the port's response comes back through the router into
@@ -453,7 +460,7 @@ of the status for the next byte.}
 \centering
 \input{vreteno_in_timing.tex}
 \caption{A byte in: the line, its register, the bits left, the byte
-shifting in, and the ready bit and the interrupt as it lands.}
+shifting in, and the buffer's count and the interrupt as it lands.}
 \label{fig:v-in}
 \end{figure}
 
@@ -545,7 +552,9 @@ newline to the serial port, a byte at a time. Each byte waits for a
 load of the status to say the port is free, the polling loop every
 program writes for a port like this. Then it echoes three bytes:
 each waits for the status to say one has come, takes it from the
-third word, waits for the port to be free and writes it back. The
+third word, waits for the port to be free and writes it back; the
+terminal typed the three back to back, so the second and third
+waited in the port's buffer. The
 timer's interrupt is enabled from the start and the line's only
 after the echo, since a byte received raises the line too; the
 pulse and the bytes have left the pending bit set by then, so the
@@ -914,8 +923,7 @@ since it compares architectural state when an instruction retires.
 
 More on the bus. The router decodes a device per range and the data
 memory could go out onto it too, at the cost of the cycle a response
-takes; the serial port holds one byte received, and a buffer of a
-few would let a program type ahead. Each begins in the model, as
+takes. Each begins in the model, as
 everything here has, is added to the core under the lockstep test,
 and is checked as a netlist by the same trace.
 

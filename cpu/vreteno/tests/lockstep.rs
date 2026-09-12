@@ -57,6 +57,8 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let mtimecmp = timer.mtimecmp.clone();
     let (pending, wb_dev) = (timer.pending.clone(), cpu.wb_dev.clone());
     let (uart_sent, uart_last) = (uart.sent.clone(), uart.last.clone());
+    let (uart_received, uart_dropped) =
+        (uart.received.clone(), uart.dropped.clone());
     // The architectural program counter, as Vreteno::arch_pc has it:
     // the oldest instruction not yet retired.
     let arch_pc = move || {
@@ -252,6 +254,12 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
             );
             if let Some(&last) = model.uart.last() {
                 assert_eq!(uart_last.get().raw() as u8, last, "last byte");
+            }
+            // The terminal's bytes all came in and none found the
+            // buffer full; the demonstration echoed every one.
+            assert_eq!(uart_dropped.get().raw(), 0, "bytes dropped, {here}");
+            if seed.is_none() {
+                assert_eq!(uart_received.get().raw(), 3, "bytes received");
             }
             for (a, &w) in model.mem.iter().enumerate() {
                 assert_eq!(word(a), w, "mem[{a}] {here}");
