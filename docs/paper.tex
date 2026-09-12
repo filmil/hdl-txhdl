@@ -410,8 +410,9 @@ retires writing nothing; a bus of two channels, a request out and
 the word read back, through a router that decodes a device per
 address range, on which a timer of sixty lines raises the second
 interrupt when its count reaches its compare and a serial port says
-what the program writes, the channels between them all being the
-runtime's buffer of two as hardware; the six CSR instructions read and write the
+what the program writes and takes what a terminal types, the
+channels between them all being the runtime's buffer of two as
+hardware; the six CSR instructions read and write the
 eight control registers. Multiply and divide are one sequencer over
 the
 magnitudes, a multiply one step in the part's DSP blocks and a
@@ -568,9 +569,8 @@ and the build holds the three to one behaviour under two simulators.
 A RISC-V core written in it runs, lowers, is checked against its own
 trace, and runs at 100~MHz on an Artix-7 with its data memory in
 block RAM, whose bitstream, with a clock, a reset and four LEDs
-around the core, is built. The next steps are the board in hand and
-the serial port's receive side; the path that limits the clock is a
-jump through a register.
+around the core, is built. The next step is the board in hand; the
+path that limits the clock is a jump through a register.
 
 \begin{thebibliography}{10}
 

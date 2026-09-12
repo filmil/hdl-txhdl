@@ -52,8 +52,8 @@ instruction in execute when \code{mie}, \code{mip} and
 \code{mstatus} allow; and with a bus, a request channel out and a
 response channel back through a router, on which a timer, a unit of
 its own, is the first device and the second interrupt, and a serial
-port the second device, on which the demonstration says OK. It is
-checked twice. In lockstep against a reference model of the instruction set
+port the second device, on which the demonstration says OK and
+echoes what a terminal types back. It is checked twice. In lockstep against a reference model of the instruction set
 written as a plain program: the model steps when the core retires an
 instruction, and after every cycle the program counter, the
 thirty-one registers, the control registers and the halt must agree,
@@ -394,24 +394,40 @@ back.},label={lst:v-router}]{cpu/vreteno/src/router.rs}
 the bus.},label={lst:v-timer}]{cpu/vreteno/src/timer.rs}
 
 The serial port, Listing~\ref{lst:v-uart}, is the second device,
-its transmit side. A byte written to its first word goes out on a
-line as a start bit, the eight bits least significant first, and a
-stop bit, each \code{DIV} cycles long. Its second word is the
-status, whose bit 0 is busy while a frame is going out. A byte
-written while busy is dropped, so a program polls the status first.
+with a line each way. A byte written to its first word goes out on
+the line as a start bit, the eight bits least significant first, and
+a stop bit, each \code{DIV} cycles long. A frame coming in on the
+other line is sampled in the middle of each bit, once a low on the
+resting line has said a start bit is there: a high where the start
+bit should be is a false start and the frame is dropped, the eight
+bits in between are shifted in, and a high at the stop bit lands the
+byte in the port's third word, where a load takes it. The port's
+interrupt line is high from the landing to the load; on the board
+it is the core's external interrupt, and the runs join it to the
+line they drive. Its second word is the status, bit 0 busy while a
+frame is going out and bit 1 a byte received and not yet read. A
+byte written while busy is dropped, and a byte received before the
+last was read replaces it, so a program polls the status.
 \code{DIV} is a parameter of the unit: 868 for 115\,200 baud at
 100~MHz on the board, and 4 in the runs that are checked, so that a
 byte takes forty cycles rather than nine thousand. The two are the
-same unit lowered twice. The port's pieces, whether an address is
-its own, the frame a byte goes out as, the frame after a bit, a
-bit's last cycle and the word a load reads, are functions under
-\code{\#[lower]}, inlined where the step calls them, so the step is
-short and reads as what it does; the examples
-document~\cite{examples} states the form. The run decodes its own
-line as a terminal would and prints what the demonstration said.
+same unit lowered twice. The line in goes through one register
+before the logic, as a pin's should. The port's pieces, whether an
+address is its own, the frame a byte goes out as, the frame after a
+bit, a bit's last cycle and middle, a bit taken in and the word a
+load reads, are functions under \code{\#[lower]}, inlined where the
+step calls them, so the step is the two sides' drives; the examples
+document~\cite{examples} states the form. The run and the lockstep
+test put a terminal on the two lines, \code{term.rs}: it decodes
+what the core sends, and once the core has said a line it types
+three bytes back, a pause between them for the program to take
+each, and the run prints what was said both ways.
 
 \lstinputlisting[caption={\code{uart.rs}: the serial port, a device
 on the bus.},label={lst:v-uart}]{cpu/vreteno/src/uart.rs}
+
+\lstinputlisting[caption={\code{term.rs}: the terminal on the port's
+lines, for the run and the test.},label={lst:v-term}]{cpu/vreteno/src/term.rs}
 
 The stages meet at the end of the cycle, in the deferred drives of
 the fetch's state and the writeback's. When the execute stage's next
@@ -484,7 +500,13 @@ five in \code{x24} at the end, and two in \code{x8}: the line,
 raised once, and the timer. Before the traps it writes OK and a
 newline to the serial port, a byte at a time. Each byte waits for a
 load of the status to say the port is free, the polling loop every
-program writes for a port like this. Between the shifts
+program writes for a port like this. Then it echoes three bytes:
+each waits for the status to say one has come, takes it from the
+third word, waits for the port to be free and writes it back. The
+timer's interrupt is enabled from the start and the line's only
+after the echo, since a byte received raises the line too; the
+pulse and the bytes have left the pending bit set by then, so the
+line's interrupt comes once, as counted. Between the shifts
 and the traps it multiplies and divides, five of the eight
 instructions, on the sum and on minus two: minus 220 into
 \code{x26}, minus 55 into \code{x29}, and the remainder minus two
@@ -804,29 +826,29 @@ the reset button synchronised into that clock and held until the
 clock has locked, and four LEDs, lit when driven low, showing the
 core halted, a heartbeat, the reset released and the clock locked;
 the router, the timer and the serial port beside the core with a
-channel buffer each way between every two, the port's line on the
-pin the board's USB serial bridge listens to, and the external
-interrupt line tied low, since nothing on the board raises it yet.
+channel buffer each way between every two, the port's lines on the
+pins the board's USB serial bridge listens and talks on, and the
+port's interrupt as the core's external interrupt line.
 The constraints name the board's pins as the project's other designs
 for it do, so the bitstream is real: the routed design meets
-100~MHz with 0.688~ns of slack, in 1994 LUTs and 927 flip-flops
-for the core, the router, the timer, the serial port and the six
-buffers together, three block RAM tiles, four DSP blocks and the
-MMCM, with no critical warning and no combinational loop, which the
-first board top with the units wired port to port had. The wait's
-move into writeback took the board's slack from 0.285~ns to 0.903,
-and a tenth of the LUTs with it; the step's pieces as functions
-moved it by two tenths, as the core's.
+100~MHz with 1.074~ns of slack, in 2016 LUTs and 984 flip-flops
+for the core, the router, the timer, the serial port with both its
+sides and the six buffers together, three block RAM tiles, four DSP
+blocks and the MMCM, with no critical warning and no combinational
+loop, which the first board top with the units wired port to port
+had. The wait's move into writeback took the board's slack from
+0.285~ns to 0.903, and a tenth of the LUTs with it; the step's
+pieces as functions moved it to 0.688, and the port's receive side,
+fifty-seven flip-flops, to this: placement moves a path of routing
+by tenths from run to run.
 \code{bazel run //cpu/vreteno:vreteno\_board\_flash} writes it into
 the board's QSPI flash over the programming cable. What the board
 should show, once it does: the clock LED at once, the running LED
 while the button is up, the heartbeat at three a second, OK and a
 newline on a terminal at 115\,200 baud on the board's serial bridge,
-and the halt LED. The halt comes some two hundred microseconds after
-the reset is released, since the program waits for the port to take
-each of its three bytes before it goes on to the traps. Holding the
-reset puts the halt LED out; releasing it says OK and lights it
-again.
+and then the next three keys typed at the terminal, echoed, and the
+halt LED once the third is. Holding the reset puts the halt LED out;
+releasing it says OK and waits for three keys again.
 
 \lstinputlisting[caption={\code{board/vreteno\_board.v}: the board
 top, by hand.},label={lst:v-board}]{cpu/vreteno/board/vreteno_board.v}
@@ -849,11 +871,10 @@ since it compares architectural state when an instruction retires.
 
 More on the bus. The router decodes a device per range and the data
 memory could go out onto it too, at the cost of the cycle a response
-takes; the serial port has a transmit side only, and a receive side
-is the next device, with the line's other direction and an interrupt
-of its own. Each begins in the model, as everything here has, is
-added to the core under the lockstep test, and is checked as a
-netlist by the same trace.
+takes; the serial port holds one byte received, and a buffer of a
+few would let a program type ahead. Each begins in the model, as
+everything here has, is added to the core under the lockstep test,
+and is checked as a netlist by the same trace.
 
 \begin{thebibliography}{10}
 
