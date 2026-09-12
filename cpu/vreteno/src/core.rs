@@ -21,9 +21,9 @@
 use crate::isa::{
     CAUSE_ECALL, CAUSE_ILLEGAL, CAUSE_MEXT, CAUSE_MTIMER, CSR_MCAUSE, CSR_MEPC,
     CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT,
-    MTIMER, TIMER_BASE,
+    MTIMER,
 };
-use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
 use txhdl::funcs::{
     band, bor, bxor, eq, is_zero, lt, lt_signed, shl, shr, sra,
 };
@@ -86,10 +86,9 @@ pub struct Vreteno {
     pub mie: Reg<U<32>>,
     pub mip: Reg<U<32>>,
     pub mtval: Reg<U<32>>,
-    pub mtime: Reg<U<64>>,
-    pub mtimecmp: Reg<U<64>>,
     pub wb_dev: Reg<U<32>>,
     pub wb_is_dev: Reg<Bit>,
+    pub dev_wait: Reg<Bit>,
     pub m_busy: Reg<Bit>,
     pub m_count: Reg<U<6>>,
     pub m_hi: Reg<U<33>>,
@@ -139,17 +138,25 @@ impl Vreteno {
 }
 
 #[lower]
-impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
-    for Vreteno
+impl
+    Unit<
+        (In<Bit>, In<Bit>, In<Bit>, Rx<U<32>>),
+        (Out<Bit>, Out<U<32>>, Out<Writeback>, Tx<U<69>>),
+    > for Vreteno
 {
     async fn run(
         &mut self,
-        (rst, irq): (In<Bit>, In<Bit>),
-        (halt, instr, wb): (Out<Bit>, Out<U<32>>, Out<Writeback>),
+        (rst, irq, tirq, resp): (In<Bit>, In<Bit>, In<Bit>, Rx<U<32>>),
+        (halt, instr, wb, req): (
+            Out<Bit>,
+            Out<U<32>>,
+            Out<Writeback>,
+            Tx<U<69>>,
+        ),
     ) {
         loop {
             DefaultClock::rising().await;
-            let (rst, irq) = (rst.get(), irq.get());
+            let (rst, irq, tirq) = (rst.get(), irq.get(), tirq.get());
             let (fetch_pc, stopped) = (self.pc.get(), self.stopped.get());
             let (ir, pc, valid) =
                 (self.ir.get(), self.ir_pc.get(), self.valid.get());
@@ -165,8 +172,11 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
             let (mepc, mcause) = (self.mepc.get(), self.mcause.get());
             let (mie_r, mip, mtval) =
                 (self.mie.get(), self.mip.get(), self.mtval.get());
-            let (mtime, mtimecmp) = (self.mtime.get(), self.mtimecmp.get());
             let (wb_dev, wb_is_dev) = (self.wb_dev.get(), self.wb_is_dev.get());
+            let dev_wait = self.dev_wait.get();
+            // The bus's answer, taken whenever it comes.
+            let resp_valid = Bit::from_bool(resp.peek().is_some());
+            let resp_data = resp.recv().unwrap_or_default();
             let (m_busy, m_count) = (self.m_busy.get(), self.m_count.get());
             let (m_hi, m_lo, m_d) =
                 (self.m_hi.get(), self.m_lo.get(), self.m_d.get());
@@ -251,12 +261,17 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
             // when it is pending, enabled, and interrupts are enabled; an
             // M instruction under one does not start, so it cannot hold
             // the stall the interrupt waits for.
-            let mtip = lt(mtime, mtimecmp).not();
+            // The timer's line is a register's output on the timer's
+            // side, so it is read as state is.
+            let mtip = tirq;
             let ext_ok = mie_r.bit(11).and(mip.bit(11));
             let tim_ok = mie_r.bit(7).and(mtip);
             let int_ok = mstatus.bit(3).and(ext_ok.or(tim_ok));
             let stall_m = m_here.and(int_ok.not()).and(m_done.not());
-            let stall = stall_ld.or(stall_m);
+            // A load or store to the bus, which is everything above the
+            // data memory. A store goes out when the bus has room; a
+            // load goes out, waits for the answer, and runs when it is
+            // there, the answer taken into the writeback's register.
             let a = mux(
                 is_zero(rs1),
                 U::<32>::from(0u32),
@@ -267,6 +282,20 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
                 U::<32>::from(0u32),
                 mux(fwd_b, wb_alu, self.regs.read(rs2)),
             );
+            let addr = a.wrapping_add(select!(opcode.raw() => {
+                0x23 => imm_s,
+                _ => imm_i,
+            }));
+            let is_load = eq(opcode, U::from(0x03u8));
+            let is_dev = is_zero(addr.slice::<13, 19>()).not();
+            let here = valid.and(rst.not()).and(stopped.not());
+            let dev_load = here.and(is_load).and(is_dev);
+            let dev_store = here.and(eq(opcode, U::from(0x23u8))).and(is_dev);
+            let send_load = dev_load.and(dev_wait.not()).and(req.ready());
+            let stall_dev = dev_load
+                .and(mux(dev_wait, resp_valid.not(), Bit::One))
+                .or(dev_store.and(req.ready().not()));
+            let stall = stall_ld.or(stall_m).or(stall_dev);
             let pc4 = pc.wrapping_add(U::from(4u8));
             // Live: an instruction in execute that is not stalled. It
             // runs unless the interrupt takes its place.
@@ -328,10 +357,6 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
             // takes the raw word into the writeback stage, which is the
             // synchronous read a block RAM has; a store merges its byte
             // or half into the word and writes it here.
-            let addr = a.wrapping_add(select!(opcode.raw() => {
-                0x23 => imm_s,
-                _ => imm_i,
-            }));
             let daddr = addr.wrapping_sub(U::from(DATA_BASE)).slice::<2, 10>();
             let word = self
                 .dmem3
@@ -341,18 +366,6 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
                 .concat::<8, 32>(self.dmem0.read(daddr));
             let lane = addr.slice::<0, 2>();
             let upper = addr.bit(1);
-            // The timer: four words at TIMER_BASE, the count and the
-            // compare, low half then high. A load reads one, a store
-            // writes one through the lanes as a memory word is written,
-            // and the count runs from the reset.
-            let is_dev = eq(addr.slice::<4, 28>(), U::from(TIMER_BASE >> 4));
-            let dev_sel = addr.slice::<2, 2>();
-            let dev_word = select!(dev_sel.raw() => {
-                0 => mtime.slice::<0, 32>(),
-                1 => mtime.slice::<32, 32>(),
-                2 => mtimecmp.slice::<0, 32>(),
-                _ => mtimecmp.slice::<32, 32>(),
-            });
             // What each lane takes on a store: its byte of the word for
             // a word, the half's byte for a half, the byte for a byte;
             // and whether it takes it at all.
@@ -389,7 +402,6 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
                 0x73 => is_zero(f3).not(),
                 _ => Bit::Zero,
             });
-            let is_load = eq(opcode, U::from(0x03u8));
             // The system instructions. A CSR instruction reads one of
             // the five registers and writes it, set or cleared or
             // replaced, from a register or a five-bit immediate; ecall
@@ -405,7 +417,7 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
                 0x341 => mepc,
                 0x342 => mcause,
                 0x304 => mie_r,
-                0x344 => mux(mtip, bor(mip, U::<32>::from(MTIMER)), mip),
+                0x344 => mux(tirq, bor(mip, U::<32>::from(MTIMER)), mip),
                 0x343 => mtval,
                 _ => U::<32>::from(0u32),
             });
@@ -508,32 +520,32 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
             when!(store_mem.and(en1) => { self.dmem1.at(daddr) <= d1 });
             when!(store_mem.and(en2) => { self.dmem2.at(daddr) <= d2 });
             when!(store_mem.and(en3) => { self.dmem3.at(daddr) <= d3 });
-            // The timer counts, and a store to one of its words puts the
-            // lanes the store covers into that word.
-            let dev_new = mux(en3, d3, dev_word.slice::<24, 8>())
-                .concat::<8, 16>(mux(en2, d2, dev_word.slice::<16, 8>()))
-                .concat::<8, 24>(mux(en1, d1, dev_word.slice::<8, 8>()))
-                .concat::<8, 32>(mux(en0, b0, dev_word.slice::<0, 8>()));
-            let store_dev = store.and(is_dev);
-            self.mtime.set(mux(
-                rst,
-                U::<64>::from(0u32),
-                mtime.wrapping_add(U::<64>::from(1u32)),
-            ));
-            when!(store_dev.and(eq(dev_sel, U::from(0u8))) => {
-                self.mtime <= mtime.slice::<32, 32>().concat::<32, 64>(dev_new)
+            // The bus: a request is the address, the data in its lanes,
+            // the lanes a store covers, and whether it is a store. The
+            // load's wait is a register.
+            let req_word = addr
+                .concat::<32, 64>(
+                    d3.concat::<8, 16>(d2)
+                        .concat::<8, 24>(d1)
+                        .concat::<8, 32>(b0),
+                )
+                .concat::<4, 68>(
+                    en3.zext::<1>()
+                        .concat::<1, 2>(en2.zext::<1>())
+                        .concat::<1, 3>(en1.zext::<1>())
+                        .concat::<1, 4>(en0.zext::<1>()),
+                )
+                .concat::<1, 69>(store.zext::<1>());
+            when!(send_load.or(store.and(is_dev)) => { req.send(req_word) });
+            case!(rst => {
+                Bit::One => { self.dev_wait <= Bit::Zero },
+                _ if send_load.to_bool() => { self.dev_wait <= Bit::One },
+                _ if dev_wait.and(resp_valid).to_bool() => {
+                    self.dev_wait <= Bit::Zero
+                },
+                _ => {},
             });
-            when!(store_dev.and(eq(dev_sel, U::from(1u8))) => {
-                self.mtime <= dev_new.concat::<32, 64>(mtime.slice::<0, 32>())
-            });
-            when!(store_dev.and(eq(dev_sel, U::from(2u8))) => {
-                self.mtimecmp <=
-                    mtimecmp.slice::<32, 32>().concat::<32, 64>(dev_new)
-            });
-            when!(store_dev.and(eq(dev_sel, U::from(3u8))) => {
-                self.mtimecmp <=
-                    dev_new.concat::<32, 64>(mtimecmp.slice::<0, 32>())
-            });
+
             // The CSRs: written by a CSR instruction, by a trap, by mret.
             // The three never coincide in one instruction.
             when!(csr_write.and(eq(f12, U::from(CSR_MSTATUS))) => {
@@ -650,8 +662,8 @@ impl Unit<(In<Bit>, In<Bit>), (Out<Bit>, Out<U<32>>, Out<Writeback>)>
                 self.wb_rd <= mux(wrote, rd, U::from(0u8));
                 self.wb_alu <= wval;
                 self.wb_ld <= word;
-                self.wb_dev <= dev_word;
-                self.wb_is_dev <= is_dev;
+                self.wb_dev <= resp_data;
+                self.wb_is_dev <= is_dev.and(is_load);
                 self.wb_f3 <= f3;
                 self.wb_lane <= lane;
                 self.wb_load <= is_load.and(run);

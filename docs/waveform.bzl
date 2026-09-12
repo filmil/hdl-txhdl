@@ -20,7 +20,8 @@ def waveform(name, example, signals, lowered = None, until = None):
     Verilog and simulates each against the trace: NAME.vhd, NAME.v and
     NAME.vhd.ports from the run, NAME_tb.vhd and NAME_tb.v from fst2tb,
     a vhdl_test NAME_sim under nvc and a cc_test NAME_vsim_test under
-    Verilator. `until` cuts the figure at that tick, for a run too long
+    Verilator. A list of pairs checks several units of the one run,
+    the targets then named NAME_sim_ENTITY and NAME_vsim_ENTITY_test. `until` cuts the figure at that tick, for a run too long
     to draw whole."""
     outs = ["out_" + name + ".txt", name + ".fst", name + ".fst.names"]
     env = "TXHDL_FST=$(RULEDIR)/" + name + ".fst"
@@ -36,46 +37,51 @@ def waveform(name, example, signals, lowered = None, until = None):
         tools = [example],
     )
     if lowered:
-        entity, unit = lowered
-        native.genrule(
-            name = name + "_tbgen",
-            srcs = [name + ".fst", name + ".vhd.ports"],
-            outs = [name + "_tb.vhd"],
-            cmd = "$(location //tools/fst2tb) $(location " + name + ".fst)" +
-                  " $(location " + name + ".vhd.ports) " + entity + " " + unit + " > $@",
-            tools = ["//tools/fst2tb"],
-        )
-        vhdl_test(
-            name = name + "_sim",
-            srcs = [name + ".vhd", name + "_tb.vhd"],
-            deps = [],
-            entities = [entity + "_tb"],
-        )
-        native.genrule(
-            name = name + "_tbgen_v",
-            srcs = [name + ".fst", name + ".vhd.ports"],
-            outs = [name + "_tb.v"],
-            cmd = "$(location //tools/fst2tb) $(location " + name + ".fst)" +
-                  " $(location " + name + ".vhd.ports) " + entity + " " + unit +
-                  " --verilog > $@",
-            tools = ["//tools/fst2tb"],
-        )
-        verilog_library(
-            name = name + "_vl",
-            srcs = [name + ".v", name + "_tb.v"],
-            top_module = entity + "_tb",
-        )
-        verilator_cc_library(
-            name = name + "_verilated",
-            module = ":" + name + "_vl",
-            timing = True,
-            vopts = ["--main", "-Wno-fatal"],
-        )
-        cc_test(
-            name = name + "_vsim_test",
-            srcs = ["//tools/vlcheck:main.cc"],
-            deps = [":" + name + "_verilated"],
-        )
+        pairs = lowered if type(lowered) == "list" else [lowered]
+        for entity, unit in pairs:
+            # One lowered unit keeps the short names; several are told
+            # apart by the entity.
+            tag = "" if len(pairs) == 1 else "_" + entity
+            tb = name + tag + "_tb"
+            native.genrule(
+                name = name + tag + "_tbgen",
+                srcs = [name + ".fst", name + ".vhd.ports"],
+                outs = [tb + ".vhd"],
+                cmd = "$(location //tools/fst2tb) $(location " + name + ".fst)" +
+                      " $(location " + name + ".vhd.ports) " + entity + " " + unit + " > $@",
+                tools = ["//tools/fst2tb"],
+            )
+            vhdl_test(
+                name = name + "_sim" + tag,
+                srcs = [name + ".vhd", tb + ".vhd"],
+                deps = [],
+                entities = [entity + "_tb"],
+            )
+            native.genrule(
+                name = name + tag + "_tbgen_v",
+                srcs = [name + ".fst", name + ".vhd.ports"],
+                outs = [tb + ".v"],
+                cmd = "$(location //tools/fst2tb) $(location " + name + ".fst)" +
+                      " $(location " + name + ".vhd.ports) " + entity + " " + unit +
+                      " --verilog > $@",
+                tools = ["//tools/fst2tb"],
+            )
+            verilog_library(
+                name = name + tag + "_vl",
+                srcs = [name + ".v", tb + ".v"],
+                top_module = entity + "_tb",
+            )
+            verilator_cc_library(
+                name = name + tag + "_verilated",
+                module = ":" + name + tag + "_vl",
+                timing = True,
+                vopts = ["--main", "-Wno-fatal"],
+            )
+            cc_test(
+                name = name + "_vsim" + tag + "_test",
+                srcs = ["//tools/vlcheck:main.cc"],
+                deps = [":" + name + tag + "_verilated"],
+            )
     native.genrule(
         name = name + "_db",
         srcs = [name + ".fst"],

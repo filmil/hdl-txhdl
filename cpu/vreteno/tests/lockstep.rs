@@ -4,12 +4,13 @@
 //! thirty-one registers, the control registers and the halt must
 //! agree, and the data memory at the end. The demonstration program
 //! and a batch of random ones.
-use txhdl::comp::{signal, DefaultClock, Running, Unit};
+use txhdl::comp::{chan, join2, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::isa::{decode, disasm, Kind, CAUSE_MEXT, CAUSE_MTIMER};
 use vreteno32::model::{Halt, Model};
 use vreteno32::program::{demo, random};
+use vreteno32::timer::Timer;
 
 /// Runs `program` on both until the core halts, checking after every
 /// cycle; returns the model at the halt.
@@ -47,7 +48,9 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     ];
     let (mip, mie, mstatus) =
         (cpu.mip.clone(), cpu.mie.clone(), cpu.mstatus.clone());
-    let (mtime, mtimecmp) = (cpu.mtime.clone(), cpu.mtimecmp.clone());
+    let mut timer = Timer::default();
+    let (mtime, mtimecmp) = (timer.mtime.clone(), timer.mtimecmp.clone());
+    let (pending, dev_wait) = (timer.pending.clone(), cpu.dev_wait.clone());
     // The architectural program counter, as Vreteno::arch_pc has it:
     // the oldest instruction not yet retired.
     let arch_pc = move || {
@@ -61,12 +64,22 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     };
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
+    let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
+    let (req_tx, req_rx) = chan::<U<69>, DefaultClock>();
+    let (resp_tx, resp_rx) = chan::<U<32>, DefaultClock>();
     let (halt_out, _halt) = signal::<Bit, DefaultClock>();
     let (instr_out, _instr) = signal::<U<32>, DefaultClock>();
     let (ir, in_execute) = (cpu.ir.clone(), cpu.valid.clone());
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
-    let mut sim =
-        Running::new(cpu.run((rst, irq), (halt_out, instr_out, wb_out)));
+    // The timer first, since the core reads its line in the same step.
+    let rst_t = rst.clone();
+    let mut sim = Running::new(join2(
+        timer.run((rst_t, req_rx), (resp_tx, tirq_out)),
+        cpu.run(
+            (rst, irq, tirq, resp_rx),
+            (halt_out, instr_out, wb_out, req_tx),
+        ),
+    ));
     rst_out.set(Bit::One);
     sim.cycle();
     rst_out.set(Bit::Zero);
@@ -81,11 +94,17 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     // which is the cycle after its last cycle in execute.
     let mut taken: Option<u32> = None;
     let mut taken_before: Option<u32> = None;
-    // The timer's count as the core had it when the instruction
-    // executed, handed to the model with the instruction, since the
-    // model has no clock of its own.
+    // The timer's count as the timer answered it: a load's request goes
+    // out at the end of one cycle and the timer answers with the count
+    // of the next, which is when the core's wait bit has just risen.
+    // The count is handed to the model with the instruction, since the
+    // model has no clock of its own, and the timer's line as the core
+    // registered it goes with it.
     let mut count = 0u64;
     let mut count_before = 0u64;
+    let mut waiting = false;
+    let mut line = false;
+    let mut line_before = false;
     for cycle in 0..4096 {
         let at = model.pc;
         let raised = match seed {
@@ -102,12 +121,15 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         // the illegal word is zero too, so the flag is kept apart.
         let executing = in_execute.get().to_bool();
         let executed = if executing { ir.get().raw() as u32 } else { 0 };
-        if executing {
+        if dev_wait.get().to_bool() && !waiting {
             count = mtime.get().raw() as u64;
+        }
+        waiting = dev_wait.get().to_bool();
+        if executing {
+            line = pending.get().to_bool();
             let ext =
                 mip.get().bit(11).to_bool() && mie.get().bit(11).to_bool();
-            let tim = count >= mtimecmp.get().raw() as u64
-                && mie.get().bit(7).to_bool();
+            let tim = line && mie.get().bit(7).to_bool();
             taken = if !mstatus.get().bit(3).to_bool() {
                 None
             } else if ext {
@@ -121,11 +143,13 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         sim.cycle();
         if wb.get().done.to_bool() {
             model.mtime = count_before;
+            model.tirq = line_before;
             model.step(program, taken_before);
             retired += 1;
         }
         taken_before = taken;
         count_before = count;
+        line_before = line;
         // The line sets the pending bit at this edge in both.
         if raised {
             model.raise();
@@ -182,14 +206,14 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
                 assert_eq!(r.get().raw() as u32, w, "{name} after {here}");
             }
         }
-        if !system {
+        // The compare lands in the timer a cycle after the core's store,
+        // so it is checked at the end, as the memory is.
+        if model.halted.is_some() {
             assert_eq!(
                 mtimecmp.get().raw() as u64,
                 model.mtimecmp,
-                "mtimecmp after {here}"
+                "mtimecmp at the halt, {here}"
             );
-        }
-        if model.halted.is_some() {
             for (a, &w) in model.mem.iter().enumerate() {
                 assert_eq!(word(a), w, "mem[{a}] {here}");
             }

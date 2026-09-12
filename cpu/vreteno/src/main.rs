@@ -4,11 +4,13 @@
 //! core, with the program in its instruction memory, where
 //! `TXHDL_VHDL` points; then print the Verilog.
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::{now, signal, DefaultClock, Running, Unit};
+use txhdl::comp::{chan, join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
+use txhdl_parts::buffer::Buffer;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::isa::disasm;
 use vreteno32::program::demo;
+use vreteno32::timer::Timer;
 
 fn main() {
     let program = demo();
@@ -28,6 +30,12 @@ fn main() {
     };
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
+    // The bus: a request channel out of the core, a response channel
+    // back, and the timer on it, with its interrupt line.
+    let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
+    let (req_tx, req_rx) = chan::<U<69>, DefaultClock>();
+    let (resp_tx, resp_rx) = chan::<U<32>, DefaultClock>();
+    let mut timer = Timer::default();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
     let (instr_out, instr) = signal::<U<32>, DefaultClock>();
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
@@ -35,14 +43,27 @@ fn main() {
         w.clock::<DefaultClock>();
         w.add("rst", &rst);
         w.add("irq", &irq);
+        w.add("tirq", &tirq);
+        w.add("resp", &resp_rx);
+        w.add("req", &req_rx);
         w.add("cpu", &cpu);
+        w.add("timer", &timer);
         w.add("instr", &instr);
         w.add("wb", &wb);
         w.add("halt", &halt);
         w.start();
     }
-    let mut sim =
-        Running::new(cpu.run((rst, irq), (halt_out, instr_out, wb_out)));
+    // The timer first: its line is a wire the core reads in the same
+    // step, so the process that drives it runs before the one that
+    // reads it. The channels between them do not care.
+    let rst_t = rst.clone();
+    let mut sim = Running::new(join2(
+        timer.run((rst_t, req_rx), (resp_tx, tirq_out)),
+        cpu.run(
+            (rst, irq, tirq, resp_rx),
+            (halt_out, instr_out, wb_out, req_tx),
+        ),
+    ));
     rst_out.set(Bit::One);
     sim.cycle();
     rst_out.set(Bit::Zero);
@@ -103,6 +124,13 @@ fn main() {
     let mut lowered = Vreteno::lowered("vreteno");
     let words: Vec<u128> = program.iter().map(|&w| w as u128).collect();
     lowered.init("imem", &words);
-    txhdl::netlist::write_vhdl_from_env(&lowered);
-    print!("\n{}", lowered.verilog());
+    // The timer, and the two channels as hardware, at the widths of the
+    // request and the response, for the board to put between them.
+    let timer = Timer::lowered("timer");
+    let req_chan = Buffer::<69>::lowered("chan69");
+    let resp_chan = Buffer::<32>::lowered("chan32");
+    txhdl::netlist::write_netlists_from_env(&[
+        &lowered, &timer, &req_chan, &resp_chan,
+    ]);
+    print!("\n{}\n{}", lowered.verilog(), timer.verilog());
 }

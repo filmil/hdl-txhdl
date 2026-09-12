@@ -31,8 +31,8 @@ all under `//docs`:
   The runtime appears there only through its public interface, which
   `//tools/api` extracts from the source at build time.
 * `//docs:vreteno` is the first large design, the Vreteno RV32IM core
-  under `//cpu/vreteno`, with its reference model, its lockstep test
-  and its waveform.
+  under `//cpu/vreteno`, with its reference model, its lockstep test,
+  its waveform, and the timer on its bus.
 * `//docs:paper` is the expository paper: the system as it is and its
   results, with diagrams, for a reader meeting TxHDL for the first
   time; no history.
@@ -67,7 +67,10 @@ the same change, or the change is not finished.
    `docs/BUILD.bazel` a `lowered = (entity, unit)`, and the example
    calls `netlist::write_vhdl_from_env`; the tests
    `//docs:<name>_sim_<entity>_tb_test` and `//docs:<name>_vsim_test`
-   must pass.
+   must pass. A run of several units gives `lowered` a list of pairs
+   and calls `netlist::write_netlists_from_env` with every unit; the
+   tests are then `//docs:<name>_sim_<entity>_<entity>_tb_test` and
+   `//docs:<name>_vsim_<entity>_test`.
 3. **The documents.** Add a section for the example to
    `docs/examples_sections/`, with a paragraph on what it shows and a
    `\lstinputlisting` of the file; if it prints, add it to the

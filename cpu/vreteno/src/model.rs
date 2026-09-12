@@ -48,6 +48,10 @@ pub struct Model {
     /// instruction executed. The compare register is the model's own.
     pub mtime: u64,
     pub mtimecmp: u64,
+    /// The timer's line as the core saw it, set by the caller with the
+    /// count; the timer is a device on the bus, so its pending bit is
+    /// what the line says, not what the model could compute.
+    pub tirq: bool,
     pub halted: Option<Halt>,
 }
 
@@ -60,6 +64,7 @@ impl Default for Model {
             csr: Csr::default(),
             mtime: 0,
             mtimecmp: 0,
+            tirq: false,
             halted: None,
         }
     }
@@ -100,9 +105,9 @@ impl Model {
         off < DATA_BYTES
     }
 
-    /// The timer's pending bit: the count has reached the compare.
+    /// The timer's pending bit: its line, as the core saw it.
     fn mtip(&self) -> u32 {
-        if self.mtime >= self.mtimecmp {
+        if self.tirq {
             MTIMER
         } else {
             0

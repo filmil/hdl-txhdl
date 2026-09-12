@@ -50,8 +50,30 @@ module vreteno_board(
   wire halt;
   wire [31:0] instr;
   wire [37:0] wb;
-  // The interrupt line: nothing on this board raises it yet.
-  vreteno core (.clk(clk), .rst(rst), .irq(1'b0), .halt(halt), .instr(instr), .wb(wb));
+  // The bus: a request channel out of the core, a response channel
+  // back, and the timer on it, raising its own interrupt line. Each
+  // channel is a buffer of two, chan69 and chan32, the language's
+  // channel as hardware, between the sender's side and the receiver's.
+  // The external line has nothing on this board to raise it yet.
+  wire [68:0] req_tx_data, req_rx_data;
+  wire req_tx_valid, req_tx_ready, req_rx_valid, req_rx_ready;
+  wire [31:0] resp_tx_data, resp_rx_data;
+  wire resp_tx_valid, resp_tx_ready, resp_rx_valid, resp_rx_ready;
+  wire tirq;
+  vreteno core (.clk(clk), .rst(rst), .irq(1'b0), .tirq(tirq),
+    .resp_data(resp_rx_data), .resp_valid(resp_rx_valid), .resp_ready(resp_rx_ready),
+    .halt(halt), .instr(instr), .wb(wb),
+    .req_data(req_tx_data), .req_valid(req_tx_valid), .req_ready(req_tx_ready));
+  chan69 req_chan (.clk(clk),
+    .tx_data(req_tx_data), .tx_valid(req_tx_valid), .tx_ready(req_tx_ready),
+    .rx_data(req_rx_data), .rx_valid(req_rx_valid), .rx_ready(req_rx_ready));
+  timer tim (.clk(clk), .rst(rst),
+    .req_data(req_rx_data), .req_valid(req_rx_valid), .req_ready(req_rx_ready),
+    .resp_data(resp_tx_data), .resp_valid(resp_tx_valid), .resp_ready(resp_tx_ready),
+    .tirq(tirq));
+  chan32 resp_chan (.clk(clk),
+    .tx_data(resp_tx_data), .tx_valid(resp_tx_valid), .tx_ready(resp_tx_ready),
+    .rx_data(resp_rx_data), .rx_valid(resp_rx_valid), .rx_ready(resp_rx_ready));
 
   // The heartbeat: bit 25 of a counter at 100 MHz toggles three times a
   // second.
