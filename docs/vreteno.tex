@@ -50,10 +50,10 @@ multipliers and a division thirty-two, which stalls the instruction
 in execute; with an interrupt line, taken in place of the
 instruction in execute when \code{mie}, \code{mip} and
 \code{mstatus} allow; and with a bus, a request channel out and a
-response channel back through a router, on which a timer, a unit of
-its own, is the first device and the second interrupt, and a serial
-port the second device, on which the demonstration says OK and
-echoes what a terminal types back. It is checked twice. In lockstep against a reference model of the instruction set
+response channel back through a router, on which the data memory, a
+timer and a serial port are units of their own, the timer the second
+interrupt, and the port where the demonstration says OK and echoes
+what a terminal types back. It is checked twice. In lockstep against a reference model of the instruction set
 written as a plain program: the model steps when the core retires an
 instruction, and after every cycle the program counter, the
 thirty-one registers, the control registers and the halt must agree,
@@ -172,10 +172,12 @@ pending bit is its line, read in \code{mip} but not stored there,
 and its interrupt comes after the external one's. The model has no
 clock and no bus, so what a device answers is not its own. The caller
 sets \code{dev\_word} before a step to what the bus answered the
-core's load, and \code{tirq} to the line as the core saw it. A store
-to a device is the device's business; the model keeps what it can
-check at the end, the timer's compare and the bytes given to the
-serial port. Which
+core's load from a device, and \code{tirq} to the line as the core
+saw it; the data memory's words the model keeps itself, and the
+memory unit's lanes are compared with them at the halt. A store to a
+device is the device's business; the model keeps what it can check
+at the end, the timer's compare and the bytes given to the serial
+port. Which
 interrupt that step takes, if any, is the caller's word too, since
 the core decides on the bits as they stood a cycle earlier, and the
 lockstep test carries the core's decision across. Only
@@ -204,10 +206,10 @@ lane and the width to take from it, the word itself, and whether it
 halts; the halt itself; the eight control registers; the sequencer's
 seven, a busy bit, a count, the two halves of the pair it shifts, the
 multiplicand or divisor, and two sign bits; the word a load read
-from the bus, whether it did, and whether a load is waiting on the
-bus; and six memories: the register file, the instruction memory,
-loaded from the program with \code{Mem::with}, and the data memory
-as four memories of a byte, one per lane of the word. Its input is
+from the bus and whether a load is waiting on it; and two memories:
+the register file, and the instruction memory loaded from the
+program with \code{Mem::with}. The data memory is a device on the
+bus, a unit of its own. Its input is
 the reset and its outputs are the halt, the word executed, and a
 \code{Writeback} value: whether an instruction retired this cycle,
 the register it wrote and what it wrote, which is what the waveform
@@ -231,14 +233,13 @@ the decode, the fields of the word by \code{slice} and the five
 immediates assembled by \code{concat} and \code{sext}, as the manual
 draws them; two plain reads of the register file; the execute, an
 ALU shared by the register and immediate forms and a branch
-condition, each a function of its inputs; the store, which writes
-the lanes of the word a byte, a half or a word covers and reads
-nothing; and the load's read, the four lanes at the address into
-the writeback stage's register at the edge, which is the synchronous
-read a block RAM has. The writeback stage takes the byte or the half
-out of that word by the lane and the width the load carried, extends
-it, and writes the register file, or writes the value execute
-computed; an instruction retires there.
+condition, each a function of its inputs; and the store and the
+load, which go out on the bus as one request, the address, the data
+in its lanes and the lanes a store covers, a load's word coming back
+on the bus into the writeback stage's register. The writeback stage
+takes the byte or the half out of that word by the lane and the
+width the load carried, extends it, and writes the register file, or
+writes the value execute computed; an instruction retires there.
 
 The one hazard a third stage brings is closed in one place. An
 instruction in execute may read a register the one in writeback has
@@ -327,8 +328,8 @@ sequencer must never step under an instruction other than its own,
 which is a defect the random programs found. The board's line is
 tied low; the run and the test drive it.
 
-The bus is everything above the data memory in the address map, and
-it is two channels: a request out of the core, one word of the
+The bus is everything from the data memory up in the address map,
+and it is two channels: a request out of the core, one word of the
 address, the data in its lanes, the lanes a store covers and whether
 it is a store; and a response back, the word read. A channel is
 what the language has for two units, registered on both sides and
@@ -340,9 +341,8 @@ send under \code{when!}, whose \code{valid} is the condition. A
 store to the bus goes out when the bus has room and the instruction
 runs on; a load goes out, sets the wait bit and moves on to
 writeback, which holds it, and the whole pipeline behind it, until
-the response has landed in a register of its own there, beside the
-one the data memory's read lands in, so that the memory's register
-stays the block RAM's own. The hold is the third use of the stall,
+the response has landed in a register of its own there. The hold is
+the third use of the stall,
 and it is a register's say: an earlier form stalled the load in
 execute on the decode of its address, and that decode, the address
 add and the fetch's multiplexer were the path that limited the
@@ -352,18 +352,33 @@ devices keep up, so there is always room. A load that has gone out
 is not taken by an interrupt: the interrupt waits for the next
 instruction, so a device is never read twice for one load.
 
-The bus has two devices, and a router between the core and them,
+The bus has three devices, and a router between the core and them,
 Listing~\ref{lst:v-router}. One request channel comes in, and a
 channel goes out per device, chosen by bits 15 to 12 of the address:
-two is the timer and three the serial port. The devices' responses
-merge back into one channel. The router takes a request only when
-the channel it goes to has room. That is a receive under a condition
-of its own, \code{recv\_if}, whose \code{ready} is the condition
-and the offer together. An address above the data memory that is no
+one is the data memory, two the timer and three the serial port. The
+devices' responses merge back into one channel. The router takes a
+request only when the channel it goes to has room. That is a receive
+under a condition of its own, \code{recv\_if}, whose \code{ready}
+is the condition and the offer together. An address that is no
 device's is a hole; the router answers a load from it with zero and
 swallows a store to it. Responses come one at a time, since the core
-waits for each load's answer before it makes another request. The
-timer, Listing~\ref{lst:v-timer}, is the first device, in sixty
+waits for each load's answer before it makes another request.
+
+The data memory, Listing~\ref{lst:v-dmem}, is the first device:
+1024 words in four memories of a byte, one per lane, so that a store
+of a byte or a half writes its lanes and reads nothing. A write lands
+in the lanes the request covers; a read goes into the memory's own
+register at the edge, the synchronous read a block RAM has, and is
+answered the cycle after. The router sends it only the requests in
+its range, so it checks no address. What the memory costs as a unit
+of its own is the bus's round trip: a load's request crosses the
+core's channel, the router and the memory's channel, the memory
+reads and answers, and the answer crosses the memory's channel, the
+router and the core's channel, so a load retires six cycles after
+its execute where the memory in the core had it retire in one. The
+random programs pay it in the wait in writeback and nothing else,
+and the board's own memory could take the same place. The
+timer, Listing~\ref{lst:v-timer}, is the second device, in sixty
 lines of the same subset. It takes every request offered,
 answers a read in the cycle after with the word addressed, or zero
 for an address that is not its own, writes the lanes a write covers
@@ -390,10 +405,13 @@ two.
 channel fanned out by address and the responses merged
 back.},label={lst:v-router}]{cpu/vreteno/src/router.rs}
 
+\lstinputlisting[caption={\code{dmem.rs}: the data memory, a device
+on the bus.},label={lst:v-dmem}]{cpu/vreteno/src/dmem.rs}
+
 \lstinputlisting[caption={\code{timer.rs}: the timer, a device on
 the bus.},label={lst:v-timer}]{cpu/vreteno/src/timer.rs}
 
-The serial port, Listing~\ref{lst:v-uart}, is the second device,
+The serial port, Listing~\ref{lst:v-uart}, is the third device,
 with a line each way. A byte written to its first word goes out on
 the line as a start bit, the eight bits least significant first, and
 a stop bit, each \code{DIV} cycles long. A frame coming in on the
@@ -506,8 +524,8 @@ nothing branches. \code{select!} chooses among values, the ALU by
 \code{f3}, the branch condition, the loaded and the stored word, the
 writeback value, the target, the old and the new CSR value and
 whether the core knows the opcode; \code{when!} and \code{case!}
-choose among drives, the register file and the four lanes' writes
-under their enables, the control registers under a CSR write, a
+choose among drives, the register file's write under its enable,
+the control registers under a CSR write, a
 trap, the line or a return, the timer's words under a store, the writeback registers under execute's run, and
 the instruction register by reset, halt or fetch, in that priority.
 Register zero reads as zero rather than being protected from writes, since a mask
@@ -757,7 +775,7 @@ fail would prove nothing. The register file is not traced, so the
 testbench cannot see it, but every write to it shows in the
 writeback output the next tick, and every read shows in the program
 counter and the outputs that follow; the seven hundred and
-thirty-two ticks of the demonstration exercise every instruction of
+twenty-four ticks of the demonstration exercise every instruction of
 the program through both, the two traps and their returns included,
 since a wrong \code{mepc} or \code{mtvec} is a wrong program
 counter, and every register of the sequencer at every step of three
@@ -798,10 +816,10 @@ of its own, is not in it, and is in the board's figures below.}
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1890 \\
+LUTs, as logic & 1952 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 481 \\
-Block RAM tiles & 3 \\
+Flip-flops & 486 \\
+Block RAM tiles & 1 \\
 DSP blocks & 4 \\
 \bottomrule
 \end{tabular}
@@ -811,18 +829,20 @@ The memories are where the third stage shows. The instruction
 memory, written by nothing and holding the program from its
 \code{initial} block, is a read-only memory in one block RAM tile,
 1024 words by 27 bits, the tool having dropped the bit columns the
-program never sets. The data memory's four lanes are four block RAMs
-of 1024 by 8, two tiles, each written by the store on its port and
-read by the load into the writeback register on the other: the
-synchronous read a block RAM has, which is what the third stage was
-for. With two stages the data memory had been 560 LUTs of
+program never sets; it is the core's one tile. The data memory, a
+device of its own now, is four block RAMs of 1024 by 8 in two tiles
+in its unit, each written by a store on its port and read by a load
+into the memory's register on the other: the synchronous read a
+block RAM has, which is what the third stage was for while the
+memory was in the core. With two stages the data memory had been
+560 LUTs of
 distributed RAM, since the load read it combinationally and the
 store read it to merge a byte; the lanes removed the store's read
 and the stage registered the load's, and the LUT count fell by a
 third. The register file, 32 by 32 with one write port and two
 reads, is twelve of the small distributed primitives, which is what
 a register file of that size is on this family. The flip-flops are
-the core's thirty-four registers and the timer's three less one, the
+the core's registers less one, the
 writeback
 stage's program counter, which only the lockstep test reads and
 synthesis removed as unused, with a warning that says so, and less
@@ -835,16 +855,16 @@ instruction.
 The netlist is also placed and routed, \code{bazel build
 //cpu/vreteno:vreteno\_pnr}, with the same constraint and no pins,
 so the bitstream is a stub and the reports are the point. The routed
-design meets ten nanoseconds with 0.643~ns of slack, and hold with
-0.163~ns. The critical path is 8.753~ns, of which routing is three
-quarters, through twelve levels of logic: from the writeback's valid
-bit, through the forwarding into an operand and the jump's add, to
-the instruction memory's address, a jump through a register that the
-instruction before is still writing. With the step's pieces written
-in place rather than as functions the same logic had 0.776~ns on a
-path from the instruction register, and sixty LUTs fewer after
-synthesis: the synthesis and the placement move by that much on one
-netlist written two ways. Before the device load's wait moved into
+design meets ten nanoseconds with 0.315~ns of slack, and hold with
+0.109~ns. The critical path is 9.095~ns, of which routing is three
+quarters, through eleven levels of logic: from the writeback's
+destination register, through the forwarding compare into an
+operand and the jump's add, to the instruction memory's address, a
+jump through a register that the instruction before is still
+writing. With the data memory in the core the same path had
+0.643~ns, and with the step's pieces written in place rather than
+as functions 0.776~ns: the synthesis and the placement move by that
+much on one design written three ways. Before the device load's wait moved into
 writeback the
 slack was 0.129~ns, on a path from the same read through the
 address add and the decode of whether the address is a device's
@@ -883,17 +903,18 @@ pins the board's USB serial bridge listens and talks on, and the
 port's interrupt as the core's external interrupt line.
 The constraints name the board's pins as the project's other designs
 for it do, so the bitstream is real: the routed design meets
-100~MHz with 1.004~ns of slack, in 2025 LUTs and 982 flip-flops
-for the core, the router, the timer, the serial port with both its
-sides and its buffer of eight, and the six channel buffers together,
-three block RAM tiles, four DSP blocks and the MMCM, with no
-critical warning and no combinational loop, which the first board
-top with the units wired port to port had. The port's buffer is six
-LUTs of distributed memory. The wait's move into writeback took the
-board's slack from 0.285~ns to 0.903, and a tenth of the LUTs with
-it; the step's pieces as functions moved it to 0.688, and the port's
-receive side to 1.074: placement moves a path of routing by tenths
-from run to run.
+100~MHz with 1.123~ns of slack, in 2041 LUTs and 1064 flip-flops
+for the core, the router, the data memory, the timer, the serial
+port with both its sides and its buffer of eight, and the eight
+channel buffers together, three block RAM tiles, four DSP blocks and
+the MMCM, with no critical warning and no combinational loop, which
+the first board top with the units wired port to port had. The
+port's buffer is six LUTs of distributed memory. The wait's move
+into writeback took the board's slack from 0.285~ns to 0.903, and a
+tenth of the LUTs with it; the step's pieces as functions moved it
+to 0.688, the port's receive side to 1.074, its buffer to 1.004, and
+the memory's move onto the bus to this: placement moves a path of
+routing by tenths from run to run.
 \code{bazel run //cpu/vreteno:vreteno\_board\_flash} writes it into
 the board's QSPI flash over the programming cable. What the board
 should show, once it does: the clock LED at once, the running LED
@@ -924,7 +945,9 @@ since it compares architectural state when an instruction retires.
 
 More on the bus. The router decodes a device per range and the data
 memory could go out onto it too, at the cost of the cycle a response
-takes. Each begins in the model, as
+takes, which is paid now; the board's own memory, behind a
+controller, could take the data memory's place at its address, the
+core none the wiser. Each begins in the model, as
 everything here has, is added to the core under the lockstep test,
 and is checked as a netlist by the same trace.
 

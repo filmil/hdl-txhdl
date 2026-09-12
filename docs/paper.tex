@@ -49,11 +49,12 @@ lowers to a netlist in Verilog and VHDL, and the build simulates that
 netlist under nvc and Verilator against the trace the simulation
 wrote, so a design that passes is right in three forms at once. The
 largest design so far is Vreteno, a three-stage RV32IM core with
-machine-mode traps, an interrupt line and a timer: written in the
-subset the lowering reads, checked
+machine-mode traps, an interrupt line and a bus with its data
+memory, a timer and a serial port on it: written in the subset the
+lowering reads, checked
 in lockstep against a reference model, checked as a netlist against
 its own trace, and synthesized, placed and routed on an Artix-7 at
-100~MHz in 2052 LUTs, its data memory in block RAM. This paper presents the system
+100~MHz in 2041 LUTs, its data memory a device in block RAM. This paper presents the system
 and its results.
 \end{abstract}
 
@@ -364,6 +365,7 @@ divider & internal wires kept as fields, seen and checked & nvc, Verilator \\
 Gray counter & functions under \code{\#[lower]}, inlined & nvc, Verilator \\
 Vreteno & the whole core, 732 ticks & nvc, Verilator \\
 router & the bus fanned out by address, the same run & nvc, Verilator \\
+data memory & a device on the core's bus, the same run & nvc, Verilator \\
 timer & a device on the core's bus, the same run & nvc, Verilator \\
 serial port & a device on the core's bus, the same run & nvc, Verilator \\
 \bottomrule
@@ -396,9 +398,11 @@ instruction memory at the program counter into an instruction
 register, with its program counter and a valid bit. The execute stage
 decodes the fields of the word in that register with \code{slice},
 \code{concat} and \code{sext}, reads two operands from the register
-file, computes with the ALU of Listing~\ref{lst:p-alu}, stores into
-the lanes of the data memory, reads it into the writeback registers
-at its edge, and, on a taken branch or a jump, redirects the fetch
+file, computes with the ALU of Listing~\ref{lst:p-alu}, sends a
+store or a load out on the bus, where the data memory is a device
+like the timer and the serial port and a load's answer comes back
+into the writeback registers, and, on a taken branch or a jump,
+redirects the fetch
 and squashes the word fetched that cycle, which is the one-cycle
 penalty. The writeback stage extends a loaded word, writes the
 register file and retires; an operand the writeback stage is about
@@ -414,8 +418,8 @@ returns; an interrupt line, pending in \code{mip} and enabled in
 retires writing nothing; a bus of two channels, a request out and
 the word read back, through a router that decodes a device per
 address range, on which a timer of sixty lines raises the second
-interrupt when its count reaches its compare and a serial port says
-what the program writes and takes what a terminal types, the
+interrupt when its count reaches its compare, a serial port says what the program writes and takes what
+a terminal types, and the data memory itself is a device, the
 channels between them all being the runtime's buffer of two as
 hardware; the six CSR instructions read and write the
 eight control registers. Multiply and divide are one sequencer over
@@ -436,7 +440,7 @@ simulates and is a netlist.
   \node[box] (dec) at (5.2,-1.5) {decode,\\immediates};
   \node[art] (regs) at (2.3,-1.5) {register\\file};
   \node[box] (alu) at (5.2,-3) {ALU, branch,\\load, store};
-  \node[art] (dmem) at (2.3,-3) {data\\memory};
+  \node[art] (dmem) at (2.3,-3) {bus: memory,\\timer, port};
   \node[box, fill=tint] (wbr) at (0,-3) {\code{wb\_*}};
   \node[box] (wb) at (0,-4.4) {writeback};
   \draw[flow] (pc) -- (imem);
@@ -486,11 +490,11 @@ memory became a read-only memory in one block RAM tile, the data
 memory's four byte lanes four block RAMs in two, since the third
 stage registers their read, and the register file distributed RAM.
 Placed and routed with the same constraint, the core meets ten
-nanoseconds with 0.643~ns to spare; the critical path runs from the
-writeback's valid bit through the forwarding into an operand and the
-jump's add to the instruction memory's address, a jump through a
-register the instruction before is still writing, and is three
-quarters routing. Fig.~\ref{fig:p-vreteno} is the opening of the
+nanoseconds with 0.315~ns to spare; the critical path runs from the
+writeback's destination register through the forwarding compare
+into an operand and the jump's add to the instruction memory's
+address, a jump through a register the instruction before is still
+writing, and is three quarters routing. Fig.~\ref{fig:p-vreteno} is the opening of the
 demonstration, from the trace, and Fig.~\ref{fig:p-uart} the serial
 port's line as the demonstration's O goes out, from the same trace:
 the write into the port, then the start bit, the byte low bit first
@@ -504,10 +508,10 @@ and the stop bit, four cycles each.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1890 \\
+LUTs, as logic & 1952 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 481 \\
-Block RAM tiles & 3 \\
+Flip-flops & 486 \\
+Block RAM tiles & 1 \\
 DSP blocks & 4 \\
 Errors, critical warnings & 0 \\
 \bottomrule
@@ -541,12 +545,13 @@ paper. The runtime is five Rust modules, one macro crate and one
 crate of parts, with one
 external crate, an FST writer. Thirty examples compile, each one
 concept, and every one that runs writes a waveform the examples
-document draws. Seventeen lowered units, Table~\ref{tab:p-checked}, are
+document draws. Eighteen lowered units, Table~\ref{tab:p-checked}, are
 simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
-thirty-nine tests run under \code{bazel test //...}, and every one of them
+forty-one tests run under \code{bazel test //...}, and every one of them
 is hermetic, the simulators built from source and the synthesis tool
-installed by the build. Vreteno is 857 lines of core, 98 of timer,
+installed by the build. Vreteno is 815 lines of core, 78 of data
+memory, 98 of timer,
 62 of router and 89 of serial port, checked in lockstep against a
 364-line model on a demonstration program and sixty-four random
 ones, with interrupts raised at random, checked as a netlist on 732
