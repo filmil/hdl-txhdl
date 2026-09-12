@@ -422,6 +422,49 @@ test put a terminal on the two lines, \code{term.rs}: it decodes
 what the core sends, and once the core has said a line it types
 three bytes back, a pause between them for the program to take
 each, and the run prints what was said both ways.
+Figures~\ref{fig:v-out}, \ref{fig:v-in} and \ref{fig:v-bus} are
+the port at work, three windows on the run's one trace. The first is
+the demonstration's O going out: the write reaches the port, the
+bit count loads ten, and the line falls for the start bit, then
+carries the byte's bits four cycles each, low first, as the shift
+register empties, and rises for the stop bit; the requests after
+the first are the program polling the status for the next byte. The second is the
+terminal's y coming in: the line falls, the port's register of it
+follows a cycle later, the bit count loads ten and counts down as
+the bits are shifted in at the middle of each, and at the stop bit
+the byte lands, the ready bit rises and with it the interrupt line.
+The third is the bus under the status poll and the write before the
+first: the core's request goes out and is taken, the router hands it
+to the port, the port's response comes back through the router into
+the core, which holds in writeback until it does, and the load
+retires; then the store goes out the same way and retires at once.
+
+\begin{figure}[htbp]
+\centering
+\input{vreteno_out_timing.tex}
+\caption{A byte out: the write into the port, ten bits to send, and
+the line's start bit, eight bits low first, and stop bit, four
+cycles each; the requests after the first are the program's polls
+of the status for the next byte.}
+\label{fig:v-out}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\input{vreteno_in_timing.tex}
+\caption{A byte in: the line, its register, the bits left, the byte
+shifting in, and the ready bit and the interrupt as it lands.}
+\label{fig:v-in}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\input{vreteno_bus_timing.tex}
+\caption{The bus under a status poll and a byte write: request out,
+through the router to the port, response back, the core waiting in
+writeback, and the retire.}
+\label{fig:v-bus}
+\end{figure}
 
 \lstinputlisting[caption={\code{uart.rs}: the serial port, a device
 on the bus.},label={lst:v-uart}]{cpu/vreteno/src/uart.rs}

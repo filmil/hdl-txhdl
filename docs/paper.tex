@@ -486,7 +486,10 @@ writeback's valid bit through the forwarding into an operand and the
 jump's add to the instruction memory's address, a jump through a
 register the instruction before is still writing, and is three
 quarters routing. Fig.~\ref{fig:p-vreteno} is the opening of the
-demonstration, from the trace.
+demonstration, from the trace, and Fig.~\ref{fig:p-uart} the serial
+port's line as the demonstration's O goes out, from the same trace:
+the write into the port, then the start bit, the byte low bit first
+and the stop bit, four cycles each.
 
 \begin{table}[htbp]
 \caption{Vreteno on an Artix-7, after synthesis.}
@@ -505,6 +508,16 @@ Errors, critical warnings & 0 \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\begin{figure}[htbp]
+\centering
+\input{paper_vreteno_out_timing.tex}
+\caption{A byte out on Vreteno's serial port, from the trace: the
+write reaches the port and the line carries the frame, a start bit,
+the byte low bit first and a stop bit, four cycles each; the later
+requests are the program's polls for the next byte.}
+\label{fig:p-uart}
+\end{figure}
 
 \begin{figure}[htbp]
 \centering

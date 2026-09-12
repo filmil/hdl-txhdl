@@ -782,6 +782,59 @@ waveform(
     ],
 )
 
+# Three windows on the same run: a byte going out on the port's line,
+# a byte coming in, and the bus carrying a status poll and the write.
+waveform(
+    name = "vreteno_out",
+    example = "//cpu/vreteno:vreteno",
+    from_tick = 430,
+    until = 522,
+    width = 15.5,
+    signals = [
+        "//clocks/clk=>clk",
+        "//ureq/rx_valid=>ureq_valid",
+        "//uart/bits=>bits",
+        "//uart/shift=>shift",
+        "//tx=>tx",
+    ],
+)
+
+waveform(
+    name = "vreteno_in",
+    example = "//cpu/vreteno:vreteno",
+    from_tick = 770,
+    until = 862,
+    width = 15.5,
+    signals = [
+        "//clocks/clk=>clk",
+        "//rx=>rx",
+        "//uart/line=>line",
+        "//uart/rx_bits=>rx_bits",
+        "//uart/rx_shift=>rx_shift",
+        "//uart/rx_ready=>rx_ready",
+        "//uirq=>uirq",
+    ],
+)
+
+waveform(
+    name = "vreteno_bus",
+    example = "//cpu/vreteno:vreteno",
+    from_tick = 412,
+    until = 440,
+    width = 15.5,
+    signals = [
+        "//clocks/clk=>clk",
+        "//req/rx_valid=>req_valid",
+        "//req/rx_ready=>req_ready",
+        "//ureq/rx_valid=>ureq_valid",
+        "//uresp/rx_valid=>uresp_valid",
+        "//resp/rx_valid=>resp_valid",
+        "//resp/rx_data=>resp_data",
+        "//cpu/dev_wait=>dev_wait",
+        "//wb/done=>done",
+    ],
+)
+
 latex_document(
     name = "vreteno",
     main = "vreteno.tex",
@@ -790,6 +843,9 @@ latex_document(
         ":vendored_tex",
         ":vreteno_run",
         ":vreteno_timing",
+        ":vreteno_out_timing",
+        ":vreteno_in_timing",
+        ":vreteno_bus_timing",
         "//cpu/vreteno:sources",
     ],
     deps = ["housestyle.tex"],
@@ -855,6 +911,12 @@ genrule(
             "",
         ),
         (
+            "vreteno_out",
+            "clk,ureq_valid,tx",
+            "//clocks/clk=>clk,//ureq/rx_valid=>ureq_valid,//tx=>tx",
+            " --from 430 --until 522",
+        ),
+        (
             "vreteno",
             "clk,rst,pc,done,rd,val",
             "//clocks/clk=>clk,//rst=>rst,//cpu/pc=>pc," +
@@ -874,6 +936,7 @@ latex_document(
         ":paper_cheat_timing",
         ":paper_stage_timing",
         ":paper_vreteno_timing",
+        ":paper_vreteno_out_timing",
         "//lib/examples:sources",
         "//cpu/vreteno:sources",
     ],

@@ -15,14 +15,23 @@ load("@rules_nvc//nvc:rules.bzl", "vhdl_test")
 load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
 load("@rules_verilog//verilog:defs.bzl", "verilog_library")
 
-def waveform(name, example, signals, lowered = None, until = None):
+def waveform(
+        name,
+        example,
+        signals,
+        lowered = None,
+        until = None,
+        from_tick = None,
+        width = None):
     """`lowered = (entity, unit)` also takes the example's VHDL and
     Verilog and simulates each against the trace: NAME.vhd, NAME.v and
     NAME.vhd.ports from the run, NAME_tb.vhd and NAME_tb.v from fst2tb,
     a vhdl_test NAME_sim under nvc and a cc_test NAME_vsim_test under
     Verilator. A list of pairs checks several units of the one run,
-    the targets then named NAME_sim_ENTITY and NAME_vsim_ENTITY_test. `until` cuts the figure at that tick, for a run too long
-    to draw whole."""
+    the targets then named NAME_sim_ENTITY and NAME_vsim_ENTITY_test.
+    `until` cuts the figure at that tick, for a run too long to draw
+    whole, and `from_tick` starts it at one, a window on one thing the
+    run does; `width` is the figure's width in centimetres."""
     outs = ["out_" + name + ".txt", name + ".fst", name + ".fst.names"]
     env = "TXHDL_FST=$(RULEDIR)/" + name + ".fst"
     if lowered:
@@ -101,6 +110,10 @@ def waveform(name, example, signals, lowered = None, until = None):
     )
     order = ",".join([s.split("=>")[-1] for s in signals])
     cut = " --until %d" % until if until else ""
+    if from_tick:
+        cut += " --from %d" % from_tick
+    if width:
+        cut += " --width %s" % width
     native.genrule(
         name = name + "_timing",
         srcs = [name + ".dt", name + ".fst.names"],

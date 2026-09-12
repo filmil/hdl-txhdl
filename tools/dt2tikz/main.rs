@@ -9,13 +9,15 @@
 //! a period, all at the current time.
 //!
 //! Usage: dt2tikz IN.dt [--order a,b,..] [--color] [--width CM]
-//!        [--until TICKS] [--only] [--names FILE --signals 'path=>alias,..']
-//!        > OUT.tex
+//!        [--from TICKS] [--until TICKS] [--only]
+//!        [--names FILE --signals 'path=>alias,..'] > OUT.tex
 //!
 //! `--until` cuts the diagram at that tick: a long run, a processor's
-//! program, shows its opening cycles and not the whole. `--only` draws
-//! the signals of `--order` and no others, for a figure that must fit
-//! a column.
+//! program, shows its opening cycles and not the whole; `--from`
+//! starts it at a tick, with every signal at the value it had then,
+//! so a window of a long run shows one thing happening, and the axis
+//! keeps the run's own ticks. `--only` draws the signals of `--order`
+//! and no others, for a figure that must fit a column.
 //!
 //! `--names` is the sidecar the FST writer leaves beside its file: one
 //! line per enum-valued signal, its path, a tab, and its variants by
@@ -47,6 +49,11 @@ fn main() {
         .iter()
         .position(|a| a == "--until")
         .map(|p| args[p + 1].parse().expect("--until needs ticks"));
+    let from: u64 = args
+        .iter()
+        .position(|a| a == "--from")
+        .map(|p| args[p + 1].parse().expect("--from needs ticks"))
+        .unwrap_or(0);
     let wanted: Vec<String> = match args.iter().position(|a| a == "--order") {
         Some(p) => args
             .get(p + 1)
@@ -119,6 +126,22 @@ fn main() {
             h.retain(|(t0, _)| *t0 < u);
         }
         t = t.min(u);
+    }
+    // A window's start: what a signal was at that tick is its first
+    // value, and the ticks are counted from there.
+    if from > 0 {
+        for h in hist.values_mut() {
+            let before = h.iter().filter(|(t0, _)| *t0 <= from).last();
+            let first = before.map(|(_, v)| (from, v.clone()));
+            h.retain(|(t0, _)| *t0 > from);
+            if let Some(f) = first {
+                h.insert(0, f);
+            }
+            for e in h.iter_mut() {
+                e.0 -= from;
+            }
+        }
+        t = t.saturating_sub(from);
     }
     if !wanted.is_empty() {
         let mut rest: Vec<String> = order
@@ -279,8 +302,13 @@ fn main() {
             }
         }
     }
-    // The time axis, in ticks.
+    // The time axis, in ticks: a mark every cycle, and a number as
+    // often as the numbers have room, a compressed window fewer.
     let yb = -(order.len() as f64) * PITCH + PITCH - H - 0.15;
+    let mut step = 2u64;
+    while (step as f64) * xs < 0.6 {
+        step += 2;
+    }
     let mut tick = 0u64;
     while (tick as f64) <= end {
         let x = tick as f64 * xs;
@@ -291,12 +319,15 @@ fn main() {
             yb - 0.1
         )
         .unwrap();
-        writeln!(
-            o,
-            "\\node[anchor=north, font=\\tiny] at ({x:.2},{:.2}) {{{tick}}};",
-            yb - 0.1
-        )
-        .unwrap();
+        if tick % step == 0 {
+            writeln!(
+                o,
+                "\\node[anchor=north, font=\\tiny] at ({x:.2},{:.2}) {{{}}};",
+                yb - 0.1,
+                tick + from
+            )
+            .unwrap();
+        }
         tick += 2;
     }
     writeln!(
