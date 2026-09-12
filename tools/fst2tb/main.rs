@@ -25,11 +25,13 @@
 //! trace holds the last offer and the entity computes the wire anyway.
 //!
 //! Form: in VHDL, one procedure holds a tick; a cycle's inputs and
-//! expected values are one string of bits, a frame, and the replay is
-//! a constant array of frames and a loop over it. nvc's heap for one
+//! expected values are one string of bits, a frame, kept as hex, and
+//! the replay is a loop over constant arrays of frames, each array a
+//! package of its own of a few hundred frames. nvc's heap for one
 //! design unit is finite, and a statement per check, or a call per
 //! cycle with an argument per signal, is more than it holds for a run
-//! of a few hundred cycles; an array of literals is data.
+//! of a few hundred cycles; a literal is data, but a unit of half a
+//! megabyte of them is over the limit too, so they are spread.
 //!
 //! Usage: fst2tb FILE.fst FILE.vhd.ports ENTITY UNIT [--verilog] > tb
 //! where UNIT is the name the Rust testbench gave the unit in the trace;
@@ -416,7 +418,22 @@ fn main() {
          end loop;\n      return v;\n    end function;\n\
          function bit1(c : character) return std_logic is\n    begin\n\
          if c = '1' then return '1'; else return '0'; end if;\n\
-         end function;\n",
+         end function;\n\
+         function unhex(h : string) return string is\n\
+         variable s : string(1 to 4 * h'length);\n\
+         variable v : integer;\n    begin\n\
+         for i in 0 to h'length - 1 loop\n\
+         case h(h'left + i) is\n\
+         when '0' => v := 0; when '1' => v := 1; when '2' => v := 2;\n\
+         when '3' => v := 3; when '4' => v := 4; when '5' => v := 5;\n\
+         when '6' => v := 6; when '7' => v := 7; when '8' => v := 8;\n\
+         when '9' => v := 9; when 'a' => v := 10; when 'b' => v := 11;\n\
+         when 'c' => v := 12; when 'd' => v := 13; when 'e' => v := 14;\n\
+         when others => v := 15;\n        end case;\n\
+         for k in 0 to 3 loop\n\
+         if (v / 2 ** (3 - k)) mod 2 = 1 then s(4 * i + k + 1) := '1';\n\
+         else s(4 * i + k + 1) := '0'; end if;\n\
+         end loop;\n      end loop;\n      return s;\n    end function;\n",
     );
     o.push_str(&format!(
         "    procedure tb_tick(f : string) is\n    begin\n{tick}    \
@@ -481,25 +498,44 @@ fn main() {
         frames.push(f);
         t += 2;
     }
-    o.push_str(&format!(
-        "    type frame_array is array (natural range <>) of \
-         string(1 to {width});\n"
-    ));
-    if !frames.is_empty() {
-        o.push_str("    constant frames : frame_array := (\n");
-        for (i, f) in frames.iter().enumerate() {
-            let sep = if i + 1 < frames.len() { "," } else { "" };
-            o.push_str(&format!("      {i} => \"{f}\"{sep}\n"));
+    // The frames, as hex, in packages of a few hundred before the
+    // entity: one package is one design unit under nvc's heap limit.
+    let hex = |f: &str| -> String {
+        let mut f = f.to_string();
+        while f.len() % 4 != 0 {
+            f.push('0');
         }
-        o.push_str("    );\n");
+        f.as_bytes()
+            .chunks(4)
+            .map(|c| {
+                let v = c.iter().fold(0u8, |v, &b| v << 1 | (b == b'1') as u8);
+                char::from_digit(v as u32, 16).unwrap()
+            })
+            .collect()
+    };
+    let hwidth = width.div_ceil(4);
+    let mut packages = String::new();
+    let chunks: Vec<&[String]> = frames.chunks(256).collect();
+    for (c, chunk) in chunks.iter().enumerate() {
+        packages.push_str(&format!(
+            "package {entity}_tb_frames{c} is\n  type frame_array is array \
+             (natural range <>) of string(1 to {hwidth});\n  constant \
+             frames : frame_array := (\n"
+        ));
+        for (i, f) in chunk.iter().enumerate() {
+            let sep = if i + 1 < chunk.len() { "," } else { "" };
+            packages.push_str(&format!("    {i} => \"{}\"{sep}\n", hex(f)));
+        }
+        packages.push_str("  );\nend package;\n\n");
     }
     o.push_str("  begin\n");
     o.push_str(&first);
-    if !frames.is_empty() {
-        o.push_str(
-            "    for i in frames'range loop\n      tb_tick(frames(i));\n    \
-             end loop;\n",
-        );
+    for c in 0..chunks.len() {
+        o.push_str(&format!(
+            "    for i in work.{entity}_tb_frames{c}.frames'range loop\n      \
+             tb_tick(unhex(work.{entity}_tb_frames{c}.frames(i)));\n    \
+             end loop;\n"
+        ));
     }
     o.push_str(
         "    wait for 1 ns;\n    if errors = 0 then\n\
@@ -507,5 +543,5 @@ fn main() {
          report \"the lowering differs from the trace\" severity failure;\n\
          end if;\n    std.env.finish;\n  end process;\nend architecture;\n",
     );
-    print!("{o}");
+    print!("{packages}{o}");
 }
