@@ -167,11 +167,11 @@ jobs:
             echo "A_GITHUB_MIRROR_TOKEN is not set; no copy to GitHub" >&2
             exit 0
           fi
-          api="https://api.github.com/repos/filmil/txhdl"
+          api="https://api.github.com/repos/filmil/hdl-txhdl"
           auth="Authorization: Bearer $TOKEN"
           accept="Accept: application/vnd.github+json"
           release_id() { sed -n 's/^ *"id": *\([0-9]*\),.*/\1/p' | head -1; }
-          git remote add github "https://x-access-token:${TOKEN}@github.com/filmil/txhdl.git"
+          git remote add github "https://x-access-token:${TOKEN}@github.com/filmil/hdl-txhdl.git"
           git push github "HEAD:refs/heads/main" ||
             echo "main not pushed; the mirror may have it already" >&2
           if [ "$OVERRIDE" = "true" ]; then
@@ -190,7 +190,7 @@ jobs:
             name=$(basename "$f")
             curl -fsS -X POST -H "$auth" -H "$accept" \
               -H "Content-Type: application/octet-stream" \
-              "https://uploads.github.com/repos/filmil/txhdl/releases/$id/assets?name=$name" \
+              "https://uploads.github.com/repos/filmil/hdl-txhdl/releases/$id/assets?name=$name" \
               --data-binary "@$f" > /dev/null
             echo "uploaded $name"
           done

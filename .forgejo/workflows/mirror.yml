@@ -5,7 +5,7 @@
 # main and the tags; it never forces and never deletes, so a branch that
 # exists only on GitHub is left alone. Nothing runs without the secret:
 # A_GITHUB_MIRROR_TOKEN is a fine-grained GitHub token with read and write
-# access to the contents of filmil/txhdl and nothing else, set in this
+# access to the contents of filmil/hdl-txhdl and nothing else, set in this
 # repository's Actions secrets.
 #
 # The instance's own push mirror (Settings, Repository, Mirror Settings)
@@ -38,6 +38,6 @@ jobs:
             echo "A_GITHUB_MIRROR_TOKEN is not set; nothing to do" >&2
             exit 1
           fi
-          git remote add github "https://x-access-token:${TOKEN}@github.com/filmil/txhdl.git"
+          git remote add github "https://x-access-token:${TOKEN}@github.com/filmil/hdl-txhdl.git"
           git push github HEAD:refs/heads/main
           git push github --tags
