@@ -1041,6 +1041,18 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# The repository in numbers: a snapshot, typed in, with its script.
+latex_document(
+    name = "stats",
+    main = "stats.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        "//tools:repostats.sh",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # Every document in sequence, one file, with a bookmark per document.
 combined_pdf(
     name = "all",
@@ -1055,6 +1067,7 @@ combined_pdf(
         "TxHDL by Example",
         "Vreteno: An RV32IM Core in TxHDL",
         "TxHDL: A Hardware Description Language That Is a Rust Library",
+        "TxHDL by the Numbers",
     ],
     parts = [
         ":cover",
@@ -1066,5 +1079,6 @@ combined_pdf(
         ":examples",
         ":vreteno",
         ":paper",
+        ":stats",
     ],
 )

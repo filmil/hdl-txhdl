@@ -15,7 +15,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and nine documents describe it,
+The language is a library, `//lib`, and ten documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -43,6 +43,9 @@ all under `//docs`:
 * `//docs:cheatsheet` is the one-page cheat sheet, also as a PNG
   (`//docs:cheatsheet_png`); it shows `ex_cheat.rs`, its netlist and
   its waveform, all produced by the build.
+* `//docs:stats` is the repository in numbers, lines per topic,
+  measured once on September 13, 2026, and typed in; it is not kept up
+  to date, and `tools/repostats.sh` measures again.
 * `//docs:all` is every document above in that order, one PDF with a
   bookmark per document.
 

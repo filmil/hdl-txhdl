@@ -26,6 +26,12 @@ the documents and the programs; every commit of the repository says
 so and carries the prompts that led to it, verbatim.}%
 \thanks{\buildstamp}}
 
+% The table of documents fills a page of its own: set it at the top of
+% that page rather than at its middle.
+\makeatletter
+\setlength{\@fptop}{0pt}
+\makeatother
+
 \markboth{TxHDL Documents}{Filmar and Janković: TxHDL Documents}
 
 \begin{document}
@@ -49,7 +55,10 @@ The release workflow publishes every PDF nightly, and on request.
 
 \section{The Documents}
 
-\begin{table}[h]
+Table~\ref{tab:documents} names every document, in the order the
+combined PDF binds them, with the target that builds each.
+
+\begin{table}[t]
 \caption{Every document, what it is for, and where it is built.}
 \label{tab:documents}
 \centering
@@ -116,6 +125,12 @@ TxHDL cheat sheet
   & One page: the rule, the model of time, the vocabulary, a unit with
     its netlist and its waveform, and how to build. Also a PNG.
   & \begin{tabular}[t]{@{}l@{}}\code{//docs:cheatsheet}\\\code{//docs:cheatsheet\_png}\end{tabular} \\
+\addlinespace
+TxHDL by the Numbers
+  & The repository in numbers: lines per topic, per language and per
+    file, measured once, on September 13, 2026, and typed in. Not kept
+    up to date; the script that measured is in the tree.
+  & \code{//docs:stats} \\
 \addlinespace
 All of the above, in this order
   & One file, \code{txhdl.pdf}, with a bookmark per document, for
