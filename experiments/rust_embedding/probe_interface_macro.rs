@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 18. The `macro_rules!` interface macro, kept as the record of
 // where that route stopped: exactly two roles, `inp` for `in`, and a
 // role that omits a member compiles silently. Against the library's

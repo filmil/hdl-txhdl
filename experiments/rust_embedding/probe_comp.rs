@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 3. Do `Bus`, `Chan`, `Signal`, `Member` and `Tag` hold together,
 // and can a unit be generic over a tag? Against the library.
 use txhdl::comp::{chan, signal, DefaultClock, In, Unit, Out, Reg, Rx, Tx, rising};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 14. Can direction be enforced rather than documented? Against the
 // library's ends: `In` has `get` and no `set`; `Out` has `set` and no
 // `get`. A unit given the wrong end is a type error at the call.

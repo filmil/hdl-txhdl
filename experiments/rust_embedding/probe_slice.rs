@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 11. May a bit slice take variable bounds? Against the library's
 // `U::slice` and `U::slice_at`. Literal bounds, const-parameter bounds
 // and a run-time offset all compile; a run-time width is probe 11b.

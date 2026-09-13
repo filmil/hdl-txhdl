@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # **Some theses for a modern hardware HDL**
 
 # **Some theses for a modern hardware definition language**

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 10c. `case!`: `when!` with many arms. The arms are Rust patterns,
 // guards, alternatives and `_` included, and the first match wins. A
 // pattern tests; it does not bind (probe 10e).

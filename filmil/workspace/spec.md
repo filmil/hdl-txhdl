@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # **FLHDL: A Data Flow Hardware Definition Language**
 
 **Date:** May 11, 2026  

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 12. A unit with submodules, against the library. Children are
 // disjoint fields, so both may be borrowed mutably at once; the wire
 // between them is handed to each as its `run` argument.

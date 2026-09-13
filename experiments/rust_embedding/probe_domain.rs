@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 20. The clock domain in the signal's type, against the library's
 // `Clock`, `DefaultClock` and `Crossing`. A single-clock design never
 // names a domain; a two-clock design names exactly the second.

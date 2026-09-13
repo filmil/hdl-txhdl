@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Readme
 
 filmil's writings, place to put them before we

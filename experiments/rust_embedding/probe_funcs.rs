@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 9. Operator latency instead of a hand-placed stage boundary.
 // Against the library's `pipeline` (async) and `funcs` (plain).
 use txhdl::comp::mux;

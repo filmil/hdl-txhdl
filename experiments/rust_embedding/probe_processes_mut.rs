@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 5b. The same processes taking `&mut self`. Expected to fail with
 // E0499; the failure is why `Reg` is a cell and processes take `&self`.
 use txhdl::comp::join2;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 19c. Two roles driving one member. Expected to fail with the
 // macro's message naming both roles.
 use txhdl::comp::{Chan, Signal};

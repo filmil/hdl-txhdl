@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # Build and test on every pull request and on every push to a mainline branch.
 #
 # Building everything is most of the test: every document target renders a PDF

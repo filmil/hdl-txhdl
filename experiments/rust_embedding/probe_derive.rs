@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 8. The derives, from the runtime's own macro crate. The bounds
 // hold only if the derives emitted the impls.
 use txhdl::comp::Bus as BusTrait;

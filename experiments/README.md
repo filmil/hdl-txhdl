@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # experiments
 
 Compiled probes. Each one answers a question a design document would

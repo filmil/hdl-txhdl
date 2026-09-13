@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 10b. A drive with no arrow inside `when!`. Expected to fail with
 // the macro's own message rather than a type error after expansion.
 use txhdl::comp::Reg;

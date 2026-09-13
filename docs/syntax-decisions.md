@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Surface syntax for the merged language
 
 Status: proposal, September 8, 2026.

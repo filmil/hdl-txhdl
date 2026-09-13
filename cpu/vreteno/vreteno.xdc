@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # For synthesis of the Vreteno core: the clock, and nothing else, since
 # the question is whether the netlist synthesizes and to what, not
 # where its pins go on a board.

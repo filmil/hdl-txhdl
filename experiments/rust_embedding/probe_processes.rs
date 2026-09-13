@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 5. A unit's `run` joins one async fn per process. The processes
 // take `&self` and share state through the library's `Reg`.
 use txhdl::comp::{join2, Unit, Reg, rising, DefaultClock};

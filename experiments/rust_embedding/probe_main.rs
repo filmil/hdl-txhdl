@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 13. A design is a program: `fn main()` reaches the top unit
 // through nothing but a configuration. Against the library's `Config`
 // and `elaborate`.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 1. Does a width that depends on arithmetic over const generic
 // parameters compile on stable Rust? Against the library's own `U`.
 use txhdl::types::U;

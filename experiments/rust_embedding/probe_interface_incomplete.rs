@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 19b. A role that forgets a member. Expected to fail with the
 // macro's own message naming the role and the member.
 use txhdl::comp::{Chan, Signal};

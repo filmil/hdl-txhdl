@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 17. Nested configuration: a parent's config names its children's
 // as associated types, so two children may share a knob name and a
 // child's config is reusable. Against the library's `Config`.

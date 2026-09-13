@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 1b. The same question on nightly, with the feature enabled.
 #![feature(generic_const_exprs)]
 #![allow(incomplete_features)]

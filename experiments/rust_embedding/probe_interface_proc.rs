@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 19. The library's `interface!`, a procedural macro: any number
 // of roles, `in` as written, and a completeness check.
 use txhdl::comp::{Chan, Signal};

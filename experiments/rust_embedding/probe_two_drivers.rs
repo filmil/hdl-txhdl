@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 16b. Two drivers on one wire. Expected to fail: `Out` is not
 // `Clone` and `signal` returns one, so the second move has nothing left.
 use txhdl::comp::{signal, DefaultClock, Out};

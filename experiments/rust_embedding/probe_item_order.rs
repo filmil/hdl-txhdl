@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 7. May an `impl` precede the `struct` it is for? Items in a Rust
 // module are not order dependent, unlike statements in a block.
 use txhdl::comp::Bus;

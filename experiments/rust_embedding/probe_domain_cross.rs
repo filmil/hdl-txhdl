@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 20b. A crossing without a `Crossing`. Expected to fail twice: a
 // named clock into another, and the default clock into a named one.
 use txhdl::comp::{signal, Clock, DefaultClock, In};

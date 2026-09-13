@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 16. A signal yields its two ends separately; `In` clones for
 // fanout and `Out` does not. Against the library's `signal`.
 use txhdl::comp::{signal, DefaultClock, In, Out, Reg};

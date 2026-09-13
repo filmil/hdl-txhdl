@@ -2,6 +2,7 @@
 draft: true
 
 ---
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # **Idea seed: Some theses for a modern hardware definition language**
 

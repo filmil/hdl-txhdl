@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 15. The value types, from the library: Bit, Logic, U, I and
 // logic::Vec, with resolution and X propagation.
 use txhdl::types::{logic, Bit, Logic, I, U};

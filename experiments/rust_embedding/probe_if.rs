@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 10. `when!` and `mux` from the library. The statement form
 // predicates a list of register writes; the expression form is a
 // function, because there is nothing to predicate.

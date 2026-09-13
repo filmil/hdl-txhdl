@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 10d. A drive with no arrow inside a `case!` arm. Expected to
 // fail with the macro's own message, the same one `when!` gives.
 use txhdl::case;

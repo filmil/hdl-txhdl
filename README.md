@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 [![build](https://git.hdlfactory.com/HDL/txhdl/actions/workflows/build.yml/badge.svg?branch=main)](https://git.hdlfactory.com/HDL/txhdl/actions?workflow=build.yml)
 [![release](https://git.hdlfactory.com/HDL/txhdl/actions/workflows/release.yml/badge.svg)](https://git.hdlfactory.com/HDL/txhdl/releases)
 
@@ -99,3 +100,11 @@ default `push` event matches nothing and runs no job at all.
 A local release run reaches the final step and fails there, because
 publishing needs a token that a local run does not have.
 Everything before it is the part worth testing.
+
+## License
+
+Everything in this tree outside `third_party/` is under the Apache
+License, version 2.0, the text of which is in `LICENSE`.
+Every source file says so in an `SPDX-License-Identifier` line.
+`third_party/` holds vendored files under their own licenses, each
+named in `third_party/README.md`.

@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Building the specification documents
 
 Status: as built, September 8, 2026.

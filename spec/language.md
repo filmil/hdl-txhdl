@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # TxHDL - Transaction Hardware Description Language
 
 ## Complete Language Specification

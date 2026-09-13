@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # Mirror the mainline to GitHub, so that a second copy exists if this
 # instance is unreachable.
 #

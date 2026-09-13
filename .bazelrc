@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 common --registry=https://raw.githubusercontent.com/filmil/bazel-registry/main
 common --registry=https://bcr.bazel.build
 

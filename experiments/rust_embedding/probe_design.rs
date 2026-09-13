@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 2. Is `async fn` in a trait usable on stable, and may inputs and
 // outputs be type parameters so one struct implements `Unit` twice?
 // Against the library's `Unit`.

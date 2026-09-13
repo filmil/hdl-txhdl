@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 6. A configuration is a struct implementing a trait with
 // associated types and constants, and the constants are compile-time.
 // Against the library's `Config`.

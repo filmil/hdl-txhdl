@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Probe 10e. A binding pattern in a `case!` arm. Expected to fail: the
 // macro tests each pattern with `matches!`, whose bindings are scoped to
 // itself, so `v` is not in scope in the arm's body. A payload is read
