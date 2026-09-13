@@ -976,6 +976,40 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# The Vreteno document's waveform figures as images, one PNG each, for
+# the web: the opening cycles, a byte out, a byte in, the bus.
+latex_document(
+    name = "vreteno_figures",
+    main = "vreteno_figures.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":vreteno_timing",
+        ":vreteno_out_timing",
+        ":vreteno_in_timing",
+        ":vreteno_bus_timing",
+    ],
+    deps = ["housestyle.tex"],
+)
+
+genrule(
+    name = "vreteno_figures_png",
+    srcs = [":vreteno_figures"],
+    outs = [
+        "vreteno_figure_1.png",
+        "vreteno_figure_2.png",
+        "vreteno_figure_3.png",
+        "vreteno_figure_4.png",
+    ],
+    cmd = "$(location @hermetic_latex_ghostscript//:gs.sh) -dBATCH -dNOPAUSE -q" +
+          " -sDEVICE=png16m -r200 -dTextAlphaBits=4 -dGraphicsAlphaBits=4" +
+          " -sOutputFile=$(RULEDIR)/vreteno_figure_%d.png $(location :vreteno_figures)",
+    tools = [
+        "@hermetic_latex_ghostscript//:files",
+        "@hermetic_latex_ghostscript//:gs.sh",
+    ],
+)
+
 genrule(
     name = "cheatsheet_png",
     srcs = [":cheatsheet"],

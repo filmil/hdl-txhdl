@@ -1,0 +1,27 @@
+% SPDX-License-Identifier: Apache-2.0
+% The Vreteno document's waveform figures, one per page, each page cut
+% to its figure: for the web, where a figure is an image on its own.
+% Built by //docs:vreteno_figures and rendered to PNG by
+% //docs:vreteno_figures_png.
+\documentclass[10pt]{article}
+\input{housestyle.tex}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\newsavebox\figurebox
+% A page the size of the figure plus a margin, the figure shipped out
+% at the page's origin: what a standalone document does, with the
+% primitives alone.
+\newcommand{\figurepage}[1]{%
+  \sbox\figurebox{\input{#1}}%
+  \pdfpagewidth=\dimexpr\wd\figurebox+24pt\relax
+  \pdfpageheight=\dimexpr\ht\figurebox+\dp\figurebox+24pt\relax
+  \hoffset=\dimexpr-1in+12pt\relax
+  \voffset=\dimexpr-1in+12pt\relax
+  \shipout\vbox{\box\figurebox}%
+}
+\begin{document}
+\figurepage{vreteno_timing.tex}
+\figurepage{vreteno_out_timing.tex}
+\figurepage{vreteno_in_timing.tex}
+\figurepage{vreteno_bus_timing.tex}
+\end{document}
