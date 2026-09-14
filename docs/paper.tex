@@ -365,35 +365,36 @@ its own VHDL in three pipelines on the same offers, which take the
 same words at the same ticks.
 
 \begin{table}[htbp]
-\caption{Lowered units simulated against their traces.}
+\caption{Lowered units simulated against their traces, each under nvc and under Verilator.}
 \label{tab:p-checked}
 \centering
-\begin{tabular}{@{}lll@{}}
+\footnotesize
+\begin{tabular}{@{}ll@{}}
 \toprule
-Unit & What it shows & Under \\
+Unit & What it shows \\
 \midrule
-counter & a register, \code{with!}, an output & nvc, Verilator \\
-sampler & two processes, one per edge & nvc, Verilator \\
-blinky & a configuration's constants baked in & nvc, Verilator \\
-sequencer & \code{case!} on a state enum, guards & nvc, Verilator \\
-ALU & ten operators by \code{case!} & nvc, Verilator \\
-scratchpad & a memory written and read & nvc, Verilator \\
-decoder & \code{slice}, \code{concat}, \code{sext}, \code{select!} & nvc, Verilator \\
-stage & two channels, the handshake & nvc, Verilator \\
-MAC & \code{mul::<M>}, a product at a stated width & nvc, Verilator \\
-tap & a send under \code{if}, a receive with no wait & nvc, Verilator \\
-buffer & the channel as hardware, against the runtime's & nvc, Verilator \\
-divider & internal wires kept as fields, seen and checked & nvc, Verilator \\
-Gray counter & functions under \code{\#[lower]}, inlined & nvc, Verilator \\
-Vreteno & the whole core, 732 ticks & nvc, Verilator \\
-router & the bus fanned out by address, the same run & nvc, Verilator \\
-data memory & a device on the core's bus, the same run & nvc, Verilator \\
-timer & a device on the core's bus, the same run & nvc, Verilator \\
-serial port & a device on the core's bus, the same run & nvc, Verilator \\
-FIFO & \code{D} words between two channels & nvc, Verilator \\
-station & two tagged inputs, beside hand Verilog & nvc, Verilator \\
-stream ALU & four latencies, results out of order & nvc, Verilator \\
-top & a unit of units, a station feeding the ALU & nvc, Verilator \\
+counter & a register, \code{with!}, an output \\
+sampler & two processes, one per edge \\
+blinky & a configuration's constants baked in \\
+sequencer & \code{case!} on a state enum, guards \\
+ALU & ten operators by \code{case!} \\
+scratchpad & a memory written and read \\
+decoder & \code{slice}, \code{concat}, \code{sext}, \code{select!} \\
+stage & two channels, the handshake \\
+MAC & \code{mul::<M>}, a product at a stated width \\
+tap & a send under \code{if}, a receive with no wait \\
+buffer & the runtime's channel, as a part \\
+divider & wires kept as fields, seen and checked \\
+Gray counter & functions under \code{\#[lower]}, inlined \\
+Vreteno & the whole core, 732 ticks \\
+router & the bus fanned out by address \\
+data memory & on the core's bus, the same run \\
+timer & on the core's bus, the same run \\
+serial port & on the core's bus, the same run \\
+FIFO & \code{D} words between two channels \\
+station & two tagged inputs, beside hand Verilog \\
+stream ALU & four latencies, results out of order \\
+top & a unit of units, a station and the ALU \\
 \bottomrule
 \end{tabular}
 \end{table}
