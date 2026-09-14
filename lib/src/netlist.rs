@@ -354,10 +354,69 @@ pub struct Lowered {
     /// channel two units share under one name in the run has a port
     /// name of its own on each side.
     pub aliases: Vec<(String, String)>,
+    /// The channels and wires a unit of units made in its `run` to
+    /// join its children: name, `Tx` for a channel or `Out` for a
+    /// wire, the payload's width and the clock. A channel is a buffer
+    /// of two between its ends, as the runtime's is, an instance of
+    /// `txhdl_chan` with the sender's three nets on one side and the
+    /// receiver's on the other; a wire is one net.
+    pub nets: Vec<(String, Kind, usize, &'static str)>,
+    /// The children of a unit of units, each a module of its own
+    /// instantiated once here.
+    pub instances: Vec<Instance>,
+}
+
+/// A child of a unit of units: the field it lives in, its own
+/// lowering, and what each of its ports is joined to in the parent,
+/// a net or a port of the parent.
+pub struct Instance {
+    pub name: String,
+    pub unit: Lowered,
+    pub conns: Vec<(String, String)>,
+}
+
+/// What `#[lower]` gives every unit, so a unit of units reaches a
+/// child's lowering through the child's type; the inherent `lowered`
+/// keeps its name, and this one differs so the two never shadow.
+pub trait Lower {
+    fn lowered_as(name: &str) -> Lowered;
+}
+
+/// A child's lowering under a module name, from a value of its type:
+/// what a parent's generated `lowered` calls on each field, since it
+/// knows the field and not the type.
+pub fn child_lowered<U: Lower>(_: &U, name: &str) -> Lowered {
+    U::lowered_as(name)
+}
+
+/// A child joined to the parent: its ports, in the order `run` names
+/// them, paired with what the parent passed, flattened in the same
+/// order. The counts must agree, or the parent passed a tuple of the
+/// wrong shape.
+pub fn instance(unit: Lowered, name: &str, args: &[&str]) -> Instance {
+    assert_eq!(
+        unit.ports.len(),
+        args.len(),
+        "`{name}` has {} ports and is joined to {} of the parent's",
+        unit.ports.len(),
+        args.len()
+    );
+    let conns = unit
+        .ports
+        .iter()
+        .zip(args)
+        .map(|((p, _, _), a)| (p.clone(), a.to_string()))
+        .collect();
+    Instance {
+        name: name.to_string(),
+        unit,
+        conns,
+    }
 }
 
 impl Lowered {
-    /// The clocks the processes wait for, each once, in order.
+    /// The clocks the processes wait for, and the children's, each
+    /// once, in order.
     fn clocks(&self) -> Vec<&'static str> {
         let mut out: Vec<&'static str> = Vec::new();
         for p in &self.procs {
@@ -365,7 +424,56 @@ impl Lowered {
                 out.push(p.clock);
             }
         }
+        for i in &self.instances {
+            for c in i.unit.clocks() {
+                if !out.contains(&c) {
+                    out.push(c);
+                }
+            }
+        }
         out
+    }
+    /// The nets of a port or a net, by kind: a channel's three, a
+    /// wire's one.
+    fn strands(k: &Kind) -> &'static [&'static str] {
+        match k {
+            Kind::Tx | Kind::Rx => &["_data", "_valid", "_ready"],
+            _ => &[""],
+        }
+    }
+    /// A child's ports joined to the parent's nets, strand by strand:
+    /// (child net, parent net) pairs, in port order. A channel net has
+    /// a sender's side and a receiver's side, and the child's port
+    /// kind says which it is on; a parent port is joined by name.
+    fn joins(&self, inst: &Instance) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (p, a) in &inst.conns {
+            let (_, k, _) = inst
+                .unit
+                .ports
+                .iter()
+                .find(|(n, _, _)| n == p)
+                .expect("a joined port is a port of the child");
+            let chan_net = self
+                .nets
+                .iter()
+                .any(|(n, nk, _, _)| n == a && matches!(nk, Kind::Tx));
+            let side = match (chan_net, k) {
+                (true, Kind::Tx) => "_tx",
+                (true, Kind::Rx) => "_rx",
+                _ => "",
+            };
+            for s in Self::strands(k) {
+                out.push((format!("{p}{s}"), format!("{a}{side}{s}")));
+            }
+        }
+        out
+    }
+    /// Whether this unit or any child joins children by a channel,
+    /// so the netlist needs the channel module once.
+    fn has_chan_nets(&self) -> bool {
+        self.nets.iter().any(|(_, k, _, _)| matches!(k, Kind::Tx))
+            || self.instances.iter().any(|i| i.unit.has_chan_nets())
     }
     /// Whether a register is driven by a falling-edge process.
     fn falling_reg(&self, name: &str) -> bool {
@@ -669,6 +777,16 @@ impl Lowered {
 
     /// The Verilog.
     pub fn verilog(&self) -> String {
+        let mut out = self.verilog_in();
+        if self.has_chan_nets() {
+            out.push('\n');
+            out.push_str(CHAN_VERILOG);
+        }
+        out
+    }
+    /// This unit's module and its children's, without the channel
+    /// module, which the outermost unit adds once.
+    fn verilog_in(&self) -> String {
         let name = &self.name;
         let l = self;
         let mut out = String::new();
@@ -730,6 +848,47 @@ impl Lowered {
                 }
                 _ => {}
             }
+        }
+        // A unit of units: the nets between the children, a channel
+        // being a buffer between its two sides, then each child as an
+        // instance of its own module, joined port by port.
+        for (n, k, w, c) in &self.nets {
+            match k {
+                Kind::Tx | Kind::Rx => writeln!(
+                    out,
+                    "  wire {r}{n}_tx_data;\n  wire {n}_tx_valid;\n  \
+                     wire {n}_tx_ready;\n  \
+                     wire {r}{n}_rx_data;\n  wire {n}_rx_valid;\n  \
+                     wire {n}_rx_ready;\n  \
+                     txhdl_chan #(.W({w})) {n}_chan(\n    .clk({c}),\n    \
+                     .tx_data({n}_tx_data), .tx_valid({n}_tx_valid), \
+                     .tx_ready({n}_tx_ready),\n    \
+                     .rx_data({n}_rx_data), .rx_valid({n}_rx_valid), \
+                     .rx_ready({n}_rx_ready)\n  );",
+                    r = range(*w)
+                )
+                .unwrap(),
+                _ => writeln!(out, "  wire {}{n};", range(*w)).unwrap(),
+            }
+        }
+        for inst in &self.instances {
+            let mut conns: Vec<String> = inst
+                .unit
+                .clocks()
+                .iter()
+                .map(|c| format!(".{c}({c})"))
+                .collect();
+            for (a, b) in self.joins(inst) {
+                conns.push(format!(".{a}({b})"));
+            }
+            writeln!(
+                out,
+                "  {} {}(\n    {}\n  );",
+                inst.unit.name,
+                inst.name,
+                conns.join(",\n    ")
+            )
+            .unwrap();
         }
         let (procs, wires, temps) = self.hoisted();
         for (n, e) in &wires {
@@ -855,12 +1014,28 @@ impl Lowered {
             writeln!(out, "{l}").unwrap();
         }
         writeln!(out, "endmodule").unwrap();
+        // The children's modules follow the parent's, each whole.
+        for inst in &self.instances {
+            out.push('\n');
+            out.push_str(&inst.unit.verilog_in());
+        }
         out
     }
 
     /// The VHDL, 2008: an entity, one process on the rising edge for
     /// the registers, a concurrent assignment per wire.
     pub fn vhdl(&self) -> String {
+        let mut out = String::new();
+        if self.has_chan_nets() {
+            out.push_str(CHAN_VHDL);
+            out.push('\n');
+        }
+        out.push_str(&self.vhdl_in());
+        out
+    }
+    /// This unit's entity and its children's, without the channel
+    /// entity, which the outermost unit puts first once.
+    fn vhdl_in(&self) -> String {
         let name = &self.name;
         let ty = |w: usize| {
             if w == 1 {
@@ -892,6 +1067,12 @@ impl Lowered {
             }
         }
         let mut out = String::new();
+        // The children's entities come first, since an entity is
+        // analysed before it is instantiated.
+        for inst in &self.instances {
+            out.push_str(&inst.unit.vhdl_in());
+            out.push('\n');
+        }
         out.push_str(
             "library ieee;\nuse ieee.std_logic_1164.all;\n\
              use ieee.numeric_std.all;\n\n",
@@ -968,7 +1149,55 @@ impl Lowered {
         for (t, w, _) in &temps {
             writeln!(out, "  signal {t} : {};", ty(*w)).unwrap();
         }
+        for (n, k, w, _) in &self.nets {
+            match k {
+                Kind::Tx | Kind::Rx => writeln!(
+                    out,
+                    "  signal {n}_tx_data, {n}_rx_data : {};\n  \
+                     signal {n}_tx_valid, {n}_tx_ready, {n}_rx_valid, \
+                     {n}_rx_ready : std_logic;",
+                    ty(*w)
+                )
+                .unwrap(),
+                _ => writeln!(out, "  signal {n} : {};", ty(*w)).unwrap(),
+            }
+        }
         writeln!(out, "begin").unwrap();
+        for (n, k, w, c) in &self.nets {
+            if matches!(k, Kind::Tx | Kind::Rx) {
+                writeln!(
+                    out,
+                    "  {n}_chan : entity work.txhdl_chan \
+                     generic map (W => {w}) port map (\n    clk => {c},\n    \
+                     tx_data => {n}_tx_data, tx_valid => {n}_tx_valid, \
+                     tx_ready => {n}_tx_ready,\n    \
+                     rx_data => {n}_rx_data, rx_valid => {n}_rx_valid, \
+                     rx_ready => {n}_rx_ready\n  );"
+                )
+                .unwrap();
+            }
+        }
+        // A unit of units: each child an instance of its entity,
+        // joined port by port to the nets and the parent's ports.
+        for inst in &self.instances {
+            let mut conns: Vec<String> = inst
+                .unit
+                .clocks()
+                .iter()
+                .map(|c| format!("{c} => {c}"))
+                .collect();
+            for (a, b) in self.joins(inst) {
+                conns.push(format!("{a} => {b}"));
+            }
+            writeln!(
+                out,
+                "  {} : entity work.{} port map (\n    {}\n  );",
+                inst.name,
+                inst.unit.name,
+                conns.join(",\n    ")
+            )
+            .unwrap();
+        }
         let mut comb: Vec<String> = Vec::new();
         // A value for a target of width `w`: an integer becomes an
         // unsigned of that width, since VHDL will not assign one bare.
@@ -1120,6 +1349,81 @@ impl Lowered {
         out
     }
 }
+
+/// The channel between two lowered units, as the runtime has it: a
+/// buffer of two, `head` and `tail`, the receiver's `valid` and
+/// `data` the head as the edge left it, the sender's `ready` the
+/// tail's room; a take moves the tail up and an offer fills the
+/// first free place, the take first. In Verilog, a module.
+const CHAN_VERILOG: &str = "`timescale 1ns/1ps
+module txhdl_chan #(parameter W = 1)(
+  input clk,
+  input [W-1:0] tx_data, input tx_valid, output tx_ready,
+  output [W-1:0] rx_data, output rx_valid, input rx_ready
+);
+  reg [W-1:0] head = 0;
+  reg [W-1:0] tail = 0;
+  reg head_v = 0;
+  reg tail_v = 0;
+  wire pop = rx_ready & head_v;
+  wire hv1 = pop ? tail_v : head_v;
+  wire [W-1:0] h1 = pop ? tail : head;
+  wire tv1 = pop ? 1'b0 : tail_v;
+  always @(posedge clk) begin
+    head_v <= hv1 | tx_valid;
+    head <= (tx_valid & ~hv1) ? tx_data : h1;
+    tail_v <= tv1 | (tx_valid & hv1);
+    tail <= (tx_valid & hv1) ? tx_data : tail;
+  end
+  assign rx_data = head;
+  assign rx_valid = head_v;
+  assign tx_ready = ~tail_v;
+endmodule
+";
+
+/// The same channel in VHDL, an entity with the width as a generic.
+const CHAN_VHDL: &str = "library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+entity txhdl_chan is
+  generic (W : natural);
+  port (
+    clk : in std_logic;
+    tx_data : in unsigned(W - 1 downto 0);
+    tx_valid : in std_logic;
+    tx_ready : out std_logic;
+    rx_data : out unsigned(W - 1 downto 0);
+    rx_valid : out std_logic;
+    rx_ready : in std_logic
+  );
+end entity;
+
+architecture rtl of txhdl_chan is
+  signal head, tail : unsigned(W - 1 downto 0) := (others => '0');
+  signal head_v, tail_v : std_logic := '0';
+begin
+  process (clk)
+    variable h, t : unsigned(W - 1 downto 0);
+    variable hv, tv : std_logic;
+  begin
+    if rising_edge(clk) then
+      h := head; t := tail; hv := head_v; tv := tail_v;
+      if rx_ready = '1' and head_v = '1' then
+        h := tail; hv := tail_v; tv := '0';
+      end if;
+      if tx_valid = '1' then
+        if hv = '0' then h := tx_data; hv := '1';
+        else t := tx_data; tv := '1'; end if;
+      end if;
+      head <= h; tail <= t; head_v <= hv; tail_v <= tv;
+    end if;
+  end process;
+  rx_data <= head;
+  rx_valid <= head_v;
+  tx_ready <= not tail_v;
+end architecture;
+";
 
 /// Write a lowered unit's VHDL and its ports sidecar where `TXHDL_VHDL`
 /// points, and its Verilog where `TXHDL_VERILOG` points, if they do.
