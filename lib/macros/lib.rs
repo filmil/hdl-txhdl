@@ -9,27 +9,16 @@ use proc_macro::{
     Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree,
 };
 
-fn type_name(input: TokenStream) -> String {
-    let mut seen_kw = false;
-    for tt in input {
-        if let TokenTree::Ident(id) = tt {
-            let s = id.to_string();
-            if seen_kw {
-                return s;
-            }
-            if s == "struct" || s == "enum" || s == "union" {
-                seen_kw = true;
-            }
-        }
-    }
-    panic!("expected a struct, enum or union")
-}
-
 fn marker(input: TokenStream, trait_path: &str) -> TokenStream {
-    let name = type_name(input);
-    format!("impl {trait_path} for {name} {{}}")
-        .parse()
-        .unwrap()
+    let item = parse_item(input);
+    format!(
+        "impl{b} {trait_path} for {n}{a} {{}}",
+        b = item.bounds,
+        n = item.name,
+        a = item.args
+    )
+    .parse()
+    .unwrap()
 }
 
 #[proc_macro_derive(Transaction)]
@@ -268,13 +257,23 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        let layout = names
+            .iter()
+            .zip(&types)
+            .map(|(n, t)| {
+                format!("(\"{n}\", <{t} as ::txhdl::types::Value>::WIDTH),")
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
         format!(
             "impl{b} ::txhdl::types::Value for {n}{a} {{\n\
              const WIDTH: usize = {width};\n\
              fn vcd(self) -> String {{\n\
              let mut s = String::new(); {parts} s }}\n\
              fn parts(self) -> Vec<::txhdl::types::Part> {{\n\
-             vec![{fields}] }}\n}}",
+             vec![{fields}] }}\n\
+             fn layout() -> Vec<(&'static str, usize)> {{\n\
+             vec![{layout}] }}\n}}",
             b = item.bounds,
             n = item.name,
             a = item.args
@@ -1546,6 +1545,33 @@ thread_local! {
     /// The functions of the file the unit being lowered is in.
     static HELPERS: std::cell::RefCell<Vec<Helper>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// The ports of the unit being lowered, each with the text of its
+    /// value's type, so a field of a port's value can be sliced out.
+    static PTYPES: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A field of a port's value, `p.f`: the base must be a port's data,
+/// and the field's bits are found from the value type's layout when
+/// `lowered` runs, so a generic value's width is no obstacle.
+fn field_of(base: &str, f: &str) -> Result<String, String> {
+    let name = base
+        .strip_prefix("E::Name(\"")
+        .and_then(|s| s.strip_suffix("\".to_string())"))
+        .ok_or_else(|| {
+            format!("`.{f}` needs a port's value before it, not a computed one")
+        })?;
+    let port = name.strip_suffix("_data").unwrap_or(name);
+    let ty = PTYPES.with(|p| {
+        p.borrow()
+            .iter()
+            .find(|(n, _)| n == port)
+            .map(|(_, t)| t.clone())
+    });
+    let Some(ty) = ty else {
+        return Err(format!("`{port}` is not a port, so `.{f}` has no layout"));
+    };
+    Ok(format!("::txhdl::netlist::field::<{ty}>({base}, \"{f}\")"))
 }
 
 /// The functions under `#[lower]` in a file. The macro reads the file,
@@ -1934,6 +1960,13 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             if matches!(s.to_string().as_str(), "self" | "this") =>
         {
             Ok(ename(&f.to_string()))
+        }
+        // A field of a port's value, `p.tag`: a slice of the port's data.
+        [base @ .., TokenTree::Punct(dot), TokenTree::Ident(f)]
+            if dot.as_char() == '.' && !base.is_empty() =>
+        {
+            let b = tr(base, subst)?;
+            field_of(&b, &f.to_string())
         }
         // A struct literal, `Name { f: e, .. }`: its fields concatenated
         // in the order written, which must be the declaration's, the
@@ -2818,6 +2851,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     HELPERS.with(|h| {
         *h.borrow_mut() = find_helpers(Span::call_site().local_file())
     });
+    PTYPES.with(|p| p.borrow_mut().clear());
     // Past any attributes and doc comments, to `impl`.
     let Some(at) = toks.iter().position(
         |t| matches!(t, TokenTree::Ident(id) if id.to_string() == "impl"),
@@ -2942,6 +2976,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             "(\"{pname}\".to_string(), ::txhdl::comp::trace::Kind::{kind}, \
              <{inner} as ::txhdl::types::Value>::WIDTH)"
         ));
+        PTYPES
+            .with(|p| p.borrow_mut().push((pname.clone(), inner.to_string())));
     }
     // run's body: the brace group after its parameters; inside it, the loop.
     fn is_brace(t: &&TokenTree) -> bool {

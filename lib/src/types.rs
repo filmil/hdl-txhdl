@@ -450,6 +450,12 @@ pub trait Value: Copy {
     fn names() -> Option<&'static [&'static str]> {
         None
     }
+    /// The fields of a compound value, each with its width, the first
+    /// field highest, so a lowering can slice one out of the whole.
+    /// Empty for a scalar.
+    fn layout() -> Vec<(&'static str, usize)> {
+        Vec::new()
+    }
 }
 
 /// One field of a compound value in a trace.

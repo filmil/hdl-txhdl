@@ -39,6 +39,7 @@ MACROS = ["//lib:txhdl_macros"]
         "probe_signal_split",
         "probe_slice",
         "probe_infer",
+        "probe_macro_in_macro",
         "probe_values",
     ]
 ]

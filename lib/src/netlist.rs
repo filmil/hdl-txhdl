@@ -204,6 +204,24 @@ pub fn lit<V: Value>(v: V) -> Expr {
     Expr::Bits(V::WIDTH, v.vcd())
 }
 
+/// A field of a compound value on a wire: the bits it occupies, as
+/// `#[derive(Value)]` laid them out, the first field highest; a
+/// one-bit field is a bit.
+pub fn field<V: Value>(e: Expr, name: &str) -> Expr {
+    let mut hi = V::WIDTH;
+    for (n, w) in V::layout() {
+        hi -= w;
+        if n == name {
+            return if w == 1 {
+                Expr::Index(Box::new(e), Box::new(Expr::Num(hi as u128)))
+            } else {
+                Expr::Slice(Box::new(e), hi, w)
+            };
+        }
+    }
+    panic!("`{name}` is not a field of the value")
+}
+
 /// An expression of a lowered body, as `#[lower]` builds it: what both
 /// emitters render.
 #[derive(Clone, Debug)]
@@ -1309,7 +1327,7 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
             Expr::Name(m) if l.is_mem(m) => {
                 format!("{m}(to_integer({}))", hval(i, 0, l))
             }
-            _ => format!("{}({})", hval(a, 0, l), vexpr(i, l)),
+            _ => format!("{}({})", hval(a, 0, l), hint(i, l)),
         },
         // A truth value as a bit, or as a word of that width.
         e if e.is_bool() && w > 1 => format!(
