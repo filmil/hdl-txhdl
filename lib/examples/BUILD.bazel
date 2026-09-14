@@ -214,6 +214,16 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An ALU as a stream, its results out of order, lowered:
+#   bazel run //lib/examples:ex_stream_alu
+rust_binary(
+    name = "ex_stream_alu",
+    srcs = ["ex_stream_alu.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A memory, lowered:  bazel run //lib/examples:ex_mem
 rust_binary(
     name = "ex_mem",
@@ -375,6 +385,7 @@ filegroup(
         "ex_with.rs",
         "ex_queue.rs",
         "ex_station.rs",
+        "ex_stream_alu.rs",
         "station.v",
         "ex_mem.rs",
         "ex_imm.rs",

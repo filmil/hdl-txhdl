@@ -1,0 +1,41 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An ALU as a Stream, Out of Order}
+\label{sec:x-stream-alu}
+
+An ALU that takes its work as a stream: a request is a tag, an
+operation and two operands on one channel, and a result is the tag
+and the value on another. The four operations are four units of four
+depths. \code{not} takes one cycle, \code{and} two, \code{or} three
+and \code{add} four, a nibble per stage with the carry passed from
+one stage to the next. A result leaves as soon as its unit is done,
+so results come out in the order the units finish and not the order
+the requests came, and the tag says which request each one answers.
+
+One result can leave per cycle. So a request is taken only when the
+cycle its unit would finish in is free: \code{slots} holds a bit per
+cycle ahead, a request claims the bit of its latency, and the
+register shifts down every cycle. A request whose bit is claimed
+waits at the head of the channel, its \code{ready} low, until the
+bit is free. The sink's room moves every stage at once; when the
+sink holds off, every stage holds and nothing is taken. The unit is
+lowered, and its netlist is checked against this run under both
+simulators.
+
+The run offers ten requests. The first is an add, and the \code{not}
+behind it comes out two cycles before it; the \code{and} behind that
+would finish in the add's cycle, so it waits one cycle at the head.
+The sink holds off for three cycles in the middle, and the whole
+pipeline holds with it.
+
+\begin{figure}[htbp]
+\centering
+\input{stream_alu_timing.tex}
+\caption{The ALU as a stream: the requests offered and taken, the
+claimed slots, the four units' last stages, and the results as they
+leave, out of order.}
+\label{fig:x-stream-alu}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_stream\_alu.rs}. Run with \code{bazel run //lib/examples:ex\_stream\_alu}.},label={lst:x-stream-alu}]{lib/examples/ex_stream_alu.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_stream\_alu} printed when the build ran it: what the source sent, the slots, what the first stage of a unit holds, and the result taken, per cycle; then the lowering.},label={lst:x-stream-alu-out}]{out_stream_alu.txt}
