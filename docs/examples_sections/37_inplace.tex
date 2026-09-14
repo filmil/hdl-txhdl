@@ -1,0 +1,33 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Register, Read in Place}
+\label{sec:x-inplace}
+
+A register is \code{Copy}, and it has the operators and the
+conversions of its value, so it reads in place: \code{self.acc + x},
+\code{self.n == 7}, \code{!self.top}, \code{sum.set(self.acc)},
+\code{mux(self.top, ..)}, \code{when!(self.top => ..)} and
+\code{if self.top.to\_bool()} all say what \code{get} said, the
+value the last edge latched, and the \code{let} at the top of the
+step that read every register into a name is gone. A drive in the
+same step does not change what a read sees, as in hardware, since a
+drive is deferred to the end of the step. \code{get} stays for what
+needs the value as a value: a method of it, \code{self.w.get().slice}
+or \code{.bit}, a typed argument, a \code{case!} or \code{select!}
+over it, and a register of an enum. The lowering reads a register
+named in an expression as the register, as it read \code{get}.
+
+The unit below sums eight inputs, then holds the sum and says so on
+\code{full} until a clear; the step reads its three registers only in
+place, in the arithmetic, the compare, the condition and the drives
+of the outputs.
+
+\begin{figure}[htbp]
+\centering
+\input{inplace_timing.tex}
+\caption{The window: a clear, eight inputs summed, three ignored while full, a clear and one more.}
+\label{fig:x-inplace}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_inplace.rs}. Run with \code{bazel run //lib/examples:ex\_inplace}.},label={lst:x-inplace}]{lib/examples/ex_inplace.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_inplace} printed when the build ran it: a line per cycle, then the lowering.},label={lst:x-inplace-out}]{out_inplace.txt}

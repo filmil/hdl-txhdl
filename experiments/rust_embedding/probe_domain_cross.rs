@@ -4,10 +4,18 @@
 use txhdl::comp::{signal, Clock, DefaultClock, In};
 use txhdl::types::U;
 
-pub struct Clk100; impl Clock for Clk100 { const NAME: &'static str = "clk100"; }
-pub struct Clk400; impl Clock for Clk400 { const NAME: &'static str = "clk400"; }
+pub struct Clk100;
+impl Clock for Clk100 {
+    const NAME: &'static str = "clk100";
+}
+pub struct Clk400;
+impl Clock for Clk400 {
+    const NAME: &'static str = "clk400";
+}
 
-pub struct Dsp { pub inp: In<U<32>, Clk400> }
+pub struct Dsp {
+    pub inp: In<U<32>, Clk400>,
+}
 
 pub fn wrong() -> Dsp {
     let (_tx, rx) = signal::<U<32>, Clk100>();

@@ -60,8 +60,10 @@ mentions neither number, and its testbench steps by
 \code{rx.wait()}, the next rising edge of the channel's clock at which
 the channel holds a transaction, taken; and \code{until(C::rising, || cond)},
 or the same with \code{falling}, the next such edge at which a
-condition on state holds. Reads are plain: \code{Reg::get} returns
-what the last edge latched, a wire's \code{get} returns what it
+condition on state holds. Reads are plain: a register in an
+expression, or \code{Reg::get}, is what the last edge latched, since
+a register is \code{Copy} and has its value's operators; a wire's
+\code{get} returns what it
 carries, a memory's \code{read} is its asynchronous port. Drives are
 deferred: \code{Reg::set} and \code{Mem::write} take effect at the end
 of the step, so a read after a drive in the same iteration still sees

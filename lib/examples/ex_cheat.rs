@@ -19,10 +19,8 @@ impl Unit<In<Bit>, Out<Bit>> for Counter {
     async fn run(&mut self, enable: In<Bit>, tick: Out<Bit>) {
         loop {
             DefaultClock::rising().await; // wait, then read
-            let n = self.n.get();
-            let en = enable.get();
-            when!(en => { self.n <= n + 1 });
-            tick.set(n == 7);
+            when!(enable.get() => { self.n <= self.n + 1 });
+            tick.set(self.n == 7);
         }
     }
 }

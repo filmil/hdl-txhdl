@@ -69,8 +69,7 @@ impl<T: Copy, C: Clock> Reg<T, C> {
 async fn port_a(&self) {
     loop {
         DefaultClock::rising().await;    // the wait
-        let hits = self.hits_a.get();  // a read at that edge
-        self.hits_a.set(hits + 1);
+        self.hits_a.set(self.hits_a + 1);  // a read at that edge
     }
 }
 \end{lstlisting}

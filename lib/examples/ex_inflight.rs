@@ -61,8 +61,7 @@ impl Unit<Rx<U<64>>, ()> for Sink {
     async fn run(&mut self, inp: Rx<U<64>>, _o: ()) {
         loop {
             let v = inp.wait().await;
-            let seen = self.seen.get();
-            self.seen.set(seen + 1);
+            self.seen.set(self.seen + 1);
             println!("t={:>2} done  {}", now(), v.raw());
         }
     }

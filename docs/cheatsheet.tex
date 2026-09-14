@@ -39,8 +39,8 @@ combinational body (no \code{.await} to write).
 \head{Time}
 A process \textbf{waits for an event, then reads state}. The waits
 are \code{C::rising()}, \code{C::falling()}, \code{rx.wait()} and
-\code{until(C::rising, || cond)}. Reads are plain: \code{reg.get()}
-is what the last edge latched. Drives commit at the end of the tick.
+\code{until(C::rising, || cond)}. Reads are plain: \code{reg} is what
+the last edge latched; drives commit at the tick's end.
 \textbf{Every \code{.await} is a cycle boundary}; events that share an
 edge are written \code{parallel!(a, b).await}. Time runs in ticks,
 two per cycle, so a falling edge is a tick of its own.
@@ -49,7 +49,7 @@ two per cycle, so a falling edge is a tick of its own.
 \begin{tabular}{@{}p{0.47\linewidth}p{0.5\linewidth}@{}}
 \code{Bit}, \code{Logic}, \code{U<N>}, \code{I<N>} & values; \code{+ - \& | \^{} ! << >>} and the compares are Rust's \\
 \code{\#[derive(Transaction)]} & a struct that moves over a channel \\
-\code{Reg<T, C>} & state, in clock \code{C}; \code{get}, \code{set} \\
+\code{Reg<T, C>} & state, in clock \code{C}; a value; \code{set} \\
 \code{signal()} $\to$ \code{(Out, In)} & a wire's two ends; \code{Out} is not \code{Clone} \\
 \code{chan()} $\to$ \code{(Tx, Rx)} & a channel, a buffer of two; \code{send}, \code{ready}, \code{wait} \\
 \code{Crossing<T, A, B>} & the only way between clocks \\

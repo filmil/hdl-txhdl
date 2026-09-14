@@ -53,8 +53,8 @@ impl Unit<In<U<32>>, (Out<U<32>>, Out<U<5>>)> for Decoder {
                 _ => imm_i,
             }));
             self.dest.set(ir.slice::<7, 5>());
-            imm.set(self.value.get());
-            rd.set(self.dest.get());
+            imm.set(self.value);
+            rd.set(self.dest);
         }
     }
 }
@@ -64,7 +64,7 @@ fn main() {
     let (imm_out, imm) = signal::<U<32>, DefaultClock>();
     let (rd_out, rd) = signal::<U<5>, DefaultClock>();
     let mut dec = Decoder::default();
-    let value = dec.value.clone();
+    let value = dec.value;
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         w.add("ir", &ir);

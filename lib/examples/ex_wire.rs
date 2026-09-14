@@ -31,12 +31,11 @@ impl Unit<In<Bit>, Out<Bit>> for Divider {
     async fn run(&mut self, pulse: In<Bit>, tick: Out<Bit>) {
         loop {
             DefaultClock::rising().await;
-            let n = self.n.get();
             self.counting.set(pulse.get());
-            self.wrap.set(self.counting.get() & (n == 2));
+            self.wrap.set(self.counting.get() & (self.n == 2));
             let (counting, wrap) = (self.counting.get(), self.wrap.get());
             when!(wrap => { self.n <= 0 });
-            when!(counting & !wrap => { self.n <= n + 1 });
+            when!(counting & !wrap => { self.n <= self.n + 1 });
             tick.set(wrap);
         }
     }

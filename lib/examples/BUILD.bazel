@@ -163,6 +163,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A register read in place:  bazel run //lib/examples:ex_inplace
+rust_binary(
+    name = "ex_inplace",
+    srcs = ["ex_inplace.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A memory, lowered:  bazel run //lib/examples:ex_mem
 rust_binary(
     name = "ex_mem",
@@ -320,6 +329,7 @@ filegroup(
         "ex_alu.rs",
         "ex_ops.rs",
         "ex_if.rs",
+        "ex_inplace.rs",
         "ex_mem.rs",
         "ex_imm.rs",
         "ex_twoproc.rs",

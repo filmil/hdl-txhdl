@@ -70,10 +70,10 @@ impl<const N: usize, W: Clock, R: Clock> Default for Fifo<N, W, R> {
 
 impl<const N: usize, W: Clock, R: Clock> Fifo<N, W, R> {
     fn full(&self) -> bool {
-        self.wptr.get() - self.rptr_w.inp.get() == N as u8
+        self.wptr - self.rptr_w.inp.get() == N as u8
     }
     fn empty(&self) -> bool {
-        self.rptr.get() == self.wptr_r.inp.get()
+        self.rptr == self.wptr_r.inp.get()
     }
 
     /// Waits for an offer it has room for, then takes it. The pointer
@@ -143,8 +143,7 @@ impl Unit<Rx<U<8>, ClkR>, ()> for Consumer {
     async fn run(&mut self, pop: Rx<U<8>, ClkR>, _o: ()) {
         loop {
             let v = pop.wait().await;
-            let seen = self.seen.get();
-            self.seen.set(seen + 1);
+            self.seen.set(self.seen + 1);
             println!("t={:>2} {}: pop  {}", now(), ClkR::NAME, v.raw());
         }
     }

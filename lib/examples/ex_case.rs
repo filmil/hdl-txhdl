@@ -28,13 +28,13 @@ impl Unit<In<Bit>, Out<State>> for Sequencer {
     async fn run(&mut self, go: In<Bit>, observed: Out<State>) {
         loop {
             DefaultClock::rising().await;
-            let (s, n) = (self.state.get(), self.count.get());
+            let s = self.state.get();
             let go = go.get();
             case!(s => {
                 State::Idle if go.to_bool() => { self.state <= State::Load },
                 State::Load => { self.count <= 3; self.state <= State::Run },
-                State::Run if n == 0 => { self.state <= State::Done },
-                State::Run => { self.count <= n - 1 },
+                State::Run if self.count == 0 => { self.state <= State::Done },
+                State::Run => { self.count <= self.count - 1 },
                 State::Done | State::Idle => { self.state <= State::Idle },
             });
             observed.set(s);

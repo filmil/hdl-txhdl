@@ -33,26 +33,24 @@ impl Unit<(In<Bit>, In<Bit>, In<U<4>>), (Out<Bit>, Tx<U<4>>)> for Pulser {
         loop {
             DefaultClock::rising().await;
             let (rst, go, len) = (rst.get(), go.get(), len.get());
-            let (count, busy) = (self.count.get(), self.busy.get());
-            let runs = self.runs.get();
             if rst.to_bool() {
                 self.count.set(0);
                 self.busy.set(false);
                 self.runs.set(0);
-            } else if !busy.to_bool() {
+            } else if !self.busy.to_bool() {
                 if go.to_bool() {
                     self.count.set(len);
                     self.busy.set(true);
                 }
-            } else if count == 1 {
-                let n = runs + 1;
+            } else if self.count == 1 {
+                let n = self.runs + 1;
                 self.busy.set(false);
                 self.runs.set(n);
                 done.send(n);
             } else {
-                self.count.set(count - 1);
+                self.count.set(self.count - 1);
             }
-            active.set(busy);
+            active.set(self.busy);
         }
     }
 }
@@ -64,7 +62,7 @@ fn main() {
     let (active_out, active) = signal::<Bit, DefaultClock>();
     let (done_tx, done_rx) = chan::<U<4>, DefaultClock>();
     let mut pulser = Pulser::default();
-    let count = pulser.count.clone();
+    let count = pulser.count;
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         w.add("rst", &rst);

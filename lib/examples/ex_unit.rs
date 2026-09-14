@@ -15,16 +15,15 @@ pub struct DualPort {
 
 impl DualPort {
     /// A process loops, because a unit runs for as long as the clock
-    /// does. Each iteration waits for the edge once and then reads what
-    /// it needs at that edge, plainly, so one iteration is one cycle.
+    /// does. Each iteration waits for the edge once and then reads the
+    /// registers as the edge left them, plainly, so one iteration is
+    /// one cycle.
     async fn port_a(&self) {
         loop {
             DefaultClock::rising().await;
-            let (enable, hits, cells) =
-                (self.enable.get(), self.hits_a.get(), self.cells.get());
-            when!(enable => {
-                self.hits_a <= hits + 1;
-                self.cells <= cells + 1
+            when!(self.enable => {
+                self.hits_a <= self.hits_a + 1;
+                self.cells <= self.cells + 1
             } else {
                 self.hits_a <= 0
             });
@@ -34,8 +33,7 @@ impl DualPort {
     async fn port_b(&self) {
         loop {
             DefaultClock::rising().await;
-            let hits = self.hits_b.get();
-            self.hits_b.set(hits + 1);
+            self.hits_b.set(self.hits_b + 1);
         }
     }
 }

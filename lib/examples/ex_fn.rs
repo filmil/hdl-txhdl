@@ -56,7 +56,7 @@ fn main() {
     let (code_out, code) = signal::<U<4>, DefaultClock>();
     let (wrap_out, wrap) = signal::<Bit, DefaultClock>();
     let mut gray = Gray::default();
-    let n = gray.n.clone();
+    let n = gray.n;
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         w.add("step", &step);

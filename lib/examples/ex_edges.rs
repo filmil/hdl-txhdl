@@ -24,8 +24,7 @@ impl Edges {
     async fn count(&self) {
         loop {
             DefaultClock::rising().await;
-            let n = self.count.get();
-            self.count.set(n + 1);
+            self.count.set(self.count + 1);
         }
     }
 
@@ -34,13 +33,13 @@ impl Edges {
     async fn capture(&self) {
         loop {
             DefaultClock::falling().await;
-            self.captured.set(self.count.get());
+            self.captured.set(self.count);
         }
     }
 
     /// A clocked condition on the falling edge.
     async fn watch(&self) {
-        until(DefaultClock::falling, || self.count.get().raw() == 4).await;
+        until(DefaultClock::falling, || self.count == 4).await;
         self.seen_four.set(true);
         println!("t={:>2} count reached four, seen at a falling edge", now());
     }

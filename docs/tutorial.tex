@@ -106,8 +106,8 @@ still simulates.
 
 The body is one \code{loop}, and the first line of the loop is the
 wait: \code{DefaultClock::rising().await}. Everything after it is one
-cycle. The two \code{get}s read the register and the input as the
-edge left them. \code{when!} is a predicated drive: \emph{when}
+cycle. \code{get} reads the input as the edge left it, and
+\code{self.n} in an expression is the register as the edge left it. \code{when!} is a predicated drive: \emph{when}
 \code{en} holds, \code{n} becomes \code{n + 1} at the end of the
 step, and the arrow \code{<=} points into the register to say so.
 \code{tick.set} drives the output, this cycle, from the value the

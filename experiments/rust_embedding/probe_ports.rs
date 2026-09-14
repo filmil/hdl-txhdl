@@ -5,13 +5,28 @@
 use txhdl::comp::{signal, DefaultClock, In, Out};
 use txhdl::types::U;
 
-pub struct Cpu { pub adr: Out<U<32>>, pub ack: In<U<1>> }
-pub struct Ram { pub adr: In<U<32>>, pub ack: Out<U<1>> }
+pub struct Cpu {
+    pub adr: Out<U<32>>,
+    pub ack: In<U<1>>,
+}
+pub struct Ram {
+    pub adr: In<U<32>>,
+    pub ack: Out<U<1>>,
+}
 
 pub fn build() -> (Cpu, Ram) {
     let (adr_out, adr_in) = signal::<U<32>, DefaultClock>();
     let (ack_out, ack_in) = signal::<U<1>, DefaultClock>();
-    (Cpu { adr: adr_out, ack: ack_in }, Ram { adr: adr_in, ack: ack_out })
+    (
+        Cpu {
+            adr: adr_out,
+            ack: ack_in,
+        },
+        Ram {
+            adr: adr_in,
+            ack: ack_out,
+        },
+    )
 }
 
 pub fn step(cpu: &Cpu, ram: &Ram) -> (U<32>, U<1>) {

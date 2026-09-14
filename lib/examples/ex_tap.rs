@@ -29,10 +29,10 @@ impl Unit<Rx<U<8>>, Tx<U<8>>> for Tap {
             let v = inp.recv_if(room).unwrap_or_default();
             let taken = offered & room;
             let odd = taken & v.bit(0);
-            when!(taken => { self.seen <= self.seen.get() + 1 });
+            when!(taken => { self.seen <= self.seen + 1 });
             when!(odd => {
                 out.send(v);
-                self.passed <= self.passed.get() + 1
+                self.passed <= self.passed + 1
             });
         }
     }

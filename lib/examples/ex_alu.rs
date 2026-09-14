@@ -52,7 +52,7 @@ impl Unit<(In<Op>, In<U<32>>, In<U<32>>), Out<U<32>>> for Alu {
                 Op::Slt => { self.r <= lt_signed(a, b).zext() },
                 Op::Sltu => { self.r <= Bit::from(a < b).zext() },
             });
-            y.set(self.r.get());
+            y.set(self.r);
         }
     }
 }
@@ -63,7 +63,7 @@ fn main() {
     let (b_out, b) = signal::<U<32>, DefaultClock>();
     let (y_out, y) = signal::<U<32>, DefaultClock>();
     let mut alu = Alu::default();
-    let result = alu.r.clone();
+    let result = alu.r;
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         w.add("op", &op);

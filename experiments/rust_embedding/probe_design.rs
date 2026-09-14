@@ -2,10 +2,12 @@
 // Probe 2. Is `async fn` in a trait usable on stable, and may inputs and
 // outputs be type parameters so one struct implements `Unit` twice?
 // Against the library's `Unit`.
-use txhdl::comp::{Unit, Reg, rising, DefaultClock};
+use txhdl::comp::{rising, DefaultClock, Reg, Unit};
 use txhdl::types::U;
 
-pub struct MacUnit { pub acc: Reg<U<64>> }
+pub struct MacUnit {
+    pub acc: Reg<U<64>>,
+}
 pub struct NarrowIn(pub U<32>);
 pub struct WideIn(pub U<64>);
 pub struct AccOut;
@@ -13,11 +15,13 @@ pub struct AccOut;
 impl Unit<NarrowIn, AccOut> for MacUnit {
     async fn run(&mut self, inputs: NarrowIn, _o: AccOut) {
         // Non-synthesisable, and allowed: it observes and drives nothing.
-        assert!(inputs.0.raw() != u32::MAX as u128, "sentinel is not a sample");
+        assert!(
+            inputs.0.raw() != u32::MAX as u128,
+            "sentinel is not a sample"
+        );
         loop {
             rising::<DefaultClock>().await;
-            let acc = self.acc.get();   // the wait for the edge
-            self.acc.set(acc + inputs.0.resize::<64>());
+            self.acc.set(self.acc + inputs.0.resize::<64>());
         }
     }
 }
@@ -27,8 +31,7 @@ impl Unit<WideIn, AccOut> for MacUnit {
     async fn run(&mut self, inputs: WideIn, _o: AccOut) {
         loop {
             rising::<DefaultClock>().await;
-            let acc = self.acc.get();
-            self.acc.set(acc + inputs.0);
+            self.acc.set(self.acc + inputs.0);
         }
     }
 }

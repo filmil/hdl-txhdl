@@ -7,9 +7,18 @@ use txhdl::comp::Reg;
 use txhdl::types::U;
 
 #[derive(Copy, Clone, Default, PartialEq)]
-pub enum Op { #[default] Nop, Inc, Dec, Load(u8) }
+pub enum Op {
+    #[default]
+    Nop,
+    Inc,
+    Dec,
+    Load(u8),
+}
 
-pub struct Unit { pub acc: Reg<U<8>>, pub op: Reg<Op> }
+pub struct Unit {
+    pub acc: Reg<U<8>>,
+    pub op: Reg<Op>,
+}
 
 impl Unit {
     pub fn step(&self, op: Op, acc: U<8>) {

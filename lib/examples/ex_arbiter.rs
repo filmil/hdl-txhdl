@@ -44,16 +44,16 @@ impl Unit<(), Tx<Packet>> for Producer {
     async fn run(&mut self, _i: (), out: Tx<Packet>) {
         loop {
             DefaultClock::rising().await;
-            let (seq, gap) = (self.seq.get(), self.gap.get());
+            let gap = self.gap.get();
             let due = gap == 0;
             let offer = out.ready() & due;
             let next_gap = (gap.raw() as u8 + 1) % self.period;
-            when!(offer => { self.seq <= seq + 1 });
+            when!(offer => { self.seq <= self.seq + 1 });
             self.gap.set(next_gap);
             if offer.to_bool() {
                 out.send(Packet {
                     from: self.from,
-                    seq,
+                    seq: self.seq.get(),
                 });
             }
         }
@@ -76,9 +76,11 @@ impl Unit<(Rx<Packet>, Rx<Packet>), Tx<Packet>> for Arbiter {
                     && out.ready().to_bool()
             })
             .await;
-            let turn = self.turn.get();
-            let (first, second) =
-                if turn.to_bool() { (&b, &a) } else { (&a, &b) };
+            let (first, second) = if self.turn.to_bool() {
+                (&b, &a)
+            } else {
+                (&a, &b)
+            };
             let p = match first.recv() {
                 Some(p) => p,
                 None => second.recv().unwrap_or_default(),
@@ -101,8 +103,7 @@ impl Unit<Rx<Packet>, ()> for Consumer {
     async fn run(&mut self, inp: Rx<Packet>, _o: ()) {
         loop {
             inp.wait().await;
-            let taken = self.taken.get();
-            self.taken.set(taken + 1);
+            self.taken.set(self.taken + 1);
         }
     }
 }

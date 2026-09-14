@@ -30,8 +30,8 @@ impl Unit<(In<Bit>, Rx<U<69>>), (Tx<U<32>>, Out<Bit>)> for Timer {
         loop {
             DefaultClock::rising().await;
             let rst = rst.get();
+            // The two words are sliced below, so they are read once.
             let (mtime, mtimecmp) = (self.mtime.get(), self.mtimecmp.get());
-            let pending = self.pending.get();
             // Every request is taken; the ones for this device are the
             // ones whose address falls in its sixteen bytes.
             let offered = req.peek().is_some();
@@ -87,7 +87,7 @@ impl Unit<(In<Bit>, Rx<U<69>>), (Tx<U<32>>, Out<Bit>)> for Timer {
             // word, or zero for an address that is not this device's.
             when!(read => { resp.send(mux(hit, word, U::<32>::from(0u32))) });
             self.pending.set(mtime >= mtimecmp);
-            tirq.set(pending);
+            tirq.set(self.pending);
         }
     }
 }

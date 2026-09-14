@@ -21,9 +21,8 @@ impl Unit<(), Out<U<32>>> for Producer {
     async fn run(&mut self, _i: (), out: Out<U<32>>) {
         loop {
             DefaultClock::rising().await; // the wait
-            let n = self.n.get(); // a read at that edge
-            out.set(n); // a wire: no wait
-            self.n.set(n + 1);
+            out.set(self.n); // a read at that edge, onto a wire
+            self.n.set(self.n + 1);
         }
     }
 }
@@ -32,8 +31,7 @@ impl Unit<In<U<32>>, ()> for Consumer {
     async fn run(&mut self, inp: In<U<32>>, _o: ()) {
         loop {
             DefaultClock::rising().await;
-            let total = self.total.get();
-            self.total.set(total + inp.get());
+            self.total.set(self.total + inp.get());
         }
     }
 }
@@ -42,8 +40,7 @@ impl Unit<U<32>, ()> for Pe {
     async fn run(&mut self, i: U<32>, _o: ()) {
         loop {
             DefaultClock::rising().await;
-            let acc = self.acc.get();
-            self.acc.set(acc + i);
+            self.acc.set(self.acc + i);
         }
     }
 }

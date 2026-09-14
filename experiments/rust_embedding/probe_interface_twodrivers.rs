@@ -7,7 +7,9 @@ use txhdl::types::U;
 use txhdl::Transaction;
 
 #[derive(Clone, Copy, Default, Transaction)]
-pub struct Beat { pub data: U<32> }
+pub struct Beat {
+    pub data: U<32>,
+}
 
 interface! {
     Bad { adr: Signal<U<32>>, dat: Chan<Beat> }

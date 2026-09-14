@@ -620,6 +620,8 @@ latex_document(
         ":ops_timing",
         ":if_run",
         ":if_timing",
+        ":inplace_run",
+        ":inplace_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -681,6 +683,23 @@ waveform(
         "//active=>active",
         "//done/tx_valid=>done_valid",
         "//done/tx_data=>done",
+    ],
+)
+
+waveform(
+    name = "inplace",
+    example = "//lib/examples:ex_inplace",
+    lowered = ("window", "inplace"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//x=>x",
+        "//en=>en",
+        "//clear=>clear",
+        "//window/acc=>acc",
+        "//window/n=>n",
+        "//window/top=>top",
+        "//sum=>sum",
+        "//full=>full",
     ],
 )
 

@@ -8,16 +8,27 @@ use txhdl::comp::{Chan, Member, Signal};
 use txhdl::types::{Bit, Transaction, U};
 
 #[derive(Clone, Copy, Default)]
-pub struct Beat { pub data: U<32>, pub last: bool }
+pub struct Beat {
+    pub data: U<32>,
+    pub last: bool,
+}
 impl Transaction for Beat {}
 
 macro_rules! end_ty {
-    (out, $t:ty) => { <$t as Member>::Driver };
-    (inp, $t:ty) => { <$t as Member>::Reader };
+    (out, $t:ty) => {
+        <$t as Member>::Driver
+    };
+    (inp, $t:ty) => {
+        <$t as Member>::Reader
+    };
 }
 macro_rules! end_of {
-    (out, $pair:expr) => { $pair.0 };
-    (inp, $pair:expr) => { $pair.1.clone() };
+    (out, $pair:expr) => {
+        $pair.0
+    };
+    (inp, $pair:expr) => {
+        $pair.1.clone()
+    };
 }
 macro_rules! interface_rules {
     ($iface:ident { $( $m:ident : $ty:ty ),* $(,)? }
@@ -44,7 +55,10 @@ interface_rules! {
 pub fn check() -> (U<32>, Bit, Option<Beat>) {
     let (m, t) = Wishbone::new();
     m.adr.set(U::new(0x1000));
-    m.dat.send(Beat { data: U::new(7), last: true });
+    m.dat.send(Beat {
+        data: U::new(7),
+        last: true,
+    });
     t.ack.set(Bit::One);
     (t.adr.get(), m.ack.get(), t.dat.recv())
 }

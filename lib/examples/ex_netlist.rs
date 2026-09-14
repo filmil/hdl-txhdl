@@ -25,9 +25,8 @@ impl Unit<(), ()> for Producer {
     async fn run(&mut self, _i: (), _o: ()) {
         loop {
             DefaultClock::rising().await;
-            let n = self.n.get();
-            self.out.set(n);
-            self.n.set(n + 1);
+            self.out.set(self.n);
+            self.n.set(self.n + 1);
         }
     }
 }
@@ -42,8 +41,7 @@ impl Unit<(), ()> for Consumer {
     async fn run(&mut self, _i: (), _o: ()) {
         loop {
             DefaultClock::rising().await;
-            let total = self.total.get();
-            self.total.set(total + self.inp.get());
+            self.total.set(self.total + self.inp.get());
         }
     }
 }

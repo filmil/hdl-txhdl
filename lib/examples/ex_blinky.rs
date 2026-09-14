@@ -32,14 +32,13 @@ impl<C: BlinkyConfig> Unit<(), Out<Bit>> for Blinky<C> {
     async fn run(&mut self, _i: (), led: Out<Bit>) {
         loop {
             DefaultClock::rising().await;
-            let n = self.count.get();
-            let wrap = n == C::PERIOD - 1;
+            let wrap = self.count == C::PERIOD - 1;
             when!(wrap => {
                 self.count <= 0
             } else {
-                self.count <= n + 1
+                self.count <= self.count + 1
             });
-            led.set(n < C::HALF);
+            led.set(self.count < C::HALF);
         }
     }
 }

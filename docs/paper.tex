@@ -170,8 +170,9 @@ executor polls every process once per tick and then commits the
 drives; a process that has crossed an edge at this tick cannot cross
 it again, so a second wait written after a first waits for the next
 edge. Fig.~\ref{fig:p-time} draws the rule. A process waits, then
-reads: a register's \code{get} returns what the last edge latched, a
-wire's \code{get} what it carries, a memory's \code{read} its
+reads: a register, in an expression or through \code{get}, is what
+the last edge latched, a wire's \code{get} what it carries, a
+memory's \code{read} its
 asynchronous port. Drives are deferred: \code{set} takes effect at the
 end of the tick, so a read after a drive in the same iteration still
 sees what the edge latched, as it does in hardware. The default clock

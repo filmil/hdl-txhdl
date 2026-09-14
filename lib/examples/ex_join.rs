@@ -36,10 +36,11 @@ impl Unit<(), Tx<U<8>>> for Producer {
     async fn run(&mut self, _i: (), out: Tx<U<8>>) {
         loop {
             DefaultClock::rising().await;
-            let (seq, gap) = (self.seq.get(), self.gap.get());
+            let gap = self.gap.get();
             let due = gap.raw() == 0 && out.ready().to_bool();
             self.gap.set((gap.raw() as u8 + 1) % self.period);
             if due {
+                let seq = self.seq.get();
                 out.send(seq);
                 self.seq.set(seq + 1);
                 println!("t={:>2} {} offers {}", now(), self.name, seq.raw());
@@ -58,8 +59,7 @@ impl Unit<(Rx<U<8>>, Rx<U<8>>), Tx<U<8>>> for Adder {
     async fn run(&mut self, (a, b): (Rx<U<8>>, Rx<U<8>>), out: Tx<U<8>>) {
         loop {
             let (x, y) = parallel!(a.wait(), b.wait()).await;
-            let sums = self.sums.get();
-            self.sums.set(sums + 1);
+            self.sums.set(self.sums + 1);
             out.send(x + y);
             println!("t={:>2} adder {} + {}", now(), x.raw(), y.raw());
         }
@@ -76,8 +76,7 @@ impl Unit<Rx<U<8>>, ()> for Consumer {
     async fn run(&mut self, inp: Rx<U<8>>, _o: ()) {
         loop {
             let s = inp.wait().await;
-            let seen = self.seen.get();
-            self.seen.set(seen + 1);
+            self.seen.set(self.seen + 1);
             println!("t={:>2} sum {}", now(), s.raw());
         }
     }

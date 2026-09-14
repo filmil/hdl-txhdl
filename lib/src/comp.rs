@@ -331,23 +331,107 @@ impl<T: Copy + Default, A: Clock, B: Clock> Crossing<T, A, B> {
 /// fact that two processes cannot both take `&mut self`.
 ///
 /// A register is the cycle boundary, and its interface says so. `set`
-/// is a drive and is plain: it states the next value. `get` is `async`:
-/// the value a register holds is the one latched at the clock edge, so
-/// reading it is where a process waits for that edge, and the `.await`
-/// is the mark the lowering will turn into the register. A wire has no
-/// edge, which is why [`In::get`] is not `async` and this is.
-pub struct Reg<T: Copy, C: Clock = DefaultClock>(
-    Rc<RegCell<T>>,
+/// is a drive and is plain: it states the next value. A read is the
+/// value latched at the last edge: `get`, or the register itself in
+/// an expression, `self.count + 1`, `self.count == 8`, `!self.busy`,
+/// `x.set(self.count)`, since a register is `Copy` and has the
+/// operators and conversions of its value. The cell lives as long as
+/// the program, which is what lets a handle be a plain copy; a unit
+/// makes its registers once.
+pub struct Reg<T: Copy + 'static, C: Clock = DefaultClock>(
+    &'static RegCell<T>,
     PhantomData<C>,
 );
 
 /// A second handle on the same register: what a testbench keeps to
-/// read a unit's state while the unit runs.
-impl<T: Copy, C: Clock> Clone for Reg<T, C> {
+/// read a unit's state while the unit runs, and what an expression
+/// takes when it names the register.
+impl<T: Copy + 'static, C: Clock> Clone for Reg<T, C> {
     fn clone(&self) -> Self {
-        Reg(self.0.clone(), PhantomData)
+        *self
     }
 }
+impl<T: Copy + 'static, C: Clock> Copy for Reg<T, C> {}
+
+// The operators of the value, on the register: `self.count + 1` is
+// `self.count.get() + 1`. The right operand of the value's operators
+// takes a register too, through the conversions below.
+macro_rules! reg_ops {
+    ($($tr:ident $f:ident),*) => { $(
+        impl<T, R, C> std::ops::$tr<R> for Reg<T, C>
+        where
+            T: Copy + 'static + std::ops::$tr<R>,
+            C: Clock,
+        {
+            type Output = T::Output;
+            fn $f(self, o: R) -> T::Output {
+                std::ops::$tr::$f(self.get(), o)
+            }
+        }
+    )* };
+}
+reg_ops!(
+    Add add,
+    Sub sub,
+    BitAnd bitand,
+    BitOr bitor,
+    BitXor bitxor,
+    Shl shl,
+    Shr shr
+);
+impl<T: Copy + 'static + std::ops::Not, C: Clock> std::ops::Not for Reg<T, C> {
+    type Output = T::Output;
+    fn not(self) -> T::Output {
+        !self.get()
+    }
+}
+impl<T: Copy + 'static + PartialEq<R>, R, C: Clock> PartialEq<R> for Reg<T, C> {
+    fn eq(&self, o: &R) -> bool {
+        self.get() == *o
+    }
+}
+impl<T: Copy + 'static + PartialOrd<R>, R, C: Clock> PartialOrd<R>
+    for Reg<T, C>
+{
+    fn partial_cmp(&self, o: &R) -> Option<std::cmp::Ordering> {
+        self.get().partial_cmp(o)
+    }
+}
+impl<const N: usize, C: Clock> From<Reg<crate::types::U<N>, C>>
+    for crate::types::U<N>
+{
+    fn from(r: Reg<crate::types::U<N>, C>) -> crate::types::U<N> {
+        r.get()
+    }
+}
+impl<C: Clock> From<Reg<Bit, C>> for Bit {
+    fn from(r: Reg<Bit, C>) -> Bit {
+        r.get()
+    }
+}
+impl<C: Clock> From<Reg<Bit, C>> for bool {
+    fn from(r: Reg<Bit, C>) -> bool {
+        r.get().to_bool()
+    }
+}
+impl<C: Clock> Reg<Bit, C> {
+    /// The bit as a condition: `if self.busy.to_bool()`.
+    pub fn to_bool(self) -> bool {
+        self.get().to_bool()
+    }
+}
+// A truth value on the left of a register of a bit: `ok & self.busy`.
+macro_rules! bool_reg_ops {
+    ($($tr:ident $f:ident),*) => { $(
+        impl<C: Clock> std::ops::$tr<Reg<Bit, C>> for bool {
+            type Output = Bit;
+            fn $f(self, o: Reg<Bit, C>) -> Bit {
+                std::ops::$tr::$f(self, o.get())
+            }
+        }
+    )* };
+}
+bool_reg_ops!(BitAnd bitand, BitOr bitor, BitXor bitxor);
 
 /// A wire a unit keeps as a field, for looking at: a `let` of the
 /// loop that has a name in the trace as well as in the netlist. The
@@ -407,10 +491,10 @@ impl<T: Copy + Default + 'static, C: Clock> Default for Reg<T, C> {
 impl<T: Copy + 'static, C: Clock> Reg<T, C> {
     pub fn new(v: impl Into<T>) -> Self {
         Reg(
-            Rc::new(RegCell {
+            Box::leak(Box::new(RegCell {
                 cur: Cell::new(v.into()),
                 next: Cell::new(None),
-            }),
+            })),
             PhantomData,
         )
     }
@@ -427,7 +511,7 @@ impl<T: Copy + 'static, C: Clock> Reg<T, C> {
     /// iteration still sees the value the edge latched, as in hardware.
     pub fn set(&self, v: impl Into<T>) {
         self.0.next.set(Some(v.into()));
-        commit(self.0.clone());
+        commit_static(self.0);
     }
 
     /// A predicated drive: a multiplexer on the enable, not a branch.
@@ -830,6 +914,8 @@ mod clock {
         /// Drives scheduled this step, applied when it ends.
         pub static COMMITS: RefCell<Vec<std::rc::Rc<dyn super::Commit>>> =
             RefCell::new(Vec::new());
+        pub static COMMITS_STATIC: RefCell<Vec<&'static dyn super::Commit>> =
+            RefCell::new(Vec::new());
         /// The trace sink, told the step number when a step ends.
         pub static TRACER: RefCell<Option<Box<dyn FnMut(u64)>>> =
             RefCell::new(None);
@@ -839,6 +925,10 @@ mod clock {
 /// Schedule a drive for the end of the step.
 fn commit(c: Rc<dyn Commit>) {
     clock::COMMITS.with(|v| v.borrow_mut().push(c))
+}
+/// A register's drive: its cell lives as long as the program.
+fn commit_static(c: &'static dyn Commit) {
+    clock::COMMITS_STATIC.with(|v| v.borrow_mut().push(c))
 }
 
 /// Enter a `parallel!` group for one poll. Returns what to hand back to
@@ -982,6 +1072,11 @@ fn process() -> Waker {
 /// End the step: apply every drive scheduled in it, then advance time.
 fn advance() {
     let drives = clock::COMMITS.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    for d in drives {
+        d.apply()
+    }
+    let drives =
+        clock::COMMITS_STATIC.with(|c| std::mem::take(&mut *c.borrow_mut()));
     for d in drives {
         d.apply()
     }
@@ -1197,11 +1292,10 @@ pub mod trace {
 
     impl<T: Value + 'static, C: Clock> Traceable for Reg<T, C> {
         fn trace(&self, scope: &Scope) {
-            let r = self.0.clone();
-            let cell = Rc::as_ptr(&self.0) as usize;
+            let r = self.0;
+            let cell = r as *const super::RegCell<T> as usize;
             let f = Box::new(move || r.cur.get().vcd());
             probe_named(scope, T::WIDTH, Kind::Reg, cell, f, T::names());
-            let r = self.0.clone();
             parts(scope, Kind::Reg, cell, move || r.cur.get());
         }
     }

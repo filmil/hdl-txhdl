@@ -29,9 +29,8 @@ impl Unit<(), Out<Bit>> for Counter {
     async fn run(&mut self, _i: (), msb: Out<Bit>) {
         loop {
             DefaultClock::rising().await;
-            let n = self.n.get();
-            let high = n.bit(2);
-            self.n.set(n + 1);
+            let high = self.n.get().bit(2);
+            self.n.set(self.n + 1);
             self.phase.set(mux(high, Phase::High, Phase::Low));
             msb.set(high);
         }

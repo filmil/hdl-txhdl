@@ -28,9 +28,9 @@ impl Unit<(In<U<8>>, In<U<8>>, In<Bit>), Out<U<20>>> for Mac {
             // The product at twenty bits, then the sum at twenty bits.
             let product = a.zext::<20>().mul::<20>(b.zext::<20>());
             when!(clear => { self.acc <= 0 } else {
-                self.acc <= self.acc.get() + product
+                self.acc <= self.acc + product
             });
-            sum.set(self.acc.get());
+            sum.set(self.acc);
         }
     }
 }

@@ -37,7 +37,7 @@ An expression needs no macro at all. \code{mux} is the operation, and a
 function says so.
 
 \begin{lstlisting}[caption={The expression form is a function. There is nothing to predicate.},label={lst:mux}]
-let chosen = mux(reset, Sig(0), self.count.get());
+let chosen = mux(reset, Sig(0), self.count);
 \end{lstlisting}
 
 A statement form has to predicate whatever is written inside it, and that
@@ -109,12 +109,11 @@ that matches wins.
 
 \begin{lstlisting}[caption={\code{case!} on a state register. The arms are Rust patterns, guards and alternatives included, and the first match wins, so the guarded arm sits above the plain one for the same state. The full sequencer is \code{ex\_case.rs} in the examples document~\cite{examples}.},label={lst:case}]
 DefaultClock::rising().await;
-let (s, n) = (self.state.get(), self.count.get());
-case!(s => {
+case!(self.state.get() => {
     State::Idle if go.to_bool() => { self.state <= State::Load },
     State::Load => { self.count <= 3; self.state <= State::Run },
-    State::Run if n == 0 => { self.state <= State::Done },
-    State::Run => { self.count <= n - 1 },
+    State::Run if self.count == 0 => { self.state <= State::Done },
+    State::Run => { self.count <= self.count - 1 },
     State::Done | State::Idle => { self.state <= State::Idle },
 });
 \end{lstlisting}

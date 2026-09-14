@@ -25,11 +25,8 @@ fn main() {
     // its output wires are set in the step from the state before it,
     // and show the same a step later, which is the netlist check's
     // business.
-    let (head, head_full, tail_full) = (
-        buffer.head.clone(),
-        buffer.head_full.clone(),
-        buffer.tail_full.clone(),
-    );
+    let (head, head_full, tail_full) =
+        (buffer.head, buffer.head_full, buffer.tail_full);
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         w.add("tx_data", &tx_data);

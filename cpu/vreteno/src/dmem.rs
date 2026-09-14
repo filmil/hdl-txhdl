@@ -41,7 +41,6 @@ impl Unit<Rx<U<69>>, Tx<U<32>>> for Dmem {
     async fn run(&mut self, req: Rx<U<69>>, resp: Tx<U<32>>) {
         loop {
             DefaultClock::rising().await;
-            let (word, answer) = (self.word.get(), self.answer.get());
             let offered = req.peek().is_some();
             let r = req.recv().unwrap_or_default();
             let at = r.slice::<REQ_ADDR, 32>().slice::<2, 10>();
@@ -72,7 +71,7 @@ impl Unit<Rx<U<69>>, Tx<U<32>>> for Dmem {
             } else {
                 self.answer <= Bit::Zero
             });
-            when!(answer => { resp.send(word) });
+            when!(self.answer => { resp.send(self.word) });
         }
     }
 }

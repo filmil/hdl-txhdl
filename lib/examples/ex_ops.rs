@@ -32,7 +32,6 @@ impl Unit<(In<U<8>>, In<U<8>>, In<Bit>), (Out<Bit>, Out<Bit>)> for Ops {
         loop {
             DefaultClock::rising().await;
             let (a, b, en) = (a.get(), b.get(), en.get());
-            let hits = self.hits.get();
             // Arithmetic and logic on values; the shift amount and
             // the mask are literals.
             when!(en => {
@@ -50,7 +49,7 @@ impl Unit<(In<U<8>>, In<U<8>>, In<Bit>), (Out<Bit>, Out<Bit>)> for Ops {
             let eq = a == b;
             let lt = a < b;
             let high = a >= 128;
-            when!(en & (eq | lt) & !high => { self.hits <= hits + 1 });
+            when!(en & (eq | lt) & !high => { self.hits <= self.hits + 1 });
             same.set(eq);
             below.set(lt & !eq);
         }
@@ -64,7 +63,7 @@ fn main() {
     let (same_out, same) = signal::<Bit, DefaultClock>();
     let (below_out, below) = signal::<Bit, DefaultClock>();
     let mut ops = Ops::default();
-    let (sum, hits) = (ops.sum.clone(), ops.hits.clone());
+    let (sum, hits) = (ops.sum, ops.hits);
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         w.add("a", &a);

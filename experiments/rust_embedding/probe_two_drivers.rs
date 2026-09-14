@@ -4,7 +4,9 @@
 use txhdl::comp::{signal, DefaultClock, Out};
 use txhdl::types::U;
 
-pub struct Driver { pub out: Out<U<32>> }
+pub struct Driver {
+    pub out: Out<U<32>>,
+}
 
 pub fn two_drivers() -> (Driver, Driver) {
     let (tx, _rx) = signal::<U<32>, DefaultClock>();

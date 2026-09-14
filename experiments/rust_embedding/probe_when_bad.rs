@@ -5,7 +5,9 @@ use txhdl::comp::Reg;
 use txhdl::types::{Bit, U};
 use txhdl::when;
 
-pub struct Unit { pub count: Reg<U<32>> }
+pub struct Unit {
+    pub count: Reg<U<32>>,
+}
 
 impl Unit {
     pub fn step(&self, enable: Bit) {

@@ -8,4 +8,6 @@ pub fn mul<const A: usize, const B: usize>(a: U<A>, b: U<B>) -> U<{ A + B }> {
     U::new(a.raw() * b.raw())
 }
 
-pub fn call_it(a: U<32>, b: U<32>) -> U<64> { mul(a, b) }
+pub fn call_it(a: U<32>, b: U<32>) -> U<64> {
+    mul(a, b)
+}

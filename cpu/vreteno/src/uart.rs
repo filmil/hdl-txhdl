@@ -129,17 +129,10 @@ impl<const DIV: u32>
         loop {
             DefaultClock::rising().await;
             let rst = rst.get().to_bool();
-            let (shift, bits, tick) =
-                (self.shift.get(), self.bits.get(), self.tick.get());
-            let (last, sent) = (self.last.get(), self.sent.get());
-            let (line, rx_shift) = (self.line.get(), self.rx_shift.get());
-            let (rx_bits, rx_tick) = (self.rx_bits.get(), self.rx_tick.get());
-            let (head, count) = (self.head.get(), self.count.get());
-            let (received, dropped) = (self.received.get(), self.dropped.get());
-            let rx_ready = count != 0;
-            let full = count == 8;
-            let rx_data = self.fifo.read(head);
-            let busy = bits != 0;
+            let rx_ready = self.count != 0;
+            let full = self.count == 8;
+            let rx_data = self.fifo.read(self.head.get());
+            let busy = self.bits != 0;
             // Every request is taken; the ones for this device are the
             // ones whose address falls in its sixteen bytes.
             let offered = req.peek().is_some();
@@ -163,24 +156,24 @@ impl<const DIV: u32>
                 self.bits.set(10);
                 self.tick.set(0);
                 self.last.set(octet);
-                self.sent.set(sent + 1);
+                self.sent.set(self.sent + 1);
             } else if busy {
-                if last_cycle::<DIV>(tick) {
+                if last_cycle::<DIV>(self.tick.get()) {
                     self.tick.set(0);
-                    self.bits.set(bits - 1);
-                    self.shift.set(shifted(shift));
+                    self.bits.set(self.bits - 1);
+                    self.shift.set(shifted(self.shift.get()));
                 } else {
-                    self.tick.set(tick + 1);
+                    self.tick.set(self.tick + 1);
                 }
             }
             when!(read => {
                 resp.send(mux(
                     mine,
-                    word(sel, busy, rx_ready, full, last, rx_data),
+                    word(sel, busy, rx_ready, full, self.last.get(), rx_data),
                     U::<32>::from(0u32)
                 ))
             });
-            tx.set(mux(busy, shift.bit(0), Bit::One));
+            tx.set(mux(busy, self.shift.get().bit(0), Bit::One));
             // The receive side. A low on the resting line is a start
             // bit; from then on the line is sampled in the middle of
             // each bit, ten of them: a high where the start bit should
@@ -190,51 +183,52 @@ impl<const DIV: u32>
             // oldest the read of the third word takes; the buffer full,
             // the byte is dropped and counted.
             self.line.set(rx.get());
-            let receiving = rx_bits != 0;
-            let sample = !rst & receiving & middle::<DIV>(rx_tick);
-            let at_start = rx_bits == 10;
-            let at_stop = rx_bits == 1;
+            let receiving = self.rx_bits != 0;
+            let sample = !rst & receiving & middle::<DIV>(self.rx_tick.get());
+            let at_start = self.rx_bits == 10;
+            let at_stop = self.rx_bits == 1;
+            let line = self.line.to_bool();
             if rst {
                 self.rx_bits.set(0);
                 self.rx_tick.set(0);
                 self.head.set(0);
                 self.count.set(0);
             } else if !receiving {
-                if !line.to_bool() {
+                if !line {
                     self.rx_bits.set(10);
                     self.rx_tick.set(0);
                 }
-            } else if last_cycle::<DIV>(rx_tick) {
+            } else if last_cycle::<DIV>(self.rx_tick.get()) {
                 self.rx_tick.set(0);
-                self.rx_bits.set(rx_bits - 1);
+                self.rx_bits.set(self.rx_bits - 1);
             } else {
-                self.rx_tick.set(rx_tick + 1);
+                self.rx_tick.set(self.rx_tick + 1);
             }
             when!(sample & at_start & line => { self.rx_bits <= 0 });
             when!(sample & !at_start & !at_stop => {
-                self.rx_shift <= taken_in(rx_shift, line)
+                self.rx_shift <= taken_in(self.rx_shift.get(), self.line.get())
             });
             when!(sample & at_stop => { self.rx_bits <= 0 });
-            let landed = sample & at_stop & line.to_bool();
+            let landed = sample & at_stop & line;
             let push = landed & !full;
             let pop = read_rx & rx_ready;
-            let tail = head + count.slice::<0, 3>();
+            let tail = self.head + self.count.get().slice::<0, 3>();
             if landed {
                 if full {
-                    self.dropped.set(dropped + 1);
+                    self.dropped.set(self.dropped + 1);
                 } else {
-                    self.fifo.at(tail).set(rx_shift);
-                    self.received.set(received + 1);
+                    self.fifo.at(tail).set(self.rx_shift);
+                    self.received.set(self.received + 1);
                 }
             }
             if !rst {
                 if pop {
-                    self.head.set(head + 1);
+                    self.head.set(self.head + 1);
                 }
                 if push & !pop {
-                    self.count.set(count + 1);
+                    self.count.set(self.count + 1);
                 } else if pop & !push {
-                    self.count.set(count - 1);
+                    self.count.set(self.count - 1);
                 }
             }
             irq.set(rx_ready);

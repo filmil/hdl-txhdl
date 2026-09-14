@@ -34,23 +34,22 @@ impl<const W: usize>
             DefaultClock::rising().await;
             let (tx_data, tx_valid) = (tx_data.get(), tx_valid.get());
             let rx_ready = rx_ready.get();
-            let (head, head_full) = (self.head.get(), self.head_full.get());
-            let (tail, tail_full) = (self.tail.get(), self.tail_full.get());
             // What the sides see this cycle, as the edge left it.
-            tx_ready.set(!tail_full);
-            rx_data.set(head);
-            rx_valid.set(head_full);
+            tx_ready.set(!self.tail_full);
+            rx_data.set(self.head);
+            rx_valid.set(self.head_full);
             // The take, then the push into whichever slot is free.
-            let pop = rx_ready & head_full;
-            let push = tx_valid & !tail_full;
-            let head1 = mux(pop, tail, head);
-            let head_full1 = mux(pop, tail_full, head_full);
-            let tail_full1 = mux(pop, Bit::Zero, tail_full);
+            let pop = rx_ready & self.head_full;
+            let push = tx_valid & !self.tail_full;
+            let head1 = mux(pop, self.tail.get(), self.head.get());
+            let head_full1 =
+                mux(pop, self.tail_full.get(), self.head_full.get());
+            let tail_full1 = mux(pop, Bit::Zero, self.tail_full.get());
             let to_head = push & !head_full1;
             let to_tail = push & head_full1;
             self.head.set(mux(to_head, tx_data, head1));
             self.head_full.set(head_full1 | to_head);
-            self.tail.set(mux(to_tail, tx_data, tail));
+            self.tail.set(mux(to_tail, tx_data, self.tail.get()));
             self.tail_full.set(tail_full1 | to_tail);
         }
     }
@@ -76,11 +75,8 @@ mod tests {
         let (rx_valid_o, _rx_valid) = signal::<Bit, DefaultClock>();
         let (rx_ready_o, rx_ready) = signal::<Bit, DefaultClock>();
         let mut buffer = Buffer::<8>::default();
-        let (head, head_full, tail_full) = (
-            buffer.head.clone(),
-            buffer.head_full.clone(),
-            buffer.tail_full.clone(),
-        );
+        let (head, head_full, tail_full) =
+            (buffer.head, buffer.head_full, buffer.tail_full);
         let mut sim = Running::new(buffer.run(
             (tx_data, tx_valid, rx_ready),
             (tx_ready_o, rx_data_o, rx_valid_o),
