@@ -650,7 +650,7 @@ pub fn interface(input: TokenStream) -> TokenStream {
 }
 
 // ---------------------------------------------------------------------
-// when!
+// with!
 
 /// Split a token stream on the first `<=` at depth zero. `<=` arrives as
 /// `<` with joint spacing followed by `=`.
@@ -702,113 +702,6 @@ fn statements(g: &Group) -> Vec<TokenStream> {
     }
     out
 }
-
-/// `when!(cond => { lhs <= rhs; ... } else { lhs <= rhs; ... })`
-///
-/// Predicated register drives that read as a conditional. Both arms exist
-/// in the hardware at once and the condition selects, which is why the
-/// name is `when` and not `if`. The arrow points into the register: the
-/// register becomes the value.
-///
-/// Procedural rather than `macro_rules!` because an `expr` fragment may
-/// be followed only by `=>`, `,` or `;`, so `lhs <= rhs` cannot be
-/// matched declaratively at all.
-#[proc_macro]
-pub fn when(input: TokenStream) -> TokenStream {
-    let toks: Vec<TokenTree> = input.into_iter().collect();
-
-    // The condition runs up to `=>`.
-    let mut i = 0;
-    let mut cond = Vec::new();
-    loop {
-        match toks.get(i) {
-            None => {
-                return err(
-                    Span::call_site(),
-                    "expected `=>` after the condition",
-                )
-            }
-            Some(TokenTree::Punct(p))
-                if p.as_char() == '='
-                    && p.spacing() == proc_macro::Spacing::Joint =>
-            {
-                if let Some(TokenTree::Punct(q)) = toks.get(i + 1) {
-                    if q.as_char() == '>' {
-                        i += 2;
-                        break;
-                    }
-                }
-                cond.push(toks[i].clone());
-                i += 1;
-            }
-            Some(t) => {
-                cond.push(t.clone());
-                i += 1
-            }
-        }
-    }
-    let cond: TokenStream = cond.into_iter().collect();
-
-    let then = match toks.get(i) {
-        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
-            i += 1;
-            g.clone()
-        }
-        _ => return err(Span::call_site(), "expected `{ ... }` after `=>`"),
-    };
-    let otherwise = match (toks.get(i), toks.get(i + 1)) {
-        (Some(TokenTree::Ident(kw)), Some(TokenTree::Group(g)))
-            if kw.to_string() == "else"
-                && g.delimiter() == Delimiter::Brace =>
-        {
-            Some(g.clone())
-        }
-        (None, _) => None,
-        (Some(t), _) => {
-            return err(t.span(), "expected `else { ... }` or the end")
-        }
-    };
-
-    // A `bool` or a `Bit`: a compare yields the one, a wire the other.
-    let mut out = String::from(
-        "{ let __c: ::txhdl::types::Bit = ::core::convert::Into::into(",
-    );
-    out.push_str(&cond.to_string());
-    out.push_str(");\n");
-    for (arm, pred) in [(Some(&then), "__c"), (otherwise.as_ref(), "!__c")] {
-        let Some(g) = arm else { continue };
-        for st in statements(g) {
-            let span = st
-                .clone()
-                .into_iter()
-                .next()
-                .map(|t| t.span())
-                .unwrap_or(g.span());
-            // A send in an arm: made under the predicate, as the drive
-            // is; the lowering makes the channel's valid the predicate.
-            let text = st.to_string();
-            if text.ends_with(')') && text.contains(".send(") {
-                out.push_str(&format!(
-                    "if ({pred}).to_bool() {{ {}; }}\n",
-                    text
-                ));
-                continue;
-            }
-            let Some((lhs, rhs)) = split_becomes(st) else {
-                return err(
-                    span,
-                    "expected `register <= value` or `tx.send(v)`",
-                );
-            };
-            out.push_str(&format!("({}).set_if({pred}, {});\n", lhs, rhs));
-        }
-    }
-    out.push('}');
-    out.parse().unwrap()
-}
-
-// ---------------------------------------------------------------------
-// with!
 
 /// One entry of a `with!` block: a drive of a field, under the
 /// predicates of the groups around it and its own, if it has one; or
@@ -1004,6 +897,86 @@ pub fn with(input: TokenStream) -> TokenStream {
     let mut out = String::from("{\n");
     let mut n = 0;
     with_rust(&text_of(&target), &es, &[], &mut out, &mut n);
+    out.push('}');
+    out.parse().unwrap()
+}
+
+/// `when!(cond => target { .. } else { .. })`: the condition, the
+/// target's tokens, the group and the group after `else`, if any.
+fn when_parts(
+    input: TokenStream,
+) -> Result<
+    (Vec<TokenTree>, Vec<TokenTree>, Group, Option<Group>),
+    (Span, String),
+> {
+    let toks: Vec<TokenTree> = input.into_iter().collect();
+    let span = toks.first().map(|t| t.span()).unwrap_or(Span::call_site());
+    let bad = || {
+        (
+            span,
+            "expected `when!(c => self { .. } else { .. })`".into(),
+        )
+    };
+    let Some((cond, i)) = up_to_arrow(&toks, 0) else {
+        return Err(bad());
+    };
+    let cond: Vec<TokenTree> = cond.into_iter().collect();
+    let brace = |t: &TokenTree| matches!(t, TokenTree::Group(g) if g.delimiter() == Delimiter::Brace);
+    let Some(b) = toks[i..].iter().position(brace) else {
+        return Err(bad());
+    };
+    let target = toks[i..i + b].to_vec();
+    if cond.is_empty() || target.is_empty() {
+        return Err(bad());
+    }
+    let TokenTree::Group(then) = &toks[i + b] else {
+        unreachable!()
+    };
+    let otherwise = match (toks.get(i + b + 1), toks.get(i + b + 2)) {
+        (Some(e), Some(TokenTree::Group(g)))
+            if is_ident(e, "else")
+                && g.delimiter() == Delimiter::Brace
+                && toks.len() == i + b + 3 =>
+        {
+            Some(g.clone())
+        }
+        (None, _) => None,
+        _ => return Err(bad()),
+    };
+    Ok((cond, target, then.clone(), otherwise))
+}
+
+/// `when!(c => self { a: x, m.at(i): v } else { a: 0 })`
+///
+/// A group of `with!`, the condition written first: the drives of
+/// one struct under a condition, and under its failure after `else`.
+/// The entries are `with!`'s, `field: value`, a nested `c ? ..` or a
+/// group. Both arms exist in the hardware at once and the condition
+/// selects, so nothing branches, which is why the name is `when` and
+/// not `if`. `with!(self <= { c ? { .. } else { .. } })` is the same
+/// block with the struct first.
+#[proc_macro]
+pub fn when(input: TokenStream) -> TokenStream {
+    let (cond, target, then, otherwise) = match when_parts(input) {
+        Ok(x) => x,
+        Err((s, m)) => return err(s, &m),
+    };
+    let group = match (entries(&then), otherwise.as_ref().map(entries)) {
+        (Ok(then), None) => Entry::Group {
+            pred: cond,
+            then,
+            otherwise: Vec::new(),
+        },
+        (Ok(then), Some(Ok(otherwise))) => Entry::Group {
+            pred: cond,
+            then,
+            otherwise,
+        },
+        (Err((s, m)), _) | (_, Some(Err((s, m)))) => return err(s, &m),
+    };
+    let mut out = String::from("{\n");
+    let mut n = 0;
+    with_rust(&text_of(&target), &[group], &[], &mut out, &mut n);
     out.push('}');
     out.parse().unwrap()
 }
@@ -1512,27 +1485,6 @@ fn target_expr(
         }
     }
     Ok(format!("T::Name(\"{}\".to_string())", target_name(ts)?))
-}
-
-/// `tx.send(e)` as a statement of a `when!` arm: the channel's name and
-/// the expression, or `None` when the statement is not a send.
-fn send_in_arm(
-    d: &[TokenTree],
-    subst: &[(String, String)],
-) -> Option<(String, String)> {
-    let end = d.len().checked_sub(3)?;
-    let (TokenTree::Punct(dot), TokenTree::Ident(m), TokenTree::Group(g)) =
-        (&d[end], &d[end + 1], &d[end + 2])
-    else {
-        return None;
-    };
-    if dot.as_char() != '.' || m.to_string() != "send" {
-        return None;
-    }
-    let tx = target_name(&d[..end]).ok()?;
-    let at: Vec<TokenTree> = g.stream().into_iter().collect();
-    let e = tr(&at, subst).ok()?;
-    Some((tx, e))
 }
 
 fn target_name(ts: &[TokenTree]) -> Result<String, String> {
@@ -2654,6 +2606,38 @@ fn lower_stmts(
         }
         // `with!(self <= { .. })`: a drive per entry, under `if` for a
         // predicate or a group, the same chain `if` makes.
+        if text.starts_with("when!") {
+            let TokenTree::Group(g) = &ts[2] else {
+                return Err(err(ts[0].span(), "expected when!(..)"));
+            };
+            let (cond, target, then, otherwise) = match when_parts(g.stream()) {
+                Ok(x) => x,
+                Err((s, m)) => return Err(err(s, &m)),
+            };
+            let unit = matches!(target.as_slice(),
+                [t] if is_ident(t, "self") || is_ident(t, "this"));
+            if !unit {
+                return Err(err(
+                    ts[0].span(),
+                    "a lowered `when!` drives `self`; another target is not \
+                     hardware of this unit",
+                ));
+            }
+            let then = entries(&then).map_err(|(s, m)| err(s, &m))?;
+            let otherwise = match otherwise {
+                Some(g) => entries(&g).map_err(|(s, m)| err(s, &m))?,
+                None => Vec::new(),
+            };
+            let group = Entry::Group {
+                pred: cond,
+                then,
+                otherwise,
+            };
+            let lowered =
+                with_lowered(cx, &[group]).map_err(|m| err(g.span(), &m))?;
+            stmts.extend(lowered);
+            continue;
+        }
         if text.starts_with("with!") {
             let TokenTree::Group(g) = &ts[2] else {
                 return Err(err(ts[0].span(), "expected with!(..)"));
@@ -2662,7 +2646,10 @@ fn lower_stmts(
                 Ok(x) => x,
                 Err((s, m)) => return Err(err(s, &m)),
             };
-            if !matches!(target.as_slice(), [t] if is_ident(t, "self")) {
+            // `self`, or `this`, a process's name for the unit.
+            let unit = matches!(target.as_slice(),
+                [t] if is_ident(t, "self") || is_ident(t, "this"));
+            if !unit {
                 return Err(err(
                     ts[0].span(),
                     "a lowered `with!` drives `self`; another target is not \
@@ -2676,81 +2663,6 @@ fn lower_stmts(
             let lowered =
                 with_lowered(cx, &es).map_err(|m| err(g.span(), &m))?;
             stmts.extend(lowered);
-            continue;
-        }
-        if text.starts_with("when!") {
-            let TokenTree::Group(g) = &ts[2] else {
-                return Err(err(ts[0].span(), "expected when!(..)"));
-            };
-            let wt: Vec<TokenTree> = g.stream().into_iter().collect();
-            let Some((cond, k)) = up_to_arrow(&wt, 0) else {
-                return Err(err(ts[0].span(), "expected `cond =>`"));
-            };
-            let ct: Vec<TokenTree> = cond.into_iter().collect();
-            let c = match tr(&ct, &cx.subst) {
-                Ok(c) => c,
-                Err(m) => return Err(err(ts[0].span(), &m)),
-            };
-            let TokenTree::Group(then) = &wt[k] else {
-                return Err(err(ts[0].span(), "expected `{ .. }`"));
-            };
-            let otherwise = match (wt.get(k + 1), wt.get(k + 2)) {
-                (Some(TokenTree::Ident(e)), Some(TokenTree::Group(g)))
-                    if e.to_string() == "else" =>
-                {
-                    Some(g)
-                }
-                _ => None,
-            };
-            let mut arms = Vec::new();
-            for (i, arm) in [Some(then), otherwise].into_iter().enumerate() {
-                let mut drives = Vec::new();
-                if let Some(g) = arm {
-                    for d in statements(g) {
-                        // tx.send(e) in an arm: the data is driven
-                        // whatever the condition, and valid is the
-                        // condition, or its negation in the else arm.
-                        let dt: Vec<TokenTree> =
-                            d.clone().into_iter().collect();
-                        if let Some((tx, e)) = send_in_arm(&dt, &cx.subst) {
-                            let v = if i == 0 {
-                                c.clone()
-                            } else {
-                                format!("E::Not(Box::new({c}))")
-                            };
-                            stmts.push(format!(
-                                "S::Drive(T::Name(\"{tx}_data\"\
-                                     .to_string()), {e})"
-                            ));
-                            stmts.push(format!(
-                                "S::Drive(T::Name(\"{tx}_valid\"\
-                                     .to_string()), {v})"
-                            ));
-                            continue;
-                        }
-                        let Some((lhs, rhs)) = split_becomes(d) else {
-                            return Err(err(
-                                g.span(),
-                                "expected `register <= value` or \
-                                     `tx.send(v)`",
-                            ));
-                        };
-                        let lt: Vec<TokenTree> = lhs.into_iter().collect();
-                        let rt: Vec<TokenTree> = rhs.into_iter().collect();
-                        let l = match target_expr(&lt, &cx.subst) {
-                            Ok(l) => l,
-                            Err(m) => return Err(err(g.span(), &m)),
-                        };
-                        let r = match tr(&rt, &cx.subst) {
-                            Ok(r) => r,
-                            Err(m) => return Err(err(g.span(), &m)),
-                        };
-                        drives.push(format!("({l}, {r})"));
-                    }
-                }
-                arms.push(format!("vec![{}]", drives.join(", ")));
-            }
-            stmts.push(format!("S::When({c}, {}, {})", arms[0], arms[1]));
             continue;
         }
         // Under `if`: a send is hoisted, its valid the path's

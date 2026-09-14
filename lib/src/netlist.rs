@@ -258,6 +258,14 @@ impl Expr {
         }
         Expr::Bin(op, Box::new(a), Box::new(b))
     }
+    /// A condition that is a constant: `true` or `false`, or none.
+    fn constant(&self) -> Option<bool> {
+        match self {
+            Expr::Num(k) => Some(*k != 0),
+            Expr::Bits(_, b) => Some(b.contains('1')),
+            _ => None,
+        }
+    }
     /// Whether this is a truth value rather than a number or bits.
     fn is_bool(&self) -> bool {
         match self {
@@ -490,10 +498,48 @@ impl Lowered {
                 Stmt::Guard(c) => Stmt::Guard(go(c, l, temps)),
             }
         }
+        // An `if` on a constant is folded: a condition that is one
+        // keeps its arm and drops the test, one that is zero drops
+        // the arm, so a condition of the build costs nothing in the
+        // netlist, as it costs nothing in the run.
+        fn fold(st: Stmt, out: &mut Vec<Stmt>) {
+            let Stmt::If(arms, els) = st else {
+                out.push(st);
+                return;
+            };
+            let folded = |body: Vec<Stmt>| {
+                body.into_iter().fold(Vec::new(), |mut v, s| {
+                    fold(s, &mut v);
+                    v
+                })
+            };
+            let mut kept: Vec<(Expr, Vec<Stmt>)> = Vec::new();
+            let mut els = folded(els);
+            for (c, body) in arms {
+                match c.constant() {
+                    Some(false) => continue,
+                    Some(true) => {
+                        els = folded(body);
+                        break;
+                    }
+                    None => kept.push((c, folded(body))),
+                }
+            }
+            if kept.is_empty() {
+                out.extend(els);
+            } else {
+                out.push(Stmt::If(kept, els));
+            }
+        }
         let mut procs = Vec::new();
         for p in &self.procs {
-            let body =
-                p.body.iter().map(|st| stmt(st, self, &mut temps)).collect();
+            let body = p.body.iter().map(|st| stmt(st, self, &mut temps)).fold(
+                Vec::new(),
+                |mut v, s| {
+                    fold(s, &mut v);
+                    v
+                },
+            );
             procs.push(Process {
                 clock: p.clock,
                 falling: p.falling,
