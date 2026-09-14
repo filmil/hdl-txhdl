@@ -21,10 +21,7 @@ pub struct Buffer<const W: usize> {
 }
 
 #[lower]
-impl<const W: usize>
-    Unit<(In<U<W>>, In<Bit>, In<Bit>), (Out<Bit>, Out<U<W>>, Out<Bit>)>
-    for Buffer<W>
-{
+impl<const W: usize> Unit for Buffer<W> {
     async fn run(
         &mut self,
         (tx_data, tx_valid, rx_ready): (In<U<W>>, In<Bit>, In<Bit>),

@@ -17,7 +17,7 @@ pub struct Decoder {
 }
 
 #[lower]
-impl Unit<In<U<32>>, (Out<U<32>>, Out<U<5>>)> for Decoder {
+impl Unit for Decoder {
     async fn run(&mut self, ir: In<U<32>>, (imm, rd): (Out<U<32>>, Out<U<5>>)) {
         loop {
             DefaultClock::rising().await;

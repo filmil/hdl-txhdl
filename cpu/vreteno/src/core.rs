@@ -352,12 +352,7 @@ impl Vreteno {
 }
 
 #[lower]
-impl
-    Unit<
-        (In<Bit>, In<Bit>, In<Bit>, Rx<U<32>>),
-        (Out<Bit>, Out<U<32>>, Out<Writeback>, Tx<U<69>>),
-    > for Vreteno
-{
+impl Unit for Vreteno {
     async fn run(
         &mut self,
         (rst, irq, tirq, resp): (In<Bit>, In<Bit>, In<Bit>, Rx<U<32>>),

@@ -15,7 +15,7 @@ pub struct Counter {
 }
 
 #[lower]
-impl Unit<In<Bit>, Out<Bit>> for Counter {
+impl Unit for Counter {
     async fn run(&mut self, enable: In<Bit>, tick: Out<Bit>) {
         loop {
             DefaultClock::rising().await; // wait, then read

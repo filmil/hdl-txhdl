@@ -20,7 +20,7 @@ pub struct Stage {
 }
 
 #[lower]
-impl Unit<Rx<U<8>>, Tx<U<8>>> for Stage {
+impl Unit for Stage {
     async fn run(&mut self, inp: Rx<U<8>>, out: Tx<U<8>>) {
         loop {
             until(DefaultClock::rising, || {

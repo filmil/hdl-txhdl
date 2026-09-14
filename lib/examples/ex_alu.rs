@@ -31,7 +31,7 @@ pub struct Alu {
 }
 
 #[lower]
-impl Unit<(In<Op>, In<U<32>>, In<U<32>>), Out<U<32>>> for Alu {
+impl Unit for Alu {
     async fn run(
         &mut self,
         (op, a, b): (In<Op>, In<U<32>>, In<U<32>>),

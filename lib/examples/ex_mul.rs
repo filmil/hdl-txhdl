@@ -16,7 +16,7 @@ pub struct Mac {
 }
 
 #[lower]
-impl Unit<(In<U<8>>, In<U<8>>, In<Bit>), Out<U<20>>> for Mac {
+impl Unit for Mac {
     async fn run(
         &mut self,
         (a, b, clear): (In<U<8>>, In<U<8>>, In<Bit>),

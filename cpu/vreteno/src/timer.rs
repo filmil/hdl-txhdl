@@ -21,7 +21,7 @@ pub struct Timer {
 }
 
 #[lower]
-impl Unit<(In<Bit>, Rx<U<69>>), (Tx<U<32>>, Out<Bit>)> for Timer {
+impl Unit for Timer {
     async fn run(
         &mut self,
         (rst, req): (In<Bit>, Rx<U<69>>),

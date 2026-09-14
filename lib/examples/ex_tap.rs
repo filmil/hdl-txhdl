@@ -20,7 +20,7 @@ pub struct Tap {
 }
 
 #[lower]
-impl Unit<Rx<U<8>>, Tx<U<8>>> for Tap {
+impl Unit for Tap {
     async fn run(&mut self, inp: Rx<U<8>>, out: Tx<U<8>>) {
         loop {
             DefaultClock::rising().await;

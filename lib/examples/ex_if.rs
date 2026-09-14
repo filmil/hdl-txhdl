@@ -24,7 +24,7 @@ pub struct Pulser {
 }
 
 #[lower]
-impl Unit<(In<Bit>, In<Bit>, In<U<4>>), (Out<Bit>, Tx<U<4>>)> for Pulser {
+impl Unit for Pulser {
     async fn run(
         &mut self,
         (rst, go, len): (In<Bit>, In<Bit>, In<U<4>>),

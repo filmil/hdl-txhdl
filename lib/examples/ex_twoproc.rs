@@ -20,7 +20,7 @@ pub struct Sampler {
 }
 
 #[lower]
-impl Unit<In<Bit>, Out<U<4>>> for Sampler {
+impl Unit for Sampler {
     async fn run(&mut self, enable: In<Bit>, q: Out<U<4>>) {
         let this = &*self;
         join2(

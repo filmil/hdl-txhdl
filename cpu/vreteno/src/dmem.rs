@@ -37,7 +37,7 @@ impl Dmem {
 }
 
 #[lower]
-impl Unit<Rx<U<69>>, Tx<U<32>>> for Dmem {
+impl Unit for Dmem {
     async fn run(&mut self, req: Rx<U<69>>, resp: Tx<U<32>>) {
         loop {
             DefaultClock::rising().await;

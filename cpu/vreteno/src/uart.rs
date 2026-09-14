@@ -117,10 +117,7 @@ pub struct Uart<const DIV: u32> {
 }
 
 #[lower]
-impl<const DIV: u32>
-    Unit<(In<Bit>, In<Bit>, Rx<U<69>>), (Tx<U<32>>, Out<Bit>, Out<Bit>)>
-    for Uart<DIV>
-{
+impl<const DIV: u32> Unit for Uart<DIV> {
     async fn run(
         &mut self,
         (rst, rx, req): (In<Bit>, In<Bit>, Rx<U<69>>),

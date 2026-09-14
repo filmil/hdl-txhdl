@@ -28,7 +28,7 @@ pub struct Blinky<C: BlinkyConfig> {
 /// LED is derived from the count rather than held in a second register,
 /// which is also how a blinky is built.
 #[lower]
-impl<C: BlinkyConfig> Unit<(), Out<Bit>> for Blinky<C> {
+impl<C: BlinkyConfig> Unit for Blinky<C> {
     async fn run(&mut self, _i: (), led: Out<Bit>) {
         loop {
             DefaultClock::rising().await;

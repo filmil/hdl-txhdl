@@ -34,7 +34,7 @@ pub struct Gray {
 }
 
 #[lower]
-impl Unit<In<Bit>, (Out<U<4>>, Out<Bit>)> for Gray {
+impl Unit for Gray {
     async fn run(
         &mut self,
         step: In<Bit>,

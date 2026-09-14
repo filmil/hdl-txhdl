@@ -19,12 +19,7 @@ use txhdl::{lower, when, Trace};
 pub struct Router {}
 
 #[lower]
-impl
-    Unit<
-        (Rx<U<69>>, Rx<U<32>>, Rx<U<32>>, Rx<U<32>>),
-        (Tx<U<69>>, Tx<U<69>>, Tx<U<69>>, Tx<U<32>>),
-    > for Router
-{
+impl Unit for Router {
     async fn run(
         &mut self,
         (req, mem_resp, timer_resp, uart_resp): (

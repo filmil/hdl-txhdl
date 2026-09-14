@@ -23,7 +23,7 @@ pub struct Window {
 }
 
 #[lower]
-impl Unit<(In<U<8>>, In<Bit>, In<Bit>), (Out<U<8>>, Out<Bit>)> for Window {
+impl Unit for Window {
     async fn run(
         &mut self,
         (x, en, clear): (In<U<8>>, In<Bit>, In<Bit>),

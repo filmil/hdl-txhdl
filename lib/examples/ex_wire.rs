@@ -27,7 +27,7 @@ pub struct Divider {
 }
 
 #[lower]
-impl Unit<In<Bit>, Out<Bit>> for Divider {
+impl Unit for Divider {
     async fn run(&mut self, pulse: In<Bit>, tick: Out<Bit>) {
         loop {
             DefaultClock::rising().await;

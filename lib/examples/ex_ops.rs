@@ -23,7 +23,7 @@ pub struct Ops {
 }
 
 #[lower]
-impl Unit<(In<U<8>>, In<U<8>>, In<Bit>), (Out<Bit>, Out<Bit>)> for Ops {
+impl Unit for Ops {
     async fn run(
         &mut self,
         (a, b, en): (In<U<8>>, In<U<8>>, In<Bit>),

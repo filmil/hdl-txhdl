@@ -24,7 +24,7 @@ pub struct Sequencer {
 }
 
 #[lower]
-impl Unit<In<Bit>, Out<State>> for Sequencer {
+impl Unit for Sequencer {
     async fn run(&mut self, go: In<Bit>, observed: Out<State>) {
         loop {
             DefaultClock::rising().await;

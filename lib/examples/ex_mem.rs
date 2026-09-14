@@ -18,7 +18,7 @@ pub struct Scratch {
 type Ports = (In<Bit>, In<U<4>>, In<U<8>>, In<U<4>>);
 
 #[lower]
-impl Unit<Ports, Out<U<8>>> for Scratch {
+impl Unit for Scratch {
     async fn run(
         &mut self,
         (we, waddr, wdata, raddr): (In<Bit>, In<U<4>>, In<U<8>>, In<U<4>>),
