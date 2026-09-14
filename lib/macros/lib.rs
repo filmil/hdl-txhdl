@@ -981,6 +981,209 @@ pub fn when(input: TokenStream) -> TokenStream {
 }
 
 // ---------------------------------------------------------------------
+// station!
+
+/// The text of a reservation station of `n` inputs, `name`: a line
+/// struct, the station struct and its lowered `run`. Every wire of
+/// the step is named for what it is, so the netlist reads as the rule.
+fn station_text(name: &str, n: usize) -> String {
+    let idx: Vec<usize> = (0..n).collect();
+    let each = |f: &dyn Fn(usize) -> String, sep: &str| -> String {
+        idx.iter().map(|&i| f(i)).collect::<Vec<_>>().join(sep)
+    };
+    let lname = format!("Line{n}");
+    let module = format!("station{n}");
+    let tparams = each(&|i| format!("T{i}: Transaction + Value"), ", ");
+    let targs = each(&|i| format!("T{i}"), ", ");
+    let line_fields = each(&|i| format!("    pub v{i}: T{i},"), "\n");
+    let state = each(
+        &|i| {
+            format!(
+                "    /// Input {i}: its cell of every line, and which are held.\n\
+                 \x20   pub mem{i}: Mem<T{i}, L>,\n\
+                 \x20   pub occ{i}: Reg<U<L>>,"
+            )
+        },
+        "\n",
+    );
+    let in_names = each(&|i| format!("in{i}"), ", ");
+    let in_types = each(&|i| format!("Rx<Tagged<TB, T{i}>>"), ", ");
+    let reads = each(
+        &|i| {
+            format!(
+                "            let offered{i} = in{i}.peek().is_some();\n\
+                 \x20           let head{i} = in{i}.head();\n\
+                 \x20           let tag{i} = head{i}.tag;\n\
+                 \x20           let value{i} = head{i}.value;\n\
+                 \x20           let cell_free{i} =\n\
+                 \x20               !self.occ{i}.get().bit(tag{i}.raw() as usize);"
+            )
+        },
+        "\n",
+    );
+    // Taking input i completes its line when every other input's
+    // cell of that line holds, or that input offers the same tag now
+    // and its cell is free.
+    let completes = each(
+        &|i| {
+            let others = idx
+                .iter()
+                .filter(|&&j| j != i)
+                .map(|&j| {
+                    format!(
+                        "(self.occ{j}.get().bit(tag{i}.raw() as usize)\n\
+                         \x20                   | (offered{j} & cell_free{j} \
+                         & (tag{j} == tag{i})))"
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n                & ");
+            format!(
+                "            let completes{i} = offered{i} & cell_free{i}\n\
+                 \x20               & {others};"
+            )
+        },
+        "\n",
+    );
+    let any = each(&|i| format!("completes{i}"), " | ");
+    // The line sent is the completing input's of lowest index.
+    let mut line_tag = format!("tag{}", n - 1);
+    for &i in idx.iter().rev().skip(1) {
+        line_tag = format!("mux(completes{i}, tag{i}, {line_tag})");
+    }
+    let takes = each(
+        &|i| {
+            format!(
+                "            let take{i} = offered{i} & cell_free{i}\n\
+                 \x20               & (!completes{i} | (send_line & (tag{i} == line_tag)));\n\
+                 \x20           let _ = in{i}.recv_if(take{i});\n\
+                 \x20           let cell_bit{i} =\n\
+                 \x20               U::<L>::from(1u8) << (tag{i}.raw() as usize);"
+            )
+        },
+        "\n",
+    );
+    let drives = each(
+        &|i| {
+            format!(
+                "                take{i} ? mem{i}.at(tag{i}): value{i},\n\
+                 \x20               occ{i}: (self.occ{i}.get()\n\
+                 \x20                   | mux(take{i}, cell_bit{i}, U::<L>::from(0u8)))\n\
+                 \x20                   & !line_clear,"
+            )
+        },
+        "\n",
+    );
+    let outs = each(
+        &|i| {
+            format!(
+                "            let out{i} = mux(\n\
+                 \x20               self.occ{i}.get().bit(line_tag.raw() as usize),\n\
+                 \x20               self.mem{i}.read(line_tag),\n\
+                 \x20               value{i},\n\
+                 \x20           );"
+            )
+        },
+        "\n",
+    );
+    let line_lit = each(&|i| format!("v{i}: out{i}"), ", ");
+    format!(
+        "pub mod {module} {{\n\
+         use super::Tagged;\n\
+         use ::txhdl::comp::{{mux, Clock, DefaultClock, Mem, Reg, Rx, Tx, Unit}};\n\
+         use ::txhdl::types::{{Transaction, U, Value}};\n\
+         use ::txhdl::{{lower, with, Trace}};\n\
+         \n\
+         /// A complete line of {n}: the tag and one value per input.\n\
+         #[derive(::txhdl::Transaction, ::txhdl::Value, Clone, Copy, Default)]\n\
+         pub struct {lname}<const TB: usize, {tparams}> {{\n\
+         \x20   pub tag: U<TB>,\n\
+         {line_fields}\n\
+         }}\n\
+         \n\
+         /// A reservation station of {n} inputs. A line per tag value,\n\
+         /// `L = 1 << TB` of them; an input lands in its cell of the line\n\
+         /// its tag names, and a line whose every cell holds is sent, at\n\
+         /// most one per cycle.\n\
+         #[derive(Trace, Default)]\n\
+         pub struct {name}<const TB: usize, const L: usize, {tparams}> {{\n\
+         {state}\n\
+         }}\n\
+         \n\
+         #[lower]\n\
+         impl<const TB: usize, const L: usize, {tparams}> Unit\n\
+         \x20   for {name}<TB, L, {targs}>\n\
+         {{\n\
+         \x20   async fn run(\n\
+         \x20       &mut self,\n\
+         \x20       ({in_names}): ({in_types}),\n\
+         \x20       out: Tx<{lname}<TB, {targs}>>,\n\
+         \x20   ) {{\n\
+         \x20       loop {{\n\
+         \x20           DefaultClock::rising().await;\n\
+         \x20           // What each input offers, and whether its cell is free.\n\
+         {reads}\n\
+         \x20           // Taking an input completes its line when every other\n\
+         \x20           // cell of that line holds, or is offered now.\n\
+         {completes}\n\
+         \x20           let any_complete = {any};\n\
+         \x20           // The line sent: the completing input's of lowest index.\n\
+         \x20           let line_tag = {line_tag};\n\
+         \x20           let send_line = any_complete & out.ready();\n\
+         \x20           // An input is taken when its cell is free and it\n\
+         \x20           // completes nothing, or completes the line being sent.\n\
+         {takes}\n\
+         \x20           let line_clear = mux(\n\
+         \x20               send_line,\n\
+         \x20               U::<L>::from(1u8) << (line_tag.raw() as usize),\n\
+         \x20               U::<L>::from(0u8),\n\
+         \x20           );\n\
+         \x20           with!(self <= {{\n\
+         {drives}\n\
+         \x20           }});\n\
+         \x20           // The line's values: from the cell if held, else\n\
+         \x20           // straight from the input.\n\
+         {outs}\n\
+         \x20           if send_line.to_bool() {{\n\
+         \x20               out.send({lname} {{ tag: line_tag, {line_lit} }});\n\
+         \x20           }}\n\
+         \x20       }}\n\
+         \x20   }}\n\
+         }}\n\
+         }}\n\
+         pub use {module}::{{{lname}, {name}}};\n"
+    )
+}
+
+/// `station!(Station3, 3)`: a reservation station of three inputs,
+/// named, with its line struct `Line3` beside it. The station is a
+/// unit of `Rx<Tagged<TB, T_i>>` inputs and a `Tx<Line3<TB, T_0..>>`
+/// output, generic over the tag width `TB`, the line count `L`, which
+/// is `1 << TB` stated, and the inputs' value types. Written out per
+/// arity, since the lowering reads a body and not a loop over inputs;
+/// `TXHDL_MACRO_DUMP` names a directory to write the text to.
+#[proc_macro]
+pub fn station(input: TokenStream) -> TokenStream {
+    let toks: Vec<TokenTree> = input.into_iter().collect();
+    let (name, n) = match toks.as_slice() {
+        [TokenTree::Ident(name), TokenTree::Punct(c), TokenTree::Literal(n)]
+            if c.as_char() == ',' =>
+        {
+            (name.to_string(), n.to_string().parse::<usize>().ok())
+        }
+        _ => return err(Span::call_site(), "expected `station!(Name, N)`"),
+    };
+    let Some(n) = n.filter(|n| (2..=16).contains(n)) else {
+        return err(toks[2].span(), "a station has from two to sixteen inputs");
+    };
+    let text = station_text(&name, n);
+    if let Ok(dir) = std::env::var("TXHDL_MACRO_DUMP") {
+        let _ = std::fs::write(format!("{dir}/station_{name}.rs"), &text);
+    }
+    text.parse().unwrap()
+}
+
+// ---------------------------------------------------------------------
 // case!
 
 /// `case!(value => { pattern => { lhs <= rhs; ... }, ... })`
@@ -1168,6 +1371,29 @@ fn split_commas(g: &Group) -> Vec<Vec<TokenTree>> {
             }
             _ => out.last_mut().unwrap().push(t),
         }
+    }
+    out.retain(|v| !v.is_empty());
+    out
+}
+
+/// A tuple of types split on its commas, a comma inside a type's
+/// angle brackets, `Rx<Tagged<TB, T0>>`, being the type's own.
+fn split_type_commas(g: &Group) -> Vec<Vec<TokenTree>> {
+    let mut out = vec![Vec::new()];
+    let mut depth = 0usize;
+    for t in g.stream() {
+        match &t {
+            TokenTree::Punct(p) if p.as_char() == '<' => depth += 1,
+            TokenTree::Punct(p) if p.as_char() == '>' => {
+                depth = depth.saturating_sub(1)
+            }
+            TokenTree::Punct(p) if p.as_char() == ',' && depth == 0 => {
+                out.push(Vec::new());
+                continue;
+            }
+            _ => {}
+        }
+        out.last_mut().unwrap().push(t);
     }
     out.retain(|v| !v.is_empty());
     out
@@ -2917,7 +3143,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // The two sides' types as written, for the impl header when it
     // names none: `impl Unit for X` is `impl Unit<I, O> for X`.
     let mut sides: Vec<String> = Vec::new();
-    for p in split_commas(params).into_iter().skip(1) {
+    for p in split_type_commas(params).into_iter().skip(1) {
         let Some(colon) = p.iter().position(
             |t| matches!(t, TokenTree::Punct(c) if c.as_char() == ':'),
         ) else {
@@ -2939,7 +3165,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     && tys.delimiter() == Delimiter::Parenthesis =>
             {
                 let ns = split_commas(names);
-                let ts = split_commas(tys);
+                let ts = split_type_commas(tys);
                 if ns.len() != ts.len() {
                     return err(names.span(), "ports and types differ");
                 }
