@@ -23,6 +23,13 @@ The mainline is mirrored to GitHub, `filmil/hdl-txhdl`, by the `mirror` workflow
 It runs on every push to `main` and every six hours, and needs the Actions secret `A_GITHUB_MIRROR_TOKEN`, a fine-grained token with write access to that repository's contents.
 The instance's own push mirror does the same from the server; either is enough.
 
+## Starting from nothing
+
+`//docs:zero` is the tutorial for an empty directory: four files,
+under `tutorial/blinky/`, that build, run and lower a blinky with
+Bazel against the GitHub mirror, with nothing installed but Bazelisk.
+The tree builds that workspace as a check.
+
 ## Building
 
 Everything is built by Bazel, and Bazel provisions every tool it uses.

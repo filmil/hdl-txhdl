@@ -1,0 +1,189 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% TxHDL from zero: a blinky in Bazel, from an empty directory to a
+% netlist, for somebody who has neither the tree nor Bazel. Built by
+% //docs:zero. Every file shown is included from tutorial/blinky/,
+% which the tree builds as a check, and every printout is what the
+% build produced by running it.
+\documentclass[journal,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{TxHDL from Zero: A Blinky in Bazel}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{This is the tutorial for an empty directory: nothing
+installed, no copy of the TxHDL tree, and a blinky built, run and
+lowered to Verilog with Bazel at the end. Every file it shows is
+included from the project repository \code{HDL/txhdl}, under
+\code{tutorial/blinky/}, which the project's own build builds as a
+check, and every printout is what the build produced by running it.
+The language is learnt from the step-by-step tutorial~\cite{tutorial}
+and the cheat sheet~\cite{cheatsheet}; the cover~\cite{cover} lists
+every document.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{TxHDL from Zero}{Filmar and Janković: TxHDL from Zero}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+TxHDL is a hardware description language that is a Rust library, and
+a design in it is built by Bazel. This document starts from an empty
+directory and ends with a blinky that runs, prints its LED as a line
+of characters, and writes its Verilog as a file of the build. It
+takes four files and one binary on the machine.
+\end{abstract}
+
+\section{What You Need}
+\label{sec:z-need}
+
+One program: Bazelisk, a single binary from its GitHub releases page
+or a package manager, put on the path as \code{bazel}. It reads the
+version a workspace names and fetches that Bazel. Everything else
+comes with the build: the Rust compiler, fetched by the Rust rules at
+the version TxHDL pins; TxHDL itself, fetched from its GitHub mirror
+at a named commit; and TxHDL's own dependencies, resolved through two
+registries. Nothing is installed on the machine, and no Verilog tool
+is needed to get a netlist, since the netlist is what the Rust
+program prints. Git is needed once, for the fetch of the mirror.
+
+\section{Four Files}
+\label{sec:z-files}
+
+A workspace is a directory with these files in it. The first names
+the Bazel version, so that Bazelisk fetches the one this document was
+built with:
+
+\lstinputlisting[style=ascii,caption={\code{.bazelversion}: one line.},label={lst:z-version}]{tutorial/blinky/.bazelversion}
+
+The second names the registries Bazel looks modules up in. TxHDL's
+dependencies, the Rust rules among them, come from the Bazel Central
+Registry; a few of its tools come from the project's own registry,
+named first:
+
+\lstinputlisting[style=ascii,caption={\code{.bazelrc}: where modules come from.},label={lst:z-rc}]{tutorial/blinky/.bazelrc}
+
+The third is the module: a name for the workspace, the Rust rules,
+and TxHDL, which no registry holds yet, so it is named by its
+repository and a commit. The commit here is the one this document
+was built from; a newer one is any commit of the mirror's
+\code{main}, and the version, \code{0.0.0}, is what TxHDL calls
+itself.
+
+\lstinputlisting[style=ascii,caption={\code{MODULE.bazel}: two dependencies, one of them by commit.},label={lst:z-module}]{tutorial/blinky/MODULE.bazel}
+
+The fourth is the build file. The blinky is a Rust binary that
+depends on TxHDL's library and its macros; the second rule runs it
+with \code{--verilog} and keeps what it prints as a file of the
+build, \code{blinky.v}. The visibility line and the last rule are
+for the document you are reading, which runs the blinky from the
+project's tree, and are not needed in a workspace of your own.
+
+\lstinputlisting[style=ascii,caption={\code{BUILD.bazel}: the binary, its netlist, and the sources.},label={lst:z-build}]{tutorial/blinky/BUILD.bazel}
+
+\section{The Blinky}
+\label{sec:z-blinky}
+
+The design is one register and one output. A unit is a struct of its
+state, here the count, and its behaviour is the \code{run} of the
+\code{Unit} trait: one loop, whose first statement waits for the
+rising edge of the clock, so that each iteration is one cycle. The
+count wraps at the period and counts otherwise, which \code{when!}
+says with the condition first; the LED is a compare on the count, a
+wire, driven with \code{set}. The attribute \code{\#[lower]} reads
+the loop and writes \code{Blinky::verilog} beside it, so the same
+struct that simulates also prints its netlist. The \code{main} runs
+the design for two periods and prints the LED, or prints the Verilog
+when asked.
+
+\lstinputlisting[caption={\code{blinky.rs}: the design, and a \code{main} that runs it or prints it.},label={lst:z-rs}]{tutorial/blinky/blinky.rs}
+
+\section{Build and Run}
+\label{sec:z-run}
+
+In the directory:
+
+\begin{lstlisting}[style=ascii]
+bazel run //:blinky
+\end{lstlisting}
+
+The first run fetches Bazel, the Rust toolchain and TxHDL with its
+dependencies, and compiles them: two minutes on the machine this
+document was built on, and some three gigabytes on disk, most of it
+the Rust toolchain and the compiler's outputs; every run after it is
+seconds, since Bazel keeps what it fetched and built. The run prints one character per cycle,
+the LED high for the first eight cycles of each period of sixteen:
+
+\lstinputlisting[style=ascii,caption={What \code{bazel run //:blinky} printed when this document was built.},label={lst:z-out}]{out_zero.txt}
+
+\section{The Netlist as a File}
+\label{sec:z-netlist}
+
+The second rule of the build file keeps the Verilog:
+
+\begin{lstlisting}[style=ascii]
+bazel build //:blinky.v
+cat bazel-bin/blinky.v
+\end{lstlisting}
+
+It is the module below: the register, the wrap as an \code{if} in
+the clocked block, the LED as a continuous assignment. The constants
+of the source, \code{PERIOD - 1} and \code{PERIOD / 2}, are the
+numbers they are, since the lowering folds them. The file is what any
+Verilog tool takes; the Vreteno document~\cite{vreteno} shows the
+whole flow to a board, with Vivado installed by the build.
+
+\lstinputlisting[style=ascii,caption={\code{blinky.v}, as the build wrote it.},label={lst:z-v}]{tutorial/blinky/blinky.v}
+
+\section{From Here}
+\label{sec:z-next}
+
+Change \code{PERIOD} and run again; the line and the netlist follow.
+Add a second register and the trace derive names it in a waveform,
+which the step-by-step tutorial~\cite{tutorial} shows how to write and
+draw, along with channels between units and the checks the project
+runs on every netlist against its own run. The cheat
+sheet~\cite{cheatsheet} is the language on one page, and the examples
+document~\cite{examples} has one example per concept, each with its
+printout and its waveform. To move the pin to a commit of your own
+choosing, change the commit in \code{MODULE.bazel} and run again;
+Bazel fetches the difference.
+
+\begin{thebibliography}{9}
+
+\bibitem{tutorial}
+F.~Filmar and D.~Janković, ``TxHDL, step by step,'' project
+repository \code{HDL/txhdl}, \code{//docs:tutorial}, 2026.
+
+\bibitem{cheatsheet}
+F.~Filmar and D.~Janković, ``TxHDL cheat sheet,'' project repository
+\code{HDL/txhdl}, \code{//docs:cheatsheet}, 2026.
+
+\bibitem{examples}
+F.~Filmar and D.~Janković, ``TxHDL by example,'' project repository
+\code{HDL/txhdl}, \code{//docs:examples}, 2026.
+
+\bibitem{vreteno}
+F.~Filmar and D.~Janković, ``Vreteno: an RV32IM core in TxHDL,''
+project repository \code{HDL/txhdl}, \code{//docs:vreteno}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}

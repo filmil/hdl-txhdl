@@ -1130,6 +1130,28 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# From zero: the blinky workspace under //tutorial/blinky, run by
+# the build, its printout and its netlist included.
+genrule(
+    name = "zero_run",
+    outs = ["out_zero.txt"],
+    cmd = "$(location //tutorial/blinky:blinky) > $@",
+    tools = ["//tutorial/blinky:blinky"],
+)
+
+latex_document(
+    name = "zero",
+    main = "zero.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":zero_run",
+        "//tutorial/blinky:blinky.v",
+        "//tutorial/blinky:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # Every document in sequence, one file, with a bookmark per document.
 combined_pdf(
     name = "all",
@@ -1138,6 +1160,7 @@ combined_pdf(
         "TxHDL Documents",
         "TxHDL cheat sheet",
         "TxHDL, Step by Step",
+        "TxHDL from Zero: A Blinky in Bazel",
         "TxHDL: Unifying a Dataflow and a Transaction HDL",
         "Deleting a Language: Embedding TxHDL in Rust",
         "The TxHDL Runtime",
@@ -1150,6 +1173,7 @@ combined_pdf(
         ":cover",
         ":cheatsheet",
         ":tutorial",
+        ":zero",
         ":article",
         ":embedding",
         ":runtime",

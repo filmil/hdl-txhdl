@@ -22,7 +22,7 @@ Those reasons live here.
 | `document-build-plan.md` | How the articles are built, what was tried before, and why the TeX packages are vendored |
 | `rust-embedding.md` | Working notes on embedding the language in Rust, with every probe result in full |
 
-Ten documents are typeset here, and `cover.tex` names them all:
+Eleven documents are typeset here, and `cover.tex` names them all:
 `article.tex` with `sections/` is the merge, `//docs:article`;
 `embedding.tex` with `embedding_sections/` is the language, `//docs:embedding`;
 `runtime.tex` with `runtime_sections/` is the runtime library verbatim, `//docs:runtime`;
@@ -32,6 +32,7 @@ Ten documents are typeset here, and `cover.tex` names them all:
 `cover.tex` is the cover, `//docs:cover`;
 `cheatsheet.tex` is the one-page cheat sheet, `//docs:cheatsheet` and `//docs:cheatsheet_png`;
 `tutorial.tex` is the tutorial, `//docs:tutorial`;
+`zero.tex` is the tutorial from an empty directory, `//docs:zero`, on `tutorial/blinky/`;
 `stats.tex` is the repository in numbers, a snapshot, `//docs:stats`;
 `//docs:all` concatenates them all, in that order, into `txhdl.pdf`.
 `housestyle.tex` is the preamble they all share, so they cannot drift apart
