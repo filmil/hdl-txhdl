@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+# The blinky: a Rust binary that runs the design and prints its
+# netlist, and a rule that keeps the netlist as a file.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+# Visible to the whole tree, for the document that runs it; not
+# needed in a workspace of your own.
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "blinky",
+    srcs = ["blinky.rs"],
+    edition = "2021",
+    deps = ["@txhdl//lib:txhdl"],
+    proc_macro_deps = ["@txhdl//lib:txhdl_macros"],
+)
+
+# The Verilog the run prints, as a file of the build:
+#   bazel build //:blinky.v
+genrule(
+    name = "verilog",
+    outs = ["blinky.v"],
+    cmd = "$(location :blinky) --verilog > $@",
+    tools = [":blinky"],
+)
+
+# Every file of this workspace, for the document that shows it.
+filegroup(
+    name = "sources",
+    srcs = [
+        ".bazelrc",
+        ".bazelversion",
+        "BUILD.bazel",
+        "MODULE.bazel",
+        "blinky.rs",
+    ],
+)

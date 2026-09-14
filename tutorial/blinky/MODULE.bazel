@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# A workspace with one dependency: TxHDL, from its GitHub mirror, at
+# a named commit. Rust itself comes with TxHDL's build; nothing is
+# installed on the machine.
+module(
+    name = "blinky",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "rules_rust", version = "0.74.0")
+bazel_dep(name = "txhdl", version = "0.0.0")
+git_override(
+    module_name = "txhdl",
+    commit = "206089c24fb2242ef18ba28d4cca38f165f88c6f",
+    remote = "https://github.com/filmil/hdl-txhdl.git",
+)

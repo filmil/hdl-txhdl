@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Where Bazel looks modules up: TxHDL's own dependencies come from
+# these two registries, the second being the Bazel Central Registry.
+common --registry=https://raw.githubusercontent.com/filmil/bazel-registry/main
+common --registry=https://bcr.bazel.build
