@@ -3103,6 +3103,251 @@ fn lower_stmts(
     Ok(stmts)
 }
 
+/// A unit of units: `run` makes the channels and wires between its
+/// children with `chan()` and `signal()`, and joins the children's
+/// `run`s. Read into the parent's nets and instances, as generated
+/// text: a `(name, kind, width)` per net, and an
+/// `instance(child_lowered(&me.FIELD, ..), "FIELD", &[..])` per child,
+/// its ports joined in order to nets and to the parent's ports.
+/// `ports` are the parent's, by name and kind.
+fn lower_structural(
+    body: &Group,
+    ports: &[(String, String)],
+) -> Result<(Vec<String>, Vec<String>), TokenStream> {
+    // The ends made in `run`: the end, its net, whether a channel.
+    let mut ends: Vec<(String, String, bool)> = Vec::new();
+    let mut nets: Vec<String> = Vec::new();
+    let mut instances: Vec<String> = Vec::new();
+    // The channel ends and channel ports joined so far, each once.
+    let mut used: Vec<String> = Vec::new();
+    let is_chan = |k: &str| k == "Tx" || k == "Rx";
+    for st in statements(body) {
+        let ts: Vec<TokenTree> = st.into_iter().collect();
+        if ts.is_empty() {
+            continue;
+        }
+        if is_ident(&ts[0], "let") {
+            let bad = |t: &TokenTree| {
+                err(
+                    t.span(),
+                    "a net is `let (tx, rx) = chan::<T, C>()` or \
+                     `let (out, inp) = signal::<T, C>()`",
+                )
+            };
+            let Some(TokenTree::Group(names)) = ts.get(1) else {
+                return Err(bad(&ts[0]));
+            };
+            let ns = split_commas(names);
+            if ns.len() != 2 || ns.iter().any(|n| n.len() != 1) {
+                return Err(bad(&ts[1]));
+            }
+            let (a, b) = (ns[0][0].to_string(), ns[1][0].to_string());
+            let Some(f) = ts.get(3) else {
+                return Err(bad(&ts[0]));
+            };
+            let chan = is_ident(f, "chan");
+            if !chan && !is_ident(f, "signal") {
+                return Err(bad(f));
+            }
+            // The payload: the first argument of the turbofish.
+            let lt = ts.iter().position(
+                |t| matches!(t, TokenTree::Punct(p) if p.as_char() == '<'),
+            );
+            let gt = ts.iter().rposition(
+                |t| matches!(t, TokenTree::Punct(p) if p.as_char() == '>'),
+            );
+            let (Some(lt), Some(gt)) = (lt, gt) else {
+                return Err(err(
+                    f.span(),
+                    "name the payload: `chan::<T, C>()`",
+                ));
+            };
+            let inner = text_of(&ts[lt + 1..gt]);
+            let (ty, clock) = match depth0_comma(&inner) {
+                Some(c) => (
+                    inner[..c].trim().to_string(),
+                    inner[c + 1..].trim().to_string(),
+                ),
+                None => (inner, "::txhdl::comp::DefaultClock".to_string()),
+            };
+            // The net is the ends' common prefix, else the first end.
+            let common: String = a
+                .chars()
+                .zip(b.chars())
+                .take_while(|(x, y)| x == y)
+                .map(|(x, _)| x)
+                .collect();
+            let net = match common.trim_end_matches('_') {
+                "" => a.clone(),
+                c => c.to_string(),
+            };
+            if ends.iter().any(|(_, n, _)| *n == net)
+                || ports.iter().any(|(p, _)| *p == net)
+            {
+                return Err(err(
+                    ts[1].span(),
+                    &format!("net `{net}` is named twice"),
+                ));
+            }
+            let kind = if chan { "Tx" } else { "Out" };
+            nets.push(format!(
+                "(\"{net}\".to_string(), ::txhdl::comp::trace::Kind::{kind}, \
+                 <{ty} as ::txhdl::types::Value>::WIDTH, \
+                 <{clock} as ::txhdl::comp::Clock>::NAME)"
+            ));
+            ends.push((a, net.clone(), chan));
+            ends.push((b, net, chan));
+            continue;
+        }
+        // A join of the children: every `self.FIELD.run(ins, outs)`.
+        let mut calls: Vec<(String, Group, Span)> = Vec::new();
+        find_runs(&ts, &mut calls);
+        if calls.is_empty() {
+            return Err(err(
+                ts[0].span(),
+                "a unit of units' `run` is lets of `chan()` or `signal()` \
+                 and a join of the children's `run`, each `self.child.run(..)`",
+            ));
+        }
+        for (field, args, span) in calls {
+            let sides = split_commas(&args);
+            if sides.len() != 2 {
+                return Err(err(
+                    span,
+                    "a child's `run` takes its inputs and its outputs",
+                ));
+            }
+            let mut names: Vec<String> = Vec::new();
+            for side in &sides {
+                match side.as_slice() {
+                    [TokenTree::Group(g)]
+                        if g.delimiter() == Delimiter::Parenthesis =>
+                    {
+                        for n in split_commas(g) {
+                            let [TokenTree::Ident(id)] = n.as_slice() else {
+                                return Err(err(
+                                    g.span(),
+                                    "a port passed to a child is a name",
+                                ));
+                            };
+                            names.push(id.to_string());
+                        }
+                    }
+                    [TokenTree::Ident(id)] => names.push(id.to_string()),
+                    _ => {
+                        return Err(err(
+                            span,
+                            "a port passed to a child is a name, a tuple \
+                             of names, or `()`",
+                        ))
+                    }
+                }
+            }
+            let mut joined: Vec<String> = Vec::new();
+            for n in names {
+                let (net, channel) = if let Some((_, net, ch)) =
+                    ends.iter().find(|(e, _, _)| *e == n)
+                {
+                    (net.clone(), *ch)
+                } else if let Some((p, k)) = ports.iter().find(|(p, _)| *p == n)
+                {
+                    (p.clone(), is_chan(k))
+                } else {
+                    return Err(err(
+                        span,
+                        &format!(
+                            "`{n}` is neither a port of the unit nor an \
+                                 end made in `run`"
+                        ),
+                    ));
+                };
+                if channel {
+                    if used.contains(&n) {
+                        return Err(err(
+                            span,
+                            &format!(
+                                "`{n}` is joined twice; a channel has one \
+                                 unit at each end"
+                            ),
+                        ));
+                    }
+                    used.push(n.clone());
+                }
+                joined.push(format!("\"{net}\""));
+            }
+            instances.push(format!(
+                "::txhdl::netlist::instance(::txhdl::netlist::child_lowered(\
+                 &me.{field}, &format!(\"{{name}}_{field}\")), \"{field}\", \
+                 &[{}])",
+                joined.join(", ")
+            ));
+        }
+    }
+    // Every channel end made, and every channel port, is joined.
+    for (e, _, ch) in &ends {
+        if *ch && !used.contains(e) {
+            return Err(err(
+                body.span(),
+                &format!("`{e}` is made and joined to no child"),
+            ));
+        }
+    }
+    for (p, k) in ports {
+        if is_chan(k) && !used.contains(p) {
+            return Err(err(
+                body.span(),
+                &format!("port `{p}` is joined to no child"),
+            ));
+        }
+    }
+    if instances.is_empty() {
+        return Err(err(
+            body.span(),
+            "run must be a `loop`, or `join2` of loops, or a join of the \
+             children's `run`",
+        ));
+    }
+    Ok((nets, instances))
+}
+
+/// Every `self.FIELD.run(ARGS)` in a token list, into any group.
+fn find_runs(ts: &[TokenTree], out: &mut Vec<(String, Group, Span)>) {
+    let mut i = 0;
+    while i < ts.len() {
+        if let (
+            s,
+            Some(TokenTree::Punct(d1)),
+            Some(TokenTree::Ident(f)),
+            Some(TokenTree::Punct(d2)),
+            Some(r),
+            Some(TokenTree::Group(g)),
+        ) = (
+            &ts[i],
+            ts.get(i + 1),
+            ts.get(i + 2),
+            ts.get(i + 3),
+            ts.get(i + 4),
+            ts.get(i + 5),
+        ) {
+            if is_ident(s, "self")
+                && d1.as_char() == '.'
+                && d2.as_char() == '.'
+                && is_ident(r, "run")
+                && g.delimiter() == Delimiter::Parenthesis
+            {
+                out.push((f.to_string(), g.clone(), f.span()));
+                i += 6;
+                continue;
+            }
+        }
+        if let TokenTree::Group(g) = &ts[i] {
+            let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+            find_runs(&inner, out);
+        }
+        i += 1;
+    }
+}
+
 #[proc_macro_attribute]
 pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let toks: Vec<TokenTree> = item.clone().into_iter().collect();
@@ -3222,6 +3467,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
     let pnames: Vec<String> = pairs.iter().map(|(n, _, _)| n.clone()).collect();
     let mut ports: Vec<String> = Vec::new();
+    // The ports by name and kind, for a unit of units' joins.
+    let mut pkinds: Vec<(String, String)> = Vec::new();
     for (pname, ty, span) in pairs {
         if ty == "()" {
             continue;
@@ -3247,6 +3494,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             "(\"{pname}\".to_string(), ::txhdl::comp::trace::Kind::{kind}, \
              <{inner} as ::txhdl::types::Value>::WIDTH)"
         ));
+        pkinds.push((pname.clone(), kind.to_string()));
         PTYPES
             .with(|p| p.borrow_mut().push((pname.clone(), inner.to_string())));
     }
@@ -3285,8 +3533,17 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let ft: Vec<TokenTree> = fbody.stream().into_iter().collect();
     let mut loops: Vec<Group> = Vec::new();
     find_loops(&ft, &mut loops);
+    // No loop: a unit of units, whose run joins its children.
+    let mut nets: Vec<String> = Vec::new();
+    let mut instances: Vec<String> = Vec::new();
     if loops.is_empty() {
-        return err(fbody.span(), "run must be a `loop`, or `join2` of loops");
+        match lower_structural(fbody, &pkinds) {
+            Ok((n, i)) => {
+                nets = n;
+                instances = i;
+            }
+            Err(e) => return e,
+        }
     }
     // `let` names that became wires of the netlist, with what drives
     // each; a name bound twice gets a numbered second wire.
@@ -3322,6 +3579,12 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             stmts.join(",\n")
         ));
     }
+    // A unit of units reaches its children through a value of itself.
+    let prelude = if instances.is_empty() {
+        ""
+    } else {
+        "let me = Self::default();\n"
+    };
     let generated_text = format!(
         "impl{generics} {unit} {{\n\
          /// This unit as `#[lower]` read it from `run`; `.verilog()` and\n\
@@ -3329,6 +3592,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          #[allow(unused_variables, clippy::all)]\n\
          pub fn lowered(name: &str) -> ::txhdl::netlist::Lowered {{\n\
          use ::txhdl::netlist::{{Expr as NlE, Stmt as NlS, Target as NlT}};\n\
+         {prelude}\
          ::txhdl::netlist::Lowered {{\n\
          name: name.to_string(),\n\
          fields: <Self as ::txhdl::netlist::Fields>::fields(),\n\
@@ -3337,14 +3601,21 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          procs: vec![{procs}],\n\
          init: Vec::new(),\n\
          aliases: Vec::new(),\n\
+         nets: vec![{nets}],\n\
+         instances: vec![{instances}],\n\
          }}\n}}\n\
          /// The Verilog of this unit.\n\
          pub fn verilog(name: &str) -> String {{\n\
          Self::lowered(name).verilog() }}\n\
          /// The VHDL of this unit.\n\
          pub fn vhdl(name: &str) -> String {{ Self::lowered(name).vhdl() }}\n\
-         }}",
+         }}\n\
+         impl{generics} ::txhdl::netlist::Lower for {unit} {{\n\
+         fn lowered_as(name: &str) -> ::txhdl::netlist::Lowered {{\n\
+         Self::lowered(name) }}\n}}",
         ports = ports.join(", "),
+        nets = nets.join(",\n"),
+        instances = instances.join(",\n"),
         wires = wires
             .iter()
             .map(|(n, e)| format!("(\"{n}\".to_string(), {e})"))
