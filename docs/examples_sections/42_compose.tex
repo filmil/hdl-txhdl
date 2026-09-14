@@ -1,0 +1,37 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Unit of Units, Lowered Whole}
+\label{sec:x-compose}
+
+A unit whose fields are units. \code{Top} holds a station of three
+inputs and the stream ALU of the section before; its \code{run}
+makes the channel between them with \code{chan} and joins the two
+children's \code{run}s, handing each its ports, exactly as the
+hierarchy example does for the simulation. \code{\#[lower]} reads
+that \code{run} too: a \code{run} with no loop is a unit of units,
+its \code{let}s of \code{chan} and \code{signal} are the nets, and
+each \code{self.child.run(..)} is an instance of the child's own
+module, its ports joined in order to the nets and to the parent's
+ports. The netlist is one module holding two, and the three are one
+file in either language; the top is checked against this run under
+both simulators at its ports.
+
+The station gathers each request from three channels: the operations
+come in request order, the first operands from the last request back,
+the second operands odd tags first, with a rest every third cycle on
+one of them. A line fires when its three cells hold, and the ALU
+answers in the order its units finish, so the results come out in
+neither the order the requests were numbered nor the order the
+station fired them. The sink holds off for three cycles, and both
+children hold with it.
+
+\begin{figure}[htbp]
+\centering
+\input{compose_timing.tex}
+\caption{The composed unit: three inputs in three orders, the
+station's masks, the ALU's slots, and the results out of order.}
+\label{fig:x-compose}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_compose.rs}. Run with \code{bazel run //lib/examples:ex\_compose}.},label={lst:x-compose}]{lib/examples/ex_compose.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_compose} printed when the build ran it: what each source sent, the station's masks, the ALU's slots and the result, per cycle; then the lowering, three modules.},label={lst:x-compose-out}]{out_compose.txt}

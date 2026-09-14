@@ -239,6 +239,20 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A unit of units: a station feeding the stream ALU, lowered whole:
+#   bazel run //lib/examples:ex_compose
+rust_binary(
+    name = "ex_compose",
+    srcs = ["ex_compose.rs"],
+    edition = "2021",
+    deps = [
+        ":stream_alu",
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A memory, lowered:  bazel run //lib/examples:ex_mem
 rust_binary(
     name = "ex_mem",
@@ -402,6 +416,7 @@ filegroup(
         "ex_station.rs",
         "stream_alu.rs",
         "ex_stream_alu.rs",
+        "ex_compose.rs",
         "station.v",
         "ex_mem.rs",
         "ex_imm.rs",

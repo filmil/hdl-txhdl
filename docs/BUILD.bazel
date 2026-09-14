@@ -633,6 +633,8 @@ latex_document(
         ":station_source",
         ":stream_alu_run",
         ":stream_alu_timing",
+        ":compose_run",
+        ":compose_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -796,6 +798,36 @@ waveform(
         "//out/rx_data/value=>out_value",
         "//out/rx_ready=>out_ready",
     ],
+)
+
+waveform(
+    name = "compose",
+    example = "//lib/examples:ex_compose",
+    lowered = ("top", "top"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//ops/rx_valid=>ops_valid",
+        "//ops/rx_data/tag=>ops_tag",
+        "//ops/rx_data/value=>ops_value",
+        "//ops/rx_ready=>ops_ready",
+        "//xs/rx_valid=>xs_valid",
+        "//xs/rx_data/tag=>xs_tag",
+        "//xs/rx_data/value=>xs_value",
+        "//xs/rx_ready=>xs_ready",
+        "//ys/rx_valid=>ys_valid",
+        "//ys/rx_data/tag=>ys_tag",
+        "//ys/rx_data/value=>ys_value",
+        "//ys/rx_ready=>ys_ready",
+        "//top/station/occ0=>occ0",
+        "//top/station/occ1=>occ1",
+        "//top/station/occ2=>occ2",
+        "//top/alu/slots=>slots",
+        "//out/rx_valid=>out_valid",
+        "//out/rx_data/tag=>out_tag",
+        "//out/rx_data/value=>out_value",
+        "//out/rx_ready=>out_ready",
+    ],
+    until = 54,
 )
 
 waveform(
