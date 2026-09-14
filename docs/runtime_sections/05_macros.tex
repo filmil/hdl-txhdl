@@ -46,7 +46,9 @@ an output is a wire; \code{self.m.at(a)}
 on the left of a drive as a word of a memory and \code{self.m.read(a)}
 as an index; and channels as a valid/ready handshake: \code{until} or
 a channel's \code{wait} is the guard on every register drive after
-it, a receive asserts \code{ready} under the guard, a send drives
+it, a receive asserts \code{ready} under the guard, a \code{take}
+binds \code{valid} and \code{data} to its two names and asserts
+\code{ready} the same way, a send drives
 \code{data} and asserts \code{valid} under it. What it does not read
 it refuses with a message that names the construct.
 \code{interface!} takes an interface and any number of roles, checks

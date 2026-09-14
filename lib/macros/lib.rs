@@ -2145,13 +2145,44 @@ fn lower_stmts(
         // offered at every edge, and ready is valid: the take, which
         // is what the runtime's trace holds for ready.
         if path.is_some()
-            && (text.contains(".recv()") || text.contains(".recv_if("))
+            && (text.contains(".recv()")
+                || text.contains(".recv_if(")
+                || text.contains(".take()"))
         {
             return Err(err(
                 ts[0].span(),
                 "a transaction is taken at the top of the loop, or with \
                      `recv_if`; not under `if`",
             ));
+        }
+        // `let (offered, v) = rx.take()`: whether one was offered is
+        // `valid`, the value is `data`, and ready is the take, as for
+        // `recv`.
+        if text.starts_with("let") && text.ends_with(".take()") {
+            let (TokenTree::Group(names), TokenTree::Ident(rx)) =
+                (&ts[1], &ts[3])
+            else {
+                return Err(err(
+                    ts[0].span(),
+                    "expected `let (offered, v) = rx.take()`",
+                ));
+            };
+            let ns = split_commas(names);
+            if ns.len() != 2 {
+                return Err(err(names.span(), "`take` gives (offered, value)"));
+            }
+            let g = cx
+                .guard
+                .clone()
+                .unwrap_or_else(|| ename(&format!("{rx}_valid")));
+            stmts.push(format!(
+                "S::Drive(T::Name(\"{rx}_ready\".to_string()), {g})"
+            ));
+            cx.subst
+                .push((ns[0][0].to_string(), ename(&format!("{rx}_valid"))));
+            cx.subst
+                .push((ns[1][0].to_string(), ename(&format!("{rx}_data"))));
+            continue;
         }
         if text.contains(".recv()") {
             let TokenTree::Ident(rx) = &ts[3] else {
