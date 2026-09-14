@@ -123,6 +123,12 @@ Probe & Question & Answer \\
 \code{probe\_domain\_cross}
   & A crossing without a \code{Crossing}?
   & \textbf{Refused:} \code{expected In<u32, Clk400>, found In<u32, Clk100>}, and the default is not a wildcard \\
+\code{probe\_infer}
+  & May a const width be left to inference, as \code{\_}?
+  & \textbf{Yes}, since Rust 1.89, where the context fixes it: an annotated destination, a typed use, the other operand, the return type \\
+\code{probe\_infer\_bad}
+  & A width nothing fixes, a slice compared with a number?
+  & \textbf{No.} \code{error[E0284]: type annotations needed}; and the lowering, which sees no types, asks for every width it needs \\
 \bottomrule
 \end{tabular}
 \end{table*}

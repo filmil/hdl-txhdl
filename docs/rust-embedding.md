@@ -212,6 +212,8 @@ Two are tagged `manual` because they are expected to fail.
 | `probe_processes` | Can `run` join two processes? | **Yes**, with processes taking `&self` and registers as cells |
 | `probe_processes_mut` | Can they take `&mut self`? | **No.** `error[E0499]: cannot borrow *self as mutable more than once at a time` |
 | `probe_config` | Is a config a struct with associated types and constants? | **Yes**, and its constants work in an array length, so they are genuinely compile-time |
+| `probe_infer` | May a const width be left to inference, as `_`? | **Yes**, since Rust 1.89, where the context fixes it: an annotated destination, a typed use, the other operand, the return type |
+| `probe_infer_bad` | A width nothing fixes, a slice compared with a number? | **No.** `error[E0284]: type annotations needed`; the lowering, which sees no types, asks for every width it needs |
 
 Three of these change the design.
 

@@ -38,6 +38,7 @@ MACROS = ["//lib:txhdl_macros"]
         "probe_processes",
         "probe_signal_split",
         "probe_slice",
+        "probe_infer",
         "probe_values",
     ]
 ]
@@ -73,6 +74,7 @@ rust_binary(
         "probe_when_bad",              # the macro's own message
         "probe_case_bad",              # the macro's own message
         "probe_case_binding",          # E0425: a pattern tests, it does not bind
+        "probe_infer_bad",             # E0282: a width nothing fixes
     ]
 ]
 
