@@ -54,7 +54,7 @@ two per cycle, so a falling edge is a tick of its own.
 \code{chan()} $\to$ \code{(Tx, Rx)} & a channel, a buffer of two; \code{send}, \code{ready}, \code{wait}, \code{take} \\
 \code{Crossing<T, A, B>} & the only way between clocks \\
 \code{interface!} & members and roles, a struct per role \\
-\code{when!(c => \{ r <= v \})}, \code{if c \{ r.set(v) \}} & predicated drives; a chain, not a branch \\
+\code{with!(self <= \{ a: x, c ? b: y \})} & drives of one struct; \code{if c \{..\}} a chain; not a branch \\
 \code{case!(v => \{ p => \{..\} \})} & many arms, first match wins \\
 \code{select!(v => \{ p => e, .. \})} & a value by pattern; a mux chain \\
 \code{Mem<T, N>} & words; \code{read}, \code{at(a) <= v} \\

@@ -1,0 +1,37 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Drives of One Struct}
+\label{sec:x-with}
+
+\code{with!(self <= \{ .. \})} is the drives of one struct, its name
+written once. Each entry is \code{field: value}, the field becoming
+the value at the end of the step; \code{c ? field: value} is a drive
+under a condition; \code{c ? \{ .. \} else \{ .. \}} is a group of
+entries under one, with the entries after \code{else} under its
+failure, and a group may hold a group; a memory word, \code{m.at(i)},
+is a field like any other. Entries apply in order, the last drive of
+a field winning, as statements do, and a condition is a \code{bool}
+or a \code{Bit}. Both arms of a group exist in the hardware at once
+and the condition selects, so nothing branches; the lowering makes
+each predicated entry and each group an \code{if} in the clocked
+block, the same chain \code{if} makes. What the block holds is
+drives: a \code{send} is a statement, under \code{if}. The block's
+target is \code{self} in a lowered unit, since that is the hardware
+of the unit; the runtime takes any path.
+
+The unit below is a table of four words with a running total. A
+clear empties the total and the count, a write lands in the table,
+the total and the count, and the last index written is kept for the
+read port; the clear and the write are one group with an
+\code{else}, the write a group inside it, and the index a predicated
+entry beside them.
+
+\begin{figure}[htbp]
+\centering
+\input{with_timing.tex}
+\caption{The table: four writes, a read cycle, a clear, two writes to one word.}
+\label{fig:x-with}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_with.rs}. Run with \code{bazel run //lib/examples:ex\_with}.},label={lst:x-with}]{lib/examples/ex_with.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_with} printed when the build ran it: a line per cycle, then the lowering, the group an \code{if} with its \code{else}.},label={lst:x-with-out}]{out_with.txt}

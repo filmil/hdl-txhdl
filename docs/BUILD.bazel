@@ -622,6 +622,8 @@ latex_document(
         ":if_timing",
         ":inplace_run",
         ":inplace_timing",
+        ":with_run",
+        ":with_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -700,6 +702,24 @@ waveform(
         "//window/top=>top",
         "//sum=>sum",
         "//full=>full",
+    ],
+)
+
+waveform(
+    name = "with",
+    example = "//lib/examples:ex_with",
+    lowered = ("tally", "with"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//we=>we",
+        "//addr=>addr",
+        "//data=>data",
+        "//clear=>clear",
+        "//table/total=>total",
+        "//table/last=>last",
+        "//table/written=>written",
+        "//word=>word",
+        "//sum=>sum",
     ],
 )
 

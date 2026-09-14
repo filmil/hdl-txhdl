@@ -5,7 +5,9 @@
 //! against `proc_macro` alone, without syn or quote, because the
 //! grammars are small and a crate registry would be the larger cost.
 extern crate proc_macro;
-use proc_macro::{Delimiter, Group, Ident, Span, TokenStream, TokenTree};
+use proc_macro::{
+    Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree,
+};
 
 fn type_name(input: TokenStream) -> String {
     let mut seen_kw = false;
@@ -801,6 +803,207 @@ pub fn when(input: TokenStream) -> TokenStream {
             out.push_str(&format!("({}).set_if({pred}, {});\n", lhs, rhs));
         }
     }
+    out.push('}');
+    out.parse().unwrap()
+}
+
+// ---------------------------------------------------------------------
+// with!
+
+/// One entry of a `with!` block: a drive of a field, under the
+/// predicates of the groups around it and its own, if it has one; or
+/// a group of entries under a predicate, with the entries under its
+/// failure.
+enum Entry {
+    Drive {
+        pred: Option<Vec<TokenTree>>,
+        path: Vec<TokenTree>,
+        value: Vec<TokenTree>,
+    },
+    Group {
+        pred: Vec<TokenTree>,
+        then: Vec<Entry>,
+        otherwise: Vec<Entry>,
+    },
+}
+
+/// The entries of a `with!` block, `field: value`, `c ? field: value`
+/// and `c ? { .. } else { .. }`, separated by commas.
+fn entries(g: &Group) -> Result<Vec<Entry>, (Span, String)> {
+    let mut out = Vec::new();
+    for part in split_commas(g) {
+        let mask = turbofish(&part);
+        let at = |c: char| {
+            part.iter().enumerate().position(|(i, t)| {
+                !mask[i]
+                    && matches!(t, TokenTree::Punct(p)
+                        if p.as_char() == c && p.spacing() == Spacing::Alone)
+            })
+        };
+        let span = part[0].span();
+        let (pred, rest) = match at('?') {
+            Some(q) => (Some(part[..q].to_vec()), &part[q + 1..]),
+            None => (None, &part[..]),
+        };
+        if pred.as_ref().is_some_and(|p| p.is_empty()) {
+            return Err((span, "`?` needs a condition before it".into()));
+        }
+        match rest.first() {
+            Some(TokenTree::Group(then))
+                if then.delimiter() == Delimiter::Brace =>
+            {
+                let Some(pred) = pred else {
+                    return Err((span, "a group needs `c ?` before it".into()));
+                };
+                let otherwise =
+                    match (rest.get(1), rest.get(2)) {
+                        (Some(e), Some(TokenTree::Group(g)))
+                            if is_ident(e, "else")
+                                && g.delimiter() == Delimiter::Brace
+                                && rest.len() == 3 =>
+                        {
+                            entries(g)?
+                        }
+                        (None, _) => Vec::new(),
+                        _ => return Err((
+                            span,
+                            "expected `c ? { .. }` or `c ? { .. } else { .. }`"
+                                .into(),
+                        )),
+                    };
+                out.push(Entry::Group {
+                    pred,
+                    then: entries(then)?,
+                    otherwise,
+                });
+            }
+            Some(_) => {
+                let rmask = turbofish(rest);
+                let colon = rest.iter().enumerate().position(|(i, t)| {
+                    !rmask[i]
+                        && matches!(t, TokenTree::Punct(p)
+                            if p.as_char() == ':'
+                                && p.spacing() == Spacing::Alone)
+                });
+                let Some(c) = colon.filter(|&c| c > 0 && c + 1 < rest.len())
+                else {
+                    return Err((
+                        span,
+                        "expected `field: value`, `c ? field: value` or \
+                         `c ? { .. }`"
+                            .into(),
+                    ));
+                };
+                out.push(Entry::Drive {
+                    pred,
+                    path: rest[..c].to_vec(),
+                    value: rest[c + 1..].to_vec(),
+                });
+            }
+            None => return Err((span, "an entry needs a drive".into())),
+        }
+    }
+    Ok(out)
+}
+
+/// `with!(target <= { .. })`: the target's tokens and the block.
+fn with_parts(
+    input: TokenStream,
+) -> Result<(Vec<TokenTree>, Group), (Span, String)> {
+    let toks: Vec<TokenTree> = input.into_iter().collect();
+    let span = toks.first().map(|t| t.span()).unwrap_or(Span::call_site());
+    let Some((lhs, rhs)) = split_becomes(toks.into_iter().collect()) else {
+        return Err((span, "expected `with!(self <= { .. })`".into()));
+    };
+    let lhs: Vec<TokenTree> = lhs.into_iter().collect();
+    let rhs: Vec<TokenTree> = rhs.into_iter().collect();
+    match (lhs.is_empty(), rhs.as_slice()) {
+        (false, [TokenTree::Group(g)]) if g.delimiter() == Delimiter::Brace => {
+            Ok((lhs, g.clone()))
+        }
+        _ => Err((span, "expected `with!(self <= { .. })`".into())),
+    }
+}
+
+/// The Rust of a `with!` block: a drive per entry, `set` with no
+/// predicate over it and `set_if` under the predicates in force; a
+/// group's predicate is taken once, as a bit, and its failure is the
+/// predicate of the entries after `else`.
+fn with_rust(
+    target: &str,
+    es: &[Entry],
+    preds: &[String],
+    out: &mut String,
+    n: &mut usize,
+) {
+    for e in es {
+        match e {
+            Entry::Drive { pred, path, value } => {
+                let mut ps = preds.to_vec();
+                if let Some(p) = pred {
+                    ps.push(format!(
+                        "::core::convert::Into::<::txhdl::types::Bit>::into({})",
+                        text_of(p)
+                    ));
+                }
+                let path = text_of(path);
+                let value = text_of(value);
+                if ps.is_empty() {
+                    out.push_str(&format!("{target}.{path}.set({value});\n"));
+                } else {
+                    out.push_str(&format!(
+                        "{target}.{path}.set_if({}, {value});\n",
+                        ps.join(" & ")
+                    ));
+                }
+            }
+            Entry::Group {
+                pred,
+                then,
+                otherwise,
+            } => {
+                let c = format!("__w{n}");
+                *n += 1;
+                out.push_str(&format!(
+                    "let {c}: ::txhdl::types::Bit = \
+                     ::core::convert::Into::into({});\n",
+                    text_of(pred)
+                ));
+                let mut yes = preds.to_vec();
+                yes.push(c.clone());
+                with_rust(target, then, &yes, out, n);
+                let mut no = preds.to_vec();
+                no.push(format!("!{c}"));
+                with_rust(target, otherwise, &no, out, n);
+            }
+        }
+    }
+}
+
+/// `with!(self <= { a: x, m.at(i): v, c ? b: y, c ? { .. } else { .. } })`
+///
+/// The drives of one struct, its name written once. Each entry is
+/// `field: value`, a drive, the field becoming the value at the end of
+/// the step; `c ? field: value` is a drive under a condition, and
+/// `c ? { entries } else { entries }` a group of them under one, with
+/// the entries under its failure. Entries apply in order, the last
+/// drive of a field winning, as statements do. A condition is a
+/// `bool` or a `Bit`. Both arms of a group exist in the hardware at
+/// once and the condition selects, so nothing branches. Procedural,
+/// since an `expr` fragment cannot be followed by `?` or `<=`.
+#[proc_macro]
+pub fn with(input: TokenStream) -> TokenStream {
+    let (target, block) = match with_parts(input) {
+        Ok(x) => x,
+        Err((s, m)) => return err(s, &m),
+    };
+    let es = match entries(&block) {
+        Ok(e) => e,
+        Err((s, m)) => return err(s, &m),
+    };
+    let mut out = String::from("{\n");
+    let mut n = 0;
+    with_rust(&text_of(&target), &es, &[], &mut out, &mut n);
     out.push('}');
     out.parse().unwrap()
 }
@@ -2043,6 +2246,47 @@ fn conj(outer: Option<&str>, nots: &[String], own: Option<&str>) -> String {
     acc.unwrap_or_else(|| "E::Bits(1, \"1\".to_string())".into())
 }
 
+/// The statements of a `with!` block on `self`: a drive per entry, an
+/// `if` with one arm for a predicated entry, an `if` with its `else`
+/// for a group.
+fn with_lowered(cx: &mut Cx, es: &[Entry]) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for e in es {
+        match e {
+            Entry::Drive { pred, path, value } => {
+                let mut t: Vec<TokenTree> = vec![
+                    TokenTree::Ident(Ident::new("self", Span::call_site())),
+                    TokenTree::Punct(Punct::new('.', Spacing::Alone)),
+                ];
+                t.extend(path.iter().cloned());
+                let l = target_expr(&t, &cx.subst)?;
+                let r = tr(value, &cx.subst)?;
+                let d = format!("S::Drive({l}, {r})");
+                out.push(match pred {
+                    None => d,
+                    Some(p) => {
+                        let c = tr(p, &cx.subst)?;
+                        format!("S::If(vec![({c}, vec![{d}])], vec![])")
+                    }
+                });
+            }
+            Entry::Group {
+                pred,
+                then,
+                otherwise,
+            } => {
+                let c = tr(pred, &cx.subst)?;
+                let yes = with_lowered(cx, then)?.join(", ");
+                let no = with_lowered(cx, otherwise)?.join(", ");
+                out.push(format!(
+                    "S::If(vec![({c}, vec![{yes}])], vec![{no}])"
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// The statements of a loop body, or of an arm of an `if` in it, as
 /// the Rust source of the netlist's statements. `path` is the
 /// condition under which an arm's statements happen, none at the top.
@@ -2136,7 +2380,10 @@ fn lower_stmts(
             (TokenTree::Ident(_), Some(TokenTree::Punct(p)))
                 if p.as_char() == '!'
         ) && !is_ident(&ts[0], "if");
-        if is_macro && !text.starts_with("when!") && !text.starts_with("case!")
+        if is_macro
+            && !text.starts_with("when!")
+            && !text.starts_with("case!")
+            && !text.starts_with("with!")
         {
             continue;
         }
@@ -2403,6 +2650,32 @@ fn lower_stmts(
                 }
             }
             stmts.push(format!("S::If(vec![{}], {els})", arms.join(", ")));
+            continue;
+        }
+        // `with!(self <= { .. })`: a drive per entry, under `if` for a
+        // predicate or a group, the same chain `if` makes.
+        if text.starts_with("with!") {
+            let TokenTree::Group(g) = &ts[2] else {
+                return Err(err(ts[0].span(), "expected with!(..)"));
+            };
+            let (target, block) = match with_parts(g.stream()) {
+                Ok(x) => x,
+                Err((s, m)) => return Err(err(s, &m)),
+            };
+            if !matches!(target.as_slice(), [t] if is_ident(t, "self")) {
+                return Err(err(
+                    ts[0].span(),
+                    "a lowered `with!` drives `self`; another target is not \
+                     hardware of this unit",
+                ));
+            }
+            let es = match entries(&block) {
+                Ok(e) => e,
+                Err((s, m)) => return Err(err(s, &m)),
+            };
+            let lowered =
+                with_lowered(cx, &es).map_err(|m| err(g.span(), &m))?;
+            stmts.extend(lowered);
             continue;
         }
         if text.starts_with("when!") {

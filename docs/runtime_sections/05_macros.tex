@@ -22,7 +22,8 @@ several under
 \code{join2}, each a process that waits for the rising or the falling
 edge of its clock, reads registers and ports into names, predicates
 drives with
-\code{when!}, \code{case!} and \code{if}, chooses values with
+\code{with!}, \code{when!}, \code{case!} and \code{if}, chooses values
+with
 \code{select!},
 and drives registers, words of memories and output ports, and writes
 \code{Unit::lowered(name)}, \code{verilog} and \code{vhdl} beside
@@ -54,7 +55,14 @@ it refuses with a message that names the construct.
 \code{interface!} takes an interface and any number of roles, checks
 that every role names every member once and that no member is driven
 twice, and emits a struct per role plus a constructor that splits each
-member. \code{when!} and \code{case!} are predicated drives that read
+member. \code{with!(self <= \{ .. \})} is the drives of one struct,
+its name written once: an entry \code{field: value} is a drive,
+\code{c ? field: value} a drive under a condition, \code{c ? \{ ..
+\} else \{ .. \}} a group under one with the entries after
+\code{else} under its failure, and a memory word \code{m.at(i)} a
+field like any other; entries apply in order, the last drive of a
+field winning, and each lowers as an \code{if} in the clocked block.
+\code{when!} and \code{case!} are predicated drives that read
 as a conditional: each statement inside them is \code{register <=
 value}, the arrow pointing into the register, or in \code{when!} a
 channel's \code{send}, made under the predicate, and a statement
