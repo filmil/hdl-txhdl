@@ -331,7 +331,12 @@ valid/ready handshake whose wait guards the drives. A \code{let} that
 computes is a wire named for it, so the netlist reads as the source
 does. What the macro does not read it refuses with a message that
 names the construct, and the subset it reads is also plain Rust: a
-unit that lowers is the unit that simulates, one file.
+unit that lowers is the unit that simulates, one file. A unit whose
+fields are units lowers too: its \code{run} makes the channels
+between the children and joins their \code{run}s, and the netlist
+is one module holding an instance of each child's, every channel
+between them the runtime's buffer of two as a module of its own, so
+a design composed of parts is checked whole at its ports.
 Listing~\ref{lst:p-netlist} is what the counter became.
 
 \lstinputlisting[style=ascii,caption={The counter's Verilog, as the build printed it. The VHDL says the same.},label={lst:p-netlist}]{out_cheat.txt}
@@ -385,6 +390,10 @@ router & the bus fanned out by address, the same run & nvc, Verilator \\
 data memory & a device on the core's bus, the same run & nvc, Verilator \\
 timer & a device on the core's bus, the same run & nvc, Verilator \\
 serial port & a device on the core's bus, the same run & nvc, Verilator \\
+FIFO & \code{D} words between two channels & nvc, Verilator \\
+station & two tagged inputs, beside hand Verilog & nvc, Verilator \\
+stream ALU & four latencies, results out of order & nvc, Verilator \\
+top & a unit of units, a station feeding the ALU & nvc, Verilator \\
 \bottomrule
 \end{tabular}
 \end{table}

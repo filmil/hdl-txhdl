@@ -62,6 +62,22 @@ station of \code{N} inputs as text, a line struct, the station's
 struct and its lowered \code{run}, every wire of the step named for
 what it is, and \code{TXHDL\_MACRO\_DUMP} writes the text out for
 reading; the attribute in its output expands as any does.
+A \code{run} with no loop is a unit of units, and \code{\#[lower]}
+reads it as the hierarchy example writes it for the simulation: a
+\code{let (tx, rx) = chan::<T, C>()} or \code{let (out, inp) =
+signal::<T, C>()} is a net between the children, named by the two
+ends' common prefix, and every \code{self.child.run(inputs,
+outputs)}, alone or under \code{join2}, is an instance of the
+child's own lowering, its ports joined in order to the nets and to
+the parent's ports; a channel end or channel port joined twice or
+never is refused by name, as is anything else in the body. The
+parent's \code{lowered} reaches each child through a value of
+itself, so a unit of units is \code{Default}, as every unit is, and
+each child's module is named for the parent and the field. A net
+made by \code{chan} is the runtime's channel in the netlist, a
+buffer of two with the receiver's \code{valid} and \code{data} and
+the sender's \code{ready} registered, one module \code{txhdl\_chan}
+put into the file once; a net made by \code{signal} is a wire.
 \code{interface!} takes an interface and any number of roles, checks
 that every role names every member once and that no member is driven
 twice, and emits a struct per role plus a constructor that splits each
