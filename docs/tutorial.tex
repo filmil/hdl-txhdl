@@ -165,12 +165,14 @@ previous cycle; read after the wait, always.
 \section{Step Three: Choosing}
 \label{sec:t-choosing}
 
-Hardware has no \code{if}. Both arms of a choice exist at once and a
+Hardware has no branch. Both arms of a choice exist at once and a
 condition selects, which is why the three ways of choosing have their
 own names, so that the file reads as the hardware does. \code{when!}
 you have seen: a drive under a condition, with an optional
 \code{else}. \code{case!} is \code{when!} with many arms, and it is
-what a state machine is made of. Listing~\ref{lst:t-case} is a
+what a state machine is made of. Rust's own \code{if} is there too,
+over a \code{bool}, with the drives under it written as \code{set};
+its arms are the same priority chain, read as written, and they nest. Listing~\ref{lst:t-case} is a
 sequencer that waits for \code{go}, loads a count, runs it down and
 reports done.
 
@@ -331,8 +333,9 @@ compares, then \code{slice}, \code{concat}, \code{sext} and
 \code{zext} for taking words apart and putting them together, and
 \code{mul::<M>} for a product at a stated width. What
 you do not have inside a lowered loop is what hardware does not
-have: \code{if}, a Rust \code{match}, a function call the lowering
-does not know, or a loop with a variable count. The macro says so at
+have: an \code{if} that yields a value, a Rust \code{match}, a
+function call the lowering does not know, or a loop with a variable
+count. The macro says so at
 compile time, with a message that names the construct.
 
 The lowering is checked, not trusted. For every lowered example the

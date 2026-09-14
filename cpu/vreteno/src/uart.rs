@@ -128,7 +128,7 @@ impl<const DIV: u32>
     ) {
         loop {
             DefaultClock::rising().await;
-            let rst = rst.get();
+            let rst = rst.get().to_bool();
             let (shift, bits, tick) =
                 (self.shift.get(), self.bits.get(), self.tick.get());
             let (last, sent) = (self.last.get(), self.sent.get());
@@ -147,32 +147,32 @@ impl<const DIV: u32>
             let addr = r.slice::<REQ_ADDR, 32>();
             let mine = hit(addr);
             let sel = addr.slice::<2, 2>();
-            let we = r.bit(0);
+            let we = r.bit(0).to_bool();
             let write = offered & we & mine;
             let read = offered & !we;
             let read_rx = read & mine & (sel == 2);
             // A byte written while idle starts a frame, ten bits of DIV
-            // cycles each.
+            // cycles each; a reset wins over everything.
             let start = write & (sel == 0) & !busy;
             let octet = r.slice::<REQ_WDATA, 8>();
-            let done = last_cycle::<DIV>(tick);
-            when!(rst => {
-                self.bits <= 0;
-                self.tick <= 0
-            });
-            when!(!rst & start => {
-                self.shift <= frame(octet);
-                self.bits <= 10;
-                self.tick <= 0;
-                self.last <= octet;
-                self.sent <= sent + 1
-            });
-            when!(!rst & busy & !done => { self.tick <= tick + 1 });
-            when!(!rst & busy & done => {
-                self.tick <= 0;
-                self.bits <= bits - 1;
-                self.shift <= shifted(shift)
-            });
+            if rst {
+                self.bits.set(0);
+                self.tick.set(0);
+            } else if start {
+                self.shift.set(frame(octet));
+                self.bits.set(10);
+                self.tick.set(0);
+                self.last.set(octet);
+                self.sent.set(sent + 1);
+            } else if busy {
+                if last_cycle::<DIV>(tick) {
+                    self.tick.set(0);
+                    self.bits.set(bits - 1);
+                    self.shift.set(shifted(shift));
+                } else {
+                    self.tick.set(tick + 1);
+                }
+            }
             when!(read => {
                 resp.send(mux(
                     mine,
@@ -191,44 +191,52 @@ impl<const DIV: u32>
             // the byte is dropped and counted.
             self.line.set(rx.get());
             let receiving = rx_bits != 0;
-            let rx_last = last_cycle::<DIV>(rx_tick);
             let sample = !rst & receiving & middle::<DIV>(rx_tick);
             let at_start = rx_bits == 10;
             let at_stop = rx_bits == 1;
-            when!(rst => {
-                self.rx_bits <= 0;
-                self.rx_tick <= 0;
-                self.head <= 0;
-                self.count <= 0
-            });
-            when!(!rst & !receiving & !line => {
-                self.rx_bits <= 10;
-                self.rx_tick <= 0
-            });
-            when!(!rst & receiving & !rx_last => {
-                self.rx_tick <= rx_tick + 1
-            });
-            when!(!rst & receiving & rx_last => {
-                self.rx_tick <= 0;
-                self.rx_bits <= rx_bits - 1
-            });
+            if rst {
+                self.rx_bits.set(0);
+                self.rx_tick.set(0);
+                self.head.set(0);
+                self.count.set(0);
+            } else if !receiving {
+                if !line.to_bool() {
+                    self.rx_bits.set(10);
+                    self.rx_tick.set(0);
+                }
+            } else if last_cycle::<DIV>(rx_tick) {
+                self.rx_tick.set(0);
+                self.rx_bits.set(rx_bits - 1);
+            } else {
+                self.rx_tick.set(rx_tick + 1);
+            }
             when!(sample & at_start & line => { self.rx_bits <= 0 });
             when!(sample & !at_start & !at_stop => {
                 self.rx_shift <= taken_in(rx_shift, line)
             });
             when!(sample & at_stop => { self.rx_bits <= 0 });
-            let landed = sample & at_stop & line;
+            let landed = sample & at_stop & line.to_bool();
             let push = landed & !full;
-            let pop = read_rx & rx_ready & !rst;
+            let pop = read_rx & rx_ready;
             let tail = head + count.slice::<0, 3>();
-            when!(push => {
-                self.fifo.at(tail) <= rx_shift;
-                self.received <= received + 1
-            });
-            when!(landed & full => { self.dropped <= dropped + 1 });
-            when!(pop => { self.head <= head + 1 });
-            when!(!rst & push & !pop => { self.count <= count + 1 });
-            when!(!rst & pop & !push => { self.count <= count - 1 });
+            if landed {
+                if full {
+                    self.dropped.set(dropped + 1);
+                } else {
+                    self.fifo.at(tail).set(rx_shift);
+                    self.received.set(received + 1);
+                }
+            }
+            if !rst {
+                if pop {
+                    self.head.set(head + 1);
+                }
+                if push & !pop {
+                    self.count.set(count + 1);
+                } else if pop & !push {
+                    self.count.set(count - 1);
+                }
+            }
             irq.set(rx_ready);
         }
     }

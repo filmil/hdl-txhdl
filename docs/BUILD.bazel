@@ -618,6 +618,8 @@ latex_document(
         ":foreign_timing",
         ":ops_run",
         ":ops_timing",
+        ":if_run",
+        ":if_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -661,6 +663,24 @@ waveform(
         "//ops/hits=>hits",
         "//same=>same",
         "//below=>below",
+    ],
+)
+
+waveform(
+    name = "if",
+    example = "//lib/examples:ex_if",
+    lowered = ("pulser", "if"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//rst=>rst",
+        "//go=>go",
+        "//len=>len",
+        "//pulser/count=>count",
+        "//pulser/busy=>busy",
+        "//pulser/runs=>runs",
+        "//active=>active",
+        "//done/tx_valid=>done_valid",
+        "//done/tx_data=>done",
     ],
 )
 

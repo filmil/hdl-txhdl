@@ -79,6 +79,25 @@ a list of drives and reinterpreting a plain \code{if}, and it is the
 elaboration decision of Section~\ref{sec:e-elaboration} rather than a
 macro's.
 
+\subsubsection{\code{if}, after all}
+
+The wall is real for an elaborator and not for this runtime. The
+runtime runs the design, so when the loop body runs a condition has a
+value: a compare is a \code{bool}, a bit is one through
+\code{to\_bool}. A plain \code{if} over it, with the drives under it
+written as \code{set}, is Rust, and its meaning is the predicated
+drive's: a \code{set} under a condition that fails does not happen.
+Nothing is rewritten; the lowering reads the \code{if}, its
+\code{else if} and its \code{else} as the priority chain \code{case!}
+makes, and an arm may hold a \code{let}, a \code{when!}, a
+\code{case!} or another \code{if}. What the macro keeps is the
+arrow, and the guarantee that an arm is a list of drives; what
+\code{if} adds is nesting and \code{else if}. Two things stay out,
+for the reason above: an \code{if} that yields a value, which is
+\code{mux} or \code{select!}, and an output driven under a
+condition, which is a wire and takes a \code{mux} outside the chain.
+The examples document has one~\cite{examples}.
+
 \subsubsection{Many arms}
 \label{sec:e-case}
 

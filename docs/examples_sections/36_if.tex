@@ -1,0 +1,41 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{\code{if}, in a Lowered Loop}
+\label{sec:x-if}
+
+Rust's \code{if} is in the lowered subset. Its condition is a
+\code{bool}, a compare or a bit's \code{to\_bool}; the drives under
+it are written as \code{set}, since \code{<=} is Rust's compare
+outside a macro; and the arms, \code{else if} and \code{else}
+included, are a priority chain, the first condition that holds
+winning, the same chain \code{case!} makes. An arm may hold a
+\code{let}, a \code{when!}, a \code{case!} or another \code{if}. The
+runtime runs it as the Rust it is, so a drive under a condition that
+fails does not happen, which is what a predicated drive is; the
+lowering reads it and writes \code{if} and \code{else if} in the
+clocked block. A \code{send} in an arm goes out with the arm's
+condition, the path through the chain to it, as \code{valid}, and a
+channel is sent on once in a chain. An output is a wire, not a
+register, so it is driven once, outside the chain, with a \code{mux}
+if it depends on the condition; the lowering says so at a \code{set}
+of an output under \code{if}. What stays outside the subset is an
+\code{if} that returns a value, which is \code{mux} or
+\code{select!}, and a \code{match}, which is \code{case!}.
+\code{when!} remains the two-arm form with the arrow, and the choice
+between the two is spelling: \code{if} where the arms exclude each
+other and nest, \code{when!} where a drive is under one condition.
+
+The unit below is a pulser: reset first, then, idle, it takes a
+length at \code{go}; running, it counts down and reports the number
+of runs done on a channel when one ends. The reset arm wins over
+every other, and the idle arm holds an \code{if} of its own.
+
+\begin{figure}[htbp]
+\centering
+\input{if_timing.tex}
+\caption{The pulser: a reset, a run of three, a run of two, a run of four cut by a reset, a run of one; \code{done} carries the count of runs.}
+\label{fig:x-if}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_if.rs}. Run with \code{bazel run //lib/examples:ex\_if}.},label={lst:x-if}]{lib/examples/ex_if.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_if} printed when the build ran it: a line per cycle, then the lowering, with the chain as it was written.},label={lst:x-if-out}]{out_if.txt}

@@ -291,6 +291,11 @@ pub enum Stmt {
     /// `case!(value => { pattern => { drives }, .. })`: arms in order,
     /// each a condition on the value, the first that holds wins.
     Case(Vec<(Expr, Vec<(Target, Expr)>)>),
+    /// `if c { .. } else if d { .. } else { .. }`: arms in order, each
+    /// a condition and the statements under it, then the statements
+    /// under no condition; the first condition that holds wins, and a
+    /// statement under it may be another `if`.
+    If(Vec<(Expr, Vec<Stmt>)>, Vec<Stmt>),
     /// The wait the loop makes: every register drive after it happens
     /// only at an edge at which the condition holds.
     Guard(Expr),
@@ -342,17 +347,21 @@ impl Lowered {
             d.iter()
                 .any(|(t, _)| matches!(t, Target::Name(n) if n == name))
         }
-        self.procs.iter().any(|p| {
-            p.falling
-                && p.body.iter().any(|st| match st {
-                    Stmt::Drive(Target::Name(n), _) => n == name,
-                    Stmt::Drive(_, _) | Stmt::Guard(_) => false,
-                    Stmt::When(_, a, b) => drives(a, name) || drives(b, name),
-                    Stmt::Case(arms) => {
-                        arms.iter().any(|(_, d)| drives(d, name))
-                    }
-                })
-        })
+        fn in_stmt(st: &Stmt, name: &str) -> bool {
+            match st {
+                Stmt::Drive(Target::Name(n), _) => n == name,
+                Stmt::Drive(_, _) | Stmt::Guard(_) => false,
+                Stmt::When(_, a, b) => drives(a, name) || drives(b, name),
+                Stmt::Case(arms) => arms.iter().any(|(_, d)| drives(d, name)),
+                Stmt::If(arms, els) => {
+                    arms.iter().any(|(_, b)| b.iter().any(|s| in_stmt(s, name)))
+                        || els.iter().any(|s| in_stmt(s, name))
+                }
+            }
+        }
+        self.procs
+            .iter()
+            .any(|p| p.falling && p.body.iter().any(|st| in_stmt(st, name)))
     }
     /// Give a memory its first words, as `Mem::with` gave them at run
     /// time; the netlist cannot see those, so the example says them
@@ -424,46 +433,67 @@ impl Lowered {
                 e => e.clone(),
             }
         }
-        let target = |x: &Target, t: &mut Vec<(String, usize, Expr)>| match x {
-            Target::Word(m, a) => Target::Word(m.clone(), go(a, self, t)),
-            n => n.clone(),
-        };
-        let drives = |d: &[(Target, Expr)],
-                      t: &mut Vec<(String, usize, Expr)>| {
+        fn target(
+            x: &Target,
+            l: &Lowered,
+            t: &mut Vec<(String, usize, Expr)>,
+        ) -> Target {
+            match x {
+                Target::Word(m, a) => Target::Word(m.clone(), go(a, l, t)),
+                n => n.clone(),
+            }
+        }
+        fn drives(
+            d: &[(Target, Expr)],
+            l: &Lowered,
+            t: &mut Vec<(String, usize, Expr)>,
+        ) -> Vec<(Target, Expr)> {
             d.iter()
-                .map(|(x, e)| (target(x, t), go(e, self, t)))
+                .map(|(x, e)| (target(x, l, t), go(e, l, t)))
                 .collect::<Vec<_>>()
-        };
+        }
         let wires = self
             .wires
             .iter()
             .map(|(n, e)| (n.clone(), go(e, self, &mut temps)))
             .collect();
+        fn stmt(
+            st: &Stmt,
+            l: &Lowered,
+            temps: &mut Vec<(String, usize, Expr)>,
+        ) -> Stmt {
+            match st {
+                Stmt::Drive(x, e) => {
+                    Stmt::Drive(target(x, l, temps), go(e, l, temps))
+                }
+                Stmt::When(c, a, b) => Stmt::When(
+                    go(c, l, temps),
+                    drives(a, l, temps),
+                    drives(b, l, temps),
+                ),
+                Stmt::Case(arms) => Stmt::Case(
+                    arms.iter()
+                        .map(|(c, d)| (go(c, l, temps), drives(d, l, temps)))
+                        .collect(),
+                ),
+                Stmt::If(arms, els) => Stmt::If(
+                    arms.iter()
+                        .map(|(c, b)| {
+                            (
+                                go(c, l, temps),
+                                b.iter().map(|s| stmt(s, l, temps)).collect(),
+                            )
+                        })
+                        .collect(),
+                    els.iter().map(|s| stmt(s, l, temps)).collect(),
+                ),
+                Stmt::Guard(c) => Stmt::Guard(go(c, l, temps)),
+            }
+        }
         let mut procs = Vec::new();
         for p in &self.procs {
-            let body = p
-                .body
-                .iter()
-                .map(|st| match st {
-                    Stmt::Drive(x, e) => Stmt::Drive(
-                        target(x, &mut temps),
-                        go(e, self, &mut temps),
-                    ),
-                    Stmt::When(c, a, b) => Stmt::When(
-                        go(c, self, &mut temps),
-                        drives(a, &mut temps),
-                        drives(b, &mut temps),
-                    ),
-                    Stmt::Case(arms) => Stmt::Case(
-                        arms.iter()
-                            .map(|(c, d)| {
-                                (go(c, self, &mut temps), drives(d, &mut temps))
-                            })
-                            .collect(),
-                    ),
-                    Stmt::Guard(c) => Stmt::Guard(go(c, self, &mut temps)),
-                })
-                .collect();
+            let body =
+                p.body.iter().map(|st| stmt(st, self, &mut temps)).collect();
             procs.push(Process {
                 clock: p.clock,
                 falling: p.falling,
@@ -668,49 +698,82 @@ impl Lowered {
         for (n, e) in &wires {
             comb.push(format!("  assign {n} = {};", vexpr(e, l)));
         }
+        // A statement of a clocked block, at an indentation; a
+        // conditional holds statements of its own, one level in.
+        type Drive<'a> = &'a dyn Fn(
+            &mut Vec<String>,
+            &mut Vec<String>,
+            &str,
+            &Target,
+            &Expr,
+        );
+        fn stmt(
+            seq: &mut Vec<String>,
+            comb: &mut Vec<String>,
+            ind: &str,
+            st: &Stmt,
+            drive: Drive,
+            l: &Lowered,
+        ) {
+            let inner = format!("{ind}  ");
+            match st {
+                Stmt::Guard(_) => {}
+                Stmt::Drive(t, e) => drive(seq, comb, ind, t, e),
+                Stmt::When(c, then, otherwise) => {
+                    seq.push(format!("{ind}if ({}) begin", vexpr(c, l)));
+                    for (t, e) in then {
+                        drive(seq, comb, &inner, t, e);
+                    }
+                    if !otherwise.is_empty() {
+                        seq.push(format!("{ind}end else begin"));
+                        for (t, e) in otherwise {
+                            drive(seq, comb, &inner, t, e);
+                        }
+                    }
+                    seq.push(format!("{ind}end"));
+                }
+                Stmt::Case(arms) => {
+                    for (i, (c, drives)) in arms.iter().enumerate() {
+                        let kw = if i == 0 { "if" } else { "end else if" };
+                        seq.push(format!("{ind}{kw} ({}) begin", vexpr(c, l)));
+                        for (t, e) in drives {
+                            drive(seq, comb, &inner, t, e);
+                        }
+                    }
+                    if !arms.is_empty() {
+                        seq.push(format!("{ind}end"));
+                    }
+                }
+                Stmt::If(arms, els) => {
+                    for (i, (c, body)) in arms.iter().enumerate() {
+                        let kw = if i == 0 { "if" } else { "end else if" };
+                        seq.push(format!("{ind}{kw} ({}) begin", vexpr(c, l)));
+                        for s in body {
+                            stmt(seq, comb, &inner, s, drive, l);
+                        }
+                    }
+                    if !els.is_empty() {
+                        seq.push(format!("{ind}end else begin"));
+                        for s in els {
+                            stmt(seq, comb, &inner, s, drive, l);
+                        }
+                    }
+                    seq.push(format!("{ind}end"));
+                }
+            }
+        }
         // A clocked block per process, on its clock and its edge.
         for p in &procs {
             let mut seq: Vec<String> = Vec::new();
             let mut guard = false;
             for st in &p.body {
-                match st {
-                    Stmt::Guard(c) => {
-                        guard = true;
-                        seq.push(format!("    if ({}) begin", vexpr(c, l)));
-                    }
-                    Stmt::Drive(t, e) => {
-                        let ind = if guard { "      " } else { "    " };
-                        drive(&mut seq, &mut comb, ind, t, e)
-                    }
-                    Stmt::When(c, then, otherwise) => {
-                        seq.push(format!("    if ({}) begin", vexpr(c, l)));
-                        for (t, e) in then {
-                            drive(&mut seq, &mut comb, "      ", t, e);
-                        }
-                        if !otherwise.is_empty() {
-                            seq.push("    end else begin".into());
-                            for (t, e) in otherwise {
-                                drive(&mut seq, &mut comb, "      ", t, e);
-                            }
-                        }
-                        seq.push("    end".into());
-                    }
-                    Stmt::Case(arms) => {
-                        for (i, (c, drives)) in arms.iter().enumerate() {
-                            let kw = if i == 0 { "if" } else { "end else if" };
-                            seq.push(format!(
-                                "    {kw} ({}) begin",
-                                vexpr(c, l)
-                            ));
-                            for (t, e) in drives {
-                                drive(&mut seq, &mut comb, "      ", t, e);
-                            }
-                        }
-                        if !arms.is_empty() {
-                            seq.push("    end".into());
-                        }
-                    }
+                if let Stmt::Guard(c) = st {
+                    guard = true;
+                    seq.push(format!("    if ({}) begin", vexpr(c, l)));
+                    continue;
                 }
+                let ind = if guard { "      " } else { "    " };
+                stmt(&mut seq, &mut comb, ind, st, &drive, l);
             }
             if guard {
                 seq.push("    end".into());
@@ -892,49 +955,82 @@ impl Lowered {
         for (n, e) in &wires {
             comb.push(format!("  {}", assign(n, self.ewidth(e), e)));
         }
+        // A statement of a process, at an indentation; a conditional
+        // holds statements of its own, one level in.
+        type Drive<'a> = &'a dyn Fn(
+            &mut Vec<String>,
+            &mut Vec<String>,
+            &str,
+            &Target,
+            &Expr,
+        );
+        fn stmt(
+            seq: &mut Vec<String>,
+            comb: &mut Vec<String>,
+            ind: &str,
+            st: &Stmt,
+            drive: Drive,
+            l: &Lowered,
+        ) {
+            let inner = format!("{ind}  ");
+            match st {
+                Stmt::Guard(_) => {}
+                Stmt::Drive(t, e) => drive(seq, comb, ind, t, e),
+                Stmt::When(c, then, otherwise) => {
+                    seq.push(format!("{ind}if {} then", hbool(c, l)));
+                    for (t, e) in then {
+                        drive(seq, comb, &inner, t, e);
+                    }
+                    if !otherwise.is_empty() {
+                        seq.push(format!("{ind}else"));
+                        for (t, e) in otherwise {
+                            drive(seq, comb, &inner, t, e);
+                        }
+                    }
+                    seq.push(format!("{ind}end if;"));
+                }
+                Stmt::Case(arms) => {
+                    for (i, (c, drives)) in arms.iter().enumerate() {
+                        let kw = if i == 0 { "if" } else { "elsif" };
+                        seq.push(format!("{ind}{kw} {} then", hbool(c, l)));
+                        for (t, e) in drives {
+                            drive(seq, comb, &inner, t, e);
+                        }
+                    }
+                    if !arms.is_empty() {
+                        seq.push(format!("{ind}end if;"));
+                    }
+                }
+                Stmt::If(arms, els) => {
+                    for (i, (c, body)) in arms.iter().enumerate() {
+                        let kw = if i == 0 { "if" } else { "elsif" };
+                        seq.push(format!("{ind}{kw} {} then", hbool(c, l)));
+                        for s in body {
+                            stmt(seq, comb, &inner, s, drive, l);
+                        }
+                    }
+                    if !els.is_empty() {
+                        seq.push(format!("{ind}else"));
+                        for s in els {
+                            stmt(seq, comb, &inner, s, drive, l);
+                        }
+                    }
+                    seq.push(format!("{ind}end if;"));
+                }
+            }
+        }
         // A process per process, on its clock and its edge.
         for p in &procs {
             let mut seq: Vec<String> = Vec::new();
             let mut guard = false;
             for st in &p.body {
-                match st {
-                    Stmt::Guard(c) => {
-                        guard = true;
-                        seq.push(format!("      if {} then", hbool(c, self)));
-                    }
-                    Stmt::Drive(t, e) => {
-                        let ind = if guard { "        " } else { "      " };
-                        drive(&mut seq, &mut comb, ind, t, e)
-                    }
-                    Stmt::When(c, then, otherwise) => {
-                        seq.push(format!("      if {} then", hbool(c, self)));
-                        for (t, e) in then {
-                            drive(&mut seq, &mut comb, "        ", t, e);
-                        }
-                        if !otherwise.is_empty() {
-                            seq.push("      else".into());
-                            for (t, e) in otherwise {
-                                drive(&mut seq, &mut comb, "        ", t, e);
-                            }
-                        }
-                        seq.push("      end if;".into());
-                    }
-                    Stmt::Case(arms) => {
-                        for (i, (c, drives)) in arms.iter().enumerate() {
-                            let kw = if i == 0 { "if" } else { "elsif" };
-                            seq.push(format!(
-                                "      {kw} {} then",
-                                hbool(c, self)
-                            ));
-                            for (t, e) in drives {
-                                drive(&mut seq, &mut comb, "        ", t, e);
-                            }
-                        }
-                        if !arms.is_empty() {
-                            seq.push("      end if;".into());
-                        }
-                    }
+                if let Stmt::Guard(c) = st {
+                    guard = true;
+                    seq.push(format!("      if {} then", hbool(c, self)));
+                    continue;
                 }
+                let ind = if guard { "        " } else { "      " };
+                stmt(&mut seq, &mut comb, ind, st, &drive, self);
             }
             if guard {
                 seq.push("      end if;".into());

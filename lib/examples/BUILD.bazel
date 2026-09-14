@@ -154,6 +154,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# `if` in a lowered loop:  bazel run //lib/examples:ex_if
+rust_binary(
+    name = "ex_if",
+    srcs = ["ex_if.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A memory, lowered:  bazel run //lib/examples:ex_mem
 rust_binary(
     name = "ex_mem",
@@ -310,6 +319,7 @@ filegroup(
         "ex_cheat.rs",
         "ex_alu.rs",
         "ex_ops.rs",
+        "ex_if.rs",
         "ex_mem.rs",
         "ex_imm.rs",
         "ex_twoproc.rs",

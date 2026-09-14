@@ -254,17 +254,19 @@ one declaration.
 
 \subsection{Control flow on a signal}
 
-A signal has no value while the Rust program runs, so it cannot be
-the condition of an \code{if}. Three macros spell what hardware means
-instead, and each is named for what it is rather than for the Rust it
-resembles. \code{when!(c => \{ r <= v \})} is a predicated drive: both
-arms exist, a multiplexer chooses, nothing branches. \code{case!} is
-\code{when!} with many arms, Rust patterns with guards and
-alternatives, the first match winning, so a state machine is one
-\code{case!} over its state register. \code{select!} chooses among
-values rather than drives, \code{match} on a value by another name,
-and lowers to a chain of multiplexers; \code{mux} is its two-arm
-case. Listing~\ref{lst:p-alu} is the Vreteno core's ALU, a
+Hardware does not branch: both arms of a choice exist and a
+condition selects. Three macros spell that, each named for what it
+is rather than for the Rust it resembles, and Rust's \code{if} is
+read the same way. \code{when!(c => \{ r <= v \})} is a predicated
+drive: both arms exist, a multiplexer chooses, nothing branches.
+\code{case!} is \code{when!} with many arms, Rust patterns with
+guards and alternatives, the first match winning, so a state machine
+is one \code{case!} over its state register. An \code{if} over a
+\code{bool}, with the drives under it written as \code{set}, and
+its \code{else if} and \code{else}, is the same priority chain, and
+its arms nest. \code{select!} chooses among values rather than
+drives, \code{match} on a value by another name, and lowers to a
+chain of multiplexers; \code{mux} is its two-arm case. Listing~\ref{lst:p-alu} is the Vreteno core's ALU, a
 \code{select!} over the function code, in a function under
 \code{\#[lower]}, which the lowering writes in where the step calls
 it.
