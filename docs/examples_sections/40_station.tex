@@ -1,0 +1,37 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Reservation Station}
+\label{sec:x-station}
+
+A reservation station gathers the operands of an operation that
+arrive out of order and on separate channels, and fires when all of
+them have. \code{Station2} to \code{Station10} in \code{txhdl\_parts}
+are the stations of two to ten inputs, each written out by
+\code{station!}. An input carries a tag and a value, a
+\code{Tagged<TB, T>}; the station has a line per tag value, one cell
+per input in each, and an input lands in its cell of the line its
+tag names. A line whose every cell holds is sent on the output as
+one value, the tag and the values; at most one line per cycle, the
+completing input of lowest index choosing when two complete at once,
+the value that completes a line going straight through and the rest
+coming from their cells. An input's \code{ready} is its take: its
+cell is free, and taking it either completes nothing or completes
+the line being sent this cycle. The tutorial on the
+station~\cite{station} reads its rule cycle by cycle.
+
+The example is a station of two inputs, a byte and a half word, by a
+two-bit tag. The two sources offer their tags in different orders,
+one with gaps, and the sink holds the output off two cycles in four,
+so one line waits for room and a repeated tag waits for its cell.
+The netlist is checked against this run under both simulators.
+
+\begin{figure}[htbp]
+\centering
+\input{station_timing.tex}
+\caption{The station: the two inputs' tags and handshakes, the
+occupancy masks, and each line as it goes out.}
+\label{fig:x-station}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_station.rs}. Run with \code{bazel run //lib/examples:ex\_station}.},label={lst:x-station}]{lib/examples/ex_station.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_station} printed when the build ran it: what each input offered, the masks, and the line taken per cycle, then the lowering.},label={lst:x-station-out}]{out_station.txt}

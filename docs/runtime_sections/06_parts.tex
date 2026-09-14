@@ -27,3 +27,39 @@ every cycle that the two agree; the part's netlist is then checked
 against that trace under both simulators.
 
 \lstinputlisting[caption={\code{lib/parts/src/buffer.rs}.},label={lst:r-buffer}]{lib/parts/src/buffer.rs}
+
+\code{Fifo<T, AW, D>} is a channel in, a channel out and \code{D}
+words between, \code{D = 1 << AW} stated since a computed width in a
+type needs nightly Rust. A word is taken from the input whenever
+there is room and the oldest word is offered on the output whenever
+there is one, so the latency is one cycle; the head and the tail are
+\code{AW} bits and a full bit tells full from empty, since the
+pointers are equal in both. Behind a unit whose output is a channel
+it is the depth the channel's buffer of two does not have. Its test
+runs it against a queue.
+
+\lstinputlisting[caption={\code{lib/parts/src/fifo.rs}.},label={lst:r-fifo}]{lib/parts/src/fifo.rs}
+
+\code{Station2} to \code{Station10} are reservation stations, one
+type per count of inputs, each written out by \code{station!}
+(Section~\ref{sec:r-macros}) since the lowering reads a body and not
+a loop over inputs. An input carries a \code{Tagged<TB, T>}, the tag
+above the value; the station has \code{L = 1 << TB} lines, a memory
+per input for the cells and an occupancy mask per input, one bit per
+line. The step is the rule: an input's cell is free when its bit of
+the mask is clear; taking an input completes its line when every
+other input's cell of that line holds or that input offers the same
+tag now; the line sent is the completing input's of lowest index,
+when the output has room; an input is taken when its cell is free
+and it completes nothing, or completes the line being sent, so an
+input never waits on another's cell, only on its own or on the
+output's room; a taken input writes its cell and sets its bit, the
+line sent clears its bit in every mask, and the values sent come
+from the cells or, for the input completing the line, straight from
+the input. The tag has two bits at least, since a one-bit value is a
+\code{std\_logic} in VHDL and cannot index. The tests run
+\code{Station2} against the rule written with loops through four
+hundred random cycles, and \code{Station3} on the cycle where two
+lines complete at once.
+
+\lstinputlisting[caption={\code{lib/parts/src/station.rs}.},label={lst:r-station}]{lib/parts/src/station.rs}

@@ -132,6 +132,9 @@ Probe & Question & Answer \\
 \code{probe\_infer\_lower}
   & A width Rust would infer, under \code{\#[lower]}?
   & \textbf{Refused:} \code{`slice::<..>` needs its width written: the lowering sees no types}; \code{concat}'s low operand is the one width it does not need \\
+\code{probe\_macro\_in\_macro}
+  & Does \code{\#[lower]} written by a macro's output expand, and does a port's field, \code{p.tag}, lower?
+  & \textbf{Yes} to both: the unit lowers, and the field is the slice of the port's data the value's layout gives it \\
 \bottomrule
 \end{tabular}
 \end{table*}

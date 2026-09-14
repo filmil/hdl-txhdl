@@ -1,0 +1,32 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A FIFO Between Two Channels}
+\label{sec:x-queue}
+
+A channel is a buffer of two. Where a unit's output needs more room
+than that, because the unit behind it takes in bursts or holds off
+for a while, \code{Fifo} in \code{txhdl\_parts} is the depth: a
+channel in, a channel out, and \code{D} words between, \code{D} a
+power of two stated with its address width \code{AW}. A word is
+taken from the input whenever there is room and the oldest word is
+offered on the output whenever there is one, so a word is visible the
+cycle after it entered; the pointers are a head and a tail of
+\code{AW} bits with a full bit to tell full from empty. The part is
+written in the lowered subset, as every part is, and its test in the
+crate runs it against a queue through three hundred cycles.
+
+The example runs it four words deep between a source that bursts
+nine words and a sink that takes nothing for eight cycles: the four
+words fill it, \code{full} rises, the source is held until the sink
+starts taking, and every word comes out in order.
+
+\begin{figure}[htbp]
+\centering
+\input{queue_timing.tex}
+\caption{The FIFO: a burst in, the fill and the hold, then a drain;
+\code{head}, \code{tail} and \code{full} are its state.}
+\label{fig:x-queue}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_queue.rs}. Run with \code{bazel run //lib/examples:ex\_queue}.},label={lst:x-queue}]{lib/examples/ex_queue.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_queue} printed when the build ran it: the pointers and the full bit per cycle, then the lowering.},label={lst:x-queue-out}]{out_queue.txt}

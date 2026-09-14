@@ -215,6 +215,7 @@ Two are tagged `manual` because they are expected to fail.
 | `probe_infer` | May a const width be left to inference, as `_`? | **Yes**, since Rust 1.89, where the context fixes it: an annotated destination, a typed use, the other operand, the return type |
 | `probe_infer_bad` | A width nothing fixes, a slice compared with a number? | **No.** `error[E0284]: type annotations needed`; the lowering, which sees no types, asks for every width it needs |
 | `probe_infer_lower` | A width Rust would infer, under `#[lower]`? | **Refused:** `` `slice::<..>` needs its width written: the lowering sees no types``; `concat`'s low operand is the one width it does not need |
+| `probe_macro_in_macro` | Does `#[lower]` written by a macro's output expand, and does a port's field, `p.tag`, lower? | **Yes** to both: the unit lowers, and the field is the slice of the port's data the value's layout gives it |
 
 Three of these change the design.
 

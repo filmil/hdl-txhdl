@@ -52,6 +52,16 @@ binds \code{valid} and \code{data} to its two names and asserts
 \code{ready} the same way, a send drives
 \code{data} and asserts \code{valid} under it. What it does not read
 it refuses with a message that names the construct.
+A field of a port's value, \code{p.tag} where \code{p} is what a
+channel port carries, is read as the slice of the port's data the
+field occupies: the \code{Value} derive lays a struct's fields out
+first field highest and says so in a \code{layout}, and the netlist
+finds the bits when \code{lowered} runs, so a generic field's width
+is no obstacle. \code{station!(Name, N)} writes a reservation
+station of \code{N} inputs as text, a line struct, the station's
+struct and its lowered \code{run}, every wire of the step named for
+what it is, and \code{TXHDL\_MACRO\_DUMP} writes the text out for
+reading; the attribute in its output expands as any does.
 \code{interface!} takes an interface and any number of roles, checks
 that every role names every member once and that no member is driven
 twice, and emits a struct per role plus a constructor that splits each

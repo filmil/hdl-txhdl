@@ -15,6 +15,7 @@ use txhdl::station;
 use txhdl::types::{Transaction, Value, U};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
+// begin{part}
 /// A tagged value: what a station's input carries, the tag above
 /// the value.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default)]
@@ -32,6 +33,7 @@ station!(Station7, 7);
 station!(Station8, 8);
 station!(Station9, 9);
 station!(Station10, 10);
+// end{part}
 
 /// The stations against the rule written with loops: a model of the
 /// same inputs, stepped on what the station sees, agrees with the

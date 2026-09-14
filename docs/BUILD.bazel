@@ -381,6 +381,8 @@ API = {
     "api_netlist.rs": "//lib:src/netlist.rs",
     "api_foreign.rs": "//lib:src/foreign.rs",
     "api_buffer.rs": "//lib/parts:src/buffer.rs",
+    "api_fifo.rs": "//lib/parts:src/fifo.rs",
+    "api_station.rs": "//lib/parts:src/station.rs",
 }
 
 [
@@ -1196,6 +1198,23 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# A reservation station in TxHDL: the tutorial on the part, its
+# example's run and waveform included.
+latex_document(
+    name = "station",
+    main = "station.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":station_run",
+        ":station_timing",
+        ":queue_run",
+        "//lib/examples:sources",
+        "//lib/parts:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # Every document in sequence, one file, with a bookmark per document.
 combined_pdf(
     name = "all",
@@ -1205,6 +1224,7 @@ combined_pdf(
         "TxHDL cheat sheet",
         "TxHDL, Step by Step",
         "TxHDL from Zero: A Blinky in Bazel",
+        "A Reservation Station in TxHDL",
         "TxHDL: Unifying a Dataflow and a Transaction HDL",
         "Deleting a Language: Embedding TxHDL in Rust",
         "The TxHDL Runtime",
@@ -1218,6 +1238,7 @@ combined_pdf(
         ":cheatsheet",
         ":tutorial",
         ":zero",
+        ":station",
         ":article",
         ":embedding",
         ":runtime",
