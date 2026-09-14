@@ -4,7 +4,9 @@
 
 An ALU that takes its work as a stream: a request is a tag, an
 operation and two operands on one channel, and a result is the tag
-and the value on another. The four operations are four units of four
+and the value on another. The request is the line a station of
+three inputs sends, its cells the operation and the two operands,
+so the next example puts a station in front of this unit. The four operations are four units of four
 depths. \code{not} takes one cycle, \code{and} two, \code{or} three
 and \code{add} four, a nibble per stage with the carry passed from
 one stage to the next. A result leaves as soon as its unit is done,
@@ -36,6 +38,8 @@ leave, out of order.}
 \label{fig:x-stream-alu}
 \end{figure}
 
-\lstinputlisting[caption={\code{ex\_stream\_alu.rs}. Run with \code{bazel run //lib/examples:ex\_stream\_alu}.},label={lst:x-stream-alu}]{lib/examples/ex_stream_alu.rs}
+\lstinputlisting[caption={\code{stream\_alu.rs}: the unit, a library both this example and the next run.},label={lst:x-stream-alu}]{lib/examples/stream_alu.rs}
+
+\lstinputlisting[caption={\code{ex\_stream\_alu.rs}. Run with \code{bazel run //lib/examples:ex\_stream\_alu}.},label={lst:x-stream-alu-run}]{lib/examples/ex_stream_alu.rs}
 
 \lstinputlisting[style=ascii,caption={What \code{ex\_stream\_alu} printed when the build ran it: what the source sent, the slots, what the first stage of a unit holds, and the result taken, per cycle; then the lowering.},label={lst:x-stream-alu-out}]{out_stream_alu.txt}
