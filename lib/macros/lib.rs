@@ -993,7 +993,9 @@ fn station_text(name: &str, n: usize) -> String {
     };
     let lname = format!("Line{n}");
     let module = format!("station{n}");
-    let tparams = each(&|i| format!("T{i}: Transaction + Value"), ", ");
+    // The type parameters, one per line, so a header stays under
+    // eighty columns at any arity.
+    let tparams = each(&|i| format!("    T{i}: Transaction + Value,"), "\n");
     let targs = each(&|i| format!("T{i}"), ", ");
     let line_fields = each(&|i| format!("    pub v{i}: T{i},"), "\n");
     let state = each(
@@ -1096,22 +1098,31 @@ fn station_text(name: &str, n: usize) -> String {
          \n\
          /// A complete line of {n}: the tag and one value per input.\n\
          #[derive(::txhdl::Transaction, ::txhdl::Value, Clone, Copy, Default)]\n\
-         pub struct {lname}<const TB: usize, {tparams}> {{\n\
+         pub struct {lname}<\n    const TB: usize,\n{tparams}\n> {{\n\
          \x20   pub tag: U<TB>,\n\
          {line_fields}\n\
          }}\n\
          \n\
-         /// A reservation station of {n} inputs. A line per tag value,\n\
-         /// `L = 1 << TB` of them; an input lands in its cell of the line\n\
-         /// its tag names, and a line whose every cell holds is sent, at\n\
-         /// most one per cycle.\n\
+         /// A reservation station of {n} inputs, each an `Rx<Tagged<TB, T>>`\n\
+         /// of its own value type, and one output, a `Tx<{lname}>`. A line\n\
+         /// per tag value, `L = 1 << TB` of them, stated; an input lands in\n\
+         /// its cell of the line its tag names, and a line whose every cell\n\
+         /// holds is sent as its tag and its values, at most one line per\n\
+         /// cycle, the completing input of lowest index choosing when two\n\
+         /// complete at once; the value that completes a line goes straight\n\
+         /// through, the rest come from their cells. An input's `ready` is\n\
+         /// its take: its cell is free, and taking it either completes\n\
+         /// nothing or completes the line sent this cycle, so an input never\n\
+         /// waits on another's cell, only on its own or on the output's\n\
+         /// room. The tag has two bits at least. Written in the lowered\n\
+         /// subset, so it is a netlist too.\n\
          #[derive(Trace, Default)]\n\
-         pub struct {name}<const TB: usize, const L: usize, {tparams}> {{\n\
+         pub struct {name}<\n    const TB: usize,\n    const L: usize,\n{tparams}\n> {{\n\
          {state}\n\
          }}\n\
          \n\
          #[lower]\n\
-         impl<const TB: usize, const L: usize, {tparams}> Unit\n\
+         impl<\n    const TB: usize,\n    const L: usize,\n{tparams}\n> Unit\n\
          \x20   for {name}<TB, L, {targs}>\n\
          {{\n\
          \x20   async fn run(\n\
@@ -1180,7 +1191,18 @@ pub fn station(input: TokenStream) -> TokenStream {
     if let Ok(dir) = std::env::var("TXHDL_MACRO_DUMP") {
         let _ = std::fs::write(format!("{dir}/station_{name}.rs"), &text);
     }
-    text.parse().unwrap()
+    // The text keeps itself, as `SOURCE` in the module, so a document
+    // can show what was written without a hand-typed copy.
+    let module = format!("station{n}");
+    let with_source = text.replacen(
+        &format!("pub mod {module} {{\n"),
+        &format!(
+            "pub mod {module} {{\n/// The text of this module, as `station!` wrote it.\n\
+             pub const SOURCE: &str = r####\"{text}\"####;\n"
+        ),
+        1,
+    );
+    with_source.parse().unwrap()
 }
 
 // ---------------------------------------------------------------------

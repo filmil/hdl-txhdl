@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
-//! A FIFO with a channel at each end: `D` words deep, `D = 1 << AW`
-//! stated, a word taken from the input whenever there is room and
-//! the oldest word offered on the output whenever there is one. A
-//! word taken lands in the memory at the end of its step and is
-//! offered the step after, so the latency is one cycle; `full` holds
-//! the input off, and the output's `ready` is the channel's. Behind
-//! a unit whose output is a channel, it is the depth the channel's
-//! own buffer of two does not have.
+//! A FIFO with a channel at each end: the depth a channel's own
+//! buffer of two does not have, for a unit whose consumer takes in
+//! bursts or holds off.
 use txhdl::comp::{mux, Clock, DefaultClock, Mem, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, Transaction, Value, U};
 use txhdl::{lower, with, Trace};
 
+/// A FIFO of `D` words of `T` between two channels, `D = 1 << AW`
+/// stated, since a computed width in a type needs nightly Rust. A
+/// word is taken from the input whenever there is room and the
+/// oldest word is offered on the output whenever there is one. A
+/// word taken lands in the memory at the end of its step and is
+/// offered the step after, so the latency is one cycle; `full`
+/// holds the input off, and the output's `ready` is the channel's.
+/// Written in the lowered subset, so it is a netlist too.
 #[derive(Trace, Default)]
 pub struct Fifo<T: Transaction + Value, const AW: usize, const D: usize> {
     /// The words, `D` of them.

@@ -1,16 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Reservation stations: `Station2` to `Station10`, one type per
-//! count of inputs, each written out by `station!`. An input carries
-//! a tag and a value; a station has a line per tag value, `L = 1 <<
-//! TB` of them, and an input lands in its cell of the line its tag
-//! names. A line whose every cell holds is sent as one value, the tag
-//! and the values, at most one line per cycle, the completing input
-//! of lowest index choosing when two lines complete at once; the
-//! value that completes a line goes straight through, the rest come
-//! from their cells. An input's `ready` is its take: its cell is
-//! free, and taking it either completes nothing or completes the line
-//! sent this cycle, so an input never waits on another's cell, only
-//! on its own or on the output's room. The tag has two bits at least.
+//! count of inputs, each written out by `station!` with its line
+//! struct beside it, and `Tagged`, what an input of any of them
+//! carries. Each type says its rule.
 use txhdl::station;
 use txhdl::types::{Transaction, Value, U};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
