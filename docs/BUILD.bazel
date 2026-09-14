@@ -624,6 +624,10 @@ latex_document(
         ":inplace_timing",
         ":with_run",
         ":with_timing",
+        ":queue_run",
+        ":queue_timing",
+        ":station_run",
+        ":station_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -720,6 +724,46 @@ waveform(
         "//table/written=>written",
         "//word=>word",
         "//sum=>sum",
+    ],
+)
+
+waveform(
+    name = "queue",
+    example = "//lib/examples:ex_queue",
+    lowered = ("queue4", "queue"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//inp/rx_valid=>inp_valid",
+        "//inp/rx_data=>inp",
+        "//inp/rx_ready=>inp_ready",
+        "//out/rx_valid=>out_valid",
+        "//out/rx_data=>out",
+        "//out/rx_ready=>out_ready",
+        "//queue/head=>head",
+        "//queue/tail=>tail",
+        "//queue/full=>full",
+    ],
+)
+
+waveform(
+    name = "station",
+    example = "//lib/examples:ex_station",
+    lowered = ("station", "station"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//in0/rx_valid=>in0_valid",
+        "//in0/rx_data/tag=>in0_tag",
+        "//in0/rx_ready=>in0_ready",
+        "//in1/rx_valid=>in1_valid",
+        "//in1/rx_data/tag=>in1_tag",
+        "//in1/rx_ready=>in1_ready",
+        "//station/occ0=>occ0",
+        "//station/occ1=>occ1",
+        "//out/rx_valid=>out_valid",
+        "//out/rx_data/tag=>out_tag",
+        "//out/rx_data/v0=>v0",
+        "//out/rx_data/v1=>v1",
+        "//out/rx_ready=>out_ready",
     ],
 )
 

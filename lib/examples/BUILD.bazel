@@ -181,6 +181,30 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A FIFO with a channel at each end:  bazel run //lib/examples:ex_queue
+rust_binary(
+    name = "ex_queue",
+    srcs = ["ex_queue.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# A reservation station:  bazel run //lib/examples:ex_station
+rust_binary(
+    name = "ex_station",
+    srcs = ["ex_station.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A memory, lowered:  bazel run //lib/examples:ex_mem
 rust_binary(
     name = "ex_mem",
@@ -340,6 +364,8 @@ filegroup(
         "ex_if.rs",
         "ex_inplace.rs",
         "ex_with.rs",
+        "ex_queue.rs",
+        "ex_station.rs",
         "ex_mem.rs",
         "ex_imm.rs",
         "ex_twoproc.rs",
