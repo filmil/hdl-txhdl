@@ -2655,6 +2655,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // A port is `name: In<T>`; a side with several ports is a tuple,
     // `(a, b): (In<X>, In<Y>)`, paired name by name.
     let mut pairs: Vec<(String, String, Span)> = Vec::new();
+    // The two sides' types as written, for the impl header when it
+    // names none: `impl Unit for X` is `impl Unit<I, O> for X`.
+    let mut sides: Vec<String> = Vec::new();
     for p in split_commas(params).into_iter().skip(1) {
         let Some(colon) = p.iter().position(
             |t| matches!(t, TokenTree::Punct(c) if c.as_char() == ':'),
@@ -2667,6 +2670,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 .collect::<Vec<_>>()
                 .join("")
         };
+        sides.push(text_of(&p[colon + 1..]));
         match (&p[0], &p[colon + 1]) {
             (TokenTree::Ident(n), _) => {
                 pairs.push((n.to_string(), text(&p[colon + 1..]), n.span()));
@@ -2832,7 +2836,30 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         );
     }
     let generated: TokenStream = generated_text.parse().unwrap();
-    let mut out = item;
+    // `impl Unit for X`, the ports named once, in `run`: the header
+    // takes them from there.
+    let bare = toks[at..f].iter().enumerate().find_map(|(k, t)| {
+        let next = toks.get(at + k + 1);
+        (is_ident(t, "Unit")
+            && !matches!(next, Some(TokenTree::Punct(p)) if p.as_char() == '<'))
+        .then_some(at + k)
+    });
+    let mut out = TokenStream::new();
+    if let Some(u) = bare {
+        if sides.len() != 2 {
+            return err(
+                toks[u].span(),
+                "`impl Unit for ..` needs `run(&mut self, inputs, outputs)`",
+            );
+        }
+        let args: TokenStream =
+            format!("<{}, {}>", sides[0], sides[1]).parse().unwrap();
+        out.extend(toks[..=u].iter().cloned());
+        out.extend(args);
+        out.extend(toks[u + 1..].iter().cloned());
+    } else {
+        out = item;
+    }
     out.extend(generated);
     out
 }
