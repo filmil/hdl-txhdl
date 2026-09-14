@@ -51,7 +51,7 @@ two per cycle, so a falling edge is a tick of its own.
 \code{\#[derive(Transaction)]} & a struct that moves over a channel \\
 \code{Reg<T, C>} & state, in clock \code{C}; a value; \code{set} \\
 \code{signal()} $\to$ \code{(Out, In)} & a wire's two ends; \code{Out} is not \code{Clone} \\
-\code{chan()} $\to$ \code{(Tx, Rx)} & a channel, a buffer of two; \code{send}, \code{ready}, \code{wait} \\
+\code{chan()} $\to$ \code{(Tx, Rx)} & a channel, a buffer of two; \code{send}, \code{ready}, \code{wait}, \code{take} \\
 \code{Crossing<T, A, B>} & the only way between clocks \\
 \code{interface!} & members and roles, a struct per role \\
 \code{when!(c => \{ r <= v \})}, \code{if c \{ r.set(v) \}} & predicated drives; a chain, not a branch \\

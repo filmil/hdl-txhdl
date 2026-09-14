@@ -240,6 +240,16 @@ impl<T: Transaction, C: Clock> Rx<T, C> {
         commit(self.0.clone());
         Some(v)
     }
+    /// Take whatever is offered: whether a transaction was, and it,
+    /// or the default when none. What a process that serves the
+    /// channel every cycle asks, `peek().is_some()` and
+    /// `recv().unwrap_or_default()` in one.
+    pub fn take(&self) -> (bool, T) {
+        match self.recv() {
+            Some(v) => (true, v),
+            None => (false, T::default()),
+        }
+    }
     /// The head's data, as the edge left it, or the default when there
     /// is none: what a process looks at before deciding to take.
     pub fn head(&self) -> T {

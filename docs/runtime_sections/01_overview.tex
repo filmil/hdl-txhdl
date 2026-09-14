@@ -74,7 +74,9 @@ what the edge latched.
 buffer at the end of it; \code{ready} says whether there is room, as
 the edge left it. A receive is a take: \code{ready} high this step,
 the head of the buffer gone at the end of it; \code{peek} is the head
-as the edge left it. Both commit as a register drive does, so what a
+as the edge left it, and \code{take} is the take of whatever is
+offered, whether one was and the value, for a process that serves
+the channel every cycle. Both commit as a register drive does, so what a
 process sees of a channel does not depend on which process ran first
 in the step, and two units that both run every cycle pass one
 transaction per cycle with \code{valid} and \code{ready} registered

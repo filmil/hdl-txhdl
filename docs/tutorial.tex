@@ -226,8 +226,9 @@ receives it, sends it on incremented, and counts.
 \code{until(clock, condition)} is a wait like \code{rising}, one that
 passes only at an edge at which the condition holds. \code{peek} is
 the head of the channel as the edge left it, \code{ready} whether
-there is room on the other channel, \code{recv} the take, \code{send}
-the offer. In the netlist a channel is a \code{valid}, a \code{ready}
+there is room on the other channel, \code{recv} the take, \code{take}
+the take of whatever is offered as \code{(offered, value)}, for a
+unit that serves the channel every cycle, and \code{send} the offer. In the netlist a channel is a \code{valid}, a \code{ready}
 and the data, and the lowering makes the wait's condition the guard
 of every drive, the \code{ready} of the receive and the \code{valid}
 of the send. Fig.~\ref{fig:t-stage} shows the handshake on both
