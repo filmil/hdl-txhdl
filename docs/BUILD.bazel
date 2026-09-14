@@ -630,6 +630,7 @@ latex_document(
         ":queue_timing",
         ":station_run",
         ":station_timing",
+        ":station_source",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -1203,8 +1204,16 @@ latex_document(
 # Verilog's: both for the tutorial, neither typed by hand.
 genrule(
     name = "station_source",
-    outs = ["station2.rs"],
-    cmd = "$(location //lib/examples:ex_station) --source > $@",
+    outs = [
+        "station2.rs",
+        "station2_marked.rs",
+    ],
+    cmd = " && ".join([
+        "$(location //lib/examples:ex_station) --source " +
+        "> $(location station2_marked.rs)",
+        "grep -v '^// \\(begin\\|end\\){' $(location station2_marked.rs) " +
+        "> $(location station2.rs)",
+    ]),
     tools = ["//lib/examples:ex_station"],
 )
 

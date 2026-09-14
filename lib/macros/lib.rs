@@ -1116,11 +1116,14 @@ fn station_text(name: &str, n: usize) -> String {
          /// waits on another's cell, only on its own or on the output's\n\
          /// room. The tag has two bits at least. Written in the lowered\n\
          /// subset, so it is a netlist too.\n\
+         // begin{{state}}\n\
          #[derive(Trace, Default)]\n\
          pub struct {name}<\n    const TB: usize,\n    const L: usize,\n{tparams}\n> {{\n\
          {state}\n\
          }}\n\
+         // end{{state}}\n\
          \n\
+         // begin{{ports}}\n\
          #[lower]\n\
          impl<\n    const TB: usize,\n    const L: usize,\n{tparams}\n> Unit\n\
          \x20   for {name}<TB, L, {targs}>\n\
@@ -1132,11 +1135,17 @@ fn station_text(name: &str, n: usize) -> String {
          \x20   ) {{\n\
          \x20       loop {{\n\
          \x20           DefaultClock::rising().await;\n\
+         // end{{ports}}\n\
+         // begin{{reads}}\n\
          \x20           // What each input offers, and whether its cell is free.\n\
          {reads}\n\
+         // end{{reads}}\n\
+         // begin{{completes}}\n\
          \x20           // Taking an input completes its line when every other\n\
          \x20           // cell of that line holds, or is offered now.\n\
          {completes}\n\
+         // end{{completes}}\n\
+         // begin{{takes}}\n\
          \x20           let any_complete = {any};\n\
          \x20           // The line sent: the completing input's of lowest index.\n\
          \x20           let line_tag = {line_tag};\n\
@@ -1144,6 +1153,8 @@ fn station_text(name: &str, n: usize) -> String {
          \x20           // An input is taken when its cell is free and it\n\
          \x20           // completes nothing, or completes the line being sent.\n\
          {takes}\n\
+         // end{{takes}}\n\
+         // begin{{drives}}\n\
          \x20           let line_clear = mux(\n\
          \x20               send_line,\n\
          \x20               U::<L>::from(1u8) << (line_tag.raw() as usize),\n\
@@ -1152,12 +1163,15 @@ fn station_text(name: &str, n: usize) -> String {
          \x20           with!(self <= {{\n\
          {drives}\n\
          \x20           }});\n\
+         // end{{drives}}\n\
+         // begin{{outputs}}\n\
          \x20           // The line's values: from the cell if held, else\n\
          \x20           // straight from the input.\n\
          {outs}\n\
          \x20           if send_line.to_bool() {{\n\
          \x20               out.send({lname} {{ tag: line_tag, {line_lit} }});\n\
          \x20           }}\n\
+         // end{{outputs}}\n\
          \x20       }}\n\
          \x20   }}\n\
          }}\n\
