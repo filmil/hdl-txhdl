@@ -216,6 +216,68 @@ the hold of the source, and the drain in order.
 
 \lstinputlisting[style=ascii,caption={What \code{ex\_queue} printed when the build ran it: a FIFO of four between two channels, filling and draining; then its lowering.},label={lst:s-queue}]{out_queue.txt}
 
+\section{The Same Station in Verilog}
+\label{sec:s-verilog}
+
+Listing~\ref{lst:s-v} is the station of the example written by hand
+in Verilog, for a reader who knows what that looks like: two inputs,
+a byte and a half word by a two-bit tag, four lines, the same ports
+the lowering gives the TxHDL one. It is not a translation of the
+netlist; it is what an engineer writes from the rule of
+Section~\ref{sec:s-rule}, and it runs beside the TxHDL station in the
+example, as a foreign unit fed the same offers, with the build
+asserting that every line the two send agrees; Listing~\ref{lst:s-out}
+ends with the count. Listing~\ref{lst:s-src} is the other side: the
+text \code{station!} wrote for the two-input station, printed by the
+example, since the macro keeps its text. Listing~\ref{lst:s-sizes}
+counts the lines of both.
+
+\lstinputlisting[style=ascii,caption={\code{station.v}: the two-input station by hand.},label={lst:s-v}]{lib/examples/station.v}
+
+\lstinputlisting[caption={\code{station2.rs}: the two-input station as \code{station!} wrote it, printed by \code{ex\_station --source}.},label={lst:s-src}]{station2.rs}
+
+\lstinputlisting[style=ascii,caption={The two, by lines, as the build counted them.},label={lst:s-sizes}]{station_sizes.txt}
+
+Read side by side, the two say the same hardware, and the wires have
+the same names, since the rule has words for them. What differs is
+what each author had to write, and what each got checked.
+
+\begin{itemize}
+\item \textbf{Widths and slices.} The Verilog names every width,
+  \code{[9:0]}, \code{[17:0]}, \code{[25:0]}, and slices the tag and
+  the value out of each input by hand, \code{in0\_data[9:8]}; a
+  change of a value type is a change in five places. The TxHDL
+  station takes them from the payload type: \code{head0.tag} is the
+  field, wherever the derive laid it, and the value types are
+  parameters of the type. The Verilog could take widths as
+  parameters too; what it cannot take as a parameter is the count of
+  inputs, which is why the Verilog is one station and the macro
+  writes nine.
+\item \textbf{The handshake.} Each \code{ready} and \code{valid}
+  is a wire the Verilog author writes and gets right, or not: the
+  take must be \code{valid} and \code{ready} together, with no
+  combinational path from an output back to an input's decision that
+  a placer would refuse. In the TxHDL station \code{recv\_if(take0)}
+  is the take, and the lowering makes the \code{ready} of it; a
+  \code{send} under \code{if} is the \code{valid}. The author writes
+  what is taken and what is sent, not the wires.
+\item \textbf{The check.} The Verilog has no test until someone
+  writes a testbench, and this one has one only because it runs
+  beside the TxHDL station. The TxHDL station ran as a program
+  against the rule written with loops for four hundred cycles before
+  it was ever a netlist, and its netlist is checked against its own
+  run under two simulators on every build, in both languages.
+\item \textbf{Lines.} By the count in Listing~\ref{lst:s-sizes} the
+  Verilog is the shorter text, by about half once comments are left
+  out. The TxHDL text is a generator's, one clause per line, and it
+  carries what the Verilog does not: the line struct, the types as
+  parameters, and the struct of the state that the trace and the
+  netlist read. Count instead what an author writes: the Verilog
+  author writes every line of the fifty, for this count of inputs
+  and these widths; the TxHDL designer writes \code{station!(Station2,
+  2)} once for all widths, and the type at the use.
+\end{itemize}
+
 \section{The Netlist}
 \label{sec:s-netlist}
 

@@ -1198,8 +1198,37 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# What `station!` wrote for the two-input station, as the example
+# prints it, and the size of that text beside the hand-written
+# Verilog's: both for the tutorial, neither typed by hand.
+genrule(
+    name = "station_source",
+    outs = ["station2.rs"],
+    cmd = "$(location //lib/examples:ex_station) --source > $@",
+    tools = ["//lib/examples:ex_station"],
+)
+
+genrule(
+    name = "station_sizes",
+    srcs = [
+        ":station2.rs",
+        "//lib/examples:station.v",
+    ],
+    outs = ["station_sizes.txt"],
+    cmd = " && ".join([
+        "echo \"lines  file\" > $@",
+        "wc -l < $(location //lib/examples:station.v) | " +
+        "xargs printf '%5d  station.v, by hand\\n' >> $@",
+        "grep -v '^ *//' $(location :station2.rs) | wc -l | " +
+        "xargs printf '%5d  station2.rs, as station! wrote it, comments left out\\n' >> $@",
+        "grep -v '^ *//' $(location //lib/examples:station.v) | wc -l | " +
+        "xargs printf '%5d  station.v, comments left out\\n' >> $@",
+    ]),
+)
+
 # A reservation station in TxHDL: the tutorial on the part, its
-# example's run and waveform included.
+# example's run and waveform included, and the same station in
+# Verilog beside it.
 latex_document(
     name = "station",
     main = "station.tex",
@@ -1208,6 +1237,8 @@ latex_document(
         ":vendored_tex",
         ":station_run",
         ":station_timing",
+        ":station_source",
+        ":station_sizes",
         ":queue_run",
         "//lib/examples:sources",
         "//lib/parts:sources",
