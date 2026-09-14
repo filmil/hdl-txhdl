@@ -33,7 +33,9 @@ build. A \code{let} that computes is a wire named for it, a read of a
 port or register an alias. It reads \code{case!} and \code{select!}
 as chains on the value, with an enum variant, an integer or \code{\_}
 as a pattern and a guard joined by \code{\&\&}; \code{slice},
-\code{concat}, \code{sext} and \code{zext} by their turbofish; a
+\code{concat}, \code{sext} and \code{zext} by their turbofish, every
+width it needs written, since it sees tokens and not types, and only
+\code{concat}'s low operand left to Rust as \code{\_}; a
 struct literal as the concatenation of its fields; an \code{if} chain
 as arms under their conditions, each arm's statements lowered in
 turn, a \code{send} in an arm hoisted with the arm's path as

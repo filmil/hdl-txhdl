@@ -1631,6 +1631,28 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                                 .map(|t| t.to_string())
                                 .collect();
                             let args = split_commas(g);
+                            // A width the netlist needs is written: the
+                            // macro sees tokens, not types, so it cannot
+                            // infer one. The low operand of a `concat`
+                            // is the exception, since its width is not
+                            // needed.
+                            let needed: &[usize] = match m.to_string().as_str()
+                            {
+                                "concat" => &[1],
+                                "slice" => &[0, 1],
+                                _ => &[0],
+                            };
+                            if needed
+                                .iter()
+                                .any(|&k| ks.get(k).is_some_and(|x| x == "_"))
+                            {
+                                return Err(format!(
+                                    "`{}::<..>` needs its width written: the \
+                                     lowering sees no types, so it cannot \
+                                     infer one",
+                                    m
+                                ));
+                            }
                             return Ok(match m.to_string().as_str() {
                                 "slice" => format!(
                                     "E::Slice(Box::new({l}), {}, {})",

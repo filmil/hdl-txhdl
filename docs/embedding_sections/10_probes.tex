@@ -129,6 +129,9 @@ Probe & Question & Answer \\
 \code{probe\_infer\_bad}
   & A width nothing fixes, a slice compared with a number?
   & \textbf{No.} \code{error[E0284]: type annotations needed}; and the lowering, which sees no types, asks for every width it needs \\
+\code{probe\_infer\_lower}
+  & A width Rust would infer, under \code{\#[lower]}?
+  & \textbf{Refused:} \code{`slice::<..>` needs its width written: the lowering sees no types}; \code{concat}'s low operand is the one width it does not need \\
 \bottomrule
 \end{tabular}
 \end{table*}
