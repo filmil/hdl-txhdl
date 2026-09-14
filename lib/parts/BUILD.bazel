@@ -8,6 +8,7 @@ rust_library(
     srcs = [
         "src/buffer.rs",
         "src/fifo.rs",
+        "src/station.rs",
         "src/lib.rs",
     ],
     crate_name = "txhdl_parts",
