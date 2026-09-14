@@ -1452,12 +1452,12 @@ fn width_of(ts: &[TokenTree]) -> Option<usize> {
 
 /// The Rust source of an `Expr` for a name.
 fn ename(n: &str) -> String {
-    format!("E::Name(\"{n}\".to_string())")
+    format!("NlE::Name(\"{n}\".to_string())")
 }
 
 /// The Rust source of an `Expr::Bin`.
 fn ebin(op: &str, a: &str, b: &str) -> String {
-    format!("E::bin(\"{op}\", {a}, {b})")
+    format!("NlE::bin(\"{op}\", {a}, {b})")
 }
 
 /// The plain name a drive targets: `x` or `self.x`.
@@ -1479,11 +1479,11 @@ fn target_expr(
                 let mem = target_name(&ts[..end])?;
                 let at: Vec<TokenTree> = g.stream().into_iter().collect();
                 let a = tr(&at, subst)?;
-                return Ok(format!("T::Word(\"{mem}\".to_string(), {a})"));
+                return Ok(format!("NlT::Word(\"{mem}\".to_string(), {a})"));
             }
         }
     }
-    Ok(format!("T::Name(\"{}\".to_string())", target_name(ts)?))
+    Ok(format!("NlT::Name(\"{}\".to_string())", target_name(ts)?))
 }
 
 fn target_name(ts: &[TokenTree]) -> Result<String, String> {
@@ -1556,7 +1556,7 @@ thread_local! {
 /// `lowered` runs, so a generic value's width is no obstacle.
 fn field_of(base: &str, f: &str) -> Result<String, String> {
     let name = base
-        .strip_prefix("E::Name(\"")
+        .strip_prefix("NlE::Name(\"")
         .and_then(|s| s.strip_suffix("\".to_string())"))
         .ok_or_else(|| {
             format!("`.{f}` needs a port's value before it, not a computed one")
@@ -1767,7 +1767,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
     }
     if let TokenTree::Punct(p) = &ts[0] {
         if p.as_char() == '!' {
-            return Ok(format!("E::Not(Box::new({}))", tr(&ts[1..], subst)?));
+            return Ok(format!("NlE::Not(Box::new({}))", tr(&ts[1..], subst)?));
         }
     }
     let end = ts.len();
@@ -1836,26 +1836,32 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                             }
                             return Ok(match m.to_string().as_str() {
                                 "slice" => format!(
-                                    "E::Slice(Box::new({l}), {}, {})",
+                                    "NlE::Slice(Box::new({l}), {}, {})",
                                     ks[0], ks[1]
                                 ),
                                 "sext" => {
-                                    format!("E::Sext(Box::new({l}), {})", ks[0])
+                                    format!(
+                                        "NlE::Sext(Box::new({l}), {})",
+                                        ks[0]
+                                    )
                                 }
                                 "zext" | "resize" => {
-                                    format!("E::Zext(Box::new({l}), {})", ks[0])
+                                    format!(
+                                        "NlE::Zext(Box::new({l}), {})",
+                                        ks[0]
+                                    )
                                 }
                                 "concat" => format!(
-                                    "E::Cat(Box::new({l}), Box::new({}))",
+                                    "NlE::Cat(Box::new({l}), Box::new({}))",
                                     tr(&args[0], subst)?
                                 ),
                                 // Both operands at the result's width,
                                 // so the product is that wide in either
                                 // target language.
                                 "mul" => format!(
-                                    "E::Bin(\"*\", \
-                                     Box::new(E::Zext(Box::new({l}), {0})), \
-                                     Box::new(E::Zext(Box::new({1}), {0})))",
+                                    "NlE::Bin(\"*\", \
+                                     Box::new(NlE::Zext(Box::new({l}), {0})), \
+                                     Box::new(NlE::Zext(Box::new({1}), {0})))",
                                     ks[0],
                                     tr(&args[0], subst)?
                                 ),
@@ -1904,7 +1910,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     "sra" => ebin(">>>", &l, &a[0]),
                     "lt_signed" => ebin("<s", &l, &a[0]),
                     "bit" | "read" => {
-                        format!("E::Index(Box::new({l}), Box::new({}))", a[0])
+                        format!("NlE::Index(Box::new({l}), Box::new({}))", a[0])
                     }
                     // Conversions between a bit and a truth value, and
                     // a read, are the value itself.
@@ -1933,19 +1939,19 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             }
             if n == "true" || n == "false" {
                 let b = if n == "true" { 1 } else { 0 };
-                return Ok(format!("E::Bits(1, \"{b}\".to_string())"));
+                return Ok(format!("NlE::Bits(1, \"{b}\".to_string())"));
             }
             let upper = n.chars().all(|c| {
                 c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()
             });
             Ok(if upper && n.chars().any(|c| c.is_ascii_uppercase()) {
-                format!("E::Num(({n}) as u128)")
+                format!("NlE::Num(({n}) as u128)")
             } else {
                 ename(&n)
             })
         }
         [TokenTree::Literal(l)] => {
-            Ok(format!("E::Num({})", l.to_string().replace('_', "")))
+            Ok(format!("NlE::Num({})", l.to_string().replace('_', "")))
         }
         [TokenTree::Group(g)]
             if matches!(
@@ -1986,7 +1992,9 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 let e = tr(&f[c + 1..], subst)?;
                 acc = Some(match acc {
                     None => e,
-                    Some(a) => format!("E::Cat(Box::new({a}), Box::new({e}))"),
+                    Some(a) => {
+                        format!("NlE::Cat(Box::new({a}), Box::new({e}))")
+                    }
                 });
             }
             acc.ok_or_else(|| "an empty struct literal".to_string())
@@ -2023,7 +2031,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                         "sra" => ebin(">>>", &v[0], &v[1]),
                         "lt_signed" => ebin("<s", &v[0], &v[1]),
                         "mux" => format!(
-                            "E::Cond(Box::new({}), Box::new({}), Box::new({}))",
+                            "NlE::Cond(Box::new({}), Box::new({}), Box::new({}))",
                             v[0], v[1], v[2]
                         ),
                         other => {
@@ -2035,10 +2043,10 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 }
             }
             if text == "Bit::One" || text == "true" {
-                return Ok("E::Bits(1, \"1\".to_string())".into());
+                return Ok("NlE::Bits(1, \"1\".to_string())".into());
             }
             if text == "Bit::Zero" || text == "false" {
-                return Ok("E::Bits(1, \"0\".to_string())".into());
+                return Ok("NlE::Bits(1, \"0\".to_string())".into());
             }
             if let Some(TokenTree::Group(g)) = ts.last() {
                 // A bit from a truth value, or the reverse, is the value.
@@ -2054,7 +2062,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     return Ok(format!("::txhdl::netlist::lit({text})"));
                 }
                 if text.starts_with("U::from") {
-                    return Ok(format!("E::Num(({}) as u128)", g.stream()));
+                    return Ok(format!("NlE::Num(({}) as u128)", g.stream()));
                 }
             }
             if text.contains("::") && !last_group {
@@ -2063,7 +2071,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()
                 });
                 return Ok(if upper {
-                    format!("E::Num(({text}) as u128)")
+                    format!("NlE::Num(({text}) as u128)")
                 } else {
                     format!("::txhdl::netlist::lit({text})")
                 });
@@ -2100,7 +2108,8 @@ fn tr_select(g: &Group, subst: &[(String, String)]) -> Result<String, String> {
         return Err("select! needs an arm".into());
     };
     for (c, e) in chain.into_iter().rev() {
-        acc = format!("E::Cond(Box::new({c}), Box::new({e}), Box::new({acc}))");
+        acc =
+            format!("NlE::Cond(Box::new({c}), Box::new({e}), Box::new({acc}))");
     }
     Ok(acc)
 }
@@ -2147,9 +2156,9 @@ fn pattern_cond(
             a.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("");
         let digit = text.chars().next().is_some_and(|c| c.is_ascii_digit());
         let c = if text == "_" {
-            "E::Bits(1, \"1\".to_string())".to_string()
+            "NlE::Bits(1, \"1\".to_string())".to_string()
         } else if digit {
-            ebin("==", v, &format!("E::Num(({text}) as u128)"))
+            ebin("==", v, &format!("NlE::Num(({text}) as u128)"))
         } else {
             ebin("==", v, &format!("::txhdl::netlist::lit({text})"))
         };
@@ -2159,7 +2168,7 @@ fn pattern_cond(
         });
     }
     let mut cond =
-        cond.unwrap_or_else(|| "E::Bits(1, \"1\".to_string())".to_string());
+        cond.unwrap_or_else(|| "NlE::Bits(1, \"1\".to_string())".to_string());
     if let Some(g) = guard {
         cond = ebin("&&", &cond, &tr(g, subst)?);
     }
@@ -2228,7 +2237,7 @@ fn conj(outer: Option<&str>, nots: &[String], own: Option<&str>) -> String {
             Some(a) => ebin("&&", &a, n),
         });
     }
-    acc.unwrap_or_else(|| "E::Bits(1, \"1\".to_string())".into())
+    acc.unwrap_or_else(|| "NlE::Bits(1, \"1\".to_string())".into())
 }
 
 /// The statements of a `with!` block on `self`: a drive per entry, an
@@ -2246,12 +2255,12 @@ fn with_lowered(cx: &mut Cx, es: &[Entry]) -> Result<Vec<String>, String> {
                 t.extend(path.iter().cloned());
                 let l = target_expr(&t, &cx.subst)?;
                 let r = tr(value, &cx.subst)?;
-                let d = format!("S::Drive({l}, {r})");
+                let d = format!("NlS::Drive({l}, {r})");
                 out.push(match pred {
                     None => d,
                     Some(p) => {
                         let c = tr(p, &cx.subst)?;
-                        format!("S::If(vec![({c}, vec![{d}])], vec![])")
+                        format!("NlS::If(vec![({c}, vec![{d}])], vec![])")
                     }
                 });
             }
@@ -2264,7 +2273,7 @@ fn with_lowered(cx: &mut Cx, es: &[Entry]) -> Result<Vec<String>, String> {
                 let yes = with_lowered(cx, then)?.join(", ");
                 let no = with_lowered(cx, otherwise)?.join(", ");
                 out.push(format!(
-                    "S::If(vec![({c}, vec![{yes}])], vec![{no}])"
+                    "NlS::If(vec![({c}, vec![{yes}])], vec![{no}])"
                 ));
             }
         }
@@ -2337,7 +2346,7 @@ fn lower_stmts(
                 Err(m) => return Err(err(ts[0].span(), &m)),
             };
             cx.guard = Some(cond.clone());
-            stmts.push(format!("S::Guard({cond})"));
+            stmts.push(format!("NlS::Guard({cond})"));
             continue;
         }
         // let v = rx.wait().await: a receive is the wait, and its guard.
@@ -2350,10 +2359,10 @@ fn lower_stmts(
             };
             let cond = ename(&format!("{rx}_valid"));
             cx.guard = Some(cond.clone());
-            stmts.push(format!("S::Guard({cond})"));
+            stmts.push(format!("NlS::Guard({cond})"));
             stmts.push(format!(
-                "S::Drive(T::Name(\"{rx}_ready\".to_string()), \
-                 E::Bits(1, \"1\".to_string()))"
+                "NlS::Drive(NlT::Name(\"{rx}_ready\".to_string()), \
+                 NlE::Bits(1, \"1\".to_string()))"
             ));
             cx.subst.push((n.to_string(), ename(&format!("{rx}_data"))));
             continue;
@@ -2408,7 +2417,7 @@ fn lower_stmts(
                 .clone()
                 .unwrap_or_else(|| ename(&format!("{rx}_valid")));
             stmts.push(format!(
-                "S::Drive(T::Name(\"{rx}_ready\".to_string()), {g})"
+                "NlS::Drive(NlT::Name(\"{rx}_ready\".to_string()), {g})"
             ));
             cx.subst
                 .push((ns[0][0].to_string(), ename(&format!("{rx}_valid"))));
@@ -2425,7 +2434,7 @@ fn lower_stmts(
                 .clone()
                 .unwrap_or_else(|| ename(&format!("{rx}_valid")));
             stmts.push(format!(
-                "S::Drive(T::Name(\"{rx}_ready\".to_string()), {g})"
+                "NlS::Drive(NlT::Name(\"{rx}_ready\".to_string()), {g})"
             ));
         }
         // A receive under a condition of its own: ready is the
@@ -2457,8 +2466,8 @@ fn lower_stmts(
             // offered, which is what the runtime records.
             let v = ename(&format!("{rx}_valid"));
             stmts.push(format!(
-                "S::Drive(T::Name(\"{rx}_ready\".to_string()), \
-                     E::Bin(\"&\", Box::new({c}), Box::new({v})))"
+                "NlS::Drive(NlT::Name(\"{rx}_ready\".to_string()), \
+                     NlE::Bin(\"&\", Box::new({c}), Box::new({v})))"
             ));
         }
         if text.starts_with("let") {
@@ -2484,9 +2493,9 @@ fn lower_stmts(
                 };
                 // A read of a port or a register, or a number, is an
                 // alias; anything computed is a wire named for the let.
-                let alias = v.starts_with("E::Name(")
-                    || v.starts_with("E::Num(")
-                    || v.starts_with("E::Bits(")
+                let alias = v.starts_with("NlE::Name(")
+                    || v.starts_with("NlE::Num(")
+                    || v.starts_with("NlE::Bits(")
                     || v.starts_with("::txhdl::netlist::lit(");
                 if alias || name == "_" {
                     cx.subst.push((name, v));
@@ -2567,7 +2576,7 @@ fn lower_stmts(
                     }
                 }
             }
-            stmts.push(format!("S::Case(vec![{}])", arms.join(", ")));
+            stmts.push(format!("NlS::Case(vec![{}])", arms.join(", ")));
             continue;
         }
         // `if c { .. } else if d { .. } else { .. }`: a priority
@@ -2604,7 +2613,7 @@ fn lower_stmts(
                 let body = lower_stmts(cx, &gt, Some(here))?;
                 cx.subst.truncate(n);
                 arms.push(format!("({c}, vec![{}])", body.join(", ")));
-                nots.push(format!("E::Not(Box::new({c}))"));
+                nots.push(format!("NlE::Not(Box::new({c}))"));
                 i += 2 + b;
                 match (ts.get(i), ts.get(i + 1)) {
                     (Some(e), Some(f))
@@ -2634,7 +2643,7 @@ fn lower_stmts(
                     }
                 }
             }
-            stmts.push(format!("S::If(vec![{}], {els})", arms.join(", ")));
+            stmts.push(format!("NlS::If(vec![{}], {els})", arms.join(", ")));
             continue;
         }
         // `with!(self <= { .. })`: a drive per entry, under `if` for a
@@ -2733,10 +2742,10 @@ fn lower_stmts(
                             None => here.to_string(),
                         };
                         cx.hoisted.push(format!(
-                            "S::Drive(T::Name({data}.to_string()), {e})"
+                            "NlS::Drive(NlT::Name({data}.to_string()), {e})"
                         ));
                         cx.hoisted.push(format!(
-                            "S::Drive(T::Name(\"{tx}_valid\"\
+                            "NlS::Drive(NlT::Name(\"{tx}_valid\"\
                                  .to_string()), {v})"
                         ));
                         continue;
@@ -2747,7 +2756,7 @@ fn lower_stmts(
                             Err(m) => return Err(err(ts[0].span(), &m)),
                         };
                         if cx.pnames.iter().any(|p| {
-                            l == format!("T::Name(\"{p}\".to_string())")
+                            l == format!("NlT::Name(\"{p}\".to_string())")
                         }) {
                             return Err(err(
                                 ts[0].span(),
@@ -2761,7 +2770,7 @@ fn lower_stmts(
                             Ok(e) => e,
                             Err(m) => return Err(err(ts[0].span(), &m)),
                         };
-                        stmts.push(format!("S::Drive({l}, {e})"));
+                        stmts.push(format!("NlS::Drive({l}, {e})"));
                         continue;
                     }
                 }
@@ -2793,10 +2802,10 @@ fn lower_stmts(
                         Err(m) => return Err(err(ts[0].span(), &m)),
                     };
                     stmts.push(format!(
-                        "S::Drive(T::Name(\"{tx}_data\".to_string()), {e})"
+                        "NlS::Drive(NlT::Name(\"{tx}_data\".to_string()), {e})"
                     ));
                     stmts.push(format!(
-                        "S::Drive(T::Name(\"{tx}_valid\".to_string()), {gd})"
+                        "NlS::Drive(NlT::Name(\"{tx}_valid\".to_string()), {gd})"
                     ));
                     continue;
                 }
@@ -2821,7 +2830,7 @@ fn lower_stmts(
                         Err(m) => return Err(err(ts[0].span(), &m)),
                     };
                     stmts.push(format!(
-                        "S::Drive(T::Name(\"{target}\".to_string()), {e})"
+                        "NlS::Drive(NlT::Name(\"{target}\".to_string()), {e})"
                     ));
                     continue;
                 }
@@ -3057,7 +3066,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          /// `.vhdl()` render it.\n\
          #[allow(unused_variables, clippy::all)]\n\
          pub fn lowered(name: &str) -> ::txhdl::netlist::Lowered {{\n\
-         use ::txhdl::netlist::{{Expr as E, Stmt as S, Target as T}};\n\
+         use ::txhdl::netlist::{{Expr as NlE, Stmt as NlS, Target as NlT}};\n\
          ::txhdl::netlist::Lowered {{\n\
          name: name.to_string(),\n\
          fields: <Self as ::txhdl::netlist::Fields>::fields(),\n\
