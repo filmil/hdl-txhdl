@@ -22,7 +22,11 @@ The example is a station of two inputs, a byte and a half word, by a
 two-bit tag. The two sources offer their tags in different orders,
 one with gaps, and the sink holds the output off two cycles in four,
 so one line waits for room and a repeated tag waits for its cell.
-The netlist is checked against this run under both simulators.
+The netlist is checked against this run under both simulators, and
+the same station written by hand in Verilog, \code{station.v}, runs
+beside it as a foreign unit fed the same offers, the two compared
+line by line; the tutorial~\cite{station} reads the two side by
+side.
 
 \begin{figure}[htbp]
 \centering

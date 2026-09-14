@@ -193,12 +193,21 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
-# A reservation station:  bazel run //lib/examples:ex_station
+# The same station written by hand in Verilog, as a unit.
+verilog_unit(
+    name = "station_verilog",
+    src = "station.v",
+    top = "station_v",
+)
+
+# A reservation station, beside its Verilog:
+#   bazel run //lib/examples:ex_station
 rust_binary(
     name = "ex_station",
     srcs = ["ex_station.rs"],
     edition = "2021",
     deps = [
+        ":station_verilog",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
     ],
@@ -366,6 +375,7 @@ filegroup(
         "ex_with.rs",
         "ex_queue.rs",
         "ex_station.rs",
+        "station.v",
         "ex_mem.rs",
         "ex_imm.rs",
         "ex_twoproc.rs",
