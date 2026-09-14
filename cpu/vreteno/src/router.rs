@@ -67,8 +67,7 @@ impl Unit for Router {
             when!(go & to_timer => { timer_req.send(r) });
             when!(go & to_uart => { uart_req.send(r) });
             // The responses, merged: the memory's first, then the timer's.
-            let m_valid = mem_resp.peek().is_some();
-            let m = mem_resp.recv().unwrap_or_default();
+            let (m_valid, m) = mem_resp.take();
             let t_valid = timer_resp.peek().is_some() & !m_valid;
             let t = timer_resp.recv_if(!m_valid).unwrap_or_default();
             let u_valid = uart_resp.peek().is_some() & !m_valid & !t_valid;

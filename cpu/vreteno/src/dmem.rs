@@ -41,8 +41,7 @@ impl Unit for Dmem {
     async fn run(&mut self, req: Rx<U<69>>, resp: Tx<U<32>>) {
         loop {
             DefaultClock::rising().await;
-            let offered = req.peek().is_some();
-            let r = req.recv().unwrap_or_default();
+            let (offered, r) = req.take();
             let at = r.slice::<REQ_ADDR, 32>().slice::<2, 10>();
             let data = r.slice::<REQ_WDATA, 32>();
             let we = r.bit(0);

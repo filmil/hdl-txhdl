@@ -375,8 +375,7 @@ impl Unit for Vreteno {
                 (self.mstatus.get(), self.mtvec.get(), self.mepc.get());
             let (mie_r, mip) = (self.mie.get(), self.mip.get());
             // The bus's answer, taken whenever it comes.
-            let resp_valid = resp.peek().is_some();
-            let resp_data = resp.recv().unwrap_or_default();
+            let (resp_valid, resp_data) = resp.take();
             let (m_hi, m_lo, m_d) =
                 (self.m_hi.get(), self.m_lo.get(), self.m_d.get());
             // The writeback stage: a loaded word's byte or half, by the

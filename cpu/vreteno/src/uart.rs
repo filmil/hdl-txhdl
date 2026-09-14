@@ -132,8 +132,7 @@ impl<const DIV: u32> Unit for Uart<DIV> {
             let busy = self.bits != 0;
             // Every request is taken; the ones for this device are the
             // ones whose address falls in its sixteen bytes.
-            let offered = req.peek().is_some();
-            let r = req.recv().unwrap_or_default();
+            let (offered, r) = req.take();
             let addr = r.slice::<REQ_ADDR, 32>();
             let mine = hit(addr);
             let sel = addr.slice::<2, 2>();
