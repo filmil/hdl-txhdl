@@ -15,7 +15,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and eleven documents describe it,
+The language is a library, `//lib`, and twelve documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -43,6 +43,9 @@ all under `//docs`:
 * `//docs:zero` is the tutorial for an empty directory: four files
   that build a blinky with Bazel against the GitHub mirror, kept under
   `tutorial/blinky/`, which the tree builds as a check.
+* `//docs:station` is the tutorial on the reservation station part:
+  its rule read cycle by cycle on the example's run, the stations of
+  two to ten inputs, the FIFO behind them, and the netlist.
 * `//docs:cheatsheet` is the one-page cheat sheet, also as a PNG
   (`//docs:cheatsheet_png`); it shows `ex_cheat.rs`, its netlist and
   its waveform, all produced by the build.

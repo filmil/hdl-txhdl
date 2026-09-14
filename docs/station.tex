@@ -1,0 +1,258 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% A reservation station in TxHDL: the tutorial on the part. Built by
+% //docs:station. Every listing is included from the tree and every
+% printout and figure is what the build made by running the example.
+\documentclass[journal,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{A Reservation Station in TxHDL}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{This is the tutorial on one part of the language's library:
+the reservation station, for a reader who has met TxHDL through the
+step-by-step tutorial~\cite{tutorial} and wants to use the part, or
+to read how it is made. Every listing is included from the project
+repository \code{HDL/txhdl} at build time and every printout and
+figure is what the build produced by running the example. The part's
+source is in the runtime document~\cite{runtime}, the example in the
+examples document~\cite{examples}, and the cover~\cite{cover} lists
+every document.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{A Reservation Station in TxHDL}{Filmar and Janković: A Reservation Station in TxHDL}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A reservation station gathers the operands of an operation that
+arrive on separate channels, out of order, and fires when all of
+them have. TxHDL provides one as a part, \code{Station2} to
+\code{Station10}, each a lowered unit with a channel per input and
+a channel out. This document says what the station does, reads its
+rule cycle by cycle on the run of an example, shows how a station is
+instantiated and fed and how a FIFO goes behind it, and shows the
+netlist the lowering makes of it.
+\end{abstract}
+
+\section{What It Is}
+\label{sec:s-what}
+
+An operation that needs several operands waits for the last of them.
+When the operands come from different producers, on different
+channels and in no fixed order, something must hold the ones that
+have arrived until the rest do, and must keep the operands of one
+operation apart from the next one's. That something is a
+reservation station, after Tomasulo. Each operation has a tag; each
+operand carries the tag of its operation; the station has a line per
+tag, with a cell per input; an operand lands in its cell of its line;
+a line whose every cell holds is complete and goes out, all its
+operands at once, with its tag.
+
+In TxHDL the inputs are channels and so is the output. An input's
+\code{ready} is whether the station can take what it offers, which
+is whether the cell the offer's tag names is free. The output's
+\code{valid} is a complete line, and its \code{ready} is the room
+the channel behind it has.
+
+\section{The Interface}
+\label{sec:s-interface}
+
+An input carries a \code{Tagged<TB, T>}, the tag of \code{TB} bits
+above a value of type \code{T}, a struct that derives
+\code{Transaction} and \code{Value} as any channel payload does. A
+station of \code{N} inputs is \code{StationN<TB, L, T0, .., TN>}:
+the tag width, the line count, which is \code{1 << TB} and is
+stated since a computed width in a type needs nightly Rust, and one
+value type per input. Its \code{run} takes a tuple of \code{N}
+receivers, \code{Rx<Tagged<TB, Ti>>}, and one sender,
+\code{Tx<LineN<TB, T0, .., TN>>}, where \code{LineN} is the tag and
+the values, \code{v0} to \code{vN}, a derived struct beside the
+station. Listing~\ref{lst:s-part} is the file that provides them:
+the payload struct, and the nine stations written out by
+\code{station!}, one per count of inputs, because the lowering reads
+a body and not a loop over inputs.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=part-part,caption={From \code{lib/parts/src/station.rs}: the tagged payload and the nine stations; the rule is in the module's own words there, and its tests follow.},label={lst:s-part}]{lib/parts/src/station.rs}
+
+\section{The Rule}
+\label{sec:s-rule}
+
+Every cycle the station looks at what each input offers, its tag and
+its value, and at its own state: a memory per input holding the
+cells, and a mask per input with one bit per line saying which cells
+hold. Then:
+
+\begin{enumerate}
+\item An input's cell is \emph{free} when its tag's bit of the
+  input's mask is clear.
+\item Taking an input \emph{completes} its line when, for every
+  other input, the cell of that line holds, or that input offers the
+  same tag now and its own cell is free.
+\item The line \emph{sent} is the completing input's of lowest
+  index, if any completes and the output has room. At most one line
+  leaves per cycle.
+\item An input is \emph{taken} when its cell is free and taking it
+  completes nothing, or completes the line being sent. An input whose
+  taking would complete a line that is not sent this cycle waits,
+  which is the case when the output has no room, and when another
+  input of lower index completes a different line at the same time.
+\item A taken input writes its cell and sets its bit. The line sent
+  clears its bit in every mask, and its values come from the cells,
+  or, for an input completing the line this cycle, straight from
+  that input.
+\end{enumerate}
+
+So an input never waits on another input's cell, only on its own,
+or on the output's room. What the rule does not do is protect
+against a stream that never completes a line: if an input's next
+offer is a tag whose cell it already holds, it waits until that line
+completes, and if the other inputs never offer that tag, it waits
+forever, with everything behind it in its channel. A station is not
+an arbiter; each input must, in time, see every tag its lines wait
+on.
+
+\section{The Rule, Cycle by Cycle}
+\label{sec:s-cycles}
+
+The example is a \code{Station2} of a byte and a half word by a
+two-bit tag, so four lines. Its first source offers bytes tagged
+0, 1, 2, 3, 0, 2, one per cycle while the station takes; its second
+offers half words tagged 2, 0, 3, 1, 2, 0, skipping every third
+cycle; and the sink takes the output on two cycles in four.
+Listing~\ref{lst:s-out} is what the run printed, one row per cycle:
+what each source offered, the two masks as the cycle left them, and
+the line the sink took. An offer is seen by the station the cycle
+after it is made, since a send lands at the end of its step, and a
+line sent is taken the cycle after at the earliest, for the same
+reason.
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_station} printed when the build ran it: the offers, the masks, the lines taken; then the lowering.},label={lst:s-out}]{out_station.txt}
+
+Read down the rows.
+
+\begin{itemize}
+\item Cycle 1: the byte tagged 0 and the half word tagged 2 are
+  offered. Cycle 2: the station takes both, into cell 0 of the first
+  mask and cell 2 of the second, which the row for cycle 2 shows as
+  \code{0001} and \code{0100}.
+\item Cycle 2 offered the byte tagged 1 and the half word tagged 0.
+  In cycle 3 the half word's tag 0 completes line 0, since the
+  byte's cell 0 holds: line 0 is sent, the half word goes straight
+  through, and cell 0 of the first mask is cleared as the byte
+  tagged 1 fills cell 1: \code{0010}. The sink takes line 0 in cycle
+  4, the row that shows it.
+\item Cycle 3 offered the byte tagged 2. In cycle 4 it completes
+  line 2, since the half word's cell 2 holds; line 2 is sent, cell 2
+  of the second mask is cleared: \code{0000}.
+\item Cycle 4 offered a byte and a half word both tagged 3. In cycle
+  5 each completes the line through the other's offer, both are
+  taken, line 3 is sent at once, and neither mask changes.
+\item Cycle 5 offered the byte tagged 0 and the half word tagged 1.
+  In cycle 6 the byte fills cell 0, \code{0011}; the half word's tag
+  1 would complete line 1, since the byte's cell 1 holds, but the
+  output holds lines 2 and 3, which the sink has not taken, so there
+  is no room and the half word waits. In cycle 7 it waits again; the
+  byte tagged 2 offered in cycle 6 fills cell 2, \code{0111}. In
+  cycle 8 the sink has taken line 2, there is room, line 1 is sent,
+  and cell 1 clears: \code{0101}.
+\item The half word tagged 2, offered in cycle 7, completes line 2
+  in cycle 9, \code{0001}; the last half word, tagged 0, completes
+  line 0 in cycle 11, and the mask is empty. The sink takes lines 1,
+  2 and 0 in cycles 11, 12 and 15.
+\end{itemize}
+
+Figure~\ref{fig:s-wave} is the same run as a waveform: the inputs'
+tags with their \code{valid} and \code{ready}, the masks, and the
+output's tag and values with its handshake. The \code{ready} of the
+second input is low through cycles 6 and 7, the wait of the rule's
+fourth point.
+
+\begin{figure}[htbp]
+\centering
+\input{station_timing.tex}
+\caption{The example's run: the two inputs' tags and handshakes, the
+masks, and the lines out.}
+\label{fig:s-wave}
+\end{figure}
+
+\section{Using a Station}
+\label{sec:s-use}
+
+Listing~\ref{lst:s-example} is the example whole. The station is a
+type, \code{Station2<2, 4, U<8>, U<16>>}, named once; its inputs are
+the receiving ends of two channels and its output the sending end of
+a third; the sources send \code{Tagged} values and the sink receives
+\code{Line2} values, reading \code{tag}, \code{v0} and \code{v1}. A
+station of three or more inputs is the same with more channels,
+\code{Station3<2, 4, A, B, C>} and so on to ten; the value types may
+differ, the tag width is one for all. The tag has two bits at least,
+since a one-bit value is a single wire in VHDL and cannot index a
+line.
+
+\lstinputlisting[caption={\code{ex\_station.rs}. Run with \code{bazel run //lib/examples:ex\_station}.},label={lst:s-example}]{lib/examples/ex_station.rs}
+
+A channel holds two, so the station's output has room for two lines
+before it waits. Where the consumer takes in bursts, or holds off
+longer, the \code{Fifo} part goes behind the station: a channel in,
+a channel out and \code{D} words between, \code{D} a power of two
+stated with its address width, \code{Fifo<Line2<2, U<8>, U<16>>,
+3, 8>} for eight lines. Listing~\ref{lst:s-queue} is the FIFO's own
+example run: a burst of nine words into a FIFO of four, the fill,
+the hold of the source, and the drain in order.
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_queue} printed when the build ran it: a FIFO of four between two channels, filling and draining; then its lowering.},label={lst:s-queue}]{out_queue.txt}
+
+\section{The Netlist}
+\label{sec:s-netlist}
+
+The end of Listing~\ref{lst:s-out} is the Verilog of the example's
+station, as the lowering wrote it. Each mask is a register of four
+bits and each input's cells a memory of four words; every wire of
+the step is named for the rule's word: \code{offered0},
+\code{cell\_free0}, \code{completes0}, \code{line\_tag},
+\code{send\_line}, \code{take0}, \code{cell\_bit0},
+\code{line\_clear}, \code{out0}. The tag and the value of an input
+are slices of the input's data, at the bits the payload's derive laid
+them out; the one-hot of a cell is a one shifted by the tag; the
+masks are updated in one assignment each, the cell filled or'd in
+and the line sent and'd out; the output's data is the concatenation
+of the tag and the values, its \code{valid} the \code{send\_line}
+wire, and each input's \code{ready} its \code{take}. The VHDL says
+the same with \code{shift\_left} and \code{to\_integer}. Both are
+simulated against the run above, by the build, every time.
+
+\begin{thebibliography}{9}
+
+\bibitem{tutorial}
+F.~Filmar and D.~Janković, ``TxHDL, step by step,'' project
+repository \code{HDL/txhdl}, \code{//docs:tutorial}, 2026.
+
+\bibitem{runtime}
+F.~Filmar and D.~Janković, ``The TxHDL runtime,'' project repository
+\code{HDL/txhdl}, \code{//docs:runtime}, 2026.
+
+\bibitem{examples}
+F.~Filmar and D.~Janković, ``TxHDL by example,'' project repository
+\code{HDL/txhdl}, \code{//docs:examples}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}
