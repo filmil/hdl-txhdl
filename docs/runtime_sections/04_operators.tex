@@ -9,7 +9,10 @@ clock, so a pipeline's depth follows from the operators it awaits and
 nobody places a stage boundary. An operator in \code{funcs} is a plain
 \code{fn}, has no \code{.await} to write, and cannot count cycles, which
 is the whole enforcement of the rule that a combinational body is
-timeless.
+timeless. The operators with a Rust spelling are Rust's, on the value
+types of Section~\ref{sec:r-types}; \code{funcs} holds the two that
+have none, the arithmetic shift and the signed compare, and the
+halves of a word.
 
 \code{drive} is what makes an \code{async fn} a pipeline rather than
 a sequence: at every edge at which an input is offered it starts an

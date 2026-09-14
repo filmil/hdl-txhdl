@@ -10,7 +10,7 @@ pub struct Top<const TAPS: usize> { pub acc: Reg<U<64>> }
 
 impl<const TAPS: usize> Unit<(), ()> for Top<TAPS> {
     async fn run(&mut self, _i: (), _o: ()) {
-        loop { for i in 0..TAPS { rising::<DefaultClock>().await; let a = self.acc.get(); self.acc.set(a.wrapping_add(U::new(i as u128 * 2))) } }
+        loop { for i in 0..TAPS { rising::<DefaultClock>().await; let a = self.acc.get(); self.acc.set(a + U::new(i as u128 * 2)) } }
     }
 }
 

@@ -10,7 +10,6 @@
 use crate::bus::{REQ_ADDR, REQ_WDATA};
 use crate::isa::TIMER_BASE;
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
-use txhdl::funcs::{eq, lt};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, when, Trace};
 
@@ -35,12 +34,12 @@ impl Unit<(In<Bit>, Rx<U<69>>), (Tx<U<32>>, Out<Bit>)> for Timer {
             let pending = self.pending.get();
             // Every request is taken; the ones for this device are the
             // ones whose address falls in its sixteen bytes.
-            let offered = Bit::from_bool(req.peek().is_some());
+            let offered = req.peek().is_some();
             let r = req.recv().unwrap_or_default();
             let addr = r.slice::<REQ_ADDR, 32>();
             let wdata = r.slice::<REQ_WDATA, 32>();
             let we = r.bit(0); // REQ_WE, which the lowering wants literal
-            let hit = eq(addr.slice::<4, 28>(), U::from(TIMER_BASE >> 4));
+            let hit = addr.slice::<4, 28>() == TIMER_BASE >> 4;
             let sel = addr.slice::<2, 2>();
             let word = select!(sel.raw() => {
                 0 => mtime.slice::<0, 32>(),
@@ -67,31 +66,27 @@ impl Unit<(In<Bit>, Rx<U<69>>), (Tx<U<32>>, Out<Bit>)> for Timer {
                         wdata.slice::<0, 8>(),
                         word.slice::<0, 8>(),
                     ));
-            let write = offered.and(we).and(hit);
-            let read = offered.and(we.not());
-            self.mtime.set(mux(
-                rst,
-                U::<64>::from(0u32),
-                mtime.wrapping_add(U::<64>::from(1u32)),
-            ));
-            when!(write.and(eq(sel, U::from(0u8))) => {
+            let write = offered & we & hit;
+            let read = offered & !we;
+            self.mtime.set(mux(rst, U::<64>::from(0u32), mtime + 1));
+            when!(write & (sel == 0) => {
                 self.mtime <= mtime.slice::<32, 32>().concat::<32, 64>(merged)
             });
-            when!(write.and(eq(sel, U::from(1u8))) => {
+            when!(write & (sel == 1) => {
                 self.mtime <= merged.concat::<32, 64>(mtime.slice::<0, 32>())
             });
-            when!(write.and(eq(sel, U::from(2u8))) => {
+            when!(write & (sel == 2) => {
                 self.mtimecmp <=
                     mtimecmp.slice::<32, 32>().concat::<32, 64>(merged)
             });
-            when!(write.and(eq(sel, U::from(3u8))) => {
+            when!(write & (sel == 3) => {
                 self.mtimecmp <=
                     merged.concat::<32, 64>(mtimecmp.slice::<0, 32>())
             });
             // A read is answered the cycle after it is taken, with the
             // word, or zero for an address that is not this device's.
             when!(read => { resp.send(mux(hit, word, U::<32>::from(0u32))) });
-            self.pending.set(lt(mtime, mtimecmp).not());
+            self.pending.set(mtime >= mtimecmp);
             tirq.set(pending);
         }
     }

@@ -767,11 +767,13 @@ pub fn when(input: TokenStream) -> TokenStream {
         }
     };
 
-    let mut out = String::from("{ let __c: ::txhdl::types::Bit = ");
+    // A `bool` or a `Bit`: a compare yields the one, a wire the other.
+    let mut out = String::from(
+        "{ let __c: ::txhdl::types::Bit = ::core::convert::Into::into(",
+    );
     out.push_str(&cond.to_string());
-    out.push_str(";\n");
-    for (arm, pred) in [(Some(&then), "__c"), (otherwise.as_ref(), "__c.not()")]
-    {
+    out.push_str(");\n");
+    for (arm, pred) in [(Some(&then), "__c"), (otherwise.as_ref(), "!__c")] {
         let Some(g) = arm else { continue };
         for st in statements(g) {
             let span = st
@@ -1280,7 +1282,7 @@ fn ename(n: &str) -> String {
 
 /// The Rust source of an `Expr::Bin`.
 fn ebin(op: &str, a: &str, b: &str) -> String {
-    format!("E::Bin(\"{op}\", Box::new({a}), Box::new({b}))")
+    format!("E::bin(\"{op}\", {a}, {b})")
 }
 
 /// The plain name a drive targets: `x` or `self.x`.
@@ -1370,11 +1372,19 @@ fn is_ident(t: &TokenTree, s: &str) -> bool {
 }
 
 /// Tokens as text, to be parsed again inside a later invocation.
+/// The tokens as text that parses back to the same tokens: a punct
+/// joined to the next, the first half of `>>` or `==`, gets no space.
 fn text_of(ts: &[TokenTree]) -> String {
-    ts.iter()
-        .map(|t| t.to_string())
-        .collect::<Vec<_>>()
-        .join(" ")
+    let mut out = String::new();
+    for t in ts {
+        out.push_str(&t.to_string());
+        let joint = matches!(t, TokenTree::Punct(p)
+            if p.spacing() == proc_macro::Spacing::Joint);
+        if !joint {
+            out.push(' ');
+        }
+    }
+    out
 }
 
 thread_local! {
@@ -1519,34 +1529,54 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
         }
     }
     let mask = turbofish(ts);
-    let infix: &[&str] =
-        &["||", "&&", "==", "!=", "<=", ">=", "<", ">", "+", "-"];
-    for op in infix {
-        let n = op.len();
-        let mut i = 1;
-        while i + n <= ts.len() {
-            if mask[i] {
-                i += 1;
+    // The binary operators by precedence, loosest first, as Rust binds
+    // them. The split is at the rightmost operator of the loosest level
+    // present, which makes every level left-associative, as Rust's are.
+    const LEVELS: &[&[&str]] = &[
+        &["||"],
+        &["&&"],
+        &["==", "!=", "<=", ">=", "<", ">"],
+        &["|"],
+        &["^"],
+        &["&"],
+        &["<<", ">>"],
+        &["+", "-"],
+        &["/"],
+    ];
+    let joint = |t: &TokenTree| {
+        matches!(t, TokenTree::Punct(p)
+            if p.spacing() == proc_macro::Spacing::Joint)
+    };
+    for level in LEVELS {
+        for i in (1..ts.len()).rev() {
+            if mask[i] || joint(&ts[i - 1]) {
                 continue;
             }
-            let here: String =
-                ts[i..i + n].iter().map(|t| t.to_string()).collect();
-            let all_punct = ts[i..i + n]
-                .iter()
-                .all(|t| matches!(t, TokenTree::Punct(_)));
-            let next_is_punct =
-                matches!(ts.get(i + n), Some(TokenTree::Punct(_)));
-            if all_punct && here == *op && !next_is_punct {
+            for op in *level {
+                let n = op.len();
+                if i + n > ts.len() {
+                    continue;
+                }
+                let here: String =
+                    ts[i..i + n].iter().map(|t| t.to_string()).collect();
+                let all_punct = ts[i..i + n]
+                    .iter()
+                    .all(|t| matches!(t, TokenTree::Punct(_)));
+                // The operator's last character is not joined to what
+                // follows, or this is the head of a longer operator.
+                if !all_punct || here != *op || joint(&ts[i + n - 1]) {
+                    continue;
+                }
                 let prev = ts[i - 1].to_string();
                 let generic =
                     (*op == "<" || *op == ">") && (prev == ":" || prev == "U");
-                if !generic {
-                    let l = tr(&ts[..i], subst)?;
-                    let r = tr(&ts[i + n..], subst)?;
-                    return Ok(ebin(op, &l, &r));
+                if generic {
+                    continue;
                 }
+                let l = tr(&ts[..i], subst)?;
+                let r = tr(&ts[i + n..], subst)?;
+                return Ok(ebin(op, &l, &r));
             }
-            i += 1;
         }
     }
     if let Some(p) = ts.iter().position(
@@ -1668,21 +1698,14 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     a.push(tr(x, subst)?);
                 }
                 return Ok(match m.as_str() {
-                    "wrapping_add" => ebin("+", &l, &a[0]),
-                    "shl" => ebin("<<", &l, &a[0]),
-                    "shr" => ebin(">>", &l, &a[0]),
                     "sra" => ebin(">>>", &l, &a[0]),
-                    "xor" => ebin("^", &l, &a[0]),
                     "lt_signed" => ebin("<s", &l, &a[0]),
-                    "eq" => ebin("==", &l, &a[0]),
-                    "wrapping_sub" => ebin("-", &l, &a[0]),
-                    "and" => ebin("&", &l, &a[0]),
-                    "or" => ebin("|", &l, &a[0]),
-                    "not" => format!("E::Not(Box::new({l}))"),
                     "bit" | "read" => {
                         format!("E::Index(Box::new({l}), Box::new({}))", a[0])
                     }
-                    "raw" | "to_bool" | "get" | "is_some" | "zext"
+                    // Conversions between a bit and a truth value, and
+                    // a read, are the value itself.
+                    "raw" | "to_bool" | "into" | "get" | "is_some" | "zext"
                     | "unwrap_or_default" => l,
                     other => {
                         return Err(format!("method `{other}` is not lowered"))
@@ -1697,14 +1720,22 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
         .collect::<Vec<_>>()
         .join("");
     match ts {
+        // A name: a parameter of an inlined function, or a wire, a
+        // register, a port; a name in capitals is a constant, `DIV`,
+        // and is its value.
         [TokenTree::Ident(id)] => {
             let n = id.to_string();
-            Ok(subst
-                .iter()
-                .rev()
-                .find(|(k, _)| *k == n)
-                .map(|(_, v)| v.clone())
-                .unwrap_or_else(|| ename(&n)))
+            if let Some((_, v)) = subst.iter().rev().find(|(k, _)| *k == n) {
+                return Ok(v.clone());
+            }
+            let upper = n.chars().all(|c| {
+                c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()
+            });
+            Ok(if upper && n.chars().any(|c| c.is_ascii_uppercase()) {
+                format!("E::Num(({n}) as u128)")
+            } else {
+                ename(&n)
+            })
         }
         [TokenTree::Literal(l)] => {
             Ok(format!("E::Num({})", l.to_string().replace('_', "")))
@@ -1775,22 +1806,12 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                         return inline_helper(&h, &v);
                     }
                     return Ok(match f.as_str() {
-                        "eq" => ebin("==", &v[0], &v[1]),
-                        "shl" => ebin("<<", &v[0], &v[1]),
-                        "shr" => ebin(">>", &v[0], &v[1]),
                         "sra" => ebin(">>>", &v[0], &v[1]),
-                        "band" => ebin("&", &v[0], &v[1]),
-                        "bor" => ebin("|", &v[0], &v[1]),
-                        "bxor" => ebin("^", &v[0], &v[1]),
                         "lt_signed" => ebin("<s", &v[0], &v[1]),
-                        "ne" => ebin("!=", &v[0], &v[1]),
-                        "lt" => ebin("<", &v[0], &v[1]),
-                        "gt" => ebin(">", &v[0], &v[1]),
                         "mux" => format!(
                             "E::Cond(Box::new({}), Box::new({}), Box::new({}))",
                             v[0], v[1], v[2]
                         ),
-                        "is_zero" => ebin("==", &v[0], "E::Num(0)"),
                         other => {
                             return Err(format!(
                                 "function `{other}` is not lowered"
@@ -1799,14 +1820,17 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     });
                 }
             }
-            if text == "Bit::One" {
+            if text == "Bit::One" || text == "true" {
                 return Ok("E::Bits(1, \"1\".to_string())".into());
             }
-            if text == "Bit::Zero" {
+            if text == "Bit::Zero" || text == "false" {
                 return Ok("E::Bits(1, \"0\".to_string())".into());
             }
             if let Some(TokenTree::Group(g)) = ts.last() {
-                if text.starts_with("Bit::from_bool") {
+                // A bit from a truth value, or the reverse, is the value.
+                if text.starts_with("Bit::from")
+                    || text.starts_with("bool::from")
+                {
                     let inner: Vec<TokenTree> =
                         g.stream().into_iter().collect();
                     return tr(&inner, subst);

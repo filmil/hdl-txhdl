@@ -27,7 +27,7 @@ impl<TC: TopConfig> Unit<(), ()> for Top<TC> {
         loop {
             rising::<DefaultClock>().await;
             let seen = self.consumer.seen.get();
-            self.consumer.seen.set(seen.wrapping_add(self.producer.gen.next()));
+            self.consumer.seen.set(seen + self.producer.gen.next());
         }
     }
 }

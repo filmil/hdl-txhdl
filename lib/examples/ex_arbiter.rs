@@ -45,11 +45,11 @@ impl Unit<(), Tx<Packet>> for Producer {
         loop {
             DefaultClock::rising().await;
             let (seq, gap) = (self.seq.get(), self.gap.get());
-            let due = Bit::from_bool(gap.raw() == 0);
-            let offer = out.ready().and(due);
+            let due = gap == 0;
+            let offer = out.ready() & due;
             let next_gap = (gap.raw() as u8 + 1) % self.period;
-            when!(offer => { self.seq <= seq.wrapping_add(1) });
-            self.gap.set(U::from(next_gap));
+            when!(offer => { self.seq <= seq + 1 });
+            self.gap.set(next_gap);
             if offer.to_bool() {
                 out.send(Packet {
                     from: self.from,
@@ -84,7 +84,7 @@ impl Unit<(Rx<Packet>, Rx<Packet>), Tx<Packet>> for Arbiter {
                 None => second.recv().unwrap_or_default(),
             };
             out.send(p);
-            self.turn.set(p.from.not());
+            self.turn.set(!p.from);
             let name = if p.from.to_bool() { "B" } else { "A" };
             println!("t={:>2} grant {} {}", now(), name, p.seq.raw());
         }
@@ -102,7 +102,7 @@ impl Unit<Rx<Packet>, ()> for Consumer {
         loop {
             inp.wait().await;
             let taken = self.taken.get();
-            self.taken.set(taken.wrapping_add(1));
+            self.taken.set(taken + 1);
         }
     }
 }

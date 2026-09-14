@@ -44,7 +44,7 @@ impl Unit<(), Tx<Pair>> for Source {
             let n = self.n.get();
             if out.ready().to_bool() {
                 out.send(Pair { a: n, b: n });
-                self.n.set(n.wrapping_add(1));
+                self.n.set(n + 1);
                 println!("t={:>2} start [{}]", now(), n.raw());
             }
         }
@@ -62,7 +62,7 @@ impl Unit<Rx<U<64>>, ()> for Sink {
         loop {
             let v = inp.wait().await;
             let seen = self.seen.get();
-            self.seen.set(seen.wrapping_add(1));
+            self.seen.set(seen + 1);
             println!("t={:>2} done  {}", now(), v.raw());
         }
     }

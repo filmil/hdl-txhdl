@@ -48,7 +48,7 @@ impl Unit<(), Tx<Packet>> for Talker {
                     kind: k,
                     len: U::from((n.raw() * 3) as u8),
                 });
-                self.n.set(n.wrapping_add(1));
+                self.n.set(n + 1);
             }
         }
     }

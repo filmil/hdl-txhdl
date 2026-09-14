@@ -153,8 +153,8 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
             }
         };
         let raised = pulse || uirq.get().to_bool();
-        irq_out.set(Bit::from_bool(raised));
-        rx_out.set(Bit::from_bool(term.level()));
+        irq_out.set(raised);
+        rx_out.set(term.level());
         // The word about to execute this cycle, or zero on a bubble;
         // the illegal word is zero too, so the flag is kept apart.
         let executing = in_execute.get().to_bool();

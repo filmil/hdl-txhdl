@@ -28,7 +28,7 @@ impl Unit<In<Bit>, Out<U<4>>> for Sampler {
                 loop {
                     DefaultClock::rising().await;
                     let (n, en) = (this.n.get(), enable.get());
-                    when!(en => { this.n <= n.wrapping_add(1) });
+                    when!(en => { this.n <= n + 1 });
                 }
             },
             async move {

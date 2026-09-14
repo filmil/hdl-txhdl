@@ -9,7 +9,7 @@
 //! its trace.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, join2, now, Clock, DefaultClock, Reg, Rx, Tx, Unit};
-use txhdl::types::{Bit, U};
+use txhdl::types::U;
 use txhdl::{lower, when, Trace};
 
 // begin{unit}
@@ -24,15 +24,15 @@ impl Unit<Rx<U<8>>, Tx<U<8>>> for Tap {
     async fn run(&mut self, inp: Rx<U<8>>, out: Tx<U<8>>) {
         loop {
             DefaultClock::rising().await;
-            let offered = Bit::from_bool(inp.peek().is_some());
+            let offered = inp.peek().is_some();
             let room = out.ready();
             let v = inp.recv_if(room).unwrap_or_default();
-            let taken = offered.and(room);
-            let odd = taken.and(v.bit(0));
-            when!(taken => { self.seen <= self.seen.get().wrapping_add(1) });
+            let taken = offered & room;
+            let odd = taken & v.bit(0);
+            when!(taken => { self.seen <= self.seen.get() + 1 });
             when!(odd => {
                 out.send(v);
-                self.passed <= self.passed.get().wrapping_add(1)
+                self.passed <= self.passed.get() + 1
             });
         }
     }
@@ -50,7 +50,7 @@ impl Unit<(), Tx<U<8>>> for Source {
         loop {
             DefaultClock::rising().await;
             let n = self.n.get();
-            self.n.set(n.wrapping_add(1));
+            self.n.set(n + 1);
             if n.raw() % 4 != 3 && out.ready().to_bool() {
                 out.send(n);
             }

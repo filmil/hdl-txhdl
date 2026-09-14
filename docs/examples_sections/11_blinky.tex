@@ -22,8 +22,8 @@ configuration are evaluated when \code{verilog} runs, so the two
 builds lower to two modules from one unit: the simulation build
 compares the count with 15 and 8, the board build with 99999999 and
 50000000. Both modules are at the end of Listing~\ref{lst:x-blinky-out}.
-The comparison had to be written \code{lt(n, U::from(C::HALF))} rather
-than on the raw integers for the macro to read it, which is the first
+The comparison is written on the value, \code{n < C::HALF}, rather
+than on the raw integers, for the macro to read it, which is the first
 place the lowering pushed back on the source. The simulation build's
 lowering is also simulated, in VHDL under \code{nvc}, against the
 trace the Rust run wrote, Section~\ref{sec:x-checked};

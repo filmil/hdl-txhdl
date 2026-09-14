@@ -22,17 +22,11 @@
 //! `#[lower]`, inlined where the step calls them. So the same file
 //! simulates and lowers, and the netlist is simulated against the
 //! trace the simulation wrote.
-use crate::isa::{
-    CAUSE_ECALL, CAUSE_ILLEGAL, CAUSE_MEXT, CAUSE_MTIMER, CSR_MCAUSE, CSR_MEPC,
-    CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT,
-    MTIMER,
-};
+use crate::isa;
 use txhdl::comp::{
     mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit, Wire,
 };
-use txhdl::funcs::{
-    band, bor, bxor, eq, is_zero, lt, lt_signed, shl, shr, sra,
-};
+use txhdl::funcs::{lt_signed, sra};
 use txhdl::types::{Bit, U};
 use txhdl::{case, lower, select, when, Trace, Value};
 
@@ -105,14 +99,14 @@ fn imm_j(ir: U<32>) -> U<32> {
 fn alu(f3: U<3>, sub: Bit, a: U<32>, b: U<32>) -> U<32> {
     let sh = b.slice::<0, 5>();
     select!(f3.raw() => {
-        0 => mux(sub, a.wrapping_sub(b), a.wrapping_add(b)),
-        1 => shl(a, sh.raw() as usize),
+        0 => mux(sub, a - b, a + b),
+        1 => a << (sh.raw() as usize),
         2 => lt_signed(a, b).zext(),
-        3 => lt(a, b).zext(),
-        4 => bxor(a, b),
-        5 => mux(sub, sra(a, sh.raw() as usize), shr(a, sh.raw() as usize)),
-        6 => bor(a, b),
-        _ => band(a, b),
+        3 => Bit::from(a < b).zext(),
+        4 => a ^ b,
+        5 => mux(sub, sra(a, sh.raw() as usize), a >> (sh.raw() as usize)),
+        6 => a | b,
+        _ => a & b,
     })
 }
 // end{alu}
@@ -121,12 +115,12 @@ fn alu(f3: U<3>, sub: Bit, a: U<32>, b: U<32>) -> U<32> {
 #[lower]
 fn branch(f3: U<3>, a: U<32>, b: U<32>) -> Bit {
     select!(f3.raw() => {
-        0 => eq(a, b),
-        1 => eq(a, b).not(),
+        0 => (a == b).into(),
+        1 => (a != b).into(),
         4 => lt_signed(a, b),
-        5 => lt_signed(a, b).not(),
-        6 => lt(a, b),
-        _ => lt(a, b).not(),
+        5 => !lt_signed(a, b),
+        6 => (a < b).into(),
+        _ => (a >= b).into(),
     })
 }
 
@@ -136,8 +130,8 @@ fn branch(f3: U<3>, a: U<32>, b: U<32>) -> Bit {
 fn extended(f3: U<3>, lane: U<2>, word: U<32>) -> U<32> {
     let bsh = lane.concat::<3, 5>(U::<3>::from(0u8));
     let hsh = lane.slice::<1, 1>().concat::<4, 5>(U::<4>::from(0u8));
-    let octet = shr(word, bsh.raw() as usize).slice::<0, 8>();
-    let half = shr(word, hsh.raw() as usize).slice::<0, 16>();
+    let octet = (word >> (bsh.raw() as usize)).slice::<0, 8>();
+    let half = (word >> (hsh.raw() as usize)).slice::<0, 16>();
     select!(f3.raw() => {
         0 => octet.sext::<32>(),
         1 => half.sext::<32>(),
@@ -170,22 +164,22 @@ fn store_data(f3: U<3>, b: U<32>) -> U<32> {
 fn store_lanes(f3: U<3>, lane: U<2>) -> U<4> {
     let upper = lane.bit(1);
     let en0 = select!(f3.raw() => {
-        0 => eq(lane, U::from(0u8)),
-        1 => upper.not(),
+        0 => (lane == 0).into(),
+        1 => !upper,
         _ => Bit::One,
     });
     let en1 = select!(f3.raw() => {
-        0 => eq(lane, U::from(1u8)),
-        1 => upper.not(),
+        0 => (lane == 1).into(),
+        1 => !upper,
         _ => Bit::One,
     });
     let en2 = select!(f3.raw() => {
-        0 => eq(lane, U::from(2u8)),
+        0 => (lane == 2).into(),
         1 => upper,
         _ => Bit::One,
     });
     let en3 = select!(f3.raw() => {
-        0 => eq(lane, U::from(3u8)),
+        0 => (lane == 3).into(),
         1 => upper,
         _ => Bit::One,
     });
@@ -238,29 +232,22 @@ fn csr_known(f12: U<12>) -> Bit {
 fn csr_value(f3: U<3>, old: U<32>, src: U<32>) -> U<32> {
     select!(f3.raw() => {
         1 | 5 => src,
-        2 | 6 => bor(old, src),
-        _ => band(old, src.not()),
+        2 | 6 => old | src,
+        _ => old & !src,
     })
 }
 
 /// Whether an M operation takes its first operand as signed: every
 /// one but the unsigned multiply-highs, divide and remainder.
 #[lower]
-fn m_signed_a(f3: U<3>) -> Bit {
-    eq(f3, U::from(0u8))
-        .or(eq(f3, U::from(1u8)))
-        .or(eq(f3, U::from(2u8)))
-        .or(eq(f3, U::from(4u8)))
-        .or(eq(f3, U::from(6u8)))
+fn m_signed_a(f3: U<3>) -> bool {
+    (f3 == 0) | (f3 == 1) | (f3 == 2) | (f3 == 4) | (f3 == 6)
 }
 
 /// Whether an M operation takes its second operand as signed.
 #[lower]
-fn m_signed_b(f3: U<3>) -> Bit {
-    eq(f3, U::from(0u8))
-        .or(eq(f3, U::from(1u8)))
-        .or(eq(f3, U::from(4u8)))
-        .or(eq(f3, U::from(6u8)))
+fn m_signed_b(f3: U<3>) -> bool {
+    (f3 == 0) | (f3 == 1) | (f3 == 4) | (f3 == 6)
 }
 
 /// An M result from the sequencer's registers, with the signs put
@@ -270,10 +257,10 @@ fn m_signed_b(f3: U<3>) -> Bit {
 #[lower]
 fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
     let mag = hi.slice::<0, 32>().concat::<32, 64>(lo);
-    let p = mux(neg_q, U::<64>::from(0u32).wrapping_sub(mag), mag);
-    let q = mux(neg_q, U::<32>::from(0u32).wrapping_sub(lo), lo);
+    let p = mux(neg_q, U::<64>::from(0u32) - mag, mag);
+    let q = mux(neg_q, U::<32>::from(0u32) - lo, lo);
     let rem = hi.slice::<0, 32>();
-    let r = mux(neg_r, U::<32>::from(0u32).wrapping_sub(rem), rem);
+    let r = mux(neg_r, U::<32>::from(0u32) - rem, rem);
     select!(f3.raw() => {
         0 => p.slice::<0, 32>(),
         1 | 2 | 3 => p.slice::<32, 32>(),
@@ -401,7 +388,7 @@ impl
             let wb_dev = self.wb_dev.get();
             let dev_wait = self.dev_wait.get();
             // The bus's answer, taken whenever it comes.
-            let resp_valid = Bit::from_bool(resp.peek().is_some());
+            let resp_valid = resp.peek().is_some();
             let resp_data = resp.recv().unwrap_or_default();
             let (m_busy, m_count) = (self.m_busy.get(), self.m_count.get());
             let (m_hi, m_lo, m_d) =
@@ -416,8 +403,8 @@ impl
             let wb_val = mux(wb_load, loaded, wb_alu);
             // A device load sits in writeback while its wait is on, and
             // retires the cycle after its answer has landed.
-            let wb_here = wb_valid.and(dev_wait.not());
-            let wb_write = wb_here.and(is_zero(wb_rd).not());
+            let wb_here = wb_valid & !dev_wait;
+            let wb_write = wb_here & (wb_rd != 0);
             // The fetch stage: the word at the program counter, into
             // the instruction register unless the execute stage
             // redirects below.
@@ -444,18 +431,18 @@ impl
             // writeback will write waits one cycle and reads the register
             // file, which has it by then. The stall is the one cycle the
             // core ever waits.
-            let fwd_a = wb_write.and(eq(wb_rd, rs1));
-            let fwd_b = wb_write.and(eq(wb_rd, rs2));
-            let stall_ld = valid.and(wb_load).and(fwd_a.or(fwd_b));
+            let fwd_a = wb_write & (wb_rd == rs1);
+            let fwd_b = wb_write & (wb_rd == rs2);
+            let stall_ld = valid & wb_load & (fwd_a | fwd_b);
             // The M extension is a sequencer: a multiply is one step in
             // the part's multipliers, a division thirty-two restoring
             // steps, over the magnitudes, and the instruction stalls in
             // execute until the count is up. One set of registers serves
             // both.
             let f7 = ir.slice::<25, 7>();
-            let is_m = eq(opcode, U::from(0x33u8)).and(eq(f7, U::from(1u8)));
-            let m_here = valid.and(rst.not()).and(stopped.not()).and(is_m);
-            let m_done = m_busy.and(eq(m_count, U::from(32u8)));
+            let is_m = (opcode == 0x33) & (f7 == 1);
+            let m_here = valid & !rst & !stopped & is_m;
+            let m_done = m_busy & (m_count == 32);
             // An interrupt is taken instead of the instruction in execute
             // when it is pending, enabled, and interrupts are enabled; an
             // M instruction under one does not start, so it cannot hold
@@ -463,59 +450,56 @@ impl
             // The timer's line is a register's output on the timer's
             // side, so it is read as state is.
             let mtip = tirq;
-            let ext_ok = mie_r.bit(11).and(mip.bit(11));
-            let tim_ok = mie_r.bit(7).and(mtip);
-            let int_ok = mstatus.bit(3).and(ext_ok.or(tim_ok));
-            let stall_m = m_here.and(int_ok.not()).and(m_done.not());
+            let ext_ok = mie_r.bit(11) & mip.bit(11);
+            let tim_ok = mie_r.bit(7) & mtip;
+            let int_ok = mstatus.bit(3) & (ext_ok | tim_ok);
+            let stall_m = m_here & !int_ok & !m_done;
             // A load or store to the bus, which is everything above the
             // data memory. A store goes out when the bus has room; a
             // load goes out and moves on to writeback, which holds it
             // until the answer has landed in its register there.
             let a = mux(
-                is_zero(rs1),
+                rs1 == 0,
                 U::<32>::from(0u32),
                 mux(fwd_a, wb_alu, self.regs.read(rs1)),
             );
             let b = mux(
-                is_zero(rs2),
+                rs2 == 0,
                 U::<32>::from(0u32),
                 mux(fwd_b, wb_alu, self.regs.read(rs2)),
             );
-            let addr = a.wrapping_add(select!(opcode.raw() => {
+            let addr = a + select!(opcode.raw() => {
                 0x23 => imm_s,
                 _ => imm_i,
-            }));
-            let is_load = eq(opcode, U::from(0x03u8));
-            let is_store = eq(opcode, U::from(0x23u8));
+            });
+            let is_load = opcode == 0x03;
+            let is_store = opcode == 0x23;
             // Everything from the data memory up is on the bus.
-            let is_dev = is_zero(addr.slice::<12, 20>()).not();
-            let here = valid.and(rst.not()).and(stopped.not());
+            let is_dev = addr.slice::<12, 20>() != 0;
+            let here = valid & !rst & !stopped;
             // A load or a store waits for room on the bus whatever its
             // address, so that the fetch's hold does not hang on the
             // address's decode, which was the path that limited the
             // clock; there is room whenever the devices keep up, and
             // they do. A device load's wait for its answer is a
             // register, so the hold for it is state too.
-            let stall_bus =
-                here.and(is_load.or(is_store)).and(req.ready().not());
-            self.stall
-                .set(stall_ld.or(stall_m).or(stall_bus).or(dev_wait));
+            let stall_bus = here & (is_load | is_store) & !req.ready();
+            self.stall.set(stall_ld | stall_m | stall_bus | dev_wait);
             let stall = self.stall.get();
-            let pc4 = pc.wrapping_add(U::from(4u8));
+            let pc4 = pc + 4;
             // Live: an instruction in execute that is not stalled. It
             // runs unless the interrupt takes its place.
-            let live = rst.not().and(stopped.not()).and(valid).and(stall.not());
-            self.int_take.set(live.and(int_ok));
+            let live = !rst & !stopped & valid & !stall;
+            self.int_take.set(live & int_ok);
             let int_take = self.int_take.get();
-            let run = live.and(int_take.not());
-            let send_load = run.and(is_load).and(is_dev);
+            let run = live & !int_take;
+            let send_load = run & is_load & is_dev;
 
             // The ALU, shared by the register and immediate forms; bit
             // 30 means subtract or arithmetic shift, except that an
             // immediate may have it set and mean nothing by it.
-            let alu_b = mux(eq(opcode, U::from(0x13u8)), imm_i, b);
-            let sub =
-                alt.and(eq(opcode, U::from(0x33u8)).or(eq(f3, U::from(5u8))));
+            let alu_b = mux(opcode == 0x13, imm_i, b);
+            let sub = alt & ((opcode == 0x33) | (f3 == 5));
             // The multiply and divide, from the sequencer's registers.
             let m_res = m_result(f3, m_hi, m_lo, m_neg_q, m_neg_r);
             let alu = alu(f3, sub, a, alu_b);
@@ -532,7 +516,7 @@ impl
             // any, where it goes next, and whether the core knows it.
             let writes = select!(opcode.raw() => {
                 0x37 | 0x17 | 0x6f | 0x67 | 0x03 | 0x13 | 0x33 => Bit::One,
-                0x73 => is_zero(f3).not(),
+                0x73 => (f3 != 0).into(),
                 _ => Bit::Zero,
             });
             // The system instructions. A CSR instruction reads one of
@@ -541,9 +525,9 @@ impl
             // and an instruction the core does not know trap; mret
             // returns; ebreak halts.
             let f12 = ir.slice::<20, 12>();
-            let is_sys = eq(opcode, U::from(0x73u8));
-            let csr_op = is_sys.and(is_zero(f3).not());
-            let mip_now = mux(tirq, bor(mip, U::<32>::from(MTIMER)), mip);
+            let is_sys = opcode == 0x73;
+            let csr_op = is_sys & (f3 != 0);
+            let mip_now = mux(tirq, mip | isa::MTIMER, mip);
             let csr_old = csr_read(
                 f12, mstatus, mtvec, mscratch, mepc, mcause, mie_r, mip_now,
                 mtval,
@@ -551,52 +535,51 @@ impl
             let csr_known = csr_known(f12);
             let csr_src = mux(f3.bit(2), rs1.zext::<32>(), a);
             let csr_new = csr_value(f3, csr_old, csr_src);
-            let sys0 = is_sys.and(is_zero(f3));
-            let is_ecall = sys0.and(eq(f12, U::from(0u8)));
-            let is_ebreak = sys0.and(eq(f12, U::from(1u8)));
-            let is_mret = sys0.and(eq(f12, U::from(0x302u32)));
+            let sys0 = is_sys & (f3 == 0);
+            let is_ecall = sys0 & (f12 == 0);
+            let is_ebreak = sys0 & (f12 == 1);
+            let is_mret = sys0 & (f12 == 0x302);
             let known = select!(opcode.raw() => {
                 0x37 | 0x17 | 0x6f | 0x67 | 0x63 | 0x03 | 0x23 | 0x13 | 0x33
                 | 0x0f => Bit::One,
-                0x73 => csr_op.and(csr_known).or(is_ecall).or(is_ebreak)
-                    .or(is_mret),
+                0x73 => (csr_op & csr_known) | is_ecall | is_ebreak | is_mret,
                 _ => Bit::Zero,
             });
             // A trap: ecall, a word the core does not know, or the
             // interrupt. The cause, the address and the trap value go to
             // the CSRs, the interrupt enable is saved and cleared, and
             // the handler is the redirect.
-            let trap = run.and(is_ecall.or(known.not())).or(int_take);
+            let trap = (run & (is_ecall | !known)) | int_take;
             let cause = mux(
                 int_take,
                 mux(
                     ext_ok,
-                    U::<32>::from(CAUSE_MEXT),
-                    U::<32>::from(CAUSE_MTIMER),
+                    U::<32>::from(isa::CAUSE_MEXT),
+                    U::<32>::from(isa::CAUSE_MTIMER),
                 ),
                 mux(
                     is_ecall,
-                    U::<32>::from(CAUSE_ECALL),
-                    U::<32>::from(CAUSE_ILLEGAL),
+                    U::<32>::from(isa::CAUSE_ECALL),
+                    U::<32>::from(isa::CAUSE_ILLEGAL),
                 ),
             );
-            let tval = mux(run.and(known.not()), ir, U::<32>::from(0u32));
+            let tval = mux(run & !known, ir, U::<32>::from(0u32));
             let mie_bit = mstatus.bit(3);
             let mpie = mstatus.bit(7);
             let trap_status =
                 mux(mie_bit, U::<32>::from(0x80u32), U::<32>::from(0u32));
             let mret_status =
                 mux(mpie, U::<32>::from(0x88u32), U::<32>::from(0x80u32));
-            let csr_write = run.and(csr_op).and(csr_known);
+            let csr_write = run & csr_op & csr_known;
             // Stopped: on ebreak, and then for good; the halt itself
             // follows a cycle later, when the halting instruction
             // retires.
-            let stop = mux(run, is_ebreak, stopped);
-            let wrote = run.and(writes).and(is_zero(rd).not()).and(trap.not());
-            let store = run.and(eq(opcode, U::from(0x23u8)));
+            let stop = mux(run, Bit::from(is_ebreak), stopped);
+            let wrote = run & writes & (rd != 0) & !trap;
+            let store = run & is_store;
             let wval = select!(opcode.raw() => {
                 0x37 => imm_u,
-                0x17 => pc.wrapping_add(imm_u),
+                0x17 => pc + imm_u,
                 0x6f | 0x67 => pc4,
                 0x73 => csr_old,
                 _ => mux(is_m, m_res, alu),
@@ -608,16 +591,16 @@ impl
             // value forwarded into the add, and this select is on the
             // critical path.
             let target = select!(opcode.raw() => {
-                0x67 => a.wrapping_add(imm_i).and(U::<32>::from(1u32).not()),
-                0x6f => pc.wrapping_add(imm_j),
-                0x63 => pc.wrapping_add(imm_b),
+                0x67 => (a + imm_i) & !U::<32>::from(1u32),
+                0x6f => pc + imm_j,
+                0x63 => pc + imm_b,
                 0x73 => mux(is_mret, mepc, mtvec),
                 _ => mtvec,
             });
             let jump = select!(opcode.raw() => {
                 0x6f | 0x67 => Bit::One,
                 0x63 => taken,
-                0x73 => is_mret.or(trap),
+                0x73 => is_mret | trap,
                 _ => trap,
             });
 
@@ -633,7 +616,7 @@ impl
             // possible; the word fetched under a redirect is written
             // and marked empty.
             when!(wb_write => { self.regs.at(wb_rd) <= wb_val });
-            self.halted.set(halted.or(wb_stop));
+            self.halted.set(halted | wb_stop);
             // The bus: a request is the address, the data in its lanes,
             // the lanes a store covers, and whether it is a store. The
             // load's wait is a register.
@@ -641,12 +624,12 @@ impl
                 .concat::<32, 64>(sdata)
                 .concat::<4, 68>(en)
                 .concat::<1, 69>(store.zext::<1>());
-            when!(send_load.or(store.and(is_dev)) => { req.send(req_word) });
+            when!(send_load | (store & is_dev) => { req.send(req_word) });
             when!(resp_valid => { self.wb_dev <= resp_data });
             case!(rst => {
                 Bit::One => { self.dev_wait <= Bit::Zero },
                 _ if send_load.to_bool() => { self.dev_wait <= Bit::One },
-                _ if dev_wait.and(resp_valid).to_bool() => {
+                _ if (dev_wait & resp_valid).to_bool() => {
                     self.dev_wait <= Bit::Zero
                 },
                 _ => {},
@@ -654,32 +637,32 @@ impl
 
             // The CSRs: written by a CSR instruction, by a trap, by mret.
             // The three never coincide in one instruction.
-            when!(csr_write.and(eq(f12, U::from(CSR_MSTATUS))) => {
-                self.mstatus <= band(csr_new, U::<32>::from(0x88u32))
+            when!(csr_write & (f12 == isa::CSR_MSTATUS) => {
+                self.mstatus <= csr_new & 0x88
             });
-            when!(csr_write.and(eq(f12, U::from(CSR_MTVEC))) => {
-                self.mtvec <= band(csr_new, U::<32>::from(3u32).not())
+            when!(csr_write & (f12 == isa::CSR_MTVEC) => {
+                self.mtvec <= csr_new & !U::<32>::from(3u32)
             });
-            when!(csr_write.and(eq(f12, U::from(CSR_MSCRATCH))) => {
+            when!(csr_write & (f12 == isa::CSR_MSCRATCH) => {
                 self.mscratch <= csr_new
             });
-            when!(csr_write.and(eq(f12, U::from(CSR_MEPC))) => {
-                self.mepc <= band(csr_new, U::<32>::from(1u32).not())
+            when!(csr_write & (f12 == isa::CSR_MEPC) => {
+                self.mepc <= csr_new & !U::<32>::from(1u32)
             });
-            when!(csr_write.and(eq(f12, U::from(CSR_MCAUSE))) => {
+            when!(csr_write & (f12 == isa::CSR_MCAUSE) => {
                 self.mcause <= csr_new
             });
-            when!(csr_write.and(eq(f12, U::from(CSR_MIE))) => {
-                self.mie <= band(csr_new, U::<32>::from(MEXT | MTIMER))
+            when!(csr_write & (f12 == isa::CSR_MIE) => {
+                self.mie <= csr_new & U::<32>::from(isa::MEXT | isa::MTIMER)
             });
-            when!(csr_write.and(eq(f12, U::from(CSR_MTVAL))) => {
+            when!(csr_write & (f12 == isa::CSR_MTVAL) => {
                 self.mtval <= csr_new
             });
             // The pending bit: set by the line, cleared by software,
             // and the write wins when both fall in one cycle.
-            when!(irq => { self.mip <= bor(mip, U::<32>::from(MEXT)) });
-            when!(csr_write.and(eq(f12, U::from(CSR_MIP))) => {
-                self.mip <= band(csr_new, U::<32>::from(MEXT))
+            when!(irq => { self.mip <= mip | isa::MEXT });
+            when!(csr_write & (f12 == isa::CSR_MIP) => {
+                self.mip <= csr_new & isa::MEXT
             });
             when!(trap => {
                 self.mepc <= pc;
@@ -687,7 +670,7 @@ impl
                 self.mtval <= tval;
                 self.mstatus <= trap_status
             });
-            when!(run.and(is_mret) => { self.mstatus <= mret_status });
+            when!(run & is_mret => { self.mstatus <= mret_status });
             // The sequencer. It starts when an M instruction is in execute
             // with its operands ready, and is released when the
             // instruction runs. A multiply is one step: the product of
@@ -698,22 +681,18 @@ impl
             // quotient bit.
             let m_signed_a = m_signed_a(f3);
             let m_signed_b = m_signed_b(f3);
-            let m_neg_a = m_signed_a.and(a.bit(31));
-            let m_neg_b = m_signed_b.and(b.bit(31));
-            let m_abs_a = mux(m_neg_a, U::<32>::from(0u32).wrapping_sub(a), a);
-            let m_abs_b = mux(m_neg_b, U::<32>::from(0u32).wrapping_sub(b), b);
-            let m_differ =
-                m_neg_a.and(m_neg_b.not()).or(m_neg_a.not().and(m_neg_b));
+            let m_neg_a = m_signed_a & a.bit(31);
+            let m_neg_b = m_signed_b & b.bit(31);
+            let m_abs_a = mux(m_neg_a, U::<32>::from(0u32) - a, a);
+            let m_abs_b = mux(m_neg_b, U::<32>::from(0u32) - b, b);
+            let m_differ = (m_neg_a & !m_neg_b) | (!m_neg_a & m_neg_b);
             let m_is_div = f3.bit(2);
-            let m_start = m_here
-                .and(m_busy.not())
-                .and(stall_ld.not())
-                .and(int_ok.not());
-            let m_step = m_busy.and(m_done.not());
+            let m_start = m_here & !m_busy & !stall_ld & !int_ok;
+            let m_step = m_busy & !m_done;
             let m_prod = m_lo.zext::<64>().mul::<64>(m_d.zext::<64>());
             let m_t =
                 m_hi.slice::<0, 32>().concat::<1, 33>(m_lo.slice::<31, 1>());
-            let m_fits = lt(m_t, m_d.zext::<33>()).not();
+            let m_fits = m_t >= m_d.zext::<33>();
             // An interrupt taken while the sequencer runs cancels it:
             // the instruction starts it again when the handler returns,
             // on the registers as they are then, and the sequencer never
@@ -724,32 +703,29 @@ impl
                 _ if m_start.to_bool() => {
                     self.m_busy <= Bit::One;
                     self.m_count <= mux(m_is_div, U::from(0u8), U::from(31u8));
-                    self.m_hi <= U::from(0u8);
+                    self.m_hi <= 0;
                     self.m_lo <= m_abs_a;
                     self.m_d <= m_abs_b;
                     self.m_neg_q <= mux(
                         m_is_div,
-                        m_differ.and(is_zero(b).not()),
+                        m_differ & (b != 0),
                         m_differ
                     );
                     self.m_neg_r <= m_neg_a
                 },
-                _ if m_step.and(m_is_div.not()).to_bool() => {
-                    self.m_count <= m_count.wrapping_add(U::from(1u8));
+                _ if (m_step & !m_is_div).to_bool() => {
+                    self.m_count <= m_count + 1;
                     self.m_hi <= m_prod.slice::<32, 32>().zext::<33>();
                     self.m_lo <= m_prod.slice::<0, 32>()
                 },
                 _ if m_step.to_bool() => {
-                    self.m_count <= m_count.wrapping_add(U::from(1u8));
-                    self.m_hi <= mux(
-                        m_fits,
-                        m_t.wrapping_sub(m_d.zext::<33>()),
-                        m_t
-                    );
-                    self.m_lo <=
-                        m_lo.slice::<0, 31>().concat::<1, 32>(m_fits.zext())
+                    self.m_count <= m_count + 1;
+                    self.m_hi <= mux(m_fits, m_t - m_d.zext::<33>(), m_t);
+                    self.m_lo <= m_lo
+                        .slice::<0, 31>()
+                        .concat::<1, 32>(Bit::from(m_fits).zext())
                 },
-                _ if run.and(is_m).to_bool() => { self.m_busy <= Bit::Zero },
+                _ if (run & is_m).to_bool() => { self.m_busy <= Bit::Zero },
                 _ => {},
             });
             // The writeback stage gets the instruction, or the interrupt
@@ -763,13 +739,13 @@ impl
                     self.wb_alu <= wval;
                     self.wb_f3 <= f3;
                     self.wb_lane <= lane;
-                    self.wb_load <= is_load.and(run);
-                    self.wb_stop <= is_ebreak.and(run)
+                    self.wb_load <= is_load & run;
+                    self.wb_stop <= is_ebreak & run
                 },
                 _ if dev_wait.to_bool() => {},
                 _ => {
                     self.wb_valid <= Bit::Zero;
-                    self.wb_rd <= U::from(0u8);
+                    self.wb_rd <= 0;
                     self.wb_stop <= Bit::Zero
                 },
             });
@@ -780,13 +756,12 @@ impl
             // hold are known early and the redirect late, so the two
             // candidates fold the early conditions in and the redirect
             // chooses last, one multiplexer from the instruction memory.
-            self.redirect.set(run.and(jump).or(int_take));
+            self.redirect.set((run & jump) | int_take);
             let redirect = self.redirect.get();
-            let park = run.and(stop);
-            let hold = stall.or(stop.and(run.not()));
+            let park = run & stop;
+            let hold = stall | (stop & !run);
             let zero = U::<32>::from(0u32);
-            let advance =
-                mux(hold, fetch_pc, fetch_pc.wrapping_add(U::from(4u8)));
+            let advance = mux(hold, fetch_pc, fetch_pc + 4);
             let go = mux(rst, zero, mux(park, pc, advance));
             let jmp =
                 mux(rst, zero, mux(park, pc, mux(int_take, mtvec, target)));
@@ -798,7 +773,7 @@ impl
                 _ => {
                     self.ir <= fetched;
                     self.ir_pc <= fetch_pc;
-                    self.valid <= redirect.not()
+                    self.valid <= !redirect
                 },
             });
             // end{fetch}

@@ -47,7 +47,7 @@ two per cycle, so a falling edge is a tick of its own.
 
 \head{Vocabulary}
 \begin{tabular}{@{}p{0.47\linewidth}p{0.5\linewidth}@{}}
-\code{Bit}, \code{Logic}, \code{U<N>}, \code{I<N>} & values; \code{Logic} is IEEE 1164's nine \\
+\code{Bit}, \code{Logic}, \code{U<N>}, \code{I<N>} & values; \code{+ - \& | \^{} ! << >>} and the compares are Rust's \\
 \code{\#[derive(Transaction)]} & a struct that moves over a channel \\
 \code{Reg<T, C>} & state, in clock \code{C}; \code{get}, \code{set} \\
 \code{signal()} $\to$ \code{(Out, In)} & a wire's two ends; \code{Out} is not \code{Clone} \\

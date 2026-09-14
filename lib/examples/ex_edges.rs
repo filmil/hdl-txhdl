@@ -25,7 +25,7 @@ impl Edges {
         loop {
             DefaultClock::rising().await;
             let n = self.count.get();
-            self.count.set(n.wrapping_add(1));
+            self.count.set(n + 1);
         }
     }
 

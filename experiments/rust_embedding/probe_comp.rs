@@ -28,7 +28,7 @@ impl<T: Tag> Unit<U<32>, ()> for MacUnit<T> {
             let acc = self.acc.get();          // a register: waits for the edge
             self.req.send(MemRead { addr });
             if self.ack.get().raw() == 1 {           // a wire: no wait
-                self.acc.set(acc.wrapping_add(U::new(1)))
+                self.acc.set(acc + 1)
             }
         }
     }

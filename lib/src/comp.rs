@@ -197,8 +197,9 @@ impl<T: Transaction, C: Clock> Tx<T, C> {
     /// the channel at the end of it. The sender asks `ready` first;
     /// sending into a channel with no room is the bug the handshake
     /// exists to prevent.
-    pub fn send(&self, v: T) {
+    pub fn send(&self, v: impl Into<T>) {
         assert!(self.ready().to_bool(), "send on a channel with no room");
+        let v = v.into();
         self.0.offered.set(v);
         self.0.offer_at.set(now());
         self.0.push.set(Some(v));
@@ -247,8 +248,8 @@ impl<T: Transaction, C: Clock> Rx<T, C> {
     /// Take the head only under a condition: `ready` is the condition,
     /// which is what a process that runs every cycle says when it can
     /// take a transaction only if it has somewhere to put it.
-    pub fn recv_if(&self, c: Bit) -> Option<T> {
-        if c.to_bool() {
+    pub fn recv_if(&self, c: impl Into<Bit>) -> Option<T> {
+        if c.into().to_bool() {
             self.recv()
         } else {
             None
@@ -430,8 +431,8 @@ impl<T: Copy + 'static, C: Clock> Reg<T, C> {
     }
 
     /// A predicated drive: a multiplexer on the enable, not a branch.
-    pub fn set_if(&self, pred: Bit, v: impl Into<T>) {
-        if pred.to_bool() {
+    pub fn set_if(&self, pred: impl Into<Bit>, v: impl Into<T>) {
+        if pred.into().to_bool() {
             self.set(v)
         }
     }
@@ -441,8 +442,8 @@ impl<T: Copy + 'static, C: Clock> Reg<T, C> {
 // Control flow on a signal
 
 /// The multiplexer. Both arms exist in the hardware; the condition picks.
-pub fn mux<T: Copy>(c: Bit, a: T, b: T) -> T {
-    if c.to_bool() {
+pub fn mux<T: Copy>(c: impl Into<Bit>, a: T, b: T) -> T {
+    if c.into().to_bool() {
         a
     } else {
         b
@@ -574,8 +575,8 @@ impl<T: Copy + 'static> Slot<T> {
         self.0.next.set(Some((self.1, v.into())));
         commit(self.0.clone());
     }
-    pub fn set_if(&self, pred: Bit, v: impl Into<T>) {
-        if pred.to_bool() {
+    pub fn set_if(&self, pred: impl Into<Bit>, v: impl Into<T>) {
+        if pred.into().to_bool() {
             self.set(v)
         }
     }

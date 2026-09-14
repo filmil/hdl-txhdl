@@ -38,10 +38,10 @@ impl Unit<(), Tx<U<8>>> for Producer {
             DefaultClock::rising().await;
             let (seq, gap) = (self.seq.get(), self.gap.get());
             let due = gap.raw() == 0 && out.ready().to_bool();
-            self.gap.set(U::from((gap.raw() as u8 + 1) % self.period));
+            self.gap.set((gap.raw() as u8 + 1) % self.period);
             if due {
                 out.send(seq);
-                self.seq.set(seq.wrapping_add(1));
+                self.seq.set(seq + 1);
                 println!("t={:>2} {} offers {}", now(), self.name, seq.raw());
             }
         }
@@ -59,8 +59,8 @@ impl Unit<(Rx<U<8>>, Rx<U<8>>), Tx<U<8>>> for Adder {
         loop {
             let (x, y) = parallel!(a.wait(), b.wait()).await;
             let sums = self.sums.get();
-            self.sums.set(sums.wrapping_add(1));
-            out.send(x.wrapping_add(y));
+            self.sums.set(sums + 1);
+            out.send(x + y);
             println!("t={:>2} adder {} + {}", now(), x.raw(), y.raw());
         }
     }
@@ -77,7 +77,7 @@ impl Unit<Rx<U<8>>, ()> for Consumer {
         loop {
             let s = inp.wait().await;
             let seen = self.seen.get();
-            self.seen.set(seen.wrapping_add(1));
+            self.seen.set(seen + 1);
             println!("t={:>2} sum {}", now(), s.raw());
         }
     }

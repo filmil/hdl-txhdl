@@ -4,8 +4,8 @@
 
 Two-valued \code{Bit}, nine-valued \code{Logic} in IEEE 1164's order,
 and the numeric vectors \code{U<N>} and \code{I<N>} with the width as a
-const parameter. Arithmetic is wrapping and explicit, a multiply names
-its result width, and a Rust integer converts to a vector where one is
-expected, so a literal reads as a literal.
+const parameter. Arithmetic is Rust's operators, wrapping at the
+width, a multiply names its result width, and a Rust integer converts
+to a vector where one is expected, so a literal reads as a literal.
 
 \lstinputlisting[caption={\code{ex\_values.rs}.},label={lst:x-values}]{lib/examples/ex_values.rs}

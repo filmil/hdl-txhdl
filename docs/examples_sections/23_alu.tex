@@ -2,16 +2,17 @@
 \section{An ALU}
 \label{sec:x-alu}
 
-The operators a datapath needs beyond arithmetic: shifts, bitwise
-logic, and the signed and unsigned compares, each a plain function on
-\code{U<N>} and each lowered to the operator of the same name, with
-\code{sra} as an arithmetic shift and the signed compare as
-\code{\$signed} in Verilog and \code{signed} in VHDL. \code{op} selects
-with \code{case!} over an enum, the result is the register \code{r} so
-the \code{case!} can drive it, and the output wire \code{y} shows it.
-A compare yields a \code{Bit}; \code{zext} makes it the datapath's
-width, and the lowering drops the call, since the target's width is
-the extension.
+The ten operations of an ALU, one per arm of a \code{case!}: the
+arithmetic, the bitwise logic and the shifts are Rust's operators on
+\code{U<N>}, Section~\ref{sec:x-ops}, and the two that have no
+operator are functions, \code{sra}, the arithmetic shift, and
+\code{lt\_signed}, the signed compare, lowered as \code{\$signed} in
+Verilog and \code{signed} in VHDL. \code{op} selects with \code{case!}
+over an enum, the result is the register \code{r} so the \code{case!}
+can drive it, and the output wire \code{y} shows it. A compare yields
+a truth value; \code{Bit::from} makes it a bit and \code{zext} the
+datapath's width, and the lowering drops both calls, since the
+target's width is the extension.
 The testbench drives ten operations from a table, one per cycle, and
 the lowering is simulated against that trace,
 Section~\ref{sec:x-checked}. Concatenation and sign extension are on

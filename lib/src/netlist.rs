@@ -235,7 +235,27 @@ impl Expr {
     pub fn name(s: &str) -> Expr {
         Expr::Name(s.to_string())
     }
+    /// A binary operator; two numbers fold to their result, so a
+    /// constant written as arithmetic, `PERIOD - 1`, lowers as the
+    /// number it is.
     pub fn bin(op: &'static str, a: Expr, b: Expr) -> Expr {
+        if let (Expr::Num(x), Expr::Num(y)) = (&a, &b) {
+            let (x, y) = (*x, *y);
+            let v = match op {
+                "+" => Some(x.wrapping_add(y)),
+                "-" => Some(x.wrapping_sub(y)),
+                "&" => Some(x & y),
+                "|" => Some(x | y),
+                "^" => Some(x ^ y),
+                "<<" => Some(x.checked_shl(y as u32).unwrap_or(0)),
+                ">>" => Some(x.checked_shr(y as u32).unwrap_or(0)),
+                "/" if y != 0 => Some(x / y),
+                _ => None,
+            };
+            if let Some(v) = v {
+                return Expr::Num(v);
+            }
+        }
         Expr::Bin(op, Box::new(a), Box::new(b))
     }
     /// Whether this is a truth value rather than a number or bits.
@@ -1104,7 +1124,14 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
                 w.min(l.ewidth(e).max(1))
             };
             let w = if l.ewidth(e) == 1 { 1 } else { w };
-            format!("({} {vop} {})", hval(a, w, l), hval(b, w, l))
+            // A number against a vector is sized to it: `a & 63` is
+            // `a and to_unsigned(63, 8)`, since numeric_std has no
+            // logic between an unsigned and an integer.
+            let side = |x: &Expr| match x {
+                Expr::Num(k) if w > 1 => format!("to_unsigned({k}, {w})"),
+                x => hval(x, w, l),
+            };
+            format!("({} {vop} {})", side(a), side(b))
         }
         Expr::Bin("<<", a, b) => {
             format!("shift_left({}, {})", hval(a, w, l), hint(b, l))

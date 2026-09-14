@@ -14,9 +14,9 @@ pub struct Unit { pub acc: Reg<U<8>>, pub op: Reg<Op> }
 impl Unit {
     pub fn step(&self, op: Op, acc: U<8>) {
         case!(op => {
-            Op::Inc => { self.acc <= acc.wrapping_add(1) },
-            Op::Dec if acc == U::from(0) => { self.op <= Op::Nop },
-            Op::Dec => { self.acc <= acc.wrapping_sub(1) },
+            Op::Inc => { self.acc <= acc + 1 },
+            Op::Dec if acc == 0 => { self.op <= Op::Nop },
+            Op::Dec => { self.acc <= acc - 1 },
             Op::Load(_) | Op::Nop => { self.op <= Op::Nop },
             _ => {},
         });

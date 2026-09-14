@@ -33,8 +33,8 @@ impl Unit<In<Bit>, Out<State>> for Sequencer {
             case!(s => {
                 State::Idle if go.to_bool() => { self.state <= State::Load },
                 State::Load => { self.count <= 3; self.state <= State::Run },
-                State::Run if n == U::from(0) => { self.state <= State::Done },
-                State::Run => { self.count <= n.wrapping_sub(1) },
+                State::Run if n == 0 => { self.state <= State::Done },
+                State::Run => { self.count <= n - 1 },
                 State::Done | State::Idle => { self.state <= State::Idle },
             });
             observed.set(s);
@@ -57,7 +57,7 @@ fn main() {
     let mut sim = Running::new(seq.run(go_in, drive));
     let mut trace = Vec::new();
     for cycle in 0..10 {
-        go.set(Bit::from_bool(cycle == 0));
+        go.set(cycle == 0);
         sim.cycle();
         trace.push(format!("{:?}", observed.get()));
     }

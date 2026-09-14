@@ -324,10 +324,12 @@ everything after it. A memory, \code{Mem<T, N>}, is an array,
 written through \code{at} and read by index.
 
 That is the subset: a loop of one wait, then reads, \code{let}s that
-are functions of what was read, and drives. Inside it you have the
-operators of the value types, \code{slice}, \code{concat},
-\code{sext} and \code{zext} for taking words apart and putting them
-together, and \code{mul::<M>} for a product at a stated width. What
+are functions of what was read, and drives. Inside it you have
+Rust's operators on the value types, \code{+}, \code{-}, \code{\&},
+\code{|}, \code{\^{}}, \code{!}, \code{<<}, \code{>>} and the
+compares, then \code{slice}, \code{concat}, \code{sext} and
+\code{zext} for taking words apart and putting them together, and
+\code{mul::<M>} for a product at a stated width. What
 you do not have inside a lowered loop is what hardware does not
 have: \code{if}, a Rust \code{match}, a function call the lowering
 does not know, or a loop with a variable count. The macro says so at

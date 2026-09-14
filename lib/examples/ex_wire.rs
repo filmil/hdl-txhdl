@@ -13,7 +13,6 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{
     signal, Clock, DefaultClock, In, Out, Reg, Running, Unit, Wire,
 };
-use txhdl::funcs::eq;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, when, Trace};
 
@@ -34,10 +33,10 @@ impl Unit<In<Bit>, Out<Bit>> for Divider {
             DefaultClock::rising().await;
             let n = self.n.get();
             self.counting.set(pulse.get());
-            self.wrap.set(self.counting.get().and(eq(n, U::from(2u8))));
+            self.wrap.set(self.counting.get() & (n == 2));
             let (counting, wrap) = (self.counting.get(), self.wrap.get());
-            when!(wrap => { self.n <= U::from(0u8) });
-            when!(counting.and(wrap.not()) => { self.n <= n.wrapping_add(1) });
+            when!(wrap => { self.n <= 0 });
+            when!(counting & !wrap => { self.n <= n + 1 });
             tick.set(wrap);
         }
     }
@@ -59,7 +58,7 @@ fn main() {
     // Pulses on all but every fourth cycle: the divider sees nine of
     // them in twelve cycles and wraps three times.
     for c in 0..12 {
-        pulse_out.set(Bit::from_bool(c % 4 != 3));
+        pulse_out.set(c % 4 != 3);
         sim.cycle();
         println!(
             "t={:>2} pulse {} tick {}",

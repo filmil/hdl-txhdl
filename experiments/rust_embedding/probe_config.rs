@@ -34,7 +34,7 @@ impl<B: Build> Unit<(), ()> for Top<B> {
             for i in 0..B::TAPS {
                 rising::<DefaultClock>().await;
                 let acc = self.filter.acc.get();
-                self.filter.acc.set(acc.wrapping_add(self.filter.mac.mul(U::new(i as u128), U::new(2))));
+                self.filter.acc.set(acc + self.filter.mac.mul(U::new(i as u128), U::new(2)));
             }
         }
     }

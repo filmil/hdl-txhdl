@@ -59,8 +59,8 @@ fn main() {
         let room = tx.ready().to_bool();
         let word = U::<8>::from(10 + i as u8);
         tx_data_o.set(word);
-        tx_valid_o.set(Bit::from_bool(offer && room));
-        rx_ready_o.set(Bit::from_bool(take));
+        tx_valid_o.set(offer && room);
+        rx_ready_o.set(take);
         if offer && tx.ready().to_bool() {
             tx.send(word);
         }
@@ -68,7 +68,7 @@ fn main() {
             let _ = rx.recv();
         }
         sim.cycle();
-        let (ready, valid) = (tail_full.get().not(), head_full.get());
+        let (ready, valid) = (!tail_full.get(), head_full.get());
         let head = head.get();
         println!(
             "{:>2} {:>5} {:>4}  {:>5} {:>5} {:>4}",

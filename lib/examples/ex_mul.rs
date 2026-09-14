@@ -27,8 +27,8 @@ impl Unit<(In<U<8>>, In<U<8>>, In<Bit>), Out<U<20>>> for Mac {
             let (a, b, clear) = (a.get(), b.get(), clear.get());
             // The product at twenty bits, then the sum at twenty bits.
             let product = a.zext::<20>().mul::<20>(b.zext::<20>());
-            when!(clear => { self.acc <= U::from(0u8) } else {
-                self.acc <= self.acc.get().wrapping_add(product)
+            when!(clear => { self.acc <= 0 } else {
+                self.acc <= self.acc.get() + product
             });
             sum.set(self.acc.get());
         }
@@ -59,8 +59,8 @@ fn main() {
     let pairs: [(u8, u8); 6] =
         [(3, 4), (10, 20), (255, 255), (1, 1), (0, 9), (128, 2)];
     for (x, y) in pairs {
-        a_out.set(U::from(x));
-        b_out.set(U::from(y));
+        a_out.set(x);
+        b_out.set(y);
         sim.cycle();
         println!("{x:>3} * {y:>3}  sum {}", sum.get().raw());
     }

@@ -85,7 +85,7 @@ fn main() {
         (0x80209063, "bne x1, x2, -4096"), // imm -4096, rd 0
     ];
     for (w, text) in words {
-        ir_out.set(U::from(w));
+        ir_out.set(w);
         sim.cycle();
         let v = value.get().raw() as u32 as i32;
         println!("{w:#010x}  {text:<18} imm {v:>6}  rd {}", dec_rd(w));

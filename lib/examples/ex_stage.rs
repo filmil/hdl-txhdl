@@ -28,9 +28,9 @@ impl Unit<Rx<U<8>>, Tx<U<8>>> for Stage {
             })
             .await;
             let v = inp.recv().unwrap_or_default();
-            out.send(v.wrapping_add(1));
+            out.send(v + 1);
             let count = self.count.get();
-            self.count.set(count.wrapping_add(1));
+            self.count.set(count + 1);
         }
     }
 }
@@ -48,10 +48,10 @@ impl Unit<(), Tx<U<8>>> for Source {
         loop {
             DefaultClock::rising().await;
             let (n, gap) = (self.n.get(), self.gap.get());
-            self.gap.set(U::from((gap.raw() as u8 + 1) % 2));
+            self.gap.set((gap.raw() as u8 + 1) % 2);
             if gap.raw() == 0 && out.ready().to_bool() {
                 out.send(n);
-                self.n.set(n.wrapping_add(1));
+                self.n.set(n + 1);
             }
         }
     }

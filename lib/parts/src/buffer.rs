@@ -37,21 +37,21 @@ impl<const W: usize>
             let (head, head_full) = (self.head.get(), self.head_full.get());
             let (tail, tail_full) = (self.tail.get(), self.tail_full.get());
             // What the sides see this cycle, as the edge left it.
-            tx_ready.set(tail_full.not());
+            tx_ready.set(!tail_full);
             rx_data.set(head);
             rx_valid.set(head_full);
             // The take, then the push into whichever slot is free.
-            let pop = rx_ready.and(head_full);
-            let push = tx_valid.and(tail_full.not());
+            let pop = rx_ready & head_full;
+            let push = tx_valid & !tail_full;
             let head1 = mux(pop, tail, head);
             let head_full1 = mux(pop, tail_full, head_full);
             let tail_full1 = mux(pop, Bit::Zero, tail_full);
-            let to_head = push.and(head_full1.not());
-            let to_tail = push.and(head_full1);
+            let to_head = push & !head_full1;
+            let to_tail = push & head_full1;
             self.head.set(mux(to_head, tx_data, head1));
-            self.head_full.set(head_full1.or(to_head));
+            self.head_full.set(head_full1 | to_head);
             self.tail.set(mux(to_tail, tx_data, tail));
-            self.tail_full.set(tail_full1.or(to_tail));
+            self.tail_full.set(tail_full1 | to_tail);
         }
     }
 }
@@ -96,8 +96,8 @@ mod tests {
             let word = U::<8>::from(i as u8);
             let room = tx.ready().to_bool();
             tx_data_o.set(word);
-            tx_valid_o.set(Bit::from_bool(offer && room));
-            rx_ready_o.set(Bit::from_bool(take));
+            tx_valid_o.set(offer && room);
+            rx_ready_o.set(take);
             if offer && room {
                 tx.send(word);
             }
@@ -105,7 +105,7 @@ mod tests {
                 let _ = rx.recv();
             }
             sim.cycle();
-            assert_eq!(tail_full.get().not(), tx.ready(), "ready at {i}");
+            assert_eq!(!tail_full.get(), tx.ready(), "ready at {i}");
             assert_eq!(
                 head_full.get().to_bool(),
                 rx.peek().is_some(),

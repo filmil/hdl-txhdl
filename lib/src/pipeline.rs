@@ -30,12 +30,12 @@ pub async fn mul(a: U<32>, b: U<32>) -> U<64> {
 
 pub async fn add<const N: usize>(a: U<N>, b: U<N>) -> U<N> {
     tick().await;
-    a.wrapping_add(b)
+    a + b
 }
 
 pub async fn sub<const N: usize>(a: U<N>, b: U<N>) -> U<N> {
     tick().await;
-    a.wrapping_sub(b)
+    a - b
 }
 
 pub async fn div(a: U<32>, b: U<32>) -> U<32> {

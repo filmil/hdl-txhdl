@@ -12,37 +12,11 @@ pub fn high_half(x: U<64>) -> U<32> {
     x.slice::<32, 32>()
 }
 
-pub fn is_zero<const N: usize>(x: U<N>) -> Bit {
-    Bit::from_bool(x.raw() == 0)
-}
-
-pub fn shl<const N: usize>(a: U<N>, k: usize) -> U<N> {
-    a.shl(k)
-}
-pub fn shr<const N: usize>(a: U<N>, k: usize) -> U<N> {
-    a.shr(k)
-}
+/// An arithmetic shift right; `>>` is the logical one.
 pub fn sra<const N: usize>(a: U<N>, k: usize) -> U<N> {
     a.sra(k)
 }
-pub fn band<const N: usize>(a: U<N>, b: U<N>) -> U<N> {
-    a.and(b)
-}
-pub fn bor<const N: usize>(a: U<N>, b: U<N>) -> U<N> {
-    a.or(b)
-}
-pub fn bxor<const N: usize>(a: U<N>, b: U<N>) -> U<N> {
-    a.xor(b)
-}
+/// A signed compare; `<` is the unsigned one.
 pub fn lt_signed<const N: usize>(a: U<N>, b: U<N>) -> Bit {
     a.lt_signed(b)
-}
-pub fn lt<const N: usize>(a: U<N>, b: U<N>) -> Bit {
-    Bit::from_bool(a.raw() < b.raw())
-}
-pub fn gt<const N: usize>(a: U<N>, b: U<N>) -> Bit {
-    Bit::from_bool(a.raw() > b.raw())
-}
-pub fn eq<const N: usize>(a: U<N>, b: U<N>) -> Bit {
-    Bit::from_bool(a.raw() == b.raw())
 }

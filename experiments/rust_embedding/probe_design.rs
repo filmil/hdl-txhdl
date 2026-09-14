@@ -17,7 +17,7 @@ impl Unit<NarrowIn, AccOut> for MacUnit {
         loop {
             rising::<DefaultClock>().await;
             let acc = self.acc.get();   // the wait for the edge
-            self.acc.set(acc.wrapping_add(inputs.0.resize::<64>()));
+            self.acc.set(acc + inputs.0.resize::<64>());
         }
     }
 }
@@ -28,7 +28,7 @@ impl Unit<WideIn, AccOut> for MacUnit {
         loop {
             rising::<DefaultClock>().await;
             let acc = self.acc.get();
-            self.acc.set(acc.wrapping_add(inputs.0));
+            self.acc.set(acc + inputs.0);
         }
     }
 }

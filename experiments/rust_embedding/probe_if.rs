@@ -13,7 +13,7 @@ impl Unit {
         rising::<DefaultClock>().await;
         let count = self.count.get();
         when!(enable => {
-            self.count <= count.wrapping_add(U::new(1));
+            self.count <= count + 1;
             self.flag <= Bit::One
         } else {
             self.count <= U::new(0);

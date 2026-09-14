@@ -23,7 +23,7 @@ impl Unit<(), Out<U<32>>> for Producer {
             DefaultClock::rising().await; // the wait
             let n = self.n.get(); // a read at that edge
             out.set(n); // a wire: no wait
-            self.n.set(n.wrapping_add(1));
+            self.n.set(n + 1);
         }
     }
 }
@@ -33,7 +33,7 @@ impl Unit<In<U<32>>, ()> for Consumer {
         loop {
             DefaultClock::rising().await;
             let total = self.total.get();
-            self.total.set(total.wrapping_add(inp.get()));
+            self.total.set(total + inp.get());
         }
     }
 }
@@ -43,7 +43,7 @@ impl Unit<U<32>, ()> for Pe {
         loop {
             DefaultClock::rising().await;
             let acc = self.acc.get();
-            self.acc.set(acc.wrapping_add(i));
+            self.acc.set(acc + i);
         }
     }
 }

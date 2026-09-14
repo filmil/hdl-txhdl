@@ -10,7 +10,6 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{
     now, signal, Clock, DefaultClock, In, Out, Reg, Running, Unit,
 };
-use txhdl::funcs::{bxor, eq, shr};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, when, Trace};
 
@@ -19,13 +18,13 @@ use txhdl::{lower, when, Trace};
 /// exclusive or.
 #[lower]
 fn gray(n: U<4>) -> U<4> {
-    bxor(n, shr(n, 1))
+    n ^ (n >> 1)
 }
 
 /// Whether the count is the last before it wraps.
 #[lower]
 fn last(n: U<4>) -> Bit {
-    eq(n, U::<4>::from(15u8))
+    Bit::from(n == 15)
 }
 // end{fns}
 
@@ -45,9 +44,9 @@ impl Unit<In<Bit>, (Out<U<4>>, Out<Bit>)> for Gray {
             DefaultClock::rising().await;
             let n = self.n.get();
             let go = step.get();
-            when!(go => { self.n <= n.wrapping_add(U::from(1u8)) });
+            when!(go => { self.n <= n + 1 });
             code.set(gray(n));
-            wrap.set(go.and(last(n)));
+            wrap.set(go & last(n));
         }
     }
 }
@@ -69,7 +68,7 @@ fn main() {
     let mut sim = Running::new(gray.run(step, (code_out, wrap_out)));
     // Steps on all but every fifth cycle: sixteen in twenty, one wrap.
     for c in 0..20 {
-        step_out.set(Bit::from_bool(c % 5 != 4));
+        step_out.set(c % 5 != 4);
         sim.cycle();
         println!(
             "t={:>2} n {:>2} code {:04b} wrap {}",

@@ -56,7 +56,7 @@ impl<TC: TopConfig> Unit<(), ()> for Top<TC> {
             DefaultClock::rising().await;
             let mut acc = self.filter.acc.get();
             for i in 0..<FilterOf<TC> as FilterConfig>::TAPS {
-                acc = acc.wrapping_add(self.filter.mac.mul(i.into(), 2.into()));
+                acc = acc + self.filter.mac.mul(i.into(), 2.into());
             }
             self.filter.acc.set(acc);
         }

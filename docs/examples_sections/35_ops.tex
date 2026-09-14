@@ -1,0 +1,41 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Operators}
+\label{sec:x-ops}
+
+The operators of a value are Rust's. \code{+} and \code{-} are
+same-width and wrapping; \code{\&}, \code{|}, \code{\^{}} and
+\code{!} are bitwise; \code{<<} and \code{>>} shift by an integer,
+not by a value; and the compares, \code{==}, \code{!=}, \code{<},
+\code{<=}, \code{>} and \code{>=}, are unsigned and yield a
+\code{bool}. The right operand of an arithmetic or bitwise operator,
+and of a compare, is anything that converts, so a literal is written
+as a literal: \code{a + 1}, \code{a \& 0x3F}, \code{a >= 128}. A
+\code{bool} is a condition wherever a \code{Bit} is, in \code{when!},
+\code{mux}, a channel's \code{recv\_if} and a register's
+\code{set\_if}, and either drives an output or a register of
+\code{Bit}; \code{\&} and \code{|} join the two, and the result is a
+\code{Bit}. Rust binds \code{\&} tighter than \code{==}, so a compare
+inside a logic expression is parenthesised, and \code{\&\&} and
+\code{||} cannot be overloaded, so they stay on \code{bool}. What has
+no operator is a method: \code{sra}, the arithmetic shift, and
+\code{lt\_signed}, the signed compare, in \code{txhdl::funcs}, and
+\code{mul::<M>}, \code{concat::<K, M>}, \code{sext::<M>} and
+\code{zext::<M>}, each with the result width stated.
+Each operator lowers to the operator of the same name; a compare in
+VHDL is a boolean and is made a bit where a bit is needed. The unit
+below drives seven registers from two inputs under \code{en}, counts
+the cycles on which the inputs are equal or ordered and the first is
+below 128, and says on two wires whether they are equal and whether
+the first is below. The lowering is simulated against the run's
+trace, Section~\ref{sec:x-checked}.
+
+\begin{figure}[htbp]
+\centering
+\input{ops_timing.tex}
+\caption{The operators: the inputs, the sum, the count of hits, and the two compares.}
+\label{fig:x-ops}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_ops.rs}. Run with \code{bazel run //lib/examples:ex\_ops}.},label={lst:x-ops}]{lib/examples/ex_ops.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_ops} printed when the build ran it: a line per cycle, then the lowering.},label={lst:x-ops-out}]{out_ops.txt}

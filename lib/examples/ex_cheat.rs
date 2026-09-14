@@ -5,7 +5,6 @@
 //! predicated drive, an output, a lowering and a waveform.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Reg, Running, Unit};
-use txhdl::funcs::eq;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, when, Trace};
 
@@ -22,8 +21,8 @@ impl Unit<In<Bit>, Out<Bit>> for Counter {
             DefaultClock::rising().await; // wait, then read
             let n = self.n.get();
             let en = enable.get();
-            when!(en => { self.n <= n.wrapping_add(1) });
-            tick.set(eq(n, U::from(7u8)));
+            when!(en => { self.n <= n + 1 });
+            tick.set(n == 7);
         }
     }
 }
@@ -42,7 +41,7 @@ fn main() {
     }
     let mut sim = Running::new(counter.run(enable, tick_out));
     for c in 0..12 {
-        en_out.set(Bit::from_bool(c < 10));
+        en_out.set(c < 10);
         sim.cycle();
     }
     stop();

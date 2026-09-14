@@ -70,7 +70,7 @@ impl<const N: usize, W: Clock, R: Clock> Default for Fifo<N, W, R> {
 
 impl<const N: usize, W: Clock, R: Clock> Fifo<N, W, R> {
     fn full(&self) -> bool {
-        self.wptr.get().wrapping_sub(self.rptr_w.inp.get()) == U::from(N as u8)
+        self.wptr.get() - self.rptr_w.inp.get() == N as u8
     }
     fn empty(&self) -> bool {
         self.rptr.get() == self.wptr_r.inp.get()
@@ -85,8 +85,8 @@ impl<const N: usize, W: Clock, R: Clock> Fifo<N, W, R> {
             let w = self.wptr.get();
             let v = push.recv().unwrap_or_default();
             self.mem.write(w.raw() as usize, v);
-            self.wptr.set(w.wrapping_add(1));
-            self.wptr_r.out.set(w.wrapping_add(1));
+            self.wptr.set(w + 1);
+            self.wptr_r.out.set(w + 1);
         }
     }
 
@@ -96,8 +96,8 @@ impl<const N: usize, W: Clock, R: Clock> Fifo<N, W, R> {
             until(R::rising, || !self.empty() && pop.ready().to_bool()).await;
             let r = self.rptr.get();
             pop.send(self.mem.read(r.raw() as usize));
-            self.rptr.set(r.wrapping_add(1));
-            self.rptr_w.out.set(r.wrapping_add(1));
+            self.rptr.set(r + 1);
+            self.rptr_w.out.set(r + 1);
         }
     }
 }
@@ -127,7 +127,7 @@ impl Unit<(), Tx<U<8>, ClkW>> for Producer {
             until(ClkW::rising, || push.ready().to_bool()).await;
             let n = self.n.get();
             push.send(n);
-            self.n.set(n.wrapping_add(1));
+            self.n.set(n + 1);
             println!("t={:>2} {}: push {}", now(), ClkW::NAME, n.raw());
         }
     }
@@ -144,7 +144,7 @@ impl Unit<Rx<U<8>, ClkR>, ()> for Consumer {
         loop {
             let v = pop.wait().await;
             let seen = self.seen.get();
-            self.seen.set(seen.wrapping_add(1));
+            self.seen.set(seen + 1);
             println!("t={:>2} {}: pop  {}", now(), ClkR::NAME, v.raw());
         }
     }

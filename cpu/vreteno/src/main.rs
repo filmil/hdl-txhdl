@@ -131,8 +131,8 @@ fn main() {
     let mut term = Terminal::new(b"yes");
     for cycle in 0..1200 {
         let at = wb_pc.get().raw() as u32;
-        irq_out.set(Bit::from_bool(cycle == irq_at).or(uirq.get()));
-        rx_out.set(Bit::from_bool(term.level()));
+        irq_out.set((cycle == irq_at) | uirq.get());
+        rx_out.set(term.level());
         sim.cycle();
         term.see(tx.get().to_bool());
         let w = wb.get();
@@ -161,7 +161,7 @@ fn main() {
     // port finish its frame.
     let mut grace = 0;
     while term.busy() && grace < 64 {
-        rx_out.set(Bit::from_bool(term.level()));
+        rx_out.set(term.level());
         sim.cycle();
         term.see(tx.get().to_bool());
         grace += 1;

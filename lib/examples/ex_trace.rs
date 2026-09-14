@@ -31,7 +31,7 @@ impl Unit<(), Out<Bit>> for Counter {
             DefaultClock::rising().await;
             let n = self.n.get();
             let high = n.bit(2);
-            self.n.set(n.wrapping_add(1));
+            self.n.set(n + 1);
             self.phase.set(mux(high, Phase::High, Phase::Low));
             msb.set(high);
         }

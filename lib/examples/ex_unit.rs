@@ -23,8 +23,8 @@ impl DualPort {
             let (enable, hits, cells) =
                 (self.enable.get(), self.hits_a.get(), self.cells.get());
             when!(enable => {
-                self.hits_a <= hits.wrapping_add(1);
-                self.cells <= cells.wrapping_add(1)
+                self.hits_a <= hits + 1;
+                self.cells <= cells + 1
             } else {
                 self.hits_a <= 0
             });
@@ -35,7 +35,7 @@ impl DualPort {
         loop {
             DefaultClock::rising().await;
             let hits = self.hits_b.get();
-            self.hits_b.set(hits.wrapping_add(1));
+            self.hits_b.set(hits + 1);
         }
     }
 }

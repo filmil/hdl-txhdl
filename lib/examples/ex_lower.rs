@@ -54,7 +54,7 @@ impl Unit<(), Tx<Triple>> for Source {
                     b: n,
                     c: U::from(100u8),
                 });
-                self.n.set(n.wrapping_add(1));
+                self.n.set(n + 1);
             }
         }
     }

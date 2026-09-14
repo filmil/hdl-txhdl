@@ -75,8 +75,13 @@ Rust will not accept, so the width is written by the caller rather than
 derived.
 
 A number is written as a number. \code{U<N>} converts from every unsigned
-primitive and from \code{i32}, and its arithmetic and every drive take
-anything that converts, so \code{acc.wrapping\_add(1)} and
-\code{reg.set(0)} say what they mean. \code{i32} is there because an
+primitive and from \code{i32}, and its operators and every drive take
+anything that converts, so \code{acc + 1}, \code{n == 0} and
+\code{reg.set(0)} say what they mean. The operators are Rust's,
+\code{+}, \code{-}, \code{\&}, \code{|}, \code{\^{}}, \code{!},
+\code{<<}, \code{>>} and the compares, through the \code{std::ops}
+traits; a compare yields a \code{bool}, since \code{PartialEq} allows
+nothing else, and a \code{bool} converts to a \code{Bit} and back, so
+a condition is either. \code{i32} is there because an
 integer literal with no other constraint is an \code{i32}, and a literal
 is the common case; a negative one is a bug, and debug builds say so.

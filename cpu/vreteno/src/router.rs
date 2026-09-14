@@ -12,7 +12,6 @@
 //! offered.
 use crate::bus::REQ_ADDR;
 use txhdl::comp::{mux, Clock, DefaultClock, Rx, Tx, Unit};
-use txhdl::funcs::eq;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, when, Trace};
 
@@ -46,13 +45,13 @@ impl
             // Where the request at the head would go, and whether that
             // channel has room; the head is looked at before it is
             // taken.
-            let offered = Bit::from_bool(req.peek().is_some());
+            let offered = req.peek().is_some();
             let head = req.head();
             let region = head.slice::<REQ_ADDR, 32>().slice::<12, 4>();
-            let to_mem = eq(region, U::from(1u8));
-            let to_timer = eq(region, U::from(2u8));
-            let to_uart = eq(region, U::from(3u8));
-            let hole = to_mem.not().and(to_timer.not()).and(to_uart.not());
+            let to_mem = region == 1;
+            let to_timer = region == 2;
+            let to_uart = region == 3;
+            let hole = !to_mem & !to_timer & !to_uart;
             let we = head.bit(0);
             let room = mux(
                 to_mem,
@@ -67,30 +66,25 @@ impl
                     ),
                 ),
             );
-            let go = offered.and(room);
+            let go = offered & room;
             let r = req.recv_if(room).unwrap_or_default();
-            when!(go.and(to_mem) => { mem_req.send(r) });
-            when!(go.and(to_timer) => { timer_req.send(r) });
-            when!(go.and(to_uart) => { uart_req.send(r) });
+            when!(go & to_mem => { mem_req.send(r) });
+            when!(go & to_timer => { timer_req.send(r) });
+            when!(go & to_uart => { uart_req.send(r) });
             // The responses, merged: the memory's first, then the timer's.
-            let m_valid = Bit::from_bool(mem_resp.peek().is_some());
+            let m_valid = mem_resp.peek().is_some();
             let m = mem_resp.recv().unwrap_or_default();
-            let t_valid =
-                Bit::from_bool(timer_resp.peek().is_some()).and(m_valid.not());
-            let t = timer_resp.recv_if(m_valid.not()).unwrap_or_default();
-            let u_valid = Bit::from_bool(uart_resp.peek().is_some())
-                .and(m_valid.not())
-                .and(t_valid.not());
-            let u = uart_resp
-                .recv_if(m_valid.not().and(t_valid.not()))
-                .unwrap_or_default();
-            let hole_read = go.and(hole).and(we.not());
+            let t_valid = timer_resp.peek().is_some() & !m_valid;
+            let t = timer_resp.recv_if(!m_valid).unwrap_or_default();
+            let u_valid = uart_resp.peek().is_some() & !m_valid & !t_valid;
+            let u = uart_resp.recv_if(!m_valid & !t_valid).unwrap_or_default();
+            let hole_read = go & hole & !we;
             let answer = mux(
                 m_valid,
                 m,
                 mux(t_valid, t, mux(u_valid, u, U::<32>::from(0u32))),
             );
-            when!(m_valid.or(t_valid).or(u_valid).or(hole_read) => {
+            when!(m_valid | t_valid | u_valid | hole_read => {
                 resp.send(answer)
             });
         }

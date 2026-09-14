@@ -27,7 +27,7 @@ impl Unit<(), ()> for Producer {
             DefaultClock::rising().await;
             let n = self.n.get();
             self.out.set(n);
-            self.n.set(n.wrapping_add(1));
+            self.n.set(n + 1);
         }
     }
 }
@@ -43,7 +43,7 @@ impl Unit<(), ()> for Consumer {
         loop {
             DefaultClock::rising().await;
             let total = self.total.get();
-            self.total.set(total.wrapping_add(self.inp.get()));
+            self.total.set(total + self.inp.get());
         }
     }
 }

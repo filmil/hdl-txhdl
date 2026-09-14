@@ -67,10 +67,10 @@ fn main() {
     ];
     println!("  t we wa   wd ra    q");
     for (en, wa, wd, ra) in steps {
-        we_out.set(Bit::from_bool(en == 1));
-        waddr_out.set(U::from(wa));
-        wdata_out.set(U::from(wd));
-        raddr_out.set(U::from(ra));
+        we_out.set(en == 1);
+        waddr_out.set(wa);
+        wdata_out.set(wd);
+        raddr_out.set(ra);
         sim.cycle();
         println!(
             "{:>3}  {en} {wa:>2} {wd:#04x} {ra:>2} {:#04x}",

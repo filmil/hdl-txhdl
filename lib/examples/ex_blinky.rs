@@ -5,7 +5,6 @@
 use std::marker::PhantomData;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{signal, Clock, DefaultClock, Out, Reg, Running, Unit};
-use txhdl::funcs::{eq, lt};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, when, Trace};
 
@@ -34,13 +33,13 @@ impl<C: BlinkyConfig> Unit<(), Out<Bit>> for Blinky<C> {
         loop {
             DefaultClock::rising().await;
             let n = self.count.get();
-            let wrap = eq(n, U::from(C::PERIOD - 1));
+            let wrap = n == C::PERIOD - 1;
             when!(wrap => {
                 self.count <= 0
             } else {
-                self.count <= n.wrapping_add(1)
+                self.count <= n + 1
             });
-            led.set(lt(n, U::from(C::HALF)));
+            led.set(n < C::HALF);
         }
     }
 }

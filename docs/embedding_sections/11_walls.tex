@@ -45,7 +45,7 @@ is what real logic needs.
 
 \begin{lstlisting}[caption={The statement form. It reads as a conditional and lowers to predicated drives. The arrow points into the register: the register becomes the value.},label={lst:when}]
 when!(enable => {
-    self.count <= count.wrapping_add(1);
+    self.count <= count + 1;
     self.flag  <= Bit::One
 } else {
     self.count <= 0;
@@ -94,8 +94,8 @@ let (s, n) = (self.state.get(), self.count.get());
 case!(s => {
     State::Idle if go.to_bool() => { self.state <= State::Load },
     State::Load => { self.count <= 3; self.state <= State::Run },
-    State::Run if n == U::from(0) => { self.state <= State::Done },
-    State::Run => { self.count <= n.wrapping_sub(1) },
+    State::Run if n == 0 => { self.state <= State::Done },
+    State::Run => { self.count <= n - 1 },
     State::Done | State::Idle => { self.state <= State::Idle },
 });
 \end{lstlisting}

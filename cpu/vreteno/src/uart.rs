@@ -16,7 +16,6 @@
 use crate::bus::{REQ_ADDR, REQ_WDATA};
 use crate::isa::UART_BASE;
 use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
-use txhdl::funcs::{eq, is_zero};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, when, Trace};
 
@@ -25,8 +24,8 @@ use txhdl::{lower, select, when, Trace};
 
 /// Whether an address is one of this device's sixteen bytes.
 #[lower]
-fn hit(addr: U<32>) -> Bit {
-    eq(addr.slice::<4, 28>(), U::from(UART_BASE >> 4))
+fn hit(addr: U<32>) -> bool {
+    addr.slice::<4, 28>() == UART_BASE >> 4
 }
 
 /// The frame a byte goes out as, least significant bit first: a start
@@ -47,15 +46,15 @@ fn shifted(shift: U<10>) -> U<10> {
 
 /// Whether the current bit's last cycle has come.
 #[lower]
-fn last_cycle<const DIV: u32>(tick: U<32>) -> Bit {
-    eq(tick, U::<32>::from(DIV - 1))
+fn last_cycle<const DIV: u32>(tick: U<32>) -> bool {
+    tick == DIV - 1
 }
 
 /// Whether the current bit's middle cycle has come, where the line is
 /// sampled.
 #[lower]
-fn middle<const DIV: u32>(tick: U<32>) -> Bit {
-    eq(tick, U::<32>::from(DIV / 2))
+fn middle<const DIV: u32>(tick: U<32>) -> bool {
+    tick == DIV / 2
 }
 
 /// A frame coming in, one more bit taken at the top: bit 0 of the
@@ -70,16 +69,16 @@ fn taken_in(shift: U<8>, line: Bit) -> U<8> {
 #[lower]
 fn word(
     sel: U<2>,
-    busy: Bit,
-    ready: Bit,
-    full: Bit,
+    busy: bool,
+    ready: bool,
+    full: bool,
     last: U<8>,
     data: U<8>,
 ) -> U<32> {
     let status = U::<29>::from(0u32)
-        .concat::<1, 30>(full.zext::<1>())
-        .concat::<1, 31>(ready.zext::<1>())
-        .concat::<1, 32>(busy.zext::<1>());
+        .concat::<1, 30>(Bit::from(full).zext::<1>())
+        .concat::<1, 31>(Bit::from(ready).zext::<1>())
+        .concat::<1, 32>(Bit::from(busy).zext::<1>());
     select!(sel.raw() => {
         0 => last.zext::<32>(),
         1 => status,
@@ -137,43 +136,41 @@ impl<const DIV: u32>
             let (rx_bits, rx_tick) = (self.rx_bits.get(), self.rx_tick.get());
             let (head, count) = (self.head.get(), self.count.get());
             let (received, dropped) = (self.received.get(), self.dropped.get());
-            let rx_ready = is_zero(count).not();
-            let full = eq(count, U::from(8u8));
+            let rx_ready = count != 0;
+            let full = count == 8;
             let rx_data = self.fifo.read(head);
-            let busy = is_zero(bits).not();
+            let busy = bits != 0;
             // Every request is taken; the ones for this device are the
             // ones whose address falls in its sixteen bytes.
-            let offered = Bit::from_bool(req.peek().is_some());
+            let offered = req.peek().is_some();
             let r = req.recv().unwrap_or_default();
             let addr = r.slice::<REQ_ADDR, 32>();
             let mine = hit(addr);
             let sel = addr.slice::<2, 2>();
             let we = r.bit(0);
-            let write = offered.and(we).and(mine);
-            let read = offered.and(we.not());
-            let read_rx = read.and(mine).and(eq(sel, U::from(2u8)));
+            let write = offered & we & mine;
+            let read = offered & !we;
+            let read_rx = read & mine & (sel == 2);
             // A byte written while idle starts a frame, ten bits of DIV
             // cycles each.
-            let start = write.and(eq(sel, U::from(0u8))).and(busy.not());
+            let start = write & (sel == 0) & !busy;
             let octet = r.slice::<REQ_WDATA, 8>();
             let done = last_cycle::<DIV>(tick);
             when!(rst => {
-                self.bits <= U::from(0u8);
-                self.tick <= U::from(0u8)
+                self.bits <= 0;
+                self.tick <= 0
             });
-            when!(rst.not().and(start) => {
+            when!(!rst & start => {
                 self.shift <= frame(octet);
-                self.bits <= U::from(10u8);
-                self.tick <= U::from(0u8);
+                self.bits <= 10;
+                self.tick <= 0;
                 self.last <= octet;
-                self.sent <= sent.wrapping_add(U::from(1u8))
+                self.sent <= sent + 1
             });
-            when!(rst.not().and(busy).and(done.not()) => {
-                self.tick <= tick.wrapping_add(U::<32>::from(1u32))
-            });
-            when!(rst.not().and(busy).and(done) => {
-                self.tick <= U::from(0u8);
-                self.bits <= bits.wrapping_sub(U::from(1u8));
+            when!(!rst & busy & !done => { self.tick <= tick + 1 });
+            when!(!rst & busy & done => {
+                self.tick <= 0;
+                self.bits <= bits - 1;
                 self.shift <= shifted(shift)
             });
             when!(read => {
@@ -193,53 +190,45 @@ impl<const DIV: u32>
             // oldest the read of the third word takes; the buffer full,
             // the byte is dropped and counted.
             self.line.set(rx.get());
-            let receiving = is_zero(rx_bits).not();
+            let receiving = rx_bits != 0;
             let rx_last = last_cycle::<DIV>(rx_tick);
-            let sample = rst.not().and(receiving).and(middle::<DIV>(rx_tick));
-            let at_start = eq(rx_bits, U::from(10u8));
-            let at_stop = eq(rx_bits, U::from(1u8));
+            let sample = !rst & receiving & middle::<DIV>(rx_tick);
+            let at_start = rx_bits == 10;
+            let at_stop = rx_bits == 1;
             when!(rst => {
-                self.rx_bits <= U::from(0u8);
-                self.rx_tick <= U::from(0u8);
-                self.head <= U::from(0u8);
-                self.count <= U::from(0u8)
+                self.rx_bits <= 0;
+                self.rx_tick <= 0;
+                self.head <= 0;
+                self.count <= 0
             });
-            when!(rst.not().and(receiving.not()).and(line.not()) => {
-                self.rx_bits <= U::from(10u8);
-                self.rx_tick <= U::from(0u8)
+            when!(!rst & !receiving & !line => {
+                self.rx_bits <= 10;
+                self.rx_tick <= 0
             });
-            when!(rst.not().and(receiving).and(rx_last.not()) => {
-                self.rx_tick <= rx_tick.wrapping_add(U::<32>::from(1u32))
+            when!(!rst & receiving & !rx_last => {
+                self.rx_tick <= rx_tick + 1
             });
-            when!(rst.not().and(receiving).and(rx_last) => {
-                self.rx_tick <= U::from(0u8);
-                self.rx_bits <= rx_bits.wrapping_sub(U::from(1u8))
+            when!(!rst & receiving & rx_last => {
+                self.rx_tick <= 0;
+                self.rx_bits <= rx_bits - 1
             });
-            when!(sample.and(at_start).and(line) => {
-                self.rx_bits <= U::from(0u8)
-            });
-            when!(sample.and(at_start.not()).and(at_stop.not()) => {
+            when!(sample & at_start & line => { self.rx_bits <= 0 });
+            when!(sample & !at_start & !at_stop => {
                 self.rx_shift <= taken_in(rx_shift, line)
             });
-            when!(sample.and(at_stop) => { self.rx_bits <= U::from(0u8) });
-            let landed = sample.and(at_stop).and(line);
-            let push = landed.and(full.not());
-            let pop = read_rx.and(rx_ready).and(rst.not());
-            let tail = head.wrapping_add(count.slice::<0, 3>());
+            when!(sample & at_stop => { self.rx_bits <= 0 });
+            let landed = sample & at_stop & line;
+            let push = landed & !full;
+            let pop = read_rx & rx_ready & !rst;
+            let tail = head + count.slice::<0, 3>();
             when!(push => {
                 self.fifo.at(tail) <= rx_shift;
-                self.received <= received.wrapping_add(U::from(1u8))
+                self.received <= received + 1
             });
-            when!(landed.and(full) => {
-                self.dropped <= dropped.wrapping_add(U::from(1u8))
-            });
-            when!(pop => { self.head <= head.wrapping_add(U::from(1u8)) });
-            when!(rst.not().and(push).and(pop.not()) => {
-                self.count <= count.wrapping_add(U::from(1u8))
-            });
-            when!(rst.not().and(pop).and(push.not()) => {
-                self.count <= count.wrapping_sub(U::from(1u8))
-            });
+            when!(landed & full => { self.dropped <= dropped + 1 });
+            when!(pop => { self.head <= head + 1 });
+            when!(!rst & push & !pop => { self.count <= count + 1 });
+            when!(!rst & pop & !push => { self.count <= count - 1 });
             irq.set(rx_ready);
         }
     }

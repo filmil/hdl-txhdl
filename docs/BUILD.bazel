@@ -616,6 +616,8 @@ latex_document(
         ":fn_timing",
         ":foreign_run",
         ":foreign_timing",
+        ":ops_run",
+        ":ops_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -643,6 +645,22 @@ waveform(
         "//b=>b",
         "//alu/r=>r",
         "//y=>y",
+    ],
+)
+
+waveform(
+    name = "ops",
+    example = "//lib/examples:ex_ops",
+    lowered = ("ops", "ops"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//a=>a",
+        "//b=>b",
+        "//en=>en",
+        "//ops/sum=>sum",
+        "//ops/hits=>hits",
+        "//same=>same",
+        "//below=>below",
     ],
 )
 

@@ -11,12 +11,12 @@ impl DualPort {
         loop {
             rising::<DefaultClock>().await;
             let (h, c) = (self.hits_a.get(), self.cells.get());
-            self.hits_a.set(h.wrapping_add(U::new(1)));
-            self.cells.set(c.wrapping_add(U::new(1)));
+            self.hits_a.set(h + 1);
+            self.cells.set(c + 1);
         }
     }
     async fn port_b(&self) {
-        loop { rising::<DefaultClock>().await; let h = self.hits_b.get(); self.hits_b.set(h.wrapping_add(U::new(1))) }
+        loop { rising::<DefaultClock>().await; let h = self.hits_b.get(); self.hits_b.set(h + 1) }
     }
 }
 

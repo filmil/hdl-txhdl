@@ -153,10 +153,10 @@ names its fields in a waveform.
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={A unit: state, ports, one loop that waits, reads and drives. From \code{ex\_cheat.rs}.},label={lst:p-counter}]{lib/examples/ex_cheat.rs}
 
 Values are \code{Bit}, IEEE 1164's nine-valued \code{Logic}, and the
-sized vectors \code{U<N>} and \code{I<N>}, with the operators a
-datapath needs as plain functions: arithmetic, shifts, bitwise logic,
-\code{slice}, \code{concat}, \code{sext} and \code{zext}, and the
-compares. A struct of values with \code{derive(Value)} is a value with
+sized vectors \code{U<N>} and \code{I<N>}, with Rust's operators for
+arithmetic, shifts, bitwise logic and the compares, and methods for
+what has no operator: \code{slice}, \code{concat}, \code{sext},
+\code{zext}, the arithmetic shift and the signed compare. A struct of values with \code{derive(Value)} is a value with
 a width, and a transaction that moves over a channel is such a struct
 with \code{derive(Transaction)}. There is no width arithmetic in the
 type system, since stable Rust has none; a width that is the sum of

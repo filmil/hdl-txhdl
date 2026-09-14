@@ -6,8 +6,8 @@
 //! signed compare, `sltu` the unsigned one.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Reg, Running, Unit};
-use txhdl::funcs::{band, bor, bxor, lt, lt_signed, shl, shr, sra};
-use txhdl::types::U;
+use txhdl::funcs::{lt_signed, sra};
+use txhdl::types::{Bit, U};
 use txhdl::{case, lower, Trace, Value};
 
 #[derive(Value, Clone, Copy, Default, PartialEq, Debug)]
@@ -41,16 +41,16 @@ impl Unit<(In<Op>, In<U<32>>, In<U<32>>), Out<U<32>>> for Alu {
             DefaultClock::rising().await;
             let (op, a, b) = (op.get(), a.get(), b.get());
             case!(op => {
-                Op::Add => { self.r <= a.wrapping_add(b) },
-                Op::Sub => { self.r <= a.wrapping_sub(b) },
-                Op::And => { self.r <= band(a, b) },
-                Op::Or => { self.r <= bor(a, b) },
-                Op::Xor => { self.r <= bxor(a, b) },
-                Op::Sll => { self.r <= shl(a, b.raw() as usize) },
-                Op::Srl => { self.r <= shr(a, b.raw() as usize) },
+                Op::Add => { self.r <= a + b },
+                Op::Sub => { self.r <= a - b },
+                Op::And => { self.r <= a & b },
+                Op::Or => { self.r <= a | b },
+                Op::Xor => { self.r <= a ^ b },
+                Op::Sll => { self.r <= a << (b.raw() as usize) },
+                Op::Srl => { self.r <= a >> (b.raw() as usize) },
                 Op::Sra => { self.r <= sra(a, b.raw() as usize) },
                 Op::Slt => { self.r <= lt_signed(a, b).zext() },
-                Op::Sltu => { self.r <= lt(a, b).zext() },
+                Op::Sltu => { self.r <= Bit::from(a < b).zext() },
             });
             y.set(self.r.get());
         }
@@ -88,8 +88,8 @@ fn main() {
     ];
     for (o, x, z) in table {
         op_out.set(o);
-        a_out.set(U::from(x));
-        b_out.set(U::from(z));
+        a_out.set(x);
+        b_out.set(z);
         sim.cycle();
         println!("{:?} {:#x} {:#x} = {:#x}", o, x, z, result.get().raw());
     }

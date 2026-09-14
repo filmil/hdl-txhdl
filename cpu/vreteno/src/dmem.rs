@@ -42,25 +42,25 @@ impl Unit<Rx<U<69>>, Tx<U<32>>> for Dmem {
         loop {
             DefaultClock::rising().await;
             let (word, answer) = (self.word.get(), self.answer.get());
-            let offered = Bit::from_bool(req.peek().is_some());
+            let offered = req.peek().is_some();
             let r = req.recv().unwrap_or_default();
             let at = r.slice::<REQ_ADDR, 32>().slice::<2, 10>();
             let data = r.slice::<REQ_WDATA, 32>();
             let we = r.bit(0);
-            let write = offered.and(we);
-            when!(write.and(r.bit(1)) => {
+            let write = offered & we;
+            when!(write & r.bit(1) => {
                 self.lane0.at(at) <= data.slice::<0, 8>()
             });
-            when!(write.and(r.bit(2)) => {
+            when!(write & r.bit(2) => {
                 self.lane1.at(at) <= data.slice::<8, 8>()
             });
-            when!(write.and(r.bit(3)) => {
+            when!(write & r.bit(3) => {
                 self.lane2.at(at) <= data.slice::<16, 8>()
             });
-            when!(write.and(r.bit(4)) => {
+            when!(write & r.bit(4) => {
                 self.lane3.at(at) <= data.slice::<24, 8>()
             });
-            let read = offered.and(we.not());
+            let read = offered & !we;
             when!(read => {
                 self.word <= self
                     .lane3

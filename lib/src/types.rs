@@ -28,15 +28,6 @@ impl Bit {
     pub fn to_bool(self) -> bool {
         matches!(self, Bit::One)
     }
-    pub fn not(self) -> Self {
-        Self::from_bool(!self.to_bool())
-    }
-    pub fn and(self, o: Bit) -> Self {
-        Self::from_bool(self.to_bool() && o.to_bool())
-    }
-    pub fn or(self, o: Bit) -> Self {
-        Self::from_bool(self.to_bool() || o.to_bool())
-    }
     /// The bit as an `M`-bit value, `0` or `1`: what a compare yields
     /// into a datapath. Lowered as the bare compare; the target's width
     /// extends it.
@@ -44,6 +35,45 @@ impl Bit {
         U::from(self.to_bool() as u8)
     }
 }
+
+// A condition is a `Bit` or a `bool`, and either converts to the other:
+// a compare yields a `bool`, a wire holds a `Bit`, and `when!`, `mux`
+// and a register's `set` take both. The logic operators are `&`, `|`,
+// `^` and `!`, on a `Bit` or across the two, and the result is a `Bit`.
+// `&&` and `||` cannot be overloaded, so they stay `bool` only.
+impl From<bool> for Bit {
+    fn from(b: bool) -> Self {
+        Self::from_bool(b)
+    }
+}
+impl From<Bit> for bool {
+    fn from(b: Bit) -> bool {
+        b.to_bool()
+    }
+}
+impl std::ops::Not for Bit {
+    type Output = Bit;
+    fn not(self) -> Bit {
+        Self::from_bool(!self.to_bool())
+    }
+}
+macro_rules! bit_ops {
+    ($($tr:ident $f:ident $op:tt),*) => { $(
+        impl<R: Into<Bit>> std::ops::$tr<R> for Bit {
+            type Output = Bit;
+            fn $f(self, o: R) -> Bit {
+                Bit::from_bool(self.to_bool() $op o.into().to_bool())
+            }
+        }
+        impl std::ops::$tr<Bit> for bool {
+            type Output = Bit;
+            fn $f(self, o: Bit) -> Bit {
+                Bit::from_bool(self $op o.to_bool())
+            }
+        }
+    )* };
+}
+bit_ops!(BitAnd bitand &, BitOr bitor |, BitXor bitxor ^);
 
 /// Nine valued, in IEEE 1164 order. `Default` is `U`: a signal nobody
 /// has driven is uninitialised, not zero. That difference is the reason
@@ -131,7 +161,7 @@ impl Logic {
 }
 
 /// An N-bit unsigned value.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub struct U<const N: usize>(u128);
 
 impl<const N: usize> U<N> {
@@ -150,16 +180,6 @@ impl<const N: usize> U<N> {
     }
     pub fn bit(self, i: usize) -> Bit {
         Bit::from_bool((self.0 >> i) & 1 == 1)
-    }
-
-    /// Same-width, wrapping. The result width is a standalone parameter,
-    /// so this is stable Rust. The operand is anything that converts, so
-    /// a literal is written as a literal.
-    pub fn wrapping_add(self, o: impl Into<Self>) -> Self {
-        Self::new(self.0.wrapping_add(o.into().0))
-    }
-    pub fn wrapping_sub(self, o: impl Into<Self>) -> Self {
-        Self::new(self.0.wrapping_sub(o.into().0))
     }
 
     /// A multiply with the result width stated: `a.mul::<64>(b)`. The
@@ -213,27 +233,78 @@ impl<const N: usize> From<i32> for U<N> {
     }
 }
 
-/// The operators a datapath needs beyond arithmetic: shifts, bitwise
-/// logic, concatenation, extension and signed comparison. Each is a
-/// plain function of its inputs and lowers to the operator of the
-/// same name; a width that is the sum of two others is stated, as
-/// `mul::<M>` states it, because that sum needs nightly Rust to write.
+// The operators of a datapath are Rust's operators. `+` and `-` are
+// same-width and wrapping; `&`, `|` and `^` are bitwise; `!` is the
+// complement; `<<` and `>>` are logical shifts by an amount that is an
+// integer, not a value. The right operand of an arithmetic or bitwise
+// operator is anything that converts, so a literal is written as a
+// literal: `n + 1`, `flags & 0xF`. A compare, `==`, `!=`, `<`, `<=`,
+// `>`, `>=`, is unsigned, yields a `bool`, and takes a literal on the
+// right too: `count == 8`. Every one lowers to the operator of the same
+// name. What has no operator is a method: `sra`, the arithmetic shift,
+// `lt_signed`, the signed compare, `mul::<M>`, `concat::<K, M>`,
+// `sext::<M>` and `zext::<M>`, each with a width that is the sum of two
+// others stated, because that sum needs nightly Rust to write.
+macro_rules! u_ops {
+    ($($tr:ident $f:ident |$a:ident, $b:ident| $e:expr),*) => { $(
+        impl<const N: usize, R: Into<U<N>>> std::ops::$tr<R> for U<N> {
+            type Output = U<N>;
+            fn $f(self, o: R) -> U<N> {
+                let ($a, $b) = (self.0, o.into().0);
+                U::<N>::new($e)
+            }
+        }
+    )* };
+}
+u_ops!(
+    Add add |a, b| a.wrapping_add(b),
+    Sub sub |a, b| a.wrapping_sub(b),
+    BitAnd bitand |a, b| a & b,
+    BitOr bitor |a, b| a | b,
+    BitXor bitxor |a, b| a ^ b
+);
+impl<const N: usize> std::ops::Not for U<N> {
+    type Output = U<N>;
+    fn not(self) -> U<N> {
+        U::<N>::new(!self.0)
+    }
+}
+macro_rules! u_shifts {
+    ($($t:ty),*) => { $(
+        impl<const N: usize> std::ops::Shl<$t> for U<N> {
+            type Output = U<N>;
+            fn shl(self, k: $t) -> U<N> {
+                let k = k as usize;
+                if k >= N { U::<N>::new(0) } else { U::<N>::new(self.0 << k) }
+            }
+        }
+        impl<const N: usize> std::ops::Shr<$t> for U<N> {
+            type Output = U<N>;
+            fn shr(self, k: $t) -> U<N> {
+                let k = k as usize;
+                if k >= N { U::<N>::new(0) } else { U::<N>::new(self.0 >> k) }
+            }
+        }
+    )* };
+}
+u_shifts!(usize, u8, u32, i32);
+macro_rules! u_compare {
+    ($($t:ty),*) => { $(
+        impl<const N: usize> PartialEq<$t> for U<N> {
+            fn eq(&self, o: &$t) -> bool {
+                self.0 == U::<N>::from(*o).0
+            }
+        }
+        impl<const N: usize> PartialOrd<$t> for U<N> {
+            fn partial_cmp(&self, o: &$t) -> Option<std::cmp::Ordering> {
+                self.0.partial_cmp(&U::<N>::from(*o).0)
+            }
+        }
+    )* };
+}
+u_compare!(u8, u16, u32, u64, u128, usize, i32);
+
 impl<const N: usize> U<N> {
-    pub fn shl(self, k: usize) -> Self {
-        if k >= N {
-            Self::new(0)
-        } else {
-            Self::new(self.0 << k)
-        }
-    }
-    /// A logical shift right.
-    pub fn shr(self, k: usize) -> Self {
-        if k >= N {
-            Self::new(0)
-        } else {
-            Self::new(self.0 >> k)
-        }
-    }
     /// An arithmetic shift right: the top bit fills in.
     pub fn sra(self, k: usize) -> Self {
         let k = k.min(N);
@@ -245,18 +316,6 @@ impl<const N: usize> U<N> {
             0
         };
         Self::new(shifted | fill)
-    }
-    pub fn and(self, o: Self) -> Self {
-        Self::new(self.0 & o.0)
-    }
-    pub fn or(self, o: Self) -> Self {
-        Self::new(self.0 | o.0)
-    }
-    pub fn xor(self, o: Self) -> Self {
-        Self::new(self.0 ^ o.0)
-    }
-    pub fn not(self) -> Self {
-        Self::new(!self.0)
     }
     /// `self` above `low`: `M` is `N + K`, stated.
     pub fn concat<const K: usize, const M: usize>(self, low: U<K>) -> U<M> {
@@ -286,9 +345,6 @@ impl<const N: usize> U<N> {
     pub fn from_i(v: I<N>) -> Self {
         Self::new(v.raw() as u128)
     }
-    pub fn eq(self, o: Self) -> Bit {
-        Bit::from_bool(self.0 == o.0)
-    }
 }
 
 /// An N-bit signed value, two's complement.
@@ -305,7 +361,10 @@ impl<const N: usize> I<N> {
     pub const fn raw(self) -> i128 {
         self.0
     }
-    pub fn wrapping_add(self, o: Self) -> Self {
+}
+impl<const N: usize> std::ops::Add for I<N> {
+    type Output = I<N>;
+    fn add(self, o: I<N>) -> I<N> {
         Self::new(self.0.wrapping_add(o.0))
     }
 }
