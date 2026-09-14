@@ -7,6 +7,7 @@ rust_library(
     name = "txhdl_parts",
     srcs = [
         "src/buffer.rs",
+        "src/fifo.rs",
         "src/lib.rs",
     ],
     crate_name = "txhdl_parts",
@@ -18,7 +19,7 @@ rust_library(
 
 # The crate's own tests: a unit in a plain #[test].
 rust_test(
-    name = "buffer_test",
+    name = "parts_test",
     crate = ":txhdl_parts",
     edition = "2021",
 )
