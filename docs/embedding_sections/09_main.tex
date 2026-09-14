@@ -86,7 +86,7 @@ needed designing.
 The first design anyone writes for a board is an LED that blinks, so it
 is the first design to write with the vocabulary above, and it is
 \code{ex\_blinky.rs} in the examples document~\cite{examples}. It uses
-one register, one wire and one \code{when!}, and nothing that was not
+one register, one wire and one \code{with!}, and nothing that was not
 already defined, with one exception. Its \code{main} wants to watch the
 wire once per cycle to print a waveform, and \code{simulate} runs a
 design to the end and returns the top. \code{Running} is the one

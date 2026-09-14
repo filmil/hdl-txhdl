@@ -107,9 +107,11 @@ still simulates.
 The body is one \code{loop}, and the first line of the loop is the
 wait: \code{DefaultClock::rising().await}. Everything after it is one
 cycle. \code{get} reads the input as the edge left it, and
-\code{self.n} in an expression is the register as the edge left it. \code{when!} is a predicated drive: \emph{when}
-\code{en} holds, \code{n} becomes \code{n + 1} at the end of the
-step, and the arrow \code{<=} points into the register to say so.
+\code{self.n} in an expression is the register as the edge left it.
+\code{with!} is the drives of the unit: under \code{enable},
+\code{n} becomes \code{n + 1} at the end of the step, the arrow
+\code{<=} pointing into the struct and the entry written as a
+struct literal writes a field.
 \code{tick.set} drives the output, this cycle, from the value the
 register had at the top. Nothing here branches, and nothing is
 assigned twice; that is the shape every unit has.
@@ -167,10 +169,13 @@ previous cycle; read after the wait, always.
 
 Hardware has no branch. Both arms of a choice exist at once and a
 condition selects, which is why the three ways of choosing have their
-own names, so that the file reads as the hardware does. \code{when!}
-you have seen: a drive under a condition, with an optional
-\code{else}. \code{case!} is \code{when!} with many arms, and it is
-what a state machine is made of. Rust's own \code{if} is there too,
+own names, so that the file reads as the hardware does. \code{with!}
+you have seen: the drives of the unit, each under a condition if it
+has one, a group of them under one with an optional \code{else}.
+\code{when!(c => self \{ .. \})} is one such group with the
+condition written first, for a line that is about the condition.
+\code{case!} is the group with many arms, and it is what a state
+machine is made of. Rust's own \code{if} is there too,
 over a \code{bool}, with the drives under it written as \code{set};
 its arms are the same priority chain, read as written, and they nest. Listing~\ref{lst:t-case} is a
 sequencer that waits for \code{go}, loads a count, runs it down and
@@ -204,8 +209,8 @@ than a drive: \code{select!(f3.raw() => \{ 0 => a + b, 1 => a << b,
 .. \})} is a multiplexer, and the Vreteno core's ALU is one of
 these. \code{mux(c, a, b)} is the two-way form. You choose between
 values with \code{select!} and \code{mux}, between drives with
-\code{when!} and \code{case!}, and that is the whole vocabulary of
-choice.
+\code{with!}, \code{when!}, \code{case!} and \code{if}, and that is
+the whole vocabulary of choice.
 
 \section{Step Four: Talking Between Units}
 \label{sec:t-channels}
@@ -245,7 +250,7 @@ taken, and passed on incremented on \code{out} a cycle later.}
 A unit that runs every cycle, as a processor core does, cannot wait
 \code{until}. It talks by predicate instead: it receives with no wait
 before the receive, which takes whatever is offered, and sends under
-\code{when!}, whose condition becomes the channel's \code{valid}.
+\code{if}, whose condition becomes the channel's \code{valid}.
 Listing~\ref{lst:t-tap} is that form: a tap that takes every word and
 passes on the odd ones.
 
@@ -319,8 +324,9 @@ It came from \code{Counter::verilog("counter")}, and
 runtime can also write as VHDL. Both come from the same \code{run}
 you read in Step One: \code{\#[lower]} reads the loop, and the
 lowering rewrites what it finds. A register is a register. A wire
-named by \code{let} is a wire of that name. \code{when!} and
-\code{case!} are predicated assignments in the clocked block.
+named by \code{let} is a wire of that name. \code{with!}, \code{when!},
+\code{case!} and \code{if} are predicated assignments in the clocked
+block.
 \code{select!} and \code{mux} are conditional expressions. The wait
 is the clock edge of the block, and an \code{until} is a guard on
 everything after it. A memory, \code{Mem<T, N>}, is an array,

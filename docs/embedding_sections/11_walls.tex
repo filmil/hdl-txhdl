@@ -27,9 +27,14 @@ both and a side effect in the arm not chosen still has to be suppressed. A
 reader who brings Rust's \code{if} semantics to a construct named after it
 is misled about the one thing that matters most.
 
-\code{when!} is what Chisel~\cite{bachrach2012} and SpinalHDL call it, so
-the engineers who will read it already know what it means, and it claims
-nothing it does not do.
+\code{when!} is what Chisel~\cite{bachrach2012} and SpinalHDL call
+it, so the engineers who will read it already know what it means, and
+it claims nothing it does not do. Its body became the drives of one
+struct, the struct named once, when every drive it predicated turned
+out to be a drive of a field of \code{self}; and the same body with
+the struct first, \code{with!(self <= \{ .. \})}, is the table of a
+unit's drives, each entry under its own condition. Two orders of one
+block, chosen by what the line is about: the condition, or the unit.
 
 \subsubsection{Two forms, and where the limit is}
 
@@ -43,34 +48,36 @@ let chosen = mux(reset, Sig(0), self.count);
 A statement form has to predicate whatever is written inside it, and that
 is what real logic needs.
 
-\begin{lstlisting}[caption={The statement form. It reads as a conditional and lowers to predicated drives. The arrow points into the register: the register becomes the value.},label={lst:when}]
-when!(enable => {
-    self.count <= count + 1;
-    self.flag  <= Bit::One
+\begin{lstlisting}[caption={The statement form, condition first. The struct is named once; each entry is a field becoming a value, and the entries after \code{else} are under the condition's failure. The same block with the struct first is \code{with!(self <= \{ enable ? \{ .. \} else \{ .. \} \})}.},label={lst:when}]
+when!(enable => self {
+    count: self.count + 1,
+    flag: Bit::One,
 } else {
-    self.count <= 0;
-    self.flag  <= Bit::Zero
+    count: 0,
+    flag: Bit::Zero,
 });
 \end{lstlisting}
 
-Probe~10 compiles both. The arrow is \code{<=}, VHDL's signal
-assignment, because it points into the register and says that the
-register becomes the value. It is also the reason \code{when!} is a
-procedural macro. The first version was \code{macro\_rules!} and spelled
+Probe~10 compiles both. In \code{with!} the arrow is \code{<=},
+VHDL's signal assignment, because it points into the struct and says
+that its fields become these values; an entry is written as a struct
+literal writes a field, \code{name: value}, and a memory word,
+\code{m.at(i)}, is a field like any other. Both are procedural
+macros of necessity. The first version was \code{macro\_rules!} and spelled
 the arrow \code{=>}, not by choice: an \code{expr} fragment may be
-followed only by \code{=>}, \code{,} or \code{;}, so \code{lhs <= rhs}
-cannot be matched declaratively at all. That is the third place
-\code{macro\_rules!} ran out, after the two in
-Section~\ref{sec:e-wiring}, and each time the reason was the same: a
-declarative macro matches a grammar, and the grammar it can match is not
-the one the design wants to write.
+followed only by \code{=>}, \code{,} or \code{;}, so neither
+\code{lhs <= rhs} nor \code{c ? ..} can be matched declaratively at
+all. That is the third place \code{macro\_rules!} ran out, after the
+two in Section~\ref{sec:e-wiring}, and each time the reason was the
+same: a declarative macro matches a grammar, and the grammar it can
+match is not the one the design wants to write.
 
-The procedural version splits each statement on the first \code{<=} at
-depth zero, so the left side may be any path, and refuses a statement
-that has none:
+The procedural version splits the block on commas and each entry on
+its first colon, so the left side may be any path into the struct,
+and refuses an entry that has none:
 
-\begin{lstlisting}[style=ascii,caption={A drive without an arrow. The macro's own message, not a type error three expansions later.},label={lst:when-err}]
-error: expected `register <= value`
+\begin{lstlisting}[style=ascii,caption={A drive without a colon. The macro's own message, not a type error three expansions later.},label={lst:when-err}]
+error: expected `field: value`, `c ? field: value` or `c ? { .. }`
 \end{lstlisting}
 
 What it still does not do is reach inside an arbitrary block and rewrite
@@ -89,10 +96,11 @@ written as \code{set}, is Rust, and its meaning is the predicated
 drive's: a \code{set} under a condition that fails does not happen.
 Nothing is rewritten; the lowering reads the \code{if}, its
 \code{else if} and its \code{else} as the priority chain \code{case!}
-makes, and an arm may hold a \code{let}, a \code{when!}, a
+makes, and an arm may hold a \code{let}, a \code{with!}, a
 \code{case!} or another \code{if}. What the macro keeps is the
-arrow, and the guarantee that an arm is a list of drives; what
-\code{if} adds is nesting and \code{else if}. Two things stay out,
+struct named once, and the guarantee that a block is a list of
+drives; what \code{if} adds is \code{else if}, and a \code{send}
+under a condition, which is a statement and not a drive. Two things stay out,
 for the reason above: an \code{if} that yields a value, which is
 \code{mux} or \code{select!}, and an output driven under a
 condition, which is a wire and takes a \code{mux} outside the chain.
@@ -101,9 +109,9 @@ The examples document has one~\cite{examples}.
 \subsubsection{Many arms}
 \label{sec:e-case}
 
-\code{when!} has two arms. A state machine has one per state, and
+A group has two arms. A state machine has one per state, and
 \code{match} is the Rust spelling, so it hits the same wall as
-\code{if} for the same reason. \code{case!} is \code{when!} with many
+\code{if} for the same reason. \code{case!} is the group with many
 arms, and it keeps \code{match}'s one rule that matters: the first arm
 that matches wins.
 
@@ -118,7 +126,7 @@ case!(self.state.get() => {
 });
 \end{lstlisting}
 
-Every arm exists in the hardware at once, as with \code{when!}. The
+Every arm exists in the hardware at once, as with \code{with!}. The
 ordering lowers to a priority chain: the predicate of an arm is its
 pattern and the failure of every arm above it, and the macro emits
 exactly that, one predicated drive per statement and a running
@@ -131,14 +139,14 @@ keeps that error. A payload is read from the value by a function
 instead, which is also how the hardware does it: the field is a slice of
 the register, and the pattern is the decoder on the rest.
 
-A statement without an arrow is refused with the message of
-Listing~\ref{lst:when-err}, because the arms share \code{when!}'s
-statement parser.
+A statement without an arrow, \code{register <= value} being an
+arm's form, is refused with the macro's own message, as an entry
+without a colon is in Listing~\ref{lst:when-err}.
 
 \subsubsection{Many values}
 \label{sec:e-select}
 
-\code{when!} and \code{case!} choose among drives. A datapath also
+\code{with!} and \code{case!} choose among drives. A datapath also
 chooses among values, an ALU's result by its function code, and
 \code{match} on a signal hits the wall a third time. \code{select!}
 is \code{match} on a value by another name: the first pattern that

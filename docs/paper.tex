@@ -146,8 +146,8 @@ an input wire and an output wire here, channels or tuples of either
 elsewhere. The body is one
 \code{loop}. Its first statement waits for the rising edge of the
 default clock; then it reads, plainly, the register and the input;
-then it drives, with \code{when!} a predicated register drive and
-with \code{set} an output wire. The attribute \code{\#[lower]} says
+then it drives, with \code{with!} the register under its condition
+and with \code{set} an output wire. The attribute \code{\#[lower]} says
 the unit lowers, Section~\ref{sec:p-lower}, and \code{derive(Trace)}
 names its fields in a waveform.
 
@@ -260,9 +260,12 @@ one declaration.
 Hardware does not branch: both arms of a choice exist and a
 condition selects. Three macros spell that, each named for what it
 is rather than for the Rust it resembles, and Rust's \code{if} is
-read the same way. \code{when!(c => \{ r <= v \})} is a predicated
-drive: both arms exist, a multiplexer chooses, nothing branches.
-\code{case!} is \code{when!} with many arms, Rust patterns with
+read the same way. \code{with!(self <= \{ c ? r: v \})} is the drives
+of the unit, each under its condition, a group of them under one
+with an \code{else}, and \code{when!(c => self \{ r: v \})} the group
+with the condition first: both arms exist, a multiplexer chooses,
+nothing branches. \code{case!} is the group with many arms, Rust
+patterns with
 guards and alternatives, the first match winning, so a state machine
 is one \code{case!} over its state register. An \code{if} over a
 \code{bool}, with the drives under it written as \code{set}, and
@@ -321,7 +324,7 @@ figure in this paper was drawn by hand.
 builds a netlist from it, without a second language: one loop, or
 several under \code{join2}, each a process on the rising or the
 falling edge of its clock and a clocked block of its own; register
-and port reads into names, \code{when!},
+and port reads into names, \code{with!}, \code{when!},
 \code{case!} and \code{select!}, the datapath operators, memories
 written through \code{at} and read by index, and channel ports as a
 valid/ready handshake whose wait guards the drives. A \code{let} that
@@ -364,7 +367,7 @@ same words at the same ticks.
 \toprule
 Unit & What it shows & Under \\
 \midrule
-counter & a register, \code{when!}, an output & nvc, Verilator \\
+counter & a register, \code{with!}, an output & nvc, Verilator \\
 sampler & two processes, one per edge & nvc, Verilator \\
 blinky & a configuration's constants baked in & nvc, Verilator \\
 sequencer & \code{case!} on a state enum, guards & nvc, Verilator \\
@@ -373,7 +376,7 @@ scratchpad & a memory written and read & nvc, Verilator \\
 decoder & \code{slice}, \code{concat}, \code{sext}, \code{select!} & nvc, Verilator \\
 stage & two channels, the handshake & nvc, Verilator \\
 MAC & \code{mul::<M>}, a product at a stated width & nvc, Verilator \\
-tap & a send under \code{when!}, a receive with no wait & nvc, Verilator \\
+tap & a send under \code{if}, a receive with no wait & nvc, Verilator \\
 buffer & the channel as hardware, against the runtime's & nvc, Verilator \\
 divider & internal wires kept as fields, seen and checked & nvc, Verilator \\
 Gray counter & functions under \code{\#[lower]}, inlined & nvc, Verilator \\

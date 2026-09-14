@@ -2,7 +2,7 @@
 \section{Blinky}
 \label{sec:x-blinky}
 
-One register, one wire, one \code{when!}, and a build that says how
+One register, one wire, one \code{with!}, and a build that says how
 fast the clock is and how fast to blink. The period is an associated
 constant computed from the two rates, so the board build and the
 simulation build differ in two numbers. The LED is derived from the
@@ -14,7 +14,7 @@ cycle.
 
 The blinky is also the first unit with state to be lowered.
 \code{\#[lower]} on its \code{Unit} impl reads the \code{run} loop,
-one \code{rising().await}, a register read, a \code{when!} and a drive,
+one \code{rising().await}, a register read, a \code{with!} and a drive,
 and writes \code{Blinky::verilog(name)} beside it. The registers and
 their widths come from the struct, through the same \code{Trace} derive
 that names signals for a waveform, and the constants of the

@@ -5,7 +5,7 @@
 A register is \code{Copy}, and it has the operators and the
 conversions of its value, so it reads in place: \code{self.acc + x},
 \code{self.n == 7}, \code{!self.top}, \code{sum.set(self.acc)},
-\code{mux(self.top, ..)}, \code{when!(self.top => ..)} and
+\code{mux(self.top, ..)}, \code{with!(self <= \{ self.top ? .. \})} and
 \code{if self.top.to\_bool()} all say what \code{get} said, the
 value the last edge latched, and the \code{let} at the top of the
 step that read every register into a name is gone. A drive in the

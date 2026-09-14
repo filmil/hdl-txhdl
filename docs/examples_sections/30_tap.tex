@@ -12,7 +12,7 @@ A plain \code{recv} takes whatever is offered at every edge, so its
 \code{ready} is its \code{valid}, the take itself, which is what
 the runtime records as ready. A \code{recv\_if} takes only under a
 condition, here that the output has room, so its \code{ready} is
-the condition and the offer together. It sends under \code{when!},
+the condition and the offer together. It sends under \code{if},
 so the channel's \code{valid} is the arm's condition, or its
 negation in the \code{else} arm, and the data is driven whatever
 the condition, since data under a low \code{valid} means nothing.

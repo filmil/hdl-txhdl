@@ -8,7 +8,7 @@ it are written as \code{set}, since \code{<=} is Rust's compare
 outside a macro; and the arms, \code{else if} and \code{else}
 included, are a priority chain, the first condition that holds
 winning, the same chain \code{case!} makes. An arm may hold a
-\code{let}, a \code{when!}, a \code{case!} or another \code{if}. The
+\code{let}, a \code{with!}, a \code{case!} or another \code{if}. The
 runtime runs it as the Rust it is, so a drive under a condition that
 fails does not happen, which is what a predicated drive is; the
 lowering reads it and writes \code{if} and \code{else if} in the
@@ -20,9 +20,11 @@ if it depends on the condition; the lowering says so at a \code{set}
 of an output under \code{if}. What stays outside the subset is an
 \code{if} that returns a value, which is \code{mux} or
 \code{select!}, and a \code{match}, which is \code{case!}.
-\code{when!} remains the two-arm form with the arrow, and the choice
-between the two is spelling: \code{if} where the arms exclude each
-other and nest, \code{when!} where a drive is under one condition.
+\code{with!} and \code{when!} are the forms for the drives of the
+unit under their conditions, and the choice is spelling: \code{if}
+where the arms exclude each other and nest, \code{with!} where the
+drives are many and the struct is named once, \code{when!} where the
+line is about one condition.
 
 The unit below is a pulser: reset first, then, idle, it takes a
 length at \code{go}; running, it counts down and reports the number

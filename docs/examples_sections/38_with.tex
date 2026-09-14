@@ -17,6 +17,10 @@ block, the same chain \code{if} makes. What the block holds is
 drives: a \code{send} is a statement, under \code{if}. The block's
 target is \code{self} in a lowered unit, since that is the hardware
 of the unit; the runtime takes any path.
+\code{when!(c => self \{ .. \} else \{ .. \})} is one group of the
+block with the condition written first, the same entries and the
+same hardware, for a line that is about its condition rather than
+about the unit; the blinky and the multiplier are written with it.
 
 The unit below is a table of four words with a running total. A
 clear empties the total and the count, a write lands in the table,

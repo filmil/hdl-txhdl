@@ -29,7 +29,7 @@ crate hold everything:
   tree, statements, a \code{Lowered} unit and its two emitters,
   Verilog and VHDL; and the structural skeleton from the trace walk.
 \item \code{txhdl\_macros}: the four derives, \code{interface!},
-  \code{when!} and \code{case!}, \code{\#[pipeline]} and
+  \code{with!}, \code{when!} and \code{case!}, \code{\#[pipeline]} and
   \code{\#[lower]}, without \code{syn} or \code{quote}; and
   \code{select!}, a \code{macro\_rules!} in the crate root.
 \end{itemize}
@@ -174,8 +174,9 @@ behavioural half is the rest: \code{\#[pipeline]} lowers an
 \code{async fn} of awaited operators, and \code{\#[lower]} lowers a
 unit's \code{run} loop into a \code{Lowered} unit built from the
 unit's fields, the ports of \code{run} and the statements the macro
-read: registers, memories, wires and channel ports; \code{when!},
-\code{case!} and \code{select!}; slices, concatenation and
+read: registers, memories, wires and channel ports; \code{with!},
+\code{when!}, \code{case!}, \code{if} and \code{select!}; slices,
+concatenation and
 extension; a \code{let} as a wire named for it. The macro builds an
 expression tree, \code{netlist::Expr}, and two emitters render the
 unit, Verilog and VHDL-2008. Both close the loop: the build simulates

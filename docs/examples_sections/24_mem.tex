@@ -5,7 +5,7 @@
 A \code{Mem<T, N>} is state with an address: one write port, deferred
 like a register drive, and as many plain reads as a cycle wants.
 \code{self.m.at(addr)} names a word as a drive's target, so
-\code{when!} and \code{case!} write a memory as they write a
+\code{with!} and \code{case!} write a memory as they write a
 register; \code{self.m.read(addr)} is the read, and the output here is
 that read as a wire, so it shows the word as it stood before the
 edge, and a read of the word being written sees the old value. The

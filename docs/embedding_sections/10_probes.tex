@@ -61,17 +61,17 @@ Probe & Question & Answer \\
   & Can operator latency replace a hand-placed stage boundary?
   & \textbf{Yes.} An \code{async} operator in \code{crate::pipeline} is awaited, and the depth follows from the operators used \\
 \code{probe\_if}
-  & Does \code{when!} work, with \code{<=} into the register?
-  & \textbf{Yes}, as a procedural macro; \code{macro\_rules!} cannot follow an \code{expr} with \code{<=} \\
+  & Do \code{when!} and \code{with!} work, the fields as entries, the condition first or the struct first?
+  & \textbf{Yes}, as procedural macros; \code{macro\_rules!} cannot follow an \code{expr} with \code{?} or \code{<=} \\
 \code{probe\_when\_bad}
-  & A drive with no arrow?
-  & \textbf{Refused:} \code{expected `register <= value`} \\
+  & An entry with no colon?
+  & \textbf{Refused:} \code{expected `field: value`, `c ? field: value` or `c ? \{ .. \}`} \\
 \code{probe\_case}
   & Does \code{case!} take Rust patterns, with guards and alternatives?
   & \textbf{Yes}, tested with \code{matches!}; the first arm that matches wins \\
 \code{probe\_case\_bad}
   & A drive with no arrow in an arm?
-  & \textbf{Refused:} the same message as \code{when!}, from the shared parser \\
+  & \textbf{Refused:} \code{expected `register <= value`}, the macro's own message \\
 \code{probe\_case\_binding}
   & May an arm's pattern bind, as \code{Op::Load(v)}?
   & \textbf{No.} \code{error[E0425]: cannot find value `v`}; \code{matches!} scopes its bindings \\
@@ -154,7 +154,7 @@ several processes reach, is a better model of a register than the one that
 failed.
 
 \textbf{A \code{macro\_rules!} conditional cannot reach inside a block.}
-Writing \code{when!} showed where the macro route stops, and that is the
+Writing \code{with!} showed where the macro route stops, and that is the
 strongest argument for the recommendation in
 Section~\ref{sec:e-elaboration}. Section~\ref{sec:e-walls} states it.
 

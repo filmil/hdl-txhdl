@@ -282,8 +282,8 @@ register's number, computes the new one by the function code, the
 source a register or the immediate in the \code{rs1} field, and
 drives the one register named, with the old value as its result
 through the ordinary writeback. The model's CSR step is one function
-over an enum; the core's is five \code{when!}s under one enable,
-which is what five registers with one write each are.
+over an enum; the core's is five entries of one \code{with!} under
+one enable, which is what five registers with one write each are.
 
 The M extension is a sequencer, and the second use of the stall. A
 multiply or a divide in execute starts it: the operands' magnitudes
@@ -345,7 +345,7 @@ indifferent to which ran first in the step, so a device is a unit of
 its own, and the core's process talks to it by predicate, as the tap
 of the examples document does~\cite{examples}: a receive with no
 wait before it, which takes the response whenever it comes, and a
-send under \code{when!}, whose \code{valid} is the condition. A
+send under \code{if}, whose \code{valid} is the condition. A
 store to the bus goes out when the bus has room and the instruction
 runs on; a load goes out, sets the wait bit and moves on to
 writeback, which holds it, and the whole pipeline behind it, until
@@ -531,7 +531,7 @@ name after the wait is a function of the state and the inputs, and
 nothing branches. \code{select!} chooses among values, the ALU by
 \code{f3}, the branch condition, the loaded and the stored word, the
 writeback value, the target, the old and the new CSR value and
-whether the core knows the opcode; \code{when!} and \code{case!}
+whether the core knows the opcode; \code{with!} and \code{case!}
 choose among drives, the register file's write under its enable,
 the control registers under a CSR write, a
 trap, the line or a return, the timer's words under a store, the writeback registers under execute's run, and

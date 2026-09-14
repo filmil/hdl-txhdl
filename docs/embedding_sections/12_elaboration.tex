@@ -70,7 +70,7 @@ the generics, the package manager and the editor tooling along with it.
 \textbf{What was built.} \code{\#[lower]} is the proc macro
 elaboration, with one departure from the recommendation as stated.
 It does not reinterpret \code{if} or \code{match}; it reads a subset
-that is also plain Rust, \code{when!}, \code{case!} and
+that is also plain Rust, \code{with!}, \code{case!} and
 \code{select!} among registers, wires, memories and channel ports,
 and refuses the rest with a message of its own. So the cost above,
 code that looks like Rust and does not mean Rust, was not paid: a

@@ -8,7 +8,7 @@ says they run in parallel. The processes take \code{\&self} and share
 state through registers, because two of them cannot both take
 \code{\&mut self}. Each process loops, and each iteration waits for
 the clock edge once, \code{DefaultClock::rising()}, and then reads what
-it needs at that edge, plainly; reading is not waiting. \code{when!}
+it needs at that edge, plainly; reading is not waiting. \code{with!}
 predicates the drives inside it; it does not branch, and the arrow
 points into the register that becomes the value.
 

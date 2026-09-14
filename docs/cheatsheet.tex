@@ -47,14 +47,14 @@ two per cycle, so a falling edge is a tick of its own.
 
 \head{Vocabulary}
 \begin{tabular}{@{}p{0.47\linewidth}p{0.5\linewidth}@{}}
-\code{Bit}, \code{Logic}, \code{U<N>}, \code{I<N>} & values; \code{+ - \& | \^{} ! << >>} and the compares are Rust's \\
+\code{Bit}, \code{Logic}, \code{U<N>}, \code{I<N>} & values; the operators are Rust's \\
 \code{\#[derive(Transaction)]} & a struct that moves over a channel \\
 \code{Reg<T, C>} & state, in clock \code{C}; a value; \code{set} \\
 \code{signal()} $\to$ \code{(Out, In)} & a wire's two ends; \code{Out} is not \code{Clone} \\
 \code{chan()} $\to$ \code{(Tx, Rx)} & a channel, a buffer of two; \code{send}, \code{ready}, \code{wait}, \code{take} \\
 \code{Crossing<T, A, B>} & the only way between clocks \\
 \code{interface!} & members and roles, a struct per role \\
-\code{with!(self <= \{ a: x, c ? b: y \})} & drives of one struct; \code{if c \{..\}} a chain; not a branch \\
+\code{with!(self <= \{..\})}, \code{when!(c => self \{..\})} & drives of one struct; \code{if c \{..\}} a chain \\
 \code{case!(v => \{ p => \{..\} \})} & many arms, first match wins \\
 \code{select!(v => \{ p => e, .. \})} & a value by pattern; a mux chain \\
 \code{Mem<T, N>} & words; \code{read}, \code{at(a) <= v} \\
