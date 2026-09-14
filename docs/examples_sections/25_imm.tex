@@ -3,7 +3,7 @@
 \label{sec:x-imm}
 
 The bit operations a decoder is made of: \code{slice::<LO, LEN>}
-takes a field out of a word, \code{concat::<K, M>} puts one value
+takes a field out of a word, \code{concat::<\_, M>} puts one value
 above another with the result width stated, and \code{sext::<M>} and
 \code{zext::<M>} extend by the top bit or by zeros. Each lowers to the
 form the target language has, a part select, a concatenation, a

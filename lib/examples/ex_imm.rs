@@ -27,23 +27,23 @@ impl Unit<In<U<32>>, (Out<U<32>>, Out<U<5>>)> for Decoder {
             let imm_i = ir.slice::<20, 12>().sext::<32>();
             let imm_s = ir
                 .slice::<25, 7>()
-                .concat::<5, 12>(ir.slice::<7, 5>())
+                .concat::<_, 12>(ir.slice::<7, 5>())
                 .sext::<32>();
             let imm_b = ir
                 .slice::<31, 1>()
-                .concat::<1, 2>(ir.slice::<7, 1>())
-                .concat::<6, 8>(ir.slice::<25, 6>())
-                .concat::<4, 12>(ir.slice::<8, 4>())
-                .concat::<1, 13>(U::<1>::from(0u8))
+                .concat::<_, 2>(ir.slice::<7, 1>())
+                .concat::<_, 8>(ir.slice::<25, 6>())
+                .concat::<_, 12>(ir.slice::<8, 4>())
+                .concat::<_, 13>(U::<1>::from(0u8))
                 .sext::<32>();
             let imm_u =
-                ir.slice::<12, 20>().concat::<12, 32>(U::<12>::from(0u8));
+                ir.slice::<12, 20>().concat::<_, 32>(U::<12>::from(0u8));
             let imm_j = ir
                 .slice::<31, 1>()
-                .concat::<8, 9>(ir.slice::<12, 8>())
-                .concat::<1, 10>(ir.slice::<20, 1>())
-                .concat::<10, 20>(ir.slice::<21, 10>())
-                .concat::<1, 21>(U::<1>::from(0u8))
+                .concat::<_, 9>(ir.slice::<12, 8>())
+                .concat::<_, 10>(ir.slice::<20, 1>())
+                .concat::<_, 20>(ir.slice::<21, 10>())
+                .concat::<_, 21>(U::<1>::from(0u8))
                 .sext::<32>();
             self.value.set(select!(opcode.raw() => {
                 0x23 => imm_s,

@@ -160,7 +160,8 @@ what has no operator: \code{slice}, \code{concat}, \code{sext},
 a width, and a transaction that moves over a channel is such a struct
 with \code{derive(Transaction)}. There is no width arithmetic in the
 type system, since stable Rust has none; a width that is the sum of
-two others is stated, as \code{concat::<K, M>} states it.
+two others is stated, as \code{concat::<\_, M>} states it, the
+operand's width left to Rust.
 
 \subsection{Time}
 

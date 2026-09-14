@@ -242,7 +242,7 @@ impl<const N: usize> From<i32> for U<N> {
 // `>`, `>=`, is unsigned, yields a `bool`, and takes a literal on the
 // right too: `count == 8`. Every one lowers to the operator of the same
 // name. What has no operator is a method: `sra`, the arithmetic shift,
-// `lt_signed`, the signed compare, `mul::<M>`, `concat::<K, M>`,
+// `lt_signed`, the signed compare, `mul::<M>`, `concat::<_, M>`,
 // `sext::<M>` and `zext::<M>`, each with a width that is the sum of two
 // others stated, because that sum needs nightly Rust to write.
 macro_rules! u_ops {
@@ -317,7 +317,8 @@ impl<const N: usize> U<N> {
         };
         Self::new(shifted | fill)
     }
-    /// `self` above `low`: `M` is `N + K`, stated.
+    /// `self` above `low`: `M` is `N + K`, stated; `K` is `low`'s own
+    /// width, and may be left to Rust as `_`.
     pub fn concat<const K: usize, const M: usize>(self, low: U<K>) -> U<M> {
         U::<M>::new((self.0 << K) | low.0)
     }

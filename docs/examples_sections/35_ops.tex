@@ -19,7 +19,7 @@ inside a logic expression is parenthesised, and \code{\&\&} and
 \code{||} cannot be overloaded, so they stay on \code{bool}. What has
 no operator is a method: \code{sra}, the arithmetic shift, and
 \code{lt\_signed}, the signed compare, in \code{txhdl::funcs}, and
-\code{mul::<M>}, \code{concat::<K, M>}, \code{sext::<M>} and
+\code{mul::<M>}, \code{concat::<\_, M>}, \code{sext::<M>} and
 \code{zext::<M>}, each with the result width stated.
 Each operator lowers to the operator of the same name; a compare in
 VHDL is a boolean and is made a bit where a bit is needed. The unit

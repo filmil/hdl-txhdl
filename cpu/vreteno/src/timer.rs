@@ -51,17 +51,17 @@ impl Unit<(In<Bit>, Rx<U<69>>), (Tx<U<32>>, Out<Bit>)> for Timer {
             // enables are bits 1 to 4 of the request.
             let merged =
                 mux(r.bit(4), wdata.slice::<24, 8>(), word.slice::<24, 8>())
-                    .concat::<8, 16>(mux(
+                    .concat::<_, 16>(mux(
                         r.bit(3),
                         wdata.slice::<16, 8>(),
                         word.slice::<16, 8>(),
                     ))
-                    .concat::<8, 24>(mux(
+                    .concat::<_, 24>(mux(
                         r.bit(2),
                         wdata.slice::<8, 8>(),
                         word.slice::<8, 8>(),
                     ))
-                    .concat::<8, 32>(mux(
+                    .concat::<_, 32>(mux(
                         r.bit(1),
                         wdata.slice::<0, 8>(),
                         word.slice::<0, 8>(),
@@ -70,18 +70,18 @@ impl Unit<(In<Bit>, Rx<U<69>>), (Tx<U<32>>, Out<Bit>)> for Timer {
             let read = offered & !we;
             self.mtime.set(mux(rst, U::<64>::from(0u32), mtime + 1));
             when!(write & (sel == 0) => {
-                self.mtime <= mtime.slice::<32, 32>().concat::<32, 64>(merged)
+                self.mtime <= mtime.slice::<32, 32>().concat::<_, 64>(merged)
             });
             when!(write & (sel == 1) => {
-                self.mtime <= merged.concat::<32, 64>(mtime.slice::<0, 32>())
+                self.mtime <= merged.concat::<_, 64>(mtime.slice::<0, 32>())
             });
             when!(write & (sel == 2) => {
                 self.mtimecmp <=
-                    mtimecmp.slice::<32, 32>().concat::<32, 64>(merged)
+                    mtimecmp.slice::<32, 32>().concat::<_, 64>(merged)
             });
             when!(write & (sel == 3) => {
                 self.mtimecmp <=
-                    merged.concat::<32, 64>(mtimecmp.slice::<0, 32>())
+                    merged.concat::<_, 64>(mtimecmp.slice::<0, 32>())
             });
             // A read is answered the cycle after it is taken, with the
             // word, or zero for an address that is not this device's.

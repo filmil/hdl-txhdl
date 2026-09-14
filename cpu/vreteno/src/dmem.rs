@@ -64,9 +64,9 @@ impl Unit<Rx<U<69>>, Tx<U<32>>> for Dmem {
                 self.word <= self
                     .lane3
                     .read(at)
-                    .concat::<8, 16>(self.lane2.read(at))
-                    .concat::<8, 24>(self.lane1.read(at))
-                    .concat::<8, 32>(self.lane0.read(at));
+                    .concat::<_, 16>(self.lane2.read(at))
+                    .concat::<_, 24>(self.lane1.read(at))
+                    .concat::<_, 32>(self.lane0.read(at));
                 self.answer <= Bit::One
             } else {
                 self.answer <= Bit::Zero

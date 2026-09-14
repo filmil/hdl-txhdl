@@ -60,7 +60,7 @@ fn imm_i(ir: U<32>) -> U<32> {
 #[lower]
 fn imm_s(ir: U<32>) -> U<32> {
     ir.slice::<25, 7>()
-        .concat::<5, 12>(ir.slice::<7, 5>())
+        .concat::<_, 12>(ir.slice::<7, 5>())
         .sext::<32>()
 }
 
@@ -68,27 +68,27 @@ fn imm_s(ir: U<32>) -> U<32> {
 #[lower]
 fn imm_b(ir: U<32>) -> U<32> {
     ir.slice::<31, 1>()
-        .concat::<1, 2>(ir.slice::<7, 1>())
-        .concat::<6, 8>(ir.slice::<25, 6>())
-        .concat::<4, 12>(ir.slice::<8, 4>())
-        .concat::<1, 13>(U::<1>::from(0u8))
+        .concat::<_, 2>(ir.slice::<7, 1>())
+        .concat::<_, 8>(ir.slice::<25, 6>())
+        .concat::<_, 12>(ir.slice::<8, 4>())
+        .concat::<_, 13>(U::<1>::from(0u8))
         .sext::<32>()
 }
 
 /// The U immediate: the top twenty bits, in place.
 #[lower]
 fn imm_u(ir: U<32>) -> U<32> {
-    ir.slice::<12, 20>().concat::<12, 32>(U::<12>::from(0u8))
+    ir.slice::<12, 20>().concat::<_, 32>(U::<12>::from(0u8))
 }
 
 /// The J immediate, a jump's offset, in four pieces and even.
 #[lower]
 fn imm_j(ir: U<32>) -> U<32> {
     ir.slice::<31, 1>()
-        .concat::<8, 9>(ir.slice::<12, 8>())
-        .concat::<1, 10>(ir.slice::<20, 1>())
-        .concat::<10, 20>(ir.slice::<21, 10>())
-        .concat::<1, 21>(U::<1>::from(0u8))
+        .concat::<_, 9>(ir.slice::<12, 8>())
+        .concat::<_, 10>(ir.slice::<20, 1>())
+        .concat::<_, 20>(ir.slice::<21, 10>())
+        .concat::<_, 21>(U::<1>::from(0u8))
         .sext::<32>()
 }
 
@@ -128,8 +128,8 @@ fn branch(f3: U<3>, a: U<32>, b: U<32>) -> Bit {
 /// read with, extended; or the word itself.
 #[lower]
 fn extended(f3: U<3>, lane: U<2>, word: U<32>) -> U<32> {
-    let bsh = lane.concat::<3, 5>(U::<3>::from(0u8));
-    let hsh = lane.slice::<1, 1>().concat::<4, 5>(U::<4>::from(0u8));
+    let bsh = lane.concat::<_, 5>(U::<3>::from(0u8));
+    let hsh = lane.slice::<1, 1>().concat::<_, 5>(U::<4>::from(0u8));
     let octet = (word >> (bsh.raw() as usize)).slice::<0, 8>();
     let half = (word >> (hsh.raw() as usize)).slice::<0, 16>();
     select!(f3.raw() => {
@@ -153,9 +153,9 @@ fn store_data(f3: U<3>, b: U<32>) -> U<32> {
     let d1 = select!(f3.raw() => { 0 => b0, _ => b1 });
     let d2 = select!(f3.raw() => { 2 => b2, _ => b0 });
     let d3 = select!(f3.raw() => { 0 => b0, 2 => b3, _ => b1 });
-    d3.concat::<8, 16>(d2)
-        .concat::<8, 24>(d1)
-        .concat::<8, 32>(b0)
+    d3.concat::<_, 16>(d2)
+        .concat::<_, 24>(d1)
+        .concat::<_, 32>(b0)
 }
 
 /// Which lanes a store writes, the highest lane first: one for a
@@ -184,9 +184,9 @@ fn store_lanes(f3: U<3>, lane: U<2>) -> U<4> {
         _ => Bit::One,
     });
     en3.zext::<1>()
-        .concat::<1, 2>(en2.zext::<1>())
-        .concat::<1, 3>(en1.zext::<1>())
-        .concat::<1, 4>(en0.zext::<1>())
+        .concat::<_, 2>(en2.zext::<1>())
+        .concat::<_, 3>(en1.zext::<1>())
+        .concat::<_, 4>(en0.zext::<1>())
 }
 
 /// A CSR read, by its number; `mip` is the pending register as the
@@ -256,7 +256,7 @@ fn m_signed_b(f3: U<3>) -> bool {
 /// all ones.
 #[lower]
 fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
-    let mag = hi.slice::<0, 32>().concat::<32, 64>(lo);
+    let mag = hi.slice::<0, 32>().concat::<_, 64>(lo);
     let p = mux(neg_q, U::<64>::from(0u32) - mag, mag);
     let q = mux(neg_q, U::<32>::from(0u32) - lo, lo);
     let rem = hi.slice::<0, 32>();
@@ -629,9 +629,9 @@ impl
             // the lanes a store covers, and whether it is a store. The
             // load's wait is a register.
             let req_word = addr
-                .concat::<32, 64>(sdata)
-                .concat::<4, 68>(en)
-                .concat::<1, 69>(store.zext::<1>());
+                .concat::<_, 64>(sdata)
+                .concat::<_, 68>(en)
+                .concat::<_, 69>(store.zext::<1>());
             when!(send_load | (store & is_dev) => { req.send(req_word) });
             when!(resp_valid => { self.wb_dev <= resp_data });
             case!(rst => {
@@ -699,7 +699,7 @@ impl
             let m_step = self.m_busy & !m_done;
             let m_prod = m_lo.zext::<64>().mul::<64>(m_d.zext::<64>());
             let m_t =
-                m_hi.slice::<0, 32>().concat::<1, 33>(m_lo.slice::<31, 1>());
+                m_hi.slice::<0, 32>().concat::<_, 33>(m_lo.slice::<31, 1>());
             let m_fits = m_t >= m_d.zext::<33>();
             // An interrupt taken while the sequencer runs cancels it:
             // the instruction starts it again when the handler returns,

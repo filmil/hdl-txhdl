@@ -33,15 +33,15 @@ fn hit(addr: U<32>) -> bool {
 #[lower]
 fn frame(octet: U<8>) -> U<10> {
     U::<1>::from(1u8)
-        .concat::<8, 9>(octet)
-        .concat::<1, 10>(U::<1>::from(0u8))
+        .concat::<_, 9>(octet)
+        .concat::<_, 10>(U::<1>::from(0u8))
 }
 
 /// The frame after a bit has gone out: shifted down, the line's rest
 /// state shifted in at the top.
 #[lower]
 fn shifted(shift: U<10>) -> U<10> {
-    U::<1>::from(1u8).concat::<9, 10>(shift.slice::<1, 9>())
+    U::<1>::from(1u8).concat::<_, 10>(shift.slice::<1, 9>())
 }
 
 /// Whether the current bit's last cycle has come.
@@ -61,7 +61,7 @@ fn middle<const DIV: u32>(tick: U<32>) -> bool {
 /// byte comes first and ends up lowest.
 #[lower]
 fn taken_in(shift: U<8>, line: Bit) -> U<8> {
-    line.zext::<1>().concat::<7, 8>(shift.slice::<1, 7>())
+    line.zext::<1>().concat::<_, 8>(shift.slice::<1, 7>())
 }
 
 /// What a load reads, by the word: the last byte sent, the status,
@@ -76,9 +76,9 @@ fn word(
     data: U<8>,
 ) -> U<32> {
     let status = U::<29>::from(0u32)
-        .concat::<1, 30>(Bit::from(full).zext::<1>())
-        .concat::<1, 31>(Bit::from(ready).zext::<1>())
-        .concat::<1, 32>(Bit::from(busy).zext::<1>());
+        .concat::<_, 30>(Bit::from(full).zext::<1>())
+        .concat::<_, 31>(Bit::from(ready).zext::<1>())
+        .concat::<_, 32>(Bit::from(busy).zext::<1>());
     select!(sel.raw() => {
         0 => last.zext::<32>(),
         1 => status,
