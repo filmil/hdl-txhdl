@@ -13,7 +13,7 @@
 use crate::bus::REQ_ADDR;
 use txhdl::comp::{mux, Clock, DefaultClock, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, when, Trace};
+use txhdl::{lower, Trace};
 
 #[derive(Trace, Default)]
 pub struct Router {}
@@ -63,9 +63,15 @@ impl Unit for Router {
             );
             let go = offered & room;
             let r = req.recv_if(room).unwrap_or_default();
-            when!(go & to_mem => { mem_req.send(r) });
-            when!(go & to_timer => { timer_req.send(r) });
-            when!(go & to_uart => { uart_req.send(r) });
+            if bool::from(go & to_mem) {
+                mem_req.send(r);
+            }
+            if bool::from(go & to_timer) {
+                timer_req.send(r);
+            }
+            if bool::from(go & to_uart) {
+                uart_req.send(r);
+            }
             // The responses, merged: the memory's first, then the timer's.
             let (m_valid, m) = mem_resp.take();
             let t_valid = timer_resp.peek().is_some() & !m_valid;
@@ -78,9 +84,9 @@ impl Unit for Router {
                 m,
                 mux(t_valid, t, mux(u_valid, u, U::<32>::from(0u32))),
             );
-            when!(m_valid | t_valid | u_valid | hole_read => {
-                resp.send(answer)
-            });
+            if bool::from(m_valid | t_valid | u_valid | hole_read) {
+                resp.send(answer);
+            }
         }
     }
 }

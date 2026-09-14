@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A unit with two processes. They take `&self`, share state through
 //! registers, and `run` joins them, which is what states that they run
-//! in parallel. `when!` predicates writes; it does not branch.
+//! in parallel. `with!` predicates writes; it does not branch.
 use txhdl::comp::{join2, Clock, DefaultClock, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::when;
@@ -21,11 +21,11 @@ impl DualPort {
     async fn port_a(&self) {
         loop {
             DefaultClock::rising().await;
-            when!(self.enable => {
-                self.hits_a <= self.hits_a + 1;
-                self.cells <= self.cells + 1
+            when!(self.enable => self {
+                hits_a: self.hits_a + 1,
+                cells: self.cells + 1,
             } else {
-                self.hits_a <= 0
+                hits_a: 0,
             });
         }
     }

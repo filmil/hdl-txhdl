@@ -15,7 +15,7 @@
 //!
 //! Written in the subset `#[lower]` reads: every value is a function
 //! of the state and the inputs, `select!` chooses among values and
-//! `when!` and `case!` among drives, and nothing branches. The pieces
+//! `with!` and `case!` among drives, and nothing branches. The pieces
 //! that are functions of their operands alone, the immediates, the
 //! ALU, the branch condition, the load's extension, the store's lanes,
 //! the CSR access and the sequencer's result, are functions under
@@ -28,7 +28,7 @@ use txhdl::comp::{
 };
 use txhdl::funcs::{lt_signed, sra};
 use txhdl::types::{Bit, U};
-use txhdl::{case, lower, select, when, Trace, Value};
+use txhdl::{case, lower, select, when, with, Trace, Value};
 
 /// Words of instruction memory. The data memory is a device on the
 /// bus, `crate::dmem`, at `DATA_BASE` as the model has it.
@@ -617,7 +617,7 @@ impl Unit for Vreteno {
             // the last value to settle, passes through as little as
             // possible; the word fetched under a redirect is written
             // and marked empty.
-            when!(wb_write => { self.regs.at(wb_rd) <= wb_val });
+            when!(wb_write => self { regs.at(wb_rd): wb_val });
             self.halted.set(self.halted | self.wb_stop);
             // The bus: a request is the address, the data in its lanes,
             // the lanes a store covers, and whether it is a store. The
@@ -626,8 +626,10 @@ impl Unit for Vreteno {
                 .concat::<_, 64>(sdata)
                 .concat::<_, 68>(en)
                 .concat::<_, 69>(store.zext::<1>());
-            when!(send_load | (store & is_dev) => { req.send(req_word) });
-            when!(resp_valid => { self.wb_dev <= resp_data });
+            if bool::from(send_load | (store & is_dev)) {
+                req.send(req_word);
+            }
+            when!(resp_valid => self { wb_dev: resp_data });
             case!(rst => {
                 Bit::One => { self.dev_wait <= Bit::Zero },
                 _ if send_load.to_bool() => { self.dev_wait <= Bit::One },
@@ -639,40 +641,31 @@ impl Unit for Vreteno {
 
             // The CSRs: written by a CSR instruction, by a trap, by mret.
             // The three never coincide in one instruction.
-            when!(csr_write & (f12 == isa::CSR_MSTATUS) => {
-                self.mstatus <= csr_new & 0x88
+            // The pending bit is set by the line and cleared by
+            // software, and the write wins when both fall in one cycle;
+            // a trap's writes come after the CSR writes, and win.
+            with!(self <= {
+                csr_write & (f12 == isa::CSR_MSTATUS) ?
+                    mstatus: csr_new & 0x88,
+                csr_write & (f12 == isa::CSR_MTVEC) ?
+                    mtvec: csr_new & !U::<32>::from(3u32),
+                csr_write & (f12 == isa::CSR_MSCRATCH) ? mscratch: csr_new,
+                csr_write & (f12 == isa::CSR_MEPC) ?
+                    mepc: csr_new & !U::<32>::from(1u32),
+                csr_write & (f12 == isa::CSR_MCAUSE) ? mcause: csr_new,
+                csr_write & (f12 == isa::CSR_MIE) ?
+                    mie: csr_new & U::<32>::from(isa::MEXT | isa::MTIMER),
+                csr_write & (f12 == isa::CSR_MTVAL) ? mtval: csr_new,
+                irq ? mip: mip | isa::MEXT,
+                csr_write & (f12 == isa::CSR_MIP) ? mip: csr_new & isa::MEXT,
+                trap ? {
+                    mepc: pc,
+                    mcause: cause,
+                    mtval: tval,
+                    mstatus: trap_status,
+                },
+                run & is_mret ? mstatus: mret_status,
             });
-            when!(csr_write & (f12 == isa::CSR_MTVEC) => {
-                self.mtvec <= csr_new & !U::<32>::from(3u32)
-            });
-            when!(csr_write & (f12 == isa::CSR_MSCRATCH) => {
-                self.mscratch <= csr_new
-            });
-            when!(csr_write & (f12 == isa::CSR_MEPC) => {
-                self.mepc <= csr_new & !U::<32>::from(1u32)
-            });
-            when!(csr_write & (f12 == isa::CSR_MCAUSE) => {
-                self.mcause <= csr_new
-            });
-            when!(csr_write & (f12 == isa::CSR_MIE) => {
-                self.mie <= csr_new & U::<32>::from(isa::MEXT | isa::MTIMER)
-            });
-            when!(csr_write & (f12 == isa::CSR_MTVAL) => {
-                self.mtval <= csr_new
-            });
-            // The pending bit: set by the line, cleared by software,
-            // and the write wins when both fall in one cycle.
-            when!(irq => { self.mip <= mip | isa::MEXT });
-            when!(csr_write & (f12 == isa::CSR_MIP) => {
-                self.mip <= csr_new & isa::MEXT
-            });
-            when!(trap => {
-                self.mepc <= pc;
-                self.mcause <= cause;
-                self.mtval <= tval;
-                self.mstatus <= trap_status
-            });
-            when!(run & is_mret => { self.mstatus <= mret_status });
             // The sequencer. It starts when an M instruction is in execute
             // with its operands ready, and is released when the
             // instruction runs. A multiply is one step: the product of

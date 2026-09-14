@@ -8,7 +8,7 @@
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Reg, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, when, Trace};
+use txhdl::{lower, with, Trace};
 
 #[derive(Trace, Default)]
 pub struct Ops {
@@ -34,14 +34,16 @@ impl Unit for Ops {
             let (a, b, en) = (a.get(), b.get(), en.get());
             // Arithmetic and logic on values; the shift amount and
             // the mask are literals.
-            when!(en => {
-                self.sum <= a + b;
-                self.diff <= a - b;
-                self.both <= a & b;
-                self.either <= a | b;
-                self.differ <= a ^ b;
-                self.up <= a << 2;
-                self.down <= (!a >> 1) & 0x3F
+            with!(self <= {
+                en ? {
+                    sum: a + b,
+                    diff: a - b,
+                    both: a & b,
+                    either: a | b,
+                    differ: a ^ b,
+                    up: a << 2,
+                    down: (!a >> 1) & 0x3F,
+                },
             });
             // A compare is a truth value. `&` joins it with a wire,
             // and a compare inside `&` is parenthesised, since `&`
@@ -49,7 +51,7 @@ impl Unit for Ops {
             let eq = a == b;
             let lt = a < b;
             let high = a >= 128;
-            when!(en & (eq | lt) & !high => { self.hits <= self.hits + 1 });
+            with!(self <= { en & (eq | lt) & !high ? hits: self.hits + 1 });
             same.set(eq);
             below.set(lt & !eq);
         }

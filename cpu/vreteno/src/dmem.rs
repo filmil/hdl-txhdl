@@ -9,7 +9,7 @@
 use crate::bus::{REQ_ADDR, REQ_WDATA};
 use txhdl::comp::{Clock, DefaultClock, Mem, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, when, Trace};
+use txhdl::{lower, with, Trace};
 
 /// Words of data memory.
 pub const DMEM_WORDS: usize = 1024;
@@ -46,31 +46,27 @@ impl Unit for Dmem {
             let data = r.slice::<REQ_WDATA, 32>();
             let we = r.bit(0);
             let write = offered & we;
-            when!(write & r.bit(1) => {
-                self.lane0.at(at) <= data.slice::<0, 8>()
-            });
-            when!(write & r.bit(2) => {
-                self.lane1.at(at) <= data.slice::<8, 8>()
-            });
-            when!(write & r.bit(3) => {
-                self.lane2.at(at) <= data.slice::<16, 8>()
-            });
-            when!(write & r.bit(4) => {
-                self.lane3.at(at) <= data.slice::<24, 8>()
-            });
             let read = offered & !we;
-            when!(read => {
-                self.word <= self
-                    .lane3
-                    .read(at)
-                    .concat::<_, 16>(self.lane2.read(at))
-                    .concat::<_, 24>(self.lane1.read(at))
-                    .concat::<_, 32>(self.lane0.read(at));
-                self.answer <= Bit::One
-            } else {
-                self.answer <= Bit::Zero
+            with!(self <= {
+                write & r.bit(1) ? lane0.at(at): data.slice::<0, 8>(),
+                write & r.bit(2) ? lane1.at(at): data.slice::<8, 8>(),
+                write & r.bit(3) ? lane2.at(at): data.slice::<16, 8>(),
+                write & r.bit(4) ? lane3.at(at): data.slice::<24, 8>(),
+                read ? {
+                    word: self
+                        .lane3
+                        .read(at)
+                        .concat::<_, 16>(self.lane2.read(at))
+                        .concat::<_, 24>(self.lane1.read(at))
+                        .concat::<_, 32>(self.lane0.read(at)),
+                    answer: Bit::One,
+                } else {
+                    answer: Bit::Zero,
+                },
             });
-            when!(self.answer => { resp.send(self.word) });
+            if self.answer.to_bool() {
+                resp.send(self.word);
+            }
         }
     }
 }

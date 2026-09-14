@@ -44,7 +44,7 @@ impl Unit for Gray {
             DefaultClock::rising().await;
             let n = self.n.get();
             let go = step.get();
-            when!(go => { self.n <= n + 1 });
+            when!(go => self { n: n + 1 });
             code.set(gray(n));
             wrap.set(go & last(n));
         }

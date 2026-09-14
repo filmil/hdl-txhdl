@@ -48,7 +48,7 @@ impl Unit<(), Tx<Packet>> for Producer {
             let due = gap == 0;
             let offer = out.ready() & due;
             let next_gap = (gap.raw() as u8 + 1) % self.period;
-            when!(offer => { self.seq <= self.seq + 1 });
+            when!(offer => self { seq: self.seq + 1 });
             self.gap.set(next_gap);
             if offer.to_bool() {
                 out.send(Packet {

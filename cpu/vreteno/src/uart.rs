@@ -17,7 +17,7 @@ use crate::bus::{REQ_ADDR, REQ_WDATA};
 use crate::isa::UART_BASE;
 use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, when, Trace};
+use txhdl::{lower, select, with, Trace};
 
 // The pieces of the step, each a function of its own, inlined by the
 // lowering where the step calls it.
@@ -162,13 +162,13 @@ impl<const DIV: u32> Unit for Uart<DIV> {
                     self.tick.set(self.tick + 1);
                 }
             }
-            when!(read => {
+            if read {
                 resp.send(mux(
                     mine,
                     word(sel, busy, rx_ready, full, self.last.get(), rx_data),
-                    U::<32>::from(0u32)
-                ))
-            });
+                    U::<32>::from(0u32),
+                ));
+            }
             tx.set(mux(busy, self.shift.get().bit(0), Bit::One));
             // The receive side. A low on the resting line is a start
             // bit; from then on the line is sampled in the middle of
@@ -200,11 +200,12 @@ impl<const DIV: u32> Unit for Uart<DIV> {
             } else {
                 self.rx_tick.set(self.rx_tick + 1);
             }
-            when!(sample & at_start & line => { self.rx_bits <= 0 });
-            when!(sample & !at_start & !at_stop => {
-                self.rx_shift <= taken_in(self.rx_shift.get(), self.line.get())
+            with!(self <= {
+                sample & at_start & line ? rx_bits: 0,
+                sample & !at_start & !at_stop ?
+                    rx_shift: taken_in(self.rx_shift.get(), self.line.get()),
+                sample & at_stop ? rx_bits: 0,
             });
-            when!(sample & at_stop => { self.rx_bits <= 0 });
             let landed = sample & at_stop & line;
             let push = landed & !full;
             let pop = read_rx & rx_ready;

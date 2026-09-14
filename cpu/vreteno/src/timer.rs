@@ -11,7 +11,7 @@ use crate::bus::{REQ_ADDR, REQ_WDATA};
 use crate::isa::TIMER_BASE;
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, when, Trace};
+use txhdl::{lower, select, with, Trace};
 
 #[derive(Trace, Default)]
 pub struct Timer {
@@ -68,23 +68,22 @@ impl Unit for Timer {
             let write = offered & we & hit;
             let read = offered & !we;
             self.mtime.set(mux(rst, U::<64>::from(0u32), mtime + 1));
-            when!(write & (sel == 0) => {
-                self.mtime <= mtime.slice::<32, 32>().concat::<_, 64>(merged)
-            });
-            when!(write & (sel == 1) => {
-                self.mtime <= merged.concat::<_, 64>(mtime.slice::<0, 32>())
-            });
-            when!(write & (sel == 2) => {
-                self.mtimecmp <=
-                    mtimecmp.slice::<32, 32>().concat::<_, 64>(merged)
-            });
-            when!(write & (sel == 3) => {
-                self.mtimecmp <=
-                    merged.concat::<_, 64>(mtimecmp.slice::<0, 32>())
+            with!(self <= {
+                write & (sel == 0) ?
+                    mtime: mtime.slice::<32, 32>().concat::<_, 64>(merged),
+                write & (sel == 1) ?
+                    mtime: merged.concat::<_, 64>(mtime.slice::<0, 32>()),
+                write & (sel == 2) ? mtimecmp: mtimecmp
+                    .slice::<32, 32>()
+                    .concat::<_, 64>(merged),
+                write & (sel == 3) ? mtimecmp: merged
+                    .concat::<_, 64>(mtimecmp.slice::<0, 32>()),
             });
             // A read is answered the cycle after it is taken, with the
             // word, or zero for an address that is not this device's.
-            when!(read => { resp.send(mux(hit, word, U::<32>::from(0u32))) });
+            if bool::from(read) {
+                resp.send(mux(hit, word, U::<32>::from(0u32)));
+            }
             self.pending.set(mtime >= mtimecmp);
             tirq.set(self.pending);
         }

@@ -14,7 +14,7 @@ use txhdl::comp::{
     signal, Clock, DefaultClock, In, Out, Reg, Running, Unit, Wire,
 };
 use txhdl::types::{Bit, U};
-use txhdl::{lower, when, Trace};
+use txhdl::{lower, with, Trace};
 
 // begin{unit}
 #[derive(Trace, Default)]
@@ -34,8 +34,10 @@ impl Unit for Divider {
             self.counting.set(pulse.get());
             self.wrap.set(self.counting.get() & (self.n == 2));
             let (counting, wrap) = (self.counting.get(), self.wrap.get());
-            when!(wrap => { self.n <= 0 });
-            when!(counting & !wrap => { self.n <= self.n + 1 });
+            with!(self <= {
+                wrap ? n: 0,
+                counting & !wrap ? n: self.n + 1,
+            });
             tick.set(wrap);
         }
     }

@@ -2,7 +2,7 @@
 //! `if` in a lowered loop: Rust's `if`, over a `bool`, with the drives
 //! under it written as `set`. The arms are a priority chain, the first
 //! condition that holds wins, and an arm may hold another `if`, a
-//! `let`, a `when!` or a `case!`. The runtime runs it as the Rust it
+//! `let`, a `with!` or a `case!`. The runtime runs it as the Rust it
 //! is; the lowering reads it as the chain `case!` makes, `if` and
 //! `else if` in the clocked block. A `send` in an arm goes out with
 //! the arm's condition as `valid`. An output is a wire, so it is

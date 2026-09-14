@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-// Probe 10. `when!` and `mux` from the library. The statement form
-// predicates a list of register writes; the expression form is a
+// Probe 10. `when!`, `with!` and `mux` from the library. The statement
+// forms predicate the drives of one struct, its name written once,
+// the condition first or the struct first; the expression form is a
 // function, because there is nothing to predicate.
 use txhdl::comp::{mux, rising, DefaultClock, Reg};
 use txhdl::types::{Bit, U};
-use txhdl::when;
+use txhdl::{when, with};
 
 pub struct Unit {
     pub count: Reg<U<32>>,
@@ -14,14 +15,14 @@ pub struct Unit {
 impl Unit {
     pub async fn step(&self, enable: Bit, reset: Bit) {
         rising::<DefaultClock>().await;
-        when!(enable => {
-            self.count <= self.count + 1;
-            self.flag <= Bit::One
+        when!(enable => self {
+            count: self.count + 1,
+            flag: Bit::One,
         } else {
-            self.count <= U::new(0);
-            self.flag <= Bit::Zero
+            count: U::new(0),
+            flag: Bit::Zero,
         });
-        self.count.set(mux(reset, U::new(0), self.count.get()));
+        with!(self <= { count: mux(reset, U::new(0), self.count.get()) });
     }
 }
 

@@ -6,7 +6,7 @@
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Reg, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, when, Trace};
+use txhdl::{lower, with, Trace};
 
 // begin{unit}
 #[derive(Trace, Default)]
@@ -19,7 +19,7 @@ impl Unit for Counter {
     async fn run(&mut self, enable: In<Bit>, tick: Out<Bit>) {
         loop {
             DefaultClock::rising().await; // wait, then read
-            when!(enable.get() => { self.n <= self.n + 1 });
+            with!(self <= { enable.get() ? n: self.n + 1 });
             tick.set(self.n == 7);
         }
     }

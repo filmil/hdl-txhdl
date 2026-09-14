@@ -2,7 +2,7 @@
 //! A tap between two channels, lowered: it takes a word whenever one
 //! is offered and there is room to pass it on, a receive under a
 //! condition, `recv_if`, so its ready is the condition and the offer;
-//! and it sends on only the odd ones, a send under `when!`, so its
+//! and it sends on only the odd ones, a send under `if`, so its
 //! valid is the arm's condition. A unit that runs every cycle and
 //! talks over channels by predicate rather than by waiting, which is
 //! how a core drives a bus. Checked under nvc and Verilator against
@@ -10,7 +10,7 @@
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, join2, now, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::types::U;
-use txhdl::{lower, when, Trace};
+use txhdl::{lower, with, Trace};
 
 // begin{unit}
 #[derive(Trace, Default)]
@@ -29,11 +29,13 @@ impl Unit for Tap {
             let v = inp.recv_if(room).unwrap_or_default();
             let taken = offered & room;
             let odd = taken & v.bit(0);
-            when!(taken => { self.seen <= self.seen + 1 });
-            when!(odd => {
-                out.send(v);
-                self.passed <= self.passed + 1
+            with!(self <= {
+                taken ? seen: self.seen + 1,
+                odd ? passed: self.passed + 1,
             });
+            if odd.to_bool() {
+                out.send(v);
+            }
         }
     }
 }

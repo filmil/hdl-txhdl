@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Blinky. One register, one wire, one `when!`, and a build that says
+//! Blinky. One register, one wire, one `with!`, and a build that says
 //! how fast the clock is and how fast to blink. The LED is a square
 //! wave: on for the first half of the period, off for the second.
 use std::marker::PhantomData;
@@ -33,11 +33,7 @@ impl<C: BlinkyConfig> Unit for Blinky<C> {
         loop {
             DefaultClock::rising().await;
             let wrap = self.count == C::PERIOD - 1;
-            when!(wrap => {
-                self.count <= 0
-            } else {
-                self.count <= self.count + 1
-            });
+            when!(wrap => self { count: 0 } else { count: self.count + 1 });
             led.set(self.count < C::HALF);
         }
     }

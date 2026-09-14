@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A memory, lowered: a scratchpad of sixteen bytes with a write port
 //! under an enable and a read port that is a wire. `Mem::at` names a
-//! word as a drive's target, so `when!` writes it as it writes a
+//! word as a drive's target, so `with!` writes it as it writes a
 //! register; `read` is a plain read, and lowers to an index. The
 //! memory is untraced, so the waveform shows the ports, and the
 //! lowering is checked against them.
@@ -15,8 +15,6 @@ pub struct Scratch {
     pub m: Mem<U<8>, 16>,
 }
 
-type Ports = (In<Bit>, In<U<4>>, In<U<8>>, In<U<4>>);
-
 #[lower]
 impl Unit for Scratch {
     async fn run(
@@ -28,7 +26,7 @@ impl Unit for Scratch {
             DefaultClock::rising().await;
             let (we, wa) = (we.get(), waddr.get());
             let (wd, ra) = (wdata.get(), raddr.get());
-            when!(we => { self.m.at(wa) <= wd });
+            when!(we => self { m.at(wa): wd });
             q.set(self.m.read(ra));
         }
     }
