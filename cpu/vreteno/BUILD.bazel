@@ -10,6 +10,7 @@ package(default_visibility = ["//visibility:public"])
 rust_library(
     name = "vreteno32",
     srcs = [
+        "src/board.rs",
         "src/core.rs",
         "src/dmem.rs",
         "src/isa.rs",
@@ -24,6 +25,7 @@ rust_library(
     crate_name = "vreteno32",
     edition = "2021",
     deps = [
+        "//ddr3",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
     ],
