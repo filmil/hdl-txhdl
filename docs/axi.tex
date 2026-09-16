@@ -17,6 +17,13 @@
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/bus/axi/sim.rs}}
 
+% A range of the AXI-Lite bridge as lite_bridge! wrote it for two
+% peripherals, or of the AXI-Lite beats, by its begin/end markers.
+\newcommand{\litepart}[3]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#1-#1,caption={#2},label={#3}]{lite_bridge2.rs}}
+
 % A range of the library's source, by its begin/end markers.
 \newcommand{\axipart}[3]{%
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
@@ -68,7 +75,11 @@ examples' runs, with the five AXI channels between them; and in
 those channels goes the router, one host to several peripherals by
 an address map its type states, which answers an address that is
 nobody's itself rather than leaving a client waiting for ever. A
-router is inserted by wiring, and changes no client.
+router is inserted by wiring, and changes no client. For small
+peripherals there is AXI-Lite, which has no identifier and no burst,
+and a bridge from an AXI4 link to several AXI-Lite peripherals: it
+decodes each burst to a peripheral and sends it there one beat at a
+time.
 \end{abstract}
 
 \section{What a Link Is}
@@ -483,6 +494,127 @@ Host-side arbitration, several hosts contending for one peripheral,
 is not here. It is the other half of a full interconnect and a
 problem of its own.
 
+\section{AXI-Lite and the Bridge}
+\label{sec:a-lite}
+
+A small peripheral does not need most of AXI4. A serial port or a
+bank of registers serves one word at a time, and has no use for an
+identifier, a burst or \code{last}. AXI-Lite is AXI4 with those taken
+out: the same five channels, one transaction per beat, and no order
+to keep but that a write's address and its word arrive together.
+Listing~\ref{lst:a-lite-beats} is every beat of it, from
+\code{bus::axi\_lite}. A peripheral on it needs no tracker. A read
+takes an address and answers a word; a write takes an address and a
+word and answers a response.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=beats-beats,caption={The AXI-Lite beats. The response is
+AXI4's \code{Resp}.},label={lst:a-lite-beats}]{lib/parts/src/bus/axi_lite.rs}
+
+\code{axi\_lite()} makes the five channels of a link and hands back
+the ends each side holds, as \code{axi\_units()} does for AXI4.
+
+\subsection*{The bridge}
+
+A design with small peripherals still has an AXI4 host, so something
+has to stand between the two. \code{LiteBridge1} to
+\code{LiteBridge8} are that: a bridge of one to eight AXI-Lite
+peripherals, each written out by \code{lite\_bridge!} for the same
+reason the router is. Like the router, the bridge states each
+peripheral's range as a base and a mask in its type:
+
+\begin{lstlisting}
+type Bridge =
+    LiteBridge2<16, 32, 4, 2, 0x1000, 0xf000, 0x2000, 0xf000>;
+\end{lstlisting}
+
+On its AXI4 side it takes the \code{aw}, \code{ar} and \code{w} a
+peripheral's tracker would take and gives the \code{b} and \code{r}
+it would give. So the bridge goes where an \code{AxiPer} would, behind
+the host's tracker or behind one of the router's peripheral ports.
+
+It keeps four rules.
+
+It takes one burst at a time. AXI-Lite has no identifier, so two
+transactions to one peripheral cannot be told apart, and the bridge
+holds the next burst until the last beat of this one is answered. The
+two address channels take turns when both offer.
+
+A burst goes out a beat at a time. Each beat is one AXI-Lite
+transaction, at the burst's address for the first beat and moved on
+by a beat's width, \code{1 << size} bytes, for each one after; a
+fixed burst does not move. A read's answers go up as the burst's
+beats, each with the burst's identifier and the final one marked
+\code{last}.
+A write's answers become one \code{B}, which keeps the first error or
+is \code{Okay}. The bridge treats a wrapping burst as an incrementing one.
+
+A burst goes where its first address decodes, one bit of \code{sel}
+per peripheral, and the lowest range that matches wins.
+
+A burst whose address is no peripheral's is answered by the bridge,
+as the router answers one. Each of its beats is answered
+\code{DecErr} as soon as it is taken, so a write's beats are taken
+and dropped, and a read gets every beat it asked for.
+
+\litepart{state}{The bridge's state, as \code{lite\_bridge!} wrote it
+for two peripherals.}{lst:a-lite-state}
+
+\litepart{accept}{Taking a burst: the turn between the address
+channels, the decode, and the address step.}{lst:a-lite-accept}
+
+\litepart{beats}{A beat's request, to the peripheral the burst decoded
+to.}{lst:a-lite-beats-out}
+
+\litepart{answers}{The answer to a beat, from the peripheral or from
+the bridge itself, going up.}{lst:a-lite-answers}
+
+\litepart{drives}{The registers: a burst taken, a request sent, a beat
+answered.}{lst:a-lite-drives}
+
+\subsection*{The run}
+
+\code{ex\_axi\_lite} puts \code{LiteBridge2} behind a host's tracker,
+with two banks of four registers, \code{Regs}, behind it and a hole
+beyond them. A bank is an AXI-Lite peripheral written as hardware in
+twenty lines, with no state for the bus. The host client writes three
+words to the first bank in one burst and reads four back in one, reads
+one word three times in a fixed burst, writes and reads the second
+bank, and sends a write of two beats and a read of two to the hole.
+The run asserts every word and every response. The bridge and both
+banks are lowered, and the build simulates the three netlists against
+this run under \code{nvc} and under Verilator. A test in
+\code{bus::axi\_lite} runs the same bursts against two simulated
+memories and counts the transactions each serves: ten on the first, for three
+beats written, four read and three read again, and two on the
+second.
+
+\begin{figure*}[t]
+\centering
+\input{axi_lite_timing.tex}
+\caption{The bridge's run: bursts in on \code{aw} and \code{ar}, the
+bridge busy with each and its peripheral in \code{sel}, the beats left
+counting down, each beat going out to a bank as a transaction of its
+own, and the answers going up, the hole's as \code{DecErr}.}
+\label{fig:a-lite}
+\end{figure*}
+
+\lstinputlisting[caption={\code{ex\_axi\_lite.rs}. Run with
+\code{bazel run //lib/examples:ex\_axi\_lite}.},%
+label={lst:a-lite-ex}]{lib/examples/ex_axi_lite.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_axi\_lite}
+printed when the build ran it: each burst, the tick its answer
+arrived, and the answer.},%
+label={lst:a-lite-out}]{out_axi_lite.txt}
+
+The core of the Vreteno document~\cite{vreteno} is the bridge's first
+user that is not a test. Its serial port is an AXI-Lite peripheral
+behind \code{LiteBridge1}, on the router's third port, and the port
+lost the three registers it used to hold a write while it waited for
+the write's beat.
+
 \begin{thebibliography}{9}
 
 \bibitem{tutorial}
@@ -504,6 +636,10 @@ project repository \code{HDL/txhdl}, \code{//docs:station}, 2026.
 \bibitem{gpu}
 F.~Filmar and D.~Janković, ``A minimal GPU in TxHDL,'' project
 repository \code{HDL/txhdl}, \code{//docs:gpu}, 2026.
+
+\bibitem{vreteno}
+F.~Filmar and D.~Janković, ``Vreteno: an RV32IM core in TxHDL,''
+project repository \code{HDL/txhdl}, \code{//docs:vreteno}, 2026.
 
 \bibitem{cover}
 F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository

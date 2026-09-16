@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The serial port: an AXI peripheral with a line each way. A byte
-//! written to its first word goes out on the line as a start bit,
-//! eight data bits least significant first and a stop bit, each
+//! The serial port: an AXI-Lite peripheral with a line each way. It
+//! sits behind a bridge from the core's AXI4 link, which hands it one
+//! transaction at a time with no identifier and no burst, so a read is
+//! an address in and a word out, and a write is an address and a word
+//! in and a response out.
+//!
+//! A byte written to its first word goes out on the line as a start
+//! bit, eight data bits least significant first and a stop bit, each
 //! `DIV` cycles long; a frame coming in on the other line, sampled in
 //! the middle of each bit, lands in a buffer of eight behind its third
 //! word, where a load takes the oldest, and the port's interrupt line
@@ -10,13 +15,14 @@
 //! not yet read, bit 2 the buffer full. A byte written while busy is
 //! dropped, and a byte received when the buffer is full is dropped
 //! and counted, so a program polls the status and keeps up. The
-//! lines rest high. `DIV` is 868 for
-//! 115200 baud at 100 MHz, and 4 in the runs that are checked, so
-//! that a byte takes forty cycles rather than nine thousand.
+//! lines rest high. `DIV` is 868 for 115200 baud at 100 MHz, and 4 in
+//! the runs that are checked, so that a byte takes forty cycles rather
+//! than nine thousand.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
-use txhdl_parts::bus::axi::{Answer, PerReq, Resp, R, W};
+use txhdl_parts::bus::axi::Resp;
+use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 
 // The pieces of the step, each a function of its own, inlined by the
 // lowering where the step calls it.
@@ -81,7 +87,7 @@ fn word(
 }
 
 #[derive(Trace, Default)]
-pub struct Uart<const DIV: u32, const IW: usize> {
+pub struct Uart<const DIV: u32> {
     /// The frame going out, least significant bit first.
     pub shift: Reg<U<10>>,
     /// Bits left to send; busy while not zero.
@@ -107,24 +113,20 @@ pub struct Uart<const DIV: u32, const IW: usize> {
     pub count: Reg<U<4>>,
     pub received: Reg<U<8>>,
     pub dropped: Reg<U<8>>,
-    /// A write taken and waiting for its beat: which of the words it
-    /// names, and which identifier answers it.
-    pub pend: Reg<U<1>>,
-    pub psel: Reg<U<2>>,
-    pub pid: Reg<U<IW>>,
 }
 
 #[lower]
-impl<const DIV: u32, const IW: usize> Unit for Uart<DIV, IW> {
+impl<const DIV: u32> Unit for Uart<DIV> {
     async fn run(
         &mut self,
-        (rst, rx, req, wd): (
+        (rst, rx, aw, ar, w): (
             In<Bit>,
             In<Bit>,
-            Rx<PerReq<32, IW>>,
-            Rx<W<32, 4>>,
+            Rx<LiteAw<32>>,
+            Rx<LiteAr<32>>,
+            Rx<LiteW<32, 4>>,
         ),
-        (ans, rb, tx, irq): (Tx<Answer<IW>>, Tx<R<32, IW>>, Out<Bit>, Out<Bit>),
+        (b, r, tx, irq): (Tx<LiteB>, Tx<LiteR<32>>, Out<Bit>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -133,20 +135,20 @@ impl<const DIV: u32, const IW: usize> Unit for Uart<DIV, IW> {
             let full = self.count == 8;
             let rx_data = self.fifo.read(self.head.get());
             let busy = self.bits != 0;
-            // The router sends this peripheral only the bursts in its
-            // range, so it checks no address. A read is answered in the
-            // cycle it is taken; a write waits for its beat.
-            let q = req.head();
-            let qoff = req.peek().is_some();
-            let held = self.pend.get() == 1;
-            let take_read = qoff & q.read & rb.ready() & !held;
-            let take_write = qoff & !q.read & !held;
-            let _ = req.recv_if(take_read | take_write);
-            let wh = wd.head();
-            let wgo = held & wd.peek().is_some() & ans.ready();
-            let _ = wd.recv_if(wgo);
-            let sel = q.addr.slice::<2, 2>();
-            let wsel = self.psel.get();
+            // The bridge sends this peripheral only the transactions in
+            // its range, so it checks no address. A read is answered in
+            // the cycle it is taken, and a write is taken when its
+            // address and its word are both there, and answered at once.
+            let arh = ar.head();
+            let take_read = r.ready() & ar.peek().is_some();
+            let _ = ar.recv_if(r.ready());
+            let awh = aw.head();
+            let wh = w.head();
+            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
+            let _ = aw.recv_if(wgo);
+            let _ = w.recv_if(wgo);
+            let sel = arh.addr.slice::<2, 2>();
+            let wsel = awh.addr.slice::<2, 2>();
             let read_rx = take_read.to_bool() & (sel == 2);
             // A byte written while idle starts a frame, ten bits of DIV
             // cycles each; a reset wins over everything.
@@ -170,17 +172,8 @@ impl<const DIV: u32, const IW: usize> Unit for Uart<DIV, IW> {
                     self.tick.set(self.tick + 1);
                 }
             }
-            with!(self <= {
-                take_write ? {
-                    pend: U::<1>::from(1u8),
-                    psel: sel,
-                    pid: q.id,
-                },
-                wgo ? pend: U::<1>::from(0u8),
-            });
             if take_read.to_bool() {
-                rb.send(R {
-                    id: q.id,
+                r.send(LiteR {
                     data: word(
                         sel,
                         busy,
@@ -190,14 +183,10 @@ impl<const DIV: u32, const IW: usize> Unit for Uart<DIV, IW> {
                         rx_data,
                     ),
                     resp: Resp::Okay,
-                    last: Bit::One,
                 });
             }
             if wgo.to_bool() {
-                ans.send(Answer {
-                    id: self.pid.get(),
-                    resp: Resp::Okay,
-                });
+                b.send(LiteB { resp: Resp::Okay });
             }
             tx.set(mux(busy, self.shift.get().bit(0), Bit::One));
             // The receive side. A low on the resting line is a start

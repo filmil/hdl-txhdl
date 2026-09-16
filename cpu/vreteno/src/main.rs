@@ -7,6 +7,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
 use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
@@ -28,6 +29,10 @@ const NIDS: usize = 4;
 /// address a hole the router answers itself.
 type Rtr =
     Router3<32, 32, 4, IW, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>;
+
+/// The bridge the serial port sits behind: one AXI-Lite peripheral,
+/// at the range the router gives the port.
+type Serial = LiteBridge1<32, 32, 4, IW, 0x3000, 0xf000>;
 
 fn main() {
     let program = demo();
@@ -70,14 +75,18 @@ fn main() {
     let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
     let (dreq, dwd, dans, drb) = dl.per_client;
     let (treq, twd, tans, trb) = tl.per_client;
-    let (ureq, uwd, uans, urb) = ul.per_client;
+    // The serial port is an AXI-Lite peripheral, behind a bridge
+    // that takes the AXI4 channels the router gives it.
+    let sl = axi_lite::<32, 32, 4>();
+    let (uaw, uar, uw, ub, ur) = sl.per;
+    let (baw, bar, bw, bb, br) = sl.host;
     let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
     let mut dper = AxiPer::<32, 32, 4, IW>::default();
     let mut tper = AxiPer::<32, 32, 4, IW>::default();
-    let mut uper = AxiPer::<32, 32, 4, IW>::default();
+    let mut ubridge = Serial::default();
     let mut router = Rtr::default();
     let mut timer = Timer::<IW>::default();
-    let mut uart = Uart::<4, IW>::default();
+    let mut uart = Uart::<4>::default();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
     let (instr_out, instr) = signal::<U<32>, DefaultClock>();
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
@@ -127,10 +136,11 @@ fn main() {
         w.add("twd", &twd);
         w.add("tans", &tans);
         w.add("trb", &trb);
-        w.add("ureq", &ureq);
-        w.add("uwd", &uwd);
-        w.add("uans", &uans);
-        w.add("urb", &urb);
+        w.add("uaw", &uaw);
+        w.add("uar", &uar);
+        w.add("uw", &uw);
+        w.add("ub", &ub);
+        w.add("ur", &ur);
         w.add("cpu", &cpu);
         w.add("dmem", &dmem);
         w.add("router", &router);
@@ -139,7 +149,7 @@ fn main() {
         w.add("axi_host", &axi_host);
         w.add("dper", &dper);
         w.add("tper", &tper);
-        w.add("uper", &uper);
+        w.add("ubridge", &ubridge);
         w.add("instr", &instr);
         w.add("wb", &wb);
         w.add("halt", &halt);
@@ -153,7 +163,7 @@ fn main() {
         join2(
             join2(
                 timer.run((rst_t, treq, twd), (tans, trb, tirq_out)),
-                uart.run((rst_u, rx, ureq, uwd), (uans, urb, tx_out, uirq_out)),
+                uart.run((rst_u, rx, uaw, uar, uw), (ub, ur, tx_out, uirq_out)),
             ),
             join2(
                 dmem.run((dreq, dwd), (dans, drb)),
@@ -198,7 +208,10 @@ fn main() {
                     dper.run(dl.per_in, dl.per_out),
                     tper.run(tl.per_in, tl.per_out),
                 ),
-                uper.run(ul.per_in, ul.per_out),
+                ubridge.run(
+                    (ul.per_in.0, ul.per_in.1, ul.per_in.2, bb, br),
+                    (baw, bar, bw, ul.per_out.2, ul.per_out.3),
+                ),
             ),
         ),
     ));
@@ -293,13 +306,31 @@ fn main() {
     timer.trace_as("wd", "twd");
     timer.trace_as("ans", "tans");
     timer.trace_as("rb", "trb");
-    let mut uart4 = Uart::<4, IW>::lowered("uart4");
-    uart4.trace_as("req", "ureq");
-    uart4.trace_as("wd", "uwd");
-    uart4.trace_as("ans", "uans");
-    uart4.trace_as("rb", "urb");
+    let mut uart4 = Uart::<4>::lowered("uart4");
+    uart4.trace_as("aw", "uaw");
+    uart4.trace_as("ar", "uar");
+    uart4.trace_as("w", "uw");
+    uart4.trace_as("b", "ub");
+    uart4.trace_as("r", "ur");
     uart4.trace_as("irq", "uirq");
-    let uart = Uart::<868, IW>::lowered("uart");
+    // The port's bridge: the AXI4 side under the router's names for
+    // the third peripheral, the AXI-Lite side under the port's.
+    let mut ubr = Serial::lowered("ubridge");
+    for (port, scope) in [
+        ("aw", "aw2"),
+        ("ar", "ar2"),
+        ("w", "w2"),
+        ("b", "b2"),
+        ("r", "r2"),
+        ("aw0", "uaw"),
+        ("ar0", "uar"),
+        ("w0", "uw"),
+        ("b0", "ub"),
+        ("r0", "ur"),
+    ] {
+        ubr.trace_as(port, scope);
+    }
+    let uart = Uart::<868>::lowered("uart");
     let axi_host = AxiHost::<32, 32, 4, IW, NIDS>::lowered("axi_host");
     let mut dper = AxiPer::<32, 32, 4, IW>::lowered("axi_per");
     dper.trace_as("aw", "aw0");
@@ -312,7 +343,7 @@ fn main() {
     dper.trace_as("ans", "dans");
     dper.trace_as("rb", "drb");
     txhdl::netlist::write_netlists_from_env(&[
-        &lowered, &router, &dmem, &timer, &uart4, &uart, &axi_host, &dper,
+        &lowered, &router, &dmem, &timer, &uart4, &ubr, &uart, &axi_host, &dper,
     ]);
     print!(
         "\n{}\n{}\n{}\n{}\n{}",

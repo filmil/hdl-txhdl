@@ -1756,6 +1756,462 @@ pub fn router(input: TokenStream) -> TokenStream {
 }
 
 // ---------------------------------------------------------------------
+// lite_bridge!
+
+/// The text of an AXI4 to AXI-Lite bridge of `n` peripherals, named
+/// `name`. The template is written once with `@` markers, and the
+/// parts that repeat per peripheral are put in by loops; a chain over
+/// the peripherals is a wire each, as the router's is, so no line
+/// grows with the count.
+fn lite_bridge_text(name: &str, n: usize) -> String {
+    let idx: Vec<usize> = (0..n).collect();
+    let each = |f: &dyn Fn(usize) -> String, sep: &str| -> String {
+        idx.iter().map(|&i| f(i)).collect::<Vec<_>>().join(sep)
+    };
+    // The peripheral select is one bit per peripheral, and two bits at
+    // least, since a one-bit value is a `std_logic` in VHDL and cannot
+    // be indexed.
+    let sw = n.max(2);
+    let module = format!("lite_bridge{n}");
+    let ranges = each(
+        &|i| format!("    const BASE{i}: usize,\n    const MASK{i}: usize,"),
+        "\n",
+    );
+    let rargs = each(&|i| format!("        BASE{i},\n        MASK{i},"), "\n");
+    let in_names =
+        each(&|i| format!("            b{i},\n            r{i},"), "\n");
+    let in_types = each(
+        &|_| "            Rx<LiteB>,\n            Rx<LiteR<D>>,".to_string(),
+        "\n",
+    );
+    let out_names = each(
+        &|i| {
+            format!("            aw{i},\n            ar{i},\n            w{i},")
+        },
+        "\n",
+    );
+    let out_types = each(
+        &|_| {
+            "            Tx<LiteAw<A>>,\n            \
+             Tx<LiteAr<A>>,\n            \
+             Tx<LiteW<D, S>>,"
+                .to_string()
+        },
+        "\n",
+    );
+    // A choice over the peripherals by the bits of `pick`: `name{i}` is
+    // `val(i)` when bit `i` is set, else the next; the last falls back
+    // to `tail`. The choice is `name0`.
+    let chain = |name: &str,
+                 pick: &str,
+                 val: &dyn Fn(usize) -> String,
+                 tail: &str|
+     -> String {
+        let top = n - 1;
+        let mut lines = vec![format!(
+            "            let {name}{top} =\n                \
+             mux({pick}.bit({top}), {}, {tail});",
+            val(top)
+        )];
+        for i in (0..top).rev() {
+            lines.push(format!(
+                "            let {name}{i} =\n                \
+                 mux({pick}.bit({i}), {}, {name}{});",
+                val(i),
+                i + 1
+            ));
+        }
+        lines.join("\n")
+    };
+    // The decode of one address channel's head, as a one-hot, the
+    // lowest range that matches winning.
+    let decode = |ph: &str| -> String {
+        let hits = each(
+            &|i| {
+                format!(
+                    "            let {ph}_hit{i} =\n                \
+                     ({ph}h.addr.raw() as usize & MASK{i}) == BASE{i};"
+                )
+            },
+            "\n",
+        );
+        let top = n - 1;
+        let mut sel = vec![format!(
+            "            let {ph}_sel{top} = mux(\n                \
+             {ph}_hit{top},\n                \
+             U::<{sw}>::from({}u32),\n                \
+             U::<{sw}>::from(0u8),\n            );",
+            1u32 << top
+        )];
+        for i in (0..top).rev() {
+            sel.push(format!(
+                "            let {ph}_sel{i} = mux(\n                \
+                 {ph}_hit{i},\n                \
+                 U::<{sw}>::from({}u32),\n                \
+                 {ph}_sel{},\n            );",
+                1u32 << i,
+                i + 1
+            ));
+        }
+        format!("{hits}\n{}", sel.join("\n"))
+    };
+    let heads = each(
+        &|i| {
+            format!(
+                "            let b{i}h = b{i}.head();\n            \
+                 let r{i}h = r{i}.head();\n            \
+                 let off_b{i} = Bit::from(b{i}.peek().is_some());\n            \
+                 let off_r{i} = Bit::from(r{i}.peek().is_some());"
+            )
+        },
+        "\n",
+    );
+    let sends = each(
+        &|i| {
+            format!(
+                "            if (w_go & cur.bit({i})).to_bool() {{\n\
+                 \x20               \
+                 aw{i}.send(LiteAw {{\n                    \
+                 addr: self.addr.get(),\n                    \
+                 prot: self.prot.get(),\n                \
+                 }});\n                \
+                 w{i}.send(LiteW {{\n                    \
+                 data: wh.data,\n                    \
+                 strb: wh.strb,\n                \
+                 }});\n            \
+                 }}\n            \
+                 if (ar_go & cur.bit({i})).to_bool() {{\n                \
+                 ar{i}.send(LiteAr {{\n                    \
+                 addr: self.addr.get(),\n                    \
+                 prot: self.prot.get(),\n                \
+                 }});\n            \
+                 }}"
+            )
+        },
+        "\n",
+    );
+    let takes = each(
+        &|i| {
+            format!(
+                "            let _ = b{i}.recv_if(b_can & cur.bit({i}));\n\
+                 \x20           \
+                 let _ = r{i}.recv_if(r_can & cur.bit({i}));"
+            )
+        },
+        "\n",
+    );
+    let template = r#"/// An AXI4 to AXI-Lite bridge of @N@ peripherals.
+/// Written by `lite_bridge!`; see [`@NAME@`].
+pub mod @MODULE@ {
+use crate::bus::axi::{Ar, Aw, BurstKind, Resp, B, R, W};
+use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use ::txhdl::comp::{mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
+use ::txhdl::types::{Bit, U};
+use ::txhdl::{lower, with, Trace};
+
+/// An AXI4 to AXI-Lite bridge of @N@ peripherals. The five AXI4
+/// channels of one link come in; five AXI-Lite channels go out per
+/// peripheral, and a peripheral's range is its `BASE` and `MASK`,
+/// matched on a burst's address. The bridge takes one burst at a
+/// time, since AXI-Lite has no identifier to tell two apart. Each beat
+/// of a burst is one AXI-Lite transaction, at the burst's address
+/// moved on by a beat's width per beat, or not moved for a fixed
+/// burst: a read's answers go up as the burst's beats, the last marked
+/// last, and a write's answers are folded into one response, the first
+/// error or `Okay`. A burst to no peripheral's range is answered
+/// `DecErr` by the bridge itself, beat by beat, so a read still gets
+/// every beat it asked for. Written in the lowered subset, so it is a
+/// netlist too.
+// begin{state}
+#[derive(Trace, Default)]
+pub struct @NAME@<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+@RANGES@
+> {
+    /// A burst is in progress, and the next waits for it.
+    pub busy: Reg<Bit>,
+    /// The burst is a read.
+    pub rd: Reg<Bit>,
+    /// The read address channel goes first when both offer.
+    pub rfirst: Reg<Bit>,
+    /// The burst's identifier, which every answer to it names.
+    pub xid: Reg<U<I>>,
+    /// The address of the current beat.
+    pub addr: Reg<U<A>>,
+    /// How far the address moves per beat: none for a fixed burst.
+    pub stride: Reg<U<A>>,
+    /// Beats left after this one.
+    pub left: Reg<U<8>>,
+    /// The burst's protection bits, given with every beat.
+    pub prot: Reg<U<3>>,
+    /// Which peripheral the burst decoded to, one bit each; none set
+    /// is a hole, answered here.
+    pub sel: Reg<U<@SW@>>,
+    /// The beat's AXI-Lite request is out, and its answer awaited.
+    pub sent: Reg<Bit>,
+    /// A write burst's response so far: its first error, or `Okay`.
+    pub wresp: Reg<Resp>,
+}
+// end{state}
+
+// begin{ports}
+#[lower]
+impl<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+@RANGES@
+> Unit
+    for @NAME@<
+        A,
+        D,
+        S,
+        I,
+@RARGS@
+    >
+{
+    async fn run(
+        &mut self,
+        (
+            aw,
+            ar,
+            w,
+@IN_NAMES@
+        ): (
+            Rx<Aw<A, I>>,
+            Rx<Ar<A, I>>,
+            Rx<W<D, S>>,
+@IN_TYPES@
+        ),
+        (
+@OUT_NAMES@
+            b,
+            r,
+        ): (
+@OUT_TYPES@
+            Tx<B<I>>,
+            Tx<R<D, I>>,
+        ),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+// end{ports}
+// begin{accept}
+            // A burst is taken when none is in progress, the two
+            // address channels taking turns when both offer.
+            let idle = !self.busy;
+            let aw_off = aw.peek().is_some();
+            let ar_off = ar.peek().is_some();
+            let awh = aw.head();
+            let arh = ar.head();
+            let pick_ar = idle & (self.rfirst | !aw_off);
+            let take_ar = pick_ar & ar_off;
+            let take_aw = idle & aw_off & !take_ar;
+            let _ = ar.recv_if(pick_ar);
+            let _ = aw.recv_if(idle & !take_ar);
+            // Where it goes: a bit per peripheral, the lowest range
+            // that matches winning, and none for a hole.
+@AR_DECODE@
+@AW_DECODE@
+            let new_sel = mux(take_ar, ar_sel0, aw_sel0);
+            // How far the address moves per beat: a beat's width, or
+            // nothing for a fixed burst.
+            let size = mux(take_ar, arh.size, awh.size);
+            let kind = mux(take_ar, arh.burst, awh.burst);
+            let fixed = kind == BurstKind::Fixed;
+            let width = U::<A>::from(1u8) << (size.raw() as usize);
+            let new_stride = mux(fixed, U::<A>::from(0u8), width);
+// end{accept}
+// begin{beats}
+            // A beat's request, to the peripheral the burst decoded
+            // to. A write needs the burst's next beat and room on both
+            // of that peripheral's channels; a read needs room on its
+            // one. A hole needs no room, and a write's beat to a hole
+            // is taken and dropped.
+            let cur = self.sel.get();
+            let wbeat = self.busy & !self.rd & !self.sent;
+            let rbeat = self.busy & self.rd & !self.sent;
+            let w_off = w.peek().is_some();
+            let wh = w.head();
+@W_ROOM@
+@AR_ROOM@
+            let w_go = wbeat & w_off & w_room0;
+            let _ = w.recv_if(wbeat & w_room0);
+            let ar_go = rbeat & ar_room0;
+@SENDS@
+// end{beats}
+// begin{answers}
+            // The answer to the beat, from that peripheral, or the
+            // bridge's own `DecErr` for a hole, there at once.
+@HEADS@
+@B_OFF@
+@B_RESP@
+@R_OFF@
+@R_DATA@
+@R_RESP@
+            let last = self.left == 0;
+            // A write's answer is taken when the burst's own response
+            // has room, or when more beats are to come.
+            let wwait = self.busy & !self.rd & self.sent;
+            let b_can = wwait & (b.ready() | !last);
+            let b_done = b_can & b_off0;
+            // A read's answer goes straight up as the burst's beat.
+            let rwait = self.busy & self.rd & self.sent;
+            let r_can = rwait & r.ready();
+            let r_done = r_can & r_off0;
+@TAKES@
+            // The burst's response keeps its first error.
+            let clean = self.wresp.get() == Resp::Okay;
+            let merged = mux(clean, b_resp0, self.wresp.get());
+            if (b_done & last).to_bool() {
+                b.send(B {
+                    id: self.xid.get(),
+                    resp: merged,
+                });
+            }
+            if r_done.to_bool() {
+                r.send(R {
+                    id: self.xid.get(),
+                    data: r_data0,
+                    resp: r_resp0,
+                    last: Bit::from(last),
+                });
+            }
+// end{answers}
+// begin{drives}
+            let done = b_done | r_done;
+            with!(self <= {
+                (take_ar | take_aw) ? {
+                    busy: Bit::One,
+                    rd: take_ar,
+                    rfirst: !take_ar,
+                    xid: mux(take_ar, arh.id, awh.id),
+                    addr: mux(take_ar, arh.addr, awh.addr),
+                    stride: new_stride,
+                    left: mux(take_ar, arh.len, awh.len),
+                    prot: mux(take_ar, arh.prot, awh.prot),
+                    sel: new_sel,
+                    sent: Bit::Zero,
+                    wresp: Resp::Okay,
+                },
+                (w_go | ar_go) ? { sent: Bit::One },
+                done ? {
+                    sent: Bit::Zero,
+                    addr: self.addr.get() + self.stride.get(),
+                    left: self.left.get() - 1,
+                    wresp: merged,
+                },
+                (done & last) ? { busy: Bit::Zero },
+            });
+// end{drives}
+        }
+    }
+}
+}
+pub use @MODULE@::@NAME@;
+"#;
+    template
+        .replace("@AR_DECODE@", &decode("ar"))
+        .replace("@AW_DECODE@", &decode("aw"))
+        .replace(
+            "@W_ROOM@",
+            &chain(
+                "w_room",
+                "cur",
+                &|i| format!("aw{i}.ready() & w{i}.ready()"),
+                "Bit::One",
+            ),
+        )
+        .replace(
+            "@AR_ROOM@",
+            &chain("ar_room", "cur", &|i| format!("ar{i}.ready()"), "Bit::One"),
+        )
+        .replace("@SENDS@", &sends)
+        .replace("@HEADS@", &heads)
+        .replace(
+            "@B_OFF@",
+            &chain("b_off", "cur", &|i| format!("off_b{i}"), "Bit::One"),
+        )
+        .replace(
+            "@B_RESP@",
+            &chain("b_resp", "cur", &|i| format!("b{i}h.resp"), "Resp::DecErr"),
+        )
+        .replace(
+            "@R_OFF@",
+            &chain("r_off", "cur", &|i| format!("off_r{i}"), "Bit::One"),
+        )
+        .replace(
+            "@R_DATA@",
+            &chain(
+                "r_data",
+                "cur",
+                &|i| format!("r{i}h.data"),
+                "U::<D>::from(0u8)",
+            ),
+        )
+        .replace(
+            "@R_RESP@",
+            &chain("r_resp", "cur", &|i| format!("r{i}h.resp"), "Resp::DecErr"),
+        )
+        .replace("@TAKES@", &takes)
+        .replace("@IN_NAMES@", &in_names)
+        .replace("@IN_TYPES@", &in_types)
+        .replace("@OUT_NAMES@", &out_names)
+        .replace("@OUT_TYPES@", &out_types)
+        .replace("@RANGES@", &ranges)
+        .replace("@RARGS@", &rargs)
+        .replace("@MODULE@", &module)
+        .replace("@NAME@", name)
+        .replace("@SW@", &sw.to_string())
+        .replace("@N@", &n.to_string())
+}
+
+/// `lite_bridge!(LiteBridge2, 2)`: an AXI4 to AXI-Lite bridge of two
+/// peripherals, named. One AXI4 link's five channels come in and five
+/// AXI-Lite channels go out per peripheral; a peripheral's address
+/// range is a `BASE` and a `MASK` const parameter, as the router's
+/// are. Written out per count, from one to eight, since the lowering
+/// reads a body and not a loop over ports; `TXHDL_MACRO_DUMP` names a
+/// directory to write the text to.
+#[proc_macro]
+pub fn lite_bridge(input: TokenStream) -> TokenStream {
+    let toks: Vec<TokenTree> = input.into_iter().collect();
+    let (name, n) = match toks.as_slice() {
+        [TokenTree::Ident(name), TokenTree::Punct(c), TokenTree::Literal(n)]
+            if c.as_char() == ',' =>
+        {
+            (name.to_string(), n.to_string().parse::<usize>().ok())
+        }
+        _ => return err(Span::call_site(), "expected `lite_bridge!(Name, N)`"),
+    };
+    let Some(n) = n.filter(|n| (1..=8).contains(n)) else {
+        return err(
+            toks[2].span(),
+            "a bridge has from one to eight peripherals",
+        );
+    };
+    let text = lite_bridge_text(&name, n);
+    if let Ok(dir) = std::env::var("TXHDL_MACRO_DUMP") {
+        let _ = std::fs::write(format!("{dir}/lite_bridge_{name}.rs"), &text);
+    }
+    let module = format!("lite_bridge{n}");
+    let with_source = text.replacen(
+        &format!("pub mod {module} {{\n"),
+        &format!(
+            "pub mod {module} {{\n\
+             /// The text of this module, as `lite_bridge!` wrote it.\n\
+             pub const SOURCE: &str = r####\"{text}\"####;\n"
+        ),
+        1,
+    );
+    with_source.parse().unwrap()
+}
+
+// ---------------------------------------------------------------------
 // case!
 
 /// `case!(value => { pattern => { lhs <= rhs; ... }, ... })`

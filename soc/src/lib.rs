@@ -30,6 +30,7 @@ use txhdl::comp::{chan, join2, join_all, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::sim::Ram;
 use txhdl_parts::bus::axi::{axi, axi_units, AxiHost, AxiPer, Link};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
 use txhdl_parts::bus::noc::mesh::lattice;
 use txhdl_parts::bus::noc::node::Node;
@@ -197,12 +198,17 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
         .collect();
     ram.load(DATA_BASE / 4, &words);
 
-    // 1,1: the serial port, behind a tracker and a bridge.
+    // 1,1: the serial port, behind a network bridge and an AXI-Lite
+    // bridge.
     let ul = axi_units::<32, 32, 4, IW>();
-    let (ureq, uwd, uans, urb) = ul.per_client;
-    let mut utrk = AxiPer::<32, 32, 4, IW>::default();
+    // The serial port is an AXI-Lite peripheral, behind a bridge
+    // from its corner's AXI4 link.
+    let sl = axi_lite::<32, 32, 4>();
+    let (uaw, uar, uw, ub, ur) = sl.per;
+    let (baw, bar, bw, bb, br) = sl.host;
+    let mut ubridge = LiteBridge1::<32, 32, 4, IW, 0x3000, 0xf000>::default();
     let mut ubr = PerBridge::<1, 1, XB, YB, 32, 32, 4, IW, NIDS>::default();
-    let mut uart = Uart::<4, IW>::default();
+    let mut uart = Uart::<4>::default();
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
     let (uirq_out, _uirq) = signal::<Bit, DefaultClock>();
@@ -246,7 +252,10 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
                 ),
             ),
             join2(
-                utrk.run(ul.per_in, ul.per_out),
+                ubridge.run(
+                    (ul.per_in.0, ul.per_in.1, ul.per_in.2, bb, br),
+                    (baw, bar, bw, ul.per_out.2, ul.per_out.3),
+                ),
                 ubr.run(
                     (e11.q_out, ul.host_in.2, ul.host_in.3),
                     (ul.host_out.0, ul.host_out.1, ul.host_out.2, e11.p_in),
@@ -266,7 +275,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
             ),
         ),
         join2(
-            uart.run((rst_u, rx, ureq, uwd), (uans, urb, tx_out, uirq_out)),
+            uart.run((rst_u, rx, uaw, uar, uw), (ub, ur, tx_out, uirq_out)),
             ram.clone().serve(ram_end, 4),
         ),
     );

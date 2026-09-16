@@ -6,6 +6,9 @@
 //! protocol: no beat counting, no identifier, no channel named.
 //!
 //! - [`axi`]: an AXI4 link, five channels behind two ends.
+//! - [`axi_lite`]: AXI4-Lite, and the bridge from an AXI4 link to
+//!   small peripherals on it.
 pub mod axi;
+pub mod axi_lite;
 pub mod noc;
 pub mod router;

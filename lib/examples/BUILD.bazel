@@ -408,6 +408,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An AXI4 to AXI-Lite bridge, two register banks behind it:
+#   bazel run //lib/examples:ex_axi_lite
+rust_binary(
+    name = "ex_axi_lite",
+    srcs = ["ex_axi_lite.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Accepting many AXI transactions and forwarding them for processing:
 #   bazel run //lib/examples:ex_axi_serve
 rust_binary(
@@ -470,6 +483,7 @@ filegroup(
         "ex_axi.rs",
         "ex_axi_serve.rs",
         "ex_axi_router.rs",
+        "ex_axi_lite.rs",
         "station.v",
         "ex_mem.rs",
         "ex_imm.rs",

@@ -899,6 +899,36 @@ waveform(
     until = 110,
 )
 
+# An AXI4 to AXI-Lite bridge of two peripherals: bursts split into
+# transactions, two register banks, and a hole the bridge answers.
+waveform(
+    name = "axi_lite",
+    example = "//lib/examples:ex_axi_lite",
+    lowered = [
+        ("axi_lite_bridge", "bridge"),
+        ("lite_regs0", "regs0"),
+        ("lite_regs1", "regs1"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//aw/rx_valid=>aw",
+        "//ar/rx_valid=>ar",
+        "//bridge/busy=>busy",
+        "//bridge/sel=>sel",
+        "//bridge/left=>left",
+        "//aw0/tx_valid=>aw0",
+        "//ar0/tx_valid=>ar0",
+        "//aw1/tx_valid=>aw1",
+        "//ar1/tx_valid=>ar1",
+        "//r/tx_valid=>r",
+        "//r/tx_data/resp=>r_resp",
+        "//r/tx_data/last=>r_last",
+        "//b/tx_valid=>b",
+        "//b/tx_data/resp=>b_resp",
+    ],
+    until = 170,
+)
+
 # Accepting many AXI transactions and forwarding them for processing:
 # three in flight over four identifiers, recycled.
 waveform(
@@ -1116,6 +1146,7 @@ waveform(
         ("dmem", "dmem"),
         ("timer", "timer"),
         ("uart4", "uart"),
+        ("ubridge", "ubridge"),
     ],
     until = 30,
     signals = [
@@ -1135,12 +1166,12 @@ waveform(
 waveform(
     name = "vreteno_out",
     example = "//cpu/vreteno:vreteno",
-    from_tick = 430,
-    until = 522,
+    from_tick = 474,
+    until = 566,
     width = 15.5,
     signals = [
         "//clocks/clk=>clk",
-        "//ureq/rx_valid=>ureq_valid",
+        "//uaw/rx_valid=>uaw_valid",
         "//uart/bits=>bits",
         "//uart/shift=>shift",
         "//tx=>tx",
@@ -1150,8 +1181,8 @@ waveform(
 waveform(
     name = "vreteno_in",
     example = "//cpu/vreteno:vreteno",
-    from_tick = 770,
-    until = 862,
+    from_tick = 834,
+    until = 930,
     width = 15.5,
     signals = [
         "//clocks/clk=>clk",
@@ -1167,17 +1198,20 @@ waveform(
 waveform(
     name = "vreteno_bus",
     example = "//cpu/vreteno:vreteno",
-    from_tick = 412,
-    until = 440,
+    from_tick = 440,
+    until = 490,
     width = 15.5,
     signals = [
         "//clocks/clk=>clk",
-        "//req/rx_valid=>req_valid",
-        "//req/rx_ready=>req_ready",
-        "//ureq/rx_valid=>ureq_valid",
-        "//uresp/rx_valid=>uresp_valid",
-        "//resp/rx_valid=>resp_valid",
-        "//resp/rx_data=>resp_data",
+        "//issue/tx_valid=>issue",
+        "//ar2/tx_valid=>ar2",
+        "//uar/rx_valid=>uar",
+        "//ur/tx_valid=>ur",
+        "//r2/rx_valid=>r2",
+        "//rdata/rx_valid=>rdata",
+        "//aw2/tx_valid=>aw2",
+        "//uaw/rx_valid=>uaw",
+        "//ub/tx_valid=>ub",
         "//cpu/dev_wait=>dev_wait",
         "//wb/done=>done",
     ],
@@ -1260,9 +1294,9 @@ genrule(
         ),
         (
             "vreteno_out",
-            "clk,ureq_valid,tx",
-            "//clocks/clk=>clk,//ureq/rx_valid=>ureq_valid,//tx=>tx",
-            " --from 430 --until 522",
+            "clk,uaw_valid,tx",
+            "//clocks/clk=>clk,//uaw/rx_valid=>uaw_valid,//tx=>tx",
+            " --from 474 --until 566",
         ),
         (
             "vreteno",
@@ -1484,6 +1518,15 @@ latex_document(
 # What `station!` wrote for the two-input station, as the example
 # prints it, and the size of that text beside the hand-written
 # Verilog's: both for the tutorial, neither typed by hand.
+# What `lite_bridge!` wrote for a bridge of two peripherals, as the
+# example prints it, for the AXI document.
+genrule(
+    name = "lite_bridge_source",
+    outs = ["lite_bridge2.rs"],
+    cmd = "$(location //lib/examples:ex_axi_lite) --source > $@",
+    tools = ["//lib/examples:ex_axi_lite"],
+)
+
 genrule(
     name = "router_source",
     outs = ["router3.rs"],
@@ -1595,6 +1638,9 @@ latex_document(
         ":axi_router_run",
         ":axi_router_timing",
         ":router_source",
+        ":axi_lite_run",
+        ":axi_lite_timing",
+        ":lite_bridge_source",
         "//lib/examples:sources",
         "//lib/parts:sources",
     ],

@@ -79,10 +79,11 @@ Buffer; FIFO & parts & both \\
 Stations of 2 to 10 inputs & parts & 2 and 3 \\
 AXI routers, 2 to 8 peripherals & parts & 3 \\
 AXI host and peripheral trackers & parts & both \\
+AXI-Lite bridges, 1 to 8 peripherals & parts & 1 and 2 \\
 Network node, switch, 2 bridges & parts & not yet \\
 Vreteno; memory, timer, serial port & \code{cpu} & all four \\
 Rasteriser; framebuffer & \code{gpu} & both \\
-The examples' own units & examples & all 20 \\
+The examples' own units & examples & all 21 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -95,10 +96,11 @@ The examples' own units & examples & all 20 \\
 \toprule
 System & Made of & Checked by \\
 \midrule
-Vreteno & core, router, 3 devices & model, 5 netlists \\
+Vreteno & core, router, 3 devices & model, 6 netlists \\
 The GPU & rasteriser, link, memory & model, 2 netlists \\
 The AXI link & host and peripheral & 2 netlists \\
 The AXI router & 1 host, 3 peripherals & its netlist \\
+The AXI-Lite bridge & 1 host, 2 banks & 3 netlists \\
 A lattice & 4 nodes, both bridges, RAM & 2 tests \\
 The SoC & core, GPU, RAM, serial & its run \\
 Composition & station, stream ALU & its netlist \\
@@ -239,7 +241,7 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs the seventy-four targets of
+its ports. \code{bazel test //...} runs the eighty-two targets of
 Table~\ref{tab:w-tests}. Every claim about what Rust accepts was
 compiled first, as a probe kept in the tree, including the ones whose
 answer was no.
@@ -252,9 +254,9 @@ answer was no.
 \toprule
 Test & Targets \\
 \midrule
-32 netlists, under \code{nvc} and under Verilator & 64 \\
+36 netlists, under \code{nvc} and under Verilator & 72 \\
 The core: the model, the encoders, 2 programs & 4 \\
-The GPU, 6 tests; the parts, 18; the SoC's run & 3 \\
+The GPU, 7 tests; the parts, 19; the SoC's run & 3 \\
 The ELF converter; \code{nvc} and Verilator alone & 3 \\
 \bottomrule
 \end{tabular}
@@ -278,11 +280,11 @@ repository rather than a paragraph here.
 \centering\footnotesize
 \begin{tabular}{@{}lr@{}}
 \toprule
-The runtime and its macros & 9\,204 \\
-Parts: the link, the router, the network & 4\,215 \\
-Examples, forty-three of them & 4\,502 \\
-Vreteno & 3\,738 \\
-The GPU & 1\,240 \\
+The runtime and its macros & 9\,660 \\
+Parts: the link, the router, the network & 4\,490 \\
+Examples, forty-four of them & 4\,728 \\
+Vreteno & 4\,178 \\
+The GPU & 1\,550 \\
 \bottomrule
 \end{tabular}
 \end{table}

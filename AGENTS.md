@@ -60,13 +60,14 @@ all under `//docs`:
   its rule read cycle by cycle on the example's run, the stations of
   two to ten inputs, the FIFO behind them, and the netlist.
 * `//docs:axi` is the tutorial on the AXI link, the bus in
-  `//lib/parts` under `bus::axi` and `bus::router`: the client verbs,
-  accepting many transactions and answering them as the work
-  finishes, the two trackers and their netlists, and the router, one
-  host to several peripherals.
-  Its three examples, `ex_axi`, `ex_axi_serve` and `ex_axi_router`,
-  are documented there and not in `//docs:examples`, because a bus is
-  a subsystem rather than one more construct.
+  `//lib/parts` under `bus::axi`, `bus::router` and `bus::axi_lite`:
+  the client verbs, accepting many transactions and answering them as
+  the work finishes, the two trackers and their netlists, the router,
+  one host to several peripherals, and AXI-Lite with the bridge from
+  an AXI4 link to several AXI-Lite peripherals.
+  Its four examples, `ex_axi`, `ex_axi_serve`, `ex_axi_router` and
+  `ex_axi_lite`, are documented there and not in `//docs:examples`,
+  because a bus is a subsystem rather than one more construct.
 * `//docs:gpu` is the minimal GPU under `//gpu`: a rasteriser that
   reads a display list and writes pixels into memory over the AXI
   link, the framebuffer behind the other end of it, the picture the

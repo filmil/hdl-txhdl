@@ -16,6 +16,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
 use txhdl_parts::bus::router::Router3;
 
 /// The link, as the demonstration has it: thirty-two bit addresses
@@ -26,6 +27,10 @@ const NIDS: usize = 4;
 /// The address map, stated in the router's type.
 type Rtr =
     Router3<32, 32, 4, IW, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>;
+
+/// The bridge the serial port sits behind: one AXI-Lite peripheral,
+/// at the range the router gives the port.
+type Serial = LiteBridge1<32, 32, 4, IW, 0x3000, 0xf000>;
 
 /// What a run came to: what a terminal on the serial line heard, and
 /// the cycle the core halted itself on, if it did.
@@ -63,14 +68,18 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
     let (dreq, dwd, dans, drb) = dl.per_client;
     let (treq, twd, tans, trb) = tl.per_client;
-    let (ureq, uwd, uans, urb) = ul.per_client;
+    // The serial port is an AXI-Lite peripheral, behind a bridge
+    // that takes the AXI4 channels the router gives it.
+    let sl = axi_lite::<32, 32, 4>();
+    let (uaw, uar, uw, ub, ur) = sl.per;
+    let (baw, bar, bw, bb, br) = sl.host;
     let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
     let mut dper = AxiPer::<32, 32, 4, IW>::default();
     let mut tper = AxiPer::<32, 32, 4, IW>::default();
-    let mut uper = AxiPer::<32, 32, 4, IW>::default();
+    let mut ubridge = Serial::default();
     let mut router = Rtr::default();
     let mut timer = Timer::<IW>::default();
-    let mut uart = Uart::<4, IW>::default();
+    let mut uart = Uart::<4>::default();
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         w.add("rst", &rst);
@@ -87,7 +96,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
         join2(
             join2(
                 timer.run((rst_t, treq, twd), (tans, trb, tirq_out)),
-                uart.run((rst_u, rx, ureq, uwd), (uans, urb, tx_out, uirq_out)),
+                uart.run((rst_u, rx, uaw, uar, uw), (ub, ur, tx_out, uirq_out)),
             ),
             join2(
                 dmem.run((dreq, dwd), (dans, drb)),
@@ -132,7 +141,10 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
                     dper.run(dl.per_in, dl.per_out),
                     tper.run(tl.per_in, tl.per_out),
                 ),
-                uper.run(ul.per_in, ul.per_out),
+                ubridge.run(
+                    (ul.per_in.0, ul.per_in.1, ul.per_in.2, bb, br),
+                    (baw, bar, bw, ul.per_out.2, ul.per_out.3),
+                ),
             ),
         ),
     ));
