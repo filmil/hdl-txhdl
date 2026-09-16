@@ -78,26 +78,52 @@ thousand and ninety-six pixels, twelve and a half thousand cycles.}
 \section{The Display List}
 \label{sec:g-list}
 
-One entry is a box to walk and, when it is a triangle, three vertices
-to test against.
+A display list is a little instruction set, and its three entries
+carry different things. A clear carries a colour and nothing else. A
+rectangle carries a box. A triangle carries three vertices. That is
+what an \code{enum} says in Rust, and it is what a program writes.
 
-\gpupart{op.rs}{op}{An entry, from \code{gpu/src/op.rs}.}{lst:g-op}
+\gpupart{op.rs}{op}{The instruction set: \code{Op} as a program writes
+it, \code{Kind} as the hardware reads it, and \code{Insn} as it goes
+on the wire.}{lst:g-op}
 
-Everything a host can work out once per primitive is worked out by
-the host. The box is already clipped to the screen, so the hardware
-never compares against a screen size and never writes outside the
-framebuffer. The vertices are already wound so that the inside of the
-triangle is where all three edge functions are non-negative, so the
-hardware tests one sign and not two. A vertex is twelve bits of two's
-complement and may therefore lie off the screen on any side, which is
-what lets a triangle be clipped by its box rather than by cutting it
-into a polygon.
+\code{Insn} is one shape, as wide as the widest entry needs, because
+every field a step of the rasteriser reads has to be at a fixed place:
+the lowered subset slices a channel's word at constant offsets, and a
+variable-width encoding would want a length field and a shifter in
+front of everything else. A clear therefore leaves the box and the
+vertices at zero and a rectangle leaves the vertices at zero, and the
+kind says which of them mean anything. That is a fixed-width
+instruction word, and it costs what one costs: the widest entry sets
+the width, and the narrow ones pay for it.
 
-This is a division of labour and not a shortcut: winding and bounding
-a primitive is what the setup stage of a real graphics pipeline does,
-and putting it in front of the rasteriser is where it goes. What is
-left for the hardware is the part that is per pixel, which is the
-part worth building.
+Between the two is an assembler, and it does what a host can do once
+per primitive rather than once per pixel.
+
+\gpupart{op.rs}{encode}{\code{Op::encode}: the assembler. It clips the
+box to the screen, winds the triangle so that its inside is where
+every edge function is non-negative, and drops an entry that would
+draw nothing.}{lst:g-encode}
+
+The kind is read by the hardware in one place and decides two things.
+A triangle is the entry whose edge functions are tested; a clear is
+the entry whose box the rasteriser supplies, from the screen size in
+its own type, since a clear is the whole screen by definition and
+there is nothing for the instruction to say. A rectangle is the plain
+case, its box read and its edges ignored. Those three lines are the
+whole of the decoder:
+
+\begin{lstlisting}[frame=none,numbers=none]
+let covered = (self.kind.get() != Kind::Tri) | (n0 & n1 & n2);
+let clearing = op.kind == Kind::Clear;
+let wx = mux(clearing, zero16, op.x0.resize::<16>());
+\end{lstlisting}
+
+A wider instruction set would grow that decoder and not the walk,
+which is the property worth having: a line, a circle or a sprite would
+each add a kind and a way to say whether a pixel is inside, and the
+one pixel a cycle, the three edge accumulators and the AXI writes
+would stay as they are.
 
 \section{The Rasteriser}
 \label{sec:g-raster}
@@ -157,9 +183,11 @@ keeps four writes in flight and no more.
 \begin{figure}[htbp]
 \centering
 \input{gpu_timing.tex}
-\caption{The first rows of the traced run's triangle. \code{x} and
-\code{y} walk the box; \code{hit} is whether the pixel is inside,
-and where it is low no burst is issued, so the row is walked and
+\caption{One instruction ending and the next beginning. \code{kind}
+turns from \code{Rect} to \code{Tri} as the rasteriser takes the
+entry off \code{op}; from there \code{x} and \code{y} walk the
+triangle's box, \code{hit} is whether the pixel is inside it, and
+where \code{hit} is low no burst is issued, so the row is walked and
 nothing is written. \code{inflight} is the writes whose response has
 not come back, which the four identifiers bound.}
 \label{fig:g-wave}

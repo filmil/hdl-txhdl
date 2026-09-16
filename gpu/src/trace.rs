@@ -6,6 +6,7 @@
 //! run, and prints the picture it drew.
 use gpu::image;
 use gpu::model;
+use gpu::op;
 use gpu::scene;
 use gpu::sim;
 
@@ -16,9 +17,9 @@ const H: usize = 16;
 const N: usize = 256;
 
 fn main() {
-    let ops = scene::small(W, H);
+    let ops = scene::small();
     let run = sim::run::<LOGW, H, N>(&ops, true, true);
-    let want = model::render(&ops, W, H);
+    let want = model::render(&op::assemble(&ops, W, H), W, H);
     assert_eq!(run.fb, want, "the hardware and the model differ");
     print!("{}", image::ascii(&run.fb, W, H));
     println!(

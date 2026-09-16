@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The scenes the demonstration and the traced run draw.
+//! The scenes the demonstration and the traced run draw, as display
+//! lists a program writes rather than as the instructions they encode
+//! to.
 use crate::op::Op;
 
 // begin{scene}
 /// The demonstration: a house under a hill, with a sun of two
-/// triangles, on a screen of `w` by `h`.
-pub fn house(w: usize, h: usize) -> Vec<Op> {
+/// triangles.
+pub fn house() -> Vec<Op> {
     let sky = 0x10_1830;
     let hill = 0x37_474f;
     let grass = 0x2e_7d32;
@@ -14,26 +16,74 @@ pub fn house(w: usize, h: usize) -> Vec<Op> {
     let door = 0x4e_342e;
     let sun = 0xfd_d835;
     vec![
-        Op::clear(w, h, sky),
-        Op::tri((38, 48), (63, 48), (52, 24), w, h, hill),
-        Op::rect(0, 48, 64, 16, w, h, grass),
-        Op::rect(16, 32, 19, 16, w, h, wall),
-        Op::tri((13, 33), (38, 33), (25, 20), w, h, roof),
-        Op::rect(23, 40, 5, 8, w, h, door),
-        Op::tri((51, 4), (58, 11), (44, 11), w, h, sun),
-        Op::tri((51, 18), (44, 11), (58, 11), w, h, sun),
+        Op::Clear { colour: sky },
+        Op::Tri {
+            colour: hill,
+            a: (38, 48),
+            b: (63, 48),
+            c: (52, 24),
+        },
+        Op::Rect {
+            colour: grass,
+            x: 0,
+            y: 48,
+            w: 64,
+            h: 16,
+        },
+        Op::Rect {
+            colour: wall,
+            x: 16,
+            y: 32,
+            w: 19,
+            h: 16,
+        },
+        Op::Tri {
+            colour: roof,
+            a: (13, 33),
+            b: (38, 33),
+            c: (25, 20),
+        },
+        Op::Rect {
+            colour: door,
+            x: 23,
+            y: 40,
+            w: 5,
+            h: 8,
+        },
+        Op::Tri {
+            colour: sun,
+            a: (51, 4),
+            b: (58, 11),
+            c: (44, 11),
+        },
+        Op::Tri {
+            colour: sun,
+            a: (51, 18),
+            b: (44, 11),
+            c: (58, 11),
+        },
     ]
 }
-
 // end{scene}
 
 /// The traced run: a screen small enough that a waveform of the whole
 /// render can be drawn and a testbench of it can be replayed, with
 /// one of each kind of entry.
-pub fn small(w: usize, h: usize) -> Vec<Op> {
+pub fn small() -> Vec<Op> {
     vec![
-        Op::clear(w, h, 0x00_0020),
-        Op::rect(2, 2, 5, 4, w, h, 0x40_8060),
-        Op::tri((9, 13), (14, 13), (14, 5), w, h, 0xc0_4040),
+        Op::Clear { colour: 0x00_0020 },
+        Op::Rect {
+            colour: 0x40_8060,
+            x: 2,
+            y: 2,
+            w: 5,
+            h: 4,
+        },
+        Op::Tri {
+            colour: 0xc0_4040,
+            a: (9, 13),
+            b: (14, 13),
+            c: (14, 5),
+        },
     ]
 }

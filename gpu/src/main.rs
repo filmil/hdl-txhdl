@@ -7,6 +7,7 @@
 //! demonstration is a check as well as a picture.
 use gpu::image;
 use gpu::model;
+use gpu::op;
 use gpu::scene;
 use gpu::sim;
 
@@ -17,9 +18,9 @@ const H: usize = 64;
 const N: usize = 4096;
 
 fn main() {
-    let ops = scene::house(W, H);
+    let ops = scene::house();
     let run = sim::run::<LOGW, H, N>(&ops, false, false);
-    let want = model::render(&ops, W, H);
+    let want = model::render(&op::assemble(&ops, W, H), W, H);
     let wrong = run.fb.iter().zip(&want).filter(|(a, b)| a != b).count();
     assert_eq!(wrong, 0, "{wrong} pixels differ from the model");
 

@@ -811,6 +811,8 @@ waveform(
     ],
     signals = [
         "//clocks/clk=>clk",
+        "//ops/tx_valid=>op",
+        "//raster/kind=>kind",
         "//raster/x=>x",
         "//raster/y=>y",
         "//raster/hit=>hit",
@@ -821,8 +823,9 @@ waveform(
         "//b/tx_valid=>b",
         "//raster/inflight=>inflight",
     ],
-    from_tick = 1102,
-    until = 1162,
+    from_tick = 1086,
+    until = 1146,
+    width = 8.2,
 )
 
 # The demonstration's picture, rendered by the GPU and written by it.

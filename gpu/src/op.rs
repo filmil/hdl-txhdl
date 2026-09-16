@@ -1,33 +1,80 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The display list: what the rasteriser is told to draw.
+//! The display list: what the rasteriser is told to draw, and how it
+//! is encoded.
 //!
-//! One entry is a box to walk and, when the entry is a triangle,
-//! three vertices to test against. Everything a host can work out
-//! once per primitive is worked out by the host: the box is already
-//! clipped to the screen, and the vertices are already wound so that
-//! the inside of the triangle is where all three edge functions are
-//! non-negative. What is left for the hardware is the part that is
-//! per pixel, which is the part worth building.
+//! [`Op`] is the instruction set as a program writes it, and its three
+//! entries carry different things: a clear carries a colour and
+//! nothing else, a rectangle carries its box, and a triangle carries
+//! three vertices. [`Insn`] is what goes on the wire, and it is one
+//! shape, as wide as the widest entry needs. [`Op::encode`] is the
+//! assembler between them, and it does what a host can do once per
+//! primitive rather than once per pixel: it clips the box to the
+//! screen and winds the triangle so that its inside is where all
+//! three edge functions are non-negative.
+//!
+//! The clear is the one entry whose box the hardware supplies, since
+//! a clear is the whole screen by definition and the rasteriser knows
+//! the screen's size from its type. That is the difference between
+//! the three that costs the decoder anything, and it is the reason
+//! this is worth writing as an instruction set at all.
 use txhdl::types::U;
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
 // begin{op}
-/// One entry of a display list.
+/// A display list entry, as a program writes it. Coordinates are in
+/// pixels and may lie off the screen; the encoder clips.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Op {
+    /// Fill the screen.
+    Clear { colour: u32 },
+    /// Fill a rectangle `w` by `h` pixels at `x`, `y`.
+    Rect {
+        colour: u32,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
+    /// Fill a triangle, in either winding.
+    Tri {
+        colour: u32,
+        a: (i32, i32),
+        b: (i32, i32),
+        c: (i32, i32),
+    },
+}
+
+/// Which entry an instruction is. The rasteriser reads this and
+/// nothing else to know where its box comes from and whether to test
+/// the edges.
+#[derive(ValueDerive, Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum Kind {
+    #[default]
+    Clear,
+    Rect,
+    Tri,
+}
+
+/// An entry as it goes to the rasteriser: one shape, as wide as the
+/// widest entry needs, so that every field a step reads is at a fixed
+/// place. A clear leaves the box and the vertices at zero and a
+/// rectangle leaves the vertices at zero; the decoder reads only what
+/// the kind says is there.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
-pub struct Op {
-    /// Fill every pixel of the box when zero, and test the three
-    /// edges when one.
-    pub tri: U<1>,
-    /// The colour written, as `0xRRGGBB`.
+pub struct Insn {
+    pub kind: Kind,
+    /// The colour written, as `0xRRGGBB`. Every entry has one.
     pub colour: U<24>,
-    /// The box to walk, both ends included, clipped to the screen.
+    /// The box to walk, both ends included, clipped to the screen. A
+    /// rectangle's and a triangle's; a clear's comes from the
+    /// rasteriser's own screen size.
     pub x0: U<10>,
     pub y0: U<10>,
     pub x1: U<10>,
     pub y1: U<10>,
-    /// The triangle's vertices, wound so that its inside is where
-    /// every edge function is non-negative. Two's complement, so a
-    /// vertex may lie off the screen on any side; see [`VMIN`].
+    /// A triangle's vertices, wound so that its inside is where every
+    /// edge function is non-negative. Two's complement, so a vertex
+    /// may lie off the screen on any side; see [`VMIN`].
     pub ax: U<12>,
     pub ay: U<12>,
     pub bx: U<12>,
@@ -65,108 +112,85 @@ fn area2(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> i32 {
     (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
 }
 
+// begin{encode}
 impl Op {
-    /// Fill the whole screen. A clear is a box with no triangle in it.
-    pub fn clear(w: usize, h: usize, colour: u32) -> Self {
-        Op::rect(0, 0, w as i32, h as i32, w, h, colour)
-    }
-
-    /// Fill a rectangle `w` by `h` at `x`, `y`, clipped to a screen of
-    /// `sw` by `sh`. An empty rectangle yields `None`.
-    #[allow(clippy::too_many_arguments)]
-    pub fn rect_checked(
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        sw: usize,
-        sh: usize,
-        colour: u32,
-    ) -> Option<Self> {
-        let (x0, y0, x1, y1) = clip(x, y, x + w - 1, y + h - 1, sw, sh)?;
-        Some(Op {
-            tri: U::from(0u8),
-            colour: U::from(colour),
-            x0: U::from(x0),
-            y0: U::from(y0),
-            x1: U::from(x1),
-            y1: U::from(y1),
-            ..Op::default()
-        })
-    }
-
-    /// The same, for a rectangle the caller knows is on the screen.
-    #[allow(clippy::too_many_arguments)]
-    pub fn rect(
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        sw: usize,
-        sh: usize,
-        colour: u32,
-    ) -> Self {
-        Op::rect_checked(x, y, w, h, sw, sh, colour)
-            .expect("an empty rectangle")
-    }
-
-    /// A flat-shaded triangle, clipped to the screen and wound for the
-    /// rasteriser. A degenerate or wholly off-screen triangle yields
-    /// `None`.
-    #[allow(clippy::too_many_arguments)]
-    pub fn tri_checked(
-        a: (i32, i32),
-        b: (i32, i32),
-        c: (i32, i32),
-        sw: usize,
-        sh: usize,
-        colour: u32,
-    ) -> Option<Self> {
-        // The winding the rasteriser wants: swap two vertices when the
-        // signed area says the other way.
-        let (b, c) = if area2(a, b, c) < 0 { (c, b) } else { (b, c) };
-        if area2(a, b, c) == 0 {
-            return None;
+    /// The instruction this entry encodes to on a screen of `sw` by
+    /// `sh` pixels, or `None` when there is nothing to draw: a box
+    /// wholly off the screen, a rectangle with no pixels in it, or a
+    /// triangle with no area. The assembler does the clipping and the
+    /// winding so that the rasteriser does neither.
+    pub fn encode(&self, sw: usize, sh: usize) -> Option<Insn> {
+        match *self {
+            // A clear says only its colour. The box is the screen,
+            // and the rasteriser supplies it.
+            Op::Clear { colour } => Some(Insn {
+                kind: Kind::Clear,
+                colour: U::from(colour),
+                ..Insn::default()
+            }),
+            Op::Rect { colour, x, y, w, h } => {
+                let (x0, y0, x1, y1) =
+                    clip(x, y, x + w - 1, y + h - 1, sw, sh)?;
+                Some(Insn {
+                    kind: Kind::Rect,
+                    colour: U::from(colour),
+                    x0: U::from(x0),
+                    y0: U::from(y0),
+                    x1: U::from(x1),
+                    y1: U::from(y1),
+                    ..Insn::default()
+                })
+            }
+            Op::Tri { colour, a, b, c } => {
+                // The winding the rasteriser wants: swap two vertices
+                // when the signed area says the other way.
+                let (b, c) = if area2(a, b, c) < 0 { (c, b) } else { (b, c) };
+                if area2(a, b, c) == 0 {
+                    return None;
+                }
+                // Every vertex must be in range, since the edge
+                // arithmetic is sized for that range and no wider.
+                let ok = |p: (i32, i32)| {
+                    (VMIN..=VMAX).contains(&p.0) && (VMIN..=VMAX).contains(&p.1)
+                };
+                if !ok(a) || !ok(b) || !ok(c) {
+                    return None;
+                }
+                let lo = |f: fn((i32, i32)) -> i32| f(a).min(f(b)).min(f(c));
+                let hi = |f: fn((i32, i32)) -> i32| f(a).max(f(b)).max(f(c));
+                let (x0, y0, x1, y1) = clip(
+                    lo(|p| p.0),
+                    lo(|p| p.1),
+                    hi(|p| p.0),
+                    hi(|p| p.1),
+                    sw,
+                    sh,
+                )?;
+                Some(Insn {
+                    kind: Kind::Tri,
+                    colour: U::from(colour),
+                    x0: U::from(x0),
+                    y0: U::from(y0),
+                    x1: U::from(x1),
+                    y1: U::from(y1),
+                    ax: vertex(a.0),
+                    ay: vertex(a.1),
+                    bx: vertex(b.0),
+                    by: vertex(b.1),
+                    cx: vertex(c.0),
+                    cy: vertex(c.1),
+                })
+            }
         }
-        // Every vertex must be in range, since the edge arithmetic is
-        // sized for that range and for nothing wider.
-        let ok = |p: (i32, i32)| {
-            (VMIN..=VMAX).contains(&p.0) && (VMIN..=VMAX).contains(&p.1)
-        };
-        if !ok(a) || !ok(b) || !ok(c) {
-            return None;
-        }
-        let lo = |f: fn((i32, i32)) -> i32| f(a).min(f(b)).min(f(c));
-        let hi = |f: fn((i32, i32)) -> i32| f(a).max(f(b)).max(f(c));
-        let (x0, y0, x1, y1) =
-            clip(lo(|p| p.0), lo(|p| p.1), hi(|p| p.0), hi(|p| p.1), sw, sh)?;
-        Some(Op {
-            tri: U::from(1u8),
-            colour: U::from(colour),
-            x0: U::from(x0),
-            y0: U::from(y0),
-            x1: U::from(x1),
-            y1: U::from(y1),
-            ax: vertex(a.0),
-            ay: vertex(a.1),
-            bx: vertex(b.0),
-            by: vertex(b.1),
-            cx: vertex(c.0),
-            cy: vertex(c.1),
-        })
     }
+}
 
-    /// The same, for a triangle the caller knows is on the screen.
-    pub fn tri(
-        a: (i32, i32),
-        b: (i32, i32),
-        c: (i32, i32),
-        sw: usize,
-        sh: usize,
-        colour: u32,
-    ) -> Self {
-        Op::tri_checked(a, b, c, sw, sh, colour).expect("a degenerate triangle")
-    }
+// end{encode}
+
+/// A display list assembled: every entry that draws something, in
+/// order, as the instructions the rasteriser reads.
+pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
+    ops.iter().filter_map(|o| o.encode(sw, sh)).collect()
 }
 
 /// A box clipped to the screen, both ends included, or `None` when

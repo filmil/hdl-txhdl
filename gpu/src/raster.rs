@@ -22,12 +22,12 @@
 //!
 //! The framebuffer is at address zero and a pixel is one word, so a
 //! pixel's address is `((y << LOGW) + x) * 4`.
-use txhdl::comp::{Clock, DefaultClock, Out, Reg, Rx, Tx, Unit, Wire};
+use txhdl::comp::{mux, Clock, DefaultClock, Out, Reg, Rx, Tx, Unit, Wire};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, W};
 
-use crate::op::Op;
+use crate::op::{Insn, Kind};
 
 /// A pixel is one word, so a pixel's byte address is its index in the
 /// framebuffer shifted by this.
@@ -35,14 +35,19 @@ const WORD: usize = 2;
 
 // begin{state}
 /// The rasteriser. `A` is the address width, `I` the AXI identifier
-/// width, and the framebuffer's stride is `1 << LOGW` pixels.
+/// width, and the screen is `1 << LOGW` by `H` pixels.
 #[derive(Trace, Default)]
-pub struct Raster<const A: usize, const I: usize, const LOGW: usize> {
+pub struct Raster<
+    const A: usize,
+    const I: usize,
+    const LOGW: usize,
+    const H: usize,
+> {
     /// Walking a primitive.
     pub busy: Reg<U<1>>,
-    /// Whether the edge functions are tested. Not called `tri`,
-    /// which Verilog reserves for a net type.
-    pub edged: Reg<U<1>>,
+    /// Which entry is being walked. A triangle is the one whose edge
+    /// functions are tested, and the waveform names it.
+    pub kind: Reg<Kind>,
     pub colour: Reg<U<24>>,
     /// Where the walk is, and the box it walks: the first column, the
     /// last column and the last row.
@@ -78,12 +83,12 @@ pub struct Raster<const A: usize, const I: usize, const LOGW: usize> {
 
 // begin{run}
 #[lower]
-impl<const A: usize, const I: usize, const LOGW: usize> Unit
-    for Raster<A, I, LOGW>
+impl<const A: usize, const I: usize, const LOGW: usize, const H: usize> Unit
+    for Raster<A, I, LOGW, H>
 {
     async fn run(
         &mut self,
-        (ops, grant, done): (Rx<Op>, Rx<Grant<I>>, Rx<Done<I>>),
+        (ops, grant, done): (Rx<Insn>, Rx<Grant<I>>, Rx<Done<I>>),
         (issue, wbeat, release, idle): (
             Tx<Issue<A>>,
             Tx<W<32, 4>>,
@@ -118,7 +123,7 @@ impl<const A: usize, const I: usize, const LOGW: usize> Unit
             // The local may not be called `hit`: that is the wire's
             // name, and one name declared twice is what the lowering
             // would write.
-            let covered = (self.edged.get() == 0) | (n0 & n1 & n2);
+            let covered = (self.kind.get() != Kind::Tri) | (n0 & n1 & n2);
             self.hit.set(covered);
             // A pixel is written when there is room for the burst and
             // for its beat; the walk steps when the pixel wanted no
@@ -145,11 +150,21 @@ impl<const A: usize, const I: usize, const LOGW: usize> Unit
             let by = op.by.sext::<32>();
             let cx = op.cx.sext::<32>();
             let cy = op.cy.sext::<32>();
-            let sx = op.x0.resize::<32>();
-            let sy = op.y0.resize::<32>();
-            // The same first pixel, at the width the walk keeps.
-            let wx = op.x0.resize::<16>();
-            let wy = op.y0.resize::<16>();
+            // The box. A clear says only its colour, so its box is
+            // the screen, which the rasteriser knows from its own
+            // type; a rectangle and a triangle carry theirs.
+            let clearing = op.kind == Kind::Clear;
+            let zero16 = U::<16>::from(0u8);
+            let last_x = U::<16>::from(((1usize << LOGW) - 1) as u32);
+            let last_y = U::<16>::from((H - 1) as u32);
+            let wx = mux(clearing, zero16, op.x0.resize::<16>());
+            let wy = mux(clearing, zero16, op.y0.resize::<16>());
+            let bx1 = mux(clearing, last_x, op.x1.resize::<16>());
+            let by1 = mux(clearing, last_y, op.y1.resize::<16>());
+            // The edge functions are set up at the box's first pixel,
+            // and only a triangle ever reads them.
+            let sx = wx.resize::<32>();
+            let sy = wy.resize::<32>();
             let zero = U::<32>::from(0u8);
             let t0x = zero - (by - ay);
             let t0y = bx - ax;
@@ -171,13 +186,13 @@ impl<const A: usize, const I: usize, const LOGW: usize> Unit
             with!(self <= {
                 start ? {
                     busy: U::<1>::from(1u8),
-                    edged: op.tri,
+                    kind: op.kind,
                     colour: op.colour,
                     x: wx,
                     y: wy,
                     xa: wx,
-                    xb: op.x1.resize::<16>(),
-                    yb: op.y1.resize::<16>(),
+                    xb: bx1,
+                    yb: by1,
                     e0: s0, r0: s0, d0x: t0x, d0y: t0y,
                     e1: s1, r1: s1, d1x: t1x, d1y: t1y,
                     e2: s2, r2: s2, d2x: t2x, d2y: t2y,

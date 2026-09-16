@@ -12,7 +12,7 @@ use txhdl::types::Bit;
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, UnitLink};
 
 use crate::fb::Fb;
-use crate::op::Op;
+use crate::op::{assemble, Insn, Op};
 use crate::raster::Raster;
 
 /// The address width of the link, and the identifiers: four of them,
@@ -32,6 +32,9 @@ pub struct Run {
 /// pixels and the framebuffer is `N` words, `N` a power of two at
 /// least as large as the screen.
 ///
+/// The display list is assembled here, since clipping and winding
+/// are the host's work and not the rasteriser's.
+///
 /// `wave` writes the trace where `TXHDL_FST` says, and `netlists`
 /// writes the two units' VHDL and Verilog where `TXHDL_VHDL` and
 /// `TXHDL_VERILOG` say, so that the build can simulate the lowering
@@ -42,6 +45,7 @@ pub fn run<const LOGW: usize, const H: usize, const N: usize>(
     netlists: bool,
 ) -> Run {
     let w = 1usize << LOGW;
+    let insns = assemble(ops, w, H);
     let UnitLink {
         host_client,
         per_client,
@@ -52,12 +56,12 @@ pub fn run<const LOGW: usize, const H: usize, const N: usize>(
     } = axi_units::<ADDR, 32, 4, IDB>();
     let (issue, wbeat, release, grant, done, _rdata) = host_client;
     let (req, wd, ans, rb) = per_client;
-    let (op_tx, op_rx) = chan::<Op, DefaultClock>();
+    let (op_tx, op_rx) = chan::<Insn, DefaultClock>();
     let (idle_out, idle) = signal::<Bit, DefaultClock>();
 
     let mut host = AxiHost::<ADDR, 32, 4, IDB, IDS>::default();
     let mut per = AxiPer::<ADDR, 32, 4, IDB>::default();
-    let mut raster = Raster::<ADDR, IDB, LOGW>::default();
+    let mut raster = Raster::<ADDR, IDB, LOGW, H>::default();
     let mut fb = Fb::<ADDR, IDB, N>::default();
     // The framebuffer is read out of the memory when the run has
     // finished, so a second handle on it is kept here.
@@ -99,15 +103,24 @@ pub fn run<const LOGW: usize, const H: usize, const N: usize>(
     // in flight.
     let mut next = 0;
     let mut cycles = 0u64;
+    // An instruction takes a cycle to cross the channel, so the
+    // rasteriser is still idle in the cycle the last one is offered.
+    // Believing `idle` then would end a one-instruction run before it
+    // had drawn anything.
+    let mut offered_at = 0u64;
     let cap = 64 * N as u64 + 1000;
     loop {
-        if next < ops.len() && op_tx.ready().to_bool() {
-            op_tx.send(ops[next]);
+        if next < insns.len() && op_tx.ready().to_bool() {
+            op_tx.send(insns[next]);
             next += 1;
+            offered_at = cycles;
         }
         sim.cycle();
         cycles += 1;
-        if next == ops.len() && idle.get().to_bool() {
+        if next == insns.len()
+            && cycles > offered_at + 1
+            && idle.get().to_bool()
+        {
             break;
         }
         assert!(cycles < cap, "the render did not finish in {cap} cycles");
@@ -116,7 +129,7 @@ pub fn run<const LOGW: usize, const H: usize, const N: usize>(
         stop();
     }
     if netlists {
-        let r = Raster::<ADDR, IDB, LOGW>::lowered("raster");
+        let r = Raster::<ADDR, IDB, LOGW, H>::lowered("raster");
         let f = Fb::<ADDR, IDB, N>::lowered("fb");
         txhdl::netlist::write_netlists_from_env(&[&r, &f]);
     }
@@ -134,7 +147,7 @@ pub fn run<const LOGW: usize, const H: usize, const N: usize>(
 mod tests {
     use super::run;
     use crate::model;
-    use crate::op::Op;
+    use crate::op::{assemble, Kind, Op};
     use crate::scene;
 
     /// The screen the tests use: sixteen by sixteen.
@@ -146,7 +159,7 @@ mod tests {
     /// Render `ops` both ways and say where they differ.
     fn agree(ops: &[Op], what: &str) {
         let got = run::<LOGW, H, N>(ops, false, false);
-        let want = model::render(ops, W, H);
+        let want = model::render(&assemble(ops, W, H), W, H);
         for y in 0..H {
             for x in 0..W {
                 assert_eq!(
@@ -158,48 +171,99 @@ mod tests {
         }
     }
 
+    /// A full-screen clear, as every test starts with.
+    fn bg(colour: u32) -> Op {
+        Op::Clear { colour }
+    }
+
     #[test]
     fn a_scene_of_every_kind_agrees_with_the_model() {
-        agree(&scene::small(W, H), "the small scene");
+        agree(&scene::small(), "the small scene");
+    }
+
+    /// The clear is the one entry whose box the hardware supplies.
+    /// The instruction carries none, and the screen is filled anyway.
+    #[test]
+    fn a_clear_says_only_its_colour() {
+        let insn = Op::Clear { colour: 0x31_41_59 }
+            .encode(W, H)
+            .expect("a clear always draws");
+        assert_eq!(insn.kind, Kind::Clear);
+        assert_eq!(insn.x1.raw(), 0, "a clear carries no box");
+        assert_eq!(insn.y1.raw(), 0, "a clear carries no box");
+        assert_eq!(insn.ax.raw(), 0, "a clear carries no vertices");
+        let got = run::<LOGW, H, N>(&[bg(0x31_41_59)], false, false);
+        assert!(
+            got.fb.iter().all(|&p| p == 0x31_41_59),
+            "the clear did not reach every pixel"
+        );
     }
 
     #[test]
     fn a_triangle_is_the_same_whichever_way_it_is_wound() {
-        let a = (2, 2);
-        let b = (13, 5);
-        let c = (6, 14);
-        let one = Op::tri(a, b, c, W, H, 0x00_ff00);
-        let other = Op::tri(a, c, b, W, H, 0x00_ff00);
-        let bg = Op::clear(W, H, 0x10_1010);
-        agree(&[bg, one], "one winding");
-        agree(&[bg, other], "the other winding");
+        let (a, b, c) = ((2, 2), (13, 5), (6, 14));
+        let one = Op::Tri {
+            colour: 0x00_ff00,
+            a,
+            b,
+            c,
+        };
+        let other = Op::Tri {
+            colour: 0x00_ff00,
+            a,
+            b: c,
+            c: b,
+        };
+        agree(&[bg(0x10_1010), one], "one winding");
+        agree(&[bg(0x10_1010), other], "the other winding");
         assert_eq!(
-            model::render(&[bg, one], W, H),
-            model::render(&[bg, other], W, H),
+            model::render(&assemble(&[bg(0x10_1010), one], W, H), W, H),
+            model::render(&assemble(&[bg(0x10_1010), other], W, H), W, H),
             "the two windings drew different pixels"
         );
     }
 
     #[test]
     fn a_triangle_hanging_off_the_screen_is_clipped() {
-        let bg = Op::clear(W, H, 0);
-        let t = Op::tri_checked((-6, -6), (10, 2), (2, 10), W, H, 0xff_0000)
-            .expect("a triangle that is partly on the screen");
-        agree(&[bg, t], "a clipped triangle");
+        let t = Op::Tri {
+            colour: 0xff_0000,
+            a: (-6, -6),
+            b: (10, 2),
+            c: (2, 10),
+        };
+        agree(&[bg(0), t], "a clipped triangle");
+        let gone = Op::Tri {
+            colour: 1,
+            a: (-9, -9),
+            b: (-4, -3),
+            c: (-3, -4),
+        };
         assert!(
-            Op::tri_checked((-9, -9), (-4, -3), (-3, -4), W, H, 1).is_none(),
-            "a triangle wholly off the screen is not an entry"
+            gone.encode(W, H).is_none(),
+            "a triangle wholly off the screen is not an instruction"
         );
     }
 
     #[test]
     fn a_single_pixel_and_an_empty_box() {
-        let bg = Op::clear(W, H, 0);
-        let dot = Op::rect(7, 9, 1, 1, W, H, 0xff_ffff);
-        agree(&[bg, dot], "one pixel");
+        let dot = Op::Rect {
+            colour: 0xff_ffff,
+            x: 7,
+            y: 9,
+            w: 1,
+            h: 1,
+        };
+        agree(&[bg(0), dot], "one pixel");
+        let gone = Op::Rect {
+            colour: 1,
+            x: 20,
+            y: 20,
+            w: 4,
+            h: 4,
+        };
         assert!(
-            Op::rect_checked(20, 20, 4, 4, W, H, 1).is_none(),
-            "a rectangle wholly off the screen is not an entry"
+            gone.encode(W, H).is_none(),
+            "a rectangle wholly off the screen is not an instruction"
         );
     }
 
@@ -215,38 +279,40 @@ mod tests {
             x
         };
         let mut triangles = 0;
+        let mut drawn = 0;
         for scene_no in 0..12 {
-            let mut ops = vec![Op::clear(W, H, 0x20_2020)];
+            let mut ops = vec![bg(0x20_2020)];
             for _ in 0..4 {
                 let r = next();
                 let p = |k: u32| (((r >> k) & 31) as i32) - 8;
                 let colour = r & 0xff_ffff;
-                if r & 0x8000_0000 == 0 {
-                    if let Some(o) = Op::rect_checked(
-                        p(0),
-                        p(5),
-                        ((r >> 10) & 15) as i32 + 1,
-                        ((r >> 14) & 15) as i32 + 1,
-                        W,
-                        H,
+                let op = if r & 0x8000_0000 == 0 {
+                    Op::Rect {
                         colour,
-                    ) {
-                        ops.push(o);
+                        x: p(0),
+                        y: p(5),
+                        w: ((r >> 10) & 15) as i32 + 1,
+                        h: ((r >> 14) & 15) as i32 + 1,
                     }
-                } else if let Some(o) = Op::tri_checked(
-                    (p(0), p(5)),
-                    (p(10), p(15)),
-                    (p(20), p(25)),
-                    W,
-                    H,
-                    colour,
-                ) {
+                } else {
                     triangles += 1;
-                    ops.push(o);
+                    Op::Tri {
+                        colour,
+                        a: (p(0), p(5)),
+                        b: (p(10), p(15)),
+                        c: (p(20), p(25)),
+                    }
+                };
+                // An entry that draws nothing is left out, which is
+                // what the assembler does with it too.
+                if op.encode(W, H).is_some() {
+                    drawn += 1;
+                    ops.push(op);
                 }
             }
             agree(&ops, &format!("scene {scene_no}"));
         }
         assert!(triangles > 8, "too few triangles drawn: {triangles}");
+        assert!(drawn > 20, "too few entries drawn: {drawn}");
     }
 }
