@@ -906,6 +906,10 @@ impl Lowered {
     /// This unit's module and its children's, without the channel
     /// module, which the outermost unit adds once.
     fn verilog_in(&self) -> String {
+        // A foreign module comes as its own source.
+        if self.foreign.is_some() {
+            return String::new();
+        }
         let name = &self.name;
         let l = self;
         let mut out = String::new();
@@ -992,19 +996,38 @@ impl Lowered {
             }
         }
         for inst in &self.instances {
-            let mut conns: Vec<String> = inst
-                .unit
-                .clocks()
-                .iter()
-                .map(|c| format!(".{c}({c})"))
-                .collect();
+            // A lowered child's clock ports are named for their clocks;
+            // a foreign child's have names of their own.
+            let mut conns: Vec<String> = match &inst.unit.foreign {
+                Some(f) => {
+                    f.clocks.iter().map(|(p, c)| format!(".{p}({c})")).collect()
+                }
+                None => inst
+                    .unit
+                    .clocks()
+                    .iter()
+                    .map(|c| format!(".{c}({c})"))
+                    .collect(),
+            };
             for (a, b) in self.joins(inst) {
                 conns.push(format!(".{a}({b})"));
             }
+            // A foreign child is its module, with its parameters.
+            let (module, params) = match &inst.unit.foreign {
+                Some(f) if !f.params.is_empty() => {
+                    let ps: Vec<String> = f
+                        .params
+                        .iter()
+                        .map(|(p, v)| format!(".{p}({v})"))
+                        .collect();
+                    (&f.module, format!("#(\n    {}\n  ) ", ps.join(",\n    ")))
+                }
+                Some(f) => (&f.module, String::new()),
+                None => (&inst.unit.name, String::new()),
+            };
             writeln!(
                 out,
-                "  {} {}(\n    {}\n  );",
-                inst.unit.name,
+                "  {module} {params}{}(\n    {}\n  );",
                 inst.name,
                 conns.join(",\n    ")
             )
