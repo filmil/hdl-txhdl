@@ -15,11 +15,16 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and fourteen documents describe it,
+The language is a library, `//lib`, and fifteen documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
   A new document is added there in the same change that creates it.
+* `//docs:showcase` is two pages on the whole of it: the rule, the
+  parts, Vreteno, the GPU, how it is all checked, and what is not
+  done. It is the one document meant to be read first and alone, so
+  it stays at two pages and every number in it comes from a count
+  rather than from memory.
 * `//docs:article` states the merge of the two languages this one came
   from.
 * `//docs:embedding` states the embedding in Rust: the exposition of

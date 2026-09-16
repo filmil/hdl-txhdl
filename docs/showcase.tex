@@ -1,0 +1,216 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% What has been built: two pages on the language, the parts, the core
+% and the GPU. Built by //docs:showcase. Every listing is included from
+% the tree and the picture is the one the GPU drew.
+\documentclass[journal,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+\input{housestyle}
+\usepackage{graphicx}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{TxHDL: What Has Been Built}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{Two pages on the whole of it, for a reader deciding whether
+to read the rest. Every claim here is a target in the project
+repository \code{HDL/txhdl} that the build runs; the cover document,
+\code{//docs:cover}, names the fourteen documents that say more.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{TxHDL: What Has Been Built}{Filmar and Janković: TxHDL: What Has Been Built}
+
+\begin{document}
+\maketitle
+
+\section{The Rule}
+
+TxHDL is a hardware description language that is a Rust library. It
+was built by deleting every construct Rust already provides. A
+transaction is a \code{struct}; a unit is a \code{struct} that
+implements \code{Unit}; a pipeline is an \code{async fn}; a
+configuration is a trait; a clock is a type. \code{rustc} is the
+parser, and its type checker is the design rule checker: two drivers
+on a wire are a move error, a clock domain crossed without a
+\code{Crossing} is a type error, and a cycle counted in combinational
+logic is impossible because a plain \code{fn} has no \code{.await} to
+write in.
+
+What is left is a unit, and a unit is a netlist. Listing~\ref{lst:w-unit}
+is one whole: a counter that ticks once in eight cycles while
+enabled. \code{\#[lower]} gives it a Verilog module and a VHDL entity
+beside the Rust, and the build simulates both against the Rust run's
+own trace, every time.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=unit-unit,caption={A unit, whole. Its netlist and its
+waveform are on the cheat sheet, \code{//docs:cheatsheet}.},%
+label={lst:w-unit}]{lib/examples/ex_cheat.rs}
+
+\section{What Is In It}
+
+\begin{table}[htbp]
+\caption{The pieces, and where each is said in full.}
+\label{tab:w-pieces}
+\centering\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+Piece & What it is & Document \\
+\midrule
+The runtime & units, channels, clocks, time & \code{runtime} \\
+The lowering & Verilog and VHDL from a unit & \code{embedding} \\
+Parts & buffer, FIFO, station & \code{station} \\
+The AXI link & five channels, two ends & \code{axi} \\
+The AXI router & one host, N peripherals & \code{axi} \\
+Vreteno & an RV32IM core, on a board & \code{vreteno} \\
+The GPU & a rasteriser and a framebuffer & \code{gpu} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Vreteno, a Core}
+
+Vreteno is an RV32IM core: fetch, execute and writeback, with the
+multiply and divide as a sequence, the machine control registers, the
+timer and the external interrupt. It is checked against a reference
+model of the instruction set written as a program, in lockstep, every
+cycle: the program counter, the thirty-one registers and the control
+registers must agree after each retirement, on a demonstration
+program and on sixty-four random ones.
+
+It runs on hardware. The netlist goes through a hermetic Vivado onto
+an Alinx AX7A200, and the board says on its serial port what the
+simulation says it will: \code{OK}, and then whatever is typed at it,
+echoed.
+
+Its bus is AXI4, and every device behind it is an AXI peripheral,
+with the router deciding by address which one a burst reaches.
+
+\section{The AXI Link}
+
+A channel carries one transaction. AXI is five channels that only
+mean something together, so the library provides the link rather than
+the channels: \code{axi()} makes every channel of it at once and
+hands back two ends, the way \code{chan()} hands back a sender and a
+receiver.
+
+A host client issues a burst and awaits its answer; several may be
+outstanding and they may be awaited in any order. A peripheral client
+accepts a whole decoded transaction, with a write's beats already
+gathered, and answers it from whatever process holds it. Neither
+names a channel, counts a beat, watches \code{last} or writes an
+identifier. Between the two ends are two units that do the protocol
+and the five AXI channels, which is where the router goes; a router
+changes no client code at all.
+
+\section{A GPU}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.52\columnwidth]{scene.png}
+\caption{Eight display list entries, drawn by the rasteriser, written
+into memory over AXI, read back and written out as this file.}
+\label{fig:w-scene}
+\end{figure}
+
+Figure~\ref{fig:w-scene} was drawn by hardware. A rasteriser walks
+the box a display list entry gives it, one pixel a cycle, keeping
+three edge functions incrementally, and writes each pixel that is
+inside the primitive as a single-beat AXI burst; the framebuffer is a
+memory behind the other end of the link. Both are lowered units, and
+the build simulates both netlists against the run that drew a smaller
+version of this picture.
+
+The rasteriser was the first client of the AXI link that is hardware
+rather than a testbench, and writing it is what showed that the
+link's two client conveniences are simulation-side by construction
+and that a unit holds the channel ends itself.
+
+\section{Parts}
+
+A part is hardware the language provides, written in its own lowerable
+subset and checked as every unit is, so nothing in the library is a
+primitive the compiler knows and the user cannot read. The channel
+itself is one: an elastic buffer of two, with \code{valid} and
+\code{ready} registered on both sides, which is what sits between two
+lowered units wherever the simulation had a channel. A FIFO is
+another, for a consumer that takes in bursts. A reservation station is
+the third: it gathers the operands of an operation that arrive on
+separate channels, out of order, and fires when the last of them has,
+in two to ten inputs, each written out by a macro because the lowering
+reads a body and not a loop over ports. The AXI link and its router
+are parts too.
+
+\begin{figure}[htbp]
+\centering
+\input{paper_cheat_timing.tex}
+\caption{The unit of Listing~\ref{lst:w-unit}, running. The build drew
+this from the trace that same run wrote, and generated a testbench
+from it that replays the netlist.}
+\label{fig:w-wave}
+\end{figure}
+
+\section{From an Empty Directory}
+
+A reader with nothing installed but Bazelisk writes four files, and
+the fourth is a blinky that builds, runs, and lowers to Verilog and
+VHDL. That workspace is kept in the tree and built as a check, so the
+tutorial cannot rot: it depends on the project the way anyone else
+would, through the public mirror, and the build fetches the toolchain,
+the simulators, the waveform tools and a TeX installation itself.
+Nothing is installed by hand, on a workstation or in CI.
+
+\section{How It Is Checked}
+
+Nothing here is checked by reading it. Every example is a program the
+build runs, and its output is included in a document from the run, so
+a document cannot drift from the code. Every lowered unit is
+simulated twice more, as VHDL under \code{nvc} and as Verilog under
+Verilator, against the trace the Rust run wrote, at its ports; that
+is what the sixty-two tests under \code{//docs} are. Every claim
+about what Rust accepts was compiled first, as a probe kept in the
+tree, including the ones whose answer was no.
+
+\section{What Is Not Done}
+
+The list is short and it is kept in the open. The lowering emits a
+name as it is written and neither escapes nor rejects the reserved
+words of its targets, so a register called \code{next} produces VHDL
+that will not analyse; three names in the GPU had to change for that
+reason. A unit's ports are a positional tuple and not a named struct,
+which a seven-port unit feels. The board's top level is still wired by
+hand and is out of date since the core moved to AXI. The GPU has no
+depth buffer, no interpolation and no texture. Fuzzing the AXI link is
+not yet a step of the build. Each of those is an issue on the
+repository rather than a paragraph here.
+
+\begin{table}[htbp]
+\caption{The tree, in lines of Rust and in targets.}
+\label{tab:w-numbers}
+\centering\footnotesize
+\begin{tabular}{@{}lr@{}}
+\toprule
+The runtime and its macros & 8\,544 \\
+Parts, including the AXI link & 2\,298 \\
+Examples, forty-two of them & 4\,335 \\
+Vreteno & 3\,380 \\
+The GPU & 1\,062 \\
+\midrule
+Tests, of which 62 are co-simulations & 68 \\
+Documents & 14 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}

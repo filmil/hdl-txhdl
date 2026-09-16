@@ -1420,6 +1420,21 @@ genrule(
     ]),
 )
 
+# Two pages on the whole of it: the language, the parts, the core and
+# the GPU, for a reader deciding whether to read the rest.
+latex_document(
+    name = "showcase",
+    main = "showcase.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":gpu_scene",
+        ":paper_cheat_timing",
+        "//lib/examples:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # A minimal GPU in TxHDL: the rasteriser, the framebuffer, the
 # picture the GPU drew and the waveform of the traced run.
 latex_document(
@@ -1483,6 +1498,7 @@ combined_pdf(
     out = "txhdl.pdf",
     bookmarks = [
         "TxHDL Documents",
+        "TxHDL: What Has Been Built",
         "TxHDL cheat sheet",
         "TxHDL, Step by Step",
         "TxHDL from Zero: A Blinky in Bazel",
@@ -1499,6 +1515,7 @@ combined_pdf(
     ],
     parts = [
         ":cover",
+        ":showcase",
         ":cheatsheet",
         ":tutorial",
         ":zero",
