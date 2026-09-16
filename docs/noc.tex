@@ -6,9 +6,17 @@
 
 \newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
 \input{housestyle}
+\usepackage{graphicx}
 
 \InputIfFileExists{buildstamp.tex}{}{}
 \providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+% A range of a source file of the network, by its begin/end markers.
+% A range of the system's source.
+\newcommand{\socpart}[3]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#1-#1,caption={#2},label={#3}]{soc/src/lib.rs}}
 
 % A range of a source file of the network, by its begin/end markers.
 \newcommand{\nocpart}[4]{%
@@ -270,6 +278,76 @@ keeps a table of who asked, so the second test is the source stamp and
 the renaming being right or the test failing, and before the renaming
 was written it did fail.
 
+
+\section{Four Corners}
+\label{sec:n-soc}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.52\columnwidth]{soc_scene.png}
+\caption{What the rasteriser drew, read back out of the memory it
+shares with the core, while the core was running a program and saying
+its line on the serial port two hops away.}
+\label{fig:n-soc}
+\end{figure}
+
+A core at 0,0, a GPU at 1,0, a memory at 0,1 and a serial port at 1,1:
+two hosts and two peripherals, none of which knows that the others are
+there or that the network is. The core is Vreteno running a program
+compiled for it; the GPU is the rasteriser; the memory is the
+simulation-only \code{Ram}, holding the program's constants at
+\code{0x1000} and the framebuffer at \code{0x4000}; the serial port is
+the same \code{Uart} the core has always had, with a terminal on its
+lines.
+
+\socpart{map}{The address map, stated in a host bridge's type. Both
+hosts use it: the serial port, the program's data, and then everything
+else, the framebuffer included.}{lst:n-map}
+
+Each corner is the same three pieces: the client, an \code{AxiHost} or
+an \code{AxiPer}, and the bridge. Nothing was added to the core or to
+the rasteriser to put them here. The rasteriser gained one type
+parameter, the framebuffer's base, which was zero and written into its
+address arithmetic; on a shared memory it has to be told where its
+pixels go.
+
+\section{What the Hops Cost}
+\label{sec:n-cost}
+
+\begin{table}[htbp]
+\caption{The same work, on a direct link and across the lattice.}
+\label{tab:n-cost}
+\centering\footnotesize
+\begin{tabular}{@{}lrr@{}}
+\toprule
+ & link & lattice \\
+\midrule
+The core says its line & 1\,042 & 1\,229 \\
+The GPU draws the scene & 12\,656 & 29\,081 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The core pays eighteen per cent and the GPU pays a little over twice,
+and the difference between them is the difference between latency and
+throughput. The core has one load in flight at a time and waits for
+each answer, so what it pays is the hops, twice, on the loads it
+makes and on nothing else. The rasteriser writes four thousand and
+ninety-six pixels and never waits for any of them, so what it pays is
+the network's rate: one packet through a node per cycle, and a write
+is a packet each way across two hops.
+
+That is the number to improve, and improving it is arbitration and
+width rather than routing: a switch that moved a packet per port per
+cycle rather than one per node would carry the rasteriser's stream at
+the rate the link does. The timing work that would pay for is written
+down separately.
+
+The two overlap for the first twelve hundred cycles, which is as long
+as the core runs. A longer program would contend for longer, and the
+fixed priority in a switch, which serves the four links before the
+exit, is the thing to watch when it does.
+
 \section{What Is Not Here}
 \label{sec:n-not}
 
@@ -277,11 +355,9 @@ The lattice is wired by a helper that makes the channels and hands out
 the ends, which does not lower; a design that is to be synthesised
 writes the same wiring as a unit of units and lets the lowering make
 the netlist. Bursts of more than one beat do not cross the network.
-The arbiter in a switch is a fixed priority. And the demonstration the
-network was asked for, a two by two with a core, a serial port, a
-memory and a GPU on its four corners, is not built yet: the pieces are
-all here and each has been driven from a client, but putting the four
-of them on the lattice at once is its own piece of work.
+The arbiter in a switch is a fixed priority. A switch moves one packet
+per cycle rather than one per port, which is what the rasteriser's
+stream pays for above.
 
 \begin{thebibliography}{9}
 

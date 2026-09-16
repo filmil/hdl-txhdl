@@ -135,6 +135,13 @@ the node and the identifier to answer under. Two hosts on one memory
 is the test that found that, and it failed before the renaming was
 written.
 
+A core, a GPU, a memory and a serial port sit on the four corners of a
+two by two lattice and run together: the core says its line on the
+port two hops away while the rasteriser draws into the memory they
+share. The core pays eighteen per cent for the hops and the GPU pays
+a little over twice, which is the difference between waiting for one
+answer at a time and never waiting at all.
+
 \section{A GPU}
 
 \begin{figure}[htbp]
@@ -213,9 +220,7 @@ reason. A unit's ports are a positional tuple and not a named struct,
 which a seven-port unit feels. The board's top level is still wired by
 hand and is out of date since the core moved to AXI. The GPU has no
 depth buffer, no interpolation and no texture. Fuzzing the AXI link is
-not yet a step of the build, and the network has its nodes, its
-bridges and its tests but not yet the four-cornered demonstration it
-was asked for. Each of those is an issue on the
+not yet a step of the build. Each of those is an issue on the
 repository rather than a paragraph here.
 
 \begin{table}[htbp]

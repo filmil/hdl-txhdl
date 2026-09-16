@@ -68,8 +68,9 @@ all under `//docs`:
   `bus::noc`: a node with a link to each of its four neighbours and an
   exit, two virtual channels, dimension-order routing, and the bridge
   that puts an AXI link across it. Its tests drive four nodes, both
-  bridges and a memory; the four-endpoint demonstration is not built
-  yet and the document says so.
+  bridges and a memory, and `//soc` puts a core, a GPU, a memory and a
+  serial port on the four corners of one lattice and runs them
+  together.
 * `//docs:cheatsheet` is the one-page cheat sheet, also as a PNG
   (`//docs:cheatsheet_png`); it shows `ex_cheat.rs`, its netlist and
   its waveform, all produced by the build.

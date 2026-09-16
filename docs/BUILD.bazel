@@ -1490,6 +1490,15 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# The picture the GPU drew while the core ran, out of the memory they
+# share on the lattice.
+genrule(
+    name = "soc_scene",
+    outs = ["soc_scene.png"],
+    cmd = "SOC_PNG=$@ $(location //soc:demo) > /dev/null",
+    tools = ["//soc:demo"],
+)
+
 # A network on chip in TxHDL: nodes on a lattice, virtual channels,
 # and the bridges that put an AXI link across it.
 latex_document(
@@ -1498,7 +1507,9 @@ latex_document(
     data = [
         ":buildstamp",
         ":vendored_tex",
+        ":soc_scene",
         "//lib/parts:sources",
+        "//soc:sources",
     ],
     deps = ["housestyle.tex"],
 )
