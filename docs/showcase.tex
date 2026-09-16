@@ -73,6 +73,7 @@ The lowering & Verilog and VHDL from a unit & \code{embedding} \\
 Parts & buffer, FIFO, station & \code{station} \\
 The AXI link & five channels, two ends & \code{axi} \\
 The AXI router & one host, N peripherals & \code{axi} \\
+The network & hosts and peripherals on a lattice & \code{noc} \\
 Vreteno & an RV32IM core, on a board & \code{vreteno} \\
 The GPU & a rasteriser and a framebuffer & \code{gpu} \\
 \bottomrule
@@ -113,6 +114,26 @@ names a channel, counts a beat, watches \code{last} or writes an
 identifier. Between the two ends are two units that do the protocol
 and the five AXI channels, which is where the router goes; a router
 changes no client code at all.
+
+\section{A Network}
+
+A router puts several peripherals behind one host. For several of
+both, there is a lattice of nodes, each with a two-way link to its
+four neighbours and a fifth, the exit, where a bridge with AXI on one
+side and packets on the other attaches. Every link is two virtual
+channels, one for requests and one for responses, which is what keeps
+a full path of requests from holding up the answers that would empty
+it. Routing is dimension order, which on a lattice needs nothing else
+said to be free of deadlock.
+
+Neither end knows the network is there. A host issues a burst and
+awaits its answer as it would on a link; a peripheral accepts a
+transaction and answers it as it would. What the network adds is the
+renaming: an identifier belongs to the host that made it, so a
+peripheral bridge gives every request one of its own and remembers
+the node and the identifier to answer under. Two hosts on one memory
+is the test that found that, and it failed before the renaming was
+written.
 
 \section{A GPU}
 
@@ -192,7 +213,9 @@ reason. A unit's ports are a positional tuple and not a named struct,
 which a seven-port unit feels. The board's top level is still wired by
 hand and is out of date since the core moved to AXI. The GPU has no
 depth buffer, no interpolation and no texture. Fuzzing the AXI link is
-not yet a step of the build. Each of those is an issue on the
+not yet a step of the build, and the network has its nodes, its
+bridges and its tests but not yet the four-cornered demonstration it
+was asked for. Each of those is an issue on the
 repository rather than a paragraph here.
 
 \begin{table}[htbp]
@@ -202,13 +225,13 @@ repository rather than a paragraph here.
 \begin{tabular}{@{}lr@{}}
 \toprule
 The runtime and its macros & 8\,544 \\
-Parts, including the AXI link & 2\,298 \\
+Parts: the link, the router, the network & 3\,915 \\
 Examples, forty-two of them & 4\,335 \\
-Vreteno & 3\,380 \\
-The GPU & 1\,062 \\
+Vreteno & 3\,738 \\
+The GPU & 1\,230 \\
 \midrule
-Tests, of which 62 are co-simulations & 68 \\
-Documents & 14 \\
+Tests, of which 62 are co-simulations & 71 \\
+Documents & 16 \\
 \bottomrule
 \end{tabular}
 \end{table}

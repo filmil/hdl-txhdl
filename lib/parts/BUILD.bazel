@@ -8,6 +8,12 @@ rust_library(
     srcs = [
         "src/buffer.rs",
         "src/bus/axi.rs",
+        "src/bus/noc.rs",
+        "src/bus/noc/bridge.rs",
+        "src/bus/noc/mesh.rs",
+        "src/bus/noc/node.rs",
+        "src/bus/noc/pkt.rs",
+        "src/bus/noc/switch.rs",
         "src/bus/axi/sim.rs",
         "src/bus/mod.rs",
         "src/bus/router.rs",
@@ -30,10 +36,10 @@ rust_test(
 )
 
 # The sources by name, for the documents' API extraction.
-exports_files(glob(["src/*.rs", "src/bus/*.rs", "src/bus/axi/*.rs"]))
+exports_files(glob(["src/*.rs", "src/bus/*.rs", "src/bus/axi/*.rs", "src/bus/noc/*.rs"]))
 
 filegroup(
     name = "sources",
-    srcs = glob(["src/*.rs", "src/bus/*.rs", "src/bus/axi/*.rs"]),
+    srcs = glob(["src/*.rs", "src/bus/*.rs", "src/bus/axi/*.rs", "src/bus/noc/*.rs"]),
     visibility = ["//visibility:public"],
 )

@@ -7,4 +7,5 @@
 //!
 //! - [`axi`]: an AXI4 link, five channels behind two ends.
 pub mod axi;
+pub mod noc;
 pub mod router;

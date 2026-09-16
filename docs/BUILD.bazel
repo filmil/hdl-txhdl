@@ -1454,6 +1454,19 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# A network on chip in TxHDL: nodes on a lattice, virtual channels,
+# and the bridges that put an AXI link across it.
+latex_document(
+    name = "noc",
+    main = "noc.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        "//lib/parts:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # AXI in TxHDL: the tutorial on the bus, its two examples' runs and
 # waveforms included, and the two trackers' netlists.
 latex_document(
@@ -1508,6 +1521,7 @@ combined_pdf(
         "A Reservation Station in TxHDL",
         "AXI in TxHDL",
         "A Minimal GPU in TxHDL",
+        "A Network on Chip in TxHDL",
         "TxHDL: Unifying a Dataflow and a Transaction HDL",
         "Deleting a Language: Embedding TxHDL in Rust",
         "The TxHDL Runtime",
@@ -1525,6 +1539,7 @@ combined_pdf(
         ":station",
         ":axi",
         ":gpu",
+        ":noc",
         ":article",
         ":embedding",
         ":runtime",

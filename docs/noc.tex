@@ -1,0 +1,206 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% A network on chip in TxHDL. Built by //docs:noc. Every listing is
+% included from the tree.
+\documentclass[journal,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+% A range of a source file of the network, by its begin/end markers.
+\newcommand{\nocpart}[4]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#2-#2,caption={#3},label={#4}]{lib/parts/src/bus/noc/#1}}
+
+\title{A Network on Chip in TxHDL}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{This is the tutorial on the network, for a reader who knows
+the AXI link~\cite{axi} and wants more than one host and more than
+one peripheral on it. Every listing is included from the project
+repository \code{HDL/txhdl} at build time. The cover~\cite{cover}
+lists every document.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{A Network on Chip in TxHDL}{Filmar and Janković: A Network on Chip in TxHDL}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A router puts several peripherals behind one host. A network puts
+several of both on a lattice and lets any of them reach any other. The
+network here is nodes with a two-way link to each of their four
+neighbours and a fifth, the exit, where something that is not a node
+attaches; every link is two virtual channels; routing is dimension
+order; and the exit is a bridge with AXI on one side and packets on
+the other. Neither end knows the network is there: a host issues a
+burst and awaits its answer as it would on a link, and a peripheral
+accepts a transaction and answers it as it would.
+\end{abstract}
+
+\section{What a Link Carries}
+\label{sec:n-pkt}
+
+One beat of one AXI channel, addressed to a node and stamped with the
+node it came from.
+
+\nocpart{pkt.rs}{pkt}{A packet.}{lst:n-pkt}
+
+It is one shape, as wide as the widest beat needs, for the same reason
+the GPU's instruction is~\cite{gpu}: every field a step reads has to
+be at a fixed place, and a link that carried a header and then a body
+would want a sequencer at both ends before anything else worked. A
+read address beat leaves the data and the strobe at zero; a write
+response leaves the address at zero; \code{Chan} says which fields
+mean anything.
+
+The source is carried rather than remembered. A node keeps no table of
+who asked, and an answer finds its way home by reading the stamp the
+question arrived with.
+
+\section{Virtual Channels}
+\label{sec:n-vc}
+
+There are two, one for requests and one for responses, and they share
+nothing: a node is a switch per virtual channel, and each switch has
+its own buffers.
+
+That is not tidiness, it is the thing that keeps the network from
+seizing. A peripheral answers a request by sending a response. If a
+full path of requests could hold up the responses behind it, the
+responses that would empty that path could never leave, and the
+network would stop with every buffer full and nothing able to move. On
+two channels the response has a way through whatever the requests are
+doing.
+
+\section{A Node}
+\label{sec:n-node}
+
+Routing is dimension order: a packet goes east or west until it is in
+its destination's column, then north or south until it is at its node,
+then out of the exit.
+
+\nocpart{switch.rs}{route}{The whole of the routing.}{lst:n-route}
+
+On a lattice that is deadlock free with nothing else said, because a
+packet never turns from Y back into X, so no cycle of waiting can
+form among the links.
+
+One packet moves through a switch per cycle. Each input's direction
+and the room at the port it wants are worked out first, so that an
+input whose port is full does not hold up the others, and the choice
+among those that can move is by a fixed order that serves the four
+links before the exit: a node does not starve the network in order to
+feed itself. A fair arbiter would be the next thing to write; the
+order here is a fixed priority and this document would rather say so
+than not.
+
+\nocpart{switch.rs}{run}{The switch, a cycle at a
+time.}{lst:n-switch}
+
+\nocpart{node.rs}{run}{A node: a switch per virtual channel. The
+twenty ports are written out one by one because a lowered unit's
+ports are a positional tuple and a named type for a side is
+refused.}{lst:n-node}
+
+\section{The Exit}
+\label{sec:n-bridge}
+
+A bridge, AXI on one side and packets on the other, in two halves.
+
+The host half packs an address phase into a packet addressed by a map
+of three ranges, whose last entry is the default route: give it a mask
+of zero and every address that matched nothing else goes there. A
+design that states its map that way has no address the network does
+not know, which is why neither half has to answer for one.
+
+A write of one beat is one packet, carrying its address phase and its
+data together. That is what the hosts in this tree make, and it is
+what keeps two of them from interleaving their write data at a
+peripheral that has one port: AXI4 puts no identifier on the write
+data channel, so a beat that arrived between another host's address
+phase and its beat could not be told apart. A burst of more than one
+beat wants a virtual channel per source, or reassembly at the
+peripheral, and this bridge carries none.
+
+\nocpart{bridge.rs}{hostrun}{The host half.}{lst:n-host}
+
+The peripheral half unpacks a request into the channels a
+peripheral's tracker reads, and packs the answers back to the node
+the request came from.
+
+It also renames. An identifier belongs to the host that made it, so
+two hosts may use the same one, and a peripheral behind one port
+cannot tell their bursts apart; the second request would overwrite
+the first's way home and one of the two answers would go to the wrong
+corner of the lattice. The bridge therefore gives every request an
+identifier of its own and remembers against it the node the request
+came from and the identifier that node used. The answer comes back
+under the local one and the packet goes home under the original. A
+request waits when the identifier whose turn it is has not been
+answered, which is what bounds how many bursts a peripheral has in
+flight.
+
+\nocpart{bridge.rs}{perrun}{The peripheral half.}{lst:n-per}
+
+That renaming is not a refinement. It is the difference between the
+network working and not, and the test that found it is the one below
+that puts two hosts on one memory.
+
+\section{What Is Checked}
+\label{sec:n-tests}
+
+Two tests, both driving the whole of it: four nodes, both bridges,
+both trackers and a memory, with a host client at one end that issues
+and awaits as it would on a link.
+
+The first sends a burst from one corner of a two by two lattice to the
+far one, so that it crosses in X and then in Y, and reads back what it
+wrote. The second puts a host at two corners and one memory at a
+third, each host writing its own word and reading it back. Nothing
+keeps a table of who asked, so the second test is the source stamp and
+the renaming being right or the test failing, and before the renaming
+was written it did fail.
+
+\section{What Is Not Here}
+\label{sec:n-not}
+
+The lattice is wired by a helper that makes the channels and hands out
+the ends, which does not lower; a design that is to be synthesised
+writes the same wiring as a unit of units and lets the lowering make
+the netlist. Bursts of more than one beat do not cross the network.
+The arbiter in a switch is a fixed priority. And the demonstration the
+network was asked for, a two by two with a core, a serial port, a
+memory and a GPU on its four corners, is not built yet: the pieces are
+all here and each has been driven from a client, but putting the four
+of them on the lattice at once is its own piece of work.
+
+\begin{thebibliography}{9}
+
+\bibitem{axi}
+F.~Filmar and D.~Janković, ``AXI in TxHDL,'' project repository
+\code{HDL/txhdl}, \code{//docs:axi}, 2026.
+
+\bibitem{gpu}
+F.~Filmar and D.~Janković, ``A minimal GPU in TxHDL,'' project
+repository \code{HDL/txhdl}, \code{//docs:gpu}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}
