@@ -97,7 +97,7 @@ impl<const A: usize, const I: usize, const AW: usize> Unit for AxiWb<A, I, AW> {
             let finished = sent_r | sent_b;
             // A read goes on the lines at once; a write waits for its
             // beat first.
-            let next = mux(q.read, U::<3>::from(2u8), U::<3>::from(1u8));
+            let first = mux(q.read, U::<3>::from(2u8), U::<3>::from(1u8));
             let is_read = q.read.zext::<1>();
             let word = (q.addr >> WORD).resize::<AW>();
             let answer = mux(read, rdat.get(), self.wdat.get());
@@ -107,7 +107,7 @@ impl<const A: usize, const I: usize, const AW: usize> Unit for AxiWb<A, I, AW> {
                     rid: q.id,
                     wadr: word,
                     wsel: U::<4>::from(15u8),
-                    stage: next,
+                    stage: first,
                 },
                 beat ? {
                     wdat: wh.data,
