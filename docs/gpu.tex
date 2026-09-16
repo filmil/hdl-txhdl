@@ -1,0 +1,249 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% A minimal GPU in TxHDL. Built by //docs:gpu. Every listing is
+% included from the tree, the picture is what the GPU drew when the
+% build ran it, and the waveform is that run's.
+\documentclass[journal,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+\input{housestyle}
+\usepackage{graphicx}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+% A range of a source file, by its begin/end markers.
+\newcommand{\gpupart}[4]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#2-#2,caption={#3},label={#4}]{gpu/src/#1}}
+
+\title{A Minimal GPU in TxHDL}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{This is the tutorial on the first design that uses the AXI
+link~\cite{axi} for something other than a test, for a reader who has
+met TxHDL through the step-by-step tutorial~\cite{tutorial}. Every
+listing is included from the project repository \code{HDL/txhdl} at
+build time, the picture is the one the GPU drew when the build ran
+it, and the waveform is that run's. The cover~\cite{cover} lists
+every document.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{A Minimal GPU in TxHDL}{Filmar and Janković: A Minimal GPU in TxHDL}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A rasteriser reads a display list and writes pixels into memory. This
+one is a unit of about a hundred lines that walks a box one pixel a
+cycle, keeps three edge functions as it goes, and writes the pixels
+that are inside the primitive as single-beat AXI bursts; the
+framebuffer is a second unit, a memory behind the other end of the
+link. Both are written in the lowered subset, so both are netlists,
+and the build simulates each netlist against the run that drew the
+picture in this document, under \code{nvc} and under Verilator. The
+rasteriser is also the first client of the AXI link that is hardware
+rather than a testbench, and it is what that half of the link is for.
+\end{abstract}
+
+\section{What It Draws}
+\label{sec:g-what}
+
+Figure~\ref{fig:g-scene} is the demonstration, drawn by the
+rasteriser, written into the framebuffer over AXI, read back out of
+it and written to a file by the same program. It is sixty-four by
+sixty-four pixels and eight entries of a display list: a clear, three
+rectangles and four triangles.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.62\columnwidth]{scene.png}
+\caption{The demonstration, as the GPU drew it. Eight entries, four
+thousand and ninety-six pixels, twelve and a half thousand cycles.}
+\label{fig:g-scene}
+\end{figure}
+
+\gpupart{scene.rs}{scene}{The display list of the picture above, from
+\code{gpu/src/scene.rs}, which drew Figure~\ref{fig:g-scene}.}{lst:g-scene}
+
+\section{The Display List}
+\label{sec:g-list}
+
+One entry is a box to walk and, when it is a triangle, three vertices
+to test against.
+
+\gpupart{op.rs}{op}{An entry, from \code{gpu/src/op.rs}.}{lst:g-op}
+
+Everything a host can work out once per primitive is worked out by
+the host. The box is already clipped to the screen, so the hardware
+never compares against a screen size and never writes outside the
+framebuffer. The vertices are already wound so that the inside of the
+triangle is where all three edge functions are non-negative, so the
+hardware tests one sign and not two. A vertex is twelve bits of two's
+complement and may therefore lie off the screen on any side, which is
+what lets a triangle be clipped by its box rather than by cutting it
+into a polygon.
+
+This is a division of labour and not a shortcut: winding and bounding
+a primitive is what the setup stage of a real graphics pipeline does,
+and putting it in front of the rasteriser is where it goes. What is
+left for the hardware is the part that is per pixel, which is the
+part worth building.
+
+\section{The Rasteriser}
+\label{sec:g-raster}
+
+An edge function is linear. For the edge from $a$ to $b$,
+\[ e(x, y) = (b_x - a_x)(y - a_y) - (b_y - a_y)(x - a_x), \]
+which is zero on the edge, positive on one side and negative on the
+other. Stepping one pixel to the right adds $-(b_y - a_y)$ and
+stepping one row down adds $(b_x - a_x)$, whatever the pixel. So the
+rasteriser keeps, for each of the three edges, its value at the
+current pixel, its value at the start of the current row, and those
+two steps.
+
+\gpupart{raster.rs}{state}{The rasteriser's state.}{lst:g-state}
+
+The only multiplications are the six of the setup, done in the cycle
+an entry is taken; the per-pixel work is three adds and three sign
+tests. The arithmetic is thirty-two bits of two's complement, which
+is wide enough for every product of two differences of vertices in
+the range an entry may use. It was sixteen bits first, and a
+pseudorandom scene with a vertex off the screen found the overflow
+within a dozen tries, which is the argument for the soak test rather
+than for the directed ones.
+
+\gpupart{raster.rs}{run}{The rasteriser, a cycle at a time.}{lst:g-run}
+
+The walk is one pixel per cycle: at the end of a row the column goes
+back to the first and each edge is reloaded from its row value plus
+its row step; otherwise the column advances and each edge takes its
+column step. A pixel is written only when the link has room for the
+burst and its beat, and the walk holds where it is until then, so
+backpressure from the bus stops the rasteriser rather than losing
+pixels.
+
+\section{Writing Over AXI}
+\label{sec:g-axi}
+
+The rasteriser is an AXI host, and it is a host written as hardware.
+The \code{Host} end of a link~\cite{axi} is a simulation-side
+convenience, with an inbox, a table of answers and futures to await;
+none of that lowers, and none of it needs to. What is underneath is
+channels, and a client that is a unit holds those channel ends
+itself: the issue channel and the write beats going out, the grant,
+the write responses and the release coming back. \code{axi\_units}
+hands them out under the names \code{HostClient} and
+\code{PerClient}, and that is the whole of the difference between a
+client that is a testbench and a client that is hardware.
+
+A pixel is one burst of one beat: the issue and its beat go out in
+the same cycle, so the write data channel stays in the order the
+address channel is in, which is what AXI4 asks of a write. The
+identifier the tracker granted is of no use to a rasteriser that
+never reads, so it is taken and dropped; the identifier is handed
+back on \code{release} as its write response arrives, which is what
+keeps four writes in flight and no more.
+
+\begin{figure}[htbp]
+\centering
+\input{gpu_timing.tex}
+\caption{The first rows of the traced run's triangle. \code{x} and
+\code{y} walk the box; \code{hit} is whether the pixel is inside,
+and where it is low no burst is issued, so the row is walked and
+nothing is written. \code{inflight} is the writes whose response has
+not come back, which the four identifiers bound.}
+\label{fig:g-wave}
+\end{figure}
+
+\section{The Framebuffer}
+\label{sec:g-fb}
+
+The framebuffer is the peripheral end of the same link: a memory of
+one word per pixel, answering single-beat bursts.
+
+\gpupart{fb.rs}{run}{The framebuffer.}{lst:g-fb}
+
+A read is answered from the memory in the cycle the request is taken.
+A write is held until its beat arrives, because AXI4 puts no
+identifier on the write data channel, so the beat belongs to the
+oldest address phase and there is nothing to match it by but order.
+One write is held at a time, which is why the demonstration takes
+about three cycles a pixel rather than one; a framebuffer that took a
+request and its beat together in the cycle both were offered would be
+the first thing to improve.
+
+\section{The Netlists}
+\label{sec:g-netlist}
+
+Both units lower. The traced run is sixteen by sixteen pixels, small
+enough that a testbench generated from its trace replays in a moment,
+and the build checks both netlists against it at their ports, as VHDL
+under \code{nvc} and as Verilog under Verilator. Listing~\ref{lst:g-out}
+is what that run printed.
+
+\lstinputlisting[style=ascii,caption={What \code{//gpu:trace} printed
+when the build ran it: the same three kinds of entry on a screen
+small enough to print.},label={lst:g-out}]{out_gpu.txt}
+
+Three names had to be changed to lower. A register called \code{next}
+gives VHDL a signal called \code{next}, which it reserves; a register
+called \code{tri} and a wire called \code{inside} give Verilog two of
+its own reserved words. The lowering emits a name as it is written
+and neither escapes nor rejects the reserved words of its targets, so
+the failure is an analysis error in a generated file rather than an
+error at the point the name was chosen. The registers here are
+therefore \code{edged} and the wire is \code{hit}.
+
+A fourth mistake is worth stating because the lowering did not catch
+it either: a \code{let} that takes the name of a register produces
+two declarations of one signal. The locals in the rasteriser are
+\code{px}, \code{py} and \code{going} for that reason, where \code{x},
+\code{y} and \code{busy} would read better.
+
+\section{What It Is Not}
+\label{sec:g-not}
+
+It is minimal, and the ways in which it is minimal are worth naming.
+There is one pixel per cycle and no more; no depth buffer, so
+primitives are drawn in the order the display list gives them; no
+interpolation, so a triangle is one colour; no texture; no clipping
+of geometry, only of the box; and the framebuffer is at address zero,
+because nothing yet shares the bus with it. Every one of those is a
+thing to add on top of what is here rather than a thing to work
+around.
+
+The next step is the one the bus was for: a CPU writing the display
+list, with the core~\cite{vreteno} and the GPU as two hosts on one
+link and the router between them.
+
+\begin{thebibliography}{9}
+
+\bibitem{axi}
+F.~Filmar and D.~Janković, ``AXI in TxHDL,'' project repository
+\code{HDL/txhdl}, \code{//docs:axi}, 2026.
+
+\bibitem{tutorial}
+F.~Filmar and D.~Janković, ``TxHDL, step by step,'' project
+repository \code{HDL/txhdl}, \code{//docs:tutorial}, 2026.
+
+\bibitem{vreteno}
+F.~Filmar and D.~Janković, ``Vreteno: an RV32IM core in TxHDL,''
+project repository \code{HDL/txhdl}, \code{//docs:vreteno}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}

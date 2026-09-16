@@ -489,6 +489,93 @@ pub type PerOut<
     const I: usize,
 > = (Tx<PerReq<A, I>>, Tx<W<D, S>>, Tx<B<I>>, Tx<R<D, I>>);
 
+/// The ends a host client holds when it is a unit rather than an
+/// async client: what it drives, and what it reads. `Host` is a
+/// simulation-side convenience and does not lower, so a client
+/// written as hardware holds these instead. In order: the issue
+/// channel, the write beats, the release, and then the grant, the
+/// write responses and the read beats.
+pub type HostClient<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+> = (
+    Tx<Issue<A>>,
+    Tx<W<D, S>>,
+    Tx<Grant<I>>,
+    Rx<Grant<I>>,
+    Rx<Done<I>>,
+    Rx<R<D, I>>,
+);
+
+/// The same for a peripheral client that is a unit: the requests and
+/// the write beats it reads, and the answers and read beats it
+/// drives.
+pub type PerClient<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+> = (Rx<PerReq<A, I>>, Rx<W<D, S>>, Tx<Answer<I>>, Tx<R<D, I>>);
+
+/// A link whose clients are units: the ports of the two trackers, and
+/// the channel ends a hardware client holds on each side. [`axi`] is
+/// this with the two ends wrapped in [`Host`] and [`Per`].
+pub struct UnitLink<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+> {
+    pub host_client: HostClient<A, D, S, I>,
+    pub per_client: PerClient<A, D, S, I>,
+    pub host_in: HostIn<A, D, S, I>,
+    pub host_out: HostOut<A, D, S, I>,
+    pub per_in: PerIn<A, D, S, I>,
+    pub per_out: PerOut<A, D, S, I>,
+}
+
+/// Make a link for clients that are units. Every channel of the link
+/// is made here, as [`axi`] makes them, but the two client ends are
+/// handed out as the channel ends themselves.
+#[allow(clippy::type_complexity)]
+pub fn axi_units<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+>() -> UnitLink<A, D, S, I> {
+    // The five AXI channels, host to peripheral and back.
+    let (aw_tx, aw_rx) = chan::<Aw<A, I>, DefaultClock>();
+    let (ar_tx, ar_rx) = chan::<Ar<A, I>, DefaultClock>();
+    let (w_tx, w_rx) = chan::<W<D, S>, DefaultClock>();
+    let (b_tx, b_rx) = chan::<B<I>, DefaultClock>();
+    let (r_tx, r_rx) = chan::<R<D, I>, DefaultClock>();
+    // The host client's channels.
+    let (issue_tx, issue_rx) = chan::<Issue<A>, DefaultClock>();
+    let (wbeat_tx, wbeat_rx) = chan::<W<D, S>, DefaultClock>();
+    let (grant_tx, grant_rx) = chan::<Grant<I>, DefaultClock>();
+    let (done_tx, done_rx) = chan::<Done<I>, DefaultClock>();
+    let (rdata_tx, rdata_rx) = chan::<R<D, I>, DefaultClock>();
+    let (release_tx, release_rx) = chan::<Grant<I>, DefaultClock>();
+    // The peripheral client's channels.
+    let (req_tx, req_rx) = chan::<PerReq<A, I>, DefaultClock>();
+    let (wd_tx, wd_rx) = chan::<W<D, S>, DefaultClock>();
+    let (ans_tx, ans_rx) = chan::<Answer<I>, DefaultClock>();
+    let (rb_tx, rb_rx) = chan::<R<D, I>, DefaultClock>();
+    UnitLink {
+        host_client: (
+            issue_tx, wbeat_tx, release_tx, grant_rx, done_rx, rdata_rx,
+        ),
+        per_client: (req_rx, wd_rx, ans_tx, rb_tx),
+        host_in: (issue_rx, wbeat_rx, b_rx, r_rx, release_rx),
+        host_out: (aw_tx, ar_tx, w_tx, grant_tx, done_tx, rdata_tx),
+        per_in: (aw_rx, ar_rx, w_rx, ans_rx, rb_rx),
+        per_out: (req_tx, wd_tx, b_tx, r_tx),
+    }
+}
+
 /// A link, as [`axi`] makes it: the two client ends, and the ports of
 /// the two units between them. A design joins [`AxiHost`] and
 /// [`AxiPer`] on those ports, or a unit of its own with the same
@@ -524,51 +611,33 @@ pub fn axi<
     const I: usize,
     const NIDS: usize,
 >() -> Link<A, D, S, I, NIDS> {
-    // The five AXI channels, host to peripheral and back.
-    let (aw_tx, aw_rx) = chan::<Aw<A, I>, DefaultClock>();
-    let (ar_tx, ar_rx) = chan::<Ar<A, I>, DefaultClock>();
-    let (w_tx, w_rx) = chan::<W<D, S>, DefaultClock>();
-    let (b_tx, b_rx) = chan::<B<I>, DefaultClock>();
-    let (r_tx, r_rx) = chan::<R<D, I>, DefaultClock>();
-    // The host client's channels.
-    let (issue_tx, issue_rx) = chan::<Issue<A>, DefaultClock>();
-    let (wbeat_tx, wbeat_rx) = chan::<W<D, S>, DefaultClock>();
-    let (grant_tx, grant_rx) = chan::<Grant<I>, DefaultClock>();
-    let (done_tx, done_rx) = chan::<Done<I>, DefaultClock>();
-    let (rdata_tx, rdata_rx) = chan::<R<D, I>, DefaultClock>();
-    let (release_tx, release_rx) = chan::<Grant<I>, DefaultClock>();
-    // The peripheral client's channels.
-    let (req_tx, req_rx) = chan::<PerReq<A, I>, DefaultClock>();
-    let (wd_tx, wd_rx) = chan::<W<D, S>, DefaultClock>();
-    let (ans_tx, ans_rx) = chan::<Answer<I>, DefaultClock>();
-    let (rb_tx, rb_rx) = chan::<R<D, I>, DefaultClock>();
+    let u = axi_units::<A, D, S, I>();
+    let (issue, wbeat, release, grant, done, rdata) = u.host_client;
+    let (req, wd, ans, rb) = u.per_client;
     Link {
         host: Host {
-            issue: issue_tx,
-            wbeat: wbeat_tx,
-            grant: grant_rx,
+            issue,
+            wbeat,
+            grant,
             inbox: Rc::new(Inbox {
-                done: done_rx,
-                rdata: rdata_rx,
-                release: release_tx,
+                done,
+                rdata,
+                release,
                 slots: RefCell::new(vec![Slot::default(); NIDS]),
                 freed: RefCell::new(VecDeque::new()),
                 drained: Cell::new(u64::MAX),
             }),
         },
         per: Per {
-            req: req_rx,
-            wd: wd_rx,
-            port: Rc::new(Port {
-                ans: ans_tx,
-                rb: rb_tx,
-            }),
+            req,
+            wd,
+            port: Rc::new(Port { ans, rb }),
             gathering: Rc::new(Cell::new(false)),
         },
-        host_in: (issue_rx, wbeat_rx, b_rx, r_rx, release_rx),
-        host_out: (aw_tx, ar_tx, w_tx, grant_tx, done_tx, rdata_tx),
-        per_in: (aw_rx, ar_rx, w_rx, ans_rx, rb_rx),
-        per_out: (req_tx, wd_tx, b_tx, r_tx),
+        host_in: u.host_in,
+        host_out: u.host_out,
+        per_in: u.per_in,
+        per_out: u.per_out,
     }
 }
 

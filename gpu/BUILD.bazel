@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+# A minimal GPU in TxHDL: a rasteriser that reads a display list and
+# writes pixels into memory over AXI, the framebuffer behind the bus,
+# and the demonstration that renders a scene and shows it.
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "gpu",
+    srcs = [
+        "src/fb.rs",
+        "src/image.rs",
+        "src/lib.rs",
+        "src/model.rs",
+        "src/op.rs",
+        "src/raster.rs",
+        "src/scene.rs",
+        "src/sim.rs",
+    ],
+    crate_name = "gpu",
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# The sources by name, for the documents' listings.
+filegroup(
+    name = "sources",
+    srcs = glob(["src/*.rs"]),
+)
+
+# Render the scene and show it:  bazel run //gpu:demo
+rust_binary(
+    name = "demo",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    deps = [
+        ":gpu",
+        "//lib:txhdl",
+    ],
+)
+
+# The traced run, small enough to draw and to replay:
+#   bazel run //gpu:trace
+rust_binary(
+    name = "trace",
+    srcs = ["src/trace.rs"],
+    edition = "2021",
+    deps = [
+        ":gpu",
+        "//lib:txhdl",
+    ],
+)
+
+# The hardware against the model, pixel by pixel.
+rust_test(
+    name = "gpu_test",
+    crate = ":gpu",
+    edition = "2021",
+)

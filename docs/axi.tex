@@ -233,6 +233,36 @@ ports and joins that instead. A peripheral that is real hardware may
 also ignore \code{AxiPer} altogether and read the five AXI channels
 directly, which is what a memory controller does.
 
+\section{A Client That Is Hardware}
+\label{sec:a-hardware}
+
+\code{Host} and \code{Per} are simulation-side objects. \code{Host}
+keeps an inbox of answers and hands out futures; \code{Per} gathers a
+write's beats into a vector; \code{Open} is a table keyed by
+identifier and \code{serve} starts as many processes as it is asked
+for. None of that lowers, and none of it is meant to: they are what a
+testbench, or a model, or the software side of a design holds.
+
+Underneath them are channels, and a client written as a unit holds
+those channel ends itself. On the host side they are the issue
+channel, the write beats and the release going out, and the grant,
+the write responses and the read beats coming back; on the peripheral
+side, the requests and write beats coming in and the answers and read
+beats going out. \code{axi\_units} makes a link and hands those out
+under the names \code{HostClient} and \code{PerClient}, which is the
+same link \code{axi} makes, with the two ends unwrapped.
+
+\begin{lstlisting}[style=ascii,frame=none,numbers=none]
+  axi()        -> Host / Per     a client that is a testbench
+  axi_units()  -> HostClient /   a client that is a unit, and
+                  PerClient      lowers with the rest of a design
+\end{lstlisting}
+
+A rasteriser written this way is the GPU's~\cite{gpu}, and it is the
+first client of this link that is hardware. Nothing about the link
+changes between the two: the same two trackers, the same five AXI
+channels, the same identifiers.
+
 \section{Peer to Peer}
 \label{sec:a-peer}
 
@@ -324,6 +354,10 @@ F.~Filmar and D.~Janković, ``TxHDL by example,'' project repository
 \bibitem{station}
 F.~Filmar and D.~Janković, ``A reservation station in TxHDL,''
 project repository \code{HDL/txhdl}, \code{//docs:station}, 2026.
+
+\bibitem{gpu}
+F.~Filmar and D.~Janković, ``A minimal GPU in TxHDL,'' project
+repository \code{HDL/txhdl}, \code{//docs:gpu}, 2026.
 
 \bibitem{cover}
 F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
