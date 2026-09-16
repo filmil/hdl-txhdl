@@ -9,6 +9,7 @@
 //!   hardware is checked against.
 //! - [`image`]: the framebuffer as a PPM file and as colour on a
 //!   terminal.
+pub mod dl;
 pub mod fb;
 pub mod image;
 pub mod model;

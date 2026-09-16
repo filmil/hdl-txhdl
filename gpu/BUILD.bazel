@@ -9,6 +9,7 @@ package(default_visibility = ["//visibility:public"])
 rust_library(
     name = "gpu",
     srcs = [
+        "src/dl.rs",
         "src/fb.rs",
         "src/image.rs",
         "src/lib.rs",
