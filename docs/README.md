@@ -39,6 +39,7 @@ Sixteen documents are typeset here, and `cover.tex` names them all:
 `gpu.tex` is the minimal GPU on that link, `//docs:gpu`, with the picture it drew;
 `noc.tex` is the network on chip, `//docs:noc`, nodes on a lattice with AXI at their exits;
 `stats.tex` is the repository in numbers, a snapshot, `//docs:stats`;
+`dynamics.tex` is how the project was built, with its timeline chart, `//docs:dynamics`;
 `//docs:all` concatenates them all, in that order, into `txhdl.pdf`.
 `housestyle.tex` is the preamble they all share, so they cannot drift apart
 in font, listing style or figure style.

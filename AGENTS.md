@@ -76,6 +76,13 @@ all under `//docs`:
 * `//docs:stats` is the repository in numbers, lines per topic,
   measured once on September 13, 2026, and typed in; it is not kept up
   to date, and `tools/repostats.sh` measures again.
+* `//docs:dynamics` is how the work went rather than what it is: the
+  project's timeline measured from its own history, with a Gantt
+  chart of the bands of work and what each needed before it could
+  begin.
+  `tools/timeline` extracts the data into `docs/timeline.tsv` by
+  hand, because a Bazel action has no repository to read, and
+  `//tools/gantt` draws it at build time.
 * `//docs:all` is every document above in that order, one PDF with a
   bookmark per document.
 

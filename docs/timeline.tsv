@@ -1,0 +1,33 @@
+# The project's timeline, from its own history.
+# Written by tools/timeline/main.go; do not edit.
+# The axis: every day the project was worked on.
+day	2026-05-04	2
+day	2026-05-05	14
+day	2026-05-11	11
+day	2026-05-14	2
+day	2026-05-16	1
+day	2026-09-08	8
+day	2026-09-09	1
+day	2026-09-11	71
+day	2026-09-12	57
+day	2026-09-13	13
+day	2026-09-14	38
+day	2026-09-16	21
+# A band each: name, what it needs, then a count per
+# day it was worked on.
+task	The specification		2026-05-04:1,2026-09-08:2,2026-09-13:1
+task	Values and units	The specification	2026-09-11:18,2026-09-12:3,2026-09-14:5,2026-09-16:1
+task	Traces	Values and units	2026-09-11:17,2026-09-12:2,2026-09-14:3,2026-09-16:1
+task	The lowering	Values and units	2026-09-11:20,2026-09-12:6,2026-09-14:14,2026-09-16:2
+task	Examples	Values and units	2026-09-11:23,2026-09-12:8,2026-09-14:13,2026-09-16:2
+task	The documents	Examples	2026-09-08:6,2026-09-09:1,2026-09-11:45,2026-09-12:36,2026-09-13:10,2026-09-14:25,2026-09-16:11
+task	Vreteno	The lowering	2026-09-11:7,2026-09-12:18,2026-09-14:7,2026-09-16:5
+task	Foreign units	The lowering	2026-09-12:2,2026-09-16:1
+task	Synthesis and the board	Vreteno	2026-09-11:2,2026-09-12:6,2026-09-13:4,2026-09-16:1
+task	Parts	The lowering	2026-09-12:2,2026-09-14:7,2026-09-16:1
+task	The AXI link	Parts	2026-09-16:6
+task	The AXI router	The AXI link	2026-09-16:1
+task	The devices	Vreteno	2026-09-12:6,2026-09-14:7,2026-09-16:3
+task	A GPU	The AXI link	2026-09-16:2
+task	Rust for the core	Vreteno	2026-09-16:3
+task	C++ for the core	Rust for the core	2026-09-16:2

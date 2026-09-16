@@ -1358,6 +1358,42 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# The project's timeline, drawn from the data `//tools/timeline`
+# extracted from the repository's own history. The extraction is by
+# hand, because a Bazel action has no repository to read; the drawing
+# is the build's, so the chart in the document is never a picture
+# somebody pasted in.
+genrule(
+    name = "gantt_tex",
+    srcs = ["timeline.tsv"],
+    outs = ["gantt.tex"],
+    cmd = "$(location //tools/gantt) $(location timeline.tsv) > $@",
+    tools = ["//tools/gantt"],
+)
+
+# The numbers the document quotes, as TeX macros, so its prose cannot
+# drift from the chart beside it.
+genrule(
+    name = "timeline_counts",
+    srcs = ["timeline.tsv"],
+    outs = ["timeline_counts.tex"],
+    cmd = "$(location //tools/gantt) --counts $(location timeline.tsv) > $@",
+    tools = ["//tools/gantt"],
+)
+
+# How the work actually went: the timeline and the chart.
+latex_document(
+    name = "dynamics",
+    main = "dynamics.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":gantt_tex",
+        ":timeline_counts",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # From zero: the blinky workspace under //tutorial/blinky, run by
 # the build, its printout and its netlist included.
 genrule(
@@ -1529,6 +1565,7 @@ combined_pdf(
         "Vreteno: An RV32IM Core in TxHDL",
         "TxHDL: A Hardware Description Language That Is a Rust Library",
         "TxHDL by the Numbers",
+        "The Dynamics of a Project",
     ],
     parts = [
         ":cover",
@@ -1547,5 +1584,6 @@ combined_pdf(
         ":vreteno",
         ":paper",
         ":stats",
+        ":dynamics",
     ],
 )

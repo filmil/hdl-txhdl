@@ -1,0 +1,208 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% The project's dynamics: how the work actually went. Built by
+% //docs:dynamics. One column, because the chart is wide.
+\documentclass[journal,onecolumn,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\normalsize}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\input{timeline_counts}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{The Dynamics of a Project}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{This document is about how TxHDL was built rather than what
+it is. What it is, is in the paper~\cite{paper}; the
+cover~\cite{cover} lists every document. The chart and every number
+here are measured from the repository's own history at build time, by
+\code{//tools/timeline} and \code{//tools/gantt}, and not typed in.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{The Dynamics of a Project}{Filmar and Janković: Dynamics}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A hardware description language, its runtime, its lowering to two
+netlist languages, a RISC-V core that runs on an FPGA, an AXI bus
+with a router, a small GPU, two compiler toolchains for the core, and
+sixteen documents, were written in \ganttdays{} days of work spread
+over four months. This is the shape of those \ganttdays{} days. It is
+not a narrative of intentions: every bar in the chart is commits that
+touched particular files on particular days, measured from the
+repository at build time. Three things are visible in it that a plan
+would not have predicted. The specification came four months before
+the first line of the runtime, and nothing in between. The
+implementation was not staged but simultaneous, because a standing
+rule of the project requires every concept to enter the runtime, an
+example and a document in the same change, so a feature is never a
+bar in one band. And the parts that look like foundations, the bus
+and the toolchains, are the youngest things in the tree.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Software process, project history, hardware description languages,
+repository mining.
+\end{IEEEkeywords}
+
+\section{What Is Measured}
+\label{sec:d-what}
+
+A band of the chart is a set of paths, and a block is a day on which
+a commit touched one of them, shaded by how many did. Paths rather
+than commit messages, because a path is what a change actually moved
+and a message is what it said it moved. The axis is the days the
+project was worked on and not the calendar, for a reason
+Section~\ref{sec:d-gap} gives.
+
+What is not measured is the arrows. A repository records what changed
+and never why it could not have changed sooner, so the dependencies
+are stated in \code{//tools/timeline} by hand and are the one part of
+the picture that is a claim rather than a measurement. They are the
+claims the rest of the documents already make: that the lowering
+needed values and units first, that the core needed the lowering,
+that the board needed the core, that the router needed the link, and
+that the C++ toolchain reused what the Rust one had built.
+
+\section{The Four Month Gap}
+\label{sec:d-gap}
+
+The project has two lives. \ganttbefore{} commits over
+\ganttbeforedays{} days in May are the specification: the language
+argued out in prose, with no runtime under it. Then \ganttgapdays{}
+days in which nothing was committed at all. Then \ganttafter{}
+commits over \ganttafterdays{} days in September, which is
+everything else in the tree. The gap is not stated here but found:
+\code{//tools/gantt} takes the longest stretch between two working
+days and counts what falls on either side of it.
+
+That is why the chart's axis is working days rather than dates. On a
+calendar the four idle months would be most of the picture and the
+week that holds nine commits in ten would be a smudge a centimetre
+wide. The gap is a fact about the project and it is said here in
+words, where a reader can weigh it, rather than drawn as an expanse
+of nothing.
+
+The gap also explains why the specification band is so thin. It was
+finished before the rest began, and it was touched three times
+afterwards: twice to publish it as a hermetic article, and once for a
+licence header. A document nobody edits is either finished or
+forgotten, and which of the two it is cannot be measured from a
+repository at all.
+
+\begin{figure*}[t]
+\centering
+\input{gantt.tex}
+\caption{The project by working day. A block is a day on which at
+least one commit touched that band's files, shaded by how many did;
+the count under each date is the commits of that day across the whole
+tree. The arrows are what a band needed before it could begin. The
+axis is working days and not the calendar, so the break marks where
+it was cut and says what the cut stands for; every other step between
+two columns is a night or a weekend. Both the cut's position and its
+length are found from the history rather than chosen.}
+\label{fig:d-gantt}
+\end{figure*}
+
+\section{Everything At Once}
+\label{sec:d-together}
+
+The striking thing in Fig.~\ref{fig:d-gantt} is how little of it
+looks like a schedule. The runtime, the lowering, the examples and
+the documents are all active on the same four days. A plan would have
+staged them, and the plan would have been wrong.
+
+The cause is a rule the project set itself before any of this was
+written, stated in \code{AGENTS.md} and quoted in the
+paper~\cite{paper}: a concept enters the runtime, a compiled example
+and the documents in the same change, or the change is not finished.
+The rule was adopted to stop documentation drifting from code. Its
+effect on the shape of the work is that a feature is never a bar in
+one band. Adding memories to the lowering, to take one day's work,
+moved \code{lib/macros}, \code{lib/examples} and \code{docs} in the
+same hour, and the chart can only show that as four bands lit at
+once.
+
+So the bands are not phases. They are layers, and the project moved
+through all of them on every feature. Whether that is a good way to
+work is not something a chart can answer; what the chart shows is
+that the rule was kept.
+
+The documents band is the widest and the darkest, with
+\ganttdocs{} commits against \ganttcommits{} in the whole tree.
+Some of that is the rule above. The rest is that this project
+produces documents as its output and not as its paperwork: sixteen
+of them, built from the tree at every commit, with every listing
+included from a file and every figure drawn from a run.
+
+\section{The Foundations Came Last}
+\label{sec:d-last}
+
+The bus, the router, the GPU and the two toolchains are all on the
+last working day, and each of them is the kind of thing a plan puts
+at the bottom.
+
+That order is not an accident of enthusiasm. Each of them needed
+something the project did not have until late. The AXI link needed
+channels to be hardware, which is the \code{Buffer} part, which
+needed the lowering to handle a send under a condition. The router
+needed the link. The core moving onto AXI needed the router. The C++
+toolchain needed the image tool and the linker script that the Rust
+toolchain had made, and the second toolchain took a fraction of the
+first's effort because of it.
+
+The pattern is worth naming because it is the opposite of the usual
+advice. The project did not build a bus and then a processor on it.
+It built a processor on a bus of its own, ran it on an FPGA, and only
+then wrote the standard bus, at which point the processor's own bus
+was deleted. The core was the thing that proved the language, and a
+standard bus is a convenience that a proof does not need.
+
+\section{What A Repository Cannot Say}
+\label{sec:d-cannot}
+
+Three things are missing from the chart and no amount of mining would
+recover them.
+
+The first is time not spent committing. A day with seventy-one
+commits and a day with two are two very different days, and the chart
+says so, but neither says how long anyone sat at it.
+
+The second is the work that failed. The tree keeps its dead ends on
+purpose, as probes under
+\code{experiments/rust\_embedding/}, and those are in the chart as
+ordinary commits, indistinguishable from the work that succeeded. A
+probe whose answer was no cost as much to write as one whose answer
+was yes.
+
+The third is order within a day. Almost every commit here landed on a
+day with dozens of others, so the chart's smallest unit is far
+coarser than the work's. An hour-by-hour axis was tried and
+discarded: it is accurate and unreadable, which is the usual fate of
+a chart that refuses to summarise.
+
+\begin{thebibliography}{9}
+
+\bibitem{paper}
+F.~Filmar and D.~Janković, ``TxHDL: A hardware description language
+that is a Rust library,'' project repository \code{HDL/txhdl},
+\code{//docs:paper}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}
