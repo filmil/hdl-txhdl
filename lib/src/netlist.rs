@@ -1179,6 +1179,10 @@ impl Lowered {
     /// This unit's entity and its children's, without the channel
     /// entity, which the outermost unit puts first once.
     fn vhdl_in(&self) -> String {
+        // A foreign entity comes as its own source.
+        if self.foreign.is_some() {
+            return String::new();
+        }
         let name = &self.name;
         let ty = |w: usize| {
             if w == 1 {
@@ -1214,8 +1218,11 @@ impl Lowered {
         // The children's entities come first, since an entity is
         // analysed before it is instantiated.
         for inst in &self.instances {
-            out.push_str(&inst.unit.vhdl_in());
-            out.push('\n');
+            let child = inst.unit.vhdl_in();
+            if !child.is_empty() {
+                out.push_str(&child);
+                out.push('\n');
+            }
         }
         out.push_str(
             "library ieee;\nuse ieee.std_logic_1164.all;\n\
@@ -1306,6 +1313,48 @@ impl Lowered {
                 _ => writeln!(out, "  signal {n} : {};", ty(*w)).unwrap(),
             }
         }
+        // A foreign child is a component, declared once per module: a
+        // Verilog module is reached from VHDL no other way, and an
+        // entity from elsewhere may not be in `work`.
+        let mut declared: Vec<&str> = Vec::new();
+        for inst in &self.instances {
+            let Some(f) = &inst.unit.foreign else {
+                continue;
+            };
+            if declared.contains(&f.module.as_str()) {
+                continue;
+            }
+            declared.push(&f.module);
+            let generics: Vec<String> = f
+                .params
+                .iter()
+                .map(|(p, _)| format!("{p} : integer"))
+                .collect();
+            let ports: Vec<String> = f
+                .clocks
+                .iter()
+                .map(|(p, _)| format!("{p} : in std_logic"))
+                .chain(inst.unit.ports.iter().map(|(p, k, w)| {
+                    let dir = match k {
+                        Kind::Out => "out",
+                        Kind::Pad => "inout",
+                        _ => "in",
+                    };
+                    format!("{p} : {dir} {}", logic(*w))
+                }))
+                .collect();
+            writeln!(out, "  component {}", f.module).unwrap();
+            if !generics.is_empty() {
+                writeln!(out, "    generic ({});", generics.join("; "))
+                    .unwrap();
+            }
+            writeln!(
+                out,
+                "    port (\n      {}\n    );\n  end component;",
+                ports.join(";\n      ")
+            )
+            .unwrap();
+        }
         writeln!(out, "begin").unwrap();
         for (n, k, w, c) in &self.nets {
             if matches!(k, Kind::Tx | Kind::Rx) {
@@ -1324,12 +1373,60 @@ impl Lowered {
         // A unit of units: each child an instance of its entity,
         // joined port by port to the nets and the parent's ports.
         for inst in &self.instances {
-            let mut conns: Vec<String> = inst
-                .unit
-                .clocks()
-                .iter()
-                .map(|c| format!("{c} => {c}"))
-                .collect();
+            let mut conns: Vec<String> = match &inst.unit.foreign {
+                Some(f) => f
+                    .clocks
+                    .iter()
+                    .map(|(p, c)| format!("{p} => {c}"))
+                    .collect(),
+                None => inst
+                    .unit
+                    .clocks()
+                    .iter()
+                    .map(|c| format!("{c} => {c}"))
+                    .collect(),
+            };
+            if let Some(f) = &inst.unit.foreign {
+                // The component's vectors are `std_logic_vector` and the
+                // netlist's are `unsigned`, so a vector crosses with a
+                // conversion: on the actual for an input, on the formal
+                // for an output. A pad is `std_logic_vector` on both.
+                let joins = self.joins(inst);
+                for (a, b) in &joins {
+                    let (_, k, w) = inst
+                        .unit
+                        .ports
+                        .iter()
+                        .find(|(n, _, _)| n == a)
+                        .expect("a joined port is a port of the child");
+                    conns.push(match k {
+                        Kind::In if *w > 1 => {
+                            format!("{a} => std_logic_vector({b})")
+                        }
+                        Kind::Out if *w > 1 => format!("unsigned({a}) => {b}"),
+                        _ => format!("{a} => {b}"),
+                    });
+                }
+                let generic = if f.params.is_empty() {
+                    String::new()
+                } else {
+                    let gs: Vec<String> = f
+                        .params
+                        .iter()
+                        .map(|(p, v)| format!("{p} => {v}"))
+                        .collect();
+                    format!(" generic map ({})", gs.join(", "))
+                };
+                writeln!(
+                    out,
+                    "  {} : {}{generic} port map (\n    {}\n  );",
+                    inst.name,
+                    f.module,
+                    conns.join(",\n    ")
+                )
+                .unwrap();
+                continue;
+            }
             for (a, b) in self.joins(inst) {
                 conns.push(format!("{a} => {b}"));
             }
