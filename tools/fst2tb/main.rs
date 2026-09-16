@@ -305,7 +305,16 @@ fn main() {
          architecture sim of {entity}_tb is\n"
     ));
     for (n, d, w) in &ports {
-        if !inside(d) {
+        // A pad is left undriven here and never checked: the trace
+        // carries nothing on it, and the module inside drives it.
+        if d == "inout" {
+            let t = if *w == 1 {
+                "std_logic".to_string()
+            } else {
+                format!("std_logic_vector({} downto 0)", w - 1)
+            };
+            o.push_str(&format!("  signal {n} : {t};\n"));
+        } else if !inside(d) {
             let init = if empty_ready(n, d) {
                 "'1'"
             } else if *w == 1 {
