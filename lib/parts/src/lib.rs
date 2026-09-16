@@ -5,6 +5,12 @@
 //! buffer of two between two units, is the first part here; a FIFO
 //! with a channel at each end and a reservation station are the
 //! others.
+
+// As in the runtime crate: every public item is documented and the
+// build refuses one that is not. A part written by a macro is
+// documented by its generator, so the text arrives with the code.
+#![deny(missing_docs)]
+
 pub mod buffer;
 pub mod bus;
 pub mod fifo;

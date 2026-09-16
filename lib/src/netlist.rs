@@ -145,7 +145,10 @@ fn range(w: usize) -> String {
 /// with a width, or nothing. Every type a unit may hold implements it,
 /// and `#[derive(Trace)]` gives a unit its `Fields` from them.
 pub trait Port {
+    /// What this field is to a netlist, or `None` for a field that
+    /// is neither state nor an end of a wire.
     const KIND: Option<Kind> = None;
+    /// How wide it is, in bits.
     const WIDTH: usize = 0;
     /// Words, for a memory; zero for everything else.
     const DEPTH: usize = 0;
@@ -196,6 +199,8 @@ impl<const N: usize> Port for crate::types::U<N> {}
 /// A unit's fields by name, kind, width and depth. Derived with
 /// `Trace`.
 pub trait Fields {
+    /// Every field of the unit, as its name, what it is, how wide it
+    /// is, and how many words it holds if it is a memory.
     fn fields() -> Vec<(&'static str, Option<Kind>, usize, usize)>;
 }
 
@@ -235,7 +240,9 @@ pub enum Expr {
     /// `+ - * & | && || == != < > <= >=`, spelled as Verilog spells
     /// them.
     Bin(&'static str, Box<Expr>, Box<Expr>),
+    /// Bitwise negation.
     Not(Box<Expr>),
+    /// A choice: the condition, what it is when true, when false.
     Cond(Box<Expr>, Box<Expr>, Box<Expr>),
     /// A bit of a value, or a word of a memory.
     Index(Box<Expr>, Box<Expr>),
@@ -245,11 +252,14 @@ pub enum Expr {
     Cat(Box<Expr>, Box<Expr>),
     /// `sext::<M>` and `zext::<M>`: to `M` bits, by the top bit or by
     /// zeros.
+    /// Sign extension to the stated width.
     Sext(Box<Expr>, usize),
+    /// Zero extension, or truncation, to the stated width.
     Zext(Box<Expr>, usize),
 }
 
 impl Expr {
+    /// A reference to a signal by name: a register, a port, a wire.
     pub fn name(s: &str) -> Expr {
         Expr::Name(s.to_string())
     }
@@ -303,7 +313,9 @@ impl Expr {
 /// memory, `m.at(addr)`.
 #[derive(Clone, Debug)]
 pub enum Target {
+    /// A register, or an output port, driven whole.
     Name(String),
+    /// One word of a memory: the memory's name and the address.
     Word(String, Expr),
 }
 
@@ -331,8 +343,11 @@ pub enum Stmt {
 /// falling edge of its clock, and the statements after the wait. A
 /// clocked block in the netlist.
 pub struct Process {
+    /// The clock this process waits on.
     pub clock: &'static str,
+    /// Whether it waits for the falling edge rather than the rising.
     pub falling: bool,
+    /// What it does at that edge.
     pub body: Vec<Stmt>,
 }
 
@@ -340,13 +355,18 @@ pub struct Process {
 /// its registers from its fields, and its processes, one per loop of
 /// `run`. The two emitters render it.
 pub struct Lowered {
+    /// What the module or entity is called.
     pub name: String,
+    /// The unit's fields, as [`Fields::fields`] gives them: the
+    /// registers and memories the netlist declares.
     pub fields: Vec<(&'static str, Option<Kind>, usize, usize)>,
+    /// The ports, from `run`'s signature: name, what it is, width.
     pub ports: Vec<(String, Kind, usize)>,
     /// The `let` names of the loops that are computed, each a wire
     /// driven by its expression; a read of a port or register is an
     /// alias and not here.
     pub wires: Vec<(String, Expr)>,
+    /// One per loop of `run`: a clocked block in the netlist.
     pub procs: Vec<Process>,
     /// A memory's first words, as `Mem::with` gave them: a program.
     pub init: Vec<(String, Vec<u128>)>,
@@ -370,8 +390,12 @@ pub struct Lowered {
 /// lowering, and what each of its ports is joined to in the parent,
 /// a net or a port of the parent.
 pub struct Instance {
+    /// The field the child lives in, which names the instance.
     pub name: String,
+    /// The child's own lowering, rendered as a module of its own.
     pub unit: Lowered,
+    /// What each of the child's ports is joined to: the child's port
+    /// name, and the parent's net or port.
     pub conns: Vec<(String, String)>,
 }
 
@@ -379,6 +403,7 @@ pub struct Instance {
 /// child's lowering through the child's type; the inherent `lowered`
 /// keeps its name, and this one differs so the two never shadow.
 pub trait Lower {
+    /// This unit's lowering, under the module name given.
     fn lowered_as(name: &str) -> Lowered;
 }
 

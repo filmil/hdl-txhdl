@@ -5,9 +5,13 @@
 
 use crate::types::{Bit, U};
 
+/// The low thirty-two bits of a sixty-four bit value: the half of a
+/// product a multiply keeps when it keeps the low one.
 pub fn low_half(x: U<64>) -> U<32> {
     x.slice::<0, 32>()
 }
+
+/// The high thirty-two bits: the half `mulh` and its relatives keep.
 pub fn high_half(x: U<64>) -> U<32> {
     x.slice::<32, 32>()
 }

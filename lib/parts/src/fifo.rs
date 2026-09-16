@@ -15,11 +15,17 @@ use txhdl::{lower, with, Trace};
 /// holds the input off, and the output's `ready` is the channel's.
 /// Written in the lowered subset, so it is a netlist too.
 #[derive(Trace, Default)]
+///
+/// `T` is what it carries, `AW` the width of its pointers, and `D`
+/// how many words it holds, which must be `1 << AW`. `D` is stated
+/// rather than computed because an expression in a const parameter's
+/// position needs nightly Rust.
 pub struct Fifo<T: Transaction + Value, const AW: usize, const D: usize> {
     /// The words, `D` of them.
     pub mem: Mem<T, D>,
-    /// Where the oldest word is, and where the next lands.
+    /// Where the oldest word is: what the output offers.
     pub head: Reg<U<AW>>,
+    /// Where the next word to arrive lands.
     pub tail: Reg<U<AW>>,
     /// The pointers are equal when the FIFO is empty and when it is
     /// full; this says which.

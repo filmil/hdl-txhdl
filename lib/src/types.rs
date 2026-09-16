@@ -12,12 +12,16 @@
 /// leaves reset at a defined value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Bit {
+    /// Low.
     #[default]
     Zero,
+    /// High.
     One,
 }
 
 impl Bit {
+    /// A bit from a truth value, so that a compare, which yields
+    /// `bool`, can drive a signal.
     pub fn from_bool(b: bool) -> Self {
         if b {
             Bit::One
@@ -25,6 +29,7 @@ impl Bit {
             Bit::Zero
         }
     }
+    /// The other way: a bit as a condition an `if` can take.
     pub fn to_bool(self) -> bool {
         matches!(self, Bit::One)
     }
@@ -80,15 +85,24 @@ bit_ops!(BitAnd bitand &, BitOr bitor |, BitXor bitxor ^);
 /// the type exists.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Logic {
+    /// Uninitialised: nobody has driven this yet.
     #[default]
     U,
+    /// Unknown, and strongly driven: two drivers disagree.
     X,
+    /// Driven low.
     Zero,
+    /// Driven high.
     One,
+    /// High impedance: nobody is driving, on a bus that allows it.
     Z,
+    /// Unknown, and weakly driven: two weak drivers disagree.
     W,
+    /// Weakly low, a pull-down.
     L,
+    /// Weakly high, a pull-up.
     H,
+    /// Any value will do, for a synthesiser to choose.
     DontCare,
 }
 
@@ -148,6 +162,7 @@ impl Logic {
         }
     }
 
+    /// A two-valued bit as a nine-valued one, strongly driven.
     pub fn from_bit(b: Bit) -> Self {
         match b {
             Bit::Zero => Logic::Zero,
@@ -155,6 +170,8 @@ impl Logic {
         }
     }
 
+    /// Whether this is a definite zero or one, strongly or weakly.
+    /// Uninitialised, unknown, floating and don't-care are not.
     pub fn is_defined(self) -> bool {
         self.to_bit().is_some()
     }
@@ -165,6 +182,8 @@ impl Logic {
 pub struct U<const N: usize>(u128);
 
 impl<const N: usize> U<N> {
+    /// The width in bits, which is `N`. A derive reads it to lay a
+    /// compound value out, so every value type has one.
     pub const WIDTH: usize = N;
     const MASK: u128 = if N >= 128 {
         u128::MAX
@@ -172,12 +191,19 @@ impl<const N: usize> U<N> {
         (1u128 << N) - 1
     };
 
+    /// A value from its bits, truncated to `N` of them. Anything
+    /// above the width is dropped rather than refused, which is what
+    /// a register of `N` bits does with a wider number.
     pub const fn new(v: u128) -> Self {
         U(v & Self::MASK)
     }
+    /// The bits as a plain integer, for a testbench to print or
+    /// compare. Inside a lowered unit this reads as the value
+    /// itself, so it costs nothing in the netlist.
     pub const fn raw(self) -> u128 {
         self.0
     }
+    /// One bit of it, counting from zero at the least significant.
     pub fn bit(self, i: usize) -> Bit {
         Bit::from_bool((self.0 >> i) & 1 == 1)
     }
@@ -201,6 +227,9 @@ impl<const N: usize> U<N> {
         U::<LEN>::new(self.0 >> LO)
     }
 
+    /// `LEN` bits starting at `lo`, where `lo` is decided at run
+    /// time rather than in the type. `LEN` is still a parameter,
+    /// because the width of the result is the width of a wire.
     pub fn slice_at<const LEN: usize>(self, lo: usize) -> U<LEN> {
         U::<LEN>::new(self.0 >> lo)
     }
@@ -340,9 +369,12 @@ impl<const N: usize> U<N> {
     pub fn lt_signed(self, o: Self) -> Bit {
         Bit::from_bool(self.to_i().raw() < o.to_i().raw())
     }
+    /// The same bits read as two's complement. The bits do not move;
+    /// only what they are taken to mean does.
     pub fn to_i(self) -> I<N> {
         I::<N>::new(self.0 as i128)
     }
+    /// The same bits back again, read as unsigned.
     pub fn from_i(v: I<N>) -> Self {
         Self::new(v.raw() as u128)
     }
@@ -353,12 +385,17 @@ impl<const N: usize> U<N> {
 pub struct I<const N: usize>(i128);
 
 impl<const N: usize> I<N> {
+    /// The width in bits, which is `N`.
     pub const WIDTH: usize = N;
 
+    /// A value from a number, sign extended into `N` bits: what does
+    /// not fit is dropped and the top bit of what remains becomes the
+    /// sign, which is what a register of `N` bits holds.
     pub fn new(v: i128) -> Self {
         let shift = 128 - N;
         I((v << shift) >> shift)
     }
+    /// The value as a plain signed integer.
     pub const fn raw(self) -> i128 {
         self.0
     }
@@ -376,6 +413,8 @@ impl<const N: usize> std::ops::Add for I<N> {
 pub mod logic {
     use super::{Bit, Logic, U};
 
+    /// `N` nine-valued bits, least significant first: a bus whose
+    /// wires may be undriven or contended, which `U<N>` cannot say.
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub struct Vec<const N: usize>([Logic; N]);
 
@@ -386,12 +425,17 @@ pub mod logic {
     }
 
     impl<const N: usize> Vec<N> {
+        /// One bit of it, counting from zero at the least
+        /// significant.
         pub fn get(&self, i: usize) -> Logic {
             self.0[i]
         }
+        /// Drive one bit of it.
         pub fn set(&mut self, i: usize, v: Logic) {
             self.0[i] = v
         }
+        /// Whether every bit is a definite zero or one. A vector
+        /// that is not is one no number can be made of.
         pub fn all_defined(&self) -> bool {
             self.0.iter().all(|l| l.is_defined())
         }
@@ -406,6 +450,8 @@ pub mod logic {
             Some(U::<N>::new(acc))
         }
 
+        /// From a number: every bit strongly driven, so nothing is
+        /// uninitialised or floating.
         pub fn from_u(v: U<N>) -> Self {
             let mut out = [Logic::Zero; N];
             for i in 0..N {
@@ -414,6 +460,8 @@ pub mod logic {
             Vec(out)
         }
 
+        /// What two drivers on one wire come to, bit by bit, by the
+        /// IEEE 1164 table: two that disagree strongly give `X`.
         pub fn resolve(&self, other: &Self) -> Self {
             let mut out = [Logic::U; N];
             for i in 0..N {
@@ -422,6 +470,7 @@ pub mod logic {
             Vec(out)
         }
 
+        /// From two-valued bits, each strongly driven.
         pub fn from_bits(bits: [Bit; N]) -> Self {
             let mut out = [Logic::Zero; N];
             for i in 0..N {
@@ -437,7 +486,11 @@ pub mod logic {
 /// Derived for a struct of values, most significant field first, and
 /// for a fieldless enum, as the index of the variant.
 pub trait Value: Copy {
+    /// How many bits the value occupies on a wire. A lowering uses
+    /// it to size a port, and a derive sums it over a struct's
+    /// fields.
     const WIDTH: usize;
+    /// The bits, most significant first, in VCD's alphabet.
     fn vcd(self) -> String;
     /// The named parts of a compound value, each with its width, its
     /// bits and, for an enum, the names of its variants, so a waveform
@@ -460,9 +513,15 @@ pub trait Value: Copy {
 
 /// One field of a compound value in a trace.
 pub struct Part {
+    /// The field's name, which becomes the signal's name under the
+    /// value's own scope.
     pub name: &'static str,
+    /// How many bits it occupies.
     pub width: usize,
+    /// Its bits, most significant first, in VCD's alphabet.
     pub bits: String,
+    /// For an enum, its variants by index, so a viewer can name the
+    /// value rather than number it. None for anything else.
     pub names: Option<&'static [&'static str]>,
 }
 

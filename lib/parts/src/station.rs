@@ -12,7 +12,10 @@ use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 /// the value.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default)]
 pub struct Tagged<const TB: usize, T: Transaction + Value> {
+    /// Which line this belongs to. `TB` bits, so a station has
+    /// `1 << TB` lines and the tag is the line's index.
     pub tag: U<TB>,
+    /// What this input contributes to that line.
     pub value: T,
 }
 

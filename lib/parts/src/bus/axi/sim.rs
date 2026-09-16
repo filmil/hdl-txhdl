@@ -67,6 +67,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
         self.words.borrow().len()
     }
 
+    /// Whether it holds no words at all.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

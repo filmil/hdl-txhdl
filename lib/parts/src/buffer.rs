@@ -12,11 +12,24 @@ use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
 
+/// The language's channel as hardware: an elastic buffer of two, so
+/// a sender and a receiver that both run every cycle pass one
+/// transaction a cycle with `valid` and `ready` registered on both
+/// sides and no combinational path between the two units.
+///
+/// `W` is the width of what it carries, in bits. A channel of a
+/// struct is a channel of that struct's bits.
 #[derive(Trace, Default)]
 pub struct Buffer<const W: usize> {
+    /// The older of the two entries: what the receiver is offered.
     pub head: Reg<U<W>>,
+    /// Whether the head holds anything, which is the receiver's
+    /// `valid`.
     pub head_full: Reg<Bit>,
+    /// The younger entry, taken while the head waits to be read.
     pub tail: Reg<U<W>>,
+    /// Whether the tail holds anything. Its absence is the sender's
+    /// `ready`, so a full buffer is what stops a sender.
     pub tail_full: Reg<Bit>,
 }
 

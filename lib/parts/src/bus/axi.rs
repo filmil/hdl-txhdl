@@ -55,10 +55,16 @@ use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 /// A response, as AXI4 encodes it.
 #[derive(ValueDerive, Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub enum Resp {
+    /// The burst was served.
     #[default]
     Okay,
+    /// An exclusive access succeeded. Nothing here makes one.
     ExOkay,
+    /// The peripheral was reached and refused, or failed.
     SlvErr,
+    /// No peripheral has this address. The router answers this
+    /// itself, since a burst nobody answers leaves its client
+    /// waiting for ever.
     DecErr,
 }
 
@@ -66,10 +72,18 @@ pub enum Resp {
 /// default, since a burst that is not incrementing is the exception.
 #[derive(ValueDerive, Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub enum BurstKind {
+    /// Every beat at the same address: a port read or written
+    /// repeatedly rather than a range of memory.
     Fixed,
+    /// Each beat one transfer further on. The usual one.
     #[default]
     Incr,
+    /// Incrementing, but wrapping at a boundary the burst's length
+    /// and size set: how a cache line is fetched critical word
+    /// first.
     Wrap,
+    /// The fourth encoding, which AXI4 reserves. Nothing should send
+    /// it and nothing here does.
     Reserved,
 }
 
@@ -77,18 +91,41 @@ pub enum BurstKind {
 /// The address phase of a burst: every AXI4 field of `AW`, which are
 /// the fields of `AR` under other names, so one struct serves both
 /// channels and [`Aw`] and [`Ar`] name it as the channel does.
+///
+/// `A` is the address width and `I` the identifier width, both stated
+/// rather than computed; see the module's own documentation for why
+/// every width in this file is a parameter.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct Addr<const A: usize, const I: usize> {
+    /// Which burst this is. Answers carry it back, which is what
+    /// lets several be in flight and be answered out of order. The
+    /// tracker allocates it, so a client never writes one.
     pub id: U<I>,
+    /// The address the burst starts at.
     pub addr: U<A>,
     /// Beats in the burst, less one, as AXI counts them.
     pub len: U<8>,
+    /// Bytes per beat, as a power of two: 2 is four bytes. It is the
+    /// width of the transfer, which may be narrower than the data
+    /// channel but never wider.
     pub size: U<3>,
+    /// How the address moves from beat to beat.
     pub burst: BurstKind,
+    /// An exclusive or locked access. Nothing here implements one;
+    /// it is carried so that a peripheral which does can see it.
     pub lock: Bit,
+    /// What a cache between here and memory may do with this burst:
+    /// buffer it, allocate on it. AXI4's `AxCACHE`. Carried, not
+    /// acted on.
     pub cache: U<4>,
+    /// Privilege, security and whether this is an instruction fetch,
+    /// AXI4's `AxPROT`. A peripheral may refuse on it.
     pub prot: U<3>,
+    /// A quality-of-service hint for an interconnect that arbitrates
+    /// on it. The router here does not.
     pub qos: U<4>,
+    /// Which region of a peripheral that decodes several, AXI4's
+    /// `AxREGION`. The router here decodes on the address instead.
     pub region: U<4>,
 }
 
@@ -97,27 +134,49 @@ pub type Aw<const A: usize, const I: usize> = Addr<A, I>;
 /// The read address channel's beat. The same fields.
 pub type Ar<const A: usize, const I: usize> = Addr<A, I>;
 
-/// The write data channel's beat.
+/// The write data channel's beat. `D` is the data width and `S` the
+/// strobe width, which is `D / 8`.
+///
+/// It carries no identifier. AXI4 puts one on the address channels
+/// and not on this one, so a beat belongs to the oldest address phase
+/// that has not finished, and anything standing between a host and a
+/// peripheral has to keep them in that order.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct W<const D: usize, const S: usize> {
+    /// The word written.
     pub data: U<D>,
+    /// Which of its bytes are meant, a bit per lane. A byte whose
+    /// bit is low is not written, which is how a store narrower than
+    /// the bus leaves the rest of the word alone.
     pub strb: U<S>,
+    /// The last beat of this burst. The only way to know the burst
+    /// has ended, since the length was on the address phase.
     pub last: Bit,
 }
 
-/// The write response channel's beat.
+/// The write response channel's beat: one per write burst, whatever
+/// its length. `I` is the identifier width.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct B<const I: usize> {
+    /// The burst this answers.
     pub id: U<I>,
+    /// How it went.
     pub resp: Resp,
 }
 
-/// The read data channel's beat.
+/// The read data channel's beat: one per beat of the burst, each
+/// carrying its own response. `D` is the data width and `I` the
+/// identifier width.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct R<const D: usize, const I: usize> {
+    /// The burst this belongs to. Beats of different bursts may be
+    /// interleaved, and this is what sorts them out again.
     pub id: U<I>,
+    /// The word read.
     pub data: U<D>,
+    /// How this beat went. A burst may fail part way through.
     pub resp: Resp,
+    /// The last beat of this burst.
     pub last: Bit,
 }
 // end{beats}
@@ -130,29 +189,47 @@ pub struct R<const D: usize, const I: usize> {
 /// tracker's to allocate, which is why the client never writes one.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct Issue<const A: usize> {
+    /// Which address channel this goes out on: high for a read.
     pub read: Bit,
+    /// The address the burst starts at.
     pub addr: U<A>,
+    /// Beats in the burst, less one, as AXI counts them.
     pub len: U<8>,
+    /// Bytes per beat, as a power of two.
     pub size: U<3>,
+    /// How the address moves from beat to beat.
     pub burst: BurstKind,
+    /// An exclusive or locked access, carried and not acted on.
     pub lock: Bit,
+    /// The cacheability hints, AXI4's `AxCACHE`.
     pub cache: U<4>,
+    /// Privilege, security and instruction fetch, AXI4's `AxPROT`.
     pub prot: U<3>,
+    /// A quality-of-service hint.
     pub qos: U<4>,
+    /// The region of a peripheral that decodes several.
     pub region: U<4>,
 }
 
 /// The identifier the tracker allocated, told back to the client in
-/// the cycle the burst went out.
+/// the cycle the burst went out. `I` is the identifier width.
+///
+/// It travels the other way too: the client sends one back when it
+/// has taken that burst's answer, which is what frees the identifier
+/// for another burst.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct Grant<const I: usize> {
+    /// The identifier granted, or the one being given back.
     pub id: U<I>,
 }
 
-/// A write finished: what the tracker makes of a `B` beat.
+/// A write finished: what the tracker makes of a `B` beat. `I` is the
+/// identifier width.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct Done<const I: usize> {
+    /// The burst that finished.
     pub id: U<I>,
+    /// How it went.
     pub resp: Resp,
 }
 
@@ -160,23 +237,39 @@ pub struct Done<const I: usize> {
 /// whichever address channel carried it.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct PerReq<const A: usize, const I: usize> {
+    /// Whether this is a read. A peripheral answers a read on its
+    /// read beat channel and a write on its answer channel, so this
+    /// is the first thing it looks at.
     pub read: Bit,
+    /// The burst's identifier, which its answer must carry back.
     pub id: U<I>,
+    /// The address the burst starts at.
     pub addr: U<A>,
+    /// Beats in the burst, less one, as AXI counts them.
     pub len: U<8>,
+    /// Bytes per beat, as a power of two.
     pub size: U<3>,
+    /// How the address moves from beat to beat.
     pub burst: BurstKind,
+    /// An exclusive or locked access, carried and not acted on.
     pub lock: Bit,
+    /// The cacheability hints, AXI4's `AxCACHE`.
     pub cache: U<4>,
+    /// Privilege, security and instruction fetch, AXI4's `AxPROT`.
     pub prot: U<3>,
+    /// A quality-of-service hint.
     pub qos: U<4>,
+    /// The region of a peripheral that decodes several.
     pub region: U<4>,
 }
 
-/// A peripheral client's answer to a write.
+/// A peripheral client's answer to a write. `I` is the identifier
+/// width. A read is answered with beats instead, on the read channel.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct Answer<const I: usize> {
+    /// The burst being answered.
     pub id: U<I>,
+    /// How it went.
     pub resp: Resp,
 }
 
@@ -196,6 +289,13 @@ pub struct Answer<const I: usize> {
 /// turn falls on an identifier still outstanding waits, which is the
 /// backpressure that bounds how many transactions are in flight.
 /// Written in the lowered subset, so it is a netlist too.
+///
+/// `A`, `D`, `S` and `I` are the link's widths, which [`axi`] states.
+/// `NIDS` is this unit's own: how many identifiers it hands out, so
+/// `1 << I`, and therefore how many bursts may be in flight at once.
+/// It is a parameter rather than a computation because `U<{1 << I}>`
+/// needs nightly Rust, and it is the width of the register of
+/// outstanding identifiers, a bit each.
 // begin{hostunit}
 #[derive(Trace, Default)]
 pub struct AxiHost<
@@ -345,6 +445,10 @@ impl<
 /// The two address channels take turns, so neither starves the other
 /// however long one of them streams. Written in the lowered subset,
 /// so it is a netlist too.
+///
+/// `A`, `D`, `S` and `I` are the link's widths, which [`axi`] states.
+/// There is no `NIDS`: this end allocates no identifiers, it answers
+/// with the one each burst arrived under.
 // begin{perunit}
 #[derive(Trace, Default)]
 pub struct AxiPer<
@@ -475,7 +579,12 @@ pub type HostOut<
 );
 
 /// The ports of a peripheral tracker, what it reads.
-pub type PerIn<const A: usize, const D: usize, const S: usize, const I: usize> = (
+pub type PerIn<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+> = (
     Rx<Aw<A, I>>,
     Rx<Ar<A, I>>,
     Rx<W<D, S>>,
@@ -530,17 +639,31 @@ pub struct UnitLink<
     const S: usize,
     const I: usize,
 > {
+    /// The channel ends a host client that is hardware holds.
     pub host_client: HostClient<A, D, S, I>,
+    /// The channel ends a peripheral client that is hardware holds.
     pub per_client: PerClient<A, D, S, I>,
+    /// What the host tracker reads: give it to [`AxiHost::run`].
     pub host_in: HostIn<A, D, S, I>,
+    /// What the host tracker drives. Its first three are the `aw`,
+    /// `ar` and `w` a router takes.
     pub host_out: HostOut<A, D, S, I>,
+    /// What the peripheral tracker reads. Its first three are the
+    /// `aw`, `ar` and `w` a router drives.
     pub per_in: PerIn<A, D, S, I>,
+    /// What the peripheral tracker drives. Its last two are the `b`
+    /// and `r` a router takes.
     pub per_out: PerOut<A, D, S, I>,
 }
 
 /// Make a link for clients that are units. Every channel of the link
 /// is made here, as [`axi`] makes them, but the two client ends are
 /// handed out as the channel ends themselves.
+///
+/// `A`, `D`, `S` and `I` are the link's widths, as for [`axi`], which
+/// states what each means. There is no `NIDS` here because the
+/// tracker that allocates identifiers is a separate unit: a design
+/// gives that count to [`AxiHost`] when it names its type.
 #[allow(clippy::type_complexity)]
 pub fn axi_units<
     const A: usize,
@@ -593,9 +716,16 @@ pub struct Link<
     pub host: Host<A, D, S, I, NIDS>,
     /// The end a peripheral client holds.
     pub per: Per<A, D, S, I>,
+    /// What the host tracker reads: give it to [`AxiHost::run`].
     pub host_in: HostIn<A, D, S, I>,
+    /// What the host tracker drives. Its first three are the `aw`,
+    /// `ar` and `w` a router takes.
     pub host_out: HostOut<A, D, S, I>,
+    /// What the peripheral tracker reads. Its first three are the
+    /// `aw`, `ar` and `w` a router drives.
     pub per_in: PerIn<A, D, S, I>,
+    /// What the peripheral tracker drives. Its last two are the `b`
+    /// and `r` a router takes.
     pub per_out: PerOut<A, D, S, I>,
 }
 
@@ -603,6 +733,20 @@ pub struct Link<
 /// gets its two. Every channel of the link is made here: the five AXI
 /// channels between the trackers, and the transaction-level channels
 /// between each tracker and its client.
+///
+/// The five parameters are the link's widths, and every type in this
+/// module carries the same ones:
+///
+/// * `A`, the address width in bits.
+/// * `D`, the data width in bits.
+/// * `S`, the write strobe width: one bit per byte lane, so `D / 8`.
+/// * `I`, the identifier width in bits.
+/// * `NIDS`, how many identifiers there are, so `1 << I`.
+///
+/// `S` and `NIDS` are stated rather than computed from `D` and `I`
+/// because an expression in a const parameter's position, `U<{D /
+/// 8}>`, needs nightly Rust. A link whose `S` and `NIDS` disagree
+/// with its `D` and `I` will not behave.
 ///
 /// [`chan`]: txhdl::comp::chan
 #[allow(clippy::type_complexity)]
@@ -651,15 +795,23 @@ pub fn axi<
 /// ordinary incrementing burst of whole words uses.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Rd<const A: usize> {
+    /// The address the burst starts at.
     pub addr: U<A>,
     /// Beats in the burst, counted as beats and not as AXI's `len`.
     pub words: usize,
+    /// Bytes per beat, as a power of two.
     pub size: U<3>,
+    /// How the address moves from beat to beat.
     pub burst: BurstKind,
+    /// An exclusive or locked access, carried and not acted on.
     pub lock: Bit,
+    /// The cacheability hints, AXI4's `ARCACHE`.
     pub cache: U<4>,
+    /// Privilege, security and instruction fetch, AXI4's `ARPROT`.
     pub prot: U<3>,
+    /// A quality-of-service hint.
     pub qos: U<4>,
+    /// The region of a peripheral that decodes several.
     pub region: U<4>,
 }
 
@@ -678,13 +830,21 @@ impl<const A: usize> Rd<A> {
 /// is given, so it can never disagree with the beats that follow.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Wr<const A: usize> {
+    /// The address the burst starts at.
     pub addr: U<A>,
+    /// Bytes per beat, as a power of two.
     pub size: U<3>,
+    /// How the address moves from beat to beat.
     pub burst: BurstKind,
+    /// An exclusive or locked access, carried and not acted on.
     pub lock: Bit,
+    /// The cacheability hints, AXI4's `AWCACHE`.
     pub cache: U<4>,
+    /// Privilege and security, AXI4's `AWPROT`.
     pub prot: U<3>,
+    /// A quality-of-service hint.
     pub qos: U<4>,
+    /// The region of a peripheral that decodes several.
     pub region: U<4>,
 }
 
@@ -701,7 +861,10 @@ impl<const A: usize> Wr<A> {
 /// An answer to a burst: the response, and the words a read read.
 #[derive(Clone, Debug, Default)]
 pub struct Reply<const D: usize> {
+    /// How the burst went. A read that failed part way through
+    /// reports the response of its last beat.
     pub resp: Resp,
+    /// The words a read read, in order. Empty for a write.
     pub data: Vec<U<D>>,
 }
 
@@ -811,6 +974,12 @@ impl<const D: usize, const I: usize> Pending<D, I> {
 /// The host end of a link: what a client that issues bursts holds.
 /// One process issues on it, since a burst's identifier is told back
 /// in the cycle the burst goes out.
+///
+/// The widths are the link's, the same five everywhere in this
+/// module: `A` the address width, `D` the data width, `S` the strobe
+/// width, `I` the identifier width, and `NIDS` how many identifiers
+/// there are. See [the module's own documentation](self) for what
+/// each means and why none of them is computed.
 pub struct Host<
     const A: usize,
     const D: usize,
@@ -968,7 +1137,11 @@ pub struct ReadXact<
 /// left in it: the beats of a write are gathered, the identifier is
 /// carried, and answering is one call.
 pub enum Xact<const A: usize, const D: usize, const S: usize, const I: usize> {
+    /// A write, with every beat of its data already gathered. It is
+    /// answered with [`WriteXact::ok`] or [`WriteXact::err`].
     Write(WriteXact<A, D, S, I>),
+    /// A read, with the count of beats it asks for. It is answered
+    /// with [`ReadXact::data`] or [`ReadXact::err`].
     Read(ReadXact<A, D, S, I>),
 }
 
@@ -1004,9 +1177,13 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
 impl<const A: usize, const D: usize, const S: usize, const I: usize>
     WriteXact<A, D, S, I>
 {
+    /// The burst's identifier, for a client that keeps the
+    /// transactions it has accepted in a table of its own. Answering
+    /// needs no identifier.
     pub fn id(&self) -> U<I> {
         self.req.id
     }
+    /// The address the burst starts at.
     pub fn addr(&self) -> U<A> {
         self.req.addr
     }
@@ -1051,9 +1228,13 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
 impl<const A: usize, const D: usize, const S: usize, const I: usize>
     ReadXact<A, D, S, I>
 {
+    /// The burst's identifier, for a client that keeps the
+    /// transactions it has accepted in a table of its own. Answering
+    /// needs no identifier.
     pub fn id(&self) -> U<I> {
         self.req.id
     }
+    /// The address the burst starts at.
     pub fn addr(&self) -> U<A> {
         self.req.addr
     }
@@ -1109,6 +1290,10 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
 /// holds. Several processes may share it, each accepting when it is
 /// free, which is how a peripheral keeps more than one transaction
 /// open at a time.
+///
+/// `A`, `D`, `S` and `I` are the link's widths; see [the module's own
+/// documentation](self). A peripheral end has no `NIDS`, because it
+/// allocates no identifiers: it answers with the one it was given.
 pub struct Per<const A: usize, const D: usize, const S: usize, const I: usize> {
     req: Rx<PerReq<A, I>>,
     wd: Rx<W<D, S>>,
@@ -1190,6 +1375,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Default
 impl<const A: usize, const D: usize, const S: usize, const I: usize>
     Open<A, D, S, I>
 {
+    /// A table with nothing in it.
     pub fn new() -> Self {
         Self::default()
     }
@@ -1205,6 +1391,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
     pub fn len(&self) -> usize {
         self.0.borrow().len()
     }
+    /// Whether none are open.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

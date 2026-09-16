@@ -997,12 +997,22 @@ fn station_text(name: &str, n: usize) -> String {
     // eighty columns at any arity.
     let tparams = each(&|i| format!("    T{i}: Transaction + Value,"), "\n");
     let targs = each(&|i| format!("T{i}"), ", ");
-    let line_fields = each(&|i| format!("    pub v{i}: T{i},"), "\n");
+    let line_fields = each(
+        &|i| {
+            format!(
+                "    /// What input {i} contributed to this line.\n\
+                 \x20   pub v{i}: T{i},"
+            )
+        },
+        "\n",
+    );
     let state = each(
         &|i| {
             format!(
-                "    /// Input {i}: its cell of every line, and which are held.\n\
+                "    /// Input {i}'s cell of every line: the value it\n\
+                 \x20   /// contributed, by tag.\n\
                  \x20   pub mem{i}: Mem<T{i}, L>,\n\
+                 \x20   /// Which of input {i}'s cells hold, a bit per line.\n\
                  \x20   pub occ{i}: Reg<U<L>>,"
             )
         },
@@ -1090,7 +1100,9 @@ fn station_text(name: &str, n: usize) -> String {
     );
     let line_lit = each(&|i| format!("v{i}: out{i}"), ", ");
     format!(
-        "pub mod {module} {{\n\
+        "/// A reservation station of {n} inputs, and the line it\n\
+         /// sends. Written by `station!`; see [`{name}`].\n\
+         pub mod {module} {{\n\
          use super::Tagged;\n\
          use ::txhdl::comp::{{mux, Clock, DefaultClock, Mem, Reg, Rx, Tx, Unit}};\n\
          use ::txhdl::types::{{Transaction, U, Value}};\n\
@@ -1099,6 +1111,7 @@ fn station_text(name: &str, n: usize) -> String {
          /// A complete line of {n}: the tag and one value per input.\n\
          #[derive(::txhdl::Transaction, ::txhdl::Value, Clone, Copy, Default)]\n\
          pub struct {lname}<\n    const TB: usize,\n{tparams}\n> {{\n\
+         \x20   /// The tag every input of this line carried.\n\
          \x20   pub tag: U<TB>,\n\
          {line_fields}\n\
          }}\n\
@@ -1341,14 +1354,20 @@ fn router_text(name: &str, n: usize) -> String {
          \x20   pub wid: Reg<U<I>>,\n\
          \x20   /// A write response the router owes for a decode error.\n\
          \x20   pub berr: Reg<Bit>,\n\
+         \x20   /// The identifier that response must carry.\n\
          \x20   pub berr_id: Reg<U<I>>,\n\
          \x20   /// A read burst is going up; its beats stay together.\n\
          \x20   pub rbusy: Reg<Bit>,\n\
+         \x20   /// Which peripheral that burst is coming from, one bit\n\
+         \x20   /// each, so no other one's beats get in between.\n\
          \x20   pub rsel: Reg<U<{n}>>,\n\
-         \x20   /// A read burst the router owes for a decode error, and\n\
-         \x20   /// the beats of it still to send.\n\
+         \x20   /// A read burst the router owes for a decode error.\n\
          \x20   pub rerr: Reg<Bit>,\n\
+         \x20   /// The identifier its beats must carry.\n\
          \x20   pub rerr_id: Reg<U<I>>,\n\
+         \x20   /// How many of its beats are still to send. A read of\n\
+         \x20   /// a hole is answered in as many beats as it asked\n\
+         \x20   /// for, or the client would gather for ever.\n\
          \x20   pub rerr_left: Reg<U<9>>,"
     );
     let send_if = |cond: &str, port: &str, val: &str| -> String {
@@ -1448,7 +1467,9 @@ fn router_text(name: &str, n: usize) -> String {
         each(&|i| p(i), "\n                | ")
     };
     format!(
-        "pub mod {module} {{\n\
+        "/// An AXI4 router of one host and {n} peripherals. Written\n\
+         /// by `router!`; see [`{name}`].\n\
+         pub mod {module} {{\n\
          use crate::bus::axi::{{Ar, Aw, Resp, B, R, W}};\n\
          use ::txhdl::comp::{{mux, Clock, DefaultClock, Reg, Rx, Tx, Unit}};\n\
          use ::txhdl::types::{{Bit, U}};\n\

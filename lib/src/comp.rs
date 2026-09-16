@@ -31,6 +31,7 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 /// mentions either. This is what SDC's `create_clock -period -waveform`
 /// states, in the same terms.
 pub trait Clock: 'static {
+    /// What this clock is called in a netlist and in a waveform.
     const NAME: &'static str;
     /// Ticks between rising edges. Two per cycle for the default clock,
     /// so that its falling edge is a tick of its own.
@@ -71,7 +72,9 @@ pub trait Clock: 'static {
 /// Which edge of a clock a wait is for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Edge {
+    /// The edge on which a design's registers ordinarily latch.
     Rising,
+    /// The other one, for the half of a design that wants it.
     Falling,
 }
 
@@ -183,11 +186,16 @@ impl<T: Transaction, C: Clock> Clone for Rx<T, C> {
 }
 
 impl<T: Copy, C: Clock> Out<T, C> {
+    /// Drive the wire. Combinational: what is driven this step is
+    /// what the reading end sees this step.
     pub fn set(&self, v: impl Into<T>) {
         self.0 .0.set(v.into())
     }
 }
 impl<T: Copy, C: Clock> In<T, C> {
+    /// Read the wire as it stands. A wire carries no promise about
+    /// which process ran first, so a design that needs one puts a
+    /// register in the way.
     pub fn get(&self) -> T {
         self.0 .0.get()
     }
@@ -271,9 +279,15 @@ impl<T: Transaction, C: Clock> Rx<T, C> {
 /// and returns its two ends, so the `interface!` macro never has to know
 /// whether a member is a wire or a channel.
 pub trait Member {
+    /// The end that drives: an `Out` for a wire, a `Tx` for a
+    /// channel.
     type Driver;
+    /// The end that reads: an `In`, or an `Rx`.
     type Reader;
+    /// A member with nothing connected to it yet.
     fn new() -> Self;
+    /// Take it apart into its two ends. It consumes the member, so
+    /// neither end can be made twice.
     fn split(self) -> (Self::Driver, Self::Reader);
 }
 
@@ -318,6 +332,10 @@ pub struct Crossing<T: Copy + Default, A: Clock, B: Clock> {
 }
 
 impl<T: Copy + Default, A: Clock, B: Clock> Crossing<T, A, B> {
+    /// A crossing from a signal in domain `A`, and the signal in
+    /// domain `B` it produces. The second is the only way to get one,
+    /// which is what makes the type a guarantee rather than a
+    /// convention.
     pub fn new(from: In<T, A>) -> (Self, In<T, B>) {
         let (to, rx) = signal::<T, B>();
         (Crossing { from, to }, rx)
@@ -465,9 +483,11 @@ impl<T: Copy + Default, C: Clock> Default for Wire<T, C> {
 }
 
 impl<T: Copy, C: Clock> Wire<T, C> {
+    /// Drive it, combinationally, as an output port is driven.
     pub fn set(&self, v: impl Into<T>) {
         self.0 .0.set(v.into())
     }
+    /// Read it as it stands this step.
     pub fn get(&self) -> T {
         self.0 .0.get()
     }
@@ -499,6 +519,8 @@ impl<T: Copy + Default + 'static, C: Clock> Default for Reg<T, C> {
 }
 
 impl<T: Copy + 'static, C: Clock> Reg<T, C> {
+    /// A register holding `v` before the first edge: its reset
+    /// value, since nothing else sets one.
     pub fn new(v: impl Into<T>) -> Self {
         Reg(
             Box::leak(Box::new(RegCell {
@@ -556,6 +578,9 @@ pub trait Bus {}
 /// processes starts one `async fn` per process and joins them.
 #[allow(async_fn_in_trait)]
 pub trait Unit<In, Out> {
+    /// The unit's behaviour: a loop that waits for an edge, reads,
+    /// and drives. It is given its ports and never returns, because
+    /// hardware does not stop.
     async fn run(&mut self, inputs: In, outputs: Out);
 }
 
@@ -563,7 +588,11 @@ pub trait Unit<In, Out> {
 /// the whole of what `main` needs. A design with sub-configurations
 /// names them as associated types of its own.
 pub trait Config {
+    /// The unit at the top of this build, which has no ports of its
+    /// own: everything it needs is inside it.
     type Top: Unit<(), ()> + Default;
+    /// What this build is called, for the netlists and files it
+    /// produces.
     const NAME: &'static str;
     /// The top unit, built from its `Default`. A design that needs
     /// anything else overrides this; most do not, because a register's
@@ -669,6 +698,8 @@ impl<T: Copy + 'static> Slot<T> {
         self.0.next.set(Some((self.1, v.into())));
         commit(self.0.clone());
     }
+    /// Drive the word only if the condition holds, which is a write
+    /// enable on the memory's port.
     pub fn set_if(&self, pred: impl Into<Bit>, v: impl Into<T>) {
         if pred.into().to_bool() {
             self.set(v)
@@ -707,6 +738,9 @@ pub struct Join2<A, B> {
     wb: Waker,
 }
 
+/// Run two processes concurrently, as one. Units are joined with
+/// this, and joins nest, so a design of any number of units is one
+/// future the executor steps.
 pub fn join2<A: Future<Output = ()>, B: Future<Output = ()>>(
     a: A,
     b: B,
@@ -794,8 +828,11 @@ macro_rules! parallel {
 /// One future inside a [`Join`]: still running, finished with its
 /// output held, or its output already taken.
 pub enum MaybeDone<F: Future> {
+    /// Still running.
     Pending(F),
+    /// Finished, with its output waiting to be collected.
     Done(F::Output),
+    /// Finished, and its output already collected.
     Taken,
 }
 
@@ -1141,6 +1178,8 @@ pub struct Running<F: Future<Output = ()>> {
 }
 
 impl<F: Future<Output = ()>> Running<F> {
+    /// Take a design, joined into one future, and hold it ready to
+    /// be stepped.
     pub fn new(f: F) -> Self {
         Running {
             f: Box::pin(f),
@@ -1210,12 +1249,15 @@ pub mod trace {
     pub struct Scope(String);
 
     impl Scope {
+        /// The top of a hierarchy, under the name given.
         pub fn new(name: &str) -> Self {
             Scope(name.to_string())
         }
+        /// A scope one level in, for a field or a nested unit.
         pub fn child(&self, name: &str) -> Scope {
             Scope(format!("{}.{}", self.0, name))
         }
+        /// The dotted path, which is what a waveform shows.
         pub fn path(&self) -> &str {
             &self.0
         }
@@ -1225,10 +1267,15 @@ pub mod trace {
     /// netlist needs the kind; a waveform does not.
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub enum Kind {
+        /// A register: state that latches on an edge.
         Reg,
+        /// The driving end of a wire.
         Out,
+        /// The reading end of a wire.
         In,
+        /// The sending end of a channel.
         Tx,
+        /// The receiving end of a channel.
         Rx,
         /// A memory: state with an address, untraced.
         Mem,
@@ -1240,10 +1287,17 @@ pub mod trace {
     /// shared cell it is on (so the two ends of one wire match), and
     /// how to read it.
     pub struct Probe {
+        /// Where it is, as a dotted path through the hierarchy.
         pub path: String,
+        /// How many bits it carries.
         pub width: usize,
+        /// What it is: state, or one end of a wire or channel.
         pub kind: Kind,
+        /// The shared cell it sits on, as an address. Two probes on
+        /// one wire share it, which is how the two ends of a wire
+        /// are recognised as one net.
         pub cell: usize,
+        /// How to read it now, as bits in VCD's alphabet.
         pub sample: Box<dyn Fn() -> String>,
         /// For an enum, its variants by index, so a viewer can name
         /// the value.
@@ -1297,6 +1351,9 @@ pub mod trace {
 
     /// Something with signals to register under a scope.
     pub trait Traceable {
+        /// Register every signal this holds, under `scope`. A unit's
+        /// derive calls it on each field, one scope further in, so
+        /// the hierarchy of a waveform is the nesting of units.
         fn trace(&self, scope: &Scope);
     }
 
@@ -1446,6 +1503,7 @@ pub mod trace {
     }
 
     impl Vcd {
+        /// A writer that will put its VCD on `out`.
         pub fn new(out: impl Write + 'static) -> Self {
             Vcd {
                 out: Box::new(out),
@@ -1609,15 +1667,20 @@ pub mod trace {
     }
 
     impl Fst {
+        /// A writer that will put its FST at `path`.
         pub fn new(path: impl Into<String>) -> Self {
             Fst {
                 path: path.into(),
                 clocks: Vec::new(),
             }
         }
+        /// Draw a clock in the waveform beside the signals, so a
+        /// reader can see which edge each change belongs to.
         pub fn clock<C: Clock>(&mut self) {
             self.clocks.push((C::NAME.to_string(), C::high_at));
         }
+        /// Watch something, under a name of its own: a unit, a
+        /// register, one end of a wire or channel.
         pub fn add(&mut self, name: &str, t: &impl Traceable) {
             t.trace(&Scope::new(name))
         }
@@ -1769,29 +1832,38 @@ pub mod trace {
     /// file, `TXHDL_VCD` a VCD one. An example names what to watch on
     /// whichever it gets, and calls [`stop`] when it is done.
     pub enum Wave {
+        /// A VCD, which is text and which any viewer reads.
         Vcd(Vcd),
+        /// An FST, which is compressed and much smaller for a long
+        /// run.
         Fst(Fst),
     }
 
     impl Wave {
+        /// Whichever sink the environment asks for, or none, in
+        /// which case an example runs without writing a waveform.
         pub fn from_env() -> Option<Wave> {
             if let Ok(p) = std::env::var("TXHDL_FST") {
                 return Some(Wave::Fst(Fst::new(p)));
             }
             Vcd::from_env().map(Wave::Vcd)
         }
+        /// Draw a clock beside the signals.
         pub fn clock<C: Clock>(&mut self) {
             match self {
                 Wave::Vcd(v) => v.clock::<C>(),
                 Wave::Fst(f) => f.clock::<C>(),
             }
         }
+        /// Watch something under a name of its own.
         pub fn add(&mut self, name: &str, t: &impl Traceable) {
             match self {
                 Wave::Vcd(v) => v.add(name, t),
                 Wave::Fst(f) => f.add(name, t),
             }
         }
+        /// Write the header and start recording. Everything to be
+        /// watched must be added before this.
         pub fn start(self) {
             match self {
                 Wave::Vcd(v) => v.start(),

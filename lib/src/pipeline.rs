@@ -23,21 +23,29 @@ use std::task::{Context, Poll, Waker};
 // In the prototype each operator yields to the executor once, so it
 // costs one cycle. A mapping would decide the real number.
 
+/// A product, at twice the width of its operands, so it cannot
+/// overflow. One cycle, as every operator here costs one.
 pub async fn mul(a: U<32>, b: U<32>) -> U<64> {
     tick().await;
     U::new(a.raw() * b.raw())
 }
 
+/// A sum at the operands' width, wrapping, in one cycle. `N` is that
+/// width, which both operands and the result share.
 pub async fn add<const N: usize>(a: U<N>, b: U<N>) -> U<N> {
     tick().await;
     a + b
 }
 
+/// A difference at the operands' width, wrapping, in one cycle. `N`
+/// is that width.
 pub async fn sub<const N: usize>(a: U<N>, b: U<N>) -> U<N> {
     tick().await;
     a - b
 }
 
+/// A quotient, in one cycle. Division by zero gives zero here, which
+/// is this prototype's choice and not any hardware convention.
 pub async fn div(a: U<32>, b: U<32>) -> U<32> {
     tick().await;
     if b.raw() == 0 {

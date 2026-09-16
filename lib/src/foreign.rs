@@ -26,11 +26,18 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 /// The shim's functions, one set per module.
 pub struct Shim {
+    /// Make an instance of the module and give back its handle.
     pub new: unsafe extern "C" fn() -> *mut c_void,
+    /// Destroy one.
     pub free: unsafe extern "C" fn(*mut c_void),
+    /// Settle the combinational logic on the inputs as they stand.
     pub eval: unsafe extern "C" fn(*mut c_void),
+    /// Take the clock through one rising edge.
     pub edge: unsafe extern "C" fn(*mut c_void),
+    /// Write a port: the handle, the port's number, the words of its
+    /// value, and how many words those are.
     pub set: unsafe extern "C" fn(*mut c_void, u32, *const u32, u32),
+    /// Read a port, by the same shape.
     pub get: unsafe extern "C" fn(*mut c_void, u32, *mut u32, u32),
 }
 
@@ -42,6 +49,7 @@ pub struct Model {
 }
 
 impl Model {
+    /// An instance of the foreign module the shim names.
     pub fn new(shim: Shim) -> Self {
         let m = unsafe { (shim.new)() };
         Self { shim, m }
@@ -147,12 +155,17 @@ impl Cosim {
         }
     }
 
+    /// Write an input port by its number. A number that is no port
+    /// of this module is ignored, since the port list came from the
+    /// entity and a caller cannot invent one.
     pub fn set(&mut self, port: u32, v: u128) {
         if let Some(e) = self.inputs.iter_mut().find(|e| e.0 == port) {
             e.2 = v;
         }
     }
 
+    /// Read an output port by its number, or zero if there is no
+    /// such port.
     pub fn get(&self, port: u32) -> u128 {
         self.outputs
             .iter()
@@ -161,10 +174,13 @@ impl Cosim {
             .unwrap_or(0)
     }
 
+    /// Settle the combinational logic on the inputs as they stand,
+    /// without advancing the clock.
     pub fn eval(&mut self) {
         self.step('S');
     }
 
+    /// Take the clock through one rising edge.
     pub fn edge(&mut self) {
         self.step('E');
     }

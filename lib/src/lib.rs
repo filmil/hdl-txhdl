@@ -21,6 +21,12 @@
 //! The lowering to hardware is the experiment the article states, and
 //! this crate is what that experiment would be written against.
 
+// Every public item carries its own documentation, and the build
+// refuses one that does not. A type parameter is not covered by this
+// lint, so a generic item says in prose what each of its parameters
+// means and why any width that looks computable is stated instead.
+#![deny(missing_docs)]
+
 pub mod comp;
 pub mod foreign;
 pub mod funcs;
