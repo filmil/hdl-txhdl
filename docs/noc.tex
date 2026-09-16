@@ -50,10 +50,42 @@ burst and awaits its answer as it would on a link, and a peripheral
 accepts a transaction and answers it as it would.
 \end{abstract}
 
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1.55cm, y=-1.25cm, font=\scriptsize]
+  \node[boxf] (n00) at (0,0) {0,0};
+  \node[boxf] (n10) at (1,0) {1,0};
+  \node[boxf] (n01) at (0,1) {0,1};
+  \node[boxf] (n11) at (1,1) {1,1};
+  \draw[{Stealth[length=3pt]}-{Stealth[length=3pt]}] (n00) -- (n10);
+  \draw[{Stealth[length=3pt]}-{Stealth[length=3pt]}] (n01) -- (n11);
+  \draw[{Stealth[length=3pt]}-{Stealth[length=3pt]}] (n00) -- (n01);
+  \draw[{Stealth[length=3pt]}-{Stealth[length=3pt]}] (n10) -- (n11);
+  \node[box] (h) at (-0.95,0) {host};
+  \node[box] (m) at (1.95,1) {memory};
+  \draw[{Stealth[length=3pt]}-{Stealth[length=3pt]}] (h) -- (n00);
+  \draw[{Stealth[length=3pt]}-{Stealth[length=3pt]}] (n11) -- (m);
+  \draw[-{Stealth[length=5pt]}, very thick, red!70!black, shorten >=3pt,
+        shorten <=3pt]
+       (n00) -- (n10) -- (n11);
+  \node[lbl, red!70!black] at (0.5,-0.42) {east, while $d_x > x$};
+  \node[lbl, red!70!black, anchor=west] at (1.14,0.5) {then south};
+  \node[lbl] at (-0.95,0.45) {exit};
+  \node[lbl] at (1.95,1.45) {exit};
+\end{tikzpicture}
+\caption{A two by two lattice, and the way a burst takes from the host
+at 0,0 to the memory at 1,1. Dimension order: X first and then Y, so a
+packet never turns from Y back into X and no cycle of waiting can form
+among the links.}
+\label{fig:n-lattice}
+\end{figure}
+
 \section{What a Link Carries}
 \label{sec:n-pkt}
 
-One beat of one AXI channel, addressed to a node and stamped with the
+Figure~\ref{fig:n-lattice} is the shape of it. A link carries one beat
+of one AXI channel, addressed to a node and stamped with the
 node it came from.
 
 \nocpart{pkt.rs}{pkt}{A packet.}{lst:n-pkt}
@@ -92,6 +124,42 @@ Routing is dimension order: a packet goes east or west until it is in
 its destination's column, then north or south until it is at its node,
 then out of the exit.
 
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm, font=\scriptsize]
+  % The response switch, behind: a node has two of these and they
+  % share nothing.
+  \node[box, fill=white, minimum width=2.5cm, minimum height=1.4cm]
+       (p) at (0.2,-0.2) {};
+  \node[lbl, anchor=north west] at (1.5,-0.62) {and one for\\responses};
+  \node[boxf, minimum width=2.5cm, minimum height=1.4cm] (q) at (0,0)
+       {request\\switch};
+  % Each link leaves the side it is named for.
+  \draw[{Stealth[length=3.5pt]}-{Stealth[length=3.5pt]}]
+       (q.north) -- ++(0,0.75) node[above, font=\scriptsize] {north};
+  \draw[{Stealth[length=3.5pt]}-{Stealth[length=3.5pt]}]
+       ($(q.south)+(-0.45,0)$) -- ++(0,-0.75)
+       node[below, font=\scriptsize] {south};
+  \draw[{Stealth[length=3.5pt]}-{Stealth[length=3.5pt]}]
+       (q.west) -- ++(-0.85,0) node[left, font=\scriptsize] {west};
+  \draw[{Stealth[length=3.5pt]}-{Stealth[length=3.5pt]}]
+       (q.east) -- ++(0.85,0) node[right, font=\scriptsize] {east};
+  % The fifth port: where something that is not a node attaches.
+  \draw[{Stealth[length=3.5pt]}-{Stealth[length=3.5pt]}]
+       ($(q.south)+(0.55,0)$) -- ++(0.55,-0.75)
+       node[below right, font=\scriptsize, inner sep=1pt] {exit};
+\end{tikzpicture}
+\caption{A switch: a two-way link on each of the four sides it is
+named for, and a fifth port, the exit, where something that is not a
+node attaches. A node is two of these, one per virtual channel, and
+they share nothing, so a request held up behind a full buffer cannot
+hold up the response that would empty it. A host's bridge puts
+requests into the one and takes responses out of the other; a
+peripheral's bridge does the reverse.}
+\label{fig:n-node}
+\end{figure}
+
 \nocpart{switch.rs}{route}{The whole of the routing.}{lst:n-route}
 
 On a lattice that is deadlock free with nothing else said, because a
@@ -119,6 +187,34 @@ refused.}{lst:n-node}
 \label{sec:n-bridge}
 
 A bridge, AXI on one side and packets on the other, in two halves.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=-0.78cm, font=\scriptsize,
+                    every node/.style={minimum width=3.1cm}]
+  \node[box] (hc) at (0,0) {host client};
+  \node[boxf] (ht) at (0,1) {\code{AxiHost}};
+  \node[boxf] (hb) at (0,2) {\code{HostBridge}};
+  \node[boxf] (nw) at (0,3) {the lattice};
+  \node[boxf] (pb) at (0,4) {\code{PerBridge}};
+  \node[boxf] (pt) at (0,5) {\code{AxiPer}};
+  \node[box] (pc) at (0,6) {peripheral client};
+  \foreach \a/\b in {hc/ht,ht/hb,hb/nw,nw/pb,pb/pt,pt/pc}
+    \draw[{Stealth[length=3pt]}-{Stealth[length=3pt]}] (\a) -- (\b);
+  \node[lbl, anchor=west] at (1.65,0.5) {transactions};
+  \node[lbl, anchor=west] at (1.65,1.5) {\code{aw ar w b r}};
+  \node[lbl, anchor=west] at (1.65,2.5) {packets};
+  \node[lbl, anchor=west] at (1.65,3.5) {packets};
+  \node[lbl, anchor=west] at (1.65,4.5) {\code{aw ar w b r}};
+  \node[lbl, anchor=west] at (1.65,5.5) {transactions};
+\end{tikzpicture}
+\caption{What is between the two clients. Neither end knows the
+network is there: the host issues a burst and awaits its answer as it
+would on a link, and the peripheral accepts a transaction and answers
+it as it would.}
+\label{fig:n-layers}
+\end{figure}
+
 
 The host half packs an address phase into a packet addressed by a map
 of three ranges, whose last entry is the default route: give it a mask
