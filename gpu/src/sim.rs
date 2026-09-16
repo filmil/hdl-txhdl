@@ -61,7 +61,7 @@ pub fn run<const LOGW: usize, const H: usize, const N: usize>(
 
     let mut host = AxiHost::<ADDR, 32, 4, IDB, IDS>::default();
     let mut per = AxiPer::<ADDR, 32, 4, IDB>::default();
-    let mut raster = Raster::<ADDR, IDB, LOGW, H>::default();
+    let mut raster = Raster::<ADDR, IDB, LOGW, H, 0>::default();
     let mut fb = Fb::<ADDR, IDB, N>::default();
     // The framebuffer is read out of the memory when the run has
     // finished, so a second handle on it is kept here.
@@ -129,7 +129,7 @@ pub fn run<const LOGW: usize, const H: usize, const N: usize>(
         stop();
     }
     if netlists {
-        let r = Raster::<ADDR, IDB, LOGW, H>::lowered("raster");
+        let r = Raster::<ADDR, IDB, LOGW, H, 0>::lowered("raster");
         let f = Fb::<ADDR, IDB, N>::lowered("fb");
         txhdl::netlist::write_netlists_from_env(&[&r, &f]);
     }

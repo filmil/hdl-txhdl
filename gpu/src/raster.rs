@@ -30,18 +30,22 @@ use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, W};
 use crate::op::{Insn, Kind};
 
 /// A pixel is one word, so a pixel's byte address is its index in the
-/// framebuffer shifted by this.
+/// framebuffer shifted by this, and then offset by the framebuffer's
+/// own base.
 const WORD: usize = 2;
 
 // begin{state}
 /// The rasteriser. `A` is the address width, `I` the AXI identifier
-/// width, and the screen is `1 << LOGW` by `H` pixels.
+/// width, the screen is `1 << LOGW` by `H` pixels, and the
+/// framebuffer's first word is at byte address `BASE`, which is where
+/// a design puts it in whatever it writes into.
 #[derive(Trace, Default)]
 pub struct Raster<
     const A: usize,
     const I: usize,
     const LOGW: usize,
     const H: usize,
+    const BASE: usize,
 > {
     /// Walking a primitive.
     pub busy: Reg<U<1>>,
@@ -83,8 +87,13 @@ pub struct Raster<
 
 // begin{run}
 #[lower]
-impl<const A: usize, const I: usize, const LOGW: usize, const H: usize> Unit
-    for Raster<A, I, LOGW, H>
+impl<
+        const A: usize,
+        const I: usize,
+        const LOGW: usize,
+        const H: usize,
+        const BASE: usize,
+    > Unit for Raster<A, I, LOGW, H, BASE>
 {
     async fn run(
         &mut self,
@@ -216,7 +225,8 @@ impl<const A: usize, const I: usize, const LOGW: usize, const H: usize> Unit
             });
 
             // One pixel, as a burst of one beat at the pixel's word.
-            let addr = ((py << LOGW) + px) << WORD;
+            let addr =
+                (((py << LOGW) + px) << WORD) + U::<16>::from(BASE as u32);
             if write.to_bool() {
                 issue.send(Issue {
                     read: Bit::Zero,
