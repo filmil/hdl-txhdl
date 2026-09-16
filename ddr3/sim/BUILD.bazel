@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+# The DDR3 controller under Vivado's simulator, against the Micron model
+# of the board's memory: UberDDR3 behind the narrow Wishbone wrapper,
+# calibrated, written and read back. Manual, as every Vivado target in
+# the tree is, since it needs the hermetic Vivado install:
+#   bazel test //ddr3/sim:wrapper_test
+load("@rules_vivado//build/vivado:rules.bzl", "vivado_library", "vivado_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["wrapper_verdict.tcl"])
+
+# Vivado's global reset and tristate module, which the primitives read.
+vivado_library(
+    name = "glbl",
+    srcs = [],
+    tags = ["manual"],
+    use_glbl = True,
+)
+
+# The Micron model of one chip. The upstream defines file picks x16 chips
+# of 8 Gb, whose timing covers the DDR3-1066 the controller runs.
+vivado_library(
+    name = "micron",
+    srcs = ["@uberddr3//:micron_model"],
+    hdrs = ["@uberddr3//:micron_model_headers"],
+    includes = ["//external/+git_repository+uberddr3/testbench"],
+    tags = ["manual"],
+)
+
+vivado_library(
+    name = "wrapper_tb",
+    srcs = [
+        "//ddr3:hdl",
+        "wrapper_tb.v",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":glbl",
+        ":micron",
+    ],
+)
+
+# The primitives the PHY instantiates come from Vivado's own compiled
+# libraries, the serialisers' encrypted parts among them. The default
+# script logs every signal first, which fails on a design elaborated
+# without trace information and stops before the run, and xsim exits
+# cleanly on a failed check anyway, so the script here runs and then
+# reads the testbench's verdict.
+vivado_test(
+    name = "wrapper_test",
+    custom_tcl_script = "wrapper_verdict.tcl",
+    extra_modules = ["glbl.glbl"],
+    library = ":wrapper_tb",
+    tags = ["manual"],
+    top = "wrapper_tb",
+    xelab_args = [
+        "--debug",
+        "typical",
+        "-L",
+        "unisims_ver",
+        "-L",
+        "secureip",
+    ],
+    xelab_relaxed = True,
+)
