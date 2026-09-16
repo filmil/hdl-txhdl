@@ -142,8 +142,8 @@ the project's cheat sheet, and it shows everything a unit has. The
 struct holds the state, one register of three bits. The
 \code{Unit<In, Out>} trait names the ports as type parameters, which
 \code{\#[lower]} fills in from \code{run}, whose arguments they are:
-an input wire and an output wire here, channels or tuples of either
-elsewhere. The body is one
+an input wire and an output wire here, channels, or tuples or
+structs of either, elsewhere. The body is one
 \code{loop}. Its first statement waits for the rising edge of the
 default clock; then it reads, plainly, the register and the input;
 then it drives, with \code{with!} the register under its condition

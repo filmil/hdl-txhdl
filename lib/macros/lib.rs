@@ -2471,6 +2471,349 @@ fn find_helpers(file: Option<std::path::PathBuf>) -> Vec<Helper> {
     out
 }
 
+/// A struct whose fields may be a unit's ports, as the file declares
+/// it: its generic parameters, each by name with its default if it has
+/// one, a lifetime left out, and its fields in declaration order, each
+/// by name with its type as written.
+struct PortStruct {
+    name: String,
+    params: Vec<(String, Option<Vec<TokenTree>>)>,
+    fields: Vec<(String, Vec<TokenTree>)>,
+}
+
+/// The arguments between `<` at `ts[at]` and its `>`, split on the
+/// commas at their own depth, and the index past the `>`.
+fn angle_args(ts: &[TokenTree], at: usize) -> (Vec<Vec<TokenTree>>, usize) {
+    let mut out = vec![Vec::new()];
+    let mut depth = 0usize;
+    let mut j = at;
+    while j < ts.len() {
+        let t = &ts[j];
+        j += 1;
+        match t {
+            TokenTree::Punct(p) if p.as_char() == '<' => {
+                depth += 1;
+                if depth == 1 {
+                    continue;
+                }
+            }
+            TokenTree::Punct(p) if p.as_char() == '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            TokenTree::Punct(p) if p.as_char() == ',' && depth == 1 => {
+                out.push(Vec::new());
+                continue;
+            }
+            _ => {}
+        }
+        out.last_mut().unwrap().push(t.clone());
+    }
+    out.retain(|v| !v.is_empty());
+    (out, j)
+}
+
+/// The structs of a file, and the roles of its `interface!`s, which
+/// are structs too: a role's member of `Signal<T>` is an `Out<T>` where
+/// the role drives it and an `In<T>` where it reads it, and of
+/// `Chan<T>` a `Tx<T>` or an `Rx<T>`. The macro reads the file for the
+/// same reason `find_helpers` does: the struct is not in the item.
+fn find_port_structs(file: Option<std::path::PathBuf>) -> Vec<PortStruct> {
+    let Some(text) = file.and_then(|p| std::fs::read_to_string(p).ok()) else {
+        return Vec::new();
+    };
+    let Ok(stream) = text.parse::<TokenStream>() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    port_structs_in(stream, &mut out);
+    out
+}
+
+fn port_structs_in(stream: TokenStream, out: &mut Vec<PortStruct>) {
+    let ts: Vec<TokenTree> = stream.into_iter().collect();
+    let brace = |t: Option<&TokenTree>| match t {
+        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
+            Some(g.clone())
+        }
+        _ => None,
+    };
+    // `#[doc]`s and `pub`, `pub(crate)` before a field's name.
+    let past_attrs = |f: &[TokenTree]| -> usize {
+        let mut k = 0;
+        while punct_at(f, k, '#') {
+            k += 2;
+        }
+        if f.get(k).is_some_and(|t| is_ident(t, "pub")) {
+            k += 1;
+            if matches!(f.get(k), Some(TokenTree::Group(g))
+                if g.delimiter() == Delimiter::Parenthesis)
+            {
+                k += 1;
+            }
+        }
+        k
+    };
+    for i in 0..ts.len() {
+        if is_ident(&ts[i], "struct") {
+            let Some(TokenTree::Ident(name)) = ts.get(i + 1) else {
+                continue;
+            };
+            let mut j = i + 2;
+            let mut params = Vec::new();
+            if punct_at(&ts, j, '<') {
+                let (args, end) = angle_args(&ts, j);
+                j = end;
+                for a in args {
+                    if punct_at(&a, 0, '\'') {
+                        continue;
+                    }
+                    let n = if is_ident(&a[0], "const") { 1 } else { 0 };
+                    let Some(TokenTree::Ident(pn)) = a.get(n) else {
+                        continue;
+                    };
+                    let default = a
+                        .iter()
+                        .position(|t| {
+                            matches!(t, TokenTree::Punct(p)
+                            if p.as_char() == '=')
+                        })
+                        .map(|e| a[e + 1..].to_vec());
+                    params.push((pn.to_string(), default));
+                }
+            }
+            // Past a `where` clause, to the braces; a tuple struct has
+            // none and names no fields.
+            while j < ts.len()
+                && brace(ts.get(j)).is_none()
+                && !punct_at(&ts, j, ';')
+                && !matches!(&ts[j], TokenTree::Group(g)
+                    if g.delimiter() == Delimiter::Parenthesis)
+            {
+                j += 1;
+            }
+            let Some(body) = brace(ts.get(j)) else {
+                continue;
+            };
+            let mut fields = Vec::new();
+            for f in split_type_commas(&body) {
+                let k = past_attrs(&f);
+                if let (Some(TokenTree::Ident(n)), true) =
+                    (f.get(k), punct_at(&f, k + 1, ':'))
+                {
+                    fields.push((n.to_string(), f[k + 2..].to_vec()));
+                }
+            }
+            out.push(PortStruct {
+                name: name.to_string(),
+                params,
+                fields,
+            });
+        } else if is_ident(&ts[i], "interface") && punct_at(&ts, i + 1, '!') {
+            if let Some(g) = brace(ts.get(i + 2)) {
+                interface_roles(&g, out);
+            }
+        } else if let TokenTree::Group(g) = &ts[i] {
+            port_structs_in(g.stream(), out);
+        }
+    }
+}
+
+/// The roles of one `interface! { Name { members } role R { .. } .. }`
+/// as port structs, a role whose members are not all signals and
+/// channels left out.
+fn interface_roles(g: &Group, out: &mut Vec<PortStruct>) {
+    let ts: Vec<TokenTree> = g.stream().into_iter().collect();
+    let Some(TokenTree::Group(members)) = ts.get(1) else {
+        return;
+    };
+    let members: Vec<(String, Vec<TokenTree>)> = split_type_commas(members)
+        .into_iter()
+        .filter_map(|m| match (m.first(), punct_at(&m, 1, ':')) {
+            (Some(TokenTree::Ident(n)), true) => {
+                Some((n.to_string(), m[2..].to_vec()))
+            }
+            _ => None,
+        })
+        .collect();
+    let mut i = 2;
+    while i + 2 < ts.len() && is_ident(&ts[i], "role") {
+        let (Some(TokenTree::Ident(name)), Some(TokenTree::Group(ends))) =
+            (ts.get(i + 1), ts.get(i + 2))
+        else {
+            break;
+        };
+        i += 3;
+        let mut fields = Vec::new();
+        for e in split_commas(ends) {
+            let [TokenTree::Ident(dir), TokenTree::Ident(m)] = e.as_slice()
+            else {
+                break;
+            };
+            let Some((_, ty)) =
+                members.iter().find(|(n, _)| *n == m.to_string())
+            else {
+                break;
+            };
+            let Some(lt) = ty.iter().position(|t| {
+                matches!(t,
+                TokenTree::Punct(p) if p.as_char() == '<')
+            }) else {
+                break;
+            };
+            let drives = dir.to_string() == "out";
+            let kind = match (ty[..lt].last(), drives) {
+                (Some(t), true) if is_ident(t, "Signal") => "Out",
+                (Some(t), false) if is_ident(t, "Signal") => "In",
+                (Some(t), true) if is_ident(t, "Chan") => "Tx",
+                (Some(t), false) if is_ident(t, "Chan") => "Rx",
+                _ => break,
+            };
+            let mut port = vec![TokenTree::Ident(Ident::new(kind, m.span()))];
+            port.extend(ty[lt..].iter().cloned());
+            fields.push((m.to_string(), port));
+        }
+        if fields.len() == split_commas(ends).len() {
+            out.push(PortStruct {
+                name: name.to_string(),
+                params: Vec::new(),
+                fields,
+            });
+        }
+    }
+}
+
+/// Tokens with every name in `map` replaced by its tokens, into every
+/// group: a struct's field types with the struct's parameters bound
+/// to the arguments the side names.
+fn substitute(
+    ts: &[TokenTree],
+    map: &[(String, Vec<TokenTree>)],
+) -> Vec<TokenTree> {
+    let mut out = Vec::new();
+    for t in ts {
+        match t {
+            TokenTree::Ident(id) => {
+                match map.iter().find(|(n, _)| *n == id.to_string()) {
+                    Some((_, v)) => out.extend(v.iter().cloned()),
+                    None => out.push(t.clone()),
+                }
+            }
+            TokenTree::Group(g) => {
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                let mut n = Group::new(
+                    g.delimiter(),
+                    substitute(&inner, map).into_iter().collect(),
+                );
+                n.set_span(g.span());
+                out.push(TokenTree::Group(n));
+            }
+            _ => out.push(t.clone()),
+        }
+    }
+    out
+}
+
+/// The ports of a side whose type is a struct of the file, each field
+/// with its type, the struct's parameters bound to the side's
+/// arguments; `None` for a side that is a port or a tuple, and an
+/// error for a type that is neither a port nor such a struct.
+fn port_struct_fields(
+    ty: &[TokenTree],
+    structs: &[PortStruct],
+) -> Result<Option<Vec<(String, String)>>, String> {
+    let lt = ty
+        .iter()
+        .position(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == '<'))
+        .unwrap_or(ty.len());
+    let Some(TokenTree::Ident(head)) = ty[..lt].last() else {
+        return Ok(None);
+    };
+    let head = head.to_string();
+    if ["In", "Out", "Tx", "Rx"].contains(&head.as_str()) {
+        return Ok(None);
+    }
+    let Some(s) = structs.iter().find(|s| s.name == head) else {
+        return Err(format!(
+            "`{head}` is not a port, and no struct `{head}` in this file \
+             names ports"
+        ));
+    };
+    let args: Vec<Vec<TokenTree>> = if lt < ty.len() {
+        angle_args(ty, lt)
+            .0
+            .into_iter()
+            .filter(|a| !punct_at(a, 0, '\''))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if args.len() > s.params.len() {
+        return Err(format!("`{head}` takes {} parameters", s.params.len()));
+    }
+    let mut map = Vec::new();
+    for (k, (pn, default)) in s.params.iter().enumerate() {
+        let v = match (args.get(k), default) {
+            (Some(a), _) => a.clone(),
+            (None, Some(d)) => d.clone(),
+            (None, None) => {
+                return Err(format!("`{head}` needs its parameter `{pn}`"))
+            }
+        };
+        map.push((pn.clone(), v));
+    }
+    Ok(Some(
+        s.fields
+            .iter()
+            .map(|(n, t)| {
+                let t: String =
+                    substitute(t, &map).iter().map(|t| t.to_string()).collect();
+                (n.clone(), t)
+            })
+            .collect(),
+    ))
+}
+
+/// `run`'s body with every `side.field` of a side that is a port
+/// struct written as the port `field`, so the lowering reads it as it
+/// reads a port named in a tuple. `self.side.field` is left alone.
+fn port_fields(
+    ts: TokenStream,
+    bound: &[(String, Vec<String>)],
+) -> TokenStream {
+    let ts: Vec<TokenTree> = ts.into_iter().collect();
+    let mut out: Vec<TokenTree> = Vec::new();
+    let mut i = 0;
+    while i < ts.len() {
+        if let (TokenTree::Ident(b), true, Some(TokenTree::Ident(f))) =
+            (&ts[i], punct_at(&ts, i + 1, '.'), ts.get(i + 2))
+        {
+            let after_dot = i > 0 && punct_at(&ts, i - 1, '.');
+            let (b, f) = (b.to_string(), f.to_string());
+            if !after_dot
+                && bound.iter().any(|(n, fs)| *n == b && fs.contains(&f))
+            {
+                out.push(ts[i + 2].clone());
+                i += 3;
+                continue;
+            }
+        }
+        match &ts[i] {
+            TokenTree::Group(g) => {
+                let mut n =
+                    Group::new(g.delimiter(), port_fields(g.stream(), bound));
+                n.set_span(g.span());
+                out.push(TokenTree::Group(n));
+            }
+            t => out.push(t.clone()),
+        }
+        i += 1;
+    }
+    out.into_iter().collect()
+}
+
 /// A call of a function under `#[lower]`, inlined: its parameters
 /// bound to the arguments, its `let`s to expressions of their own,
 /// and its value the call's.
@@ -3644,11 +3987,14 @@ fn lower_stmts(
 /// `run`s. Read into the parent's nets and instances, as generated
 /// text: a `(name, kind, width)` per net, and an
 /// `instance(child_lowered(&me.FIELD, ..), "FIELD", &[..])` per child,
-/// its ports joined in order to nets and to the parent's ports.
-/// `ports` are the parent's, by name and kind.
+/// its ports joined in order to nets and to the parent's ports, or by
+/// name where the parent passes a struct literal `S { a: x, b }`.
+/// `ports` are the parent's, by name and kind, and `bound` its sides
+/// that are structs of ports, each passed whole as its fields.
 fn lower_structural(
     body: &Group,
     ports: &[(String, String)],
+    bound: &[(String, Vec<String>)],
 ) -> Result<(Vec<String>, Vec<String>), TokenStream> {
     // The ends made in `run`: the end, its net, whether a channel.
     let mut ends: Vec<(String, String, bool)> = Vec::new();
@@ -3753,7 +4099,9 @@ fn lower_structural(
                     "a child's `run` takes its inputs and its outputs",
                 ));
             }
-            let mut names: Vec<String> = Vec::new();
+            // The names passed, each with the child's port it joins
+            // when the parent named that port, by a struct literal.
+            let mut names: Vec<(String, String)> = Vec::new();
             for side in &sides {
                 match side.as_slice() {
                     [TokenTree::Group(g)]
@@ -3766,21 +4114,53 @@ fn lower_structural(
                                     "a port passed to a child is a name",
                                 ));
                             };
-                            names.push(id.to_string());
+                            names.push((String::new(), id.to_string()));
                         }
                     }
-                    [TokenTree::Ident(id)] => names.push(id.to_string()),
+                    // A side of the parent's that is a struct of ports,
+                    // passed whole, is its fields in order.
+                    [TokenTree::Ident(id)] => {
+                        let id = id.to_string();
+                        match bound.iter().find(|(b, _)| *b == id) {
+                            Some((_, fs)) => names.extend(
+                                fs.iter().map(|f| (String::new(), f.clone())),
+                            ),
+                            None => names.push((String::new(), id)),
+                        }
+                    }
+                    [TokenTree::Ident(_), .., TokenTree::Group(g)]
+                        if g.delimiter() == Delimiter::Brace =>
+                    {
+                        for e in split_commas(g) {
+                            let (port, net) = match e.as_slice() {
+                                [TokenTree::Ident(f)] => (f, f),
+                                [TokenTree::Ident(f), _, TokenTree::Ident(n)]
+                                    if punct_at(&e, 1, ':') =>
+                                {
+                                    (f, n)
+                                }
+                                _ => {
+                                    return Err(err(
+                                        g.span(),
+                                        "a field of a struct passed to a \
+                                         child is `field: name` or `field`",
+                                    ))
+                                }
+                            };
+                            names.push((port.to_string(), net.to_string()));
+                        }
+                    }
                     _ => {
                         return Err(err(
                             span,
                             "a port passed to a child is a name, a tuple \
-                             of names, or `()`",
+                             of names, a struct of names, or `()`",
                         ))
                     }
                 }
             }
             let mut joined: Vec<String> = Vec::new();
-            for n in names {
+            for (port, n) in names {
                 let (net, channel) = if let Some((_, net, ch)) =
                     ends.iter().find(|(e, _, _)| *e == n)
                 {
@@ -3809,7 +4189,7 @@ fn lower_structural(
                     }
                     used.push(n.clone());
                 }
-                joined.push(format!("\"{net}\""));
+                joined.push(format!("(\"{port}\", \"{net}\")"));
             }
             instances.push(format!(
                 "::txhdl::netlist::instance(::txhdl::netlist::child_lowered(\
@@ -3960,6 +4340,12 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // The two sides' types as written, for the impl header when it
     // names none: `impl Unit for X` is `impl Unit<I, O> for X`.
     let mut sides: Vec<String> = Vec::new();
+    // A side may be a struct of this file whose fields are the ports,
+    // `inp: S<..>` or `S { a, b }: S<..>`: each field is a port named
+    // for the field, in the order the struct declares them, and
+    // `inp.a` in `run` is the port `a`.
+    let structs = find_port_structs(Span::call_site().local_file());
+    let mut bound: Vec<(String, Vec<String>)> = Vec::new();
     for p in split_type_commas(params).into_iter().skip(1) {
         let Some(colon) = p.iter().position(
             |t| matches!(t, TokenTree::Punct(c) if c.as_char() == ':'),
@@ -3973,6 +4359,47 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 .join("")
         };
         sides.push(text_of(&p[colon + 1..]));
+        let fields = match port_struct_fields(&p[colon + 1..], &structs) {
+            Ok(f) => f,
+            Err(e) => return err(p[colon + 1].span(), &e),
+        };
+        if let Some(fields) = fields {
+            let names: Vec<String> =
+                fields.iter().map(|(n, _)| n.clone()).collect();
+            match &p[..colon] {
+                [TokenTree::Ident(n)] => bound.push((n.to_string(), names)),
+                [m, TokenTree::Ident(n)] if is_ident(m, "mut") => {
+                    bound.push((n.to_string(), names))
+                }
+                [TokenTree::Ident(_), TokenTree::Group(g)]
+                    if g.delimiter() == Delimiter::Brace =>
+                {
+                    let given = split_commas(g);
+                    let each = given.iter().all(|f| {
+                        matches!(f.as_slice(), [TokenTree::Ident(f)]
+                            if names.contains(&f.to_string()))
+                    });
+                    if !each || given.len() != names.len() {
+                        return err(
+                            g.span(),
+                            "a struct of ports is taken apart whole, each \
+                             field by its own name: `S { a, b }: S`",
+                        );
+                    }
+                }
+                _ => {
+                    return err(
+                        p[0].span(),
+                        "a side that is a struct of ports is `name: S` or \
+                         `S { a, b }: S`",
+                    )
+                }
+            }
+            for (n, t) in fields {
+                pairs.push((n, t, p[0].span()));
+            }
+            continue;
+        }
         match (&p[0], &p[colon + 1]) {
             (TokenTree::Ident(n), _) => {
                 pairs.push((n.to_string(), text(&p[colon + 1..]), n.span()));
@@ -3999,6 +4426,11 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     "a port must be `name: Out<T>` or `name: In<T>`",
                 )
             }
+        }
+    }
+    for (k, (n, t, s)) in pairs.iter().enumerate() {
+        if t != "()" && pairs[..k].iter().any(|(m, _, _)| m == n) {
+            return err(*s, &format!("port `{n}` is named twice"));
         }
     }
     let pnames: Vec<String> = pairs.iter().map(|(n, _, _)| n.clone()).collect();
@@ -4042,6 +4474,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     else {
         return err(body.span(), "expected run's body");
     };
+    let mut fbody_ports =
+        Group::new(fbody.delimiter(), port_fields(fbody.stream(), &bound));
+    fbody_ports.set_span(fbody.span());
+    let fbody = &fbody_ports;
     // Every `loop` in run's body is a process: one, or several under
     // `join2(async { loop .. }, async { loop .. })`.
     fn find_loops(ts: &[TokenTree], out: &mut Vec<Group>) {
@@ -4073,7 +4509,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut nets: Vec<String> = Vec::new();
     let mut instances: Vec<String> = Vec::new();
     if loops.is_empty() {
-        match lower_structural(fbody, &pkinds) {
+        match lower_structural(fbody, &pkinds, &bound) {
             Ok((n, i)) => {
                 nets = n;
                 instances = i;

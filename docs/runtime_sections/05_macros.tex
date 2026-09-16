@@ -28,7 +28,8 @@ with
 and drives registers, words of memories and output ports, and writes
 \code{Unit::lowered(name)}, \code{verilog} and \code{vhdl} beside
 the impl. Ports come from \code{run}'s signature, a side of several
-written as a tuple; registers, memories and widths come from the
+written as a tuple or as a struct whose fields are the ports;
+registers, memories and widths come from the
 struct through the \code{Trace} derive, which also derives
 \code{Fields} and \code{Port}; and the configuration's constants are
 evaluated when \code{lowered} runs, so a generic unit lowers once per
@@ -57,7 +58,23 @@ channel port carries, is read as the slice of the port's data the
 field occupies: the \code{Value} derive lays a struct's fields out
 first field highest and says so in a \code{layout}, and the netlist
 finds the bits when \code{lowered} runs, so a generic field's width
-is no obstacle. \code{station!(Name, N)} writes a reservation
+is no obstacle.
+A side that is a struct, \code{inp: S<..>} or
+\code{S \{ a, b \}: S<..>}, is read from the file the unit is in, as
+the inlined functions are, since a proc macro sees only the item it
+is on. \code{find\_port\_structs} collects every struct of the file,
+with its generic parameters and its fields. It also collects every
+role of an \code{interface!} in the file: a member of \code{Signal}
+becomes an \code{Out} or an \code{In}, and a member of \code{Chan} a
+\code{Tx} or an \code{Rx}, by the role's direction. The side's
+arguments are substituted for the struct's parameters in each field's
+type, and each field is a port named for the field, in declaration
+order. Before the body is read, \code{port\_fields} rewrites every
+\code{inp.a} of such a side to the port \code{a}, so the rest of the
+lowering sees the names it sees for a tuple. A type that is neither a
+port nor a struct of the file is refused by name, and so is a port
+name that two sides both give.
+\code{station!(Name, N)} writes a reservation
 station of \code{N} inputs as text, a line struct, the station's
 struct and its lowered \code{run}, every wire of the step named for
 what it is, and \code{TXHDL\_MACRO\_DUMP} writes the text out for
@@ -69,8 +86,11 @@ signal::<T, C>()} is a net between the children, named by the two
 ends' common prefix, and every \code{self.child.run(inputs,
 outputs)}, alone or under \code{join2}, is an instance of the
 child's own lowering, its ports joined in order to the nets and to
-the parent's ports; a channel end or channel port joined twice or
-never is refused by name, as is anything else in the body. The
+the parent's ports. A side of the parent's that is a struct, passed
+whole, is its fields in order, and a struct literal
+\code{S \{ b: x, a \}} joins each field to the child's port of that
+name, whatever order the literal writes them in; a channel end or
+channel port joined twice or never is refused by name, as is anything else in the body. The
 parent's \code{lowered} reaches each child through a value of
 itself, so a unit of units is \code{Default}, as every unit is, and
 each child's module is named for the parent and the field. A net

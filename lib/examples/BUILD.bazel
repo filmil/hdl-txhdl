@@ -253,6 +253,16 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A unit's ports as named structs, an interface role among them:
+#   bazel run //lib/examples:ex_ports
+rust_binary(
+    name = "ex_ports",
+    srcs = ["ex_ports.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A memory, lowered:  bazel run //lib/examples:ex_mem
 rust_binary(
     name = "ex_mem",
@@ -456,6 +466,7 @@ filegroup(
         "stream_alu.rs",
         "ex_stream_alu.rs",
         "ex_compose.rs",
+        "ex_ports.rs",
         "ex_axi.rs",
         "ex_axi_serve.rs",
         "ex_axi_router.rs",

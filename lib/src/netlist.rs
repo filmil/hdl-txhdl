@@ -414,11 +414,13 @@ pub fn child_lowered<U: Lower>(_: &U, name: &str) -> Lowered {
     U::lowered_as(name)
 }
 
-/// A child joined to the parent: its ports, in the order `run` names
-/// them, paired with what the parent passed, flattened in the same
-/// order. The counts must agree, or the parent passed a tuple of the
-/// wrong shape.
-pub fn instance(unit: Lowered, name: &str, args: &[&str]) -> Instance {
+/// A child joined to the parent: what the parent passed, flattened
+/// in the order `run` names it, each with the child's port it joins.
+/// An empty port name joins the child's port at that position; a
+/// port named, a field of a struct the parent passed, joins the port
+/// of that name. The counts must agree, or the parent passed a tuple
+/// of the wrong shape, and no port is joined twice.
+pub fn instance(unit: Lowered, name: &str, args: &[(&str, &str)]) -> Instance {
     assert_eq!(
         unit.ports.len(),
         args.len(),
@@ -426,12 +428,23 @@ pub fn instance(unit: Lowered, name: &str, args: &[&str]) -> Instance {
         unit.ports.len(),
         args.len()
     );
-    let conns = unit
-        .ports
-        .iter()
-        .zip(args)
-        .map(|((p, _, _), a)| (p.clone(), a.to_string()))
-        .collect();
+    let mut conns: Vec<(String, String)> = Vec::new();
+    for ((p, _, _), (by, a)) in unit.ports.iter().zip(args) {
+        let port = if by.is_empty() {
+            p.clone()
+        } else {
+            assert!(
+                unit.ports.iter().any(|(n, _, _)| n == by),
+                "`{name}` has no port `{by}`"
+            );
+            by.to_string()
+        };
+        assert!(
+            !conns.iter().any(|(c, _)| *c == port),
+            "port `{port}` of `{name}` is joined twice"
+        );
+        conns.push((port, a.to_string()));
+    }
     Instance {
         name: name.to_string(),
         unit,

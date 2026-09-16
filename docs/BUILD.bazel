@@ -635,6 +635,8 @@ latex_document(
         ":stream_alu_timing",
         ":compose_run",
         ":compose_timing",
+        ":ports_run",
+        ":ports_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -949,6 +951,26 @@ waveform(
         "//out/rx_ready=>out_ready",
     ],
     until = 54,
+)
+
+waveform(
+    name = "ports",
+    example = "//lib/examples:ex_ports",
+    lowered = ("ports", "top"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//minuend/rx_valid=>minuend_valid",
+        "//minuend/rx_data=>minuend_data",
+        "//minuend/rx_ready=>minuend_ready",
+        "//subtrahend/rx_valid=>subtrahend_valid",
+        "//subtrahend/rx_data=>subtrahend_data",
+        "//subtrahend/rx_ready=>subtrahend_ready",
+        "//top/diff/count=>count",
+        "//diff/rx_valid=>diff_valid",
+        "//diff/rx_data=>diff_data",
+        "//diff/rx_ready=>diff_ready",
+        "//borrow=>borrow",
+    ],
 )
 
 waveform(
