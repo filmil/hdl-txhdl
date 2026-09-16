@@ -58,6 +58,29 @@ use_repo(rust, "rust_toolchains")
 
 register_toolchains("@rust_toolchains//:all")
 
+# A C and C++ compiler for Vreteno itself, fetched by checksum: the
+# xPack build of the GNU toolchain for bare-metal RISC-V. It is here
+# rather than a Clang because of what comes with it. Its `rv32im/ilp32`
+# multilib is exactly this core, RV32IM with no compressed
+# instructions and the soft-float ABI, and it carries newlib and a
+# real `libstdc++.a` built for it, so "with a standard library" is
+# something the toolchain already has rather than something the build
+# would have to compile.
+http_archive = use_repo_rule(
+    "@bazel_tools//tools/build_defs/repo:http.bzl",
+    "http_archive",
+)
+
+http_archive(
+    name = "riscv_none_elf_gcc",
+    build_file = "//third_party/riscv_gcc:BUILD.toolchain",
+    sha256 = "f574415b63f12b09bdd3475223ab492a465d23810646c90c13a4c3b676c83503",
+    strip_prefix = "xpack-riscv-none-elf-gcc-14.2.0-3",
+    urls = [
+        "https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/v14.2.0-3/xpack-riscv-none-elf-gcc-14.2.0-3-linux-x64.tar.gz",
+    ],
+)
+
 # Prebuilt tools, fetched by checksum for every platform they ship for.
 # vcdcvt and sqlite2drawtiming turn a VCD into a signals database and
 # the database into drawtiming text; //tools/dt2tikz draws that text.

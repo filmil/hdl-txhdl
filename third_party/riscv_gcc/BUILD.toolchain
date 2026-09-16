@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# The fetched bare-metal RISC-V toolchain, as Bazel sees it.
+#
+# Every file of it is one filegroup, because a compiler driver reaches
+# for its own pieces by path at run time: `cc1plus`, the assembler,
+# the linker, the specs, the headers, and the multilib chosen by
+# `-march` and `-mabi`. Naming them one by one would be a list that
+# went stale on the next version, and the archive is fetched by
+# checksum, so what is in it is fixed anyway.
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "all",
+    srcs = glob(
+        ["**"],
+        exclude = ["**/BUILD*", "**/*.py"],
+    ),
+)
+
+filegroup(
+    name = "gxx",
+    srcs = ["bin/riscv-none-elf-g++"],
+)

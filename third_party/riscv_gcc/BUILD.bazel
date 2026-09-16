@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# The build file the fetched RISC-V toolchain is given is next to this
+# one, `BUILD.toolchain`. It lives here rather than in the archive
+# because the archive is somebody else's and is fetched by checksum.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["BUILD.toolchain"])
