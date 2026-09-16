@@ -56,6 +56,12 @@ pub type Outs<
 /// What attaches at a node's exit: a host bridge drives `q_in` and
 /// reads `p_out`, and a peripheral bridge drives `p_in` and reads
 /// `q_out`.
+///
+/// The widths are the AXI link's, and they are the same everywhere in
+/// the network: `A` is the address width, `D` the data width, `S` the
+/// strobe width, which is `D / 8`, and `I` the identifier width. `XB`
+/// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
+/// by `1 << YB` nodes at most.
 pub struct Exit<
     const XB: usize,
     const YB: usize,
@@ -64,14 +70,24 @@ pub struct Exit<
     const S: usize,
     const I: usize,
 > {
+    /// Requests into the node, which a host's bridge drives.
     pub q_in: Tx<Pkt<XB, YB, A, D, S, I>>,
+    /// Requests out of the node, which a peripheral's bridge reads.
     pub q_out: Rx<Pkt<XB, YB, A, D, S, I>>,
+    /// Responses into the node, which a peripheral's bridge drives.
     pub p_in: Tx<Pkt<XB, YB, A, D, S, I>>,
+    /// Responses out of the node, which a host's bridge reads.
     pub p_out: Rx<Pkt<XB, YB, A, D, S, I>>,
 }
 
 /// A lattice, wired: per node in row-major order, the ends its `run`
 /// takes, and the ends whatever attaches to its exit holds.
+///
+/// The widths are the AXI link's, and they are the same everywhere in
+/// the network: `A` is the address width, `D` the data width, `S` the
+/// strobe width, which is `D / 8`, and `I` the identifier width. `XB`
+/// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
+/// by `1 << YB` nodes at most.
 pub struct Lattice<
     const XB: usize,
     const YB: usize,
@@ -80,8 +96,11 @@ pub struct Lattice<
     const S: usize,
     const I: usize,
 > {
+    /// What each node's `run` reads, in row-major order.
     pub ins: Vec<Ins<XB, YB, A, D, S, I>>,
+    /// What each node's `run` drives, in the same order.
     pub outs: Vec<Outs<XB, YB, A, D, S, I>>,
+    /// What attaches at each node's exit, in the same order.
     pub exits: Vec<Exit<XB, YB, A, D, S, I>>,
 }
 

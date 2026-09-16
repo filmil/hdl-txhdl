@@ -65,8 +65,19 @@ fn room(
 }
 
 // begin{state}
-/// A five-port switch at `X`, `Y` of a lattice. `XB` and `YB` are the
-/// widths of a coordinate; `A`, `D`, `S` and `I` are the AXI link's.
+/// A five-port switch at column `X` and row `Y` of a lattice: a
+/// two-way link on each of the four sides it is named for, and a
+/// fifth port, the exit.
+///
+/// It holds nothing. Where a packet goes is a function of the
+/// packet and of `X` and `Y`, so a switch has no state to keep
+/// between cycles.
+///
+/// The widths are the AXI link's, and they are the same everywhere in
+/// the network: `A` is the address width, `D` the data width, `S` the
+/// strobe width, which is `D / 8`, and `I` the identifier width. `XB`
+/// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
+/// by `1 << YB` nodes at most.
 #[derive(Trace, Default)]
 pub struct Switch<
     const X: usize,

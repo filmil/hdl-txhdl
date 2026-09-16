@@ -33,9 +33,18 @@ use super::pkt::{Chan, Pkt};
 use crate::bus::axi::{Addr, BurstKind, Resp, B, R, W};
 
 // begin{host}
-/// The host side of an exit, at node `X`, `Y`. `B0`/`M0`/`X0`/`Y0`
-/// and its two fellows are the address map: a base, a mask, and the
-/// node that range lives at. The last entry is the default route.
+/// The host side of an exit, at column `X` and row `Y`.
+///
+/// `B0`, `M0`, `X0` and `Y0`, and their two fellows, are the address
+/// map: an address whose bits under the mask `M0` equal `B0` goes to
+/// the node at `X0`, `Y0`. The last entry is the default route, so a
+/// mask of zero there takes everything that matched nothing else.
+///
+/// The widths are the AXI link's, and they are the same everywhere in
+/// the network: `A` is the address width, `D` the data width, `S` the
+/// strobe width, which is `D / 8`, and `I` the identifier width. `XB`
+/// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
+/// by `1 << YB` nodes at most.
 ///
 /// It holds nothing: a write is one packet, so there is no burst to
 /// keep track of between cycles.
@@ -246,11 +255,16 @@ pub struct PerBridge<
     const I: usize,
     const NIDS: usize,
 > {
+    /// The column of the node each local identifier's burst came from.
     pub sx: Mem<U<XB>, NIDS>,
+    /// The row of it.
     pub sy: Mem<U<YB>, NIDS>,
+    /// The identifier that node used, which its answer goes back
+    /// under.
     pub oid: Mem<U<I>, NIDS>,
-    /// The local identifier whose turn it is, and which are out.
+    /// The local identifier whose turn it is to be given out.
     pub turn: Reg<U<I>>,
+    /// Which local identifiers are out and not yet answered.
     pub busy: Reg<U<NIDS>>,
 }
 // end{per}

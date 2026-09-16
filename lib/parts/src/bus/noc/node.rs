@@ -20,6 +20,12 @@ use super::switch::Switch;
 // begin{state}
 /// A node of the lattice at `X`, `Y`: the request switch and the
 /// response switch, each with its four links and its exit.
+///
+/// The widths are the AXI link's, and they are the same everywhere in
+/// the network: `A` is the address width, `D` the data width, `S` the
+/// strobe width, which is `D / 8`, and `I` the identifier width. `XB`
+/// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
+/// by `1 << YB` nodes at most.
 #[derive(Trace, Default)]
 pub struct Node<
     const X: usize,
@@ -31,7 +37,9 @@ pub struct Node<
     const S: usize,
     const I: usize,
 > {
+    /// What a host sends and a peripheral receives.
     pub req: Switch<X, Y, XB, YB, A, D, S, I>,
+    /// What a peripheral sends and a host receives.
     pub rsp: Switch<X, Y, XB, YB, A, D, S, I>,
 }
 // end{state}
