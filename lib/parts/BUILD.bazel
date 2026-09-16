@@ -9,6 +9,7 @@ rust_library(
         "src/buffer.rs",
         "src/bus/axi.rs",
         "src/bus/mod.rs",
+        "src/bus/router.rs",
         "src/fifo.rs",
         "src/station.rs",
         "src/lib.rs",
