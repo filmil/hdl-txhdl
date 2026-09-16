@@ -948,7 +948,8 @@ waveform(
         "//ack=>ack",
         "//ans/tx_valid=>ans",
     ],
-    until = 64,
+    until = 36,
+    width = 8.2,
 )
 
 # Accepting many AXI transactions and forwarding them for processing:
@@ -1678,6 +1679,8 @@ latex_document(
         ":axi_serve_timing",
         ":axi_router_run",
         ":axi_router_timing",
+        ":axi_wb_run",
+        ":axi_wb_timing",
         ":router_source",
         ":axi_lite_run",
         ":axi_lite_timing",

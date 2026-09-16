@@ -24,6 +24,13 @@ linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/bus/axi/sim.rs}}
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=#1-#1,caption={#2},label={#3}]{lite_bridge2.rs}}
 
+
+% A range of the simulation-only Wishbone parts.
+\newcommand{\simwbpart}[3]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/bus/wb/sim.rs}}
+
 % A range of the library's source, by its begin/end markers.
 \newcommand{\axipart}[3]{%
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
@@ -616,6 +623,86 @@ user that is not a test. Its serial port is an AXI-Lite peripheral
 behind \code{LiteBridge1}, on the router's third port, and the port
 lost the three registers it used to hold a write while it waited for
 the write's beat.
+
+
+\section{Reaching Wishbone}
+\label{sec:a-wb}
+
+A controller written elsewhere often speaks Wishbone rather than AXI.
+The DDR3 controller the board's memory runs on is one, and
+\code{bus::wb::AxiWb} is the bridge that puts it on a link: a
+peripheral client written as hardware, holding the peripheral's
+channel ends on one side and driving the host lines of a pipelined
+Wishbone bus on the other.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=state-state,caption={The bridge's state, from
+\code{lib/parts/src/bus/wb.rs}.},%
+label={lst:a-wbstate}]{lib/parts/src/bus/wb.rs}
+
+It takes one single-beat burst at a time. A read goes on the lines at
+once and a write once its beat has come, since AXI4 puts no
+identifier on a write's beat and the beat comes when it comes. The
+request is offered with \code{cyc} and \code{stb}; a cycle with no
+\code{stall} is the one the peripheral takes it in; then \code{cyc}
+alone is held until \code{ack}, which brings the word for a read; and
+then the answer goes on the link, a response for a write or a beat
+for a read, when the link has room for it. Every line the bridge
+drives is a register.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=run-run,caption={The bridge, a cycle at a
+time.},label={lst:a-wbrun}]{lib/parts/src/bus/wb.rs}
+
+The Wishbone address is a word address, the burst's byte address
+shifted down by two and cut to the bridge's width. A peripheral
+decoded at a region of the link's map therefore sees offsets from the
+region's base without the bridge subtracting anything, as long as the
+base lies above those bits.
+
+On the other side of the lines, in a simulation, is
+\code{bus::wb::sim::WbMem}, which is to Wishbone what the RAM of
+Section~\ref{sec:a-sim} is to AXI: plain Rust, sparse, and a handle on
+its words. It stalls for a number of cycles at the start, as a
+controller does while it calibrates, and takes a number of cycles for
+each request.
+
+\simwbpart{mem}{The Wishbone memory, from
+\code{lib/parts/src/bus/wb/sim.rs}.}{lst:a-wbmem}
+
+\code{ex\_axi\_wb} writes three words through the bridge and reads
+them back, against a memory that calibrates for ten cycles and takes
+two for each request. The client is a host end made by
+\code{axi\_to\_unit}, the link whose host is a testbench and whose
+peripheral is a unit. The memory runs ahead of the bridge in the
+join, so the bridge reads its lines in the cycle they are driven, as
+the netlist does; the memory, a model, reads the bridge's a cycle
+later, which is why its stall rises a cycle after the bridge has
+seen a request taken.
+
+\begin{figure}[htbp]
+\centering
+\input{axi_wb_timing.tex}
+\caption{The first write through the bridge: the request and its
+beat arriving, \code{stb} held through the memory's calibration until
+a cycle with no stall takes it, \code{cyc} held until the
+acknowledge, and the response going out on \code{ans}.}
+\label{fig:a-wb}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_axi\_wb.rs}. Run with
+\code{bazel run //lib/examples:ex\_axi\_wb}.},%
+label={lst:a-wb-ex}]{lib/examples/ex_axi_wb.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_axi\_wb} printed
+when the build ran it: the lines in each cycle a request is on them,
+the words read back, and the bridge's netlist.},%
+label={lst:a-wb-out}]{out_axi_wb.txt}
+
+The bridge is lowered, and the build simulates its netlist against
+this run under \code{nvc} and under Verilator at its ports.
 
 \begin{thebibliography}{9}
 
