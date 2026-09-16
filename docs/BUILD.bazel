@@ -954,6 +954,25 @@ waveform(
     until = 104,
 )
 
+# A foreign module inside a netlist: the netlist is simulated with the
+# hand-written module's own source, against the trace its Rust model
+# wrote.
+waveform(
+    name = "blackbox",
+    example = "//lib/examples:ex_blackbox",
+    foreign_verilog = ["//lib/examples:blinker.v"],
+    foreign_vhdl = ["//lib/examples:blinker.vhd"],
+    lowered = ("blackbox", "top"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//enable=>enable",
+        "//top/hold/held=>held",
+        "//top/blink/tick=>tick",
+        "//count=>count",
+    ],
+    until = 60,
+)
+
 waveform(
     name = "compose",
     example = "//lib/examples:ex_compose",
