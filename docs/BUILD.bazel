@@ -832,6 +832,34 @@ waveform(
     until = 110,
 )
 
+# An AXI4 router: one host, three peripherals at three ranges, and a
+# fourth address that is nobody's, answered by the router itself.
+waveform(
+    name = "axi_router",
+    example = "//lib/examples:ex_axi_router",
+    lowered = ("axi_router", "router"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//ar/tx_valid=>ar",
+        "//ar/tx_data/addr=>ar_addr",
+        "//aw/tx_valid=>aw",
+        "//aw/tx_data/addr=>aw_addr",
+        "//ar0/tx_valid=>ar0",
+        "//ar1/tx_valid=>ar1",
+        "//aw2/tx_valid=>aw2",
+        "//router/rerr=>rerr",
+        "//router/berr=>berr",
+        "//r/tx_valid=>r",
+        "//r/tx_data/id=>r_id",
+        "//r/tx_data/resp=>r_resp",
+        "//r/tx_data/last=>r_last",
+        "//b/tx_valid=>b",
+        "//b/tx_data/id=>b_id",
+        "//b/tx_data/resp=>b_resp",
+    ],
+    until = 110,
+)
+
 # Accepting many AXI transactions and forwarding them for processing:
 # three in flight over four identifiers, recycled.
 waveform(
@@ -1320,6 +1348,13 @@ latex_document(
 # prints it, and the size of that text beside the hand-written
 # Verilog's: both for the tutorial, neither typed by hand.
 genrule(
+    name = "router_source",
+    outs = ["router3.rs"],
+    cmd = "$(location //lib/examples:ex_axi_router) --source > $@",
+    tools = ["//lib/examples:ex_axi_router"],
+)
+
+genrule(
     name = "station_source",
     outs = [
         "station2.rs",
@@ -1364,6 +1399,9 @@ latex_document(
         ":axi_timing",
         ":axi_serve_run",
         ":axi_serve_timing",
+        ":axi_router_run",
+        ":axi_router_timing",
+        ":router_source",
         "//lib/examples:sources",
         "//lib/parts:sources",
     ],

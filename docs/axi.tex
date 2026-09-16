@@ -58,8 +58,11 @@ whole decoded transaction and answers it, from whatever process it
 likes and in whatever order its work finished. Neither names a
 channel. Between the two ends are the two units that do the
 protocol, lowered to Verilog and to VHDL and simulated against the
-examples' runs, with the five AXI channels between them, which is
-where a router will go.
+examples' runs, with the five AXI channels between them; and in
+those channels goes the router, one host to several peripherals by
+an address map its type states, which answers an address that is
+nobody's itself rather than leaving a client waiting for ever. A
+router is inserted by wiring, and changes no client.
 \end{abstract}
 
 \section{What a Link Is}
@@ -155,14 +158,14 @@ a pool of workers, the workers take their own time, and a third
 answers whatever finished, taking the transaction back out of
 \code{Open}. That third process never called \code{accept}.
 
-\begin{figure}[htbp]
+\begin{figure*}[t]
 \centering
 \input{axi_serve_timing.tex}
 \caption{Ten one-word reads over four identifiers, three in flight.
 An identifier goes back on \code{release} only once the client has
 taken that burst's answer, and \code{busy} shows which are out.}
 \label{fig:a-serve}
-\end{figure}
+\end{figure*}
 
 \lstinputlisting[caption={\code{ex\_axi\_serve.rs}. Run with
 \code{bazel run //lib/examples:ex\_axi\_serve}.},label={lst:a-serve-ex}]{lib/examples/ex_axi_serve.rs}
@@ -242,7 +245,7 @@ of them, so all three are in flight with an identifier each. The
 peripheral serves them with three slots and a worker whose time
 depends on the address, so the work finishes in an order of its own.
 
-\begin{figure}[htbp]
+\begin{figure*}[t]
 \centering
 \input{axi_timing.tex}
 \caption{The peer-to-peer run: three bursts issued, the identifiers
@@ -250,7 +253,7 @@ granted, the address beats out on \code{ar} and \code{aw}, the write
 beats with \code{w\_last}, and the answers back in an order that is
 not the order they were issued.}
 \label{fig:a-peer}
-\end{figure}
+\end{figure*}
 
 \lstinputlisting[caption={\code{ex\_axi.rs}. Run with
 \code{bazel run //lib/examples:ex\_axi}.},label={lst:a-peer-ex}]{lib/examples/ex_axi.rs}
@@ -294,18 +297,127 @@ netlist then does not analyse; the register here is called
 \code{turn} for that reason. The lowering does not yet escape the
 reserved words of its targets.
 
-\section{What Routing Attaches To}
+\section{The Router}
 \label{sec:a-routing}
 
 The five AXI channels between \code{AxiHost} and \code{AxiPer} are
-ordinary channels of ordinary transactions. A router is a unit with
-an \code{aw}, \code{ar} and \code{w} in and several out, and several
-\code{b} and \code{r} in and one out, choosing by address on the way
-down and by identifier on the way back, which is what
-\code{cpu/vreteno/src/router.rs} already does for that core's
-simpler bus. Nothing in the two ends changes when one is inserted:
-the client verbs are the same, and the identifiers, which the
-clients never see, are what the answers come home by.
+ordinary channels of ordinary transactions, which is what makes a
+router a unit like any other rather than a special case of the link.
+It takes the host's \code{aw}, \code{ar} and \code{w} and gives a set
+of the three per peripheral; it takes a \code{b} and an \code{r} per
+peripheral and gives the host one of each.
+
+A peripheral's range is a base and a mask, stated where the type is
+named, so the address map of a design is in its type and the netlist
+has the decode baked in:
+
+\begin{lstlisting}
+type Rtr =
+    Router3<16, 32, 4, 3, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>;
+\end{lstlisting}
+
+One count of peripherals is one unit, written out by
+\code{router!(Router3, 3)} for two to eight of them. The lowering
+reads a body and not a loop over ports, so the count cannot be a
+parameter; it is the same reason the reservation station is written
+out per arity~\cite{station}.
+
+\subsection*{What it has to keep}
+
+Three things make a router more than a fan-out.
+
+The write beats carry no identifier. AXI4 puts one on \code{aw} and
+none on \code{w}, so the beats belong to the oldest address phase
+that has not finished, and the router remembers where that one went:
+\code{wsel} is a bit per peripheral and \code{wbusy} says a burst is
+still running. A second \code{aw}, to any peripheral, waits for the
+first burst's last beat. Without that the beats of two writes would
+interleave and each peripheral would get half of each.
+
+A read burst's beats must stay together, because \code{rlast} is how
+the host end knows a burst has ended. So the choice among
+peripherals is made once, at the first beat, and held in \code{rsel}
+until \code{last} goes by; \code{rbusy} says so.
+
+An address that is no peripheral's cannot simply be dropped. The
+client is waiting on an answer, and with nothing coming back the
+identifier is never released and the host stops. The router answers
+it: \code{DecErr} on \code{b} for a write, once its beats have been
+swallowed, and \code{DecErr} on \code{r} for a read, in as many
+beats as were asked for, counted down in \code{rerr\_left}. The
+beats matter. A read of four answered in one would leave the client
+gathering for ever.
+
+\subsection*{The unit}
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=state-state,caption={The router's state, as
+\code{router!} wrote it for three peripherals.},%
+label={lst:a-rstate}]{router3.rs}
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=decode-decode,caption={The decode: where each address
+phase goes, and whether that peripheral has room for
+it.},label={lst:a-rdecode}]{router3.rs}
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=merge-merge,caption={The merge: the beat that goes up, from
+the chosen peripheral or from the router's own decode
+error.},label={lst:a-rmerge}]{router3.rs}
+
+Every step is a wire with a name, and the chains are written as a
+wire each rather than one nested expression, so no line grows with
+the count of peripherals and the netlist says which peripheral was
+waiting for which.
+
+\subsection*{The run}
+
+\code{ex\_axi\_router} is one host, three peripherals and a fourth
+address that is nobody's. Five bursts go out before any is
+collected: a read to each of the first two peripherals, a write to
+the third, and a read and a write to the hole. The three peripherals
+take different times, so the answers come back in an order of their
+own, and each answer carries the number of the peripheral that
+served it, which is what the run asserts.
+
+\begin{figure*}[t]
+\centering
+\input{axi_router_timing.tex}
+\caption{The router's run: the address phases in on \code{aw} and
+\code{ar}, the three peripherals' selected, the two error flags
+raised by the hole, and the answers going up with their identifiers
+and responses.}
+\label{fig:a-router}
+\end{figure*}
+
+\lstinputlisting[caption={\code{ex\_axi\_router.rs}. Run with
+\code{bazel run //lib/examples:ex\_axi\_router}.},%
+label={lst:a-router-ex}]{lib/examples/ex_axi_router.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_axi\_router}
+printed when the build ran it: five bursts, each answered by the
+right range, and then the router's netlist.},%
+label={lst:a-router-out}]{out_axi_router.txt}
+
+The thing to look for in Listing~\ref{lst:a-router-ex} is what is
+not there. The host client is the client of
+Section~\ref{sec:a-peer}, and each peripheral is a \code{serve} with
+a body and nothing else. Neither mentions the router, a range or an
+identifier. A router is put in by wiring: each of a link's five
+channels has two ends, so the router is given the peripheral-facing
+ends of the host's link and the host-facing ends of each
+peripheral's, and nothing else moves.
+
+The router is lowered, and the build simulates its netlist against
+this run under \code{nvc} and under Verilator at its ports, as it
+does the two trackers.
+
+Host-side arbitration, several hosts contending for one peripheral,
+is not here. It is the other half of a full interconnect and a
+problem of its own.
 
 \begin{thebibliography}{9}
 
