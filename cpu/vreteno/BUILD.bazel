@@ -32,6 +32,20 @@ rust_library(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The board's design as one lowered unit, on the programs compiled for
+# the core, and its netlist with the DDR3 controller in it.
+rust_test(
+    name = "board_test",
+    srcs = ["tests/board.rs"],
+    edition = "2021",
+    deps = [
+        ":vreteno32",
+        "//cpu/vreteno/rust:ddr3_program",
+        "//cpu/vreteno/rust:hello_program",
+        "//lib:txhdl",
+    ],
+)
+
 # The encoders against the decoder.
 rust_test(
     name = "isa_test",
