@@ -221,22 +221,29 @@ vivado_place_and_route2(
     tags = ["manual"],
 )
 
-# The core on the Alinx AX7A200: a hand-written Verilog top brings the
-# board's 200 MHz clock down to 100 MHz, synchronises the reset button,
-# and lights a LED on halt; the constraints name the board's pins, so
-# this bitstream is real. Manual, as every Vivado target is.
+# The board on the Alinx AX7A200: the lowered design with the DDR3 test
+# in its memories, UberDDR3's controller, and the hand-written top with
+# the PLL, the resets and the pins. The constraints name the board's
+# pins, the memory's among them, so this bitstream is real. Manual, as
+# every Vivado target is.
 #
 #   bazel build //cpu/vreteno:vreteno_board_pnr
 filegroup(
     name = "ax7a200_xdc",
-    srcs = ["board/ax7a200.xdc"],
+    srcs = [
+        "board/ax7a200.xdc",
+        "board/ax7a200_ddr3.xdc",
+    ],
 )
 
 vivado_synthesis2(
     name = "vreteno_board_synth",
+    # UberDDR3's RTL sets default_nettype none, which lasts into every
+    # file read after it, so the controller goes last.
     srcs = [
+        ":board_v",
         "board/vreteno_board.v",
-        "//docs:vreteno.v",
+        "//ddr3:hdl",
     ],
     part = "xc7a200tfbg484-2",
     top = "vreteno_board",
