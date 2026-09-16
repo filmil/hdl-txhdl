@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: Apache-2.0
+//! The demonstration: render a scene on the GPU and show it.
+//!
+//! The picture is printed on the terminal in colour, and written as a
+//! PNG where `GPU_PNG` says, which is how the document gets it. The
+//! framebuffer is compared with the model as the run ends, so the
+//! demonstration is a check as well as a picture.
+use gpu::image;
+use gpu::model;
+use gpu::scene;
+use gpu::sim;
+
+/// The screen: sixty-four by sixty-four, one word a pixel.
+const LOGW: usize = 6;
+const W: usize = 1 << LOGW;
+const H: usize = 64;
+const N: usize = 4096;
+
+fn main() {
+    let ops = scene::house(W, H);
+    let run = sim::run::<LOGW, H, N>(&ops, false, false);
+    let want = model::render(&ops, W, H);
+    let wrong = run.fb.iter().zip(&want).filter(|(a, b)| a != b).count();
+    assert_eq!(wrong, 0, "{wrong} pixels differ from the model");
+
+    if std::env::args().any(|a| a == "--ascii") {
+        print!("{}", image::ascii(&run.fb, W, H));
+    } else {
+        println!("{}", image::ansi(&run.fb, W, H));
+    }
+    println!(
+        "{} entries, {W} by {H} pixels, {} cycles, every pixel as the \
+         model says",
+        ops.len(),
+        run.cycles
+    );
+    if let Ok(p) = std::env::var("GPU_PNG") {
+        std::fs::write(&p, image::png(&run.fb, W, H, 6)).expect("the PNG");
+    }
+}

@@ -800,6 +800,39 @@ waveform(
     ],
 )
 
+# A minimal GPU: the rasteriser and the framebuffer lowered, the
+# whole of a small render traced.
+waveform(
+    name = "gpu",
+    example = "//gpu:trace",
+    lowered = [
+        ("raster", "raster"),
+        ("fb", "fb"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//raster/x=>x",
+        "//raster/y=>y",
+        "//raster/hit=>hit",
+        "//issue/tx_valid=>issue",
+        "//aw/tx_valid=>aw",
+        "//req/tx_valid=>req",
+        "//wd/tx_valid=>wd",
+        "//b/tx_valid=>b",
+        "//raster/inflight=>inflight",
+    ],
+    from_tick = 1102,
+    until = 1162,
+)
+
+# The demonstration's picture, rendered by the GPU and written by it.
+genrule(
+    name = "gpu_scene",
+    outs = ["scene.png"],
+    cmd = "GPU_PNG=$@ $(location //gpu:demo) > /dev/null",
+    tools = ["//gpu:demo"],
+)
+
 # An AXI4 link, peer to peer: the two trackers lowered, the five AXI
 # channels between them, and the answers out of order.
 waveform(
@@ -1387,6 +1420,22 @@ genrule(
     ]),
 )
 
+# A minimal GPU in TxHDL: the rasteriser, the framebuffer, the
+# picture the GPU drew and the waveform of the traced run.
+latex_document(
+    name = "gpu",
+    main = "gpu.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":gpu_run",
+        ":gpu_timing",
+        ":gpu_scene",
+        "//gpu:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # AXI in TxHDL: the tutorial on the bus, its two examples' runs and
 # waveforms included, and the two trackers' netlists.
 latex_document(
@@ -1439,6 +1488,7 @@ combined_pdf(
         "TxHDL from Zero: A Blinky in Bazel",
         "A Reservation Station in TxHDL",
         "AXI in TxHDL",
+        "A Minimal GPU in TxHDL",
         "TxHDL: Unifying a Dataflow and a Transaction HDL",
         "Deleting a Language: Embedding TxHDL in Rust",
         "The TxHDL Runtime",
@@ -1454,6 +1504,7 @@ combined_pdf(
         ":zero",
         ":station",
         ":axi",
+        ":gpu",
         ":article",
         ":embedding",
         ":runtime",
