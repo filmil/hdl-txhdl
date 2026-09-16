@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# The board's DDR3 memory as an AXI peripheral: UberDDR3's controller as
+# a foreign module behind a Wishbone of words, and the bridge from the
+# link to it.
+package(default_visibility = ["//visibility:public"])
+
+# The controller as its netlist names it: the wrapper, then UberDDR3's
+# own RTL, for a simulation or a synthesis to read beside the lowering.
+filegroup(
+    name = "hdl",
+    srcs = [
+        "hdl/ddr3_wb32.v",
+        "@uberddr3//:rtl",
+    ],
+)
