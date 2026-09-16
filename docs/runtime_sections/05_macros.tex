@@ -86,7 +86,11 @@ signal::<T, C>()} is a net between the children, named by the two
 ends' common prefix, and every \code{self.child.run(inputs,
 outputs)}, alone or under \code{join2}, is an instance of the
 child's own lowering, its ports joined in order to the nets and to
-the parent's ports. A side of the parent's that is a struct, passed
+the parent's ports. A wire's reading end or an input port may be read
+by several children: \code{let b = a.clone();} is another name for the
+same net, which is how a reset reaches the core, the timer and the
+serial port at once; a channel end is not cloned this way, since a
+channel has one receiver. A side of the parent's that is a struct, passed
 whole, is its fields in order, and a struct literal
 \code{S \{ b: x, a \}} joins each field to the child's port of that
 name, whatever order the literal writes them in; a channel end or
