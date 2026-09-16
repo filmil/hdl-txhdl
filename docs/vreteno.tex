@@ -954,10 +954,24 @@ is what the test's terminal reads. The controller alone is checked
 the same way, against the same models, by
 \code{//ddr3/sim:wrapper\_test}.
 
+\code{bazel build //cpu/vreteno:vreteno\_board\_pnr} synthesises it,
+places and routes it with the board's pins and the memory's, and
+writes the bitstream, in eleven minutes. Every timing constraint is
+met: the worst setup slack is 0.220~ns, the worst hold slack
+0.040~ns, over 17\,708 endpoints on the four clocks Vivado derives
+from the one constraint on the board's 200~MHz input. No register is
+without a clock, no internal endpoint is unconstrained, and neither
+synthesis nor implementation raises a critical warning. The design
+takes 7\,661 LUTs, 6\,403 flip-flops, three block RAM tiles, four DSP
+blocks, 80 pins, the PLL, and the controller's 65 output and 36 input
+serialisers. The memory's pins carry no input or output delay, as in
+the a200t examples, since the controller calibrates their timing
+itself.
+
 The run on the board below was made with the design before the DDR3
 memory was on the bus, when the top wired the units to each other by
-hand around an MMCM. The design with the memory has not been
-synthesised yet, and its figures are for the next change.
+hand around an MMCM; the design with the memory has not been run on
+the board yet.
 
 The board sits on another machine, with its programming cable and
 its serial bridge, and is programmed from here. Vivado's
@@ -1125,10 +1139,9 @@ second register in the middle of its carry chain, one more step of
 the sequencer, would. The lockstep test is the check for either,
 since it compares architectural state when an instruction retires.
 
-The design with the DDR3 memory, synthesised, placed and routed with
-the memory's constraints, and then run on the board: what it takes,
-how fast it runs, and whether the board says what the simulation
-says.
+The design with the DDR3 memory on the board: its bitstream is built
+and meets timing, and what is left is to program it and see that the
+board says \code{ddr3 ok} as the simulation does.
 
 \begin{thebibliography}{10}
 
