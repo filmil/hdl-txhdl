@@ -38,7 +38,10 @@ all under `//docs`:
   `//tools/api` extracts from the source at build time.
 * `//docs:vreteno` is the first large design, the Vreteno RV32IM core
   under `//cpu/vreteno`, with its reference model, its lockstep test,
-  its waveform, and the timer on its bus.
+  its waveform, the timer on its bus, and the board: one lowered
+  module with the DDR3 memory of `//ddr3` behind it, UberDDR3's
+  controller a foreign module inside, simulated whole under Vivado's
+  simulator by the manual `//cpu/vreteno/board/sim:board_test`.
 * `//docs:tapeout` is the same core after the FPGA: mapped onto the
   open Nangate45 standard cell library with Yosys and floorplanned,
   placed, routed and timed with OpenROAD, both fetched by checksum as
