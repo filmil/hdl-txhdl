@@ -6,6 +6,7 @@ pub mod dmem;
 pub mod isa;
 pub mod model;
 pub mod program;
+pub mod run;
 pub mod term;
 pub mod timer;
 pub mod uart;
