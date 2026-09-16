@@ -98,6 +98,24 @@ made by \code{chan} is the runtime's channel in the netlist, a
 buffer of two with the receiver's \code{valid} and \code{data} and
 the sender's \code{ready} registered, one module \code{txhdl\_chan}
 put into the file once; a net made by \code{signal} is a wire.
+A child need not be lowered. A unit that implements \code{Lower} by
+hand with \code{netlist::foreign} is a module the netlist does not
+write: its lowering names the module, its ports by their own names in
+the order the unit's \code{run} takes them, its parameters, and which
+clock drives each of its clock pins, and the parent joins it as it
+joins any child. The netlist then has an instance of that module,
+with its parameters, where the child would be, and emits no body for
+it: a Verilog instance with \code{\#(..)}, and in VHDL a component
+declared once per module and instantiated with a generic map, since a
+Verilog module is reached from VHDL no other way. The component's
+vectors are \code{std\_logic\_vector} where the netlist's are
+\code{unsigned}, so a vector crosses with a conversion, on the actual
+for an input and on the formal for an output. A port of kind
+\code{Pad} is a pin driven from both sides: the parent takes it among
+its own ports and passes it to the foreign child untouched, and both
+netlists declare it \code{inout}. The simulation carries nothing on
+a pad; the foreign unit's model in Rust stands in for whatever is on
+the other side of the pins.
 \code{interface!} takes an interface and any number of roles, checks
 that every role names every member once and that no member is driven
 twice, and emits a struct per role plus a constructor that splits each
