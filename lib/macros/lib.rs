@@ -3188,7 +3188,7 @@ fn port_struct_fields(
         return Ok(None);
     };
     let head = head.to_string();
-    if ["In", "Out", "Tx", "Rx"].contains(&head.as_str()) {
+    if ["In", "Out", "Tx", "Rx", "Pad"].contains(&head.as_str()) {
         return Ok(None);
     }
     let Some(s) = structs.iter().find(|s| s.name == head) else {
@@ -4905,8 +4905,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             ("Tx", x)
         } else if let Some(x) = ty.strip_prefix("Rx<") {
             ("Rx", x)
+        } else if let Some(x) = ty.strip_prefix("Pad<") {
+            ("Pad", x)
         } else {
-            return err(span, "a port must be an Out, In, Tx or Rx");
+            return err(span, "a port must be an Out, In, Tx, Rx or Pad");
         };
         // The transaction type: up to the clock argument, if any.
         let inner = inner.strip_suffix('>').unwrap_or(inner);
