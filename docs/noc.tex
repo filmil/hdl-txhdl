@@ -285,9 +285,9 @@ was written it did fail.
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.52\columnwidth]{soc_scene.png}
-\caption{What the rasteriser drew, read back out of the memory it
-shares with the core, while the core was running a program and saying
-its line on the serial port two hops away.}
+\caption{An icosahedron. The core worked it out and wrote it into
+memory as a display list; the rasteriser read the list out of that
+memory and drew it there, two hops away from the core.}
 \label{fig:n-soc}
 \end{figure}
 
@@ -295,58 +295,88 @@ A core at 0,0, a GPU at 1,0, a memory at 0,1 and a serial port at 1,1:
 two hosts and two peripherals, none of which knows that the others are
 there or that the network is. The core is Vreteno running a program
 compiled for it; the GPU is the rasteriser; the memory is the
-simulation-only \code{Ram}, holding the program's constants at
-\code{0x1000} and the framebuffer at \code{0x4000}; the serial port is
-the same \code{Uart} the core has always had, with a terminal on its
-lines.
+simulation-only \code{Ram}; the serial port is the same \code{Uart}
+the core has always had, with a terminal on its lines.
+
+The two hosts work together through the memory and through nothing
+else. The program holds an icosahedron as twelve vertices and twenty
+faces, turns it to the view, throws away the faces that point away
+from the camera, shades the rest by how squarely they face a light,
+and writes each as a triangle of the display list at \code{0x2000},
+with the count at \code{0x4000} last. The rasteriser has been reading
+that count since the first cycle. When it turns non-zero, the
+rasteriser fetches the list and draws it into the framebuffer at
+\code{0x8000}. The program's constants and its stack are at
+\code{0x1000}, and the serial port is at \code{0x3000}, where the core
+says \code{icosahedron} when it is done.
 
 \socpart{map}{The address map, stated in a host bridge's type. Both
 hosts use it: the serial port, the program's data, and then everything
-else, the framebuffer included.}{lst:n-map}
+else, the list and the framebuffer included.}{lst:n-map}
+
+The masks cover the whole address. A mask of \code{0xf000} compares
+only the digit the base is written in, and the framebuffer's last
+rows, at \code{0x13000} and above, then went to the serial port: the
+picture came out of the terminal as a line of the background colour's
+low byte.
 
 Each corner is the same three pieces: the client, an \code{AxiHost} or
-an \code{AxiPer}, and the bridge. Nothing was added to the core or to
-the rasteriser to put them here. The rasteriser gained one type
-parameter, the framebuffer's base, which was zero and written into its
-address arithmetic; on a shared memory it has to be told where its
-pixels go.
+an \code{AxiPer}, and the bridge. Nothing was added to the core to put
+it here. The rasteriser is told three addresses in its type, the
+framebuffer's base, the list's and the count's, and works its
+addresses out at the link's width, since a framebuffer above
+\code{0x10000} would otherwise wrap onto whatever the map has below.
+
+The program found a fault in the core. A multiply whose operand is
+the word the instruction before it loaded latched the register's old
+value, because the load was still waiting for its answer from the bus
+and the sequencer started anyway. The colour of every face came out
+with no red in it. The core's lockstep test now has that case, and the
+sequencer waits for the answer.
 
 \section{What the Hops Cost}
 \label{sec:n-cost}
 
 \begin{table}[htbp]
-\caption{The same work, on a direct link and across the lattice.}
+\caption{Cycles in the run of Figure~\ref{fig:n-soc}, and the same
+display list drawn by the rasteriser alone on a direct link.}
 \label{tab:n-cost}
 \centering\footnotesize
 \begin{tabular}{@{}lrr@{}}
 \toprule
  & link & lattice \\
 \midrule
-The core says its line & 1\,042 & 1\,229 \\
-The GPU draws the scene & 12\,656 & 29\,081 \\
+The core writes the list & & 13\,191 \\
+The GPU draws the list & 36\,516 & 78\,391 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The core pays eighteen per cent and the GPU pays a little over twice,
-and the difference between them is the difference between latency and
-throughput. The core has one load in flight at a time and waits for
-each answer, so what it pays is the hops, twice, on the loads it
-makes and on nothing else. The rasteriser writes four thousand and
-ninety-six pixels and never waits for any of them, so what it pays is
-the network's rate: one packet through a node per cycle, and a write
-is a packet each way across two hops.
+The demonstration prints both numbers for the GPU. It hands the list
+the core wrote to the rasteriser and its framebuffer joined by a
+plain link, draws it again, and checks that the picture is the same.
+On the lattice the rasteriser takes a little over twice as long,
+counted from the cycle the count is written.
 
-That is the number to improve, and improving it is arbitration and
+That is the cost of throughput rather than of latency. A hop adds
+about as much to one transaction's round trip as it does to the next,
+and a host that waits for each answer, as the core does for its loads,
+pays that and nothing more. The rasteriser writes over twelve thousand
+pixels and never waits for any of them, so what it pays is the
+network's rate: one packet through a node per cycle, and a write is a
+packet each way across two hops.
+
+The rate is the number to improve, and improving it is arbitration and
 width rather than routing: a switch that moved a packet per port per
 cycle rather than one per node would carry the rasteriser's stream at
 the rate the link does. The timing work that would pay for is written
 down separately.
 
-The two overlap for the first twelve hundred cycles, which is as long
-as the core runs. A longer program would contend for longer, and the
-fixed priority in a switch, which serves the four links before the
-exit, is the thing to watch when it does.
+The two hardly contend. While the core works, the rasteriser only
+polls the count, one read at a time; by the time it draws, the core
+has halted. A program that kept writing while the GPU drew would
+contend for longer, and the fixed priority in a switch, which serves
+the four links before the exit, is the thing to watch when it does.
 
 \section{What Is Not Here}
 \label{sec:n-not}

@@ -48,7 +48,10 @@ one is a unit of about a hundred lines that walks a box one pixel a
 cycle, keeps three edge functions as it goes, and writes the pixels
 that are inside the primitive as single-beat AXI bursts; the
 framebuffer is a second unit, a memory behind the other end of the
-link. Both are written in the lowered subset, so both are netlists,
+link. The display list is in that memory too, and the rasteriser
+reads it over the same link, so a program that writes the list is all
+it takes to give the GPU work. Both are written in the lowered subset,
+so both are netlists,
 and the build simulates each netlist against the run that drew the
 picture in this document, under \code{nvc} and under Verilator. The
 rasteriser is also the first client of the AXI link that is hardware
@@ -68,7 +71,7 @@ rectangles and four triangles.
 \centering
 \includegraphics[width=0.62\columnwidth]{scene.png}
 \caption{The demonstration, as the GPU drew it. Eight entries, four
-thousand and ninety-six pixels, twelve and a half thousand cycles.}
+thousand and ninety-six pixels, thirteen thousand cycles.}
 \label{fig:g-scene}
 \end{figure}
 
@@ -115,8 +118,8 @@ whole of the decoder:
 
 \begin{lstlisting}[frame=none,numbers=none]
 let covered = (self.kind.get() != Kind::Tri) | (n0 & n1 & n2);
-let clearing = op.kind == Kind::Clear;
-let wx = mux(clearing, zero16, op.x0.resize::<16>());
+let clearing = self.skind.get() == Kind::Clear;
+let wx = mux(clearing, zero16, self.sx0.get().resize::<16>());
 \end{lstlisting}
 
 A wider instruction set would grow that decoder and not the walk,
@@ -124,6 +127,38 @@ which is the property worth having: a line, a circle or a sprite would
 each add a kind and a way to say whether a pixel is inside, and the
 one pixel a cycle, the three edge accumulators and the AXI writes
 would stay as they are.
+
+\section{The List in Memory}
+\label{sec:g-mem}
+
+\code{Insn} is how the list is held in a program and in a model.
+In the memory it is words, and the format of those words is the one
+thing software and hardware both have to agree on, so it is stated
+once, in \code{gpu/src/dl.rs}.
+
+\gpupart{dl.rs}{format}{The display list as a program writes it:
+eight words an instruction, six of which say anything, and no field
+across a word.}{lst:g-format}
+
+An instruction takes eight words, so that the address of the
+$i$th is the list's base plus $i$ shifted by five, a shift rather
+than a multiply. No field crosses a word, so a program writes a field
+with a shift and a mask and the rasteriser reads it with a slice at a
+constant offset. Beside the list is one more word, the count. The
+rasteriser reads the count until it is not zero, and then the list;
+a program therefore writes the list first and the count last, and
+writing the count is how it says the list is ready. Nothing else
+passes between the two.
+
+So the rasteriser has a front end. It polls the count, fetches the
+six words of an instruction one read at a time, latching each field
+as its word lands, draws the instruction, and fetches the next; when
+the count is used up it is done and says so on \code{idle}. The
+third vertex is not latched: its word is the last, so the setup reads
+it straight off the bus in the cycle the walk starts. One read is out
+at a time, because the front end has nothing to do until the answer
+lands. The fetch costs the demonstration six reads an entry,
+which is a few hundred cycles out of thirteen thousand.
 
 \section{The Rasteriser}
 \label{sec:g-raster}
@@ -175,21 +210,26 @@ client that is a testbench and a client that is hardware.
 A pixel is one burst of one beat: the issue and its beat go out in
 the same cycle, so the write data channel stays in the order the
 address channel is in, which is what AXI4 asks of a write. The
-identifier the tracker granted is of no use to a rasteriser that
-never reads, so it is taken and dropped; the identifier is handed
-back on \code{release} as its write response arrives, which is what
-keeps four writes in flight and no more.
+identifier the tracker granted is not needed, since a write's answer
+matters only as a count and the front end has one read out at a time,
+so it is taken and dropped. An identifier is handed back on
+\code{release} as the answer arrives: a write's with its response, a
+read's with its beat. That is what keeps four transactions in flight
+and no more. A write's response is taken before a read's beat in the
+cycle both arrive, since only one identifier goes back a cycle, and
+the read waits a cycle for it.
 
 \begin{figure}[htbp]
 \centering
 \input{gpu_timing.tex}
-\caption{One instruction ending and the next beginning. \code{kind}
-turns from \code{Rect} to \code{Tri} as the rasteriser takes the
-entry off \code{op}; from there \code{x} and \code{y} walk the
-triangle's box, \code{hit} is whether the pixel is inside it, and
-where \code{hit} is low no burst is issued, so the row is walked and
-nothing is written. \code{inflight} is the writes whose response has
-not come back, which the four identifiers bound.}
+\caption{The triangle fetched and begun. \code{phase} is one while
+the front end reads the instruction's words, which land one at a
+time on \code{rdata}, and turns to two as the last word lands; in
+that cycle \code{kind} turns from \code{Rect} to \code{Tri}. From
+there \code{x} and \code{y} walk the triangle's box and \code{hit} is
+whether the pixel is inside it; where \code{hit} is low no burst is
+issued, so the row is walked and nothing is written. \code{inflight}
+is the writes whose response has not come back.}
 \label{fig:g-wave}
 \end{figure}
 
@@ -201,7 +241,9 @@ one word per pixel, answering single-beat bursts.
 
 \gpupart{fb.rs}{run}{The framebuffer.}{lst:g-fb}
 
-A read is answered from the memory in the cycle the request is taken.
+It holds the display list as well as the pixels, above them. A read,
+which is only ever the rasteriser fetching that list, is answered
+from the memory in the cycle the request is taken.
 A write is held until its beat arrives, because AXI4 puts no
 identifier on the write data channel, so the beat belongs to the
 oldest address phase and there is nothing to match it by but order.
@@ -219,6 +261,16 @@ and the build checks both netlists against it at their ports, as VHDL
 under \code{nvc} and as Verilog under Verilator. Listing~\ref{lst:g-out}
 is what that run printed.
 
+The framebuffer's netlist is told what its memory starts with, the
+list and its count, which \code{Mem::with} gave the run and which the
+lowering cannot see; without it the simulated module reads zeroes
+where the run read the list. The rasteriser is also the first unit
+checked this way that does something in its first cycle, since it
+goes looking for the count at once, and the testbench generator
+starts a channel's \code{ready} high for that reason: an empty
+channel has room, and the first cycle has no sample in the trace to
+say so.
+
 \lstinputlisting[style=ascii,caption={What \code{//gpu:trace} printed
 when the build ran it: the same three kinds of entry on a screen
 small enough to print.},label={lst:g-out}]{out_gpu.txt}
@@ -235,8 +287,8 @@ therefore \code{edged} and the wire is \code{hit}.
 A fourth mistake is worth stating because the lowering did not catch
 it either: a \code{let} that takes the name of a register produces
 two declarations of one signal. The locals in the rasteriser are
-\code{px}, \code{py} and \code{going} for that reason, where \code{x},
-\code{y} and \code{busy} would read better.
+\code{px}, \code{py} and \code{held} for that reason, where \code{x},
+\code{y} and \code{waiting} would read better.
 
 \section{What It Is Not}
 \label{sec:g-not}
@@ -245,14 +297,15 @@ It is minimal, and the ways in which it is minimal are worth naming.
 There is one pixel per cycle and no more; no depth buffer, so
 primitives are drawn in the order the display list gives them; no
 interpolation, so a triangle is one colour; no texture; no clipping
-of geometry, only of the box; and the framebuffer is at address zero,
-because nothing yet shares the bus with it. Every one of those is a
+of geometry, only of the box; and one read out at a time, so the
+fetch is as slow as the link's round trip. Every one of those is a
 thing to add on top of what is here rather than a thing to work
 around.
 
-The next step is the one the bus was for: a CPU writing the display
-list, with the core~\cite{vreteno} and the GPU as two hosts on one
-link and the router between them.
+A CPU writing the display list is the step the bus was for, and it is
+taken in the network document~\cite{noc}: the core~\cite{vreteno}
+works out an icosahedron and writes it into a memory the GPU shares,
+two hops away on a lattice.
 
 \begin{thebibliography}{9}
 
@@ -267,6 +320,10 @@ repository \code{HDL/txhdl}, \code{//docs:tutorial}, 2026.
 \bibitem{vreteno}
 F.~Filmar and D.~Janković, ``Vreteno: an RV32IM core in TxHDL,''
 project repository \code{HDL/txhdl}, \code{//docs:vreteno}, 2026.
+
+\bibitem{noc}
+F.~Filmar and D.~Janković, ``A network on chip in TxHDL,'' project
+repository \code{HDL/txhdl}, \code{//docs:noc}, 2026.
 
 \bibitem{cover}
 F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
