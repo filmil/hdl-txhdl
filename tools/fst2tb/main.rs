@@ -38,6 +38,21 @@
 //! `--verilog` writes the same testbench in Verilog, for Verilator.
 use std::collections::BTreeMap;
 
+/// Whether a port starts high: the `ready` a unit reads from a
+/// channel it sends on, which is high at power-on because an empty
+/// elastic buffer has room. It matters for one cycle and one only.
+/// The testbench's first edge is the run's first cycle, and no trace
+/// sample stands for the inputs of that cycle: the sample at tick
+/// zero already holds the state it left and the inputs of the cycle
+/// after it. Leaving every input at zero therefore says the run
+/// began with every channel full, which is the one thing a fresh
+/// channel is not, and a unit that acts in its first cycle, as the
+/// rasteriser does when it goes looking for its display list, is
+/// then a cycle out for the whole run.
+fn empty_ready(name: &str, dir: &str) -> bool {
+    dir == "txin" && name.ends_with("_ready")
+}
+
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let (fst, ports, entity, unit) = (&a[1], &a[2], &a[3], &a[4]);
@@ -186,7 +201,11 @@ fn main() {
                 continue;
             }
             if is_in(d) {
-                o.push_str(&format!("  reg {}{n} = 0;\n", vty(*w)));
+                o.push_str(&format!(
+                    "  reg {}{n} = {};\n",
+                    vty(*w),
+                    if empty_ready(n, d) { 1 } else { 0 }
+                ));
             } else {
                 o.push_str(&format!("  wire {}{n};\n", vty(*w)));
             }
@@ -287,7 +306,13 @@ fn main() {
     ));
     for (n, d, w) in &ports {
         if !inside(d) {
-            let init = if *w == 1 { "'0'" } else { "(others => '0')" };
+            let init = if empty_ready(n, d) {
+                "'1'"
+            } else if *w == 1 {
+                "'0'"
+            } else {
+                "(others => '0')"
+            };
             o.push_str(&format!("  signal {n} : {} := {init};\n", ty(*w)));
         }
     }
