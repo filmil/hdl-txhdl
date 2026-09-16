@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Vreteno onto standard cells. The build fills in the words between
+# the at signs: the sources the document build emitted, the top
+# module, the timing library of the technology, the period the
+# technology mapper aims at, and where the netlist and the cell count
+# are to be written.
+#
+# Every line here is a step a reader can follow, and the order is the
+# one the OpenROAD flow scripts use. It is worth keeping that order:
+# the last six lines are what turns a netlist into something a layout
+# can be made of, and getting them in the wrong sequence costs cells
+# that nothing needs.
+
+read_verilog @SOURCES@
+hierarchy -check -top @TOP@
+
+# The generic synthesis: elaborate, infer the memories and the
+# arithmetic, map to generic gates, and optimise. The design is
+# flattened because the core is one module already and its submodules
+# are separate designs.
+synth -top @TOP@ -flatten
+opt -purge
+
+# The technology: registers first, since a register can only be mapped
+# to a cell that exists, and then the combinational logic, where ABC
+# is told the period so that it knows which paths are worth the area.
+dfflibmap -liberty @LIBERTY@
+abc -liberty @LIBERTY@ -D @PERIOD_PS@
+
+# What is left of the abstractions. Undefined bits become zero and
+# every bus becomes its bits, because a netlist of cells has no such
+# thing as a vector; then what nothing reads goes. Constants become
+# the two cells that drive them, which the mapper will not use because
+# the library marks them `dont_use`, and a port wired straight through
+# to another gets a buffer, because a layout has no such thing as a
+# wire with no driver.
+#
+# The order of these six is the one the OpenROAD flow scripts use, and
+# it is not decoration: buffering before the buses are split puts a
+# buffer on every bit of every bus, which here was three thousand
+# eight hundred cells that nothing needed.
+setundef -zero
+splitnets
+opt_clean -purge
+hilomap -hicell LOGIC1_X1 Z -locell LOGIC0_X1 Z -singleton
+insbuf -buf BUF_X1 A Z
+
+tee -o @STATS@ stat -liberty @LIBERTY@
+write_verilog -noattr @NETLIST@

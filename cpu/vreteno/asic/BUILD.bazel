@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Vreteno on an ASIC: the same Verilog the FPGA flow takes, mapped onto
+# an open 45 nm standard cell library and then floorplanned, placed,
+# routed and timed. Nothing here is a tapeout; it is what a design does
+# before one, and `//docs:tapeout` says which of the remaining steps a
+# real node would add.
+#
+#   bazel build //cpu/vreteno/asic:vreteno_cells   # a few seconds
+#   bazel build //cpu/vreteno/asic:vreteno_pnr     # about twenty minutes
+load("//tools/asic:defs.bzl", "asic_pnr", "asic_synth")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "synth.ys",
+    "pnr.tcl",
+    "vreteno.sdc",
+])
+
+# The core as cells of the library: the netlist, the log of every pass,
+# and the count of each cell type with the area it comes to.
+asic_synth(
+    name = "vreteno_cells",
+    srcs = ["//docs:vreteno.v"],
+    liberty = "lib/NangateOpenCellLibrary_typical.lib",
+    period_ps = 3000,
+    script = "synth.ys",
+    top = "vreteno",
+)
+
+# The core as a layout: a die, rows of cells, a power grid, a clock
+# tree and metal between every pin. Manual, because it is twenty
+# minutes of work and `bazel test //...` should not be.
+asic_pnr(
+    name = "vreteno_pnr",
+    density = "0.60",
+    netlist = ":vreteno_cells",
+    script = "pnr.tcl",
+    sdc = "vreteno.sdc",
+    tags = ["manual"],
+    top = "vreteno",
+    utilization = 30,
+)
+
+# The three scripts, so the document can include them from the tree
+# rather than have them typed into it.
+filegroup(
+    name = "sources",
+    srcs = [
+        "pnr.tcl",
+        "synth.ys",
+        "vreteno.sdc",
+    ],
+)
