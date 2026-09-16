@@ -564,6 +564,48 @@ writeback decoded into its register and value.}
 \label{fig:p-vreteno}
 \end{figure}
 
+\subsection{Programs written for it}
+
+A core that runs only what its own assembler emits is a core that has
+been tested, not one that can be programmed. Vreteno is RV32IM, so
+compilers target it, and two do: Rust through the ruleset's own
+toolchain, and C++ through the GNU bare-metal RISC-V toolchain, whose
+\code{rv32im/ilp32} multilib is this machine exactly and carries
+\code{newlib} and a \code{libstdc++} built for it. Both are fetched
+by the build against a checksum. Nothing is installed to compile for
+the core, as nothing is installed to simulate or to synthesise it.
+
+A program for the core is built for a different machine than the
+build runs on, so a rule with a platform transition carries it
+across, and \code{//tools/elf2vreteno} turns the linked ELF into the
+two images the core is loaded from. Both languages end at the same
+place: the same machine, the same terminal on the serial line, the
+same assertion that the line came out and that the core stopped
+itself.
+
+What is interesting is not that it works but what the machine will
+not allow, because the core meets each restriction by going quietly
+wrong rather than by refusing, so each had to become a check that
+speaks. A load below the data base never leaves the core, so a
+constant placed beside the code is one the program cannot read and
+the load retires with a stale word; \code{.rodata} is therefore
+linked into the data memory and the image carries its bytes, and
+there is no startup copy that could do it instead, since the copy
+could not read the source either. A compressed instruction is an
+illegal opcode, and \code{mtvec} resets to zero, so a program holding
+one restarts from the beginning instead of faulting. And the
+instruction memory is 4~KiB, which the loader truncates to without a
+word and the fetch wraps within. Each is refused by the image tool,
+by name, where it can be said out loud.
+
+That size is the real constraint on what a standard library can mean
+here. The half of it that is templates and constants is usable and
+both programs use it; the half that needs an operating system
+underneath, a heap, file descriptors, an unwinder, is not, and no
+amount of toolchain fetches it into existence. The C++ program says
+hello and prints a number its compiler worked out, in 89
+instructions.
+
 \section{Results}
 \label{sec:p-results}
 

@@ -967,7 +967,7 @@ and waits for three keys again.
 \lstinputlisting[caption={\code{board/vreteno\_board.v}: the board
 top, by hand.},label={lst:v-board}]{cpu/vreteno/board/vreteno_board.v}
 
-\section{Programs in Rust}
+\section{Programs in Rust and C++}
 \label{sec:v-rust}
 
 Everything above runs programs written with the assembler in
@@ -1044,6 +1044,47 @@ nothing fails rather than passes quietly, and it asserts that the
 core halted itself. The same run is \code{//cpu/vreteno:hello\_test},
 so the toolchain and the core are checked together by
 \code{bazel test //...}.
+
+\subsection*{And in C++}
+
+The other toolchain is the GNU one for bare-metal RISC-V, fetched by
+checksum like the first. It is the GNU one rather than a Clang
+because of what comes with it: its \code{rv32im/ilp32} multilib is
+this core exactly, RV32IM with no compressed instructions and the
+soft-float ABI, and it carries \code{newlib} and a \code{libstdc++}
+already built for it, so a standard library is something the
+toolchain has rather than something the build would have to compile.
+
+Everything the machine forbids forbids it just as firmly in C++, and
+the same linker script says so, since what a machine allows does not
+depend on the language above it. Four flags are the language's own.
+There is no unwinder and nothing to unwind to, so exceptions are off;
+nothing reads a type at run time, so \code{RTTI} is off; a static
+with a guard would call a lock that does not exist, so thread-safe
+statics are off; and the entry point is the core's reset vector
+rather than a C runtime's, so the toolchain's startup files are left
+out and the reset stub sets the stack pointer and clears the
+uninitialised data itself, as the Rust one does.
+
+What a standard library can mean on a machine with 4~KiB of
+instruction memory is worth stating rather than implying. The half of
+it that is templates and constants is usable, and the program uses
+it: \code{std::array}, \code{std::string\_view}, \code{std::for\_each},
+and a sum of squares the compiler works out before the core is
+started. The half that needs an operating system underneath, a heap,
+file descriptors, an unwinder, is not usable, and no toolchain fetch
+makes it so. That is freestanding C++: most of the language and a
+good deal of the library, and none of the runtime.
+
+\lstinputlisting[caption={\code{cpu/vreteno/cpp/hello.cc}: the same
+greeting, in C++, against the standard library the toolchain carries
+for this core.},label={lst:v-hellocc}]{cpu/vreteno/cpp/hello.cc}
+
+The run is checked the same way, by \code{//cpu/vreteno:hello\_cc}
+and its test. Both languages end at the same place: the machine of
+\code{run.rs}, the same terminal on the serial line, and the same
+two assertions. What changes between them is the language and
+nothing else.
 
 \section{What Comes Next}
 \label{sec:v-next}
