@@ -29,7 +29,7 @@ pub mod pipeline;
 pub mod types;
 
 pub use txhdl_macros::{
-    case, interface, lower, pipeline, station, when, with, Bus, Trace,
+    case, interface, lower, pipeline, router, station, when, with, Bus, Trace,
     Transaction, Value,
 };
 
