@@ -253,6 +253,13 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A module written by hand, in both languages, for a unit of units to
+# instantiate: the source the simulations of its netlist need.
+exports_files([
+    "blinker.v",
+    "blinker.vhd",
+])
+
 # A unit's ports as named structs, an interface role among them:
 #   bazel run //lib/examples:ex_ports
 rust_binary(
@@ -479,6 +486,8 @@ filegroup(
         "stream_alu.rs",
         "ex_stream_alu.rs",
         "ex_compose.rs",
+        "blinker.v",
+        "blinker.vhd",
         "ex_ports.rs",
         "ex_axi.rs",
         "ex_axi_serve.rs",
