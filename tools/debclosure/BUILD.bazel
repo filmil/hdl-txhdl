@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The Debian dependency closure of a set of packages, written as a lock
+# file that the build then fetches by checksum. Run by hand when a pin
+# is to move; what it writes is committed.
+#
+#   bazel run //tools/debclosure -- -suite=trixie yosys
+load("@rules_go//go:def.bzl", "go_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+go_binary(
+    name = "debclosure",
+    srcs = ["main.go"],
+)

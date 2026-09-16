@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# OpenROAD, which floorplans, places, routes and times a gate level
+# netlist. Two lock files pin it: `openroad.lock.tsv` is the package
+# the OpenROAD project publishes, and `bullseye.lock.tsv` is the
+# closure of the shared libraries that package names, written by
+# //tools/debclosure. The solver the package links against but does
+# not carry, or-tools, is fetched beside them by MODULE.bazel.
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "openroad.lock.tsv",
+    "bullseye.lock.tsv",
+])
+
+# Manual, both of them: seventy two megabytes and forty eight, which
+# only the layout target wants, and `bazel build //...` should not
+# fetch what it is not going to run.
+alias(
+    name = "tree",
+    actual = "@openroad_tree//:all",
+    tags = ["manual"],
+)
+
+alias(
+    name = "ortools",
+    actual = "@or_tools//:all",
+    tags = ["manual"],
+)

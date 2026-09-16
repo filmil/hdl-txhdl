@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# Nangate45, the technology the ASIC flow targets: an open 45 nm
+# standard cell library with a timing model, a layout abstraction and
+# the layer stack to route in. It is the library the OpenROAD project
+# uses for its own examples, and it is not a foundry's: no wafer was
+# ever made from it. `//docs:tapeout` says what that means.
+#
+# The files are fetched one by one from the OpenROAD flow scripts at
+# the revision `nangate45.lock.tsv` names, each by checksum.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["nangate45.lock.tsv"])
+
+alias(
+    name = "tree",
+    actual = "@nangate45//:all",
+)

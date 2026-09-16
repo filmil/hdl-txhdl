@@ -23,3 +23,24 @@ package relative path, and pdflatex searches the build directory rather than
 a tree beneath it, so a file here would land at `third_party/...` and not be
 found.
 `//docs` copies them into its own package with a `genrule` first.
+
+## Pins rather than files
+
+Four more directories hold no vendored bytes at all.
+They hold lock files: a row per file or per package, with a checksum and
+where to fetch it from, which the build reads and fetches.
+That is the better arrangement whenever what is needed is large, is
+published somewhere stable, and is not modified here.
+
+| Directory | What it pins |
+|---|---|
+| `debs/` | `repo.bzl`, the rule that reads such a lock file and unpacks what it names |
+| `yosys/` | Yosys and the ten libraries it needs, from Debian trixie |
+| `openroad/` | OpenROAD, and the closure of a hundred and thirty one packages it links against, from Debian bullseye |
+| `nangate45/` | The six files of the open 45 nm standard cell library the ASIC flow reads |
+
+`//tools/debclosure` writes the two Debian lock files; run it again to
+move a pin.
+Every one of those rows carries two URLs, the live archive and
+`snapshot.debian.org`, so a pin that the archive has forgotten still
+fetches.

@@ -1,0 +1,4 @@
+# tool	openroad
+# note	the last release Precision Innovations published as a package
+# name	version	size	sha256	url	fallback
+openroad	2.0-17598-ga008522d8	52642368	a3918391a20ee817ed40f2f4d75d9c32950155e4602aafd2c03d63ab4f49279c	https://github.com/Precision-Innovations/OpenROAD/releases/download/2024-12-14/openroad_2.0-17598-ga008522d8_amd64-debian11.deb

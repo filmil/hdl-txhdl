@@ -151,3 +151,57 @@ vivado.install(
     urls = ["file:///data/tools/archives/FPGAs_AdaptiveSoCs_Unified_SDI_2025.2_1114_2157_1.tar"],
     modules = ["Artix-7"],
 )
+
+# The ASIC flow, hermetic in the same sense as the rest: nothing is
+# installed, everything is fetched by checksum. Yosys maps the core's
+# Verilog onto a standard cell library and OpenROAD floorplans, places,
+# routes and times it. Both are published as Debian packages, and a
+# Debian package names the shared libraries it needs without carrying
+# them, so //tools/debclosure writes the closure of each as a lock file
+# in //third_party and the rule below unpacks exactly those bytes.
+# Bazel's own decompressors open both the `ar` archive a `.deb` is and
+# the `tar.xz` inside it, so neither `dpkg` nor a container is used.
+deb_tree = use_repo_rule("//third_party/debs:repo.bzl", "deb_tree")
+
+file_tree = use_repo_rule("//third_party/debs:repo.bzl", "file_tree")
+
+deb_tree(
+    name = "yosys_tree",
+    locks = ["//third_party/yosys:trixie.lock.tsv"],
+)
+
+deb_tree(
+    name = "openroad_tree",
+    locks = [
+        "//third_party/openroad:openroad.lock.tsv",
+        "//third_party/openroad:bullseye.lock.tsv",
+    ],
+)
+
+# The solver OpenROAD's global placer uses. The package links against
+# it and does not carry it: its runpath names `/opt/or-tools`, which is
+# where the project's own build puts this archive.
+http_archive(
+    name = "or_tools",
+    build_file_content = """
+package(default_visibility = ["//visibility:public"])
+filegroup(name = "all", srcs = glob(["lib/**"]))
+""",
+    sha256 = "a8354696f365aa13a2375da5f8f6cfd8785430681addcd887bfd194851dd4710",
+    strip_prefix = "or-tools_x86_64_Debian-11_cpp_v9.11.4210",
+    urls = [
+        "https://github.com/google/or-tools/releases/download/v9.11/or-tools_amd64_debian-11_cpp_v9.11.4210.tar.gz",
+    ],
+)
+
+# The technology: the open 45 nm library the OpenROAD project uses for
+# its own examples, taken file by file from the flow scripts at one
+# revision.
+file_tree(
+    name = "nangate45",
+    build_file_content = """
+package(default_visibility = ["//visibility:public"])
+filegroup(name = "all", srcs = glob(["tree/**"]))
+""",
+    locks = ["//third_party/nangate45:nangate45.lock.tsv"],
+)

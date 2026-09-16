@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# Yosys, the synthesiser that maps a design onto a standard cell
+# library. It is fetched as the Debian package it is published as,
+# together with the closure of the libraries that package names;
+# `trixie.lock.tsv` is that closure, written by //tools/debclosure and
+# pinned by checksum.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["trixie.lock.tsv"])
+
+alias(
+    name = "tree",
+    actual = "@yosys_tree//:all",
+)

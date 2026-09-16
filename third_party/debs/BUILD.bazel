@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# The repository rules that turn a lock file into a tree of files.
+# Nothing is built here; `repo.bzl` is loaded by MODULE.bazel.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["repo.bzl"])
