@@ -356,6 +356,36 @@ fn demo_program() {
     assert_eq!(m.x[30], (-2i32) as u32, "rem");
 }
 
+/// A multiply and a divide whose operand is the word the instruction
+/// before them loaded. The load's answer comes back over the bus, so
+/// for a while the load sits in writeback with nothing to forward and
+/// the register file still holds the old value. The sequencer latches
+/// its operands when it starts, so it must not start until the word
+/// has landed. It did, and multiplied by the old value: a compiled
+/// program found it, when a colour came out with no red in it.
+#[test]
+fn a_multiply_right_after_a_load() {
+    use vreteno32::isa::{addi, div, ebreak, lui, lw, mul, sw};
+    let p = vec![
+        lui(6, 1),        // x6 = 0x1000, the data memory
+        addi(5, 0, 1234), // the word to load back
+        sw(5, 6, 0),
+        addi(17, 0, 255),
+        addi(7, 0, 10),
+        addi(10, 0, 3), // the old value the multiply must not see
+        lw(10, 6, 0),
+        mul(11, 17, 10),
+        addi(12, 0, 3), // and the divide's
+        lw(12, 6, 0),
+        div(13, 12, 7),
+        ebreak(),
+    ];
+    let m = lockstep(&p, "a multiply right after a load", Some(1));
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[11], 255 * 1234, "mul of the loaded word");
+    assert_eq!(m.x[13], 123, "div of the loaded word");
+}
+
 #[test]
 fn random_programs() {
     for seed in 0..64 {

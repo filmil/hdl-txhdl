@@ -733,7 +733,13 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let m_abs_b = mux(m_neg_b, U::<32>::from(0u32) - b, b);
             let m_differ = (m_neg_a & !m_neg_b) | (!m_neg_a & m_neg_b);
             let m_is_div = f3.bit(2);
-            let m_start = m_here & !self.m_busy & !stall_ld & !int_ok;
+            // The operands are latched here, so the sequencer does not
+            // start while the one in writeback is a device load still
+            // waiting for its answer: until the word lands there is
+            // nothing to forward, and the register file still holds
+            // the value from before the load.
+            let m_start =
+                m_here & !self.m_busy & !stall_ld & !self.dev_wait & !int_ok;
             let m_step = self.m_busy & !m_done;
             let m_prod = m_lo.zext::<64>().mul::<64>(m_d.zext::<64>());
             let m_t =
