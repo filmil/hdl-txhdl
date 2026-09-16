@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+# A system on one lattice: a core, a GPU, a memory and a serial port,
+# each on a corner of a two by two network on chip.
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "soc",
+    srcs = ["src/lib.rs"],
+    crate_name = "soc",
+    edition = "2021",
+    deps = [
+        "//cpu/vreteno:vreteno32",
+        "//gpu",
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+)
+
+# The whole system, run:  bazel run //soc:demo
+rust_binary(
+    name = "demo",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    deps = [
+        ":soc",
+        "//cpu/vreteno:vreteno32",
+        "//cpu/vreteno/rust:hello_program",
+        "//gpu",
+        "//lib:txhdl",
+    ],
+)
+
+# The same run, as a test.
+rust_test(
+    name = "demo_test",
+    crate = ":demo",
+    edition = "2021",
+)
+
+# The sources by name, for the documents' listings.
+filegroup(
+    name = "sources",
+    srcs = glob(["src/*.rs"]),
+)
