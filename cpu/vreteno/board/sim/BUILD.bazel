@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+# The Vreteno board simulated whole under Vivado's simulator: the top with
+# its PLL and resets, the lowered design with the DDR3 test in its
+# memories, UberDDR3's controller, and the Micron models on the memory's
+# pins. Manual, as every Vivado target in the tree is:
+#   bazel test //cpu/vreteno/board/sim:board_test
+load("@rules_vivado//build/vivado:rules.bzl", "vivado_library", "vivado_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["board_verdict.tcl"])
+
+vivado_library(
+    name = "board_tb",
+    # UberDDR3's RTL sets `default_nettype none`, which lasts into
+    # every file compiled after it, and the lowered netlist declares its
+    # ports without a net type; so the controller goes last.
+    srcs = [
+        "//cpu/vreteno:board_sim_v",
+        "//cpu/vreteno:board/vreteno_board.v",
+        "board_tb.v",
+        "//ddr3:hdl",
+    ],
+    tags = ["manual"],
+    deps = [
+        "//ddr3/sim:glbl",
+        "//ddr3/sim:micron",
+    ],
+)
+
+vivado_test(
+    name = "board_test",
+    custom_tcl_script = "board_verdict.tcl",
+    extra_modules = ["glbl.glbl"],
+    library = ":board_tb",
+    tags = ["manual"],
+    timeout = "long",
+    top = "board_tb",
+    xelab_args = [
+        "--debug",
+        "typical",
+        "-L",
+        "unisims_ver",
+        "-L",
+        "secureip",
+    ],
+    xelab_relaxed = True,
+)
