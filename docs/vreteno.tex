@@ -839,8 +839,7 @@ unused, and an advisory on floorplanning.
 
 \begin{table}[htbp]
 \caption{The core on an Artix-7, after synthesis; the data memory,
-the timer and the serial port, units of their own, are not in it,
-and are in the board's figures below.}
+the timer and the serial port, units of their own, are not in it.}
 \label{tab:v-synth}
 \centering
 \begin{tabular}{@{}lr@{}}
@@ -919,34 +918,47 @@ put them.
 
 \subsection{The board}
 
-The board is the Alinx AX7A200, the Artix-7 the part was chosen for,
-and \code{bazel build //cpu/vreteno:vreteno\_board\_pnr} builds
-its bitstream. Listing~\ref{lst:v-board} is the one file of the
-design written by hand rather than lowered, and it holds what a
-board needs and a core does not: the board's 200~MHz differential
-clock brought down to the 100~MHz the core meets through an MMCM,
-the reset button synchronised into that clock and held until the
-clock has locked, and four LEDs, lit when driven low, showing the
-core halted, a heartbeat, the reset released and the clock locked;
-the router, the timer and the serial port beside the core with a
-channel buffer each way between every two, the port's lines on the
-pins the board's USB serial bridge listens and talks on, and the
-port's interrupt as the core's external interrupt line.
-The constraints name the board's pins as the project's other designs
-for it do, so the bitstream is real: the routed design meets
-100~MHz with 1.094~ns of slack, in 2050 LUTs and 1062 flip-flops
-for the core, the router, the data memory, the timer, the serial
-port with both its sides and its buffer of eight, and the eight
-channel buffers together, measured before the serial port moved
-behind its AXI-Lite bridge, three block RAM tiles, four DSP blocks and
-the MMCM, with no critical warning and no combinational loop, which
-the first board top with the units wired port to port had. The
-port's buffer is six LUTs of distributed memory. The wait's move
-into writeback took the board's slack from 0.285~ns to 0.903, and a
-tenth of the LUTs with it; the step's pieces as functions moved it
-to 0.688, the port's receive side to 1.074, its buffer to 1.004, and
-the memory's move onto the bus to this: placement moves a path of
-routing by tenths from run to run.
+The board is the Alinx AX7A200, the Artix-7 the part was chosen for.
+Everything that computes is one lowered module, \code{board}, the
+netlist \code{\#[lower]} writes for \code{vreteno32::board::Board}: a
+unit of units holding the core and its tracker, a router of four, a
+tracker for each peripheral but the serial port, which sits behind its
+AXI-Lite bridge, the data memory at \code{0x1000}, the
+timer at \code{0x2000}, the serial port at \code{0x3000}, and the
+board's DDR3 memory from \code{0x4000\_0000}, a gigabyte behind the
+bridge from AXI to Wishbone and UberDDR3's controller. The controller
+is a module from elsewhere, so the netlist names its wrapper and does
+not write it, and the memory's pins, the data and strobe lines among
+them, are the module's own ports. \code{board\_netlist} writes it with
+a program already in the instruction memory and the data memory,
+since nothing on the machine loads them at run time.
+
+Listing~\ref{lst:v-board} is the one file written by hand, and it
+holds only what a board needs and a lowered unit cannot say. One PLL
+makes the four clocks, 100~MHz for the design and the controller,
+400~MHz for the memory and the same a quarter cycle late, and
+200~MHz for the controller's delay control. The memory's reset
+follows the button and the lock; the core's follows those and the
+controller's calibration as well, so the core starts only once the
+memory it may reach is ready. The LEDs, lit when driven low, show the
+core halted, a heartbeat, the memory calibrated, and the PLL locked.
+
+The whole of it is simulated under Vivado's simulator by
+\code{//cpu/vreteno/board/sim:board\_test}: the top, the netlist with
+the DDR3 test in its memories, the controller, and two Micron models
+of the board's chips on its pins. The program writes sixteen words
+across the memory's region and reads them back. In the run the PLL
+locks at 0.27~microseconds, the memory calibrates at 12.26, and the
+core says \code{ddr3 ok} on the serial port and halts at 31.4, which
+is what the test's terminal reads. The controller alone is checked
+the same way, against the same models, by
+\code{//ddr3/sim:wrapper\_test}.
+
+The run on the board below was made with the design before the DDR3
+memory was on the bus, when the top wired the units to each other by
+hand around an MMCM. The design with the memory has not been
+synthesised yet, and its figures are for the next change.
+
 The board sits on another machine, with its programming cable and
 its serial bridge, and is programmed from here. Vivado's
 \code{hw\_server} and the cable's libraries come out of the
@@ -1113,13 +1125,10 @@ second register in the middle of its carry chain, one more step of
 the sequencer, would. The lockstep test is the check for either,
 since it compares architectural state when an instruction retires.
 
-More on the bus. The router decodes a device per range and the data
-memory could go out onto it too, at the cost of the cycle a response
-takes, which is paid now; the board's own memory, behind a
-controller, could take the data memory's place at its address, the
-core none the wiser. Each begins in the model, as
-everything here has, is added to the core under the lockstep test,
-and is checked as a netlist by the same trace.
+The design with the DDR3 memory, synthesised, placed and routed with
+the memory's constraints, and then run on the board: what it takes,
+how fast it runs, and whether the board says what the simulation
+says.
 
 \begin{thebibliography}{10}
 
