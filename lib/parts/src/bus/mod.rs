@@ -12,3 +12,4 @@ pub mod axi;
 pub mod axi_lite;
 pub mod noc;
 pub mod router;
+pub mod wb;
