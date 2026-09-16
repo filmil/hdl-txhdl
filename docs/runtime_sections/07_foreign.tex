@@ -19,9 +19,11 @@ settle; the transfers the module agrees to, a take where it says
 ready and an offer stands, a send where it says valid and there is
 room; the edge; and the outputs out. So the module is a registered
 unit, its outputs seen a step later, and goes first in the join
-order as the timer of the core does. What it cannot do is lower: the
-lowering carries it as nothing, and a netlist that holds one is the
-board top's business, by hand, as the core's is.
+order as the timer of the core does. It does not lower through this
+path, since what is lowered is the design and not the model; a
+netlist holds a foreign module as a child of a unit of units instead,
+through \code{netlist::foreign}, which the section on the macros
+describes.
 \code{verilog\_unit()} in \code{lib/foreign.bzl} builds the model,
 the shim and the crate from the one Verilog file.
 
