@@ -1,0 +1,334 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% AXI in TxHDL: the tutorial on the bus. Built by //docs:axi. Every
+% listing is included from the tree and every printout and figure is
+% what the build made by running the examples.
+\documentclass[journal,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+% A range of the library's source, by its begin/end markers.
+\newcommand{\axipart}[3]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/bus/axi.rs}}
+
+\title{AXI in TxHDL}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{This is the tutorial on one bus of the language's library,
+for a reader who has met TxHDL through the step-by-step
+tutorial~\cite{tutorial} and wants to put an AXI link in a design,
+or to read how the link is made. Every listing is included from the
+project repository \code{HDL/txhdl} at build time and every printout
+and figure is what the build produced by running the examples. The
+reservation station has a tutorial of its own~\cite{station}, the
+runtime is in the runtime document~\cite{runtime}, and the
+cover~\cite{cover} lists every document. The AXI examples are here
+and not in the examples document~\cite{examples}, because a bus is a
+subsystem and not one more construct.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{AXI in TxHDL}{Filmar and Janković: AXI in TxHDL}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A channel carries one transaction in one direction. AXI is five
+channels that only mean something together, and a client written
+against them directly must gather a write address with its data
+beats, count them, watch \code{last}, allocate identifiers and match
+them back. TxHDL provides the link instead: \code{axi()} makes every
+channel of an AXI4 link at once and hands back two ends, the way
+\code{chan()} hands back a sender and a receiver. A host client
+issues a burst and awaits its answer; a peripheral client accepts a
+whole decoded transaction and answers it, from whatever process it
+likes and in whatever order its work finished. Neither names a
+channel. Between the two ends are the two units that do the
+protocol, lowered to Verilog and to VHDL and simulated against the
+examples' runs, with the five AXI channels between them, which is
+where a router will go.
+\end{abstract}
+
+\section{What a Link Is}
+\label{sec:a-what}
+
+AXI4 is five channels. Write address, write data and write response
+go \code{aw}, \code{w}, \code{b}; read address and read data go
+\code{ar} and \code{r}. A write is an address beat, one or more data
+beats with the last of them marked, and a response beat. A read is
+an address beat and one or more data beats, again with the last
+marked. Every beat carries an identifier, and beats of different
+identifiers may be interleaved and answered in any order, which is
+what lets several transactions be in flight at once.
+
+None of that is a client's work, and in TxHDL none of it is written
+by one. \code{axi()} makes the five channels, and the channels
+between each end and the unit that speaks the protocol for it, and
+returns a \code{Link}: a \code{Host} end, a \code{Per} end, and the
+ports of the two units. A design joins the two units as it joins any
+others, and its clients hold the two ends.
+
+\begin{figure}[htbp]
+\centering
+\begin{lstlisting}[style=ascii,frame=none,numbers=none]
+  host client        issue / beat / grant / done / release
+  AxiHost            a unit, lowered
+     aw ar w b r     the AXI4 channels, where a router goes
+  AxiPer             a unit, lowered
+  peripheral client  request / write data / answer / read beat
+\end{lstlisting}
+\caption{The layers of a link. The middle is real AXI; everything
+above and below it is transactions.}
+\label{fig:a-layers}
+\end{figure}
+
+\section{The Client}
+\label{sec:a-client}
+
+A host client has two verbs. \code{read} takes an address and a
+count of beats; \code{write} takes an address and the beats
+themselves. Each returns when the burst has gone out, with a handle
+that is the answer to come. Several handles may be outstanding, and
+they may be awaited in any order.
+
+\axipart{hostapi}{The host end, from
+\code{lib/parts/src/bus/axi.rs}: the whole of what a client that
+issues bursts uses.}{lst:a-hostapi}
+
+The burst's length is the slice the client passed, so it cannot
+disagree with the beats that follow it; the last beat is marked as
+the last by \code{write} and not by the client; and the identifier is
+allocated by the hardware and told back, so a client never writes
+one. What a client writes is the address and the data.
+
+A peripheral client has one verb. \code{accept} waits for a whole
+AXI transaction and returns it decoded: a read, with the count of
+beats it wants, or a write, with every beat of its data already
+gathered. The transaction answers itself, with \code{ok}, \code{err}
+or \code{data}.
+
+\axipart{accept}{The peripheral end: one call, and what comes back
+is a whole transaction.}{lst:a-accept}
+
+A read is ready as soon as its address beat arrives. A write is
+ready when its last data beat has, because AXI4 puts no identifier
+on the write data channel, so the beats belong to the oldest address
+beat and there is nothing to gather them by but order. One accept
+gathers at a time, which is what lets several processes share one
+end without taking each other's beats.
+
+\section{Accepting Many}
+\label{sec:a-many}
+
+A peripheral that does real work does not answer one transaction
+before accepting the next. It accepts as they arrive, hands each to
+whatever does the work, and answers each as its data becomes
+available. An accepted transaction carries its own identifier and a
+handle on the end's answer port, so it may be moved to another
+process and answered there, long after and out of order.
+
+\code{Open} holds the ones in between, by identifier, and
+\code{serve} is the whole shape as one call: as many processes as
+the design wants slots, each accepting when it is free and answering
+when its work finished.
+
+\axipart{serve}{\code{serve}: \code{pipeline::drive} for a bus. The
+client writes the body and nothing of the protocol.}{lst:a-serve}
+
+\code{ex\_axi\_serve} writes the same peripheral twice, once by hand
+and once with \code{serve}, and asserts that the two answer alike.
+By hand it is three processes: one accepts and forwards a ticket to
+a pool of workers, the workers take their own time, and a third
+answers whatever finished, taking the transaction back out of
+\code{Open}. That third process never called \code{accept}.
+
+\begin{figure}[htbp]
+\centering
+\input{axi_serve_timing.tex}
+\caption{Ten one-word reads over four identifiers, three in flight.
+An identifier goes back on \code{release} only once the client has
+taken that burst's answer, and \code{busy} shows which are out.}
+\label{fig:a-serve}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_axi\_serve.rs}. Run with
+\code{bazel run //lib/examples:ex\_axi\_serve}.},label={lst:a-serve-ex}]{lib/examples/ex_axi_serve.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_axi\_serve}
+printed when the build ran it: the two peripherals, each answering
+in the order its work finished.},label={lst:a-serve-out}]{out_axi_serve.txt}
+
+\section{The Beats}
+\label{sec:a-beats}
+
+The values on the wire are AXI4's, in full: the address phase
+carries \code{id}, \code{addr}, \code{len}, \code{size},
+\code{burst}, \code{lock}, \code{cache}, \code{prot}, \code{qos} and
+\code{region}, and it is one struct, because \code{AW} and \code{AR}
+are the same fields under different names.
+
+\axipart{beats}{The five channels' beats.}{lst:a-beats}
+
+The widths are stated rather than computed, as they are everywhere
+in this library: \code{A} is the address width, \code{D} the data
+width, \code{S} the strobe width, which is \code{D/8}, \code{I} the
+identifier width and \code{NIDS} the count of identifiers, which is
+\code{1 << I}. \code{U<\{D / 8\}>} would need nightly Rust, and the
+prototype pays that in stated parameters rather than in a nightly
+toolchain, exactly as \code{Fifo} states its depth and
+\code{Station} its line count.
+
+\section{The Trackers}
+\label{sec:a-trackers}
+
+Two units do the protocol, and both are written in the lowered
+subset, so each is a netlist as well as a simulation.
+
+\code{AxiHost} turns an issue into an address beat on whichever
+channel it belongs to, hands out the identifiers, passes the write
+beats out, and reports back what returns. The identifiers go round
+robin, one per burst.
+
+\axipart{hostunit}{\code{AxiHost}: the host side, as
+hardware.}{lst:a-hostunit}
+
+An identifier is outstanding from its address beat until the client
+releases it, and the client's end releases it when it has taken that
+burst's answer. That is one cycle later than freeing it on the
+response would be, and it is the difference between correct and
+almost correct: an identifier freed on its response could be handed
+out again while the answer to the burst before still stood
+uncollected, and the two answers would be gathered into one. A burst
+whose turn falls on an identifier still outstanding waits, which is
+the backpressure that bounds how many transactions are in flight.
+
+\code{AxiPer} merges the two address channels into one stream of
+requests, hands the write beats to the client, and turns the
+client's answers back into response beats. The two address channels
+take turns, so neither starves the other however long one of them
+streams.
+
+\axipart{perunit}{\code{AxiPer}: the peripheral side.}{lst:a-perunit}
+
+\section{Supplying Your Own}
+\label{sec:a-own}
+
+Neither unit is privileged. \code{axi()} returns their ports as
+named types, \code{HostIn}, \code{HostOut}, \code{PerIn} and
+\code{PerOut}, so a design writes a unit of its own against the same
+ports and joins that instead. A peripheral that is real hardware may
+also ignore \code{AxiPer} altogether and read the five AXI channels
+directly, which is what a memory controller does.
+
+\section{Peer to Peer}
+\label{sec:a-peer}
+
+\code{ex\_axi} is one host and one peripheral on one link. The host
+issues three bursts, two reads and a write, without waiting for any
+of them, so all three are in flight with an identifier each. The
+peripheral serves them with three slots and a worker whose time
+depends on the address, so the work finishes in an order of its own.
+
+\begin{figure}[htbp]
+\centering
+\input{axi_timing.tex}
+\caption{The peer-to-peer run: three bursts issued, the identifiers
+granted, the address beats out on \code{ar} and \code{aw}, the write
+beats with \code{w\_last}, and the answers back in an order that is
+not the order they were issued.}
+\label{fig:a-peer}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_axi.rs}. Run with
+\code{bazel run //lib/examples:ex\_axi}.},label={lst:a-peer-ex}]{lib/examples/ex_axi.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_axi} printed
+when the build ran it: the three bursts, the order they were
+answered in, and then the lowering, two modules.},label={lst:a-peer-out}]{out_axi.txt}
+
+The client awaits its three handles in the order it issued them and
+still gets each burst its own answer, although the answers arrived
+in another order. An answer that arrives early waits in the host
+end's inbox until the handle it belongs to is awaited; the drain
+that puts it there is done by whichever handle is being polled, so
+no process has to be joined for it and no answer is ever stuck
+behind another at the head of a channel.
+
+\section{The Netlist}
+\label{sec:a-netlist}
+
+The end of Listing~\ref{lst:a-peer-out} is the Verilog of the two
+trackers, as the lowering wrote it. Every channel port becomes
+\code{\_data}, \code{\_valid} and \code{\_ready}, so \code{AxiPer}
+is a module with \code{aw\_data}, \code{aw\_valid},
+\code{aw\_ready}, \code{ar\_data} and the rest, which is the shape a
+synthesis tool expects of an AXI subordinate, with each channel's
+fields packed into one word rather than split into \code{awaddr},
+\code{awlen} and the others. Splitting them is a renaming of slices
+and nothing more.
+
+The identifiers are a register and a mask of four bits; the taking
+turns is one register of one bit; every wire of the step is named
+for what it is: \code{free}, \code{go}, \code{wr\_go},
+\code{rel\_go}, \code{take\_ar}, \code{take\_aw}. Both netlists are
+generated by the run of \code{ex\_axi} and simulated against that
+run by the build, as VHDL under \code{nvc} and as Verilog under
+Verilator, at their ports, every time.
+
+One name is worth the warning. A register called \code{next} lowers
+to a VHDL signal called \code{next}, which VHDL reserves, and the
+netlist then does not analyse; the register here is called
+\code{turn} for that reason. The lowering does not yet escape the
+reserved words of its targets.
+
+\section{What Routing Attaches To}
+\label{sec:a-routing}
+
+The five AXI channels between \code{AxiHost} and \code{AxiPer} are
+ordinary channels of ordinary transactions. A router is a unit with
+an \code{aw}, \code{ar} and \code{w} in and several out, and several
+\code{b} and \code{r} in and one out, choosing by address on the way
+down and by identifier on the way back, which is what
+\code{cpu/vreteno/src/router.rs} already does for that core's
+simpler bus. Nothing in the two ends changes when one is inserted:
+the client verbs are the same, and the identifiers, which the
+clients never see, are what the answers come home by.
+
+\begin{thebibliography}{9}
+
+\bibitem{tutorial}
+F.~Filmar and D.~Janković, ``TxHDL, step by step,'' project
+repository \code{HDL/txhdl}, \code{//docs:tutorial}, 2026.
+
+\bibitem{runtime}
+F.~Filmar and D.~Janković, ``The TxHDL runtime,'' project repository
+\code{HDL/txhdl}, \code{//docs:runtime}, 2026.
+
+\bibitem{examples}
+F.~Filmar and D.~Janković, ``TxHDL by example,'' project repository
+\code{HDL/txhdl}, \code{//docs:examples}, 2026.
+
+\bibitem{station}
+F.~Filmar and D.~Janković, ``A reservation station in TxHDL,''
+project repository \code{HDL/txhdl}, \code{//docs:station}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}

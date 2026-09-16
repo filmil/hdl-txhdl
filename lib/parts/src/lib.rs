@@ -6,5 +6,6 @@
 //! with a channel at each end and a reservation station are the
 //! others.
 pub mod buffer;
+pub mod bus;
 pub mod fifo;
 pub mod station;

@@ -800,6 +800,63 @@ waveform(
     ],
 )
 
+# An AXI4 link, peer to peer: the two trackers lowered, the five AXI
+# channels between them, and the answers out of order.
+waveform(
+    name = "axi",
+    example = "//lib/examples:ex_axi",
+    lowered = [
+        ("axi_host", "host"),
+        ("axi_per", "per"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//issue/tx_valid=>issue",
+        "//issue/tx_data/addr=>issue_addr",
+        "//grant/tx_valid=>grant",
+        "//grant/tx_data/id=>grant_id",
+        "//ar/tx_valid=>ar",
+        "//ar/tx_data/id=>ar_id",
+        "//aw/tx_valid=>aw",
+        "//w/tx_valid=>w",
+        "//w/tx_data/last=>w_last",
+        "//req/tx_valid=>req",
+        "//req/tx_data/id=>req_id",
+        "//r/tx_valid=>r",
+        "//r/tx_data/id=>r_id",
+        "//r/tx_data/last=>r_last",
+        "//b/tx_valid=>b",
+        "//b/tx_data/id=>b_id",
+        "//host/busy=>busy",
+    ],
+    until = 110,
+)
+
+# Accepting many AXI transactions and forwarding them for processing:
+# three in flight over four identifiers, recycled.
+waveform(
+    name = "axi_serve",
+    example = "//lib/examples:ex_axi_serve",
+    signals = [
+        "//clocks/clk=>clk",
+        "//issue/tx_valid=>issue",
+        "//grant/tx_data/id=>grant_id",
+        "//ar/tx_valid=>ar",
+        "//ar/tx_data/id=>ar_id",
+        "//req/tx_valid=>req",
+        "//req/tx_data/id=>req_id",
+        "//rb/tx_valid=>answer",
+        "//rb/tx_data/id=>answer_id",
+        "//r/tx_valid=>r",
+        "//r/tx_data/id=>r_id",
+        "//release/tx_valid=>release",
+        "//release/tx_data/id=>release_id",
+        "//host/busy=>busy",
+    ],
+    from_tick = 40,
+    until = 104,
+)
+
 waveform(
     name = "compose",
     example = "//lib/examples:ex_compose",
@@ -1295,6 +1352,24 @@ genrule(
     ]),
 )
 
+# AXI in TxHDL: the tutorial on the bus, its two examples' runs and
+# waveforms included, and the two trackers' netlists.
+latex_document(
+    name = "axi",
+    main = "axi.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":axi_run",
+        ":axi_timing",
+        ":axi_serve_run",
+        ":axi_serve_timing",
+        "//lib/examples:sources",
+        "//lib/parts:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # A reservation station in TxHDL: the tutorial on the part, its
 # example's run and waveform included, and the same station in
 # Verilog beside it.
@@ -1325,6 +1400,7 @@ combined_pdf(
         "TxHDL, Step by Step",
         "TxHDL from Zero: A Blinky in Bazel",
         "A Reservation Station in TxHDL",
+        "AXI in TxHDL",
         "TxHDL: Unifying a Dataflow and a Transaction HDL",
         "Deleting a Language: Embedding TxHDL in Rust",
         "The TxHDL Runtime",
@@ -1339,6 +1415,7 @@ combined_pdf(
         ":tutorial",
         ":zero",
         ":station",
+        ":axi",
         ":article",
         ":embedding",
         ":runtime",

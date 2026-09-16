@@ -15,7 +15,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and twelve documents describe it,
+The language is a library, `//lib`, and thirteen documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -46,6 +46,13 @@ all under `//docs`:
 * `//docs:station` is the tutorial on the reservation station part:
   its rule read cycle by cycle on the example's run, the stations of
   two to ten inputs, the FIFO behind them, and the netlist.
+* `//docs:axi` is the tutorial on the AXI link, the bus in
+  `//lib/parts` under `bus::axi`: the client verbs, accepting many
+  transactions and answering them as the work finishes, the two
+  trackers and their netlists, and what routing will attach to. Its
+  two examples, `ex_axi` and `ex_axi_serve`, are documented there and
+  not in `//docs:examples`, because a bus is a subsystem rather than
+  one more construct.
 * `//docs:cheatsheet` is the one-page cheat sheet, also as a PNG
   (`//docs:cheatsheet_png`); it shows `ex_cheat.rs`, its netlist and
   its waveform, all produced by the build.

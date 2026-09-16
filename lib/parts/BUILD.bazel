@@ -7,6 +7,8 @@ rust_library(
     name = "txhdl_parts",
     srcs = [
         "src/buffer.rs",
+        "src/bus/axi.rs",
+        "src/bus/mod.rs",
         "src/fifo.rs",
         "src/station.rs",
         "src/lib.rs",
@@ -26,10 +28,10 @@ rust_test(
 )
 
 # The sources by name, for the documents' API extraction.
-exports_files(glob(["src/*.rs"]))
+exports_files(glob(["src/*.rs", "src/bus/*.rs"]))
 
 filegroup(
     name = "sources",
-    srcs = glob(["src/*.rs"]),
+    srcs = glob(["src/*.rs", "src/bus/*.rs"]),
     visibility = ["//visibility:public"],
 )

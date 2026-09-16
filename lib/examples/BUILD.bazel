@@ -372,6 +372,32 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An AXI4 link, peer to peer, out of order:
+#   bazel run //lib/examples:ex_axi
+rust_binary(
+    name = "ex_axi",
+    srcs = ["ex_axi.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# Accepting many AXI transactions and forwarding them for processing:
+#   bazel run //lib/examples:ex_axi_serve
+rust_binary(
+    name = "ex_axi_serve",
+    srcs = ["ex_axi_serve.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # The cheat sheet's counter:  bazel run //lib/examples:ex_cheat
 rust_binary(
     name = "ex_cheat",
@@ -417,6 +443,8 @@ filegroup(
         "stream_alu.rs",
         "ex_stream_alu.rs",
         "ex_compose.rs",
+        "ex_axi.rs",
+        "ex_axi_serve.rs",
         "station.v",
         "ex_mem.rs",
         "ex_imm.rs",
