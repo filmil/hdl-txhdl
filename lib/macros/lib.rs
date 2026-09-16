@@ -5033,6 +5033,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          aliases: Vec::new(),\n\
          nets: vec![{nets}],\n\
          instances: vec![{instances}],\n\
+         foreign: None,\n\
          }}\n}}\n\
          /// The Verilog of this unit.\n\
          pub fn verilog(name: &str) -> String {{\n\

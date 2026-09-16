@@ -394,6 +394,69 @@ pub struct Lowered {
     /// The children of a unit of units, each a module of its own
     /// instantiated once here.
     pub instances: Vec<Instance>,
+    /// Set when the unit is a module the netlist does not write: its
+    /// ports are the module's own, and a parent instantiates it by the
+    /// module's name, with the parameters given, and emits no body for
+    /// it. See [`foreign`].
+    pub foreign: Option<Foreign>,
+}
+
+/// A module the netlist instantiates and does not write: a controller
+/// from elsewhere, a vendor primitive, anything that comes as its own
+/// source. The name is the module's, or the entity's, and the
+/// parameters are its parameters, or its generics, by name.
+pub struct Foreign {
+    /// The module's own name, which the instance names.
+    pub module: String,
+    /// Its parameters, each a name and an integer.
+    pub params: Vec<(String, i128)>,
+    /// Its clock pins, each with the clock that drives it: joined to
+    /// the parent's clock of that name, as a lowered child's clock is.
+    pub clocks: Vec<(String, &'static str)>,
+}
+
+/// The lowering of a unit that is a foreign module: what its `Lower`
+/// gives, written by hand, since there is no `run` for `#[lower]` to
+/// read. `ports` are the module's ports by their own names, in the
+/// order the unit's `run` takes them, each an `In`, an `Out` or a
+/// `Pad`. `clocks` are its clock pins, each named with the clock that
+/// drives it, such as `DefaultClock::NAME`; they are not among `ports`,
+/// since the unit's `run` does not take a clock. A unit of units that
+/// holds such a unit joins its ports as it joins any child's, and the
+/// netlist has an instance of `module` with `params` where the child
+/// would be.
+pub fn foreign(
+    name: &str,
+    module: &str,
+    ports: &[(&str, Kind, usize)],
+    params: &[(&str, i128)],
+    clocks: &[(&str, &'static str)],
+) -> Lowered {
+    for (p, k, _) in ports {
+        assert!(
+            matches!(k, Kind::In | Kind::Out | Kind::Pad),
+            "port `{p}` of foreign `{module}` is not an In, an Out or a Pad"
+        );
+    }
+    Lowered {
+        name: name.to_string(),
+        fields: Vec::new(),
+        ports: ports
+            .iter()
+            .map(|(p, k, w)| (p.to_string(), *k, *w))
+            .collect(),
+        wires: Vec::new(),
+        procs: Vec::new(),
+        init: Vec::new(),
+        aliases: Vec::new(),
+        nets: Vec::new(),
+        instances: Vec::new(),
+        foreign: Some(Foreign {
+            module: module.to_string(),
+            params: params.iter().map(|(n, v)| (n.to_string(), *v)).collect(),
+            clocks: clocks.iter().map(|(p, c)| (p.to_string(), *c)).collect(),
+        }),
+    }
 }
 
 /// A child of a unit of units: the field it lives in, its own
@@ -467,6 +530,13 @@ impl Lowered {
     /// once, in order.
     fn clocks(&self) -> Vec<&'static str> {
         let mut out: Vec<&'static str> = Vec::new();
+        if let Some(f) = &self.foreign {
+            for (_, c) in &f.clocks {
+                if !out.contains(c) {
+                    out.push(c);
+                }
+            }
+        }
         for p in &self.procs {
             if !out.contains(&p.clock) {
                 out.push(p.clock);
