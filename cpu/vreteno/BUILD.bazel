@@ -16,6 +16,7 @@ rust_library(
         "src/lib.rs",
         "src/model.rs",
         "src/program.rs",
+        "src/run.rs",
         "src/term.rs",
         "src/timer.rs",
         "src/uart.rs",
@@ -70,6 +71,26 @@ rust_test(
     edition = "2021",
 )
 
+# The same, in C++: the other toolchain, the same core.
+#   bazel run //cpu/vreteno:hello_cc
+rust_binary(
+    name = "hello_cc",
+    srcs = ["src/bin/hello_cc.rs"],
+    edition = "2021",
+    deps = [
+        ":vreteno32",
+        "//cpu/vreteno/cpp:hello_cc_program",
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+)
+
+rust_test(
+    name = "hello_cc_test",
+    crate = ":hello_cc",
+    edition = "2021",
+)
+
 # The core against the model, every cycle.
 rust_test(
     name = "lockstep",
@@ -92,7 +113,10 @@ filegroup(
         # The program compiled for the core and its linker script are
         # a package of their own, so they come by label rather than by
         # a glob, which cannot cross a package boundary.
-    ]) + ["//cpu/vreteno/rust:sources"],
+    ]) + [
+        "//cpu/vreteno/rust:sources",
+        "//cpu/vreteno/cpp:sources",
+    ],
 )
 
 # Synthesis of the core's Verilog, as the document build wrote it, on an

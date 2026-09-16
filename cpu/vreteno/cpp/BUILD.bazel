@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+# C++ compiled for Vreteno itself, by the toolchain `MODULE.bazel`
+# fetches: the xPack build of the GNU bare-metal RISC-V compiler,
+# whose `rv32im/ilp32` multilib carries newlib and a `libstdc++.a`
+# built for exactly this core.
+load("@rules_rust//rust:defs.bzl", "rust_library")
+load(":defs.bzl", "vreteno_cc_image")
+
+package(default_visibility = ["//visibility:public"])
+
+# The image of the C++ program: the instruction words, and the bytes
+# the data memory starts with. The linker script is the one the Rust
+# programs use, since what the machine allows does not depend on the
+# language it is written in.
+vreteno_cc_image(
+    name = "hello_cc_image",
+    src = "hello.cc",
+    linker_script = "//cpu/vreteno/rust:vreteno.ld",
+)
+
+rust_library(
+    name = "hello_cc_program",
+    srcs = [":hello_cc_image"],
+    crate_name = "hello_cc_program",
+    edition = "2021",
+)
+
+filegroup(
+    name = "sources",
+    srcs = ["hello.cc"],
+)
