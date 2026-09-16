@@ -10,6 +10,8 @@
 \usepackage{graphicx}
 
 \InputIfFileExists{buildstamp.tex}{}{}
+% The numbers the ASIC run produced, written by the run itself.
+\input{asic_counts.tex}
 \providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
 
 \title{TxHDL: What Has Been Built}
@@ -118,7 +120,11 @@ program and on sixty-four random ones.
 It runs on hardware. The netlist goes through a hermetic Vivado onto
 an Alinx AX7A200, and the board says on its serial port what the
 simulation says it will: \code{OK}, and then whatever is typed at it,
-echoed.
+echoed. The same netlist also goes onto an open 45~nm standard cell
+library, through Yosys and OpenROAD, both fetched by checksum: a die
+\asicdie~$\mu$m square that meets \asicfreq~MHz and routes with
+\asicdrc{} violations. That is a layout and not a tapeout, and
+\code{//docs:tapeout} says what a tapeout would still want.
 
 Its bus is AXI4, and every device behind it is an AXI peripheral,
 with the router deciding by address which one a burst reaches.

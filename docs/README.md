@@ -22,12 +22,13 @@ Those reasons live here.
 | `document-build-plan.md` | How the articles are built, what was tried before, and why the TeX packages are vendored |
 | `rust-embedding.md` | Working notes on embedding the language in Rust, with every probe result in full |
 
-Sixteen documents are typeset here, and `cover.tex` names them all:
+Seventeen documents are typeset here, and `cover.tex` names them all:
 `article.tex` with `sections/` is the merge, `//docs:article`;
 `embedding.tex` with `embedding_sections/` is the language, `//docs:embedding`;
 `runtime.tex` with `runtime_sections/` is the runtime library verbatim, `//docs:runtime`;
 `examples.tex` with `examples_sections/` is every example with its output, `//docs:examples`;
 `vreteno.tex` is the Vreteno RV32I core, `//docs:vreteno`;
+`tapeout.tex` is the core through an open ASIC flow, `//docs:tapeout`;
 `paper.tex` is the expository paper, `//docs:paper`;
 `cover.tex` is the cover, `//docs:cover`;
 `showcase.tex` is two pages on the whole of it, `//docs:showcase`;

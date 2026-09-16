@@ -1,0 +1,406 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% Vreteno through an open ASIC flow. Built by //docs:tapeout. Every
+% listing is included from the tree and every number comes from a run.
+\documentclass[journal,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+% The numbers the prose quotes, written by the run that produced them.
+\input{asic_counts.tex}
+
+% A script of the flow, highlighted for its own vocabulary: the
+% comment character is the hash, and the commands are the steps.
+\lstdefinestyle{script}{%
+  style=txhdl,
+  morecomment=[l]{\#},
+  morekeywords={set,expr,proc,foreach,source,puts,format,open,close,
+    read_verilog,hierarchy,synth,opt,dfflibmap,abc,setundef,splitnets,
+    opt_clean,hilomap,insbuf,tee,stat,write_verilog,read_lef,
+    read_liberty,read_sdc,link_design,initialize_floorplan,place_pins,
+    tapcell,pdngen,global_placement,detailed_placement,check_placement,
+    clock_tree_synthesis,set_propagated_clock,repair_design,
+    repair_clock_nets,repair_timing,global_route,detailed_route,
+    filler_placement,estimate_parasitics,write_def,create_clock,
+    set_input_delay,set_output_delay,set_driving_cell,set_load,
+    set_max_fanout,set_clock_uncertainty,set_thread_count,get_ports,
+    get_clocks,all_inputs,all_outputs,current_design,lsearch,metric,
+    report_design_area,report_worst_slack,report_tns,report_checks,
+    report_power,report_check_types,report_clock_skew},
+}
+
+\title{A Tapeout Prep in TxHDL: Vreteno on an Open 45\,nm Node}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{This is the tutorial on what a design does after synthesis
+and before a mask. The core is the one in~\cite{vreteno}; the
+netlist it starts from is the one the lowering emits. Every listing
+is included from the project repository \code{HDL/txhdl} at build
+time. The cover~\cite{cover} lists every document.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{A Tapeout Prep in TxHDL}{Filmar and Janković: A Tapeout Prep in TxHDL}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A design that has been simulated, lowered, checked against its trace
+and synthesised onto an FPGA has still never been a shape. This takes
+the Vreteno core's Verilog, the same file the board's bitstream is
+built from, maps it onto an open 45\,nm standard cell library with
+Yosys, and floorplans, places, routes and times it with OpenROAD. The
+result is a die \asicdie\,$\mu$m square holding \asiccells{} cells
+that meets a \asicperiod\,ns clock with \asicslack\,ns to spare and
+routes with \asicdrc{} violations. Both tools are fetched by
+checksum and unpacked by the build, so the flow needs nothing
+installed. This is not a tapeout, and the last section says what a
+tapeout would still want.
+\end{abstract}
+
+\section{What This Is}
+\label{sec:t-what}
+
+An FPGA answers one question about a design: does it fit, and how
+fast does it go, on this part. An ASIC flow answers a different one,
+and asks the design for things an FPGA never does. There is no block
+RAM to put a memory in and no arithmetic block to put a multiplier
+in, so both become gates. There is no configuration bitstream to give
+a register its value at power on, so a register that was initialised
+and never reset is a register with no defined value. And there is no
+routing fabric that exists whether or not the design uses it: every
+wire is drawn, and its length is a delay.
+
+The Vreteno core has been through the first of those~\cite{vreteno}.
+It runs on an Alinx AX7A200 at 100\,MHz, and what it said on the
+board is what its simulation said. This document puts the same
+netlist through the second, and reports what the flow found.
+
+None of it is a tapeout. No foundry has a process that matches this
+library, no mask was made, and the checks a foundry demands are not
+here. Section~\ref{sec:t-not} lists what is missing, one item at a
+time, because a document that showed a picture of a layout and
+stopped would be claiming more than it had done.
+
+\section{The Node}
+\label{sec:t-node}
+
+Nangate45 is an open standard cell library at a notional 45\,nm: a
+timing model for each cell, a layout abstraction saying what shape it
+is and where its pins are, and a technology file saying what the ten
+metal layers are and how wide a wire on each may be. It is the
+library the OpenROAD project uses for its own examples, it is
+published under Apache 2.0 with the flow scripts, and the build
+fetches the six files the flow reads, each by checksum, at one
+revision, with its licence.
+
+It is not a foundry's library. No wafer was ever made from it, its
+numbers are a plausible 45\,nm and not a measured one, and it has no
+design rule deck that a fab would sign. That is exactly why it is
+the right thing to put a first flow on: every step is real, every
+number means what it says, and nothing is under a licence that keeps
+it out of a repository.
+
+The one thing it does not have is memory. A foundry node comes with
+a compiler that makes an SRAM macro of whatever shape is asked for,
+and there is no such thing here; the flow scripts ship mock macros of
+fixed shapes for experimenting with placement, and a mock macro has
+no contents. Section~\ref{sec:t-cells} says what the core's memories
+became instead, which is the most interesting thing this flow found.
+
+\section{The Tools, and How They Are Pinned}
+\label{sec:t-tools}
+
+Everything in this repository is fetched by checksum and nothing is
+installed, and the ASIC flow is held to the same rule. That is
+harder here than elsewhere, because Yosys and OpenROAD are published
+as Debian packages, and a Debian package names the shared libraries
+it needs without carrying them.
+
+So the build resolves the closure first. \code{//tools/debclosure}
+reads a suite's package index, walks the dependencies from the
+packages named on its command line, and writes a lock file: one row
+per package with its version, its size, its checksum and two places
+to fetch it from. The first is the live archive, which is fast and
+forgets a package as soon as a newer one replaces it; the second is
+\code{snapshot.debian.org}, which is slow and never forgets. A
+fetcher that tries them in order is fast while the pin is current and
+still right years later.
+
+Two such lock files are in the tree. Yosys 0.52 and the ten libraries
+it needs are eleven packages and thirteen megabytes. OpenROAD is the
+last release its project published as a package, fifty two megabytes
+of its own, and the closure of what it links against is a hundred and
+thirty one packages and seventy two megabytes more, most of that Qt,
+which the program links against whether or not a window is ever
+opened. Beside them is the solver its placer uses, which the package
+names in its runtime path and does not carry.
+
+Nothing unpacks them but Bazel. A \code{.deb} is an \code{ar} archive
+holding a \code{tar.xz}, and Bazel's own decompressors open both, so
+the repository rule in \code{//third\_party/debs} downloads each
+package, unpacks it twice, and leaves one tree that the two tools run
+against with their own libraries. There is no \code{dpkg}, no
+container, and no step that reads the machine.
+
+\section{From Verilog to Cells}
+\label{sec:t-cells}
+
+Listing~\ref{lst:t-synth} is the whole of the mapping. The build
+fills in the words between the at signs, and the rest is the order
+the OpenROAD flow scripts use.
+
+\lstinputlisting[style=script, caption={Vreteno onto standard
+cells.}, label={lst:t-synth}]{cpu/vreteno/asic/synth.ys}
+
+Six of those lines are not decoration. \code{dfflibmap} must run
+before \code{abc}, because a register can only be mapped to a cell
+that exists and the combinational mapper will not invent one.
+\code{setundef} gives a defined value to bits that had none, and
+\code{splitnets} turns every bus into its bits, because a netlist of
+cells has no such thing as a vector. \code{hilomap} replaces the
+constants a netlist writes as one and zero with the two cells that
+drive them, which the mapper will not use on its own because the
+library marks them \code{dont\_use}. And \code{insbuf} puts a buffer
+on a port wired straight through to another, because a layout has no
+such thing as a wire with no driver.
+
+Their order matters more than it looks. Buffering before the buses
+are split puts a buffer on every bit of every bus: three thousand
+eight hundred cells that nothing needed, a fifth of the design, found
+by reading the cell counts and not by any tool complaining.
+
+What comes out is \asiccells{} cells on \asicnets{} nets, of which
+\asicflops{} are flip-flops.
+
+\subsection{The Memories}
+
+Compare that with the same core on the Artix-7, which is 1952 lookup
+tables, 486 flip-flops, one block RAM tile and four arithmetic
+blocks~\cite{vreteno}. The flip-flop counts differ by a factor of
+three, and the reason is the register file. On the FPGA it is twelve
+distributed memory primitives, because the fabric has a small
+memory that is not a register; on an ASIC there is no such thing, so
+thirty two words of thirty two bits are a thousand and twenty four
+flip-flops. Those and the core's own registers come to \asicflops{},
+against 486 on the board, where the register file was not flip-flops
+at all.
+
+The instruction memory went the other way, and this is the
+interesting part. On the FPGA it is one block RAM tile, 1024 words by
+27 bits, the tool having dropped the five bit columns the program
+never sets. Here there is no block RAM, and the memory is read-only:
+nothing in the core writes it, and its contents are the program,
+which is known at synthesis. So it is not a memory at all. It is a
+mask ROM, which is to say a lump of combinational logic, and what it
+costs depends on the program in it. A different program is a
+different area. That is true of any mask ROM and it is worth saying
+out loud, because it means the area figure below is the area of this
+core running this program, and nothing more general.
+
+The multiplier is the third case. Four arithmetic blocks on the
+FPGA, and here the gates that a thirty two bit multiply step is,
+because the library has cells and nothing else.
+
+\section{From Cells to a Layout}
+\label{sec:t-pnr}
+
+Listing~\ref{lst:t-sdc} is what the design is asked to meet. Three
+nanoseconds is 333\,MHz, three times what the board runs at, because
+a 45\,nm standard cell is a faster thing than an FPGA lookup table
+and the point of naming a period is that every number after it means
+something. The ports are timed as if a chip of the same speed were on
+the other side of each, with a fifth of the period to arrive and a
+fifth to be taken. Ports with no timing at all are the usual way a
+report comes out clean and wrong.
+
+\lstinputlisting[style=script, caption={What the core is asked to
+meet.}, label={lst:t-sdc}]{cpu/vreteno/asic/vreteno.sdc}
+
+The flow itself is in \code{cpu/vreteno/asic/pnr.tcl} and runs in
+this order. A floorplan: a square of silicon with room for the cells,
+the rows they will stand in, and the tracks they will be wired along.
+The ports become pins on the edge, on the two upper layers that are
+clear of the cells. Cells that tie the wells to the supplies go in,
+one every 120 microns along a row and one at each end. A power grid
+goes over the whole of it: the rails the rows sit on, and straps
+above them on two upper layers. Then the cells are spread out,
+resized where a signal was too slow or too sharp, and packed into the
+rows. Then the clock: a tree of buffers so that it reaches every one
+of the flip-flops at nearly the same moment, after which the
+registers move a little to make that tree shorter. Then routing,
+first as a plan and then as metal, and a last pass of resizing
+against the delays the real wires turned out to have. Last of all,
+filler cells, which carry the wells and the supply rails across the
+gaps left in the rows and which come last because they have no signal
+pins and so nothing to route.
+
+\begin{figure*}[t]
+\centering
+\input{asicmap.tex}
+\caption{The placed core, as a grid of \asicbins{} squares a side over
+the die. On the left, how much of each square is filled by cells of
+any kind, before the filler goes in: the pale border is the margin
+the floorplan leaves outside the rows. On the right, the flip-flops
+alone, shaded against the fullest square, which is \asicffpeak\,\% of
+its area; they are a tenth of the cells, so against a full square the
+whole panel would be one pale wash. The state of the design has a
+shape: where there are no flip-flops at all there is combinational
+logic, and by far the largest piece of that is the instruction
+memory, which is a mask ROM and holds no state.}
+\label{fig:t-map}
+\end{figure*}
+
+\section{What the Run Says}
+\label{sec:t-results}
+
+Table~\ref{tab:t-results} is the run. Every number in it was written
+by the flow into a file, and the prose here quotes that file through
+macros, so neither can drift from the other.
+
+\begin{table}[htbp]
+\caption{Vreteno on Nangate45, after routing.}
+\label{tab:t-results}
+\centering
+\begin{tabular}{@{}lr@{}}
+\toprule
+Cells, after mapping & \asiccells{} \\
+Nets & \asicnets{} \\
+Flip-flops & \asicflops{} \\
+Instances placed, before filler & \asicinstances{} \\
+\addlinespace
+Die & \asicdie{} $\times$ \asicdie\,$\mu$m \\
+Cell area & \asicarea\,$\mu$m$^2$ \\
+Core filled by cells & \asicutil\,\% \\
+\addlinespace
+Clock & \asicperiod\,ns (\asicfreq\,MHz) \\
+Worst setup slack & \asicslack\,ns \\
+Worst hold slack & \asicholdslack\,ns \\
+Total negative slack & \asictns\,ns \\
+\addlinespace
+Routing violations & \asicdrc{} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The timing closes, and it closes by a margin thin enough to be worth
+looking at: \asicslack\,ns out of \asicperiod. Total
+negative slack is \asictns, so the worst path is the only path that
+is close. Hold is met everywhere as well, which matters more than it
+sounds: a setup failure is a chip that has to be run slower, and a
+hold failure is a chip that does not work at any speed.
+
+Routing finished with \asicdrc{} violations. Zero is the only
+interesting value that number can have, because a routed design with
+violations is a design that has not been routed.
+
+The utilization deserves a word, because \asicutil\,\% is loose. The
+floorplan is sized from the cell area the mapping came to, and the
+resizer then grows the design by a quarter; a production flow
+iterates on that, and this one does not. A tighter
+die would be smaller and harder to route, and the point of this run
+is the flow rather than the squeeze.
+
+\section{Where This Sits in the Build}
+\label{sec:t-build}
+
+Two targets. \code{//cpu/vreteno/asic:vreteno\_cells} is the mapping.
+It takes about ten seconds and is built with everything else, so a
+change to the core that the library cannot express is a broken build
+on the next commit rather than a surprise months later.
+\code{//cpu/vreteno/asic:vreteno\_pnr} is the layout. It takes about
+twenty minutes, so it is tagged \code{manual}, as every Vivado target
+is, and \code{bazel test //...} stays a thing somebody runs before
+every commit.
+
+That leaves every number in this document coming from a run the build
+does not make, which is the problem the project's timeline has, and
+it is handled the same way. The run writes two small files, the
+numbers and a grid of where the cells went, and those two are
+committed; \code{//tools/denmap} turns them into the table's macros
+and into Fig.~\ref{fig:t-map} at build time. The routed design itself
+is forty megabytes of DEF and stays where it was made. So the figure
+is never a picture somebody pasted in, the prose can only quote
+numbers that a tool wrote, and moving any of them means running the
+layout again and committing what it says.
+
+\section{What a Tapeout Would Still Want}
+\label{sec:t-not}
+
+This flow ends with a routed design that meets its timing. A tapeout
+begins there.
+
+\emph{A foundry, and its rules.} Nangate45 has no design rule deck
+and no device models, so the routing checks are the router's own
+rules and not a fab's. Physical verification, which is design rule
+checking and layout versus schematic against the foundry's decks, has
+not been done because there is nothing to do it against. On an open
+node that has a fab behind it, Sky130 or GF180, both exist and both
+would run.
+
+\emph{Something to hold the program.} The instruction memory is a
+mask ROM here, which means the program is fixed when the mask is. A
+chip that is to be useful wants the program loaded, which means an
+SRAM macro from the node's compiler, or a serial port that writes
+into one before the core is let go. The core already has the bus for
+it.
+
+\emph{Pads.} The design has \asiccells{} cells and no pad ring. Every
+port here is a pin on the edge of the core, which is what the next
+level up would connect to; a chip needs pads with their drivers,
+their electrostatic protection and their bond or bump pattern, and a
+power ring to feed them.
+
+\emph{A way to test it.} There is no scan chain. Every flip-flop in
+the design is an ordinary one, so a manufactured part could be run
+but not shifted through, and a fault in the middle of it could not be
+found. Inserting scan is a synthesis option and a set of extra pins,
+and it is the difference between a chip that works and a chip you can
+show works.
+
+\emph{Reset.} The core resets its pipeline, and the register file is
+not reset at all. On an FPGA that is harmless: the bitstream writes
+every register on the way in. On silicon the register file powers up
+holding nothing in particular, which the instruction set does not
+mind for thirty one of its thirty two words and does mind for the
+one that must read as zero. This core reads that one from a constant
+rather than from the file, so it survives, and the general point
+stands anyway: an initial value in Verilog is a simulation's
+convenience and not a circuit.
+
+\emph{Corners.} One timing library was read: typical process, one
+voltage, one temperature. A signoff wants the slow and the fast
+corner as well, and hold checked at the fast one, because a chip has
+to work at both ends of what a wafer does.
+
+\emph{Extraction.} The delays here are estimated from the routing.
+Real signoff extracts the resistance and capacitance of the metal
+that was actually drawn and times against that.
+
+Every one of those is a known piece of work rather than an open
+question, and the flow they would attach to is the one above.
+
+\begin{thebibliography}{9}
+
+\bibitem{vreteno}
+F.~Filmar and D.~Janković, ``Vreteno: an RV32IM core in TxHDL,''
+project repository \code{HDL/txhdl}, \code{//docs:vreteno}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,11 @@
+cells	16516
+nets	18065
+die_width	289.32
+die_height	289.32
+utilization	38.4
+design_area	31126.0
+worst_slack_max	0.0012
+worst_slack_min	0.0354
+tns	0.0000
+clock_period	3.000
+drc_violations	0

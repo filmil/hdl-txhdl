@@ -15,7 +15,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and sixteen documents describe it,
+The language is a library, `//lib`, and seventeen documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -39,6 +39,14 @@ all under `//docs`:
 * `//docs:vreteno` is the first large design, the Vreteno RV32IM core
   under `//cpu/vreteno`, with its reference model, its lockstep test,
   its waveform, and the timer on its bus.
+* `//docs:tapeout` is the same core after the FPGA: mapped onto the
+  open Nangate45 standard cell library with Yosys and floorplanned,
+  placed, routed and timed with OpenROAD, both fetched by checksum as
+  Debian packages and unpacked by the build. The mapping is a normal
+  target; the layout is `//cpu/vreteno/asic:vreteno_pnr`, which is
+  manual because it is twenty minutes of work, and what it writes into
+  `docs/asic.tsv` and `docs/asic_map.tsv` is committed, so
+  `//tools/denmap` draws the figure and the numbers at build time.
 * `//docs:paper` is the expository paper: the system as it is and its
   results, with diagrams, for a reader meeting TxHDL for the first
   time; no history.
@@ -163,6 +171,8 @@ bazel build //...              # the library, every example, every document
 bazel run //lib/examples:ex_config -- asic
 bazel build //docs/...         # -> bazel-bin/docs/{cover,article,embedding,runtime,examples,txhdl}.pdf
 bazel build //cpu/vreteno:vreteno_synth   # the core through Vivado, hermetic; manual
+bazel build //cpu/vreteno/asic:vreteno_cells  # the core onto standard cells
+bazel build //cpu/vreteno/asic:vreteno_pnr    # and to a layout; manual, 20 min
 ```
 
 Vivado is hermetic through `rules_vivado`: the `vivado.install` tag in

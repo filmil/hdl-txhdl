@@ -9,6 +9,8 @@
 \input{housestyle}
 
 \InputIfFileExists{buildstamp.tex}{}{}
+% The numbers the ASIC run produced, written by the run itself.
+\input{asic_counts.tex}
 \providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
 
 \definecolor{tint}{RGB}{232,238,250}
@@ -527,6 +529,23 @@ port's line as the demonstration's O goes out, from the same trace:
 the write into the port, then the start bit, the byte low bit first
 and the stop bit, four cycles each.
 
+The same netlist goes the other way as well. Mapped onto Nangate45,
+an open 45~nm standard cell library, by Yosys, and then floorplanned,
+placed, routed and timed by OpenROAD, both of them fetched by
+checksum as Debian packages and unpacked by the build, it comes to
+\asiccells{} cells on a die \asicdie~$\mu$m square, meets
+\asicperiod~ns with \asicslack~ns to spare, and routes with
+\asicdrc{} violations. What changes between the two targets is the
+memories. An FPGA has a block RAM to put the instruction memory in
+and a small distributed memory to put the register file in, and a
+standard cell library has neither: the instruction memory, which
+nothing in the core writes, becomes a mask ROM of gates whose size
+depends on the program in it, and the register file becomes a
+thousand and twenty four flip-flops. That is why the same core is 486
+flip-flops on the board and \asicflops{} on silicon. The flow, the
+layout and everything a tapeout would still want are
+in~\cite{tapeout}.
+
 \begin{table}[htbp]
 \caption{Vreteno on an Artix-7, after synthesis.}
 \label{tab:p-synth}
@@ -690,6 +709,11 @@ limits the clock is a jump through a register.
 \bibitem{cover}
 F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
 \code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\bibitem{tapeout}
+F.~Filmar and D.~Janković, ``A tapeout prep in TxHDL: Vreteno on an
+open 45~nm node,'' project repository \code{HDL/txhdl},
+\code{//docs:tapeout}, 2026.
 
 \bibitem{bachrach2012}
 J.~Bachrach et al., ``Chisel: Constructing hardware in a Scala embedded

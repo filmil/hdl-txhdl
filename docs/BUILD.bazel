@@ -1285,6 +1285,7 @@ latex_document(
         ":paper_stage_timing",
         ":paper_vreteno_timing",
         ":paper_vreteno_out_timing",
+        ":asic_counts",
         "//lib/examples:sources",
         "//cpu/vreteno:sources",
     ],
@@ -1417,6 +1418,47 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# The placed core, drawn from the grid the ASIC flow wrote. The layout
+# itself is `//cpu/vreteno/asic:vreteno_pnr`, which is manual because
+# it is twenty minutes of work; what it writes is two small files, and
+# those are committed, exactly as the timeline's data is.
+genrule(
+    name = "asicmap_tex",
+    srcs = ["asic_map.tsv"],
+    outs = ["asicmap.tex"],
+    cmd = "$(location //tools/denmap) $(location asic_map.tsv) > $@",
+    tools = ["//tools/denmap"],
+)
+
+# The numbers that run produced, as TeX macros, so the prose beside
+# the table cannot drift from it.
+genrule(
+    name = "asic_counts",
+    srcs = [
+        "asic_map.tsv",
+        "asic.tsv",
+    ],
+    outs = ["asic_counts.tex"],
+    cmd = "$(location //tools/denmap) --counts $(location asic_map.tsv) " +
+          "$(location asic.tsv) > $@",
+    tools = ["//tools/denmap"],
+)
+
+# Vreteno through an open ASIC flow: the mapping onto standard cells,
+# which the build runs, and the layout, whose numbers are committed.
+latex_document(
+    name = "tapeout",
+    main = "tapeout.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":asicmap_tex",
+        ":asic_counts",
+        "//cpu/vreteno/asic:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # From zero: the blinky workspace under //tutorial/blinky, run by
 # the build, its printout and its netlist included.
 genrule(
@@ -1488,6 +1530,7 @@ latex_document(
     name = "showcase",
     main = "showcase.tex",
     data = [
+        ":asic_counts",
         ":buildstamp",
         ":vendored_tex",
         ":gpu_scene",
@@ -1597,6 +1640,7 @@ combined_pdf(
         "The TxHDL Runtime",
         "TxHDL by Example",
         "Vreteno: An RV32IM Core in TxHDL",
+        "A Tapeout Prep in TxHDL: Vreteno on an Open 45 nm Node",
         "TxHDL: A Hardware Description Language That Is a Rust Library",
         "TxHDL by the Numbers",
         "The Dynamics of a Project",
@@ -1616,6 +1660,7 @@ combined_pdf(
         ":runtime",
         ":examples",
         ":vreteno",
+        ":tapeout",
         ":paper",
         ":stats",
         ":dynamics",

@@ -44,6 +44,21 @@ The first build fetches a Debian rootfs, a Zig toolchain, graphviz built
 from source and a TeX installation, which is roughly 950 actions.
 Later builds reuse them.
 
+## Silicon
+
+The same netlist the board's bitstream is built from also goes through
+an open ASIC flow, onto the Nangate45 standard cell library.
+Yosys and OpenROAD are fetched by checksum as Debian packages and
+unpacked by the build, so nothing is installed for this either.
+
+```sh
+bazel build //cpu/vreteno/asic:vreteno_cells   # onto standard cells
+bazel build //cpu/vreteno/asic:vreteno_pnr     # a layout; manual, 20 min
+```
+
+`//docs:tapeout` has the flow, the layout, the numbers and a list of
+everything a real tapeout would still want.
+
 ## The board
 
 The Vreteno core's board, an Alinx AX7A200, sits on another machine

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Draws the placed core from the grid the ASIC flow wrote, and emits
+# the numbers the document quotes as TeX macros.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "denmap",
+    srcs = ["main.rs"],
+    edition = "2021",
+)
