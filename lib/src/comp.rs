@@ -174,6 +174,33 @@ pub struct Rx<T: Transaction, C: Clock = DefaultClock>(
     PhantomData<C>,
 );
 
+/// A pad: a pin driven from both sides, which is what a memory's data
+/// lines are. A design does not drive one itself. It takes a pad among
+/// its ports and passes it, untouched, to the foreign module that
+/// does, so that the netlist has an `inout` running from the top level
+/// to that module. The simulation carries nothing on it: the foreign
+/// module's model in Rust stands in for the chip on the other side, and
+/// a pad is only the wire a netlist needs. `Clone`, since it is a
+/// name and not a driver.
+pub struct Pad<T: Copy, C: Clock = DefaultClock>(PhantomData<(T, C)>);
+
+impl<T: Copy, C: Clock> Clone for Pad<T, C> {
+    fn clone(&self) -> Self {
+        Pad(PhantomData)
+    }
+}
+
+impl<T: Copy, C: Clock> Default for Pad<T, C> {
+    fn default() -> Self {
+        Pad(PhantomData)
+    }
+}
+
+/// A pad, to pass to a unit that takes one.
+pub fn pad<T: Copy, C: Clock>() -> Pad<T, C> {
+    Pad::default()
+}
+
 impl<T: Copy, C: Clock> Clone for In<T, C> {
     fn clone(&self) -> Self {
         In(self.0.clone(), PhantomData)
@@ -1281,6 +1308,9 @@ pub mod trace {
         Mem,
         /// A wire kept as a field, for looking at.
         Wire,
+        /// A pad, a pin driven from both sides: a port that a unit of
+        /// units passes to a foreign module and nothing else reads.
+        Pad,
     }
 
     /// One traced signal: where it is, how wide, what it is, which
@@ -1401,6 +1431,11 @@ pub mod trace {
             let c = self.0.clone();
             parts(scope, Kind::Out, cell, move || c.0.get());
         }
+    }
+    /// A pad traces as nothing, since the simulation carries nothing on
+    /// it; what is on the pins is the foreign module's business.
+    impl<T: Copy + 'static, C: Clock> Traceable for super::Pad<T, C> {
+        fn trace(&self, _scope: &Scope) {}
     }
     /// A wire field traces as an output does: a wire, under the unit.
     impl<T: Value + 'static, C: Clock> Traceable for super::Wire<T, C> {

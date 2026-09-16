@@ -137,6 +137,16 @@ fn range(w: usize) -> String {
         String::new()
     }
 }
+/// The VHDL type a foreign module's port is declared with: the plain
+/// logic types, since a module written by hand, or in Verilog, knows
+/// nothing of `unsigned`.
+fn logic(w: usize) -> String {
+    if w > 1 {
+        format!("std_logic_vector({} downto 0)", w - 1)
+    } else {
+        "std_logic".to_string()
+    }
+}
 
 // ---------------------------------------------------------------------
 // Lowering a unit: what `#[lower]` needs at run time
@@ -796,6 +806,7 @@ impl Lowered {
                     "{n}_data rxin {w}{s}\n{n}_valid rxin 1{s}\n\
                      {n}_ready rxout 1{s}\n"
                 )),
+                Kind::Pad => out.push_str(&format!("{n} inout {w}{s}\n")),
                 Kind::Reg | Kind::Mem | Kind::Wire => {}
             }
         }
@@ -842,6 +853,7 @@ impl Lowered {
                     "input {}{n}_data, input {n}_valid, output {n}_ready",
                     range(*w)
                 )),
+                Kind::Pad => plist.push(format!("inout {}{n}", range(*w))),
                 Kind::Reg | Kind::Mem | Kind::Wire => {}
             }
         }
@@ -1101,6 +1113,7 @@ impl Lowered {
                     plist.push(format!("{n}_valid : in std_logic"));
                     plist.push(format!("{n}_ready : out std_logic"));
                 }
+                Kind::Pad => plist.push(format!("{n} : inout {}", logic(*w))),
                 Kind::Reg | Kind::Mem | Kind::Wire => {}
             }
         }
