@@ -26,10 +26,16 @@
 //! the list holds. The rasteriser reads it until it is not zero, and
 //! that is how a program says the list is ready. A program therefore
 //! writes the list first and the count last.
+//!
+//! The count sits beside the list and not in it, so whoever lays the
+//! two out leaves the list room for the longest it will hold: a list
+//! of `n` instructions reaches `base + (n << BYTE_SHIFT)`, and the
+//! count has to be at or past that.
 use txhdl::types::U;
 
 use crate::op::{Insn, Kind};
 
+// begin{format}
 /// Words an instruction takes, a power of two.
 pub const WORDS: usize = 8;
 /// The shift from an instruction's index to its byte address.
@@ -54,6 +60,7 @@ pub fn encode(i: &Insn) -> [u32; WORDS] {
     w[5] = lo(i.cx.raw()) | (lo(i.cy.raw()) << 16);
     w
 }
+// end{format}
 
 /// The words of an instruction read back, for a model or a test.
 pub fn decode(w: &[u32]) -> Insn {

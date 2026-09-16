@@ -7,8 +7,8 @@
 //! what [`axi_units`] hands out. Nothing else is between it and the
 //! framebuffer but the five AXI channels.
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::{chan, join2, now, signal, DefaultClock, Running, Unit};
-use txhdl::types::Bit;
+use txhdl::comp::{join2, now, signal, DefaultClock, Mem, Running, Unit};
+use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, UnitLink};
 
 use crate::fb::Fb;
@@ -33,19 +33,53 @@ pub struct Run {
 /// least as large as the screen.
 ///
 /// The display list is assembled here, since clipping and winding
-/// are the host's work and not the rasteriser's.
+/// are the host's work and not the rasteriser's, and then drawn as
+/// [`run_list`] draws it.
 ///
 /// `wave` writes the trace where `TXHDL_FST` says, and `netlists`
 /// writes the two units' VHDL and Verilog where `TXHDL_VHDL` and
 /// `TXHDL_VERILOG` say, so that the build can simulate the lowering
 /// against this very run.
-pub fn run<const LOGW: usize, const H: usize, const N: usize>(
+pub fn run<
+    const LOGW: usize,
+    const H: usize,
+    const N: usize,
+    const DL: usize,
+    const CTRL: usize,
+>(
     ops: &[Op],
     wave: bool,
     netlists: bool,
 ) -> Run {
+    let insns = assemble(ops, 1usize << LOGW, H);
+    run_list::<LOGW, H, N, DL, CTRL>(&insns, wave, netlists)
+}
+
+/// Render a display list that is already assembled, such as one a
+/// program wrote. It is put in the memory at `DL` with its count at
+/// `CTRL`, which is where the rasteriser goes looking for it, so the
+/// run is the rasteriser alone on a link: what a system measures its
+/// own run against.
+pub fn run_list<
+    const LOGW: usize,
+    const H: usize,
+    const N: usize,
+    const DL: usize,
+    const CTRL: usize,
+>(
+    insns: &[Insn],
+    wave: bool,
+    netlists: bool,
+) -> Run {
     let w = 1usize << LOGW;
-    let insns = assemble(ops, w, H);
+    // The memory the rasteriser reads its work out of and writes its
+    // pixels into: the framebuffer at nought, the display list at
+    // `DL`, and the count last, which is what says the list is ready.
+    let mut image = vec![U::<32>::new(0); N];
+    for (i, word) in crate::dl::image(insns).iter().enumerate() {
+        image[DL / 4 + i] = U::from(*word);
+    }
+    image[CTRL / 4] = U::from(insns.len() as u32);
     let UnitLink {
         host_client,
         per_client,
@@ -54,15 +88,17 @@ pub fn run<const LOGW: usize, const H: usize, const N: usize>(
         per_in,
         per_out,
     } = axi_units::<ADDR, 32, 4, IDB>();
-    let (issue, wbeat, release, grant, done, _rdata) = host_client;
+    let (issue, wbeat, release, grant, done, rdata) = host_client;
     let (req, wd, ans, rb) = per_client;
-    let (op_tx, op_rx) = chan::<Insn, DefaultClock>();
     let (idle_out, idle) = signal::<Bit, DefaultClock>();
 
     let mut host = AxiHost::<ADDR, 32, 4, IDB, IDS>::default();
     let mut per = AxiPer::<ADDR, 32, 4, IDB>::default();
-    let mut raster = Raster::<ADDR, IDB, LOGW, H, 0>::default();
-    let mut fb = Fb::<ADDR, IDB, N>::default();
+    let mut raster = Raster::<ADDR, IDB, LOGW, H, 0, DL, CTRL>::default();
+    let mut fb = Fb::<ADDR, IDB, N> {
+        px: Mem::with(&image),
+        ..Default::default()
+    };
     // The framebuffer is read out of the memory when the run has
     // finished, so a second handle on it is kept here.
     let pixels = fb.px.clone();
@@ -70,11 +106,11 @@ pub fn run<const LOGW: usize, const H: usize, const N: usize>(
     if wave {
         if let Some(mut t) = Wave::from_env() {
             t.clock::<DefaultClock>();
-            t.add("ops", &op_rx);
             t.add("issue", &issue);
             t.add("wbeat", &wbeat);
             t.add("grant", &grant);
             t.add("done", &done);
+            t.add("rdata", &rdata);
             t.add("release", &release);
             t.add("aw", &host_out.0);
             t.add("w", &host_out.2);
@@ -94,33 +130,18 @@ pub fn run<const LOGW: usize, const H: usize, const N: usize>(
     let mut sim = Running::new(join2(
         join2(host.run(host_in, host_out), per.run(per_in, per_out)),
         join2(
-            raster.run((op_rx, grant, done), (issue, wbeat, release, idle_out)),
+            raster.run((grant, done, rdata), (issue, wbeat, release, idle_out)),
             fb.run((req, wd), (ans, rb)),
         ),
     ));
-    // Offer the display list as fast as the rasteriser takes it, then
-    // wait for it to say it has nothing left to draw and nothing left
-    // in flight.
-    let mut next = 0;
+    // The rasteriser finds its own work, so the run only waits for it
+    // to say it has nothing left to draw and nothing left in flight.
     let mut cycles = 0u64;
-    // An instruction takes a cycle to cross the channel, so the
-    // rasteriser is still idle in the cycle the last one is offered.
-    // Believing `idle` then would end a one-instruction run before it
-    // had drawn anything.
-    let mut offered_at = 0u64;
-    let cap = 64 * N as u64 + 1000;
+    let cap = 128 * N as u64 + 2000;
     loop {
-        if next < insns.len() && op_tx.ready().to_bool() {
-            op_tx.send(insns[next]);
-            next += 1;
-            offered_at = cycles;
-        }
         sim.cycle();
         cycles += 1;
-        if next == insns.len()
-            && cycles > offered_at + 1
-            && idle.get().to_bool()
-        {
+        if idle.get().to_bool() {
             break;
         }
         assert!(cycles < cap, "the render did not finish in {cap} cycles");
@@ -129,8 +150,20 @@ pub fn run<const LOGW: usize, const H: usize, const N: usize>(
         stop();
     }
     if netlists {
-        let r = Raster::<ADDR, IDB, LOGW, H, 0>::lowered("raster");
-        let f = Fb::<ADDR, IDB, N>::lowered("fb");
+        let r = Raster::<ADDR, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster");
+        // The memory starts with the display list in it, which the
+        // lowering cannot see: `Mem::with` gave it at run time. The
+        // netlist is told, or the fetch would read zeroes and the
+        // simulated module would not follow the run it is checked
+        // against. Only as far as the last word that says anything,
+        // since the rest is the zero the array already starts at.
+        let mut f = Fb::<ADDR, IDB, N>::lowered("fb");
+        let last = image
+            .iter()
+            .rposition(|w| w.raw() != 0)
+            .map_or(0, |i| i + 1);
+        let words: Vec<u128> = image[..last].iter().map(|w| w.raw()).collect();
+        f.init("px", &words);
         txhdl::netlist::write_netlists_from_env(&[&r, &f]);
     }
     let _ = start;
@@ -154,11 +187,17 @@ mod tests {
     const LOGW: usize = 4;
     const W: usize = 1 << LOGW;
     const H: usize = 16;
-    const N: usize = 256;
+    /// Words of memory: the framebuffer, then the display list at
+    /// [`DL`] and its count at [`CTRL`], and a power of two.
+    const N: usize = 1024;
+    /// Where the display list sits, clear of the framebuffer.
+    const DL: usize = 0x400;
+    /// Where the count sits, clear of the longest list a test makes.
+    const CTRL: usize = 0x600;
 
     /// Render `ops` both ways and say where they differ.
     fn agree(ops: &[Op], what: &str) {
-        let got = run::<LOGW, H, N>(ops, false, false);
+        let got = run::<LOGW, H, N, DL, CTRL>(ops, false, false);
         let want = model::render(&assemble(ops, W, H), W, H);
         for y in 0..H {
             for x in 0..W {
@@ -192,7 +231,7 @@ mod tests {
         assert_eq!(insn.x1.raw(), 0, "a clear carries no box");
         assert_eq!(insn.y1.raw(), 0, "a clear carries no box");
         assert_eq!(insn.ax.raw(), 0, "a clear carries no vertices");
-        let got = run::<LOGW, H, N>(&[bg(0x31_41_59)], false, false);
+        let got = run::<LOGW, H, N, DL, CTRL>(&[bg(0x31_41_59)], false, false);
         assert!(
             got.fb.iter().all(|&p| p == 0x31_41_59),
             "the clear did not reach every pixel"

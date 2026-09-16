@@ -14,11 +14,16 @@ use gpu::sim;
 const LOGW: usize = 4;
 const W: usize = 1 << LOGW;
 const H: usize = 16;
-const N: usize = 256;
+/// Words of memory: the framebuffer, the display list and its count.
+const N: usize = 1024;
+/// Where the display list sits.
+const DL: usize = 0x400;
+/// Where the count sits.
+const CTRL: usize = 0x600;
 
 fn main() {
     let ops = scene::small();
-    let run = sim::run::<LOGW, H, N>(&ops, true, true);
+    let run = sim::run::<LOGW, H, N, DL, CTRL>(&ops, true, true);
     let want = model::render(&op::assemble(&ops, W, H), W, H);
     assert_eq!(run.fb, want, "the hardware and the model differ");
     print!("{}", image::ascii(&run.fb, W, H));

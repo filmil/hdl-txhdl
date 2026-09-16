@@ -15,11 +15,17 @@ use gpu::sim;
 const LOGW: usize = 6;
 const W: usize = 1 << LOGW;
 const H: usize = 64;
-const N: usize = 4096;
+/// Words of memory: the framebuffer, then the display list and its
+/// count, and a power of two.
+const N: usize = 8192;
+/// Where the display list sits, just above the framebuffer.
+const DL: usize = 0x4000;
+/// Where the count sits, above the longest list the scene makes.
+const CTRL: usize = 0x4200;
 
 fn main() {
     let ops = scene::house();
-    let run = sim::run::<LOGW, H, N>(&ops, false, false);
+    let run = sim::run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
     let want = model::render(&op::assemble(&ops, W, H), W, H);
     let wrong = run.fb.iter().zip(&want).filter(|(a, b)| a != b).count();
     assert_eq!(wrong, 0, "{wrong} pixels differ from the model");

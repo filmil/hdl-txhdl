@@ -16,10 +16,14 @@
 //! those into packets.
 //!
 //! The memory is the simulation-only [`Ram`], which is what a design
-//! reaches for when the point is the rest of the system: it holds the
-//! program's constants at the data base and the GPU's framebuffer
-//! above them, and a test reads either back afterwards.
-use gpu::op::{assemble, Insn, Op};
+//! reaches for when the point is the rest of the system, and it is
+//! also what the two halves talk through. The core computes a display
+//! list and writes it at [`DL_BASE`], with the count at [`DL_CTRL`]
+//! last; the rasteriser has been reading that count since the first
+//! cycle, sees it turn non-zero, fetches the list and fills every
+//! triangle in it into the framebuffer at [`FB_BASE`]. Neither waits
+//! on the other through anything but the memory they share.
+use gpu::op::Insn;
 use gpu::raster::Raster;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, join2, join_all, signal, DefaultClock, Running, Unit};
@@ -43,22 +47,34 @@ pub const XB: usize = 2;
 /// The same for a row.
 pub const YB: usize = 2;
 /// The screen is `1 << LOGW` by [`H`] pixels.
-pub const LOGW: usize = 6;
+pub const LOGW: usize = 7;
 /// Rows of the screen.
-pub const H: usize = 64;
-/// Where the framebuffer's first word sits in the memory, clear of
-/// the data the program uses.
-pub const FB_BASE: usize = 0x4000;
-/// Words of memory: enough for the data at `0x1000` and the
-/// framebuffer at [`FB_BASE`].
-pub const RAM_WORDS: usize = 0x2000;
-/// Where the program's constants go, as the core's decode has it.
+pub const H: usize = 96;
+/// Where the program's constants go, and where its stack ends: the
+/// four kilobytes the linker script gives the data memory.
 pub const DATA_BASE: usize = 0x1000;
+/// Where the display list sits, above the program's data. There is
+/// room for the hundred and twenty-eight instructions that reach as
+/// far as the serial port, which is the next thing in the map.
+pub const DL_BASE: usize = 0x2000;
+/// Where its count sits, past the serial port's four words at
+/// `0x3000`. The program writes it last, and that is what tells the
+/// rasteriser the list is ready.
+pub const DL_CTRL: usize = 0x4000;
+/// Where the framebuffer's first word sits, clear of all of it.
+pub const FB_BASE: usize = 0x8000;
+/// Words of memory: as far as the last word of the framebuffer.
+pub const RAM_WORDS: usize = FB_BASE / 4 + (1 << LOGW) * H;
 
 // begin{map}
 /// A host bridge at `X`, `Y` with the map every host here uses: the
 /// serial port at 1,1, the program's data at 0,1, and everything
 /// else, the framebuffer included, at 0,1 as well.
+///
+/// The masks reach the whole of the address and not only the digit
+/// the base is written in. A mask of `0xf000` would send the
+/// framebuffer's own `0x13000` to the serial port, which is a way of
+/// writing a picture into a terminal and nothing else.
 pub type Bridge<const X: usize, const Y: usize> = HostBridge<
     X,
     Y,
@@ -69,11 +85,11 @@ pub type Bridge<const X: usize, const Y: usize> = HostBridge<
     4,
     IW,
     0x3000,
-    0xf000,
+    0xffff_f000,
     1,
     1,
     0x1000,
-    0xf000,
+    0xffff_f000,
     0,
     1,
     0,
@@ -90,21 +106,28 @@ pub struct Ran {
     pub said: String,
     /// The cycle the core halted itself on, if it did.
     pub halted_at: Option<u64>,
+    /// The cycle the count of the display list was first not zero in
+    /// the memory, which is the cycle the core finished writing it.
+    pub listed_at: Option<u64>,
     /// The cycle the rasteriser had nothing left to draw and nothing
     /// left in flight, if it reached it.
     pub drawn_at: Option<u64>,
     /// The framebuffer, read out of the memory afterwards.
     pub fb: Vec<u32>,
+    /// The display list the program wrote, read back out of the
+    /// memory and decoded. It is what the core asked for, so a model
+    /// rendered from it says what the framebuffer should hold.
+    pub list: Vec<Insn>,
     /// Cycles the run took.
     pub cycles: u64,
 }
 
-/// Run `text` on the core with `data` in the memory and `ops` on the
-/// GPU, both at once, for at most `limit` cycles.
+/// Run `text` on the core with `data` in the memory, for at most
+/// `limit` cycles. The scene is the program's: nothing is put in the
+/// memory here but the constants the program was linked with.
 #[allow(clippy::too_many_lines)]
-pub fn run(text: &[u32], data: &[u8], ops: &[Op], limit: u64) -> Ran {
+pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let width = 1usize << LOGW;
-    let insns: Vec<Insn> = assemble(ops, width, H);
 
     // The lattice, and the four nodes on it, row major.
     let mut net = lattice::<XB, YB, 32, 32, 4, IW>(2, 2);
@@ -139,11 +162,11 @@ pub fn run(text: &[u32], data: &[u8], ops: &[Op], limit: u64) -> Ran {
 
     // 1,0: the rasteriser, its tracker and its bridge.
     let gl = axi_units::<32, 32, 4, IW>();
-    let (gissue, gwbeat, grelease, ggrant, gdone, _grdata) = gl.host_client;
+    let (gissue, gwbeat, grelease, ggrant, gdone, grdata) = gl.host_client;
     let mut gtrk = AxiHost::<32, 32, 4, IW, NIDS>::default();
     let mut gbr = Bridge::<1, 0>::default();
-    let mut raster = Raster::<32, IW, LOGW, H, FB_BASE>::default();
-    let (op_tx, op_rx) = chan::<Insn, DefaultClock>();
+    let mut raster =
+        Raster::<32, IW, LOGW, H, FB_BASE, DL_BASE, DL_CTRL>::default();
     let (idle_out, idle) = signal::<Bit, DefaultClock>();
 
     // 0,1: the memory, behind a tracker and a bridge. It takes the
@@ -238,7 +261,7 @@ pub fn run(text: &[u32], data: &[u8], ops: &[Op], limit: u64) -> Ran {
                 (halt_out, instr_out, wb_out, issue, wbeat, release),
             ),
             raster.run(
-                (op_rx, ggrant, gdone),
+                (ggrant, gdone, grdata),
                 (gissue, gwbeat, grelease, idle_out),
             ),
         ),
@@ -257,16 +280,10 @@ pub fn run(text: &[u32], data: &[u8], ops: &[Op], limit: u64) -> Ran {
     rx_out.set(Bit::One);
     let mut term = Terminal::new(b"");
     let mut halted_at = None;
+    let mut listed_at = None;
     let mut drawn_at = None;
-    let mut next = 0;
-    let mut offered_at = 0u64;
     let mut cycles = 0u64;
     for c in 0..limit {
-        if next < insns.len() && op_tx.ready().to_bool() {
-            op_tx.send(insns[next]);
-            next += 1;
-            offered_at = c;
-        }
         sim.cycle();
         cycles = c + 1;
         term.see(tx.get().to_bool());
@@ -274,11 +291,10 @@ pub fn run(text: &[u32], data: &[u8], ops: &[Op], limit: u64) -> Ran {
         if halted_at.is_none() && halt.get().to_bool() {
             halted_at = Some(c);
         }
-        if drawn_at.is_none()
-            && next == insns.len()
-            && c > offered_at + 1
-            && idle.get().to_bool()
-        {
+        if listed_at.is_none() && ram.word(DL_CTRL / 4).raw() != 0 {
+            listed_at = Some(c);
+        }
+        if drawn_at.is_none() && idle.get().to_bool() {
             drawn_at = Some(c);
         }
         if halted_at.is_some() && drawn_at.is_some() {
@@ -293,13 +309,27 @@ pub fn run(text: &[u32], data: &[u8], ops: &[Op], limit: u64) -> Ran {
         term.see(tx.get().to_bool());
     }
     stop();
+    // What the program asked for, read back out of the memory the way
+    // the rasteriser read it.
+    let count = ram.word(DL_CTRL / 4).raw() as usize;
+    let list = (0..count)
+        .map(|i| {
+            let at = DL_BASE / 4 + i * gpu::dl::WORDS;
+            let words: Vec<u32> = (0..gpu::dl::USED)
+                .map(|k| ram.word(at + k).raw() as u32)
+                .collect();
+            gpu::dl::decode(&words)
+        })
+        .collect();
     Ran {
         said: term.said.clone(),
         halted_at,
+        listed_at,
         drawn_at,
         fb: (0..width * H)
             .map(|i| ram.word(FB_BASE / 4 + i).raw() as u32)
             .collect(),
+        list,
         cycles,
     }
 }

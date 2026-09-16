@@ -813,7 +813,8 @@ waveform(
     ],
     signals = [
         "//clocks/clk=>clk",
-        "//ops/tx_valid=>op",
+        "//rdata/tx_valid=>rdata",
+        "//raster/phase=>phase",
         "//raster/kind=>kind",
         "//raster/x=>x",
         "//raster/y=>y",
@@ -825,8 +826,8 @@ waveform(
         "//b/tx_valid=>b",
         "//raster/inflight=>inflight",
     ],
-    from_tick = 1086,
-    until = 1146,
+    from_tick = 1344,
+    until = 1404,
     width = 8.2,
 )
 
