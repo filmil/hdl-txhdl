@@ -60,22 +60,47 @@ label={lst:w-unit}]{lib/examples/ex_cheat.rs}
 
 \section{What Is In It}
 
+Table~\ref{tab:w-units} lists every unit the build lowers to Verilog
+and VHDL. Table~\ref{tab:w-systems} lists the systems it assembles
+from them.
+
 \begin{table}[htbp]
-\caption{The pieces, and where each is said in full.}
-\label{tab:w-pieces}
+\caption{Every lowered unit, and which netlists are simulated.}
+\label{tab:w-units}
 \centering\footnotesize
 \begin{tabular}{@{}lll@{}}
 \toprule
-Piece & What it is & Document \\
+Unit & Where & Simulated \\
 \midrule
-The runtime & units, channels, clocks, time & \code{runtime} \\
-The lowering & Verilog and VHDL from a unit & \code{embedding} \\
-Parts & buffer, FIFO, station & \code{station} \\
-The AXI link & five channels, two ends & \code{axi} \\
-The AXI router & one host, N peripherals & \code{axi} \\
-The network & hosts and peripherals on a lattice & \code{noc} \\
-Vreteno & an RV32IM core, on a board & \code{vreteno} \\
-The GPU & a rasteriser and a framebuffer & \code{gpu} \\
+The channel, a buffer of two & runtime & inside a parent \\
+Buffer; FIFO & parts & both \\
+Stations of 2 to 10 inputs & parts & 2 and 3 \\
+AXI routers, 2 to 8 peripherals & parts & 3 \\
+AXI host and peripheral trackers & parts & both \\
+Network node, switch, 2 bridges & parts & not yet \\
+Vreteno; memory, timer, serial port & \code{cpu} & all four \\
+Rasteriser; framebuffer & \code{gpu} & both \\
+The examples' own units & examples & all 20 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\caption{The systems the build assembles, and what checks each.}
+\label{tab:w-systems}
+\centering\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+System & Made of & Checked by \\
+\midrule
+Vreteno & core, router, 3 devices & model, 5 netlists \\
+The GPU & rasteriser, link, memory & model, 2 netlists \\
+The AXI link & host and peripheral & 2 netlists \\
+The AXI router & 1 host, 3 peripherals & its netlist \\
+A lattice & 4 nodes, both bridges, RAM & 2 tests \\
+The SoC & core, GPU, RAM, serial & its run \\
+Composition & station, stream ALU & its netlist \\
+On a board & Vreteno, by Vivado & by hand \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -106,14 +131,11 @@ the channels: \code{axi()} makes every channel of it at once and
 hands back two ends, the way \code{chan()} hands back a sender and a
 receiver.
 
-A host client issues a burst and awaits its answer; several may be
-outstanding and they may be awaited in any order. A peripheral client
-accepts a whole decoded transaction, with a write's beats already
-gathered, and answers it from whatever process holds it. Neither
-names a channel, counts a beat, watches \code{last} or writes an
-identifier. Between the two ends are two units that do the protocol
-and the five AXI channels, which is where the router goes; a router
-changes no client code at all.
+A host client issues a burst and awaits its answer, in any order. A
+peripheral client accepts a whole transaction and answers it from
+whatever process holds it. Neither names a channel, counts a beat or
+writes an identifier. Two trackers between the ends do the protocol,
+and a router goes between them without changing client code.
 
 \section{A Network}
 
@@ -131,9 +153,7 @@ awaits its answer as it would on a link; a peripheral accepts a
 transaction and answers it as it would. What the network adds is the
 renaming: an identifier belongs to the host that made it, so a
 peripheral bridge gives every request one of its own and remembers
-the node and the identifier to answer under. Two hosts on one memory
-is the test that found that, and it failed before the renaming was
-written.
+the node and the identifier to answer under.
 
 A core, a GPU, a memory and a serial port sit on the four corners of a
 two by two lattice and run together: the core says its line on the
@@ -146,7 +166,7 @@ answer at a time and never waiting at all.
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.52\columnwidth]{scene.png}
+\includegraphics[width=0.36\columnwidth]{scene.png}
 \caption{Eight display list entries, drawn by the rasteriser, written
 into memory over AXI, read back and written out as this file.}
 \label{fig:w-scene}
@@ -160,25 +180,13 @@ memory behind the other end of the link. Both are lowered units, and
 the build simulates both netlists against the run that drew a smaller
 version of this picture.
 
-The rasteriser was the first client of the AXI link that is hardware
-rather than a testbench, and writing it is what showed that the
-link's two client conveniences are simulation-side by construction
-and that a unit holds the channel ends itself.
-
 \section{Parts}
 
 A part is hardware the language provides, written in its own lowerable
 subset and checked as every unit is, so nothing in the library is a
-primitive the compiler knows and the user cannot read. The channel
-itself is one: an elastic buffer of two, with \code{valid} and
-\code{ready} registered on both sides, which is what sits between two
-lowered units wherever the simulation had a channel. A FIFO is
-another, for a consumer that takes in bursts. A reservation station is
-the third: it gathers the operands of an operation that arrive on
-separate channels, out of order, and fires when the last of them has,
-in two to ten inputs, each written out by a macro because the lowering
-reads a body and not a loop over ports. The AXI link and its router
-are parts too.
+primitive the compiler knows and the user cannot read. A reservation station gathers the operands
+of an operation that arrive on separate channels, out of order, and
+fires when the last of them has.
 
 \begin{figure}[htbp]
 \centering
@@ -195,48 +203,79 @@ A reader with nothing installed but Bazelisk writes four files, and
 the fourth is a blinky that builds, runs, and lowers to Verilog and
 VHDL. That workspace is kept in the tree and built as a check, so the
 tutorial cannot rot: it depends on the project the way anyone else
-would, through the public mirror, and the build fetches the toolchain,
-the simulators, the waveform tools and a TeX installation itself.
-Nothing is installed by hand, on a workstation or in CI.
+would, through the public mirror. The build fetches every toolchain in
+Table~\ref{tab:w-tools} itself, by checksum or from source. Nothing is
+installed by hand, on a workstation or in CI.
+
+\begin{table}[htbp]
+\caption{The toolchains the build fetches.}
+\label{tab:w-tools}
+\centering\footnotesize
+\begin{tabular}{@{}ll@{}}
+\toprule
+Toolchain, and what the build uses it for & Version \\
+\midrule
+Rust, for the host and for the core & 1.90.0, nightly \\
+GNU C and C++, for the core & 14.2.0 \\
+\code{nvc} and Verilator, to simulate & from source \\
+Vivado, Artix-7, to synthesise & 2025.2 \\
+TinyTeX, for the documents & pinned \\
+Go, for the serial watcher & 1.25.1 \\
+Two waveform converters, for figures & pinned \\
+\end{tabular}
+\end{table}
 
 \section{How It Is Checked}
 
 Nothing here is checked by reading it. Every example is a program the
 build runs, and its output is included in a document from the run, so
-a document cannot drift from the code. Every lowered unit is
-simulated twice more, as VHDL under \code{nvc} and as Verilog under
-Verilator, against the trace the Rust run wrote, at its ports; that
-is what the sixty-two tests under \code{//docs} are. Every claim
-about what Rust accepts was compiled first, as a probe kept in the
-tree, including the ones whose answer was no.
+a document cannot drift from the code. Every simulated unit of
+Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
+as Verilog under Verilator, against the trace the Rust run wrote, at
+its ports. \code{bazel test //...} runs the seventy-four targets of
+Table~\ref{tab:w-tests}. Every claim about what Rust accepts was
+compiled first, as a probe kept in the tree, including the ones whose
+answer was no.
+
+\begin{table}[htbp]
+\caption{The test targets.}
+\label{tab:w-tests}
+\centering\footnotesize
+\begin{tabular}{@{}lr@{}}
+\toprule
+Test & Targets \\
+\midrule
+32 netlists, under \code{nvc} and under Verilator & 64 \\
+The core: the model, the encoders, 2 programs & 4 \\
+The GPU, 6 tests; the parts, 18; the SoC's run & 3 \\
+The ELF converter; \code{nvc} and Verilator alone & 3 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{What Is Not Done}
 
-The list is short and it is kept in the open. The lowering emits a
+The lowering emits a
 name as it is written and neither escapes nor rejects the reserved
 words of its targets, so a register called \code{next} produces VHDL
 that will not analyse; three names in the GPU had to change for that
-reason. A unit's ports are a positional tuple and not a named struct,
-which a seven-port unit feels. The board's top level is still wired by
+reason. The board's top level is still wired by
 hand and is out of date since the core moved to AXI. The GPU has no
 depth buffer, no interpolation and no texture. Fuzzing the AXI link is
 not yet a step of the build. Each of those is an issue on the
 repository rather than a paragraph here.
 
 \begin{table}[htbp]
-\caption{The tree, in lines of Rust and in targets.}
+\caption{The tree, in lines of Rust.}
 \label{tab:w-numbers}
 \centering\footnotesize
 \begin{tabular}{@{}lr@{}}
 \toprule
-The runtime and its macros & 8\,544 \\
-Parts: the link, the router, the network & 3\,915 \\
-Examples, forty-two of them & 4\,335 \\
+The runtime and its macros & 9\,204 \\
+Parts: the link, the router, the network & 4\,215 \\
+Examples, forty-three of them & 4\,502 \\
 Vreteno & 3\,738 \\
-The GPU & 1\,230 \\
-\midrule
-Tests, of which 62 are co-simulations & 71 \\
-Documents & 16 \\
+The GPU & 1\,240 \\
 \bottomrule
 \end{tabular}
 \end{table}
