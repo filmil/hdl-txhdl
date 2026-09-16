@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: Apache-2.0
+# Rust compiled for Vreteno itself: a program that runs on the core
+# rather than on the machine the simulation runs on.
+#
+# The toolchain is hermetic. `MODULE.bazel` names the bare-metal
+# RISC-V target beside the host's, so the build fetches that target's
+# standard library by checksum as it fetches everything else, and
+# nothing is installed on the machine. The linker is `rust-lld`, which
+# comes with the toolchain, so there is no cross binutils either.
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load(":defs.bzl", "vreteno_image")
+
+package(default_visibility = ["//visibility:public"])
+
+# The machine Vreteno is, for Bazel's toolchain resolution.
+platform(
+    name = "vreteno",
+    constraint_values = [
+        "@platforms//cpu:riscv32",
+        "@platforms//os:none",
+    ],
+)
+
+# The flags every program for this core is built with. The core is
+# RV32IM with no compressed instructions, and the only RISC-V target
+# the ruleset maps has them, so they are turned off here; nothing
+# after this relies on that, because `elf2vreteno` refuses an image
+# that holds one. Optimising for size is not a preference: the
+# instruction memory is 4 KiB, and a debug assertion pulls in `core`'s
+# panic formatting, which does not fit and is compressed besides.
+VRETENO_FLAGS = [
+    "-Ctarget-feature=-c",
+    "-Copt-level=z",
+    "-Cdebug-assertions=no",
+    "-Coverflow-checks=no",
+    "-Cpanic=abort",
+    "-Clinker=rust-lld",
+    "-Clink-arg=-Tcpu/vreteno/rust/vreteno.ld",
+]
+
+rust_binary(
+    name = "hello",
+    srcs = ["hello.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    # Built through the transition below, not for this machine.
+    tags = ["manual"],
+)
+
+# The image of that program, as Rust source: the instruction words and
+# the bytes the data memory starts with.
+vreteno_image(
+    name = "hello_image",
+    platform = ":vreteno",
+    program = ":hello",
+)
+
+rust_library(
+    name = "hello_program",
+    srcs = [":hello_image"],
+    crate_name = "hello_program",
+    edition = "2021",
+)
+
+# What the document lists: the program as written, and the script
+# that says where each of its sections may go.
+filegroup(
+    name = "sources",
+    srcs = [
+        "hello.rs",
+        "vreteno.ld",
+    ],
+)
