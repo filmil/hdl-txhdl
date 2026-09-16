@@ -637,6 +637,8 @@ latex_document(
         ":compose_timing",
         ":ports_run",
         ":ports_timing",
+        ":blackbox_run",
+        ":blackbox_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),

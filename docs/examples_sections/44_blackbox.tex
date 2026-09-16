@@ -1,0 +1,45 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Foreign Module Inside a Netlist}
+\label{sec:x-blackbox}
+
+A module written by hand, held by a lowered unit of units as one of
+its children. \code{blinker} is Verilog, in
+Listing~\ref{lst:x-blinker}, and again VHDL, in \code{blinker.vhd}:
+a count that steps once every \code{PERIOD} cycles while enabled,
+put out on eight pins that it drives while enabled and leaves
+floating otherwise. It has the three things a netlist has to say to
+reach such a module: a parameter, a clock pin, and an inout.
+
+The unit \code{Blinker} is that module twice over. For the
+simulation it is a model in Rust, an ordinary unit with a loop. For
+the netlist it implements \code{Lower} by hand with \code{foreign},
+which names the module, its ports by their own names in the order
+\code{run} takes them, the value of its parameter, and which clock
+drives its clock pin. \code{Top} holds it beside a lowered register
+and joins the two as any unit of units does. The pins are a
+\code{Pad}: a port that nothing in the design reads or drives, passed
+from \code{Top}'s ports to the module's, so that the netlist has an
+\code{inout} running the whole way. The simulation carries nothing on
+it.
+
+The netlist instantiates \code{blinker} with its parameter and writes
+no module for it. The build simulates that netlist together with the
+module's own source, under Verilator with \code{blinker.v} and under
+nvc with \code{blinker.vhd}, against the trace the model wrote. So
+the model and the module are checked against each other, a cycle at
+a time, in both languages.
+
+\begin{figure}[htbp]
+\centering
+\input{blackbox_timing.tex}
+\caption{The foreign module's run: the enable, a cycle later through
+the register, the module's tick, and the count it puts out.}
+\label{fig:x-blackbox}
+\end{figure}
+
+\lstinputlisting[caption={\code{blinker.v}, the module written by
+hand.},label={lst:x-blinker}]{lib/examples/blinker.v}
+
+\lstinputlisting[caption={\code{ex\_blackbox.rs}. Run with \code{bazel run //lib/examples:ex\_blackbox}.},label={lst:x-blackbox}]{lib/examples/ex_blackbox.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_blackbox} printed when the build ran it: the enable and the count every fourth cycle, then the lowering, the top and its register, with the module instantiated and not written.},label={lst:x-blackbox-out}]{out_blackbox.txt}
