@@ -4458,11 +4458,61 @@ fn lower_structural(
     let mut instances: Vec<String> = Vec::new();
     // The channel ends and channel ports joined so far, each once.
     let mut used: Vec<String> = Vec::new();
+    // Another name for a wire's reading end or an input port, made by
+    // `let b = a.clone();`: the name and what it stands for.
+    let mut aliases: Vec<(String, String)> = Vec::new();
     let is_chan = |k: &str| k == "Tx" || k == "Rx";
     for st in statements(body) {
         let ts: Vec<TokenTree> = st.into_iter().collect();
         if ts.is_empty() {
             continue;
+        }
+        // `let b = a.clone();`: a wire read in two places, which is
+        // how a design fans an input out to several children. A clone
+        // is another name for the same net; a channel has one receiver
+        // and is not cloned this way.
+        if let (
+            true,
+            Some(TokenTree::Ident(b)),
+            Some(TokenTree::Punct(eq)),
+            Some(TokenTree::Ident(a)),
+            Some(TokenTree::Punct(dot)),
+            Some(cl),
+            Some(TokenTree::Group(args)),
+        ) = (
+            is_ident(&ts[0], "let"),
+            ts.get(1),
+            ts.get(2),
+            ts.get(3),
+            ts.get(4),
+            ts.get(5),
+            ts.get(6),
+        ) {
+            if eq.as_char() == '='
+                && dot.as_char() == '.'
+                && is_ident(cl, "clone")
+                && args.stream().is_empty()
+            {
+                let (a, b) = (a.to_string(), b.to_string());
+                let a = aliases
+                    .iter()
+                    .find(|(x, _)| *x == a)
+                    .map(|(_, t)| t.clone())
+                    .unwrap_or(a);
+                let wire_end = ends.iter().any(|(e, _, ch)| *e == a && !*ch);
+                let in_port = ports.iter().any(|(p, k)| *p == a && k == "In");
+                if !wire_end && !in_port {
+                    return Err(err(
+                        ts[3].span(),
+                        &format!(
+                            "`{a}` is not a wire's end or an input port; \
+                             only those are cloned"
+                        ),
+                    ));
+                }
+                aliases.push((b, a));
+                continue;
+            }
         }
         if is_ident(&ts[0], "let") {
             let bad = |t: &TokenTree| {
@@ -4617,6 +4667,11 @@ fn lower_structural(
             }
             let mut joined: Vec<String> = Vec::new();
             for (port, n) in names {
+                let n = aliases
+                    .iter()
+                    .find(|(x, _)| *x == n)
+                    .map(|(_, t)| t.clone())
+                    .unwrap_or(n);
                 let (net, channel) = if let Some((_, net, ch)) =
                     ends.iter().find(|(e, _, _)| *e == n)
                 {
