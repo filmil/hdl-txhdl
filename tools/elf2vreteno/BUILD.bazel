@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Turns a linked ELF for Vreteno into the two images the core is
+# loaded from, and refuses one the core could not run: a compressed
+# instruction, a program past the instruction memory, or a constant
+# left where a load cannot reach it.
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "elf2vreteno",
+    srcs = ["main.rs"],
+    edition = "2021",
+)
+
+rust_test(
+    name = "elf2vreteno_test",
+    crate = ":elf2vreteno",
+    edition = "2021",
+)

@@ -32,11 +32,21 @@ register_toolchains("@hermetic_latex//:all")
 # rather than argued. docs/rust-embedding.md section 8 lists what is being
 # checked. The toolchain is fetched by the ruleset, so nothing is installed
 # on the machine.
+# The constraint values a platform is written in: the CPU Vreteno is,
+# and the absence of an operating system.
+bazel_dep(name = "platforms", version = "0.0.11")
+
 bazel_dep(name = "rules_rust", version = "0.74.0")
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2021",
+    # The bare-metal RISC-V target Vreteno is: thirty-two bit, the
+    # multiply extension, no compressed instructions, no operating
+    # system. Naming it here makes the build fetch that target's
+    # standard library by checksum, as it fetches the host's, so
+    # nothing has to be installed to compile for the core.
+    extra_target_triples = ["riscv32imc-unknown-none-elf"],
     versions = [
         # Stable and nightly both, because the open question is which of
         # the two the numeric library needs.
