@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# The ASIC flow's two rules. Nothing is built here; `defs.bzl` is
+# loaded by the package that has a design to put through them.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["defs.bzl"])
