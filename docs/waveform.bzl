@@ -22,7 +22,9 @@ def waveform(
         lowered = None,
         until = None,
         from_tick = None,
-        width = None):
+        width = None,
+        foreign_vhdl = [],
+        foreign_verilog = []):
     """`lowered = (entity, unit)` also takes the example's VHDL and
     Verilog and simulates each against the trace: NAME.vhd, NAME.v and
     NAME.vhd.ports from the run, NAME_tb.vhd and NAME_tb.v from fst2tb,
@@ -31,7 +33,11 @@ def waveform(
     the targets then named NAME_sim_ENTITY and NAME_vsim_ENTITY_test.
     `until` cuts the figure at that tick, for a run too long to draw
     whole, and `from_tick` starts it at one, a window on one thing the
-    run does; `width` is the figure's width in centimetres."""
+    run does; `width` is the figure's width in centimetres.
+    `foreign_vhdl` and `foreign_verilog` are the sources of the foreign
+    modules a lowered unit instantiates, simulated with its netlist in
+    that language, since the netlist names them and does not write
+    them."""
     outs = ["out_" + name + ".txt", name + ".fst", name + ".fst.names"]
     env = "TXHDL_FST=$(RULEDIR)/" + name + ".fst"
     if lowered:
@@ -62,7 +68,7 @@ def waveform(
             )
             vhdl_test(
                 name = name + "_sim" + tag,
-                srcs = [name + ".vhd", tb + ".vhd"],
+                srcs = foreign_vhdl + [name + ".vhd", tb + ".vhd"],
                 deps = [],
                 entities = [entity + "_tb"],
             )
@@ -77,7 +83,7 @@ def waveform(
             )
             verilog_library(
                 name = name + tag + "_vl",
-                srcs = [name + ".v", tb + ".v"],
+                srcs = foreign_verilog + [name + ".v", tb + ".v"],
                 top_module = entity + "_tb",
             )
             verilator_cc_library(
