@@ -11,6 +11,12 @@
 \InputIfFileExists{buildstamp.tex}{}{}
 \providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
 
+% A range of a simulation-only source, by its begin/end markers.
+\newcommand{\simpart}[3]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/bus/axi/sim.rs}}
+
 % A range of the library's source, by its begin/end markers.
 \newcommand{\axipart}[3]{%
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
@@ -265,6 +271,34 @@ A rasteriser written this way is the GPU's~\cite{gpu}, and it is the
 first client of this link that is hardware. Nothing about the link
 changes between the two: the same two trackers, the same five AXI
 channels, the same identifiers.
+
+\section{Peripherals That Only Simulate}
+\label{sec:a-sim}
+
+Not every peripheral on a link is going to be hardware. A testbench
+needs somewhere to put a program, a model needs somewhere to put its
+data, and a bring-up needs a memory long before the memory controller
+exists. Those belong in \code{bus::axi::sim}, where the module's name
+is the contract: nothing in it lowers, and nothing in it is meant to.
+
+\simpart{ram}{A RAM behind a peripheral end, from
+\code{lib/parts/src/bus/axi/sim.rs}.}{lst:a-ram}
+
+It is a handle on its words, so a test loads a program into it before
+the run and reads the result out after, while the run holds another
+handle. Being plain Rust rather than the lowered subset is the whole
+point: a megabyte is a \code{Vec} and not a \code{Mem} that a netlist
+would have to hold, and the burst types, the strobes and an address
+past the end are a few lines each rather than a state machine. A
+burst wholly inside it is answered \code{Okay} and one that reaches
+past the end \code{SlvErr}, which is what a peripheral says to an
+address it has but cannot serve.
+
+A peripheral that is to become hardware is written the other way, in
+the lowered subset against the five channels, as the GPU's
+framebuffer~\cite{gpu} is. The two are not alternatives: a design
+usually wants the simulation one first and the hardware one later,
+and the client above them does not change when it swaps.
 
 \section{Peer to Peer}
 \label{sec:a-peer}

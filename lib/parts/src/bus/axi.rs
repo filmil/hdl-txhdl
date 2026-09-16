@@ -44,6 +44,8 @@ use txhdl::comp::{
     chan, join_all, mux, now, Clock, DefaultClock, Reg, Rx, Tx, Unit,
 };
 use txhdl::types::{Bit, U};
+
+pub mod sim;
 use txhdl::{lower, with, Trace};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
