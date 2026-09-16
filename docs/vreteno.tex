@@ -360,17 +360,33 @@ devices keep up, so there is always room. A load that has gone out
 is not taken by an interrupt: the interrupt waits for the next
 instruction, so a device is never read twice for one load.
 
-The bus has three devices, and a router between the core and them,
-Listing~\ref{lst:v-router}. One request channel comes in, and a
-channel goes out per device, chosen by bits 15 to 12 of the address:
-one is the data memory, two the timer and three the serial port. The
-devices' responses merge back into one channel. The router takes a
-request only when the channel it goes to has room. That is a receive
-under a condition of its own, \code{recv\_if}, whose \code{ready}
-is the condition and the offer together. An address that is no
-device's is a hole; the router answers a load from it with zero and
-swallows a store to it. Responses come one at a time, since the core
-waits for each load's answer before it makes another request.
+The bus is AXI4~\cite{axi}. The core is a host, and a host written
+as hardware, so it holds the link's channel ends themselves rather
+than the simulation-side \code{Host}: it issues a burst of one beat
+per load or store on \code{issue}, sends a store's beat on
+\code{wbeat} in the same cycle, and hands the identifier the tracker
+granted back on \code{release} as the answer arrives. It writes no
+identifier and counts no beat.
+
+Three devices sit behind the link's router, \code{Router3} of
+\code{txhdl\_parts}, whose type states the address map: the data
+memory at \code{0x1000}, the timer at \code{0x2000} and the serial
+port at \code{0x3000}, a nibble each, and every other address a hole
+the router answers \code{DecErr} itself. Each device is behind an
+\code{AxiPer}, so what a device sees is a whole request and, for a
+write, its beat; none of them decodes an address any more, because
+the router has already done it. Nothing in this section is the
+core's or the devices' own code: the link, the router and the two
+trackers are parts, and this design is their first user that is not
+a test.
+
+A load waits for its answer and a store is posted, so the core has
+one read and as many writes in flight as the link has identifiers,
+which is four. A write's response and a load's beat come back on
+channels of their own and one identifier goes back a cycle, so a
+write's is taken first and a load's waits; that cannot starve the
+load, because a load holds the core in its wait and no further store
+is issued while it does.
 
 The data memory, Listing~\ref{lst:v-dmem}, is the first device:
 1024 words in four memories of a byte, one per lane, so that a store
@@ -409,15 +425,11 @@ the run writes one at each width, \code{chan69} and \code{chan32},
 beside the core and the timer, and the board puts them between the
 two.
 
-\lstinputlisting[caption={\code{router.rs}: the router, one request
-channel fanned out by address and the responses merged
-back.},label={lst:v-router}]{cpu/vreteno/src/router.rs}
+\lstinputlisting[caption={\code{dmem.rs}: the data memory, an AXI
+peripheral.},label={lst:v-dmem}]{cpu/vreteno/src/dmem.rs}
 
-\lstinputlisting[caption={\code{dmem.rs}: the data memory, a device
-on the bus.},label={lst:v-dmem}]{cpu/vreteno/src/dmem.rs}
-
-\lstinputlisting[caption={\code{timer.rs}: the timer, a device on
-the bus.},label={lst:v-timer}]{cpu/vreteno/src/timer.rs}
+\lstinputlisting[caption={\code{timer.rs}: the timer, an AXI
+peripheral.},label={lst:v-timer}]{cpu/vreteno/src/timer.rs}
 
 The serial port, Listing~\ref{lst:v-uart}, is the third device,
 with a line each way. A byte written to its first word goes out on
@@ -500,7 +512,7 @@ writeback, and the retire.}
 \end{figure}
 
 \lstinputlisting[caption={\code{uart.rs}: the serial port, a device
-on the bus.},label={lst:v-uart}]{cpu/vreteno/src/uart.rs}
+an AXI peripheral.},label={lst:v-uart}]{cpu/vreteno/src/uart.rs}
 
 \lstinputlisting[caption={\code{term.rs}: the terminal on the port's
 lines, for the run and the test.},label={lst:v-term}]{cpu/vreteno/src/term.rs}
@@ -989,6 +1001,10 @@ Rust,'' project repository \code{HDL/txhdl}, \code{//docs:embedding},
 \bibitem{runtime}
 F.~Filmar and D.~Janković, ``The TxHDL runtime,'' project repository
 \code{HDL/txhdl}, \code{//docs:runtime}, 2026.
+
+\bibitem{axi}
+F.~Filmar and D.~Janković, ``AXI in TxHDL,'' project repository
+\code{HDL/txhdl}, \code{//docs:axi}, 2026.
 
 \bibitem{examples}
 F.~Filmar and D.~Janković, ``TxHDL by example,'' project repository

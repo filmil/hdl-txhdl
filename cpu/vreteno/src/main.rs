@@ -4,17 +4,30 @@
 //! core, with the program in its instruction memory, where
 //! `TXHDL_VHDL` points; then print the Verilog.
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::{chan, join2, now, signal, DefaultClock, Running, Unit};
+use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl_parts::buffer::Buffer;
+use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
+use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
 use vreteno32::isa::disasm;
 use vreteno32::program::demo;
-use vreteno32::router::Router;
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
+
+/// The link: thirty-two bit addresses and words, four lanes, and
+/// two-bit identifiers, four of them. The core has one load in flight
+/// and posts its stores, and it hands an identifier back as its
+/// answer arrives, so four is more than it uses.
+const IW: usize = 2;
+const NIDS: usize = 4;
+
+/// The address map, as the router's type states it: the data memory,
+/// the timer and the serial port, a nibble each, and every other
+/// address a hole the router answers itself.
+type Rtr =
+    Router3<32, 32, 4, IW, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>;
 
 fn main() {
     let program = demo();
@@ -45,17 +58,26 @@ fn main() {
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
     let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
-    let (req_tx, req_rx) = chan::<U<69>, DefaultClock>();
-    let (resp_tx, resp_rx) = chan::<U<32>, DefaultClock>();
-    let (dreq_tx, dreq_rx) = chan::<U<69>, DefaultClock>();
-    let (dresp_tx, dresp_rx) = chan::<U<32>, DefaultClock>();
-    let (treq_tx, treq_rx) = chan::<U<69>, DefaultClock>();
-    let (tresp_tx, tresp_rx) = chan::<U<32>, DefaultClock>();
-    let (ureq_tx, ureq_rx) = chan::<U<69>, DefaultClock>();
-    let (uresp_tx, uresp_rx) = chan::<U<32>, DefaultClock>();
-    let mut router = Router::default();
-    let mut timer = Timer::default();
-    let mut uart = Uart::<4>::default();
+    // The core's link, and one per peripheral. The core is a host
+    // client written as hardware, so it holds its link's channel ends
+    // itself rather than a `Host`; each peripheral likewise. The
+    // router stands between the core's tracker and the three
+    // peripherals', and nothing on either side knows it is there.
+    let cl = axi_units::<32, 32, 4, IW>();
+    let dl = axi_units::<32, 32, 4, IW>();
+    let tl = axi_units::<32, 32, 4, IW>();
+    let ul = axi_units::<32, 32, 4, IW>();
+    let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
+    let (dreq, dwd, dans, drb) = dl.per_client;
+    let (treq, twd, tans, trb) = tl.per_client;
+    let (ureq, uwd, uans, urb) = ul.per_client;
+    let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
+    let mut dper = AxiPer::<32, 32, 4, IW>::default();
+    let mut tper = AxiPer::<32, 32, 4, IW>::default();
+    let mut uper = AxiPer::<32, 32, 4, IW>::default();
+    let mut router = Rtr::default();
+    let mut timer = Timer::<IW>::default();
+    let mut uart = Uart::<4, IW>::default();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
     let (instr_out, instr) = signal::<U<32>, DefaultClock>();
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
@@ -67,19 +89,57 @@ fn main() {
         w.add("tx", &tx);
         w.add("rx", &rx);
         w.add("uirq", &uirq);
-        w.add("resp", &resp_rx);
-        w.add("req", &req_rx);
-        w.add("dreq", &dreq_rx);
-        w.add("dresp", &dresp_rx);
-        w.add("treq", &treq_rx);
-        w.add("tresp", &tresp_rx);
-        w.add("ureq", &ureq_rx);
-        w.add("uresp", &uresp_rx);
+        // The transaction level between the core and its tracker.
+        w.add("issue", &issue);
+        w.add("wbeat", &wbeat);
+        w.add("release", &release);
+        w.add("grant", &grant);
+        w.add("done", &cdone);
+        w.add("rdata", &crdata);
+        // The five AXI channels the router sits in, at the core's
+        // side and at each peripheral's.
+        w.add("aw", &cl.host_out.0);
+        w.add("ar", &cl.host_out.1);
+        w.add("w", &cl.host_out.2);
+        w.add("b", &cl.host_in.2);
+        w.add("r", &cl.host_in.3);
+        w.add("aw0", &dl.host_out.0);
+        w.add("ar0", &dl.host_out.1);
+        w.add("w0", &dl.host_out.2);
+        w.add("b0", &dl.host_in.2);
+        w.add("r0", &dl.host_in.3);
+        w.add("aw1", &tl.host_out.0);
+        w.add("ar1", &tl.host_out.1);
+        w.add("w1", &tl.host_out.2);
+        w.add("b1", &tl.host_in.2);
+        w.add("r1", &tl.host_in.3);
+        w.add("aw2", &ul.host_out.0);
+        w.add("ar2", &ul.host_out.1);
+        w.add("w2", &ul.host_out.2);
+        w.add("b2", &ul.host_in.2);
+        w.add("r2", &ul.host_in.3);
+        // The transaction level at each peripheral.
+        w.add("dreq", &dreq);
+        w.add("dwd", &dwd);
+        w.add("dans", &dans);
+        w.add("drb", &drb);
+        w.add("treq", &treq);
+        w.add("twd", &twd);
+        w.add("tans", &tans);
+        w.add("trb", &trb);
+        w.add("ureq", &ureq);
+        w.add("uwd", &uwd);
+        w.add("uans", &uans);
+        w.add("urb", &urb);
         w.add("cpu", &cpu);
         w.add("dmem", &dmem);
         w.add("router", &router);
         w.add("timer", &timer);
         w.add("uart", &uart);
+        w.add("axi_host", &axi_host);
+        w.add("dper", &dper);
+        w.add("tper", &tper);
+        w.add("uper", &uper);
         w.add("instr", &instr);
         w.add("wb", &wb);
         w.add("halt", &halt);
@@ -92,19 +152,53 @@ fn main() {
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run((rst_t, treq_rx), (tresp_tx, tirq_out)),
-                uart.run((rst_u, rx, ureq_rx), (uresp_tx, tx_out, uirq_out)),
+                timer.run((rst_t, treq, twd), (tans, trb, tirq_out)),
+                uart.run((rst_u, rx, ureq, uwd), (uans, urb, tx_out, uirq_out)),
             ),
-            dmem.run(dreq_rx, dresp_tx),
+            join2(
+                dmem.run((dreq, dwd), (dans, drb)),
+                cpu.run(
+                    (rst, irq, tirq, crdata, cdone, grant),
+                    (halt_out, instr_out, wb_out, issue, wbeat, release),
+                ),
+            ),
         ),
         join2(
-            router.run(
-                (req_rx, dresp_rx, tresp_rx, uresp_rx),
-                (dreq_tx, treq_tx, ureq_tx, resp_tx),
+            join2(
+                axi_host.run(cl.host_in, cl.host_out),
+                router.run(
+                    (
+                        cl.per_in.0,
+                        cl.per_in.1,
+                        cl.per_in.2,
+                        dl.host_in.2,
+                        dl.host_in.3,
+                        tl.host_in.2,
+                        tl.host_in.3,
+                        ul.host_in.2,
+                        ul.host_in.3,
+                    ),
+                    (
+                        dl.host_out.0,
+                        dl.host_out.1,
+                        dl.host_out.2,
+                        tl.host_out.0,
+                        tl.host_out.1,
+                        tl.host_out.2,
+                        ul.host_out.0,
+                        ul.host_out.1,
+                        ul.host_out.2,
+                        cl.per_out.2,
+                        cl.per_out.3,
+                    ),
+                ),
             ),
-            cpu.run(
-                (rst, irq, tirq, resp_rx),
-                (halt_out, instr_out, wb_out, req_tx),
+            join2(
+                join2(
+                    dper.run(dl.per_in, dl.per_out),
+                    tper.run(tl.per_in, tl.per_out),
+                ),
+                uper.run(ul.per_in, ul.per_out),
             ),
         ),
     ));
@@ -180,35 +274,45 @@ fn main() {
     }
     // The netlist, with the program in its instruction memory, which
     // the lowering cannot see: Mem::with gave it at run time.
-    let mut lowered = Vreteno::lowered("vreteno");
+    let mut lowered = Vreteno::<IW>::lowered("vreteno");
     let words: Vec<u128> = program.iter().map(|&w| w as u128).collect();
     lowered.init("imem", &words);
-    // The router, the timer and the serial port, each told under which
-    // scope the run traced its channels; the port again at the board's
-    // baud rate; and the two channels as hardware, at the widths of the
-    // request and the response, for the board to put between them.
-    let mut router = Router::lowered("router");
-    router.trace_as("mem_req", "dreq");
-    router.trace_as("mem_resp", "dresp");
-    router.trace_as("timer_req", "treq");
-    router.trace_as("timer_resp", "tresp");
-    router.trace_as("uart_req", "ureq");
-    router.trace_as("uart_resp", "uresp");
-    let mut dmem = Dmem::lowered("dmem");
+    // The router and the three peripherals, each told under which
+    // scope the run traced its channels, since a channel two units
+    // share has a port name of its own on each side; the serial port
+    // again at the board's baud rate; and the two trackers, which the
+    // AXI document already checks but which the board needs too.
+    let router = Rtr::lowered("router");
+    let mut dmem = Dmem::<IW>::lowered("dmem");
     dmem.trace_as("req", "dreq");
-    dmem.trace_as("resp", "dresp");
-    let mut timer = Timer::lowered("timer");
+    dmem.trace_as("wd", "dwd");
+    dmem.trace_as("ans", "dans");
+    dmem.trace_as("rb", "drb");
+    let mut timer = Timer::<IW>::lowered("timer");
     timer.trace_as("req", "treq");
-    timer.trace_as("resp", "tresp");
-    let mut uart4 = Uart::<4>::lowered("uart4");
+    timer.trace_as("wd", "twd");
+    timer.trace_as("ans", "tans");
+    timer.trace_as("rb", "trb");
+    let mut uart4 = Uart::<4, IW>::lowered("uart4");
     uart4.trace_as("req", "ureq");
-    uart4.trace_as("resp", "uresp");
+    uart4.trace_as("wd", "uwd");
+    uart4.trace_as("ans", "uans");
+    uart4.trace_as("rb", "urb");
     uart4.trace_as("irq", "uirq");
-    let uart = Uart::<868>::lowered("uart");
-    let req_chan = Buffer::<69>::lowered("chan69");
-    let resp_chan = Buffer::<32>::lowered("chan32");
+    let uart = Uart::<868, IW>::lowered("uart");
+    let axi_host = AxiHost::<32, 32, 4, IW, NIDS>::lowered("axi_host");
+    let mut dper = AxiPer::<32, 32, 4, IW>::lowered("axi_per");
+    dper.trace_as("aw", "aw0");
+    dper.trace_as("ar", "ar0");
+    dper.trace_as("w", "w0");
+    dper.trace_as("b", "b0");
+    dper.trace_as("r", "r0");
+    dper.trace_as("req", "dreq");
+    dper.trace_as("wd", "dwd");
+    dper.trace_as("ans", "dans");
+    dper.trace_as("rb", "drb");
     txhdl::netlist::write_netlists_from_env(&[
-        &lowered, &router, &dmem, &timer, &uart4, &uart, &req_chan, &resp_chan,
+        &lowered, &router, &dmem, &timer, &uart4, &uart, &axi_host, &dper,
     ]);
     print!(
         "\n{}\n{}\n{}\n{}\n{}",

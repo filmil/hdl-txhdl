@@ -4,17 +4,24 @@
 //! thirty-one registers, the control registers and the halt must
 //! agree, and the data memory at the end. The demonstration program
 //! and a batch of random ones.
-use txhdl::comp::{chan, join2, signal, DefaultClock, Running, Unit};
+use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
+use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
+use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
 use vreteno32::isa::{decode, disasm, Kind, CAUSE_MEXT, CAUSE_MTIMER};
 use vreteno32::model::{Halt, Model};
 use vreteno32::program::{demo, random};
-use vreteno32::router::Router;
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
+
+/// The link the core sits on, as the demonstration has it.
+const IW: usize = 2;
+const NIDS: usize = 4;
+type Rtr =
+    Router3<32, 32, 4, IW, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>;
 
 /// Runs `program` on both until the core halts, checking after every
 /// cycle; returns the model at the halt.
@@ -27,7 +34,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         cpu.regs.clone(),
         cpu.halted.clone(),
     );
-    let mut dmem = Dmem::default();
+    let mut dmem = Dmem::<IW>::default();
     let lanes = (
         dmem.lane0.clone(),
         dmem.lane1.clone(),
@@ -53,9 +60,9 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     ];
     let (mip, mie, mstatus) =
         (cpu.mip.clone(), cpu.mie.clone(), cpu.mstatus.clone());
-    let mut router = Router::default();
-    let mut timer = Timer::default();
-    let mut uart = Uart::<4>::default();
+
+    let mut timer = Timer::<IW>::default();
+    let mut uart = Uart::<4, IW>::default();
     let mtimecmp = timer.mtimecmp.clone();
     let (pending, wb_dev) = (timer.pending.clone(), cpu.wb_dev.clone());
     let (uart_sent, uart_last) = (uart.sent.clone(), uart.last.clone());
@@ -78,14 +85,21 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
     let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
-    let (req_tx, req_rx) = chan::<U<69>, DefaultClock>();
-    let (resp_tx, resp_rx) = chan::<U<32>, DefaultClock>();
-    let (dreq_tx, dreq_rx) = chan::<U<69>, DefaultClock>();
-    let (dresp_tx, dresp_rx) = chan::<U<32>, DefaultClock>();
-    let (treq_tx, treq_rx) = chan::<U<69>, DefaultClock>();
-    let (tresp_tx, tresp_rx) = chan::<U<32>, DefaultClock>();
-    let (ureq_tx, ureq_rx) = chan::<U<69>, DefaultClock>();
-    let (uresp_tx, uresp_rx) = chan::<U<32>, DefaultClock>();
+    // The core's link, and one per peripheral, with the router
+    // between the core's tracker and the three peripherals'.
+    let cl = axi_units::<32, 32, 4, IW>();
+    let dl = axi_units::<32, 32, 4, IW>();
+    let tl = axi_units::<32, 32, 4, IW>();
+    let ul = axi_units::<32, 32, 4, IW>();
+    let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
+    let (dreq, dwd, dans, drb) = dl.per_client;
+    let (treq, twd, tans, trb) = tl.per_client;
+    let (ureq, uwd, uans, urb) = ul.per_client;
+    let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
+    let mut dper = AxiPer::<32, 32, 4, IW>::default();
+    let mut tper = AxiPer::<32, 32, 4, IW>::default();
+    let mut uper = AxiPer::<32, 32, 4, IW>::default();
+    let mut router = Rtr::default();
     let (halt_out, _halt) = signal::<Bit, DefaultClock>();
     let (instr_out, _instr) = signal::<U<32>, DefaultClock>();
     let (ir, in_execute) = (cpu.ir.clone(), cpu.valid.clone());
@@ -96,19 +110,53 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run((rst_t, treq_rx), (tresp_tx, tirq_out)),
-                uart.run((rst_u, rx, ureq_rx), (uresp_tx, tx_out, uirq_out)),
+                timer.run((rst_t, treq, twd), (tans, trb, tirq_out)),
+                uart.run((rst_u, rx, ureq, uwd), (uans, urb, tx_out, uirq_out)),
             ),
-            dmem.run(dreq_rx, dresp_tx),
+            join2(
+                dmem.run((dreq, dwd), (dans, drb)),
+                cpu.run(
+                    (rst, irq, tirq, crdata, cdone, grant),
+                    (halt_out, instr_out, wb_out, issue, wbeat, release),
+                ),
+            ),
         ),
         join2(
-            router.run(
-                (req_rx, dresp_rx, tresp_rx, uresp_rx),
-                (dreq_tx, treq_tx, ureq_tx, resp_tx),
+            join2(
+                axi_host.run(cl.host_in, cl.host_out),
+                router.run(
+                    (
+                        cl.per_in.0,
+                        cl.per_in.1,
+                        cl.per_in.2,
+                        dl.host_in.2,
+                        dl.host_in.3,
+                        tl.host_in.2,
+                        tl.host_in.3,
+                        ul.host_in.2,
+                        ul.host_in.3,
+                    ),
+                    (
+                        dl.host_out.0,
+                        dl.host_out.1,
+                        dl.host_out.2,
+                        tl.host_out.0,
+                        tl.host_out.1,
+                        tl.host_out.2,
+                        ul.host_out.0,
+                        ul.host_out.1,
+                        ul.host_out.2,
+                        cl.per_out.2,
+                        cl.per_out.3,
+                    ),
+                ),
             ),
-            cpu.run(
-                (rst, irq, tirq, resp_rx),
-                (halt_out, instr_out, wb_out, req_tx),
+            join2(
+                join2(
+                    dper.run(dl.per_in, dl.per_out),
+                    tper.run(tl.per_in, tl.per_out),
+                ),
+                uper.run(ul.per_in, ul.per_out),
             ),
         ),
     ));
@@ -141,7 +189,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     // gets nothing typed. The port's interrupt joins the core's line,
     // as it does on the board.
     let mut term = Terminal::new(if seed.is_none() { b"yes" } else { b"" });
-    for cycle in 0..8192 {
+    for cycle in 0..32768 {
         let at = model.pc;
         let pulse = match seed {
             None => cycle == 40,
@@ -246,9 +294,14 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
                 assert_eq!(r.get().raw() as u32, w, "{name} after {here}");
             }
         }
-        // The compare lands in the timer a cycle after the core's store,
-        // so it is checked at the end, as the memory is.
+        // The compare lands in the timer some cycles after the core's
+        // store, since a store is posted and the bus carries it, so it
+        // is checked at the end, as the memory is, and the bus is let
+        // drain first.
         if model.halted.is_some() {
+            for _ in 0..32 {
+                sim.cycle();
+            }
             assert_eq!(
                 mtimecmp.get().raw() as u64,
                 model.mtimecmp,
@@ -279,7 +332,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
             return model;
         }
     }
-    panic!("{what}: no halt in 8192 cycles");
+    panic!("{what}: no halt in 32768 cycles");
 }
 
 #[test]

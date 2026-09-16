@@ -29,6 +29,7 @@ use txhdl::comp::{
 use txhdl::funcs::{lt_signed, sra};
 use txhdl::types::{Bit, U};
 use txhdl::{case, lower, select, when, with, Trace, Value};
+use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, R, W};
 
 /// Words of instruction memory. The data memory is a device on the
 /// bus, `crate::dmem`, at `DATA_BASE` as the model has it.
@@ -283,7 +284,7 @@ fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
 /// halts. The halt itself, which the writeback stage sets. And the
 /// three memories.
 #[derive(Trace, Default)]
-pub struct Vreteno {
+pub struct Vreteno<const IW: usize> {
     pub pc: Reg<U<32>>,
     pub ir: Reg<U<32>>,
     pub ir_pc: Reg<U<32>>,
@@ -326,7 +327,7 @@ pub struct Vreteno {
     pub imem: Mem<U<32>, IMEM_WORDS>,
 }
 
-impl Vreteno {
+impl<const IW: usize> Vreteno<IW> {
     /// A core with its program loaded.
     pub fn with(program: &[u32]) -> Self {
         let words: Vec<U<32>> = program.iter().map(|&w| U::from(w)).collect();
@@ -352,15 +353,24 @@ impl Vreteno {
 }
 
 #[lower]
-impl Unit for Vreteno {
+impl<const IW: usize> Unit for Vreteno<IW> {
     async fn run(
         &mut self,
-        (rst, irq, tirq, resp): (In<Bit>, In<Bit>, In<Bit>, Rx<U<32>>),
-        (halt, instr, wb, req): (
+        (rst, irq, tirq, rdata, done, grant): (
+            In<Bit>,
+            In<Bit>,
+            In<Bit>,
+            Rx<R<32, IW>>,
+            Rx<Done<IW>>,
+            Rx<Grant<IW>>,
+        ),
+        (halt, instr, wb, issue, wbeat, release): (
             Out<Bit>,
             Out<U<32>>,
             Out<Writeback>,
-            Tx<U<69>>,
+            Tx<Issue<32>>,
+            Tx<W<32, 4>>,
+            Tx<Grant<IW>>,
         ),
     ) {
         loop {
@@ -374,8 +384,23 @@ impl Unit for Vreteno {
             let (mstatus, mtvec, mepc) =
                 (self.mstatus.get(), self.mtvec.get(), self.mepc.get());
             let (mie_r, mip) = (self.mie.get(), self.mip.get());
-            // The bus's answer, taken whenever it comes.
-            let (resp_valid, resp_data) = resp.take();
+            // The bus's answers. A write's response and a load's beat
+            // come back on channels of their own and one identifier
+            // goes back a cycle, so a write's is taken first and a
+            // load's waits. That cannot starve the load: a load holds
+            // the core in `dev_wait`, so no further store is issued,
+            // and the stores already out are as many as there are
+            // identifiers.
+            let rel_room = release.ready();
+            let dh = done.head();
+            let dv = done.peek().is_some();
+            let rh = rdata.head();
+            let take_done = dv & rel_room;
+            let take_r = rdata.peek().is_some() & rel_room & !dv;
+            let _ = done.recv_if(rel_room);
+            let _ = rdata.recv_if(rel_room & !dv);
+            let resp_valid = take_r;
+            let resp_data = rh.data;
             let (m_hi, m_lo, m_d) =
                 (self.m_hi.get(), self.m_lo.get(), self.m_d.get());
             // The writeback stage: a loaded word's byte or half, by the
@@ -471,7 +496,8 @@ impl Unit for Vreteno {
             // clock; there is room whenever the devices keep up, and
             // they do. A device load's wait for its answer is a
             // register, so the hold for it is state too.
-            let stall_bus = here & (is_load | is_store) & !req.ready();
+            let stall_bus =
+                here & (is_load | is_store) & !(issue.ready() & wbeat.ready());
             self.stall
                 .set(stall_ld | stall_m | stall_bus | self.dev_wait);
             let stall = self.stall.get();
@@ -619,15 +645,40 @@ impl Unit for Vreteno {
             // and marked empty.
             when!(wb_write => self { regs.at(wb_rd): wb_val });
             self.halted.set(self.halted | self.wb_stop);
-            // The bus: a request is the address, the data in its lanes,
-            // the lanes a store covers, and whether it is a store. The
-            // load's wait is a register.
-            let req_word = addr
-                .concat::<_, 64>(sdata)
-                .concat::<_, 68>(en)
-                .concat::<_, 69>(store.zext::<1>());
-            if bool::from(send_load | (store & is_dev)) {
-                req.send(req_word);
+            // The bus: a load or a store is a burst of one beat at
+            // the address, and a store's beat carries the data with
+            // the lanes it covers as its strobe. The load's wait is a
+            // register. The identifier is the tracker's to allocate,
+            // so the core writes none, and the grant it sends back is
+            // of no use here and is dropped.
+            let _ = grant.recv_if(grant.peek().is_some());
+            let send_store = store & is_dev;
+            let send_any = send_load | send_store;
+            if bool::from(send_any) {
+                issue.send(Issue {
+                    read: !send_store,
+                    addr: addr,
+                    len: U::<8>::from(0u8),
+                    size: U::<3>::from(2u8),
+                    burst: BurstKind::Incr,
+                    lock: Bit::Zero,
+                    cache: U::<4>::from(0u8),
+                    prot: U::<3>::from(0u8),
+                    qos: U::<4>::from(0u8),
+                    region: U::<4>::from(0u8),
+                });
+            }
+            if bool::from(send_store) {
+                wbeat.send(W {
+                    data: sdata,
+                    strb: en,
+                    last: Bit::One,
+                });
+            }
+            if bool::from(take_done | take_r) {
+                release.send(Grant {
+                    id: mux(take_done, dh.id, rh.id),
+                });
             }
             when!(resp_valid => self { wb_dev: resp_data });
             case!(rst => {

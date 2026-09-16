@@ -1,88 +1,117 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The timer, a device on the bus: the count and the compare, each in
-//! two halves, four words at `TIMER_BASE`. It takes every request
-//! offered, writes the lanes a write covers into the word addressed,
-//! answers a read with the word in the cycle after, and raises its
-//! interrupt while the count has reached the compare, through a
-//! register, so that the line is a register's output and the core
-//! sees in a cycle what the timer decided the cycle before. The count
-//! runs from the reset, one a cycle.
-use crate::bus::{REQ_ADDR, REQ_WDATA};
-use crate::isa::TIMER_BASE;
+//! The timer, an AXI peripheral: the count and the compare, each in
+//! two halves, four words at `TIMER_BASE`. It writes the lanes a
+//! write's strobe covers into the word addressed, answers a read with
+//! the word in the cycle it takes the burst, and raises its interrupt
+//! while the count has reached the compare, through a register, so
+//! that the line is a register's output and the core sees in a cycle
+//! what the timer decided the cycle before. The count runs from the
+//! reset, one a cycle. The router sends it only the bursts in its
+//! range, so it checks no address.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
+use txhdl_parts::bus::axi::{Answer, PerReq, Resp, R, W};
 
 #[derive(Trace, Default)]
-pub struct Timer {
+pub struct Timer<const I: usize> {
     pub mtime: Reg<U<64>>,
     pub mtimecmp: Reg<U<64>>,
     pub pending: Reg<Bit>,
+    /// A write taken and waiting for its beat: which of the four
+    /// words it names, and which identifier answers it.
+    pub pend: Reg<U<1>>,
+    pub psel: Reg<U<2>>,
+    pub pid: Reg<U<I>>,
 }
 
 #[lower]
-impl Unit for Timer {
+impl<const I: usize> Unit for Timer<I> {
     async fn run(
         &mut self,
-        (rst, req): (In<Bit>, Rx<U<69>>),
-        (resp, tirq): (Tx<U<32>>, Out<Bit>),
+        (rst, req, wd): (In<Bit>, Rx<PerReq<32, I>>, Rx<W<32, 4>>),
+        (ans, rb, tirq): (Tx<Answer<I>>, Tx<R<32, I>>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
             let rst = rst.get();
             // The two words are sliced below, so they are read once.
             let (mtime, mtimecmp) = (self.mtime.get(), self.mtimecmp.get());
-            // Every request is taken; the ones for this device are the
-            // ones whose address falls in its sixteen bytes.
-            let (offered, r) = req.take();
-            let addr = r.slice::<REQ_ADDR, 32>();
-            let wdata = r.slice::<REQ_WDATA, 32>();
-            let we = r.bit(0); // REQ_WE, which the lowering wants literal
-            let hit = addr.slice::<4, 28>() == TIMER_BASE >> 4;
-            let sel = addr.slice::<2, 2>();
+            let q = req.head();
+            let qoff = req.peek().is_some();
+            let held = self.pend.get() == 1;
+            let take_read = qoff & q.read & rb.ready() & !held;
+            let take_write = qoff & !q.read & !held;
+            let _ = req.recv_if(take_read | take_write);
+            let wh = wd.head();
+            let wgo = held & wd.peek().is_some() & ans.ready();
+            let _ = wd.recv_if(wgo);
+            // The word a read names, and the word a held write names.
+            let sel = q.addr.slice::<2, 2>();
             let word = select!(sel.raw() => {
                 0 => mtime.slice::<0, 32>(),
                 1 => mtime.slice::<32, 32>(),
                 2 => mtimecmp.slice::<0, 32>(),
                 _ => mtimecmp.slice::<32, 32>(),
             });
-            // A write puts the lanes it covers into the word; the lane
-            // enables are bits 1 to 4 of the request.
+            let wsel = self.psel.get();
+            let old = select!(wsel.raw() => {
+                0 => mtime.slice::<0, 32>(),
+                1 => mtime.slice::<32, 32>(),
+                2 => mtimecmp.slice::<0, 32>(),
+                _ => mtimecmp.slice::<32, 32>(),
+            });
+            // A write puts the lanes its strobe covers into the word.
+            let wdata = wh.data;
+            let strb = wh.strb;
             let merged =
-                mux(r.bit(4), wdata.slice::<24, 8>(), word.slice::<24, 8>())
+                mux(strb.bit(3), wdata.slice::<24, 8>(), old.slice::<24, 8>())
                     .concat::<_, 16>(mux(
-                        r.bit(3),
+                        strb.bit(2),
                         wdata.slice::<16, 8>(),
-                        word.slice::<16, 8>(),
+                        old.slice::<16, 8>(),
                     ))
                     .concat::<_, 24>(mux(
-                        r.bit(2),
+                        strb.bit(1),
                         wdata.slice::<8, 8>(),
-                        word.slice::<8, 8>(),
+                        old.slice::<8, 8>(),
                     ))
                     .concat::<_, 32>(mux(
-                        r.bit(1),
+                        strb.bit(0),
                         wdata.slice::<0, 8>(),
-                        word.slice::<0, 8>(),
+                        old.slice::<0, 8>(),
                     ));
-            let write = offered & we & hit;
-            let read = offered & !we;
             self.mtime.set(mux(rst, U::<64>::from(0u32), mtime + 1));
             with!(self <= {
-                write & (sel == 0) ?
+                take_write ? {
+                    pend: U::<1>::from(1u8),
+                    psel: sel,
+                    pid: q.id,
+                },
+                wgo ? pend: U::<1>::from(0u8),
+                wgo & (wsel == 0) ?
                     mtime: mtime.slice::<32, 32>().concat::<_, 64>(merged),
-                write & (sel == 1) ?
+                wgo & (wsel == 1) ?
                     mtime: merged.concat::<_, 64>(mtime.slice::<0, 32>()),
-                write & (sel == 2) ? mtimecmp: mtimecmp
+                wgo & (wsel == 2) ? mtimecmp: mtimecmp
                     .slice::<32, 32>()
                     .concat::<_, 64>(merged),
-                write & (sel == 3) ? mtimecmp: merged
+                wgo & (wsel == 3) ? mtimecmp: merged
                     .concat::<_, 64>(mtimecmp.slice::<0, 32>()),
             });
-            // A read is answered the cycle after it is taken, with the
-            // word, or zero for an address that is not this device's.
-            if bool::from(read) {
-                resp.send(mux(hit, word, U::<32>::from(0u32)));
+            if take_read.to_bool() {
+                rb.send(R {
+                    id: q.id,
+                    data: word,
+                    resp: Resp::Okay,
+                    last: Bit::One,
+                });
+            }
+            if wgo.to_bool() {
+                ans.send(Answer {
+                    id: self.pid.get(),
+                    resp: Resp::Okay,
+                });
             }
             self.pending.set(mtime >= mtimecmp);
             tirq.set(self.pending);

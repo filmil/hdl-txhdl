@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The serial port: a device on the bus with a line each way. A byte
+//! The serial port: an AXI peripheral with a line each way. A byte
 //! written to its first word goes out on the line as a start bit,
 //! eight data bits least significant first and a stop bit, each
 //! `DIV` cycles long; a frame coming in on the other line, sampled in
@@ -13,20 +13,13 @@
 //! lines rest high. `DIV` is 868 for
 //! 115200 baud at 100 MHz, and 4 in the runs that are checked, so
 //! that a byte takes forty cycles rather than nine thousand.
-use crate::bus::{REQ_ADDR, REQ_WDATA};
-use crate::isa::UART_BASE;
 use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
+use txhdl_parts::bus::axi::{Answer, PerReq, Resp, R, W};
 
 // The pieces of the step, each a function of its own, inlined by the
 // lowering where the step calls it.
-
-/// Whether an address is one of this device's sixteen bytes.
-#[lower]
-fn hit(addr: U<32>) -> bool {
-    addr.slice::<4, 28>() == UART_BASE >> 4
-}
 
 /// The frame a byte goes out as, least significant bit first: a start
 /// bit low, the byte, a stop bit high.
@@ -88,7 +81,7 @@ fn word(
 }
 
 #[derive(Trace, Default)]
-pub struct Uart<const DIV: u32> {
+pub struct Uart<const DIV: u32, const IW: usize> {
     /// The frame going out, least significant bit first.
     pub shift: Reg<U<10>>,
     /// Bits left to send; busy while not zero.
@@ -114,14 +107,24 @@ pub struct Uart<const DIV: u32> {
     pub count: Reg<U<4>>,
     pub received: Reg<U<8>>,
     pub dropped: Reg<U<8>>,
+    /// A write taken and waiting for its beat: which of the words it
+    /// names, and which identifier answers it.
+    pub pend: Reg<U<1>>,
+    pub psel: Reg<U<2>>,
+    pub pid: Reg<U<IW>>,
 }
 
 #[lower]
-impl<const DIV: u32> Unit for Uart<DIV> {
+impl<const DIV: u32, const IW: usize> Unit for Uart<DIV, IW> {
     async fn run(
         &mut self,
-        (rst, rx, req): (In<Bit>, In<Bit>, Rx<U<69>>),
-        (resp, tx, irq): (Tx<U<32>>, Out<Bit>, Out<Bit>),
+        (rst, rx, req, wd): (
+            In<Bit>,
+            In<Bit>,
+            Rx<PerReq<32, IW>>,
+            Rx<W<32, 4>>,
+        ),
+        (ans, rb, tx, irq): (Tx<Answer<IW>>, Tx<R<32, IW>>, Out<Bit>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -130,20 +133,25 @@ impl<const DIV: u32> Unit for Uart<DIV> {
             let full = self.count == 8;
             let rx_data = self.fifo.read(self.head.get());
             let busy = self.bits != 0;
-            // Every request is taken; the ones for this device are the
-            // ones whose address falls in its sixteen bytes.
-            let (offered, r) = req.take();
-            let addr = r.slice::<REQ_ADDR, 32>();
-            let mine = hit(addr);
-            let sel = addr.slice::<2, 2>();
-            let we = r.bit(0).to_bool();
-            let write = offered & we & mine;
-            let read = offered & !we;
-            let read_rx = read & mine & (sel == 2);
+            // The router sends this peripheral only the bursts in its
+            // range, so it checks no address. A read is answered in the
+            // cycle it is taken; a write waits for its beat.
+            let q = req.head();
+            let qoff = req.peek().is_some();
+            let held = self.pend.get() == 1;
+            let take_read = qoff & q.read & rb.ready() & !held;
+            let take_write = qoff & !q.read & !held;
+            let _ = req.recv_if(take_read | take_write);
+            let wh = wd.head();
+            let wgo = held & wd.peek().is_some() & ans.ready();
+            let _ = wd.recv_if(wgo);
+            let sel = q.addr.slice::<2, 2>();
+            let wsel = self.psel.get();
+            let read_rx = take_read.to_bool() & (sel == 2);
             // A byte written while idle starts a frame, ten bits of DIV
             // cycles each; a reset wins over everything.
-            let start = write & (sel == 0) & !busy;
-            let octet = r.slice::<REQ_WDATA, 8>();
+            let start = wgo.to_bool() & (wsel == 0) & !busy;
+            let octet = wh.data.slice::<0, 8>();
             if rst {
                 self.bits.set(0);
                 self.tick.set(0);
@@ -162,12 +170,34 @@ impl<const DIV: u32> Unit for Uart<DIV> {
                     self.tick.set(self.tick + 1);
                 }
             }
-            if read {
-                resp.send(mux(
-                    mine,
-                    word(sel, busy, rx_ready, full, self.last.get(), rx_data),
-                    U::<32>::from(0u32),
-                ));
+            with!(self <= {
+                take_write ? {
+                    pend: U::<1>::from(1u8),
+                    psel: sel,
+                    pid: q.id,
+                },
+                wgo ? pend: U::<1>::from(0u8),
+            });
+            if take_read.to_bool() {
+                rb.send(R {
+                    id: q.id,
+                    data: word(
+                        sel,
+                        busy,
+                        rx_ready,
+                        full,
+                        self.last.get(),
+                        rx_data,
+                    ),
+                    resp: Resp::Okay,
+                    last: Bit::One,
+                });
+            }
+            if wgo.to_bool() {
+                ans.send(Answer {
+                    id: self.pid.get(),
+                    resp: Resp::Okay,
+                });
             }
             tx.set(mux(busy, self.shift.get().bit(0), Bit::One));
             // The receive side. A low on the resting line is a start

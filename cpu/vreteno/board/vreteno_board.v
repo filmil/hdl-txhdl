@@ -1,4 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
+// OUT OF DATE. This top level wires the core to its devices over the
+// packed-word bus that the design used before it moved to AXI4. The
+// core is now an AXI host, the router is `Router3` of `txhdl_parts`,
+// and each device sits behind an `AxiPer`, so the modules this file
+// instantiates and the ports it names no longer exist as written.
+// Rewiring it, and the board run that proves it, are a task of their
+// own: the right shape is a lowered unit of units whose netlist the
+// build writes, leaving this file the pin and clock wrapper only.
+//
 // The Vreteno core on the Alinx AX7A200 board. This is the one file of
 // the design written by hand rather than lowered, and it holds what a
 // board needs and a core does not: the 200 MHz differential clock
