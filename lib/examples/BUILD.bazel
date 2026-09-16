@@ -253,6 +253,17 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A foreign module inside a netlist: a hand-written module, with a
+# parameter, a clock pin and an inout, instantiated by a unit of units:
+#   bazel run //lib/examples:ex_blackbox
+rust_binary(
+    name = "ex_blackbox",
+    srcs = ["ex_blackbox.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A module written by hand, in both languages, for a unit of units to
 # instantiate: the source the simulations of its netlist need.
 exports_files([
@@ -486,6 +497,7 @@ filegroup(
         "stream_alu.rs",
         "ex_stream_alu.rs",
         "ex_compose.rs",
+        "ex_blackbox.rs",
         "blinker.v",
         "blinker.vhd",
         "ex_ports.rs",
