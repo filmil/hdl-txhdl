@@ -46,6 +46,34 @@ rust_test(
     ],
 )
 
+# The board's netlist with the DDR3 test in its memories, for a
+# simulation (`sim`) or for the board (`board`):
+#   bazel run //cpu/vreteno:board_netlist -- sim
+rust_binary(
+    name = "board_netlist",
+    srcs = ["src/bin/board_netlist.rs"],
+    edition = "2021",
+    deps = [
+        ":vreteno32",
+        "//cpu/vreteno/rust:ddr3_program",
+        "//lib:txhdl",
+    ],
+)
+
+genrule(
+    name = "board_sim_v",
+    outs = ["board_sim.v"],
+    cmd = "$(location :board_netlist) sim > $@",
+    tools = [":board_netlist"],
+)
+
+genrule(
+    name = "board_v",
+    outs = ["board.v"],
+    cmd = "$(location :board_netlist) board > $@",
+    tools = [":board_netlist"],
+)
+
 # The encoders against the decoder.
 rust_test(
     name = "isa_test",
