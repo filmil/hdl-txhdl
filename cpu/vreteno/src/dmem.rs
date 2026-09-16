@@ -26,6 +26,30 @@ pub struct Dmem {
 }
 
 impl Dmem {
+    /// A memory holding `bytes` from its base before the first cycle:
+    /// the constants a compiled program reads. Nothing on this machine
+    /// can put them there at run time, because the instruction memory
+    /// a program is loaded into is not on the bus and a load never
+    /// reaches it, so what a program reads has to be here already.
+    /// The bytes go a lane each, as an address's low two bits choose.
+    pub fn with(bytes: &[u8]) -> Self {
+        // A drive through `at` is deferred to the edge, as a register's
+        // is, so the lanes are built whole and handed to `Mem::with`.
+        let words = bytes.len().div_ceil(4).min(DMEM_WORDS);
+        let lane = |k: usize| -> Vec<U<8>> {
+            (0..words)
+                .map(|w| U::from(*bytes.get(w * 4 + k).unwrap_or(&0)))
+                .collect()
+        };
+        Dmem {
+            lane0: Mem::with(&lane(0)),
+            lane1: Mem::with(&lane(1)),
+            lane2: Mem::with(&lane(2)),
+            lane3: Mem::with(&lane(3)),
+            ..Default::default()
+        }
+    }
+
     /// A word of the memory, for the run and the test to look at.
     pub fn data_word(&self, at: usize) -> u32 {
         let lane = |m: &Mem<U<8>, DMEM_WORDS>| m.read(at).raw() as u32;

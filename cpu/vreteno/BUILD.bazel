@@ -47,6 +47,27 @@ rust_binary(
     ],
 )
 
+# Rust compiled for the core, run on it: the hello world of issue 79.
+#   bazel run //cpu/vreteno:hello
+rust_binary(
+    name = "hello",
+    srcs = ["src/bin/hello.rs"],
+    edition = "2021",
+    deps = [
+        ":vreteno32",
+        "//cpu/vreteno/rust:hello_program",
+        "//lib:txhdl",
+    ],
+)
+
+# The same run as a test, so the toolchain and the core are checked
+# together by `bazel test //...` and not only by hand.
+rust_test(
+    name = "hello_test",
+    crate = ":hello",
+    edition = "2021",
+)
+
 # The core against the model, every cycle.
 rust_test(
     name = "lockstep",
@@ -62,9 +83,13 @@ filegroup(
     name = "sources",
     srcs = glob([
         "src/*.rs",
+        "src/bin/*.rs",
         "tests/*.rs",
         "board/*.v",
-    ]),
+        # The program compiled for the core and its linker script are
+        # a package of their own, so they come by label rather than by
+        # a glob, which cannot cross a package boundary.
+    ]) + ["//cpu/vreteno/rust:sources"],
 )
 
 # Synthesis of the core's Verilog, as the document build wrote it, on an
