@@ -758,22 +758,9 @@ pub fn axi<
     const NIDS: usize,
 >() -> Link<A, D, S, I, NIDS> {
     let u = axi_units::<A, D, S, I>();
-    let (issue, wbeat, release, grant, done, rdata) = u.host_client;
     let (req, wd, ans, rb) = u.per_client;
     Link {
-        host: Host {
-            issue,
-            wbeat,
-            grant,
-            inbox: Rc::new(Inbox {
-                done,
-                rdata,
-                release,
-                slots: RefCell::new(vec![Slot::default(); NIDS]),
-                freed: RefCell::new(VecDeque::new()),
-                drained: Cell::new(u64::MAX),
-            }),
-        },
+        host: host_end(u.host_client),
         per: Per {
             req,
             wd,
@@ -784,6 +771,77 @@ pub fn axi<
         host_out: u.host_out,
         per_in: u.per_in,
         per_out: u.per_out,
+    }
+}
+
+/// A link whose host is a simulation client and whose peripheral is a
+/// unit: the host end [`axi`] hands out, and the channel ends
+/// [`axi_units`] hands a peripheral that is hardware. It is what a test
+/// drives a peripheral written in the lowered subset with, from client
+/// code rather than from another unit.
+pub struct HostLink<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+    const NIDS: usize,
+> {
+    /// The end a host client holds.
+    pub host: Host<A, D, S, I, NIDS>,
+    /// The channel ends a peripheral client that is hardware holds.
+    pub per_client: PerClient<A, D, S, I>,
+    /// What the host tracker reads.
+    pub host_in: HostIn<A, D, S, I>,
+    /// What the host tracker drives.
+    pub host_out: HostOut<A, D, S, I>,
+    /// What the peripheral tracker reads.
+    pub per_in: PerIn<A, D, S, I>,
+    /// What the peripheral tracker drives.
+    pub per_out: PerOut<A, D, S, I>,
+}
+
+/// Make a link with a simulation host and a peripheral that is a unit.
+/// The parameters are [`axi`]'s.
+pub fn axi_to_unit<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+    const NIDS: usize,
+>() -> HostLink<A, D, S, I, NIDS> {
+    let u = axi_units::<A, D, S, I>();
+    HostLink {
+        host: host_end(u.host_client),
+        per_client: u.per_client,
+        host_in: u.host_in,
+        host_out: u.host_out,
+        per_in: u.per_in,
+        per_out: u.per_out,
+    }
+}
+
+/// The host end over a host client's channel ends.
+fn host_end<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+    const NIDS: usize,
+>(
+    (issue, wbeat, release, grant, done, rdata): HostClient<A, D, S, I>,
+) -> Host<A, D, S, I, NIDS> {
+    Host {
+        issue,
+        wbeat,
+        grant,
+        inbox: Rc::new(Inbox {
+            done,
+            rdata,
+            release,
+            slots: RefCell::new(vec![Slot::default(); NIDS]),
+            freed: RefCell::new(VecDeque::new()),
+            drained: Cell::new(u64::MAX),
+        }),
     }
 }
 
