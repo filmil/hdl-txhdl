@@ -955,6 +955,84 @@ and waits for three keys again.
 \lstinputlisting[caption={\code{board/vreteno\_board.v}: the board
 top, by hand.},label={lst:v-board}]{cpu/vreteno/board/vreteno_board.v}
 
+\section{Programs in Rust}
+\label{sec:v-rust}
+
+Everything above runs programs written with the assembler in
+\code{program.rs}, which is enough to check a core and no way to
+write software. The core is an RV32IM machine, so a compiler can
+target it, and the toolchain for that is fetched by the build like
+every other: \code{MODULE.bazel} names the bare-metal RISC-V target
+beside the host's, and the ruleset downloads that target's standard
+library by checksum. The linker is \code{rust-lld}, which comes with
+the toolchain, so there is no cross binutils to install either.
+Nothing is on the machine that Bazel did not put there.
+
+A program for the core is built for another machine than the one the
+build runs on, so \code{vreteno\_image} carries it across: a rule
+with a platform transition that builds the binary for the core, runs
+\code{//tools/elf2vreteno} over the linked ELF, and gives back the
+image as Rust source. The rest of the tree depends on that source, so
+a program for the core is built by \code{bazel build //...} like
+anything else, with no flag to remember.
+
+\subsection*{What the machine will not let a compiler do}
+
+Three of the core's properties decide how a program has to be
+written, and each of them the core meets by going quietly wrong
+rather than by refusing.
+
+The first is the one that shapes the linker script. A load below the
+data base never leaves the core: \code{is\_dev} is false, no request
+is sent, and the instruction that was waiting retires with whatever
+word the previous device load left in its register. Instruction
+memory is not a device on the bus, so a constant placed there is a
+constant the program cannot read, and it is not an error, it is a
+wrong answer. So \code{.rodata} is linked into the data memory rather
+than beside the code, and the image carries the bytes the data memory
+starts with. That is what \code{Dmem::with} is for: there is no way
+for a program to put them there itself.
+
+The second is the compressed instructions. The core fetches one
+32-bit word per instruction and its decode is by opcode, so a
+compressed instruction is an illegal opcode, which traps to
+\code{mtvec}, which resets to zero, so the program restarts from the
+beginning. The only RISC-V target the ruleset maps has the compressed
+extension, so codegen is told to leave it out, and
+\code{elf2vreteno} refuses an image that holds one rather than trust
+the flag.
+
+The third is the size. A program is 1024 instructions, the loader
+truncates a longer one without saying so, and the fetch takes
+\code{pc[11:2]}, so a program that runs off the end wraps into
+itself. Optimising for size is not a preference here. It is also why
+debug assertions are off: one of them pulls in \code{core}'s panic
+formatting, which is larger than the whole instruction memory.
+
+Two more things nothing else does: the stack pointer is zero at
+reset, and \code{.bss} is not cleared. The entry stub does both, in
+the assembly that has to come before Rust can run at all. And
+\code{ebreak} halts this core rather than trapping, which makes it
+what a program ends with.
+
+\lstinputlisting[caption={\code{cpu/vreteno/rust/hello.rs}: Rust
+compiled for the core. Run the whole machine on it with
+\code{bazel run //cpu/vreteno:hello}.},label={lst:v-hello}]{cpu/vreteno/rust/hello.rs}
+
+\lstinputlisting[caption={\code{cpu/vreteno/rust/vreteno.ld}: where
+each section goes, and why it has to go
+there.},label={lst:v-ld}]{cpu/vreteno/rust/vreteno.ld}
+
+The run is the check. \code{//cpu/vreteno:hello} builds the image,
+puts it in the core's instruction memory and its constants in the
+data memory, runs the whole machine with the router, the timer and
+the serial port, and reads the port's line with the same terminal the
+demonstration uses. It asserts what came out, so a program that says
+nothing fails rather than passes quietly, and it asserts that the
+core halted itself. The same run is \code{//cpu/vreteno:hello\_test},
+so the toolchain and the core are checked together by
+\code{bazel test //...}.
+
 \section{What Comes Next}
 \label{sec:v-next}
 
