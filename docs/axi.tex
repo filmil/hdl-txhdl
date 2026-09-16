@@ -276,6 +276,8 @@ same link \code{axi} makes, with the two ends unwrapped.
   axi()        -> Host / Per     a client that is a testbench
   axi_units()  -> HostClient /   a client that is a unit, and
                   PerClient      lowers with the rest of a design
+  axi_to_unit() -> Host /        a testbench driving a peripheral
+                  PerClient      that is a unit
 \end{lstlisting}
 
 A rasteriser written this way is the GPU's~\cite{gpu}, and it is the
