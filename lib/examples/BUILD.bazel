@@ -385,6 +385,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An AXI router, one host and three peripherals:
+#   bazel run //lib/examples:ex_axi_router
+rust_binary(
+    name = "ex_axi_router",
+    srcs = ["ex_axi_router.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Accepting many AXI transactions and forwarding them for processing:
 #   bazel run //lib/examples:ex_axi_serve
 rust_binary(
@@ -445,6 +458,7 @@ filegroup(
         "ex_compose.rs",
         "ex_axi.rs",
         "ex_axi_serve.rs",
+        "ex_axi_router.rs",
         "station.v",
         "ex_mem.rs",
         "ex_imm.rs",
