@@ -2,7 +2,27 @@
 # The board's DDR3 memory as an AXI peripheral: UberDDR3's controller as
 # a foreign module behind a Wishbone of words, and the bridge from the
 # link to it.
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
 package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "ddr3",
+    srcs = ["src/lib.rs"],
+    crate_name = "ddr3",
+    edition = "2021",
+    proc_macro_deps = ["//lib:txhdl_macros"],
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+)
+
+rust_test(
+    name = "ddr3_test",
+    crate = ":ddr3",
+    edition = "2021",
+)
 
 # The controller as its netlist names it: the wrapper, then UberDDR3's
 # own RTL, for a simulation or a synthesis to read beside the lowering.
@@ -12,4 +32,10 @@ filegroup(
         "hdl/ddr3_wb32.v",
         "@uberddr3//:rtl",
     ],
+)
+
+# The sources by name, for the documents' listings.
+filegroup(
+    name = "sources",
+    srcs = glob(["src/*.rs"]) + ["hdl/ddr3_wb32.v"],
 )
