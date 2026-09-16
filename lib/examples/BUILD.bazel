@@ -439,6 +439,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An AXI link reaching a Wishbone peripheral through the bridge:
+#   bazel run //lib/examples:ex_axi_wb
+rust_binary(
+    name = "ex_axi_wb",
+    srcs = ["ex_axi_wb.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Accepting many AXI transactions and forwarding them for processing:
 #   bazel run //lib/examples:ex_axi_serve
 rust_binary(
@@ -505,6 +518,7 @@ filegroup(
         "ex_axi_serve.rs",
         "ex_axi_router.rs",
         "ex_axi_lite.rs",
+        "ex_axi_wb.rs",
         "station.v",
         "ex_mem.rs",
         "ex_imm.rs",

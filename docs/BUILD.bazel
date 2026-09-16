@@ -931,6 +931,26 @@ waveform(
     until = 170,
 )
 
+# An AXI link reaching a Wishbone peripheral: the bridge lowered, and
+# the first write offered, taken and acknowledged.
+waveform(
+    name = "axi_wb",
+    example = "//lib/examples:ex_axi_wb",
+    lowered = ("axi_wb", "bridge"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//req/rx_valid=>req",
+        "//wd/rx_valid=>wd",
+        "//bridge/stage=>stage",
+        "//cyc=>cyc",
+        "//stb=>stb",
+        "//stall=>stall",
+        "//ack=>ack",
+        "//ans/tx_valid=>ans",
+    ],
+    until = 64,
+)
+
 # Accepting many AXI transactions and forwarding them for processing:
 # three in flight over four identifiers, recycled.
 waveform(
