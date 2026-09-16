@@ -81,6 +81,24 @@ http_archive(
     ],
 )
 
+# UberDDR3, the DDR3 controller the board's memory runs on, at the commit
+# the a200t_examples repository proves on the same board. It is fetched
+# and not vendored: its RTL is GPL-3.0, this tree is Apache-2.0, and a
+# fetched repository keeps the two apart in the tree. What the build
+# reads of it, the controller's RTL and the Micron model of a DDR3 chip,
+# is named in //third_party/uberddr3:uberddr3.BUILD.bazel.
+git_repository = use_repo_rule(
+    "@bazel_tools//tools/build_defs/repo:git.bzl",
+    "git_repository",
+)
+
+git_repository(
+    name = "uberddr3",
+    build_file = "//third_party/uberddr3:uberddr3.BUILD.bazel",
+    commit = "a1258e2eedefa6fba1a425becaded83928c78709",
+    remote = "https://github.com/AngeloJacobo/UberDDR3",
+)
+
 # Prebuilt tools, fetched by checksum for every platform they ship for.
 # vcdcvt and sqlite2drawtiming turn a VCD into a signals database and
 # the database into drawtiming text; //tools/dt2tikz draws that text.

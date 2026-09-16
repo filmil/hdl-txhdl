@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+# The build file of @uberddr3, the DDR3 controller fetched at a pinned
+# commit. It names what the build reads and nothing more; the files are
+# upstream's, unmodified, under upstream's licence.
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["LICENSE"])
+
+# The controller: the PHY and the controller proper, in the order they
+# compile in, then the top with its Wishbone interface.
+filegroup(
+    name = "rtl",
+    srcs = [
+        "rtl/ddr3_controller.v",
+        "rtl/ddr3_phy.v",
+        "rtl/ddr3_top.v",
+    ],
+)
+
+# The Micron model of one DDR3 chip, for simulation. Its sizes come from
+# a parameters header that a define chooses, den8192Mb for the one header
+# upstream carries.
+filegroup(
+    name = "micron_model",
+    srcs = ["testbench/ddr3.sv"],
+)
+
+filegroup(
+    name = "micron_model_headers",
+    srcs = [
+        "testbench/8192Mb_ddr3_parameters.vh",
+        "testbench/sim_defines.vh",
+    ],
+)

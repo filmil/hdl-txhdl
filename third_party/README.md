@@ -15,6 +15,9 @@ upstream.
 
 All three are LaTeX packages that the pinned TeX distribution does not
 include, and that cannot be fetched reproducibly.
+
+`uberddr3/` is the exception: it holds no upstream files, only the build
+file of a repository `MODULE.bazel` fetches, and its `README.md` says why.
 `docs/document-build-plan.md` section 3 states the measurements behind that.
 
 A LaTeX document cannot read these in place.
