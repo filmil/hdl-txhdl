@@ -284,6 +284,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The system control block: identity, reset cause and a soft reset:
+#   bazel run //lib/examples:ex_syscon
+rust_binary(
+    name = "ex_syscon",
+    srcs = ["ex_syscon.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # General purpose pins behind AXI-Lite, with an interrupt:
 #   bazel run //lib/examples:ex_gpio
 rust_binary(
@@ -594,6 +607,7 @@ filegroup(
         "blinker.vhd",
         "ex_gpio.rs",
         "ex_spi.rs",
+        "ex_syscon.rs",
         "ex_ports.rs",
         "ex_axi.rs",
         "ex_axi_serve.rs",
