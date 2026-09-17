@@ -10,6 +10,7 @@ rust_library(
         "src/eth.rs",
         "src/bus/axi.rs",
         "src/bus/axi_lite.rs",
+        "src/bus/axi_pins.rs",
         "src/bus/noc.rs",
         "src/bus/noc/bridge.rs",
         "src/bus/noc/mesh.rs",
