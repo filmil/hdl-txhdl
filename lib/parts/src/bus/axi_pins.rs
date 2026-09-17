@@ -404,26 +404,103 @@ pub mod sim {
         }
     }
 
-    /// Make the pins: the host's ends, and the unit's two sides, with
-    /// the link's channel ends given to the unit where they belong.
-    #[allow(clippy::type_complexity)]
-    pub fn pins<
+    /// The unit's ends of what the host drives: the inputs of a
+    /// device on the pins, named as its ports are.
+    pub struct HostPins<
         const A: usize,
         const D: usize,
         const S: usize,
         const I: usize,
-    >(
-        aw: Tx<Aw<A, I>>,
-        ar: Tx<Ar<A, I>>,
-        w: Tx<W<D, S>>,
-        b: Rx<B<I>>,
-        r: Rx<R<D, I>>,
-    ) -> (
-        PinHost<A, D, S, I>,
-        AxiPinsIn<A, D, S, I>,
-        AxiPinsOut<A, D, S, I>,
-    ) {
-        fn wire<T: txhdl::types::Value + Copy + Default>() -> (Out<T>, In<T>) {
+    > {
+        /// `AWID`.
+        pub awid: In<U<I>>,
+        /// `AWADDR`.
+        pub awaddr: In<U<A>>,
+        /// `AWLEN`.
+        pub awlen: In<U<8>>,
+        /// `AWSIZE`.
+        pub awsize: In<U<3>>,
+        /// `AWBURST`.
+        pub awburst: In<U<2>>,
+        /// `AWLOCK`, at rest.
+        pub awlock: In<Bit>,
+        /// `AWCACHE`, at rest.
+        pub awcache: In<U<4>>,
+        /// `AWPROT`, at rest.
+        pub awprot: In<U<3>>,
+        /// `AWVALID`.
+        pub awvalid: In<Bit>,
+        /// `WDATA`.
+        pub wdata: In<U<D>>,
+        /// `WSTRB`.
+        pub wstrb: In<U<S>>,
+        /// `WLAST`.
+        pub wlast: In<Bit>,
+        /// `WVALID`.
+        pub wvalid: In<Bit>,
+        /// `BREADY`.
+        pub bready: In<Bit>,
+        /// `ARID`.
+        pub arid: In<U<I>>,
+        /// `ARADDR`.
+        pub araddr: In<U<A>>,
+        /// `ARLEN`.
+        pub arlen: In<U<8>>,
+        /// `ARSIZE`.
+        pub arsize: In<U<3>>,
+        /// `ARBURST`.
+        pub arburst: In<U<2>>,
+        /// `ARLOCK`, at rest.
+        pub arlock: In<Bit>,
+        /// `ARCACHE`, at rest.
+        pub arcache: In<U<4>>,
+        /// `ARPROT`, at rest.
+        pub arprot: In<U<3>>,
+        /// `ARVALID`.
+        pub arvalid: In<Bit>,
+        /// `RREADY`.
+        pub rready: In<Bit>,
+    }
+
+    /// The device's ends of what the host reads: the outputs of a
+    /// device on the pins, named as its ports are.
+    pub struct DevicePins<const D: usize, const I: usize> {
+        /// `AWREADY`.
+        pub awready: Out<Bit>,
+        /// `WREADY`.
+        pub wready: Out<Bit>,
+        /// `BID`.
+        pub bid: Out<U<I>>,
+        /// `BRESP`.
+        pub bresp: Out<U<2>>,
+        /// `BVALID`.
+        pub bvalid: Out<Bit>,
+        /// `ARREADY`.
+        pub arready: Out<Bit>,
+        /// `RID`.
+        pub rid: Out<U<I>>,
+        /// `RDATA`.
+        pub rdata: Out<U<D>>,
+        /// `RRESP`.
+        pub rresp: Out<U<2>>,
+        /// `RLAST`.
+        pub rlast: Out<Bit>,
+        /// `RVALID`.
+        pub rvalid: Out<Bit>,
+    }
+
+    /// Make the pins as wires: the host's ends, the ends a device reads
+    /// and the ends a device drives. The pins this host leaves at rest,
+    /// `AxLOCK`, `AxCACHE` and `AxPROT`, are wires nobody drives.
+    #[allow(clippy::type_complexity)]
+    pub fn pin_host<
+        const A: usize,
+        const D: usize,
+        const S: usize,
+        const I: usize,
+    >() -> (PinHost<A, D, S, I>, HostPins<A, D, S, I>, DevicePins<D, I>) {
+        fn wire<T: txhdl::types::Value + Copy + Default>(
+        ) -> (Out<T>, In<T>) {
             signal::<T, DefaultClock>()
         }
         let (awid, awid_i) = wire::<U<I>>();
@@ -455,11 +532,6 @@ pub mod sim {
         let (rresp_o, rresp) = wire::<U<2>>();
         let (rlast_o, rlast) = wire::<Bit>();
         let (rvalid_o, rvalid) = wire::<Bit>();
-        // The pins this host leaves at rest: no lock, no cache hints,
-        // and unprivileged, secure, data access.
-        let rest = || wire::<Bit>().1;
-        let rest4 = || wire::<U<4>>().1;
-        let rest3 = || wire::<U<3>>().1;
         (
             PinHost {
                 aw: (awid, awaddr, awlen, awsize, awburst),
@@ -482,15 +554,15 @@ pub mod sim {
                 rlast,
                 rvalid,
             },
-            AxiPinsIn {
+            HostPins {
                 awid: awid_i,
                 awaddr: awaddr_i,
                 awlen: awlen_i,
                 awsize: awsize_i,
                 awburst: awburst_i,
-                awlock: rest(),
-                awcache: rest4(),
-                awprot: rest3(),
+                awlock: wire::<Bit>().1,
+                awcache: wire::<U<4>>().1,
+                awprot: wire::<U<3>>().1,
                 awvalid: awvalid_i,
                 wdata: wdata_i,
                 wstrb: wstrb_i,
@@ -502,18 +574,13 @@ pub mod sim {
                 arlen: arlen_i,
                 arsize: arsize_i,
                 arburst: arburst_i,
-                arlock: rest(),
-                arcache: rest4(),
-                arprot: rest3(),
+                arlock: wire::<Bit>().1,
+                arcache: wire::<U<4>>().1,
+                arprot: wire::<U<3>>().1,
                 arvalid: arvalid_i,
                 rready: rready_i,
-                b,
-                r,
             },
-            AxiPinsOut {
-                aw,
-                ar,
-                w,
+            DevicePins {
                 awready: awready_o,
                 wready: wready_o,
                 bid: bid_o,
@@ -525,6 +592,71 @@ pub mod sim {
                 rresp: rresp_o,
                 rlast: rlast_o,
                 rvalid: rvalid_o,
+            },
+        )
+    }
+
+    /// Make the pins for an [`AxiPins`](super::AxiPins): the host's
+    /// ends, and the unit's two sides, with the link's channel ends
+    /// given to the unit where they belong.
+    #[allow(clippy::type_complexity)]
+    pub fn pins<const A: usize, const D: usize, const S: usize, const I: usize>(
+        aw: Tx<Aw<A, I>>,
+        ar: Tx<Ar<A, I>>,
+        w: Tx<W<D, S>>,
+        b: Rx<B<I>>,
+        r: Rx<R<D, I>>,
+    ) -> (
+        PinHost<A, D, S, I>,
+        AxiPinsIn<A, D, S, I>,
+        AxiPinsOut<A, D, S, I>,
+    ) {
+        let (host, h, d) = pin_host::<A, D, S, I>();
+        (
+            host,
+            AxiPinsIn {
+                awid: h.awid,
+                awaddr: h.awaddr,
+                awlen: h.awlen,
+                awsize: h.awsize,
+                awburst: h.awburst,
+                awlock: h.awlock,
+                awcache: h.awcache,
+                awprot: h.awprot,
+                awvalid: h.awvalid,
+                wdata: h.wdata,
+                wstrb: h.wstrb,
+                wlast: h.wlast,
+                wvalid: h.wvalid,
+                bready: h.bready,
+                arid: h.arid,
+                araddr: h.araddr,
+                arlen: h.arlen,
+                arsize: h.arsize,
+                arburst: h.arburst,
+                arlock: h.arlock,
+                arcache: h.arcache,
+                arprot: h.arprot,
+                arvalid: h.arvalid,
+                rready: h.rready,
+                b,
+                r,
+            },
+            AxiPinsOut {
+                aw,
+                ar,
+                w,
+                awready: d.awready,
+                wready: d.wready,
+                bid: d.bid,
+                bresp: d.bresp,
+                bvalid: d.bvalid,
+                arready: d.arready,
+                rid: d.rid,
+                rdata: d.rdata,
+                rresp: d.rresp,
+                rlast: d.rlast,
+                rvalid: d.rvalid,
             },
         )
     }
