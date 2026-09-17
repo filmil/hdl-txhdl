@@ -2,13 +2,11 @@
 # The Ethernet echo on the Alinx AX7A200 (xc7a200tfbg484-2).
 #
 # The clock and the LEDs are the ones cpu/vreteno/board/ax7a200.xdc
-# names. The Ethernet pins are the KSZ9031RNX's, from the table of the
-# AX7A200 manual's section 3.2, "Gigabit Ethernet Interface". Four of
-# its rows did not come through with their pins, ETH_RXCTL, ETH_MDC,
-# ETH_MDIO and ETH_RESET, and are left below as TODO; the bitstream
-# cannot be built until they are filled in. The I/O standard of the
-# Ethernet pins is LVCMOS33 as for the board's other user pins, and is
-# to be confirmed together with them.
+# names. The Ethernet pins are the JL2121-N040I PHY's, from the table
+# of the AX7A200B manual's section on the gigabit Ethernet interface.
+# The I/O standard of the Ethernet pins is LVCMOS33 as for the board's
+# other user pins; the manual does not state it, and it is to be
+# confirmed on the board.
 
 # The board's 200 MHz clock, and the LEDs.
 create_clock -add -name sys_clk_p -period 5.0 -waveform {0 2.5} \
@@ -42,13 +40,14 @@ set_property PACKAGE_PIN U18 [get_ports {eth_rxd[1]}]
 set_property PACKAGE_PIN U17 [get_ports {eth_rxd[2]}]
 set_property PACKAGE_PIN P17 [get_ports {eth_rxd[3]}]
 
-# TODO: the pins the manual's table lost.
-# set_property PACKAGE_PIN <pin> [get_ports {eth_rxctl}]
-# set_property PACKAGE_PIN <pin> [get_ports {eth_mdc}]
-# set_property PACKAGE_PIN <pin> [get_ports {eth_mdio}]
-# set_property PACKAGE_PIN <pin> [get_ports {eth_reset_n}]
+# The PHY's other pins: the receive control line, the management
+# interface, and the reset.
+set_property PACKAGE_PIN R19 [get_ports {eth_rxctl}]
+set_property PACKAGE_PIN N13 [get_ports {eth_mdc}]
+set_property PACKAGE_PIN P14 [get_ports {eth_mdio}]
+set_property PACKAGE_PIN R14 [get_ports {eth_reset_n}]
 
-# Every Ethernet pin, to be confirmed with the four above.
+# Every Ethernet pin, to be confirmed on the board.
 set_property IOSTANDARD LVCMOS33 [get_ports {eth_*}]
 
 set_property CONFIG_VOLTAGE 3.3 [current_design]

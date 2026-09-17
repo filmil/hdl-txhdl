@@ -50,11 +50,11 @@ clock to another. In front of them is an AXI-Lite peripheral of three
 words, which a core or any AXI host reaches through the AXI-Lite
 bridge. The build runs the three against a loop of wire with one frame
 corrupted, and simulates the three netlists against that run under
-\code{nvc} and under Verilator. For the Alinx AX7A200 there is a
+\code{nvc} and under Verilator. For the Alinx AX7A200B there is a
 hand-written echo design: the PHY's RGMII, the clocks, and a crossing
 between the receive clock and the transmit clock, around the two
-halves of the MAC. It goes through Vivado's synthesis; four of the
-PHY's pins are still to be filled in before it can become a bitstream.
+halves of the MAC. It goes through Vivado's synthesis, place and route
+to a bitstream; it has not yet run on the board.
 \end{abstract}
 
 \section{What Is Here}
@@ -237,8 +237,10 @@ dropped.
 \section{On the Board}
 \label{sec:e-board}
 
-The Alinx AX7A200 has one gigabit port, a Micrel KSZ9031RNX PHY on
-RGMII. RGMII sends a GMII byte as two nibbles a cycle, the low
+The Alinx AX7A200B has one gigabit port, a JL2121-N040I PHY on
+RGMII. The PHY negotiates 10, 100 or 1000~Mbit and full or half duplex
+by itself, from the levels on its configuration pins at power on, and
+answers on its management bus at address 3. RGMII sends a GMII byte as two nibbles a cycle, the low
 nibble on the clock's rising edge and the high nibble on its falling
 edge, and a control line that is the valid line on the rising edge and
 valid exclusive-or error on the falling edge. Two edges per cycle are
@@ -274,36 +276,41 @@ design.},label={lst:e-echo}]{eth/board/eth_echo.v}
 
 \code{bazel build //eth:echo\_synth} puts the lowered halves and the
 three hand-written files through Vivado's synthesis for the board's
-part. It finishes with no error and no critical warning. The design
-takes 1341 LUTs, 776 of them memory for the two frames and the FIFO,
-and 232 flip-flops, and the estimate after synthesis meets 125~MHz
-with 2.388~ns of slack. Its two warnings are that the halves' frame
-counters are removed, since nothing on the board reads them, and that
-the management pins are driven by a constant or not at all.
+part, with no error and no critical warning. Its two warnings are that
+the halves' frame counters are removed, since nothing on the board
+reads them, and that the management pins are driven by a constant or
+not at all.
 
-The constraints name the clock, the LEDs and the eleven Ethernet pins
-that the AX7A200 manual's table gives. Four rows of that table came
-through without their pins: \code{ETH\_RXCTL}, \code{ETH\_MDC},
-\code{ETH\_MDIO} and \code{ETH\_RESET}. They are in the constraints as
-TODO lines, and until they are filled in there is no place and route
-and no bitstream.
+\code{bazel build //eth:echo\_pnr} places and routes the design with
+the board's pins and writes the bitstream. Every timing constraint is
+met, with 1.491~ns of setup slack and 0.065~ns of hold slack over 6549
+endpoints, and the design rule check finds nothing. The design takes
+1330 LUTs, 776 of them memory for the two frames and the FIFO, 232
+flip-flops and 19 pins. No input or output delay is constrained on the
+RGMII pins yet, so that slack says nothing about the timing between
+the FPGA and the PHY.
+
+The constraints name the clock, the LEDs and the fifteen pins of the
+PHY, from the table in the AX7A200B manual.
 
 \lstinputlisting[caption={\code{eth/board/ax7a200\_eth.xdc}: the
-board's pins, four still to come.},label={lst:e-xdc}]{eth/board/ax7a200_eth.xdc}
+board's pins.},label={lst:e-xdc}]{eth/board/ax7a200_eth.xdc}
 
 \section{What Is Not Done}
 \label{sec:e-not}
 
-The four pins, and the I/O standard of all fifteen Ethernet pins,
-which the constraints give as LVCMOS33 like the board's other user
-pins, still have to be confirmed. Nothing here has run on the board,
-and the receive side's timing at the pins depends on a receive delay
-the PHY may or may not add, which has not been measured.
+Nothing here has run on the board. The I/O standard of the fifteen
+Ethernet pins is given as LVCMOS33, like the board's other user pins,
+since the manual does not state it, and has to be confirmed. The
+receive side's timing at the pins depends on a receive delay the PHY
+may or may not add, which has not been measured.
 
 Only gigabit works. At 100 or 10~Mbit the PHY sends a nibble per
-cycle, and neither half of the MAC takes a byte over two cycles.
-The management interface is left idle, so the PHY runs on its
-strapped defaults and nothing reads its link state.
+cycle, and neither half of the MAC takes a byte over two cycles. The
+PHY negotiates any of the three speeds, so the port on the other end
+of the cable has to be a gigabit port. The management interface is
+left idle, so the PHY runs on its power-on configuration, nothing
+restricts what it advertises, and nothing reads its link state.
 
 Each half holds one frame. A receiver whose frame the client has not
 yet read drops the next one, and a client that wants to keep frames

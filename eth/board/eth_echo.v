@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// An Ethernet echo on the Alinx AX7A200: every good frame the PHY
+// An Ethernet echo on the Alinx AX7A200B: every good frame the PHY
 // receives is sent back out as it came, with a fresh check sequence.
 // The design to bring the port up with before a core is behind it.
 //
@@ -18,7 +18,8 @@
 // The LEDs are lit when driven low: the MMCM locked, a frame received,
 // and a frame sent, the last two held for a while so a person sees them.
 // The PHY's reset is released once the MMCM has locked; the management
-// interface is left idle, so the PHY runs on its strapped defaults.
+// interface is left idle, so the JL2121 runs on its power-on
+// configuration, every speed and duplex advertised.
 `timescale 1ps / 1ps
 module eth_echo (
   input sys_clk_p,

@@ -4,7 +4,7 @@
 //!
 //! [`EthTx`] and [`EthRx`] speak GMII, a byte per cycle with a valid
 //! line. A board wrapper makes GMII of an RGMII PHY such as the
-//! KSZ9031 on the AX7A200, whose nibbles come on both clock edges.
+//! JL2121 on the AX7A200B, whose nibbles come on both clock edges.
 //! Each half is a unit of one clock, so that on a board each can run
 //! on the clock its side of the PHY keeps: the transmit clock the FPGA
 //! makes, and the receive clock the PHY recovers from the line.

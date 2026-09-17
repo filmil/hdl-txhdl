@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// RGMII to GMII, for a gigabit PHY such as the KSZ9031 on the Alinx
-// AX7A200, on a Xilinx 7-series part.
+// RGMII to GMII, for a gigabit PHY such as the JL2121 on the Alinx
+// AX7A200B, on a Xilinx 7-series part.
 //
 // RGMII sends a GMII byte as two nibbles a cycle: the low nibble while
 // the clock is high and the high nibble while it is low, with the valid

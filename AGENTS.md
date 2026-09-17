@@ -91,8 +91,9 @@ all under `//docs`:
   MAC's transmitter and receiver on GMII, each on one clock and each
   storing whole frames, the CRC-32, the AXI-Lite peripheral, the
   example `ex_eth` on a looped wire, and `//eth`, the hand-written
-  RGMII wrapper, clock crossing and echo design for the AX7A200, which
-  `//eth:echo_synth` puts through Vivado's synthesis.
+  RGMII wrapper, clock crossing and echo design for the AX7A200B's
+  JL2121 PHY, which `//eth:echo_synth` and `//eth:echo_pnr` put
+  through Vivado to a bitstream.
   `ex_eth` is documented there and not in `//docs:examples`.
 * `//docs:cheatsheet` is the one-page cheat sheet, also as a PNG
   (`//docs:cheatsheet_png`); it shows `ex_cheat.rs`, its netlist and

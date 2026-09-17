@@ -3,7 +3,11 @@
 # //lib/parts, lowered, inside a hand-written echo design with the PHY's
 # RGMII, the clocks and the crossing between them.
 load("@rules_rust//rust:defs.bzl", "rust_binary")
-load("@rules_vivado//build/vivado:rules.bzl", "vivado_synthesis2")
+load(
+    "@rules_vivado//build/vivado:rules.bzl",
+    "vivado_place_and_route2",
+    "vivado_synthesis2",
+)
 
 package(default_visibility = ["//visibility:public"])
 
@@ -27,11 +31,12 @@ filegroup(
     srcs = ["board/ax7a200_eth.xdc"],
 )
 
-# The echo design through Vivado's synthesis. Four of the PHY's pins are
-# not yet known, see board/ax7a200_eth.xdc, so there is no place and
-# route and no bitstream. Manual, as every Vivado target is:
+# The echo design through Vivado's synthesis, and then through place and
+# route with the board's pins to a bitstream. Manual, as every Vivado
+# target is:
 #
 #   bazel build //eth:echo_synth
+#   bazel build //eth:echo_pnr
 vivado_synthesis2(
     name = "echo_synth",
     srcs = [
@@ -42,6 +47,13 @@ vivado_synthesis2(
     ],
     part = "xc7a200tfbg484-2",
     top = "eth_echo",
+    xdcs = [":echo_xdc"],
+    tags = ["manual"],
+)
+
+vivado_place_and_route2(
+    name = "echo_pnr",
+    synthesis = ":echo_synth",
     xdcs = [":echo_xdc"],
     tags = ["manual"],
 )
