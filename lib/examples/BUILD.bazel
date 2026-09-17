@@ -271,6 +271,19 @@ exports_files([
     "blinker.vhd",
 ])
 
+# General purpose pins behind AXI-Lite, with an interrupt:
+#   bazel run //lib/examples:ex_gpio
+rust_binary(
+    name = "ex_gpio",
+    srcs = ["ex_gpio.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A unit's ports as named structs, an interface role among them:
 #   bazel run //lib/examples:ex_ports
 rust_binary(
@@ -566,6 +579,7 @@ filegroup(
         "ex_blackbox.rs",
         "blinker.v",
         "blinker.vhd",
+        "ex_gpio.rs",
         "ex_ports.rs",
         "ex_axi.rs",
         "ex_axi_serve.rs",

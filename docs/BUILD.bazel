@@ -1111,6 +1111,24 @@ waveform(
     until = 54,
 )
 
+# Pins behind AXI-Lite: the direction set, a pin read through its
+# synchroniser, and an edge raising the interrupt and being cleared.
+waveform(
+    name = "gpio",
+    example = "//lib/examples:ex_gpio",
+    lowered = ("gpio", "gpio"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//pins=>pins",
+        "//drive=>drive",
+        "//dirs=>dirs",
+        "//gpio/sync1=>sync1",
+        "//gpio/status=>status",
+        "//irq=>irq",
+    ],
+    until = 200,
+)
+
 waveform(
     name = "ports",
     example = "//lib/examples:ex_ports",
