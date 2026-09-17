@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The reference: RV32IM as a program, one `step` per instruction,
+//! The reference: RV32IMC as a program, one `step` per instruction,
 //! written against the decoder and nothing else. The core is checked
 //! against it, in lockstep, every cycle.
 use crate::isa::{
-    decode, Kind, CAUSE_ECALL, CAUSE_ILLEGAL, CAUSE_MEXT, CAUSE_MTIMER,
-    CSR_MCAUSE, CSR_MEPC, CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS,
-    CSR_MTVAL, CSR_MTVEC, MEXT, MTIMER, TIMER_BASE, UART_BASE,
+    compressed, decode, is_compressed, Kind, CAUSE_ECALL, CAUSE_ILLEGAL,
+    CAUSE_MEXT, CAUSE_MTIMER, CSR_MCAUSE, CSR_MEPC, CSR_MIE, CSR_MIP,
+    CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT, MTIMER, TIMER_BASE,
+    UART_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -75,6 +76,27 @@ impl Default for Model {
 
 const MIE: u32 = 1 << 3;
 const MPIE: u32 = 1 << 7;
+
+/// The instruction at `pc` in the instruction memory, as thirty-two
+/// bits, and its length in bytes; `None` past the memory's end. The
+/// words are little-endian, so a halfword at an address with bit 1 set
+/// is the upper half of its word, and a thirty-two bit instruction
+/// there takes its upper half from the next word. A compressed
+/// instruction reads as the one it stands for, and a halfword that is
+/// none as itself, which decodes as illegal and is the trap value an
+/// illegal instruction leaves.
+pub fn fetch(imem: &[u32], pc: u32) -> Option<(u32, u32)> {
+    let half = |at: u32| {
+        imem.get((at / 4) as usize)
+            .map(|w| (w >> (8 * (at & 2))) as u16)
+    };
+    let lo = half(pc)?;
+    if is_compressed(lo) {
+        return Some((compressed(lo).unwrap_or(lo as u32), 2));
+    }
+    let hi = half(pc.wrapping_add(2))?;
+    Some(((hi as u32) << 16 | lo as u32, 4))
+}
 
 impl Model {
     /// A word of data memory by byte address, or, above it, the word
@@ -196,7 +218,7 @@ impl Model {
         if self.halted.is_some() {
             return;
         }
-        let Some(&w) = imem.get((self.pc / 4) as usize) else {
+        let Some((w, len)) = fetch(imem, self.pc) else {
             self.halted = Some(Halt::Fault(self.pc));
             return;
         };
@@ -210,7 +232,7 @@ impl Model {
         let imm = d.imm as u32;
         let sh = (b & 31) as u32;
         let shi = (imm & 31) as u32;
-        let mut next = self.pc.wrapping_add(4);
+        let mut next = self.pc.wrapping_add(len);
         let mut rd: Option<u32> = None;
         use Kind::*;
         match d.kind {
@@ -360,5 +382,41 @@ impl Model {
             }
         }
         self.pc = next;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::isa::{addi, c_addi, c_jal, c_jr, c_nop, ebreak, lui};
+
+    /// A program of both widths: a compressed instruction, a thirty-two
+    /// bit one that starts in the upper half of the first word and ends
+    /// in the second, a compressed call whose link is two bytes on, and
+    /// a compressed return to that link.
+    #[test]
+    fn half_words() {
+        let lui5 = lui(5, 0x12345);
+        let imem = [
+            (lui5 & 0xffff) << 16 | c_addi(1, 7) as u32, // 0, 2
+            (c_jal(10) as u32) << 16 | lui5 >> 16,       // 6: to 16
+            addi(6, 0, 1),                               // 8
+            ebreak(),                                    // 12
+            (c_nop() as u32) << 16 | c_jr(1) as u32,     // 16: to 8
+        ];
+        assert_eq!(fetch(&imem, 0), Some((addi(1, 1, 7), 2)));
+        assert_eq!(fetch(&imem, 2), Some((lui5, 4)), "across two words");
+        assert_eq!(fetch(&imem, 20), None, "past the end");
+        let mut m = Model::default();
+        let mut pcs = vec![];
+        while m.halted.is_none() {
+            pcs.push(m.pc);
+            m.step(&imem, None);
+        }
+        assert_eq!(pcs, [0, 2, 6, 16, 8, 12]);
+        assert_eq!(m.halted, Some(Halt::Break));
+        assert_eq!(m.x[1], 8, "the link is the address after c.jal");
+        assert_eq!(m.x[5], 0x1234_5000);
+        assert_eq!(m.x[6], 1);
     }
 }
