@@ -74,6 +74,11 @@ and \code{AxiPer<16, 32, 4, 2>} with a client on each end:
 \item \code{a\_transaction\_is\_answered\_by\_another\_process};
 \item \code{every\_burst\_is\_answered\_and\_reads\_agree\_with\_writes}.
 \end{itemize}
+\item \code{bus::axi::fuzz} runs the two trackers with a relay that
+stalls at random in every channel and a seeded client and peripheral
+on the ends, and checks every burst answered once, reads against
+writes, \code{last} on the final beat, and no deadlock, on 24 seeds;
+\code{//lib/parts:axi\_fuzz\_test}, manual, runs more.
 \item The tests of \code{bus::axi::sim} put the two trackers in front
 of the simulated RAM:
 \begin{itemize}

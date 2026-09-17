@@ -64,9 +64,10 @@ issue's.
 \item In that cycle \code{grant} sends the identifier, \code{turn}
 moves on by one, and the identifier's bit of \code{busy} is set. At
 most one burst goes out per cycle.
-\item The identifiers go round robin. A burst waits for its own turn's
-identifier to be free, and for nothing else. Another free identifier
-does not let it go.
+\item In a cycle in which the identifier \code{turn} names is
+outstanding, \code{turn} moves on by one as well. So the identifiers
+go round, and a burst waits only while every identifier is
+outstanding; it finds a free one within \code{NIDS} cycles.
 \item \code{release} is taken whenever it offers, and it clears the
 bit of the identifier it names. An identifier is therefore outstanding
 from its address phase until the client has taken its answer.
@@ -94,6 +95,14 @@ client on the two ends:
 which issues 24 bursts of one to four words to a peripheral that
 \code{serve} runs with four slots.
 \end{itemize}
+\item \code{bus::axi::fuzz} runs the two trackers with a relay that
+stalls at random in every channel, a seeded client that holds up to
+four bursts of one to sixteen beats and awaits them in its own order,
+and a seeded peripheral that answers out of order and with errors. It
+checks that every burst is answered once, that reads read the writes,
+that \code{last} falls on the final beat, that no identifier is handed
+out while its answer stands uncollected, and that no run deadlocks, on
+24 seeds; \code{//lib/parts:axi\_fuzz\_test}, manual, runs more.
 \item The tests of \code{bus::axi::sim} put the same two trackers in
 front of the simulated RAM:
 \begin{itemize}

@@ -264,8 +264,9 @@ its ports. \code{bazel test //...} runs a hundred and eight targets, of
 which ninety-four are netlists under both simulators; the rest are the
 core's model and
 programs, the board's own run, Razboj, the parts, the SoC's run, and
-the tools. Two more are tagged manual because they want Vivado: the
-board and its DDR3 under its simulator. Every claim about what
+the tools. Three more are tagged manual: the board and its DDR3 under
+Vivado's simulator, and the AXI link's fuzzing over many seeds, which
+the nightly run does. Every claim about what
 Rust accepts was compiled first, as a probe kept in the tree,
 including the ones whose answer was no.
 
@@ -275,8 +276,7 @@ The lowering names a wire as its \code{let} is written, so a
 \code{let} Rust accepts can still be refused, or renamed, on its way
 to the netlist. The core cannot load a program it
 was not built with, because its instruction memory is not on the bus.
-Razboj has no depth buffer, no interpolation and no texture, and
-fuzzing the AXI link is not yet a step of the build. Each is an issue
+Razboj has no depth buffer, no interpolation and no texture. Each is an issue
 on the repository rather than a paragraph here.
 
 \end{document}

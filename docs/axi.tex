@@ -31,6 +31,12 @@ linerange=#1-#1,caption={#2},label={#3}]{lite_bridge2.rs}}
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/bus/wb/sim.rs}}
 
+% A range of the fuzzing of the link, by its begin/end markers.
+\newcommand{\fuzzpart}[3]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/bus/axi/fuzz.rs}}
+
 % A range of the library's source, by its begin/end markers.
 \newcommand{\axipart}[3]{%
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
@@ -238,9 +244,14 @@ burst's answer. That is one cycle later than freeing it on the
 response would be, and it is the difference between correct and
 almost correct: an identifier freed on its response could be handed
 out again while the answer to the burst before still stood
-uncollected, and the two answers would be gathered into one. A burst
-whose turn falls on an identifier still outstanding waits, which is
-the backpressure that bounds how many transactions are in flight.
+uncollected, and the two answers would be gathered into one. The
+identifiers go round, one per burst, and when the one whose turn it
+is is still outstanding the turn moves on to the next, so a burst
+waits only while every identifier is out: that is the backpressure
+that bounds how many transactions are in flight. It used to wait for
+the identifier in turn alone, and a client holding that one answer
+and issuing another burst waited for ever, with another identifier
+free; Section~\ref{sec:a-fuzz} is how that was found.
 
 \code{AxiPer} merges the two address channels into one stream of
 requests, hands the write beats to the client, and turns the
@@ -447,6 +458,57 @@ netlist then does not analyse; the register here is called
 \code{turn} for that reason. The lowering does not escape the
 reserved words of its targets, and it refuses such a name at the
 field that declares it.
+
+\section{Fuzzing the Link}
+\label{sec:a-fuzz}
+
+The tests so far each check one promise on a run chosen to show it.
+\code{bus::axi::fuzz} checks all of them at once, on runs nobody chose.
+A seeded client issues bursts of one to sixteen beats, reads and
+writes mixed, at pseudorandom addresses, holds up to four in flight,
+and awaits them in an order of its own. A seeded peripheral serves
+four at a time, each after a delay of its own, and answers one region
+of the address space with \code{SlvErr}. In every one of the fifteen
+channels, the five AXI channels and the ten between each tracker and
+its client, is a relay that stalls at random, a quarter of the cycles
+for one cycle and now and then for eight to forty-seven.
+
+\fuzzpart{relay}{A relay, from
+\code{lib/parts/src/bus/axi/fuzz.rs}.}{lst:a-relay}
+
+What is checked is what AXI promises. Every burst is answered exactly
+once. A read reads what the last write to its addresses left, which
+the client knows because it never issues a burst over the addresses of
+one in flight. An identifier is never handed out while an answer stands
+uncollected against it. Every run finishes within a bound, so nothing
+deadlocks. And \code{last} falls on a burst's final beat and nowhere
+else, which a monitor beside the relays of the AXI channels checks on
+the wire.
+
+\fuzzpart{monitor}{The monitor of the AXI channels.}{lst:a-monitor}
+
+A fuzzer that passes because nothing difficult happened proves
+nothing, so the test also asserts, across its seeds, that answers were
+awaited and answered out of order, that identifiers came round again
+while other answers stood uncollected, that errors and bursts of
+sixteen beats occurred, and that on every channel a transaction was
+held at a stalled relay for eight cycles or more. \code{bazel test
+//...} runs 24 seeds inside \code{//lib/parts:parts\_test};
+\code{//lib/parts:axi\_fuzz\_test}, which is manual, runs the fuzzing
+alone, and the nightly workflow runs it over 1024 seeds through
+\code{AXI\_FUZZ\_SEEDS}. A second test answers a read of four beats
+with three and checks that the peripheral end refuses the answer
+where it is made rather than leaving the client to wait.
+
+Its first seed found two defects, and each is fixed and filed. The
+peripheral end's answers go out through one port that every process
+serving it shares, and two processes that sent on it in the same
+step sent one beat, the other lost (\#182); the port now takes one send
+a channel a step, and a second sender waits a cycle. And the host
+tracker waited for the identifier in turn even when another was free
+(\#184), which deadlocked a client holding that answer; the turn now
+moves on. A mutation that marks the wrong read beat as the last is
+caught on the first read it touches.
 
 \section{The Router}
 \label{sec:a-routing}
