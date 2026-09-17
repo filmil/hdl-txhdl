@@ -1699,6 +1699,8 @@ latex_document(
         ":axi_router_timing",
         ":axi_wb_run",
         ":axi_wb_timing",
+        ":axi_reg_run",
+        ":axi_reg_timing",
         ":router_source",
         ":axi_lite_run",
         ":axi_lite_timing",

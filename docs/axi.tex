@@ -292,6 +292,72 @@ first client of this link that is hardware. Nothing about the link
 changes between the two: the same two trackers, the same five AXI
 channels, the same identifiers.
 
+\section{The Simplest Peripheral}
+\label{sec:a-simplest}
+
+The smallest peripheral worth putting on a link is one register of
+one word. \code{ex\_axi\_reg} writes it as a peripheral client that is
+hardware. It holds the four channel ends of \code{PerClient}: the
+requests and the write beats it reads, and the answers and the read
+beats it drives. Listing~\ref{lst:a-reg} is the whole of it, and
+Listing~\ref{lst:a-reg-ex} is the run that drives it.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=register-register,caption={\code{Register}, the simplest
+peripheral.},label={lst:a-reg}]{lib/examples/ex_axi_reg.rs}
+
+Every cycle it looks at the request at the head of its channel. It
+takes a read when there is room for the read's beat, and sends that
+beat in the same cycle: the word, the request's identifier, and
+\code{last}, since the burst is one beat long. It takes a write when
+the write's beat has come too and there is room for the response.
+The word is written, and the response goes out in the same cycle.
+Because it takes a write's request and beat together, it needs no
+register to hold a write while the beat is on its way, and the word
+is its only state.
+
+What it leaves out is what makes it the simplest. It serves one-beat
+bursts of whole words, and looks at nothing else. There is no
+address, because a router has already decided the burst is this
+peripheral's. There is no length, so a longer burst is not served
+correctly and must not be sent to it. There is no strobe, so every
+write replaces the whole word. The timer of the Vreteno
+core~\cite{vreteno} has the same shape, with four words and the
+strobes. The framebuffer of the GPU~\cite{gpu} is the same idea with a
+whole memory and bursts.
+
+The run drives it from a host end made by \code{axi\_to\_unit}, the
+link whose host is a testbench and whose peripheral is a unit. The
+client writes two words and reads each back, and prints the time step
+of each answer, two steps to a cycle.
+
+\begin{figure}[htbp]
+\centering
+\input{axi_reg_timing.tex}
+\caption{The first write and its read. The write's request waits on
+\code{req} until its beat comes on \code{wd}. A cycle later both are
+taken, \code{word} changes, and the response goes out on \code{ans}.
+The read is answered on \code{rb} a cycle after its request
+comes.}
+\label{fig:a-reg}
+\end{figure}
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=main-main,caption={The run, the rest of
+\code{lib/examples/ex\_axi\_reg.rs}. Run it with
+\code{bazel run //lib/examples:ex\_axi\_reg}.},%
+label={lst:a-reg-ex}]{lib/examples/ex_axi_reg.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_axi\_reg}
+printed when the build ran it: each answer and its time step, and
+the register's netlist.},label={lst:a-reg-out}]{out_axi_reg.txt}
+
+The netlist is one 32-bit register, and every other line in it is
+combinational. The build simulates it against this run under
+\code{nvc} and under Verilator at its ports.
+
 \section{Peripherals That Only Simulate}
 \label{sec:a-sim}
 
