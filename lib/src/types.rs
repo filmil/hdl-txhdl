@@ -177,15 +177,31 @@ impl Logic {
     }
 }
 
-/// An N-bit unsigned value.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+/// The widest `U<N>` or `I<N>`: each keeps its bits in one Rust
+/// integer of this many. A wider one fails to compile, where its width
+/// is first read, rather than dropping the bits above; wider values are
+/// issue #119.
+pub const MAX_WIDTH: usize = 128;
+
+/// An N-bit unsigned value, `N` at most [`MAX_WIDTH`].
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct U<const N: usize>(u128);
+
+impl<const N: usize> Default for U<N> {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
 
 impl<const N: usize> U<N> {
     /// The width in bits, which is `N`. A derive reads it to lay a
-    /// compound value out, so every value type has one.
-    pub const WIDTH: usize = N;
-    const MASK: u128 = if N >= 128 {
+    /// compound value out, so every value type has one, and reading it
+    /// is where a width over [`MAX_WIDTH`] stops the build.
+    pub const WIDTH: usize = {
+        assert!(N <= MAX_WIDTH, "a U<N> is at most 128 bits wide");
+        N
+    };
+    const MASK: u128 = if Self::WIDTH == MAX_WIDTH {
         u128::MAX
     } else {
         (1u128 << N) - 1
@@ -380,19 +396,29 @@ impl<const N: usize> U<N> {
     }
 }
 
-/// An N-bit signed value, two's complement.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+/// An N-bit signed value, two's complement, `N` at most
+/// [`MAX_WIDTH`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct I<const N: usize>(i128);
 
+impl<const N: usize> Default for I<N> {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
 impl<const N: usize> I<N> {
-    /// The width in bits, which is `N`.
-    pub const WIDTH: usize = N;
+    /// The width in bits, which is `N`, checked as `U`'s is.
+    pub const WIDTH: usize = {
+        assert!(N <= MAX_WIDTH, "an I<N> is at most 128 bits wide");
+        N
+    };
 
     /// A value from a number, sign extended into `N` bits: what does
     /// not fit is dropped and the top bit of what remains becomes the
     /// sign, which is what a register of `N` bits holds.
     pub fn new(v: i128) -> Self {
-        let shift = 128 - N;
+        let shift = MAX_WIDTH - Self::WIDTH;
         I((v << shift) >> shift)
     }
     /// The value as a plain signed integer.
@@ -554,13 +580,13 @@ impl Value for Logic {
     }
 }
 impl<const N: usize> Value for U<N> {
-    const WIDTH: usize = N;
+    const WIDTH: usize = U::<N>::WIDTH;
     fn vcd(self) -> String {
         format!("{:0width$b}", self.0, width = N)
     }
 }
 impl<const N: usize> Value for I<N> {
-    const WIDTH: usize = N;
+    const WIDTH: usize = I::<N>::WIDTH;
     fn vcd(self) -> String {
         let mask = if N >= 128 {
             u128::MAX
