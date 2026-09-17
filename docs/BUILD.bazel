@@ -641,6 +641,8 @@ latex_document(
         ":blackbox_timing",
         ":gpio_run",
         ":gpio_timing",
+        ":spi_run",
+        ":spi_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),

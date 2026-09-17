@@ -1,0 +1,76 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An SPI Master, and a Chip to Talk To}
+\label{sec:x-spi}
+
+SPI is four wires and no protocol. A select says which chip is
+listening, a clock says when a bit is worth looking at, and the two
+data wires carry a bit each way on every one of those clocks. What
+the bytes mean is between the two ends.
+
+\code{Spi} is three registers. The first holds the divider, the two
+mode bits and the chip select; the second is written with the byte to
+send and read for the byte that came back; the third says whether a
+transfer is running and whether one has finished.
+
+The select is a bit a program sets and clears, rather than something a
+transfer does for itself. That is not laziness. Every SPI command is
+several bytes under one unbroken select: the read in this example is a
+command byte, three of address, one that is thrown away, and then as
+many as are wanted. A master that dropped the select between bytes
+would start a new command each time and read nothing.
+
+The second register is the one that surprises people, and it is worth
+saying why it is one register and not two. SPI has no direction. The
+eight clocks that send a byte are the eight that receive one, so
+every transfer is a swap: a driver writes a byte it may not care about
+in order to clock in a byte it does. Reading this flash means sending
+five bytes of command and then sending four more zeroes to get four
+bytes back.
+
+\subsection{The Two Mode Bits, and the One Place They Are Not Symmetric}
+
+\code{cpol} is the level the clock idles at. \code{cpha} says which of
+a bit's two edges carries it: with \code{cpha} clear the master takes
+the bit on the leading edge and moves its own data on the trailing
+one, and with \code{cpha} set it does the reverse.
+
+Written that way the two look symmetric, and the implementation is
+almost symmetric, but not quite. With \code{cpha} set the first bit
+has to be on the wire \emph{before} the first leading edge, and that
+leading edge must not move it, or the last bit of the byte never gets
+sent. The run counts half edges rather than bits, which makes the
+exception a single condition: it is the one leading edge that does not
+shift, the one at count zero.
+
+\subsection{What Checks It}
+
+A model of a flash chip, \code{FlashDevice}, on the other end of the
+wires, stepped between cycles from the loop as the I2C device of
+\code{//docs:hdmi} is. It answers the two commands a bootloader needs:
+\code{0x9f}, which says who the chip is, and \code{0x0b}, a fast read.
+It is a model and not a part. It holds a \code{Vec} and nothing lowers
+it, and its place is a testbench.
+
+It is also the thing that caught the first version of this example.
+The identify command came back as \code{de 80 30} against the
+\code{ef 40 18} that was asked for, every byte shifted up by one bit,
+because the model moved its output on the edge after the one the
+master read it on and so lost the top bit of every byte. A slave
+presents a bit and moves it only once the master has taken it. Two
+shift registers turning on the same clock have to agree about which
+edge does which, and the failure when they do not is not an error
+anywhere: it is a plausible number that is wrong.
+
+\begin{figure}[htbp]
+\centering
+\input{spi_timing.tex}
+\caption{A window on the identify command: the select held low, the
+clock running at a half bit of two cycles, the byte going out on
+\code{mosi} and the chip's answer arriving on \code{miso}, a bit per
+leading edge.}
+\label{fig:x-spi}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_spi.rs}. Run with \code{bazel run //lib/examples:ex\_spi}.},label={lst:x-spi}]{lib/examples/ex_spi.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_spi} printed when the build ran it: the chip's identity, the four bytes read from an address, and then the master's Verilog.},label={lst:x-spi-out}]{out_spi.txt}
