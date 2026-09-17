@@ -279,15 +279,18 @@ small enough to print.},label={lst:g-out}]{out_razboj.txt}
 Three names had to be changed to lower. A register called \code{next}
 gives VHDL a signal called \code{next}, which it reserves; a register
 called \code{tri} and a wire called \code{inside} give Verilog two of
-its own reserved words. The lowering emits a name as it is written
-and neither escapes nor rejects the reserved words of its targets, so
-the failure is an analysis error in a generated file rather than an
-error at the point the name was chosen. The registers here are
-therefore \code{edged} and the wire is \code{hit}.
+its own reserved words. The lowering emits a name as it is written,
+and it did not then reject the reserved words of its targets, so the
+failure was an analysis error in a generated file rather than an error
+at the point the name was chosen. It now refuses such a name where the
+name is declared. The registers here are \code{edged} and the wire is
+\code{hit}.
 
 A fourth mistake is worth stating because the lowering did not catch
-it either: a \code{let} that takes the name of a register produces
-two declarations of one signal. The locals in the rasteriser are
+it either: a \code{let} that computes, and takes the name of a
+register, produces two declarations of one signal. That is now refused
+too, at the \code{let}, once the unit's \code{lowered} is compiled.
+The locals in the rasteriser are
 \code{px}, \code{py} and \code{held} for that reason, where \code{x},
 \code{y} and \code{waiting} would read better.
 

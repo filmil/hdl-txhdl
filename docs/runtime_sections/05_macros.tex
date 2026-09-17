@@ -74,6 +74,20 @@ order. Before the body is read, \code{port\_fields} rewrites every
 lowering sees the names it sees for a tuple. A type that is neither a
 port nor a struct of the file is refused by name, and so is a port
 name that two sides both give.
+A name the netlist would hold as written is checked where it is
+chosen, since a name that fails there fails as an analysis error in a
+generated file. The \code{Trace} derive refuses a field, and
+\code{\#[lower]} a port or a computed \code{let}, whose name VHDL or
+SystemVerilog reserves: \code{next}, \code{out} and \code{inside}
+among them, VHDL's without regard to case. A computed \code{let} or a
+port whose netlist name is also a field's would be declared twice.
+\code{\#[lower]} does not see the struct, so for each such name it
+writes a constant, placed at the name, that tests the name against the
+\code{NAMES} the derive gives \code{Fields} and fails to compile if it
+is there; \code{lowered} uses every one. For a generic unit that
+constant is evaluated only for a type that is lowered. A computed
+\code{let} with a port's name is still renamed, with \code{\_w}, and a
+name bound twice is numbered.
 \code{station!(Name, N)} writes a reservation
 station of \code{N} inputs as text, a line struct, the station's
 struct and its lowered \code{run}, every wire of the step named for
