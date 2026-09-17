@@ -197,7 +197,7 @@ does not arise: Rust's constructs are already there.
 ## 7. What the probes established
 
 Run them with `bazel build //experiments/rust_embedding/...`.
-Two are tagged `manual` because they are expected to fail.
+Those expected to fail are tagged `manual`.
 
 | Probe | Question | Answer |
 |---|---|---|
@@ -217,6 +217,10 @@ Two are tagged `manual` because they are expected to fail.
 | `probe_infer_lower` | A width Rust would infer, under `#[lower]`? | **Refused:** `` `slice::<..>` needs its width written: the lowering sees no types``; `concat`'s low operand is the one width it does not need |
 | `probe_wide` | Is a `U<200>`, wider than the `u128` it is kept in, refused? | **Yes**: `error[E0080]: evaluation panicked: a U<N> is at most 128 bits wide`, where such a value is made, or a struct holding one is laid out |
 | `probe_macro_in_macro` | Does `#[lower]` written by a macro's output expand, and does a port's field, `p.tag`, lower? | **Yes** to both: the unit lowers, and the field is the slice of the port's data the value's layout gives it |
+| `probe_reserved_field` | Is a field named for a target's reserved word, a register called `next`, refused? | **Yes**, at the field: ``error: field `next` is a reserved word of VHDL: the netlist names it as written and would not analyse, so rename it (see issue 77)`` |
+| `probe_reserved_let` | Are a port called `out` and a computed `let inside` refused? | **Yes**, each where it is named: ``port `out` is a reserved word of VHDL`` and ``the `let` `inside` is a reserved word of Verilog`` |
+| `probe_shadow` | Is a computed `let` with a register's name refused? | **Yes**, at the `let`: ``error[E0080]: evaluation panicked: `let pend` is the wire `pend` of the netlist, and the unit has a field `pend`: the netlist would declare `pend` twice, so rename one (see issue 77)`` |
+| `probe_shadow_generic` | Is it refused in a generic unit? | **Only once a type is lowered.** The check is a constant `lowered` uses, so the file builds until `Latch::<1>::verilog` is called; issue 171 |
 
 Three of these change the design.
 
