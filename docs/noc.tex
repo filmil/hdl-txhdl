@@ -266,9 +266,9 @@ that puts two hosts on one memory.
 \section{What Is Checked}
 \label{sec:n-tests}
 
-Two tests, both driving the whole of it: four nodes, both bridges,
-both trackers and a memory, with a host client at one end that issues
-and awaits as it would on a link.
+Three tests, all driving the whole of it: four nodes, both bridges,
+both trackers and memory, with a host client that issues and awaits
+as it would on a link.
 
 The first sends a burst from one corner of a two by two lattice to the
 far one, so that it crosses in X and then in Y, and reads back what it
@@ -277,6 +277,17 @@ third, each host writing its own word and reading it back. Nothing
 keeps a table of who asked, so the second test is the source stamp and
 the renaming being right or the test failing, and before the renaming
 was written it did fail.
+
+The third puts four peripherals behind one node. An exit holds one
+bridge, and the bridge's other side is five ordinary AXI channels, so
+a router of four goes there, with a memory in each of its ranges. Two
+hosts write a word into every peripheral, read each back, and read an
+address that the network sends to that node but that no peripheral
+has. Each word has to be in its own memory and in no other, and the
+router has to answer the missing address with \code{DecErr} itself.
+A peripheral behind the router needs nothing of the network: the
+router does not know a bridge is in front of it, and the bridge does
+not know a router is behind it.
 
 
 \section{Four Corners}
