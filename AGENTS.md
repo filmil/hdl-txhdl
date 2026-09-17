@@ -67,10 +67,12 @@ all under `//docs`:
   `bus::wb`: the client verbs, accepting many transactions and
   answering them as the work finishes, the two trackers and their
   netlists, the router, one host to several peripherals, AXI-Lite with
-  the bridge from an AXI4 link to several AXI-Lite peripherals, and the
-  bridge that reaches a Wishbone peripheral.
-  Its five examples, `ex_axi`, `ex_axi_serve`, `ex_axi_router`,
-  `ex_axi_lite` and `ex_axi_wb`, are documented there and not in
+  the bridge from an AXI4 link to several AXI-Lite peripherals, the
+  bridge that reaches a Wishbone peripheral, and the simplest
+  peripheral, one register written as hardware.
+  Its six examples, `ex_axi`, `ex_axi_serve`, `ex_axi_reg`,
+  `ex_axi_router`, `ex_axi_lite` and `ex_axi_wb`, are documented there
+  and not in
   `//docs:examples`,
   because a bus is a subsystem rather than one more construct.
 * `//docs:gpu` is the minimal GPU under `//gpu`: a rasteriser that
