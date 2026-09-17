@@ -608,6 +608,86 @@ pub fn compressed(h: u16) -> Option<u32> {
     })
 }
 
+/// The compressed spelling of a thirty-two bit instruction, if it has
+/// one: what an assembler does when it is allowed to. Where two
+/// spellings fit, the one the list below reaches first is taken; each
+/// expands back to `w`.
+pub fn compress(w: u32) -> Option<u16> {
+    let d = decode(w);
+    let (rd, rs1, rs2, imm) = (d.rd, d.rs1, d.rs2, d.imm);
+    let short = |r: u32| (8..16).contains(&r);
+    let six = |v: i32| (-32..32).contains(&v);
+    use Kind::*;
+    Some(match d.kind {
+        Addi if rd == 0 && rs1 == 0 && imm == 0 => c_nop(),
+        Addi if rd == rs1 && rd != 0 && imm != 0 && six(imm) => c_addi(rd, imm),
+        Addi if rs1 == 0 && rd != 0 && six(imm) => c_li(rd, imm),
+        Addi if rd == 2 && rs1 == 2 && imm != 0 && imm % 16 == 0 => {
+            if !(-512..512).contains(&imm) {
+                return None;
+            }
+            c_addi16sp(imm)
+        }
+        Addi if rs1 == 2
+            && short(rd)
+            && imm > 0
+            && imm < 1024
+            && imm % 4 == 0 =>
+        {
+            c_addi4spn(rd, imm as u32)
+        }
+        Lui if rd != 0 && rd != 2 && imm != 0 && six(imm >> 12) => {
+            c_lui(rd, imm >> 12)
+        }
+        Slli if rd == rs1 && rd != 0 => c_slli(rd, imm as u32),
+        Srli if rd == rs1 && short(rd) => c_srli(rd, imm as u32),
+        Srai if rd == rs1 && short(rd) => c_srai(rd, imm as u32),
+        Andi if rd == rs1 && short(rd) && six(imm) => c_andi(rd, imm),
+        Sub if rd == rs1 && short(rd) && short(rs2) => c_sub(rd, rs2),
+        Xor if rd == rs1 && short(rd) && short(rs2) => c_xor(rd, rs2),
+        Or if rd == rs1 && short(rd) && short(rs2) => c_or(rd, rs2),
+        And if rd == rs1 && short(rd) && short(rs2) => c_and(rd, rs2),
+        Add if rd == rs1 && rd != 0 && rs2 != 0 => c_add(rd, rs2),
+        Add if rs1 == 0 && rd != 0 && rs2 != 0 => c_mv(rd, rs2),
+        Jal if rd == 0 && (-2048..2048).contains(&imm) => c_j(imm),
+        Jal if rd == 1 && (-2048..2048).contains(&imm) => c_jal(imm),
+        Jalr if imm == 0 && rs1 != 0 && rd == 0 => c_jr(rs1),
+        Jalr if imm == 0 && rs1 != 0 && rd == 1 => c_jalr(rs1),
+        Beq if rs2 == 0 && short(rs1) && (-256..256).contains(&imm) => {
+            c_beqz(rs1, imm)
+        }
+        Bne if rs2 == 0 && short(rs1) && (-256..256).contains(&imm) => {
+            c_bnez(rs1, imm)
+        }
+        Lw if rs1 == 2
+            && rd != 0
+            && (0..256).contains(&imm)
+            && imm % 4 == 0 =>
+        {
+            c_lwsp(rd, imm as u32)
+        }
+        Lw if short(rs1)
+            && short(rd)
+            && (0..128).contains(&imm)
+            && imm % 4 == 0 =>
+        {
+            c_lw(rd, rs1, imm as u32)
+        }
+        Sw if rs1 == 2 && (0..256).contains(&imm) && imm % 4 == 0 => {
+            c_swsp(rs2, imm as u32)
+        }
+        Sw if short(rs1)
+            && short(rs2)
+            && (0..128).contains(&imm)
+            && imm % 4 == 0 =>
+        {
+            c_sw(rs2, rs1, imm as u32)
+        }
+        Ebreak => c_ebreak(),
+        _ => return None,
+    })
+}
+
 /// The fields of a word, by the format its opcode names.
 pub fn decode(w: u32) -> Decoded {
     let op = w & 0x7f;
@@ -862,5 +942,33 @@ mod tests {
         for h in [0x0000, 0x8002, 0x4002, 0x6081, 0x6101, 0x1082, 0x9c01] {
             assert_eq!(compressed(h), None, "{h:#06x} should be reserved");
         }
+    }
+
+    /// Compressing an instruction and expanding it again gives the
+    /// instruction back, for every instruction a compressed halfword
+    /// stands for; and every one of those but the hints, the ones that
+    /// write x0 and the additions of zero, finds a compressed spelling.
+    #[test]
+    fn compress_inverts_compressed() {
+        let mut found = 0;
+        let mut spelt = 0;
+        for h in (0u32..0x10000).filter(|h| h & 3 != 3) {
+            let Some(w) = compressed(h as u16) else {
+                continue;
+            };
+            found += 1;
+            if let Some(h2) = compress(w) {
+                spelt += 1;
+                assert_eq!(compressed(h2), Some(w), "{h:#06x} and {h2:#06x}");
+            } else {
+                let d = decode(w);
+                assert!(
+                    d.rd == 0 || (d.kind == Kind::Addi && d.imm == 0),
+                    "{h:#06x}: {} has no compressed spelling",
+                    disasm(w)
+                );
+            }
+        }
+        assert!(spelt > found * 9 / 10, "{spelt} of {found}");
     }
 }
