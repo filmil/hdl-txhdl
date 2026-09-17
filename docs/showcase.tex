@@ -23,7 +23,7 @@ reached at linkedin.com/in/dragisa-jankovic.}%
 \thanks{Two pages on the whole of it, for a reader deciding whether
 to read the rest. Every claim here is a target in the project
 repository \code{HDL/txhdl} that the build runs; the cover document,
-\code{//docs:cover}, names the fourteen documents that say more.}%
+\code{//docs:cover}, names the twenty documents that say more.}%
 \thanks{The authors used a large language model, Claude, as an
 assistant in exploring the concepts and in writing and constructing
 the documents and the programs; every commit of the repository says
@@ -64,7 +64,10 @@ label={lst:w-unit}]{lib/examples/ex_cheat.rs}
 
 Table~\ref{tab:w-units} lists every unit the build lowers to Verilog
 and VHDL. Table~\ref{tab:w-systems} lists the systems it assembles
-from them.
+from them. Together they are 29\,382 lines of Rust: 9\,982 of runtime
+and macros, 6\,683 of parts, 5\,535 in forty-nine examples, 4\,714 of
+Vreteno with its board, and 2\,468 of the GPU, DDR3, Ethernet, HDMI
+and the SoC.
 
 \begin{table}[htbp]
 \caption{Every lowered unit, and which netlists are simulated.}
@@ -80,8 +83,12 @@ Stations of 2 to 10 inputs & parts & 2 and 3 \\
 AXI routers, 2 to 8 peripherals & parts & 3 \\
 AXI host and peripheral trackers & parts & both \\
 AXI-Lite bridges, 1 to 8 peripherals & parts & 1 and 2 \\
+AXI to Wishbone bridge & parts & yes \\
 Network node, switch, 2 bridges & parts & not yet \\
+Ethernet: transmit, receive, peripheral & parts & all three \\
+HDMI video; the I2C that sets it up & parts & both \\
 Vreteno; memory, timer, serial port & \code{cpu} & all four \\
+The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
 The examples' own units & examples & all 21 \\
 \bottomrule
@@ -104,7 +111,10 @@ The AXI-Lite bridge & 1 host, 2 banks & 3 netlists \\
 A lattice & 4 nodes, both bridges, RAM & 2 tests \\
 The SoC & core, GPU, RAM, serial & its run \\
 Composition & station, stream ALU & its netlist \\
-On a board & Vreteno, by Vivado & by hand \\
+The board & core, 4 devices, DDR3 & 2 runs, Vivado \\
+Ethernet & the MAC, the board's PHY & on the board \\
+Video & HDMI, its I2C, the board & on the board \\
+On silicon & Vreteno, Yosys, OpenROAD & routed, no DRC \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -129,7 +139,10 @@ library, through Yosys and OpenROAD, both fetched by checksum: a die
 \code{//docs:tapeout} says what a tapeout would still want.
 
 Its bus is AXI4, and every device behind it is an AXI peripheral,
-with the router deciding by address which one a burst reaches.
+with the router deciding by address which one a burst reaches. On the
+board that includes a gigabyte of DDR3, through a controller brought
+in as a foreign module: the first thing here the language wires
+rather than writes.
 
 \section{The AXI Link}
 
@@ -197,6 +210,11 @@ primitive the compiler knows and the user cannot read. A reservation station gat
 of an operation that arrive on separate channels, out of order, and
 fires when the last of them has.
 
+It has grown outwards from the bus since: an Ethernet MAC, an HDMI
+video peripheral with the I2C that configures the transmitter, and a
+bridge from AXI to Wishbone, which is what lets a controller written
+elsewhere be a peripheral here.
+
 \begin{figure}[htbp]
 \centering
 \input{paper_cheat_timing.tex}
@@ -228,6 +246,7 @@ Rust, for the host and for the core & 1.90.0, nightly \\
 GNU C and C++, for the core & 14.2.0 \\
 \code{nvc} and Verilator, to simulate & from source \\
 Vivado, Artix-7, to synthesise & 2025.2 \\
+Yosys and OpenROAD, to lay out & pinned packages \\
 TinyTeX, for the documents & pinned \\
 Go, for the serial watcher & 1.25.1 \\
 Two waveform converters, for figures & pinned \\
@@ -241,52 +260,22 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs the eighty-two targets of
-Table~\ref{tab:w-tests}. Every claim about what Rust accepts was
-compiled first, as a probe kept in the tree, including the ones whose
-answer was no.
-
-\begin{table}[htbp]
-\caption{The test targets.}
-\label{tab:w-tests}
-\centering\footnotesize
-\begin{tabular}{@{}lr@{}}
-\toprule
-Test & Targets \\
-\midrule
-36 netlists, under \code{nvc} and under Verilator & 72 \\
-The core: the model, the encoders, 2 programs & 4 \\
-The GPU, 7 tests; the parts, 19; the SoC's run & 3 \\
-The ELF converter; \code{nvc} and Verilator alone & 3 \\
-\bottomrule
-\end{tabular}
-\end{table}
+its ports. \code{bazel test //...} runs a hundred targets, of which eighty-eight
+are netlists under both simulators; the rest are the core's model and
+programs, the board's own run, the GPU, the parts, the SoC's run, and
+the tools. Two more are tagged manual because they want Vivado: the
+board and its DDR3 under its simulator. Every claim about what
+Rust accepts was compiled first, as a probe kept in the tree,
+including the ones whose answer was no.
 
 \section{What Is Not Done}
 
-The lowering emits a
-name as it is written and neither escapes nor rejects the reserved
-words of its targets, so a register called \code{next} produces VHDL
-that will not analyse; three names in the GPU had to change for that
-reason. The board's top level is still wired by
-hand and is out of date since the core moved to AXI. The GPU has no
-depth buffer, no interpolation and no texture. Fuzzing the AXI link is
-not yet a step of the build. Each of those is an issue on the
-repository rather than a paragraph here.
-
-\begin{table}[htbp]
-\caption{The tree, in lines of Rust.}
-\label{tab:w-numbers}
-\centering\footnotesize
-\begin{tabular}{@{}lr@{}}
-\toprule
-The runtime and its macros & 9\,660 \\
-Parts: the link, the router, the network & 4\,490 \\
-Examples, forty-four of them & 4\,728 \\
-Vreteno & 4\,178 \\
-The GPU & 1\,550 \\
-\bottomrule
-\end{tabular}
-\end{table}
+The lowering emits a name as it is written and neither escapes nor
+rejects its targets' reserved words, so a register called \code{next}
+produces VHDL that will not analyse. The core cannot load a program it
+was not built with, because its instruction memory is not on the bus.
+The GPU has no depth buffer, no interpolation and no texture, and
+fuzzing the AXI link is not yet a step of the build. Each is an issue
+on the repository rather than a paragraph here.
 
 \end{document}
