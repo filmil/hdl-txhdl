@@ -388,7 +388,7 @@ tap & a send under \code{if}, a receive with no wait \\
 buffer & the runtime's channel, as a part \\
 divider & wires kept as fields, seen and checked \\
 Gray counter & functions under \code{\#[lower]}, inlined \\
-Vreteno & the whole core, 732 ticks \\
+Vreteno & the whole core, 647 ticks \\
 router & the bus fanned out by address \\
 data memory & on the core's bus, the same run \\
 timer & on the core's bus, the same run \\
@@ -638,11 +638,11 @@ simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
 forty-one tests run under \code{bazel test //...}, and every one of them
 is hermetic, the simulators built from source and the synthesis tool
-installed by the build. Vreteno is 815 lines of core, 78 of data
+installed by the build. Vreteno is 1132 lines of core, 78 of data
 memory, 98 of timer,
 62 of router and 89 of serial port, checked in lockstep against a
-364-line model on a demonstration program and sixty-four random
-ones, with interrupts raised at random, checked as a netlist on 732
+422-line model on a demonstration program and sixty-four random
+ones, with interrupts raised at random, checked as a netlist on 647
 ticks with every register compared at each, synthesized in two
 minutes to the figures of Table~\ref{tab:p-synth}, placed and
 routed at 100~MHz, and programmed into the board, where it said OK on

@@ -915,26 +915,30 @@ Listing~\ref{lst:v-main} runs the demonstration program and prints a
 line per cycle, the program counter, the disassembly of the word
 executed and the register written, or a bubble when the execute
 stage was empty; Listing~\ref{lst:v-out} is what it printed when the
-build ran it. The loop is visible as the three instructions that
-repeat ten times with a bubble after each taken \code{bne}, the call
-as the jump to \code{0x5c} and the return to \code{0x20}, each with
-its bubble, and the loads as the sign and zero extensions of the same
-byte and half. The one load stall is the bubble after \code{lw},
-where the next instruction adds to what it loaded; each multiply is
-a run of three and each divide a run of thirty-three, which the run
-prints as one line with the count, and the last line of the printout
-is what the port said, decoded from its line. The line's interrupt
-is the
-first jump to the handler at \code{0xb4}, out of the loop, with
-cause eleven and the top bit in \code{x23} and one counted into
-\code{x8}, and the return to the instruction it interrupted. The
-timer's is the second, cause seven, in the middle of the second
-division: twenty bubbles of it, the handler, and then the division
-again from the start, thirty-four bubbles, since an interrupt
-cancels the sequencer. The two traps are the later jumps to the same
-handler, the first from the \code{ecall} with eleven read into
-\code{x23}, the second from the illegal word with two, each with
-its bubble, as the returns have theirs. Figure~\ref{fig:v-wave} is the opening of the same run, the reset
+build ran it. An instruction the program holds compressed is marked
+with a \code{c} and printed as the instruction it stands for, which
+is what the core executes; the address after it is two bytes on
+rather than four. The timer's interrupt is the first jump to the
+handler at \code{0x140}, as soon as interrupts are enabled and before
+the loop, since the compare is zero until the store of 150 lands:
+cause seven and the top bit in \code{x23}, the compare moved past the
+end of the run, one counted into \code{x8}, and the return to the
+instruction it interrupted. The loop is visible as the three
+instructions at \code{0x30} that repeat ten times with a bubble after
+each taken \code{bne}, the call as the jump to \code{0x13a} and the
+compressed return to \code{0x3c}, each with its bubble, and the loads
+as the sign and zero extensions of the same byte and half. The one
+load stall is the bubble after \code{lw}, where the next instruction
+adds to what it loaded; each multiply is a run of three and each
+divide a run of thirty-three, which the run prints as one line with
+the count, and the last line of the printout is what the port said,
+decoded from its line. The line's interrupt comes once the echo has
+enabled it, in place of the \code{ecall}, with eleven and the top bit
+in \code{x23}, and returns to that \code{ecall}. The two traps are the
+last jumps to the handler, the first from the \code{ecall} with
+eleven read into \code{x23}, the second from the illegal word, all
+ones and thirty-two bits long, with two, each with its bubble, as the
+returns have theirs. Figure~\ref{fig:v-wave} is the opening of the same run, the reset
 and the first dozen instructions, drawn from the waveform the run
 wrote; \code{pc} there is the fetch
 stage's counter, one instruction ahead of the one executing, and
@@ -966,9 +970,9 @@ the build ran it.},label={lst:v-out}]{out_vreteno.txt}
 
 The Verilog at the end of Listing~\ref{lst:v-out} is the core as
 hardware: its registers, two memories, the instruction
-memory holding the program, a wire per \code{let} of the loop, three
-temporaries, and one clocked block of a hundred and eighteen lines;
-the timer's, after it, is three registers and a block of eighteen.
+memory holding the program, a wire per \code{let} of the loop, seven
+temporaries, and one clocked block of a hundred and twelve lines;
+the timer's, after it, is six registers and a block of twenty-eight.
 The VHDL the run
 wrote beside it says the same, and the build simulates both against
 the trace the Rust core wrote, the VHDL under nvc and the Verilog
@@ -998,8 +1002,8 @@ The netlist was checked as the model was: a testbench that could not
 fail would prove nothing. The register file is not traced, so the
 testbench cannot see it, but every write to it shows in the
 writeback output the next tick, and every read shows in the program
-counter and the outputs that follow; the seven hundred and
-twenty-four ticks of the demonstration exercise every instruction of
+counter and the outputs that follow; the six hundred and forty-seven
+ticks of the demonstration exercise every instruction of
 the program through both, the two traps and their returns included,
 since a wrong \code{mepc} or \code{mtvec} is a wrong program
 counter, and every register of the sequencer at every step of three
@@ -1027,9 +1031,8 @@ is an Artix-7, \code{xc7a200tfbg484-2}, with a clock constraint of
 ten nanoseconds and no pins, since the question is whether the
 netlist synthesizes and to what, not where it goes on a board.
 Synthesis took two minutes and finished with no error and no
-critical warning; its two warnings are that the writeback stage's
-program counter, which only the lockstep test reads, was removed as
-unused, and an advisory on floorplanning.
+critical warning. Among its warnings, the writeback stage's program
+counter, which only the lockstep test reads, was removed as unused.
 
 \begin{table}[htbp]
 \caption{The core on an Artix-7, after synthesis; the data memory,
@@ -1117,8 +1120,9 @@ and its steps are a cycle each, the multiplier's included, which
 runs from registers to registers. The tool had an opinion of its own
 on the way. Left to itself it moved three of the four data memory
 lanes into distributed RAM to shorten the load's path, so the
-constraints file pins the lanes to block RAM, where the third stage
-put them.
+board's constraints pin the lanes to block RAM, where the third stage
+put them; the data memory is a unit of its own now, and not in the
+core synthesised here.
 
 \subsection{The board}
 
