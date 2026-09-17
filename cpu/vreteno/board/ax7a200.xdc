@@ -21,5 +21,6 @@ set_property CFGBVS VCCO [current_design]
 # The flash is written over a 4-bit SPI bus.
 set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]
 
-# The core's data memory lanes stay in block RAM, as in vreteno.xdc.
+# The data memory lanes stay in block RAM: left to itself the tool
+# moves some into distributed RAM to shorten the load-then-jump path.
 set_property RAM_STYLE BLOCK [get_cells -hierarchical -regexp {.*lane[0-3]_reg.*}]
