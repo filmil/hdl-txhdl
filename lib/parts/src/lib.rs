@@ -18,4 +18,5 @@ pub mod fifo;
 pub mod gpio;
 pub mod hdmi;
 pub mod plic;
+pub mod spi;
 pub mod station;
