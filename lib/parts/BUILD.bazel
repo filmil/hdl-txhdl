@@ -22,6 +22,7 @@ rust_library(
         "src/bus/wb.rs",
         "src/bus/wb/sim.rs",
         "src/fifo.rs",
+        "src/gpio.rs",
         "src/hdmi.rs",
         "src/plic.rs",
         "src/station.rs",
