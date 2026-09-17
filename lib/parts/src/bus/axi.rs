@@ -764,7 +764,7 @@ pub fn axi<
         per: Per {
             req,
             wd,
-            port: Rc::new(Port { ans, rb }),
+            port: Rc::new(Port::new(ans, rb)),
             gathering: Rc::new(Cell::new(false)),
         },
         host_in: u.host_in,
@@ -1159,9 +1159,49 @@ impl<
 /// holds one of these, so it may be moved to another process and
 /// answered there; the channels inside stay unique, so there is still
 /// one driver on each.
+///
+/// Several processes may answer through one port, and a channel takes
+/// one transaction a step, so the port remembers the step each channel
+/// was last sent on and a second sender in that step waits for the
+/// next. Without that, two answers ready in one step were one answer
+/// sent (#182).
 struct Port<const D: usize, const I: usize> {
     ans: Tx<Answer<I>>,
     rb: Tx<R<D, I>>,
+    ans_at: Cell<u64>,
+    rb_at: Cell<u64>,
+}
+
+impl<const D: usize, const I: usize> Port<D, I> {
+    fn new(ans: Tx<Answer<I>>, rb: Tx<R<D, I>>) -> Self {
+        Port {
+            ans,
+            rb,
+            ans_at: Cell::new(u64::MAX),
+            rb_at: Cell::new(u64::MAX),
+        }
+    }
+
+    /// Send a write's response if the channel has room and nobody has
+    /// sent on it this step; whether it went.
+    fn answer(&self, a: Answer<I>) -> bool {
+        if self.ans.ready().to_bool() && self.ans_at.get() != now() {
+            self.ans_at.set(now());
+            self.ans.send(a);
+            return true;
+        }
+        false
+    }
+
+    /// Send a read beat on the same terms.
+    fn beat(&self, r: R<D, I>) -> bool {
+        if self.rb.ready().to_bool() && self.rb_at.get() != now() {
+            self.rb_at.set(now());
+            self.rb.send(r);
+            return true;
+        }
+        false
+    }
 }
 
 /// A write, accepted whole: its address phase and every beat of its
@@ -1270,13 +1310,13 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
     }
 
     async fn answer(self, resp: Resp) {
+        let a = Answer {
+            id: self.req.id,
+            resp,
+        };
         loop {
             DefaultClock::rising().await;
-            if self.port.ans.ready().to_bool() {
-                self.port.ans.send(Answer {
-                    id: self.req.id,
-                    resp,
-                });
+            if self.port.answer(a) {
                 return;
             }
         }
@@ -1335,8 +1375,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
             };
             loop {
                 DefaultClock::rising().await;
-                if self.port.rb.ready().to_bool() {
-                    self.port.rb.send(beat);
+                if self.port.beat(beat) {
                     break;
                 }
             }
