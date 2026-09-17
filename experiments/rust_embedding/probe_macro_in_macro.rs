@@ -26,12 +26,12 @@ macro_rules! keeper {
 
         #[lower]
         impl Unit for $name {
-            async fn run(&mut self, inp: Rx<Pair>, out: Out<U<8>>) {
+            async fn run(&mut self, inp: Rx<Pair>, outp: Out<U<8>>) {
                 loop {
                     DefaultClock::rising().await;
                     let (offered, p) = inp.take();
                     when!(offered & (p.tag == 0) => self { last: p.value });
-                    out.set(self.last);
+                    outp.set(self.last);
                 }
             }
         }

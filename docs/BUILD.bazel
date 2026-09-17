@@ -514,7 +514,7 @@ waveform(
     signals = [
         "//clocks/clk=>clk",
         "//top/producer/n=>n",
-        "//top/producer/out=>out",
+        "//top/producer/outp=>outp",
         "//top/consumer/total=>total",
     ],
 )

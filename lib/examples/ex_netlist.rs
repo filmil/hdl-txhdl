@@ -18,14 +18,14 @@ use txhdl::Trace;
 #[derive(Trace)]
 pub struct Producer {
     pub n: Reg<U<8>>,
-    pub out: Out<U<8>>,
+    pub outp: Out<U<8>>,
 }
 
 impl Unit<(), ()> for Producer {
     async fn run(&mut self, _i: (), _o: ()) {
         loop {
             DefaultClock::rising().await;
-            self.out.set(self.n);
+            self.outp.set(self.n);
             self.n.set(self.n + 1);
         }
     }
@@ -56,11 +56,11 @@ pub struct Top {
 
 impl Default for Top {
     fn default() -> Self {
-        let (out, inp) = signal::<U<8>, DefaultClock>();
+        let (outp, inp) = signal::<U<8>, DefaultClock>();
         Top {
             producer: Producer {
                 n: Reg::default(),
-                out,
+                outp,
             },
             consumer: Consumer {
                 total: Reg::default(),
