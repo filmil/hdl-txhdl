@@ -439,6 +439,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The simplest AXI peripheral, a register of one word, as hardware:
+#   bazel run //lib/examples:ex_axi_reg
+rust_binary(
+    name = "ex_axi_reg",
+    srcs = ["ex_axi_reg.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # An AXI link reaching a Wishbone peripheral through the bridge:
 #   bazel run //lib/examples:ex_axi_wb
 rust_binary(
@@ -519,6 +532,7 @@ filegroup(
         "ex_axi_router.rs",
         "ex_axi_lite.rs",
         "ex_axi_wb.rs",
+        "ex_axi_reg.rs",
         "station.v",
         "ex_mem.rs",
         "ex_imm.rs",
