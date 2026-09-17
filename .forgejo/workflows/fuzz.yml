@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+# Fuzz the AXI link over many seeds, every night.
+#
+# `bazel test //...` on every pull request already runs the fuzzing, over
+# 24 seeds, inside `//lib/parts:parts_test`. That is enough to catch a
+# change that breaks the link; it is not enough to find the rare
+# interleaving, which is what a longer run is for. The target below runs
+# the fuzzing alone and is manual, so it is not part of `//...`, and this
+# workflow is where it runs, with a wider seed range. A seed that fails
+# names itself in the assertion, so it can be run again by hand with
+# `AXI_FUZZ_SEEDS` set past it.
+name: fuzz
+
+on:
+  schedule:
+    # 04:00 UTC daily, after the nightly release.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    runs-on: docker
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+
+      # As in build.yml: nothing else is installed, and a setup-bazel action
+      # does not resolve its organization on this instance.
+      - name: Install Bazelisk (pinned)
+        run: |
+          set -eux
+          { command -v curl && command -v git; } >/dev/null 2>&1 || {
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends ca-certificates curl git
+          }
+          curl -fsSL -o /usr/local/bin/bazel \
+            https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
+          echo "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992  /usr/local/bin/bazel" | sha256sum -c
+          chmod +x /usr/local/bin/bazel
+
+      - name: Cache Bazel
+        uses: https://code.forgejo.org/actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ hashFiles('.bazelversion', '.bazelrc', 'MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-keys: |
+            bazel-
+
+      - name: Fuzz the AXI link over 1024 seeds
+        run: >-
+          bazel test //lib/parts:axi_fuzz_test
+          --test_env=AXI_FUZZ_SEEDS=1024
+          --test_timeout=3600
+          --test_output=errors
