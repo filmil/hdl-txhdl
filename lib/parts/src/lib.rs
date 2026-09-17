@@ -13,5 +13,6 @@
 
 pub mod buffer;
 pub mod bus;
+pub mod eth;
 pub mod fifo;
 pub mod station;

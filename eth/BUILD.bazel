@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+# Ethernet on the Alinx AX7A200: the two halves of the MAC from
+# //lib/parts, lowered, inside a hand-written echo design with the PHY's
+# RGMII, the clocks and the crossing between them.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+load("@rules_vivado//build/vivado:rules.bzl", "vivado_synthesis2")
+
+package(default_visibility = ["//visibility:public"])
+
+# The Verilog of `eth_rx` and `eth_tx`.
+rust_binary(
+    name = "netlist",
+    srcs = ["src/netlist.rs"],
+    edition = "2021",
+    deps = ["//lib/parts:txhdl_parts"],
+)
+
+genrule(
+    name = "mac_v",
+    outs = ["eth_mac.v"],
+    cmd = "$(location :netlist) > $@",
+    tools = [":netlist"],
+)
+
+filegroup(
+    name = "echo_xdc",
+    srcs = ["board/ax7a200_eth.xdc"],
+)
+
+# The echo design through Vivado's synthesis. Four of the PHY's pins are
+# not yet known, see board/ax7a200_eth.xdc, so there is no place and
+# route and no bitstream. Manual, as every Vivado target is:
+#
+#   bazel build //eth:echo_synth
+vivado_synthesis2(
+    name = "echo_synth",
+    srcs = [
+        ":mac_v",
+        "board/eth_cdc.v",
+        "board/eth_rgmii.v",
+        "board/eth_echo.v",
+    ],
+    part = "xc7a200tfbg484-2",
+    top = "eth_echo",
+    xdcs = [":echo_xdc"],
+    tags = ["manual"],
+)
+
+# The sources by name, for the documents' listings.
+filegroup(
+    name = "sources",
+    srcs = glob(["board/*.v", "board/*.xdc", "src/*.rs"]),
+)

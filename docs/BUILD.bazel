@@ -970,6 +970,31 @@ waveform(
     width = 8.2,
 )
 
+# Ethernet behind AXI-Lite: the transmitter, the receiver and the
+# peripheral, on a wire looped back with one frame corrupted.
+waveform(
+    name = "eth",
+    example = "//lib/examples:ex_eth",
+    lowered = [
+        ("eth_lite", "lite"),
+        ("eth_tx", "mac_tx"),
+        ("eth_rx", "mac_rx"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//tx/rx_valid=>tx_valid",
+        "//mac_tx/whole=>whole",
+        "//mac_tx/phase=>tx_phase",
+        "//tx_en=>tx_en",
+        "//rx_dv=>rx_dv",
+        "//mac_rx/phase=>rx_phase",
+        "//rx/rx_valid=>rx_valid",
+        "//irq=>irq",
+    ],
+    from_tick = 120,
+    until = 330,
+)
+
 # Accepting many AXI transactions and forwarding them for processing:
 # three in flight over four identifiers, recycled.
 waveform(
@@ -1683,6 +1708,24 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# Ethernet in TxHDL: the MAC's two halves and the AXI-Lite peripheral,
+# the example's run and waveform, and the board's hand-written echo
+# design.
+latex_document(
+    name = "eth",
+    main = "eth.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":eth_run",
+        ":eth_timing",
+        "//eth:sources",
+        "//lib/examples:sources",
+        "//lib/parts:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # AXI in TxHDL: the tutorial on the bus, its two examples' runs and
 # waveforms included, and the two trackers' netlists.
 latex_document(
@@ -1765,6 +1808,7 @@ combined_pdf(
         ":axi",
         ":gpu",
         ":noc",
+        ":eth",
         ":article",
         ":embedding",
         ":runtime",

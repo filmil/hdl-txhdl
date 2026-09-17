@@ -1,0 +1,339 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% Ethernet in TxHDL. Built by //docs:eth. Every listing is included
+% from the tree, and every printout and figure is what the build made
+% by running the example.
+\documentclass[journal,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+% A range of the Ethernet part, by its begin/end markers.
+\newcommand{\ethpart}[3]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/eth.rs}}
+
+\title{Ethernet in TxHDL}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{This is the tutorial on the Ethernet part, for a reader who
+knows the AXI link and its AXI-Lite bridge~\cite{axi}. Every listing is
+included from the project repository \code{HDL/txhdl} at build time,
+and every printout and figure is what the build produced by running
+the example. The cover~\cite{cover} lists every document.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{Ethernet in TxHDL}{Filmar and Janković: Ethernet in TxHDL}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+An Ethernet MAC turns frames into bytes on a wire and back. This one
+is two units, a transmitter and a receiver, of about eighty lines each
+of the lowered subset. Each speaks GMII, a byte a cycle,
+and each runs on one clock, so on a board each can run on the clock of
+its own side of the PHY. Both store a whole frame before acting on it,
+so the channels to their client can be slow and can cross from one
+clock to another. In front of them is an AXI-Lite peripheral of three
+words, which a core or any AXI host reaches through the AXI-Lite
+bridge. The build runs the three against a loop of wire with one frame
+corrupted, and simulates the three netlists against that run under
+\code{nvc} and under Verilator. For the Alinx AX7A200 there is a
+hand-written echo design: the PHY's RGMII, the clocks, and a crossing
+between the receive clock and the transmit clock, around the two
+halves of the MAC. It goes through Vivado's synthesis; four of the
+PHY's pins are still to be filled in before it can become a bitstream.
+\end{abstract}
+
+\section{What Is Here}
+\label{sec:e-what}
+
+The part is \code{eth} in \code{txhdl\_parts}, and it has three units.
+
+\code{EthTx} takes a frame's bytes from a channel and sends the frame
+on GMII: \code{txd}, a byte, and \code{tx\_en}, high while a frame is
+on the wire. \code{EthRx} takes a frame off GMII, \code{rxd},
+\code{rx\_dv} and \code{rx\_er}, and offers its bytes on a channel.
+\code{EthLite} is the peripheral: it takes bytes from AXI-Lite writes
+and gives them to the transmitter, and it answers AXI-Lite reads with
+the bytes the receiver offers.
+
+A byte on either channel is an \code{EthByte}, the byte and whether it
+is its frame's last. A frame there is what a client means by a frame:
+the destination address, the source address, the type and the
+payload. The preamble, the padding and the check sequence are the
+MAC's business and never reach the client.
+
+\ethpart{byte}{A byte of a frame, between the MAC and its
+client.}{lst:e-byte}
+
+\section{The Frame on the Wire}
+\label{sec:e-frame}
+
+A frame on the wire is seven bytes of \code{0x55}, the start of frame
+delimiter \code{0xd5}, the frame, and four bytes of check sequence. A
+frame shorter than sixty bytes is padded with zeros to sixty before
+its check sequence is worked out. Twelve idle bytes follow before the
+next frame may begin.
+
+The check sequence is a CRC-32. The register starts with every bit
+set, takes each byte least significant bit first, and is complemented
+at the end; the four bytes go out least significant first. A receiver
+that runs the frame and its check sequence through the same register
+finds \code{0xdebb20e3} in it when nothing was corrupted, so it needs
+no second register to compare.
+
+A step of the register is a shift right with the polynomial
+\code{0xedb88320} added when the bit leaving and the bit arriving
+differ, and a byte is eight steps. The lowering inlines a function's
+argument as text, and one step uses the register three times. So
+eight calls of a function for one step would hold the register's
+expression $3^8 = 6561$ times. Listing~\ref{lst:e-crc} is the
+same function as 32 sums instead: each bit of the new register is the
+exclusive or of at most fourteen bits of the old register and the
+byte. A test checks the sums against the steps on every byte from four
+registers.
+
+\ethpart{crc}{A byte into the CRC-32 register, as 32
+sums.}{lst:e-crc}
+
+\section{The Transmitter}
+\label{sec:e-tx}
+
+A frame on the wire cannot pause, so the transmitter stores the whole
+frame before it sends any of it. While it is idle and holds no whole
+frame, it takes a byte from \code{tx} whenever one is offered and puts
+it in \code{frame}, a memory of 2048 bytes. The byte marked last makes
+the frame \code{whole}. A whole frame starts the phases: the preamble,
+the frame with the register running over it, zeros up to sixty bytes
+with the register still running, the check sequence, and the gap. At
+the end of the gap the frame is forgotten and the next is taken.
+
+The client may offer bytes as slowly as it likes, and the transmitter
+holds it off while a frame is going out. That is what lets the channel
+between the peripheral and the transmitter cross from one clock to
+another on a board.
+
+\ethpart{txstate}{The transmitter's state.}{lst:e-txstate}
+
+\ethpart{tx}{The transmitter's step.}{lst:e-tx}
+
+\section{The Receiver}
+\label{sec:e-rx}
+
+The wire cannot be held off, so the receiver stores the whole frame
+too, and offers it only once its check sequence has passed. It waits
+for \code{rx\_dv} with the delimiter on \code{rxd}, passing over the
+preamble, then stores a byte a cycle for as long as \code{rx\_dv} stays
+high, with the register running over every byte, the check sequence
+included. When \code{rx\_dv} falls, the frame is good if the register
+holds the residue, no byte came with \code{rx\_er}, and it is longer
+than its check sequence. A good frame is offered on \code{rx} without
+its check sequence, its last byte marked, as fast as the client takes
+it.
+
+Three kinds of frame are dropped and counted in \code{dropped}. A
+frame whose check fails is one. A frame that arrives while the one
+before it is still being offered is another, since there is nowhere to
+put it. The third is a frame whose start the receiver missed: a busy
+line with neither the preamble nor the delimiter on it is ignored
+until \code{rx\_dv} falls.
+
+\ethpart{rxstate}{The receiver's state.}{lst:e-rxstate}
+
+\ethpart{rx}{The receiver's step.}{lst:e-rx}
+
+\section{The Peripheral}
+\label{sec:e-lite}
+
+\code{EthLite} is an AXI-Lite peripheral of three words, and it moves
+one byte per transaction.
+
+\begin{table}[htbp]
+\caption{The peripheral's words.}
+\label{tab:e-words}
+\centering\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+Word & Access & Bits \\
+\midrule
+0, status & read & 0 a byte waits, 1 room to send \\
+1, transmit & write & 7 to 0 the byte, 8 last \\
+2, receive & read & 7 to 0 the byte, 8 last, 9 valid \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A write to the transmit word is answered only when the transmitter has
+taken the byte, so a client that writes faster than the transmitter
+takes is held off rather than losing bytes. A read of the receive word
+takes the oldest byte if one waits and answers with bit 9 set; with
+none waiting it answers with bit 9 clear and takes nothing. The
+interrupt line is high while a byte waits.
+
+One byte per transaction is slow for a frame of fifteen hundred bytes,
+but the AXI-Lite bridge makes it cheaper than it looks. A fixed burst
+to one address becomes one AXI-Lite transaction per beat at that
+address, so a host sends a whole frame as one burst to the transmit
+word and reads sixteen bytes as one burst from the receive word.
+
+\ethpart{lite}{The peripheral.}{lst:e-lite}
+
+\section{The Run}
+\label{sec:e-run}
+
+\code{ex\_eth} puts the three units behind \code{LiteBridge1}, behind
+a host's tracker, with the transmitter's GMII looped into the
+receiver's a cycle late. The host client sends three frames, each as
+one fixed burst, and after each reads bursts of sixteen from the
+receive word until the frame comes back or twelve bursts have come
+back empty. The loop flips one data byte of the second frame on its
+way.
+
+The first frame is twenty bytes and comes back sixty, padded. The
+second fails its check and does not come back, and the receiver counts
+it. The third is seventy-two bytes and comes back as it went. The run
+asserts all three outcomes, and that the transmitter sent three frames
+and the receiver dropped one.
+
+\begin{figure*}[t]
+\centering
+\input{eth_timing.tex}
+\caption{The first frame: its bytes offered to the transmitter, the
+frame whole, the transmitter's phases and \code{tx\_en}, the
+receiver's \code{rx\_dv} and phases, and the bytes offered back, with
+the interrupt line. The phases are in binary: for the transmitter idle
+0, preamble 1, frame 2, padding 3, check sequence 4 and gap 5, and for
+the receiver hunting 0, receiving 1 and offering 2.}
+\label{fig:e-run}
+\end{figure*}
+
+\lstinputlisting[caption={\code{ex\_eth.rs}. Run with
+\code{bazel run //lib/examples:ex\_eth}.},%
+label={lst:e-ex}]{lib/examples/ex_eth.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_eth} printed when
+the build ran it.},label={lst:e-out}]{out_eth.txt}
+
+The transmitter, the receiver and the peripheral are lowered, and the
+build simulates each netlist against this run under \code{nvc} and
+under Verilator, at its ports. A test in the part holds the
+transmitter's wire to a model of the frame, at fifty-nine, sixty and
+sixty-one bytes and longer, and checks the three ways a frame is
+dropped.
+
+\section{On the Board}
+\label{sec:e-board}
+
+The Alinx AX7A200 has one gigabit port, a Micrel KSZ9031RNX PHY on
+RGMII. RGMII sends a GMII byte as two nibbles a cycle, the low
+nibble on the clock's rising edge and the high nibble on its falling
+edge, and a control line that is the valid line on the rising edge and
+valid exclusive-or error on the falling edge. Two edges per cycle are
+the FPGA's own primitives, \code{ODDR} out and \code{IDDR} in, which a
+lowered unit does not name, so the board's part is written by hand in
+\code{//eth/board}. The echo design in it sends every good frame it
+receives straight back out.
+
+\code{eth\_rgmii.v} is the RGMII wrapper. The PHY expects its transmit
+clock a quarter cycle after the data changes. The wrapper does that
+by clocking the data on 125~MHz and the transmit clock on the same
+125~MHz a quarter cycle late, both from an MMCM; it does not rely on
+the PHY's internal delay. The receive clock comes from the PHY
+through a global buffer, and the receiving half of the MAC runs on
+it.
+
+\lstinputlisting[caption={\code{eth/board/eth\_rgmii.v}: RGMII to
+GMII.},label={lst:e-rgmii}]{eth/board/eth_rgmii.v}
+
+The receiver and the transmitter are on two clocks, the PHY's and the
+FPGA's, so the channel between them crosses from one to the other.
+\code{eth\_cdc.v} is that channel: an asynchronous FIFO of sixteen
+words with the valid and ready of a lowered unit's channel port on each
+side, its pointers in Gray code, each crossing to the other clock
+through two flip-flops. The halves of the MAC store whole frames, so
+the FIFO may hold the bytes up for a cycle or two without harm.
+
+\lstinputlisting[caption={\code{eth/board/eth\_cdc.v}: a channel from
+one clock to another.},label={lst:e-cdc}]{eth/board/eth_cdc.v}
+
+\lstinputlisting[caption={\code{eth/board/eth\_echo.v}: the echo
+design.},label={lst:e-echo}]{eth/board/eth_echo.v}
+
+\code{bazel build //eth:echo\_synth} puts the lowered halves and the
+three hand-written files through Vivado's synthesis for the board's
+part. It finishes with no error and no critical warning. The design
+takes 1341 LUTs, 776 of them memory for the two frames and the FIFO,
+and 232 flip-flops, and the estimate after synthesis meets 125~MHz
+with 2.388~ns of slack. Its two warnings are that the halves' frame
+counters are removed, since nothing on the board reads them, and that
+the management pins are driven by a constant or not at all.
+
+The constraints name the clock, the LEDs and the eleven Ethernet pins
+that the AX7A200 manual's table gives. Four rows of that table came
+through without their pins: \code{ETH\_RXCTL}, \code{ETH\_MDC},
+\code{ETH\_MDIO} and \code{ETH\_RESET}. They are in the constraints as
+TODO lines, and until they are filled in there is no place and route
+and no bitstream.
+
+\lstinputlisting[caption={\code{eth/board/ax7a200\_eth.xdc}: the
+board's pins, four still to come.},label={lst:e-xdc}]{eth/board/ax7a200_eth.xdc}
+
+\section{What Is Not Done}
+\label{sec:e-not}
+
+The four pins, and the I/O standard of all fifteen Ethernet pins,
+which the constraints give as LVCMOS33 like the board's other user
+pins, still have to be confirmed. Nothing here has run on the board,
+and the receive side's timing at the pins depends on a receive delay
+the PHY may or may not add, which has not been measured.
+
+Only gigabit works. At 100 or 10~Mbit the PHY sends a nibble per
+cycle, and neither half of the MAC takes a byte over two cycles.
+The management interface is left idle, so the PHY runs on its
+strapped defaults and nothing reads its link state.
+
+Each half holds one frame. A receiver whose frame the client has not
+yet read drops the next one, and a client that wants to keep frames
+arriving back to back reads each promptly. The peripheral moves a
+byte per transaction.
+
+The peripheral is not yet on Vreteno's board, which would put it
+behind the core's AXI-Lite bridge and its channels through two crossings
+like the echo's.
+
+Writing the part found three things in the lowering, each worked
+around here. A wire named for a reserved word of either target
+language, such as \code{next}, \code{out}, \code{begin}, \code{body},
+\code{buf} or \code{byte}, produces a netlist that does not analyse. A
+bit of a field of a channel's value, \code{wh.data.bit(8)}, is written
+in Verilog as a bit select of a part select, which VHDL did not
+simulate the same way. And a constant of $2^{31}$ or more is written
+as an unsized integer, which overflows in Verilog and lies outside
+VHDL's guaranteed integer range.
+
+\begin{thebibliography}{9}
+
+\bibitem{axi}
+F.~Filmar and D.~Janković, ``AXI in TxHDL,'' project repository
+\code{HDL/txhdl}, \code{//docs:axi}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}

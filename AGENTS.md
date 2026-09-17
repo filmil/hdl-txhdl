@@ -15,7 +15,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and seventeen documents describe it,
+The language is a library, `//lib`, and eighteen documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -87,6 +87,13 @@ all under `//docs`:
   bridges and a memory, and `//soc` puts a core, a GPU, a memory and a
   serial port on the four corners of one lattice and runs them
   together.
+* `//docs:eth` is the Ethernet part in `//lib/parts` under `eth`: the
+  MAC's transmitter and receiver on GMII, each on one clock and each
+  storing whole frames, the CRC-32, the AXI-Lite peripheral, the
+  example `ex_eth` on a looped wire, and `//eth`, the hand-written
+  RGMII wrapper, clock crossing and echo design for the AX7A200, which
+  `//eth:echo_synth` puts through Vivado's synthesis.
+  `ex_eth` is documented there and not in `//docs:examples`.
 * `//docs:cheatsheet` is the one-page cheat sheet, also as a PNG
   (`//docs:cheatsheet_png`); it shows `ex_cheat.rs`, its netlist and
   its waveform, all produced by the build.
