@@ -38,7 +38,7 @@ all under `//docs`:
   build produced by running it.
   The runtime appears there only through its public interface, which
   `//tools/api` extracts from the source at build time.
-* `//docs:vreteno` is the first large design, the Vreteno RV32IM core
+* `//docs:vreteno` is the first large design, the Vreteno RV32IMC core
   under `//cpu/vreteno`, with its reference model, its lockstep test,
   its waveform, the timer on its bus, the platform-level interrupt
   controller in `//lib/parts` under `plic` with its example `ex_plic`,

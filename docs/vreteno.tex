@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: Apache-2.0
 %
-% Vreteno: an RV32IM core in TxHDL, the first large design. Built by
+% Vreteno: an RV32IMC core in TxHDL, the first large design. Built by
 % //docs:vreteno. One column, because it is mostly listings.
 \documentclass[journal,onecolumn,9pt]{IEEEtran}
 
@@ -18,13 +18,13 @@
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=#1-#1,caption={#2},label={#3}]{plic3.rs}}
 
-\title{Vreteno: An RV32IM Core in TxHDL}
+\title{Vreteno: An RV32IMC Core in TxHDL}
 
 \author{Filip Filmar and Dragiša Janković%
 \thanks{Both authors are independent. Filip Filmar is the
 corresponding author, at f@hdlfactory.com; Dragiša Janković is
 reached at linkedin.com/in/dragisa-jankovic.}%
-\thanks{This document holds the Vreteno core, a RISC-V RV32IM processor
+\thanks{This document holds the Vreteno core, a RISC-V RV32IMC processor
 written in TxHDL under \code{//cpu/vreteno} of the project repository,
 included verbatim at build time with the reference model it is checked
 against, the programs it runs, and the trace and waveform the build
@@ -38,18 +38,19 @@ the documents and the programs; every commit of the repository says
 so and carries the prompts that led to it, verbatim.}%
 \thanks{\buildstamp}}
 
-\markboth{Vreteno: An RV32IM Core in TxHDL}{Filmar and Janković: Vreteno}
+\markboth{Vreteno: An RV32IMC Core in TxHDL}{Filmar and Janković: Vreteno}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Vreteno is a 32-bit RISC-V core, the RV32I base integer set and the
-M extension, written in TxHDL: the first design large enough to ask
-whether the language scales past its examples. This is its fifth
-form: a three-stage
+Vreteno is a 32-bit RISC-V core, the RV32I base integer set, the M
+extension and the C extension's compressed instructions, written in
+TxHDL: the first design large enough to ask whether the language
+scales past its examples. This is its fifth form: a three-stage
 pipeline, one process in which a fetch stage reads the instruction
-memory into an instruction register, an execute stage runs the
+memory into an instruction register, a compressed instruction
+expanded there into the one it stands for, an execute stage runs the
 instruction before it and reads the data memory into a register at
 its edge, and a writeback stage extends a load, writes the register
 file and retires, with the one hazard closed by forwarding, except
@@ -84,7 +85,7 @@ build produced when it ran the core.
 \end{abstract}
 
 \begin{IEEEkeywords}
-RISC-V, RV32IM, processor, hardware description languages, Rust,
+RISC-V, RV32IMC, processor, hardware description languages, Rust,
 lockstep testing.
 \end{IEEEkeywords}
 
@@ -124,7 +125,7 @@ refactoring too.
 \section{The Instruction Set as Bits}
 \label{sec:v-isa}
 
-Listing~\ref{lst:v-isa} is RV32IM as encoders and a decoder. An
+Listing~\ref{lst:v-isa} is RV32IMC as encoders and a decoder. An
 encoder per mnemonic builds the word, the six formats being six
 functions of their fields; the decoder takes a word apart into its
 mnemonic, its registers and its immediate, sign-extended. The core
@@ -147,6 +148,30 @@ register format with \code{funct7} one: the four multiplies, which
 differ in which operand is signed and which half of the product they
 keep, and the two divides and two remainders, signed and unsigned. A
 unit test checks each format's encoder against the decoder.
+
+The compressed instructions are sixteen-bit spellings of instructions
+above, and \code{isa} has an encoder for each, named \code{c\_} and
+the assembler's mnemonic. \code{compressed} reads a halfword as the
+thirty-two bit instruction it stands for, or refuses it: all zeros,
+\code{c.jr} of \code{x0}, \code{c.lwsp} into \code{x0}, \code{c.lui}
+and \code{c.addi16sp} of zero, the floating-point and 64-bit forms,
+and shifts by 32 or more, which RV32C leaves to custom extensions. A
+hint, \code{c.addi} of zero or \code{c.mv} into \code{x0}, is an
+instruction that does nothing, and expands to the one it is spelt
+as. \code{compress} goes the other way, as an assembler does when it
+may, and a test checks that every instruction a halfword stands for
+compresses to a halfword that expands back to it.
+
+This decoder has a checker from outside the project. The build
+assembles all 49\,152 halfwords whose low two bits are not both set
+with the GNU assembler of the toolchain it already fetches and lists
+them with its disassembler, and \code{//cpu/vreteno:compressed\_test}
+spells each instruction the listing names with the thirty-two bit
+encoders and requires \code{compressed} to give the same word, and
+to refuse every halfword the listing does not name. The two differ in
+two places, where the test follows the specification: the
+disassembler names \code{c.addi16sp} of zero and shifts by 32 or more.
+Of the 49\,152, 28\,823 are instructions.
 
 \lstinputlisting[caption={\code{isa.rs}: the encoders, the decoder,
 the disassembler.},label={lst:v-isa}]{cpu/vreteno/src/isa.rs}
@@ -196,7 +221,12 @@ port. Which
 interrupt that step takes, if any, is the caller's word too, since
 the core decides on the bits as they stood a cycle earlier, and the
 lockstep test carries the core's decision across. Only
-\code{ebreak} halts. The
+\code{ebreak} halts. The fetch reads a halfword, the upper half of its
+word when bit 1 of the address is set, and takes a second when the
+first's low two bits are both set; a compressed instruction is read
+as the one it stands for, the counter moves on by the instruction's
+length, and a jump links that address. A halfword that is no
+instruction decodes as illegal, and is the trap value. The
 M extension is Rust's arithmetic on the
 right types: a product's low word is the same whatever the signs, the
 high word is the top of a 64-bit product of the operands extended
@@ -212,7 +242,8 @@ model.},label={lst:v-model}]{cpu/vreteno/src/model.rs}
 
 Listing~\ref{lst:v-core} is the core. It is one unit whose state is
 the fetch stage's program counter; an instruction register with the
-program counter it was fetched at and a valid bit, which together
+program counter it was fetched at, a valid bit, and a bit that says
+the instruction was compressed, which together
 are the boundary between fetch and execute; the writeback registers,
 the boundary between execute and writeback, which hold whether an
 instruction is there, its program counter, its destination, its
@@ -231,7 +262,9 @@ the register it wrote and what it wrote, which is what the waveform
 decodes field by field and the lockstep test steps the model on.
 The pieces of the step that are functions of their operands alone
 come first in the file, each a function under \code{\#[lower]} with
-a name and a sentence of its own: the five immediates, the ALU, the
+a name and a sentence of its own: the expander of compressed
+instructions and the encoders of the formats it builds, the five
+immediates, the ALU, the
 branch condition, a loaded word's extension, what a store puts on
 each lane and which lanes it writes, the CSR read, the CSR number
 check and the CSR's new value, the sequencer's signs and its result.
@@ -242,8 +275,24 @@ the pieces were written in place.
 
 The process is one \code{loop} with one wait, the rising edge, and
 everything after the wait is one cycle of all three stages at once.
-The fetch stage is a plain read of the instruction memory at its
-program counter. The execute stage takes the instruction register:
+The fetch stage reads the instruction memory at its program counter
+and at the word after, since an instruction may cross from one word
+into the next. The halfword at the counter is the upper half of its
+word when bit 1 of the address is set. If its low two bits are not
+both set it is a compressed instruction, and \code{expand} makes it
+the thirty-two bit instruction it stands for; otherwise the halfword
+after it is the instruction's upper half. The counter moves on by two
+or by four, and the instruction register takes the instruction with
+a bit that says which, so nothing after the fetch knows there are two
+lengths but the link a jump writes, two bytes on for a compressed
+call. \code{expand} is one \code{select!} on the three bits of the
+major opcode above the two that say compressed, over the instructions
+the encoders build from the halfword's fields, and it gives a halfword
+that is no instruction back as itself: no thirty-two bit instruction
+has its low two bits clear, so it traps as illegal, with itself as
+the trap value, which is what the specification asks. A test compares
+it with \code{isa::compressed} on every compressed halfword. The
+execute stage takes the instruction register:
 the decode, the fields of the word by \code{slice} and the five
 immediates assembled by \code{concat} and \code{sext}, as the manual
 draws them; two plain reads of the register file; the execute, an
@@ -677,7 +726,17 @@ interrupt, one interrupt a byte.},label={lst:v-irq}]{cpu/vreteno/rust/irq.rs}
 Listing~\ref{lst:v-program} holds the programs. \code{Asm} is the
 smallest assembler that has labels: a branch to a label not yet
 placed is emitted as a placeholder and patched when the label is,
-which is all a forward branch needs. The demonstration program sums
+which is all a forward branch needs. It holds halfwords, a thirty-two
+bit instruction being two of them and a compressed one one, and packs
+them into the little-endian words the instruction memory holds. With
+\code{compress} set, \code{emit} writes an instruction in its
+compressed spelling where it has one; a branch to a label keeps
+thirty-two bits, since its size is fixed before the label is placed.
+\code{align} pads to a whole word, which a trap handler needs:
+\code{mtvec} keeps no low bits, so a handler starting in the upper
+half of a word is entered two bytes early. The demonstration program
+is written with \code{compress} set, so it runs the same
+instructions in the same cycles in fewer bytes. It sums
 one to ten in a loop, calls a function that doubles the sum and
 returns through \code{jalr}, stores and loads every width so the sign
 extension of \code{lb} and \code{lh} and the zero extension of
@@ -723,8 +782,15 @@ data base, now and then a forward branch over one or two words, so
 both outcomes of every branch condition occur, the M extension in
 half the places an \code{or} would go, the six CSR forms on
 \code{mscratch}, \code{mcause}, \code{mepc} and \code{mtval},
-and now and then an \code{ecall} or an illegal word, zero or all
-ones. Half the word stores and loads go to the timer through
+and now and then an \code{ecall} or an illegal instruction: a word of
+zeros, which is two illegal halfwords, a reserved compressed halfword,
+or a word of ones. Half of its instructions are shaped to have a
+compressed spelling, with the destination as the first operand, the
+registers \code{x8} to \code{x15} and a six-bit immediate, and are
+written in it, and some forward branches are \code{c.beqz},
+\code{c.bnez} or \code{c.j}. So the two lengths are mixed, and a
+thirty-two bit instruction often starts in the upper half of a word.
+Half the word stores and loads go to the timer through
 \code{x30}, which the program keeps at its address, so the count
 and the compare are written with anything, and the count read
 back. Both interrupts are enabled from the start, and the compare is
@@ -733,9 +799,13 @@ placed after the \code{ebreak} branches on the cause's sign as the
 demonstration's does: an interrupt has the line's bit cleared and
 the compare set to the count plus sixty-four, both halves, since a
 program may have stored anything into the count, and returns to the
-word it interrupted; an exception returns to the word after.
-\code{x30} and \code{x31} are the handler's and the program leaves
-them alone. Nothing in it can loop, so every program halts, the
+word it interrupted; an exception returns past the instruction that
+trapped, four bytes on for an \code{ecall} or an illegal instruction
+whose low two bits are both set and two for the rest, which the
+handler reads off the cause and the trap value. \code{x30} and
+\code{x31} are the handler's and the program leaves them alone;
+\code{x29} is the handler's too, and a program that writes it loses
+it at the next trap, in the core and the model alike. Nothing in it can loop, so every program halts, the
 timer's storms included.
 
 \lstinputlisting[caption={\code{program.rs}: the assembler, the
@@ -761,7 +831,26 @@ retired instructions must not exceed the count of cycles, which is
 what one instruction per cycle at most means. The demonstration program passes with the values the
 comments promise, and sixty-four random programs of two hundred
 instructions each pass, which covers every instruction the generator
-emits many times over with operands it did not choose.
+emits many times over with operands it did not choose. The test also
+walks each random program from its start and counts its instructions
+by length: across the sixty-four there must be more than three
+thousand compressed ones, more than three thousand whole words, and
+more than two thousand thirty-two bit instructions that start in the
+upper half of a word, so the mix the fetch has to get right cannot
+quietly go away.
+
+The compressed instructions have a test of their own,
+\code{compressed\_instructions}, which runs every one of them at
+least once with the lengths mixed: the arithmetic group, the stack
+pointer's short forms, the loads and stores, a loop on
+\code{c.bnez}, calls by \code{c.jal}, \code{jal} and \code{c.jalr}
+with their links two or four bytes on, returns by \code{c.jr}, a
+reserved halfword that traps with itself as the trap value, and
+\code{c.ebreak} to halt. Two more negative controls belong to it. With
+a compressed call linking four bytes on, it fails at cycle 59 on
+\code{x1}; with a thirty-two bit instruction in the upper half of a
+word taking its upper half from its own word rather than the next, it
+fails at cycle 9 on the first such instruction.
 
 A test that cannot fail proves nothing, so two negative controls
 were run. With the arithmetic shift in the ALU replaced by the
@@ -863,8 +952,9 @@ waveform.},label={lst:v-main}]{cpu/vreteno/src/main.rs}
 \input{vreteno_timing.tex}
 \caption{The opening cycles: reset, then an instruction per edge,
 the handler's address, the timer's compare and the two enables set
-up, and the loop begun; \code{rd} and \code{val} are the
-writeback, \code{rd} zero when nothing was written.}
+up, the counter moving on by two after a compressed instruction and
+by four after the rest; \code{rd} and \code{val} are the writeback,
+\code{rd} zero when nothing was written.}
 \label{fig:v-wave}
 \end{figure}
 
@@ -1115,7 +1205,7 @@ top, by hand.},label={lst:v-board}]{cpu/vreteno/board/vreteno_board.v}
 
 Everything above runs programs written with the assembler in
 \code{program.rs}, which is enough to check a core and no way to
-write software. The core is an RV32IM machine, so a compiler can
+write software. The core is an RV32IMC machine, so a compiler can
 target it, and the toolchain for that is fetched by the build like
 every other: \code{MODULE.bazel} names the bare-metal RISC-V target
 beside the host's, and the ruleset downloads that target's standard
@@ -1133,7 +1223,7 @@ anything else, with no flag to remember.
 
 \subsection*{What the machine will not let a compiler do}
 
-Three of the core's properties decide how a program has to be
+Two of the core's properties decide how a program has to be
 written, and each of them the core meets by going quietly wrong
 rather than by refusing.
 
@@ -1148,21 +1238,15 @@ than beside the code, and the image carries the bytes the data memory
 starts with. That is what \code{Dmem::with} is for: there is no way
 for a program to put them there itself.
 
-The second is the compressed instructions. The core fetches one
-32-bit word per instruction and its decode is by opcode, so a
-compressed instruction is an illegal opcode, which traps to
-\code{mtvec}, which resets to zero, so the program restarts from the
-beginning. The only RISC-V target the ruleset maps has the compressed
-extension, so codegen is told to leave it out, and
-\code{elf2vreteno} refuses an image that holds one rather than trust
-the flag.
-
-The third is the size. A program is 1024 instructions, the loader
-truncates a longer one without saying so, and the fetch takes
-\code{pc[11:2]}, so a program that runs off the end wraps into
-itself. Optimising for size is not a preference here. It is also why
+The second is the size. A program is 4096 bytes, 1024 words, the
+loader truncates a longer one without saying so, and the fetch takes
+its word by \code{pc[11:2]}, so a program that runs off the end wraps
+into itself. Optimising for size is not a preference here. It is also why
 debug assertions are off: one of them pulls in \code{core}'s panic
-formatting, which is larger than the whole instruction memory.
+formatting, which is larger than the whole instruction memory. The
+compressed instructions help: the target the ruleset maps has them,
+the core runs them, and the greeting is 25 words where it was 33
+without them.
 
 Two more things nothing else does: the stack pointer is zero at
 reset, and \code{.bss} is not cleared. The entry stub does both, in
@@ -1192,9 +1276,9 @@ so the toolchain and the core are checked together by
 
 The other toolchain is the GNU one for bare-metal RISC-V, fetched by
 checksum like the first. It is the GNU one rather than a Clang
-because of what comes with it: its \code{rv32im/ilp32} multilib is
-this core exactly, RV32IM with no compressed instructions and the
-soft-float ABI, and it carries \code{newlib} and a \code{libstdc++}
+because of what comes with it: its \code{rv32imc/ilp32} multilib is
+this core exactly, RV32IMC and the soft-float ABI, and it carries
+\code{newlib} and a \code{libstdc++}
 already built for it, so a standard library is something the
 toolchain has rather than something the build would have to compile.
 

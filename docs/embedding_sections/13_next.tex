@@ -184,7 +184,7 @@ traces at every tick, while a deliberately broken one fails. Memories
 lower, and the runtime's channel is an elastic buffer with the
 handshake registered on both sides, which is the backpressure of the
 list above made real rather than assumed, so a unit with channels is
-checked as any other. The largest thing lowered is a three-stage RV32IM
+checked as any other. The largest thing lowered is a three-stage RV32IMC
 core~\cite{vreteno}, written in the subset the lowering reads,
 checked in lockstep against a reference model and, as a netlist,
 against its own trace, placed and routed at 100~MHz on an Artix-7,

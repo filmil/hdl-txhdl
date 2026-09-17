@@ -27,7 +27,7 @@ Seventeen documents are typeset here, and `cover.tex` names them all:
 `embedding.tex` with `embedding_sections/` is the language, `//docs:embedding`;
 `runtime.tex` with `runtime_sections/` is the runtime library verbatim, `//docs:runtime`;
 `examples.tex` with `examples_sections/` is every example with its output, `//docs:examples`;
-`vreteno.tex` is the Vreteno RV32I core, `//docs:vreteno`;
+`vreteno.tex` is the Vreteno RV32IMC core, `//docs:vreteno`;
 `tapeout.tex` is the core through an open ASIC flow, `//docs:tapeout`;
 `paper.tex` is the expository paper, `//docs:paper`;
 `cover.tex` is the cover, `//docs:cover`;

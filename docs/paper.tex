@@ -30,7 +30,7 @@ corresponding author, at f@hdlfactory.com; Dragiša Janković is
 reached at linkedin.com/in/dragisa-jankovic.}%
 \thanks{This paper presents TxHDL as it stands: the language, its
 runtime, the traces and netlists it produces, the checks that hold
-them together, and the Vreteno RV32IM core built with it. Every
+them together, and the Vreteno RV32IMC core built with it. Every
 listing is included from the project repository \code{HDL/txhdl} at
 build time, every waveform is drawn from a trace the build produced,
 and every number is from a run the build made. The companion
@@ -57,7 +57,7 @@ source runs as a cycle-accurate simulation, writes a waveform, and
 lowers to a netlist in Verilog and VHDL, and the build simulates that
 netlist under nvc and Verilator against the trace the simulation
 wrote, so a design that passes is right in three forms at once. The
-largest design so far is Vreteno, a three-stage RV32IM core with
+largest design so far is Vreteno, a three-stage RV32IMC core with
 machine-mode traps, an interrupt line and a bus with its data
 memory, a timer and a serial port on it: written in the subset the
 lowering reads, checked
@@ -129,7 +129,7 @@ is the language: what a unit is, how time is modelled, how units are
 wired, and how control flow on a signal is spelled.
 Section~\ref{sec:p-sim} is the simulation and its traces.
 Section~\ref{sec:p-lower} is the lowering and the checks that close
-the loop. Section~\ref{sec:p-vreteno} is Vreteno, an RV32IM core
+the loop. Section~\ref{sec:p-vreteno} is Vreteno, an RV32IMC core
 written in the language, from a reference model to synthesis.
 Section~\ref{sec:p-results} gathers the numbers.
 
@@ -586,10 +586,10 @@ writeback decoded into its register and value.}
 \subsection{Programs written for it}
 
 A core that runs only what its own assembler emits is a core that has
-been tested, not one that can be programmed. Vreteno is RV32IM, so
+been tested, not one that can be programmed. Vreteno is RV32IMC, so
 compilers target it, and two do: Rust through the ruleset's own
 toolchain, and C++ through the GNU bare-metal RISC-V toolchain, whose
-\code{rv32im/ilp32} multilib is this machine exactly and carries
+\code{rv32imc/ilp32} multilib is this machine exactly and carries
 \code{newlib} and a \code{libstdc++} built for it. Both are fetched
 by the build against a checksum. Nothing is installed to compile for
 the core, as nothing is installed to simulate or to synthesise it.
@@ -610,20 +610,19 @@ constant placed beside the code is one the program cannot read and
 the load retires with a stale word; \code{.rodata} is therefore
 linked into the data memory and the image carries its bytes, and
 there is no startup copy that could do it instead, since the copy
-could not read the source either. A compressed instruction is an
-illegal opcode, and \code{mtvec} resets to zero, so a program holding
-one restarts from the beginning instead of faulting. And the
-instruction memory is 4~KiB, which the loader truncates to without a
-word and the fetch wraps within. Each is refused by the image tool,
-by name, where it can be said out loud.
+could not read the source either. And the instruction memory is
+4~KiB, which the loader truncates to without a word and the fetch
+wraps within. Each is refused by the image tool, by name, where it
+can be said out loud. The compressed instructions were a third such
+restriction until the core ran them; now the compilers' own targets
+are the core's, and the programs are a quarter smaller for it.
 
 That size is the real constraint on what a standard library can mean
 here. The half of it that is templates and constants is usable and
 both programs use it; the half that needs an operating system
 underneath, a heap, file descriptors, an unwinder, is not, and no
 amount of toolchain fetches it into existence. The C++ program says
-hello and prints a number its compiler worked out, in 89
-instructions.
+hello and prints a number its compiler worked out, in 63 words.
 
 \section{Results}
 \label{sec:p-results}
