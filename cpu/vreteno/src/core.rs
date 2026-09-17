@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Vreteno: a three-stage RV32IM core. One process, and on every edge
-//! three things at once: the fetch stage reads the instruction memory
-//! at the program counter into the instruction register; the execute
+//! Vreteno: a three-stage RV32IMC core. One process, and on every edge
+//! three things at once: the fetch stage reads the instruction at the
+//! program counter into the instruction register, sixteen bits or
+//! thirty-two, a compressed one as the instruction it stands for, so
+//! that nothing after the fetch knows there are two lengths; the execute
 //! stage decodes the fields of the word in that register, executes,
 //! stores, reads the data memory into a register at its edge, and, on
 //! a taken branch or a jump, redirects the fetch and squashes the word
@@ -81,6 +83,256 @@ fn imm_b(ir: U<32>) -> U<32> {
 fn imm_u(ir: U<32>) -> U<32> {
     ir.slice::<12, 20>().concat::<_, 32>(U::<12>::from(0u8))
 }
+
+/// An I-type instruction from its fields.
+#[lower]
+fn enc_i(imm: U<12>, rs1: U<5>, f3: U<3>, rd: U<5>, op: U<7>) -> U<32> {
+    imm.concat::<_, 17>(rs1)
+        .concat::<_, 20>(f3)
+        .concat::<_, 25>(rd)
+        .concat::<_, 32>(op)
+}
+
+/// An S-type instruction, a store, from its fields.
+#[lower]
+fn enc_s(imm: U<12>, rs2: U<5>, rs1: U<5>, f3: U<3>) -> U<32> {
+    let hi = imm.slice::<5, 7>();
+    let lo = imm.slice::<0, 5>();
+    hi.concat::<_, 12>(rs2)
+        .concat::<_, 17>(rs1)
+        .concat::<_, 20>(f3)
+        .concat::<_, 25>(lo)
+        .concat::<_, 32>(U::<7>::from(0x23u8))
+}
+
+/// An R-type instruction, or a shift by an immediate, from its fields.
+#[lower]
+fn enc_r(
+    f7: U<7>,
+    rs2: U<5>,
+    rs1: U<5>,
+    f3: U<3>,
+    rd: U<5>,
+    op: U<7>,
+) -> U<32> {
+    f7.concat::<_, 12>(rs2)
+        .concat::<_, 17>(rs1)
+        .concat::<_, 20>(f3)
+        .concat::<_, 25>(rd)
+        .concat::<_, 32>(op)
+}
+
+/// A jal from its offset, which is even, and its link register.
+#[lower]
+fn enc_j(off: U<21>, rd: U<5>) -> U<32> {
+    let top = off.slice::<20, 1>();
+    let low = off.slice::<1, 10>();
+    let mid = off.slice::<11, 1>();
+    let high = off.slice::<12, 8>();
+    top.concat::<_, 11>(low)
+        .concat::<_, 12>(mid)
+        .concat::<_, 20>(high)
+        .concat::<_, 25>(rd)
+        .concat::<_, 32>(U::<7>::from(0x6fu8))
+}
+
+/// A beq or bne against x0, from its offset, which is even.
+#[lower]
+fn enc_b(off: U<13>, rs1: U<5>, f3: U<3>) -> U<32> {
+    let top = off.slice::<12, 1>();
+    let high = off.slice::<5, 6>();
+    let low = off.slice::<1, 4>();
+    let mid = off.slice::<11, 1>();
+    top.concat::<_, 7>(high)
+        .concat::<_, 12>(U::<5>::from(0u8))
+        .concat::<_, 17>(rs1)
+        .concat::<_, 20>(f3)
+        .concat::<_, 24>(low)
+        .concat::<_, 25>(mid)
+        .concat::<_, 32>(U::<7>::from(0x63u8))
+}
+
+// begin{expand}
+/// A compressed instruction as the thirty-two bit instruction it stands
+/// for; a halfword that is none, as itself, which is no thirty-two bit
+/// instruction either, since those have both low bits set, and so traps
+/// as illegal with the halfword as its trap value. The key is the three
+/// bits of the major opcode above the two that say compressed. A
+/// register field of three bits names x8 to x15; x2 is the stack
+/// pointer the short forms of the stack's loads and stores assume.
+#[lower]
+fn expand(h: U<16>) -> U<32> {
+    let key = h.slice::<13, 3>().concat::<_, 5>(h.slice::<0, 2>());
+    let rd = h.slice::<7, 5>();
+    let rs2 = h.slice::<2, 5>();
+    let rs1s = U::<2>::from(1u8).concat::<_, 5>(h.slice::<7, 3>());
+    let rs2s = U::<2>::from(1u8).concat::<_, 5>(h.slice::<2, 3>());
+    let x0 = U::<5>::from(0u8);
+    let sp = U::<5>::from(2u8);
+    // Bit 12, as a bit to concatenate and as a bit to test; a one-bit
+    // value compared with a number is not VHDL that analyses, #160.
+    let top = h.slice::<12, 1>();
+    let top_set = h.bit(12);
+    let op_imm = U::<7>::from(0x13u8);
+    let op_op = U::<7>::from(0x33u8);
+    // The immediates, each at the width its instruction takes.
+    let imm6 = top.concat::<_, 6>(rs2).sext::<12>();
+    let sh = rs2;
+    let imm4spn = h
+        .slice::<7, 4>()
+        .concat::<_, 6>(h.slice::<11, 2>())
+        .concat::<_, 7>(h.slice::<5, 1>())
+        .concat::<_, 8>(h.slice::<6, 1>())
+        .concat::<_, 10>(U::<2>::from(0u8))
+        .zext::<12>();
+    let imm16sp = top
+        .concat::<_, 3>(h.slice::<3, 2>())
+        .concat::<_, 4>(h.slice::<5, 1>())
+        .concat::<_, 5>(h.slice::<2, 1>())
+        .concat::<_, 6>(h.slice::<6, 1>())
+        .concat::<_, 10>(U::<4>::from(0u8))
+        .sext::<12>();
+    let imm_lw = h
+        .slice::<5, 1>()
+        .concat::<_, 4>(h.slice::<10, 3>())
+        .concat::<_, 5>(h.slice::<6, 1>())
+        .concat::<_, 7>(U::<2>::from(0u8))
+        .zext::<12>();
+    let imm_lwsp = h
+        .slice::<2, 2>()
+        .concat::<_, 3>(top)
+        .concat::<_, 6>(h.slice::<4, 3>())
+        .concat::<_, 8>(U::<2>::from(0u8))
+        .zext::<12>();
+    let imm_swsp = h
+        .slice::<7, 2>()
+        .concat::<_, 6>(h.slice::<9, 4>())
+        .concat::<_, 8>(U::<2>::from(0u8))
+        .zext::<12>();
+    let imm_lui = top.concat::<_, 6>(rs2).sext::<20>();
+    let joff = top
+        .concat::<_, 2>(h.slice::<8, 1>())
+        .concat::<_, 4>(h.slice::<9, 2>())
+        .concat::<_, 5>(h.slice::<6, 1>())
+        .concat::<_, 6>(h.slice::<7, 1>())
+        .concat::<_, 7>(h.slice::<2, 1>())
+        .concat::<_, 8>(h.slice::<11, 1>())
+        .concat::<_, 11>(h.slice::<3, 3>())
+        .concat::<_, 12>(U::<1>::from(0u8))
+        .sext::<21>();
+    let boff = top
+        .concat::<_, 3>(h.slice::<5, 2>())
+        .concat::<_, 4>(h.slice::<2, 1>())
+        .concat::<_, 6>(h.slice::<10, 2>())
+        .concat::<_, 8>(h.slice::<3, 2>())
+        .concat::<_, 9>(U::<1>::from(0u8))
+        .sext::<13>();
+    // The instructions, one per group of the major opcode.
+    let lui_rd = imm_lui
+        .concat::<_, 25>(rd)
+        .concat::<_, 32>(U::<7>::from(0x37u8));
+    let addi16sp = enc_i(imm16sp, sp, U::<3>::from(0u8), sp, op_imm);
+    let arith_f3 = select!(h.slice::<5, 2>().raw() => {
+        0 => U::<3>::from(0u8),
+        1 => U::<3>::from(4u8),
+        2 => U::<3>::from(6u8),
+        _ => U::<3>::from(7u8),
+    });
+    let arith_f7 = mux(
+        h.slice::<5, 2>() == 0,
+        U::<7>::from(0x20u8),
+        U::<7>::from(0u8),
+    );
+    // The function codes the instructions below take. One name to a
+    // let: a tuple bound in a lowered function is not declared in its
+    // netlist, #159.
+    let f0 = U::<3>::from(0u8);
+    let f1 = U::<3>::from(1u8);
+    let f2 = U::<3>::from(2u8);
+    let f5 = U::<3>::from(5u8);
+    let f7 = U::<3>::from(7u8);
+    let plain = U::<7>::from(0u8);
+    let alt = U::<7>::from(0x20u8);
+    let op_load = U::<7>::from(0x03u8);
+    let srli = enc_r(plain, sh, rs1s, f5, rs1s, op_imm);
+    let srai = enc_r(alt, sh, rs1s, f5, rs1s, op_imm);
+    let andi = enc_i(imm6, rs1s, f7, rs1s, op_imm);
+    let arith = enc_r(arith_f7, rs2s, rs1s, arith_f3, rs1s, op_op);
+    let misc = select!(h.slice::<10, 2>().raw() => {
+        0 => srli,
+        1 => srai,
+        2 => andi,
+        _ => arith,
+    });
+    let no_rs2 = rs2 == 0;
+    let jalr_rd = mux(top_set, U::<5>::from(1u8), x0);
+    let jumps = mux(
+        no_rs2,
+        mux(
+            top_set & (rd == 0),
+            U::<32>::from(0x0010_0073u32),
+            enc_i(
+                U::<12>::from(0u8),
+                rd,
+                U::<3>::from(0u8),
+                jalr_rd,
+                U::<7>::from(0x67u8),
+            ),
+        ),
+        enc_r(
+            U::<7>::from(0u8),
+            rs2,
+            mux(top_set, rd, x0),
+            U::<3>::from(0u8),
+            rd,
+            op_op,
+        ),
+    );
+    let addi4spn = enc_i(imm4spn, sp, f0, rs2s, op_imm);
+    let lw = enc_i(imm_lw, rs1s, f2, rs2s, op_load);
+    let sw = enc_s(imm_lw, rs2s, rs1s, f2);
+    let addi = enc_i(imm6, rd, f0, rd, op_imm);
+    let jal = enc_j(joff, U::<5>::from(1u8));
+    let li = enc_i(imm6, x0, f0, rd, op_imm);
+    let upper = mux(rd == 2, addi16sp, lui_rd);
+    let j = enc_j(joff, x0);
+    let beqz = enc_b(boff, rs1s, f0);
+    let bnez = enc_b(boff, rs1s, f1);
+    let slli = enc_r(plain, sh, rd, f1, rd, op_imm);
+    let lwsp = enc_i(imm_lwsp, sp, f2, rd, op_load);
+    let swsp = enc_s(imm_swsp, rs2, sp, f2);
+    let word = select!(key.raw() => {
+        0 => addi4spn,
+        8 => lw,
+        24 => sw,
+        1 => addi,
+        5 => jal,
+        9 => li,
+        13 => upper,
+        17 => misc,
+        21 => j,
+        25 => beqz,
+        29 => bnez,
+        2 => slli,
+        10 => lwsp,
+        18 => jumps,
+        _ => swsp,
+    });
+    // Whether the halfword is an instruction: what the specification
+    // reserves, and what RV32C does not have, is not.
+    let ok = select!(key.raw() => {
+        0 => (h.slice::<5, 8>() != 0).into(),
+        8 | 24 | 1 | 5 | 9 | 21 | 25 | 29 | 26 => Bit::One,
+        13 => top_set | (rs2 != 0),
+        17 => !top_set | (h.slice::<10, 2>() == 2),
+        2 => !top_set,
+        10 => (rd != 0).into(),
+        18 => top_set | (rd != 0) | (rs2 != 0),
+        _ => Bit::Zero,
+    });
+    mux(ok, word, h.zext::<32>())
+}
+// end{expand}
 
 /// The J immediate, a jump's offset, in four pieces and even.
 #[lower]
@@ -287,6 +539,7 @@ fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
 pub struct Vreteno<const IW: usize> {
     pub pc: Reg<U<32>>,
     pub ir: Reg<U<32>>,
+    pub ir_c: Reg<Bit>,
     pub ir_pc: Reg<U<32>>,
     pub valid: Reg<Bit>,
     pub stopped: Reg<Bit>,
@@ -418,10 +671,22 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // retires the cycle after its answer has landed.
             let wb_here = self.wb_valid & !self.dev_wait;
             let wb_write = wb_here & (wb_rd != 0);
-            // The fetch stage: the word at the program counter, into
-            // the instruction register unless the execute stage
-            // redirects below.
-            let fetched = self.imem.read(fetch_pc.slice::<2, 10>());
+            // The fetch stage: the instruction at the program counter,
+            // into the instruction register unless the execute stage
+            // redirects below. The memory holds little-endian words, so
+            // the halfword at an address with bit 1 set is the upper
+            // half of its word; a compressed instruction is that
+            // halfword alone, and a thirty-two bit one takes its upper
+            // half from the halfword after, which may be the next word.
+            let widx = fetch_pc.slice::<2, 10>();
+            let w0 = self.imem.read(widx);
+            let w1 = self.imem.read(widx + 1);
+            let odd = fetch_pc.bit(1);
+            let lo = mux(odd, w0.slice::<16, 16>(), w0.slice::<0, 16>());
+            let hi = mux(odd, w1.slice::<0, 16>(), w0.slice::<16, 16>());
+            let short = lo.slice::<0, 2>() != 3;
+            let expanded = expand(lo);
+            let fetched = mux(short, expanded, hi.concat::<_, 32>(lo));
             // The execute stage: the fields of the word.
             let opcode = ir.slice::<0, 7>();
             let rd = ir.slice::<7, 5>();
@@ -501,7 +766,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             self.stall
                 .set(stall_ld | stall_m | stall_bus | self.dev_wait);
             let stall = self.stall.get();
-            let pc4 = pc + 4;
+            // The address after the instruction, which a jump links:
+            // two bytes on for a compressed one, four for the rest.
+            let link =
+                pc + mux(self.ir_c, U::<32>::from(2u32), U::<32>::from(4u32));
             // Live: an instruction in execute that is not stalled. It
             // runs unless the interrupt takes its place.
             let live = !rst & !self.stopped & self.valid & !stall;
@@ -608,7 +876,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let wval = select!(opcode.raw() => {
                 0x37 => imm_u,
                 0x17 => pc + imm_u,
-                0x6f | 0x67 => pc4,
+                0x6f | 0x67 => link,
                 0x73 => csr_old,
                 _ => mux(is_m, m_res, alu),
             });
@@ -804,7 +1072,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // begin{fetch}
             // The fetch's next counter: zero on reset, parked on the
             // halting instruction, held while halted or stalled, the
-            // target on a redirect, else the next word. Reset, park and
+            // target on a redirect, else the next instruction, two bytes
+            // on or four. Reset, park and
             // hold are known early and the redirect late, so the two
             // candidates fold the early conditions in and the redirect
             // chooses last, one multiplexer from the instruction memory.
@@ -813,7 +1082,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let park = run & stop;
             let hold = stall | (stop & !run);
             let zero = U::<32>::from(0u32);
-            let advance = mux(hold, fetch_pc, fetch_pc + 4);
+            let width = mux(short, U::<32>::from(2u32), U::<32>::from(4u32));
+            let advance = mux(hold, fetch_pc, fetch_pc + width);
             let go = mux(rst, zero, mux(park, pc, advance));
             let jmp =
                 mux(rst, zero, mux(park, pc, mux(int_take, mtvec, target)));
@@ -824,6 +1094,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 _ if stop.to_bool() => { self.valid <= Bit::Zero },
                 _ => {
                     self.ir <= fetched;
+                    self.ir_c <= Bit::from(short);
                     self.ir_pc <= fetch_pc;
                     self.valid <= !redirect
                 },
@@ -837,6 +1108,25 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 rd: wb_rd,
                 val: mux(wb_here, wb_val, U::<32>::from(0u32)),
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expand;
+    use crate::isa::compressed;
+    use txhdl::types::U;
+
+    /// The core's expander against the decoder's, on every halfword
+    /// that is compressed: the same instruction, or, for one that is
+    /// none, the halfword itself.
+    #[test]
+    fn expand_agrees_with_the_decoder() {
+        for h in (0u32..0x10000).filter(|h| h & 3 != 3) {
+            let want = compressed(h as u16).unwrap_or(h);
+            let got = expand(U::<16>::from(h)).raw() as u32;
+            assert_eq!(got, want, "{h:#06x}");
         }
     }
 }
