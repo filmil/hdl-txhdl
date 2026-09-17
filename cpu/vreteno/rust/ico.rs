@@ -25,8 +25,7 @@
 //! what happens when it cannot, and that is not a style. Either would
 //! ask for a check that can fail, a check that can fail calls
 //! `core`'s panic path, and that path drags in `core::fmt`, which is
-//! larger than the four kilobytes of instruction memory and compiled
-//! with compressed instructions this core does not have. `elf2vreteno`
+//! larger than the four kilobytes of instruction memory. `elf2vreteno`
 //! refuses such an image and says so, which is how this was found.
 //!
 //! The addresses below are the agreement with the rest of the system:
@@ -134,25 +133,6 @@ fn emit(at: usize, words: &[u32; USED]) {
 /// complement, in the low or the high half of a word.
 fn pair(x: i32, y: i32) -> u32 {
     ((x as u32) & 0xfff) | (((y as u32) & 0xfff) << 16)
-}
-
-/// Clearing an array is a call to `memset`, and the `memset` that
-/// comes with the toolchain is compiled with compressed instructions,
-/// which this core does not have. So the program brings its own. The
-/// stores are volatile, or the optimiser would notice what the loop
-/// is and call `memset`.
-///
-/// # Safety
-/// `p` points at `n` bytes this program owns, which is what the
-/// compiler passes here.
-#[no_mangle]
-unsafe extern "C" fn memset(p: *mut u8, v: i32, n: usize) -> *mut u8 {
-    let mut i = 0;
-    while i < n {
-        write_volatile(p.add(i), v as u8);
-        i += 1;
-    }
-    p
 }
 
 /// The three vertices a face is made of.
