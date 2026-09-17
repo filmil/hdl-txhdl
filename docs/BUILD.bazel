@@ -643,6 +643,8 @@ latex_document(
         ":gpio_timing",
         ":spi_run",
         ":spi_timing",
+        ":syscon_run",
+        ":syscon_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -1133,6 +1135,25 @@ waveform(
     ],
     from_tick = 180,
     until = 320,
+)
+
+# The system control block: the reset a program asked for, held for
+# eight cycles, with the cause and the scratch word coming through it.
+waveform(
+    name = "syscon",
+    example = "//lib/examples:ex_syscon",
+    lowered = ("syscon", "syscon"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//por=>por",
+        "//button=>button",
+        "//srst=>srst",
+        "//block/cause=>cause",
+        "//block/hold=>hold",
+        "//block/scratch=>scratch",
+    ],
+    from_tick = 146,
+    until = 200,
 )
 
 # Pins behind AXI-Lite: the direction set, a pin read through its

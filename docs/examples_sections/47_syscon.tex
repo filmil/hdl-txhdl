@@ -1,0 +1,66 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Who This Chip Is, and Why It Restarted}
+\label{sec:x-syscon}
+
+Three questions a program wants answered by the hardware and by
+nothing else. Which design am I running on. Why did I start. And how
+do I hand a word to whatever runs next.
+
+\code{Syscon} answers all three in seven words. Four are constants
+from the type's parameters: an identifier, a version, and two words of
+build stamp, which a build can fill with a commit and a date so that a
+program can say which bitstream it is running on rather than which one
+it was compiled for. The other three are a cause, a reset and a
+scratch.
+
+\subsection{The Cause Accumulates}
+
+\code{cause} has a bit per reason, and they are kept until a program
+clears them by writing ones. It is tempting to make such a register
+hold only the last reason, and that is the wrong choice: the
+interesting case is the one where two things went wrong, and a
+register that overwrote itself would lose exactly that case. The
+example ends by pressing the button while the software bit is still
+set, and reads back both.
+
+The four reasons are the power coming on, the button, the watchdog
+and a program asking. The first three arrive as wires, so a board
+decides what they mean; the fourth is this block's own doing.
+
+\subsection{A Key, and Why}
+
+A write to \code{reset} restarts the system only if it carries
+\code{KEY}. A wild store from a program that has lost its way should
+not restart the machine, and the cheapest defence is to make the
+value improbable. The example writes a zero and checks that nothing
+happened.
+
+The reset is held for eight cycles rather than one, because a reset
+that lasted a single cycle would be a pulse that some parts of a
+design saw and others did not.
+
+\subsection{What A Reset Does Not Touch}
+
+\code{scratch} and \code{cause} are the two registers a reset leaves
+alone, and that is what makes them worth having. A bootloader leaves a
+word in \code{scratch} and restarts into the program that reads it; a
+program reads \code{cause} to find out whether it is starting for the
+first time or picking up after a watchdog.
+
+The block does not reset itself, which is how those two survive. That
+is a decision rather than an oversight, and it is the reason this part
+sits outside whatever the reset line drives.
+
+\begin{figure}[htbp]
+\centering
+\input{syscon_timing.tex}
+\caption{A reset the program asked for: the key written, the line
+held for eight cycles while \code{hold} counts down, the cause coming
+back with the software bit, and the scratch word untouched through
+all of it.}
+\label{fig:x-syscon}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_syscon.rs}. Run with \code{bazel run //lib/examples:ex\_syscon}.},label={lst:x-syscon}]{lib/examples/ex_syscon.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_syscon} printed when the build ran it: the identity, the build stamp, the cause at each step, and then the block's Verilog.},label={lst:x-syscon-out}]{out_syscon.txt}

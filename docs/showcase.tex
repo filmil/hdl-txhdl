@@ -87,6 +87,7 @@ AXI to Wishbone bridge & parts & yes \\
 Interrupt controllers, 1 to 8 sources & parts & 3 \\
 Network node, switch, 2 bridges & parts & not yet \\
 Pins; SPI; Ethernet's three; HDMI's two & parts & all seven \\
+System control: identity, cause, reset & parts & yes \\
 Vreteno; memory, timer, serial port & \code{cpu} & all four \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
@@ -211,9 +212,10 @@ of an operation that arrive on separate channels, out of order, and
 fires when the last of them has.
 
 It has grown outwards from the bus since: an Ethernet MAC, HDMI video
-with the I2C that configures the chip, general purpose pins, and a
-bridge from AXI to Wishbone, which lets a controller written elsewhere
-be a peripheral here.
+with the I2C that configures the chip, general purpose pins, a system
+control block that says which design is running and why it last
+restarted, and a bridge from AXI to Wishbone, which lets a controller
+written elsewhere be a peripheral here.
 
 \begin{figure}[htbp]
 \centering
