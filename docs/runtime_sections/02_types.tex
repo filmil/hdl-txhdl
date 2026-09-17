@@ -4,7 +4,10 @@
 
 Values, and the two markers. \code{Bit} is two valued, \code{Logic} is
 IEEE 1164's nine, and \code{U<N>} and \code{I<N>} are the numeric
-vectors, with the width a const parameter. A width that is an
+vectors, with the width a const parameter. Each keeps its bits in one
+128-bit Rust integer, so a width is at most \code{MAX\_WIDTH}, 128,
+and a wider one stops the build where its width is first read, rather
+than dropping the bits above. A width that is an
 expression of other widths, \code{U<\{A + B\}>}, needs nightly Rust,
 which is the largest constraint the embedding found, and the
 prototype declares each width by hand instead. The conversions from
