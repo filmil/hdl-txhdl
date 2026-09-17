@@ -64,8 +64,8 @@ label={lst:w-unit}]{lib/examples/ex_cheat.rs}
 
 Table~\ref{tab:w-units} lists every unit the build lowers to Verilog
 and VHDL. Table~\ref{tab:w-systems} lists the systems it assembles
-from them. Together they are 31\,615 lines of Rust: 10\,591 of runtime
-and macros, 7\,497 of parts, 6\,094 in fifty-two examples, 4\,964 of
+from them. Together they are 32\,643 lines of Rust: 10\,591 of runtime
+and macros, 8\,312 of parts, 6\,307 in fifty-three examples, 4\,964 of
 Vreteno with its board, and 2\,469 of Razboj, DDR3, Ethernet, HDMI
 and the SoC.
 
@@ -262,8 +262,8 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs a hundred and eight targets, of
-which ninety-four are netlists under both simulators; the rest are the
+its ports. \code{bazel test //...} runs a hundred and ten targets, of
+which ninety-six are netlists under both simulators; the rest are the
 core's model and
 programs, the board's own run, Razboj, the parts, the SoC's run, and
 the tools. Three more are tagged manual: the board and its DDR3 under

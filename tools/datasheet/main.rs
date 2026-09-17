@@ -30,6 +30,7 @@ use txhdl_parts::gpio::Gpio;
 use txhdl_parts::spi::Spi;
 use txhdl_parts::plic::Plic2;
 use txhdl_parts::station::Station3;
+use txhdl_parts::syscon::Syscon;
 use vreteno32::board::Board;
 use vreteno32::core::Vreteno;
 use vreteno32::dmem::Dmem;
@@ -283,6 +284,13 @@ fn main() {
     sheet("Plic", "Plic2<0>", Plic2::<0>::lowered("plic"));
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));
     sheet("Spi", "Spi", Spi::lowered("spi"));
+    sheet(
+        "Syscon",
+        "Syscon<0x74780001, 0x10000, 0, 0, 0x52535421>",
+        Syscon::<0x7478_0001, 0x1_0000, 0, 0, 0x5253_5421>::lowered(
+            "syscon",
+        ),
+    );
     sheet("Uart", "Uart<868>", Uart::<868>::lowered("uart"));
     sheet("Ddr3Per", "Ddr3Per<0, 0>", Ddr3Per::<0, 0>::lowered("ddr3"));
     sheet(

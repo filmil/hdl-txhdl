@@ -1,0 +1,116 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Syscon
+\datasheet{Syscon}{The system control block: identity, build stamp, reset cause, soft reset, and a word that survives a reset.}
+
+\dsfacts{\code{lib/parts/src/syscon.rs}}{\code{txhdl\_parts::syscon::Syscon}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{Syscon} answers three questions only the hardware can answer:
+which design is running, why it last restarted, and where to leave a
+word for whatever runs next. It also drives the system's reset line.
+
+Four of its words are constants from the type's parameters, so a build
+can put a commit and a date into the hardware and a program can read
+back which bitstream it is on. Three are registers: the cause, the
+reset key and the scratch.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{ID} & The design's identifier, read at \code{0x00}. \\
+\code{VERSION} & Its version, read at \code{0x04}. \\
+\code{STAMP0} & The build stamp's low word, read at \code{0x08}. A
+build would put a commit here. \\
+\code{STAMP1} & The build stamp's high word, read at \code{0x0c}. A
+build would put a date here. \\
+\code{KEY} & The word that must be written to \code{0x14} for a reset
+to happen. Any other value is ignored. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Register map}
+
+Offsets from the block's base. The block selects the word by bits 4 to
+2 of the address and looks at no other bits.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.5\textwidth}@{}}
+\toprule
+Offset & Word & Access \\
+\midrule
+\code{0x00} & \code{id} & Read only, \code{ID}. \\
+\code{0x04} & \code{version} & Read only, \code{VERSION}. \\
+\code{0x08} & \code{stamp0} & Read only, \code{STAMP0}. \\
+\code{0x0c} & \code{stamp1} & Read only, \code{STAMP1}. \\
+\code{0x10} & \code{cause} & Read, and write ones to clear. Bit 0 the
+power, 1 the button, 2 the watchdog, 3 software. \\
+\code{0x14} & \code{reset} & Write only. Writing \code{KEY} asks for a
+reset; anything else does nothing. Reads as zero. \\
+\code{0x18} & \code{scratch} & Read and write. A reset does not clear
+it. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{Syscon}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item Each cycle \code{cause} takes what it held, less any bit a write
+to \code{0x10} set to one in that cycle, plus a bit for each reason
+asserting now: \code{por}, \code{button}, \code{wdog}, and a write of
+\code{KEY} to \code{0x14}.
+\item The reasons accumulate. A system reset by the button and then by
+software reads both bits until a program clears them, so the case
+where two things went wrong is not lost.
+\item A write of \code{KEY} to \code{0x14} sets \code{hold} to eight.
+While \code{hold} is not zero it counts down by one a cycle. The reset
+is held for eight cycles rather than one so that every part of a
+design sees it.
+\item \code{srst} is high while any of \code{por}, \code{button},
+\code{wdog} or the key write is asserting, or while \code{hold} is not
+zero. It is combinational from those and from a register.
+\item Nothing in this block is cleared by \code{srst}. That is what
+lets \code{cause} and \code{scratch} survive a reset, and it is why
+the block sits outside whatever \code{srst} drives.
+\item A read is answered on \code{r} in the cycle it is taken, with
+\code{OKAY}. A write is taken when its address phase, its beat and
+room on \code{b} are all there.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/examples:ex\_syscon} reads the identity and the
+build stamp, reads the power-on cause, leaves a word in
+\code{scratch}, clears the cause, asks for a reset with the key, and
+checks that the cause comes back as software while the scratch word is
+unchanged. It then writes a wrong key and checks that nothing moved,
+and presses the button to see the two causes side by side.
+\item The build simulates the netlist against that run under nvc and
+Verilator: \code{//docs:syscon\_sim\_syscon\_tb\_test} and
+\code{//docs:syscon\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+Nothing in the tree yet. Issue 147 asks for it on the board, where the
+watchdog of issue 149 would drive \code{wdog} and the bootloader of
+issue 135 would use \code{scratch}.
+
+\subsection*{Limits}
+
+The four constants are type parameters, so putting a real commit in
+them wants a build that generates the instantiation; this part offers
+the words and does not fill them. The reset is eight cycles, not a
+parameter. There is no lock, so a program can clear a cause another
+program wanted to read. \code{reset} reads as zero rather than as what
+was last written.
