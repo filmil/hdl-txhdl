@@ -1113,6 +1113,26 @@ waveform(
     until = 54,
 )
 
+# An SPI master reading a flash chip: the select held, the clock, the
+# byte going out and the byte coming back.
+waveform(
+    name = "spi",
+    example = "//lib/examples:ex_spi",
+    lowered = ("spi", "spi"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//cs_n=>cs_n",
+        "//sclk=>sclk",
+        "//mosi=>mosi",
+        "//miso=>miso",
+        "//spi/txb=>txb",
+        "//spi/rxb=>rxb",
+        "//spi/busy=>busy",
+    ],
+    from_tick = 180,
+    until = 320,
+)
+
 # Pins behind AXI-Lite: the direction set, a pin read through its
 # synchroniser, and an edge raising the interrupt and being cleared.
 waveform(
