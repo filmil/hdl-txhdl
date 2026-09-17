@@ -4,7 +4,7 @@
 # provides has been deleted. Every concept the article introduces lives
 # here, and every one is exercised by a compiled example under
 # //lib/examples that the article's appendix includes verbatim.
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_proc_macro")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_proc_macro", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,6 +12,13 @@ rust_proc_macro(
     name = "txhdl_macros",
     srcs = ["macros/lib.rs"],
     crate_name = "txhdl_macros",
+    edition = "2021",
+)
+
+# The macros' own tests: the reserved words a netlist cannot hold.
+rust_test(
+    name = "macros_test",
+    crate = ":txhdl_macros",
     edition = "2021",
 )
 

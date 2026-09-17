@@ -209,9 +209,35 @@ impl<const N: usize> Port for crate::types::U<N> {}
 /// A unit's fields by name, kind, width and depth. Derived with
 /// `Trace`.
 pub trait Fields {
+    /// The names of the unit's fields, in order, for the checks
+    /// `#[lower]` writes against the names of its wires and ports.
+    const NAMES: &'static [&'static str];
     /// Every field of the unit, as its name, what it is, how wide it
     /// is, and how many words it holds if it is a memory.
     fn fields() -> Vec<(&'static str, Option<Kind>, usize, usize)>;
+}
+
+/// Whether `name` is one of `names`, in a constant: the check
+/// `#[lower]` writes for a wire or a port that would take the name of
+/// a field, which the netlist would declare twice.
+#[doc(hidden)]
+pub const fn has_name(names: &[&str], name: &str) -> bool {
+    let name = name.as_bytes();
+    let mut i = 0;
+    while i < names.len() {
+        let n = names[i].as_bytes();
+        if n.len() == name.len() {
+            let mut k = 0;
+            while k < n.len() && n[k] == name[k] {
+                k += 1;
+            }
+            if k == n.len() {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 /// A value as an expression: its width and bits.

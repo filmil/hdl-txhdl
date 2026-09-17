@@ -129,6 +129,12 @@ fn parse_item(input: TokenStream) -> Item {
 
 /// The field names of a braced struct body, in order.
 fn field_names(body: &Group) -> Vec<String> {
+    field_idents(body).iter().map(|id| id.to_string()).collect()
+}
+
+/// The fields of a braced struct body as their name tokens, in order,
+/// so that a check can point at one.
+fn field_idents(body: &Group) -> Vec<Ident> {
     let toks: Vec<TokenTree> = body.stream().into_iter().collect();
     let mut names = Vec::new();
     let mut depth = 0i32;
@@ -145,7 +151,7 @@ fn field_names(body: &Group) -> Vec<String> {
                             Some(TokenTree::Punct(q)) if q.as_char() == ':'
                         );
                         if !next_is_path {
-                            names.push(id.to_string());
+                            names.push(id.clone());
                         }
                     }
                 }
@@ -315,6 +321,13 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
     let Some(body) = &item.body else {
         return err(Span::call_site(), "Trace needs a braced struct");
     };
+    // A unit's field is a signal of its netlist, and of the testbench
+    // made from its trace, so a name either target reserves is refused
+    // here, at the field.
+    let refused: TokenStream = field_idents(body)
+        .iter()
+        .filter_map(|id| check_reserved(&id.to_string(), "field", id.span()))
+        .collect();
     let calls = field_names(body)
         .iter()
         .map(|n| {
@@ -339,21 +352,28 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    format!(
+    let generated = format!(
         "impl{b} ::txhdl::comp::trace::Traceable for {n}{a} {{\n\
          fn trace(&self, scope: &::txhdl::comp::trace::Scope) {{\n\
          {calls} }}\n}}\n\
          impl{b} ::txhdl::netlist::Fields for {n}{a} {{\n\
+         const NAMES: &'static [&'static str] = &[{quoted}];\n\
          fn fields() -> Vec<(&'static str, \
          Option<::txhdl::comp::trace::Kind>, usize, usize)> {{ \
          vec![{fields}] }}\n}}\n\
          impl{b} ::txhdl::netlist::Port for {n}{a} {{}}",
         b = item.bounds,
         n = item.name,
-        a = item.args
-    )
-    .parse()
-    .unwrap()
+        a = item.args,
+        quoted = names
+            .iter()
+            .map(|n| format!("\"{n}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    let mut out: TokenStream = generated.parse().unwrap();
+    out.extend(refused);
+    out
 }
 
 // ---------------------------------------------------------------------
@@ -381,6 +401,154 @@ fn err(span: Span, msg: &str) -> TokenStream {
         })
         .collect();
     ts
+}
+
+// ---------------------------------------------------------------------
+// Names a netlist cannot hold
+
+/// The reserved words of VHDL-2008, which are not case sensitive.
+const VHDL_RESERVED: &[&str] = &[
+    "abs", "access", "after", "alias", "all", "and", "architecture",
+    "array", "assert", "assume", "assume_guarantee", "attribute", "begin",
+    "block", "body", "buffer", "bus", "case", "component", "configuration",
+    "constant", "context", "cover", "default", "disconnect", "downto",
+    "else", "elsif", "end", "entity", "exit", "fairness", "file", "for",
+    "force", "function", "generate", "generic", "group", "guarded", "if",
+    "impure", "in", "inertial", "inout", "is", "label", "library",
+    "linkage", "literal", "loop", "map", "mod", "nand", "new", "next",
+    "nor", "not", "null", "of", "on", "open", "or", "others", "out",
+    "package", "parameter", "port", "postponed", "procedure", "process",
+    "property", "protected", "pure", "range", "record", "register",
+    "reject", "release", "rem", "report", "restrict",
+    "restrict_guarantee", "return", "rol", "ror", "select", "sequence",
+    "severity", "shared", "signal", "sla", "sll", "sra", "srl", "strong",
+    "subtype", "then", "to", "transport", "type", "unaffected", "units",
+    "until", "use", "variable", "vmode", "vprop", "vunit", "wait", "when",
+    "while", "with", "xnor", "xor",
+];
+
+/// The keywords of SystemVerilog, IEEE 1800-2017, which include
+/// Verilog's. Verilator reads a netlist's Verilog with all of them
+/// reserved.
+const VERILOG_RESERVED: &[&str] = &[
+    "accept_on", "alias", "always", "always_comb", "always_ff",
+    "always_latch", "and", "assert", "assign", "assume", "automatic",
+    "before", "begin", "bind", "bins", "binsof", "bit", "break", "buf",
+    "bufif0", "bufif1", "byte", "case", "casex", "casez", "cell",
+    "chandle", "checker", "class", "clocking", "cmos", "config", "const",
+    "constraint", "context", "continue", "cover", "covergroup",
+    "coverpoint", "cross", "deassign", "default", "defparam", "design",
+    "disable", "dist", "do", "edge", "else", "end", "endcase",
+    "endchecker", "endclass", "endclocking", "endconfig", "endfunction",
+    "endgenerate", "endgroup", "endinterface", "endmodule", "endpackage",
+    "endprimitive", "endprogram", "endproperty", "endspecify",
+    "endsequence", "endtable", "endtask", "enum", "event", "eventually",
+    "expect", "export", "extends", "extern", "final", "first_match", "for",
+    "force", "foreach", "forever", "fork", "function", "generate",
+    "genvar", "global", "highz0", "highz1", "if", "iff", "ifnone",
+    "ignore_bins", "illegal_bins", "implements", "implies", "import",
+    "incdir", "include", "initial", "inout", "input", "inside", "instance",
+    "int", "integer", "interconnect", "interface", "intersect", "join",
+    "join_any", "join_none", "large", "let", "liblist", "library", "local",
+    "localparam", "logic", "longint", "macromodule", "matches", "medium",
+    "modport", "module", "nand", "negedge", "nettype", "new", "nexttime",
+    "nmos", "nor", "noshowcancelled", "not", "notif0", "notif1", "null",
+    "or", "output", "package", "packed", "parameter", "pmos", "posedge",
+    "primitive", "priority", "program", "property", "protected", "pull0",
+    "pull1", "pulldown", "pullup", "pulsestyle_ondetect",
+    "pulsestyle_onevent", "pure", "rand", "randc", "randcase",
+    "randsequence", "rcmos", "real", "realtime", "ref", "reg", "reject_on",
+    "release", "repeat", "restrict", "return", "rnmos", "rpmos", "rtran",
+    "rtranif0", "rtranif1", "s_always", "s_eventually", "s_nexttime",
+    "s_until", "s_until_with", "scalared", "sequence", "shortint",
+    "shortreal", "showcancelled", "signed", "small", "soft", "solve",
+    "specify", "specparam", "static", "string", "strong", "strong0",
+    "strong1", "struct", "super", "supply0", "supply1", "sync_accept_on",
+    "sync_reject_on", "table", "tagged", "task", "this", "throughout",
+    "time", "timeprecision", "timeunit", "tran", "tranif0", "tranif1",
+    "tri", "tri0", "tri1", "triand", "trior", "trireg", "type", "typedef",
+    "union", "unique", "unique0", "unsigned", "until", "until_with",
+    "untyped", "use", "uwire", "var", "vectored", "virtual", "void", "wait",
+    "wait_order", "wand", "weak", "weak0", "weak1", "while", "wildcard",
+    "wire", "with", "within", "wor", "xnor", "xor",
+];
+
+/// Which of the two targets reserve `name`, if either does. A unit
+/// lowers to both, so a name either one reserves is refused.
+fn reserved_by(name: &str) -> Option<&'static str> {
+    let vhdl = VHDL_RESERVED.contains(&name.to_ascii_lowercase().as_str());
+    let verilog = VERILOG_RESERVED.contains(&name);
+    match (vhdl, verilog) {
+        (true, true) => Some("VHDL and Verilog"),
+        (true, false) => Some("VHDL"),
+        (false, true) => Some("Verilog"),
+        (false, false) => None,
+    }
+}
+
+/// The error for a name a netlist would hold that a target reserves,
+/// at its declaration, or nothing.
+fn check_reserved(name: &str, what: &str, span: Span) -> Option<TokenStream> {
+    reserved_by(name).map(|by| {
+        err(
+            span,
+            &format!(
+                "{what} `{name}` is a reserved word of {by}: the netlist \
+                 names it as written and would not analyse, so rename it \
+                 (see issue 77)"
+            ),
+        )
+    })
+}
+
+/// `ts` with every token given `span`: a check the macro writes then
+/// reports at the name it checks. Every path in such a check is
+/// absolute, so where its names resolve does not change.
+fn placed_at(ts: TokenStream, span: Span) -> TokenStream {
+    let at = span;
+    ts.into_iter()
+        .map(|t| match t {
+            TokenTree::Group(g) => {
+                let mut n = Group::new(g.delimiter(), placed_at(g.stream(), span));
+                n.set_span(at);
+                TokenTree::Group(n)
+            }
+            mut t => {
+                t.set_span(at);
+                t
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod reserved_tests {
+    use super::reserved_by;
+
+    #[test]
+    fn the_names_that_broke_netlists_are_reserved() {
+        // The names issue 77 lists, and those `eth` renamed.
+        assert_eq!(reserved_by("next"), Some("VHDL"));
+        assert_eq!(reserved_by("tri"), Some("Verilog"));
+        assert_eq!(reserved_by("inside"), Some("Verilog"));
+        for n in ["out", "begin", "end", "body", "buf", "byte"] {
+            assert!(reserved_by(n).is_some(), "{n}");
+        }
+        assert_eq!(reserved_by("begin"), Some("VHDL and Verilog"));
+    }
+
+    #[test]
+    fn vhdl_is_not_case_sensitive_and_verilog_is() {
+        assert_eq!(reserved_by("Next"), Some("VHDL"));
+        assert_eq!(reserved_by("TRI"), None);
+    }
+
+    #[test]
+    fn ordinary_names_are_not() {
+        for n in ["pend", "hit", "edged", "turn", "count", "irq", "data"] {
+            assert_eq!(reserved_by(n), None, "{n}");
+        }
+    }
 }
 
 fn expect_ident(
@@ -4131,6 +4299,9 @@ fn pattern_cond(
 struct Cx<'a> {
     pnames: &'a [String],
     wires: &'a mut Vec<(String, String)>,
+    /// Each wire as the `let` named it, as the netlist names it, and
+    /// where the `let` names it, for the checks on names.
+    named: &'a mut Vec<(String, String, Span)>,
     subst: Vec<(String, String)>,
     guard: Option<String>,
     clock: String,
@@ -4452,6 +4623,7 @@ fn lower_stmts(
                     w = format!("{w}_{}", taken + 1);
                 }
                 cx.wires.push((w.clone(), v));
+                cx.named.push((name.clone(), w.clone(), n[0].span()));
                 cx.subst.push((name, ename(&w)));
             }
             continue;
@@ -5293,6 +5465,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut ports: Vec<String> = Vec::new();
     // The ports by name and kind, for a unit of units' joins.
     let mut pkinds: Vec<(String, String)> = Vec::new();
+    // The names the netlist gives the ports, each with where it is
+    // declared, and the errors for names a target reserves.
+    let mut port_nets: Vec<(String, String, Span)> = Vec::new();
+    let mut refused = TokenStream::new();
     for (pname, ty, span) in pairs {
         if ty == "()" {
             continue;
@@ -5321,6 +5497,14 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
              <{inner} as ::txhdl::types::Value>::WIDTH)"
         ));
         pkinds.push((pname.clone(), kind.to_string()));
+        if kind == "Tx" || kind == "Rx" {
+            for end in ["data", "valid", "ready"] {
+                port_nets.push((pname.clone(), format!("{pname}_{end}"), span));
+            }
+        } else {
+            refused.extend(check_reserved(&pname, "port", span));
+            port_nets.push((pname.clone(), pname.clone(), span));
+        }
         PTYPES
             .with(|p| p.borrow_mut().push((pname.clone(), inner.to_string())));
     }
@@ -5378,12 +5562,14 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // `let` names that became wires of the netlist, with what drives
     // each; a name bound twice gets a numbered second wire.
     let mut wires: Vec<(String, String)> = Vec::new();
+    let mut named: Vec<(String, String, Span)> = Vec::new();
     let mut procs: Vec<String> = Vec::new();
     for lbody in &loops {
         let toks: Vec<TokenTree> = lbody.stream().into_iter().collect();
         let mut cx = Cx {
             pnames: &pnames,
             wires: &mut wires,
+            named: &mut named,
             subst: Vec::new(),
             guard: None,
             clock: String::new(),
@@ -5409,6 +5595,50 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             stmts.join(",\n")
         ));
     }
+    for (name, _, span) in &named {
+        refused.extend(check_reserved(name, "the `let`", *span));
+    }
+    // A wire or a port that takes the name of a field is declared twice
+    // in the netlist. The fields are the struct's, which this attribute
+    // does not see, so the check is a constant the compiler evaluates,
+    // written at each name, which `lowered` uses.
+    // One constant a name, placed wholly at the name, since the
+    // compiler reports a failed constant at the constant.
+    let mut named_nets: Vec<(String, String, Span)> = Vec::new();
+    for (name, w, span) in &named {
+        named_nets.push((
+            w.clone(),
+            format!(
+                "`let {name}` is the wire `{w}` of the netlist, and the unit \
+                 has a field `{w}`: the netlist would declare `{w}` twice, so \
+                 rename one (see issue 77)"
+            ),
+            *span,
+        ));
+    }
+    for (pname, net, span) in &port_nets {
+        named_nets.push((
+            net.clone(),
+            format!(
+                "port `{pname}` is `{net}` in the netlist, and the unit has a \
+                 field `{net}`: the netlist would declare `{net}` twice, so \
+                 rename one (see issue 77)"
+            ),
+            *span,
+        ));
+    }
+    let mut checks = TokenStream::new();
+    let mut uses = String::new();
+    for (k, (net, msg, span)) in named_nets.iter().enumerate() {
+        uses.push_str(&format!("let () = Self::__TXHDL_NAME_{k};\n"));
+        let text = format!(
+            "#[doc(hidden)] const __TXHDL_NAME_{k}: () = \
+             if ::txhdl::netlist::has_name(\
+             <Self as ::txhdl::netlist::Fields>::NAMES, {net:?}) \
+             {{ ::core::panic!({msg:?}) }};"
+        );
+        checks.extend(placed_at(text.parse().unwrap(), *span));
+    }
     // A unit of units reaches its children through a value of itself.
     let prelude = if instances.is_empty() {
         ""
@@ -5422,6 +5652,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          #[allow(unused_variables, clippy::all)]\n\
          pub fn lowered(name: &str) -> ::txhdl::netlist::Lowered {{\n\
          use ::txhdl::netlist::{{Expr as NlE, Stmt as NlS, Target as NlT}};\n\
+         {uses}\
          {prelude}\
          ::txhdl::netlist::Lowered {{\n\
          name: name.to_string(),\n\
@@ -5486,5 +5717,12 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         out = item;
     }
     out.extend(generated);
+    // The constants of the checks on names, in an impl of their own,
+    // since their tokens are placed at the names they check.
+    let header: TokenStream =
+        format!("impl{generics} {unit}").parse().unwrap();
+    out.extend(header);
+    out.extend([TokenTree::Group(Group::new(Delimiter::Brace, checks))]);
+    out.extend(refused);
     out
 }
