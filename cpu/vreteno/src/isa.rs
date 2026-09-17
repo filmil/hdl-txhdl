@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! RV32IM as bits: the encoders a program is written with, and the
-//! decoder the reference model reads with. The core decodes on its
-//! own, from the fields of the word, so the two decoders check each
-//! other.
+//! RV32IMC as bits: the encoders a program is written with, and the
+//! decoder the reference model reads with, which reads a compressed
+//! instruction as the thirty-two bit one it stands for. The core
+//! decodes and expands on its own, from the fields of the word, so the
+//! two decoders check each other.
 
 /// Every RV32IM instruction the core runs, by mnemonic.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -326,6 +327,287 @@ pub fn csrrci(rd: u32, csr: u32, zimm: u32) -> u32 {
     i(OP_SYSTEM, rd, 7, zimm, csr as i32)
 }
 
+// The compressed instructions, RV32C: sixteen bits each, every one of
+// them a shorter spelling of an instruction above. A register field of
+// three bits names x8 to x15, the registers the calling convention uses
+// most. The encoders take register numbers and immediates as the
+// assembler does, and are named as it names them.
+
+/// Whether a halfword starts a compressed instruction: the low two
+/// bits of every thirty-two bit instruction are both set.
+pub fn is_compressed(half: u16) -> bool {
+    half & 3 != 3
+}
+
+/// A register of x8 to x15, as the three bits that name it.
+fn creg(r: u32) -> u32 {
+    assert!((8..16).contains(&r), "x{r} has no three-bit name");
+    r - 8
+}
+
+fn c(v: u32) -> u16 {
+    v as u16
+}
+
+pub fn c_nop() -> u16 {
+    0x0001
+}
+pub fn c_addi(rd: u32, imm: i32) -> u16 {
+    let imm = imm as u32;
+    c((imm >> 5 & 1) << 12 | rd << 7 | (imm & 0x1f) << 2 | 1)
+}
+pub fn c_li(rd: u32, imm: i32) -> u16 {
+    let imm = imm as u32;
+    c(2 << 13 | (imm >> 5 & 1) << 12 | rd << 7 | (imm & 0x1f) << 2 | 1)
+}
+/// `lui rd, imm`, where `imm` is the upper value, -32 to 31, not 0.
+pub fn c_lui(rd: u32, imm: i32) -> u16 {
+    let imm = imm as u32;
+    c(3 << 13 | (imm >> 5 & 1) << 12 | rd << 7 | (imm & 0x1f) << 2 | 1)
+}
+/// `addi sp, sp, imm`, `imm` a multiple of 16 from -512 to 496.
+pub fn c_addi16sp(imm: i32) -> u16 {
+    let i = imm as u32;
+    c(3 << 13
+        | (i >> 9 & 1) << 12
+        | 2 << 7
+        | (i >> 4 & 1) << 6
+        | (i >> 6 & 1) << 5
+        | (i >> 7 & 3) << 3
+        | (i >> 5 & 1) << 2
+        | 1)
+}
+/// `addi rd, sp, imm`, `imm` a multiple of 4 from 4 to 1020.
+pub fn c_addi4spn(rd: u32, imm: u32) -> u16 {
+    c((imm >> 4 & 3) << 11
+        | (imm >> 6 & 0xf) << 7
+        | (imm >> 2 & 1) << 6
+        | (imm >> 3 & 1) << 5
+        | creg(rd) << 2)
+}
+pub fn c_slli(rd: u32, sh: u32) -> u16 {
+    c((sh >> 5 & 1) << 12 | rd << 7 | (sh & 0x1f) << 2 | 2)
+}
+pub fn c_srli(rd: u32, sh: u32) -> u16 {
+    c(4 << 13 | (sh >> 5 & 1) << 12 | creg(rd) << 7 | (sh & 0x1f) << 2 | 1)
+}
+pub fn c_srai(rd: u32, sh: u32) -> u16 {
+    c(4 << 13
+        | (sh >> 5 & 1) << 12
+        | 1 << 10
+        | creg(rd) << 7
+        | (sh & 0x1f) << 2
+        | 1)
+}
+pub fn c_andi(rd: u32, imm: i32) -> u16 {
+    let imm = imm as u32;
+    c(4 << 13
+        | (imm >> 5 & 1) << 12
+        | 2 << 10
+        | creg(rd) << 7
+        | (imm & 0x1f) << 2
+        | 1)
+}
+/// The four register operations of the arithmetic group: `f` is 0 for
+/// sub, 1 xor, 2 or, 3 and.
+fn c_arith(f: u32, rd: u32, rs2: u32) -> u16 {
+    c(4 << 13 | 3 << 10 | creg(rd) << 7 | f << 5 | creg(rs2) << 2 | 1)
+}
+pub fn c_sub(rd: u32, rs2: u32) -> u16 {
+    c_arith(0, rd, rs2)
+}
+pub fn c_xor(rd: u32, rs2: u32) -> u16 {
+    c_arith(1, rd, rs2)
+}
+pub fn c_or(rd: u32, rs2: u32) -> u16 {
+    c_arith(2, rd, rs2)
+}
+pub fn c_and(rd: u32, rs2: u32) -> u16 {
+    c_arith(3, rd, rs2)
+}
+/// A jump's offset as `c.j` and `c.jal` scatter it.
+fn cj(off: i32) -> u32 {
+    let o = off as u32;
+    (o >> 11 & 1) << 12
+        | (o >> 4 & 1) << 11
+        | (o >> 8 & 3) << 9
+        | (o >> 10 & 1) << 8
+        | (o >> 6 & 1) << 7
+        | (o >> 7 & 1) << 6
+        | (o >> 1 & 7) << 3
+        | (o >> 5 & 1) << 2
+}
+pub fn c_j(off: i32) -> u16 {
+    c(5 << 13 | cj(off) | 1)
+}
+pub fn c_jal(off: i32) -> u16 {
+    c(1 << 13 | cj(off) | 1)
+}
+/// A branch's offset as `c.beqz` and `c.bnez` scatter it.
+fn cb(off: i32) -> u32 {
+    let o = off as u32;
+    (o >> 8 & 1) << 12
+        | (o >> 3 & 3) << 10
+        | (o >> 6 & 3) << 5
+        | (o >> 1 & 3) << 3
+        | (o >> 5 & 1) << 2
+}
+pub fn c_beqz(rs1: u32, off: i32) -> u16 {
+    c(6 << 13 | cb(off) | creg(rs1) << 7 | 1)
+}
+pub fn c_bnez(rs1: u32, off: i32) -> u16 {
+    c(7 << 13 | cb(off) | creg(rs1) << 7 | 1)
+}
+pub fn c_lw(rd: u32, rs1: u32, off: u32) -> u16 {
+    c(2 << 13
+        | (off >> 3 & 7) << 10
+        | creg(rs1) << 7
+        | (off >> 2 & 1) << 6
+        | (off >> 6 & 1) << 5
+        | creg(rd) << 2)
+}
+pub fn c_sw(rs2: u32, rs1: u32, off: u32) -> u16 {
+    c(6 << 13
+        | (off >> 3 & 7) << 10
+        | creg(rs1) << 7
+        | (off >> 2 & 1) << 6
+        | (off >> 6 & 1) << 5
+        | creg(rs2) << 2)
+}
+/// `lw rd, off(sp)`, `off` a multiple of 4 from 0 to 252.
+pub fn c_lwsp(rd: u32, off: u32) -> u16 {
+    c(2 << 13
+        | (off >> 5 & 1) << 12
+        | rd << 7
+        | (off >> 2 & 7) << 4
+        | (off >> 6 & 3) << 2
+        | 2)
+}
+/// `sw rs2, off(sp)`, `off` a multiple of 4 from 0 to 252.
+pub fn c_swsp(rs2: u32, off: u32) -> u16 {
+    c(6 << 13 | (off >> 2 & 0xf) << 9 | (off >> 6 & 3) << 7 | rs2 << 2 | 2)
+}
+pub fn c_jr(rs1: u32) -> u16 {
+    c(4 << 13 | rs1 << 7 | 2)
+}
+pub fn c_mv(rd: u32, rs2: u32) -> u16 {
+    c(4 << 13 | rd << 7 | rs2 << 2 | 2)
+}
+pub fn c_ebreak() -> u16 {
+    0x9002
+}
+pub fn c_jalr(rs1: u32) -> u16 {
+    c(4 << 13 | 1 << 12 | rs1 << 7 | 2)
+}
+pub fn c_add(rd: u32, rs2: u32) -> u16 {
+    c(4 << 13 | 1 << 12 | rd << 7 | rs2 << 2 | 2)
+}
+
+/// A compressed instruction as the thirty-two bit instruction it
+/// stands for, or `None` for a halfword that is no RV32C instruction:
+/// a reserved pattern, a floating-point or 64-bit one, or a shift by
+/// 32 or more, which RV32C leaves to custom extensions. A hint, such
+/// as `c.addi` of zero or `c.mv` into x0, is an instruction, and
+/// expands to the one it is spelt as, which does nothing.
+pub fn compressed(h: u16) -> Option<u32> {
+    let h = h as u32;
+    let bit = |i: u32| h >> i & 1;
+    let bits = |hi: u32, lo: u32| h >> lo & ((1 << (hi - lo + 1)) - 1);
+    let sext =
+        |v: u32, width: u32| ((v << (32 - width)) as i32) >> (32 - width);
+    let rd = bits(11, 7);
+    let rs2 = bits(6, 2);
+    // The three-bit register fields, as register numbers.
+    let rs1s = bits(9, 7) + 8;
+    let rs2s = bits(4, 2) + 8;
+    // The six-bit immediate of c.addi, c.li, c.andi and the shifts.
+    let imm6 = sext(bit(12) << 5 | bits(6, 2), 6);
+    let sh = bit(12) << 5 | bits(6, 2);
+    let jimm = sext(
+        bit(12) << 11
+            | bit(8) << 10
+            | bits(10, 9) << 8
+            | bit(6) << 7
+            | bit(7) << 6
+            | bit(2) << 5
+            | bit(11) << 4
+            | bits(5, 3) << 1,
+        12,
+    );
+    let bimm = sext(
+        bit(12) << 8
+            | bits(6, 5) << 6
+            | bit(2) << 5
+            | bits(11, 10) << 3
+            | bits(4, 3) << 1,
+        9,
+    );
+    let lwimm = (bit(5) << 6 | bits(12, 10) << 3 | bit(6) << 2) as i32;
+    Some(match (bits(1, 0), bits(15, 13)) {
+        (0, 0) => {
+            let imm = bits(10, 7) << 6
+                | bits(12, 11) << 4
+                | bit(5) << 3
+                | bit(6) << 2;
+            if imm == 0 {
+                return None;
+            }
+            addi(rs2s, 2, imm as i32)
+        }
+        (0, 2) => lw(rs2s, rs1s, lwimm),
+        (0, 6) => sw(rs2s, rs1s, lwimm),
+        (1, 0) => addi(rd, rd, imm6),
+        (1, 1) => jal(1, jimm),
+        (1, 2) => addi(rd, 0, imm6),
+        (1, 3) => {
+            if bit(12) == 0 && bits(6, 2) == 0 {
+                return None;
+            }
+            if rd == 2 {
+                let imm = bit(12) << 9
+                    | bits(4, 3) << 7
+                    | bit(5) << 6
+                    | bit(2) << 5
+                    | bit(6) << 4;
+                addi(2, 2, sext(imm, 10))
+            } else {
+                lui(rd, imm6 as u32 & 0xfffff)
+            }
+        }
+        (1, 4) => match bits(11, 10) {
+            0 if bit(12) == 0 => srli(rs1s, rs1s, sh),
+            1 if bit(12) == 0 => srai(rs1s, rs1s, sh),
+            2 => andi(rs1s, rs1s, imm6),
+            3 if bit(12) == 0 => match bits(6, 5) {
+                0 => sub(rs1s, rs1s, rs2s),
+                1 => xor(rs1s, rs1s, rs2s),
+                2 => or(rs1s, rs1s, rs2s),
+                _ => and(rs1s, rs1s, rs2s),
+            },
+            _ => return None,
+        },
+        (1, 5) => jal(0, jimm),
+        (1, 6) => beq(rs1s, 0, bimm),
+        (1, 7) => bne(rs1s, 0, bimm),
+        (2, 0) if bit(12) == 0 => slli(rd, rd, sh),
+        (2, 2) if rd != 0 => lw(
+            rd,
+            2,
+            (bits(3, 2) << 6 | bit(12) << 5 | bits(6, 4) << 2) as i32,
+        ),
+        (2, 4) => match (bit(12), rd, rs2) {
+            (0, 0, 0) => return None,
+            (0, _, 0) => jalr(0, rd, 0),
+            (0, _, _) => add(rd, 0, rs2),
+            (_, 0, 0) => ebreak(),
+            (_, _, 0) => jalr(1, rd, 0),
+            _ => add(rd, rd, rs2),
+        },
+        (2, 6) => sw(rs2, 2, (bits(8, 7) << 6 | bits(12, 9) << 2) as i32),
+        _ => return None,
+    })
+}
+
 /// The fields of a word, by the format its opcode names.
 pub fn decode(w: u32) -> Decoded {
     let op = w & 0x7f;
@@ -517,6 +799,68 @@ mod tests {
             assert_eq!(rd.map(|_| d.rd), rd, "{t}");
             assert_eq!(rs1.map(|_| d.rs1), rs1, "{t}");
             assert_eq!(rs2.map(|_| d.rs2), rs2, "{t}");
+        }
+    }
+
+    /// Every compressed encoder expands to the instruction it spells,
+    /// at the ends of each immediate's range. The halfwords written out
+    /// are as the GNU disassembler reads them.
+    #[test]
+    fn compressed_round_trip() {
+        let cases = [
+            (0x0505, addi(10, 10, 1)),
+            (0x4515, addi(10, 0, 5)),
+            (0x8082, jalr(0, 1, 0)),
+            (0x852e, add(10, 0, 11)),
+            (0x952e, add(10, 10, 11)),
+            (0x9002, ebreak()),
+            (0x0001, addi(0, 0, 0)),
+            (0x0028, addi(10, 2, 8)),
+            (0x1101, addi(2, 2, -32)),
+            (0xc606, sw(1, 2, 12)),
+            (0x40b2, lw(1, 2, 12)),
+            (c_addi(31, -32), addi(31, 31, -32)),
+            (c_addi(1, 31), addi(1, 1, 31)),
+            (c_li(5, -1), addi(5, 0, -1)),
+            (c_lui(7, -32), lui(7, 0xfffe0)),
+            (c_lui(7, 31), lui(7, 31)),
+            (c_addi16sp(-512), addi(2, 2, -512)),
+            (c_addi16sp(496), addi(2, 2, 496)),
+            (c_addi4spn(15, 1020), addi(15, 2, 1020)),
+            (c_addi4spn(8, 4), addi(8, 2, 4)),
+            (c_slli(3, 31), slli(3, 3, 31)),
+            (c_srli(9, 1), srli(9, 9, 1)),
+            (c_srai(10, 31), srai(10, 10, 31)),
+            (c_andi(11, -32), andi(11, 11, -32)),
+            (c_sub(12, 13), sub(12, 12, 13)),
+            (c_xor(14, 15), xor(14, 14, 15)),
+            (c_or(8, 9), or(8, 8, 9)),
+            (c_and(10, 11), and(10, 10, 11)),
+            (c_j(-2048), jal(0, -2048)),
+            (c_j(2046), jal(0, 2046)),
+            (c_jal(-2), jal(1, -2)),
+            (c_beqz(8, -256), beq(8, 0, -256)),
+            (c_bnez(15, 254), bne(15, 0, 254)),
+            (c_lw(8, 15, 124), lw(8, 15, 124)),
+            (c_sw(9, 14, 4), sw(9, 14, 4)),
+            (c_lwsp(31, 252), lw(31, 2, 252)),
+            (c_swsp(4, 0), sw(4, 2, 0)),
+            (c_jr(5), jalr(0, 5, 0)),
+            (c_jalr(6), jalr(1, 6, 0)),
+            (c_mv(7, 8), add(7, 0, 8)),
+            (c_add(9, 10), add(9, 9, 10)),
+            (c_ebreak(), ebreak()),
+            (c_nop(), addi(0, 0, 0)),
+        ];
+        for (h, w) in cases {
+            assert!(is_compressed(h), "{h:#06x} is not compressed");
+            assert_eq!(compressed(h), Some(w), "{h:#06x}: {}", disasm(w));
+        }
+        // Reserved: all zeros, c.jr of x0, c.lwsp into x0, c.lui and
+        // c.addi16sp of zero, a shift by 32, and c.addiw, which is
+        // RV64's.
+        for h in [0x0000, 0x8002, 0x4002, 0x6081, 0x6101, 0x1082, 0x9c01] {
+            assert_eq!(compressed(h), None, "{h:#06x} should be reserved");
         }
     }
 }
