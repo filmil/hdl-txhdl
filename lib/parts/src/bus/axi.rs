@@ -285,9 +285,12 @@ pub struct Answer<const I: usize> {
 /// outstanding from its address phase until the client releases it,
 /// which the client's end does when it has taken that burst's
 /// answer, so an identifier is never handed out again while an
-/// answer nobody has read still stands against it. A burst whose
-/// turn falls on an identifier still outstanding waits, which is the
-/// backpressure that bounds how many transactions are in flight.
+/// answer nobody has read still stands against it. When the
+/// identifier whose turn it is is still outstanding, the turn moves on
+/// to the next, so a burst waits only while every identifier is out,
+/// which is the backpressure that bounds how many transactions are in
+/// flight; a client that holds every answer and issues another waits
+/// for ever.
 /// Written in the lowered subset, so it is a netlist too.
 ///
 /// `A`, `D`, `S` and `I` are the link's widths, which [`axi`] states.
@@ -342,7 +345,7 @@ impl<
         loop {
             DefaultClock::rising().await;
             // The identifier this burst would take, and whether it is
-            // free; a burst waits for its own turn, nothing else.
+            // free.
             let id = self.turn.get();
             let free = !self.busy.get().bit(id.raw() as usize);
             let offered = issue.peek().is_some();
@@ -375,8 +378,11 @@ impl<
             let id_bit = one << (id.raw() as usize);
             let rel_bit = one << (rel.id.raw() as usize);
             let freed = mux(rel_go, rel_bit, zero);
+            // The turn moves on when a burst takes the identifier, and
+            // also when the identifier is still out, so a burst waits
+            // for a free identifier rather than for this one (#184).
             with!(self <= {
-                go ? turn: id + 1,
+                go | !free ? turn: id + 1,
                 busy: (self.busy.get() | mux(go, id_bit, zero)) & !freed,
             });
             if (go & read).to_bool() {
