@@ -46,6 +46,9 @@ use txhdl::comp::{
 use txhdl::types::{Bit, U};
 
 pub mod sim;
+
+#[cfg(test)]
+mod fuzz;
 use txhdl::{lower, with, Trace};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 

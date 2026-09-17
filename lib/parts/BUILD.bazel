@@ -16,6 +16,7 @@ rust_library(
         "src/bus/noc/node.rs",
         "src/bus/noc/pkt.rs",
         "src/bus/noc/switch.rs",
+        "src/bus/axi/fuzz.rs",
         "src/bus/axi/sim.rs",
         "src/bus/mod.rs",
         "src/bus/router.rs",
@@ -41,6 +42,19 @@ rust_test(
     name = "parts_test",
     crate = ":txhdl_parts",
     edition = "2021",
+)
+
+# The AXI link's fuzzing alone, over many more seeds than the 24 that
+# `parts_test` runs: what the nightly release runs. Manual, since it is
+# a long run.
+#
+#   bazel test //lib/parts:axi_fuzz_test --test_env=AXI_FUZZ_SEEDS=512
+rust_test(
+    name = "axi_fuzz_test",
+    args = ["bus::axi::fuzz::"],
+    crate = ":txhdl_parts",
+    edition = "2021",
+    tags = ["manual"],
 )
 
 # The sources by name, for the documents' API extraction.
