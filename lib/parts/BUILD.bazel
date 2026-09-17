@@ -28,6 +28,7 @@ rust_library(
         "src/plic.rs",
         "src/spi.rs",
         "src/station.rs",
+        "src/syscon.rs",
         "src/lib.rs",
     ],
     crate_name = "txhdl_parts",

@@ -20,3 +20,4 @@ pub mod hdmi;
 pub mod plic;
 pub mod spi;
 pub mod station;
+pub mod syscon;
