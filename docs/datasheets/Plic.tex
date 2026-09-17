@@ -1,0 +1,141 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Plic1, Plic2, Plic3, Plic4, Plic5, Plic6, Plic7, Plic8
+\datasheet{Plic}{Platform-level interrupt controllers: one to eight sources and one target, at the RISC-V PLIC's offsets.}
+
+\dsfacts{\code{lib/parts/src/plic.rs}; generator \code{plic\_text} in \code{lib/macros/lib.rs}}%
+{\code{txhdl\_parts::plic::Plic1} to \code{Plic8}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+A controller gathers the interrupt lines of several sources into one
+line for one target, a hart's machine mode, and lets software ask which
+source to serve. Each source \textit{i} is an input line,
+\code{src}\textit{i}, numbered from 1. The output \code{irq} is the
+target's line. Software reaches the controller as an AXI-Lite
+peripheral: reads come on \code{ar} and are answered on \code{r}, and
+writes come on \code{aw} and \code{w} and are answered on \code{b}. It
+sits behind a \code{LiteBridge1}, which sends it only its own range.
+The input \code{rst} clears the requests, the line, the priorities, the
+enable bits and the threshold.
+
+\code{plic!(PlicN, N)} writes one unit per count, since the lowering
+reads a body and not a loop over ports. \code{plic.rs} writes
+\code{Plic1} to \code{Plic8}; the macro takes counts from 1 to 31, the
+most one word of pending bits holds. \code{plic.rs} also names the
+offsets, \code{PENDING}, \code{ENABLE}, \code{THRESHOLD} and
+\code{CLAIM}, and \code{priority(i)}.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\textit{N} & The count of sources, in the type's name. \\
+\code{EDGE} & A bit per source: bit \textit{i} set makes source
+\textit{i} ask on a rising edge rather than while its line is high.
+Bit 0 and bits above \textit{N} are ignored. The tables use 0, as the
+board does. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Register map}
+
+Offsets from the controller's base, which are the RISC-V PLIC's for
+one target. The controller decodes the low 22 bits of an address. On
+the board the base is \code{0x0c00\_0000}.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.55\textwidth}@{}}
+\toprule
+Offset & Word & Access \\
+\midrule
+\code{0x4} $\times$ \textit{i} & Source \textit{i}'s priority, 3 bits &
+Read and write, for \textit{i} from 1 to \textit{N}. \\
+\code{0x1000} & The pending bits, bit \textit{i} for source \textit{i} &
+Read only. \\
+\code{0x2000} & The enable bits, the same way & Read and write; bit 0
+does not stick. \\
+\code{0x20\_0000} & The threshold, 3 bits & Read and write. \\
+\code{0x20\_0004} & Claim and complete & A read claims; a write
+completes. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Every other offset, offset 0 among them, reads as zero and ignores a
+write.
+
+\dstables{Plic}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \textbf{The gateway.} A level source asks while its line is high.
+An edge source asks when its line is high and was low a cycle before
+(\code{prev}), or when it holds an edge (\code{held}).
+\item A request goes forward when its source is not \code{active}.
+Going forward sets the source's bits in \code{pending} and in
+\code{active}.
+\item An edge that comes while its source is \code{active} sets its bit
+in \code{held}, one deep, and it asks as soon as the source is no
+longer active.
+\item \textbf{The choice.} A source is a candidate when it is pending,
+enabled, and its priority is above \code{threshold}. The best
+candidate has the highest priority, and the lowest number wins a tie.
+A priority of 0 is never above a threshold, so it never interrupts.
+\item \textbf{A claim.} A read of \code{0x20\_0004} answers with the
+best candidate's number, or 0 for none, and clears that source's
+\code{pending} bit. The source stays \code{active}.
+\item \textbf{A complete.} A write of a number from 0 to \textit{N} to
+\code{0x20\_0004} clears that source's \code{active} bit. A larger
+number changes nothing. A level source whose line is still high then
+asks again at once.
+\item \textbf{The line.} \code{asserted} is set each cycle when there
+is a best candidate, and \code{irq} follows \code{asserted}, so the
+line is a register's output and lags the choice by a cycle.
+\item \textbf{The bus.} A read is answered in the cycle it is taken, and
+a write is taken when its address and its word are both there, and
+answered \code{Okay} at once. Every answer is \code{Okay}.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item In \code{plic}, in \code{//lib/parts:parts\_test}, against a
+\code{Plic3}:
+\begin{itemize}
+\item \code{the\_highest\_priority\_is\_claimed\_first\_and\_the\_lowest\_number\_wins\_a\_tie};
+\item \code{a\_priority\_at\_or\_below\_the\_threshold\_does\_not\_interrupt};
+\item \code{a\_claimed\_source\_asks\_again\_only\_after\_its\_complete};
+\item \code{an\_edge\_source\_asks\_once\_per\_edge\_and\_a\_level\_source\_while\_high}.
+\end{itemize}
+\code{the\_eight\_source\_controller\_lowers} writes \code{Plic8}'s
+Verilog.
+\item \code{ex\_plic} runs \code{Plic3<0b100>} against a host that
+claims and completes, and the build simulates its netlist against that
+run under nvc and Verilator: \code{//docs:plic\_sim\_plic3\_tb\_test}
+and \code{//docs:plic\_vsim\_test}.
+\item \code{input\_comes\_by\_interrupt\_one\_byte\_each}, in
+\code{//cpu/vreteno:board\_test}, runs the board's \code{Plic2} under a
+compiled program that takes the serial port's input by interrupt.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Plic2<0>} in the board's design, \code{Board}, as its field
+\code{plic} behind the bridge \code{pplic}: source 1 is the serial
+port's receive interrupt, source 2 the board's \code{irq} input, and
+\code{irq} is the core's external interrupt. \code{Plic3<0b100>} in the
+example \code{ex\_plic}.
+
+\subsection*{Limits}
+
+It has one target and no per-target context beyond it. Priorities are 3
+bits, so from 0 to 7. A write ignores its strobe and writes the whole
+field. The controller checks no address above bit 21, and relies on its
+bridge for the rest. An edge source holds one edge during a service; a
+second is lost.

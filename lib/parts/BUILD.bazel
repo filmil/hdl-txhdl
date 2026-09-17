@@ -23,6 +23,7 @@ rust_library(
         "src/bus/wb/sim.rs",
         "src/fifo.rs",
         "src/hdmi.rs",
+        "src/plic.rs",
         "src/station.rs",
         "src/lib.rs",
     ],

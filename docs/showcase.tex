@@ -64,8 +64,8 @@ label={lst:w-unit}]{lib/examples/ex_cheat.rs}
 
 Table~\ref{tab:w-units} lists every unit the build lowers to Verilog
 and VHDL. Table~\ref{tab:w-systems} lists the systems it assembles
-from them. Together they are 29\,382 lines of Rust: 9\,982 of runtime
-and macros, 6\,683 of parts, 5\,535 in forty-nine examples, 4\,714 of
+from them. Together they are 30\,488 lines of Rust: 10\,325 of runtime
+and macros, 7\,010 of parts, 5\,721 in fifty examples, 4\,964 of
 Vreteno with its board, and 2\,468 of the GPU, DDR3, Ethernet, HDMI
 and the SoC.
 
@@ -84,6 +84,7 @@ AXI routers, 2 to 8 peripherals & parts & 3 \\
 AXI host and peripheral trackers & parts & both \\
 AXI-Lite bridges, 1 to 8 peripherals & parts & 1 and 2 \\
 AXI to Wishbone bridge & parts & yes \\
+Interrupt controllers, 1 to 8 sources & parts & 3 \\
 Network node, switch, 2 bridges & parts & not yet \\
 Ethernet: transmit, receive, peripheral & parts & all three \\
 HDMI video; the I2C that sets it up & parts & both \\
@@ -111,7 +112,7 @@ The AXI-Lite bridge & 1 host, 2 banks & 3 netlists \\
 A lattice & 4 nodes, both bridges, RAM & 2 tests \\
 The SoC & core, GPU, RAM, serial & its run \\
 Composition & station, stream ALU & its netlist \\
-The board & core, 4 devices, DDR3 & 2 runs, Vivado \\
+The board & core, 5 devices, DDR3 & 3 runs, Vivado \\
 Ethernet & the MAC, the board's PHY & on the board \\
 Video & HDMI, its I2C, the board & on the board \\
 On silicon & Vreteno, Yosys, OpenROAD & routed, no DRC \\
@@ -260,7 +261,7 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs a hundred and one targets, of which eighty-eight
+its ports. \code{bazel test //...} runs a hundred and three targets, of which ninety
 are netlists under both simulators; the rest are the core's model and
 programs, the board's own run, the GPU, the parts, the SoC's run, and
 the tools. Two more are tagged manual because they want Vivado: the

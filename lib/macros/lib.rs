@@ -2212,6 +2212,351 @@ pub fn lite_bridge(input: TokenStream) -> TokenStream {
 }
 
 // ---------------------------------------------------------------------
+// plic!
+
+/// The text of a platform-level interrupt controller of `n` sources,
+/// named `name`. The template is written once with `@` markers, and
+/// the parts that repeat per source are put in by loops; the choice of
+/// the source to claim is a chain of wires, one a source, so no line
+/// grows with the count.
+fn plic_text(name: &str, n: usize) -> String {
+    let src: Vec<usize> = (1..=n).collect();
+    let each = |f: &dyn Fn(usize) -> String, sep: &str| -> String {
+        src.iter().map(|&i| f(i)).collect::<Vec<_>>().join(sep)
+    };
+    // A bit per source and bit 0 for the source that does not exist,
+    // so a source's number is its bit; and the width of a number.
+    let w = n + 1;
+    let iw = ((usize::BITS - n.leading_zeros()) as usize).max(2);
+    let mask = ((1u64 << w) - 1) & !1;
+    let module = format!("plic{n}");
+    let prio_fields = each(
+        &|i| {
+            format!(
+                "    /// The priority of source {i}.\n    \
+                 pub prio{i}: Reg<U<3>>,"
+            )
+        },
+        "\n",
+    );
+    let src_names = each(&|i| format!("            src{i},"), "\n");
+    let src_types = each(&|_| "            In<Bit>,".to_string(), "\n");
+    let lines = each(
+        &|i| {
+            format!(
+                "            let lines{i} = src{i}\n                \
+                 .get()\n                \
+                 .zext::<1>()\n                \
+                 .concat::<_, {}>(lines{});",
+                i + 1,
+                i - 1
+            )
+        },
+        "\n",
+    );
+    let prios = each(
+        &|i| format!("            let prio{i} = self.prio{i}.get();"),
+        "\n",
+    );
+    let cands = each(
+        &|i| {
+            format!(
+                "            let cand{i} = pending.bit({i})\n                \
+                 & enable.bit({i})\n                \
+                 & Bit::from(prio{i} > threshold);"
+            )
+        },
+        "\n",
+    );
+    // The best candidate, from the highest number down: a source wins
+    // over the ones above it at an equal priority, so the lowest
+    // number wins a tie.
+    let mut best = vec![format!(
+        "            let best_id{n} =\n                \
+         mux(cand{n}, U::<{iw}>::from({n}u8), U::<{iw}>::from(0u8));\n            \
+         let best_pr{n} = mux(cand{n}, prio{n}, U::<3>::from(0u8));"
+    )];
+    for i in (1..n).rev() {
+        best.push(format!(
+            "            let take{i} = cand{i} & Bit::from(prio{i} >= best_pr{j});\n            \
+             let best_id{i} =\n                \
+             mux(take{i}, U::<{iw}>::from({i}u8), best_id{j});\n            \
+             let best_pr{i} = mux(take{i}, prio{i}, best_pr{j});",
+            j = i + 1
+        ));
+    }
+    let best = best.join("\n");
+    let mut words = vec![format!(
+        "            let word{n} =\n                \
+         mux(roff == {}, prio{n}.zext::<32>(), word_reg);",
+        4 * n
+    )];
+    for i in (1..n).rev() {
+        words.push(format!(
+            "            let word{i} =\n                \
+             mux(roff == {}, prio{i}.zext::<32>(), word{});",
+            4 * i,
+            i + 1
+        ));
+    }
+    let words = words.join("\n");
+    let prio_writes = each(
+        &|i| {
+            format!(
+                "                wgo & (woff == {}) ? prio{i}: wprio,",
+                4 * i
+            )
+        },
+        "\n",
+    );
+    let prio_resets = each(
+        &|i| format!("                    prio{i}: U::<3>::from(0u8),"),
+        "\n",
+    );
+    // The complete compares the word with an unsuffixed `@N@`: a
+    // suffixed literal in a comparison does not lower, which is #166.
+    let template = r#"/// A platform-level interrupt controller of @N@ sources.
+/// Written by `plic!`; see [`@NAME@`].
+pub mod @MODULE@ {
+use crate::bus::axi::Resp;
+use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use ::txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use ::txhdl::types::{Bit, U};
+use ::txhdl::{lower, with, Trace};
+
+/// A platform-level interrupt controller of @N@ sources and one
+/// target, an AXI-Lite peripheral at the RISC-V PLIC's offsets: a
+/// priority per source from `0x4`, the pending bits at `0x1000`, the
+/// enable bits at `0x2000`, the threshold at `0x20_0000`, and claim and
+/// complete at `0x20_0004`. Sources are numbered from 1, and a source's
+/// number is its bit in the pending and enable words. `EDGE` has a
+/// bit per source, set for a source that asks on a rising edge rather
+/// than while its line is high.
+///
+/// A source's request becomes pending when no earlier request of its
+/// is still being served, from the claim that took it to the
+/// complete. A read of the claim word answers with the enabled pending
+/// source of the highest priority above the threshold, the lowest
+/// number winning a tie, or 0 for none, and clears that source's
+/// pending bit; a write of the number back completes it. The
+/// interrupt line is high, a cycle behind, while a claim would answer
+/// with a source. The bridge sends it only the transactions in its
+/// range, so it decodes only the low 22 bits of an address. Written in
+/// the lowered subset, so it is a netlist too.
+// begin{state}
+#[derive(Trace, Default)]
+pub struct @NAME@<const EDGE: usize> {
+@PRIO_FIELDS@
+    /// The target's threshold: only a priority above it interrupts.
+    pub threshold: Reg<U<3>>,
+    /// A request not yet claimed, a bit per source.
+    pub pending: Reg<U<@W@>>,
+    /// The sources the target takes, a bit per source.
+    pub enable: Reg<U<@W@>>,
+    /// A request forwarded and not yet completed, a bit per source.
+    pub active: Reg<U<@W@>>,
+    /// A rising edge that came while its source was active, kept to
+    /// ask again on the complete, a bit per edge source.
+    pub held: Reg<U<@W@>>,
+    /// The lines as they were a cycle ago, to see an edge.
+    pub prev: Reg<U<@W@>>,
+    /// The interrupt line, as a register.
+    pub asserted: Reg<Bit>,
+}
+// end{state}
+
+// begin{ports}
+#[lower]
+impl<const EDGE: usize> Unit for @NAME@<EDGE> {
+    async fn run(
+        &mut self,
+        (
+            rst,
+@SRC_NAMES@
+            aw,
+            ar,
+            w,
+        ): (
+            In<Bit>,
+@SRC_TYPES@
+            Rx<LiteAw<32>>,
+            Rx<LiteAr<32>>,
+            Rx<LiteW<32, 4>>,
+        ),
+        (b, r, irq): (Tx<LiteB>, Tx<LiteR<32>>, Out<Bit>),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+// end{ports}
+// begin{gateway}
+            // The lines as one word, a bit per source, bit 0 low.
+            let rst = rst.get();
+            let lines0 = U::<1>::from(0u8);
+@LINES@
+            let lines = lines@N@;
+            let sources = U::<@W@>::from(@MASK@u32);
+            let edges = U::<@W@>::from(EDGE as u32) & sources;
+            let prev = self.prev.get();
+            let held = self.held.get();
+            let active = self.active.get();
+            let pending = self.pending.get();
+            let enable = self.enable.get();
+            let threshold = self.threshold.get();
+            // A level source asks while its line is high; an edge
+            // source asks on a rising edge, or on one it holds. A
+            // request goes forward when its source is not active.
+            let rose = lines & !prev;
+            let request = (lines & !edges) | ((rose | held) & edges);
+            let forward = request & !active & sources;
+// end{gateway}
+// begin{choice}
+            // The source a claim would take.
+@PRIOS@
+@CANDS@
+@BEST@
+            let best = best_id1;
+// end{choice}
+// begin{bus}
+            // A read is answered in the cycle it is taken, and a write
+            // is taken when its address and its word are both there,
+            // and answered at once.
+            let arh = ar.head();
+            let take_read = r.ready() & ar.peek().is_some();
+            let _ = ar.recv_if(r.ready());
+            let awh = aw.head();
+            let wh = w.head();
+            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
+            let _ = aw.recv_if(wgo);
+            let _ = w.recv_if(wgo);
+            let roff = arh.addr.slice::<0, 22>();
+            let woff = awh.addr.slice::<0, 22>();
+            let wdata = wh.data;
+            let wprio = wdata.slice::<0, 3>();
+            let wenable = wdata.slice::<0, @W@>() & sources;
+            let wnum = wdata.slice::<0, @IW@>();
+            // A claim takes the best source's request; a complete of a
+            // number in range ends that source's service.
+            let claim = take_read & Bit::from(roff == 0x20_0004);
+            let complete =
+                wgo & Bit::from(woff == 0x20_0004) & Bit::from(wdata <= @N@);
+            let one = U::<@W@>::from(1u8);
+            let none = U::<@W@>::from(0u8);
+            let claimed = mux(claim, one << (best.raw() as usize), none);
+            let completed = mux(complete, one << (wnum.raw() as usize), none);
+            // What a read answers, by the offset.
+            let word_reg = mux(
+                roff == 0x1000,
+                pending.zext::<32>(),
+                mux(
+                    roff == 0x2000,
+                    enable.zext::<32>(),
+                    mux(
+                        roff == 0x20_0000,
+                        threshold.zext::<32>(),
+                        mux(
+                            roff == 0x20_0004,
+                            best.zext::<32>(),
+                            U::<32>::from(0u32),
+                        ),
+                    ),
+                ),
+            );
+@WORDS@
+            if take_read.to_bool() {
+                r.send(LiteR {
+                    data: word1,
+                    resp: Resp::Okay,
+                });
+            }
+            if wgo.to_bool() {
+                b.send(LiteB { resp: Resp::Okay });
+            }
+// end{bus}
+// begin{drives}
+            self.prev.set(lines);
+            self.pending.set(mux(rst, none, (pending & !claimed) | forward));
+            self.active.set(mux(rst, none, (active & !completed) | forward));
+            self.held.set(mux(rst, none, (held | rose) & edges & !forward));
+            with!(self <= {
+@PRIO_WRITES@
+                wgo & (woff == 0x2000) ? enable: wenable,
+                wgo & (woff == 0x20_0000) ? threshold: wprio,
+                rst ? {
+@PRIO_RESETS@
+                    enable: none,
+                    threshold: U::<3>::from(0u8),
+                },
+            });
+            self.asserted.set(mux(rst, Bit::Zero, Bit::from(best != 0)));
+            irq.set(self.asserted);
+// end{drives}
+        }
+    }
+}
+}
+pub use @MODULE@::@NAME@;
+"#;
+    template
+        .replace("@PRIO_FIELDS@", &prio_fields)
+        .replace("@SRC_NAMES@", &src_names)
+        .replace("@SRC_TYPES@", &src_types)
+        .replace("@LINES@", &lines)
+        .replace("@PRIOS@", &prios)
+        .replace("@CANDS@", &cands)
+        .replace("@BEST@", &best)
+        .replace("@WORDS@", &words)
+        .replace("@PRIO_WRITES@", &prio_writes)
+        .replace("@PRIO_RESETS@", &prio_resets)
+        .replace("@MODULE@", &module)
+        .replace("@NAME@", name)
+        .replace("@MASK@", &format!("{mask:#x}"))
+        .replace("@IW@", &iw.to_string())
+        .replace("@W@", &w.to_string())
+        .replace("@N@", &n.to_string())
+}
+
+/// `plic!(Plic8, 8)`: a platform-level interrupt controller of eight
+/// sources and one target, named, an AXI-Lite peripheral at the RISC-V
+/// PLIC's offsets. Its sources are an input line each, and which of
+/// them ask on an edge is its `EDGE` const parameter. Written out per
+/// count, from one to thirty-one, the most one word of pending bits
+/// holds, since the lowering reads a body and not a loop over ports;
+/// `TXHDL_MACRO_DUMP` names a directory to write the text to.
+#[proc_macro]
+pub fn plic(input: TokenStream) -> TokenStream {
+    let toks: Vec<TokenTree> = input.into_iter().collect();
+    let (name, n) = match toks.as_slice() {
+        [TokenTree::Ident(name), TokenTree::Punct(c), TokenTree::Literal(n)]
+            if c.as_char() == ',' =>
+        {
+            (name.to_string(), n.to_string().parse::<usize>().ok())
+        }
+        _ => return err(Span::call_site(), "expected `plic!(Name, N)`"),
+    };
+    let Some(n) = n.filter(|n| (1..=31).contains(n)) else {
+        return err(
+            toks[2].span(),
+            "a controller has from one to thirty-one sources",
+        );
+    };
+    let text = plic_text(&name, n);
+    if let Ok(dir) = std::env::var("TXHDL_MACRO_DUMP") {
+        let _ = std::fs::write(format!("{dir}/plic_{name}.rs"), &text);
+    }
+    let module = format!("plic{n}");
+    let with_source = text.replacen(
+        &format!("pub mod {module} {{\n"),
+        &format!(
+            "pub mod {module} {{\n\
+             /// The text of this module, as `plic!` wrote it.\n\
+             pub const SOURCE: &str = r####\"{text}\"####;\n"
+        ),
+        1,
+    );
+    with_source.parse().unwrap()
+}
+
+// ---------------------------------------------------------------------
 // case!
 
 /// `case!(value => { pattern => { lhs <= rhs; ... }, ... })`

@@ -16,4 +16,5 @@ pub mod bus;
 pub mod eth;
 pub mod fifo;
 pub mod hdmi;
+pub mod plic;
 pub mod station;

@@ -113,7 +113,8 @@ design from before the DDR3 memory was on the bus, said \code{OK} at
 
 \subsection*{Used by}
 
-\code{Board}, as \code{uart} behind the bridge \code{puart}. The
+\code{Board}, as \code{uart} behind the bridge \code{puart}, with
+\code{irq} as source 1 of the interrupt controller. The
 demonstration \code{//cpu/vreteno:vreteno}, the lockstep test and
 \code{run.rs}. The system in \code{soc}, where it is the serial port at
 corner 1,1 of the lattice.

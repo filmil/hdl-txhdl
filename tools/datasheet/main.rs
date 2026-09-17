@@ -26,6 +26,7 @@ use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::eth::{EthLite, EthRx, EthTx};
 use txhdl_parts::fifo::Fifo;
 use txhdl_parts::hdmi::{vga, Hdmi, I2cInit};
+use txhdl_parts::plic::Plic2;
 use txhdl_parts::station::Station3;
 use vreteno32::board::Board;
 use vreteno32::core::Vreteno;
@@ -277,6 +278,7 @@ fn main() {
     sheet("Vreteno", "Vreteno<2>", Vreteno::<2>::lowered("vreteno"));
     sheet("Dmem", "Dmem<2>", Dmem::<2>::lowered("dmem"));
     sheet("Timer", "Timer<2>", Timer::<2>::lowered("timer"));
+    sheet("Plic", "Plic2<0>", Plic2::<0>::lowered("plic"));
     sheet("Uart", "Uart<868>", Uart::<868>::lowered("uart"));
     sheet("Ddr3Per", "Ddr3Per<0, 0>", Ddr3Per::<0, 0>::lowered("ddr3"));
     sheet(

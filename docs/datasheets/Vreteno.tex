@@ -184,4 +184,5 @@ instruction retires with the word the previous device load left in
 The core decodes 32-bit words only, so a compressed instruction traps
 as illegal. It has machine mode only, the eight control registers
 above, and \code{ebreak} halts rather than traps. It has one load in
-flight at a time. The board top ties \code{irq} low.
+flight at a time. On the board, \code{irq} is the interrupt
+controller's line.

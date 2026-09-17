@@ -112,6 +112,31 @@ rust_library(
     edition = "2021",
 )
 
+# Input by interrupt: the serial port's receive interrupt through the
+# interrupt controller, one interrupt per byte, run on the board's
+# design. Built exactly as the greeting is.
+rust_binary(
+    name = "irq",
+    srcs = ["irq.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    tags = ["manual"],
+)
+
+vreteno_image(
+    name = "irq_image",
+    platform = ":vreteno",
+    program = ":irq",
+)
+
+rust_library(
+    name = "irq_program",
+    srcs = [":irq_image"],
+    crate_name = "irq_program",
+    edition = "2021",
+)
+
 # What the document lists: the program as written, and the script
 # that says where each of its sections may go.
 filegroup(
@@ -119,6 +144,7 @@ filegroup(
     srcs = [
         "ico.rs",
         "hello.rs",
+        "irq.rs",
         "vreteno.ld",
     ],
 )

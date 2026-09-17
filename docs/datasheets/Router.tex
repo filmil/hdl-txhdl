@@ -63,9 +63,11 @@ Peripheral & \code{BASE} & \code{MASK} & In Vreteno \\
 \end{tabular}
 \end{center}
 
-The board's design names \code{Router4} as \code{BoardRouter}, with
-masks of \code{0xffff\_f000} for the same three pages and the DDR3
-memory at \code{0x4000\_0000}, mask \code{0xc000\_0000}.
+The board's design names \code{Router5} as \code{BoardRouter}, with
+masks of \code{0xffff\_f000} for the same three pages, the DDR3
+memory at \code{0x4000\_0000}, mask \code{0xc000\_0000}, and the
+interrupt controller at \code{0x0c00\_0000}, mask
+\code{0xfc00\_0000}.
 
 \dstables{Router}
 
@@ -143,8 +145,8 @@ range. Two hosts write and read every peripheral and read a hole.
 
 \code{Router3} in the example \code{ex\_axi\_router} and in Vreteno's
 run, \code{cpu/vreteno/src/run.rs} and \code{cpu/vreteno/src/main.rs}.
-\code{Router4} in the board's design, \code{cpu/vreteno/src/board.rs},
-and in the network on chip's test. \code{Router2} in the router's own
+\code{Router5} in the board's design, \code{cpu/vreteno/src/board.rs}.
+\code{Router4} in the network on chip's test. \code{Router2} in the router's own
 tests.
 
 \subsection*{Limits}

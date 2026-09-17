@@ -42,6 +42,7 @@ rust_test(
         ":vreteno32",
         "//cpu/vreteno/rust:ddr3_program",
         "//cpu/vreteno/rust:hello_program",
+        "//cpu/vreteno/rust:irq_program",
         "//lib:txhdl",
     ],
 )

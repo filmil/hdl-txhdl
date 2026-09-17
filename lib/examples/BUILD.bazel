@@ -439,6 +439,20 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A platform-level interrupt controller of three sources, claimed and
+# completed by a host on its AXI-Lite link:
+#   bazel run //lib/examples:ex_plic
+rust_binary(
+    name = "ex_plic",
+    srcs = ["ex_plic.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # The simplest AXI peripheral, a register of one word, as hardware:
 #   bazel run //lib/examples:ex_axi_reg
 rust_binary(
@@ -557,6 +571,7 @@ filegroup(
         "ex_axi_serve.rs",
         "ex_axi_router.rs",
         "ex_axi_lite.rs",
+        "ex_plic.rs",
         "ex_eth.rs",
         "ex_hdmi.rs",
         "ex_axi_wb.rs",

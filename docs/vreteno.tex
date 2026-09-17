@@ -11,6 +11,13 @@
 \InputIfFileExists{buildstamp.tex}{}{}
 \providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
 
+% A range of the interrupt controller as plic! wrote it for three
+% sources, by its begin/end markers.
+\newcommand{\plicpart}[3]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#1-#1,caption={#2},label={#3}]{plic3.rs}}
+
 \title{Vreteno: An RV32IM Core in TxHDL}
 
 \author{Filip Filmar and Dragiša Janković%
@@ -416,7 +423,9 @@ not a channel, and a wire between units carries no promise about the
 step, so the timer drives it from a register, and the run and the
 test poll the timer before the core: then the core reads in a cycle
 what the timer decided the cycle before, which is what the netlist
-does too. The timer's own netlist is checked as the core's is, from
+does too. The board's other device that raises an interrupt, the
+interrupt controller, has a section of its own,
+Section~\ref{sec:v-plic}. The timer's own netlist is checked as the core's is, from
 the same trace; the two entities share one run. Between two lowered
 units there is no testbench to play the channel, and no channel: a
 unit's port is one side of the handshake, and the sides wired
@@ -452,8 +461,9 @@ index of the oldest and a count, a push at the landing and a pop at
 the load, both in one cycle leaving the count where it was; so a
 terminal may type ahead of the program, as the terminal of the runs
 does, its bytes back to back. The port's interrupt line is high
-while the buffer holds any; on the board it is the core's external
-interrupt, and the runs join it to the line they drive. Its second
+while the buffer holds any; on the board it is source 1 of the
+interrupt controller, whose line is the core's external interrupt, and
+the demonstration joins it to the line it drives. Its second
 word is the status, bit 0 busy while a frame is going out, bit 1 a
 byte received and not yet read, and bit 2 the buffer full. A byte
 written while busy is dropped, and a byte received when the buffer
@@ -566,6 +576,100 @@ made rewriting it safe.
 
 \lstinputlisting[caption={\code{core.rs}: the three-stage
 core.},label={lst:v-core}]{cpu/vreteno/src/core.rs}
+
+\section{The Interrupt Controller}
+\label{sec:v-plic}
+
+The core has one external interrupt line, and a machine has more
+sources than one. On the board a platform-level interrupt controller,
+Listing~\ref{lst:v-plic-gateway} and those after it, stands between
+them, at \code{0x0c00\_0000}, where RISC-V machines put it. It is a
+part of \code{txhdl\_parts}, \code{Plic1} to \code{Plic8}, one unit per
+count of sources written out by \code{plic!}, as the routers are, and
+an AXI-Lite peripheral behind a bridge of its own. Its words are the
+RISC-V PLIC's for one target: a priority per source from \code{0x4},
+three bits, where 0 never interrupts; the pending bits at
+\code{0x1000}; the enable bits at \code{0x2000}; the threshold at
+\code{0x20\_0000}; and the claim word at \code{0x20\_0004}. Sources are
+numbered from 1, and a source's number is its bit.
+
+A source's line goes through a gateway first,
+Listing~\ref{lst:v-plic-gateway}. A level source asks while its line is
+high, and an edge source, whose bit is set in the \code{EDGE}
+parameter, asks on a rising edge. A request goes forward, and becomes
+pending, only when the source has none in service: service runs from
+the claim that took the last request to the complete that ended it.
+An edge during a service is held, one deep, and asks on the complete;
+a level source still high on the complete asks again at once.
+The choice, Listing~\ref{lst:v-plic-choice}, is a chain of wires from
+the highest number down. A source is a candidate when it is pending,
+enabled and above the threshold, and the best has the highest
+priority, the lowest number winning a tie. A read of the claim word
+answers with the best source's number, or 0, and clears its pending
+bit; a write of the number back is the complete. The interrupt line is
+a register, high a cycle after there is a best source, so the core
+reads it as it reads the timer's.
+
+\code{ex\_plic}, Listing~\ref{lst:v-plic-ex}, drives a \code{Plic3}
+whose second source asks on an edge, the way a handler would: it sets
+the priorities to 1, 3 and 3 and raises all three lines. The claims
+come out 2, 3 and 1, and a fourth claim answers 0. On the completes the
+two level sources still high ask again and the edge source does not. A
+threshold of 1 hides a priority of 1, and a second pulse on the edge
+source during its service asks once on its complete.
+Figure~\ref{fig:v-plic} is the start of that run. The build simulates
+the controller's netlist against the run under nvc and Verilator, and
+\code{//lib/parts:parts\_test} checks the same four rules on their
+own.
+
+\begin{figure}[htbp]
+\centering
+\input{plic_timing.tex}
+\caption{Three sources asking at once: the lines, the pending and
+active bits, the claims on \code{ar} and their answers on \code{r},
+and the interrupt line, which falls a cycle after the last claim and
+rises again when source 1, completed and still high, asks again.}
+\label{fig:v-plic}
+\end{figure}
+
+\plicpart{gateway}{The gateway, as \code{plic!} wrote it for three
+sources.}{lst:v-plic-gateway}
+
+\plicpart{choice}{The choice of the source a claim takes.}%
+{lst:v-plic-choice}
+
+\plicpart{bus}{The words on the bus, the claim and the complete.}%
+{lst:v-plic-bus}
+
+\plicpart{drives}{The drives: the requests, the registers and the
+line.}{lst:v-plic-drives}
+
+\lstinputlisting[caption={\code{ex\_plic.rs}: a controller of three
+sources, claimed and completed.},label={lst:v-plic-ex}]{lib/examples/ex_plic.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_plic} printed when
+the build ran it.},label={lst:v-plic-out}]{out_plic.txt}
+
+On the board the controller is a \code{Plic2}. Its source 1 is the
+serial port's interrupt line and its source 2 the board's \code{irq}
+input, both level sources, and its line is the core's external
+interrupt. \code{irq.rs}, Listing~\ref{lst:v-irq}, is a program for the
+board that takes its input by interrupt. It enables source 1, sets
+\code{mtvec}, enables the external interrupt and says \code{ready},
+then waits in a loop that never reads the serial port. Each byte the
+terminal types lands in the port's buffer and raises its line. The
+controller raises the core's, and the handler claims, reads one byte
+and completes. A byte still in the buffer keeps the port's line high,
+so the controller asks again on the complete, and the next byte is the
+next interrupt. The core's pending bit for the external interrupt is
+set by its line and cleared only by software, so the handler clears it
+after the complete; the controller's line fell a cycle after the
+claim. \code{//cpu/vreteno:board\_test} runs the board's design on it,
+with a terminal that types \code{ping}, and the program says
+\code{got ping in 4 interrupts}.
+
+\lstinputlisting[caption={\code{cpu/vreteno/rust/irq.rs}: input by
+interrupt, one interrupt a byte.},label={lst:v-irq}]{cpu/vreteno/rust/irq.rs}
 
 \section{The Programs}
 \label{sec:v-programs}
@@ -921,12 +1025,14 @@ put them.
 The board is the Alinx AX7A200, the Artix-7 the part was chosen for.
 Everything that computes is one lowered module, \code{board}, the
 netlist \code{\#[lower]} writes for \code{vreteno32::board::Board}: a
-unit of units holding the core and its tracker, a router of four, a
-tracker for each peripheral but the serial port, which sits behind its
-AXI-Lite bridge, the data memory at \code{0x1000}, the
-timer at \code{0x2000}, the serial port at \code{0x3000}, and the
-board's DDR3 memory from \code{0x4000\_0000}, a gigabyte behind the
-bridge from AXI to Wishbone and UberDDR3's controller. The controller
+unit of units holding the core and its tracker, a router of five, a
+tracker for each peripheral but the serial port and the interrupt
+controller, which sit behind AXI-Lite bridges, the data memory at
+\code{0x1000}, the timer at \code{0x2000}, the serial port at
+\code{0x3000}, the board's DDR3 memory from \code{0x4000\_0000}, a
+gigabyte behind the bridge from AXI to Wishbone and UberDDR3's
+controller, and the interrupt controller at \code{0x0c00\_0000}, whose
+line is the core's external interrupt. The controller
 is a module from elsewhere, so the netlist names its wrapper and does
 not write it, and the memory's pins, the data and strobe lines among
 them, are the module's own ports. \code{board\_netlist} writes it with
@@ -957,12 +1063,12 @@ the same way, against the same models, by
 \code{bazel build //cpu/vreteno:vreteno\_board\_pnr} synthesises it,
 places and routes it with the board's pins and the memory's, and
 writes the bitstream, in eleven minutes. Every timing constraint is
-met: the worst setup slack is 0.220~ns, the worst hold slack
-0.040~ns, over 17\,708 endpoints on the four clocks Vivado derives
+met: the worst setup slack is 0.211~ns, the worst hold slack
+0.036~ns, over 18\,787 endpoints on the four clocks Vivado derives
 from the one constraint on the board's 200~MHz input. No register is
 without a clock, no internal endpoint is unconstrained, and neither
 synthesis nor implementation raises a critical warning. The design
-takes 7\,661 LUTs, 6\,403 flip-flops, three block RAM tiles, four DSP
+takes 8\,018 LUTs, 6\,960 flip-flops, three block RAM tiles, four DSP
 blocks, 80 pins, the PLL, and the controller's 65 output and 36 input
 serialisers. The memory's pins carry no input or output delay, as in
 the a200t examples, since the controller calibrates their timing

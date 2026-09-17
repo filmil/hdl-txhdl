@@ -1262,6 +1262,30 @@ waveform(
     ],
 )
 
+# The interrupt controller on the board, in Vreteno's document: three
+# sources claimed in priority order, and the edge source's second
+# pulse held through its service.
+waveform(
+    name = "plic",
+    example = "//lib/examples:ex_plic",
+    lowered = ("plic3", "plic"),
+    from_tick = 12,
+    until = 60,
+    width = 15.5,
+    signals = [
+        "//clocks/clk=>clk",
+        "//src1=>src1",
+        "//src2=>src2",
+        "//src3=>src3",
+        "//plic/pending=>pending",
+        "//plic/active=>active",
+        "//ar/rx_valid=>ar",
+        "//r/tx_valid=>r",
+        "//r/tx_data/data=>r_data",
+        "//irq=>irq",
+    ],
+)
+
 # Vreteno: the RV32I core, its run and the opening cycles of its
 # waveform, in its own document.
 waveform(
@@ -1355,7 +1379,11 @@ latex_document(
         ":vreteno_out_timing",
         ":vreteno_in_timing",
         ":vreteno_bus_timing",
+        ":plic_run",
+        ":plic_timing",
+        ":plic_source",
         "//cpu/vreteno:sources",
+        "//lib/examples:sources",
     ],
     deps = ["housestyle.tex"],
 )
@@ -1647,6 +1675,13 @@ latex_document(
 # Verilog's: both for the tutorial, neither typed by hand.
 # What `lite_bridge!` wrote for a bridge of two peripherals, as the
 # example prints it, for the AXI document.
+genrule(
+    name = "plic_source",
+    outs = ["plic3.rs"],
+    cmd = "$(location //lib/examples:ex_plic) --source > $@",
+    tools = ["//lib/examples:ex_plic"],
+)
+
 genrule(
     name = "lite_bridge_source",
     outs = ["lite_bridge2.rs"],
