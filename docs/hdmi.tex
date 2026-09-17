@@ -1,0 +1,316 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% HDMI in TxHDL. Built by //docs:hdmi. Every listing is included from
+% the tree, and every printout and figure is what the build made by
+% running the example.
+\documentclass[journal,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+% A range of the HDMI part, by its begin/end markers.
+\newcommand{\hdmipart}[3]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/hdmi.rs}}
+
+\title{HDMI in TxHDL}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{This is the tutorial on the HDMI part, for a reader who knows
+the AXI link and its AXI-Lite bridge~\cite{axi}. Every listing is
+included from the project repository \code{HDL/txhdl} at build time,
+and every printout and figure is what the build produced by running
+the example. The cover~\cite{cover} lists every document.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{HDMI in TxHDL}{Filmar and Janković: HDMI in TxHDL}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+The Alinx AX7A200B sends HDMI through a SiI9134 encoder. The chip
+does the TMDS encoding and the serialising. The FPGA gives it a pixel
+clock, 24 bits of colour, two syncs and a data enable, and a few
+register writes over I2C before it shows anything. This part is
+two units in the lowered subset. The video peripheral counts the
+raster, shows a framebuffer of 12-bit pixels, and lets a host paint
+that framebuffer over AXI-Lite. The I2C master resets the chip and
+writes its configuration. The build runs both, in a mode of 16 by 12
+pixels, against a host that paints a picture and a model of an I2C
+device, checks every pixel on the screen, and simulates both netlists
+against the run under \code{nvc} and under Verilator. For the board
+there is a hand-written demonstration that shows a test picture at
+640 by 480 and 60~Hz, through Vivado to a bitstream; it has not yet
+run on the board.
+\end{abstract}
+
+\section{What Is Here}
+\label{sec:h-what}
+
+The part is \code{hdmi} in \code{txhdl\_parts}, and it has two units.
+
+\code{Hdmi} is the video peripheral. It runs on the pixel clock and
+drives the chip's inputs: \code{rgb}, 24 bits with red on top,
+\code{hsync} and \code{vsync}, low while active, and \code{de}, high
+over the visible part of the raster. Its framebuffer holds 12-bit
+pixels, four bits each of red, green and blue, and each framebuffer
+pixel covers a square of \code{1 << SHIFT} screen pixels on a side. A
+host writes the framebuffer through the unit's AXI-Lite port.
+
+\code{I2cInit} is the chip's setup. It holds the chip's reset low,
+lets it go, waits, and writes a table of registers as I2C
+transactions. It reports \code{done} when the table is written and
+\code{failed} when the chip did not acknowledge a byte.
+
+\section{The Raster}
+\label{sec:h-raster}
+
+A frame is a raster of columns and rows, most of them visible and the
+rest blanking: a front porch, a sync pulse and a back porch, across
+and down. At 640 by 480 and 60~Hz that is 800 columns by 525 rows, a
+pixel every 39.7~ns at 25.175~MHz, with both syncs low while active.
+Listing~\ref{lst:h-modes} states those numbers. The unit takes all
+eight of them as type parameters, so a test can run a mode of a few
+hundred pixels.
+
+\hdmipart{modes}{640 by 480 at 60~Hz.}{lst:h-modes}
+
+The unit counts the column in \code{hc} and the row in \code{vc}. From
+them it works out whether the beam is in the visible part and whether
+it is in either sync pulse, with the functions of
+Listing~\ref{lst:h-fns}. It reads the framebuffer at the pixel under
+the beam into \code{px} at the clock edge, the synchronous read a block
+RAM has. The syncs and the enable go into registers at the same edge,
+so they meet the pixel they belong to. The chip's inputs are those
+registers.
+
+The functions come in pairs, one per axis, where one function would
+do for both. The lowering binds a function's constant parameters by
+name rather than by position, so a function's parameters have to be
+named as the unit names its own~\cite{i127}.
+
+\hdmipart{fns}{The raster's functions.}{lst:h-fns}
+
+\section{The Framebuffer and the Bus}
+\label{sec:h-bus}
+
+The framebuffer is a memory of $2^{15}$ words, addressed by the row
+in the top seven bits and the column in the low eight. At 640 by 480
+with \code{SHIFT} of 2 the picture is 160 by 120, and the rest of the
+memory is unused.
+
+\begin{table}[htbp]
+\caption{The video peripheral's words.}
+\label{tab:h-words}
+\centering\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+Word & Access & Bits \\
+\midrule
+0, status & read & 0 vertical blank, 31 to 16 frames \\
+1, cursor & read, write & 7 to 0 column, 14 to 8 row \\
+2, pixel & write & 11 to 0 the colour \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A write to the pixel word puts the colour into the framebuffer at the
+cursor and moves the cursor to the next pixel. At the end of a row the
+cursor goes to the start of the next row, and after the last row back
+to the first. A host sets the cursor once and then paints a run of
+pixels in one fixed burst to the pixel word, since the AXI-Lite bridge
+makes each beat of a fixed burst a transaction of its own at the same
+address.
+
+\hdmipart{state}{The video peripheral's state.}{lst:h-state}
+
+\hdmipart{run}{The video peripheral's step.}{lst:h-run}
+
+The colour going out is built from wires named for each colour, with a
+function call per wire before the concatenation. A chain that begins
+with a call of a function is not read by the lowering, which takes it
+for a constant~\cite{i128}.
+
+\section{Configuring the Chip}
+\label{sec:h-i2c}
+
+I2C is two open-drain lines, a clock and a data line, each pulled high
+on the board and pulled low by whoever is talking. A transaction starts
+with the data line falling while the clock is high and stops with it
+rising while the clock is high. Between, each byte is eight bits, most
+significant first, each changing while the clock is low and read while
+it is high, and after each byte the device pulls the data line low
+through one more clock to acknowledge it.
+
+The master cuts a bit into four quarters of \code{DIV} cycles each,
+the clock low in the first and the last. A transaction is 29 steps of
+four quarters: the start, the device's address and its acknowledge, the
+register and its acknowledge, the value and its acknowledge, and the
+stop. \code{scl\_low} and \code{sda\_low} high pull a line low, and the
+data line comes back in on \code{sda\_in}, where the master reads it in
+the third quarter of each acknowledge.
+
+\hdmipart{i2cstate}{The master's state.}{lst:h-i2cstate}
+
+\hdmipart{i2c}{The master's step.}{lst:h-i2c}
+
+Listing~\ref{lst:h-table} is the table the master writes: a register
+that takes the chip out of power-down for the input the board wires,
+and one that sets its output to DVI, the picture with no HDMI packets.
+None of the documents this part was written from states the chip's
+registers, so these values are to be confirmed against the SiI9134's
+documentation or the board vendor's example before the board is
+expected to show a picture. They are one table in the source, and the
+functions that give the master its entries.
+
+\hdmipart{table}{The chip's configuration, to be
+confirmed.}{lst:h-table}
+
+\section{The Run}
+\label{sec:h-run}
+
+\code{ex\_hdmi} puts the video peripheral behind \code{LiteBridge1},
+behind a host's tracker, in a mode of 16 by 12 visible pixels with
+each framebuffer pixel 2 by 2, so the framebuffer is 8 by 6. The host
+client sets the cursor to the corner and paints all 48 pixels in one
+fixed burst, red rising across, green rising down, and blue on the
+diagonal. Then it reads the status until two more frames have been
+shown.
+
+Beside it the I2C master runs against \code{I2cDevice}, a model of a
+device on the lines that acknowledges every byte and records what it
+was sent. The run checks that it was sent the table.
+
+The run rebuilds each frame from the pixels \code{de} marks, starting
+at the vertical sync, and checks every one of the 192 screen pixels of
+the last whole frame against the colour painted. A pixel shifted by
+one column or one row would fail at the edge of its 2 by 2 square.
+
+\begin{figure*}[t]
+\centering
+\input{hdmi_timing.tex}
+\caption{The run: the pixels written on \code{w}, the syncs and the
+enable frame after frame, and the chip's reset and
+the I2C lines while the two transactions go out, until \code{done}.}
+\label{fig:h-run}
+\end{figure*}
+
+\lstinputlisting[caption={\code{ex\_hdmi.rs}. Run with
+\code{bazel run //lib/examples:ex\_hdmi}.},%
+label={lst:h-ex}]{lib/examples/ex_hdmi.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_hdmi} printed when
+the build ran it: the two transactions the device was sent, and the
+last whole frame, one screen pixel per framebuffer pixel.},%
+label={lst:h-out}]{out_hdmi.txt}
+
+The peripheral and the master are lowered, and the build simulates
+each netlist against this run under \code{nvc} and under Verilator, at
+its ports. Tests in the part check the syncs and the enable against
+the mode, one fixed lag fitting all three, and the table on the I2C
+lines.
+
+\section{On the Board}
+\label{sec:h-board}
+
+The board's part is written by hand in \code{//hdmi}. It is a
+demonstration with no host: the netlist the build writes for it has a
+test picture in the framebuffer's initial values, eight colour bars
+over a grey ramp inside a white border, and the peripheral's AXI-Lite
+inputs are held idle.
+
+\lstinputlisting[caption={\code{hdmi/src/netlist.rs}: the netlist, with
+the test picture.},label={lst:h-netlist}]{hdmi/src/netlist.rs}
+
+The pixel clock comes from an MMCM. The board's 200~MHz input is
+divided by ten and multiplied by 63 for a 1260~MHz oscillator, which
+divided by 50 is 25.2~MHz, within half a per cent of the mode's
+25.175~MHz. The chip's clock is the pixel clock turned over by an
+\code{ODDR}, so the chip's rising edge falls in the middle of each
+pixel. The I2C lines are open drain: the pad is driven low while the
+master pulls, and left floating otherwise.
+
+\lstinputlisting[caption={\code{hdmi/board/hdmi\_demo.v}: the
+demonstration.},label={lst:h-demo}]{hdmi/board/hdmi_demo.v}
+
+\code{bazel build //hdmi:demo\_synth} puts the two lowered units and
+the demonstration through Vivado's synthesis for the board's part, with
+no error and no critical warning. Its 87 warnings are all the same
+one: the bits of the peripheral's AXI-Lite inputs that the
+demonstration holds at zero have no load. \code{bazel build
+//hdmi:demo\_pnr} places and routes the design with the board's pins
+and writes the bitstream. Every timing constraint is met, with
+35.872~ns of setup slack and 0.164~ns of hold slack over 398
+endpoints, and the design rule check finds nothing. The design takes
+60 LUTs, 86 flip-flops, 12 block RAM tiles for the framebuffer, and 36
+pins. No input or output delay is constrained on the chip's pins, so
+that slack says nothing about the timing between the FPGA and the
+chip.
+
+The constraints name the clock, the LEDs, and the chip's 31 pins from
+the table in the AX7A200B manual.
+
+\lstinputlisting[caption={\code{hdmi/board/ax7a200\_hdmi.xdc}: the
+board's pins.},label={lst:h-xdc}]{hdmi/board/ax7a200_hdmi.xdc}
+
+\section{What Is Not Done}
+\label{sec:h-not}
+
+Nothing here has run on the board. Three things on the board side are
+assumptions to be confirmed there.
+The chip's register values, as above. The order of the chip's data
+inputs: the manual's table numbers them \code{D[0]} to \code{D[23]}
+and does not say which are red, green and blue, and the demonstration
+puts red on the top eight. And the I/O standard of the chip's pins,
+which the constraints give as LVCMOS33 like the board's other user
+pins.
+
+The whole peripheral runs on the pixel clock, bus port included. A
+host on the system clock reaches it through a crossing of the five
+AXI-Lite channels, which the demonstration does not need and nothing
+here provides. The lowering cannot yet co-simulate a unit of two
+clocks, which is what a crossing written in the language would
+be~\cite{i131}.
+
+The framebuffer is 12 bits a pixel and at most 256 by 128. The mode
+is fixed when the type is named, and there is one I2C table.
+
+\begin{thebibliography}{9}
+
+\bibitem{axi}
+F.~Filmar and D.~Janković, ``AXI in TxHDL,'' project repository
+\code{HDL/txhdl}, \code{//docs:axi}, 2026.
+
+\bibitem{i127}
+Issue 127, ``fix(lower): a function's const parameters are bound by
+name, not by position,'' project repository \code{HDL/txhdl}, 2026.
+
+\bibitem{i128}
+Issue 128, ``fix(lower): a method chain on a function call becomes a
+constant naming missing variables,'' project repository
+\code{HDL/txhdl}, 2026.
+
+\bibitem{i131}
+Issue 131, ``feat(test): co-simulate a unit of several clocks, and
+lower a clock-crossing channel,'' project repository \code{HDL/txhdl},
+2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}

@@ -15,7 +15,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and eighteen documents describe it,
+The language is a library, `//lib`, and nineteen documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -95,6 +95,13 @@ all under `//docs`:
   JL2121 PHY, which `//eth:echo_synth` and `//eth:echo_pnr` put
   through Vivado to a bitstream.
   `ex_eth` is documented there and not in `//docs:examples`.
+* `//docs:hdmi` is the HDMI part in `//lib/parts` under `hdmi`: the
+  video peripheral for an encoder chip, its raster and its framebuffer
+  a host paints over AXI-Lite, the I2C master that configures the chip,
+  the example `ex_hdmi`, and `//hdmi`, the hand-written demonstration
+  for the AX7A200B's SiI9134, which `//hdmi:demo_synth` and
+  `//hdmi:demo_pnr` put through Vivado to a bitstream.
+  `ex_hdmi` is documented there and not in `//docs:examples`.
 * `//docs:cheatsheet` is the one-page cheat sheet, also as a PNG
   (`//docs:cheatsheet_png`); it shows `ex_cheat.rs`, its netlist and
   its waveform, all produced by the build.

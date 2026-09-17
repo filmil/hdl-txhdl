@@ -995,6 +995,29 @@ waveform(
     until = 330,
 )
 
+# Video for an HDMI encoder chip behind AXI-Lite, and the I2C master
+# that configures the chip: a small mode, painted and shown.
+waveform(
+    name = "hdmi",
+    example = "//lib/examples:ex_hdmi",
+    lowered = [
+        ("hdmi_video", "video"),
+        ("hdmi_i2c", "master"),
+    ],
+    signals = [
+        "//w/rx_valid=>w",
+        "//vsync=>vsync",
+        "//hsync=>hsync",
+        "//de=>de",
+        "//nreset=>nreset",
+        "//scl_low=>scl_low",
+        "//sda_low=>sda_low",
+        "//sda_in=>sda",
+        "//done=>done",
+    ],
+    width = 17.0,
+)
+
 # Accepting many AXI transactions and forwarding them for processing:
 # three in flight over four identifiers, recycled.
 waveform(
@@ -1726,6 +1749,23 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# HDMI in TxHDL: the video peripheral and the I2C master, the example's
+# run and waveform, and the board's hand-written demonstration.
+latex_document(
+    name = "hdmi",
+    main = "hdmi.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":hdmi_run",
+        ":hdmi_timing",
+        "//hdmi:sources",
+        "//lib/examples:sources",
+        "//lib/parts:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # AXI in TxHDL: the tutorial on the bus, its two examples' runs and
 # waveforms included, and the two trackers' netlists.
 latex_document(
@@ -1809,6 +1849,7 @@ combined_pdf(
         ":gpu",
         ":noc",
         ":eth",
+        ":hdmi",
         ":article",
         ":embedding",
         ":runtime",

@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+# HDMI on the Alinx AX7A200B: the video peripheral and the I2C master
+# from //lib/parts, lowered, inside a hand-written demonstration that
+# sends a test picture through the board's SiI9134 encoder.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+load(
+    "@rules_vivado//build/vivado:rules.bzl",
+    "vivado_place_and_route2",
+    "vivado_synthesis2",
+)
+
+package(default_visibility = ["//visibility:public"])
+
+# The Verilog of `hdmi_video`, with the test picture, and `hdmi_i2c`.
+rust_binary(
+    name = "netlist",
+    srcs = ["src/netlist.rs"],
+    edition = "2021",
+    deps = ["//lib/parts:txhdl_parts"],
+)
+
+genrule(
+    name = "demo_v",
+    outs = ["hdmi_units.v"],
+    cmd = "$(location :netlist) > $@",
+    tools = [":netlist"],
+)
+
+filegroup(
+    name = "demo_xdc",
+    srcs = ["board/ax7a200_hdmi.xdc"],
+)
+
+# The demonstration through Vivado's synthesis, and through place and
+# route with the board's pins to a bitstream. Manual, as every Vivado
+# target is:
+#
+#   bazel build //hdmi:demo_synth
+#   bazel build //hdmi:demo_pnr
+vivado_synthesis2(
+    name = "demo_synth",
+    srcs = [
+        ":demo_v",
+        "board/hdmi_demo.v",
+    ],
+    part = "xc7a200tfbg484-2",
+    top = "hdmi_demo",
+    xdcs = [":demo_xdc"],
+    tags = ["manual"],
+)
+
+vivado_place_and_route2(
+    name = "demo_pnr",
+    synthesis = ":demo_synth",
+    xdcs = [":demo_xdc"],
+    tags = ["manual"],
+)
+
+# The sources by name, for the documents' listings.
+filegroup(
+    name = "sources",
+    srcs = glob(["board/*.v", "board/*.xdc", "src/*.rs"]),
+)

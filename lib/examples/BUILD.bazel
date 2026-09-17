@@ -478,6 +478,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Video for an HDMI encoder chip, behind AXI-Lite, with its I2C setup:
+#   bazel run //lib/examples:ex_hdmi
+rust_binary(
+    name = "ex_hdmi",
+    srcs = ["ex_hdmi.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Accepting many AXI transactions and forwarding them for processing:
 #   bazel run //lib/examples:ex_axi_serve
 rust_binary(
@@ -545,6 +558,7 @@ filegroup(
         "ex_axi_router.rs",
         "ex_axi_lite.rs",
         "ex_eth.rs",
+        "ex_hdmi.rs",
         "ex_axi_wb.rs",
         "ex_axi_reg.rs",
         "station.v",
