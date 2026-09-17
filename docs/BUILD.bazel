@@ -956,6 +956,29 @@ waveform(
     until = 170,
 )
 
+# A host on AXI4 pins: the write's address phase and beats handed to the
+# link's channels, and the response handed back.
+waveform(
+    name = "axi_pins",
+    example = "//lib/examples:ex_axi_pins",
+    lowered = ("axi_pins", "pins"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//awvalid=>awvalid",
+        "//awready=>awready",
+        "//wvalid=>wvalid",
+        "//wready=>wready",
+        "//wlast=>wlast",
+        "//aw/tx_valid=>aw",
+        "//w/tx_valid=>w",
+        "//bvalid=>bvalid",
+        "//bready=>bready",
+        "//bid=>bid",
+    ],
+    until = 20,
+    width = 7.4,
+)
+
 # The simplest AXI peripheral: a register of one word, the first write
 # and its read back.
 waveform(
