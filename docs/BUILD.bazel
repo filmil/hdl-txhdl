@@ -931,6 +931,24 @@ waveform(
     until = 170,
 )
 
+# The simplest AXI peripheral: a register of one word, the first write
+# and its read back.
+waveform(
+    name = "axi_reg",
+    example = "//lib/examples:ex_axi_reg",
+    lowered = ("axi_reg", "reg"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//req/rx_valid=>req",
+        "//wd/rx_valid=>wd",
+        "//ans/tx_valid=>ans",
+        "//rb/tx_valid=>rb",
+        "//reg/word=>word",
+    ],
+    until = 34,
+    width = 7.4,
+)
+
 # An AXI link reaching a Wishbone peripheral: the bridge lowered, and
 # the first write offered, taken and acknowledged.
 waveform(
