@@ -15,7 +15,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and twenty-one documents describe it,
+The language is a library, `//lib`, and twenty-two documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -107,6 +107,14 @@ all under `//docs`:
   for the AX7A200B's SiI9134, which `//hdmi:demo_synth` and
   `//hdmi:demo_pnr` put through Vivado to a bitstream.
   `ex_hdmi` is documented there and not in `//docs:examples`.
+* `//docs:pcie` is PCIe on the AX7A200B: AMD's XDMA endpoint, which
+  `//pcie:xdma_x2` generates with `vivado_ip`; `AxiPins` in
+  `//lib/parts` under `bus::axi_pins`, which joins a host's AXI4 pins to
+  the link's channels, with its example `ex_axi_pins`; and `//pcie`, the
+  lowered design behind BAR0 and the hand-written top, which
+  `//pcie:endpoint_synth` and `//pcie:endpoint_pnr` put through Vivado
+  to a bitstream.
+  `ex_axi_pins` is documented there and not in `//docs:examples`.
 * `//docs:datasheets` is a datasheet per component: every unit under
   `#[lower]` outside the examples, and every family a macro writes.
   The prose of each sheet is in `docs/datasheets/<Key>.tex`; its

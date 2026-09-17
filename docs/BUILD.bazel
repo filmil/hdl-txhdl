@@ -1906,6 +1906,23 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# PCIe in TxHDL: the endpoint the build generates, the part that joins
+# its master's pins to the link, the design behind BAR0, and the board.
+latex_document(
+    name = "pcie",
+    main = "pcie.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":axi_pins_run",
+        ":axi_pins_timing",
+        "//lib/examples:sources",
+        "//lib/parts:sources",
+        "//pcie:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 # AXI in TxHDL: the tutorial on the bus, its two examples' runs and
 # waveforms included, and the two trackers' netlists.
 latex_document(
@@ -1970,6 +1987,7 @@ combined_pdf(
         "A Network on Chip in TxHDL",
         "Ethernet in TxHDL",
         "HDMI in TxHDL",
+        "PCIe in TxHDL",
         "TxHDL Datasheets",
         "TxHDL: Unifying a Dataflow and a Transaction HDL",
         "Deleting a Language: Embedding TxHDL in Rust",
@@ -1993,6 +2011,7 @@ combined_pdf(
         ":noc",
         ":eth",
         ":hdmi",
+        ":pcie",
         ":datasheets",
         ":article",
         ":embedding",
