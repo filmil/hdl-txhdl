@@ -10,8 +10,8 @@
  * Everything a load may touch, `.rodata` included, therefore lives in
  * the data memory, and the image carries its initial bytes.
  *
- * Both are 4 KiB and both are hard limits: the core fetches
- * `pc[11:2]`, so a program past 1024 instructions wraps into itself
+ * Both are 4 KiB and both are hard limits: the core fetches by
+ * `pc[11:2]`, so a program past 4096 bytes wraps into itself
  * with no fault, and the data memory's word index is ten bits.
  * `elf2vreteno` refuses an image that overruns either.
  */

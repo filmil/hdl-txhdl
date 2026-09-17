@@ -42,7 +42,7 @@ rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2021",
     # The bare-metal RISC-V target Vreteno is: thirty-two bit, the
-    # multiply extension, no compressed instructions, no operating
+    # multiply extension, compressed instructions, no operating
     # system. Naming it here makes the build fetch that target's
     # standard library by checksum, as it fetches the host's, so
     # nothing has to be installed to compile for the core.
@@ -60,9 +60,9 @@ register_toolchains("@rust_toolchains//:all")
 
 # A C and C++ compiler for Vreteno itself, fetched by checksum: the
 # xPack build of the GNU toolchain for bare-metal RISC-V. It is here
-# rather than a Clang because of what comes with it. Its `rv32im/ilp32`
-# multilib is exactly this core, RV32IM with no compressed
-# instructions and the soft-float ABI, and it carries newlib and a
+# rather than a Clang because of what comes with it. Its `rv32imc/ilp32`
+# multilib is exactly this core, RV32IMC with the soft-float ABI, and
+# it carries newlib and a
 # real `libstdc++.a` built for it, so "with a standard library" is
 # something the toolchain already has rather than something the build
 # would have to compile.

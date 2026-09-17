@@ -9,13 +9,13 @@ image, by the same tool and the same checks the Rust images go
 through.
 """
 
-# What this core is, in the compiler's words. `rv32im` is the
-# instruction set with no compressed instructions, `ilp32` the
+# What this core is, in the compiler's words. `rv32imc` is the
+# instruction set, compressed instructions included, `ilp32` the
 # soft-float ABI, and both name the multilib of newlib and libstdc++
 # the toolchain carries, so the standard library that gets linked is
 # one built for this machine.
 _ARCH = [
-    "-march=rv32im",
+    "-march=rv32imc",
     "-mabi=ilp32",
 ]
 

@@ -22,14 +22,11 @@ platform(
 )
 
 # The flags every program for this core is built with. The core is
-# RV32IM with no compressed instructions, and the only RISC-V target
-# the ruleset maps has them, so they are turned off here; nothing
-# after this relies on that, because `elf2vreteno` refuses an image
-# that holds one. Optimising for size is not a preference: the
-# instruction memory is 4 KiB, and a debug assertion pulls in `core`'s
-# panic formatting, which does not fit and is compressed besides.
+# RV32IMC, which is the target the ruleset maps, so the target's own
+# instruction set is used as it is. Optimising for size is not a
+# preference: the instruction memory is 4 KiB, and a debug assertion
+# pulls in `core`'s panic formatting, which does not fit.
 VRETENO_FLAGS = [
-    "-Ctarget-feature=-c",
     "-Copt-level=z",
     "-Cdebug-assertions=no",
     "-Coverflow-checks=no",

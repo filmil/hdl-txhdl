@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # C++ compiled for Vreteno itself, by the toolchain `MODULE.bazel`
 # fetches: the xPack build of the GNU bare-metal RISC-V compiler,
-# whose `rv32im/ilp32` multilib carries newlib and a `libstdc++.a`
+# whose `rv32imc/ilp32` multilib carries newlib and a `libstdc++.a`
 # built for exactly this core.
 load("@rules_rust//rust:defs.bzl", "rust_library")
 load(":defs.bzl", "vreteno_cc_image")
