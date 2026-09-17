@@ -15,7 +15,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and nineteen documents describe it,
+The language is a library, `//lib`, and twenty documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -24,7 +24,9 @@ all under `//docs`:
   parts, Vreteno, the GPU, how it is all checked, and what is not
   done. It is the one document meant to be read first and alone, so
   it stays at two pages and every number in it comes from a count
-  rather than from memory.
+  rather than from memory. Its tables claim to be exhaustive, so a
+  new component goes in them in the same change; the standing rule
+  below says what counts as one and how to check the numbers.
 * `//docs:article` states the merge of the two languages this one came
   from.
 * `//docs:embedding` states the embedding in Rust: the exposition of
@@ -169,6 +171,51 @@ before including: the documents set source at 80 columns and never
 break a line, so a longer line overflows its frame.
 A listing that was typed into the article rather than included from a
 file is a defect, because it is the one copy nothing checks.
+
+# Standing rule: a component enters the showcase in the same change
+
+`//docs:showcase` is the one document meant to be read first and
+alone, and its two tables claim to be exhaustive: Table I says it
+lists *every* unit the build lowers, and Table II *every* system it
+assembles.
+A change that adds one and does not add it there makes the document
+lie, and a reader has no way to tell which of the two is out of date.
+
+So a change that adds any of the following updates `docs/showcase.tex`
+in the same commit:
+
+* a unit others can use: a part, a peripheral, a bridge;
+* a system the build assembles from units;
+* a toolchain the build fetches, which is Table III;
+* a flow the build runs, such as synthesis or a layout.
+
+Four things in that document are counts and not opinions, and each has
+a command behind it.
+Run them; do not carry a number over from the last edit.
+
+```sh
+# What `bazel test //...` runs is the targets less the manual ones,
+# which is the number the document quotes; the tail of a test run
+# says the same thing.
+bazel query 'kind(".*_test", //...)' | wc -l
+bazel query 'attr(tags, "manual", kind(".*_test", //...))' | wc -l
+bazel query 'kind(".*_test", //...)' | grep -c _vsim    # netlists, each x2
+find lib/parts/src -name '*.rs' | xargs wc -l | tail -1 # a band of lines
+ls lib/examples/ex_*.rs | wc -l                         # the examples
+```
+
+The document stays at two pages.
+That is the constraint that makes it worth reading, so when an
+addition pushes it onto a third, something else gives: a table of
+numbers becomes a sentence, or a paragraph that has stopped earning
+its place goes.
+Two tables have already been folded into prose that way.
+Check with `pdfinfo bazel-bin/docs/showcase.pdf`, and render both
+pages and look at them, as every document change here requires.
+
+The same applies to `//docs:cover`, which names every document, and to
+the list of documents in this file: a new document is added to both in
+the change that creates it.
 
 # Claims about Rust are compiled, not argued
 
