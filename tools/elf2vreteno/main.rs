@@ -3,11 +3,10 @@
 //! from, and checked against what the core can actually run.
 //!
 //! The checks are the point. Every one of them is something the core
-//! does silently and wrongly rather than refusing: a compressed
-//! instruction is an illegal opcode that traps to `mtvec`, which
-//! resets to zero, so the program restarts instead of faulting; a
-//! program past 1024 instructions is truncated by the loader and the
-//! fetch wraps into it; a constant left in instruction memory is
+//! does silently and wrongly rather than refusing: a program past
+//! 4096 bytes is truncated by the loader and the fetch wraps into it;
+//! an entry point other than zero is never reached, since the core
+//! starts at zero; a constant left in instruction memory is
 //! unreadable, because a load from below the data base never leaves
 //! the core. Each of those is caught here, where it can be said out
 //! loud, rather than in a simulation that quietly does the wrong
@@ -99,21 +98,6 @@ fn sections(d: &[u8]) -> Result<(u32, Vec<Section>), String> {
     ))
 }
 
-/// A RISC-V instruction is compressed when the low two bits of its
-/// first halfword are not both set. Vreteno has no compressed
-/// instructions, so one in the image is a trap waiting to happen.
-fn compressed_at(bytes: &[u8]) -> Option<usize> {
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        let half = u16::from_le_bytes([bytes[i], bytes[i + 1]]);
-        if half & 3 != 3 {
-            return Some(i);
-        }
-        i += 4;
-    }
-    None
-}
-
 fn run() -> Result<String, String> {
     let path = std::env::args().nth(1).ok_or("usage: elf2vreteno FILE")?;
     let d = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
@@ -170,15 +154,6 @@ fn run() -> Result<String, String> {
         }
         let bytes = &d[s.off as usize..(s.off + s.size) as usize];
         if s.flags & SHF_EXEC != 0 {
-            if let Some(at) = compressed_at(bytes) {
-                return Err(format!(
-                    "a compressed instruction in `{}` at {:#x}. Vreteno \
-                     has no compressed instructions and would trap on \
-                     it. Build with `-Ctarget-feature=-c`.",
-                    s.name,
-                    s.addr + at as u32
-                ));
-            }
             put(&mut imem, (s.addr - IMEM_BASE) as usize, bytes);
         } else {
             put(&mut dmem, (s.addr - DMEM_BASE) as usize, bytes);
@@ -221,8 +196,8 @@ fn run() -> Result<String, String> {
     writeln!(out).unwrap();
     writeln!(
         out,
-        "/// The program: {} instructions, of the 1024 there is room \
-         for.",
+        "/// The program: {} words, of the 1024 there is room for, \
+         holding\n/// instructions of sixteen and thirty-two bits.",
         words.len()
     )
     .unwrap();
@@ -262,21 +237,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{compressed_at, sections};
-
-    /// A compressed instruction is one whose first halfword does not
-    /// end in two set bits. The check must find one wherever it is,
-    /// and must not call an ordinary instruction one.
-    #[test]
-    fn compressed_instructions_are_found() {
-        // Two ordinary instructions: `addi` and `ebreak`.
-        let plain = [0x13, 0x05, 0x00, 0x00, 0x73, 0x00, 0x10, 0x00];
-        assert_eq!(compressed_at(&plain), None, "two plain instructions");
-        // `c.addi` in the second slot: its low two bits are 01.
-        let mixed = [0x13, 0x05, 0x00, 0x00, 0x41, 0x11, 0x00, 0x00];
-        assert_eq!(compressed_at(&mixed), Some(4), "a compressed one");
-        assert_eq!(compressed_at(&[]), None, "nothing at all");
-    }
+    use super::sections;
 
     /// Anything that is not a 32-bit little-endian RISC-V ELF is
     /// refused by name rather than misread.
