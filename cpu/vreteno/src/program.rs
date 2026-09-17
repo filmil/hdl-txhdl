@@ -5,19 +5,44 @@
 use crate::isa::*;
 use crate::model::DATA_BASE;
 
-/// Words with labels: a forward branch is emitted with a placeholder
-/// and patched when its label is placed.
+/// A branch or a jump whose label is not placed yet: a thirty-two bit
+/// one or a compressed one, as a function of the byte offset.
+enum Fixup {
+    Wide(Box<dyn Fn(i32) -> u32>),
+    Short(Box<dyn Fn(i32) -> u16>),
+}
+
+/// Instructions with labels, as halfwords: a thirty-two bit instruction
+/// is two of them, the low half first, and a compressed one is one.
+/// Addresses and offsets are bytes, two to a halfword. A forward branch
+/// is emitted with a placeholder and patched when its label is placed.
 #[derive(Default)]
 pub struct Asm {
-    pub words: Vec<u32>,
-    fixups: Vec<(usize, usize, Box<dyn Fn(i32) -> u32>)>,
+    pub halves: Vec<u16>,
+    fixups: Vec<(usize, usize, Fixup)>,
     abs_fixups: Vec<(usize, usize, Box<dyn Fn(u32) -> u32>)>,
     labels: Vec<Option<usize>>,
 }
 
 impl Asm {
+    /// A thirty-two bit instruction.
     pub fn emit(&mut self, w: u32) {
-        self.words.push(w);
+        self.halves.push(w as u16);
+        self.halves.push((w >> 16) as u16);
+    }
+    /// A compressed instruction.
+    pub fn emit_c(&mut self, h: u16) {
+        self.halves.push(h);
+    }
+    /// Where the next instruction goes, in bytes.
+    pub fn here(&self) -> usize {
+        self.halves.len() * 2
+    }
+    /// A thirty-two bit instruction in place of the two halfwords at
+    /// `at`.
+    fn put(&mut self, at: usize, w: u32) {
+        self.halves[at] = w as u16;
+        self.halves[at + 1] = (w >> 16) as u16;
     }
     /// A fresh label, not yet placed.
     pub fn label(&mut self) -> usize {
@@ -26,41 +51,69 @@ impl Asm {
     }
     /// Place a label here.
     pub fn place(&mut self, l: usize) {
-        self.labels[l] = Some(self.words.len());
-        let here = self.words.len();
-        for (at, lbl, enc) in &self.fixups {
+        let here = self.halves.len();
+        self.labels[l] = Some(here);
+        let fixups = std::mem::take(&mut self.fixups);
+        for (at, lbl, enc) in &fixups {
             if *lbl == l {
-                self.words[*at] = enc((here as i32 - *at as i32) * 4);
+                let off = (here as i32 - *at as i32) * 2;
+                match enc {
+                    Fixup::Wide(e) => self.put(*at, e(off)),
+                    Fixup::Short(e) => self.halves[*at] = e(off),
+                }
             }
         }
-        for (at, lbl, enc) in &self.abs_fixups {
+        self.fixups = fixups;
+        let abs_fixups = std::mem::take(&mut self.abs_fixups);
+        for (at, lbl, enc) in &abs_fixups {
             if *lbl == l {
-                self.words[*at] = enc(here as u32 * 4);
+                self.put(*at, enc(here as u32 * 2));
             }
         }
+        self.abs_fixups = abs_fixups;
     }
     /// A label's absolute address, `enc` taking it: what a handler's
     /// address in mtvec needs. The program is at zero.
     pub fn abs(&mut self, l: usize, enc: impl Fn(u32) -> u32 + 'static) {
-        let at = self.words.len();
+        let at = self.halves.len();
         match self.labels[l] {
-            Some(t) => self.words.push(enc(t as u32 * 4)),
+            Some(t) => self.emit(enc(t as u32 * 2)),
             None => {
                 self.abs_fixups.push((at, l, Box::new(enc)));
-                self.words.push(0);
+                self.emit(0);
             }
         }
     }
     /// A branch or jump to a label, `enc` taking the byte offset.
     pub fn to(&mut self, l: usize, enc: impl Fn(i32) -> u32 + 'static) {
-        let at = self.words.len();
+        let at = self.halves.len();
         match self.labels[l] {
-            Some(t) => self.words.push(enc((t as i32 - at as i32) * 4)),
+            Some(t) => self.emit(enc((t as i32 - at as i32) * 2)),
             None => {
-                self.fixups.push((at, l, Box::new(enc)));
-                self.words.push(0);
+                self.fixups.push((at, l, Fixup::Wide(Box::new(enc))));
+                self.emit(0);
             }
         }
+    }
+    /// A compressed branch or jump to a label.
+    pub fn to_c(&mut self, l: usize, enc: impl Fn(i32) -> u16 + 'static) {
+        let at = self.halves.len();
+        match self.labels[l] {
+            Some(t) => self.emit_c(enc((t as i32 - at as i32) * 2)),
+            None => {
+                self.fixups.push((at, l, Fixup::Short(Box::new(enc))));
+                self.emit_c(0);
+            }
+        }
+    }
+    /// The program as the instruction memory holds it: little-endian
+    /// words, two halfwords each, the last padded with a zero halfword
+    /// if it needs one.
+    pub fn words(&self) -> Vec<u32> {
+        self.halves
+            .chunks(2)
+            .map(|c| c[0] as u32 | (*c.get(1).unwrap_or(&0) as u32) << 16)
+            .collect()
     }
 }
 
@@ -190,7 +243,7 @@ pub fn demo() -> Vec<u32> {
     a.emit(mret());
     a.place(done);
     a.emit(ebreak());
-    a.words
+    a.words()
 }
 
 /// A random straight-line program: register operations, the M
@@ -219,7 +272,7 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     a.emit(csrrw(0, CSR_MIE, 31)); // the line and the timer
     a.emit(lui(30, TIMER_BASE >> 12)); // x30 = the timer, kept
     a.emit(csrrsi(0, CSR_MSTATUS, 8));
-    while a.words.len() < len {
+    while a.halves.len() < 2 * len {
         let r = next();
         let rd = (r >> 8 & 31) as u32;
         let rs1 = (r >> 16 & 31) as u32;
@@ -351,5 +404,5 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     a.emit(addi(31, 31, 4));
     a.emit(csrrw(0, CSR_MEPC, 31));
     a.emit(mret());
-    a.words
+    a.words()
 }
