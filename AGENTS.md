@@ -276,6 +276,72 @@ change, its datasheet is updated in the same change.
    A new crate with lowered units adds its `sources` to that test's
    `data` and its source directory to the test script's `find`.
 
+# Standing rule: one issue, one pull request, in topical commits
+
+An issue is a pull request of its own.
+Two issues in one branch cannot be reviewed apart, merged apart or
+reverted apart, and the one that turns out to be wrong holds up the
+one that is right.
+A pull request that closes three issues is three pull requests that
+were not made.
+
+Inside a pull request the commits are topical, not chronological.
+A part, the example that checks it, and the documents that describe it
+are three commits and not one, because a reviewer reads them
+differently: the first is hardware, the second is a test, the third is
+prose.
+The order to commit in is the order of the three places rule above,
+which is also the order to work in.
+
+Four things follow.
+
+* Every commit builds.
+  `bazel build //...` is green at each one, so that a bisect is worth
+  running and a commit can be reverted on its own.
+* A change the work did not ask for is a commit of its own, named as
+  such.
+  What a formatter does to a file the change never touched belongs
+  there, not carried along by the feature that ran the formatter.
+* A bug found along the way is its own commit, naming the issue it
+  closes or works around, as the rule above requires.
+* A commit that only moves or renames is separate from one that
+  changes what moved, because the two together are unreadable as a
+  diff.
+
+When one issue's work genuinely needs another's, the branch is stacked
+on it rather than merged into it, and the pull request says so in its
+first line.
+
+## A pull request is watched until it lands
+
+Opening a pull request is not the end of the work on it.
+`main` moves while a branch waits, and a branch that has gone stale is
+a branch nobody can merge without doing the author's work for them.
+
+* Check for conflicts as soon as the pull request is opened, not only
+  later.
+  A branch can conflict the moment it is pushed, because `main` may
+  have moved between the last rebase and the push.
+* Check every open pull request again whenever `main` moves, and
+  before reporting on a task.
+  One command says it for all of them:
+
+```sh
+fj pr -R hd search -s open      # the numbers
+fj pr -R hd status <number>     # mergeable, or not
+```
+
+* Repair a conflict by rebasing onto `origin/main`, not by merging
+  `main` into the branch.
+  A rebase keeps the topical commits topical; a merge buries them
+  under a commit that is about nothing.
+* A stacked branch is rebased onto its parent after the parent moves,
+  in that order, parent first.
+* After a rebase, the checks are run again.
+  A conflict resolved by hand is a change nobody has built, and `main`
+  may have added a rule the branch does not yet meet: the datasheet
+  test above is exactly that kind of rule.
+
 # Claims about Rust are compiled, not argued
 
 Any claim about what Rust accepts goes into
