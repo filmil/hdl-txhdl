@@ -82,6 +82,44 @@ rust_test(
     edition = "2021",
 )
 
+# Every compressed halfword, disassembled by the GNU tools the build
+# fetches, for the test below to read.
+genrule(
+    name = "compressed_listing",
+    outs = ["compressed.txt"],
+    cmd = """
+        t=$$(mktemp -d)
+        {
+            echo '.option rvc'
+            echo '.text'
+            i=0
+            while [ $$i -lt 65536 ]; do
+                if [ $$((i & 3)) -ne 3 ]; then
+                    printf '.insn 0x%04x\\n' $$i
+                fi
+                i=$$((i + 1))
+            done
+        } > $$t/all.S
+        $(location @riscv_none_elf_gcc//:as) -march=rv32imc -o $$t/all.o $$t/all.S
+        $(location @riscv_none_elf_gcc//:objdump) -d -M no-aliases,numeric $$t/all.o > $@
+        rm -rf $$t
+    """,
+    tools = [
+        "@riscv_none_elf_gcc//:as",
+        "@riscv_none_elf_gcc//:objdump",
+    ],
+)
+
+# The decoder of compressed instructions against that listing.
+rust_test(
+    name = "compressed_test",
+    srcs = ["tests/compressed.rs"],
+    data = [":compressed_listing"],
+    edition = "2021",
+    env = {"COMPRESSED_LISTING": "$(rootpath :compressed_listing)"},
+    deps = [":vreteno32"],
+)
+
 # Run the demonstration:  bazel run //cpu/vreteno
 rust_binary(
     name = "vreteno",

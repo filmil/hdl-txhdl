@@ -21,3 +21,15 @@ filegroup(
     name = "gxx",
     srcs = ["bin/riscv-none-elf-g++"],
 )
+
+# The assembler and the disassembler, which the core's decoder of
+# compressed instructions is checked against.
+filegroup(
+    name = "as",
+    srcs = ["bin/riscv-none-elf-as"],
+)
+
+filegroup(
+    name = "objdump",
+    srcs = ["bin/riscv-none-elf-objdump"],
+)
