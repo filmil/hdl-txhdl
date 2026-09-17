@@ -34,10 +34,13 @@ mod tests {
     use super::mesh::lattice;
     use super::node::Node;
     use crate::bus::axi::sim::Ram;
-    use crate::bus::axi::{axi, AxiHost, AxiPer, Link, Rd, Resp, Wr};
+    use crate::bus::axi::{
+        axi, Ar, Aw, AxiHost, AxiPer, Link, Rd, Resp, Wr, B, R, W,
+    };
+    use crate::bus::router::Router4;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use txhdl::comp::{join2, join_all, Running, Unit};
+    use txhdl::comp::{chan, join2, join_all, DefaultClock, Running, Unit};
     use txhdl::types::U;
 
     const XB: usize = 2;
@@ -295,5 +298,243 @@ mod tests {
         );
         assert_eq!(ram.word(0x1010 / 4).raw(), 0xaaaa_1111);
         assert_eq!(ram.word(0x1020 / 4).raw(), 0xbbbb_2222);
+    }
+
+    /// The word host `h` writes into peripheral `k`.
+    fn word(h: u32, k: usize) -> u32 {
+        0x5eed_0000 | (h << 8) | k as u32
+    }
+
+    /// Four peripherals behind one node: a router of four behind the
+    /// peripheral bridge at 1, 1, a memory in each of its ranges, and
+    /// a host at each of two other corners. Each host writes a word
+    /// into every peripheral, reads each back, and then reads an
+    /// address the network sends to the node but no peripheral has.
+    /// The network sees one exit and the router decodes behind it, so
+    /// a word in the wrong memory, an answer at the wrong host, or a
+    /// hole nobody answers fails the test.
+    #[test]
+    fn four_peripherals_share_one_node() {
+        type HostAt<const X: usize, const Y: usize> = HostBridge<
+            X,
+            Y,
+            XB,
+            YB,
+            A,
+            D,
+            S,
+            I,
+            0x1000,
+            0xf000,
+            1,
+            1,
+            0x2000,
+            0xf000,
+            1,
+            1,
+            0,
+            0,
+            1,
+            1,
+        >;
+        // A quarter of 0x1000..0x2000 each. 0x2000 reaches the node
+        // by the hosts' map and is none of the router's.
+        type Rtr = Router4<
+            A,
+            D,
+            S,
+            I,
+            0x1000,
+            0xfc00,
+            0x1400,
+            0xfc00,
+            0x1800,
+            0xfc00,
+            0x1c00,
+            0xfc00,
+        >;
+        const BASES: [u32; 4] = [0x1000, 0x1400, 0x1800, 0x1c00];
+        const HOLE: u32 = 0x2010;
+        type Boxed<'a> =
+            std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>>;
+
+        let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
+        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+        let nodes = join_all(vec![
+            Box::pin(n00.run(net.ins.remove(0), net.outs.remove(0)))
+                as Boxed<'_>,
+            Box::pin(n10.run(net.ins.remove(0), net.outs.remove(0))),
+            Box::pin(n01.run(net.ins.remove(0), net.outs.remove(0))),
+            Box::pin(n11.run(net.ins.remove(0), net.outs.remove(0))),
+        ]);
+        // The hosts are at 0, 0 and 1, 0; the peripherals at 1, 1.
+        let e00 = net.exits.remove(0);
+        let e10 = net.exits.remove(0);
+        let e11 = net.exits.pop().unwrap();
+
+        // The node's one exit, its bridge, and the router behind it,
+        // on the five AXI channels between the two.
+        let mut pbr = Peri::default();
+        let mut rtr = Rtr::default();
+        let (aw_tx, aw_rx) = chan::<Aw<A, I>, DefaultClock>();
+        let (ar_tx, ar_rx) = chan::<Ar<A, I>, DefaultClock>();
+        let (w_tx, w_rx) = chan::<W<D, S>, DefaultClock>();
+        let (b_tx, b_rx) = chan::<B<I>, DefaultClock>();
+        let (r_tx, r_rx) = chan::<R<D, I>, DefaultClock>();
+
+        // The four peripherals: each a link's peripheral half, its
+        // tracker, and a memory that serves it.
+        let rams: Vec<Ram<A, D, S, I>> =
+            (0..4).map(|_| Ram::new(2048)).collect();
+        let mut t0 = AxiPer::<A, D, S, I>::default();
+        let mut t1 = AxiPer::<A, D, S, I>::default();
+        let mut t2 = AxiPer::<A, D, S, I>::default();
+        let mut t3 = AxiPer::<A, D, S, I>::default();
+        let Link {
+            per: p0,
+            per_in: i0,
+            per_out: o0,
+            host_in: h0,
+            host_out: g0,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let Link {
+            per: p1,
+            per_in: i1,
+            per_out: o1,
+            host_in: h1,
+            host_out: g1,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let Link {
+            per: p2,
+            per_in: i2,
+            per_out: o2,
+            host_in: h2,
+            host_out: g2,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let Link {
+            per: p3,
+            per_in: i3,
+            per_out: o3,
+            host_in: h3,
+            host_out: g3,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let peripherals =
+            join_all(vec![
+                Box::pin(pbr.run(
+                    (e11.q_out, b_rx, r_rx),
+                    (aw_tx, ar_tx, w_tx, e11.p_in),
+                )) as Boxed<'_>,
+                Box::pin(rtr.run(
+                    (
+                        aw_rx, ar_rx, w_rx, h0.2, h0.3, h1.2, h1.3, h2.2, h2.3,
+                        h3.2, h3.3,
+                    ),
+                    (
+                        g0.0, g0.1, g0.2, g1.0, g1.1, g1.2, g2.0, g2.1, g2.2,
+                        g3.0, g3.1, g3.2, b_tx, r_tx,
+                    ),
+                )),
+                Box::pin(t0.run(i0, o0)),
+                Box::pin(t1.run(i1, o1)),
+                Box::pin(t2.run(i2, o2)),
+                Box::pin(t3.run(i3, o3)),
+                Box::pin(rams[0].clone().serve(p0, 2)),
+                Box::pin(rams[1].clone().serve(p1, 2)),
+                Box::pin(rams[2].clone().serve(p2, 2)),
+                Box::pin(rams[3].clone().serve(p3, 2)),
+            ]);
+
+        // One host's corner: its link, and a client that writes every
+        // peripheral, reads every one back, and reads the hole.
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let mk = |h: u32| {
+            let Link {
+                host,
+                host_in,
+                host_out,
+                per_in,
+                per_out,
+                ..
+            } = axi::<A, D, S, I, NIDS>();
+            let out = got.clone();
+            let client = async move {
+                for (k, base) in BASES.iter().enumerate() {
+                    let at = base + 0x10 + 4 * h;
+                    let w =
+                        host.write(Wr::at(at), &[U::from(word(h, k))]).await;
+                    assert_eq!(w.done().await.resp, Resp::Okay, "a write");
+                }
+                let mut seen = Vec::new();
+                for base in BASES {
+                    let at = base + 0x10 + 4 * h;
+                    let rd = host.read(Rd::at(at, 1)).await.done().await;
+                    seen.push((rd.resp, rd.data[0].raw()));
+                }
+                let hole = host.read(Rd::at(HOLE, 1)).await.done().await;
+                seen.push((hole.resp, 0));
+                out.borrow_mut().push((h, seen));
+            };
+            (host_in, host_out, per_in, per_out, client)
+        };
+        let (ain, aout, apin, apout, aclient) = mk(0);
+        let (bin, bout, bpin, bpout, bclient) = mk(1);
+        let mut atrk = AxiHost::<A, D, S, I, NIDS>::default();
+        let mut btrk = AxiHost::<A, D, S, I, NIDS>::default();
+        let mut abr = HostAt::<0, 0>::default();
+        let mut bbr = HostAt::<1, 0>::default();
+        let hosts = join_all(vec![
+            Box::pin(atrk.run(ain, aout)) as Boxed<'_>,
+            Box::pin(abr.run(
+                (apin.0, apin.1, apin.2, e00.p_out),
+                (e00.q_in, apout.2, apout.3),
+            )),
+            Box::pin(btrk.run(bin, bout)),
+            Box::pin(bbr.run(
+                (bpin.0, bpin.1, bpin.2, e10.p_out),
+                (e10.q_in, bpout.2, bpout.3),
+            )),
+        ]);
+
+        let mut sim = Running::new(join2(
+            join2(nodes, hosts),
+            join2(peripherals, join2(aclient, bclient)),
+        ));
+        for _ in 0..4000 {
+            sim.cycle();
+        }
+        let mut got = got.borrow().clone();
+        got.sort_by_key(|(h, _)| *h);
+        assert_eq!(got.len(), 2, "both hosts did not finish");
+        for (h, seen) in &got {
+            for (k, answer) in seen[..4].iter().enumerate() {
+                assert_eq!(
+                    *answer,
+                    (Resp::Okay, word(*h, k) as u128),
+                    "host {h} read peripheral {k}"
+                );
+            }
+            assert_eq!(seen[4].0, Resp::DecErr, "host {h} read the hole");
+        }
+        // Each word is in its own peripheral's memory and in no other.
+        for h in 0..2 {
+            for (k, base) in BASES.iter().enumerate() {
+                let at = ((base + 0x10 + 4 * h) / 4) as usize;
+                for (j, ram) in rams.iter().enumerate() {
+                    let want = if j == k { word(h, k) } else { 0 };
+                    assert_eq!(
+                        ram.word(at).raw(),
+                        want as u128,
+                        "host {h}'s word for peripheral {k}, in memory {j}"
+                    );
+                }
+            }
+        }
     }
 }
