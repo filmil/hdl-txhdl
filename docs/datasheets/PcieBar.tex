@@ -1,0 +1,65 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: PcieBar
+\datasheet{PcieBar}{Everything behind the PCIe endpoint's BAR0, as one lowered unit of units.}
+
+\dsfacts{\code{pcie/src/bar.rs}}{\code{pcie::bar::PcieBar}}%
+{\code{//docs:pcie}}
+
+\subsection*{Function}
+
+\code{PcieBar} holds \code{AxiPins<32, 64, 8, 4>}, an
+\code{AxiPer<32, 64, 8, 4>} and \code{BarRegs<4>}, joined by channels.
+Its inputs, the struct \code{PcieBarIn}, are a reset and the 24 pins an
+AXI4 host drives. Its outputs, \code{PcieBarOut}, are the eleven pins
+the host reads and the LEDs' two bits. The board's top,
+\code{pcie/board/pcie\_top.v}, wires the XDMA endpoint's master to it
+pin for pin, the low 32 bits of the master's 64-bit addresses, and its
+clock and reset to the endpoint's user clock and reset.
+
+\subsection*{Parameters}
+
+None. The widths are the endpoint's: 32-bit addresses on this side,
+64-bit words, eight lanes, four-bit identifiers.
+
+\subsection*{Address map}
+
+The tracker sends every address to \code{BarRegs}, which decodes bits 4
+and 3; see its sheet.
+
+\dstables{PcieBar}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item The pins' address phases and write beats go through
+\code{AxiPins} onto the tracker's channels, and its responses and read
+beats come back to the pins the same way.
+\item The tracker hands each request to \code{BarRegs}.
+\item \code{rst} goes to \code{BarRegs} only.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{a\_host\_reads\_and\_writes\_the\_bar}, in
+\code{//pcie:bar\_test}, drives it through the pins with
+\code{PinHost}.
+\item \code{the\_netlist\_has\_the\_endpoint\_pins} checks that its
+Verilog is one module, \code{pcie\_bar}, with the pins as ports.
+\item \code{//pcie:endpoint\_synth} and \code{//pcie:endpoint\_pnr}
+put it and the endpoint through Vivado with the board's pins. Both are
+manual. \code{//docs:pcie} reports their results.
+\end{itemize}
+
+No waveform target simulates its netlist against a trace.
+
+\subsection*{Used by}
+
+\code{//pcie:bar\_netlist}, whose genrule \code{//pcie:bar\_v} writes
+the netlist, and \code{pcie\_top.v}, which instantiates it as
+\code{bar}.
+
+\subsection*{Limits}
+
+It has not run in a PC (issue 180). It is its own bus on the endpoint's
+clock, and reaches nothing on Vreteno's.

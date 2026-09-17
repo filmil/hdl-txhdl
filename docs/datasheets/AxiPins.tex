@@ -1,0 +1,91 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: AxiPins
+\datasheet{AxiPins}{A host's AXI4 pins joined to the AXI link's channels.}
+
+\dsfacts{\code{lib/parts/src/bus/axi\_pins.rs}}%
+{\code{txhdl\_parts::bus::axi\_pins::AxiPins}}%
+{\code{//docs:pcie}}
+
+\subsection*{Function}
+
+A core from elsewhere that is an AXI4 host has pins: a \code{valid} and
+a \code{ready} per channel and a wire per field, named as AXI4 names
+them. \code{AxiPins} joins those pins to the link's five channels, so it
+goes where an \code{AxiHost} would, with an \code{AxiPer} or a router
+behind it. Its inputs are the struct \code{AxiPinsIn}: the host's 24
+pins and the \code{b} and \code{r} channels from the link. Its outputs
+are \code{AxiPinsOut}: the \code{aw}, \code{ar} and \code{w} channels
+to the link, and the eleven pins the host reads.
+
+\code{axi\_pins::sim} has \code{PinHost}, a host on the pins written as
+a simulation, and \code{pin\_host} and \code{pins}, which make the
+wires.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The address width, in bits. The tables use 32. \\
+\code{D} & The data width, in bits. The tables use 64. \\
+\code{S} & The strobe width, \code{D / 8}. The tables use 8. \\
+\code{I} & The identifier width, in bits. The tables use 4. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables are generated for \code{AxiPins<32, 64, 8, 4>}, the widths of
+the PCIe endpoint's master as \code{PcieBar} uses it.
+
+\dstables{AxiPins}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item It holds no state; every output is a function of the step's
+inputs and the channels.
+\item \code{awready}, \code{arready} and \code{wready} are the room on
+\code{aw}, \code{ar} and \code{w}.
+\item When \code{awvalid} is high and \code{aw} has room, an address
+phase goes onto \code{aw} with the pins' \code{id}, \code{addr},
+\code{len}, \code{size}, \code{lock}, \code{cache} and \code{prot}, the
+burst type decoded from its two bits, and \code{qos} and \code{region}
+zero. The same holds for \code{arvalid} and \code{ar}, and for
+\code{wvalid} and \code{w}, with \code{data}, \code{strb} and
+\code{last}.
+\item \code{bvalid} is high while \code{b} holds a response, with
+\code{bid} and \code{bresp} its fields, the response encoded in two
+bits. It is taken in a step \code{bready} is high.
+\item \code{rvalid}, \code{rid}, \code{rdata}, \code{rresp} and
+\code{rlast} are the head of \code{r} the same way, taken in a step
+\code{rready} is high.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{a\_host\_on\_pins\_reaches\_a\_peripheral\_through\_the\_link}
+in \code{bus::axi\_pins}, in \code{//lib/parts:parts\_test}, writes three
+words through the pins, an \code{AxiPer} and a simulated RAM, reads four
+back with their identifier, and reads past the RAM's end, answered
+\code{SlvErr}.
+\item \code{ex\_axi\_pins} runs \code{AxiPins<32, 64, 8, 4>} the same
+way, and the build simulates its netlist against that run under nvc and
+Verilator: \code{//docs:axi\_pins\_sim\_axi\_pins\_tb\_test} and
+\code{//docs:axi\_pins\_vsim\_test}.
+\item \code{//pcie:bar\_test} drives it inside \code{PcieBar}.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{PcieBar}, as its field \code{pins}, between the PCIe endpoint's
+master and a peripheral tracker. The example \code{ex\_axi\_pins}.
+
+\subsection*{Limits}
+
+Its \code{ready} outputs follow the channels' room in the same step, so
+a path runs from a channel's state through the unit to the host's pins
+with no register. It has no \code{AxQOS}, \code{AxREGION} or user pins,
+and drives \code{qos} and \code{region} as zero.

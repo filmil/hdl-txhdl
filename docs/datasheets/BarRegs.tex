@@ -1,0 +1,86 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: BarRegs
+\datasheet{BarRegs}{Four 64-bit registers behind a peripheral tracker: what a host reaches in the PCIe endpoint's BAR0.}
+
+\dsfacts{\code{pcie/src/bar.rs}}{\code{pcie::bar::BarRegs}}%
+{\code{//docs:pcie}}
+
+\subsection*{Function}
+
+\code{BarRegs} is a peripheral client of an \code{AxiPer}: requests
+come on \code{req} and write beats on \code{wd}, and answers go out on
+\code{ans} and \code{rb}. It holds four words a host reads and writes,
+and drives two LEDs from one of them. The input \code{rst} clears the
+words that can be written and the count.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{I} & The width of the AXI identifier on \code{req}, \code{ans}
+and \code{rb}, in bits. The tables use 4, as \code{PcieBar} does. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Register map}
+
+Offsets from BAR0.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.55\textwidth}@{}}
+\toprule
+Offset & Word & Access \\
+\midrule
+\code{0x00} & Identifier, \code{IDENT}, \code{0x5478\_4844\_4c00\_0001} &
+Read only. \\
+\code{0x08} & \code{scratch} & Read and write. \\
+\code{0x10} & \code{lights}, bits 1 and 0 & Read and write; the other
+bits read zero. \\
+\code{0x18} & \code{writes} & Read only. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+It selects the word by bits 4 and 3 of the address and looks at no
+other bits.
+
+\dstables{BarRegs}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A read is taken when \code{rb} has room and no write is waiting
+for its beat. It is answered on \code{rb} in the cycle it is taken,
+with the word addressed, \code{OKAY} and \code{last} set.
+\item A write is taken when no write is waiting. The word it names goes
+into \code{psel} and its identifier into \code{pid}.
+\item The held write's beat is taken when it has arrived and \code{ans}
+has room. \code{writes} counts it. A write to \code{0x08} replaces
+\code{scratch} with the beat's data, and one to \code{0x10} replaces
+\code{lights} with its low two bits, whatever the strobe. A write to
+\code{0x00} or \code{0x18} changes nothing else. \code{ans} sends
+\code{OKAY}.
+\item \code{leds} is \code{lights}, a register's output.
+\item \code{rst} clears \code{pend}, \code{scratch}, \code{lights} and
+\code{writes}.
+\end{itemize}
+
+\subsection*{Verification}
+
+\code{a\_host\_reads\_and\_writes\_the\_bar}, in
+\code{//pcie:bar\_test}, drives it inside \code{PcieBar} through the
+endpoint's pins: the identifier, the scratch word read back, an LED,
+a write to the identifier that changes nothing, and the count of writes.
+
+\subsection*{Used by}
+
+\code{PcieBar}, as its field \code{regs}.
+
+\subsection*{Limits}
+
+It serves bursts of one beat and ignores a write's strobe. One write is
+held at a time, and no read is taken while it waits.

@@ -12,12 +12,14 @@ use txhdl::comp::trace::Kind;
 use txhdl::netlist::Lowered;
 
 use ddr3::Ddr3Per;
+use pcie::bar::{BarRegs, PcieBar};
 use razboj::fb::Fb;
 use razboj::raster::Raster;
 use txhdl::types::U;
 use txhdl_parts::buffer::Buffer;
 use txhdl_parts::bus::axi::{AxiHost, AxiPer};
 use txhdl_parts::bus::axi_lite::LiteBridge1;
+use txhdl_parts::bus::axi_pins::AxiPins;
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
 use txhdl_parts::bus::noc::node::Node;
 use txhdl_parts::bus::noc::switch::Switch;
@@ -215,6 +217,11 @@ fn main() {
         AxiWb::<32, 2, { ddr3::AW }>::lowered("axi_wb"),
     );
     sheet(
+        "AxiPins",
+        "AxiPins<32, 64, 8, 4>",
+        AxiPins::<32, 64, 8, 4>::lowered("axi_pins"),
+    );
+    sheet(
         "Switch",
         "Switch<0, 0, 2, 2, 32, 32, 4, 2>",
         Switch::<0, 0, 2, 2, 32, 32, 4, 2>::lowered("switch"),
@@ -298,6 +305,8 @@ fn main() {
         "Board<868, 0, 0>",
         Board::<868, 0, 0>::lowered("board"),
     );
+    sheet("BarRegs", "BarRegs<4>", BarRegs::<4>::lowered("bar_regs"));
+    sheet("PcieBar", "PcieBar", PcieBar::lowered("pcie_bar"));
     sheet("Fb", "Fb<16, 2, 1024>", Fb::<16, 2, 1024>::lowered("fb"));
     sheet(
         "Raster",

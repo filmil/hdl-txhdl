@@ -17,6 +17,7 @@ rust_binary(
         "//gpu/razboj",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
+        "//pcie",
     ],
 )
 
@@ -38,6 +39,7 @@ sh_test(
         "//ddr3:sources",
         "//docs:datasheet_sources",
         "//gpu/razboj:sources",
+        "//pcie:sources",
         "//lib/parts:sources",
     ],
 )
