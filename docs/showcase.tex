@@ -64,8 +64,8 @@ label={lst:w-unit}]{lib/examples/ex_cheat.rs}
 
 Table~\ref{tab:w-units} lists every unit the build lowers to Verilog
 and VHDL. Table~\ref{tab:w-systems} lists the systems it assembles
-from them. Together they are 30\,491 lines of Rust: 10\,327 of runtime
-and macros, 7\,010 of parts, 5\,721 in fifty examples, 4\,964 of
+from them. Together they are 30\,848 lines of Rust: 10\,327 of runtime
+and macros, 7\,175 of parts, 5\,913 in fifty-one examples, 4\,964 of
 Vreteno with its board, and 2\,469 of Razboj, DDR3, Ethernet, HDMI
 and the SoC.
 
@@ -86,8 +86,7 @@ AXI-Lite bridges, 1 to 8 peripherals & parts & 1 and 2 \\
 AXI to Wishbone bridge & parts & yes \\
 Interrupt controllers, 1 to 8 sources & parts & 3 \\
 Network node, switch, 2 bridges & parts & not yet \\
-Ethernet: transmit, receive, peripheral & parts & all three \\
-HDMI video; the I2C that sets it up & parts & both \\
+Pins; Ethernet's three; HDMI's two & parts & all six \\
 Vreteno; memory, timer, serial port & \code{cpu} & all four \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
@@ -211,10 +210,10 @@ primitive the compiler knows and the user cannot read. A reservation station gat
 of an operation that arrive on separate channels, out of order, and
 fires when the last of them has.
 
-It has grown outwards from the bus since: an Ethernet MAC, an HDMI
-video peripheral with the I2C that configures the transmitter, and a
-bridge from AXI to Wishbone, which is what lets a controller written
-elsewhere be a peripheral here.
+It has grown outwards from the bus since: an Ethernet MAC, HDMI video
+with the I2C that configures the chip, general purpose pins, and a
+bridge from AXI to Wishbone, which lets a controller written elsewhere
+be a peripheral here.
 
 \begin{figure}[htbp]
 \centering
@@ -261,8 +260,9 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs a hundred and three targets, of which ninety
-are netlists under both simulators; the rest are the core's model and
+its ports. \code{bazel test //...} runs a hundred and five targets, of
+which ninety-two are netlists under both simulators; the rest are the
+core's model and
 programs, the board's own run, Razboj, the parts, the SoC's run, and
 the tools. Two more are tagged manual because they want Vivado: the
 board and its DDR3 under its simulator. Every claim about what

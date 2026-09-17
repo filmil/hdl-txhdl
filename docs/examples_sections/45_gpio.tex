@@ -1,0 +1,61 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Pins, and an Interrupt on One}
+\label{sec:x-gpio}
+
+A pin is the least interesting thing a chip has and the first thing
+anybody wants. Until there is one, a running program can say nothing
+except through the serial port, and a board's four LEDs and its keys
+are wire that goes nowhere.
+
+\code{Gpio<N>} is \code{N} of them behind AXI-Lite, in seven words: what
+to drive, what the pins read, which way each pin faces, and then the
+four that make an interrupt, an enable, a kind, a polarity and a
+status. The part drives no pin itself. It offers the three wires a pad
+wants, the value, the direction and the value read back, and a board's
+top level joins them to a tristate buffer. That is not a detour: a pad
+in this language carries nothing until there is a netlist, so a part
+written around one is a part no simulation can run, and a peripheral
+nobody can simulate is a peripheral nobody can check.
+
+An input arrives through two flip-flops before anything reads it.
+A pin is a wire to the outside and its edges fall where they like, so
+a value taken straight into logic can be half way between one and zero
+when two gates read it, and the two gates can disagree. Two flip-flops
+is the usual price of not caring.
+
+The interrupt is per pin and is four registers rather than one,
+because there are four questions and they are independent: whether the
+pin may interrupt at all, whether it is a level or an edge, which
+level or which edge, and whether it has happened. The status bit is
+cleared by writing a one to it and not a zero, so two programs
+clearing different pins cannot lose each other's work. A pin set for a
+level sets its bit again in the cycle after it is cleared while the
+level lasts, which is what a level means, and the example shows that
+happening rather than asserting it.
+
+The run is a bring-up program. It makes the low four pins outputs and
+drives a pattern, reads the high four back as the testbench moves
+them, asks for an interrupt on one pin's rising edge, and watches the
+line rise on the rise and stay down on the fall. Then it clears the
+status and watches the line fall, switches the pin to a level, clears
+again, and finds the bit back.
+
+One detail of the testbench is worth the sentence it takes. The pins
+are moved between one cycle and the next, from the loop, and not from
+a process inside the simulation. A process that set them during the
+cycle would race the peripheral reading them, and the netlist, whose
+port is settled before the edge, would then disagree with the run.
+The check would fail, and it would be the testbench that was wrong.
+
+\begin{figure}[htbp]
+\centering
+\input{gpio_timing.tex}
+\caption{The pins and the interrupt: the value driven out, the value
+read in two cycles behind the pin, the status bit set by the rising
+edge and cleared by the write, and the line that follows it.}
+\label{fig:x-gpio}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_gpio.rs}. Run with \code{bazel run //lib/examples:ex\_gpio}.},label={lst:x-gpio}]{lib/examples/ex_gpio.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_gpio} printed when the build ran it: what the program read at each step, and then the peripheral's Verilog.},label={lst:x-gpio-out}]{out_gpio.txt}
