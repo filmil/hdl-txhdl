@@ -218,7 +218,7 @@ fn main() {
     rst_out.set(Bit::One);
     sim.cycle();
     rst_out.set(Bit::Zero);
-    println!("{:>4} {:>6}  {:<22} {}", "t", "pc", "instruction", "writes");
+    println!("{:>4} {:>6}   {:<22} {}", "t", "pc", "instruction", "writes");
     // The interrupt line: one pulse, in the loop.
     let irq_at = 40;
     // A run of bubbles prints as one line with its count: a divide is
@@ -261,8 +261,14 @@ fn main() {
         } else {
             String::new()
         };
+        // The core expands a compressed instruction in the fetch, so
+        // what retires is the one it stands for; the program says
+        // which were compressed, and those are marked with a c.
+        let short = vreteno32::model::fetch(&program, at)
+            .is_some_and(|(_, len)| len == 2);
+        let mark = if short { "c" } else { " " };
         let text = disasm(instr.get().raw() as u32);
-        println!("{:>4} {at:#06x}  {text:<22} {wrote}", now());
+        println!("{:>4} {at:#06x} {mark} {text:<22} {wrote}", now());
     }
     // The last byte is still going out when the core halts; let the
     // port finish its frame.
