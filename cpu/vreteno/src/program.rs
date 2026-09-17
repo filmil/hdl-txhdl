@@ -19,14 +19,27 @@ enum Fixup {
 #[derive(Default)]
 pub struct Asm {
     pub halves: Vec<u16>,
+    /// Whether `emit` writes an instruction in its compressed spelling
+    /// when it has one. Branches and jumps to labels, and addresses,
+    /// stay thirty-two bits, since their size is fixed before the
+    /// label is placed.
+    pub compress: bool,
     fixups: Vec<(usize, usize, Fixup)>,
     abs_fixups: Vec<(usize, usize, Box<dyn Fn(u32) -> u32>)>,
     labels: Vec<Option<usize>>,
 }
 
 impl Asm {
-    /// A thirty-two bit instruction.
+    /// An instruction: compressed if `compress` is set and it can be,
+    /// else thirty-two bits.
     pub fn emit(&mut self, w: u32) {
+        match compress(w) {
+            Some(h) if self.compress => self.emit_c(h),
+            _ => self.wide(w),
+        }
+    }
+    /// A thirty-two bit instruction, whatever `compress` says.
+    pub fn wide(&mut self, w: u32) {
         self.halves.push(w as u16);
         self.halves.push((w >> 16) as u16);
     }
@@ -43,6 +56,14 @@ impl Asm {
     fn put(&mut self, at: usize, w: u32) {
         self.halves[at] = w as u16;
         self.halves[at + 1] = (w >> 16) as u16;
+    }
+    /// Pad to a whole word with a c.nop, if the next instruction would
+    /// start in the upper half of one. A trap handler needs it: mtvec
+    /// holds an address whose low two bits are zero.
+    pub fn align(&mut self) {
+        if self.halves.len() % 2 == 1 {
+            self.emit_c(c_nop());
+        }
     }
     /// A fresh label, not yet placed.
     pub fn label(&mut self) -> usize {
@@ -77,10 +98,10 @@ impl Asm {
     pub fn abs(&mut self, l: usize, enc: impl Fn(u32) -> u32 + 'static) {
         let at = self.halves.len();
         match self.labels[l] {
-            Some(t) => self.emit(enc(t as u32 * 2)),
+            Some(t) => self.wide(enc(t as u32 * 2)),
             None => {
                 self.abs_fixups.push((at, l, Box::new(enc)));
-                self.emit(0);
+                self.wide(0);
             }
         }
     }
@@ -88,10 +109,10 @@ impl Asm {
     pub fn to(&mut self, l: usize, enc: impl Fn(i32) -> u32 + 'static) {
         let at = self.halves.len();
         match self.labels[l] {
-            Some(t) => self.emit(enc((t as i32 - at as i32) * 2)),
+            Some(t) => self.wide(enc((t as i32 - at as i32) * 2)),
             None => {
                 self.fixups.push((at, l, Fixup::Wide(Box::new(enc))));
-                self.emit(0);
+                self.wide(0);
             }
         }
     }
@@ -248,10 +269,13 @@ pub fn demo() -> Vec<u32> {
 
 /// A random straight-line program: register operations, the M
 /// extension among them, aligned stores and loads within the first
-/// data words, a forward branch now and then, CSR operations on
-/// mscratch, an ecall or an illegal
-/// word now and then, which a handler after the end returns from,
-/// and `ebreak` at the end. `seed` is the whole of it.
+/// data words, a forward branch or jump now and then, CSR operations
+/// on mscratch, an ecall or an illegal instruction now and then, which
+/// a handler after the end returns from, and `ebreak` at the end.
+/// About half the instructions that have a compressed spelling are
+/// written in it, and some branches and jumps are compressed ones, so
+/// the two lengths are mixed and a thirty-two bit instruction often
+/// starts in the upper half of a word. `seed` is the whole of it.
 pub fn random(seed: u64, len: usize) -> Vec<u32> {
     let mut s = seed.wrapping_mul(0x9e3779b97f4a7c15) | 1;
     let mut next = move || {
@@ -274,10 +298,21 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     a.emit(csrrsi(0, CSR_MSTATUS, 8));
     while a.halves.len() < 2 * len {
         let r = next();
+        // Half the instructions are shaped to have a compressed
+        // spelling and are written in it: the destination is the first
+        // operand, the registers are x8 to x15, and the immediate is
+        // six bits.
+        let squeeze = r >> 56 & 1 == 1;
         let rd = (r >> 8 & 31) as u32;
         let rs1 = (r >> 16 & 31) as u32;
         let rs2 = (r >> 24 & 31) as u32;
         let imm = ((r >> 32) as i32) >> 20;
+        let (rd, rs1, rs2, imm) = if squeeze {
+            let rd = 8 + (rd & 7);
+            (rd, rd, 8 + (rs2 & 7), imm >> 6)
+        } else {
+            (rd, rs1, rs2, imm)
+        };
         let amt = (r >> 40 & 31) as u32;
         let off = ((r >> 48) & 0x3f) as i32 * 4; // an aligned data offset
         let w = match r & 31 {
@@ -342,9 +377,15 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
                     _ => csrrs(rd, CSR_MTVAL, 0),
                 },
             },
-            // A trap: an ecall, or an illegal word, zero or all ones.
+            // A trap: an ecall, or an illegal instruction: a word of
+            // zeros, which is two illegal halfwords, a reserved
+            // compressed one, or a word of ones.
             30 => match r >> 60 & 3 {
-                0 | 1 => ecall(),
+                0 => ecall(),
+                1 => {
+                    a.emit_c(0x8002); // c.jr x0, which is reserved
+                    continue;
+                }
                 2 => 0,
                 _ => 0xffff_ffff,
             },
@@ -361,7 +402,16 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
                     5 => bltu,
                     _ => bgeu,
                 };
-                a.to(l, move |o| enc(rs1, rs2, o));
+                // A compressed one now and then: a branch on a register
+                // of x8 to x15 against zero, or a jump.
+                let rs1s = 8 + (rs1 & 7);
+                match r >> 54 & 3 {
+                    0 => a.to_c(l, move |o| c_beqz(rs1s, o)),
+                    1 => a.to_c(l, move |o| c_bnez(rs1s, o)),
+                    2 => a.to_c(l, c_j),
+                    _ => a.to(l, move |o| enc(rs1, rs2, o)),
+                }
+                a.compress = squeeze;
                 for _ in 0..skip {
                     let r = next();
                     let rd = (r >> 8 & 31) as u32;
@@ -382,11 +432,13 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
         {
             continue;
         }
+        a.compress = squeeze;
         a.emit(w);
     }
     a.emit(ebreak());
     // The handler: an interrupt is cleared and returned from; an
-    // exception returns to the word after the one that trapped.
+    // exception returns past the instruction that trapped.
+    a.align();
     a.place(handler);
     a.emit(csrrs(31, CSR_MCAUSE, 0));
     a.to(sync, |o| bge(31, 0, o));
@@ -399,9 +451,20 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     a.emit(addi(31, 31, 64));
     a.emit(sw(31, 30, 8));
     a.emit(mret());
+    // An exception returns past the instruction that trapped, which is
+    // four bytes long for an ecall and for an illegal instruction whose
+    // low two bits are both set, and two for the rest. mcause is 11 or
+    // 2, so its bit 3 says ecall; x29 is the handler's too.
     a.place(sync);
+    a.emit(csrrs(29, CSR_MTVAL, 0));
+    a.emit(andi(29, 29, 3)); // the trap value's low two bits
+    a.emit(andi(31, 31, 8)); // 8 for an ecall
+    a.emit(or(29, 29, 31)); // 3 or 8 for four bytes
+    a.emit(sltiu(29, 29, 3)); // 1 for two bytes
+    a.emit(slli(29, 29, 1));
     a.emit(csrrs(31, CSR_MEPC, 0));
     a.emit(addi(31, 31, 4));
+    a.emit(sub(31, 31, 29)); // mepc + 4 - 2, or + 4
     a.emit(csrrw(0, CSR_MEPC, 31));
     a.emit(mret());
     a.words()
