@@ -400,9 +400,128 @@ fn a_multiply_right_after_a_load() {
 
 #[test]
 fn random_programs() {
+    // Instructions by length, and thirty-two bit ones that start in
+    // the upper half of a word, read off the programs from the start:
+    // the mix the compressed fetch has to get right.
+    let (mut short, mut wide, mut straddle) = (0, 0, 0);
     for seed in 0..64 {
         let p = random(seed, 200);
+        let mut at = 0;
+        while let Some((_, n)) = vreteno32::model::fetch(&p, at) {
+            match (n, at % 4) {
+                (2, _) => short += 1,
+                (_, 2) => straddle += 1,
+                _ => wide += 1,
+            }
+            at += n;
+        }
         let m = lockstep(&p, &format!("random seed {seed}"), Some(seed));
         assert_eq!(m.halted, Some(Halt::Break), "seed {seed} faulted");
     }
+    let counts = format!("{short} compressed, {wide} whole, {straddle} across");
+    assert!(short > 3000, "{counts}");
+    assert!(wide > 3000, "{counts}");
+    assert!(straddle > 2000, "{counts}");
+}
+
+/// The compressed instructions, each at least once, with the lengths
+/// mixed so that thirty-two bit instructions start in the upper half of
+/// a word: the arithmetic, the stack pointer's short forms, loads and
+/// stores, a loop on c.bnez, calls and returns by c.jal, jal, c.jalr and
+/// c.jr with their links two or four bytes on, a reserved halfword
+/// that traps with itself as the trap value and is stepped over by the
+/// handler, and c.ebreak to halt.
+#[test]
+fn compressed_instructions() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (handler, after, f1, f2, f3, top) = (
+        a.label(),
+        a.label(),
+        a.label(),
+        a.label(),
+        a.label(),
+        a.label(),
+    );
+    a.wide(lui(2, 1)); // sp = 0x1000, the data memory
+    a.abs(handler, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.emit_c(c_li(8, 5)); // x8 = 5
+    a.emit_c(c_addi(8, -2)); // x8 = 3
+    a.wide(addi(9, 0, 7)); // x9 = 7, starting in an upper half
+    a.emit_c(c_nop());
+    a.wide(lui(10, 0x12345)); // x10 = 0x12345000
+    a.emit_c(c_srli(10, 12)); // x10 = 0x12345
+    a.emit_c(c_slli(10, 4)); // x10 = 0x123450
+    a.emit_c(c_srai(10, 8)); // x10 = 0x1234
+    a.emit_c(c_andi(10, 0x0f)); // x10 = 4
+    a.emit_c(c_mv(11, 9)); // x11 = 7
+    a.emit_c(c_add(11, 8)); // x11 = 10
+    a.emit_c(c_sub(11, 10)); // x11 = 6
+    a.emit_c(c_xor(11, 8)); // x11 = 5
+    a.emit_c(c_or(11, 10)); // x11 = 5
+    a.emit_c(c_and(11, 9)); // x11 = 5
+    a.emit_c(c_lui(15, -1)); // x15 = 0xfffff000
+    a.emit_c(c_addi16sp(32)); // sp = 0x1020
+    a.emit_c(c_addi4spn(12, 8)); // x12 = 0x1028
+    a.emit_c(c_addi16sp(-32)); // sp = 0x1000
+    a.emit_c(c_swsp(9, 4)); // mem[1] = 7
+    a.emit_c(c_lwsp(13, 4)); // x13 = 7
+    a.emit_c(c_sw(11, 12, 8)); // mem at 0x1030 = 5
+    a.emit_c(c_lw(14, 12, 8)); // x14 = 5
+                               // A loop: x8 counts down from 3, x9 counts up.
+    a.place(top);
+    a.emit_c(c_addi(9, 1));
+    a.emit_c(c_addi(8, -1));
+    a.to_c(top, |o| c_bnez(8, o)); // x9 = 10 after
+    a.to_c(f1, c_jal); // x1 = the next address, f1 adds 100 to x9
+    a.to(f2, |o| jal(1, o)); // x1 = four bytes on, f2 adds 1000
+    a.wide(auipc(5, 0)); // x5 = this address
+    a.emit_c(c_addi(5, 10)); // x5 = f3, ten bytes on
+    a.emit_c(c_jalr(5)); // x1 = two bytes on
+    a.to_c(after, c_j);
+    a.place(f3);
+    a.emit_c(c_addi(9, 3)); // x9 += 3
+    a.emit_c(c_jr(1));
+    a.place(after);
+    a.emit_c(0x8002); // c.jr x0: reserved, a trap
+    a.emit_c(c_beqz(8, 4)); // taken: over the next halfword
+    a.emit_c(c_li(9, 0)); // not reached
+    a.emit_c(c_mv(16, 1)); // x16 = the last link
+    a.emit_c(c_ebreak());
+    a.place(f1);
+    a.emit_c(c_addi16sp(16)); // sp moves and comes back
+    a.wide(addi(9, 9, 100));
+    a.emit_c(c_addi16sp(-16));
+    a.emit_c(c_jr(1));
+    a.place(f2);
+    a.wide(addi(9, 9, 1000));
+    a.wide(jalr(0, 1, 0));
+    // The handler, at a whole word as mtvec needs: the reserved
+    // halfword's cause and value, then on past it, two bytes.
+    a.align();
+    a.place(handler);
+    a.wide(csrrs(20, CSR_MCAUSE, 0));
+    a.wide(csrrs(21, CSR_MTVAL, 0));
+    a.wide(csrrs(22, CSR_MEPC, 0));
+    a.emit_c(c_addi(22, 2));
+    a.wide(csrrw(0, CSR_MEPC, 22));
+    a.wide(mret());
+    let p = a.words();
+    let m = lockstep(&p, "compressed instructions", Some(7));
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[8], 0, "the loop's count");
+    assert_eq!(m.x[9], 7 + 3 + 100 + 1000 + 3, "the loop and the calls");
+    assert_eq!(m.x[10], 4);
+    assert_eq!(m.x[11], 5);
+    assert_eq!(m.x[12], 0x1028);
+    assert_eq!(m.x[13], 7);
+    assert_eq!(m.x[14], 5);
+    assert_eq!(m.x[15], 0xffff_f000);
+    assert_eq!(m.x[2], 0x1000, "sp");
+    assert_eq!(m.x[20], CAUSE_ILLEGAL);
+    assert_eq!(m.x[21], 0x8002, "the halfword is the trap value");
+    assert_eq!(m.x[16], m.x[1]);
+    assert_eq!(m.x[1] & 1, 0);
 }
