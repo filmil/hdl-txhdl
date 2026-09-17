@@ -1,0 +1,157 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Board
+\datasheet{Board}{The Vreteno machine for the Alinx AX7A200, as one lowered unit of units.}
+
+\dsfacts{\code{cpu/vreteno/src/board.rs}}{\code{vreteno32::board::Board}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+\code{Board} is everything that computes on the board, written as a
+unit of units so that \code{\#[lower]} makes its netlist as one module
+holding the rest. It holds the core and its tracker, a router of four,
+and four peripherals. The data memory and the timer each sit behind an
+\code{AxiPer}. The serial port sits behind the AXI-Lite bridge
+\code{LiteBridge1}. The DDR3 memory sits behind an \code{AxiPer} and
+holds UberDDR3's controller as a foreign module.
+
+\code{run.rs} wires the same parts for a simulation. \code{Board} is
+that wiring as a unit, so a board top has to supply only the clocks,
+the resets and the pins. The top for the AX7A200 is
+\code{cpu/vreteno/board/vreteno\_board.v}.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{DIV} & The serial port's cycles per bit, as \code{Uart<DIV>}.
+The tables use 868, the value \code{board\_netlist board} writes for
+115200 baud at 100~MHz. \\
+\code{MICRON\_SIM} & The DDR3 controller's \code{MICRON\_SIM}: one to
+shorten its power-on waits for the Micron model, zero on the board. \\
+\code{BIST} & The DDR3 controller's \code{BIST\_MODE}, its self test
+after calibration. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{board\_netlist} lowers \code{Board<868, 0, 0>} for the board and
+\code{Board<16, 1, 0>} for simulation. \code{//cpu/vreteno:board\_test}
+runs \code{Board<4, 1, 0>}.
+
+\subsection*{Address map}
+
+\code{BoardRouter} states the map in its type, \code{Router4<32, 32, 4,
+2, ...>}. A peripheral gets an address when the address under the mask
+equals the base.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lllp{0.35\textwidth}@{}}
+\toprule
+Base & Mask & Child & Behind \\
+\midrule
+\code{0x1000} & \code{0xffff\_f000} & \code{dmem}, \code{Dmem<2>} &
+\code{pdmem}, \code{AxiPer} \\
+\code{0x2000} & \code{0xffff\_f000} & \code{timer}, \code{Timer<2>} &
+\code{ptimer}, \code{AxiPer} \\
+\code{0x3000} & \code{0xffff\_f000} & \code{uart}, \code{Uart<DIV>} &
+\code{puart}, \code{LiteBridge1} at \code{0x3000} \\
+\code{0x4000\_0000} & \code{0xc000\_0000} & \code{ddr3},
+\code{Ddr3Per} & \code{pddr3}, \code{AxiPer} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The router answers a burst that matches no range with \code{DecErr}.
+The core's instruction memory is not on the bus, and the core sends no
+request for an address below \code{0x1000}.
+
+\dstables{Board}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item The core's tracker is \code{AxiHost<32, 32, 4, 2, 4>}: 32-bit
+addresses and words, four lanes, two-bit identifiers, four of them.
+\item \code{rst} goes to the core, the timer and the serial port. The
+DDR3 controller has its own active-low \code{ddr3\_rst\_n}.
+\item \code{irq} is the core's external interrupt. The timer's line
+goes to the core's \code{tirq}.
+\item The serial port's interrupt line is driven inside the unit and
+is not connected to the core.
+\item Of the core's outputs, only \code{halt} is a port. \code{instr}
+and the \code{Writeback} go nowhere.
+\item The join runs the timer before the core, since the core reads
+the timer's line in the same step. \code{Ddr3Per} runs its controller
+before its bridge for the same reason.
+\item \code{calib} and the memory's pins are \code{Ddr3Per}'s,
+brought out as the unit's own ports.
+\item \code{board\_netlist} puts a program in the core's
+\code{imem} and in the data memory's \code{lane0} to \code{lane3} of
+the netlist, since nothing on the machine loads them at run time.
+\end{itemize}
+
+The top, \code{vreteno\_board.v}, does the following around the
+lowered \code{board}:
+
+\begin{itemize}
+\item One PLL on the board's 200~MHz differential clock makes 100~MHz
+for the design, 400~MHz for \code{ddr3\_clk}, the same 400~MHz a
+quarter cycle late for \code{ddr3\_clk\_90}, and 200~MHz for
+\code{ref\_clk}.
+\item The memory's reset follows the button and the PLL's lock. The
+core's reset also waits for \code{calib}. Each passes through two
+flip-flops on the design's clock.
+\item It ties \code{irq} low.
+\item Its four LEDs, lit when driven low, show the core halted, a
+heartbeat from bit 25 of a counter, the memory calibrated, and the PLL
+locked.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//cpu/vreteno:board\_test} runs \code{Board<4, 1, 0>} in
+Rust. \code{the\_greeting\_runs\_on\_the\_board} must print
+\code{hello from rust} and halt within 8000 cycles.
+\code{the\_memory\_test\_runs\_on\_the\_board} must print
+\code{ddr3 ok} and halt within 40000 cycles.
+\code{the\_netlist\_holds\_the\_controller} checks that the Verilog
+has the top, the core and the bridge as modules, instantiates
+\code{ddr3\_wb32} without writing it, and has the \code{dq} pads.
+\item \code{//cpu/vreteno/board/sim:board\_test} simulates the top, the
+netlist of \code{//cpu/vreteno:board\_sim\_v}, the controller and two
+Micron models under Vivado's simulator. It is manual.
+\code{//docs:vreteno} reports that in that run the core says
+\code{ddr3 ok} on the serial port and halts.
+\item \code{//cpu/vreteno:vreteno\_board\_synth} and
+\code{//cpu/vreteno:vreteno\_board\_pnr} synthesise, place and route
+the design with the board's pins. Both are manual.
+\code{//docs:vreteno} reports that every timing constraint is met, with
+0.220~ns worst setup slack and 0.040~ns worst hold slack. It reports
+7661 LUTs, 6403 flip-flops, three block RAM tiles and four DSP blocks.
+\item \code{//cpu/vreteno:vreteno\_board\_prog} and
+\code{//cpu/vreteno:vreteno\_board\_flash} program the FPGA and the
+QSPI flash. Both are manual.
+\end{itemize}
+
+No waveform target simulates \code{Board}'s netlist against a trace.
+
+\subsection*{Used by}
+
+\code{//cpu/vreteno:board\_netlist}, whose genrules
+\code{//cpu/vreteno:board\_v} and \code{//cpu/vreteno:board\_sim\_v}
+write the netlist, and \code{vreteno\_board.v}, which instantiates it
+as \code{board}. The test \code{cpu/vreteno/tests/board.rs}.
+
+\subsection*{Limits}
+
+\code{//docs:vreteno} states that this design, with the DDR3 memory on
+the bus, has not yet been run on the board. The board run it reports
+was made with an earlier design without the memory. The program is
+fixed in the netlist. The board top ties the external interrupt low,
+and the serial port's interrupt reaches nothing, so on the board only
+the timer can interrupt the core. The core is the only host.

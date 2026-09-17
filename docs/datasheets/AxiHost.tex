@@ -1,0 +1,137 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: AxiHost
+\datasheet{AxiHost}{The host side of an AXI4 link: bursts out, identifiers handed out, answers back.}
+
+\dsfacts{\code{lib/parts/src/bus/axi.rs}}{\code{txhdl\_parts::bus::axi::AxiHost}}%
+{\code{//docs:axi}, \code{//docs:noc}}
+
+\subsection*{Function}
+
+An AXI4 link in \code{txhdl\_parts} has a tracker at each end, between
+a client and the five AXI channels. \code{AxiHost} is the tracker on
+the host side. A host client gives it an \code{Issue} on \code{issue}:
+an address phase with no identifier, and a bit that says whether it is
+a read. \code{AxiHost} gives the burst an identifier, sends it on
+\code{ar} or \code{aw}, and tells the client the identifier on
+\code{grant}.
+
+It also passes the client's write beats from \code{wbeat} to \code{w},
+turns each \code{B} beat into a \code{Done} on \code{done}, and passes
+each read beat from \code{r} to \code{rdata}. The client hands an
+identifier back on \code{release} when it has taken that burst's
+answer. \code{axi}, \code{axi\_units} and \code{axi\_to\_unit} make the
+channels it runs on. Its ports are named types, \code{HostIn} and
+\code{HostOut}, so a design may supply a unit of its own instead.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The address width, in bits. \\
+\code{D} & The data width, in bits. \\
+\code{S} & The write strobe width, one bit per byte lane, so \code{D / 8}. \\
+\code{I} & The identifier width, in bits. \\
+\code{NIDS} & How many identifiers it hands out, so \code{1 << I}. It is
+the width of \code{busy}, and the most bursts in flight at once. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{S} and \code{NIDS} are stated rather than computed, because an
+expression in a const parameter's position needs nightly Rust. The
+source states that a link whose \code{S} and \code{NIDS} disagree with
+its \code{D} and \code{I} will not behave. The tables below use
+\code{AxiHost<32, 32, 4, 2, 4>}, the tracker of Vreteno's link and of
+its board.
+
+\dstables{AxiHost}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item At each rising edge it looks at the issue at the head of
+\code{issue}. The identifier that burst would take is \code{turn}.
+\item The burst goes out when that identifier's bit of \code{busy} is
+clear, \code{grant} has room, and the address channel it needs has
+room: \code{ar} for a read, \code{aw} for a write.
+\item A burst that goes out is sent with \code{turn} as its \code{id}.
+Its \code{addr}, \code{len}, \code{size}, \code{burst}, \code{lock},
+\code{cache}, \code{prot}, \code{qos} and \code{region} are the
+issue's.
+\item In that cycle \code{grant} sends the identifier, \code{turn}
+moves on by one, and the identifier's bit of \code{busy} is set. At
+most one burst goes out per cycle.
+\item The identifiers go round robin. A burst waits for its own turn's
+identifier to be free, and for nothing else. Another free identifier
+does not let it go.
+\item \code{release} is taken whenever it offers, and it clears the
+bit of the identifier it names. An identifier is therefore outstanding
+from its address phase until the client has taken its answer.
+\code{//docs:axi} explains why freeing it on the response would be
+wrong.
+\item A write beat passes from \code{wbeat} to \code{w} unchanged when
+\code{w} has room. AXI4 puts no identifier on \code{w}, so the source
+says a client sends a burst's beats before it issues the next burst.
+\item A \code{B} beat becomes a \code{Done} of the same \code{id} and
+\code{resp} when \code{done} has room. A read beat passes from
+\code{r} to \code{rdata} unchanged when \code{rdata} has room.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Four tests in \code{bus::axi} run \code{AxiHost<16, 32, 4, 2, 4>}
+and \code{AxiPer<16, 32, 4, 2>} with a host client and a peripheral
+client on the two ends:
+\begin{itemize}
+\item \code{a\_read\_reads\_what\_the\_write\_wrote};
+\item \code{answers\_come\_back\_out\_of\_order};
+\item \code{a\_transaction\_is\_answered\_by\_another\_process};
+\item \code{every\_burst\_is\_answered\_and\_reads\_agree\_with\_writes},
+which issues 24 bursts of one to four words to a peripheral that
+\code{serve} runs with four slots.
+\end{itemize}
+\item The tests of \code{bus::axi::sim} put the same two trackers in
+front of the simulated RAM:
+\begin{itemize}
+\item \code{a\_burst\_reads\_what\_a\_burst\_wrote};
+\item \code{a\_strobe\_covers\_the\_lanes\_it\_says};
+\item \code{a\_fixed\_burst\_stays\_on\_one\_word};
+\item \code{an\_address\_past\_the\_end\_is\_answered};
+\item \code{an\_image\_is\_loaded\_and\_read\_back}.
+\end{itemize}
+All of these run in \code{//lib/parts:parts\_test}.
+\item \code{ex\_axi} issues three bursts and has them answered out of
+order. The build simulates the netlist of \code{AxiHost<16, 32, 4, 2,
+4>} against that run under nvc and Verilator:
+\begin{itemize}
+\item \code{//docs:axi\_sim\_axi\_host\_axi\_host\_tb\_test};
+\item \code{//docs:axi\_vsim\_axi\_host\_test}.
+\end{itemize}
+\item The tests of the router, the AXI-Lite bridge, the Wishbone bridge
+and the network on chip in \code{txhdl\_parts} run it in simulation.
+So do \code{//ddr3:ddr3\_test}, \code{//gpu:gpu\_test},
+\code{//soc:demo\_test} and \code{//cpu/vreteno:lockstep}.
+\end{itemize}
+
+\subsection*{Used by}
+
+The examples \code{ex\_axi}, \code{ex\_axi\_serve}, \code{ex\_axi\_router},
+\code{ex\_axi\_lite}, \code{ex\_axi\_reg}, \code{ex\_axi\_wb},
+\code{ex\_eth} and \code{ex\_hdmi}. Vreteno's run in
+\code{cpu/vreteno/src/run.rs} and \code{cpu/vreteno/src/main.rs}, and
+the board's design, \code{Board}, as its field \code{host}. The
+four-corner system in \code{soc/src/lib.rs}, once for the core and
+once for the GPU. The GPU's simulation in \code{gpu/src/sim.rs}.
+
+\subsection*{Limits}
+
+At most \code{NIDS} bursts are in flight at once. A client that never
+releases an identifier stops the unit when the turn reaches that
+identifier. It sends \code{lock}, \code{cache}, \code{qos} and
+\code{region} as the client gave them and acts on none of them; nothing
+in \code{bus::axi} makes an exclusive access. It does not check
+\code{S} and \code{NIDS} against \code{D} and \code{I}.

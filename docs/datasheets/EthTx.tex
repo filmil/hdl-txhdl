@@ -1,0 +1,88 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: EthTx
+\datasheet{EthTx}{The transmit half of the Ethernet MAC: whole frames from a channel onto GMII.}
+
+\dsfacts{\code{lib/parts/src/eth.rs}}{\code{txhdl\_parts::eth::EthTx}}%
+{\code{//docs:eth}}
+
+\subsection*{Function}
+
+\code{EthTx} takes a frame's bytes from the channel \code{tx}, each an
+\code{EthByte}: the byte and whether it is the frame's last. A frame
+there is the destination address, the source address, the type or
+length and the payload. The unit stores the whole frame, then sends it
+on GMII: \code{txd}, a byte per cycle, and \code{tx\_en}. It adds the
+preamble, the start of frame delimiter, padding up to sixty bytes and
+the four bytes of the CRC-32 frame check sequence. The unit runs on one
+clock, so on a board it can run on the transmit clock.
+
+\subsection*{Parameters}
+
+\code{EthTx} has no type parameters. Its frame memory holds
+\code{FRAME\_MAX} bytes, 2048, a constant of the module.
+
+\dstables{EthTx}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \code{phase} is idle 0, preamble 1, frame 2, padding 3, check
+sequence 4 and gap 5.
+\item While idle and holding no whole frame, the unit takes a byte from
+\code{tx} whenever one is offered, and stores it in \code{frame} at
+\code{fill}. The byte marked last sets \code{whole}.
+\item A whole frame starts the preamble: seven bytes of \code{0x55},
+then \code{0xd5}. The frame follows, with the CRC register running
+over it from \code{CRC\_INIT}, every bit set.
+\item A frame of fewer than sixty bytes is followed by zeros up to
+sixty, with the register still running.
+\item The check sequence is the register complemented, least
+significant byte first.
+\item \code{tx\_en} is high from the preamble to the end of the check
+sequence. Twelve bytes of gap follow with \code{tx\_en} low. At the end
+of the gap the unit forgets the frame, adds one to \code{frames}, and
+takes the next.
+\item The unit takes no byte from \code{tx} while a frame is going out,
+so it holds the client off. The client may offer bytes as slowly as it
+likes.
+\item \code{crc\_byte} steps the register by a whole byte, as 32
+exclusive-or sums worked out from the polynomial \code{0xedb88320}.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item The tests below are in \code{lib/parts/src/eth.rs}, and run in
+\code{//lib/parts:parts\_test}.
+\item \code{the\_byte\_wide\_crc\_is\_the\_bitwise\_one} checks
+\code{crc\_byte} against the register stepped a bit at a time, on every
+byte from four registers.
+\item \code{the\_crc\_of\_a\_known\_string} checks \code{crc32} against
+the catalogue value and the residue.
+\item \code{a\_frame\_goes\_out\_as\_the\_model\_says\_and\_comes\_back}
+loops the transmitter into \code{EthRx}, and holds the bytes on the
+wire to \code{wire\_bytes}, for frames of 20 and 100 bytes.
+\item \code{frames\_at\_the\_minimum\_length} does the same for frames
+of 59, 60 and 61 bytes.
+\item \code{ex\_eth} runs the unit behind \code{EthLite} with the wire
+looped back, and asserts that it sent three frames. The build simulates
+the netlist of \code{EthTx} against that run under nvc and Verilator:
+\code{//docs:eth\_sim\_eth\_tx\_eth\_tx\_tb\_test} and
+\code{//docs:eth\_vsim\_eth\_tx\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+The example \code{ex\_eth}. The echo design for the AX7A200B:
+\code{//eth:netlist} writes the Verilog of \code{eth\_tx}, and
+\code{eth/board/eth\_echo.v} instantiates it on the 125~MHz transmit
+clock. \code{//eth:echo\_synth} and \code{//eth:echo\_pnr} put that
+design through Vivado to a bitstream. \code{//docs:eth} states that it
+has not yet run on the board.
+
+\subsection*{Limits}
+
+The unit holds one frame. A frame longer than \code{FRAME\_MAX} bytes
+keeps overwriting its last byte. Only gigabit works: at 100 or
+10~Mbit a PHY sends a nibble per cycle, and the unit does not take a
+byte over two cycles.

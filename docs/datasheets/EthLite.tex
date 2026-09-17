@@ -1,0 +1,94 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: EthLite
+\datasheet{EthLite}{The Ethernet peripheral on AXI-Lite: three words, a byte per transaction.}
+
+\dsfacts{\code{lib/parts/src/eth.rs}}{\code{txhdl\_parts::eth::EthLite}}%
+{\code{//docs:eth}}
+
+\subsection*{Function}
+
+\code{EthLite} stands between an AXI-Lite host and the two halves of
+the MAC. It takes bytes from AXI-Lite writes and sends them to
+\code{EthTx} on \code{tx}. It answers AXI-Lite reads with the bytes
+\code{EthRx} offers on \code{rx}. Its AXI-Lite side is \code{aw},
+\code{ar} and \code{w} in and \code{b} and \code{r} out, with 32-bit
+addresses and words. \code{irq} is high while a received byte waits.
+
+\subsection*{Parameters}
+
+\code{EthLite} has no type parameters.
+
+\subsection*{Register map}
+
+The unit decodes the word from address bits 3 to 2, so the words are at
+offsets \code{0x0}, \code{0x4} and \code{0x8} of its range.
+\code{ex\_eth} puts them at \code{0x1000}, \code{0x1004} and
+\code{0x1008}.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lllp{0.55\textwidth}@{}}
+\toprule
+Word & Offset & Access & Bits \\
+\midrule
+0, status & \code{0x0} & read & 0: a received byte waits. 1: the
+transmitter has room for a byte. \\
+1, transmit & \code{0x4} & write & 7 to 0: the byte. 8: high on a
+frame's last byte. \\
+2, receive & \code{0x8} & read & 7 to 0: the oldest received byte. 8:
+high on a frame's last byte. 9: high when a byte was there. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{EthLite}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A write goes when \code{aw} and \code{w} both offer and \code{b}
+is ready. A write to the transmit word also waits until \code{tx} is
+ready, so the unit answers it only when the transmitter has taken the
+byte. A client that writes faster than the transmitter takes is held
+off rather than losing bytes.
+\item A write to the transmit word sends bits 7 to 0 and bit 8 of the
+written data on \code{tx}. The unit answers every write
+\code{Okay}; a write to any other word does nothing else.
+\item A read goes when \code{ar} offers and \code{r} is ready. The unit
+answers every read \code{Okay}. A read of word 1 or word 3 answers
+zero.
+\item A read of the receive word takes the waiting byte, if one waits,
+and answers with bit 9 high. With none waiting it answers with bit 9
+low and takes nothing.
+\item \code{irq} is high while \code{rx} offers a byte.
+\item The unit holds no state. It does not read the write strobe.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{EthLite} has no \code{\#[test]} of its own.
+\item \code{ex\_eth} puts it behind \code{LiteBridge1} and an
+\code{AxiHost}, in front of \code{EthTx} and \code{EthRx} on a looped
+wire. The host sends three frames, each as one fixed burst to the
+transmit word, and reads them back in fixed bursts of sixteen from the
+receive word. The run asserts that the first comes back padded to
+sixty bytes, the second, corrupted on the wire, does not come back, and
+the third comes back as it went.
+\item The build simulates the netlist of \code{EthLite} against that
+run under nvc and Verilator:
+\code{//docs:eth\_sim\_eth\_lite\_eth\_lite\_tb\_test} and
+\code{//docs:eth\_vsim\_eth\_lite\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+The example \code{ex\_eth}. \code{//docs:eth} states that the
+peripheral is not yet on Vreteno's board, and the echo design for the
+AX7A200B does not use it.
+
+\subsection*{Limits}
+
+The unit moves one byte per transaction. The AXI-Lite bridge makes a
+fixed burst one transaction per beat at the same address, so a host
+sends a whole frame as one burst. The unit checks no more of the
+address than the word: the bridge in front sends it only its own range.

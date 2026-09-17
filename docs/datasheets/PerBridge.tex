@@ -1,0 +1,116 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: PerBridge
+\datasheet{PerBridge}{The peripheral side of an exit: request packets in, AXI to a peripheral out.}
+
+\dsfacts{\code{lib/parts/src/bus/noc/bridge.rs}}{\code{txhdl\_parts::bus::noc::bridge::PerBridge}}%
+{\code{//docs:noc}}
+
+\subsection*{Function}
+
+\code{PerBridge} is the other end of \code{HostBridge}. It takes
+request packets on \code{req} from its node's exit and unpacks them
+into \code{aw}, \code{ar} and \code{w} for a peripheral's tracker. It
+takes the tracker's answers on \code{b} and \code{r}, and packs them on
+\code{rsp} back to the node each request came from.
+
+It also renames. An identifier belongs to the host that made it, so
+two hosts may use the same one. The bridge gives every request a local
+identifier of its own, and remembers against it the source node and
+the identifier that node used. The answer comes back under the local
+identifier, and the bridge sends the packet home under the original.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{X}, \code{Y} & The column and row of the bridge's node. The
+bridge stamps them on every answer as its source. \\
+\code{XB}, \code{YB} & The widths of a column and a row coordinate, in
+bits. \\
+\code{A} & The address width of the AXI link. \\
+\code{D} & The data width of the AXI link. \\
+\code{S} & The strobe width, which is \code{D / 8}. \\
+\code{I} & The identifier width of the AXI link. \\
+\code{NIDS} & How many local identifiers the bridge gives out, and so
+how many bursts the peripheral has in flight at most. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables below are for \code{PerBridge<0, 1, 2, 2, 32, 32, 4, 2,
+4>}, the bridge of the memory at 0,1 in \code{soc/src/lib.rs}.
+
+\dstables{PerBridge}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item The local identifier on offer is \code{turn}. It is free when its
+bit in \code{busy} is low.
+\item A request packet with \code{chan} \code{W} is a write. The bridge
+takes it when \code{turn} is free and both \code{aw} and \code{w} are
+ready. It sends the address phase on \code{aw} under the local
+identifier, and the data and strobe on \code{w} with \code{last} high.
+\item The bridge treats any other request packet as a read. It takes it
+when \code{turn} is free and \code{ar} is ready, and sends the address
+phase on \code{ar} under the local identifier.
+\item On taking a request, the bridge stores the source column in
+\code{sx}, the source row in \code{sy} and the original identifier in
+\code{oid}, each at the local identifier. It sets that identifier's
+\code{busy} bit and adds one to \code{turn}.
+\item A request waits while the identifier whose turn it is has not
+been answered. The bridge does not look for another free identifier.
+\item The bridge sends at most one answer packet per cycle, when
+\code{rsp} has room, and a write response before a read beat. The
+packet goes to the \code{sx} and \code{sy} stored under the answer's
+identifier, under the \code{oid} stored there, with the source
+\code{X}, \code{Y}.
+\item A write response goes with \code{chan} \code{B}, its response,
+and \code{last} high. A read beat goes with \code{chan} \code{R}, its
+data, its response and its \code{last}.
+\item The bridge clears an identifier's \code{busy} bit when it sends a
+write response, or the last beat of a read, under that identifier.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Three tests in \code{lib/parts/src/bus/noc.rs}, in
+\code{//lib/parts:parts\_test}, put a
+\code{PerBridge<1, 1, 2, 2, 16, 32, 4, 2, 4>} in front of the memory
+at 1,1.
+\code{a\_burst\_crosses\_the\_lattice\_and\_its\_answer\_comes\_back}
+writes and reads one word from one host.
+\code{two\_hosts\_share\_a\_memory\_and\_each\_answer\_goes\_home} checks
+that each answer reaches the host that asked. \code{//docs:noc} states
+that this test failed before the renaming was written.
+\code{four\_peripherals\_share\_one\_node} puts a router of four
+memories behind the bridge, and checks each word and the router's
+\code{DecErr} for an address none of them has.
+\item \code{a\_core\_draws\_a\_solid\_and\_a\_gpu\_fills\_it}, in
+\code{//soc:demo\_test}, runs a bridge at 0,1 for the memory and one at
+1,1 for the serial port.
+\item No waveform in \code{docs/BUILD.bazel} lowers the bridge, so its
+netlist has no co-simulation under nvc or Verilator.
+\code{//docs:showcase} lists the network's netlists as not yet
+simulated.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{soc::run} in \code{soc/src/lib.rs}: at 0,1 in front of the
+memory's \code{AxiPer}, and at 1,1 in front of the serial port, behind
+\code{LiteBridge1}. The tests of the network in
+\code{lib/parts/src/bus/noc.rs}.
+
+\subsection*{Limits}
+
+A write request is one packet with one beat, so a burst of more than
+one beat does not cross the network. At most \code{NIDS} bursts are in
+flight at the peripheral. \code{turn} is a register of \code{I} bits
+and \code{busy} has \code{NIDS} bits. Every use in the tree sets
+\code{NIDS} to 4 with \code{I} of 2. The bridge sends one answer per
+cycle.

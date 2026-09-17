@@ -1,0 +1,154 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: LiteBridge1, LiteBridge2, LiteBridge3, LiteBridge4, LiteBridge5, LiteBridge6, LiteBridge7, LiteBridge8
+\datasheet{LiteBridge}{AXI4 to AXI-Lite bridges: one AXI4 link to one to eight AXI-Lite peripherals.}
+
+\dsfacts{\code{lib/parts/src/bus/axi\_lite.rs}; generator \code{lite\_bridge\_text} in \code{lib/macros/lib.rs}}%
+{\code{txhdl\_parts::bus::axi\_lite::LiteBridge1} to \code{LiteBridge8}}%
+{\code{//docs:axi}, \code{//docs:vreteno}, \code{//docs:eth}, \code{//docs:hdmi}}
+
+\subsection*{Function}
+
+AXI-Lite is AXI4 with no identifier, no burst and no \code{last}, so
+one transaction is one beat on each channel it uses. A bridge stands
+between an AXI4 link and that many AXI-Lite peripherals. On its AXI4
+side it takes the \code{aw}, \code{ar} and \code{w} an \code{AxiPer}
+would take, and gives the \code{b} and \code{r} it would give. So it
+goes where an \code{AxiPer} would: behind a host's tracker, or behind
+one of a router's peripheral ports.
+
+Per peripheral \textit{i} it drives \code{aw}\textit{i},
+\code{ar}\textit{i} and \code{w}\textit{i}, and reads
+\code{b}\textit{i} and \code{r}\textit{i}. An address phase there is a
+\code{LiteAddr}: \code{addr} and \code{prot}. A write word is a
+\code{LiteW}: \code{data} and \code{strb}. \code{axi\_lite} makes the
+five channels of such a link. \code{lite\_bridge!(LiteBridgeN, N)}
+writes one unit per count, since the lowering reads a body and not a
+loop over ports. \code{axi\_lite.rs} writes \code{LiteBridge1} to
+\code{LiteBridge8}; the macro refuses a count outside 1 to 8.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The address width, in bits, on both sides. \\
+\code{D} & The data width, in bits, on both sides. \\
+\code{S} & The write strobe width, one bit per byte lane, so \code{D / 8}. \\
+\code{I} & The identifier width of the AXI4 side, in bits. \\
+\code{BASE}\textit{i} & The base of peripheral \textit{i}'s range, for
+\textit{i} from 0 to \textit{N} less one. \\
+\code{MASK}\textit{i} & The bits of an address that must equal
+\code{BASE}\textit{i} for peripheral \textit{i}. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Address map}
+
+An address \code{a} is peripheral \textit{i}'s when
+\code{(a \& MASK}\textit{i}\code{) == BASE}\textit{i}. The bridge
+decodes a burst's first address, and the lowest range that matches
+wins. An address in no range is a hole. The tables below are generated
+for \code{LiteBridge1<32, 32, 4, 2, 0x3000, 0xf000>}, the bridge in
+front of Vreteno's serial port, whose map is this one:
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llll@{}}
+\toprule
+Peripheral & \code{BASE} & \code{MASK} & In Vreteno \\
+\midrule
+0 & \code{0x3000} & \code{0xf000} & The serial port \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The board's design uses \code{LiteBridge1} at \code{0x3000} with mask
+\code{0xffff\_f000}. \code{ex\_axi\_lite} uses \code{LiteBridge2} with
+ranges at \code{0x1000} and \code{0x2000}, mask \code{0xf000} each.
+
+\dstables{LiteBridge}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \textbf{Taking a burst.} It takes a burst only when none is in
+progress (\code{busy} clear). When both address channels offer,
+\code{rfirst} says which goes first. After a read the write channel
+goes first, and after a write the read channel.
+\item Taking a burst records its identifier in \code{xid}, its address
+in \code{addr}, its \code{len} in \code{left}, its \code{prot}, and
+its peripheral in \code{sel}, a bit each. A hole has no bit set.
+\code{sel} is at least two bits wide, so \code{LiteBridge1}'s is two.
+\item \code{stride} is how far the address moves per beat:
+\code{1 << size} bytes, or zero for a \code{Fixed} burst. Every other
+burst kind moves as \code{Incr} does.
+\item \textbf{A write beat.} The bridge takes the burst's next beat
+from \code{w} when the chosen peripheral has room on both its
+\code{aw} and its \code{w}. It sends that peripheral \code{addr} and
+\code{prot} on \code{aw}, and the beat's \code{data} and \code{strb}
+on \code{w}. To a hole, the beat is taken and dropped.
+\item \textbf{A read beat.} The bridge sends \code{addr} and
+\code{prot} on the chosen peripheral's \code{ar} when it has room.
+\item Once a beat's request is out (\code{sent}), the bridge waits for
+that peripheral's answer. A hole's answer is there at once:
+\code{DecErr}, with zero data for a read.
+\item \textbf{A read's answer} goes up on \code{r} as a beat of the
+burst, when \code{r} has room. It has the burst's identifier, the word,
+the peripheral's response, and \code{last} on the final beat.
+\item \textbf{A write's answer} is taken when \code{b} has room, or when
+more beats are to come. \code{wresp} keeps the first response that is
+not \code{Okay}. After the last beat one \code{B} goes up, with the
+burst's identifier and that response.
+\item After each answer, \code{addr} moves on by \code{stride} and
+\code{left} counts down. The answer to the last beat clears
+\code{busy}.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{bursts\_cross\_the\_bridge\_a\_beat\_at\_a\_time} in
+\code{bus::axi\_lite}, in \code{//lib/parts:parts\_test}, puts
+\code{LiteBridge2<16, 32, 4, 2, 0x1000, 0xf000, 0x2000, 0xf000>} behind
+a host tracker, with two simulated memories. It writes three words and
+reads four, reads one word three times in a fixed burst, uses the
+second peripheral, and sends a write and a read of two beats to a hole.
+It checks every word and response, and counts ten transactions on the
+first memory and two on the second.
+\item \code{ex\_axi\_lite} runs the same kind of bursts against two
+banks of registers written as hardware. The build simulates the
+\code{LiteBridge2} netlist against that run under nvc and Verilator:
+\begin{itemize}
+\item \code{//docs:axi\_lite\_sim\_axi\_lite\_bridge\_axi\_lite\_bridge\_tb\_test};
+\item \code{//docs:axi\_lite\_vsim\_axi\_lite\_bridge\_test}.
+\end{itemize}
+\item Vreteno's run lowers its serial port's bridge, the
+\code{LiteBridge1} of the tables, and the build simulates that netlist
+against the run: \code{//docs:vreteno\_sim\_ubridge\_ubridge\_tb\_test}
+and \code{//docs:vreteno\_vsim\_ubridge\_test}.
+\item \code{//cpu/vreteno:lockstep} and \code{//soc:demo\_test} run
+\code{LiteBridge1} in simulation.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{LiteBridge2} in the example \code{ex\_axi\_lite}.
+\code{LiteBridge1} in front of the serial port in Vreteno's run
+(\code{cpu/vreteno/src/run.rs} and \code{cpu/vreteno/src/main.rs}), in
+the board's design as its field \code{puart}, and in
+\code{soc/src/lib.rs}. \code{LiteBridge1} also puts the Ethernet
+peripheral in \code{ex\_eth} and the HDMI video peripheral in
+\code{ex\_hdmi} behind a host's tracker.
+
+\subsection*{Limits}
+
+It serves one burst at a time, for all its peripherals together, since
+AXI-Lite has no identifier to tell two apart. A burst's peripheral is
+chosen on its first address, and every beat of the burst goes there.
+It treats a \code{Wrap} burst as \code{Incr}. It counts a write's beats
+from \code{len} and does not read \code{last} on \code{w}. Of the
+address phase only \code{addr} and \code{prot} reach a peripheral;
+\code{size} sets the stride, and \code{lock}, \code{cache},
+\code{qos} and \code{region} are dropped.

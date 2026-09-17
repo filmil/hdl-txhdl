@@ -15,7 +15,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and twenty documents describe it,
+The language is a library, `//lib`, and twenty-one documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -104,6 +104,12 @@ all under `//docs`:
   for the AX7A200B's SiI9134, which `//hdmi:demo_synth` and
   `//hdmi:demo_pnr` put through Vivado to a bitstream.
   `ex_hdmi` is documented there and not in `//docs:examples`.
+* `//docs:datasheets` is a datasheet per component: every unit under
+  `#[lower]` outside the examples, and every family a macro writes.
+  The prose of each sheet is in `docs/datasheets/<Key>.tex`; its
+  tables of ports, state and children are generated at build time by
+  `//tools/datasheet` from the component's own lowering.
+  See the standing rule below.
 * `//docs:cheatsheet` is the one-page cheat sheet, also as a PNG
   (`//docs:cheatsheet_png`); it shows `ex_cheat.rs`, its netlist and
   its waveform, all produced by the build.
@@ -239,6 +245,33 @@ the commit that brings the workaround names the issue too.
 Before filing, look for an open issue that already covers the bug; if
 one does, add what was learned to it rather than filing another.
 Report the issues filed when reporting on the task.
+
+# Standing rule: every component has a datasheet
+
+A component is a unit under `#[lower]` outside `lib/examples`, or a
+family of units a macro writes, such as `router!`'s routers.
+When a component is added, its datasheet is added in the same change,
+or the change is not finished.
+When a component's parameters, ports, register map or behaviour
+change, its datasheet is updated in the same change.
+
+1. Add `docs/datasheets/<Key>.tex`, following the other sheets: a
+   `% covers:` line naming every type the sheet covers, then
+   `\datasheet`, `\dsfacts`, the function, the parameters, any
+   register or address map, `\dstables{<Key>}`, the behaviour, the
+   verification with its test targets, where it is used, and its
+   limits.
+   Say nothing on a sheet that the code, its tests or a document does
+   not state.
+2. Add `\input{datasheets/<Key>}` to `docs/datasheets.tex`.
+3. Add the component to `tools/datasheet/main.rs`, lowered with the
+   parameters the tree uses it with, under the same key.
+   The document does not build if a sheet asks for tables the
+   generator does not write.
+4. `//tools/datasheet:coverage_test` fails when a component in the
+   crates it scans has no sheet, or a sheet is not in the document.
+   A new crate with lowered units adds its `sources` to that test's
+   `data` and its source directory to the test script's `find`.
 
 # Claims about Rust are compiled, not argued
 

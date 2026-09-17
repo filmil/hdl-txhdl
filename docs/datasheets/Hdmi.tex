@@ -1,0 +1,137 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Hdmi
+\datasheet{Hdmi}{The video peripheral for an HDMI encoder chip: a raster, a framebuffer, and AXI-Lite to paint it.}
+
+\dsfacts{\code{lib/parts/src/hdmi.rs}}{\code{txhdl\_parts::hdmi::Hdmi}}%
+{\code{//docs:hdmi}}
+
+\subsection*{Function}
+
+\code{Hdmi} drives the parallel inputs of an encoder chip such as the
+SiI9134 on the Alinx AX7A200B. It is one unit on the pixel clock. It
+counts the raster, reads its framebuffer under the beam, and drives
+\code{rgb}, 24 bits with red on top, \code{hsync}, \code{vsync} and
+\code{de} from registers. A host paints the framebuffer through the
+unit's AXI-Lite side: \code{aw}, \code{ar} and \code{w} in, \code{b}
+and \code{r} out, with 32-bit addresses and words.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{HV} & Visible columns. \\
+\code{HFP} & Columns of horizontal front porch. \\
+\code{HSW} & Columns of horizontal sync. \\
+\code{HBP} & Columns of horizontal back porch. \\
+\code{VV} & Visible rows. \\
+\code{VFP} & Rows of vertical front porch. \\
+\code{VSW} & Rows of vertical sync. \\
+\code{VBP} & Rows of vertical back porch. \\
+\code{SHIFT} & A framebuffer pixel covers \code{1 << SHIFT} by
+\code{1 << SHIFT} pixels of the screen. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables below are for \code{Hdmi<640, 16, 96, 48, 480, 10, 2, 33,
+2>}. Those are the constants of \code{hdmi::vga}, 640 by 480 at 60~Hz
+as VESA states it, with \code{SHIFT} of 2. That is the mode of
+\code{hdmi/src/netlist.rs}, and its picture is 160 by 120.
+
+\subsection*{Register map}
+
+The unit decodes the word from address bits 3 to 2, so the words are at
+offsets \code{0x0}, \code{0x4} and \code{0x8} of its range.
+\code{ex\_hdmi} puts them at \code{0x1000}, \code{0x1004} and
+\code{0x1008}.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lllp{0.5\textwidth}@{}}
+\toprule
+Word & Offset & Access & Bits \\
+\midrule
+0, status & \code{0x0} & read & 0: high in vertical blanking. 31 to 16:
+the count of frames shown. \\
+1, cursor & \code{0x4} & read, write & 7 to 0: the column. 14 to 8: the
+row. \\
+2, pixel & \code{0x8} & write & 11 to 0: the colour, four bits each of
+red, green and blue from the top. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{Hdmi}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \code{hc} counts the column and \code{vc} the row, each over the
+visible part and the blanking. \code{frames} goes up by one at the end
+of each frame.
+\item At each edge the unit reads the framebuffer at the pixel under
+the beam into \code{px}. \code{//docs:hdmi} calls this the synchronous
+read a block RAM has. The framebuffer address is the row,
+\code{vc >> SHIFT}, in the top seven bits and the column,
+\code{hc >> SHIFT}, in the low eight.
+\item At the same edge the unit registers the syncs in \code{hs\_q} and
+\code{vs\_q}, low inside the sync pulse, and the enable in
+\code{de\_q}, high over the visible part. So they meet the pixel they
+belong to.
+\item \code{rgb} is \code{px} with each 4-bit colour widened to 8 bits
+by repeating its bits, so 15 is full scale.
+\item A write to the cursor word sets \code{cx} and \code{cy}.
+\item A write to the pixel word puts the colour into the framebuffer at
+the cursor, and moves the cursor to the next column. From the last
+column it moves to the first column of the next row, and from the last
+row to the first. A fixed burst to this word paints a run of pixels.
+\item A write goes when \code{aw} and \code{w} both offer and \code{b}
+is ready. A read goes when \code{ar} offers and \code{r} is ready. The
+unit answers every transaction \code{Okay}. A read of word 2 or word 3
+answers zero, and a write to word 0 or word 3 does nothing else.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{the\_raster\_is\_where\_the\_mode\_puts\_it}, in
+\code{//lib/parts:parts\_test}, runs \code{Hdmi<8, 2, 3, 3, 6, 1, 2, 2,
+1>} for two frames. It checks that exactly one lag of the outputs
+behind the counters fits \code{de}, \code{hsync} and \code{vsync}
+together.
+\item \code{ex\_hdmi} runs \code{Hdmi<16, 2, 3, 3, 12, 1, 2, 2, 1>}
+behind \code{LiteBridge1} and an \code{AxiHost}. The host sets the
+cursor to the corner and paints all 48 pixels of the 8 by 6
+framebuffer in one fixed burst. The run rebuilds the last whole frame
+from the pixels \code{de} marks, and asserts every one of its 192
+screen pixels against the colour painted.
+\item The build simulates that unit's netlist against the run under
+nvc and Verilator: \code{//docs:hdmi\_sim\_hdmi\_video\_hdmi\_video\_tb\_test}
+and \code{//docs:hdmi\_vsim\_hdmi\_video\_test}. The co-simulated mode
+is the example's, not the one in the tables above.
+\end{itemize}
+
+\subsection*{Used by}
+
+The example \code{ex\_hdmi}. The demonstration for the AX7A200B:
+\code{//hdmi:netlist} writes the Verilog of \code{hdmi\_video} in the
+640 by 480 mode, with a test picture in the framebuffer's initial
+values. \code{hdmi/board/hdmi\_demo.v} instantiates it on a 25.2~MHz
+pixel clock, with its AXI-Lite inputs held idle.
+\code{//hdmi:demo\_synth} and \code{//hdmi:demo\_pnr} put the design
+through Vivado to a bitstream. \code{//docs:hdmi} states that it has
+not yet run on the board.
+
+\subsection*{Limits}
+
+A framebuffer pixel is 12 bits, and the framebuffer holds
+\code{FB\_WORDS}, $2^{15}$ words, so the picture is at most 256
+columns by 128 rows. \code{hc} and \code{vc} are 12 bits wide. The mode
+is fixed when the type is named. The whole unit runs on the pixel
+clock, bus included. A host on another clock needs a crossing of the
+five AXI-Lite channels, and nothing in the tree provides one. The
+framebuffer cannot be read over the bus. On the board, \code{//docs:hdmi}
+marks two things as unconfirmed: which of the chip's data inputs are
+red, green and blue, and the I/O standard of the chip's pins.

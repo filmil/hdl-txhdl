@@ -1,0 +1,129 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Uart
+\datasheet{Uart}{Vreteno's serial port: an AXI-Lite peripheral with a line each way and a receive buffer of eight.}
+
+\dsfacts{\code{cpu/vreteno/src/uart.rs}}{\code{vreteno32::uart::Uart}}%
+{\code{//docs:vreteno}, \code{//docs:noc}}
+
+\subsection*{Function}
+
+\code{Uart} sends bytes on \code{tx} and receives them on \code{rx},
+one start bit, eight data bits least significant first and one stop
+bit, each \code{DIV} cycles long. The lines rest high. A received byte
+lands in a buffer of eight, and \code{irq} is high while the buffer
+holds any.
+
+It is an AXI-Lite peripheral. It sits behind a \code{LiteBridge1},
+which hands it one transaction at a time with no identifier and no
+burst. Reads come on \code{ar} and are answered on \code{r}; writes
+come on \code{aw} and \code{w} and are answered on \code{b}. The input
+\code{rst} stops both sides and empties the buffer.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{DIV} & Cycles per bit on both lines. The tables use 868, which
+\code{uart.rs} states is 115200 baud at 100~MHz, as the board runs.
+The checked runs use 4, and \code{board\_netlist sim} uses 16. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Register map}
+
+Offsets from the port's base. On the board the base is \code{0x3000},
+which is also \code{isa::UART\_BASE}. The port selects the word by
+bits 3 and 2 of the address.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.38\textwidth}p{0.38\textwidth}@{}}
+\toprule
+Offset & Read & Write \\
+\midrule
+\code{0x0} & The last byte accepted for sending, zero-extended. &
+Bits 7 to 0 start a frame if the port is idle; else the byte is
+dropped. \\
+\code{0x4} & Status: bit 0 busy sending, bit 1 a byte received and not
+yet read, bit 2 the buffer full. Other bits zero. & Ignored. \\
+\code{0x8} & The oldest received byte, zero-extended. The read removes
+it from the buffer. & Ignored. \\
+\code{0xc} & Zero. & Ignored. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{Uart}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A read is taken when \code{r} has room and a request is on
+\code{ar}, and it is answered with \code{OKAY} in the same cycle.
+\item A write is taken when \code{b} has room and both \code{aw} and
+\code{w} hold a request. It is answered with \code{OKAY} in the same
+cycle, whichever word it names.
+\item A byte written to word 0 while the port is idle loads the ten
+bits of its frame into \code{shift} and ten into \code{bits}. It also
+goes into \code{last}, and \code{sent} counts it.
+\item While \code{bits} is not zero the port is busy and \code{tx} is
+bit 0 of \code{shift}. Every \code{DIV} cycles the frame shifts down
+and \code{bits} counts down. When idle, \code{tx} is high.
+\item The \code{rx} line passes through one register, \code{line},
+before the logic.
+\item When the port is not receiving and \code{line} is low, a frame
+begins. The port samples \code{line} in cycle \code{DIV/2} of each of
+the ten bits.
+\item A high where the start bit should be is a false start, and the
+frame is dropped. The eight data bits shift into \code{rx\_shift}.
+\item A high stop bit lands the byte. If the buffer holds eight, the
+byte is dropped and \code{dropped} counts it; else it goes in at the
+tail and \code{received} counts it. A low stop bit lands nothing.
+\item A read of word 2 with a byte in the buffer removes the oldest. A
+push and a removal in the same cycle leave the count unchanged.
+\item \code{irq} is high while the buffer's count is not zero.
+\item With \code{rst} high, \code{bits}, \code{tick},
+\code{rx\_bits}, \code{rx\_tick}, \code{head} and \code{count} go to
+zero.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//cpu/vreteno:lockstep} puts the terminal of
+\code{term.rs} on the two lines. At the halt it checks \code{sent} and
+\code{last} against the bytes the model was given, and that
+\code{dropped} is zero. In \code{demo\_program} the port must say
+\code{OK} and a newline, receive three bytes, and echo them.
+\item \code{//cpu/vreteno:hello\_test},
+\code{//cpu/vreteno:hello\_cc\_test} and \code{//cpu/vreteno:board\_test}
+check what compiled programs print on \code{tx}.
+\item The build simulates \code{Uart<4>}'s netlist, the entity
+\code{uart4}, against the trace of \code{//cpu/vreteno:vreteno} under
+nvc and Verilator: \code{//docs:vreteno\_sim\_uart4\_uart4\_tb\_test}
+and \code{//docs:vreteno\_vsim\_uart4\_test}. The run also writes
+\code{Uart<868>}'s netlist, which no test simulates.
+\item \code{//docs:vreteno} reports that the board, programmed with the
+design from before the DDR3 memory was on the bus, said \code{OK} at
+115200 baud and echoed the three bytes a watcher typed.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Board}, as \code{uart} behind the bridge \code{puart}. The
+demonstration \code{//cpu/vreteno:vreteno}, the lockstep test and
+\code{run.rs}. The system in \code{soc}, where it is the serial port at
+corner 1,1 of the lattice.
+
+\subsection*{Limits}
+
+A byte written while a frame is going out is dropped, and a byte
+received with the buffer full is dropped and counted. A program polls
+the status and keeps up. \code{sent}, \code{received} and
+\code{dropped} are eight-bit counters that are not on the bus. The port
+checks no address beyond bits 3 and 2, since the bridge sends it only
+its own range. The frame is fixed at ten bits, with no parity bit, and
+the port has no flow-control lines.

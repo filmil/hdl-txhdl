@@ -1,0 +1,167 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Raster
+\datasheet{Raster}{The GPU's rasteriser: it reads a display list over AXI and writes one pixel a cycle.}
+
+\dsfacts{\code{gpu/src/raster.rs}}{\code{gpu::raster::Raster}}%
+{\code{//docs:gpu}, \code{//docs:noc}}
+
+\subsection*{Function}
+
+\code{Raster} finds its work in memory and draws it there. It polls a
+count at \code{CTRL} until the count is not zero. It then reads the
+six words of each instruction of the display list at \code{DL}, one
+read at a time, and walks the instruction's box one pixel per cycle.
+It writes the instruction's colour at every pixel inside the
+primitive: every pixel of a clear or a rectangle, and every pixel of a
+triangle at which no edge function is negative.
+
+It is an AXI host written as hardware. It issues bursts on
+\code{issue}, sends a pixel's beat on \code{wbeat}, and hands
+identifiers back on \code{release}. It receives \code{grant},
+\code{done} and \code{rdata} from its tracker. \code{idle} goes high
+when the list is drawn and no write is in flight.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The width of the link's address, in bits. \\
+\code{I} & The width of the AXI identifier, in bits. \\
+\code{LOGW} & The screen is \code{1 << LOGW} pixels wide. \\
+\code{H} & The screen is \code{H} pixels high. \\
+\code{BASE} & The byte address of the framebuffer's first word. \\
+\code{DL} & The byte address of the display list's first word. \\
+\code{CTRL} & The byte address of the count. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables use \code{Raster<16, 2, 4, 16, 0, 0x400, 0x600>}, the
+rasteriser of \code{//gpu:trace}: a sixteen by sixteen screen at
+\code{0x0}, the list at \code{0x400} and the count at \code{0x600}. In
+\code{soc} it is \code{Raster<32, 2, 7, 96, 0x8000, 0x2000, 0x4000>}.
+
+\subsection*{Address map}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.6\textwidth}@{}}
+\toprule
+Address & What the rasteriser does there \\
+\midrule
+\code{CTRL} & Reads the count while polling. \\
+\code{DL + (i << 5) + (k << 2)} & Reads word \code{k}, 0 to 5, of
+instruction \code{i}. \\
+\code{BASE + (((y << LOGW) + x) << 2)} & Writes pixel \code{x},
+\code{y}. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+An instruction's words are in the format \code{gpu/src/dl.rs} states.
+Words 6 and 7 of an instruction are never read.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.42\textwidth}p{0.3\textwidth}@{}}
+\toprule
+Word & Low field & High field \\
+\midrule
+0 & bits 1 to 0: kind, 0 clear, 1 rectangle, 2 triangle & bits 25 to
+2: colour \\
+1 & bits 9 to 0: \code{x0} & bits 25 to 16: \code{y0} \\
+2 & bits 9 to 0: \code{x1} & bits 25 to 16: \code{y1} \\
+3 & bits 11 to 0: \code{ax} & bits 27 to 16: \code{ay} \\
+4 & bits 11 to 0: \code{bx} & bits 27 to 16: \code{by} \\
+5 & bits 11 to 0: \code{cx} & bits 27 to 16: \code{cy} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{Raster}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \code{phase} is 0 while polling, 1 while fetching, 2 while
+drawing and 3 when done.
+\item While polling or fetching, the rasteriser issues one read when
+no read is out and \code{issue} has room. \code{waiting} is set until
+the read's beat arrives.
+\item A count that is not zero starts the fetch at instruction 0, word
+0, and its low eight bits go into \code{left}. A count of zero means
+poll again.
+\item During the fetch each word's fields are latched as the word
+lands. A kind field of 3 is taken as a triangle.
+\item When word 5 lands, the walk is set up in that cycle. The third
+vertex comes straight from the bus. The six products of the edge
+functions are computed then, and nowhere else.
+\item A clear's box is the whole screen, from its own type. A
+rectangle's and a triangle's box is \code{x0}, \code{y0} to
+\code{x1}, \code{y1}. Vertices are sign-extended from twelve bits.
+\item Each edge is kept as its value at this pixel, its value at the
+start of this row and its two steps, in 32-bit two's complement. A
+step to the right adds the column step; a new row reloads from the row
+value plus the row step.
+\item \code{hit} is high when the kind is not a triangle, or when all
+three edge values have bit 31 clear.
+\item A pixel with \code{hit} high is written when both \code{issue}
+and \code{wbeat} have room. The walk steps when the pixel needs no
+write or its write went out, so backpressure holds the walk.
+\item A pixel's write is a burst of one beat, size 2, \code{INCR},
+with the colour zero-extended to 32 bits, strobe \code{0xf} and
+\code{last} set.
+\item At the end of the box the rasteriser fetches the next instruction
+while \code{left} is above 1, and otherwise goes to phase 3.
+\item \code{inflight} counts writes issued whose response has not come
+back.
+\item When a write response and a read beat arrive together, the
+write's identifier goes back first and the read's waits a cycle.
+Grants are taken and dropped.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//gpu:gpu\_test} renders scenes on the rasteriser through
+an \code{AxiHost}, an \code{AxiPer} and \code{Fb}, and compares every
+pixel with the model of \code{gpu/src/model.rs}:
+\code{a\_scene\_of\_every\_kind\_agrees\_with\_the\_model},
+\code{a\_clear\_says\_only\_its\_colour},
+\code{a\_triangle\_is\_the\_same\_whichever\_way\_it\_is\_wound},
+\code{a\_triangle\_hanging\_off\_the\_screen\_is\_clipped},
+\code{a\_single\_pixel\_and\_an\_empty\_box}, and
+\code{pseudorandom\_scenes\_agree\_with\_the\_model}, twelve scenes of
+up to four random rectangles and triangles.
+\item \code{an\_instruction\_survives\_the\_format} in the same target
+checks the display list's encoder against its decoder.
+\item The build simulates the netlist of \code{Raster<16, 2, 4, 16, 0,
+0x400, 0x600>} against the trace of \code{//gpu:trace} under nvc and
+Verilator: \code{//docs:gpu\_sim\_raster\_raster\_tb\_test} and
+\code{//docs:gpu\_vsim\_raster\_test}.
+\item \code{//soc:demo\_test} runs
+\code{a\_core\_draws\_a\_solid\_and\_a\_gpu\_fills\_it}. Vreteno writes
+a display list on the lattice, the rasteriser draws it, and every pixel
+must match the model's picture of that list.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{gpu::sim::run} and \code{gpu::sim::run\_list}, and so the GPU's
+tests, \code{//gpu:trace} and \code{//gpu:demo}. The system in
+\code{soc}, where the rasteriser is the host at corner 1,0 of the
+lattice.
+
+\subsection*{Limits}
+
+\code{//docs:gpu} lists them. It writes one pixel per cycle at most. It
+has no depth buffer, so primitives are drawn in list order. It has no
+interpolation, so a triangle is one colour, and no texture. It clips
+no geometry, only boxes, and the assembler \code{Op::encode} does that
+on the host. It has one read out at a time.
+
+The code adds these. It has no reset port, and phase 3 is final, so it
+draws one list. \code{left} is eight bits. The pixel's offset from
+\code{BASE} is formed at sixteen bits and then widened to \code{A}
+bits. A colour is 24 bits.

@@ -1,0 +1,97 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Dmem
+\datasheet{Dmem}{Vreteno's data memory: 1024 words behind an AXI peripheral end.}
+
+\dsfacts{\code{cpu/vreteno/src/dmem.rs}}{\code{vreteno32::dmem::Dmem}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+\code{Dmem} is the data memory of the Vreteno machine, a device on its
+bus. It holds \code{DMEM\_WORDS}, 1024 words, in four memories of a
+byte, \code{lane0} to \code{lane3}, one per lane of the word. A store
+of a byte or a half writes only its lanes and reads nothing.
+
+It is the peripheral client of an \code{AxiPer}: it takes requests on
+\code{req} and write beats on \code{wd}, and answers on \code{ans}
+for a write and \code{rb} for a read. It answers single-beat bursts,
+which is all the core makes.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{I} & The width of the AXI identifier on \code{req}, \code{ans}
+and \code{rb}, in bits. The tables use 2, as the board does. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Address map}
+
+The word a burst names is bits 11 to 2 of its address. Lane $k$ is
+byte $k$ of the word: \code{lane0} is bits 7 to 0, \code{lane3} bits 31
+to 24. The memory looks at no other address bits.
+
+On the board, \code{BoardRouter} sends it the page at \code{0x1000}
+with mask \code{0xffff\_f000}, so addresses \code{0x1000} to
+\code{0x1ffc} are words 0 to 1023. The model's \code{DATA\_BASE} is
+the same \code{0x1000}.
+
+\dstables{Dmem}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A write is taken when no other write is waiting for its beat.
+Its word and identifier go into \code{paddr} and \code{pid}, and
+\code{pend} is set.
+\item The held write's beat is taken when it has arrived and
+\code{ans} has room. Each lane whose strobe bit is set takes its byte
+of the beat, and \code{ans} sends \code{OKAY} with \code{pid}.
+\item A read is taken when no write is waiting and the answer register
+is free or is being emptied in this cycle. The four lanes are read
+into \code{word} at the edge, the synchronous read a block RAM has.
+\item The read is answered on \code{rb} the cycle after, with
+\code{rid}, \code{OKAY} and \code{last} set.
+\item While a write waits for its beat, no request of either kind is
+taken.
+\item \code{Dmem::with} fills the lanes from bytes before the first
+cycle. \code{data\_word} reads a word back for a run or a test.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//cpu/vreteno:lockstep} compares every word of the model's
+data memory with the four lanes at the halt, in \code{demo\_program},
+\code{a\_multiply\_right\_after\_a\_load} and \code{random\_programs}.
+\item \code{//cpu/vreteno:hello\_test}, \code{//cpu/vreteno:hello\_cc\_test}
+and \code{//cpu/vreteno:board\_test} put the compiled programs'
+constants in it with \code{Dmem::with}, and check what the programs
+print.
+\item The build simulates \code{Dmem<2>}'s netlist against the trace
+of \code{//cpu/vreteno:vreteno} under nvc and Verilator:
+\code{//docs:vreteno\_sim\_dmem\_dmem\_tb\_test} and
+\code{//docs:vreteno\_vsim\_dmem\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Board}, as \code{dmem} behind the tracker \code{pdmem}. The
+demonstration \code{//cpu/vreteno:vreteno}, the lockstep test and
+\code{run.rs}. \code{board\_netlist} writes a program's data into
+\code{lane0} to \code{lane3} of the board's netlist.
+
+\subsection*{Limits}
+
+It serves bursts of one beat and does not look at a burst's length. It
+checks no address, since the router sends it only its own range, so
+an address beyond word 1023 wraps. One write is held at a time. Nothing
+on the machine fills it at run time except stores, so a program's
+constants have to be in it before the first cycle.
+\code{cpu/vreteno/board/ax7a200.xdc} constrains the four lanes to block
+RAM.

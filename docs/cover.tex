@@ -55,8 +55,10 @@ The release workflow publishes every PDF nightly, and on request.
 
 \section{The Documents}
 
-Table~\ref{tab:documents} names every document, in the order the
-combined PDF binds them, with the target that builds each.
+Tables~\ref{tab:documents} and~\ref{tab:records} name every
+document, in the order the combined PDF binds them, with the target
+that builds each. The first holds the documents on the language and
+what was built in it; the second, the ones that summarise and record.
 
 \begin{table}[t]
 \caption{Every document, what it is for, and where it is built.}
@@ -173,6 +175,24 @@ HDMI in TxHDL
     demonstration for the AX7A200B's SiI9134.
   & \code{//docs:hdmi} \\
 \addlinespace
+TxHDL Datasheets
+  & A datasheet per component: what it does, its parameters and
+    register map, its ports, state and children as its netlist has
+    them, how it behaves, how it is checked, and where it is used.
+  & \code{//docs:datasheets} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\caption{The documents that summarise and record, and all of them in
+one file.}
+\label{tab:records}
+\centering
+\begin{tabular}{@{}p{46mm}p{92mm}l@{}}
+\toprule
+Document & What it is for & Target \\
+\midrule
 TxHDL Documents
   & This document.
   & \code{//docs:cover} \\

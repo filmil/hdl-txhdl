@@ -1,0 +1,113 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: AxiWb
+\datasheet{AxiWb}{A bridge from the peripheral end of an AXI4 link to the host lines of a pipelined Wishbone bus.}
+
+\dsfacts{\code{lib/parts/src/bus/wb.rs}}{\code{txhdl\_parts::bus::wb::AxiWb}}%
+{\code{//docs:axi}, \code{//docs:vreteno}}
+
+\subsection*{Function}
+
+A controller written elsewhere often speaks Wishbone rather than AXI.
+\code{AxiWb} puts such a controller on a link. It is a peripheral
+client written as hardware. On one side it holds the channel ends an
+\code{AxiPer} gives a client: requests on \code{req} and write beats on
+\code{wd} in, answers on \code{ans} and read beats on \code{rb} out.
+On the other side it drives the host lines of a pipelined Wishbone
+bus, \code{cyc}, \code{stb}, \code{we}, \code{adr}, \code{dat} and
+\code{sel}, and reads \code{stall}, \code{ack} and the peripheral's
+word, \code{rdat}.
+
+It takes one single-beat burst at a time and puts it on the lines as
+one request. The DDR3 controller of Vreteno's board is behind one.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The link's address width, in bits. \\
+\code{I} & The link's identifier width, in bits. \\
+\code{AW} & The width of the Wishbone word address, in bits. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Words are 32 bits with four lanes, fixed in the source. The tables
+below use \code{AxiWb<32, 2, 28>}. There \code{AW} is \code{ddr3::AW},
+28 bits, the word address of the board's DDR3 memory.
+
+\dstables{AxiWb}
+
+\subsection*{Behaviour}
+
+\code{stage} says where the request is. The source names five values.
+
+\begin{itemize}
+\item \textbf{0, waiting.} A request on \code{req} is taken when one
+offers. The bridge keeps its identifier and its word address, and sets
+\code{wsel} to all four lanes. A read goes to stage 2 at once, and a
+write to stage 1.
+\item \textbf{1, a write waiting for its beat.} The beat on \code{wd}
+is taken when it offers. Its \code{data} goes to \code{wdat} and its
+\code{strb} to \code{wsel}. Then stage 2.
+\item \textbf{2, offered.} \code{cyc} and \code{stb} are high. A cycle
+with \code{stall} low is the one the peripheral takes the request in,
+and the stage moves to 3.
+\item \textbf{3, taken.} \code{cyc} alone is high until \code{ack}.
+An \code{ack} in the cycle of the take counts too. On \code{ack} the
+stage moves to 4, and a read keeps the word on \code{rdat} in
+\code{wdat}.
+\item \textbf{4, answering.} A read sends one beat on \code{rb}: the
+identifier, \code{wdat}, \code{Okay}, and \code{last} high. A write
+sends an \code{Answer} of \code{Okay} on \code{ans}. Each waits for
+room on its channel, then the stage returns to 0.
+\item \code{we} is high unless the request is a read. \code{adr},
+\code{dat} and \code{sel} are \code{wadr}, \code{wdat} and \code{wsel}.
+Every line depends only on the bridge's registers, so nothing
+combinational passes from the link to the lines or back.
+\item The Wishbone address is a word address: the burst's byte address
+shifted down by two and cut to \code{AW} bits. A peripheral decoded at
+a region of the link's map sees offsets from the region's base, as
+long as the base lies above those bits. A write at
+\code{0x4000\_0010} lands in word 4.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Two tests in \code{bus::wb}, in \code{//lib/parts:parts\_test},
+run the bridge on a link, behind \code{AxiHost} and \code{AxiPer},
+against \code{WbMem}, a simulated Wishbone memory. The first,
+\code{a\_read\_gets\_what\_a\_write\_put}, writes and reads one word.
+The second, \code{slow\_answers\_and\_a\_calibration}, writes and
+reads back 24 words at pseudorandom addresses, against a memory that
+stalls for its first 40 cycles and answers after 5.
+\item \code{ex\_axi\_wb} writes three words and reads them back, against
+a memory that stalls for 10 cycles and answers after 2. The build
+simulates the netlist of \code{AxiWb<32, 2, 28>} against that run under
+nvc and Verilator: \code{//docs:axi\_wb\_sim\_axi\_wb\_tb\_test} and
+\code{//docs:axi\_wb\_vsim\_test}.
+\item In \code{//ddr3:ddr3\_test}, \code{words\_go\_in\_and\_come\_back}
+runs \code{Ddr3Per}, this bridge with the controller's simulation
+model behind it, and
+\code{the\_controller\_is\_instantiated\_and\_not\_written} checks that
+its netlist writes the bridge's module.
+\item \code{//cpu/vreteno/board/sim:board\_test}, a manual target,
+simulates the whole board under Vivado's simulator.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Ddr3Per} in \code{ddr3/src/lib.rs}, as its field \code{bridge},
+and so the board's DDR3 memory at \code{0x4000\_0000}. The example
+\code{ex\_axi\_wb}.
+
+\subsection*{Limits}
+
+It handles single-beat bursts only. It takes one write beat per
+request, and answers a read with one beat marked \code{last}. It holds
+one request at a time. It always answers \code{Okay}, and it reads no
+error line from the peripheral. Words are 32 bits with four lanes.
+Address bits above the \code{AW} bits it keeps are dropped.

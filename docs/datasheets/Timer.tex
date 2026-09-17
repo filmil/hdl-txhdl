@@ -1,0 +1,103 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Timer
+\datasheet{Timer}{Vreteno's timer: a count, a compare and an interrupt line, behind an AXI peripheral end.}
+
+\dsfacts{\code{cpu/vreteno/src/timer.rs}}{\code{vreteno32::timer::Timer}}%
+{\code{//docs:vreteno}, \code{//docs:axi}}
+
+\subsection*{Function}
+
+\code{Timer} is the machine timer of the Vreteno machine. It holds a
+64-bit count, \code{mtime}, and a 64-bit compare, \code{mtimecmp}, and
+shows each as two words on the bus. It raises \code{tirq} while the
+count has reached the compare. The core reads that line as bit 7 of
+\code{mip}.
+
+It is the peripheral client of an \code{AxiPer}: requests come on
+\code{req} and write beats on \code{wd}, and answers go out on
+\code{ans} and \code{rb}. The input \code{rst} clears the count.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{I} & The width of the AXI identifier on \code{req}, \code{ans}
+and \code{rb}, in bits. The tables use 2, as the board does. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Register map}
+
+Offsets from the timer's base. On the board the base is
+\code{0x2000}, which is also \code{isa::TIMER\_BASE}.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.55\textwidth}@{}}
+\toprule
+Offset & Word & Access \\
+\midrule
+\code{0x0} & \code{mtime}, bits 31 to 0 & Read and write. \\
+\code{0x4} & \code{mtime}, bits 63 to 32 & Read and write. \\
+\code{0x8} & \code{mtimecmp}, bits 31 to 0 & Read and write. \\
+\code{0xc} & \code{mtimecmp}, bits 63 to 32 & Read and write. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The timer selects the word by bits 3 and 2 of the address and looks at
+no other bits.
+
+\dstables{Timer}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item The count adds one every cycle. With \code{rst} high it goes to
+zero.
+\item A read is taken when \code{rb} has room and no write is waiting
+for its beat. It is answered on \code{rb} in the cycle it is taken,
+with the word addressed, \code{OKAY} and \code{last} set.
+\item A write is taken when no write is waiting. The word it names
+goes into \code{psel} and its identifier into \code{pid}.
+\item The held write's beat is taken when it has arrived and
+\code{ans} has room. The lanes the strobe covers replace those bytes of
+the word, the other bytes stay, and \code{ans} sends \code{OKAY}.
+\item Every cycle \code{pending} takes whether \code{mtime} is at or
+above \code{mtimecmp}, compared as unsigned numbers. \code{tirq} is
+\code{pending}, a register's output, so the core sees in one cycle
+what the timer decided in the cycle before.
+\item \code{mtimecmp} starts at zero and \code{rst} does not clear it,
+so the line is high until software writes a compare above the count.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//cpu/vreteno:lockstep} hands \code{pending} to the model
+for each instruction and checks \code{mtimecmp} against the model at
+the halt. \code{demo\_program} sets the compare to 150 and counts the
+timer's interrupt. \code{random\_programs} writes the count and the
+compare with arbitrary words and runs with the timer firing.
+\item The build simulates \code{Timer<2>}'s netlist against the trace
+of \code{//cpu/vreteno:vreteno} under nvc and Verilator:
+\code{//docs:vreteno\_sim\_timer\_timer\_tb\_test} and
+\code{//docs:vreteno\_vsim\_timer\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Board}, as \code{timer} behind the tracker \code{ptimer}, with
+its line wired to the core's \code{tirq}. The demonstration
+\code{//cpu/vreteno:vreteno}, the lockstep test and \code{run.rs}.
+
+\subsection*{Limits}
+
+The count counts clock cycles. The timer serves bursts of one beat and
+checks no address beyond bits 3 and 2, since the router sends it only
+its own range. One write is held at a time, and no read is taken while
+it waits. A write updates 32 bits of a 64-bit register, so software
+sets a whole compare in two stores.

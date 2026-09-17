@@ -644,6 +644,25 @@ latex_document(
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
 )
 
+# The datasheets: one per component, their tables generated from each
+# component's lowering by //tools/datasheet.
+latex_document(
+    name = "datasheets",
+    main = "datasheets.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        "//tools/datasheet:tables",
+    ],
+    deps = ["housestyle.tex"] + glob(["datasheets/*.tex"]),
+)
+
+# The datasheets' sources, for the check that every component has one.
+filegroup(
+    name = "datasheet_sources",
+    srcs = ["datasheets.tex"] + glob(["datasheets/*.tex"]),
+)
+
 # The cover: every document, what it is for, where it is built.
 latex_document(
     name = "cover",
@@ -1828,6 +1847,9 @@ combined_pdf(
         "AXI in TxHDL",
         "A Minimal GPU in TxHDL",
         "A Network on Chip in TxHDL",
+        "Ethernet in TxHDL",
+        "HDMI in TxHDL",
+        "TxHDL Datasheets",
         "TxHDL: Unifying a Dataflow and a Transaction HDL",
         "Deleting a Language: Embedding TxHDL in Rust",
         "The TxHDL Runtime",
@@ -1850,6 +1872,7 @@ combined_pdf(
         ":noc",
         ":eth",
         ":hdmi",
+        ":datasheets",
         ":article",
         ":embedding",
         ":runtime",

@@ -1,0 +1,94 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Node
+\datasheet{Node}{A node of the network on chip: a switch per virtual channel.}
+
+\dsfacts{\code{lib/parts/src/bus/noc/node.rs}}{\code{txhdl\_parts::bus::noc::node::Node}}%
+{\code{//docs:noc}}
+
+\subsection*{Function}
+
+A node sits at column \code{X} and row \code{Y} of a lattice. It is two
+\code{Switch} units: \code{req}, for what a host sends and a peripheral
+receives, and \code{rsp}, for what a peripheral sends and a host
+receives. The two share nothing. So a request held up behind a full
+buffer cannot hold up the response that would empty it.
+
+The node has twenty ports, written out one by one. A port name starts
+with \code{q} for the request channel or \code{p} for the response
+channel. The side follows: \code{n}, \code{s}, \code{w}, \code{e}, or
+\code{x} for the exit. Last is \code{i} or \code{o}. So \code{qei} is the request
+input from the east, and \code{pxo} is the response output to the
+exit.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{X} & The column of the node in the lattice. \\
+\code{Y} & The row of the node in the lattice. \\
+\code{XB} & The width of a column coordinate, in bits. A lattice is at
+most \code{1 << XB} columns wide. \\
+\code{YB} & The width of a row coordinate, in bits. A lattice is at
+most \code{1 << YB} rows high. \\
+\code{A} & The address width of the AXI link. \\
+\code{D} & The data width of the AXI link. \\
+\code{S} & The strobe width, which is \code{D / 8}. \\
+\code{I} & The identifier width of the AXI link. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables below are for \code{Node<0, 0, 2, 2, 32, 32, 4, 2>}, the
+node at 0,0 as \code{//soc} states it.
+
+\dstables{Node}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item The node has no logic of its own. It runs \code{req} on the ten
+\code{q} ports and \code{rsp} on the ten \code{p} ports, side by side.
+\item Each switch routes in dimension order and moves one packet per
+cycle, as the \code{Switch} sheet states.
+\item A host's bridge sends requests into \code{qxi} and takes
+responses from \code{pxo}. A peripheral's bridge takes requests from
+\code{qxo} and sends responses into \code{pxi}.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Three tests in \code{lib/parts/src/bus/noc.rs}, in
+\code{//lib/parts:parts\_test}, run four nodes on a two by two lattice
+with both bridges, both AXI trackers and memory.
+\code{a\_burst\_crosses\_the\_lattice\_and\_its\_answer\_comes\_back}
+writes a word from the host at 0,0 to a memory at 1,1 and reads it
+back. \code{two\_hosts\_share\_a\_memory\_and\_each\_answer\_goes\_home}
+puts hosts at 0,0 and 1,0 on that memory.
+\code{four\_peripherals\_share\_one\_node} puts a router of four
+memories behind the node at 1,1.
+\item \code{a\_core\_draws\_a\_solid\_and\_a\_gpu\_fills\_it}, in
+\code{//soc:demo\_test}, runs the core, the GPU, a memory and a serial
+port on the four corners of one lattice.
+\item No waveform in \code{docs/BUILD.bazel} lowers the node, so its
+netlist has no co-simulation under nvc or Verilator.
+\code{//docs:showcase} lists the network's netlists as not yet
+simulated.
+\end{itemize}
+
+\subsection*{Used by}
+
+The tests of the network in \code{lib/parts/src/bus/noc.rs}, and
+\code{soc::run} in \code{soc/src/lib.rs}, each with four nodes. Both
+wire the lattice with \code{mesh::lattice}.
+
+\subsection*{Limits}
+
+\code{mesh::lattice} makes the channels in simulation and does not
+lower. A design that is to be synthesised writes the same wiring as a
+unit of units. On a lattice that \code{mesh::lattice} makes, a link at
+the edge drives a channel nobody reads. Each of the two switches moves
+one packet per cycle, by fixed priority.

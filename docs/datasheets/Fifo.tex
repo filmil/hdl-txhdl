@@ -1,0 +1,80 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Fifo
+\datasheet{Fifo}{A FIFO of a power of two words, with a channel at each end.}
+
+\dsfacts{\code{lib/parts/src/fifo.rs}}{\code{txhdl\_parts::fifo::Fifo}}%
+{\code{//docs:runtime}, \code{//docs:examples}, \code{//docs:station}}
+
+\subsection*{Function}
+
+A channel is a buffer of two. \code{Fifo} is the depth a channel does
+not have, for a unit whose consumer takes in bursts or holds off. It
+has a channel in, \code{inp}, a channel out, \code{out}, and \code{D}
+words between. \code{//docs:station} puts one behind a reservation
+station for that reason.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{T} & What it holds: a \code{Transaction} and \code{Value} type. \\
+\code{AW} & The width of its pointers, in bits. \\
+\code{D} & How many words it holds, which must be \code{1 << AW}. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{D} is stated rather than computed, because an expression in a
+const parameter's position needs nightly Rust. The tables below use
+\code{Fifo<U<8>, 2, 4>}, the FIFO of \code{ex\_queue}: four bytes.
+
+\dstables{Fifo}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \code{mem} holds the words. \code{head} is where the oldest word
+is, and \code{tail} is where the next word lands.
+\item The pointers are equal both when it is empty and when it is
+full. \code{full} says which.
+\item A word is taken from \code{inp} whenever \code{full} is clear,
+and written at \code{tail}, which moves on by one.
+\item When it is not empty and \code{out} has room, the word at
+\code{head} is sent on \code{out}, and \code{head} moves on by one.
+\item A word taken lands in the memory at the end of its step and is
+offered the step after. The source states the latency as one cycle.
+\item \code{full} clears in a cycle that sends a word. It sets in a
+cycle that takes a word and sends none, when the moved \code{tail}
+meets \code{head}.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{fifo\_keeps\_every\_word\_in\_order} in
+\code{txhdl\_parts}, in \code{//lib/parts:parts\_test}, runs
+\code{Fifo<U<8>, 2, 4>} against a queue. It offers words at random
+for 200 cycles and takes none for the first 40, so the FIFO fills. It
+checks every word comes out in order, that \code{full} was seen, and
+that it is empty at the end.
+\item \code{ex\_queue} bursts nine words into the same FIFO while the
+sink takes nothing for eight cycles, as \code{//docs:examples}
+describes. The build simulates the netlist, named \code{queue4},
+against that run under nvc and Verilator:
+\code{//docs:queue\_sim\_queue4\_tb\_test} and
+\code{//docs:queue\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+The example \code{ex\_queue}. \code{ex\_fifo} is a different unit: an
+asynchronous FIFO of its own, defined in the example.
+
+\subsection*{Limits}
+
+It runs on one clock, \code{DefaultClock}. \code{D} must be
+\code{1 << AW}, and nothing checks it. When \code{full} is set it
+takes no word, even in a cycle in which it sends one.

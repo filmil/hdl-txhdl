@@ -1,0 +1,65 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Buffer
+\datasheet{Buffer}{The channel as hardware: an elastic buffer of two.}
+
+\dsfacts{\code{lib/parts/src/buffer.rs}}{\code{txhdl\_parts::buffer::Buffer}}%
+{\code{//docs:runtime}, \code{//docs:examples}}
+
+\subsection*{Function}
+
+A channel in a simulation is a buffer of two between a sender and a
+receiver. \code{Buffer} is that buffer as a netlist, for the places
+where two lowered units meet on a channel: a board top, or a design
+wired by hand. Its sender side is \code{tx\_data}, \code{tx\_valid} and
+\code{tx\_ready}; its receiver side is \code{rx\_data}, \code{rx\_valid}
+and \code{rx\_ready}.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{W} & The width of the words the channel holds, in bits. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{Buffer}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \code{tx\_ready} is high when the tail is empty, as the last edge
+left it. \code{rx\_valid} is high when the head is full, and
+\code{rx\_data} is the head.
+\item All three outputs are registers, so there is no combinational
+path from one side to the other.
+\item At an edge, a take moves the tail into the head, and a push goes
+into the head if the head is then empty, else into the tail.
+\item With both sides running every cycle, one word passes per cycle.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{buffer\_is\_the\_runtime\_channel} in \code{txhdl\_parts}
+runs the buffer beside a runtime channel for 200 cycles of pseudorandom
+offers and takes, and checks \code{ready}, \code{valid} and the head
+after every cycle.
+\item \code{ex\_buffer} does the same on a fixed pattern, and the build
+simulates \code{Buffer<8>}'s netlist against that run under nvc and
+Verilator: \code{//docs:buffer\_sim\_buffer8\_tb\_test} and
+\code{//docs:buffer\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+The example \code{ex\_buffer}. A unit of units does not need it, since
+its netlist puts a \code{txhdl\_chan} of the same rules between its
+children.
+
+\subsection*{Limits}
+
+It holds two words. A consumer that takes in bursts needs \code{Fifo}.

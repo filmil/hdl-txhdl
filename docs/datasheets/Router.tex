@@ -1,0 +1,161 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Router2, Router3, Router4, Router5, Router6, Router7, Router8
+\datasheet{Router}{AXI4 routers: one host and two to eight peripherals, decoded by address.}
+
+\dsfacts{\code{lib/parts/src/bus/router.rs}; generator \code{router\_text} in \code{lib/macros/lib.rs}}%
+{\code{txhdl\_parts::bus::router::Router2} to \code{Router8}}%
+{\code{//docs:axi}, \code{//docs:vreteno}, \code{//docs:noc}}
+
+\subsection*{Function}
+
+A router puts several peripherals behind one host. It sits in the five
+channels of an AXI4 link, so nothing on either side changes when it is
+put there. It takes the host's \code{aw}, \code{ar} and \code{w}, and
+gives \code{aw}\textit{i}, \code{ar}\textit{i} and \code{w}\textit{i}
+to each peripheral \textit{i}. It takes \code{b}\textit{i} and
+\code{r}\textit{i} from each peripheral, and gives the host one
+\code{b} and one \code{r}.
+
+Each peripheral's range is a base and a mask, stated where the type is
+named. A burst whose address is in no range is answered \code{DecErr}
+by the router itself. \code{router!(RouterN, N)} writes one unit per
+count of peripherals, because the lowering reads a body and not a loop
+over ports. \code{router.rs} writes \code{Router2} to \code{Router8};
+the macro refuses a count outside 2 to 8.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The address width, in bits. \\
+\code{D} & The data width, in bits. \\
+\code{S} & The write strobe width, one bit per byte lane, so \code{D / 8}. \\
+\code{I} & The identifier width, in bits. \\
+\code{BASE}\textit{i} & The base of peripheral \textit{i}'s range, for
+\textit{i} from 0 to \textit{N} less one. \\
+\code{MASK}\textit{i} & The bits of an address that must equal
+\code{BASE}\textit{i} for peripheral \textit{i}. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Address map}
+
+An address \code{a} is peripheral \textit{i}'s when
+\code{(a \& MASK}\textit{i}\code{) == BASE}\textit{i}. The router
+decodes the address of each address phase. Every address in no range
+is a hole. The tables below are generated for \code{Router3<32, 32, 4,
+2, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>}, Vreteno's router,
+whose map is this one:
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llll@{}}
+\toprule
+Peripheral & \code{BASE} & \code{MASK} & In Vreteno \\
+\midrule
+0 & \code{0x1000} & \code{0xf000} & The data memory \\
+1 & \code{0x2000} & \code{0xf000} & The timer \\
+2 & \code{0x3000} & \code{0xf000} & The serial port \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The board's design names \code{Router4} as \code{BoardRouter}, with
+masks of \code{0xffff\_f000} for the same three pages and the DDR3
+memory at \code{0x4000\_0000}, mask \code{0xc000\_0000}.
+
+\dstables{Router}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \textbf{Write address.} The head of \code{aw} is taken when no
+write burst is running (\code{wbusy} clear) and the lowest peripheral
+whose range matches has room on its \code{aw}. It is sent to every
+peripheral whose range matches.
+\item Taking it sets \code{wbusy}, and records the lowest matching
+peripheral in \code{wsel}, a bit each, and the identifier in
+\code{wid}. \code{whole} records that no range matched.
+\item \textbf{Write beats.} While \code{wbusy} is set, beats pass from
+\code{w} to the peripheral in \code{wsel} when it has room. A burst to
+a hole has no bit in \code{wsel}, and its beats are taken and dropped.
+The beat marked \code{last} clears \code{wbusy}.
+\item So a second write address phase, to any peripheral, waits for
+the first burst's last beat. AXI4 puts no identifier on \code{w}, and
+this keeps two bursts' beats apart.
+\item \textbf{Write to a hole.} When its last beat has gone, the router
+sets \code{berr} and \code{berr\_id}. It sends a \code{B} of
+\code{DecErr} with that identifier when \code{b} has room. That answer
+goes before any peripheral's. A write to a hole waits while
+\code{berr} is set.
+\item \textbf{Read address.} The head of \code{ar} is taken when the
+lowest peripheral whose range matches has room on its \code{ar}, or,
+for a hole, when \code{rerr} is clear. It is sent to every peripheral
+whose range matches. Several reads may be outstanding at once.
+\item \textbf{Read to a hole.} Taking it sets \code{rerr}, keeps its
+identifier in \code{rerr\_id}, and sets \code{rerr\_left} to its
+\code{len} plus one. The router then sends that many beats of
+\code{DecErr} and zero data on \code{r}, the last marked \code{last}.
+\item \textbf{Read beats.} When no read burst is going up
+(\code{rbusy} clear), the router's own error burst goes first. Else the
+lowest peripheral that offers a beat is chosen.
+\item A peripheral's beat that goes up without \code{last} sets
+\code{rbusy} and records the peripheral in \code{rsel}. Its beats then
+go up alone until its \code{last}, so \code{last} still marks the end
+of one burst.
+\item \textbf{Write responses.} When the router owes no \code{DecErr},
+the lowest peripheral that offers a \code{B} sends it to the host. Each
+response keeps the identifier the peripheral gave it.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Two tests in \code{bus::router} run \code{Router2<16, 32, 4, 3,
+0x1000, 0xf000, 0x2000, 0xf000>} between a host tracker and two
+peripheral trackers, in \code{//lib/parts:parts\_test}.
+\code{each\_burst\_reaches\_its\_range} reads from both ranges and
+reads three beats from a hole, and checks the hole's answer is
+\code{DecErr} in three beats. \code{write\_beats\_do\_not\_interleave}
+writes three beats to each peripheral, one burst after the other, and
+checks each peripheral got its own burst whole and in order.
+\item \code{ex\_axi\_router} issues five bursts before collecting any:
+a read to each of two peripherals, a write to the third, and a read and
+a write to a hole. The build simulates the netlist of \code{Router3<16,
+32, 4, 3, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>} against that
+run under nvc and Verilator:
+\code{//docs:axi\_router\_sim\_axi\_router\_tb\_test} and
+\code{//docs:axi\_router\_vsim\_test}.
+\item Vreteno's run lowers its router, the \code{Router3} of the
+tables, and the build simulates that netlist against the run:
+\code{//docs:vreteno\_sim\_router\_router\_tb\_test} and
+\code{//docs:vreteno\_vsim\_router\_test}.
+\code{//cpu/vreteno:lockstep} runs the same router in simulation.
+\item \code{four\_peripherals\_share\_one\_node} in \code{bus::noc} puts
+a \code{Router4} behind a node of the network, with a memory in each
+range. Two hosts write and read every peripheral and read a hole.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Router3} in the example \code{ex\_axi\_router} and in Vreteno's
+run, \code{cpu/vreteno/src/run.rs} and \code{cpu/vreteno/src/main.rs}.
+\code{Router4} in the board's design, \code{cpu/vreteno/src/board.rs},
+and in the network on chip's test. \code{Router2} in the router's own
+tests.
+
+\subsection*{Limits}
+
+It serves one host. Several hosts contending for one peripheral are not
+handled here, as \code{//docs:axi} states. Write bursts pass one at a
+time, whichever peripherals they go to. The merge of responses is by
+fixed priority, lowest peripheral first. A mask compares only its own
+bits. On an address wider than 16 bits, a mask of \code{0xf000} also
+matches its base plus every multiple of \code{0x10000}. Nothing checks
+that ranges do not overlap: an address in two ranges sends its address
+phase to both, and a write's beats only to the lower. The router
+decodes on the address alone, and ignores \code{region} and
+\code{qos}.

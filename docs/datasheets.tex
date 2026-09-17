@@ -1,0 +1,124 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% Datasheets: one per component the project has built. Built by
+% //docs:datasheets. The tables of ports, state and children come from
+% each component's own lowering, through //tools/datasheet; the prose is
+% in docs/datasheets/, one file per component, and
+% //tools/datasheet:coverage_test fails when a component has none.
+\documentclass[journal,onecolumn,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\normalsize}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+% The generated tables. A sheet that asks for a table the generator
+% does not write stops the build, rather than printing nothing.
+\input{tools/datasheet/ds_tables}
+\makeatletter
+\newcommand{\dsget}[2]{%
+  \@ifundefined{ds@#1@#2}%
+    {\PackageError{datasheets}{//tools/datasheet writes no #1 for #2}%
+      {Add the component to tools/datasheet/main.rs.}}%
+    {\csname ds@#1@#2\endcsname}}
+\makeatother
+
+% A datasheet's heading: the component and what it is, on a page of
+% its own.
+\newcommand{\datasheet}[2]{\clearpage\section{#1}\label{ds:#1}%
+\noindent\textit{#2}\par\medskip}
+
+% Where a component lives: its source, its Rust path, and the document
+% that explains it.
+\newcommand{\dsfacts}[3]{%
+\begin{center}\footnotesize
+\begin{tabular}{@{}ll@{}}
+Source & #1 \\
+Rust path & #2 \\
+Explained in & #3 \\
+\end{tabular}
+\end{center}}
+
+% The generated part of a sheet.
+\newcommand{\dstables}[1]{%
+\subsection*{Ports, state and children}
+As lowered for \dsget{type}{#1}: \dsget{counts}{#1}.
+\dsget{ports}{#1}
+\dsget{state}{#1}
+\dsget{children}{#1}}
+
+\title{TxHDL Datasheets}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{One datasheet per component built in the project repository
+\code{HDL/txhdl}. The tables of ports, state and children on each sheet
+are generated at build time from the component's own lowering, so they
+are the netlist's. The cover, \code{//docs:cover}, lists every
+document.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{TxHDL Datasheets}{Filmar and Janković: TxHDL Datasheets}
+
+\begin{document}
+\maketitle
+
+\section*{How to Read a Datasheet}
+
+A component is a unit written in the lowered subset, so it is both a
+simulation and a netlist. Each sheet says what the component does, the
+parameters it takes, how it behaves at its ports, how it is checked and
+where it is used, and what it does not do.
+
+The tables of ports, state and children are not typed in. The build
+lowers each component with the parameters the tree uses it with, the
+ones the sheet names, and writes the tables from that lowering. A
+channel port is one row, and its width is the width of the word it passes;
+in the netlist it is \code{\_data}, \code{\_valid} and \code{\_ready}. A
+wire port is one row and one net. A memory's width is its word's, and
+its words are how many it holds.
+
+A family of components written by one macro, such as the routers of two
+to eight peripherals, has one sheet, and its tables are those of the
+member the tree uses.
+
+% Channels and queues.
+\input{datasheets/Buffer}
+\input{datasheets/Fifo}
+\input{datasheets/Station}
+% The AXI link.
+\input{datasheets/AxiHost}
+\input{datasheets/AxiPer}
+\input{datasheets/Router}
+\input{datasheets/LiteBridge}
+\input{datasheets/AxiWb}
+% The network on chip.
+\input{datasheets/Switch}
+\input{datasheets/Node}
+\input{datasheets/HostBridge}
+\input{datasheets/PerBridge}
+% Peripherals for the board.
+\input{datasheets/EthTx}
+\input{datasheets/EthRx}
+\input{datasheets/EthLite}
+\input{datasheets/Hdmi}
+\input{datasheets/I2cInit}
+% Vreteno and its devices.
+\input{datasheets/Vreteno}
+\input{datasheets/Dmem}
+\input{datasheets/Timer}
+\input{datasheets/Uart}
+\input{datasheets/Ddr3Per}
+\input{datasheets/Board}
+% The GPU.
+\input{datasheets/Fb}
+\input{datasheets/Raster}
+
+\end{document}

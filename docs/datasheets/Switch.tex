@@ -1,0 +1,95 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Switch
+\datasheet{Switch}{A five-port switch of the network on chip, one per virtual channel.}
+
+\dsfacts{\code{lib/parts/src/bus/noc/switch.rs}}{\code{txhdl\_parts::bus::noc::switch::Switch}}%
+{\code{//docs:noc}}
+
+\subsection*{Function}
+
+A switch sits at column \code{X} and row \code{Y} of a lattice. It has
+a two-way link on each of its four sides and a fifth port, the exit,
+where something that is not a node attaches. Its inputs are
+\code{n\_in}, \code{s\_in}, \code{w\_in}, \code{e\_in} and
+\code{x\_in}, and its outputs are \code{n\_out}, \code{s\_out},
+\code{w\_out}, \code{e\_out} and \code{x\_out}. Each port passes one
+\code{Pkt}, a beat of one AXI channel addressed to a node. The switch
+routes in dimension order, X before Y. A \code{Node} is two switches,
+one per virtual channel.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{X} & The column of the switch in the lattice. \\
+\code{Y} & The row of the switch in the lattice. \\
+\code{XB} & The width of a column coordinate, in bits. A lattice is at
+most \code{1 << XB} columns wide. \\
+\code{YB} & The width of a row coordinate, in bits. A lattice is at
+most \code{1 << YB} rows high. \\
+\code{A} & The address width of the AXI link. \\
+\code{D} & The data width of the AXI link. \\
+\code{S} & The strobe width, which is \code{D / 8}. \\
+\code{I} & The identifier width of the AXI link. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables below are for \code{Switch<0, 0, 2, 2, 32, 32, 4, 2>}. That
+is the switch at 0,0, with two-bit coordinates, on the link that
+\code{//soc} uses.
+
+\dstables{Switch}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item The switch holds no state. The port a packet leaves by is a
+function of the packet's \code{dx} and \code{dy} and of \code{X} and
+\code{Y}.
+\item The switch compares coordinates at \code{CW}, 8 bits. It sends a
+packet east when \code{dx} is above \code{X}, and west when \code{dx}
+is below \code{X}. In the right column, it sends the packet south when
+\code{dy} is above \code{Y}, and north when \code{dy} is below
+\code{Y}. At its own node it sends the packet out of the exit.
+\item Each cycle the switch works out, for every input with a packet,
+the port that packet wants and whether that port is ready. An input
+whose port is full does not hold up the others.
+\item Of the inputs that can move, the switch takes one per cycle, by
+fixed priority: north, south, west, east, and the exit last.
+\item The switch sends the packet it takes unchanged.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item The switch has no test of its own. The three tests of the
+network in \code{lib/parts/src/bus/noc.rs} run it inside four nodes:
+\code{a\_burst\_crosses\_the\_lattice\_and\_its\_answer\_comes\_back},
+\code{two\_hosts\_share\_a\_memory\_and\_each\_answer\_goes\_home} and
+\code{four\_peripherals\_share\_one\_node}, in
+\code{//lib/parts:parts\_test}.
+\item \code{a\_core\_draws\_a\_solid\_and\_a\_gpu\_fills\_it}, in
+\code{//soc:demo\_test}, runs a core, a GPU, a memory and a serial port
+on a two by two lattice of nodes.
+\item No waveform in \code{docs/BUILD.bazel} lowers the switch, so its
+netlist has no co-simulation under nvc or Verilator.
+\code{//docs:showcase} lists the network's netlists as not yet
+simulated.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Node}, which holds two: \code{req} for requests and \code{rsp}
+for responses.
+
+\subsection*{Limits}
+
+The switch moves one packet per cycle, not one per port. Its arbiter
+is a fixed priority, and \code{//docs:noc} names a fair arbiter as the
+next thing to write. \code{//docs:noc} measures the cost on the
+system of \code{//soc}: the rasteriser draws its list in 36\,516 cycles
+on a direct link and in 78\,391 cycles across the lattice.

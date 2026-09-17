@@ -1,0 +1,112 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Station2, Station3, Station4, Station5, Station6, Station7, Station8, Station9, Station10
+\datasheet{Station}{Reservation stations of two to ten inputs: operands gathered by tag, sent as one line.}
+
+\dsfacts{\code{lib/parts/src/station.rs}; generator \code{station\_text} in \code{lib/macros/lib.rs}}%
+{\code{txhdl\_parts::station::Station2} to \code{Station10}}%
+{\code{//docs:station}, \code{//docs:runtime}, \code{//docs:examples}}
+
+\subsection*{Function}
+
+A reservation station gathers the operands of an operation that arrive
+on separate channels, out of order, and fires when all of them have.
+Each input is a channel of \code{Tagged<TB, T>}: a tag of \code{TB}
+bits above a value. The station has a line per tag value, with a cell
+per input. An input lands in its cell of the line its tag names.
+
+A line whose every cell holds is sent on the one output as a
+\code{Line}\textit{N}: the tag, and a value per input, \code{v0}
+upwards. \code{station!(StationN,
+N)} writes each station with its line struct beside it, since the
+lowering reads a body and not a loop over inputs. \code{station.rs}
+writes \code{Station2} to \code{Station10}; the macro itself accepts 2
+to 16.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{TB} & The tag width, in bits. It is two at least. \\
+\code{L} & The count of lines, which is \code{1 << TB}. \\
+\code{T}\textit{i} & The value type of input \textit{i}, for \textit{i}
+from 0 to \textit{N} less one. The types may differ. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{L} is stated rather than computed, because a computed width in a
+type needs nightly Rust. The tag has two bits at least, since a one-bit
+value is a single wire in VHDL and cannot index a line. The tables
+below use \code{Station3<4, 16, U<2>, U<16>, U<16>>}, the station of
+\code{ex\_compose}: sixteen lines, an operation and two operands.
+
+\dstables{Station}
+
+\subsection*{Behaviour}
+
+Each input \textit{i} has \code{mem}\textit{i}, its cells, a word per
+line, and \code{occ}\textit{i}, a bit per line that says which cells
+hold. Each cycle:
+
+\begin{itemize}
+\item An input's cell is free when its tag's bit of the input's mask
+is clear.
+\item Taking an input completes its line when, for every other input,
+that line's cell holds, or that input offers the same tag now and its
+own cell is free.
+\item The line sent is the completing input's of lowest index, if any
+input completes and the output has room. At most one line leaves per
+cycle.
+\item An input is taken when its cell is free and taking it completes
+nothing, or completes the line being sent. An input's \code{ready} is
+that take.
+\item So an input never waits on another input's cell. It waits on its
+own cell, on the output's room, or while an input of lower index
+completes a different line in the same cycle.
+\item A taken input writes its cell and sets its bit. The line sent
+clears its bit in every mask.
+\item The values sent come from the cells. The value of an input that
+completes the line in this cycle goes straight through instead.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Two tests in \code{txhdl\_parts}, in
+\code{//lib/parts:parts\_test}. \code{station2\_follows\_the\_rule} runs
+\code{Station2<2, 4, U<8>, U<16>>} against the rule written with loops
+for 400 cycles of random offers and takes. It checks both masks after
+every cycle and every line the sink takes.
+\code{station3\_lowest\_input\_wins} sets up two lines that complete in
+one cycle, and checks that the lower input's line goes first.
+\item \code{ex\_station} runs a \code{Station2<2, 4, U<8>, U<16>>}
+beside \code{station.v}, the same station written by hand in Verilog,
+and compares every line the two send. The build simulates the
+station's netlist against that run under nvc and Verilator:
+\code{//docs:station\_sim\_station\_tb\_test} and
+\code{//docs:station\_vsim\_test}.
+\item \code{ex\_compose} lowers \code{Top}, which holds the
+\code{Station3} of the tables and the stream ALU as children. The build
+simulates the netlist of the top against that run:
+\code{//docs:compose\_sim\_top\_tb\_test} and
+\code{//docs:compose\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Station2} in the example \code{ex\_station}. \code{Station3} in
+the example \code{ex\_compose}, in front of the stream ALU, whose
+requests are \code{Line3} values.
+
+\subsection*{Limits}
+
+A station is not an arbiter. If an input's next offer names a cell it
+already holds, it waits until that line completes. If the other inputs
+never offer that tag, it waits for ever, as \code{//docs:station}
+states. Each input must, in time, see every tag its lines wait on. One
+line leaves per cycle at most, and a line waits for room on the output;
+\code{//docs:station} puts a \code{Fifo} behind the station where the
+consumer takes in bursts.

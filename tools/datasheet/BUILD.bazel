@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+# The generated half of the datasheets, and the check that every
+# component has a datasheet.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Every component's parameters, ports, state and children, as LaTeX.
+rust_binary(
+    name = "datasheet",
+    srcs = ["main.rs"],
+    edition = "2021",
+    deps = [
+        "//cpu/vreteno:vreteno32",
+        "//ddr3",
+        "//gpu",
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+)
+
+genrule(
+    name = "tables",
+    outs = ["ds_tables.tex"],
+    cmd = "$(location :datasheet) > $@",
+    tools = [":datasheet"],
+)
+
+# Every lowered unit in the crates below, and every family a macro
+# writes, has a datasheet that says it covers it. A crate that gains
+# lowered units adds its sources here.
+sh_test(
+    name = "coverage_test",
+    srcs = ["coverage_test.sh"],
+    data = [
+        "//cpu/vreteno:sources",
+        "//ddr3:sources",
+        "//docs:datasheet_sources",
+        "//gpu:sources",
+        "//lib/parts:sources",
+    ],
+)

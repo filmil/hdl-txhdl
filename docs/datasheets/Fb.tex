@@ -1,0 +1,114 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Fb
+\datasheet{Fb}{The GPU's framebuffer: a memory of one word per pixel behind an AXI peripheral end.}
+
+\dsfacts{\code{gpu/src/fb.rs}}{\code{gpu::fb::Fb}}%
+{\code{//docs:gpu}, \code{//docs:axi}}
+
+\subsection*{Function}
+
+\code{Fb} is \code{N} words of memory, \code{px}, behind the
+peripheral end of an AXI link. A pixel is one word. The rasteriser
+writes pixels into it, and in the GPU's runs the same memory also
+holds the display list and its count, which the rasteriser reads.
+
+It is the peripheral client of an \code{AxiPer}: requests come on
+\code{req} and write beats on \code{wd}, and answers go out on
+\code{ans} and \code{rb}. It answers single-beat bursts, which is all
+the rasteriser makes.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The width of the link's address, in bits. \\
+\code{I} & The width of the AXI identifier, in bits. \\
+\code{N} & Words of memory, a power of two. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables use \code{Fb<16, 2, 1024>}, the framebuffer of
+\code{//gpu:trace}.
+
+\subsection*{Address map}
+
+The word a burst names is its address shifted down by two, cut to
+sixteen bits, and masked with \code{N}~$-$~1. The memory itself gives
+no word a meaning. In \code{//gpu:trace} and the tests of
+\code{gpu/src/sim.rs}, with \code{N} of 1024:
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.6\textwidth}@{}}
+\toprule
+Byte address & What \code{sim.rs} puts there \\
+\midrule
+\code{0x000} & The framebuffer, sixteen by sixteen pixels, a word
+each. \\
+\code{0x400} & The display list, eight words an instruction. \\
+\code{0x600} & The count of instructions, written last. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{Fb}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A read is taken when \code{rb} has room and no write is waiting
+for its beat. It is answered on \code{rb} in the cycle it is taken,
+with the word from \code{px}, \code{OKAY} and \code{last} set.
+\item A write is taken when no write is waiting. Its word and its
+identifier go into \code{paddr} and \code{pid}, and \code{pend} is
+set.
+\item The held write's beat is taken when it has arrived and
+\code{ans} has room. The whole beat is written to the word, and
+\code{ans} sends \code{OKAY} with \code{pid}. The strobe is not read.
+\item While a write waits for its beat, no request of either kind is
+taken.
+\item An address beyond the memory wraps rather than ending the run.
+\item \code{pixel} reads a word back for a run or a test.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//gpu:gpu\_test} renders every scene on the rasteriser
+through the link into \code{Fb}, reads the pixels back and compares
+each with the model in \code{gpu/src/model.rs}. The tests are
+\code{a\_scene\_of\_every\_kind\_agrees\_with\_the\_model},
+\code{a\_clear\_says\_only\_its\_colour},
+\code{a\_triangle\_is\_the\_same\_whichever\_way\_it\_is\_wound},
+\code{a\_triangle\_hanging\_off\_the\_screen\_is\_clipped},
+\code{a\_single\_pixel\_and\_an\_empty\_box} and
+\code{pseudorandom\_scenes\_agree\_with\_the\_model}.
+\item The build simulates \code{Fb<16, 2, 1024>}'s netlist, with the
+display list and its count in \code{px}, against the trace of
+\code{//gpu:trace} under nvc and Verilator:
+\code{//docs:gpu\_sim\_fb\_fb\_tb\_test} and
+\code{//docs:gpu\_vsim\_fb\_test}.
+\item \code{//gpu:trace} and \code{//gpu:demo} assert that the
+framebuffer equals the model's picture. The build runs
+\code{//gpu:demo} to draw the picture in \code{//docs:gpu}.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{gpu::sim::run} and \code{gpu::sim::run\_list}, and so the GPU's
+tests, \code{//gpu:trace} and \code{//gpu:demo}. The system's
+\code{//soc:demo} draws the core's display list a second time with
+\code{run\_list}, on a plain link into \code{Fb}, and checks that the
+picture is the same. On the lattice itself the memory is the
+simulation-only \code{Ram}.
+
+\subsection*{Limits}
+
+It serves bursts of one beat and does not look at a burst's length or
+strobe. It holds one write at a time. \code{//docs:gpu} states that
+this is why the demonstration takes about three cycles a pixel. The
+word index is sixteen bits wide, so the framebuffer reaches at most
+65536 words.

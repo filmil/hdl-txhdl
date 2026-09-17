@@ -1,0 +1,92 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: EthRx
+\datasheet{EthRx}{The receive half of the Ethernet MAC: frames off GMII, checked, onto a channel.}
+
+\dsfacts{\code{lib/parts/src/eth.rs}}{\code{txhdl\_parts::eth::EthRx}}%
+{\code{//docs:eth}}
+
+\subsection*{Function}
+
+\code{EthRx} takes a frame off GMII: \code{rxd}, a byte per cycle,
+\code{rx\_dv} and \code{rx\_er}. It stores the whole frame and checks
+its CRC-32 frame check sequence. Only then does it offer the frame's
+bytes on the channel \code{rx}, each an \code{EthByte}, without the
+preamble and the check sequence. It drops a frame whose check fails.
+The unit runs on one clock, so on a board it can run on the receive
+clock the PHY recovers from the line.
+
+\subsection*{Parameters}
+
+\code{EthRx} has no type parameters. Its frame memory holds
+\code{FRAME\_MAX} bytes, 2048, a constant of the module.
+
+\dstables{EthRx}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \code{phase} is hunting 0, receiving 1 and offering 2.
+\item While hunting, \code{rx\_dv} high with \code{0xd5} on \code{rxd}
+starts a frame. The unit clears \code{len} and \code{bad}, and sets the
+CRC register to \code{CRC\_INIT}. It passes over \code{0x55}.
+\item While hunting, any other byte with \code{rx\_dv} high is the
+middle of a frame whose start the unit missed. The unit sets
+\code{skip} and ignores the line until \code{rx\_dv} falls.
+\item While receiving, the unit stores a byte per cycle for as long as
+\code{rx\_dv} stays high. The CRC register runs over every byte, the
+check sequence included. \code{bad} records any cycle with
+\code{rx\_er} high.
+\item When \code{rx\_dv} falls, the frame is good if \code{bad} is low,
+the register holds \code{CRC\_RESIDUE}, and \code{len} is more than
+four. A good frame goes to offering. The unit drops any other frame and
+adds one to \code{dropped}.
+\item While offering, the unit sends one byte on \code{rx} each cycle
+\code{rx} is ready. It offers \code{len} less four bytes, and marks the
+last. After the last it adds one to \code{frames} and hunts again.
+\item A frame that arrives while the unit is offering is dropped:
+the unit sets \code{skip} and adds one to \code{dropped}, once for that
+frame.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item The tests below are in \code{lib/parts/src/eth.rs}, and run in
+\code{//lib/parts:parts\_test}. Each loops \code{EthTx} into the
+receiver a cycle late.
+\item \code{a\_frame\_goes\_out\_as\_the\_model\_says\_and\_comes\_back}
+checks that a frame of 20 bytes comes back padded to sixty, and a frame
+of 100 bytes comes back as it went.
+\item \code{frames\_at\_the\_minimum\_length} does the same at 59, 60
+and 61 bytes.
+\item \code{a\_corrupted\_frame\_is\_dropped} flips a byte of the second
+of three frames. It checks that the other two come back and that one
+frame is counted dropped.
+\item \code{a\_frame\_on\_a\_busy\_receiver\_is\_dropped} holds the
+client off. It checks that the second frame is dropped and counted, and
+that the first is intact.
+\item \code{ex\_eth} runs the unit with one byte of the second frame
+flipped on the wire, and asserts that the receiver dropped one frame.
+The build simulates the netlist of \code{EthRx} against that run under
+nvc and Verilator: \code{//docs:eth\_sim\_eth\_rx\_eth\_rx\_tb\_test}
+and \code{//docs:eth\_vsim\_eth\_rx\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+The example \code{ex\_eth}. The echo design for the AX7A200B:
+\code{//eth:netlist} writes the Verilog of \code{eth\_rx}, and
+\code{eth/board/eth\_echo.v} instantiates it on the PHY's receive
+clock. \code{eth/board/eth\_cdc.v} takes its bytes across to the
+transmit clock. \code{//eth:echo\_synth} and \code{//eth:echo\_pnr} put
+that design through Vivado to a bitstream. \code{//docs:eth} states
+that it has not yet run on the board.
+
+\subsection*{Limits}
+
+The unit holds one frame. A client that has not yet taken a frame
+loses the next one. \code{len} stops at 2047, so the unit stores any
+further bytes of a longer frame in the last slot. Only gigabit works:
+at 100 or 10~Mbit a PHY sends a nibble per cycle, and the unit does not
+take a byte over two cycles. The unit reads \code{rx\_er} only while
+receiving.
