@@ -152,7 +152,12 @@ impl Asm {
 /// in x24, 0xfe01 in x25, -220 in x26, -55 in x29 and -2 in x30, and
 /// has written OK, a newline and the three bytes to the serial port.
 pub fn demo() -> Vec<u32> {
-    let mut a = Asm::default();
+    // Every instruction that has a compressed spelling is written in
+    // it, as a compiler would, so the fetch sees both lengths.
+    let mut a = Asm {
+        compress: true,
+        ..Asm::default()
+    };
     let (top, done, double) = (a.label(), a.label(), a.label());
     let (handler, sync, count) = (a.label(), a.label(), a.label());
     a.emit(lui(2, DATA_BASE >> 12)); // x2 = data base
@@ -244,6 +249,7 @@ pub fn demo() -> Vec<u32> {
     a.place(double);
     a.emit(add(10, 10, 10));
     a.emit(jalr(0, 1, 0)); // return
+    a.align(); // mtvec holds a whole word's address
     a.place(handler);
     a.emit(csrrs(23, CSR_MCAUSE, 0)); // x23 = mcause
     a.to(sync, |o| bge(23, 0, o)); // an exception: cause positive
