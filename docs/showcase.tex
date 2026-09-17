@@ -1,8 +1,8 @@
 % SPDX-License-Identifier: Apache-2.0
 %
 % What has been built: two pages on the language, the parts, the core
-% and the GPU. Built by //docs:showcase. Every listing is included from
-% the tree and the picture is the one the GPU drew.
+% and Razboj. Built by //docs:showcase. Every listing is included from
+% the tree and the picture is the one Razboj drew.
 \documentclass[journal,9pt]{IEEEtran}
 
 \newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
@@ -64,9 +64,9 @@ label={lst:w-unit}]{lib/examples/ex_cheat.rs}
 
 Table~\ref{tab:w-units} lists every unit the build lowers to Verilog
 and VHDL. Table~\ref{tab:w-systems} lists the systems it assembles
-from them. Together they are 30\,488 lines of Rust: 10\,325 of runtime
+from them. Together they are 30\,491 lines of Rust: 10\,327 of runtime
 and macros, 7\,010 of parts, 5\,721 in fifty examples, 4\,964 of
-Vreteno with its board, and 2\,468 of the GPU, DDR3, Ethernet, HDMI
+Vreteno with its board, and 2\,469 of Razboj, DDR3, Ethernet, HDMI
 and the SoC.
 
 \begin{table}[htbp]
@@ -105,7 +105,7 @@ The examples' own units & examples & all 21 \\
 System & Made of & Checked by \\
 \midrule
 Vreteno & core, router, 3 devices & model, 6 netlists \\
-The GPU & rasteriser, link, memory & model, 2 netlists \\
+Razboj, a GPU & rasteriser, link, memory & model, 2 netlists \\
 The AXI link & host and peripheral & 2 netlists \\
 The AXI router & 1 host, 3 peripherals & its netlist \\
 The AXI-Lite bridge & 1 host, 2 banks & 3 netlists \\
@@ -177,15 +177,15 @@ renaming: an identifier belongs to the host that made it, so a
 peripheral bridge gives every request one of its own and remembers
 the node and the identifier to answer under.
 
-A core, a GPU, a memory and a serial port sit on the four corners of a
+Vreteno, Razboj, a memory and a serial port sit on the four corners of a
 two by two lattice and run together: the core works out an
 icosahedron and writes it into the memory they share as a display
 list, and the rasteriser, which has been watching for it, reads the
-list and draws it there. Drawing across the lattice takes the GPU a
+list and draws it there. Drawing across the lattice takes Razboj a
 little over twice as long as on a link, which is what never waiting
 for an answer costs on a network that moves one packet a node a cycle.
 
-\section{A GPU}
+\section{Razboj, a GPU}
 
 \begin{figure}[htbp]
 \centering
@@ -263,7 +263,7 @@ Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
 its ports. \code{bazel test //...} runs a hundred and three targets, of which ninety
 are netlists under both simulators; the rest are the core's model and
-programs, the board's own run, the GPU, the parts, the SoC's run, and
+programs, the board's own run, Razboj, the parts, the SoC's run, and
 the tools. Two more are tagged manual because they want Vivado: the
 board and its DDR3 under its simulator. Every claim about what
 Rust accepts was compiled first, as a probe kept in the tree,
@@ -275,7 +275,7 @@ The lowering emits a name as it is written and neither escapes nor
 rejects its targets' reserved words, so a register called \code{next}
 produces VHDL that will not analyse. The core cannot load a program it
 was not built with, because its instruction memory is not on the bus.
-The GPU has no depth buffer, no interpolation and no texture, and
+Razboj has no depth buffer, no interpolation and no texture, and
 fuzzing the AXI link is not yet a step of the build. Each is an issue
 on the repository rather than a paragraph here.
 

@@ -25,7 +25,7 @@ covered=$(grep -h '^% covers:' $sheets | sed 's/^% covers://' \
 # for Name`, read across the lines up to its opening brace, and the
 # first argument of each family macro.
 sources=$(find -L . \( -path '*/lib/parts/src/*' -o -path '*/cpu/vreteno/src/*' \
-  -o -path '*/gpu/src/*' -o -path '*/ddr3/src/*' \) -name '*.rs' | sort)
+  -o -path '*/gpu/razboj/src/*' -o -path '*/ddr3/src/*' \) -name '*.rs' | sort)
 components=$(
   for f in $sources; do
     awk '

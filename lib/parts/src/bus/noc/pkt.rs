@@ -3,7 +3,7 @@
 //! node and stamped with the node it came from.
 //!
 //! A packet is one shape, as wide as the widest beat needs, for the
-//! same reason the GPU's instruction is: every field a step reads has
+//! same reason Razboj's instruction is: every field a step reads has
 //! to be at a fixed place, and a link that carried a header and then
 //! a body would want a sequencer at both ends before anything else
 //! worked. A read address beat leaves the data and the strobe at

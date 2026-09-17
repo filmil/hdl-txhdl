@@ -37,7 +37,7 @@ Seventeen documents are typeset here, and `cover.tex` names them all:
 `zero.tex` is the tutorial from an empty directory, `//docs:zero`, on `tutorial/blinky/`;
 `station.tex` is the tutorial on the reservation station, `//docs:station`;
 `axi.tex` is the tutorial on the AXI link, `//docs:axi`, and holds its examples;
-`gpu.tex` is the minimal GPU on that link, `//docs:gpu`, with the picture it drew;
+`razboj.tex` is Razboj, the minimal GPU on that link, `//docs:razboj`, with the picture it drew;
 `noc.tex` is the network on chip, `//docs:noc`, nodes on a lattice with AXI at their exits;
 `stats.tex` is the repository in numbers, a snapshot, `//docs:stats`;
 `dynamics.tex` is how the project was built, with its timeline chart, `//docs:dynamics`;

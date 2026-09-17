@@ -3,7 +3,7 @@
 //! peripheral end of a link to the host lines of a pipelined Wishbone
 //! bus, which is what controllers written elsewhere often speak.
 //!
-//! [`AxiWb`] is a peripheral client written as hardware, as the GPU's
+//! [`AxiWb`] is a peripheral client written as hardware, as Razboj's
 //! framebuffer is. It takes one single-beat burst at a time and puts it
 //! on the Wishbone lines as one request: `cyc` and `stb` held until the
 //! peripheral takes it, a cycle with `cyc`, `stb` and no `stall`; then

@@ -1,15 +1,15 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: Fb
-\datasheet{Fb}{The GPU's framebuffer: a memory of one word per pixel behind an AXI peripheral end.}
+\datasheet{Fb}{Razboj's framebuffer: a memory of one word per pixel behind an AXI peripheral end.}
 
-\dsfacts{\code{gpu/src/fb.rs}}{\code{gpu::fb::Fb}}%
-{\code{//docs:gpu}, \code{//docs:axi}}
+\dsfacts{\code{gpu/razboj/src/fb.rs}}{\code{razboj::fb::Fb}}%
+{\code{//docs:razboj}, \code{//docs:axi}}
 
 \subsection*{Function}
 
 \code{Fb} is \code{N} words of memory, \code{px}, behind the
 peripheral end of an AXI link. A pixel is one word. The rasteriser
-writes pixels into it, and in the GPU's runs the same memory also
+writes pixels into it, and in Razboj's runs the same memory also
 holds the display list and its count, which the rasteriser reads.
 
 It is the peripheral client of an \code{AxiPer}: requests come on
@@ -32,14 +32,14 @@ Parameter & Meaning \\
 \end{center}
 
 The tables use \code{Fb<16, 2, 1024>}, the framebuffer of
-\code{//gpu:trace}.
+\code{//gpu/razboj:trace}.
 
 \subsection*{Address map}
 
 The word a burst names is its address shifted down by two, cut to
 sixteen bits, and masked with \code{N}~$-$~1. The memory itself gives
-no word a meaning. In \code{//gpu:trace} and the tests of
-\code{gpu/src/sim.rs}, with \code{N} of 1024:
+no word a meaning. In \code{//gpu/razboj:trace} and the tests of
+\code{gpu/razboj/src/sim.rs}, with \code{N} of 1024:
 
 \begin{center}\footnotesize
 \begin{tabular}{@{}lp{0.6\textwidth}@{}}
@@ -77,9 +77,9 @@ taken.
 \subsection*{Verification}
 
 \begin{itemize}
-\item \code{//gpu:gpu\_test} renders every scene on the rasteriser
+\item \code{//gpu/razboj:razboj\_test} renders every scene on the rasteriser
 through the link into \code{Fb}, reads the pixels back and compares
-each with the model in \code{gpu/src/model.rs}. The tests are
+each with the model in \code{gpu/razboj/src/model.rs}. The tests are
 \code{a\_scene\_of\_every\_kind\_agrees\_with\_the\_model},
 \code{a\_clear\_says\_only\_its\_colour},
 \code{a\_triangle\_is\_the\_same\_whichever\_way\_it\_is\_wound},
@@ -88,18 +88,18 @@ each with the model in \code{gpu/src/model.rs}. The tests are
 \code{pseudorandom\_scenes\_agree\_with\_the\_model}.
 \item The build simulates \code{Fb<16, 2, 1024>}'s netlist, with the
 display list and its count in \code{px}, against the trace of
-\code{//gpu:trace} under nvc and Verilator:
-\code{//docs:gpu\_sim\_fb\_fb\_tb\_test} and
-\code{//docs:gpu\_vsim\_fb\_test}.
-\item \code{//gpu:trace} and \code{//gpu:demo} assert that the
+\code{//gpu/razboj:trace} under nvc and Verilator:
+\code{//docs:razboj\_sim\_fb\_fb\_tb\_test} and
+\code{//docs:razboj\_vsim\_fb\_test}.
+\item \code{//gpu/razboj:trace} and \code{//gpu/razboj:demo} assert that the
 framebuffer equals the model's picture. The build runs
-\code{//gpu:demo} to draw the picture in \code{//docs:gpu}.
+\code{//gpu/razboj:demo} to draw the picture in \code{//docs:razboj}.
 \end{itemize}
 
 \subsection*{Used by}
 
-\code{gpu::sim::run} and \code{gpu::sim::run\_list}, and so the GPU's
-tests, \code{//gpu:trace} and \code{//gpu:demo}. The system's
+\code{razboj::sim::run} and \code{razboj::sim::run\_list}, and so Razboj's
+tests, \code{//gpu/razboj:trace} and \code{//gpu/razboj:demo}. The system's
 \code{//soc:demo} draws the core's display list a second time with
 \code{run\_list}, on a plain link into \code{Fb}, and checks that the
 picture is the same. On the lattice itself the memory is the
@@ -108,7 +108,7 @@ simulation-only \code{Ram}.
 \subsection*{Limits}
 
 It serves bursts of one beat and does not look at a burst's length or
-strobe. It holds one write at a time. \code{//docs:gpu} states that
+strobe. It holds one write at a time. \code{//docs:razboj} states that
 this is why the demonstration takes about three cycles a pixel. The
 word index is sixteen bits wide, so the framebuffer reaches at most
 65536 words.

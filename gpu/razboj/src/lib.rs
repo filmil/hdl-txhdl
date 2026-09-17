@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! A minimal GPU in TxHDL: a rasteriser that reads a display list and
-//! writes pixels into memory over AXI.
+//! Razboj, a minimal GPU in TxHDL: a rasteriser that reads a display
+//! list and writes pixels into memory over AXI.
 //!
 //! - [`op`]: what a display list entry says.
 //! - [`raster`]: the rasteriser, a unit and an AXI host.

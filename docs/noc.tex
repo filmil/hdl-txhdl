@@ -99,7 +99,7 @@ node it came from.
 \nocpart{pkt.rs}{pkt}{A packet.}{lst:n-pkt}
 
 It is one shape, as wide as the widest beat needs, for the same reason
-the GPU's instruction is~\cite{gpu}: every field a step reads has to
+Razboj's instruction is~\cite{gpu}: every field a step reads has to
 be at a fixed place, and a link that carried a header and then a body
 would want a sequencer at both ends before anything else worked. A
 read address beat leaves the data and the strobe at zero; a write
@@ -305,7 +305,7 @@ memory and drew it there, two hops away from the core.}
 A core at 0,0, a GPU at 1,0, a memory at 0,1 and a serial port at 1,1:
 two hosts and two peripherals, none of which knows that the others are
 there or that the network is. The core is Vreteno running a program
-compiled for it; the GPU is the rasteriser; the memory is the
+compiled for it; the GPU is Razboj, the rasteriser; the memory is the
 simulation-only \code{Ram}; the serial port is the same \code{Uart}
 the core has always had, with a terminal on its lines.
 
@@ -407,8 +407,8 @@ F.~Filmar and D.~Janković, ``AXI in TxHDL,'' project repository
 \code{HDL/txhdl}, \code{//docs:axi}, 2026.
 
 \bibitem{gpu}
-F.~Filmar and D.~Janković, ``A minimal GPU in TxHDL,'' project
-repository \code{HDL/txhdl}, \code{//docs:gpu}, 2026.
+F.~Filmar and D.~Janković, ``Razboj: A minimal GPU in TxHDL,'' project
+repository \code{HDL/txhdl}, \code{//docs:razboj}, 2026.
 
 \bibitem{cover}
 F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository

@@ -7,7 +7,7 @@
 //! the five channels, so they may be as large and as simple as the
 //! run wants: a memory of a megabyte is a `Vec`, not a `Mem` the
 //! netlist would have to hold. A peripheral that is to become
-//! hardware is written in the lowered subset instead, as the GPU's
+//! hardware is written in the lowered subset instead, as Razboj's
 //! framebuffer is.
 //!
 //! The module's name is the contract. `bus::axi` is the link and the

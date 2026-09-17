@@ -823,11 +823,11 @@ waveform(
     ],
 )
 
-# A minimal GPU: the rasteriser and the framebuffer lowered, the
+# Razboj, the minimal GPU: the rasteriser and the framebuffer lowered, the
 # whole of a small render traced.
 waveform(
-    name = "gpu",
-    example = "//gpu:trace",
+    name = "razboj",
+    example = "//gpu/razboj:trace",
     lowered = [
         ("raster", "raster"),
         ("fb", "fb"),
@@ -852,12 +852,12 @@ waveform(
     width = 8.2,
 )
 
-# The demonstration's picture, rendered by the GPU and written by it.
+# The demonstration's picture, rendered by Razboj and written by it.
 genrule(
-    name = "gpu_scene",
+    name = "razboj_scene",
     outs = ["scene.png"],
-    cmd = "GPU_PNG=$@ $(location //gpu:demo) > /dev/null",
-    tools = ["//gpu:demo"],
+    cmd = "RAZBOJ_PNG=$@ $(location //gpu/razboj:demo) > /dev/null",
+    tools = ["//gpu/razboj:demo"],
 )
 
 # An AXI4 link, peer to peer: the two trackers lowered, the five AXI
@@ -1738,30 +1738,30 @@ latex_document(
         ":asic_counts",
         ":buildstamp",
         ":vendored_tex",
-        ":gpu_scene",
+        ":razboj_scene",
         ":paper_cheat_timing",
         "//lib/examples:sources",
     ],
     deps = ["housestyle.tex"],
 )
 
-# A minimal GPU in TxHDL: the rasteriser, the framebuffer, the
-# picture the GPU drew and the waveform of the traced run.
+# Razboj, a minimal GPU in TxHDL: the rasteriser, the framebuffer, the
+# picture Razboj drew and the waveform of the traced run.
 latex_document(
-    name = "gpu",
-    main = "gpu.tex",
+    name = "razboj",
+    main = "razboj.tex",
     data = [
         ":buildstamp",
         ":vendored_tex",
-        ":gpu_run",
-        ":gpu_timing",
-        ":gpu_scene",
-        "//gpu:sources",
+        ":razboj_run",
+        ":razboj_timing",
+        ":razboj_scene",
+        "//gpu/razboj:sources",
     ],
     deps = ["housestyle.tex"],
 )
 
-# The picture the GPU drew while the core ran, out of the memory they
+# The picture Razboj drew while the core ran, out of the memory they
 # share on the lattice.
 genrule(
     name = "soc_scene",
@@ -1880,7 +1880,7 @@ combined_pdf(
         "TxHDL from Zero: A Blinky in Bazel",
         "A Reservation Station in TxHDL",
         "AXI in TxHDL",
-        "A Minimal GPU in TxHDL",
+        "Razboj: A Minimal GPU in TxHDL",
         "A Network on Chip in TxHDL",
         "Ethernet in TxHDL",
         "HDMI in TxHDL",
@@ -1903,7 +1903,7 @@ combined_pdf(
         ":zero",
         ":station",
         ":axi",
-        ":gpu",
+        ":razboj",
         ":noc",
         ":eth",
         ":hdmi",

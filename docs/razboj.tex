@@ -1,7 +1,7 @@
 % SPDX-License-Identifier: Apache-2.0
 %
-% A minimal GPU in TxHDL. Built by //docs:gpu. Every listing is
-% included from the tree, the picture is what the GPU drew when the
+% Razboj, a minimal GPU in TxHDL. Built by //docs:razboj. Every listing
+% is included from the tree, the picture is what Razboj drew when the
 % build ran it, and the waveform is that run's.
 \documentclass[journal,9pt]{IEEEtran}
 
@@ -16,9 +16,9 @@
 \newcommand{\gpupart}[4]{%
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
-linerange=#2-#2,caption={#3},label={#4}]{gpu/src/#1}}
+linerange=#2-#2,caption={#3},label={#4}]{gpu/razboj/src/#1}}
 
-\title{A Minimal GPU in TxHDL}
+\title{Razboj: A Minimal GPU in TxHDL}
 
 \author{Filip Filmar and Dragiša Janković%
 \thanks{Both authors are independent. Filip Filmar is the
@@ -28,7 +28,7 @@ reached at linkedin.com/in/dragisa-jankovic.}%
 link~\cite{axi} for something other than a test, for a reader who has
 met TxHDL through the step-by-step tutorial~\cite{tutorial}. Every
 listing is included from the project repository \code{HDL/txhdl} at
-build time, the picture is the one the GPU drew when the build ran
+build time, the picture is the one Razboj drew when the build ran
 it, and the waveform is that run's. The cover~\cite{cover} lists
 every document.}%
 \thanks{The authors used a large language model, Claude, as an
@@ -37,20 +37,21 @@ the documents and the programs; every commit of the repository says
 so and carries the prompts that led to it, verbatim.}%
 \thanks{\buildstamp}}
 
-\markboth{A Minimal GPU in TxHDL}{Filmar and Janković: A Minimal GPU in TxHDL}
+\markboth{Razboj: A Minimal GPU in TxHDL}{Filmar and Janković: Razboj: A Minimal GPU in TxHDL}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-A rasteriser reads a display list and writes pixels into memory. This
-one is a unit of about a hundred lines that walks a box one pixel a
+A rasteriser reads a display list and writes pixels into memory.
+Razboj, the minimal GPU of this document, is one: a unit of about a
+hundred lines that walks a box one pixel a
 cycle, keeps three edge functions as it goes, and writes the pixels
 that are inside the primitive as single-beat AXI bursts; the
 framebuffer is a second unit, a memory behind the other end of the
 link. The display list is in that memory too, and the rasteriser
 reads it over the same link, so a program that writes the list is all
-it takes to give the GPU work. Both are written in the lowered subset,
+it takes to give Razboj work. Both are written in the lowered subset,
 so both are netlists,
 and the build simulates each netlist against the run that drew the
 picture in this document, under \code{nvc} and under Verilator. The
@@ -70,13 +71,13 @@ rectangles and four triangles.
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.62\columnwidth]{scene.png}
-\caption{The demonstration, as the GPU drew it. Eight entries, four
+\caption{The demonstration, as Razboj drew it. Eight entries, four
 thousand and ninety-six pixels, thirteen thousand cycles.}
 \label{fig:g-scene}
 \end{figure}
 
 \gpupart{scene.rs}{scene}{The display list of the picture above, from
-\code{gpu/src/scene.rs}, which drew Figure~\ref{fig:g-scene}.}{lst:g-scene}
+\code{gpu/razboj/src/scene.rs}, which drew Figure~\ref{fig:g-scene}.}{lst:g-scene}
 
 \section{The Display List}
 \label{sec:g-list}
@@ -134,7 +135,7 @@ would stay as they are.
 \code{Insn} is how the list is held in a program and in a model.
 In the memory it is words, and the format of those words is the one
 thing software and hardware both have to agree on, so it is stated
-once, in \code{gpu/src/dl.rs}.
+once, in \code{gpu/razboj/src/dl.rs}.
 
 \gpupart{dl.rs}{format}{The display list as a program writes it:
 eight words an instruction, six of which say anything, and no field
@@ -221,7 +222,7 @@ the read waits a cycle for it.
 
 \begin{figure}[htbp]
 \centering
-\input{gpu_timing.tex}
+\input{razboj_timing.tex}
 \caption{The triangle fetched and begun. \code{phase} is one while
 the front end reads the instruction's words, which land one at a
 time on \code{rdata}, and turns to two as the last word lands; in
@@ -271,9 +272,9 @@ starts a channel's \code{ready} high for that reason: an empty
 channel has room, and the first cycle has no sample in the trace to
 say so.
 
-\lstinputlisting[style=ascii,caption={What \code{//gpu:trace} printed
+\lstinputlisting[style=ascii,caption={What \code{//gpu/razboj:trace} printed
 when the build ran it: the same three kinds of entry on a screen
-small enough to print.},label={lst:g-out}]{out_gpu.txt}
+small enough to print.},label={lst:g-out}]{out_razboj.txt}
 
 Three names had to be changed to lower. A register called \code{next}
 gives VHDL a signal called \code{next}, which it reserves; a register
@@ -304,7 +305,7 @@ around.
 
 A CPU writing the display list is the step the bus was for, and it is
 taken in the network document~\cite{noc}: the core~\cite{vreteno}
-works out an icosahedron and writes it into a memory the GPU shares,
+works out an icosahedron and writes it into a memory Razboj shares,
 two hops away on a lattice.
 
 \begin{thebibliography}{9}

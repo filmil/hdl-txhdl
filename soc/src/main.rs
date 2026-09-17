@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The system, run: a core and a GPU on two corners of a lattice, a
+//! The system, run: Vreteno and Razboj on two corners of a lattice, a
 //! memory and a serial port on the other two, all at once.
 //!
 //! The scene is not written here. The core runs a program compiled
@@ -10,7 +10,8 @@
 //! What comes out is the terminal's transcript and the picture, both
 //! read out of the one memory at the end, and the list itself, which
 //! is what the core asked for and so what the picture is held to.
-use gpu::{image, model};
+use razboj::sim::run_list;
+use razboj::{image, model};
 use soc::{run, FB_BASE, H, LOGW};
 
 /// The screen's width.
@@ -61,7 +62,7 @@ fn main() {
     // rasteriser alone on a link with its framebuffer behind it. The
     // picture has to be the same one, and the cycles are the ones to
     // hold the lattice's against, counted from the list being ready.
-    let alone = gpu::sim::run_list::<LOGW, H, LINK_WORDS, LINK_DL, LINK_CTRL>(
+    let alone = run_list::<LOGW, H, LINK_WORDS, LINK_DL, LINK_CTRL>(
         &ran.list, false, false,
     );
     assert_eq!(alone.fb, ran.fb, "the same list drew a different picture");

@@ -113,7 +113,7 @@ order. The build simulates the netlist of \code{AxiHost<16, 32, 4, 2,
 \end{itemize}
 \item The tests of the router, the AXI-Lite bridge, the Wishbone bridge
 and the network on chip in \code{txhdl\_parts} run it in simulation.
-So do \code{//ddr3:ddr3\_test}, \code{//gpu:gpu\_test},
+So do \code{//ddr3:ddr3\_test}, \code{//gpu/razboj:razboj\_test},
 \code{//soc:demo\_test} and \code{//cpu/vreteno:lockstep}.
 \end{itemize}
 
@@ -125,7 +125,7 @@ The examples \code{ex\_axi}, \code{ex\_axi\_serve}, \code{ex\_axi\_router},
 \code{cpu/vreteno/src/run.rs} and \code{cpu/vreteno/src/main.rs}, and
 the board's design, \code{Board}, as its field \code{host}. The
 four-corner system in \code{soc/src/lib.rs}, once for the core and
-once for the GPU. The GPU's simulation in \code{gpu/src/sim.rs}.
+once for Razboj. Razboj's simulation in \code{gpu/razboj/src/sim.rs}.
 
 \subsection*{Limits}
 

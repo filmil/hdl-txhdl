@@ -287,7 +287,7 @@ same link \code{axi} makes, with the two ends unwrapped.
                   PerClient      that is a unit
 \end{lstlisting}
 
-A rasteriser written this way is the GPU's~\cite{gpu}, and it is the
+A rasteriser written this way is Razboj's~\cite{gpu}, and it is the
 first client of this link that is hardware. Nothing about the link
 changes between the two: the same two trackers, the same five AXI
 channels, the same identifiers.
@@ -324,7 +324,7 @@ peripheral's. There is no length, so a longer burst is not served
 correctly and must not be sent to it. There is no strobe, so every
 write replaces the whole word. The timer of the Vreteno
 core~\cite{vreteno} has the same shape, with four words and the
-strobes. The framebuffer of the GPU~\cite{gpu} is the same idea with a
+strobes. The framebuffer of Razboj~\cite{gpu} is the same idea with a
 whole memory and bursts.
 
 The run drives it from a host end made by \code{axi\_to\_unit}, the
@@ -381,7 +381,7 @@ past the end \code{SlvErr}, which is what a peripheral says to an
 address it has but cannot serve.
 
 A peripheral that is to become hardware is written the other way, in
-the lowered subset against the five channels, as the GPU's
+the lowered subset against the five channels, as Razboj's
 framebuffer~\cite{gpu} is. The two are not alternatives: a design
 usually wants the simulation one first and the hardware one later,
 and the client above them does not change when it swaps.
@@ -789,8 +789,8 @@ F.~Filmar and D.~Janković, ``A reservation station in TxHDL,''
 project repository \code{HDL/txhdl}, \code{//docs:station}, 2026.
 
 \bibitem{gpu}
-F.~Filmar and D.~Janković, ``A minimal GPU in TxHDL,'' project
-repository \code{HDL/txhdl}, \code{//docs:gpu}, 2026.
+F.~Filmar and D.~Janković, ``Razboj: A minimal GPU in TxHDL,'' project
+repository \code{HDL/txhdl}, \code{//docs:razboj}, 2026.
 
 \bibitem{vreteno}
 F.~Filmar and D.~Janković, ``Vreteno: an RV32IM core in TxHDL,''

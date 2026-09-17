@@ -4,11 +4,11 @@
 //! generated from it can be replayed. It writes the trace and the two
 //! units' netlists, so the build checks the lowering against this
 //! run, and prints the picture it drew.
-use gpu::image;
-use gpu::model;
-use gpu::op;
-use gpu::scene;
-use gpu::sim;
+use razboj::image;
+use razboj::model;
+use razboj::op;
+use razboj::scene;
+use razboj::sim;
 
 /// The traced screen: sixteen by sixteen.
 const LOGW: usize = 4;

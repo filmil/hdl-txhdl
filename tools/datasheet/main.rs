@@ -12,8 +12,8 @@ use txhdl::comp::trace::Kind;
 use txhdl::netlist::Lowered;
 
 use ddr3::Ddr3Per;
-use gpu::fb::Fb;
-use gpu::raster::Raster;
+use razboj::fb::Fb;
+use razboj::raster::Raster;
 use txhdl::types::U;
 use txhdl_parts::buffer::Buffer;
 use txhdl_parts::bus::axi::{AxiHost, AxiPer};

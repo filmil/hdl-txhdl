@@ -21,7 +21,7 @@ all under `//docs`:
 * `//docs:cover` names every document and says which to read for what.
   A new document is added there in the same change that creates it.
 * `//docs:showcase` is two pages on the whole of it: the rule, the
-  parts, Vreteno, the GPU, how it is all checked, and what is not
+  parts, Vreteno, Razboj, how it is all checked, and what is not
   done. It is the one document meant to be read first and alone, so
   it stays at two pages and every number in it comes from a count
   rather than from memory. Its tables claim to be exhaustive, so a
@@ -80,8 +80,8 @@ all under `//docs`:
   and not in
   `//docs:examples`,
   because a bus is a subsystem rather than one more construct.
-* `//docs:gpu` is the minimal GPU under `//gpu`: a rasteriser that
-  reads a display list and writes pixels into memory over the AXI
+* `//docs:razboj` is Razboj, the minimal GPU under `//gpu/razboj`: a
+  rasteriser that reads a display list and writes pixels into memory over the AXI
   link, the framebuffer behind the other end of it, the picture the
   build had it draw, and the netlists of both. It is the first client
   of the link that is hardware rather than a testbench.
@@ -89,7 +89,7 @@ all under `//docs`:
   `bus::noc`: a node with a link to each of its four neighbours and an
   exit, two virtual channels, dimension-order routing, and the bridge
   that puts an AXI link across it. Its tests drive four nodes, both
-  bridges and a memory, and `//soc` puts a core, a GPU, a memory and a
+  bridges and a memory, and `//soc` puts Vreteno, Razboj, a memory and a
   serial port on the four corners of one lattice and runs them
   together.
 * `//docs:eth` is the Ethernet part in `//lib/parts` under `eth`: the

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# A minimal GPU in TxHDL: a rasteriser that reads a display list and
+# Razboj, a minimal GPU in TxHDL: a rasteriser that reads a display list and
 # writes pixels into memory over AXI, the framebuffer behind the bus,
 # and the demonstration that renders a scene and shows it.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
@@ -7,7 +7,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 package(default_visibility = ["//visibility:public"])
 
 rust_library(
-    name = "gpu",
+    name = "razboj",
     srcs = [
         "src/dl.rs",
         "src/fb.rs",
@@ -19,7 +19,7 @@ rust_library(
         "src/scene.rs",
         "src/sim.rs",
     ],
-    crate_name = "gpu",
+    crate_name = "razboj",
     edition = "2021",
     deps = [
         "//lib:txhdl",
@@ -34,32 +34,32 @@ filegroup(
     srcs = glob(["src/*.rs"]),
 )
 
-# Render the scene and show it:  bazel run //gpu:demo
+# Render the scene and show it:  bazel run //gpu/razboj:demo
 rust_binary(
     name = "demo",
     srcs = ["src/main.rs"],
     edition = "2021",
     deps = [
-        ":gpu",
+        ":razboj",
         "//lib:txhdl",
     ],
 )
 
 # The traced run, small enough to draw and to replay:
-#   bazel run //gpu:trace
+#   bazel run //gpu/razboj:trace
 rust_binary(
     name = "trace",
     srcs = ["src/trace.rs"],
     edition = "2021",
     deps = [
-        ":gpu",
+        ":razboj",
         "//lib:txhdl",
     ],
 )
 
 # The hardware against the model, pixel by pixel.
 rust_test(
-    name = "gpu_test",
-    crate = ":gpu",
+    name = "razboj_test",
+    crate = ":razboj",
     edition = "2021",
 )

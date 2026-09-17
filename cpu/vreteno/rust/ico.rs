@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! An icosahedron, worked out by the core and filled by the GPU.
+//! An icosahedron, worked out by the core and filled by Razboj, the GPU.
 //!
 //! This is the software half of a display list. The core holds the
 //! solid as twelve vertices and twenty triangles, turns it to face the
@@ -31,7 +31,7 @@
 //!
 //! The addresses below are the agreement with the rest of the system:
 //! `soc::DL_BASE` and `soc::DL_CTRL` are the same numbers, and the
-//! word layout is the one `gpu::dl` states. The count goes in last,
+//! word layout is the one `razboj::dl` states. The count goes in last,
 //! because writing it is what tells the rasteriser the list is ready.
 #![no_std]
 #![no_main]
@@ -46,7 +46,7 @@ const UART: *mut u32 = 0x3000 as *mut u32;
 const DL: *mut u32 = 0x2000 as *mut u32;
 const CTRL: *mut u32 = 0x4000 as *mut u32;
 /// Words an instruction takes, and the words of it that say
-/// anything: `gpu::dl::WORDS` and `gpu::dl::USED`.
+/// anything: `razboj::dl::WORDS` and `razboj::dl::USED`.
 const WORDS: usize = 8;
 const USED: usize = 6;
 

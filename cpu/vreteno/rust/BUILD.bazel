@@ -64,7 +64,7 @@ rust_library(
 )
 
 # An icosahedron, worked out on the core and written into memory as a
-# display list for the GPU to fill. Built exactly as the greeting is.
+# display list for Razboj to fill. Built exactly as the greeting is.
 rust_binary(
     name = "ico",
     srcs = ["ico.rs"],

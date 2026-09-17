@@ -43,7 +43,7 @@ use crate::op::Kind;
 const WORD: usize = 2;
 
 /// The shift from an instruction's index to its byte address, which
-/// is `gpu::dl::BYTE_SHIFT` and is stated here because the lowering
+/// is `razboj::dl::BYTE_SHIFT` and is stated here because the lowering
 /// wants a constant it can see.
 const SHIFT: usize = 5;
 

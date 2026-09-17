@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! A system on one lattice: a core, a GPU, a memory and a serial
-//! port, each on a corner of a two by two network.
+//! A system on one lattice: Vreteno, Razboj the GPU, a memory and a
+//! serial port, each on a corner of a two by two network.
 //!
 //! ```text
-//!     (0,0) Vreteno ------ (1,0) the GPU
+//!     (0,0) Vreteno ------ (1,0) Razboj
 //!        |                      |
 //!     (0,1) memory ------- (1,1) serial port
 //! ```
@@ -23,8 +23,8 @@
 //! cycle, sees it turn non-zero, fetches the list and fills every
 //! triangle in it into the framebuffer at [`FB_BASE`]. Neither waits
 //! on the other through anything but the memory they share.
-use gpu::op::Insn;
-use gpu::raster::Raster;
+use razboj::op::Insn;
+use razboj::raster::Raster;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, join2, join_all, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
@@ -323,11 +323,11 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let count = ram.word(DL_CTRL / 4).raw() as usize;
     let list = (0..count)
         .map(|i| {
-            let at = DL_BASE / 4 + i * gpu::dl::WORDS;
-            let words: Vec<u32> = (0..gpu::dl::USED)
+            let at = DL_BASE / 4 + i * razboj::dl::WORDS;
+            let words: Vec<u32> = (0..razboj::dl::USED)
                 .map(|k| ram.word(at + k).raw() as u32)
                 .collect();
-            gpu::dl::decode(&words)
+            razboj::dl::decode(&words)
         })
         .collect();
     Ran {

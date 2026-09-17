@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# A system on one lattice: a core, a GPU, a memory and a serial port,
+# A system on one lattice: Vreteno, Razboj the GPU, a memory and a serial port,
 # each on a corner of a two by two network on chip.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
@@ -12,7 +12,7 @@ rust_library(
     edition = "2021",
     deps = [
         "//cpu/vreteno:vreteno32",
-        "//gpu",
+        "//gpu/razboj",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
     ],
@@ -27,7 +27,7 @@ rust_binary(
         ":soc",
         "//cpu/vreteno:vreteno32",
         "//cpu/vreteno/rust:ico_program",
-        "//gpu",
+        "//gpu/razboj",
         "//lib:txhdl",
     ],
 )

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The demonstration: render a scene on the GPU and show it.
+//! The demonstration: render a scene on Razboj and show it.
 //!
 //! The picture is printed on the terminal in colour, and written as a
-//! PNG where `GPU_PNG` says, which is how the document gets it. The
+//! PNG where `RAZBOJ_PNG` says, which is how the document gets it. The
 //! framebuffer is compared with the model as the run ends, so the
 //! demonstration is a check as well as a picture.
-use gpu::image;
-use gpu::model;
-use gpu::op;
-use gpu::scene;
-use gpu::sim;
+use razboj::image;
+use razboj::model;
+use razboj::op;
+use razboj::scene;
+use razboj::sim;
 
 /// The screen: sixty-four by sixty-four, one word a pixel.
 const LOGW: usize = 6;
@@ -41,7 +41,7 @@ fn main() {
         ops.len(),
         run.cycles
     );
-    if let Ok(p) = std::env::var("GPU_PNG") {
+    if let Ok(p) = std::env::var("RAZBOJ_PNG") {
         std::fs::write(&p, image::png(&run.fb, W, H, 6)).expect("the PNG");
     }
 }

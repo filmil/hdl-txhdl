@@ -93,7 +93,7 @@ under nvc and Verilator:
 \end{itemize}
 \item The tests of the router, the Wishbone bridge and the network on
 chip in \code{txhdl\_parts} run it in simulation. So do
-\code{//ddr3:ddr3\_test}, \code{//gpu:gpu\_test},
+\code{//ddr3:ddr3\_test}, \code{//gpu/razboj:razboj\_test},
 \code{//soc:demo\_test} and \code{//cpu/vreteno:lockstep}.
 \end{itemize}
 
@@ -105,8 +105,8 @@ Vreteno's run in \code{cpu/vreteno/src/run.rs} and
 \code{cpu/vreteno/src/main.rs}, in front of the data memory and the
 timer. The board's design, \code{Board}, as its fields \code{pdmem},
 \code{ptimer} and \code{pddr3}. The four-corner system in
-\code{soc/src/lib.rs}, and the GPU's simulation in
-\code{gpu/src/sim.rs}.
+\code{soc/src/lib.rs}, and Razboj's simulation in
+\code{gpu/razboj/src/sim.rs}.
 
 \subsection*{Limits}
 

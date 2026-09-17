@@ -1,9 +1,9 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: Raster
-\datasheet{Raster}{The GPU's rasteriser: it reads a display list over AXI and writes one pixel a cycle.}
+\datasheet{Raster}{Razboj's rasteriser: it reads a display list over AXI and writes one pixel a cycle.}
 
-\dsfacts{\code{gpu/src/raster.rs}}{\code{gpu::raster::Raster}}%
-{\code{//docs:gpu}, \code{//docs:noc}}
+\dsfacts{\code{gpu/razboj/src/raster.rs}}{\code{razboj::raster::Raster}}%
+{\code{//docs:razboj}, \code{//docs:noc}}
 
 \subsection*{Function}
 
@@ -40,7 +40,7 @@ Parameter & Meaning \\
 \end{center}
 
 The tables use \code{Raster<16, 2, 4, 16, 0, 0x400, 0x600>}, the
-rasteriser of \code{//gpu:trace}: a sixteen by sixteen screen at
+rasteriser of \code{//gpu/razboj:trace}: a sixteen by sixteen screen at
 \code{0x0}, the list at \code{0x400} and the count at \code{0x600}. In
 \code{soc} it is \code{Raster<32, 2, 7, 96, 0x8000, 0x2000, 0x4000>}.
 
@@ -60,7 +60,7 @@ instruction \code{i}. \\
 \end{tabular}
 \end{center}
 
-An instruction's words are in the format \code{gpu/src/dl.rs} states.
+An instruction's words are in the format \code{gpu/razboj/src/dl.rs} states.
 Words 6 and 7 of an instruction are never read.
 
 \begin{center}\footnotesize
@@ -124,9 +124,9 @@ Grants are taken and dropped.
 \subsection*{Verification}
 
 \begin{itemize}
-\item \code{//gpu:gpu\_test} renders scenes on the rasteriser through
+\item \code{//gpu/razboj:razboj\_test} renders scenes on the rasteriser through
 an \code{AxiHost}, an \code{AxiPer} and \code{Fb}, and compares every
-pixel with the model of \code{gpu/src/model.rs}:
+pixel with the model of \code{gpu/razboj/src/model.rs}:
 \code{a\_scene\_of\_every\_kind\_agrees\_with\_the\_model},
 \code{a\_clear\_says\_only\_its\_colour},
 \code{a\_triangle\_is\_the\_same\_whichever\_way\_it\_is\_wound},
@@ -137,9 +137,9 @@ up to four random rectangles and triangles.
 \item \code{an\_instruction\_survives\_the\_format} in the same target
 checks the display list's encoder against its decoder.
 \item The build simulates the netlist of \code{Raster<16, 2, 4, 16, 0,
-0x400, 0x600>} against the trace of \code{//gpu:trace} under nvc and
-Verilator: \code{//docs:gpu\_sim\_raster\_raster\_tb\_test} and
-\code{//docs:gpu\_vsim\_raster\_test}.
+0x400, 0x600>} against the trace of \code{//gpu/razboj:trace} under nvc and
+Verilator: \code{//docs:razboj\_sim\_raster\_raster\_tb\_test} and
+\code{//docs:razboj\_vsim\_raster\_test}.
 \item \code{//soc:demo\_test} runs
 \code{a\_core\_draws\_a\_solid\_and\_a\_gpu\_fills\_it}. Vreteno writes
 a display list on the lattice, the rasteriser draws it, and every pixel
@@ -148,14 +148,14 @@ must match the model's picture of that list.
 
 \subsection*{Used by}
 
-\code{gpu::sim::run} and \code{gpu::sim::run\_list}, and so the GPU's
-tests, \code{//gpu:trace} and \code{//gpu:demo}. The system in
+\code{razboj::sim::run} and \code{razboj::sim::run\_list}, and so Razboj's
+tests, \code{//gpu/razboj:trace} and \code{//gpu/razboj:demo}. The system in
 \code{soc}, where the rasteriser is the host at corner 1,0 of the
 lattice.
 
 \subsection*{Limits}
 
-\code{//docs:gpu} lists them. It writes one pixel per cycle at most. It
+\code{//docs:razboj} lists them. It writes one pixel per cycle at most. It
 has no depth buffer, so primitives are drawn in list order. It has no
 interpolation, so a triangle is one colour, and no texture. It clips
 no geometry, only boxes, and the assembler \code{Op::encode} does that
