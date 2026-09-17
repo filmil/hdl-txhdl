@@ -1040,10 +1040,10 @@ the timer and the serial port, units of their own, are not in it.}
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1952 \\
+LUTs, as logic & 2151 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 486 \\
-Block RAM tiles & 1 \\
+Flip-flops & 489 \\
+Block RAM tiles & 2 \\
 DSP blocks & 4 \\
 \bottomrule
 \end{tabular}
@@ -1051,9 +1051,15 @@ DSP blocks & 4 \\
 
 The memories are where the third stage shows. The instruction
 memory, written by nothing and holding the program from its
-\code{initial} block, is a read-only memory in one block RAM tile,
-1024 words by 27 bits, the tool having dropped the bit columns the
-program never sets; it is the core's one tile. The data memory, a
+\code{initial} block, is a read-only memory of 1024 words by 32 bits.
+The fetch reads it at two addresses, the word at the counter and the
+word after, since an instruction may cross from one into the other,
+and the tool makes that two block RAM tiles, one per address, rather
+than one tile's two ports; they are the core's two tiles. Without the
+compressed instructions the fetch read one word, the memory was one
+tile, and the logic was 1952 LUTs: the second read, the choice of
+halfword and the expander cost some two hundred LUTs, a tenth of the
+core. The data memory, a
 device of its own now, is four block RAMs of 1024 by 8 in two tiles
 in its unit, each written by a store on its port and read by a load
 into the memory's register on the other: the synchronous read a
@@ -1079,13 +1085,17 @@ instruction.
 The netlist is also placed and routed, \code{bazel build
 //cpu/vreteno:vreteno\_pnr}, with the same constraint and no pins,
 so the bitstream is a stub and the reports are the point. The routed
-design meets ten nanoseconds with 0.315~ns of slack, and hold with
-0.109~ns. The critical path is 9.095~ns, of which routing is three
-quarters, through eleven levels of logic: from the writeback's
+design meets ten nanoseconds with 0.296~ns of slack, and hold with
+0.102~ns. The critical path is 9.661~ns, of which routing is three
+quarters, through twelve levels of logic: from the second register
+field of the instruction register, through the operand's read and
+its forwarding into the ALU's compare, and into the writeback value.
+The expander of compressed instructions is in the fetch, before the
+instruction register, and is not on it. Before the compressed
+instructions the slack was 0.315~ns, on a path from the writeback's
 destination register, through the forwarding compare into an
-operand and the jump's add, to the instruction memory's address, a
-jump through a register that the instruction before is still
-writing. With the data memory in the core the same path had
+operand and the jump's add, to the instruction memory's address.
+With the data memory in the core that path had
 0.643~ns, and with the step's pieces written in place rather than
 as functions 0.776~ns: the synthesis and the placement move by that
 much on one design written three ways. Before the device load's wait moved into
@@ -1152,13 +1162,13 @@ the same way, against the same models, by
 
 \code{bazel build //cpu/vreteno:vreteno\_board\_pnr} synthesises it,
 places and routes it with the board's pins and the memory's, and
-writes the bitstream, in eleven minutes. Every timing constraint is
-met: the worst setup slack is 0.211~ns, the worst hold slack
-0.036~ns, over 18\,787 endpoints on the four clocks Vivado derives
+writes the bitstream. Every timing constraint is
+met: the worst setup slack is 0.432~ns, the worst hold slack
+0.031~ns, over 18\,795 endpoints on the four clocks Vivado derives
 from the one constraint on the board's 200~MHz input. No register is
 without a clock, no internal endpoint is unconstrained, and neither
 synthesis nor implementation raises a critical warning. The design
-takes 8\,018 LUTs, 6\,960 flip-flops, three block RAM tiles, four DSP
+takes 8\,100 LUTs, 6\,959 flip-flops, four block RAM tiles, four DSP
 blocks, 80 pins, the PLL, and the controller's 65 output and 36 input
 serialisers. The memory's pins carry no input or output delay, as in
 the a200t examples, since the controller calibrates their timing

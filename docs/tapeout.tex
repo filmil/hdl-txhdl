@@ -186,21 +186,22 @@ What comes out is \asiccells{} cells on \asicnets{} nets, of which
 
 \subsection{The Memories}
 
-Compare that with the same core on the Artix-7, which is 1952 lookup
-tables, 486 flip-flops, one block RAM tile and four arithmetic
+Compare that with the same core on the Artix-7, which is 2151 lookup
+tables, 489 flip-flops, two block RAM tiles and four arithmetic
 blocks~\cite{vreteno}. The flip-flop counts differ by a factor of
 three, and the reason is the register file. On the FPGA it is twelve
 distributed memory primitives, because the fabric has a small
 memory that is not a register; on an ASIC there is no such thing, so
 thirty two words of thirty two bits are a thousand and twenty four
 flip-flops. Those and the core's own registers come to \asicflops{},
-against 486 on the board, where the register file was not flip-flops
+against 489 on the board, where the register file was not flip-flops
 at all.
 
 The instruction memory went the other way, and this is the
-interesting part. On the FPGA it is one block RAM tile, 1024 words by
-27 bits, the tool having dropped the five bit columns the program
-never sets. Here there is no block RAM, and the memory is read-only:
+interesting part. On the FPGA it is two block RAM tiles of 1024 words
+by 32 bits, one for each of the two words the fetch reads, since an
+instruction may cross from one word into the next. Here there is no
+block RAM, and the memory is read-only:
 nothing in the core writes it, and its contents are the program,
 which is known at synthesis. So it is not a memory at all. It is a
 mask ROM, which is to say a lump of combinational logic, and what it

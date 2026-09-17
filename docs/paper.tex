@@ -515,15 +515,16 @@ program in its instruction memory. And the Verilog is synthesized,
 Table~\ref{tab:p-synth}, on an Artix-7 with a clock constraint of ten
 nanoseconds, by Vivado, which the build installs itself from the
 vendor's archive into a cache the machine shares. The instruction
-memory became a read-only memory in one block RAM tile, the data
+memory became a read-only memory in two block RAM tiles, one for
+each of the two words the fetch reads, since an instruction may cross
+from one into the next, the data
 memory's four byte lanes four block RAMs in two, since the third
 stage registers their read, and the register file distributed RAM.
 Placed and routed with the same constraint, the core meets ten
-nanoseconds with 0.315~ns to spare; the critical path runs from the
-writeback's destination register through the forwarding compare
-into an operand and the jump's add to the instruction memory's
-address, a jump through a register the instruction before is still
-writing, and is three quarters routing. Fig.~\ref{fig:p-vreteno} is the opening of the
+nanoseconds with 0.296~ns to spare; the critical path runs from a
+register field of the instruction register through an operand's
+read and its forwarding into the ALU's compare and the writeback
+value, and is three quarters routing. Fig.~\ref{fig:p-vreteno} is the opening of the
 demonstration, from the trace, and Fig.~\ref{fig:p-uart} the serial
 port's line as the demonstration's O goes out, from the same trace:
 the write into the port, then the start bit, the byte low bit first
@@ -541,7 +542,7 @@ and a small distributed memory to put the register file in, and a
 standard cell library has neither: the instruction memory, which
 nothing in the core writes, becomes a mask ROM of gates whose size
 depends on the program in it, and the register file becomes a
-thousand and twenty four flip-flops. That is why the same core is 486
+thousand and twenty four flip-flops. That is why the same core is 489
 flip-flops on the board and \asicflops{} on silicon. The flow, the
 layout and everything a tapeout would still want are
 in~\cite{tapeout}.
@@ -554,10 +555,10 @@ in~\cite{tapeout}.
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 1952 \\
+LUTs, as logic & 2151 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 486 \\
-Block RAM tiles & 1 \\
+Flip-flops & 489 \\
+Block RAM tiles & 2 \\
 DSP blocks & 4 \\
 Errors, critical warnings & 0 \\
 \bottomrule
