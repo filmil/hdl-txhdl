@@ -27,6 +27,7 @@ use txhdl_parts::eth::{EthLite, EthRx, EthTx};
 use txhdl_parts::fifo::Fifo;
 use txhdl_parts::hdmi::{vga, Hdmi, I2cInit};
 use txhdl_parts::gpio::Gpio;
+use txhdl_parts::spi::Spi;
 use txhdl_parts::plic::Plic2;
 use txhdl_parts::station::Station3;
 use vreteno32::board::Board;
@@ -281,6 +282,7 @@ fn main() {
     sheet("Timer", "Timer<2>", Timer::<2>::lowered("timer"));
     sheet("Plic", "Plic2<0>", Plic2::<0>::lowered("plic"));
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));
+    sheet("Spi", "Spi", Spi::lowered("spi"));
     sheet("Uart", "Uart<868>", Uart::<868>::lowered("uart"));
     sheet("Ddr3Per", "Ddr3Per<0, 0>", Ddr3Per::<0, 0>::lowered("ddr3"));
     sheet(

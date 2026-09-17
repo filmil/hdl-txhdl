@@ -1,0 +1,111 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Spi
+\datasheet{Spi}{An SPI master on AXI-Lite: one byte each way at a time, under a chip select a program holds.}
+
+\dsfacts{\code{lib/parts/src/spi.rs}}{\code{txhdl\_parts::spi::Spi}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{Spi} drives the four wires of an SPI link: \code{sclk}, the
+clock; \code{mosi}, the byte going out; \code{miso}, the byte coming
+in; and \code{cs\_n}, the chip select, low while a chip is held.
+
+A program writes a byte to \code{data}, waits for the transfer to
+finish, and reads \code{data} for the byte that arrived the other way.
+SPI has no direction: the eight clocks that send a byte are the eight
+that receive one, so every transfer is a swap, and a driver that wants
+to read sends a byte it does not care about.
+
+The chip select is a bit in \code{ctrl} that a program sets and
+clears, not something a transfer does. Every SPI command is several
+bytes under one unbroken select, so a master that dropped it between
+bytes would start a new command each time.
+
+\subsection*{Parameters}
+
+None. The divider and the mode are registers rather than parameters,
+so one instance can reach chips that want different clocks.
+
+\subsection*{Register map}
+
+Offsets from the peripheral's base. The part selects the word by bits
+3 and 2 of the address and looks at no other bits.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.5\textwidth}@{}}
+\toprule
+Offset & Word & Access \\
+\midrule
+\code{0x00} & \code{ctrl} & Read and write. Bits 7 to 0 the divider,
+8 \code{cpol}, 9 \code{cpha}, 10 the chip select, 11 the interrupt
+enable. \\
+\code{0x04} & \code{data} & Written: the byte to send, which starts a
+transfer. Read: the byte that came in. \\
+\code{0x08} & \code{state} & Bit 0 a transfer is running, bit 1 one
+has finished. Write a one to bit 1 to clear it. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A half of a bit takes \code{div + 1} cycles, so the clock is the
+system's over \code{2 * (div + 1)}.
+
+\dstables{Spi}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A write to \code{data} while no transfer is running loads
+\code{txb}, sets \code{busy}, and clears \code{tick}, \code{half} and
+\code{count}. A write while one is running is answered and does
+nothing, so a driver reads \code{state} first.
+\item While \code{busy}, \code{tick} counts to \code{div}. The cycle
+it reaches it, \code{half} turns over and \code{count} adds one.
+\code{sclk} is \code{cpol} exclusive-or \code{half}, so it idles at
+\code{cpol}.
+\item The bit is taken on the leading turn when \code{cpha} is clear
+and on the trailing turn when it is set. \code{rxb} shifts left and
+takes \code{miso}.
+\item \code{txb} shifts on the other turn, with one exception: when
+\code{cpha} is set the first leading turn does not shift, because the
+first bit is already on the wire and moving it would lose the last bit
+of the byte. That is the turn at \code{count} zero.
+\item After sixteen turns, eight bits, \code{busy} clears,
+\code{half} returns to zero and \code{fired} is set. \code{irq} is
+\code{fired} and the interrupt enable.
+\item \code{mosi} is the top bit of \code{txb} and \code{cs\_n} is the
+inverse of the select bit, both combinational.
+\item A read is answered on \code{r} in the cycle it is taken, with
+\code{OKAY}. A write is taken when its address phase, its beat and
+room on \code{b} are all there.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/examples:ex\_spi} reads the chip's identity with
+\code{0x9f} and four bytes from an address with the \code{0x0b} fast
+read, against \code{FlashDevice}, and asserts both against what was
+put in the model.
+\item The build simulates \code{Spi}'s netlist against that run under
+nvc and Verilator: \code{//docs:spi\_sim\_spi\_tb\_test} and
+\code{//docs:spi\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+Nothing in the tree yet. It is meant for the board's configuration
+flash, for an SD card in SPI mode, and for sensors on the header;
+issue 146 says so.
+
+\subsection*{Limits}
+
+One chip select, so a second chip wants a second instance or a pin
+from elsewhere. One byte at a time, so a driver spends a bus
+transaction per byte and the interrupt is per byte, not per command.
+No quad or dual mode, and no direct memory access: reading a large
+image through this costs the core a read and a write for every byte.
+The board's configuration flash is reached through the
+\code{STARTUPE2} primitive rather than an ordinary pin, which this
+part does not do.
