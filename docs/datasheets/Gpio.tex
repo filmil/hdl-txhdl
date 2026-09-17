@@ -1,0 +1,126 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Gpio
+\datasheet{Gpio}{General purpose pins on AXI-Lite: a value out, a value in, a direction, and an interrupt per pin.}
+
+\dsfacts{\code{lib/parts/src/gpio.rs}}{\code{txhdl\_parts::gpio::Gpio}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{Gpio<N>} puts \code{N} pins behind an AXI-Lite link. A program
+chooses which way each pin faces, drives the ones that face out, reads
+the ones that face in, and may ask for an interrupt from any of them.
+
+The part drives no pin itself. It offers the three wires a pad wants,
+\code{drive}, the value; \code{dirs}, whether to drive it; and
+\code{pins}, the value read back, and a board's top level joins them
+to a tristate buffer. A \code{Pad} carries nothing in a simulation, so
+a part written around one could not be run or checked.
+
+\code{pins} is taken through two flip-flops, \code{sync0} then
+\code{sync1}, before anything reads it. Nothing else in the part reads
+the port.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{N} & How many pins there are. Every register is \code{N} bits
+wide and reads back into the low \code{N} bits of a word; the bits
+above are zero. The tables use 8, as \code{ex\_gpio} does. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Register map}
+
+Offsets from the peripheral's base. The part selects the word by bits
+4 to 2 of the address and looks at no other bits, so the router or the
+bridge in front of it decides the base.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.5\textwidth}@{}}
+\toprule
+Offset & Word & Access \\
+\midrule
+\code{0x00} & \code{dout} & Read and write. Driven on a pin whose
+direction is out. \\
+\code{0x04} & \code{sync1} & Read only. What the pins read, after the
+two flip-flops. A write is taken and ignored. \\
+\code{0x08} & \code{dir} & Read and write. One to drive the pin, zero
+to read it. \\
+\code{0x0c} & \code{ie} & Read and write. One to let the pin raise
+\code{irq}. \\
+\code{0x10} & \code{kind} & Read and write. Zero for a level, one for
+an edge. \\
+\code{0x14} & \code{pol} & Read and write. A level: one for high. An
+edge: one for rising. \\
+\code{0x18} & \code{status} & Read, and write one to clear. Which pins
+have fired. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{dout} is named for VHDL, which reserves \code{out}; the lowering
+neither escapes nor rejects a reserved word, which is issue 77.
+
+\dstables{Gpio}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item Every cycle \code{sync0} takes \code{pins}, \code{sync1} takes
+\code{sync0}, and \code{seen} takes \code{sync1}. So a read of
+\code{sync1} is what the pin held two cycles before, and \code{seen}
+is what it held three cycles before, which is what an edge is measured
+against.
+\item A pin fires while it is enabled in \code{ie} and either its
+\code{kind} bit is zero and \code{sync1} equals \code{pol}, or its
+\code{kind} bit is one and \code{sync1} crossed \code{seen} in the
+direction \code{pol} names.
+\item \code{status} takes what it held, less any bit a write to
+\code{0x18} set to one in the same cycle, plus every pin firing that
+cycle. A level therefore sets its bit again in the cycle after it is
+cleared, while the level lasts. Clearing is by a written one and not a
+written zero, so two programs clearing different pins cannot lose each
+other's work.
+\item \code{irq} is high while any bit of \code{status} is set. It is
+combinational from \code{status}, which is a register, so it follows
+the register by no cycles.
+\item A read is answered on \code{r} in the cycle it is taken, with
+\code{OKAY}. A write is taken when its address phase, its beat and
+room on \code{b} are all there, and is answered \code{OKAY} in that
+cycle.
+\item An address that selects no word reads as zero and a write to it
+is answered and does nothing.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/examples:ex\_gpio} sets the direction, drives a
+pattern, reads a pin through the synchroniser, takes an interrupt on a
+rising edge and not on the fall, clears the status, and asks for a
+level and finds the bit back. Every step is asserted against what the
+program read.
+\item The build simulates \code{Gpio<8>}'s netlist against that run
+under nvc and Verilator: \code{//docs:gpio\_sim\_gpio\_tb\_test} and
+\code{//docs:gpio\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+Nothing in the tree yet. It is meant for a board's LEDs and keys, and
+for the header pins, behind an AXI-Lite bridge; issue 145 says so.
+
+\subsection*{Limits}
+
+The interrupt is one line for all \code{N} pins; which pin raised it
+is in \code{status}. There is no debounce, so a key wired to a pin
+bounces into an edge interrupt many times. The part does not drive a
+pad, so a board that wants one writes the tristate buffer itself.
+\code{N} is at most the width of a bus word, since every register
+reads back in one.
