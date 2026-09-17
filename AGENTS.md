@@ -217,6 +217,29 @@ The same applies to `//docs:cover`, which names every document, and to
 the list of documents in this file: a new document is added to both in
 the change that creates it.
 
+# Standing rule: every bug found is filed
+
+A bug found along the way is filed as an issue on `HDL/txhdl` when it
+is found, whatever the task at hand was.
+That covers the library, the lowering and the netlists, the parts, the
+cores, the tools, the build and the documents.
+A bug that is worked around and not filed is paid for again by the
+next person to meet it, and nothing records the workaround's reason.
+
+The issue says:
+
+* what goes wrong, with the smallest reproduction that shows it, and
+  the output or the error it gives;
+* what should happen instead;
+* how it was found, naming the issue or change that was under way;
+* the workaround, if one was used, and where it is.
+
+A workaround in the tree names its issue in the comment beside it, and
+the commit that brings the workaround names the issue too.
+Before filing, look for an open issue that already covers the bug; if
+one does, add what was learned to it rather than filing another.
+Report the issues filed when reporting on the task.
+
 # Claims about Rust are compiled, not argued
 
 Any claim about what Rust accepts goes into
