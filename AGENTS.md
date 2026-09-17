@@ -20,11 +20,11 @@ all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
   A new document is added there in the same change that creates it.
-* `//docs:showcase` is two pages on the whole of it: the rule, the
-  parts, Vreteno, Razboj, how it is all checked, and what is not
-  done. It is the one document meant to be read first and alone, so
-  it stays at two pages and every number in it comes from a count
-  rather than from memory. Its tables claim to be exhaustive, so a
+* `//docs:showcase` is at most five pages on the whole of it: the
+  rule, the parts, Vreteno, Razboj, how it is all checked, and what is
+  not done. It is the one document meant to be read first and alone,
+  so it stays within five pages and every number in it comes from a
+  count rather than from memory. Its tables claim to be exhaustive, so a
   new component goes in them in the same change; the standing rule
   below says what counts as one and how to check the numbers.
 * `//docs:article` states the merge of the two languages this one came
@@ -213,14 +213,14 @@ find lib/parts/src -name '*.rs' | xargs wc -l | tail -1 # a band of lines
 ls lib/examples/ex_*.rs | wc -l                         # the examples
 ```
 
-The document stays at two pages.
+The document stays within five pages.
 That is the constraint that makes it worth reading, so when an
-addition pushes it onto a third, something else gives: a table of
+addition pushes it onto a sixth, something else gives: a table of
 numbers becomes a sentence, or a paragraph that has stopped earning
 its place goes.
 Two tables have already been folded into prose that way.
-Check with `pdfinfo bazel-bin/docs/showcase.pdf`, and render both
-pages and look at them, as every document change here requires.
+Check with `pdfinfo bazel-bin/docs/showcase.pdf`, and render every
+page and look at it, as every document change here requires.
 
 The same applies to `//docs:cover`, which names every document, and to
 the list of documents in this file: a new document is added to both in

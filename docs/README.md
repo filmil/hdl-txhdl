@@ -31,7 +31,7 @@ Seventeen documents are typeset here, and `cover.tex` names them all:
 `tapeout.tex` is the core through an open ASIC flow, `//docs:tapeout`;
 `paper.tex` is the expository paper, `//docs:paper`;
 `cover.tex` is the cover, `//docs:cover`;
-`showcase.tex` is two pages on the whole of it, `//docs:showcase`;
+`showcase.tex` is at most five pages on the whole of it, `//docs:showcase`;
 `cheatsheet.tex` is the one-page cheat sheet, `//docs:cheatsheet` and `//docs:cheatsheet_png`;
 `tutorial.tex` is the tutorial, `//docs:tutorial`;
 `zero.tex` is the tutorial from an empty directory, `//docs:zero`, on `tutorial/blinky/`;
