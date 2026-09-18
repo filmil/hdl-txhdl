@@ -1151,7 +1151,27 @@ makes the four clocks, 100~MHz for the design and the controller,
 follows the button and the lock; the core's follows those and the
 controller's calibration as well, so the core starts only once the
 memory it may reach is ready. The LEDs, lit when driven low, show the
-core halted, a heartbeat, the memory calibrated, and the PLL locked.
+core halted, the serial line driven at least once, the memory
+calibrated, and a heartbeat. The second LED held the heartbeat until
+the board was first run, and the heartbeat moved to the fourth, which
+held the PLL's lock: a blinking heartbeat says the lock as well, since
+the counter behind it runs on the PLL's output. What no LED said was
+whether a byte ever left the core's serial port. That question is
+issue~195, where the board halts with every LED on and the host's
+serial port stays silent, so the second LED now latches the first start
+bit on the line. A heartbeat in a new place also tells somebody at the
+board that a new bitstream is in the part.
+
+The program for the board says more than the one a simulation runs.
+Built with \code{--cfg=board\_run} it puts a header line out before
+it touches the memory, and a dot every ten seconds for half a minute
+before the test and two minutes after it, so that a reader who
+attaches at any moment can tell a silent serial path from a core that
+never ran. It also halts only when every word came back, and spins
+when one did not, which puts the verdict on the first LED for anybody
+who cannot read the line. A simulation runs the program without those,
+since its tests state the whole of what a run said and every byte is
+simulated time they pay for.
 
 The whole of it is simulated under Vivado's simulator by
 \code{//cpu/vreteno/board/sim:board\_test}: the top, the netlist with
@@ -1198,9 +1218,27 @@ a small program, one static binary in Go on the standard library
 alone, and runs it on the far machine over ssh and under a timeout
 that frees the port whatever happens here; it prints what the board
 says for a while and may type a reply once the board has said a
-line. So the run on the board is the run in the runtime, ordered the
-other way round: the watcher first, then the programming, and the
-watcher's log at the end.
+line.
+
+The watcher is opened after the programming, and not before it.
+Reconfiguring the part puts its pins into high impedance, which the
+board's serial bridge reads as a break, and a reader that already has
+the port open receives nothing for the rest of its session. A reader
+opened afterwards receives normally. The measurement is in issue~195:
+with a bitstream that says one line a second in the part, a watcher held
+open across a reconfiguration saw no bytes in 150 seconds, and one
+opened straight after saw 360 bytes in 30. This cost an evening of runs
+that looked like a silent design, which is why the board's program now
+says a header and a dot every ten seconds: a board that keeps talking
+for two minutes can be read whenever the reader is ready.
+
+The bitstream in that measurement is \code{//cpu/vreteno/board/probe},
+which has no core, no memory and no bus: the board's 200~MHz clock, a
+counter, and a transmitter that says one line a second on the same pins
+and the same I/O standards the design uses. It is the control for any
+question about the serial port, since a line from it and silence from
+the design says the fault is in the design, and silence from both says
+it is the path or the reader.
 
 The board did what the runs did. Programmed over the tunnel, it said
 OK and a newline on the serial port at 115\,200 baud, the watcher
@@ -1343,9 +1381,13 @@ second register in the middle of its carry chain, one more step of
 the sequencer, would. The lockstep test is the check for either,
 since it compares architectural state when an instruction retires.
 
-The design with the DDR3 memory on the board: its bitstream is built
-and meets timing, and what is left is to program it and see that the
-board says \code{ddr3 ok} as the simulation does.
+The design with the DDR3 memory ran on the board on September 18,
+2026, and said \code{ddr3 ok}: sixteen words written across the
+memory's range and read back, every one of them correct. It ran twice,
+once written into the part over JTAG and once from the board's own QSPI
+flash after a power cycle, with nothing attached but power. So the
+whole path is proven on hardware: the core, the AXI link, \code{AxiWb},
+UberDDR3's controller and the board's memory chips.
 
 \begin{thebibliography}{10}
 
