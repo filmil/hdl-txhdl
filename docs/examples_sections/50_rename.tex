@@ -1,0 +1,39 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Field the Netlist Names Differently}
+\label{sec:x-rename}
+
+A unit's field is a signal of its netlist, so its name has to be a
+name the netlist can carry. VHDL reserves \code{next} and
+\code{buffer}, Verilog reserves \code{signed} and \code{buf}, and a
+field named for one of those writes a netlist that will not analyse,
+so the derive refuses such a name where the field is declared. That
+refusal is right and it is also a cost: the name that reads best in
+Rust is sometimes exactly the one a target reserves.
+
+\code{\#[rename("...")]} on a field says what the netlist should call
+it. Rust keeps the name the code is written with; the netlist takes
+the other, everywhere, in its declarations, its drives and the trace
+the run records. The queue here calls its two registers \code{next}
+and \code{buffer}, which is what they are, and the netlist calls them
+\code{nxt} and \code{held}.
+
+The lowering reads the \code{impl} and never the struct, so it writes
+every reference under the name Rust knows and the rename is applied
+to the lowered unit afterwards, from a table the derive writes beside
+the field names. The check for a reserved word then runs on the
+netlist's name rather than on Rust's, and two fields that would take
+one name in the netlist are refused, since the netlist would declare
+it twice.
+
+\begin{figure}[htbp]
+\centering
+\input{rename_timing.tex}
+\caption{The queue: \code{nxt} is the word about to leave and
+\code{held} the one behind it, under the names the netlist gives
+them.}
+\label{fig:x-rename}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_rename.rs}. Run with \code{bazel run //lib/examples:ex\_rename}.},label={lst:x-rename}]{lib/examples/ex_rename.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_rename} printed when the build ran it: the queue cycle by cycle, then the Verilog, with \code{nxt} and \code{held} in it.},label={lst:x-rename-out}]{out_rename.txt}
