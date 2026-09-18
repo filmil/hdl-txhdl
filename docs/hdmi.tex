@@ -96,10 +96,14 @@ RAM has. The syncs and the enable go into registers at the same edge,
 so they meet the pixel they belong to. The chip's inputs are those
 registers.
 
-The functions come in pairs, one per axis, where one function would
-do for both. The lowering binds a function's constant parameters by
-name rather than by position, so a function's parameters have to be
-named as the unit names its own~\cite{i127}.
+Three of the functions serve both axes, each called once per axis,
+because the lowering binds a function's constant parameters to the
+arguments of the call by position~\cite{i127}; the names inside the
+function are its own. Until that fix the binding was by name, so a
+function's parameters had to be named as the unit named its own, and
+the functions came in pairs where one would have done. The last
+column and the last row still have a function each: they count in
+eight bits and in seven.
 
 \hdmipart{fns}{The raster's functions.}{lst:h-fns}
 
