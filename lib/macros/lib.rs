@@ -132,6 +132,61 @@ fn field_names(body: &Group) -> Vec<String> {
     field_idents(body).iter().map(|id| id.to_string()).collect()
 }
 
+/// The netlist name of each field of a braced struct body, in the
+/// order `field_idents` gives them: the name a `#[rename("...")]`
+/// attribute on the field asks for, or `None` where there is none.
+///
+/// A netlist name is not a Rust name: VHDL and Verilog reserve words
+/// Rust does not, and a field whose name a target reserves is refused
+/// (issue 77). `#[rename("...")]` is how a field keeps the name that
+/// reads best in Rust and takes another in the netlist (issue 222).
+fn field_renames(body: &Group) -> Vec<Option<(String, Span)>> {
+    let toks: Vec<TokenTree> = body.stream().into_iter().collect();
+    let mut out = Vec::new();
+    let mut pending: Option<(String, Span)> = None;
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < toks.len() {
+        // An attribute: `#` and a bracketed group.
+        if let (TokenTree::Punct(h), Some(TokenTree::Group(g))) =
+            (&toks[i], toks.get(i + 1))
+        {
+            if h.as_char() == '#' && g.delimiter() == Delimiter::Bracket {
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                if let [TokenTree::Ident(k), TokenTree::Group(a)] =
+                    inner.as_slice()
+                {
+                    if k.to_string() == "rename" {
+                        let text = a.stream().to_string();
+                        let name = text.trim().trim_matches('"').to_string();
+                        pending = Some((name, k.span()));
+                    }
+                }
+                i += 2;
+                continue;
+            }
+        }
+        match &toks[i] {
+            TokenTree::Punct(p) if p.as_char() == '<' => depth += 1,
+            TokenTree::Punct(p) if p.as_char() == '>' => depth -= 1,
+            TokenTree::Ident(_) if depth == 0 => {
+                if let Some(TokenTree::Punct(p)) = toks.get(i + 1) {
+                    let path = matches!(
+                        toks.get(i + 2),
+                        Some(TokenTree::Punct(q)) if q.as_char() == ':'
+                    );
+                    if p.as_char() == ':' && !path {
+                        out.push(pending.take());
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
 /// The fields of a braced struct body as their name tokens, in order,
 /// so that a check can point at one.
 fn field_idents(body: &Group) -> Vec<Ident> {
@@ -314,31 +369,67 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
     out.parse().unwrap()
 }
 
-/// `#[derive(Trace)]`: every field is registered under its own name.
-#[proc_macro_derive(Trace)]
+/// `#[derive(Trace)]`: every field is registered under its own name,
+/// or under the name `#[rename("...")]` gives it in the netlist.
+#[proc_macro_derive(Trace, attributes(rename))]
 pub fn derive_trace(input: TokenStream) -> TokenStream {
     let item = parse_item(input);
     let Some(body) = &item.body else {
         return err(Span::call_site(), "Trace needs a braced struct");
     };
+    let rust = field_names(body);
+    let renames = field_renames(body);
+    // The name each field takes in the netlist and in the trace: its
+    // own, or the one it was renamed to.
+    let names: Vec<String> = rust
+        .iter()
+        .zip(&renames)
+        .map(|(n, r)| match r {
+            Some((net, _)) => net.clone(),
+            None => n.clone(),
+        })
+        .collect();
     // A unit's field is a signal of its netlist, and of the testbench
     // made from its trace, so a name either target reserves is refused
-    // here, at the field.
-    let refused: TokenStream = field_idents(body)
+    // here, at the field. It is the netlist's name that is checked,
+    // since that is the one the netlist writes.
+    let mut refused: TokenStream = field_idents(body)
         .iter()
-        .filter_map(|id| check_reserved(&id.to_string(), "field", id.span()))
+        .zip(&renames)
+        .zip(&names)
+        .filter_map(|((id, r), net)| {
+            let span = match r {
+                Some((_, s)) => *s,
+                None => id.span(),
+            };
+            check_reserved(net, "field", span)
+        })
         .collect();
-    let calls = field_names(body)
+    // Two fields cannot take one name in the netlist, which would
+    // declare it twice.
+    for (k, n) in names.iter().enumerate() {
+        if names[..k].contains(n) {
+            let span = match &renames[k] {
+                Some((_, s)) => *s,
+                None => field_idents(body)[k].span(),
+            };
+            refused.extend(err(
+                span,
+                &format!("two fields are called `{n}` in the netlist"),
+            ));
+        }
+    }
+    let calls = rust
         .iter()
-        .map(|n| {
+        .zip(&names)
+        .map(|(f, n)| {
             format!(
                 "::txhdl::comp::trace::Traceable::trace(\
-                 &self.{n}, &scope.child(\"{n}\"));"
+                 &self.{f}, &scope.child(\"{n}\"));"
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let names = field_names(body);
     let types = field_types(body);
     let fields = names
         .iter()
@@ -358,6 +449,8 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
          {calls} }}\n}}\n\
          impl{b} ::txhdl::netlist::Fields for {n}{a} {{\n\
          const NAMES: &'static [&'static str] = &[{quoted}];\n\
+         const RENAMES: &'static [(&'static str, &'static str)] = \
+         &[{pairs}];\n\
          fn fields() -> Vec<(&'static str, \
          Option<::txhdl::comp::trace::Kind>, usize, usize)> {{ \
          vec![{fields}] }}\n}}\n\
@@ -368,6 +461,13 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
         quoted = names
             .iter()
             .map(|n| format!("\"{n}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+        pairs = rust
+            .iter()
+            .zip(&names)
+            .filter(|(f, n)| f != n)
+            .map(|(f, n)| format!("(\"{f}\", \"{n}\")"))
             .collect::<Vec<_>>()
             .join(", "),
     );
@@ -6762,7 +6862,12 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          nets: vec![{nets}],\n\
          instances: vec![{instances}],\n\
          foreign: None,\n\
-         }}\n}}\n\
+         }}\n\
+         // A field the struct renamed is referred to here under the\n\
+         // name Rust knows, since `#[lower]` reads the `impl` and\n\
+         // never sees the struct; this writes the netlist's name in.\n\
+         .renamed(<Self as ::txhdl::netlist::Fields>::RENAMES)\n\
+         }}\n\
          /// The Verilog of this unit.\n\
          pub fn verilog(name: &str) -> String {{\n\
          Self::lowered(name).verilog() }}\n\

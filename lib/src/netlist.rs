@@ -211,7 +211,14 @@ impl<const N: usize> Port for crate::types::U<N> {}
 pub trait Fields {
     /// The names of the unit's fields, in order, for the checks
     /// `#[lower]` writes against the names of its wires and ports.
+    /// A field carrying `#[rename("...")]` is here under the name it
+    /// takes in the netlist, not the name Rust knows it by.
     const NAMES: &'static [&'static str];
+    /// Every field the netlist names differently from Rust, as the
+    /// Rust name and the netlist name. `#[rename("...")]` on a field
+    /// puts it here, and the lowering rewrites its references through
+    /// this table (issue 222). Empty when nothing is renamed.
+    const RENAMES: &'static [(&'static str, &'static str)] = &[];
     /// Every field of the unit, as its name, what it is, how wide it
     /// is, and how many words it holds if it is a memory.
     fn fields() -> Vec<(&'static str, Option<Kind>, usize, usize)>;
@@ -576,6 +583,121 @@ pub fn instance(unit: Lowered, name: &str, args: &[(&str, &str)]) -> Instance {
 }
 
 impl Lowered {
+    /// This unit with every reference to a renamed field written as
+    /// the netlist names it. The declarations already are: they come
+    /// from [`Fields::fields`], which the derive writes with the
+    /// netlist's names. What the lowering wrote are the references,
+    /// under the names Rust knows, since `#[lower]` reads the `impl`
+    /// and never sees the struct. This is issue 222.
+    pub fn renamed(mut self, pairs: &[(&'static str, &'static str)]) -> Self {
+        if pairs.is_empty() {
+            return self;
+        }
+        let of = |n: &str| -> Option<String> {
+            pairs
+                .iter()
+                .find(|(rust, _)| *rust == n)
+                .map(|(_, net)| (*net).to_string())
+        };
+        fn walk_expr(e: &mut Expr, of: &dyn Fn(&str) -> Option<String>) {
+            match e {
+                Expr::Name(n) => {
+                    if let Some(net) = of(n) {
+                        *n = net;
+                    }
+                }
+                Expr::Num(_) | Expr::Bits(..) => {}
+                Expr::Bin(_, a, b) => {
+                    walk_expr(a, of);
+                    walk_expr(b, of);
+                }
+                Expr::Not(a) | Expr::Sext(a, _) | Expr::Zext(a, _) => {
+                    walk_expr(a, of)
+                }
+                Expr::Slice(a, _, _) => walk_expr(a, of),
+                Expr::Cat(a, b) | Expr::Index(a, b) => {
+                    walk_expr(a, of);
+                    walk_expr(b, of);
+                }
+                Expr::Cond(c, a, b) => {
+                    walk_expr(c, of);
+                    walk_expr(a, of);
+                    walk_expr(b, of);
+                }
+            }
+        }
+        fn walk_target(t: &mut Target, of: &dyn Fn(&str) -> Option<String>) {
+            match t {
+                Target::Name(n) => {
+                    if let Some(net) = of(n) {
+                        *n = net;
+                    }
+                }
+                Target::Word(n, a) => {
+                    if let Some(net) = of(n) {
+                        *n = net;
+                    }
+                    walk_expr(a, of);
+                }
+            }
+        }
+        fn walk_drives(
+            ds: &mut Vec<(Target, Expr)>,
+            of: &dyn Fn(&str) -> Option<String>,
+        ) {
+            for (t, e) in ds {
+                walk_target(t, of);
+                walk_expr(e, of);
+            }
+        }
+        fn walk_stmt(st: &mut Stmt, of: &dyn Fn(&str) -> Option<String>) {
+            match st {
+                Stmt::Drive(t, e) => {
+                    walk_target(t, of);
+                    walk_expr(e, of);
+                }
+                Stmt::When(c, a, b) => {
+                    walk_expr(c, of);
+                    walk_drives(a, of);
+                    walk_drives(b, of);
+                }
+                Stmt::Case(arms) => {
+                    for (c, ds) in arms {
+                        walk_expr(c, of);
+                        walk_drives(ds, of);
+                    }
+                }
+                Stmt::If(arms, rest) => {
+                    for (c, ss) in arms {
+                        walk_expr(c, of);
+                        for s in ss {
+                            walk_stmt(s, of);
+                        }
+                    }
+                    for s in rest {
+                        walk_stmt(s, of);
+                    }
+                }
+                Stmt::Guard(c) => walk_expr(c, of),
+            }
+        }
+        for (_, e) in &mut self.wires {
+            walk_expr(e, &of);
+        }
+        for p in &mut self.procs {
+            for s in &mut p.body {
+                walk_stmt(s, &of);
+            }
+        }
+        // A memory's words are given under the memory's own name.
+        for (n, _) in &mut self.init {
+            if let Some(net) = of(n) {
+                *n = net;
+            }
+        }
+        self
+    }
+
     /// The clocks the processes wait for, and the children's, each
     /// once, in order.
     fn clocks(&self) -> Vec<&'static str> {
