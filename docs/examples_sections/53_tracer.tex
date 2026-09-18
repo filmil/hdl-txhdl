@@ -1,0 +1,45 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Last Thing That Happened}
+\label{sec:x-tracer}
+
+A design on a board says almost nothing. Four LEDs and a serial line
+are what a program has, and neither answers the question a post-mortem
+asks, which is what the machine did in the cycles before it stopped.
+
+The answer is usually already computed. The Vreteno core drives the
+instruction it retired and the register it wrote, every cycle, and on
+the board those wires go nowhere. \code{Tracer<N>} takes a word a
+cycle and keeps the last \code{N} of them in a ring, so that what is
+held is always the most recent window; a host reads the window out
+over AXI-Lite, oldest first.
+
+Freezing is the point of the \code{halt} input. A window that keeps
+filling after the machine stops is a window of whatever happened next,
+which is nothing anybody is asking about, so with \code{CTRL\_FREEZE}
+set the first cycle of \code{halt} clears the run bit. The buffer then
+holds still, and the bit a host reads back says why it stopped.
+
+An entry is 128 bits because a retirement is: a program counter, an
+instruction, the register written and the word written come to a
+hundred and one bits, and a width that is a whole number of bus words
+is one the readout can walk without shifting. The four words of an
+entry are read at \code{0x10} to \code{0x1c}, and the cursor at
+\code{0x08} says which held entry they belong to.
+
+The run offers twelve entries into a ring of eight, raises
+\code{halt}, and offers four more that the buffer must refuse. The
+readout that follows is what a post-mortem wants: the last eight
+things the machine did, oldest first, and nothing after the halt.
+
+\begin{figure}[htbp]
+\centering
+\input{tracer_timing.tex}
+\caption{The buffer filling: \code{head} walks the ring, \code{count}
+stops at eight, and \code{ctrl} loses its run bit when \code{halt}
+rises.}
+\label{fig:x-tracer}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_tracer.rs}. Run with \code{bazel run //lib/examples:ex\_tracer}.},label={lst:x-tracer}]{lib/examples/ex_tracer.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_tracer} printed when the build ran it: eight held, the run bit cleared by the halt, and the window read out oldest first.},label={lst:x-tracer-out}]{out_tracer.txt}
