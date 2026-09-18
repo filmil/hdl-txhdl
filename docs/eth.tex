@@ -299,11 +299,35 @@ board's pins.},label={lst:e-xdc}]{eth/board/ax7a200_eth.xdc}
 \section{What Is Not Done}
 \label{sec:e-not}
 
-Nothing here has run on the board. The I/O standard of the fifteen
-Ethernet pins is given as LVCMOS33, like the board's other user pins,
-since the manual does not state it, and has to be confirmed. The
-receive side's timing at the pins depends on a receive delay the PHY
-may or may not add, which has not been measured.
+The echo design has run on the board, and it is not finished. On
+September 18, 2026 the board linked at gigabit with a host, and frames
+sent to it came back: byte for byte, never twice, and a frame shorter
+than the minimum came back padded to sixty bytes. So the transmitter,
+the check sequence, the padding and the crossing between the two clocks
+all work on hardware.
+
+What is not finished is the receive side's timing at the pins, which is
+issue~231. The PHY adds no receive delay of its own, so with none in the
+FPGA either the MAC accepted nothing at all. The design now shifts the
+receive clock by 90 degrees, which is 2~ns of its 8~ns period, and that
+is the best of the settings measured: delaying the five data lines
+instead, with an \code{IDELAYE2} each at 20, 26 and 31 taps, let between
+a quarter and a third of the frames through, and delaying the clock the
+other way let none through.
+
+At the best setting a 46-byte frame comes back three times in five, a
+200-byte frame one time in three, and a 1000-byte frame one time in ten.
+Loss that grows with length is bit errors rather than a race, at about
+one in ten thousand, so the sampling point is inside the eye and the eye
+is narrow. The next things to try are the PHY's own receive delay over
+the management interface, which the design leaves idle, and a look at
+the lines with an \code{ILA} or a scope. The I/O standard of the
+Ethernet pins is given as LVCMOS33, which the core board's banks
+support, since they are at 3.3~V.
+
+\code{//eth/hil:run} is the test that produced those numbers. It runs
+where the cable is, sends a frame and waits for it to come back before
+sending the next, and compares what returns with what went out.
 
 Only gigabit works. At 100 or 10~Mbit the PHY sends a nibble per
 cycle, and neither half of the MAC takes a byte over two cycles. The
