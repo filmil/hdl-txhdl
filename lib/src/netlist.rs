@@ -1876,6 +1876,15 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
             hint(b, l)
         ),
         Expr::Not(a) => format!("(not {})", hval(a, w, l)),
+        // A slice of one bit where a bit is wanted is an index and
+        // not a range. `a(7 downto 7)` is an `unsigned` of one
+        // element, and there is no `=` between that and `'1'`, so
+        // nvc calls the literal ambiguous; `a(7)` is `std_logic`,
+        // which is what every other one-bit value here is. See
+        // issue 160.
+        Expr::Slice(a, lo, 1) if w == 1 => {
+            format!("{}({lo})", hval(a, 0, l))
+        }
         Expr::Slice(a, lo, len) => {
             format!("{}({} downto {})", hval(a, 0, l), lo + len - 1, lo)
         }
