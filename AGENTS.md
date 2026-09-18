@@ -564,7 +564,19 @@ repository has had that happen twice.
 
 # Verification
 
-* `bazel build //...` is green.
+* `bazel build //...` is green, which includes Clippy: `.bazelrc` runs
+  the Clippy aspect on every build with its warnings as errors, so a
+  lint is answered where it is written rather than found later in a
+  sweep (issue 228).
+  A lint the lowering forces is allowed at the item it fires on, with
+  the reason beside it, and every other lint is fixed: the lowering
+  reads `name: value` and not a field shorthand (issue 235), `&` and
+  `>=` and not a range, and a `select!` arm's alternatives one by one.
+  An `allow` goes above `#[lower]`, never between it and the `fn`,
+  which hides the function from the scan (issue 234).
+  `clippy::type_complexity` is allowed everywhere, in `.bazelrc`: a
+  unit's ports are tuples of channel types, and a join's are tuples of
+  those.
 * `bazel test //...` exits 0: the lowered units agree with their traces.
 * Every PDF builds, every face is Type 1, every `\ref` and `\cite`
   resolves, and no listing line overflows its frame.

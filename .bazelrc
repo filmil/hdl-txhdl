@@ -12,6 +12,19 @@ build --workspace_status_command=tools/workspace_status.sh
 # 165).
 common --@rules_rust//:rustfmt.toml=//:rustfmt.toml
 
+# Clippy on every build, its warnings errors, so a lint is dealt with
+# where it is written rather than found later in a sweep (issue 228).
+# A lint the lowering forces is allowed at the item it fires on, with
+# the reason beside it: the lowering reads `name: value` and not a
+# field shorthand, `&` and not a range, and an arm's alternatives one
+# by one and not as a range.
+build --aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect
+build --output_groups=+clippy_checks
+# The one lint allowed everywhere: a unit's ports are tuples of channel
+# types, and a join's are tuples of those, so the types the library
+# writes are as complex as the hardware they stand for.
+build --@rules_rust//:clippy_flags=-Dwarnings,-Aclippy::type_complexity
+
 # Vivado from the Bazel-installed toolchain, not Docker or the host.
 build --@rules_vivado//:vivado_mode=hermetic
 

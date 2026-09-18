@@ -4178,7 +4178,7 @@ fn names_a_signal(
                     continue;
                 }
                 if subst.iter().any(|(k, _)| *k == n)
-                    || PNAMES.with(|p| p.borrow().iter().any(|q| *q == n))
+                    || PNAMES.with(|p| p.borrow().contains(&n))
                 {
                     return Some(n);
                 }
