@@ -3678,6 +3678,30 @@ fn split_commas(g: &Group) -> Vec<Vec<TokenTree>> {
 
 /// A tuple of types split on its commas, a comma inside a type's
 /// angle brackets, `Rx<Tagged<TB, T0>>`, being the type's own.
+/// The same as [`split_type_commas`], over a slice rather than a
+/// group: the generic parameters of a function, which are tokens
+/// between a `<` and its `>` and not a group of their own.
+fn split_type_commas_slice(ts: &[TokenTree]) -> Vec<Vec<TokenTree>> {
+    let mut out = vec![Vec::new()];
+    let mut depth = 0usize;
+    for t in ts {
+        match t {
+            TokenTree::Punct(p) if p.as_char() == '<' => depth += 1,
+            TokenTree::Punct(p) if p.as_char() == '>' => {
+                depth = depth.saturating_sub(1)
+            }
+            TokenTree::Punct(p) if p.as_char() == ',' && depth == 0 => {
+                out.push(Vec::new());
+                continue;
+            }
+            _ => {}
+        }
+        out.last_mut().unwrap().push(t.clone());
+    }
+    out.retain(|v| !v.is_empty());
+    out
+}
+
 fn split_type_commas(g: &Group) -> Vec<Vec<TokenTree>> {
     let mut out = vec![Vec::new()];
     let mut depth = 0usize;
@@ -4072,6 +4096,9 @@ fn target_name(ts: &[TokenTree]) -> Result<String, String> {
 struct Helper {
     name: String,
     params: Vec<String>,
+    /// The names of its const parameters, in order, which a call binds
+    /// by position through its turbofish.
+    consts: Vec<String>,
     lets: Vec<(String, String)>,
     value: String,
 }
@@ -4175,8 +4202,13 @@ fn find_helpers(file: Option<std::path::PathBuf>) -> Vec<Helper> {
             continue;
         };
         j += 2;
+        // The generic parameters, if it has any: the const ones are
+        // kept, in order, since a call binds them by position (issue
+        // 127).
+        let mut consts: Vec<String> = Vec::new();
         if matches!(ts.get(j), Some(TokenTree::Punct(p)) if p.as_char() == '<')
         {
+            let start = j;
             let mut depth = 0;
             while j < ts.len() {
                 match &ts[j] {
@@ -4187,6 +4219,16 @@ fn find_helpers(file: Option<std::path::PathBuf>) -> Vec<Helper> {
                 j += 1;
                 if depth == 0 {
                     break;
+                }
+            }
+            let inner = &ts[start + 1..j.saturating_sub(1)];
+            for g in split_type_commas_slice(inner) {
+                if let [TokenTree::Ident(k), TokenTree::Ident(n), ..] =
+                    g.as_slice()
+                {
+                    if k.to_string() == "const" {
+                        consts.push(n.to_string());
+                    }
                 }
             }
         }
@@ -4224,6 +4266,7 @@ fn find_helpers(file: Option<std::path::PathBuf>) -> Vec<Helper> {
         out.push(Helper {
             name: name.to_string(),
             params,
+            consts,
             lets,
             value,
         });
@@ -4578,14 +4621,37 @@ fn port_fields(
 /// A call of a function under `#[lower]`, inlined: its parameters
 /// bound to the arguments, its `let`s to expressions of their own,
 /// and its value the call's.
-fn inline_helper(h: &Helper, args: &[String]) -> Result<String, String> {
+fn inline_helper(
+    h: &Helper,
+    args: &[String],
+    consts: &[String],
+) -> Result<String, String> {
     if args.len() != h.params.len() {
         return Err(format!("`{}` takes {} arguments", h.name, h.params.len()));
     }
+    if consts.len() != h.consts.len() {
+        return Err(format!(
+            "`{}` takes {} const parameters and the call gives {}",
+            h.name,
+            h.consts.len(),
+            consts.len()
+        ));
+    }
+    // The const parameters are bound by position, as the value ones
+    // are, by putting the call's expression in place of the name in
+    // the body. The name itself means nothing where the unit is, and
+    // binding by name is what issue 127 was.
+    let cs: Vec<(String, String)> = h
+        .consts
+        .iter()
+        .cloned()
+        .zip(consts.iter().cloned())
+        .collect();
     let mut s: Vec<(String, String)> =
         h.params.iter().cloned().zip(args.iter().cloned()).collect();
     let toks = |text: &str| -> Result<Vec<TokenTree>, String> {
-        text.parse::<TokenStream>()
+        with_consts(text, &cs)
+            .parse::<TokenStream>()
             .map(|t| t.into_iter().collect())
             .map_err(|_| format!("cannot parse `{text}` in `{}`", h.name))
     };
@@ -4597,6 +4663,56 @@ fn inline_helper(h: &Helper, args: &[String]) -> Result<String, String> {
         return Err(format!("`{}` has no value", h.name));
     }
     tr(&toks(&h.value)?, &s)
+}
+
+/// `text` with each const parameter's name replaced by the expression
+/// the call gave for it, in brackets so that its parts stay together.
+fn with_consts(text: &str, consts: &[(String, String)]) -> String {
+    fn walk(ts: TokenStream, consts: &[(String, String)]) -> String {
+        let mut out = String::new();
+        for t in ts {
+            match t {
+                TokenTree::Ident(id) => {
+                    let n = id.to_string();
+                    match consts.iter().find(|(k, _)| *k == n) {
+                        Some((_, v)) => out.push_str(&format!("({v})")),
+                        None => out.push_str(&n),
+                    }
+                }
+                TokenTree::Group(g) => {
+                    let (open, close) = match g.delimiter() {
+                        Delimiter::Parenthesis => ("(", ")"),
+                        Delimiter::Bracket => ("[", "]"),
+                        Delimiter::Brace => ("{", "}"),
+                        Delimiter::None => ("", ""),
+                    };
+                    out.push_str(open);
+                    out.push_str(&walk(g.stream(), consts));
+                    out.push_str(close);
+                }
+                // A punctuation token keeps its spacing: `==` and
+                // `>>` are two joint tokens each, and a space between
+                // them would make them two operators.
+                TokenTree::Punct(p) => {
+                    out.push(p.as_char());
+                    if p.spacing() == Spacing::Alone {
+                        out.push(' ');
+                    }
+                    continue;
+                }
+                t => out.push_str(&t.to_string()),
+            }
+            out.push(' ');
+        }
+        out
+    }
+    if consts.is_empty() {
+        return text.to_string();
+    }
+    match text.parse::<TokenStream>() {
+        Ok(stream) => walk(stream, consts),
+        Err(_) => text.to_string(),
+    }
 }
 
 fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
@@ -4936,7 +5052,37 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                         v.push(tr(&x, subst)?);
                     }
                     if let Some(h) = helper {
-                        return inline_helper(&h, &v);
+                        // The turbofish, if there is one: the
+                        // expressions between `<` and its `>`, which
+                        // bind the function's const parameters.
+                        let mut cs: Vec<String> = Vec::new();
+                        if turbo {
+                            let mut depth = 0usize;
+                            let mut end = 3;
+                            while end < ts.len() {
+                                match &ts[end] {
+                                    TokenTree::Punct(p)
+                                        if p.as_char() == '<' =>
+                                    {
+                                        depth += 1
+                                    }
+                                    TokenTree::Punct(p)
+                                        if p.as_char() == '>' =>
+                                    {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                end += 1;
+                            }
+                            for a in split_type_commas_slice(&ts[4..end]) {
+                                cs.push(text_of(&a));
+                            }
+                        }
+                        return inline_helper(&h, &v, &cs);
                     }
                     return Ok(match f.as_str() {
                         "sra" => ebin(">>>", &v[0], &v[1]),
