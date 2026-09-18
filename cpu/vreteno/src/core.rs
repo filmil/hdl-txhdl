@@ -752,6 +752,16 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             });
             let is_load = opcode == 0x03;
             let is_store = opcode == 0x23;
+            // A half wants an even address and a word one that is a
+            // multiple of four; a byte is never misaligned. The
+            // specification lets a core either support an unaligned
+            // access or raise the exception. This one raises it: it
+            // used to take the aligned word and say nothing, which was
+            // issue 138, and a wrong answer nothing reports is worse
+            // than a trap a handler can emulate.
+            let bad_half = ((f3 == 1) | (f3 == 5)) & addr.bit(0);
+            let bad_word = (f3 == 2) & (addr.slice::<0, 2>() != 0);
+            let unaligned = (is_load | is_store) & (bad_half | bad_word);
             // Everything from the data memory up is on the bus.
             let is_dev = addr.slice::<12, 20>() != 0;
             let here = self.valid & !rst & !self.stopped;
@@ -761,8 +771,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // clock; there is room whenever the devices keep up, and
             // they do. A device load's wait for its answer is a
             // register, so the hold for it is state too.
-            let stall_bus =
-                here & (is_load | is_store) & !(issue.ready() & wbeat.ready());
+            let stall_bus = here
+                & (is_load | is_store)
+                & !unaligned
+                & !(issue.ready() & wbeat.ready());
             self.stall
                 .set(stall_ld | stall_m | stall_bus | self.dev_wait);
             let stall = self.stall.get();
@@ -776,7 +788,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             self.int_take.set(live & int_ok);
             let int_take = self.int_take.get();
             let run = live & !int_take;
-            let send_load = run & is_load & is_dev;
+            let send_load = run & is_load & is_dev & !unaligned;
 
             // The ALU, shared by the register and immediate forms; bit
             // 30 means subtract or arithmetic shift, except that an
@@ -845,7 +857,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // interrupt. The cause, the address and the trap value go to
             // the CSRs, the interrupt enable is saved and cleared, and
             // the handler is the redirect.
-            let trap = (run & (is_ecall | !known)) | int_take;
+            let trap = (run & (is_ecall | !known | unaligned)) | int_take;
+            // The exception an unaligned access raises says which way
+            // it was going, and its trap value is the address, which is
+            // what a handler emulating the access needs.
+            let misaligned = mux(
+                is_store,
+                U::<32>::from(isa::CAUSE_STORE_MISALIGNED),
+                U::<32>::from(isa::CAUSE_LOAD_MISALIGNED),
+            );
             let cause = mux(
                 int_take,
                 mux(
@@ -856,10 +876,18 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 mux(
                     is_ecall,
                     U::<32>::from(isa::CAUSE_ECALL),
-                    U::<32>::from(isa::CAUSE_ILLEGAL),
+                    mux(
+                        unaligned,
+                        misaligned,
+                        U::<32>::from(isa::CAUSE_ILLEGAL),
+                    ),
                 ),
             );
-            let tval = mux(run & !known, ir, U::<32>::from(0u32));
+            let tval = mux(
+                run & !known,
+                ir,
+                mux(unaligned, addr, U::<32>::from(0u32)),
+            );
             let mie_bit = mstatus.bit(3);
             let mpie = mstatus.bit(7);
             let trap_status =
@@ -872,7 +900,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // retires.
             let stop = mux(run, Bit::from(is_ebreak), self.stopped.get());
             let wrote = run & writes & (rd != 0) & !trap;
-            let store = run & is_store;
+            let store = run & is_store & !unaligned;
             let wval = select!(opcode.raw() => {
                 0x37 => imm_u,
                 0x17 => pc + imm_u,

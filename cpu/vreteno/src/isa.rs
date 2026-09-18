@@ -77,9 +77,14 @@ pub const CSR_MIE: u32 = 0x304;
 pub const CSR_MIP: u32 = 0x344;
 pub const CSR_MTVAL: u32 = 0x343;
 
-/// The causes the core raises: two exceptions, and the external
+/// The causes the core raises: four exceptions, and the external
 /// interrupt, whose cause has the top bit set.
 pub const CAUSE_ILLEGAL: u32 = 2;
+/// A load whose address is not a multiple of its width, and a store
+/// of the same. The specification lets a core either support such an
+/// access or raise these; this one raises them.
+pub const CAUSE_LOAD_MISALIGNED: u32 = 4;
+pub const CAUSE_STORE_MISALIGNED: u32 = 6;
 pub const CAUSE_ECALL: u32 = 11;
 pub const CAUSE_MEXT: u32 = 0x8000_000b;
 pub const CAUSE_MTIMER: u32 = 0x8000_0007;

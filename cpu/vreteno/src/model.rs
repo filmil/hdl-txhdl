@@ -4,9 +4,9 @@
 //! against it, in lockstep, every cycle.
 use crate::isa::{
     compressed, decode, is_compressed, Kind, CAUSE_ECALL, CAUSE_ILLEGAL,
-    CAUSE_MEXT, CAUSE_MTIMER, CSR_MCAUSE, CSR_MEPC, CSR_MIE, CSR_MIP,
-    CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT, MTIMER, TIMER_BASE,
-    UART_BASE,
+    CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MTIMER, CAUSE_STORE_MISALIGNED,
+    CSR_MCAUSE, CSR_MEPC, CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS,
+    CSR_MTVAL, CSR_MTVEC, MEXT, MTIMER, TIMER_BASE, UART_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -96,6 +96,21 @@ pub fn fetch(imem: &[u32], pc: u32) -> Option<(u32, u32)> {
     }
     let hi = half(pc.wrapping_add(2))?;
     Some(((hi as u32) << 16 | lo as u32, 4))
+}
+
+/// Whether an access of this kind at this address is misaligned: a
+/// half wants an even address and a word a multiple of four, and a
+/// byte is never misaligned. The core raises an exception rather than
+/// supporting such an access, which the specification allows and issue
+/// 138 asked for, so the model has to agree or the lockstep test will
+/// say the core is wrong.
+pub fn misaligned(kind: Kind, addr: u32) -> bool {
+    use Kind::*;
+    match kind {
+        Lh | Lhu | Sh => addr & 1 != 0,
+        Lw | Sw => addr & 3 != 0,
+        _ => false,
+    }
 }
 
 impl Model {
@@ -261,6 +276,14 @@ impl Model {
             }
             Lb | Lh | Lw | Lbu | Lhu => {
                 let addr = a.wrapping_add(imm);
+                // A half wants an even address and a word a multiple of
+                // four. The core raises the exception rather than
+                // supporting the access, which the specification allows
+                // and issue 138 asked for, so the model does too.
+                if misaligned(d.kind, addr) {
+                    self.trap(CAUSE_LOAD_MISALIGNED, addr);
+                    return;
+                }
                 let Some(word) = self.word(addr) else {
                     self.halted = Some(Halt::Fault(addr));
                     return;
@@ -277,6 +300,10 @@ impl Model {
             }
             Sb | Sh | Sw => {
                 let addr = a.wrapping_add(imm);
+                if misaligned(d.kind, addr) {
+                    self.trap(CAUSE_STORE_MISALIGNED, addr);
+                    return;
+                }
                 let Some(word) = self.word(addr) else {
                     self.halted = Some(Halt::Fault(addr));
                     return;
