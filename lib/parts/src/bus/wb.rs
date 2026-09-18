@@ -232,7 +232,11 @@ mod tests {
                         .await;
                     assert_eq!(a.done().await.resp, Resp::Okay);
                     let r = host.read(Rd::at(0x4000_0010u32, 1)).await;
-                    out.borrow_mut().push(r.done().await);
+                    // The answer first, then the borrow: a borrow
+                    // held across an await is one the next task cannot
+                    // take, and this executor runs them in one thread.
+                    let done = r.done().await;
+                    out.borrow_mut().push(done);
                 }))
             },
             200,
