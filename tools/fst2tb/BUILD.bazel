@@ -3,7 +3,7 @@
 # Writes a VHDL testbench from the trace a Rust simulation wrote: it
 # replays the recorded inputs into the lowered entity and checks its
 # registers and outputs against the recorded values, tick by tick.
-load("@rules_rust//rust:defs.bzl", "rust_binary")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,4 +12,13 @@ rust_binary(
     srcs = ["main.rs"],
     edition = "2021",
     deps = ["@crates//:wellen"],
+)
+
+# The names the testbench gives a register, which may not be a name it
+# already declares: issue 211 was one such collision, and it made a
+# port look wrong for a whole run.
+rust_test(
+    name = "fst2tb_test",
+    crate = ":fst2tb",
+    edition = "2021",
 )

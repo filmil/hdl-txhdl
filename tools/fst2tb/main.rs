@@ -53,6 +53,36 @@ fn empty_ready(name: &str, dir: &str) -> bool {
     dir == "txin" && name.ends_with("_ready")
 }
 
+/// The name each register takes in the testbench, where it is read
+/// through an alias of the signal inside the entity. The name is
+/// `reg_<register>`, lengthened by another `reg_` while it is a name
+/// the testbench already declares.
+///
+/// The prefix used to be `r_`, which a channel port called `r` also
+/// writes: a unit with a register called `data` and such a port
+/// declared `r_data` twice, and every check of the port read the
+/// register instead, so nvc reported the port as differing for the
+/// whole run. That is issue 211.
+fn aliases(
+    regs: &[String],
+    declared: &[String],
+) -> std::collections::HashMap<String, String> {
+    let mut used: std::collections::HashSet<String> =
+        declared.iter().cloned().collect();
+    // The testbench's own signal, declared beside the ports.
+    used.insert("errors".to_string());
+    let mut out = std::collections::HashMap::new();
+    for n in regs {
+        let mut a = format!("reg_{n}");
+        while used.contains(&a) {
+            a = format!("reg_{a}");
+        }
+        used.insert(a.clone());
+        out.insert(n.clone(), a);
+    }
+    out
+}
+
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let (fst, ports, entity, unit) = (&a[1], &a[2], &a[3], &a[4]);
@@ -295,6 +325,17 @@ fn main() {
         print!("{o}");
         return;
     }
+    let names: Vec<String> = ports
+        .iter()
+        .filter(|(_, d, _)| inside(d))
+        .map(|(n, _, _)| n.clone())
+        .collect();
+    let declared: Vec<String> = ports
+        .iter()
+        .filter(|(_, d, _)| !inside(d))
+        .map(|(n, _, _)| n.clone())
+        .collect();
+    let alias = aliases(&names, &declared);
     let mut o = String::new();
     o.push_str(
         "library ieee;\nuse ieee.std_logic_1164.all;\n\
@@ -364,7 +405,8 @@ fn main() {
     for (n, d, w) in &ports {
         if inside(d) {
             o.push_str(&format!(
-                "    alias r_{n} is << signal .{entity}_tb.uut.{n} : {} >>;\n",
+                "    alias {} is << signal .{entity}_tb.uut.{n} : {} >>;\n",
+                alias[n],
                 ty(*w)
             ));
         }
@@ -419,8 +461,9 @@ fn main() {
             let v = take(*w);
             let (c, _) = take(1);
             tick.push_str(&format!(
-                "      if f({c}) = '1' then expect(\"{n}\", r_{n} = {}, \
+                "      if f({c}) = '1' then expect(\"{n}\", {} = {}, \
                  now); end if;\n",
+                alias[n],
                 conv(*w, v)
             ));
         }
@@ -430,7 +473,7 @@ fn main() {
             let v = take(*w);
             let (c, _) = take(1);
             let sig = if d == "wire" {
-                format!("r_{n}")
+                alias[n].clone()
             } else {
                 n.clone()
             };
@@ -578,4 +621,48 @@ fn main() {
          end if;\n    std.env.finish;\n  end process;\nend architecture;\n",
     );
     print!("{packages}{o}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::aliases;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The case of issue 211: a register called `data` and an
+    /// AXI-Lite channel port called `r`, whose data wire the netlist
+    /// calls `r_data`.
+    #[test]
+    fn an_alias_is_never_a_declared_signal() {
+        let regs = names(&["data", "state", "errors"]);
+        let ports = names(&["clk", "r_data", "r_valid", "r_ready"]);
+        let a = aliases(&regs, &ports);
+        for r in &regs {
+            assert!(!ports.contains(&a[r]), "{} took a port's name", a[r]);
+            assert_ne!(a[r], "errors");
+        }
+        assert_eq!(a["data"], "reg_data");
+        assert_eq!(a["state"], "reg_state");
+    }
+
+    /// A port that takes the prefixed name too, which nothing in the
+    /// tree has, and the alias lengthens rather than colliding.
+    #[test]
+    fn an_alias_lengthens_past_a_port() {
+        let a = aliases(&names(&["data"]), &names(&["reg_data"]));
+        assert_eq!(a["data"], "reg_reg_data");
+    }
+
+    /// Two registers never share an alias, however they are named.
+    #[test]
+    fn aliases_are_distinct() {
+        let regs = names(&["data", "reg_data", "reg_reg_data"]);
+        let a = aliases(&regs, &names(&["r_data"]));
+        let mut all: Vec<&String> = regs.iter().map(|r| &a[r]).collect();
+        all.sort();
+        all.dedup();
+        assert_eq!(all.len(), regs.len());
+    }
 }
