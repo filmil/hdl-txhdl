@@ -140,10 +140,14 @@ rest. \code{ecall}, \code{ebreak} and \code{mret} share an opcode
 and a function code and differ in their upper twelve bits; in the
 six CSR forms those bits name the register. The five machine-mode
 registers the core has, \code{mstatus}, \code{mtvec},
-\code{mscratch}, \code{mepc} and \code{mcause}, and the two
+\code{mscratch}, \code{mepc} and \code{mcause}, and the
 causes it raises, are constants beside them, with \code{mie},
 \code{mip}, \code{mtval}, the external and the timer interrupt's
-bits and causes, and the timer's and the serial port's addresses. The M extension is the
+bits and causes, and the timer's and the serial port's addresses.
+\code{mhalt} at \code{0x7c0} is this core's own, in the space the
+specification leaves to a design: it reads as zero, and a write of an
+odd value to it stops the core when that instruction retires, which
+is what \code{halt} encodes and what a program ends with. The M extension is the
 register format with \code{funct7} one: the four multiplies, which
 differ in which operand is signed and which half of the product they
 keep, and the two divides and two remainders, signed and unsigned. A
@@ -200,7 +204,8 @@ bit, and the saved bit is set. A CSR instruction reads the register
 its upper twelve bits name into \code{rd} and writes it, replaced,
 set or cleared by a register or by a five-bit immediate; a name the
 model does not have is an illegal word, and traps. \code{mtval}
-takes the illegal word itself, and zero for any other trap. The
+takes the illegal word itself, the address an unaligned access asked
+for, the breakpoint's own address, and zero for any other trap. The
 external interrupt is a bit in \code{mip}, which \code{raise}
 sets when the line is seen high and software clears; when it is set,
 enabled in \code{mie} and interrupts are enabled in
@@ -220,8 +225,8 @@ at the end, the timer's compare and the bytes given to the serial
 port. Which
 interrupt that step takes, if any, is the caller's word too, since
 the core decides on the bits as they stood a cycle earlier, and the
-lockstep test carries the core's decision across. Only
-\code{ebreak} halts. The fetch reads a halfword, the upper half of its
+lockstep test carries the core's decision across. Only the write to
+\code{mhalt} halts. The fetch reads a halfword, the upper half of its
 word when bit 1 of the address is set, and takes a second when the
 first's low two bits are both set; a compressed instruction is read
 as the one it stands for, the counter moves on by the instruction's
@@ -742,7 +747,8 @@ returns through \code{jalr}, stores and loads every width so the sign
 extension of \code{lb} and \code{lh} and the zero extension of
 \code{lbu} and \code{lhu} are exercised, uses the upper immediates,
 the arithmetic shift and both compares, then traps twice and ends
-in \code{ebreak} with 110 in \code{x10} and at the first data word.
+in the write to \code{mhalt} with 110 in \code{x10} and at the first
+data word.
 The traps need a label's absolute address, which \code{abs} gives
 an encoder once the label is placed. The handler's address goes into
 \code{mtvec} first of all, the timer's compare is set to 150, both
@@ -795,7 +801,7 @@ Half the word stores and loads go to the timer through
 and the compare are written with anything, and the count read
 back. Both interrupts are enabled from the start, and the compare is
 zero then, so the timer fires at once and keeps firing. The handler
-placed after the \code{ebreak} branches on the cause's sign as the
+placed after the halt branches on the cause's sign as the
 demonstration's does: an interrupt has the line's bit cleared and
 the compare set to the count plus sixty-four, both halves, since a
 program may have stored anything into the count, and returns to the
@@ -845,8 +851,9 @@ least once with the lengths mixed: the arithmetic group, the stack
 pointer's short forms, the loads and stores, a loop on
 \code{c.bnez}, calls by \code{c.jal}, \code{jal} and \code{c.jalr}
 with their links two or four bytes on, returns by \code{c.jr}, a
-reserved halfword that traps with itself as the trap value, and
-\code{c.ebreak} to halt. Two more negative controls belong to it. With
+reserved halfword that traps with itself as the trap value, and the
+write to \code{mhalt}, a thirty-two bit instruction among the short
+ones, to end. Two more negative controls belong to it. With
 a compressed call linking four bytes on, it fails at cycle 59 on
 \code{x1}; with a thirty-two bit instruction in the upper half of a
 word taking its upper half from its own word rather than the next, it
@@ -1302,9 +1309,11 @@ without them.
 
 Two more things nothing else does: the stack pointer is zero at
 reset, and \code{.bss} is not cleared. The entry stub does both, in
-the assembly that has to come before Rust can run at all. And
-\code{ebreak} halts this core rather than trapping, which makes it
-what a program ends with.
+the assembly that has to come before Rust can run at all. And a
+program ends by writing an odd value to \code{mhalt},
+\code{csrwi 0x7c0, 1}, which is one instruction and needs no runtime;
+\code{ebreak} is a breakpoint here as the specification says, and
+traps.
 
 \lstinputlisting[caption={\code{cpu/vreteno/rust/hello.rs}: Rust
 compiled for the core. Run the whole machine on it with

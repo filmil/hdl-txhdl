@@ -67,6 +67,8 @@ bit 0. \\
 \code{0x343} & \code{mtval} & The whole word. \\
 \code{0x344} & \code{mip} & Bit 11 is stored: \code{irq} sets it and
 a write keeps only that bit. Bit 7 reads as \code{tirq}. \\
+\code{0x7c0} & \code{mhalt} & Nothing: it reads as zero. A write of an
+odd value stops the core when that instruction retires. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -109,11 +111,14 @@ its answer lands in \code{wb\_dev}.
 \item When a write response and a read beat arrive together, the
 write's identifier goes back first and the read's waits a cycle. The
 core drops what it receives on \code{grant}.
-\item \code{ecall} traps with cause 11. A word the core does not know
-traps with cause 2, and \code{mtval} takes the word. A halfword that
-is no RV32C instruction expands to itself, which no thirty-two bit
+\item \code{ecall} traps with cause 11 and \code{ebreak} with cause 3,
+which takes its own address as \code{mtval}. A word the core does not
+know traps with cause 2, and \code{mtval} takes the word. A halfword
+that is no RV32C instruction expands to itself, which no thirty-two bit
 instruction is, so it traps with cause 2 and \code{mtval} takes the
-halfword. Every other trap writes zero to \code{mtval}.
+halfword. An unaligned load traps with cause 4 and an unaligned store
+with cause 6, and \code{mtval} takes the address that was asked for.
+Every other trap writes zero to \code{mtval}.
 \item On a trap, \code{mepc} takes the instruction's address, bit 7 of
 \code{mstatus} takes bit 3, bit 3 is cleared, and the fetch goes to
 \code{mtvec}. \code{mret} sets bit 3 from bit 7, sets bit 7, and goes
@@ -131,9 +136,9 @@ An interrupt cancels the sequencer, and the instruction starts it
 again after the handler returns.
 \item The sequencer does not start while a device load in writeback is
 still waiting for its answer.
-\item \code{ebreak} stops the fetch and parks the program counter on
-itself. \code{halt} rises when that instruction retires, and stays
-high.
+\item A write of an odd value to \code{mhalt} stops the fetch and
+parks the program counter one word past that instruction, which
+retires first. \code{halt} rises as it retires, and stays high.
 \item \code{stall}, \code{int\_take} and \code{redirect} are wires kept
 as fields, so the trace and the netlist show them.
 \end{itemize}
@@ -144,11 +149,13 @@ as fields, so the trace and the netlist show them.
 \item \code{//cpu/vreteno:lockstep} runs the core with the router, the
 data memory, the timer and the serial port against the reference model
 in \code{model.rs}. After every cycle the program counter, registers
-1 to 31, the eight control registers and the halt must agree. At the
+1 to 31, the eight control registers that hold something and the halt
+must agree. At the
 halt the data memory, the timer's compare and the serial port's bytes
 must agree. Its tests are \code{demo\_program},
 \code{a\_multiply\_right\_after\_a\_load},
-\code{compressed\_instructions}, and \code{random\_programs}, which
+\code{compressed\_instructions}, \code{an\_unaligned\_access\_traps},
+and \code{random\_programs}, which
 runs 64 seeds of 200 instructions each with both lengths mixed and
 counts that the mix is there.
 \item \code{//cpu/vreteno:isa\_test} compares the core's expander with
@@ -200,7 +207,7 @@ instruction retires with the word the previous device load left in
 \code{wb\_dev}. A store below \code{0x1000} writes nothing.
 
 A trap handler must start at a whole word: \code{mtvec} keeps no
-bits 1 and 0. The core has machine mode only, the eight control registers
-above, and \code{ebreak} halts rather than traps. It has one load in
+bits 1 and 0. The core has machine mode only and the nine control
+registers above, one of which, \code{mhalt}, is its own. It has one load in
 flight at a time. On the board, \code{irq} is the interrupt
 controller's line.
