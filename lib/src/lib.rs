@@ -35,8 +35,8 @@ pub mod pipeline;
 pub mod types;
 
 pub use txhdl_macros::{
-    case, interface, lite_bridge, lower, pipeline, plic, router, station, when,
-    with, Bus, Trace, Transaction, Value,
+    arbiter, case, interface, lite_bridge, lower, pipeline, plic, router,
+    station, when, with, Bus, Trace, Transaction, Value,
 };
 
 /// `select!(value => { pattern => expr, .., _ => expr })`: a value
