@@ -23,6 +23,17 @@ async fn mac(a: U<32>, b: U<32>, c: U<64>) -> U<64> {
     add(p, c).await
 }
 
+/// The same shape with both constants written as literals rather than
+/// taken as inputs: the factor in hexadecimal with the suffix that
+/// says its width, and the addend in binary. A literal argument is
+/// read the way Rust reads it, in any radix and with or without a
+/// suffix, which is issue 200.
+#[pipeline(mul = 1, add = 1)]
+async fn scale(a: U<32>) -> U<64> {
+    let p = mul(a, U::<32>::from(0x10u32)).await;
+    add(p, U::<64>::from(0b1000_0000u64)).await
+}
+
 /// The same, with a three-cycle multiplier.
 #[pipeline(mul = 3, add = 1)]
 async fn mac3(a: U<32>, b: U<32>, c: U<64>) -> U<64> {
@@ -75,6 +86,7 @@ impl Unit<Rx<U<64>>, ()> for Sink {
 fn main() {
     println!("{}", mac_verilog());
     println!("{}", mac3_verilog());
+    println!("{}", scale_verilog());
 
     let (t_tx, t_rx) = chan::<Triple, _>();
     let (r_tx, r_rx) = chan::<U<64>, _>();
@@ -97,6 +109,6 @@ fn main() {
     for _ in 0..6 {
         sim.cycle();
     }
-    let _ = mac3;
+    let _ = (mac3, scale);
     stop();
 }
