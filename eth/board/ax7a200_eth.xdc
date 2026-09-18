@@ -52,3 +52,10 @@ set_property IOSTANDARD LVCMOS33 [get_ports {eth_*}]
 
 set_property CONFIG_VOLTAGE 3.3 [current_design]
 set_property CFGBVS VCCO [current_design]
+
+# The board has four LEDs and this design names three, so K13 is an
+# unused pin. A 7 series bitstream pulls unused pins down by default,
+# and a pull-down on an LED that is lit when driven low leaves it
+# glowing faintly, which reads as a signal to somebody at the board.
+# See issue #232.
+set_property BITSTREAM.CONFIG.UNUSEDPIN PULLNONE [current_design]
