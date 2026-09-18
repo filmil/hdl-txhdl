@@ -4241,6 +4241,65 @@ thread_local! {
     /// below: an expression that names one of them is not a constant.
     static PNAMES: std::cell::RefCell<Vec<String>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// The wires an inlined call asked for, each a name and what
+    /// drives it, waiting for the statement being lowered to take
+    /// them. An inlined function used to paste an argument's whole
+    /// expression wherever the body read it, so a body that read a
+    /// parameter three times held three copies and eight nested calls
+    /// held six thousand: issue 126. Now an argument the body reads
+    /// more than once, and a `let` inside it read more than once,
+    /// becomes a wire named here and read by name, so each expression
+    /// is written once however deep the calls go.
+    static INLINED: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// How many wires the inlining has named in this lowering, so the
+    /// next one gets a name no other has.
+    static INLINED_N: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A name no other wire of this lowering has, for a value an inlined
+/// call has to hold: the function's name, the parameter's or `let`'s,
+/// and a number.
+fn inline_name(f: &str, n: &str) -> String {
+    let k = INLINED_N.with(|c| {
+        c.set(c.get() + 1);
+        c.get()
+    });
+    format!("{f}_{n}_{k}")
+}
+
+/// Whether an expression the lowering wrote costs so little to read
+/// again that a wire would cost more: a name, a number, a constant of
+/// the build, or a value of a node or two, such as a bit or a field
+/// of one of those. A name for `h(12)` is longer than `h(12)` and
+/// says less; a name for a tree is shorter than the tree and is read
+/// in one place, which is the whole of issue 126.
+fn is_cheap(e: &str) -> bool {
+    e.starts_with("NlE::Name(")
+        || e.starts_with("NlE::Num(")
+        || e.starts_with("NlE::Bits(")
+        || e.starts_with("::txhdl::netlist::lit(")
+        || e.matches("NlE::").count() <= 2
+}
+
+/// How many times `name` is read as an identifier in `texts`.
+fn reads_of(name: &str, texts: &[&str]) -> usize {
+    fn walk(ts: TokenStream, name: &str, n: &mut usize) {
+        for t in ts {
+            match t {
+                TokenTree::Ident(id) if id.to_string() == name => *n += 1,
+                TokenTree::Group(g) => walk(g.stream(), name, n),
+                _ => {}
+            }
+        }
+    }
+    let mut n = 0;
+    for t in texts {
+        if let Ok(ts) = t.parse::<TokenStream>() {
+            walk(ts, name, &mut n);
+        }
+    }
+    n
 }
 
 /// The name of a signal the expression mentions, if it mentions one: a
@@ -4876,20 +4935,47 @@ fn inline_helper(
         .cloned()
         .zip(consts.iter().cloned())
         .collect();
-    let mut s: Vec<(String, String)> =
-        h.params.iter().cloned().zip(args.iter().cloned()).collect();
+    if let Some(why) = h.refused.first() {
+        return Err(why.clone());
+    }
+    // What the body still has to read, after the binding being made:
+    // the `let`s below it and the value. A name read once is pasted
+    // where it is read, which is one copy; a name read more often
+    // becomes a wire, so the expression is written once whatever the
+    // body does with it, and a chain of calls grows by a wire a call
+    // rather than by a power of the reads. That is issue 126.
+    let rest = |from: usize| -> Vec<&str> {
+        let mut v: Vec<&str> =
+            h.lets[from..].iter().map(|(_, e)| e.as_str()).collect();
+        v.push(h.value.as_str());
+        v
+    };
+    // The binding of one name: the expression itself when it is read
+    // once or costs nothing to read again, and otherwise a wire that
+    // holds it, which the body reads by name.
+    let bind = |n: &str, v: String, reads: usize| -> String {
+        if reads < 2 || is_cheap(&v) {
+            return v;
+        }
+        let w = inline_name(&h.name, n);
+        INLINED.with(|ws| ws.borrow_mut().push((w.clone(), v)));
+        ename(&w)
+    };
+    let mut s: Vec<(String, String)> = Vec::new();
+    for (p, a) in h.params.iter().zip(args) {
+        let reads = reads_of(p, &rest(0));
+        s.push((p.clone(), bind(p, a.clone(), reads)));
+    }
     let toks = |text: &str| -> Result<Vec<TokenTree>, String> {
         with_consts(text, &cs)
             .parse::<TokenStream>()
             .map(|t| t.into_iter().collect())
             .map_err(|_| format!("cannot parse `{text}` in `{}`", h.name))
     };
-    if let Some(why) = h.refused.first() {
-        return Err(why.clone());
-    }
-    for (n, e) in &h.lets {
+    for (i, (n, e)) in h.lets.iter().enumerate() {
         let v = tr(&toks(e)?, &s)?;
-        s.push((n.clone(), v));
+        let reads = reads_of(n, &rest(i + 1));
+        s.push((n.clone(), bind(n, v, reads)));
     }
     if h.value.is_empty() {
         return Err(format!("`{}` has no value", h.name));
@@ -5599,6 +5685,11 @@ fn lower_stmts(
 ) -> Result<Vec<String>, TokenStream> {
     let mut stmts: Vec<String> = Vec::new();
     for st in stmts_of(toks) {
+        // The wires the statement before this one asked for while it
+        // was inlining a call, taken into the unit's. They are
+        // continuous assignments, so where they sit among the others
+        // does not matter; that they are there does. See issue 126.
+        cx.wires.extend(INLINED.with(|w| w.take()));
         let ts: Vec<TokenTree> = st;
         let text: String = ts
             .iter()
@@ -6147,6 +6238,8 @@ fn lower_stmts(
         }
         return Err(err(ts[0].span(), &format!("cannot lower `{text}`")));
     }
+    // And the last statement's, which no next one would take.
+    cx.wires.extend(INLINED.with(|w| w.take()));
     Ok(stmts)
 }
 
@@ -6508,6 +6601,11 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     });
     PTYPES.with(|p| p.borrow_mut().clear());
     PNAMES.with(|p| p.borrow_mut().clear());
+    // The wires the inlining names are numbered from one in each
+    // unit, so the same source lowers to the same netlist whatever
+    // was lowered before it on this thread.
+    INLINED.with(|w| w.borrow_mut().clear());
+    INLINED_N.with(|c| c.set(0));
     // Past any attributes and doc comments, to `impl`.
     let Some(at) = toks.iter().position(
         |t| matches!(t, TokenTree::Ident(id) if id.to_string() == "impl"),
