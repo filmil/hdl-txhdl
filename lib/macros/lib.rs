@@ -4253,6 +4253,17 @@ fn find_helpers(file: Option<std::path::PathBuf>) -> Vec<Helper> {
             continue;
         }
         let mut j = i + 2;
+        // Another attribute, or a doc comment, may stand between the
+        // marker and the function: Rust takes attributes in any order,
+        // and a scan that insisted on the marker being last left the
+        // function uninlined, with the call refused as not lowered.
+        // That is issue 234.
+        while matches!(ts.get(j), Some(TokenTree::Punct(p)) if p.as_char() == '#')
+            && matches!(ts.get(j + 1), Some(TokenTree::Group(g))
+                if g.delimiter() == Delimiter::Bracket)
+        {
+            j += 2;
+        }
         if ts.get(j).is_some_and(|t| is_ident(t, "pub")) {
             j += 1;
             if matches!(ts.get(j), Some(TokenTree::Group(g))
