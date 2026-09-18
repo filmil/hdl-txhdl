@@ -478,6 +478,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An AXI4 arbiter, two hosts sharing one memory:
+#   bazel run //lib/examples:ex_axi_arbiter
+rust_binary(
+    name = "ex_axi_arbiter",
+    srcs = ["ex_axi_arbiter.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # An AXI4 to AXI-Lite bridge, two register banks behind it:
 #   bazel run //lib/examples:ex_axi_lite
 rust_binary(
@@ -651,6 +664,7 @@ filegroup(
         "ex_ports.rs",
         "ex_axi.rs",
         "ex_axi_serve.rs",
+        "ex_axi_arbiter.rs",
         "ex_axi_router.rs",
         "ex_axi_lite.rs",
         "ex_i2c.rs",
