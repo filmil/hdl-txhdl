@@ -98,7 +98,9 @@ pub enum BurstKind {
 /// `A` is the address width and `I` the identifier width, both stated
 /// rather than computed; see the module's own documentation for why
 /// every width in this file is a parameter.
-#[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
+#[derive(
+    TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
+)]
 pub struct Addr<const A: usize, const I: usize> {
     /// Which burst this is. Answers carry it back, which is what
     /// lets several be in flight and be answered out of order. The
@@ -144,7 +146,9 @@ pub type Ar<const A: usize, const I: usize> = Addr<A, I>;
 /// and not on this one, so a beat belongs to the oldest address phase
 /// that has not finished, and anything standing between a host and a
 /// peripheral has to keep them in that order.
-#[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
+#[derive(
+    TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
+)]
 pub struct W<const D: usize, const S: usize> {
     /// The word written.
     pub data: U<D>,
@@ -159,7 +163,9 @@ pub struct W<const D: usize, const S: usize> {
 
 /// The write response channel's beat: one per write burst, whatever
 /// its length. `I` is the identifier width.
-#[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
+#[derive(
+    TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
+)]
 pub struct B<const I: usize> {
     /// The burst this answers.
     pub id: U<I>,
@@ -170,7 +176,9 @@ pub struct B<const I: usize> {
 /// The read data channel's beat: one per beat of the burst, each
 /// carrying its own response. `D` is the data width and `I` the
 /// identifier width.
-#[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
+#[derive(
+    TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
+)]
 pub struct R<const D: usize, const I: usize> {
     /// The burst this belongs to. Beats of different bursts may be
     /// interleaved, and this is what sorts them out again.
@@ -190,7 +198,9 @@ pub struct R<const D: usize, const I: usize> {
 /// What a host client hands its tracker: an address phase with no
 /// identifier, and whether it is a read. The identifier is the
 /// tracker's to allocate, which is why the client never writes one.
-#[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
+#[derive(
+    TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
+)]
 pub struct Issue<const A: usize> {
     /// Which address channel this goes out on: high for a read.
     pub read: Bit,
@@ -220,7 +230,9 @@ pub struct Issue<const A: usize> {
 /// It travels the other way too: the client sends one back when it
 /// has taken that burst's answer, which is what frees the identifier
 /// for another burst.
-#[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
+#[derive(
+    TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
+)]
 pub struct Grant<const I: usize> {
     /// The identifier granted, or the one being given back.
     pub id: U<I>,
@@ -228,7 +240,9 @@ pub struct Grant<const I: usize> {
 
 /// A write finished: what the tracker makes of a `B` beat. `I` is the
 /// identifier width.
-#[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
+#[derive(
+    TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
+)]
 pub struct Done<const I: usize> {
     /// The burst that finished.
     pub id: U<I>,
@@ -238,7 +252,9 @@ pub struct Done<const I: usize> {
 
 /// What a peripheral client is given: a whole request, decoded, from
 /// whichever address channel carried it.
-#[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
+#[derive(
+    TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
+)]
 pub struct PerReq<const A: usize, const I: usize> {
     /// Whether this is a read. A peripheral answers a read on its
     /// read beat channel and a write on its answer channel, so this
@@ -268,7 +284,9 @@ pub struct PerReq<const A: usize, const I: usize> {
 
 /// A peripheral client's answer to a write. `I` is the identifier
 /// width. A read is answered with beats instead, on the read channel.
-#[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
+#[derive(
+    TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
+)]
 pub struct Answer<const I: usize> {
     /// The burst being answered.
     pub id: U<I>,

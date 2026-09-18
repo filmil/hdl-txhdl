@@ -29,6 +29,7 @@ rust_library(
         "src/hdmi.rs",
         "src/i2c.rs",
         "src/plic.rs",
+        "src/redundant.rs",
         "src/spi.rs",
         "src/station.rs",
         "src/syscon.rs",
