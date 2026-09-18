@@ -588,6 +588,12 @@ pub type HostOut<
 );
 
 /// The ports of a peripheral tracker, what it reads.
+///
+/// The formatter is told to leave this one alone. Collapsed onto one
+/// line, as it would write it, the alias is 82 columns, and the
+/// documents set source at 80 and never break a line; that is issue
+/// 165.
+#[rustfmt::skip]
 pub type PerIn<
     const A: usize,
     const D: usize,
