@@ -41,6 +41,7 @@ MACROS = ["//lib:txhdl_macros"]
         "probe_infer",
         "probe_macro_in_macro",
         "probe_values",
+        "probe_attr_order",
     ]
 ]
 

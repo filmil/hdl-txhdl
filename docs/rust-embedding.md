@@ -223,6 +223,7 @@ Those expected to fail are tagged `manual`.
 | `probe_tuple_let` | Is a tuple `let` in a lowered function whose value is not a tuple refused? | **Yes**, where the helper is called: ``the tuple `let` of `pair` binds 2 names to something that is not a tuple of 2 values: a helper's `let` is a substitution, so write one `let` per name (issue 159)`` |
 | `probe_shadow_generic` | Is it refused in a generic unit? | **Only once a type is lowered.** The check is a constant `lowered` uses, so the file builds until `Latch::<1>::verilog` is called; issue 171 |
 | `probe_lit_signal` | Is an expression the lowering does not read, `U::<8>::new(n)`, which names a wire, refused? | **Yes**, at the statement: ``error: cannot lower `U::<8>::new(n)`: it names `n`, which is a signal of the unit, so the expression cannot be a constant``; before issue 128 it became a constant and `rustc` reported `n` as missing at the attribute |
+| `probe_attr_order` | May another attribute, or a doc comment, stand between `#[lower]` and the `fn`? | **Yes**, since issue 234. The lowering finds its functions by a scan of the file, which insisted on the marker standing last; the call was refused with ``function `plus_one` is not lowered`` |
 
 Three of these change the design.
 
