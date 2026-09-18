@@ -315,15 +315,22 @@ vivado_program_device(
     tags = ["manual"],
 )
 
-# Write the bitstream into the board's QSPI flash, a Micron MT25QL256
-# over a 4-bit bus, as the a200t examples do; the same tunnel:
+# Write the bitstream into the board's QSPI flash, a Micron MT25QL128
+# over a 4-bit bus; the same tunnel:
 #
 #   bazel run //cpu/vreteno:vreteno_board_flash -- \
 #       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+#
+# The part is the one this board answers with, read off the chip over
+# JTAG: `Mfg ID : 20  Memory Type : ba  Memory Capacity : 18`, which is
+# 128 Mbit, 16 MiB. The a200t examples name an MT25QL256, and a target
+# that names it is refused by Vivado with `Part identified : mt25ql128
+# Part selected : mt25ql256`. Board revisions differ here, so read the
+# chip rather than a manual. See issue #210.
 vivado_program_flash(
     name = "vreteno_board_flash",
-    size = 32,
-    flash_part = "mt25ql256-spi-x1_x2_x4",
+    size = 16,
+    flash_part = "mt25ql128-spi-x1_x2_x4",
     interface = "SPIx4",
     deps = [":vreteno_board_pnr"],
     tags = ["manual"],
