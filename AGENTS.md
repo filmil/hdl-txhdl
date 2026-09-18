@@ -420,6 +420,17 @@ fj pr -R hd search -s open      # the numbers
 fj pr -R hd status <number>     # mergeable, or not
 ```
 
+* Keep checking while the pull request is open, on a rhythm rather
+  than once.
+  Every open pull request is checked at each of these, whether or not
+  it is the one being worked on: after opening one, after any pull
+  request lands, before taking the next issue, and before reporting.
+  A branch does not announce that it has gone stale, and the session
+  that opened it is usually looking somewhere else by the time it
+  does; the check is one command, and the repair is cheapest the
+  moment the conflict appears, while the change is still in mind.
+  This rule was written against a pull request that reported
+  conflicts within the hour, on a file nobody expected to move.
 * Repair a conflict by rebasing onto `origin/main`, not by merging
   `main` into the branch.
   A rebase keeps the topical commits topical; a merge buries them
