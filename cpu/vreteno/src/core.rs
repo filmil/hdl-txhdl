@@ -613,10 +613,6 @@ impl<const IW: usize> Vreteno<IW> {
     }
 }
 
-// A struct literal's field is `name: value` to the lowering,
-// which reads no shorthand (issue 235), so `addr: addr` stays as
-// written.
-#[allow(clippy::redundant_field_names)]
 #[lower]
 impl<const IW: usize> Unit for Vreteno<IW> {
     async fn run(
@@ -965,7 +961,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             if bool::from(send_any) {
                 issue.send(Issue {
                     read: !send_store,
-                    addr: addr,
+                    addr,
                     len: U::<8>::from(0u8),
                     size: U::<3>::from(2u8),
                     burst: BurstKind::Incr,

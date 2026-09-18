@@ -318,10 +318,6 @@ pub struct AxiHost<
     pub busy: Reg<U<NIDS>>,
 }
 
-// A struct literal's field is `name: value` to the lowering,
-// which reads no shorthand (issue 235), so `id: id` stays as it is
-// written.
-#[allow(clippy::redundant_field_names)]
 #[lower]
 impl<
         const A: usize,
@@ -394,7 +390,7 @@ impl<
             });
             if (go & read).to_bool() {
                 ar.send(Ar {
-                    id: id,
+                    id,
                     addr: head.addr,
                     len: head.len,
                     size: head.size,
@@ -408,7 +404,7 @@ impl<
             }
             if (go & !read).to_bool() {
                 aw.send(Aw {
-                    id: id,
+                    id,
                     addr: head.addr,
                     len: head.len,
                     size: head.size,
@@ -421,7 +417,7 @@ impl<
                 });
             }
             if go.to_bool() {
-                grant.send(Grant { id: id });
+                grant.send(Grant { id });
             }
             if wr_go.to_bool() {
                 w.send(W {
