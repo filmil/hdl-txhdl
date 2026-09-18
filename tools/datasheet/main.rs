@@ -93,6 +93,151 @@ fn count(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// A port's label in the diagram: its name, and its width where the
+/// width says something, which a one-bit wire's does not.
+fn label(n: &str, k: Kind, w: usize) -> String {
+    let what = match k {
+        Kind::Rx | Kind::Tx => "~(ch)",
+        _ => "",
+    };
+    if w == 1 {
+        format!("\\code{{{}}}{what}", tex(n))
+    } else {
+        format!("\\code{{{}}}{what}~[{w}]", tex(n))
+    }
+}
+
+/// The diagram of a component's interfaces: a box with the inputs
+/// down its left side and the outputs down its right, each arrow
+/// labelled with the port and its width. A channel is marked, since
+/// it is three wires rather than one and carries a handshake.
+///
+/// It is drawn from the lowering, as the tables are, so it cannot say
+/// a port the netlist does not have.
+fn figure(key: &str, net: &Lowered) -> String {
+    let side = |want: &[Kind]| -> Vec<(String, Kind, usize)> {
+        net.ports
+            .iter()
+            .filter(|(_, k, _)| want.contains(k))
+            .map(|(n, k, w)| (n.clone(), *k, *w))
+            .collect()
+    };
+    let ins = side(&[Kind::In, Kind::Rx]);
+    let outs = side(&[Kind::Out, Kind::Tx]);
+    let pads = side(&[Kind::Pad]);
+    let rows = ins.len().max(outs.len()).max(1);
+    // A row is 7mm, and the box is as tall as the longer side.
+    let height = 7 * rows + 6;
+    let mut out = String::new();
+    out.push_str(
+        "\\begin{center}\\footnotesize\n\\begin{tikzpicture}[\n\
+         every node/.style={font=\\footnotesize},\n\
+         pin/.style={-{Stealth[length=1.6mm]}, thin}]\n",
+    );
+    out.push_str(&format!(
+        "\\node[draw, rounded corners, minimum width=34mm, \
+         minimum height={height}mm, align=center] (u) \
+         {{\\code{{{key}}}}};\n"
+    ));
+    let place = |list: &[(String, Kind, usize)], left: bool| -> String {
+        let mut s = String::new();
+        let n = list.len();
+        for (i, (name, k, w)) in list.iter().enumerate() {
+            // Down the side, spread over the box's height.
+            let y = (height as f64) / 2.0 - 3.0 - (7.0 * i as f64);
+            let (x0, x1, anchor) = if left {
+                (-17.0 - 12.0, -17.0, "east")
+            } else {
+                (17.0 + 12.0, 17.0, "west")
+            };
+            let _ = n;
+            let (from, to) = if left { (x0, x1) } else { (x1, x0) };
+            s.push_str(&format!(
+                "\\draw[pin] ({from}mm,{y}mm) -- ({to}mm,{y}mm);\n\
+                 \\node[anchor={anchor}] at ({x0}mm,{y}mm) {{{}}};\n",
+                label(name, *k, *w)
+            ));
+        }
+        s
+    };
+    out.push_str(&place(&ins, true));
+    out.push_str(&place(&outs, false));
+    if !pads.is_empty() {
+        let names: Vec<String> =
+            pads.iter().map(|(n, k, w)| label(n, *k, *w)).collect();
+        out.push_str(&format!(
+            "\\node[anchor=north, text width=60mm, align=center] at \
+             (0mm,{}mm) {{pads, both ways: {}}};\n",
+            -(height as f64) / 2.0 - 1.0,
+            names.join(", ")
+        ));
+    }
+    out.push_str("\\end{tikzpicture}\n\\end{center}\n");
+    out
+}
+
+/// How a component is made and joined, from its lowering: the type as
+/// this document lowers it, a value of it, and the call that gives its
+/// ports to the simulator.
+///
+/// The ports are named in the order `run` takes them. Where the
+/// inputs all come before the outputs, which is this repository's
+/// habit, the call is written with the two tuples the unit's `run`
+/// has; where they are mixed, the ports are listed instead, since the
+/// lowering keeps their order and not their grouping.
+fn instance(ty: &str, net: &Lowered) -> String {
+    let is_in = |k: &Kind| matches!(k, Kind::In | Kind::Rx);
+    let split = net.ports.iter().position(|(_, k, _)| !is_in(k));
+    let tidy = ty.replace('<', "::<");
+    let var = {
+        let head: String =
+            ty.chars().take_while(|c| c.is_alphanumeric()).collect();
+        head.chars()
+            .enumerate()
+            .flat_map(|(i, c)| {
+                if c.is_uppercase() && i > 0 {
+                    vec!['_', c.to_ascii_lowercase()]
+                } else {
+                    vec![c.to_ascii_lowercase()]
+                }
+            })
+            .collect::<String>()
+    };
+    let names = |r: &[(String, Kind, usize)]| -> String {
+        r.iter()
+            .map(|(n, _, _)| n.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let all: Vec<(String, Kind, usize)> = net
+        .ports
+        .iter()
+        .map(|(n, k, w)| (n.clone(), *k, *w))
+        .collect();
+    let call = match split {
+        Some(i) if all[i..].iter().all(|(_, k, _)| !is_in(k)) => {
+            format!("{var}.run(({}), ({}))", names(&all[..i]), names(&all[i..]))
+        }
+        _ => format!("{var}.run(/* {} */)", names(&all)),
+    };
+    // Three lines, each a short one, since a sheet is not the place
+    // for a wrapped call. `lstlisting` cannot be used here: listings
+    // reads its body from the file, and this arrives through a macro.
+    let lines = [
+        format!("let mut {var} = {tidy}::default();"),
+        format!("sim.spawn({call});"),
+        format!("let net = {tidy}::lowered(\"{var}\");"),
+    ];
+    let rows: Vec<String> = lines
+        .iter()
+        .map(|l| format!("\\code{{{}}} \\\\", tex(l)))
+        .collect();
+    format!(
+        "\\begin{{center}}\\footnotesize\n\\begin{{tabular}}{{@{{}}p{{0.92\\textwidth}}@{{}}}}\n{}\n\\end{{tabular}}\n\\end{{center}}\n",
+        rows.join("\n")
+    )
+}
+
 /// The tables of one component, lowered as `ty` states it.
 fn sheet(key: &str, ty: &str, net: Lowered) {
     define("type", key, &format!("\\code{{{}}}", tex(ty)));
@@ -167,6 +312,8 @@ fn sheet(key: &str, ty: &str, net: Lowered) {
             _ => *w,
         })
         .sum();
+    define("figure", key, &figure(key, &net));
+    define("instance", key, &instance(ty, &net));
     define(
         "counts",
         key,
