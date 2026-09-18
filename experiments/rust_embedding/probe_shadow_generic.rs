@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Probe 25d. Expected to fail: probe 25c's unit made generic. The
-//! check on a `let` with a register's name is a constant evaluated when
-//! `lowered` is compiled, so for a generic unit it runs only for a type
-//! that is lowered: without `lowered_verilog` below this file builds.
-//! That gap is issue 171.
+//! Probe 25d. Expected to compile: probe 25c's unit made generic. The
+//! name of a wire is chosen by a constant, which the compiler
+//! evaluates for every type the unit is lowered at, so the answer is
+//! the same whether or not `lowered_verilog` below is ever called.
+//! While the collision was refused rather than renamed, this was the
+//! gap the refusal left: a generic unit nobody lowered was never
+//! checked. That is issue 171.
 use txhdl::comp::{Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};

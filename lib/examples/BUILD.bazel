@@ -402,6 +402,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Every way a `let` can want a taken name:  bazel run //lib/examples:ex_names
+rust_binary(
+    name = "ex_names",
+    srcs = ["ex_names.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A field the netlist names differently:  bazel run //lib/examples:ex_rename
 rust_binary(
     name = "ex_rename",
@@ -705,6 +714,7 @@ filegroup(
         "ex_buffer.rs",
         "ex_wire.rs",
         "ex_fn.rs",
+        "ex_names.rs",
         "ex_rename.rs",
         "ex_foreign.rs",
     ],
