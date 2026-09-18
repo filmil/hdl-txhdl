@@ -1297,6 +1297,21 @@ waveform(
 )
 
 waveform(
+    name = "pwm",
+    example = "//lib/examples:ex_pwm",
+    lowered = ("pwm", "pwm"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//pwm/ctrl=>ctrl",
+        "//pwm/period=>period",
+        "//pwm/count=>count",
+        "//pins=>pins",
+    ],
+    from_tick = 100,
+    until = 180,
+)
+
+waveform(
     name = "gpio",
     example = "//lib/examples:ex_gpio",
     lowered = ("gpio", "gpio"),
