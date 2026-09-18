@@ -1,0 +1,55 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Every Name a \code{let} Can Want}
+\label{sec:x-names}
+
+A computed \code{let} in a step is a wire of the netlist, named as the
+\code{let} is written. The netlist keeps one namespace for the unit's
+fields, its ports and its wires, and Rust's rules do not reach into
+it: a \code{let} may take a port's name, another \code{let}'s, a
+field's, or a word VHDL or Verilog reserves, and every one of those
+would have the netlist declare a name twice or use a word it cannot.
+
+The lowering owns that namespace, so it decides. A wire takes the
+\code{let}'s name where it is free, and \code{\_w}, \code{\_w2},
+\code{\_w3} where it is not, which is one rule for all four cases. The
+ports, the wires before it and the reserved words are known where the
+attribute reads the step, so those are settled there; a field is not,
+since \code{\#[lower]} reads the \code{impl} and never the struct, so
+that part of the choice is a constant the compiler evaluates. A
+constant is evaluated for every type the unit is lowered at, which is
+why a generic unit needs no instantiation for the answer to be right.
+
+None of it is silent. The netlist carries a line per renamed
+\code{let} above the module, in the target's own comment syntax, so a
+reader who meets a wire called \code{count\_w} is told which
+\code{let} it came from:
+
+\begin{lstlisting}[style=ascii]
+// `let count` is the wire count_w.
+// `let sum` is the wire sum_w.
+// `let step` is the wire step_w.
+// `let step` is the wire step_w2.
+// `let buffer` is the wire buffer_w.
+\end{lstlisting}
+
+A \code{let} that only reads a register, a port or a number is an
+alias rather than a wire, so it takes no name at all and may be called
+anything. The unit below has one of those too, \code{same}, which
+reads the register the field \code{count} holds.
+
+One consequence is Rust's and not the netlist's: a \code{let} that
+takes a port's name shadows the port in Rust as well, so the port is
+driven above the \code{let} and read through the wire below it, as
+\code{sum} is here.
+
+\begin{figure}[htbp]
+\centering
+\input{names_timing.tex}
+\caption{The counter: \code{count} and \code{last} are the fields,
+\code{sum} the port the \code{let} shadows.}
+\label{fig:x-names}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_names.rs}. Run with \code{bazel run //lib/examples:ex\_names}.},label={lst:x-names}]{lib/examples/ex_names.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_names} printed when the build ran it: the counter, then the Verilog with the renamed wires and the lines that say which \code{let} each came from.},label={lst:x-names-out}]{out_names.txt}

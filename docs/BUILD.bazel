@@ -616,6 +616,8 @@ latex_document(
         ":wire_timing",
         ":fn_run",
         ":fn_timing",
+        ":names_run",
+        ":names_timing",
         ":rename_run",
         ":rename_timing",
         ":foreign_run",
