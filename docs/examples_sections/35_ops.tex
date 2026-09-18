@@ -33,10 +33,21 @@ there would be an \code{unsigned}, which has no \code{=} against a
 bit literal, and the analyser would call the literal ambiguous. The
 lowering writes each the way its language wants it.
 
+The sign extension of a value of one bit is the same disagreement
+again. A wider value is extended by repeating its top bit, which
+Verilog takes with a bit select and VHDL with \code{resize} on a
+\code{signed}; neither works on one bit, since a wire of one bit is a
+scalar in Verilog, with no bit to select, and a \code{std\_logic} in
+VHDL, which \code{signed} may not convert. Such a value is its own top
+bit, so the lowering repeats the value itself, \code{\{\{7\{odd\}\},
+odd\}} and \code{unsigned'(7 downto 0 => odd)}. That was issue 247,
+and \code{spread} below is the register that showed it.
+
 The unit below drives seven registers from two inputs under
 \code{en}, counts the cycles on which the inputs are equal or ordered
 and the first is below 128, counts in a second register the cycles on
-which either input has its top bit set, and says on two wires whether
+which either input has its top bit set, spreads one computed bit over
+a width in an eighth register, and says on two wires whether
 they are equal and whether the first is below. The top bit is read
 through a name of its own for the first input and inside the
 condition for the second, which are the two places the lowering has
@@ -46,8 +57,8 @@ trace, Section~\ref{sec:x-checked}.
 \begin{figure}[htbp]
 \centering
 \input{ops_timing.tex}
-\caption{The operators: the inputs, the sum, the two counts, and the
-two compares.}
+\caption{The operators: the inputs, the sum, the two counts, the
+spread bit, and the two compares.}
 \label{fig:x-ops}
 \end{figure}
 
