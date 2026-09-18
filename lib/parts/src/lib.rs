@@ -17,6 +17,7 @@ pub mod eth;
 pub mod fifo;
 pub mod gpio;
 pub mod hdmi;
+pub mod i2c;
 pub mod plic;
 pub mod spi;
 pub mod station;
