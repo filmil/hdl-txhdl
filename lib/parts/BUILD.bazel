@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Parts: units the language provides as hardware, written in the
 # language's own lowerable subset. The channel buffer is the first.
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("@rules_vivado//build/vivado:rules.bzl", "vivado_synthesis2")
 
 rust_library(
     name = "txhdl_parts",
@@ -70,4 +71,57 @@ filegroup(
     name = "sources",
     srcs = glob(["src/*.rs", "src/bus/*.rs", "src/bus/axi/*.rs", "src/bus/noc/*.rs", "src/bus/wb/*.rs"]),
     visibility = ["//visibility:public"],
+)
+
+# The Verilog of one node, and of one switch inside it, for a synthesis
+# run that says how fast a node can go and what it costs (issue 99).
+#
+#   bazel run //lib/parts:noc_netlist -- switch
+rust_binary(
+    name = "noc_netlist",
+    srcs = ["src/bin/noc_netlist.rs"],
+    edition = "2021",
+    deps = [":txhdl_parts"],
+)
+
+genrule(
+    name = "node_v",
+    outs = ["node.v"],
+    cmd = "$(location :noc_netlist) node > $@",
+    tools = [":noc_netlist"],
+)
+
+genrule(
+    name = "switch_v",
+    outs = ["switch.v"],
+    cmd = "$(location :noc_netlist) switch > $@",
+    tools = [":noc_netlist"],
+)
+
+filegroup(
+    name = "noc_xdc",
+    srcs = ["noc.xdc"],
+)
+
+# One node and one switch through Vivado, for the timing and the
+# utilisation issue 99 asks for. Manual, as every Vivado target here
+# is.
+#
+#   bazel build //lib/parts:node_synth
+vivado_synthesis2(
+    name = "node_synth",
+    srcs = [":node.v"],
+    part = "xc7a200tfbg484-2",
+    tags = ["manual"],
+    top = "node",
+    xdcs = [":noc_xdc"],
+)
+
+vivado_synthesis2(
+    name = "switch_synth",
+    srcs = [":switch.v"],
+    part = "xc7a200tfbg484-2",
+    tags = ["manual"],
+    top = "switch",
+    xdcs = [":noc_xdc"],
 )
