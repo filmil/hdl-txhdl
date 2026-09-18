@@ -15,8 +15,11 @@ multiplier, is delayed by as many registers as it must wait, which is
 what the merged language's \code{pipe} keyword existed to make the
 designer write. The two lowerings differ in exactly the multiplier's
 depth and the length of that delay, and the source of the two is
-identical. Listing~\ref{lst:x-lower-out} is what the example printed:
-both Verilog modules, then the simulation of the function through
+identical. A third function beside them, \code{scale}, has the same
+shape with its two constants written as literals rather than taken as
+inputs, and is there for what the next paragraph says about them.
+Listing~\ref{lst:x-lower-out} is what the example printed: the three
+Verilog modules, then the simulation of the function through
 \code{pipeline::drive}, whose figure is Figure~\ref{fig:x-lower}. The
 runtime's \code{mul} takes one cycle, so the waveform is the first
 lowering's; the second is a different implementation of the same
@@ -27,7 +30,11 @@ What the macro reads is small on purpose: parameters of type
 tail expression of the same form, literals as \code{U::<W>::from(n)},
 and macro calls such as \code{println!}, which it skips as not
 hardware. Anything else is a compile error with the macro's own
-message. Widening the grammar toward \code{with!}, \code{case!} and the
+message. The literal is read the way Rust reads one, in any of the
+four radices and with or without a suffix, which is worth saying
+because it has to be: this macro needs the number while it runs, so it
+reads the text itself rather than handing it to the compiler as the
+unit lowering does. Widening the grammar toward \code{with!}, \code{case!} and the
 bodies of \code{run} is the rest of the lowering.
 
 \begin{figure}[htbp]
