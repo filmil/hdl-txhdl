@@ -46,6 +46,9 @@ pub struct EthByte {
 
 /// The CRC-32 register after the reset: every bit set.
 pub const CRC_INIT: u32 = 0xffff_ffff;
+/// The polynomial, reflected, as a register that shifts right takes
+/// it: the CRC-32 of Ethernet, of ZIP and of PNG.
+pub const CRC_POLY: u32 = 0xedb8_8320;
 /// The register after a whole frame and its own check sequence have
 /// gone through it, when nothing was corrupted on the way.
 pub const CRC_RESIDUE: u32 = 0xdebb_20e3;
@@ -57,279 +60,35 @@ pub const CRC_GOOD: u32 = !CRC_RESIDUE;
 pub const FRAME_MAX: usize = 2048;
 
 // begin{crc}
-/// One byte into the CRC-32 register, as Ethernet sends its bits,
-/// least significant first. The register shifts right a bit per data
-/// bit, with the polynomial `0xedb88320` going in whenever the bit
-/// leaving and the bit arriving differ; eight such steps make each bit
-/// of the new register the exclusive or of some bits of the old one and
-/// of the byte. These are those 32 sums, worked out from the polynomial
-/// and checked by the tests against the steps one bit at a time. They
-/// are written as sums because the lowering inlines a function's
-/// arguments as text, so eight steps nested one in the next would
-/// copy the register's expression three times at every step.
+/// One step of the CRC-32 register: it shifts right, and the
+/// polynomial goes in whenever the bit that leaves is set.
+#[lower]
+fn crc_step(crc: U<32>) -> U<32> {
+    let shifted = crc >> 1;
+    mux(crc.bit(0), shifted ^ U::<32>::from(CRC_POLY), shifted)
+}
+
+/// One byte into the register, as Ethernet sends its bits, least
+/// significant first: the byte goes in by exclusive or and the
+/// register takes eight steps.
+///
+/// This was written as the 32 sums the eight steps work out to, and is
+/// written as the eight steps again. The lowering used to paste an
+/// argument's text wherever the body read it, and `crc_step` reads its
+/// argument twice, so the eighth step held the register's expression
+/// 256 times and one unit took minutes to compile. The lowering now
+/// gives such a value a wire of the netlist and reads it by name,
+/// which is issue 126.
 #[lower]
 fn crc_byte(crc: U<32>, d: U<8>) -> U<32> {
-    let n0 = crc.bit(2) ^ crc.bit(8) ^ d.bit(2);
-    let n1 = crc.bit(0) ^ crc.bit(3) ^ crc.bit(9) ^ d.bit(0) ^ d.bit(3);
-    let n2 = crc.bit(0)
-        ^ crc.bit(1)
-        ^ crc.bit(4)
-        ^ crc.bit(10)
-        ^ d.bit(0)
-        ^ d.bit(1)
-        ^ d.bit(4);
-    let n3 = crc.bit(1)
-        ^ crc.bit(2)
-        ^ crc.bit(5)
-        ^ crc.bit(11)
-        ^ d.bit(1)
-        ^ d.bit(2)
-        ^ d.bit(5);
-    let n4 = crc.bit(0)
-        ^ crc.bit(2)
-        ^ crc.bit(3)
-        ^ crc.bit(6)
-        ^ crc.bit(12)
-        ^ d.bit(0)
-        ^ d.bit(2)
-        ^ d.bit(3)
-        ^ d.bit(6);
-    let n5 = crc.bit(1)
-        ^ crc.bit(3)
-        ^ crc.bit(4)
-        ^ crc.bit(7)
-        ^ crc.bit(13)
-        ^ d.bit(1)
-        ^ d.bit(3)
-        ^ d.bit(4)
-        ^ d.bit(7);
-    let n6 = crc.bit(4) ^ crc.bit(5) ^ crc.bit(14) ^ d.bit(4) ^ d.bit(5);
-    let n7 = crc.bit(0)
-        ^ crc.bit(5)
-        ^ crc.bit(6)
-        ^ crc.bit(15)
-        ^ d.bit(0)
-        ^ d.bit(5)
-        ^ d.bit(6);
-    let n8 = crc.bit(1)
-        ^ crc.bit(6)
-        ^ crc.bit(7)
-        ^ crc.bit(16)
-        ^ d.bit(1)
-        ^ d.bit(6)
-        ^ d.bit(7);
-    let n9 = crc.bit(7) ^ crc.bit(17) ^ d.bit(7);
-    let n10 = crc.bit(2) ^ crc.bit(18) ^ d.bit(2);
-    let n11 = crc.bit(3) ^ crc.bit(19) ^ d.bit(3);
-    let n12 = crc.bit(0) ^ crc.bit(4) ^ crc.bit(20) ^ d.bit(0) ^ d.bit(4);
-    let n13 = crc.bit(0)
-        ^ crc.bit(1)
-        ^ crc.bit(5)
-        ^ crc.bit(21)
-        ^ d.bit(0)
-        ^ d.bit(1)
-        ^ d.bit(5);
-    let n14 = crc.bit(1)
-        ^ crc.bit(2)
-        ^ crc.bit(6)
-        ^ crc.bit(22)
-        ^ d.bit(1)
-        ^ d.bit(2)
-        ^ d.bit(6);
-    let n15 = crc.bit(2)
-        ^ crc.bit(3)
-        ^ crc.bit(7)
-        ^ crc.bit(23)
-        ^ d.bit(2)
-        ^ d.bit(3)
-        ^ d.bit(7);
-    let n16 = crc.bit(0)
-        ^ crc.bit(2)
-        ^ crc.bit(3)
-        ^ crc.bit(4)
-        ^ crc.bit(24)
-        ^ d.bit(0)
-        ^ d.bit(2)
-        ^ d.bit(3)
-        ^ d.bit(4);
-    let n17 = crc.bit(0)
-        ^ crc.bit(1)
-        ^ crc.bit(3)
-        ^ crc.bit(4)
-        ^ crc.bit(5)
-        ^ crc.bit(25)
-        ^ d.bit(0)
-        ^ d.bit(1)
-        ^ d.bit(3)
-        ^ d.bit(4)
-        ^ d.bit(5);
-    let n18 = crc.bit(0)
-        ^ crc.bit(1)
-        ^ crc.bit(2)
-        ^ crc.bit(4)
-        ^ crc.bit(5)
-        ^ crc.bit(6)
-        ^ crc.bit(26)
-        ^ d.bit(0)
-        ^ d.bit(1)
-        ^ d.bit(2)
-        ^ d.bit(4)
-        ^ d.bit(5)
-        ^ d.bit(6);
-    let n19 = crc.bit(1)
-        ^ crc.bit(2)
-        ^ crc.bit(3)
-        ^ crc.bit(5)
-        ^ crc.bit(6)
-        ^ crc.bit(7)
-        ^ crc.bit(27)
-        ^ d.bit(1)
-        ^ d.bit(2)
-        ^ d.bit(3)
-        ^ d.bit(5)
-        ^ d.bit(6)
-        ^ d.bit(7);
-    let n20 = crc.bit(3)
-        ^ crc.bit(4)
-        ^ crc.bit(6)
-        ^ crc.bit(7)
-        ^ crc.bit(28)
-        ^ d.bit(3)
-        ^ d.bit(4)
-        ^ d.bit(6)
-        ^ d.bit(7);
-    let n21 = crc.bit(2)
-        ^ crc.bit(4)
-        ^ crc.bit(5)
-        ^ crc.bit(7)
-        ^ crc.bit(29)
-        ^ d.bit(2)
-        ^ d.bit(4)
-        ^ d.bit(5)
-        ^ d.bit(7);
-    let n22 = crc.bit(2)
-        ^ crc.bit(3)
-        ^ crc.bit(5)
-        ^ crc.bit(6)
-        ^ crc.bit(30)
-        ^ d.bit(2)
-        ^ d.bit(3)
-        ^ d.bit(5)
-        ^ d.bit(6);
-    let n23 = crc.bit(3)
-        ^ crc.bit(4)
-        ^ crc.bit(6)
-        ^ crc.bit(7)
-        ^ crc.bit(31)
-        ^ d.bit(3)
-        ^ d.bit(4)
-        ^ d.bit(6)
-        ^ d.bit(7);
-    let n24 = crc.bit(0)
-        ^ crc.bit(2)
-        ^ crc.bit(4)
-        ^ crc.bit(5)
-        ^ crc.bit(7)
-        ^ d.bit(0)
-        ^ d.bit(2)
-        ^ d.bit(4)
-        ^ d.bit(5)
-        ^ d.bit(7);
-    let n25 = crc.bit(0)
-        ^ crc.bit(1)
-        ^ crc.bit(2)
-        ^ crc.bit(3)
-        ^ crc.bit(5)
-        ^ crc.bit(6)
-        ^ d.bit(0)
-        ^ d.bit(1)
-        ^ d.bit(2)
-        ^ d.bit(3)
-        ^ d.bit(5)
-        ^ d.bit(6);
-    let n26 = crc.bit(0)
-        ^ crc.bit(1)
-        ^ crc.bit(2)
-        ^ crc.bit(3)
-        ^ crc.bit(4)
-        ^ crc.bit(6)
-        ^ crc.bit(7)
-        ^ d.bit(0)
-        ^ d.bit(1)
-        ^ d.bit(2)
-        ^ d.bit(3)
-        ^ d.bit(4)
-        ^ d.bit(6)
-        ^ d.bit(7);
-    let n27 = crc.bit(1)
-        ^ crc.bit(3)
-        ^ crc.bit(4)
-        ^ crc.bit(5)
-        ^ crc.bit(7)
-        ^ d.bit(1)
-        ^ d.bit(3)
-        ^ d.bit(4)
-        ^ d.bit(5)
-        ^ d.bit(7);
-    let n28 = crc.bit(0)
-        ^ crc.bit(4)
-        ^ crc.bit(5)
-        ^ crc.bit(6)
-        ^ d.bit(0)
-        ^ d.bit(4)
-        ^ d.bit(5)
-        ^ d.bit(6);
-    let n29 = crc.bit(0)
-        ^ crc.bit(1)
-        ^ crc.bit(5)
-        ^ crc.bit(6)
-        ^ crc.bit(7)
-        ^ d.bit(0)
-        ^ d.bit(1)
-        ^ d.bit(5)
-        ^ d.bit(6)
-        ^ d.bit(7);
-    let n30 = crc.bit(0)
-        ^ crc.bit(1)
-        ^ crc.bit(6)
-        ^ crc.bit(7)
-        ^ d.bit(0)
-        ^ d.bit(1)
-        ^ d.bit(6)
-        ^ d.bit(7);
-    let n31 = crc.bit(1) ^ crc.bit(7) ^ d.bit(1) ^ d.bit(7);
-    n31.zext::<1>()
-        .concat::<_, 2>(n30.zext::<1>())
-        .concat::<_, 3>(n29.zext::<1>())
-        .concat::<_, 4>(n28.zext::<1>())
-        .concat::<_, 5>(n27.zext::<1>())
-        .concat::<_, 6>(n26.zext::<1>())
-        .concat::<_, 7>(n25.zext::<1>())
-        .concat::<_, 8>(n24.zext::<1>())
-        .concat::<_, 9>(n23.zext::<1>())
-        .concat::<_, 10>(n22.zext::<1>())
-        .concat::<_, 11>(n21.zext::<1>())
-        .concat::<_, 12>(n20.zext::<1>())
-        .concat::<_, 13>(n19.zext::<1>())
-        .concat::<_, 14>(n18.zext::<1>())
-        .concat::<_, 15>(n17.zext::<1>())
-        .concat::<_, 16>(n16.zext::<1>())
-        .concat::<_, 17>(n15.zext::<1>())
-        .concat::<_, 18>(n14.zext::<1>())
-        .concat::<_, 19>(n13.zext::<1>())
-        .concat::<_, 20>(n12.zext::<1>())
-        .concat::<_, 21>(n11.zext::<1>())
-        .concat::<_, 22>(n10.zext::<1>())
-        .concat::<_, 23>(n9.zext::<1>())
-        .concat::<_, 24>(n8.zext::<1>())
-        .concat::<_, 25>(n7.zext::<1>())
-        .concat::<_, 26>(n6.zext::<1>())
-        .concat::<_, 27>(n5.zext::<1>())
-        .concat::<_, 28>(n4.zext::<1>())
-        .concat::<_, 29>(n3.zext::<1>())
-        .concat::<_, 30>(n2.zext::<1>())
-        .concat::<_, 31>(n1.zext::<1>())
-        .concat::<_, 32>(n0.zext::<1>())
+    let c0 = crc_step(crc ^ d.zext::<32>());
+    let c1 = crc_step(c0);
+    let c2 = crc_step(c1);
+    let c3 = crc_step(c2);
+    let c4 = crc_step(c3);
+    let c5 = crc_step(c4);
+    let c6 = crc_step(c5);
+    crc_step(c6)
 }
 // end{crc}
 
@@ -693,8 +452,9 @@ mod tests {
         (0..n).map(|i| (i * 7 + 3) as u8).collect()
     }
 
-    /// The 32 sums of `crc_byte` against the register stepped a bit at
-    /// a time, on every byte from a few registers.
+    /// `crc_byte` against the register stepped a bit at a time by
+    /// plain Rust that spells the polynomial out, on every byte from
+    /// a few registers.
     #[test]
     fn the_byte_wide_crc_is_the_bitwise_one() {
         for start in [0u32, CRC_INIT, 0x1234_5678, 0x8000_0001] {
