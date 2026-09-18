@@ -45,8 +45,9 @@ takes the next.
 \item The unit takes no byte from \code{tx} while a frame is going out,
 so it holds the client off. The client may offer bytes as slowly as it
 likes.
-\item \code{crc\_byte} steps the register by a whole byte, as 32
-exclusive-or sums worked out from the polynomial \code{0xedb88320}.
+\item \code{crc\_byte} steps the register by a whole byte: the byte
+added to it, then eight shifts with the polynomial \code{0xedb88320}
+going in whenever the bit that leaves is set.
 \end{itemize}
 
 \subsection*{Verification}

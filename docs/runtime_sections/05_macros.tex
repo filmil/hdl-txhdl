@@ -34,7 +34,14 @@ struct through the \code{Trace} derive, which also derives
 \code{Fields} and \code{Port}; and the configuration's constants are
 evaluated when \code{lowered} runs, so a generic unit lowers once per
 build. A \code{let} that computes is a wire named for it, a read of a
-port or register an alias. It reads \code{case!} and \code{select!}
+port or register an alias. A call of a function under \code{\#[lower]}
+is inlined in the same terms: each argument and each \code{let} of the
+function is bound to the expression it stands for, and one the body
+reads more than once, and that is worth more than a name, is given a
+wire of its own instead, called after the function and the name it had
+there and numbered. That keeps an expression written once whatever the
+body does with it, so calls that nest cost a wire each rather than a
+power of the reads, which is issue 126. It reads \code{case!} and \code{select!}
 as chains on the value, with an enum variant, an integer or \code{\_}
 as a pattern and a guard joined by \code{\&\&}; \code{slice},
 \code{concat}, \code{sext} and \code{zext} by their turbofish, every

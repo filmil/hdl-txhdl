@@ -96,18 +96,26 @@ finds \code{0xdebb20e3} in it when nothing was corrupted, so it needs
 no second register to compare.
 
 A step of the register is a shift right with the polynomial
-\code{0xedb88320} added when the bit leaving and the bit arriving
-differ, and a byte is eight steps. The lowering inlines a function's
-argument as text, and one step uses the register three times. So
-eight calls of a function for one step would hold the register's
-expression $3^8 = 6561$ times. Listing~\ref{lst:e-crc} is the
-same function as 32 sums instead: each bit of the new register is the
-exclusive or of at most fourteen bits of the old register and the
-byte. A test checks the sums against the steps on every byte from four
-registers.
+\code{0xedb88320} added when the bit that leaves is set, and a byte is
+the byte added to the register and eight such steps.
+Listing~\ref{lst:e-crc} says exactly that: a function of one step, and
+a function that calls it eight times.
 
-\ethpart{crc}{A byte into the CRC-32 register, as 32
-sums.}{lst:e-crc}
+It was not always able to say so. The lowering used to inline a
+function by pasting each argument's text wherever the body read it, and one
+step reads its argument twice, so the eighth call held the register's
+expression $2^8 = 256$ times and the crate took minutes to compile.
+The byte was written as the 32 sums the eight steps work out to
+instead, each bit of the new register the exclusive or of at most
+fourteen bits of the old one and of the byte, which is correct and
+says nothing about what it is. A value an inlined body reads more than
+once is a wire of the netlist now, issue 126, so the steps are steps
+again and the netlist holds sixteen more wires. A test checks the
+function against the register stepped a bit at a time in plain Rust,
+on every byte from four registers.
+
+\ethpart{crc}{A byte into the CRC-32 register: one step, and eight of
+them.}{lst:e-crc}
 
 \section{The Transmitter}
 \label{sec:e-tx}
