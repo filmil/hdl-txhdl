@@ -84,11 +84,8 @@ pub struct I2c {
     /// The byte going out, its next bit on top, or the byte coming in,
     /// its first bit at the bottom by the end.
     pub shift: Reg<U<8>>,
-    /// The byte a read took. It is not called `data`: the VHDL
-    /// testbench generator names a register's alias `r_<name>`, which
-    /// collides with the `r` port's `r_data`, and the co-simulation
-    /// then compares the wrong signal. That is issue 211.
-    pub rxb: Reg<U<8>>,
+    /// The byte a read took.
+    pub data: Reg<U<8>>,
     /// A transaction is open: a start has been sent and no stop has.
     /// The lines are parked with the clock low between the commands of
     /// one transaction, since a data line that moves while the clock
@@ -230,7 +227,7 @@ impl Unit for I2c {
                 .zext::<32>();
             let word = select!(rsel.raw() => {
                 0 => ctrl,
-                2 => self.rxb.get().zext::<32>(),
+                2 => self.data.get().zext::<32>(),
                 3 => state,
                 _ => U::<32>::from(0u8),
             });
@@ -263,7 +260,7 @@ impl Unit for I2c {
                 stolen ? lost: Bit::One,
                 step_go ? step: next_step,
                 step_go & at_bits ? shift: mux(reading, shift, shift << 1),
-                step_go & (step == 9) & reading ? rxb: shift,
+                step_go & (step == 9) & reading ? data: shift,
                 step_go & at_stop ? held: Bit::Zero,
                 at_end ? {
                     busy: Bit::Zero,
