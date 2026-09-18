@@ -338,10 +338,23 @@ the silence.
 The label comes off when the pull request that closes the issue is
 merged, since the issue closes with it.
 
+## Priority comes before size
+
+An issue carrying the `priority` label is taken before anything else
+that is free, whatever its size and whatever else is open.
+The label is how the user says which issue matters now, and it is the
+one thing that outranks the order below; size decides only among the
+issues that are free and unlabelled, or among several that carry
+`priority`.
+
+```sh
+fj issue -R hd search -s open -l priority   # what to take first
+```
+
 ## Prefer the simpler issue
 
-Of the issues that are free, take the simplest one that is worth
-doing, not the most interesting one.
+Of the issues that are free and carry no `priority`, take the
+simplest one that is worth doing, not the most interesting one.
 Simplest means the one whose fix is smallest and whose check is
 clearest: a one-line refusal with a probe beside it, a stale
 paragraph, a dependency that may no longer be needed.
