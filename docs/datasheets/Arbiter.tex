@@ -1,0 +1,132 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Arbiter2, Arbiter3, Arbiter4, Arbiter5, Arbiter6, Arbiter7, Arbiter8
+\datasheet{Arbiter}{AXI4 arbiters: two to eight hosts merged onto one peripheral link, answered by identifier.}
+
+\dsfacts{\code{lib/parts/src/bus/arbiter.rs}; generator \code{arbiter\_text} in \code{lib/macros/lib.rs}}%
+{\code{txhdl\_parts::bus::arbiter::Arbiter2} to \code{Arbiter8}}%
+{\code{//docs:axi}}
+
+\subsection*{Function}
+
+An arbiter puts several hosts on one peripheral link. It is the
+mirror of the \code{Router}: the router decides on the address and
+fans out, the arbiter decides whose turn it is and merges. It takes
+\code{aw}\textit{i}, \code{ar}\textit{i} and \code{w}\textit{i} from
+each host \textit{i} and gives the peripheral side one \code{aw}, one
+\code{ar} and one \code{w}; it takes that side's \code{b} and
+\code{r} and gives each host its own.
+
+Two things follow from AXI4 rather than from any choice made here.
+
+An answer must reach the host that asked, and the peripheral does not
+know there is more than one. The only thing it carries back is the
+identifier from the address phase, so the arbiter writes the host's
+port number above the host's own identifier on the way out and takes
+it off again on the way back. The peripheral side's identifier is
+therefore wider than a host's.
+
+The write data channel carries no identifier at all: a beat belongs
+to the oldest write address phase that has not finished. So the
+arbiter holds that channel for the host whose write address phase it
+granted until that burst's last beat, and a second host's address
+phase waits. Reads need no such lock.
+
+\code{arbiter!(ArbiterN, N)} writes one unit per count of hosts,
+because the lowering reads a body and not a loop over ports.
+\code{arbiter.rs} writes \code{Arbiter2} to \code{Arbiter8}; the macro
+refuses a count outside 2 to 8.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The address width, in bits. \\
+\code{D} & The data width, in bits. \\
+\code{S} & The write strobe width, one bit per byte lane, so \code{D / 8}. \\
+\code{I} & The identifier width on each host, in bits. \\
+\code{J} & The identifier width on the peripheral side. It must be at
+least \code{I} plus the bits the port number needs, which is one bit
+for two hosts and three for five to eight. Nothing checks it; too
+small a \code{J} loses the top of the tag. \\
+\code{FIXED} & Zero for round robin, anything else for fixed
+priority. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{The identifier}
+
+A host's address phase goes out carrying
+\code{(port << I) | id}, where \code{id} is the identifier that host's
+own tracker allocated. An answer's identifier is read the other way:
+\code{id >> I} names the host, and its low \code{I} bits are given
+back to that host unchanged.
+
+So a host's identifiers stay its own, and what the peripheral sees is
+a wider space with the hosts side by side in it. The tables below are
+generated for \code{Arbiter2<16, 32, 4, 2, 5, 0>}, the example's, whose
+hosts carry two bits and whose peripheral side carries five.
+
+\dstables{Arbiter}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \textbf{Read address.} Each cycle the hosts offering on
+\code{ar} are considered, and one is granted if the peripheral side
+has room. Several reads may be outstanding at once, from different
+hosts, since each carries its identifier.
+\item \textbf{Write address.} The same, except that no host is granted
+while \code{wbusy} is set. Taking a phase sets \code{wbusy} and
+records the host in \code{wsel}, a bit each.
+\item \textbf{Write beats.} While \code{wbusy} is set, beats pass from
+the host in \code{wsel} and from no other. The beat marked \code{last}
+clears \code{wbusy}, and the next write address phase may then be
+granted, to any host.
+\item \textbf{Answers.} A beat on \code{b} or \code{r} is given to the
+host its identifier's top bits name, when that host has room, with the
+tag taken off. A host that is not ready holds that beat, and the
+peripheral side is not taken from until it is.
+\item \textbf{The turn.} With \code{FIXED} zero, \code{rturn} and
+\code{wturn} hold where to start looking, and each moves past the host
+that won, so a host that keeps asking cannot shut another out. With
+\code{FIXED} not zero every host is eligible always, so the lowest
+numbered one that is offering wins.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/parts:parts\_test} drives two hosts and four:
+\code{each\_answer\_goes\_home} has two hosts read at once from a
+memory that answers with the address it was asked for, so a host given
+another's beats would see an address it never asked for;
+\code{write\_beats\_do\_not\_interleave} has both write four beats at
+the same moment and checks the memory was given two whole bursts;
+\code{four\_hosts\_share\_the\_link} has four read as fast as they can
+for twelve hundred cycles and checks the counts come out within one of
+each other.
+\item \code{//lib/examples:ex\_axi\_arbiter} is the same shape as a
+run, and the build simulates the netlist against it under nvc and
+Verilator: \code{//docs:axi\_arbiter\_sim\_axi\_arbiter\_tb\_test} and
+\code{//docs:axi\_arbiter\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+Nothing in the tree yet. Issue 151 asks for it under a direct memory
+access engine, which is the second host the board's memory needs, and
+issue 87 for the board's top level, which is where an arbiter and a
+router would sit together.
+
+\subsection*{Limits}
+
+The turn is three bits, which is what eight hosts need and no more.
+\code{J} is not checked against \code{I} and the count. There is no
+arbitration on quality of service, though the address phase carries
+the field. A host that stops taking its answers stops the peripheral
+side for every host, since the arbiter holds the beat rather than
+dropping it.

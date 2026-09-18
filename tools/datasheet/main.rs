@@ -17,6 +17,7 @@ use razboj::fb::Fb;
 use razboj::raster::Raster;
 use txhdl::types::U;
 use txhdl_parts::buffer::Buffer;
+use txhdl_parts::bus::arbiter::Arbiter2;
 use txhdl_parts::bus::axi::{AxiHost, AxiPer};
 use txhdl_parts::bus::axi_lite::LiteBridge1;
 use txhdl_parts::bus::axi_pins::AxiPins;
@@ -29,10 +30,12 @@ use txhdl_parts::eth::{EthLite, EthRx, EthTx};
 use txhdl_parts::fifo::Fifo;
 use txhdl_parts::gpio::Gpio;
 use txhdl_parts::hdmi::{vga, Hdmi, I2cInit};
+use txhdl_parts::i2c::I2c;
 use txhdl_parts::plic::Plic2;
 use txhdl_parts::spi::Spi;
 use txhdl_parts::station::Station3;
 use txhdl_parts::syscon::Syscon;
+use txhdl_parts::wdog::Wdog;
 use vreteno32::board::Board;
 use vreteno32::core::Vreteno;
 use vreteno32::dmem::Dmem;
@@ -207,6 +210,11 @@ fn main() {
         Router3::<32, 32, 4, 2, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>::lowered("router"),
     );
     sheet(
+        "Arbiter",
+        "Arbiter2<16, 32, 4, 2, 5, 0>",
+        Arbiter2::<16, 32, 4, 2, 5, 0>::lowered("arbiter"),
+    );
+    sheet(
         "LiteBridge",
         "LiteBridge1<32, 32, 4, 2, 0x3000, 0xf000>",
         LiteBridge1::<32, 32, 4, 2, 0x3000, 0xf000>::lowered("lite_bridge"),
@@ -291,6 +299,12 @@ fn main() {
     sheet("Plic", "Plic2<0>", Plic2::<0>::lowered("plic"));
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));
     sheet("Spi", "Spi", Spi::lowered("spi"));
+    sheet("I2c", "I2c", I2c::lowered("i2c"));
+    sheet(
+        "Wdog",
+        "Wdog<0x57444f47>",
+        Wdog::<0x5744_4f47>::lowered("wdog"),
+    );
     sheet(
         "Syscon",
         "Syscon<0x74780001, 0x10000, 0, 0, 0x52535421>",

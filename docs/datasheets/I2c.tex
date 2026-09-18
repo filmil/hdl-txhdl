@@ -1,0 +1,120 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: I2c
+\datasheet{I2c}{A general I2C master on AXI-Lite: one piece of a transaction per command, on two open drain lines.}
+
+\dsfacts{\code{lib/parts/src/i2c.rs}}{\code{txhdl\_parts::i2c::I2c}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{I2cInit} of the HDMI part replays a fixed list of writes and
+cannot read. This master is the other kind: a program says what one
+piece of a transaction is and the master does it, so a driver can
+address a device, write to it, turn the bus around and read from it.
+
+One command is at most a start, one byte either way, and a stop. A
+driver that wants to read a register writes the address with
+\code{start|write}, then asks for \code{start|read|nack}, whose start
+is the repeated start. Between the commands of one transaction the
+lines are parked with the clock low, since a data line that moves
+while the clock is high is a start or a stop to every device on the
+bus.
+
+\subsection*{Register map}
+
+Offsets from the block's base.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.52\textwidth}@{}}
+\toprule
+Offset & Word & Access \\
+\midrule
+\code{0x00} & \code{ctrl} & Read and write. Bits 0 to 15 the divider,
+bit 16 the interrupt enable. \\
+\code{0x04} & \code{cmd} & Write only; writing it starts the command.
+Bit 0 start, 1 stop, 2 write, 3 read, 4 the answer after a read, bits
+8 to 15 the byte to write. \\
+\code{0x08} & \code{data} & Read only, the byte a read took. \\
+\code{0x0c} & \code{state} & Read, and write ones to clear bits 1, 2
+and 3. Bit 0 busy, 1 done, 2 not acknowledged, 3 arbitration lost. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A quarter of a bit takes \code{div + 1} cycles, so the bus runs at the
+system clock over \code{4 * (div + 1)}. From 100 MHz, 249 is
+100 kbit/s and 62 is 400 kbit/s.
+
+Bit 4 of \code{cmd} is set for a NACK, which is what a master sends
+after the last byte it wants; a master that acknowledges the last byte
+tells the device to send another.
+
+\dstables{I2c}
+
+\subsection*{The two lines}
+
+Both are open drain, as I2C requires: a device pulls a line low and
+nobody drives one high. \code{scl\_low} and \code{sda\_low} high pull
+their line low, and a line nobody pulls is high through the board's
+pull-up, so a board wrapper drives a pad from each output and reads
+the pad back into \code{scl\_in} and \code{sda\_in}.
+
+The master watches both inputs, and two things follow that a master
+driving the lines itself could not do.
+
+A device that holds the clock low is stretching it, and the master
+waits for the line to rise rather than counting cycles. And a data
+line that reads low while this master released it is another master
+winning the bus, which sets arbitration lost and ends the command.
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item Writing \code{cmd} clears the three status bits, records what
+was asked, and starts the run. \code{step} walks the transaction:
+idle, the start, the eight bits, the acknowledge, the stop, the end.
+\item \code{quarter} says which quarter of the bit the lines are in,
+and \code{tick} counts the cycles of that quarter against the divider.
+\item On a write, the acknowledge step reads the data line: low is the
+device acknowledging, high sets the not-acknowledged bit.
+\item On a read, the byte arrives in \code{shift} and is put in
+\code{rxb}, which \code{data} reads. The master then drives the
+answer bit 4 asked for.
+\item Finishing a command sets the done bit, which raises the
+interrupt while the enable is set, and clears busy.
+\item \code{held} records that a start has been sent and no stop has,
+which is what parks the lines between the commands of one
+transaction.
+\end{itemize}
+
+The register the byte lands in is \code{rxb} rather than \code{data},
+because the VHDL testbench generator names a register's alias
+\code{r\_<name>}, which would collide with the \code{r} port's
+\code{r\_data} and make the co-simulation compare the wrong signal.
+That is issue 211, and the name is the workaround.
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/parts:parts\_test} drives the master against the
+device model in the same file.
+\item \code{//lib/examples:ex\_i2c} addresses a device, writes to it,
+turns the bus around and reads back, and the build simulates the
+netlist against that run under nvc and Verilator.
+\end{itemize}
+
+\subsection*{Used by}
+
+Nothing in the tree yet. The HDMI part still uses \code{I2cInit} for
+its fixed setup; issue 148 notes that \code{I2cInit} could become a
+program for this master instead, and that a board's EEPROM, which
+often holds the Ethernet address, is what wants a master that can
+read.
+
+\subsection*{Limits}
+
+Ten-bit addressing is not here: an address is a byte like any other,
+so a driver writes what it likes, but nothing helps it. There is no
+general call handling, no clock synchronisation with another master
+beyond losing arbitration, and no timeout on a stretched clock, so a
+device that holds the clock low for ever holds the master with it.

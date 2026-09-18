@@ -1,0 +1,127 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Wdog
+\datasheet{Wdog}{A watchdog timer: a countdown software has to keep refreshing, and a reset when it stops.}
+
+\dsfacts{\code{lib/parts/src/wdog.rs}}{\code{txhdl\_parts::wdog::Wdog}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+A program that hangs stays hung until somebody presses the button, and
+on a board nobody is standing next to, nobody does. So the hardware
+counts down and software has to keep saying that it is still there.
+When it stops saying so, \code{Wdog} asks the system control block of
+\code{Syscon} for a reset, which records the watchdog as the cause, so
+a program that restarts can read why it did.
+
+Three things make it a watchdog rather than a timer, and each is there
+because a hung program can do more than stop.
+
+A refresh carries \code{KEY}. A program that has lost its way is
+writing whatever it finds over whatever it reaches, and a watchdog it
+can refresh by accident is a watchdog it cannot fail. A wrong key is
+not ignored: it is a failure.
+
+In window mode a refresh while the count is still above \code{sill} is
+too early, and too early is also a failure. A program looping tightly
+on its own refresh is as stuck as one that has stopped, and a plain
+countdown cannot tell them apart.
+
+The lock sets and does not clear. After it is set, \code{ctrl},
+\code{load} and \code{sill} are read only until the next reset.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{KEY} & The word a refresh carries. A write of anything else to
+\code{feed} is a failure rather than a refresh. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Register map}
+
+Offsets from the block's base. The block selects the word by bits 4 to
+2 of the address and looks at no other bits.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.5\textwidth}@{}}
+\toprule
+Offset & Word & Access \\
+\midrule
+\code{0x00} & \code{ctrl} & Read and write. Bit 0 enable, 1 window, 2
+warn, 3 lock. Writes are ignored once locked, and the lock bit itself
+only ever sets. \\
+\code{0x04} & \code{load} & Read and write, the timeout in cycles.
+Ignored once locked. \\
+\code{0x08} & \code{count} & Read only, what is left of the timeout. \\
+\code{0x0c} & \code{feed} & Write only. \code{KEY} refreshes; anything
+else is a failure. Reads as zero. \\
+\code{0x10} & \code{status} & Read, and write ones to clear. Bit 0
+warned, 1 failed. \\
+\code{0x14} & \code{sill} & Read and write. In window mode a refresh
+while \code{count} is above this is a failure. Ignored once locked. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The field is \code{sill} and not \code{open}, because \code{open} is a
+reserved word of VHDL and the lowering refuses such a name where it is
+chosen, which is issue 77.
+
+\dstables{Wdog}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item While \code{ctrl} bit 0 is set, \code{count} falls by one a
+cycle. A refresh loads it from \code{load}.
+\item A write of \code{KEY} to \code{feed} is a refresh, unless window
+mode is on and \code{count} is above \code{sill}, in which case it is
+a failure. A write of anything else is a failure in either mode.
+\item When \code{count} reaches zero: if warning is on and has not
+happened, the warning bit sets, \code{irq} rises and the count
+reloads, which gives a program that is merely slow one more timeout to
+notice. Otherwise it is a failure.
+\item A failure sets the failed bit, drives \code{rst} and holds it
+for eight cycles, and reloads the count. The reload matters: the count
+is at zero when a timeout fails, so a watchdog that did not reload
+would ask for a reset on every cycle from then on and hold the machine
+down rather than restart it.
+\item \code{irq} is a level, standing while the warning bit is set and
+warning is on. \code{rst} is a request to \code{Syscon}, not a reset
+line.
+\item Nothing in this block is reset by its own request, which is what
+lets a program read \code{status} after the restart.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/examples:ex\_wdog} sets a timeout, watches the count
+fall between two reads and come back after a refresh, stops refreshing
+and takes the warning and then the reset, writes a wrong key, refreshes
+while the window is shut, and locks the watchdog on and fails to turn
+it off.
+\item The build simulates the netlist against that run under nvc and
+Verilator: \code{//docs:wdog\_sim\_wdog\_tb\_test} and
+\code{//docs:wdog\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+Nothing in the tree yet. \code{Syscon} has the \code{wdog} line this
+drives, and issue 149 asks for a board program that stops refreshing
+and reads \code{watchdog} as the cause after it restarts.
+
+\subsection*{Limits}
+
+\code{count} and \code{load} are sixteen bits, so the timeout is at
+most 65535 cycles. The reset request is eight cycles and not a
+parameter. \code{feed} reads as zero rather than as what was last
+written. There is no second stage: the warning and the reset are the
+only two things a timeout can do.
