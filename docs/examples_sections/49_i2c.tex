@@ -1,0 +1,90 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A General I2C Master}
+\label{sec:x-i2c}
+
+I2C is two wires and a protocol. Both are open drain: every device may
+pull a line low and nobody may drive it high, so a line nobody pulls
+is high through the board's pull-up. What that buys is a bus where any
+device can hold the clock, and a master that has to watch the lines
+rather than count cycles at them.
+
+\code{I2cInit}, which \code{//docs:hdmi} describes, replays a fixed
+list of writes into one chip and cannot read. \code{I2c} is the other
+kind: four registers, and one command at a time.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.52\columnwidth}@{}}
+\toprule
+Offset & Name & What it is \\
+\midrule
+\code{0x00} & \code{ctrl} & the divider, and the interrupt enable \\
+\code{0x04} & \code{cmd} & one piece of a transaction; writing it
+starts the piece \\
+\code{0x08} & \code{data} & the byte a read took \\
+\code{0x0c} & \code{state} & busy, done, not acknowledged, arbitration
+lost \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A command is at most a start, one byte either way, and a stop. That is
+not a limitation of the hardware so much as where the line between
+hardware and software falls: the shape of a transaction is a
+program's business, and every I2C transaction is a sequence of these
+pieces. Reading a register of a device is four commands: address it
+for writing, write the register number, address it again for reading
+after a repeated start, and read the byte with a NACK and a stop,
+because a master says NACK to the last byte it wants.
+
+\subsection{What the Master Watches}
+
+Two of the four states in \code{state} are there because the bus is
+shared, and both are read from the lines rather than assumed.
+
+A device that is not ready holds the clock low after the master
+releases it. That is clock stretching, and the master waits: the
+quarter of a bit does not advance while the clock reads low against
+what the master drives. A master that counted cycles instead would
+walk over the device.
+
+A data line that reads low where the master released it is another
+master driving the bus, which is arbitration lost. The command ends
+there and the bit is set, because two masters that both keep going
+corrupt each other's bytes.
+
+There is a third thing the lines must be watched for, and it is the
+one this example was written twice for: between the pieces of one
+transaction, the clock is parked \emph{low} and not high. A data line
+that moves while the clock is high is a start or a stop to every
+device on the bus, so a master that parks the clock high and then
+loads the next byte has sent a start nobody asked for. The device
+model catches it: the byte after such a park arrives rotated by one
+bit, because the device took the spurious start as the beginning of a
+new address.
+
+\subsection{What Checks It}
+
+\code{I2cDev}, a model of a device with a byte per register, stepped
+between cycles from the loop as the I2C device of \code{//docs:hdmi}
+is. It acknowledges its own address and nothing else, answers reads
+from the register its pointer names, and can be told to hold the clock
+low for a few cycles after every byte.
+
+Five tests in \code{//lib/parts:parts\_test} drive the master against
+it: a write of two bytes under one address, a read after a repeated
+start, an address nobody answers, which sets the NACK bit and clears
+it again, and a device that stretches the clock, which changes only
+how long the transaction takes.
+
+\begin{figure}[htbp]
+\centering
+\input{i2c_timing.tex}
+\caption{The address going out: the clock and the data as the master
+pulls them, the lines as they read back, the step through the
+transaction, and the byte shifting out a bit per clock.}
+\label{fig:x-i2c}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_i2c.rs}. Run with \code{bazel run //lib/examples:ex\_i2c}.},label={lst:x-i2c}]{lib/examples/ex_i2c.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_i2c} printed when the build ran it: a register read out of the device, and an address nobody answered.},label={lst:x-i2c-out}]{out_i2c.txt}
