@@ -21,6 +21,7 @@ Those reasons live here.
 | `syntax-decisions.md` | The Rust-shaped surface syntax chosen for the merged language, one decision per conflict, with a worked example |
 | `document-build-plan.md` | How the articles are built, what was tried before, and why the TeX packages are vendored |
 | `rust-embedding.md` | Working notes on embedding the language in Rust, with every probe result in full |
+| `on-chip-debug.md` | What the board shows today, the options for debugging the SoC on it, what each costs, and the order to do them in |
 
 Seventeen documents are typeset here, and `cover.tex` names them all:
 `article.tex` with `sections/` is the merge, `//docs:article`;
