@@ -514,10 +514,8 @@ fn m_signed_b(f3: U<3>) -> bool {
 /// all ones.
 // A `select!` arm's alternatives are compared one by one when the
 // function is lowered, so they are written out rather than as a range.
-// The allow goes above `#[lower]`: the lowering finds a function by
-// the attribute directly above it (issue 234).
-#[allow(clippy::manual_range_patterns)]
 #[lower]
+#[allow(clippy::manual_range_patterns)]
 fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
     let mag = hi.slice::<0, 32>().concat::<_, 64>(lo);
     let p = mux(neg_q, U::<64>::from(0u32) - mag, mag);
