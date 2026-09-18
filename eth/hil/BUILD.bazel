@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+# The hardware test of the Ethernet echo design: it runs where the cable
+# is, which is the machine .bazelrc names in TXHDL_BOARD_SERVER.
+#
+#   bazel run //cpu/vreteno/board/remote:hw_server
+#   bazel run //eth:echo_prog -- \
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+#   bazel run //eth/hil:run -- --count=64 --size=64
+#
+# The tester needs a raw socket on that machine, so once, there:
+#
+#   sudo ip link set fpga-a200t-eth0 up
+#   sudo setcap cap_net_raw+ep ~/txhdl_ethtest/ethtest
+#
+# The second is redone whenever the binary is uploaded again, since
+# capabilities belong to the file.
+load("@rules_go//go:def.bzl", "go_binary")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+go_binary(
+    name = "ethtest",
+    srcs = ["ethtest.go"],
+    pure = "on",
+    tags = ["manual"],
+)
+
+sh_binary(
+    name = "run",
+    srcs = ["run.sh"],
+    data = [
+        ":ethtest",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
+    tags = ["manual"],
+)
+
+filegroup(
+    name = "sources",
+    srcs = glob(["*.go", "*.sh"]),
+)
