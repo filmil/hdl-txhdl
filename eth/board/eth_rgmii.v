@@ -17,15 +17,34 @@
 //
 // Receive: the PHY's receive clock comes in through a global buffer and
 // clocks the IDDRs, and `rx_clk` is that clock, for the receiving half of
-// the MAC. Whether the data is centred on that clock at the pins depends
-// on the PHY's receive delay; this wrapper adds none, and it has not yet
-// been measured on the board.
+// the MAC. RGMII asks one side to put the clock in the middle of the
+// data, and the JL2121 on this board does not: with no delay here, the
+// board linked at gigabit and the MAC accepted no frame at all, which is
+// issue #231.
+//
+// So the receive clock goes through an `IDELAYE2` before its buffer,
+// tapped to about two nanoseconds, which is a quarter of the 8 ns bit
+// period, and the sampling edge then falls inside the data rather than
+// where it changes. The delay is on the clock and not on the five data
+// lines on purpose: one delay element moves the sampling point and
+// leaves the lines' alignment to each other alone, where five of them
+// would add each element's own error between the bits and narrow the
+// eye. Delaying the data was tried first and let a third of the frames
+// through.
+//
+// The taps are calibrated by an `IDELAYCTRL` on the board's 200 MHz
+// clock, which the design already makes, and `RX_DELAY_TAPS` is a
+// parameter so that the value can be moved without reading this file.
 //
 // Only gigabit works. At 100 or 10 Mbit a PHY sends one nibble per
 // clock cycle and the MAC would have to take bytes over two cycles,
 // which neither half of the MAC does.
 `timescale 1ps / 1ps
-module eth_rgmii (
+module eth_rgmii #(
+  // How far the receive clock is shifted, in degrees of its own cycle.
+  // A quarter of 8 ns is 2 ns, which is the middle of a data bit.
+  parameter real RX_CLOCK_PHASE = 90.0
+) (
   // The transmit side, GMII, on clk125.
   input clk125,
   input clk125_90,
@@ -65,10 +84,37 @@ module eth_rgmii (
     .D1(1'b1), .D2(1'b0), .R(1'b0), .S(1'b0)
   );
 
-  // Receive: the PHY's clock, buffered onto the global clock network.
-  wire rxck_ibuf;
+  // Receive: the PHY's clock through an MMCM that shifts it a quarter
+  // of a cycle, which is 2 ns at 125 MHz, and then onto the global clock
+  // network. The shift puts the sampling edge in the middle of the data
+  // rather than where it changes.
+  //
+  // The shift is made once, on the clock, rather than by delaying the
+  // five data lines with an `IDELAYE2` each. Both were measured on the
+  // board under #231: five delays of 20 to 31 taps let between a quarter
+  // and a third of the frames through, because each delay element brings
+  // its own error and the bits drift apart; a delay on the clock alone,
+  // in the other direction, let none through.
+  wire rxck_ibuf, rxck_shifted, rxck_fb, rxck_fb_buf, rx_locked;
   IBUF rxck_in (.I(eth_rxck), .O(rxck_ibuf));
-  BUFG rxck_bufg (.I(rxck_ibuf), .O(rx_clk));
+  MMCME2_BASE #(
+    .CLKIN1_PERIOD(8.0),
+    .CLKFBOUT_MULT_F(8.0),
+    .DIVCLK_DIVIDE(1),
+    .CLKOUT0_DIVIDE_F(8.0),
+    .CLKOUT0_PHASE(RX_CLOCK_PHASE)
+  ) rxmmcm (
+    .CLKIN1(rxck_ibuf),
+    .CLKFBIN(rxck_fb_buf),
+    .CLKFBOUT(rxck_fb),
+    .CLKOUT0(rxck_shifted),
+    .LOCKED(rx_locked),
+    .RST(1'b0),
+    .PWRDWN(1'b0)
+  );
+  BUFG rxck_fb_bufg (.I(rxck_fb), .O(rxck_fb_buf));
+  BUFG rxck_bufg (.I(rxck_shifted), .O(rx_clk));
+
   // Both nibbles and both halves of the control line, presented
   // together on the rising edge.
   wire [3:0] rx_lo, rx_hi;
