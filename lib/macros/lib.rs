@@ -2968,19 +2968,51 @@ fn turbofish(ts: &[TokenTree]) -> Vec<bool> {
     mask
 }
 
+/// The suffixes Rust allows on an integer literal, longest first so
+/// that `u128` is not read as `u1` followed by `28`.
+const INT_SUFFIXES: &[&str] = &[
+    "usize", "isize", "u128", "i128", "u64", "i64", "u32", "i32", "u16",
+    "i16", "u8", "i8",
+];
+
+/// A literal's value, read as Rust reads it: any of the four radices,
+/// with or without a suffix. `str::parse` takes decimal digits and
+/// nothing else, so it refused `0x10` and `16u32` alike, and this
+/// macro needs the value at macro time rather than in generated code,
+/// where a cast would do. See issue 200.
+fn lit_value(text: &str) -> Option<u128> {
+    let t = text.replace('_', "");
+    let (radix, body) = match t.get(..2) {
+        Some("0x" | "0X") => (16, &t[2..]),
+        Some("0b" | "0B") => (2, &t[2..]),
+        Some("0o" | "0O") => (8, &t[2..]),
+        _ => (10, &t[..]),
+    };
+    let end =
+        body.find(|c: char| !c.is_digit(radix)).unwrap_or(body.len());
+    let (digits, suffix) = body.split_at(end);
+    if digits.is_empty() {
+        return None;
+    }
+    if !suffix.is_empty() && !INT_SUFFIXES.contains(&suffix) {
+        return None;
+    }
+    u128::from_str_radix(digits, radix).ok()
+}
+
 /// `name`, `LIT`, `U::from(LIT)` or `U::<W>::from(LIT)`.
 fn parse_arg(ts: &[TokenTree]) -> Result<Arg, String> {
     match ts {
         [TokenTree::Ident(id)] if id.to_string() != "U" => {
             Ok(Arg::Name(id.to_string()))
         }
-        [TokenTree::Literal(l)] => Ok(Arg::Lit(
-            l.to_string()
-                .replace('_', "")
-                .parse()
-                .map_err(|_| "a literal")?,
-            None,
-        )),
+        [TokenTree::Literal(l)] => {
+            let t = l.to_string();
+            let v = lit_value(&t).ok_or_else(|| {
+                format!("`{t}` is not a whole number an argument can be")
+            })?;
+            Ok(Arg::Lit(v, None))
+        }
         _ => {
             let text: String = ts
                 .iter()
@@ -2994,7 +3026,7 @@ fn parse_arg(ts: &[TokenTree]) -> Result<Arg, String> {
             let lit = text
                 .rsplit_once("from(")
                 .and_then(|(_, r)| r.strip_suffix(')'))
-                .and_then(|l| l.replace('_', "").parse().ok())
+                .and_then(lit_value)
                 .ok_or_else(|| format!("cannot lower the argument `{text}`"))?;
             Ok(Arg::Lit(lit, width))
         }
