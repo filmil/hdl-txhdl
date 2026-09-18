@@ -54,60 +54,35 @@ pub mod vga {
 // end{modes}
 
 // begin{fns}
-/// The last column of a line, blanking included.
+/// The last count of an axis, blanking included: the visible part, the
+/// front porch, the sync pulse and the back porch, less one.
+///
+/// One function serves both axes. A call binds a function's const
+/// parameters by position, so the names here are the axis's rather
+/// than either axis's own, which is issue 127; before that they had to
+/// be the unit's names, and each axis had a function of its own.
 #[lower]
-fn line_end<
-    const HV: usize,
-    const HFP: usize,
-    const HSW: usize,
-    const HBP: usize,
+fn axis_end<
+    const V: usize,
+    const FP: usize,
+    const SW: usize,
+    const BP: usize,
 >(
-    hc: U<12>,
+    c: U<12>,
 ) -> bool {
-    hc == HV + HFP + HSW + HBP - 1
+    c == V + FP + SW + BP - 1
 }
 
-/// The last row of a frame, blanking included.
+/// Whether a count is inside its axis's sync pulse.
 #[lower]
-fn frame_end<
-    const VV: usize,
-    const VFP: usize,
-    const VSW: usize,
-    const VBP: usize,
->(
-    vc: U<12>,
-) -> bool {
-    vc == VV + VFP + VSW + VBP - 1
+fn in_sync<const V: usize, const FP: usize, const SW: usize>(c: U<12>) -> bool {
+    (c >= V + FP) & (c < V + FP + SW)
 }
 
-/// Whether a column is inside the horizontal sync pulse. The lowering
-/// reads a function's constants by the names the unit gives them, so
-/// the two axes have a function each.
+/// Whether a count is in the visible part of its axis.
 #[lower]
-fn h_sync<const HV: usize, const HFP: usize, const HSW: usize>(
-    hc: U<12>,
-) -> bool {
-    (hc >= HV + HFP) & (hc < HV + HFP + HSW)
-}
-
-/// Whether a row is inside the vertical sync pulse.
-#[lower]
-fn v_sync<const VV: usize, const VFP: usize, const VSW: usize>(
-    vc: U<12>,
-) -> bool {
-    (vc >= VV + VFP) & (vc < VV + VFP + VSW)
-}
-
-/// Whether a column is visible.
-#[lower]
-fn h_visible<const HV: usize>(hc: U<12>) -> bool {
-    hc < HV
-}
-
-/// Whether a row is visible.
-#[lower]
-fn v_visible<const VV: usize>(vc: U<12>) -> bool {
-    vc < VV
+fn visible<const V: usize>(c: U<12>) -> bool {
+    c < V
 }
 
 /// The last column of the framebuffer: the visible columns, divided by
@@ -216,11 +191,11 @@ impl<
             // The raster.
             let hc = self.hc.get();
             let vc = self.vc.get();
-            let h_last = line_end::<HV, HFP, HSW, HBP>(hc);
-            let v_last = frame_end::<VV, VFP, VSW, VBP>(vc);
-            let shown = h_visible::<HV>(hc) & v_visible::<VV>(vc);
-            let hs_on = h_sync::<HV, HFP, HSW>(hc);
-            let vs_on = v_sync::<VV, VFP, VSW>(vc);
+            let h_last = axis_end::<HV, HFP, HSW, HBP>(hc);
+            let v_last = axis_end::<VV, VFP, VSW, VBP>(vc);
+            let shown = visible::<HV>(hc) & visible::<VV>(vc);
+            let hs_on = in_sync::<HV, HFP, HSW>(hc);
+            let vs_on = in_sync::<VV, VFP, VSW>(vc);
             // The framebuffer's pixel under the beam.
             let fx = (hc >> SHIFT).slice::<0, 8>();
             let fy = (vc >> SHIFT).slice::<0, 7>();
@@ -253,7 +228,7 @@ impl<
             let place = wgo & (wsel == 1);
             let row_done = last_col::<HV, SHIFT>(cx);
             let rows_done = last_row::<VV, SHIFT>(cy);
-            let blank = Bit::from(!v_visible::<VV>(vc));
+            let blank = Bit::from(!visible::<VV>(vc));
             let status = self
                 .frames
                 .get()
