@@ -220,6 +220,7 @@ Those expected to fail are tagged `manual`.
 | `probe_reserved_field` | Is a field named for a target's reserved word, a register called `next`, refused? | **Yes**, at the field: ``error: field `next` is a reserved word of VHDL: the netlist names it as written and would not analyse, so rename it (see issue 77)`` |
 | `probe_reserved_let` | Are a port called `out` and a computed `let inside` refused? | **Yes**, each where it is named: ``port `out` is a reserved word of VHDL`` and ``the `let` `inside` is a reserved word of Verilog`` |
 | `probe_shadow` | Is a computed `let` with a register's name refused? | **Yes**, at the `let`: ``error[E0080]: evaluation panicked: `let pend` is the wire `pend` of the netlist, and the unit has a field `pend`: the netlist would declare `pend` twice, so rename one (see issue 77)`` |
+| `probe_tuple_let` | Is a tuple `let` in a lowered function whose value is not a tuple refused? | **Yes**, where the helper is called: ``the tuple `let` of `pair` binds 2 names to something that is not a tuple of 2 values: a helper's `let` is a substitution, so write one `let` per name (issue 159)`` |
 | `probe_shadow_generic` | Is it refused in a generic unit? | **Only once a type is lowered.** The check is a constant `lowered` uses, so the file builds until `Latch::<1>::verilog` is called; issue 171 |
 
 Three of these change the design.

@@ -82,6 +82,7 @@ rust_binary(
         "probe_reserved_let",          # the macro's own message, twice
         "probe_shadow",                # E0080: the check's own message
         "probe_shadow_generic",        # E0080, once a type is lowered
+        "probe_tuple_let",             # the macro's own message
     ]
 ]
 

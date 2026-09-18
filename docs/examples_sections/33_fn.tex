@@ -11,9 +11,19 @@ and its \code{let}s to expressions of their own. The lowering reads
 the file for it, since a proc macro sees one item at a time. What it
 can inline is what the step could have said in place, and nothing
 else: no register, no port, no \code{with!}. The counter here keeps
-its two pieces of arithmetic so, the Gray code of the count and
-whether the count is about to wrap, and the netlist is the one the
-step would have made with them written in.
+its three pieces of arithmetic so, the Gray code of the count,
+whether the count is about to wrap, and its two nibbles swapped, and
+the netlist is the one the step would have made with them written in.
+
+A tuple \code{let}, which the third of them uses, is taken apart into
+the \code{let}s it stands for. It has to be: a helper's \code{let} is
+a substitution rather than a wire, so a name of \code{(lo, hi)} would
+substitute for nothing and leave \code{lo} and \code{hi} in the
+netlist with nothing declaring them. VHDL then refuses to analyse and
+Verilog quietly makes them one-bit wires, which is the worse of the
+two. A tuple whose value is not a tuple of the same length, such as a
+call that returns a pair, is refused where the helper is called, with
+the probe for it kept in \code{experiments/rust\_embedding}.
 
 \begin{figure}[htbp]
 \centering
