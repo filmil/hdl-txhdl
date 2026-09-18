@@ -109,6 +109,32 @@ rust_library(
     edition = "2021",
 )
 
+# The same test, built for the board: `--cfg=board_run` adds the header
+# line and a dot every ten seconds around the test, which a simulation
+# would pay for in simulated time and which the tests that read the
+# whole of a run's output would have to state.
+rust_binary(
+    name = "ddr3_board",
+    srcs = ["ddr3.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS + ["--cfg=board_run"],
+    tags = ["manual"],
+)
+
+vreteno_image(
+    name = "ddr3_board_image",
+    platform = ":vreteno",
+    program = ":ddr3_board",
+)
+
+rust_library(
+    name = "ddr3_board_program",
+    srcs = [":ddr3_board_image"],
+    crate_name = "ddr3_board_program",
+    edition = "2021",
+)
+
 # Input by interrupt: the serial port's receive interrupt through the
 # interrupt controller, one interrupt per byte, run on the board's
 # design. Built exactly as the greeting is.

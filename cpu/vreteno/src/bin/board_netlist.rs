@@ -14,10 +14,8 @@ use vreteno32::board::Board;
 
 /// The image, in the two memories of the core's module and the data
 /// memory's: a word per instruction, and a byte per lane per word.
-fn load(net: &mut Lowered) {
-    let text: Vec<u128> =
-        ddr3_program::TEXT.iter().map(|&w| w as u128).collect();
-    let data = ddr3_program::DATA;
+fn load(net: &mut Lowered, text: &[u32], data: &[u8]) {
+    let text: Vec<u128> = text.iter().map(|&w| w as u128).collect();
     for inst in &mut net.instances {
         match inst.name.as_str() {
             "cpu" => inst.unit.init("imem", &text),
@@ -37,16 +35,27 @@ fn load(net: &mut Lowered) {
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
-    let mut net = match mode.as_str() {
+    // The board's program says a header and a dot every ten seconds
+    // around the test; a simulation's does not, since the tests state
+    // the whole of what a run said and every byte is simulated time.
+    let (mut net, text, data) = match mode.as_str() {
         // Sixteen cycles a bit, and the controller's simulation waits.
-        "sim" => Board::<16, 1, 0>::lowered("board"),
+        "sim" => (
+            Board::<16, 1, 0>::lowered("board"),
+            ddr3_program::TEXT,
+            ddr3_program::DATA,
+        ),
         // 100 MHz over 115200 baud is 868 cycles a bit.
-        "board" => Board::<868, 0, 0>::lowered("board"),
+        "board" => (
+            Board::<868, 0, 0>::lowered("board"),
+            ddr3_board_program::TEXT,
+            ddr3_board_program::DATA,
+        ),
         _ => {
             eprintln!("usage: board_netlist sim|board");
             std::process::exit(2);
         }
     };
-    load(&mut net);
+    load(&mut net, text, data);
     print!("{}", net.verilog());
 }
