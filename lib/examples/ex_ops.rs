@@ -20,6 +20,7 @@ pub struct Ops {
     pub up: Reg<U<8>>,
     pub down: Reg<U<8>>,
     pub hits: Reg<U<4>>,
+    pub tops: Reg<U<4>>,
 }
 
 #[lower]
@@ -52,6 +53,15 @@ impl Unit for Ops {
             let lt = a < b;
             let high = a >= 128;
             with!(self <= { en & (eq | lt) & !high ? hits: self.hits + 1 });
+            // A slice of one bit is a value of one bit, and comparing
+            // it with a number is how a program asks whether that bit
+            // is set: through a name of its own for `a`, and inside
+            // the compare for `b`.
+            let top = a.slice::<7, 1>();
+            with!(self <= {
+                en & ((top == 1) | (b.slice::<7, 1>() == 1))
+                    ? tops: self.tops + 1
+            });
             same.set(eq);
             below.set(lt & !eq);
         }
@@ -65,7 +75,7 @@ fn main() {
     let (same_out, same) = signal::<Bit, DefaultClock>();
     let (below_out, below) = signal::<Bit, DefaultClock>();
     let mut ops = Ops::default();
-    let (sum, hits) = (ops.sum, ops.hits);
+    let (sum, hits, tops) = (ops.sum, ops.hits, ops.tops);
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         w.add("a", &a);
@@ -85,7 +95,10 @@ fn main() {
         (200, 1, true),
         (3, 4, false),
         (0xF0, 0x3C, true),
-        (1, 1, true),
+        // The last row is the only one whose top bit is on the second
+        // input, so it is the one that counts through the compare
+        // written inside the condition rather than through a name.
+        (1, 200, true),
     ];
     for (x, y, e) in table {
         a_out.set(U::from(x));
@@ -93,10 +106,11 @@ fn main() {
         en_out.set(e);
         sim.cycle();
         println!(
-            "a={x:3} b={y:3} en={} sum={:3} hits={}",
+            "a={x:3} b={y:3} en={} sum={:3} hits={} tops={}",
             e as u8,
             sum.get().raw(),
-            hits.get().raw()
+            hits.get().raw(),
+            tops.get().raw()
         );
     }
     sim.cycle();
