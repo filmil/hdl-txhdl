@@ -312,6 +312,18 @@ rust_binary(
 
 # General purpose pins behind AXI-Lite, with an interrupt:
 #   bazel run //lib/examples:ex_gpio
+# One thing run twice and compared:  bazel run //lib/examples:ex_redundant
+rust_binary(
+    name = "ex_redundant",
+    srcs = ["ex_redundant.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 rust_binary(
     name = "ex_gpio",
     srcs = ["ex_gpio.rs"],
@@ -667,6 +679,7 @@ filegroup(
         "blinker.v",
         "blinker.vhd",
         "ex_gpio.rs",
+        "ex_redundant.rs",
         "ex_spi.rs",
         "ex_syscon.rs",
         "ex_wdog.rs",

@@ -1374,6 +1374,48 @@ and its test. Both languages end at the same place: the machine of
 two assertions. What changes between them is the language and
 nothing else.
 
+\section{Two of It, Compared}
+\label{sec:v-pair}
+
+A machine that must not be quietly wrong runs two of itself and
+compares. \code{Pair} is that: two \code{Vreteno} cores on one bus,
+with everything they say compared and one line, \code{differs}, that
+goes up when they stop agreeing and stays up until reset.
+
+What makes the comparison worth anything is that both cores see
+exactly the same inputs in the same cycles. The wires are given to
+both; each of the three channels the pair receives goes through a
+\code{Tee}, a part that hands a word to both cores in one cycle or to
+neither, so neither core can be a word ahead. Each of the three
+channels the cores drive goes through a \code{Check}, which takes a
+word from both in the same cycle, passes the first core's on and
+raises its line when the two differ. Both parts are in
+\code{//lib/parts} under \code{redundant}.
+
+The three wires, \code{halt}, \code{instr} and the writeback, have no
+handshake, so \code{Watch} compares them every cycle and passes the
+first core's on; it also gathers the three checks' lines into
+\code{differs}, since a unit of units has no logic of its own to do it
+with.
+
+What leaves the pair is the first core's, so a design puts a pair
+where it would have put a core and wires nothing differently. What it
+adds is one input and one output: \code{fault}, which holds the second
+core in reset while it is high, and \code{differs}.
+
+\code{fault} is the self-test. A comparator nobody has ever seen fire
+is a comparator nobody knows the state of, and holding one core in
+reset for a cycle is a divergence with a known cause that runs through
+every part of the comparison path. \code{//cpu/vreteno:pair\_test}
+does both halves: eight random programs run with the two cores agreeing
+throughout, and then the same programs with one cycle of \code{fault},
+after which the line is up and stays up to the end of the run.
+
+What the pair does not do is decide what to do about a disagreement.
+It says that there was one; a design around it chooses between a
+reset, a trap and a stop, and that choice belongs to the system rather
+than to the pair.
+
 \section{What Comes Next}
 \label{sec:v-next}
 
