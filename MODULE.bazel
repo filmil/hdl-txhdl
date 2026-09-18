@@ -34,7 +34,7 @@ register_toolchains("@hermetic_latex//:all")
 # on the machine.
 # The constraint values a platform is written in: the CPU Vreteno is,
 # and the absence of an operating system.
-bazel_dep(name = "platforms", version = "0.0.11")
+bazel_dep(name = "platforms", version = "1.1.0")
 
 bazel_dep(name = "rules_rust", version = "0.74.0")
 
