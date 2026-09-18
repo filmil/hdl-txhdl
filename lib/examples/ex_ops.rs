@@ -21,6 +21,7 @@ pub struct Ops {
     pub down: Reg<U<8>>,
     pub hits: Reg<U<4>>,
     pub tops: Reg<U<4>>,
+    pub spread: Reg<U<8>>,
 }
 
 #[lower]
@@ -62,6 +63,13 @@ impl Unit for Ops {
                 en & ((top == 1) | (b.slice::<7, 1>() == 1))
                     ? tops: self.tops + 1
             });
+            // A computed value of one bit is a wire of one bit, and
+            // sign-extending it spreads that bit over the width: zero,
+            // or every bit set. In Verilog such a wire is a scalar,
+            // which has no bit to select, so the extension has to
+            // repeat the wire itself. See issue 247.
+            let odd = a.slice::<0, 1>() ^ b.slice::<0, 1>();
+            with!(self <= { en ? spread: odd.sext::<8>() });
             same.set(eq);
             below.set(lt & !eq);
         }
@@ -75,7 +83,7 @@ fn main() {
     let (same_out, same) = signal::<Bit, DefaultClock>();
     let (below_out, below) = signal::<Bit, DefaultClock>();
     let mut ops = Ops::default();
-    let (sum, hits, tops) = (ops.sum, ops.hits, ops.tops);
+    let (sum, hits, tops, spread) = (ops.sum, ops.hits, ops.tops, ops.spread);
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         w.add("a", &a);
@@ -106,11 +114,12 @@ fn main() {
         en_out.set(e);
         sim.cycle();
         println!(
-            "a={x:3} b={y:3} en={} sum={:3} hits={} tops={}",
+            "a={x:3} b={y:3} en={} sum={:3} hits={} tops={} spread={:08b}",
             e as u8,
             sum.get().raw(),
             hits.get().raw(),
-            tops.get().raw()
+            tops.get().raw(),
+            spread.get().raw()
         );
     }
     sim.cycle();

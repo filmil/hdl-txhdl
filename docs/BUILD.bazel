@@ -712,6 +712,7 @@ waveform(
         "//ops/sum=>sum",
         "//ops/hits=>hits",
         "//ops/tops=>tops",
+        "//ops/spread=>spread",
         "//same=>same",
         "//below=>below",
     ],
