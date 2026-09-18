@@ -77,21 +77,15 @@ idle, the start, the eight bits, the acknowledge, the stop, the end.
 and \code{tick} counts the cycles of that quarter against the divider.
 \item On a write, the acknowledge step reads the data line: low is the
 device acknowledging, high sets the not-acknowledged bit.
-\item On a read, the byte arrives in \code{shift} and is put in
-\code{rxb}, which \code{data} reads. The master then drives the
-answer bit 4 asked for.
+\item On a read, the byte arrives in \code{shift} and is put in the
+\code{data} register, which the word at \code{0x08} reads. The master
+then drives the answer bit 4 asked for.
 \item Finishing a command sets the done bit, which raises the
 interrupt while the enable is set, and clears busy.
 \item \code{held} records that a start has been sent and no stop has,
 which is what parks the lines between the commands of one
 transaction.
 \end{itemize}
-
-The register the byte lands in is \code{rxb} rather than \code{data},
-because the VHDL testbench generator names a register's alias
-\code{r\_<name>}, which would collide with the \code{r} port's
-\code{r\_data} and make the co-simulation compare the wrong signal.
-That is issue 211, and the name is the workaround.
 
 \subsection*{Verification}
 
