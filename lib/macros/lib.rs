@@ -5151,14 +5151,24 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
         {
             let mut acc: Option<String> = None;
             for f in split_commas(g) {
-                let Some(c) = f.iter().position(
+                let colon = f.iter().position(
                     |t| matches!(t, TokenTree::Punct(p) if p.as_char() == ':'),
-                ) else {
-                    return Err(
-                        "a struct literal's field is `name: value`".into()
-                    );
+                );
+                let e = match (colon, f.as_slice()) {
+                    (Some(c), _) => tr(&f[c + 1..], subst)?,
+                    // The shorthand, `Name { id }`: the field's value
+                    // is the name itself, which is what Rust makes of
+                    // it, and what `clippy::redundant_field_names`
+                    // asks for. That is issue 235.
+                    (None, [TokenTree::Ident(_)]) => tr(&f, subst)?,
+                    (None, _) => {
+                        return Err(
+                            "a struct literal's field is `name: value`, \
+                             or `name` on its own"
+                                .into(),
+                        )
+                    }
                 };
-                let e = tr(&f[c + 1..], subst)?;
                 acc = Some(match acc {
                     None => e,
                     Some(a) => {
