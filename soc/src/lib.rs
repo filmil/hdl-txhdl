@@ -310,7 +310,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
             break;
         }
     }
-    // The core stops the moment it reaches `ebreak` and the last byte
+    // The core stops the moment it writes `mhalt` and the last byte
     // is still going out a bit at a time, so the line is read to the
     // end of the frame before the run is judged.
     for _ in 0..64 {

@@ -64,8 +64,9 @@ extern "C" [[noreturn]] void VretenoMain() {
   Say("the squares to eight sum to ");
   Say(kAnswerText.data());
   Put('\n');
-  // `ebreak` halts this core. It is how a program says it is done.
-  for (;;) __asm__ volatile("ebreak");
+  // A write of one to `mhalt` stops this core. It is how a program
+  // says it is done; `ebreak` is a breakpoint and traps.
+  for (;;) __asm__ volatile("csrwi 0x7c0, 1");
 }
 
 // The reset vector. Nothing sets the stack pointer on this machine and

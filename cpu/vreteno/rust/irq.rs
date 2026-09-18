@@ -188,10 +188,10 @@ extern "C" fn main() -> ! {
     say(b" in ");
     put(b'0' + unsafe { read_volatile(addr_of!(INTERRUPTS)) } as u8);
     say(b" interrupts\n");
-    unsafe { core::arch::asm!("ebreak", options(noreturn)) }
+    unsafe { core::arch::asm!("csrwi 0x7c0, 1", options(noreturn)) }
 }
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
-    unsafe { core::arch::asm!("ebreak", options(noreturn)) }
+    unsafe { core::arch::asm!("csrwi 0x7c0, 1", options(noreturn)) }
 }

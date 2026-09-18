@@ -130,7 +130,7 @@ extern "C" fn main() -> ! {
     if bad != 0 {
         loop {}
     }
-    unsafe { core::arch::asm!("ebreak", options(noreturn)) }
+    unsafe { core::arch::asm!("csrwi 0x7c0, 1", options(noreturn)) }
 }
 
 /// The entry point, at address zero, which is where the core's
@@ -158,5 +158,5 @@ pub unsafe extern "C" fn _start() -> ! {
 /// the machine the same way a finished program does.
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
-    unsafe { core::arch::asm!("ebreak", options(noreturn)) }
+    unsafe { core::arch::asm!("csrwi 0x7c0, 1", options(noreturn)) }
 }

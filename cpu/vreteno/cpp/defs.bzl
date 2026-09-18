@@ -13,9 +13,13 @@ through.
 # instruction set, compressed instructions included, `ilp32` the
 # soft-float ABI, and both name the multilib of newlib and libstdc++
 # the toolchain carries, so the standard library that gets linked is
-# one built for this machine.
+# one built for this machine. `zicsr` is the control registers, which
+# this assembler wants named before it will assemble a `csrwi`, and
+# a program ends by writing one of them; it is an extension of the
+# instruction set and not of the multilib, so the same libraries are
+# still the ones linked.
 _ARCH = [
-    "-march=rv32imc",
+    "-march=rv32imc_zicsr",
     "-mabi=ilp32",
 ]
 

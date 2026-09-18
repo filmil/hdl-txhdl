@@ -165,7 +165,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
             break;
         }
     }
-    // The core stops the moment it reaches `ebreak`, and the last byte
+    // The core stops the moment it writes `mhalt`, and the last byte
     // is still going out a bit at a time: a frame is ten bits of four
     // cycles. The line is read to the end of it before the run is
     // judged, or the last character would always be missing.
@@ -190,8 +190,5 @@ pub fn expect(what: &str, ran: &Ran, expected: &str) {
         None => println!("it never halted"),
     }
     assert_eq!(ran.said, expected, "what {what} printed");
-    assert!(
-        ran.halted_at.is_some(),
-        "{what} halted the core with `ebreak`"
-    );
+    assert!(ran.halted_at.is_some(), "{what} halted the core");
 }

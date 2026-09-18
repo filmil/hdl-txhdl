@@ -6,11 +6,11 @@
 //! What the machine does not give you shapes the whole file. There is
 //! no operating system and no standard library, so `no_std` and
 //! `no_main`. Nothing sets the stack pointer, so the entry stub does.
-//! Nothing zeroes `.bss`, so the entry stub does. `ebreak` halts the
-//! core rather than trapping, which makes it the way to exit. And the
-//! core cannot read its own instruction memory, so every constant the
-//! program reads, this file's greeting included, is linked into the
-//! data memory and carried in the image.
+//! Nothing zeroes `.bss`, so the entry stub does. A write of one to
+//! `mhalt` halts the core, which is how a program exits; `ebreak` is a
+//! breakpoint and traps. And the core cannot read its own instruction
+//! memory, so every constant the program reads, this file's greeting
+//! included, is linked into the data memory and carried in the image.
 #![no_std]
 #![no_main]
 
@@ -69,13 +69,14 @@ pub unsafe extern "C" fn _start() -> ! {
 #[no_mangle]
 extern "C" fn main() -> ! {
     say(GREETING);
-    // `ebreak` stops this core. It is how a program says it is done.
-    unsafe { core::arch::asm!("ebreak", options(noreturn)) }
+    // A write of one to `mhalt` stops this core. It is how a program
+    // says it is done; `ebreak` is a breakpoint and traps.
+    unsafe { core::arch::asm!("csrwi 0x7c0, 1", options(noreturn)) }
 }
 
 /// Nothing can be reported and nothing can unwind, so a panic stops
 /// the machine the same way a finished program does.
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
-    unsafe { core::arch::asm!("ebreak", options(noreturn)) }
+    unsafe { core::arch::asm!("csrwi 0x7c0, 1", options(noreturn)) }
 }

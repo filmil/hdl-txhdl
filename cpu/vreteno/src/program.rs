@@ -144,7 +144,7 @@ impl Asm {
 /// an ecall and an illegal word reach and return from, the CSRs,
 /// a use of a word the instruction before it loaded, which stalls a
 /// cycle, the multiplies and divides, a line said on the serial port
-/// and three bytes echoed from it, then `ebreak`. Interrupts are
+/// and three bytes echoed from it, then the halt. Interrupts are
 /// enabled from the start, the timer's at once and set to 150, the
 /// line's after the echo, since the port's byte raises it too; the
 /// handler counts interrupts in x8, two by the end. It leaves 110 in
@@ -269,7 +269,7 @@ pub fn demo() -> Vec<u32> {
     a.emit(csrrw(0, CSR_MEPC, 22)); // mepc = x22
     a.emit(mret());
     a.place(done);
-    a.emit(ebreak());
+    a.emit(halt());
     a.words()
 }
 
@@ -277,7 +277,7 @@ pub fn demo() -> Vec<u32> {
 /// extension among them, aligned stores and loads within the first
 /// data words, a forward branch or jump now and then, CSR operations
 /// on mscratch, an ecall or an illegal instruction now and then, which
-/// a handler after the end returns from, and `ebreak` at the end.
+/// a handler after the end returns from, and the halt at the end.
 /// About half the instructions that have a compressed spelling are
 /// written in it, and some branches and jumps are compressed ones, so
 /// the two lengths are mixed and a thirty-two bit instruction often
@@ -441,7 +441,7 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
         a.compress = squeeze;
         a.emit(w);
     }
-    a.emit(ebreak());
+    a.emit(halt());
     // The handler: an interrupt is cleared and returned from; an
     // exception returns past the instruction that trapped.
     a.align();
