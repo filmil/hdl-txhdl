@@ -1276,6 +1276,24 @@ waveform(
     ],
 )
 
+# The trace buffer filling and freezing: the ring walking, the count
+# stopping at the ring's size, and the halt taking the run bit.
+waveform(
+    name = "tracer",
+    example = "//lib/examples:ex_tracer",
+    lowered = ("tracer", "tracer"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//take=>take",
+        "//halt=>halt",
+        "//tracer/ctrl=>ctrl",
+        "//tracer/head=>head",
+        "//tracer/count=>count",
+        "//tracer/cursor=>cursor",
+    ],
+    until = 60,
+)
+
 waveform(
     name = "gpio",
     example = "//lib/examples:ex_gpio",

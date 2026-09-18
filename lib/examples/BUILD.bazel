@@ -324,6 +324,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A trace buffer read out after a halt:  bazel run //lib/examples:ex_tracer
+rust_binary(
+    name = "ex_tracer",
+    srcs = ["ex_tracer.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 rust_binary(
     name = "ex_gpio",
     srcs = ["ex_gpio.rs"],
@@ -689,6 +701,7 @@ filegroup(
         "blinker.vhd",
         "ex_gpio.rs",
         "ex_redundant.rs",
+        "ex_tracer.rs",
         "ex_spi.rs",
         "ex_syscon.rs",
         "ex_wdog.rs",
