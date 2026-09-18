@@ -3,10 +3,11 @@
 //! written against the decoder and nothing else. The core is checked
 //! against it, in lockstep, every cycle.
 use crate::isa::{
-    compressed, decode, is_compressed, Kind, CAUSE_ECALL, CAUSE_ILLEGAL,
-    CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MTIMER, CAUSE_STORE_MISALIGNED,
-    CSR_MCAUSE, CSR_MEPC, CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS,
-    CSR_MTVAL, CSR_MTVEC, MEXT, MTIMER, TIMER_BASE, UART_BASE,
+    compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT, CAUSE_ECALL,
+    CAUSE_ILLEGAL, CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MTIMER,
+    CAUSE_STORE_MISALIGNED, CSR_MCAUSE, CSR_MEPC, CSR_MHALT, CSR_MIE, CSR_MIP,
+    CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT, MTIMER, TIMER_BASE,
+    UART_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -15,8 +16,9 @@ use crate::isa::{
 pub const DATA_BASE: u32 = 0x1000;
 pub const DATA_BYTES: u32 = 4096;
 
-/// What stops the model: the program's own `ebreak`, or a fault. An
-/// illegal instruction and `ecall` do not stop it: they trap.
+/// What stops the model: the program writing `mhalt`, or a fault. An
+/// illegal instruction, `ecall` and `ebreak` do not stop it: they
+/// trap.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Halt {
     Break,
@@ -171,6 +173,9 @@ impl Model {
             CSR_MIE => self.csr.mie,
             CSR_MIP => self.csr.mip | self.mtip(),
             CSR_MTVAL => self.csr.mtval,
+            // The halt holds nothing: it reads as zero, and a write of
+            // an odd value to it stops the machine.
+            CSR_MHALT => 0,
             _ => return None,
         })
     }
@@ -249,6 +254,9 @@ impl Model {
         let shi = (imm & 31) as u32;
         let mut next = self.pc.wrapping_add(len);
         let mut rd: Option<u32> = None;
+        // Whether this instruction is the one that stops the
+        // machine: a write of an odd value to `mhalt`.
+        let mut halting = false;
         use Kind::*;
         match d.kind {
             Lui => rd = Some(imm),
@@ -369,7 +377,10 @@ impl Model {
             Remu => rd = Some(if b == 0 { a } else { a % b }),
             Fence => {}
             Ebreak => {
-                self.halted = Some(Halt::Break);
+                // A breakpoint, not a halt: a monitor catches it,
+                // prints, steps, continues. A program that means to
+                // stop writes `mhalt` instead, which is issue 139.
+                self.trap(CAUSE_BREAKPOINT, self.pc);
                 return;
             }
             Ecall => {
@@ -401,6 +412,12 @@ impl Model {
                 };
                 self.csr_write(imm, v);
                 rd = Some(old);
+                // A write of an odd value to `mhalt` is how a program
+                // says it is finished. The register holds nothing and
+                // reads as zero, and the instruction retires as any
+                // other does before the machine stops, which is what
+                // the core does too.
+                halting = imm == CSR_MHALT && v & 1 != 0;
             }
         }
         if let Some(v) = rd {
@@ -409,13 +426,16 @@ impl Model {
             }
         }
         self.pc = next;
+        if halting {
+            self.halted = Some(Halt::Break);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::isa::{addi, c_addi, c_jal, c_jr, c_nop, ebreak, lui};
+    use crate::isa::{addi, c_addi, c_jal, c_jr, c_nop, halt, lui};
 
     /// A program of both widths: a compressed instruction, a thirty-two
     /// bit one that starts in the upper half of the first word and ends
@@ -428,7 +448,7 @@ mod tests {
             (lui5 & 0xffff) << 16 | c_addi(1, 7) as u32, // 0, 2
             (c_jal(10) as u32) << 16 | lui5 >> 16,       // 6: to 16
             addi(6, 0, 1),                               // 8
-            ebreak(),                                    // 12
+            halt(),                                      // 12
             (c_nop() as u32) << 16 | c_jr(1) as u32,     // 16: to 8
         ];
         assert_eq!(fetch(&imem, 0), Some((addi(1, 1, 7), 2)));
@@ -465,9 +485,9 @@ mod tests {
                 addi(3, 0, handler),    // 8: x3 = the handler
                 csrrw(0, CSR_MTVEC, 3), // 12: mtvec = x3
                 access,                 // 16
-                ebreak(),               // 20
+                halt(),                 // 20
             ];
-            imem.resize(32, ebreak());
+            imem.resize(32, halt());
             let mut m = Model::default();
             for _ in 0..8 {
                 if m.halted.is_some() {
@@ -486,7 +506,11 @@ mod tests {
         let m = run(lw(4, 1, 2));
         assert_eq!(m.csr.mcause, CAUSE_LOAD_MISALIGNED, "lw at 0x1002");
         assert_eq!(m.csr.mtval, 0x1002, "the address is the trap value");
-        assert_eq!(m.pc, handler as u32, "and the handler is next");
+        assert_eq!(m.csr.mepc, 16, "the access that trapped");
+        // The handler's first word is one of the halts the fill above
+        // put there, and a halt retires before the machine stops, so
+        // the program counter stands one word past the entry.
+        assert_eq!(m.pc, handler as u32 + 4, "and the handler ran");
         let m = run(lh(4, 1, 1));
         assert_eq!(m.csr.mcause, CAUSE_LOAD_MISALIGNED, "lh at 0x1001");
         let m = run(sw(2, 1, 1));

@@ -474,12 +474,14 @@ fn csr_read(
     })
 }
 
-/// Whether a CSR number is one of the eight the core has.
+/// Whether a CSR number is one of the nine the core has. The ninth is
+/// `mhalt`, which is this core's own: a write of an odd value to it
+/// stops the machine, and it reads as zero.
 #[lower]
 fn csr_known(f12: U<12>) -> Bit {
     select!(f12.raw() => {
         0x300 | 0x305 | 0x340 | 0x341 | 0x342 | 0x304 | 0x344
-        | 0x343 => Bit::One,
+        | 0x343 | 0x7c0 => Bit::One,
         _ => Bit::Zero,
     })
 }
@@ -865,7 +867,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // interrupt. The cause, the address and the trap value go to
             // the CSRs, the interrupt enable is saved and cleared, and
             // the handler is the redirect.
-            let trap = (run & (is_ecall | !known | unaligned)) | int_take;
+            let trap =
+                (run & (is_ecall | is_ebreak | !known | unaligned)) | int_take;
             // The exception an unaligned access raises says which way
             // it was going, and its trap value is the address, which is
             // what a handler emulating the access needs.
@@ -885,16 +888,25 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     is_ecall,
                     U::<32>::from(isa::CAUSE_ECALL),
                     mux(
-                        unaligned,
-                        misaligned,
-                        U::<32>::from(isa::CAUSE_ILLEGAL),
+                        is_ebreak,
+                        U::<32>::from(isa::CAUSE_BREAKPOINT),
+                        mux(
+                            unaligned,
+                            misaligned,
+                            U::<32>::from(isa::CAUSE_ILLEGAL),
+                        ),
                     ),
                 ),
             );
+            // The trap value: the word for an instruction the core does
+            // not know, the address for an unaligned access, and the
+            // breakpoint's own address, which is what the
+            // specification asks for and what a monitor reads to find
+            // out where it stopped.
             let tval = mux(
                 run & !known,
                 ir,
-                mux(unaligned, addr, U::<32>::from(0u32)),
+                mux(unaligned, addr, mux(is_ebreak, pc, U::<32>::from(0u32))),
             );
             let mie_bit = mstatus.bit(3);
             let mpie = mstatus.bit(7);
@@ -903,10 +915,13 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let mret_status =
                 mux(mpie, U::<32>::from(0x88u32), U::<32>::from(0x80u32));
             let csr_write = run & csr_op & csr_known;
-            // Stopped: on ebreak, and then for good; the halt itself
-            // follows a cycle later, when the halting instruction
-            // retires.
-            let stop = mux(run, Bit::from(is_ebreak), self.stopped.get());
+            // Stopped: on a write of an odd value to `mhalt`, and then
+            // for good; the halt itself follows a cycle later, when
+            // the halting instruction retires. `ebreak` used to do
+            // this and now raises the breakpoint exception, so a
+            // program that means to stop says so, which is issue 139.
+            let halting = csr_write & (f12 == isa::CSR_MHALT) & csr_new.bit(0);
+            let stop = mux(run, halting, self.stopped.get());
             let wrote = run & writes & (rd != 0) & !trap;
             let store = run & is_store & !unaligned;
             let wval = select!(opcode.raw() => {
@@ -941,8 +956,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // it needs, or nothing. A redirect means the next
             // instruction is not the one the fetch stage read this
             // cycle, so that word is squashed and the fetch restarts at
-            // the target; a halt parks the program counter on the
-            // halting instruction, as the model's does. The redirect is
+            // the target; a halt parks the program counter one word
+            // past the halting instruction, since the halt retires
+            // before the machine stops, as the model's does. The
+            // redirect is
             // one mux on the way into the fetch's state, so the target,
             // the last value to settle, passes through as little as
             // possible; the word fetched under a redirect is written
@@ -1096,7 +1113,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     self.wb_f3 <= f3;
                     self.wb_lane <= lane;
                     self.wb_load <= is_load & run;
-                    self.wb_stop <= is_ebreak & run
+                    self.wb_stop <= halting
                 },
                 _ if self.dev_wait.to_bool() => {},
                 _ => {
@@ -1106,10 +1123,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 },
             });
             // begin{fetch}
-            // The fetch's next counter: zero on reset, parked on the
-            // halting instruction, held while halted or stalled, the
-            // target on a redirect, else the next instruction, two bytes
-            // on or four. Reset, park and
+            // The fetch's next counter: zero on reset, parked one word
+            // past the halting instruction, held while halted or
+            // stalled, the target on a redirect, else the next
+            // instruction, two bytes on or four. Reset, park and
             // hold are known early and the redirect late, so the two
             // candidates fold the early conditions in and the redirect
             // chooses last, one multiplexer from the instruction memory.
@@ -1120,9 +1137,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let zero = U::<32>::from(0u32);
             let width = mux(short, U::<32>::from(2u32), U::<32>::from(4u32));
             let advance = mux(hold, fetch_pc, fetch_pc + width);
-            let go = mux(rst, zero, mux(park, pc, advance));
+            let go = mux(rst, zero, mux(park, link, advance));
             let jmp =
-                mux(rst, zero, mux(park, pc, mux(int_take, mtvec, target)));
+                mux(rst, zero, mux(park, link, mux(int_take, mtvec, target)));
             self.pc.set(mux(redirect, jmp, go));
             case!(rst => {
                 Bit::One => { self.valid <= Bit::Zero },

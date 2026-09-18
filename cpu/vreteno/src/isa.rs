@@ -77,9 +77,23 @@ pub const CSR_MIE: u32 = 0x304;
 pub const CSR_MIP: u32 = 0x344;
 pub const CSR_MTVAL: u32 = 0x343;
 
-/// The causes the core raises: four exceptions, and the external
+/// The halt: a write of an odd value to this custom machine register
+/// stops the core, and nothing restarts it. `csrwi 0x7c0, 1` is the
+/// whole of it, one instruction, which is what a program says when it
+/// is finished.
+///
+/// `ebreak` used to stop the core instead. It now raises the
+/// breakpoint exception, which is what it is for and what a debugger
+/// needs, so a program that means to stop says so here. That is
+/// issue 139.
+pub const CSR_MHALT: u32 = 0x7c0;
+
+/// The causes the core raises: five exceptions, and the external
 /// interrupt, whose cause has the top bit set.
 pub const CAUSE_ILLEGAL: u32 = 2;
+/// `ebreak`, and anything else a debugger plants. The trap value is
+/// the address of the instruction that raised it.
+pub const CAUSE_BREAKPOINT: u32 = 3;
 /// A load whose address is not a multiple of its width, and a store
 /// of the same. The specification lets a core either support such an
 /// access or raise these; this one raises them.
@@ -310,6 +324,12 @@ pub fn ebreak() -> u32 {
 }
 pub fn mret() -> u32 {
     i(OP_SYSTEM, 0, 0, 0, 0x302)
+}
+/// What a program says when it is finished: a write of one to
+/// `CSR_MHALT`, in one instruction. `ebreak` used to do this and now
+/// raises the breakpoint exception instead, which is issue 139.
+pub fn halt() -> u32 {
+    csrrwi(0, CSR_MHALT, 1)
 }
 // The CSR instructions: a register form and an immediate form of each
 // of write, set and clear; `rd` takes the old value.
