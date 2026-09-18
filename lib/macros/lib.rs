@@ -2481,8 +2481,6 @@ fn plic_text(name: &str, n: usize) -> String {
         &|i| format!("                    prio{i}: U::<3>::from(0u8),"),
         "\n",
     );
-    // The complete compares the word with an unsuffixed `@N@`: a
-    // suffixed literal in a comparison does not lower, which is #166.
     let template = r#"/// A platform-level interrupt controller of @N@ sources.
 /// Written by `plic!`; see [`@NAME@`].
 pub mod @MODULE@ {
@@ -2606,7 +2604,7 @@ impl<const EDGE: usize> Unit for @NAME@<EDGE> {
             // number in range ends that source's service.
             let claim = take_read & Bit::from(roff == 0x20_0004);
             let complete =
-                wgo & Bit::from(woff == 0x20_0004) & Bit::from(wdata <= @N@);
+                wgo & Bit::from(woff == 0x20_0004) & Bit::from(wdata <= @N@u32);
             let one = U::<@W@>::from(1u8);
             let none = U::<@W@>::from(0u8);
             let claimed = mux(claim, one << (best.raw() as usize), none);
