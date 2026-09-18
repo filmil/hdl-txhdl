@@ -131,7 +131,7 @@ fn main() {
     // value, and the ticks are counted from there.
     if from > 0 {
         for h in hist.values_mut() {
-            let before = h.iter().filter(|(t0, _)| *t0 <= from).last();
+            let before = h.iter().filter(|(t0, _)| *t0 <= from).next_back();
             let first = before.map(|(_, v)| (from, v.clone()));
             h.retain(|(t0, _)| *t0 > from);
             if let Some(f) = first {
@@ -319,7 +319,7 @@ fn main() {
             yb - 0.1
         )
         .unwrap();
-        if tick % step == 0 {
+        if tick.is_multiple_of(step) {
             writeln!(
                 o,
                 "\\node[anchor=north, font=\\tiny] at ({x:.2},{:.2}) {{{}}};",

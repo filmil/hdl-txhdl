@@ -55,12 +55,12 @@ pub trait Clock: 'static {
     }
     /// Whether this clock has a rising edge at tick `t`.
     fn rising_at(t: u64) -> bool {
-        t >= Self::PHASE && (t - Self::PHASE) % Self::PERIOD == 0
+        t >= Self::PHASE && (t - Self::PHASE).is_multiple_of(Self::PERIOD)
     }
     /// Whether this clock has a falling edge at tick `t`.
     fn falling_at(t: u64) -> bool {
         let f = Self::PHASE + Self::PERIOD / 2;
-        t >= f && (t - f) % Self::PERIOD == 0
+        t >= f && (t - f).is_multiple_of(Self::PERIOD)
     }
     /// Whether this clock is high at tick `t`: from a rising edge up to
     /// the falling one.
@@ -969,7 +969,7 @@ mod clock {
                 super::Edge::Rising => self.phase,
                 super::Edge::Falling => self.phase + self.period / 2,
             };
-            t >= at && (t - at) % self.period == 0
+            t >= at && (t - at).is_multiple_of(self.period)
         }
     }
     /// What the executor knows of a process: the clock it is in and the

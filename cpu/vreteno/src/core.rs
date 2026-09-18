@@ -444,6 +444,11 @@ fn store_lanes(f3: U<3>, lane: U<2>) -> U<4> {
 
 /// A CSR read, by its number; `mip` is the pending register as the
 /// core shows it, with the timer's line in it.
+///
+/// Each parameter is a wire of the unit, so there are as many of them
+/// as there are registers to choose between; a struct of them is not
+/// something the lowering reads.
+#[allow(clippy::too_many_arguments)]
 #[lower]
 fn csr_read(
     f12: U<12>,
@@ -507,6 +512,11 @@ fn m_signed_b(f3: U<3>) -> bool {
 /// back: a product or a quotient is negated when the signs differed,
 /// a remainder takes the dividend's sign, and a quotient by zero is
 /// all ones.
+// A `select!` arm's alternatives are compared one by one when the
+// function is lowered, so they are written out rather than as a range.
+// The allow goes above `#[lower]`: the lowering finds a function by
+// the attribute directly above it (issue 234).
+#[allow(clippy::manual_range_patterns)]
 #[lower]
 fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
     let mag = hi.slice::<0, 32>().concat::<_, 64>(lo);
@@ -605,6 +615,10 @@ impl<const IW: usize> Vreteno<IW> {
     }
 }
 
+// A struct literal's field is `name: value` to the lowering,
+// which reads no shorthand (issue 235), so `addr: addr` stays as
+// written.
+#[allow(clippy::redundant_field_names)]
 #[lower]
 impl<const IW: usize> Unit for Vreteno<IW> {
     async fn run(

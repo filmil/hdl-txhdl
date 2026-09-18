@@ -227,6 +227,11 @@ impl<const N: usize> U<N> {
     /// A multiply with the result width stated: `a.mul::<64>(b)`. The
     /// width is a standalone parameter, so this is stable; `U<{A + B}>`
     /// would not be.
+    ///
+    /// It is not `std::ops::Mul`, which takes no width and answers in
+    /// the width it was given, so the name is the operation's rather
+    /// than the trait's.
+    #[allow(clippy::should_implement_trait)]
     pub fn mul<const M: usize>(self, o: impl Into<Self>) -> U<M> {
         U::<M>::new(self.0.wrapping_mul(o.into().0))
     }
@@ -480,8 +485,8 @@ pub mod logic {
         /// uninitialised or floating.
         pub fn from_u(v: U<N>) -> Self {
             let mut out = [Logic::Zero; N];
-            for i in 0..N {
-                out[i] = Logic::from_bit(v.bit(i))
+            for (i, o) in out.iter_mut().enumerate() {
+                *o = Logic::from_bit(v.bit(i))
             }
             Vec(out)
         }
@@ -490,8 +495,8 @@ pub mod logic {
         /// IEEE 1164 table: two that disagree strongly give `X`.
         pub fn resolve(&self, other: &Self) -> Self {
             let mut out = [Logic::U; N];
-            for i in 0..N {
-                out[i] = self.0[i].resolve(other.0[i])
+            for (i, o) in out.iter_mut().enumerate() {
+                *o = self.0[i].resolve(other.0[i])
             }
             Vec(out)
         }

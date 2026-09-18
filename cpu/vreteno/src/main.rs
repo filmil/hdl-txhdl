@@ -37,7 +37,7 @@ type Serial = LiteBridge1<32, 32, 4, IW, 0x3000, 0xf000>;
 fn main() {
     let program = demo();
     let mut cpu = Vreteno::with(&program);
-    let (wb_pc, regs) = (cpu.wb_pc.clone(), cpu.regs.clone());
+    let (wb_pc, regs) = (cpu.wb_pc, cpu.regs.clone());
     let mut dmem = Dmem::default();
     let lanes = (
         dmem.lane0.clone(),
@@ -218,10 +218,15 @@ fn main() {
     rst_out.set(Bit::One);
     sim.cycle();
     rst_out.set(Bit::Zero);
-    println!(
-        "{:>4} {:>6}   {:<22} {}",
-        "t", "pc", "instruction", "writes"
-    );
+    // The header takes the widths of the rows below it, so it is
+    // written with them rather than spaced out by hand.
+    #[allow(clippy::print_literal)]
+    {
+        println!(
+            "{:>4} {:>6}   {:<22} {}",
+            "t", "pc", "instruction", "writes"
+        );
+    }
     // The interrupt line: one pulse, in the loop.
     let irq_at = 40;
     // A run of bubbles prints as one line with its count: a divide is

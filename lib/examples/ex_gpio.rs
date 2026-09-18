@@ -20,7 +20,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::{join2, now, signal, Clock, DefaultClock, Running, Unit};
+use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};

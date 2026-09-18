@@ -380,7 +380,7 @@ pub mod sim {
             self.rready.set(Bit::One);
             let mut data = Vec::new();
             let mut worst = Resp::Okay;
-            let mut id = U::<I>::from(0u8);
+            let mut id;
             loop {
                 DefaultClock::rising().await;
                 if self.rvalid.get().to_bool() {

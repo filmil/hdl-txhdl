@@ -318,6 +318,10 @@ pub struct AxiHost<
     pub busy: Reg<U<NIDS>>,
 }
 
+// A struct literal's field is `name: value` to the lowering,
+// which reads no shorthand (issue 235), so `id: id` stays as it is
+// written.
+#[allow(clippy::redundant_field_names)]
 #[lower]
 impl<
         const A: usize,
@@ -1808,7 +1812,7 @@ mod tests {
                 x ^= x >> 17;
                 x ^= x << 5;
                 let words = (x as usize % 4) + 1;
-                let addr = ((x >> 8) % 8) as u32 * 4;
+                let addr = ((x >> 8) % 8) * 4;
                 if x & 0x40 == 0 {
                     let vs: Vec<U<32>> =
                         (0..words).map(|i| U::from(next + i as u32)).collect();

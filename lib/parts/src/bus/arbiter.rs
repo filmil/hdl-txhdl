@@ -46,7 +46,7 @@ arbiter!(Arbiter8, 8);
 mod tests {
     use super::{Arbiter2, Arbiter4};
     use crate::bus::axi::{
-        axi, AxiHost, AxiPer, Host, Link, Per, Rd, Resp, Wr, Xact,
+        axi, AxiHost, AxiPer, Host, Per, Rd, Resp, Wr, Xact,
     };
     use std::cell::RefCell;
     use std::rc::Rc;

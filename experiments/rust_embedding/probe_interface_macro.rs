@@ -38,6 +38,7 @@ macro_rules! interface_rules {
         pub struct $ra { $( pub $fa: end_ty!($da, $ty), )* }
         pub struct $rb { $( pub $fb: end_ty!($db, $ty), )* }
         impl $iface {
+            #[allow(clippy::new_ret_no_self)]
             pub fn new() -> ($ra, $rb) {
                 $( let $m = <$ty as Member>::new().split(); )*
                 ( $ra { $( $fa: end_of!($da, $fa), )* }, $rb { $( $fb: end_of!($db, $fb), )* } )

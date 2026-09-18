@@ -68,7 +68,7 @@ pub fn verilog(name: &str, top: &impl Traceable) -> String {
             let below = |q: &&Probe| {
                 scope_of(&q.path)
                     .strip_prefix(path.as_str())
-                    .map_or(false, |r| r.starts_with('.'))
+                    .is_some_and(|r| r.starts_with('.'))
             };
             if e.len() < 2 || !e.iter().all(below) {
                 continue;

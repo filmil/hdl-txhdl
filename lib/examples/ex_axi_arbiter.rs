@@ -36,7 +36,7 @@ use txhdl::comp::{join2, now, DefaultClock, Running, Unit};
 use txhdl::types::U;
 use txhdl_parts::bus::arbiter::Arbiter2;
 use txhdl_parts::bus::axi::{
-    axi, serve, AxiHost, AxiPer, Link, Per, Rd, Resp, Wr, Xact,
+    axi, serve, AxiHost, AxiPer, Per, Rd, Resp, Wr, Xact,
 };
 
 /// A host's link: sixteen-bit addresses, thirty-two-bit words, four

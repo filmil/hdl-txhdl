@@ -574,8 +574,8 @@ mod tests {
                 let n = t - lag;
                 let (x, y) = (n % width, (n / width) % height);
                 d == (x < 8 && y < 6)
-                    && h == !(10..13).contains(&x)
-                    && v == !(7..9).contains(&y)
+                    && h != (10..13).contains(&x)
+                    && v != (7..9).contains(&y)
             })
         };
         let lags: Vec<usize> = (0..4).filter(|&l| fits(l)).collect();

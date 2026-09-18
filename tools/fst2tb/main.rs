@@ -485,6 +485,9 @@ fn main() {
         }
     }
     tick.push_str("      wait for 1050 ps;\n");
+    // The closure borrows `width`, and this is where the borrow ends;
+    // the closure itself has nothing to drop.
+    #[allow(clippy::drop_non_drop)]
     drop(take);
     o.push_str(
         "    function bits(s : string) return unsigned is\n\
@@ -579,7 +582,7 @@ fn main() {
     // entity: one package is one design unit under nvc's heap limit.
     let hex = |f: &str| -> String {
         let mut f = f.to_string();
-        while f.len() % 4 != 0 {
+        while !f.len().is_multiple_of(4) {
             f.push('0');
         }
         f.as_bytes()

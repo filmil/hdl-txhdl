@@ -110,7 +110,7 @@ fn run() -> Result<String, String> {
     }
     let mut imem = vec![0u8; 0];
     let mut dmem = vec![0u8; 0];
-    let mut put = |into: &mut Vec<u8>, at: usize, bytes: &[u8]| {
+    let put = |into: &mut Vec<u8>, at: usize, bytes: &[u8]| {
         if into.len() < at + bytes.len() {
             into.resize(at + bytes.len(), 0);
         }
@@ -121,7 +121,9 @@ fn run() -> Result<String, String> {
             continue;
         }
         let end = s.addr + s.size;
-        let in_imem = s.addr >= IMEM_BASE && end <= IMEM_BASE + IMEM_BYTES;
+        // The instruction memory starts at zero, so every address is at
+        // or above its base.
+        let in_imem = end <= IMEM_BASE + IMEM_BYTES;
         let in_dmem = s.addr >= DMEM_BASE && end <= DMEM_BASE + DMEM_BYTES;
         if !in_imem && !in_dmem {
             return Err(format!(
@@ -162,7 +164,7 @@ fn run() -> Result<String, String> {
     if imem.is_empty() {
         return Err("the image has no instructions".into());
     }
-    if imem.len() % 4 != 0 {
+    if !imem.len().is_multiple_of(4) {
         imem.resize(imem.len().div_ceil(4) * 4, 0);
     }
     if imem.len() > IMEM_BYTES as usize {

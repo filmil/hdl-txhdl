@@ -4024,9 +4024,7 @@ fn width_of(ts: &[TokenTree]) -> Option<usize> {
         .map(|t| t.to_string())
         .collect::<Vec<_>>()
         .join("");
-    let r = text
-        .trim_start_matches(|c| c == '-' || c == '>')
-        .trim_start_matches("U<");
+    let r = text.trim_start_matches(['-', '>']).trim_start_matches("U<");
     r.split('>').next()?.trim().parse().ok()
 }
 

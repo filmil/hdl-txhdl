@@ -26,7 +26,7 @@
 use razboj::op::Insn;
 use razboj::raster::Raster;
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::{chan, join2, join_all, signal, DefaultClock, Running, Unit};
+use txhdl::comp::{join2, join_all, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::sim::Ram;
 use txhdl_parts::bus::axi::{axi, axi_units, AxiHost, AxiPer, Link};

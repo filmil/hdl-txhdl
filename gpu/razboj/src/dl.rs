@@ -101,7 +101,7 @@ pub fn image(list: &[Insn]) -> Vec<u32> {
 /// What goes through the format and comes back unchanged.
 #[cfg(test)]
 mod tests {
-    use super::{decode, encode, image, WORDS};
+    use super::{decode, image, WORDS};
     use crate::op::{assemble, Op};
 
     #[test]

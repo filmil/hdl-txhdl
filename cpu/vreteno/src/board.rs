@@ -147,8 +147,8 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         let (grant_tx, grant_rx) = chan::<Grant<2>, DefaultClock>();
         let (done_tx, done_rx) = chan::<Done<2>, DefaultClock>();
         let (rdata_tx, rdata_rx) = chan::<R<32, 2>, DefaultClock>();
-        let (instr_o, instr_i) = signal::<U<32>, DefaultClock>();
-        let (retire_o, retire_i) = signal::<Writeback, DefaultClock>();
+        let (instr_o, _instr_i) = signal::<U<32>, DefaultClock>();
+        let (retire_o, _retire_i) = signal::<Writeback, DefaultClock>();
         let (tirq_o, tirq_i) = signal::<Bit, DefaultClock>();
         let (uirq_o, uirq_i) = signal::<Bit, DefaultClock>();
         let (eirq_o, eirq_i) = signal::<Bit, DefaultClock>();

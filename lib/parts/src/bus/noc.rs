@@ -208,7 +208,7 @@ mod tests {
 
         let got = Rc::new(RefCell::new(Vec::new()));
         // One host's corner, its tracker, its bridge and its client.
-        let mut mk = |at: u32, word: u32| {
+        let mk = |at: u32, word: u32| {
             let Link {
                 host,
                 host_in,

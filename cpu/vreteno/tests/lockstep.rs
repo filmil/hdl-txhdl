@@ -33,11 +33,11 @@ type Serial = LiteBridge1<32, 32, 4, IW, 0x3000, 0xf000>;
 fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let mut cpu = Vreteno::with(program);
     let (pc, ir_pc, valid, regs, halted) = (
-        cpu.pc.clone(),
-        cpu.ir_pc.clone(),
-        cpu.valid.clone(),
+        cpu.pc,
+        cpu.ir_pc,
+        cpu.valid,
         cpu.regs.clone(),
-        cpu.halted.clone(),
+        cpu.halted,
     );
     let mut dmem = Dmem::<IW>::default();
     let lanes = (
@@ -52,27 +52,27 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
             | (lanes.2.read(a).raw() as u32) << 16
             | (lanes.3.read(a).raw() as u32) << 24
     };
-    let (wb_valid, wb_pc) = (cpu.wb_valid.clone(), cpu.wb_pc.clone());
+    let (wb_valid, wb_pc) = (cpu.wb_valid, cpu.wb_pc);
     let csrs = [
-        ("mstatus", cpu.mstatus.clone()),
-        ("mtvec", cpu.mtvec.clone()),
-        ("mscratch", cpu.mscratch.clone()),
-        ("mepc", cpu.mepc.clone()),
-        ("mcause", cpu.mcause.clone()),
-        ("mie", cpu.mie.clone()),
-        ("mip", cpu.mip.clone()),
-        ("mtval", cpu.mtval.clone()),
+        ("mstatus", cpu.mstatus),
+        ("mtvec", cpu.mtvec),
+        ("mscratch", cpu.mscratch),
+        ("mepc", cpu.mepc),
+        ("mcause", cpu.mcause),
+        ("mie", cpu.mie),
+        ("mip", cpu.mip),
+        ("mtval", cpu.mtval),
     ];
     let (mip, mie, mstatus) =
-        (cpu.mip.clone(), cpu.mie.clone(), cpu.mstatus.clone());
+        (cpu.mip, cpu.mie, cpu.mstatus);
 
     let mut timer = Timer::<IW>::default();
     let mut uart = Uart::<4>::default();
-    let mtimecmp = timer.mtimecmp.clone();
-    let (pending, wb_dev) = (timer.pending.clone(), cpu.wb_dev.clone());
-    let (uart_sent, uart_last) = (uart.sent.clone(), uart.last.clone());
+    let mtimecmp = timer.mtimecmp;
+    let (pending, wb_dev) = (timer.pending, cpu.wb_dev);
+    let (uart_sent, uart_last) = (uart.sent, uart.last);
     let (uart_received, uart_dropped) =
-        (uart.received.clone(), uart.dropped.clone());
+        (uart.received, uart.dropped);
     // The architectural program counter, as Vreteno::arch_pc has it:
     // the oldest instruction not yet retired.
     let arch_pc = move || {
@@ -111,7 +111,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let mut router = Rtr::default();
     let (halt_out, _halt) = signal::<Bit, DefaultClock>();
     let (instr_out, _instr) = signal::<U<32>, DefaultClock>();
-    let (ir, in_execute) = (cpu.ir.clone(), cpu.valid.clone());
+    let (ir, in_execute) = (cpu.ir, cpu.valid);
     let stall = cpu.stall.clone();
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
     // The timer first, since the core reads its line in the same step.
@@ -195,7 +195,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     // as the timer registered it goes with it.
     let mut line = false;
     let mut line_before = false;
-    let mut answer = 0u32;
+    let mut answer;
     // The terminal on the port's lines: it answers the demonstration's
     // line with three bytes, which the program echoes; a random program
     // gets nothing typed. The port's interrupt joins the core's line,
