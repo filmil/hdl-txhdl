@@ -1874,6 +1874,11 @@ fn vtop(e: &Expr, l: &Lowered) -> String {
     match e {
         Expr::Slice(a, lo, len) => format!("{}[{}]", vexpr(a, l), lo + len - 1),
         Expr::Cat(a, _) => vtop(a, l),
+        // A value of one bit is its own top bit, and has to be written
+        // that way: a wire or a register of one bit is a scalar in
+        // Verilog, which has no bit to select, so `x[0]` is an error
+        // rather than the bit. See issue 247.
+        _ if l.ewidth(e) <= 1 => vexpr(e, l),
         _ => format!("{}[{}]", vexpr(e, l), l.ewidth(e).max(1) - 1),
     }
 }
@@ -2078,6 +2083,13 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
         // Qualified, since every array type in scope has a `&` too.
         Expr::Cat(a, b) => {
             format!("unsigned'({} & {})", hval(a, 0, l), hval(b, 0, l))
+        }
+        // A value of one bit is a `std_logic`, and `signed` converts
+        // only between closely related types, so nvc refuses
+        // `signed(x)` on it. Its sign extension is that bit repeated,
+        // which an aggregate says outright. See issue 247.
+        Expr::Sext(a, m) if l.ewidth(a) == 1 => {
+            format!("unsigned'({} downto 0 => {})", m - 1, hval(a, 1, l))
         }
         Expr::Sext(a, m) => {
             format!("unsigned(resize(signed({}), {m}))", hval(a, 0, l))
