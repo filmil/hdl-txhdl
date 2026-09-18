@@ -239,6 +239,10 @@ For each component an issue names:
    limits.
    Say nothing on a sheet that the code, its tests or a document does
    not state.
+   The diagram of the component's interfaces and the snippet that
+   makes and joins it come with `\dstables`, written from the
+   lowering by the generator, so a sheet neither draws nor types them
+   (issue 173).
 2. Add `\input{datasheets/<Key>}` to `docs/datasheets.tex`.
 3. Add the component to `tools/datasheet/main.rs`, lowered with the
    parameters the tree uses it with, under the same key.

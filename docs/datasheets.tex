@@ -40,8 +40,17 @@ Explained in & #3 \\
 \end{tabular}
 \end{center}}
 
-% The generated part of a sheet.
+% The generated part of a sheet: the interfaces as a diagram, how the
+% component is made and joined, and the tables. All of it is written
+% by //tools/datasheet from the component's own lowering, so a sheet
+% cannot say a port the netlist does not have (issue 173).
 \newcommand{\dstables}[1]{%
+\subsection*{Interfaces}
+\dsget{figure}{#1}
+\subsection*{How it is instantiated}
+As lowered for \dsget{type}{#1}. The ports are named in the order the
+unit's \code{run} takes them.
+\dsget{instance}{#1}
 \subsection*{Ports, state and children}
 As lowered for \dsget{type}{#1}: \dsget{counts}{#1}.
 \dsget{ports}{#1}
