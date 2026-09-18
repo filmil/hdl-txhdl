@@ -4060,9 +4060,18 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 ename(&n)
             })
         }
-        [TokenTree::Literal(l)] => {
-            Ok(format!("NlE::Num({})", l.to_string().replace('_', "")))
-        }
+        // A number. The netlist's numbers are all `u128`, and a
+        // reader writes a suffix to say the width in Rust's terms, so
+        // the literal is cast rather than passed on as it stands: a
+        // cast drops the suffix and still leaves Rust to say whether
+        // the literal fits the type it names, so `300u8` is refused
+        // where it is written. `u128::from` would not do, because a
+        // literal with no suffix is then ambiguous between the
+        // implementations and falls back to `i32`. See issue 166.
+        [TokenTree::Literal(l)] => Ok(format!(
+            "NlE::Num(({}) as u128)",
+            l.to_string().replace('_', "")
+        )),
         [TokenTree::Group(g)]
             if matches!(
                 g.delimiter(),
