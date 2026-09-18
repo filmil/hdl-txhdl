@@ -643,6 +643,8 @@ latex_document(
         ":gpio_timing",
         ":spi_run",
         ":spi_timing",
+        ":i2c_run",
+        ":i2c_timing",
         ":syscon_run",
         ":syscon_timing",
         ":wdog_run",
@@ -980,6 +982,28 @@ waveform(
     ],
     until = 20,
     width = 7.4,
+)
+
+# An I2C master: the address going out a bit at a time, the device's
+# acknowledge, and the clock the device stretches.
+waveform(
+    name = "i2c",
+    example = "//lib/examples:ex_i2c",
+    lowered = ("i2c", "i2c"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//scl_low=>scl_low",
+        "//sda_low=>sda_low",
+        "//scl_in=>scl_in",
+        "//sda_in=>sda_in",
+        "//i2c/step=>step",
+        "//i2c/shift=>shift",
+        "//i2c/nack=>nack",
+        "//irq=>irq",
+    ],
+    from_tick = 60,
+    until = 220,
+    width = 17.0,
 )
 
 # The simplest AXI peripheral: a register of one word, the first write

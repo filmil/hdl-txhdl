@@ -518,6 +518,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An I2C master on AXI-Lite, with a device on the two lines:
+#   bazel run //lib/examples:ex_i2c
+rust_binary(
+    name = "ex_i2c",
+    srcs = ["ex_i2c.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # The simplest AXI peripheral, a register of one word, as hardware:
 #   bazel run //lib/examples:ex_axi_reg
 rust_binary(
@@ -640,6 +653,7 @@ filegroup(
         "ex_axi_serve.rs",
         "ex_axi_router.rs",
         "ex_axi_lite.rs",
+        "ex_i2c.rs",
         "ex_axi_pins.rs",
         "ex_plic.rs",
         "ex_eth.rs",
