@@ -20,8 +20,19 @@
 // core starts only when the memory it may reach is ready. Both are
 // brought into the design's clock by two flip-flops.
 //
-// The LEDs are lit when driven low: the core halted, a heartbeat, the
-// memory calibrated, and the PLL locked.
+// The LEDs are lit when driven low: the core halted, the serial line
+// driven at least once, the memory calibrated, and a heartbeat.
+//
+// The second LED carries what the heartbeat used to, and the heartbeat
+// moved to the fourth. The second now latches the first start bit on the
+// serial line, which is the open question of issue #195: the board halts
+// with every LED on and nothing arrives on the host's serial port, and
+// nothing so far says whether a byte ever left the core.
+//
+// The fourth LED showed the PLL's lock. A blinking heartbeat says that
+// as well, since the counter behind it runs on the PLL's output, and a
+// heartbeat in a new place is also how somebody at the board can tell
+// that a new bitstream is in the part.
 `timescale 1ps / 1ps
 module vreteno_board (
   input sys_clk_p,
@@ -128,13 +139,23 @@ module vreteno_board (
     .dqs_n(ddr3_dqs_n)
   );
 
+  // The serial line idles high, so any byte begins by pulling it low.
+  // This latch holds from the first start bit until the next reset,
+  // which is what separates a design that never drove the line from a
+  // board path that does not carry it.
+  reg said = 0;
+  always @(posedge clk) begin
+    if (rst) said <= 1'b0;
+    else if (!uart_tx) said <= 1'b1;
+  end
+
   // The heartbeat: bit 25 of a counter at 100 MHz toggles three times a
   // second.
   reg [25:0] beat = 0;
   always @(posedge clk) beat <= beat + 1;
 
   assign led1 = ~halt;
-  assign led2 = ~beat[25];
+  assign led2 = ~said;
   assign led3 = ~calib;
-  assign led4 = ~locked;
+  assign led4 = ~beat[25];
 endmodule
