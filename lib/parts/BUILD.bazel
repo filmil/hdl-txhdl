@@ -30,6 +30,7 @@ rust_library(
         "src/spi.rs",
         "src/station.rs",
         "src/syscon.rs",
+        "src/wdog.rs",
         "src/lib.rs",
     ],
     crate_name = "txhdl_parts",
