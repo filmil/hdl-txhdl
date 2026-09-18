@@ -224,6 +224,25 @@ pub trait Fields {
     fn fields() -> Vec<(&'static str, Option<Kind>, usize, usize)>;
 }
 
+/// The name a wire takes: `want`, unless a field of the unit already
+/// has that name, in which case `alt`. `#[lower]` writes one of these
+/// per computed `let`, so the choice is made for every type the unit
+/// is lowered at, generic or not, and a `let` that shadows a register
+/// lowers rather than being refused. The netlist says which wires
+/// were renamed. This is issue 171.
+#[doc(hidden)]
+pub const fn wire_name(
+    names: &[&'static str],
+    want: &'static str,
+    alt: &'static str,
+) -> &'static str {
+    if has_name(names, want) {
+        alt
+    } else {
+        want
+    }
+}
+
 /// Whether `name` is one of `names`, in a constant: the check
 /// `#[lower]` writes for a wire or a port that would take the name of
 /// a field, which the netlist would declare twice.
@@ -433,6 +452,12 @@ pub struct Lowered {
     /// driven by its expression; a read of a port or register is an
     /// alias and not here.
     pub wires: Vec<(String, Expr)>,
+    /// Every computed `let` as it is written and as the netlist names
+    /// it. The two differ where the `let`'s name is a port's, another
+    /// wire's or a field's, since the netlist has one namespace for
+    /// all of them; the emitters say so in a comment, so that a reader
+    /// can map a wire back to the `let` it came from (issue 171).
+    pub wire_names: Vec<(String, String)>,
     /// One per loop of `run`: a clocked block in the netlist.
     pub procs: Vec<Process>,
     /// A memory's first words, as `Mem::with` gave them: a program.
@@ -503,6 +528,7 @@ pub fn foreign(
             .map(|(p, k, w)| (p.to_string(), *k, *w))
             .collect(),
         wires: Vec::new(),
+        wire_names: Vec::new(),
         procs: Vec::new(),
         init: Vec::new(),
         aliases: Vec::new(),
@@ -1075,6 +1101,21 @@ impl Lowered {
         }
         out
     }
+    /// The `let`s the netlist named differently, as comment lines in
+    /// the target's own comment syntax. A wire takes another name when
+    /// the one written is a port's, another wire's, a field's or a
+    /// word the target reserves, and a reader who cannot see why a
+    /// wire is called `count_w` is owed the answer (issue 171).
+    fn renamed_lets(&self, lead: &str) -> String {
+        let mut out = String::new();
+        for (l, w) in &self.wire_names {
+            if l != w {
+                let _ = writeln!(out, "{lead} `let {l}` is the wire {w}.");
+            }
+        }
+        out
+    }
+
     /// This unit's module and its children's, without the channel
     /// module, which the outermost unit adds once.
     fn verilog_in(&self) -> String {
@@ -1104,6 +1145,7 @@ impl Lowered {
             }
         }
         writeln!(out, "`timescale 1ns/1ps").unwrap();
+        out.push_str(&self.renamed_lets("//"));
         writeln!(out, "module {name}(\n  {}\n);", plist.join(",\n  ")).unwrap();
         for (n, k, w, d) in &self.fields {
             match k {
@@ -1400,6 +1442,7 @@ impl Lowered {
             "library ieee;\nuse ieee.std_logic_1164.all;\n\
              use ieee.numeric_std.all;\n\n",
         );
+        out.push_str(&self.renamed_lets("--"));
         writeln!(
             out,
             "entity {name} is\n  port (\n    {}\n  );\nend entity;\n",

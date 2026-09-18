@@ -5580,6 +5580,10 @@ fn pattern_cond(
 struct Cx<'a> {
     pnames: &'a [String],
     wires: &'a mut Vec<(String, String)>,
+    /// The name each wire takes when a field has the one it wanted:
+    /// chosen here, where the ports and the other wires are known,
+    /// and used by the constant that makes the choice.
+    wire_alts: &'a mut Vec<String>,
     /// Each wire as the `let` named it, as the netlist names it, and
     /// where the `let` names it, for the checks on names.
     named: &'a mut Vec<(String, String, Span)>,
@@ -5900,17 +5904,45 @@ fn lower_stmts(
                     cx.subst.push((name, v));
                     continue;
                 }
+                // The netlist has one namespace for fields, ports and
+                // wires, and Rust's rules do not reach into it: a
+                // `let` may take a port's name, another `let`'s, a
+                // field's, or a word a target reserves. So the wire
+                // takes the `let`'s name where it is free and `_w`,
+                // `_w2`, `_w3` where it is not, by one rule (issue
+                // 171). What is free here is what this attribute can
+                // see: the ports and the wires before it, and the
+                // reserved words. A field it cannot see, so the name
+                // is chosen by a constant below, which the compiler
+                // evaluates for every type the unit is lowered at.
+                let taken = |w: &str, cx: &Cx| {
+                    cx.pnames.iter().any(|p| p == w)
+                        || cx.wires.iter().any(|(x, _)| x == w)
+                        || reserved_by(w).is_some()
+                };
                 let mut w = name.clone();
-                if cx.pnames.contains(&w) {
-                    w.push_str("_w");
+                let mut k = 1;
+                while taken(&w, cx) {
+                    k += 1;
+                    w = match k {
+                        2 => format!("{name}_w"),
+                        _ => format!("{name}_w{}", k - 1),
+                    };
                 }
-                let taken = cx.wires.iter().filter(|(x, _)| *x == w).count();
-                if taken > 0 {
-                    w = format!("{w}_{}", taken + 1);
+                // And the same again for the name the constant falls
+                // back to, so that a field's name sends the wire
+                // somewhere nothing else has taken.
+                let mut alt = format!("{w}_w");
+                while taken(&alt, cx) || alt == w {
+                    alt = format!("{alt}_w");
                 }
+                let idx = cx.wires.len();
+                let chosen = format!("Self::__TXHDL_WIRE_{idx}");
                 cx.wires.push((w.clone(), v));
                 cx.named.push((name.clone(), w.clone(), n[0].span()));
-                cx.subst.push((name, ename(&w)));
+                cx.wire_alts.push(alt);
+                cx.subst
+                    .push((name, format!("NlE::Name({chosen}.to_string())")));
             }
             continue;
         }
@@ -6857,6 +6889,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // `let` names that became wires of the netlist, with what drives
     // each; a name bound twice gets a numbered second wire.
     let mut wires: Vec<(String, String)> = Vec::new();
+    let mut wire_alts: Vec<String> = Vec::new();
     let mut named: Vec<(String, String, Span)> = Vec::new();
     let mut procs: Vec<String> = Vec::new();
     for lbody in &loops {
@@ -6864,6 +6897,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         let mut cx = Cx {
             pnames: &pnames,
             wires: &mut wires,
+            wire_alts: &mut wire_alts,
             named: &mut named,
             subst: Vec::new(),
             guard: None,
@@ -6890,9 +6924,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             stmts.join(",\n")
         ));
     }
-    for (name, _, span) in &named {
-        refused.extend(check_reserved(name, "the `let`", *span));
-    }
+    // A `let` whose name a target reserves is not refused: the wire
+    // takes another name, by the rule above, and the netlist says so
+    // (issue 171). A port and a field are refused, since those names
+    // are the unit's interface and nobody can rename them for it.
     // A wire or a port that takes the name of a field is declared twice
     // in the netlist. The fields are the struct's, which this attribute
     // does not see, so the check is a constant the compiler evaluates,
@@ -6900,17 +6935,6 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // One constant a name, placed wholly at the name, since the
     // compiler reports a failed constant at the constant.
     let mut named_nets: Vec<(String, String, Span)> = Vec::new();
-    for (name, w, span) in &named {
-        named_nets.push((
-            w.clone(),
-            format!(
-                "`let {name}` is the wire `{w}` of the netlist, and the unit \
-                 has a field `{w}`: the netlist would declare `{w}` twice, so \
-                 rename one (see issue 77)"
-            ),
-            *span,
-        ));
-    }
     for (pname, net, span) in &port_nets {
         named_nets.push((
             net.clone(),
@@ -6924,6 +6948,19 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
     let mut checks = TokenStream::new();
     let mut uses = String::new();
+    // The name of each wire: what the `let` asked for, unless a field
+    // of the unit has that name, in which case the alternative chosen
+    // above. A constant, so that the answer is the same for every
+    // type the unit is lowered at, and so that a generic unit needs no
+    // instantiation to be right.
+    for (k, ((_, w, span), alt)) in named.iter().zip(&wire_alts).enumerate() {
+        let text = format!(
+            "#[doc(hidden)] const __TXHDL_WIRE_{k}: &'static str = \
+             ::txhdl::netlist::wire_name(\
+             <Self as ::txhdl::netlist::Fields>::NAMES, {w:?}, {alt:?});"
+        );
+        checks.extend(placed_at(text.parse().unwrap(), *span));
+    }
     for (k, (net, msg, span)) in named_nets.iter().enumerate() {
         uses.push_str(&format!("let () = Self::__TXHDL_NAME_{k};\n"));
         let text = format!(
@@ -6954,6 +6991,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          fields: <Self as ::txhdl::netlist::Fields>::fields(),\n\
          ports: vec![{ports}],\n\
          wires: vec![{wires}],\n\
+         wire_names: vec![{wire_names}],\n\
          procs: vec![{procs}],\n\
          init: Vec::new(),\n\
          aliases: Vec::new(),\n\
@@ -6980,7 +7018,20 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         instances = instances.join(",\n"),
         wires = wires
             .iter()
-            .map(|(n, e)| format!("(\"{n}\".to_string(), {e})"))
+            .enumerate()
+            .map(|(k, (_, e))| {
+                format!("(Self::__TXHDL_WIRE_{k}.to_string(), {e})")
+            })
+            .collect::<Vec<_>>()
+            .join(",\n"),
+        wire_names = named
+            .iter()
+            .enumerate()
+            .map(|(k, (n, _, _))| {
+                format!(
+                    "(\"{n}\".to_string(), Self::__TXHDL_WIRE_{k}.to_string())"
+                )
+            })
             .collect::<Vec<_>>()
             .join(",\n"),
         procs = procs.join(",\n"),
