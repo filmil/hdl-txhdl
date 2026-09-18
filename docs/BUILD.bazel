@@ -647,6 +647,8 @@ latex_document(
         ":gpio_timing",
         ":redundant_run",
         ":redundant_timing",
+        ":pwm_run",
+        ":pwm_timing",
         ":tracer_run",
         ":tracer_timing",
         ":spi_run",

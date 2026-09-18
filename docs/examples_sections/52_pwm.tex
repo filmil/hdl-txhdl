@@ -1,0 +1,50 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Four Outputs Between On and Off}
+\label{sec:x-pwm}
+
+A pin is on or off, and much of what a board drives wants a value in
+between: an LED at a third of its brightness, a fan at half its speed,
+a servo told where to stand. Switching the pin fast enough that the
+load cannot follow gives the in-between, and what the load sees is the
+fraction of each period the pin was high.
+
+\code{Pwm} is four such outputs behind AXI-Lite, in six words: a
+period, a duty per channel, and a control word with an enable, a
+centre bit and a polarity bit per channel. A counter runs the period,
+and each channel is high while the counter is below its duty.
+
+The ends need no special case, which is the reason for that
+comparison. A duty of zero never wins it, so the pin never rises; a
+duty of the period or more always wins it, so the pin never falls.
+Neither end is a pulse one cycle wide, which is what a scheme that
+counted edges rather than compared would leave behind.
+
+A duty written takes effect at the end of the period rather than at
+once. A width that changed under the counter halfway through would
+make one pulse of neither the old width nor the new, and a load that
+averages sees a step nobody asked for while a servo reads it as a
+command. So a write goes to a shadow, and every shadow is loaded
+together at the wrap. The run below widens a duty from two cycles to
+eight in the middle of a period, and every whole pulse it then
+measures is two wide or eight, never something between them.
+
+Two shapes of pulse. Edge aligned counts up and wraps, so every pulse
+starts at the same moment and its end moves as the duty does. Centre
+aligned counts up and then back down, so the pulse is centred in its
+period and both edges move; a bank of outputs driven that way does not
+switch all at once, which is what a supply prefers. A centred period
+is twice the count, and the run shows channel 2, at four of ten, as
+one run of eight cycles rather than two runs at the ends of the
+period.
+
+\begin{figure}[htbp]
+\centering
+\input{pwm_timing.tex}
+\caption{The counter and the four pins, through one change of duty:
+\code{count} runs the period and each pin is high below its duty.}
+\label{fig:x-pwm}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_pwm.rs}. Run with \code{bazel run //lib/examples:ex\_pwm}.},label={lst:x-pwm}]{lib/examples/ex_pwm.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_pwm} printed when the build ran it: the duties as cycles high, the pulses around a change of width, the channel turned over, and the centred pulses.},label={lst:x-pwm-out}]{out_pwm.txt}
