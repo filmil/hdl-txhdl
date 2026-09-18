@@ -389,7 +389,7 @@ fn demo_program() {
 /// program found it, when a colour came out with no red in it.
 #[test]
 fn a_multiply_right_after_a_load() {
-    use vreteno32::isa::{addi, div, ebreak, lui, lw, mul, sw};
+    use vreteno32::isa::{addi, div, halt, lui, lw, mul, sw};
     let p = vec![
         lui(6, 1),        // x6 = 0x1000, the data memory
         addi(5, 0, 1234), // the word to load back
@@ -402,7 +402,7 @@ fn a_multiply_right_after_a_load() {
         addi(12, 0, 3), // and the divide's
         lw(12, 6, 0),
         div(13, 12, 7),
-        ebreak(),
+        halt(),
     ];
     let m = lockstep(&p, "a multiply right after a load", Some(1));
     assert_eq!(m.halted, Some(Halt::Break));
@@ -442,7 +442,7 @@ fn random_programs() {
 /// stores, a loop on c.bnez, calls and returns by c.jal, jal, c.jalr and
 /// c.jr with their links two or four bytes on, a reserved halfword
 /// that traps with itself as the trap value and is stepped over by the
-/// handler, and c.ebreak to halt.
+/// handler, and the halt at the end.
 #[test]
 fn compressed_instructions() {
     use vreteno32::isa::*;
@@ -501,7 +501,7 @@ fn compressed_instructions() {
     a.emit_c(c_beqz(8, 4)); // taken: over the next halfword
     a.emit_c(c_li(9, 0)); // not reached
     a.emit_c(c_mv(16, 1)); // x16 = the last link
-    a.emit_c(c_ebreak());
+    a.wide(halt());
     a.place(f1);
     a.emit_c(c_addi16sp(16)); // sp moves and comes back
     a.wide(addi(9, 9, 100));
@@ -567,7 +567,7 @@ fn an_unaligned_access_traps() {
     // And a byte at an odd address, which never traps.
     a.wide(sb(3, 2, 9));
     a.wide(lb(9, 2, 9)); // x9 = -2
-    a.wide(ebreak());
+    a.wide(halt());
     // The handler: the cause and the trap value of the last one, the
     // count, and on past the instruction, which is four bytes here.
     a.align();
