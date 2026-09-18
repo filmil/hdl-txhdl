@@ -390,6 +390,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A field the netlist names differently:  bazel run //lib/examples:ex_rename
+rust_binary(
+    name = "ex_rename",
+    srcs = ["ex_rename.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # The stage's own Verilog, from its lowering, made a unit again by
 # Verilator; the example co-runs the two:  bazel run //lib/examples:ex_foreign
 genrule(
@@ -683,6 +692,7 @@ filegroup(
         "ex_buffer.rs",
         "ex_wire.rs",
         "ex_fn.rs",
+        "ex_rename.rs",
         "ex_foreign.rs",
     ],
 )

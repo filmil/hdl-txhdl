@@ -1396,6 +1396,23 @@ waveform(
 )
 
 waveform(
+    name = "rename",
+    example = "//lib/examples:ex_rename",
+    lowered = ("queue", "rename"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//push=>push",
+        "//word=>word",
+        "//pop=>pop",
+        "//queue/nxt=>nxt",
+        "//queue/held=>held",
+        "//queue/count=>count",
+        "//head=>head",
+        "//full=>full",
+    ],
+)
+
+waveform(
     name = "fn",
     example = "//lib/examples:ex_fn",
     lowered = ("gray", "gray"),
