@@ -206,9 +206,6 @@ impl<
             let red = shade.slice::<8, 4>();
             let green = shade.slice::<4, 4>();
             let blue = shade.slice::<0, 4>();
-            let red8 = wide(red);
-            let green8 = wide(green);
-            let blue8 = wide(blue);
             // The bus.
             let arh = ar.head();
             let awh = aw.head();
@@ -271,7 +268,11 @@ impl<
             if wgo.to_bool() {
                 b.send(LiteB { resp: Resp::Okay });
             }
-            rgb.set(red8.concat::<8, 16>(green8).concat::<8, 24>(blue8));
+            rgb.set(
+                wide(red)
+                    .concat::<8, 16>(wide(green))
+                    .concat::<8, 24>(wide(blue)),
+            );
             hsync.set(self.hs_q.get());
             vsync.set(self.vs_q.get());
             de.set(self.de_q.get());
