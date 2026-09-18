@@ -1405,6 +1405,7 @@ waveform(
         "//gray/n=>n",
         "//code=>code",
         "//wrap=>wrap",
+        "//swap=>swap",
     ],
 )
 
