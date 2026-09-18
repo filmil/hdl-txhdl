@@ -31,9 +31,16 @@ genrule(
 # Every lowered unit in the crates below, and every family a macro
 # writes, has a datasheet that says it covers it. A crate that gains
 # lowered units adds its sources here.
+#
+# Manual: a change that adds a component files an issue for its sheet
+# rather than writing one, so this test is the sweep's own check and
+# not a step of `bazel test //...`:
+#
+#   bazel test //tools/datasheet:coverage_test
 sh_test(
     name = "coverage_test",
     srcs = ["coverage_test.sh"],
+    tags = ["manual"],
     data = [
         "//cpu/vreteno:sources",
         "//ddr3:sources",

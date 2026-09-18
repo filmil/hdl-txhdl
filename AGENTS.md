@@ -24,9 +24,9 @@ all under `//docs`:
   rule, the parts, Vreteno, Razboj, how it is all checked, and what is
   not done. It is the one document meant to be read first and alone,
   so it stays within five pages and every number in it comes from a
-  count rather than from memory. Its tables claim to be exhaustive, so a
-  new component goes in them in the same change; the standing rule
-  below says what counts as one and how to check the numbers.
+  count rather than from memory. Its tables are as of the last sweep of
+  the documents rather than of the last commit; the standing rule below
+  says why, and how a sweep is done.
 * `//docs:article` states the merge of the two languages this one came
   from.
 * `//docs:embedding` states the embedding in Rust: the exposition of
@@ -120,7 +120,8 @@ all under `//docs`:
   The prose of each sheet is in `docs/datasheets/<Key>.tex`; its
   tables of ports, state and children are generated at build time by
   `//tools/datasheet` from the component's own lowering.
-  See the standing rule below.
+  A component's sheet is written in a sweep rather than in the change
+  that adds it; see the standing rule below.
 * `//docs:cheatsheet` is the one-page cheat sheet, also as a PNG
   (`//docs:cheatsheet_png`); it shows `ex_cheat.rs`, its netlist and
   its waveform, all produced by the build.
@@ -189,25 +190,72 @@ break a line, so a longer line overflows its frame.
 A listing that was typed into the article rather than included from a
 file is a defect, because it is the one copy nothing checks.
 
-# Standing rule: a component enters the showcase in the same change
+# Standing rule: the showcase and the datasheets are swept, not written per change
 
-`//docs:showcase` is the one document meant to be read first and
-alone, and its two tables claim to be exhaustive: Table I says it
-lists *every* unit the build lowers, and Table II *every* system it
-assembles.
-A change that adds one and does not add it there makes the document
-lie, and a reader has no way to tell which of the two is out of date.
+`docs/showcase.tex` and the sheets under `docs/datasheets/` are the two
+files that every branch which adds a component wants to edit.
+Both say something about every component, and the showcase also holds
+counts taken from the whole tree, so two branches that each add one
+conflict there, and the conflict is in sentences and totals that no
+rebase resolves on its own.
+On September 17, 2026, four branches went out in a day and the showcase
+conflicted on three of them, each time in the same two lines of counts.
 
-So a change that adds any of the following updates `docs/showcase.tex`
-in the same commit:
+So a change that adds a component, or changes one, leaves both alone.
+It files an issue instead and says in its pull request that it did.
 
-* a unit others can use: a part, a peripheral, a bridge;
-* a system the build assembles from units;
-* a toolchain the build fetches, which is Table III;
-* a flow the build runs, such as synthesis or a layout.
+* One issue for the sheet, titled
+  `docs(datasheets): a sheet for <Key>`, naming the component, the file
+  its code is in, and the parameters the tree uses it with.
+* One issue for the showcase, titled
+  `docs(showcase): <component> in the tables`, saying which table it
+  belongs in and what it is.
+* One issue may carry both when a change adds one component.
 
-Four things in that document are counts and not opinions, and each has
-a command behind it.
+A component is a unit under `#[lower]` outside `lib/examples`, or a
+family of units a macro writes, such as `router!`'s routers.
+What belongs in the showcase is wider: a unit others can use, a system
+the build assembles, a toolchain the build fetches, or a flow the build
+runs, such as synthesis or a layout.
+
+`//tools/datasheet:coverage_test`, which fails on a component with no
+sheet, is therefore tagged `manual`: it stays out of `bazel test //...`
+and is run when the sheets are written.
+The filed issue, not the test, is what records that a sheet is owed.
+
+## The sweep
+
+A sweep is a change of its own, and it closes those issues.
+It is worth doing when a few of those issues are open, and before a
+release, since the showcase is the document read first.
+
+For each component an issue names:
+
+1. Add `docs/datasheets/<Key>.tex`, following the other sheets: a
+   `% covers:` line naming every type the sheet covers, then
+   `\datasheet`, `\dsfacts`, the function, the parameters, any
+   register or address map, `\dstables{<Key>}`, the behaviour, the
+   verification with its test targets, where it is used, and its
+   limits.
+   Say nothing on a sheet that the code, its tests or a document does
+   not state.
+2. Add `\input{datasheets/<Key>}` to `docs/datasheets.tex`.
+3. Add the component to `tools/datasheet/main.rs`, lowered with the
+   parameters the tree uses it with, under the same key.
+   The document does not build if a sheet asks for tables the
+   generator does not write.
+4. Put the component in the showcase's tables.
+
+Then run `bazel test //tools/datasheet:coverage_test`, which is manual,
+and it names every component still without a sheet and every sheet the
+document does not include.
+A new crate with lowered units adds its `sources` to that test's
+`data` and its source directory to the test script's `find`.
+
+Then the showcase's numbers are taken again, since a sweep is the one
+place they are allowed to change.
+Four of them are counts and not opinions, and each has a command
+behind it.
 Run them; do not carry a number over from the last edit.
 
 ```sh
@@ -221,7 +269,7 @@ find lib/parts/src -name '*.rs' | xargs wc -l | tail -1 # a band of lines
 ls lib/examples/ex_*.rs | wc -l                         # the examples
 ```
 
-The document stays within five pages.
+The showcase stays within five pages.
 That is the constraint that makes it worth reading, so when an
 addition pushes it onto a sixth, something else gives: a table of
 numbers becomes a sentence, or a paragraph that has stopped earning
@@ -230,9 +278,15 @@ Two tables have already been folded into prose that way.
 Check with `pdfinfo bazel-bin/docs/showcase.pdf`, and render every
 page and look at it, as every document change here requires.
 
-The same applies to `//docs:cover`, which names every document, and to
-the list of documents in this file: a new document is added to both in
-the change that creates it.
+Because the sweep lags the code, the showcase says that its tables are
+as of the last sweep, and the open issues say what is missing.
+
+## A document is still added in the change that creates it
+
+None of the above applies to a new document.
+`//docs:cover` names every document, and so does the list in this
+file, and a new document is added to both in the change that creates
+it: they are a line each, and a document arrives once.
 
 # Standing rule: every bug found is filed
 
@@ -256,33 +310,6 @@ the commit that brings the workaround names the issue too.
 Before filing, look for an open issue that already covers the bug; if
 one does, add what was learned to it rather than filing another.
 Report the issues filed when reporting on the task.
-
-# Standing rule: every component has a datasheet
-
-A component is a unit under `#[lower]` outside `lib/examples`, or a
-family of units a macro writes, such as `router!`'s routers.
-When a component is added, its datasheet is added in the same change,
-or the change is not finished.
-When a component's parameters, ports, register map or behaviour
-change, its datasheet is updated in the same change.
-
-1. Add `docs/datasheets/<Key>.tex`, following the other sheets: a
-   `% covers:` line naming every type the sheet covers, then
-   `\datasheet`, `\dsfacts`, the function, the parameters, any
-   register or address map, `\dstables{<Key>}`, the behaviour, the
-   verification with its test targets, where it is used, and its
-   limits.
-   Say nothing on a sheet that the code, its tests or a document does
-   not state.
-2. Add `\input{datasheets/<Key>}` to `docs/datasheets.tex`.
-3. Add the component to `tools/datasheet/main.rs`, lowered with the
-   parameters the tree uses it with, under the same key.
-   The document does not build if a sheet asks for tables the
-   generator does not write.
-4. `//tools/datasheet:coverage_test` fails when a component in the
-   crates it scans has no sheet, or a sheet is not in the document.
-   A new crate with lowered units adds its `sources` to that test's
-   `data` and its source directory to the test script's `find`.
 
 # Standing rule: one issue, one pull request, in topical commits
 
@@ -347,8 +374,8 @@ fj pr -R hd status <number>     # mergeable, or not
   in that order, parent first.
 * After a rebase, the checks are run again.
   A conflict resolved by hand is a change nobody has built, and `main`
-  may have added a rule the branch does not yet meet: the datasheet
-  test above is exactly that kind of rule.
+  may have added a rule the branch does not yet meet, as this one was
+  added while four branches were open.
 
 # Claims about Rust are compiled, not argued
 
