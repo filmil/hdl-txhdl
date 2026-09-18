@@ -16,6 +16,7 @@ rust_library(
         "src/isa.rs",
         "src/lib.rs",
         "src/model.rs",
+        "src/pair.rs",
         "src/program.rs",
         "src/run.rs",
         "src/term.rs",
@@ -179,6 +180,19 @@ rust_test(
 rust_test(
     name = "lockstep",
     srcs = ["tests/lockstep.rs"],
+    edition = "2021",
+    deps = [
+        ":vreteno32",
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+)
+
+# Two cores on one bus, with everything they say compared:
+#   bazel test //cpu/vreteno:pair_test
+rust_test(
+    name = "pair",
+    srcs = ["tests/pair.rs"],
     edition = "2021",
     deps = [
         ":vreteno32",

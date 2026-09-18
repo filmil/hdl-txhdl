@@ -6,6 +6,7 @@ pub mod core;
 pub mod dmem;
 pub mod isa;
 pub mod model;
+pub mod pair;
 pub mod program;
 pub mod run;
 pub mod term;
