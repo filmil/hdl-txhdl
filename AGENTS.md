@@ -400,6 +400,30 @@ every time.
    checked for conflicts, and a bug found on the way is filed. Then
    step 2.
 
+A loop that only opens pull requests is a loop that leaves them.
+Step 6 is where they are kept, and it is not a glance: the pull
+requests this loop has opened are its own work until they land, ahead
+of the next issue.
+
+* Check them all, not the newest.
+  `main` moves under a branch opened three issues ago as easily as
+  under the one opened a minute ago, and the older branch is the one
+  nobody is thinking about.
+* Repair a conflict when it appears, in the same turn as finding it.
+  Rebase onto `origin/main`, resolve, run the checks again, force push
+  with a lease, and confirm the pull request reports mergeable
+  afterwards rather than assuming the push fixed it.
+  Read what the conflict is before resolving it: a rule that landed on
+  `main` while the branch waited can make "keep my side" the wrong
+  answer, and it has been, once.
+* A branch that cannot be repaired cheaply goes back to the tracker.
+  Say so on the issue, take the `taken` label off, and let the work be
+  picked up fresh rather than left as a stale branch nobody will
+  rebase.
+
+The check itself is two commands, and the cost of skipping them is
+somebody else doing the author's rebase for them.
+
 Two things are not failures of the loop and should not be made to
 look like one. An issue whose answer turns out to be "nothing to do"
 is closed with what was measured and no pull request, which is a
