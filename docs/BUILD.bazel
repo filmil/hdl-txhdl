@@ -705,6 +705,7 @@ waveform(
         "//en=>en",
         "//ops/sum=>sum",
         "//ops/hits=>hits",
+        "//ops/tops=>tops",
         "//same=>same",
         "//below=>below",
     ],

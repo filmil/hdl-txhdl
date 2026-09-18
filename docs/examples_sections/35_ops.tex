@@ -22,17 +22,32 @@ no operator is a method: \code{sra}, the arithmetic shift, and
 \code{mul::<M>}, \code{concat::<\_, M>}, \code{sext::<M>} and
 \code{zext::<M>}, each with the result width stated.
 Each operator lowers to the operator of the same name; a compare in
-VHDL is a boolean and is made a bit where a bit is needed. The unit
-below drives seven registers from two inputs under \code{en}, counts
-the cycles on which the inputs are equal or ordered and the first is
-below 128, and says on two wires whether they are equal and whether
-the first is below. The lowering is simulated against the run's
+VHDL is a boolean and is made a bit where a bit is needed. One case
+of that is worth saying, because the two languages disagree about
+what a value of one bit is. A slice of one bit, \code{a.slice::<7,
+1>()}, compared with a number is how a program asks whether that bit
+is set. In Verilog it is \code{a[7:7] == 1}, a vector against a
+number. In VHDL a value of one bit is a \code{std\_logic} rather than
+an array of one element, so it is written \code{a(7) = '1'}: a range
+there would be an \code{unsigned}, which has no \code{=} against a
+bit literal, and the analyser would call the literal ambiguous. The
+lowering writes each the way its language wants it.
+
+The unit below drives seven registers from two inputs under
+\code{en}, counts the cycles on which the inputs are equal or ordered
+and the first is below 128, counts in a second register the cycles on
+which either input has its top bit set, and says on two wires whether
+they are equal and whether the first is below. The top bit is read
+through a name of its own for the first input and inside the
+condition for the second, which are the two places the lowering has
+to get right. The lowering is simulated against the run's
 trace, Section~\ref{sec:x-checked}.
 
 \begin{figure}[htbp]
 \centering
 \input{ops_timing.tex}
-\caption{The operators: the inputs, the sum, the count of hits, and the two compares.}
+\caption{The operators: the inputs, the sum, the two counts, and the
+two compares.}
 \label{fig:x-ops}
 \end{figure}
 
