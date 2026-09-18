@@ -33,6 +33,7 @@ rust_library(
         "src/redundant.rs",
         "src/spi.rs",
         "src/station.rs",
+        "src/tracer.rs",
         "src/syscon.rs",
         "src/wdog.rs",
         "src/lib.rs",
