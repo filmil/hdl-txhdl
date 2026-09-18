@@ -3976,7 +3976,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                             }
                             return Ok(match m.to_string().as_str() {
                                 "slice" => format!(
-                                    "NlE::Slice(Box::new({l}), {}, {})",
+                                    "NlE::slice({l}, {}, {})",
                                     ks[0], ks[1]
                                 ),
                                 "sext" => {
@@ -4050,7 +4050,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     "sra" => ebin(">>>", &l, &a[0]),
                     "lt_signed" => ebin("<s", &l, &a[0]),
                     "bit" | "read" => {
-                        format!("NlE::Index(Box::new({l}), Box::new({}))", a[0])
+                        format!("NlE::index({l}, {})", a[0])
                     }
                     // Conversions between a bit and a truth value, and
                     // a read, are the value itself.

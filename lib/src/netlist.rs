@@ -254,9 +254,9 @@ pub fn field<V: Value>(e: Expr, name: &str) -> Expr {
         hi -= w;
         if n == name {
             return if w == 1 {
-                Expr::Index(Box::new(e), Box::new(Expr::Num(hi as u128)))
+                Expr::index(e, Expr::Num(hi as u128))
             } else {
-                Expr::Slice(Box::new(e), hi, w)
+                Expr::slice(e, hi, w)
             };
         }
     }
@@ -321,6 +321,30 @@ impl Expr {
             }
         }
         Expr::Bin(op, Box::new(a), Box::new(b))
+    }
+    /// A bit of a value. A bit of a part of a value is a bit of the
+    /// value at an offset: Verilog has no bit-select of a part-select,
+    /// and the VHDL written for one did not simulate as the run did,
+    /// which is issue 129.
+    pub fn index(a: Expr, i: Expr) -> Expr {
+        match (a, i) {
+            (Expr::Slice(inner, lo, _), Expr::Num(k)) => {
+                Expr::Index(inner, Box::new(Expr::Num(lo as u128 + k)))
+            }
+            (Expr::Slice(inner, lo, _), i) => Expr::Index(
+                inner,
+                Box::new(Expr::bin("+", i, Expr::Num(lo as u128))),
+            ),
+            (a, i) => Expr::Index(Box::new(a), Box::new(i)),
+        }
+    }
+    /// A part of a value. A part of a part is one part of the value,
+    /// for the same reason a bit of a part is one bit of it.
+    pub fn slice(a: Expr, lo: usize, len: usize) -> Expr {
+        match a {
+            Expr::Slice(inner, ilo, _) => Expr::Slice(inner, ilo + lo, len),
+            a => Expr::Slice(Box::new(a), lo, len),
+        }
     }
     /// A condition that is a constant: `true` or `false`, or none.
     fn constant(&self) -> Option<bool> {
