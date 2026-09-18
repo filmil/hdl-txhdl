@@ -380,8 +380,58 @@ packet each way across two hops.
 The rate is the number to improve, and improving it is arbitration and
 width rather than routing: a switch that moved a packet per port per
 cycle rather than one per node would carry the rasteriser's stream at
-the rate the link does. The timing work that would pay for is written
-down separately.
+the rate the link does.
+
+\subsection{What a node's own logic costs}
+\label{sec:n-timing}
+
+How fast a node can be clocked was read off the logic for a long time
+and not measured. It has been measured now, with the hermetic Vivado
+the rest of the tree uses: \code{//lib/parts:node\_synth} and
+\code{//lib/parts:switch\_synth} put one node, and one switch inside
+it, through synthesis for the Artix-7 the board has. Both are manual,
+as every Vivado target here is, and both take about a minute.
+
+A node holds no register. The flip-flops that bound its path are the
+channels' on either side of it, and those belong to whatever
+instantiates the node, so the question is the node's own delay from an
+input to an output; the constraint asks for that rather than for a
+clock period. Table~\ref{tab:n-timing} is the answer.
+
+\begin{table}[htbp]
+\caption{One node, and one switch inside it, through synthesis for
+the \code{xc7a200tfbg484-2}. The delay is from an input pad to an
+output pad, so it carries an input buffer and an output buffer,
+3.23~ns of the total, which a node inside a design does not pay.}
+\label{tab:n-timing}
+\centering\footnotesize
+\begin{tabular}{@{}lrr@{}}
+\toprule
+ & switch & node \\
+\midrule
+Look-up tables & 266 & 534 \\
+Registers & 0 & 0 \\
+Longest path, pad to pad & 7.73~ns & 7.61~ns \\
+Of that, the two pads & 3.23~ns & 3.23~ns \\
+Levels of logic between them & 5 & 5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Five levels of look-up table is the whole of it, and the same five in
+a node as in a switch, since a node is two switches that do not chain.
+At the tenth of a nanosecond a LUT costs on this part, that is about
+half a nanosecond of logic; the rest of the measured delay is the two
+pads and an unplaced estimate of the wires. So a node has room at
+100~MHz, and the shortening that was proposed for it, carrying the
+next hop's direction in the packet so that a node reads its direction
+rather than working it out, is not worth doing yet.
+
+The path is not the one that was expected, and that is worth writing
+down. It runs from an output's \code{ready} to another output's
+\code{valid}, which is the backpressure chain through the arbitration,
+not the wide multiplexer on the packet. A switch that wanted to be
+faster would shorten that chain first.
 
 The two hardly contend. While the core works, the rasteriser only
 polls the count, one read at a time; by the time it draws, the core
