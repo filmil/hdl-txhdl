@@ -322,15 +322,17 @@ behind the core's AXI-Lite bridge and its channels through two crossings
 like the echo's.
 
 Writing the part found three things in the lowering, each worked
-around here at the time, and two of them since fixed. A wire named for
+around here at the time, and all three since fixed. A wire named for
 a reserved word of either target
 language, such as \code{next}, \code{out}, \code{begin}, \code{body},
 \code{buf} or \code{byte}, produced a netlist that did not analyse;
 the lowering now refuses such a name where it is chosen. A
-bit of a field of a channel's value, \code{wh.data.bit(8)}, is written
-in Verilog as a bit select of a part select, which VHDL did not
-simulate the same way; that one is still worked around, by reading the
-field into a name first. And a constant of $2^{31}$ or more was
+bit of a field of a channel's value, \code{wh.data.bit(8)}, was written
+in Verilog as a bit select of a part select, which Verilog does not
+allow and VHDL did not simulate as the run did; a bit of a part is now
+one bit of the value, at the part's offset, so the peripheral asks for
+the bit of the word it was written with. And a constant of $2^{31}$ or
+more was
 written as an unsized integer, which overflows Verilog's 32-bit signed
 integer and lies above the natural VHDL guarantees, so the receiver
 compared the complement of its register with a smaller constant. The
