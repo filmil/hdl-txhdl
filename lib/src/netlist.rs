@@ -1470,7 +1470,7 @@ impl Lowered {
         // unsigned of that width, since VHDL will not assign one bare.
         let sized = |e: &Expr, w: usize| -> String {
             match e {
-                Expr::Num(k) if w > 1 => format!("to_unsigned({k}, {w})"),
+                Expr::Num(k) if w > 1 => hnum(*k, w),
                 e => hval(e, w, self),
             }
         };
@@ -1747,8 +1747,15 @@ fn vexpr(e: &Expr, l: &Lowered) -> String {
         Expr::Bin(">>>", a, b) => {
             format!("$unsigned($signed({}) >>> {})", vexpr(a, l), vexpr(b, l))
         }
+        // A number beside a value of known width is sized to it: an
+        // unsized decimal is a 32-bit signed integer in Verilog.
         Expr::Bin(op, a, b) => {
-            format!("({} {op} {})", vexpr(a, l), vexpr(b, l))
+            let w = l.ewidth(a).max(l.ewidth(b));
+            let side = |x: &Expr| match x {
+                Expr::Num(k) if w > 0 => vnum(*k, w),
+                x => vexpr(x, l),
+            };
+            format!("({} {op} {})", side(a), side(b))
         }
         Expr::Not(a) if a.is_bool() => format!("(!{})", vexpr(a, l)),
         Expr::Not(a) => format!("(~{})", vexpr(a, l)),
@@ -1757,7 +1764,7 @@ fn vexpr(e: &Expr, l: &Lowered) -> String {
         Expr::Cond(c, a, b) => {
             let w = l.ewidth(a).max(l.ewidth(b));
             let side = |x: &Expr| match x {
-                Expr::Num(k) if w > 0 => format!("{w}'d{k}"),
+                Expr::Num(k) if w > 0 => vnum(*k, w),
                 x => vexpr(x, l),
             };
             format!("({} ? {} : {})", vexpr(c, l), side(a), side(b))
@@ -1815,6 +1822,33 @@ fn hbool(e: &Expr, l: &Lowered) -> String {
     }
 }
 
+/// A number as bits, most significant first, in `w` of them.
+fn numbits(k: u128, w: usize) -> String {
+    (0..w).rev().map(|i| if (k >> i) & 1 == 1 { '1' } else { '0' }).collect()
+}
+
+/// A number as a VHDL value of width `w`. `to_unsigned` reads well and
+/// is what a small number becomes, but its first argument is a
+/// `natural`, and VHDL guarantees a natural only to 2^31 - 1, so a
+/// number at or above that is written as a bit string instead (issue
+/// 130).
+fn hnum(k: u128, w: usize) -> String {
+    if k < (1u128 << 31) {
+        format!("to_unsigned({k}, {w})")
+    } else {
+        format!("unsigned'(\"{}\")", numbits(k, w))
+    }
+}
+
+/// A number as a Verilog value of width `w`. An unsized decimal is a
+/// 32-bit signed integer there, so a number at or above 2^31 overflows
+/// it; every number a width is known for is therefore sized (issue
+/// 130).
+fn vnum(k: u128, w: usize) -> String {
+    let w = w.max(128 - k.leading_zeros() as usize).max(1);
+    format!("{w}'h{k:x}")
+}
+
 /// A shift count in VHDL: an integer, which a literal already is and
 /// a value is converted to.
 fn hint(e: &Expr, l: &Lowered) -> String {
@@ -1829,6 +1863,10 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
     match e {
         Expr::Name(n) => n.clone(),
         Expr::Num(k) if w == 1 => format!("'{}'", if *k == 0 { 0 } else { 1 }),
+        // A number a width is known for is written at that width; one
+        // in a context with no width stays an integer, which is what
+        // VHDL's own arithmetic on a natural wants.
+        Expr::Num(k) if w > 1 => hnum(*k, w),
         Expr::Num(k) => k.to_string(),
         Expr::Bits(bw, b) if *bw == 1 => format!("'{b}'"),
         Expr::Bits(_, b) => format!("unsigned'(\"{b}\")"),
@@ -1859,7 +1897,7 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
             // `a and to_unsigned(63, 8)`, since numeric_std has no
             // logic between an unsigned and an integer.
             let side = |x: &Expr| match x {
-                Expr::Num(k) if w > 1 => format!("to_unsigned({k}, {w})"),
+                Expr::Num(k) if w > 1 => hnum(*k, w),
                 x => hval(x, w, l),
             };
             format!("({} {vop} {})", side(a), side(b))
@@ -1924,7 +1962,7 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
                 w
             };
             let side = |x: &Expr| match x {
-                Expr::Num(k) if w > 1 => format!("to_unsigned({k}, {w})"),
+                Expr::Num(k) if w > 1 => hnum(*k, w),
                 x => hval(x, w, l),
             };
             format!("mux({}, {}, {})", hbool(c, l), side(a), side(b))
