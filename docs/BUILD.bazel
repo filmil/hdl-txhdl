@@ -645,6 +645,8 @@ latex_document(
         ":spi_timing",
         ":syscon_run",
         ":syscon_timing",
+        ":wdog_run",
+        ":wdog_timing",
         "//lib/examples:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
@@ -1178,6 +1180,25 @@ waveform(
     ],
     from_tick = 146,
     until = 200,
+)
+
+# The watchdog, at the end of its second timeout: the count reaching
+# zero with the warning already standing, the reset asked for, and the
+# count reloaded so that the request is eight cycles and not forever.
+waveform(
+    name = "wdog",
+    example = "//lib/examples:ex_wdog",
+    lowered = ("wdog", "wdog"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//irq=>irq",
+        "//rst=>rst",
+        "//block/count=>count",
+        "//block/status=>status",
+        "//block/hold=>hold",
+    ],
+    from_tick = 566,
+    until = 616,
 )
 
 # Pins behind AXI-Lite: the direction set, a pin read through its

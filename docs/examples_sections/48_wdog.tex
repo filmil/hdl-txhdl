@@ -1,0 +1,74 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Machine That Restarts Itself}
+\label{sec:x-wdog}
+
+A program that hangs stays hung until somebody presses the button, and
+on a board nobody is standing next to, nobody does. So the hardware
+counts, and software has to keep saying that it is still there.
+
+\code{Wdog} is that counter in six words. A timeout, the count left of
+it, a control word, a status, the window's sill, and the register a
+refresh is written to. When the count reaches zero it asks the system
+control block of Section~\ref{sec:x-syscon} for a reset, which records
+the watchdog as the cause, so a program that restarts can read why it
+did.
+
+\subsection{Why A Refresh Carries A Key}
+
+A program that has lost its way is not a program that has stopped. It
+is a program writing whatever it finds over whatever it reaches, and
+it will eventually reach the watchdog. A refresh that any write
+performs is a refresh such a program keeps doing by accident, and a
+watchdog it cannot fail is no watchdog.
+
+So a refresh carries a word, and a write of anything else is not
+ignored: it is a failure, and it asks for the reset at once. The
+example writes a zero and watches the status.
+
+\subsection{The Window, And What It Catches}
+
+The plain countdown catches a program that stopped. It does not catch
+a program looping tightly on its own refresh, which is just as stuck
+and looks from here like the healthiest program on the machine.
+
+In window mode a refresh is too early while the count is still above
+the sill, and too early is a failure like a wrong key. A program then
+has to refresh in the second half of its timeout, which it can only do
+if it is keeping time rather than spinning. The example sets the sill
+at half the timeout and refreshes twice in quick succession, which is
+what a spinning program looks like.
+
+\subsection{Warning First}
+
+A timeout can mean the machine is broken, and it can mean that
+something took longer than it usually does. With warning on, the first
+timeout raises an interrupt and reloads the count instead of resetting,
+which gives a program that is merely slow one more timeout to say so.
+The second one resets. The run below takes both. The ticks it prints
+are when the program read the status rather than when the watchdog
+moved, since a read over this bus costs about twenty six cycles; the
+figure is the moment itself.
+
+\subsection{The Lock}
+
+A watchdog software can turn off is a watchdog that gets turned off,
+usually while somebody is debugging something else. The lock bit sets
+and does not clear, and after it is set the control, the timeout and
+the sill are read only until the next reset. The example locks the
+watchdog on and then writes a zero over the control word, which
+changes nothing.
+
+\begin{figure}[htbp]
+\centering
+\input{wdog_timing.tex}
+\caption{The second timeout: the count falling to zero with the
+warning already standing on \code{irq}, the reset asked for on
+\code{rst} and held while \code{hold} counts down, the status going
+from warned to warned and failed, and the count reloaded so that the
+request ends rather than standing for ever.}
+\label{fig:x-wdog}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_wdog.rs}. Run with \code{bazel run //lib/examples:ex\_wdog}.},label={lst:x-wdog}]{lib/examples/ex_wdog.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_wdog} printed when the build ran it: the refresh, the warning, the reset, the two failures and the lock, and then the watchdog's Verilog.},label={lst:x-wdog-out}]{out_wdog.txt}
