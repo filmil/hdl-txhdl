@@ -232,8 +232,19 @@ impl<T: Transaction, C: Clock> Tx<T, C> {
     /// the channel at the end of it. The sender asks `ready` first;
     /// sending into a channel with no room is the bug the handshake
     /// exists to prevent.
+    ///
+    /// One step is one offer. A channel has a single `valid` and a
+    /// single `data`, so a second send in the same step would replace
+    /// the first and lose a transaction; `ready`, which is the buffer
+    /// as the edge left it, cannot say so, and both sends pass the
+    /// check above. It is refused here instead. Two processes that
+    /// share one end therefore arbitrate, as they must in hardware.
     pub fn send(&self, v: impl Into<T>) {
         assert!(self.ready().to_bool(), "send on a channel with no room");
+        assert!(
+            !self.0.offering(),
+            "two sends on one channel in one step"
+        );
         let v = v.into();
         self.0.offered.set(v);
         self.0.offer_at.set(now());

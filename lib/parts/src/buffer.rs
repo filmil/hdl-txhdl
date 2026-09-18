@@ -73,7 +73,7 @@ impl<const W: usize> Unit for Buffer<W> {
 #[cfg(test)]
 mod tests {
     use super::Buffer;
-    use txhdl::comp::{chan, signal, DefaultClock, Running, Unit};
+    use txhdl::comp::{chan, signal, Clock, DefaultClock, Running, Unit};
     use txhdl::types::{Bit, U};
 
     #[test]
@@ -121,5 +121,43 @@ mod tests {
                 assert_eq!(head.get(), h, "head at {i}");
             }
         }
+    }
+
+    /// One step is one offer. A channel has one `valid` and one
+    /// `data`, so a second send in a step would replace the first and
+    /// lose it; `ready` is the buffer as the edge left it and cannot
+    /// say so. The runtime refuses it instead (issue 183).
+    #[test]
+    #[should_panic(expected = "two sends on one channel in one step")]
+    fn a_second_send_in_one_step_is_refused() {
+        let (tx, _rx) = chan::<U<8>, DefaultClock>();
+        assert!(tx.ready().to_bool(), "the channel starts with room");
+        tx.send(U::<8>::from(1u8));
+        assert!(tx.ready().to_bool(), "ready still says the edge's room");
+        tx.send(U::<8>::from(2u8));
+    }
+
+    /// A send in each of two steps is what the handshake is for, and
+    /// the receiver sees both.
+    #[test]
+    fn a_send_in_each_step_is_taken() {
+        let (tx, rx) = chan::<U<8>, DefaultClock>();
+        let mut got = Vec::new();
+        // A process that only waits, so the run has a step to take.
+        let mut sim = Running::new(async {
+            loop {
+                DefaultClock::rising().await;
+            }
+        });
+        for i in 1..=4u8 {
+            if tx.ready().to_bool() {
+                tx.send(U::<8>::from(i));
+            }
+            if let Some(v) = rx.recv() {
+                got.push(v.raw() as u8);
+            }
+            sim.cycle();
+        }
+        assert_eq!(got, vec![1, 2, 3], "one a step, a step behind");
     }
 }
