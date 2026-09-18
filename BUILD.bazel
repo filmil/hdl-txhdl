@@ -1,3 +1,30 @@
 # SPDX-License-Identifier: Apache-2.0
+load("@rules_rust//rust:defs.bzl", "rustfmt_test")
+
 exports_files(["rustfmt.toml"])
 exports_files(["Cargo.lock", "cargo-bazel-lock.json"])
+
+# The formatter is a check rather than a step somebody remembers.
+# `AGENTS.md` prescribes a run of `@rules_rust//:rustfmt` before a
+# listing is included, and a run that rewrites a file nobody meant to
+# touch is how issue 165 was found. This test runs `rustfmt --check`
+# over the crates the documents include, with the repository's own
+# `max_width = 80`, which `.bazelrc` gives every rustfmt action.
+#
+#   bazel test //:fmt_test
+rustfmt_test(
+    name = "fmt_test",
+    targets = [
+        "//cpu/vreteno:vreteno32",
+        "//ddr3",
+        "//gpu/razboj",
+        "//lib:txhdl",
+        "//lib:txhdl_macros",
+        "//lib/parts:txhdl_parts",
+        "//pcie",
+        "//soc",
+        "//tools/datasheet",
+        "//tools/denmap",
+        "//tools/gantt",
+    ],
+)

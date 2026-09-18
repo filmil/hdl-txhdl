@@ -5,6 +5,13 @@ common --registry=https://bcr.bazel.build
 # Every document is stamped with the commit it was built from.
 build --workspace_status_command=tools/workspace_status.sh
 
+# The formatter's own settings, `max_width = 80`, wherever it runs:
+# the prescribed run of `@rules_rust//:rustfmt`, and the `rustfmt_test`
+# targets that keep the tree that way. Without this, both use the
+# default of 100 columns, and the documents set source at 80 (issue
+# 165).
+common --@rules_rust//:rustfmt.toml=//:rustfmt.toml
+
 # Vivado from the Bazel-installed toolchain, not Docker or the host.
 build --@rules_vivado//:vivado_mode=hermetic
 
