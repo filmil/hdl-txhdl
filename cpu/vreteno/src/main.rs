@@ -218,7 +218,10 @@ fn main() {
     rst_out.set(Bit::One);
     sim.cycle();
     rst_out.set(Bit::Zero);
-    println!("{:>4} {:>6}   {:<22} {}", "t", "pc", "instruction", "writes");
+    println!(
+        "{:>4} {:>6}   {:<22} {}",
+        "t", "pc", "instruction", "writes"
+    );
     // The interrupt line: one pulse, in the loop.
     let irq_at = 40;
     // A run of bubbles prints as one line with its count: a divide is

@@ -191,12 +191,7 @@ fn picture(m: &Map) -> String {
     panel(&mut out, m, &m.all, 0.0, "black", 1.0);
     panel(&mut out, m, &m.flop, SIDE + GAP, "kwblue", ffscale);
     key(&mut out, 0.0, "black", "empty to full");
-    key(
-        &mut out,
-        SIDE + GAP,
-        "kwblue",
-        "none to the fullest square",
-    );
+    key(&mut out, SIDE + GAP, "kwblue", "none to the fullest square");
     let _ = writeln!(
         out,
         "  \\node[lbl, anchor=south] at ({:.3},{:.3}) \

@@ -241,10 +241,7 @@ impl<T: Transaction, C: Clock> Tx<T, C> {
     /// share one end therefore arbitrate, as they must in hardware.
     pub fn send(&self, v: impl Into<T>) {
         assert!(self.ready().to_bool(), "send on a channel with no room");
-        assert!(
-            !self.0.offering(),
-            "two sends on one channel in one step"
-        );
+        assert!(!self.0.offering(), "two sends on one channel in one step");
         let v = v.into();
         self.0.offered.set(v);
         self.0.offer_at.set(now());

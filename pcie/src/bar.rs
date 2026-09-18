@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! What BAR0 reaches: four words of registers behind the endpoint's
 //! AXI master, and the unit of units that joins them to its pins.
-use txhdl::comp::{chan, join2, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{
+    chan, join2, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit,
+};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 use txhdl_parts::bus::axi::{Answer, Ar, Aw, AxiPer, PerReq, Resp, B, R, W};

@@ -27,10 +27,10 @@ use txhdl_parts::bus::router::Router3;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::eth::{EthLite, EthRx, EthTx};
 use txhdl_parts::fifo::Fifo;
-use txhdl_parts::hdmi::{vga, Hdmi, I2cInit};
 use txhdl_parts::gpio::Gpio;
-use txhdl_parts::spi::Spi;
+use txhdl_parts::hdmi::{vga, Hdmi, I2cInit};
 use txhdl_parts::plic::Plic2;
+use txhdl_parts::spi::Spi;
 use txhdl_parts::station::Station3;
 use txhdl_parts::syscon::Syscon;
 use vreteno32::board::Board;
@@ -294,9 +294,7 @@ fn main() {
     sheet(
         "Syscon",
         "Syscon<0x74780001, 0x10000, 0, 0, 0x52535421>",
-        Syscon::<0x7478_0001, 0x1_0000, 0, 0, 0x5253_5421>::lowered(
-            "syscon",
-        ),
+        Syscon::<0x7478_0001, 0x1_0000, 0, 0, 0x5253_5421>::lowered("syscon"),
     );
     sheet("Uart", "Uart<868>", Uart::<868>::lowered("uart"));
     sheet("Ddr3Per", "Ddr3Per<0, 0>", Ddr3Per::<0, 0>::lowered("ddr3"));

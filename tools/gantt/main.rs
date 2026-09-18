@@ -50,9 +50,7 @@ fn read(text: &str) -> (Vec<(String, usize)>, Vec<Band>) {
                 let days = f[3]
                     .split(',')
                     .filter_map(|p| p.split_once(':'))
-                    .map(|(d, n)| {
-                        (d.to_string(), n.parse().unwrap_or(0))
-                    })
+                    .map(|(d, n)| (d.to_string(), n.parse().unwrap_or(0)))
                     .collect();
                 bands.push(Band {
                     name: f[1].to_string(),
@@ -139,12 +137,8 @@ fn counts(axis: &[(String, usize)], bands: &[Band]) -> String {
     writeln!(o, "\\newcommand{{\\ganttbefore}}{{{before}}}").unwrap();
     writeln!(o, "\\newcommand{{\\ganttafter}}{{{after}}}").unwrap();
     writeln!(o, "\\newcommand{{\\ganttbeforedays}}{{{at}}}").unwrap();
-    writeln!(
-        o,
-        "\\newcommand{{\\ganttafterdays}}{{{}}}",
-        axis.len() - at
-    )
-    .unwrap();
+    writeln!(o, "\\newcommand{{\\ganttafterdays}}{{{}}}", axis.len() - at)
+        .unwrap();
     writeln!(o, "\\newcommand{{\\ganttgapdays}}{{{gap}}}").unwrap();
     let docs = bands
         .iter()
@@ -295,7 +289,9 @@ fn main() {
         )
         .unwrap();
         for (d, n) in &b.days {
-            let Some(&i) = at.get(d.as_str()) else { continue };
+            let Some(&i) = at.get(d.as_str()) else {
+                continue;
+            };
             let x = xs[i] + 0.12;
             writeln!(
                 o,
@@ -316,7 +312,9 @@ fn main() {
         let Some(&to_y) = ypos.get(b.name.as_str()) else {
             continue;
         };
-        let Some(first) = b.days.first() else { continue };
+        let Some(first) = b.days.first() else {
+            continue;
+        };
         let Some(&to_i) = at.get(first.0.as_str()) else {
             continue;
         };

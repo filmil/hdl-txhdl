@@ -1848,7 +1848,10 @@ fn hbool(e: &Expr, l: &Lowered) -> String {
 
 /// A number as bits, most significant first, in `w` of them.
 fn numbits(k: u128, w: usize) -> String {
-    (0..w).rev().map(|i| if (k >> i) & 1 == 1 { '1' } else { '0' }).collect()
+    (0..w)
+        .rev()
+        .map(|i| if (k >> i) & 1 == 1 { '1' } else { '0' })
+        .collect()
 }
 
 /// A number as a VHDL value of width `w`. `to_unsigned` reads well and

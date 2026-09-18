@@ -499,8 +499,7 @@ pub mod sim {
         const S: usize,
         const I: usize,
     >() -> (PinHost<A, D, S, I>, HostPins<A, D, S, I>, DevicePins<D, I>) {
-        fn wire<T: txhdl::types::Value + Copy + Default>(
-        ) -> (Out<T>, In<T>) {
+        fn wire<T: txhdl::types::Value + Copy + Default>() -> (Out<T>, In<T>) {
             signal::<T, DefaultClock>()
         }
         let (awid, awid_i) = wire::<U<I>>();
@@ -600,7 +599,12 @@ pub mod sim {
     /// ends, and the unit's two sides, with the link's channel ends
     /// given to the unit where they belong.
     #[allow(clippy::type_complexity)]
-    pub fn pins<const A: usize, const D: usize, const S: usize, const I: usize>(
+    pub fn pins<
+        const A: usize,
+        const D: usize,
+        const S: usize,
+        const I: usize,
+    >(
         aw: Tx<Aw<A, I>>,
         ar: Tx<Ar<A, I>>,
         w: Tx<W<D, S>>,
