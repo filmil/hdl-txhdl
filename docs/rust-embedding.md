@@ -222,6 +222,7 @@ Those expected to fail are tagged `manual`.
 | `probe_shadow` | Is a computed `let` with a register's name refused? | **Yes**, at the `let`: ``error[E0080]: evaluation panicked: `let pend` is the wire `pend` of the netlist, and the unit has a field `pend`: the netlist would declare `pend` twice, so rename one (see issue 77)`` |
 | `probe_tuple_let` | Is a tuple `let` in a lowered function whose value is not a tuple refused? | **Yes**, where the helper is called: ``the tuple `let` of `pair` binds 2 names to something that is not a tuple of 2 values: a helper's `let` is a substitution, so write one `let` per name (issue 159)`` |
 | `probe_shadow_generic` | Is it refused in a generic unit? | **Only once a type is lowered.** The check is a constant `lowered` uses, so the file builds until `Latch::<1>::verilog` is called; issue 171 |
+| `probe_lit_signal` | Is an expression the lowering does not read, `U::<8>::new(n)`, which names a wire, refused? | **Yes**, at the statement: ``error: cannot lower `U::<8>::new(n)`: it names `n`, which is a signal of the unit, so the expression cannot be a constant``; before issue 128 it became a constant and `rustc` reported `n` as missing at the attribute |
 
 Three of these change the design.
 
