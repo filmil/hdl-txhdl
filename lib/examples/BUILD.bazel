@@ -297,6 +297,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A watchdog timer behind AXI-Lite:
+#   bazel run //lib/examples:ex_wdog
+rust_binary(
+    name = "ex_wdog",
+    srcs = ["ex_wdog.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # General purpose pins behind AXI-Lite, with an interrupt:
 #   bazel run //lib/examples:ex_gpio
 rust_binary(
@@ -621,6 +634,7 @@ filegroup(
         "ex_gpio.rs",
         "ex_spi.rs",
         "ex_syscon.rs",
+        "ex_wdog.rs",
         "ex_ports.rs",
         "ex_axi.rs",
         "ex_axi_serve.rs",
