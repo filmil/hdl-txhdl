@@ -420,6 +420,19 @@ of the next issue.
   Say so on the issue, take the `taken` label off, and let the work be
   picked up fresh rather than left as a stale branch nobody will
   rebase.
+* **Before touching a branch that is not yours, run `git worktree
+  list`.**
+  The sessions here share one repository, so a branch checked out in
+  another worktree is a branch somebody is standing on.
+  A rebase moves the ref at once, and that worktree's `HEAD` moves
+  with it, whatever its files say.
+  `--force-with-lease` does not help: it guards the remote, and the
+  damage is already done locally.
+  A branch held by another worktree is diagnosed on its pull request
+  and left alone.
+  If a ref has already been moved, `git update-ref <ref> <old> <new>`
+  puts it back and names the value it expects to find, so it fails
+  rather than guessing.
 
 The check itself is two commands, and the cost of skipping them is
 somebody else doing the author's rebase for them.
