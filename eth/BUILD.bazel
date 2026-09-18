@@ -6,6 +6,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary")
 load(
     "@rules_vivado//build/vivado:rules.bzl",
     "vivado_place_and_route2",
+    "vivado_program_device",
     "vivado_synthesis2",
 )
 
@@ -55,6 +56,21 @@ vivado_place_and_route2(
     name = "echo_pnr",
     synthesis = ":echo_synth",
     xdcs = [":echo_xdc"],
+    tags = ["manual"],
+)
+
+# Write the echo design into the board where it is, over the tunnel the
+# Vreteno board's daemon opens. Bring the tunnel up first:
+#
+#   bazel run //cpu/vreteno/board/remote:hw_server
+#   bazel run //eth:echo_prog -- \
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+#
+# This writes the FPGA itself, which the next power cycle forgets.
+vivado_program_device(
+    name = "echo_prog",
+    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
+    deps = [":echo_pnr"],
     tags = ["manual"],
 )
 
