@@ -931,6 +931,33 @@ waveform(
     until = 110,
 )
 
+# An AXI4 arbiter: two hosts writing four beats each at the same
+# time, the write data channel held for one burst and then the other,
+# and each answer going home by the tag above its identifier.
+waveform(
+    name = "axi_arbiter",
+    example = "//lib/examples:ex_axi_arbiter",
+    lowered = ("axi_arbiter", "arbiter"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//aw0/tx_valid=>aw0",
+        "//aw1/tx_valid=>aw1",
+        "//w0/tx_valid=>w0",
+        "//w1/tx_valid=>w1",
+        "//arbiter/wbusy=>wbusy",
+        "//arbiter/wsel=>wsel",
+        "//w/tx_valid=>w",
+        "//w/tx_data/data=>w_data",
+        "//w/tx_data/last=>w_last",
+        "//b/tx_valid=>b",
+        "//b/tx_data/id=>b_id",
+        "//b0/tx_valid=>b0",
+        "//b1/tx_valid=>b1",
+    ],
+    from_tick = 16,
+    until = 76,
+)
+
 # An AXI4 to AXI-Lite bridge of two peripherals: bursts split into
 # transactions, two register banks, and a hole the bridge answers.
 waveform(
@@ -1981,6 +2008,8 @@ latex_document(
         ":axi_timing",
         ":axi_serve_run",
         ":axi_serve_timing",
+        ":axi_arbiter_run",
+        ":axi_arbiter_timing",
         ":axi_router_run",
         ":axi_router_timing",
         ":axi_wb_run",

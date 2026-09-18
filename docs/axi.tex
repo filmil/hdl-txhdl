@@ -629,8 +629,94 @@ this run under \code{nvc} and under Verilator at its ports, as it
 does the two trackers.
 
 Host-side arbitration, several hosts contending for one peripheral,
-is not here. It is the other half of a full interconnect and a
-problem of its own.
+is the other half of a full interconnect, and it is the next section.
+
+\section{The Arbiter}
+\label{sec:a-arbiter}
+
+The arbiter is the router read backwards: several hosts, one
+peripheral link. The router decides on the address and fans out; the
+arbiter decides whose turn it is and merges. Put one of each together
+and a design has a bus rather than a wire, which is what a second
+thing that wants memory needs. Until there was one, the core was the
+only unit here that could be a host, and everything else was given
+its bytes a word at a time through a register.
+
+Deciding whose turn it is, is the easy half. \code{Arbiter2} to
+\code{Arbiter8} take the turn round the hosts, moving it past
+whichever won, so a host that keeps asking cannot shut another out;
+with the last parameter not zero it is fixed priority instead, and
+the lowest numbered host that is offering always wins.
+
+\subsection{Where the Answer Goes}
+
+The hard half is that an answer has to reach the host that asked, and
+the peripheral does not know there is more than one. What it does
+know is the identifier: AXI4 carries the one on each address phase
+back on that burst's answer, unchanged, so the identifier is the only
+thing an arbiter can write its own note on.
+
+So the arbiter puts the host's port number above the host's own
+identifier on the way out, and takes it off again on the way back.
+That is why the two sides of an arbiter have different identifier
+widths, \code{I} on each host and \code{J} on the peripheral, and why
+\code{J} must be at least \code{I} plus the bits the port number
+needs. A host's identifiers are its own and stay its own; what the
+peripheral sees is a wider space with the hosts side by side in it.
+
+\subsection{The Channel With No Identifier}
+
+The write data channel carries none, which is the same problem
+without the tool that solved it. A beat belongs to the oldest write
+address phase that has not finished, and that is all the protocol
+says, so anything standing between hosts and a peripheral has to keep
+them in that order itself.
+
+The arbiter therefore holds the write data channel for the host whose
+write address phase it granted, until that burst's last beat. A
+second host's address phase waits, however long the first burst is.
+Reads need no such lock, since each carries its identifier and may be
+answered out of order; that asymmetry is why the read path is a
+cycle-by-cycle decision and the write path is a lock.
+
+Both hosts in the run below write four beats at the same moment, and
+the memory is given two whole bursts rather than a mixture. That is
+the assertion at the end of the example, and it is the one a wrong
+arbiter fails.
+
+\begin{figure*}[t]
+\centering
+\input{axi_arbiter_timing.tex}
+\caption{The arbiter's run: both hosts offering write address phases
+and beats, \code{wsel} naming whose beats the peripheral side is
+carrying while \code{wbusy} stands, the four beats of one burst going
+out together and then the other's, and each write response going home
+by the tag above its identifier.}
+\label{fig:a-arbiter}
+\end{figure*}
+
+\lstinputlisting[caption={\code{ex\_axi\_arbiter.rs}. Run with
+\code{bazel run //lib/examples:ex\_axi\_arbiter}.},%
+label={lst:a-arbiter-ex}]{lib/examples/ex_axi_arbiter.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_axi\_arbiter}
+printed when the build ran it: each host's own answers, the two write
+bursts as the memory was given them, and then the arbiter's
+netlist.},%
+label={lst:a-arbiter-out}]{out_axi_arbiter.txt}
+
+As with the router, the thing to look for is what is not there.
+Neither client mentions the arbiter, a port number or an identifier,
+and the memory does not know there are two hosts. The arbiter is put
+in by wiring: it is given the peripheral-facing ends of each host's
+link and the host-facing ends of the memory's.
+
+The arbiter is lowered, and the build simulates its netlist against
+this run under \code{nvc} and under Verilator at its ports. Its own
+tests, in \code{lib/parts/src/bus/arbiter.rs}, drive two hosts and
+four: that every answer goes home, that write beats do not
+interleave, and that four hosts reading as fast as they can come away
+within one burst of each other, which is what round robin is for.
 
 \section{AXI-Lite and the Bridge}
 \label{sec:a-lite}
