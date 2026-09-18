@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+# A bitstream that only talks on the serial port, to tell a design that
+# never drove the line from a board path that does not carry it. See
+# issue #195.
+#
+#   bazel build //cpu/vreteno/board/probe:uart_probe_pnr
+#   bazel run //cpu/vreteno/board/remote:hw_server
+#   bazel run //cpu/vreteno/board/probe:uart_probe_prog -- \
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+load(
+    "@rules_vivado//build/vivado:rules.bzl",
+    "vivado_place_and_route2",
+    "vivado_program_device",
+    "vivado_synthesis2",
+)
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "probe_xdc",
+    srcs = ["probe.xdc"],
+)
+
+vivado_synthesis2(
+    name = "uart_probe_synth",
+    srcs = ["uart_probe.v"],
+    part = "xc7a200tfbg484-2",
+    top = "uart_probe",
+    xdcs = [":probe_xdc"],
+    tags = ["manual"],
+)
+
+vivado_place_and_route2(
+    name = "uart_probe_pnr",
+    synthesis = ":uart_probe_synth",
+    xdcs = [":probe_xdc"],
+    tags = ["manual"],
+)
+
+vivado_program_device(
+    name = "uart_probe_prog",
+    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
+    deps = [":uart_probe_pnr"],
+    tags = ["manual"],
+)
+
+filegroup(
+    name = "sources",
+    srcs = glob(["*.v", "*.xdc"]),
+)
