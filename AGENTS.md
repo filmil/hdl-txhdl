@@ -378,6 +378,34 @@ left half done.
 When it is unclear whether an issue is small, read it and find out
 before taking it, rather than after.
 
+## The loop
+
+Working through the tracker is a loop, and it is the same six steps
+every time.
+
+1. **Sweep what is already done.** Before taking anything, look for
+   open issues that the tree has quietly fixed, and close them with
+   the evidence: the commits that did it, and the lines that show it.
+   An issue that is fixed and still open sends the next session to
+   work that does not exist.
+2. **List and choose.** `priority` first, then the simplest free
+   issue, by the two rules above.
+3. **Take it.** The `taken` label and a comment, before the first
+   line of code.
+4. **Do it, and check it.** The three places rule, `bazel test
+   //...`, and for a document change the rendered pages.
+5. **Send it.** One issue, one pull request, in topical commits, with
+   `Closes #<number>` in the last of them.
+6. **Look around before going again.** Every open pull request is
+   checked for conflicts, and a bug found on the way is filed. Then
+   step 2.
+
+Two things are not failures of the loop and should not be made to
+look like one. An issue whose answer turns out to be "nothing to do"
+is closed with what was measured and no pull request, which is a
+result; #162 went that way. And an issue found to be already fixed in
+step 1 is closed the same way.
+
 # Standing rule: one issue, one pull request, in topical commits
 
 An issue is a pull request of its own.
