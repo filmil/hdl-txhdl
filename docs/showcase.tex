@@ -152,6 +152,46 @@ with the router deciding by address which one a burst reaches. On the
 board that includes a gigabyte of DDR3, through a controller brought
 in as a foreign module: the first thing here the language wires
 rather than writes.
+Fig.~\ref{fig:s-board} is the whole of it.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[x=1cm, y=1cm, every node/.style={font=\scriptsize}]
+  \node[box] (cpu) at (0,0) {Vreteno\\core};
+  \node[box] (host) at (2.0,0) {host\\tracker};
+  \node[box] (rt) at (3.7,0) {router};
+  \node[box] (dmem) at (5.9,1.4) {data\\memory};
+  \node[box] (uart) at (5.9,0.5) {serial};
+  \node[box] (ddr) at (5.9,-0.35) {DDR3\\peripheral};
+  \node[boxf] (uber) at (8.1,-0.35) {UberDDR3\\foreign};
+  \node[box] (tim) at (5.9,-1.35) {timer};
+  \node[box] (plic) at (5.9,-2.2) {interrupt\\controller};
+  \draw[fl] (cpu) -- node[lbl, below=3pt] {AXI4} (host);
+  \draw[fl] (host) -- (rt);
+  \draw[fl] (rt) -- (dmem);
+  \draw[fl] (rt) -- (uart);
+  \draw[fl] (rt) -- (ddr);
+  \draw[fl] (rt) -- (tim);
+  \draw[fl] (rt) -- (plic);
+  \draw[fl] (ddr) -- (uber);
+  \draw[fl] (uber.east) -- ++(0.75,0) node[lbl, right] {pads};
+  \draw[fl] (uart.east) -- ++(0.75,0) node[lbl, right] {tx, rx};
+  % The two lines the core waits on run in lanes of their own, below
+  % every box, so neither crosses one.
+  \draw[fl] (tim.west) -- ++(-0.5,0) |- (0,-2.9)
+    node[lbl, above, pos=0.72] {the timer's line} -| (cpu.south);
+  \draw[fl] (plic.west) -- ++(-0.9,0) |- (0,-3.5)
+    node[lbl, below, pos=0.72] {the interrupt controller's} -| (cpu.south);
+\end{tikzpicture}}
+\caption{The board: the core, its tracker, the router that decides by
+address, and the five peripherals behind it. The DDR3 controller is a
+foreign module, wired rather than written; the serial port reaches two
+pins, and the interrupt controller and the timer reach the core's two
+lines.}
+\label{fig:s-board}
+\end{figure}
+
 
 \section{The AXI Link}
 
@@ -186,12 +226,32 @@ peripheral bridge gives every request one of its own and remembers
 the node and the identifier to answer under.
 
 Vreteno, Razboj, a memory and a serial port sit on the four corners of a
-two by two lattice and run together: the core works out an
+two by two lattice, as Fig.~\ref{fig:s-noc} shows, and run together: the core works out an
 icosahedron and writes it into the memory they share as a display
 list, and the rasteriser, which has been watching for it, reads the
 list and draws it there. Drawing across the lattice takes Razboj a
 little over twice as long as on a link, which is what never waiting
 for an answer costs on a network that moves one packet a node a cycle.
+
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm, every node/.style={font=\scriptsize}]
+  \node[box] (n00) at (0,1.5) {node (0,0)\\Vreteno};
+  \node[box] (n10) at (3.0,1.5) {node (1,0)\\Razboj};
+  \node[box] (n01) at (0,0) {node (0,1)\\memory};
+  \node[box] (n11) at (3.0,0) {node (1,1)\\serial};
+  \draw[fl, <->] (n00) -- node[lbl, above] {link} (n10);
+  \draw[fl, <->] (n01) -- node[lbl, below] {link} (n11);
+  \draw[fl, <->] (n00) -- (n01);
+  \draw[fl, <->] (n10) -- (n11);
+\end{tikzpicture}
+\caption{The system on a two by two lattice: the core, the rasteriser,
+the memory they share and the serial port, one to a node. Every link
+is two virtual channels, one for requests and one for responses, and
+each node's fifth port is the bridge that puts AXI on the network.}
+\label{fig:s-noc}
+\end{figure}
 
 \section{Razboj, a GPU}
 
@@ -240,6 +300,28 @@ was an arbiter, the core was the only unit here that could be a host.
 this from the trace that same run wrote, and generated a testbench
 from it that replays the netlist.}
 \label{fig:w-wave}
+\end{figure}
+
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[x=1cm, y=1cm, every node/.style={font=\scriptsize}]
+  \node[box] (part) at (0,0) {the part,\\lowered};
+  \node[box] (top) at (2.6,0) {a top written\\by hand};
+  \node[boxf] (out) at (5.4,0) {the board's\\own silicon};
+  \draw[fl] (part) -- node[lbl, above] {netlist} (top);
+  \draw[fl] (top) -- node[lbl, above] {pins} (out);
+  \node[lbl, align=left, anchor=north west] at (-1.0,-0.8)
+    {Ethernet: the MAC, an RGMII wrapper, the JL2121 PHY.\\
+     Video: the HDMI peripheral and its I2C, the SiI9134 encoder.\\
+     PCIe: the BAR registers and the pin join, AMD's XDMA endpoint.};
+\end{tikzpicture}}
+\caption{The three designs that reach the board's own silicon have one
+shape: a lowered part, a top written by hand for the clocking and the
+pins, and a chip on the far side of them. Each goes through Vivado to
+a bitstream; what has run on the board is in Table~II.}
+\label{fig:s-boards}
 \end{figure}
 
 \section{From an Empty Directory}
