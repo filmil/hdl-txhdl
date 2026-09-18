@@ -67,9 +67,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 35\,106 lines of Rust: 10\,591 of runtime
-and macros, 9\,041 of parts, 6\,442 in fifty-four examples, 6\,119 of
-Vreteno with its board, and 2\,913 of Razboj, DDR3, Ethernet, HDMI,
+Together they are 38\,119 lines of Rust: 11\,473 of runtime
+and macros, 10\,407 of parts, 7\,124 in fifty-seven examples, 6\,200 of
+Vreteno with its board, and 2\,915 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -84,14 +84,16 @@ The channel, a buffer of two & runtime & inside a parent \\
 Buffer; FIFO & parts & both \\
 Stations of 2 to 10 inputs & parts & 2 and 3 \\
 AXI routers, 2 to 8 peripherals & parts & 3 \\
+AXI arbiters, 2 to 8 hosts & parts & 2 \\
 AXI host and peripheral trackers & parts & both \\
 AXI-Lite bridges, 1 to 8 peripherals & parts & 1 and 2 \\
 AXI to Wishbone bridge & parts & yes \\
 AXI host pins to the link's channels & parts & yes \\
 Interrupt controllers, 1 to 8 sources & parts & 3 \\
 Network node, switch, 2 bridges & parts & not yet \\
-Pins; SPI; Ethernet's three; HDMI's two & parts & all seven \\
+Pins; SPI; I2C; Ethernet's three; HDMI's two & parts & all eight \\
 System control: identity, cause, reset & parts & yes \\
+Watchdog: a countdown, a key, a window & parts & yes \\
 Vreteno; memory, timer, serial port & \code{cpu} & all four \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
@@ -218,10 +220,18 @@ of an operation that arrive on separate channels, out of order, and
 fires when the last of them has.
 
 It has grown outwards from the bus since: an Ethernet MAC, HDMI video
-with the I2C that configures the chip, general purpose pins, a system
-control block that says which design is running and why it last
-restarted, and a bridge from AXI to Wishbone, which lets a controller
-written elsewhere be a peripheral here.
+with the I2C that configures the chip and a general I2C master beside
+it, general purpose pins, an SPI master, a system control block that
+says which design is running and why it last restarted, a watchdog
+that restarts it when software stops saying it is there, and a bridge
+from AXI to Wishbone, which lets a controller written elsewhere be a
+peripheral here.
+
+The bus itself has both halves now. A router puts several peripherals
+behind one host and decides on the address; an arbiter puts several
+hosts on one peripheral link and decides whose turn it is, tagging
+each host's identifier so the answers find their way home. Until there
+was an arbiter, the core was the only unit here that could be a host.
 
 \begin{figure}[htbp]
 \centering
@@ -268,8 +278,8 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs a hundred and thirteen targets, of
-which ninety-eight are netlists under both simulators; the rest are the
+its ports. \code{bazel test //...} runs a hundred and twenty targets, of
+which a hundred and four are netlists under both simulators; the rest are the
 core's model and
 programs, the board's own run, Razboj, the parts, the SoC's run, and
 the tools. Four more are tagged manual: the board and its DDR3 under
