@@ -4101,6 +4101,10 @@ struct Helper {
     consts: Vec<String>,
     lets: Vec<(String, String)>,
     value: String,
+    /// Why this helper cannot be inlined, if it cannot: a tuple `let`
+    /// the scan could not take apart. The message is given where the
+    /// helper is called, since that is the line a reader can act on.
+    refused: Vec<String>,
 }
 
 fn punct_at(ts: &[TokenTree], i: usize, c: char) -> bool {
@@ -4254,11 +4258,60 @@ fn find_helpers(file: Option<std::path::PathBuf>) -> Vec<Helper> {
             break;
         };
         let mut lets = Vec::new();
+        let mut refused = Vec::new();
         let mut value = String::new();
         for st in statements(body) {
             let st: Vec<TokenTree> = st.into_iter().collect();
             if st.len() > 3 && is_ident(&st[0], "let") {
-                lets.push((st[1].to_string(), text_of(&st[3..])));
+                // A tuple `let` stands for one `let` per name, and it
+                // is taken apart here: the name of a helper's `let` is
+                // what its value is substituted for, so a name of
+                // `(x, y)` would substitute for nothing and leave `x`
+                // and `y` in the netlist with nothing declaring them,
+                // which is issue 159.
+                let names = match &st[1] {
+                    TokenTree::Group(g)
+                        if g.delimiter() == Delimiter::Parenthesis =>
+                    {
+                        Some(split_commas(g))
+                    }
+                    _ => None,
+                };
+                match names {
+                    None => lets.push((st[1].to_string(), text_of(&st[3..]))),
+                    Some(names) => {
+                        let values = match &st[3] {
+                            TokenTree::Group(g)
+                                if g.delimiter() == Delimiter::Parenthesis
+                                    && st.len() == 4 =>
+                            {
+                                Some(split_commas(g))
+                            }
+                            _ => None,
+                        };
+                        let single = |t: &Vec<TokenTree>| match t.as_slice() {
+                            [TokenTree::Ident(id)] => Some(id.to_string()),
+                            _ => None,
+                        };
+                        let named: Option<Vec<String>> =
+                            names.iter().map(single).collect();
+                        match (named, values) {
+                            (Some(ns), Some(vs)) if ns.len() == vs.len() => {
+                                for (n, v) in ns.iter().zip(&vs) {
+                                    lets.push((n.clone(), text_of(v)));
+                                }
+                            }
+                            _ => refused.push(format!(
+                                "the tuple `let` of `{name}` binds {n} \
+                                 names to something that is not a tuple of \
+                                 {n} values: a helper's `let` is a \
+                                 substitution, so write one `let` per name \
+                                 (issue 159)",
+                                n = names.len()
+                            )),
+                        }
+                    }
+                }
             } else {
                 value = text_of(&st);
             }
@@ -4269,6 +4322,7 @@ fn find_helpers(file: Option<std::path::PathBuf>) -> Vec<Helper> {
             consts,
             lets,
             value,
+            refused,
         });
         i = j + k + 1;
     }
@@ -4655,6 +4709,9 @@ fn inline_helper(
             .map(|t| t.into_iter().collect())
             .map_err(|_| format!("cannot parse `{text}` in `{}`", h.name))
     };
+    if let Some(why) = h.refused.first() {
+        return Err(why.clone());
+    }
     for (n, e) in &h.lets {
         let v = tr(&toks(e)?, &s)?;
         s.push((n.clone(), v));
@@ -5091,11 +5148,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                             "NlE::Cond(Box::new({}), Box::new({}), Box::new({}))",
                             v[0], v[1], v[2]
                         ),
-                        other => {
-                            return Err(format!(
-                                "function `{other}` is not lowered"
-                            ))
-                        }
+                        other => return Err(format!("function `{other}` is not lowered")),
                     });
                 }
             }
