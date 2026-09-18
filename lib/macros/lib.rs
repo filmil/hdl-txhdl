@@ -4139,6 +4139,72 @@ thread_local! {
     /// value's type, so a field of a port's value can be sliced out.
     static PTYPES: std::cell::RefCell<Vec<(String, String)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// The names of the ports of the unit being lowered, for the check
+    /// below: an expression that names one of them is not a constant.
+    static PNAMES: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The name of a signal the expression mentions, if it mentions one: a
+/// port of the unit, a name a `let` bound, or `self`, which reaches a
+/// register. An expression the lowering does not recognise otherwise
+/// becomes `lit`, a constant evaluated where `lowered` runs, and these
+/// names mean nothing there: `rustc` then reports them as missing
+/// variables, pointing at the `#[lower]` attribute with nothing to say
+/// which expression it was. That is issue 128.
+fn names_a_signal(
+    ts: &[TokenTree],
+    subst: &[(String, String)],
+) -> Option<String> {
+    for (i, t) in ts.iter().enumerate() {
+        match t {
+            TokenTree::Group(g) => {
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                if let Some(n) = names_a_signal(&inner, subst) {
+                    return Some(n);
+                }
+            }
+            TokenTree::Ident(id) => {
+                let n = id.to_string();
+                if n == "self" {
+                    return Some(n);
+                }
+                // A path's segments are not signals: neither the
+                // segment after `::` nor the one before it.
+                let after = i >= 2
+                    && matches!(&ts[i - 1], TokenTree::Punct(p) if p.as_char() == ':');
+                let before = i + 2 < ts.len()
+                    && matches!(&ts[i + 1], TokenTree::Punct(p) if p.as_char() == ':')
+                    && matches!(&ts[i + 2], TokenTree::Punct(p) if p.as_char() == ':');
+                if after || before {
+                    continue;
+                }
+                if subst.iter().any(|(k, _)| *k == n)
+                    || PNAMES.with(|p| p.borrow().iter().any(|q| *q == n))
+                {
+                    return Some(n);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `lit(text)`, unless the text names a signal, in which case the
+/// expression is refused here rather than by `rustc` at the attribute.
+fn as_lit(
+    ts: &[TokenTree],
+    text: &str,
+    subst: &[(String, String)],
+) -> Result<String, String> {
+    match names_a_signal(ts, subst) {
+        Some(n) => Err(format!(
+            "cannot lower `{text}`: it names `{n}`, which is a signal of \
+             the unit, so the expression cannot be a constant"
+        )),
+        None => Ok(format!("::txhdl::netlist::lit({text})")),
+    }
 }
 
 /// A field of a port's value, `p.f`: the base must be a port's data,
@@ -4773,6 +4839,16 @@ fn with_consts(text: &str, consts: &[(String, String)]) -> String {
 }
 
 fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
+    // A trailing comma: the tokens of a call's argument carry it when
+    // the formatter puts the argument on its own line, and it made the
+    // expression end in a comma rather than in whatever it is. A chain
+    // then stopped being a chain and became a constant, which is half
+    // of issue 128.
+    if let [rest @ .., TokenTree::Punct(p)] = ts {
+        if p.as_char() == ',' {
+            return tr(rest, subst);
+        }
+    }
     if ts.is_empty() {
         return Err("empty expression".into());
     }
@@ -5169,7 +5245,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 }
                 // A sized literal keeps its width; a bare one is a number.
                 if text.starts_with("U::<") {
-                    return Ok(format!("::txhdl::netlist::lit({text})"));
+                    return as_lit(ts, &text, subst);
                 }
                 if text.starts_with("U::from") {
                     return Ok(format!("NlE::Num(({}) as u128)", g.stream()));
@@ -5180,11 +5256,10 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 let upper = leaf.chars().all(|c| {
                     c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()
                 });
-                return Ok(if upper {
-                    format!("NlE::Num(({text}) as u128)")
-                } else {
-                    format!("::txhdl::netlist::lit({text})")
-                });
+                if upper {
+                    return Ok(format!("NlE::Num(({text}) as u128)"));
+                }
+                return as_lit(ts, &text, subst);
             }
             Err(format!("cannot lower `{text}`"))
         }
@@ -5270,7 +5345,8 @@ fn pattern_cond(
         } else if digit {
             ebin("==", v, &format!("NlE::Num(({text}) as u128)"))
         } else {
-            ebin("==", v, &format!("::txhdl::netlist::lit({text})"))
+            // A pattern is a constant too, so the same check applies.
+            ebin("==", v, &as_lit(a, &text, subst)?)
         };
         cond = Some(match cond {
             None => c,
@@ -6312,6 +6388,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         *h.borrow_mut() = find_helpers(Span::call_site().local_file())
     });
     PTYPES.with(|p| p.borrow_mut().clear());
+    PNAMES.with(|p| p.borrow_mut().clear());
     // Past any attributes and doc comments, to `impl`.
     let Some(at) = toks.iter().position(
         |t| matches!(t, TokenTree::Ident(id) if id.to_string() == "impl"),
@@ -6507,6 +6584,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
         PTYPES
             .with(|p| p.borrow_mut().push((pname.clone(), inner.to_string())));
+        PNAMES.with(|p| p.borrow_mut().push(pname.clone()));
     }
     // run's body: the brace group after its parameters; inside it, the loop.
     fn is_brace(t: &&TokenTree) -> bool {
