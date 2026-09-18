@@ -446,4 +446,55 @@ mod tests {
         assert_eq!(m.x[5], 0x1234_5000);
         assert_eq!(m.x[6], 1);
     }
+
+    /// An unaligned load and an unaligned store each trap, with the
+    /// cause the specification names and the address as the trap
+    /// value. A byte never traps, whatever the address, and the
+    /// aligned forms still work. This is issue 138: each of these used
+    /// to use the aligned word and say nothing.
+    #[test]
+    fn an_unaligned_access_traps() {
+        use crate::isa::{csrrw, lb, lh, lw, sh, sw};
+        let handler = 0x40;
+        // The trap handler is a word past everything else, and every
+        // program below sets it, does one access, and ends.
+        let run = |access: u32| {
+            let mut imem = vec![
+                lui(1, 0x1),            // 0: x1 = 0x1000, the data
+                addi(2, 0, 1),          // 4: x2 = 1, a byte to store
+                addi(3, 0, handler),    // 8: x3 = the handler
+                csrrw(0, CSR_MTVEC, 3), // 12: mtvec = x3
+                access,                 // 16
+                ebreak(),               // 20
+            ];
+            imem.resize(32, ebreak());
+            let mut m = Model::default();
+            for _ in 0..8 {
+                if m.halted.is_some() {
+                    break;
+                }
+                m.step(&imem, None);
+            }
+            m
+        };
+        // The aligned forms go through and leave no cause behind.
+        let m = run(lw(4, 1, 0));
+        assert_eq!(m.csr.mcause, 0, "an aligned word is no trap");
+        let m = run(lb(4, 1, 3));
+        assert_eq!(m.csr.mcause, 0, "a byte at any address is no trap");
+        // The unaligned ones trap, with the address they asked for.
+        let m = run(lw(4, 1, 2));
+        assert_eq!(m.csr.mcause, CAUSE_LOAD_MISALIGNED, "lw at 0x1002");
+        assert_eq!(m.csr.mtval, 0x1002, "the address is the trap value");
+        assert_eq!(m.pc, handler as u32, "and the handler is next");
+        let m = run(lh(4, 1, 1));
+        assert_eq!(m.csr.mcause, CAUSE_LOAD_MISALIGNED, "lh at 0x1001");
+        let m = run(sw(2, 1, 1));
+        assert_eq!(m.csr.mcause, CAUSE_STORE_MISALIGNED, "sw at 0x1001");
+        assert_eq!(m.csr.mtval, 0x1001);
+        let m = run(sh(2, 1, 3));
+        assert_eq!(m.csr.mcause, CAUSE_STORE_MISALIGNED, "sh at 0x1003");
+        // And the store that trapped wrote nothing.
+        assert_eq!(m.mem[0], 0, "a trapping store leaves the word alone");
+    }
 }

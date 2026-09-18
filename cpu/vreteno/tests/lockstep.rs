@@ -273,9 +273,21 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         // the model writes it when the instruction retires. So the
         // CSRs are compared except in the cycle a system instruction,
         // or an illegal word, executed: they agree again a cycle later.
+        // A load that traps writes the CSRs in execute as a system
+        // instruction does, so it is skipped for the same reason: the
+        // address is the one the core used, since the registers agree.
+        let d = decode(executed);
+        let bad_access = matches!(
+            d.kind,
+            Kind::Lb | Kind::Lh | Kind::Lw | Kind::Lbu | Kind::Lhu
+        ) && vreteno32::model::misaligned(
+            d.kind,
+            model.x[d.rs1 as usize].wrapping_add(d.imm as u32),
+        );
         let system = executing
             && !stall.get().to_bool()
             && (taken.is_some()
+                || bad_access
                 || matches!(
                     decode(executed).kind,
                     Kind::Csrrw
@@ -524,4 +536,67 @@ fn compressed_instructions() {
     assert_eq!(m.x[21], 0x8002, "the halfword is the trap value");
     assert_eq!(m.x[16], m.x[1]);
     assert_eq!(m.x[1] & 1, 0);
+}
+
+/// An unaligned load and an unaligned store trap rather than using the
+/// aligned word, which is issue 138. The core and the model are held
+/// to the same rule every cycle, and the handler counts the traps and
+/// steps past each, so the run ends.
+#[test]
+fn an_unaligned_access_traps() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let handler = a.label();
+    a.wide(lui(2, 1)); // x2 = 0x1000, the data memory
+    a.abs(handler, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.wide(addi(8, 0, 0)); // x8 counts the traps
+    a.wide(addi(3, 0, -2)); // x3 = -2, something to store
+                            // A word at an aligned address, which goes through and is read
+                            // back, so the run says the ordinary path still works.
+    a.wide(sw(3, 2, 0));
+    a.wide(lw(4, 2, 0)); // x4 = -2
+                         // Then the five that must trap: a word one byte along and two
+                         // along, and a half at an odd address, each way.
+    a.wide(lw(5, 2, 1));
+    a.wide(lw(6, 2, 2));
+    a.wide(lh(7, 2, 5));
+    a.wide(sh(3, 2, 7));
+    a.wide(sw(3, 2, 3));
+    // And a byte at an odd address, which never traps.
+    a.wide(sb(3, 2, 9));
+    a.wide(lb(9, 2, 9)); // x9 = -2
+    a.wide(ebreak());
+    // The handler: the cause and the trap value of the last one, the
+    // count, and on past the instruction, which is four bytes here.
+    a.align();
+    a.place(handler);
+    a.wide(csrrs(20, CSR_MCAUSE, 0));
+    a.wide(csrrs(21, CSR_MTVAL, 0));
+    a.wide(addi(8, 8, 1));
+    a.wide(csrrs(22, CSR_MEPC, 0));
+    a.wide(addi(22, 22, 4));
+    a.wide(csrrw(0, CSR_MEPC, 22));
+    a.wide(mret());
+    let p = a.words();
+    let m = lockstep(&p, "an unaligned access", Some(11));
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[4], (-2i32) as u32, "the aligned word went through");
+    assert_eq!(m.x[9], (-2i32) as u32, "and a byte at an odd address");
+    assert_eq!(m.x[8], 5, "five accesses trapped");
+    assert_eq!(m.x[5], 0, "a load that trapped wrote no register");
+    assert_eq!(m.x[6], 0);
+    assert_eq!(m.x[7], 0);
+    assert_eq!(
+        m.x[20],
+        vreteno32::isa::CAUSE_STORE_MISALIGNED,
+        "the last trap was a store's"
+    );
+    assert_eq!(m.x[21], 0x1003, "and its address is the trap value");
+    assert_eq!(
+        m.mem[0],
+        (-2i32) as u32,
+        "the trapping stores wrote nothing"
+    );
 }
