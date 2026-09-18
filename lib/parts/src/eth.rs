@@ -657,13 +657,10 @@ impl Unit for EthLite {
                 2 => received,
                 _ => U::<32>::from(0u32),
             });
-            // The written word as a wire of its own, whose bits the
-            // byte and its last flag are.
-            let written = wh.data;
             if wgo & (wsel == 1) {
                 tx.send(EthByte {
-                    data: written.slice::<0, 8>(),
-                    last: written.bit(8),
+                    data: wh.data.slice::<0, 8>(),
+                    last: wh.data.bit(8),
                 });
             }
             if wgo {
@@ -818,6 +815,22 @@ mod tests {
         padded.push(0);
         assert_eq!(got, vec![padded, frames[1].clone(), frames[2].clone()]);
         assert_eq!(dropped, 0);
+    }
+
+    /// A bit of a field of a channel's value is a bit of the value, at
+    /// the field's offset. Verilog has no bit-select of a part-select,
+    /// and what was written for one, `w_data[35:4][8]`, did not
+    /// simulate in VHDL as the run did (issue 129).
+    #[test]
+    fn a_bit_of_a_channel_field_is_one_select_in_both_netlists() {
+        let v = EthLite::verilog("eth_lite");
+        let h = EthLite::vhdl("eth_lite");
+        assert!(v.contains("{w_data[11:4], w_data[12]}"), "one select each");
+        assert!(!v.contains("]["), "no select of a select");
+        assert!(
+            h.contains("w_data(11 downto 4) & w_data(12)"),
+            "the same in VHDL"
+        );
     }
 
     /// The receiver compares the CRC register with the residue,
