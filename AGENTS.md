@@ -311,6 +311,60 @@ Before filing, look for an open issue that already covers the bug; if
 one does, add what was learned to it rather than filing another.
 Report the issues filed when reporting on the task.
 
+# Standing rule: take the simplest issue, and say you have taken it
+
+More than one session works on this repository at once, and two
+sessions that pick the same issue do the same work twice and then
+conflict over it.
+So picking an issue is itself a step with a rule.
+
+## Take it before working on it
+
+An issue being worked on carries the `taken` label, and a comment
+saying who is on it and when.
+Put both on before the first line of code, not after the branch is
+pushed, because the window between choosing and pushing is exactly
+where two sessions collide.
+
+```sh
+fj issue -R hd search -s open       # what is open
+fj issue -R hd view <number>        # the labels say what is taken
+```
+
+Skip every issue that already carries `taken`.
+If the work is abandoned, the label comes off with a comment saying
+why, so that the next session finds it free rather than guessing from
+the silence.
+The label comes off when the pull request that closes the issue is
+merged, since the issue closes with it.
+
+## Prefer the simpler issue
+
+Of the issues that are free, take the simplest one that is worth
+doing, not the most interesting one.
+Simplest means the one whose fix is smallest and whose check is
+clearest: a one-line refusal with a probe beside it, a stale
+paragraph, a dependency that may no longer be needed.
+
+That order is not modesty, it is throughput.
+A small issue lands in one pull request, in an hour, against a `main`
+that has not moved under it.
+A large one spends a day on a branch that goes stale twice, conflicts
+with whatever else landed, and blocks nothing while it waits.
+Ten small issues closed are ten issues closed; one large one half done
+is none.
+
+Reasons to pass over a simpler issue, and to say which applies:
+
+* it is blocked by an issue nobody has done, and the issue says so;
+* it wants hardware, a board or a cable nobody has connected;
+* the user asked for a particular one, which settles it.
+
+A large issue that is genuinely next is taken whole, not started and
+left half done.
+When it is unclear whether an issue is small, read it and find out
+before taking it, rather than after.
+
 # Standing rule: one issue, one pull request, in topical commits
 
 An issue is a pull request of its own.
