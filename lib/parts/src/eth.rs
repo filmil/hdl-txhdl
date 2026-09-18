@@ -49,9 +49,9 @@ pub const CRC_INIT: u32 = 0xffff_ffff;
 /// The register after a whole frame and its own check sequence have
 /// gone through it, when nothing was corrupted on the way.
 pub const CRC_RESIDUE: u32 = 0xdebb_20e3;
-/// The same register complemented, which is what the receiver compares:
-/// a constant below 2 to the 31, so that the netlist's literal fits the
-/// integer of both target languages.
+/// The same register complemented. The receiver compared this while
+/// the lowering wrote a constant of 2 to the 31 or more as an unsized
+/// integer, which is issue 130; it compares the residue itself now.
 pub const CRC_GOOD: u32 = !CRC_RESIDUE;
 /// The largest frame a half stores, check sequence included.
 pub const FRAME_MAX: usize = 2048;
@@ -538,7 +538,7 @@ impl Unit for EthRx {
             let store = receiving & dv;
             let dv_end = receiving & !dv;
             let good =
-                !self.bad.get().to_bool() & (!crc == CRC_GOOD) & (len > 4);
+                !self.bad.get().to_bool() & (crc == CRC_RESIDUE) & (len > 4);
             // Offering: the frame without its check sequence.
             let payload = len - 4;
             let pos_next = pos + 1;
@@ -818,6 +818,26 @@ mod tests {
         padded.push(0);
         assert_eq!(got, vec![padded, frames[1].clone(), frames[2].clone()]);
         assert_eq!(dropped, 0);
+    }
+
+    /// The receiver compares the CRC register with the residue,
+    /// `0xdebb_20e3`, which is above 2 to the 31. Verilog reads an
+    /// unsized decimal as a 32-bit signed integer and VHDL guarantees
+    /// a natural only to 2^31 - 1, so the netlist writes the constant
+    /// at the width of what it is compared with: sized hexadecimal in
+    /// Verilog, a bit string in VHDL (issue 130).
+    #[test]
+    fn the_crc_residue_is_a_sized_constant_in_both_netlists() {
+        let v = EthRx::verilog("eth_rx");
+        let h = EthRx::vhdl("eth_rx");
+        assert!(v.contains("32'hdebb20e3"), "sized in Verilog");
+        assert!(!v.contains("3736805603"), "no unsized decimal");
+        let bits = format!("{:032b}", CRC_RESIDUE);
+        assert!(
+            h.contains(&format!("unsigned'(\"{bits}\")")),
+            "a bit string in VHDL"
+        );
+        assert!(!h.contains("to_unsigned(3736805603"), "not a natural");
     }
 
     #[test]
