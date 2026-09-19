@@ -170,6 +170,110 @@ mod tests {
         );
     }
 
+    /// A read of four beats across the network. A write of more than
+    /// one beat is refused (issue 125), because the beats after the
+    /// first carry no address and would be paired with the next
+    /// burst's address phase. A read is the other way round: the
+    /// network carries one request packet, and every beat of the
+    /// answer is a packet of its own with the identifier and `last`
+    /// in it, so nothing has to be remembered between them. Issue 133
+    /// asks whether that is true in fact as well as in argument, and
+    /// this is the answer: the four words come back, in order, with
+    /// the right data, and the last is marked.
+    #[test]
+    fn a_read_of_four_beats_crosses_the_lattice() {
+        let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
+        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+
+        let Link {
+            host,
+            host_in,
+            host_out,
+            per_in: hp_in,
+            per_out: hp_out,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let mut htrk = AxiHost::<A, D, S, I, NIDS>::default();
+        let mut hbr = Bridge::default();
+        let hx = net.exits.remove(0);
+
+        let Link {
+            per,
+            per_in: pp_in,
+            per_out: pp_out,
+            host_in: ph_in,
+            host_out: ph_out,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let mut ptrk = AxiPer::<A, D, S, I>::default();
+        let mut pbr = Peri::default();
+        let px = net.exits.pop().unwrap();
+        let ram = Ram::<A, D, S, I>::new(2048);
+
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let out = got.clone();
+        let client = async move {
+            // Four words, one beat each, since a write of several
+            // beats is refused; then one read of four beats.
+            for i in 0..4u32 {
+                let w = host
+                    .write(Wr::at(0x1000u32 + 4 * i), &[U::from(0xa0 + i)])
+                    .await;
+                w.done().await;
+            }
+            let r = host.read(Rd::at(0x1000u32, 4)).await;
+            let rd = r.done().await;
+            out.borrow_mut().push((
+                rd.resp,
+                rd.data.iter().map(|w| w.raw()).collect::<Vec<_>>(),
+            ));
+        };
+
+        let nodes = join_all(vec![
+            Box::pin(n00.run(net.ins.remove(0), net.outs.remove(0)))
+                as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
+            Box::pin(n10.run(net.ins.remove(0), net.outs.remove(0))),
+            Box::pin(n01.run(net.ins.remove(0), net.outs.remove(0))),
+            Box::pin(n11.run(net.ins.remove(0), net.outs.remove(0))),
+        ]);
+        let mut sim = Running::new(join2(
+            join2(
+                nodes,
+                join2(
+                    htrk.run(host_in, host_out),
+                    hbr.run(
+                        (hp_in.0, hp_in.1, hp_in.2, hx.p_out),
+                        (hx.q_in, hp_out.2, hp_out.3),
+                    ),
+                ),
+            ),
+            join2(
+                join2(
+                    ptrk.run(pp_in, pp_out),
+                    pbr.run(
+                        (px.q_out, ph_in.2, ph_in.3),
+                        (ph_out.0, ph_out.1, ph_out.2, px.p_in),
+                    ),
+                ),
+                join2(client, ram.clone().serve(per, 2)),
+            ),
+        ));
+        for _ in 0..2000 {
+            sim.cycle();
+        }
+        let got = got.borrow();
+        assert_eq!(got.len(), 1, "the read never came back");
+        assert_eq!(got[0].0, Resp::Okay, "the read");
+        assert_eq!(
+            got[0].1,
+            vec![0xa0, 0xa1, 0xa2, 0xa3],
+            "four beats, in order, each with its own word"
+        );
+    }
+
     /// A write of two beats across the network, which the bridges do
     /// not carry (issue 125), and which the host bridge therefore
     /// refuses. Before the refusal this test hung: the write left as
