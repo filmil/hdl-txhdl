@@ -1,0 +1,109 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: FlashWin
+\datasheet{FlashWin}{A read-only window onto an SPI flash: a read on the bus becomes a fast read on the wires, and the word comes back.}
+
+\dsfacts{\code{lib/parts/src/flashwin.rs}}{\code{txhdl\_parts::flashwin::FlashWin}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+The SPI master in \code{spi} is what a program drives a byte at a
+time. \code{FlashWin} is the other way of reaching the same chip: an
+address range in which an ordinary read is answered with what the
+flash holds there, with no registers to drive and nothing for software
+to sequence.
+
+That is what a bootloader needs, and what a core fetching from the bus
+needs, because neither can run software to read the software it is
+about to run.
+
+A read at an address sends the fast read command \code{0x0b}, the
+three bytes of that address with its low two bits cleared, one byte
+the chip throws away, and then takes four, which are the word, lowest
+address in the lowest byte. Nine bytes on the wires for four on the
+bus.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{DIV} & The clock: a half of a bit takes \code{DIV + 1} cycles,
+so the flash is clocked at the system's rate over
+\code{2 * (DIV + 1)}. The tables use 1, as the example does; a board
+divides further. \\
+\code{I} & The width of the AXI identifier on \code{req}, \code{ans}
+and \code{rb}, in bits. The tables use 2, as every design here does. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Register map}
+
+None. The window has no registers: every address in its range is a
+word of the flash, and the range's base is the router's business
+rather than the part's, as it is for the data memory.
+
+\dstables{FlashWin}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A read is taken when nothing is on the wires and no answer is
+waiting. Its address is kept with the low two bits cleared, since a
+word is what the bus asks for.
+\item The nine bytes go out under one select. The select is low from
+the cycle the read is taken and rises when the ninth byte is done, so
+each read is a command the chip sees whole, which is what a real chip
+requires.
+\item The wires are mode 0, and only mode 0: the clock idles low, the
+chip takes a bit as the clock rises and the master moves one as it
+falls. Every flash answers a fast read in that mode, so the part needs
+neither the master's two mode bits nor a register to hold them.
+\item The four bytes of data are assembled as they arrive, the first
+into the low eight bits. The answer goes out on \code{rb} in the first
+cycle the channel has room after the ninth byte.
+\item A write is taken, its beat is dropped and it is answered
+\code{SLVERR}. The window is read only, and saying so is what makes it
+safe to fetch from: nothing on the bus can change what the instruction
+stream is reading, so the question of what a fetch sees when a write
+lands in the same cycle does not arise. That question is issue 268.
+\item \code{rst} stops whatever is on the wires and clears the answer
+and the held write.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/examples:ex\_flashwin} puts the window behind an AXI
+link, reads two words the chip model holds and checks each against
+what was put there, then writes and finds \code{SLVERR}.
+\item The chip is \code{FlashDevice} from \code{spi}, the model that
+already checks the master, so the two ways of reaching a flash are
+checked against one description of one chip rather than two that could
+drift apart.
+\item The build simulates the netlist against that run under nvc and
+Verilator: \code{//docs:flashwin\_sim\_flashwin\_tb\_test} and
+\code{//docs:flashwin\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+Nothing in the tree yet. It is meant for the board's configuration
+flash, which issue 312 puts on the board through \code{STARTUPE2}, and
+for the bootloader of issue 135.
+
+\subsection*{Limits}
+
+A word costs nine bytes on the wires, which is about three hundred
+cycles at the divider the example uses: slow beside a memory and fast
+beside a resynthesis. There is no cache in front of it and no burst:
+every word is a command of its own, and a read of several beats is not
+served. Only mode 0, and only the fast read command, so a chip that
+wants another command for another purpose wants the master instead.
+The address is 24 bits, which is the three the command carries, so the
+window reaches 16\,MiB. Nothing is refused by address: every address
+in the range is asked of the chip, and a chip that has nothing there
+answers what it answers.

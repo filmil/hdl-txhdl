@@ -29,6 +29,7 @@ use txhdl_parts::bus::router::Router3;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::eth::{EthLite, EthRx, EthTx};
 use txhdl_parts::fifo::Fifo;
+use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::gpio::Gpio;
 use txhdl_parts::hdmi::{vga, Hdmi, I2cInit};
 use txhdl_parts::i2c::I2c;
@@ -459,6 +460,11 @@ fn main() {
         "Check",
         "Check<Issue<32>>",
         Check::<Issue<32>>::lowered("check"),
+    );
+    sheet(
+        "FlashWin",
+        "FlashWin<1, 2>",
+        FlashWin::<1, 2>::lowered("flashwin"),
     );
     sheet("Spi", "Spi", Spi::lowered("spi"));
     sheet("Tracer", "Tracer<8>", Tracer::<8>::lowered("tracer"));
