@@ -1,0 +1,71 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Check
+\datasheet{Check}{Two streams to one, with a line that says they differed: a word moves when both offer one, the first copy's goes on.}
+
+\dsfacts{\code{lib/parts/src/redundant.rs}}{\code{txhdl\_parts::redundant::Check}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+\code{Check<T>} is the other half of running one thing twice. It takes
+a word from each copy in the same cycle, passes the first copy's on,
+and raises \code{differs} when the two are not equal. The line is
+raised in the cycle the difference is seen and stays raised until
+\code{rst}.
+
+It compares the whole payload, since \code{T} is a \code{PartialEq},
+rather than a checksum of it.
+
+\subsection*{Parameters}
+
+\code{T}, the payload, a \code{Transaction}, a \code{Value} and a
+\code{PartialEq}. The tables use \code{Issue<32>}, the burst a core
+issues. \code{Pair} also checks \code{W<32, 4>} and \code{Grant<2>},
+and the example and the tests check a byte.
+
+\dstables{Check}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A word moves only when both inputs offer one and the output has
+room. Both are taken in that cycle and the first's is sent.
+\item The comparison is made only when a word moves. Two copies that
+are merely out of step, one offering and the other not, stall the part
+rather than raise the line: a copy that has stopped shows up on the
+wires a design compares beside this, not here.
+\item \code{differed} is set in the cycle a difference moves and is
+cleared only by \code{rst}. The \code{differs} port is that register
+or this cycle's difference, so the line is up in the same cycle rather
+than the one after.
+\item The differing word is not dropped and the stream is not stopped:
+the first copy's word goes on whatever the second said.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{two\_that\_agree\_pass\_through\_with\_the\_line\_down} and
+\code{a\_difference\_raises\_the\_line\_and\_keeps\_it\_up}, in
+\code{//lib/parts:parts\_test}. The second feeds two lists that differ
+in their middle word and finds the first list on the output and the
+line still up at the end.
+\item \code{//lib/examples:ex\_redundant}, and the netlist simulated
+against its run under nvc and Verilator:
+\code{//docs:redundant\_sim\_check\_check\_tb\_test} and
+\code{//docs:redundant\_vsim\_check\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Pair}, three times: the bursts the two cores issue, the write
+beats they send and the identifiers they release.
+
+\subsection*{Limits}
+
+It says that there was a difference, not which copy is wrong and not
+which word it was in; a design that wants either keeps its own record.
+It does not stop the stream on a difference. It holds a register,
+\code{last}, that nothing drives and nothing reads, which is issue 287.
+There is no timeout: two copies that stop offering stall the output for
+ever.

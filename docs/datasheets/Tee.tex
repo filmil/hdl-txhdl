@@ -1,0 +1,75 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Tee
+\datasheet{Tee}{One stream to two receivers in step: a word is taken when both have room, and neither can run a word ahead of the other.}
+
+\dsfacts{\code{lib/parts/src/redundant.rs}}{\code{txhdl\_parts::redundant::Tee}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+A machine that must not be quietly wrong runs two of itself and
+compares. The comparison is worth something only if both copies see
+exactly the same words in the same cycles, and \code{Tee<T>} is what
+makes that true of a channel: it takes one word from its input and
+offers it to both sides, and it takes the next only once both have had
+it.
+
+That is the whole of the part. It does not compare, drop or reorder
+anything; \code{Check} is the other half.
+
+\subsection*{Parameters}
+
+\code{T}, the payload, which must be a \code{Transaction} and a
+\code{Value}. The tables use the tree's read answer,
+\code{R<32, 2>}. \code{Pair} also tees \code{Done<2>} and
+\code{Grant<2>}, and the example and the tests tee a byte.
+
+\dstables{Tee}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item The word is registered rather than passed through. A unit that
+read a channel and drove one in the same cycle would be a
+combinational path from one side's handshake to the other's, which is
+the shape this repository keeps out of its channels, and its netlist
+could not be replayed against the run cycle by cycle. So a word taken
+in one cycle is offered from the next.
+\item \code{full} says a word is held. Each side takes it in the first
+cycle in which that side has room and has not taken it already, which
+\code{took\_a} and \code{took\_b} record.
+\item A new word is taken when the held one has been taken by both, or
+when none is held. So the tee refuses its input for as long as the
+slower side has not caught up, and the faster side cannot be offered
+the next word early.
+\item With both sides ready in every cycle the tee passes one word a
+cycle, and the two sides are always on the same word.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{both\_sides\_of\_a\_tee\_see\_every\_word} and
+\code{a\_slow\_side\_holds\_the\_other\_back}, in
+\code{//lib/parts:parts\_test}. The second gives one side a receiver
+that takes a word every other cycle and finds the two sides' lists
+equal, which is the property the part exists for.
+\item \code{//lib/examples:ex\_redundant} runs two adders behind one
+tee and gives one of them a different addend halfway through. The build
+simulates the netlist against that run under nvc and Verilator:
+\code{//docs:redundant\_sim\_tee\_tee\_tb\_test} and
+\code{//docs:redundant\_vsim\_tee\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Pair}, three times: the read answers, the write completions and
+the identifiers the tracker hands out, each to both cores.
+
+\subsection*{Limits}
+
+Two receivers, not \code{N}. One word of storage, so one cycle between
+taking a word and offering it, and no queue behind that. A side that
+never becomes ready stops the tee, which is the intended behaviour and
+also means the part has no timeout. There is no reset port: the
+registers start at their defaults.

@@ -1,0 +1,92 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Pair
+\datasheet{Pair}{Two Vreteno cores in step, with everything they say compared and one line that says they stopped agreeing.}
+
+\dsfacts{\code{cpu/vreteno/src/pair.rs}}{\code{vreteno32::pair::Pair}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+\code{Pair<IW>} is two \code{Vreteno} cores running one program, with
+one line that says they disagreed.
+
+Every input the pair is given goes to both: the wires directly, since a
+wire has no handshake, and each of the three channels through a
+\code{Tee}, which hands a word to both cores in one cycle or to
+neither. Every output is compared: the three channels through a
+\code{Check} each, and the three wires through \code{Watch}.
+
+What leaves the pair is the first core's, so a design puts a pair where
+it would have put a core and wires nothing differently. What the pair
+adds is one input and one output: \code{fault}, the self-test, and
+\code{differs}.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{IW} & The width of the AXI identifier the cores use, in bits,
+passed to both cores and to the channels between them. The tables use
+2, which is the only width in the tree. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{Pair}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item The pair holds no register of its own. Every register in it
+belongs to a core, a tee, a check or the watch.
+\item The three tees put one cycle between a word reaching the pair and
+a core being offered it. The delay is the same for both cores, which is
+the point of it, and neither core can be offered a word the other has
+not had.
+\item A disagreement raises \code{differs} in the cycle it happens, on
+a channel or on a wire alike, and the line stays up until \code{rst}.
+\item Nothing else happens. Neither core is stopped, no channel is
+held, no trap is raised, and the first core's word still goes out. The
+pair says that there was a disagreement; what to do about it, between a
+reset, a trap and a stop, belongs to the system around it.
+\item A core that stops offering on a channel stalls that channel
+rather than raising the line, since a check compares only words that
+move. Such a core shows up on the wires, which are compared every
+cycle.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//cpu/vreteno:pair} runs the pair on the lockstep test's
+machine, with a tracker, a router, the data memory, the interrupt
+controller and the serial port.
+\code{two\_cores\_given\_the\_same\_run\_agree} runs eight random
+programs and finds the line never up.
+\code{a\_core\_held\_in\_reset\_a\_cycle\_longer\_is\_caught} raises
+\code{fault} for one cycle and finds it up.
+\code{the\_line\_stays\_up\_after\_a\_disagreement} reads it again at the
+end of six hundred cycles and finds it still up.
+\item The pair is never lowered, so it has no netlist, no
+co-simulation and no synthesis. Its two parts from \code{//lib/parts}
+are simulated on their own through \code{ex\_redundant}.
+\end{itemize}
+
+\subsection*{Used by}
+
+Nothing in the tree but its own test. It is the shape a design takes
+when it must not be quietly wrong, and no design here has asked for it
+yet.
+
+\subsection*{Limits}
+
+One bit of report, with no record of which comparison fired or when.
+The only fault the design can inject is holding the second core in
+reset. The two cores are two instances of one Rust type, so a fault in
+the design is in both and neither the comparison nor the self-test can
+see it; what a pair catches is a fault that strikes one copy. The pair
+has no address map and no registers of its own, so a program cannot
+read the line; a design brings it out as a wire.

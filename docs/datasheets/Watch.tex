@@ -1,0 +1,62 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Watch
+\datasheet{Watch}{The three wires two cores drive, compared every cycle, and every disagreement gathered into one line.}
+
+\dsfacts{\code{cpu/vreteno/src/pair.rs}}{\code{vreteno32::pair::Watch}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+A channel has a handshake, so two copies of it can be compared when a
+word moves, which is what \code{Check} does. A wire has none: it holds
+a value in every cycle and nothing says when to look. \code{Watch}
+therefore compares the three wires a \code{Vreteno} core drives,
+\code{halt}, \code{instr} and its \code{Writeback}, in every cycle, and
+passes the first core's on.
+
+It is also where the lines meet. A unit of units has no logic of its
+own, so the three \code{Check} lines are brought here and gathered with
+the wire comparison into the one line a design outside reads.
+
+\subsection*{Parameters}
+
+None. The ports are the core's own types, so the unit is written for
+the core rather than for any pair of things.
+
+\dstables{Watch}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item Every cycle it compares the two halts, the two instruction words
+and the two writebacks, and takes the three check lines as they are
+this cycle.
+\item \code{differed} is set in the first such cycle and is cleared
+only by \code{rst}. The \code{differs} port is that register or this
+cycle's disagreement, so the line is up in the cycle the cores stop
+agreeing rather than the one after.
+\item \code{halt}, \code{instr} and \code{wb} are the first core's,
+driven combinationally, so a design around the pair sees one core and
+no added cycle.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Through \code{Pair}, in \code{//cpu/vreteno:pair}: eight random
+programs with the two cores agreeing, and then one cycle of
+\code{fault}, after which the line is up and stays up to the end of the
+run.
+\item It is never lowered on its own, so it has no netlist and no
+co-simulation of its own.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Pair}, once.
+
+\subsection*{Limits}
+
+One bit of report for six comparisons, so nothing outside can tell
+which of them fired. It compares what it is given and knows nothing of
+the channels. Only \code{rst} clears it.

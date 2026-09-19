@@ -19,6 +19,7 @@ use txhdl::types::U;
 use txhdl_parts::buffer::Buffer;
 use txhdl_parts::bus::arbiter::Arbiter2;
 use txhdl_parts::bus::axi::{AxiHost, AxiPer};
+use txhdl_parts::bus::axi::{Issue, R};
 use txhdl_parts::bus::axi_lite::LiteBridge1;
 use txhdl_parts::bus::axi_pins::AxiPins;
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
@@ -33,6 +34,7 @@ use txhdl_parts::hdmi::{vga, Hdmi, I2cInit};
 use txhdl_parts::i2c::I2c;
 use txhdl_parts::plic::Plic2;
 use txhdl_parts::pwm::Pwm;
+use txhdl_parts::redundant::{Check, Tee};
 use txhdl_parts::spi::Spi;
 use txhdl_parts::station::Station3;
 use txhdl_parts::syscon::Syscon;
@@ -41,6 +43,7 @@ use txhdl_parts::wdog::Wdog;
 use vreteno32::board::Board;
 use vreteno32::core::Vreteno;
 use vreteno32::dmem::Dmem;
+use vreteno32::pair::{Inject, Pair, Watch};
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
 
@@ -442,12 +445,21 @@ fn main() {
         "I2cInit<63, 2520000>",
         I2cInit::<63, 2_520_000>::lowered("hdmi_i2c"),
     );
+    sheet("Watch", "Watch", Watch::lowered("watch"));
+    sheet("Inject", "Inject", Inject::lowered("inject"));
+    sheet("Pair", "Pair<2>", Pair::<2>::lowered("pair"));
     sheet("Vreteno", "Vreteno<2>", Vreteno::<2>::lowered("vreteno"));
     sheet("Dmem", "Dmem<2>", Dmem::<2>::lowered("dmem"));
     sheet("Timer", "Timer<2>", Timer::<2>::lowered("timer"));
     sheet("Plic", "Plic2<0>", Plic2::<0>::lowered("plic"));
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));
     sheet("Pwm", "Pwm", Pwm::lowered("pwm"));
+    sheet("Tee", "Tee<R<32, 2>>", Tee::<R<32, 2>>::lowered("tee"));
+    sheet(
+        "Check",
+        "Check<Issue<32>>",
+        Check::<Issue<32>>::lowered("check"),
+    );
     sheet("Spi", "Spi", Spi::lowered("spi"));
     sheet("Tracer", "Tracer<8>", Tracer::<8>::lowered("tracer"));
     sheet("I2c", "I2c", I2c::lowered("i2c"));

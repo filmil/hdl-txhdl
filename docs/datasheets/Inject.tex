@@ -1,0 +1,56 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Inject
+\datasheet{Inject}{The second core's reset, held while `fault` is high: the self-test's one difference.}
+
+\dsfacts{\code{cpu/vreteno/src/pair.rs}}{\code{vreteno32::pair::Inject}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+A comparator nobody has ever seen fire is a comparator nobody knows the
+state of. \code{Inject} is how the pair is made to fire on purpose: it
+gives the second core a reset of its own, the pair's reset or
+\code{fault}, so that raising \code{fault} for one cycle holds that
+core in reset a cycle longer than the first.
+
+A core a cycle behind disagrees on everything it says afterwards, so
+that one line runs through every part of the comparison path: the three
+checks, the wire comparison and the gathering.
+
+\subsection*{Parameters}
+
+None.
+
+\dstables{Inject}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \code{rst2} is \code{rst} or \code{fault}, combinational, with
+nothing held between cycles. The second core is in reset for exactly
+the cycles \code{fault} is high.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{a\_core\_held\_in\_reset\_a\_cycle\_longer\_is\_caught} and
+\code{the\_line\_stays\_up\_after\_a\_disagreement}, in
+\code{//cpu/vreteno:pair}, raise \code{fault} for the twentieth cycle
+of a six hundred cycle run and find the pair's line up, and still up at
+the end.
+\item It is never lowered on its own, so it has no netlist and no
+co-simulation of its own.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Pair}, once.
+
+\subsection*{Limits}
+
+One shape of fault, and one core. It cannot corrupt a word, flip a bit
+in a channel or fault the first core, so the self-test proves the
+comparison path and not the comparison's coverage of every failure a
+core can have. It holds no state, so it cannot stretch or debounce
+\code{fault}.
