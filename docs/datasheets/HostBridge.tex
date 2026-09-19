@@ -73,13 +73,24 @@ above went to the serial port.
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item The bridge holds nothing between cycles. A write is one packet,
-so it has no burst to keep track of.
+\item A write of one beat is one packet, so it needs nothing kept
+between cycles. What the bridge does hold is its refusal of a longer
+one: \code{eat}, whether the beats of a refused burst are still
+arriving; \code{owe}, whether such a burst is waiting to be answered;
+and \code{bad}, the identifier to answer it under.
 \item A write goes when \code{aw} offers an address phase, \code{w}
 offers a beat, and \code{req} has room. The bridge takes both and sends
 one packet with \code{chan} \code{W}. The packet holds the address
 phase from \code{aw}, the data and strobe from \code{w}, and
 \code{last} high.
+\item A write whose \code{len} is not zero is refused instead. The
+bridge takes its address phase, sends no packet for it, and takes and
+drops every beat that follows until the one marked \code{last}. Then
+it answers \code{b} with \code{SLVERR} under the identifier it kept,
+in the first cycle \code{b} is ready and the network is not answering.
+Issue 280 says why the refusal is there: before it, such a burst left
+as one packet marked \code{last}, the peripheral waited for a beat
+that had stayed behind, and the host waited for ever.
 \item A read goes when no write goes in that cycle, \code{ar} offers an
 address phase, and \code{req} has room. The bridge takes it and sends
 one packet with \code{chan} \code{Ar}.
@@ -96,7 +107,7 @@ packet goes to \code{r} as its identifier, data, response and
 \subsection*{Verification}
 
 \begin{itemize}
-\item Three tests in \code{lib/parts/src/bus/noc.rs}, in
+\item Five tests in \code{lib/parts/src/bus/noc.rs}, in
 \code{//lib/parts:parts\_test}, put host bridges on a two by two
 lattice with 16-bit addresses. Their map sends \code{0x1000} and
 \code{0x2000}, each under the mask \code{0xf000}, and the default, all
@@ -107,6 +118,13 @@ has one host, at 0,0.
 has hosts at 0,0 and 1,0 on one memory.
 \item \code{four\_peripherals\_share\_one\_node} has hosts at 0,0 and
 1,0, and four memories behind a router at 1,1.
+\item \code{a\_write\_of\_two\_beats\_is\_refused\_rather\_than\_carried}
+asks for two words at once and finds \code{SLVERR} and a memory
+nobody wrote. Before the refusal it did not fail an assertion about
+the data: it hung.
+\item \code{a\_short\_write\_after\_a\_refused\_one\_still\_works}
+sends one beat after that burst and finds it served, so the dropped
+beats left the channel clean.
 \item \code{a\_core\_draws\_a\_solid\_and\_a\_gpu\_fills\_it}, in
 \code{//soc:demo\_test}, runs \code{soc::Bridge} at 0,0 for the core
 and at 1,0 for the rasteriser.
@@ -126,7 +144,9 @@ the rasteriser at 1,0. The tests of the network in
 
 A write of one beat is one packet. A burst of more than one beat does
 not cross the network: it would need a virtual channel per source, or
-reassembly at the peripheral, and the bridge has neither. The map has
+reassembly at the peripheral, and the bridge has neither. Such a burst
+is refused with \code{SLVERR} rather than carried, which is issue 280;
+carrying it is issue 125, and that work takes the refusal out again. The map has
 three ranges. The last one takes every address the others miss. So no
 address is unknown to the network, and neither bridge has to answer for
 one.
