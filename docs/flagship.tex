@@ -292,6 +292,19 @@ minutes of work that a plain build should not start.
 \code{//flagship:flagship\_pnr} about twenty-five more, and the second
 depends on the first, so the second alone is the whole of it.
 
+Synthesis stops on the warnings that would otherwise reach the board.
+Vivado cuts a sized literal too large for its width and carries on:
+\code{21'd2\_100\_000} in the top became 2848, and the reset detector
+that compared against it could never fire. The build was green, timing
+was met, the bitstream was wrong, and the only trace was one line of
+\code{flagship\_synth.log}. It cost a place and route and a run on the
+board to find. Every synthesis target now asks Vivado, after
+\code{synth\_design} and before the netlist is written, how many times
+it issued that message, and fails if the answer is not zero. The list
+is in \code{tools/vivado/defs.bzl}, which is where synthesis is loaded
+from for this reason; a message earns a place on it by being silent at
+every later step, so that the first thing to disagree is the hardware.
+
 Writing the result to the board needs the tunnel to the machine the
 board is attached to, which \code{bazel run
 //cpu/vreteno/board/remote:hw\_server} opens. Then either

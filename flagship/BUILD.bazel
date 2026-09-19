@@ -14,8 +14,8 @@ load(
     "vivado_program_device",
     "vivado_program_flash",
     "vivado_repl",
-    "vivado_synthesis2",
 )
+load("//tools/vivado:defs.bzl", "vivado_synthesis2")
 
 package(default_visibility = ["//visibility:public"])
 

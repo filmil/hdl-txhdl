@@ -2,7 +2,7 @@
 # Parts: units the language provides as hardware, written in the
 # language's own lowerable subset. The channel buffer is the first.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
-load("@rules_vivado//build/vivado:rules.bzl", "vivado_synthesis2")
+load("//tools/vivado:defs.bzl", "vivado_synthesis2")
 
 rust_library(
     name = "txhdl_parts",

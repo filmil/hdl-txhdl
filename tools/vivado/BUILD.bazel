@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Vivado synthesis with the warnings that produce wrong hardware made
+# fatal. See defs.bzl for which warnings, and why those.
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["defs.bzl"])

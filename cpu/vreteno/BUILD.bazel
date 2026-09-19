@@ -266,8 +266,8 @@ load(
     "vivado_program_flash",
     "vivado_project",
     "vivado_synthesis",
-    "vivado_synthesis2",
 )
+load("//tools/vivado:defs.bzl", "vivado_synthesis2")
 
 vivado_project(
     name = "vreteno_project",
