@@ -331,6 +331,35 @@ pub fn soft() -> Vec<u32> {
     a.words()
 }
 
+/// The two halves of a program that lives above the boot memory: what
+/// the boot memory holds, which is a jump into the data memory, and
+/// what the data memory holds, which is the program itself.
+///
+/// It is what a bootloader leaves behind: the core starts in the boot
+/// memory, and everything after the jump is fetched over the bus
+/// (issue 134). The program adds the first ten numbers, writes the sum
+/// where the test can read it, and halts.
+pub fn in_memory() -> (Vec<u32>, Vec<u32>) {
+    let mut boot = Asm::default();
+    boot.emit(lui(1, DATA_BASE >> 12)); // x1 = the data memory
+    boot.emit(jalr(0, 1, 0)); // and away
+                              // Its branches are relative and its addresses are written out, so
+                              // the program runs where it is loaded without being told where.
+    let mut a = Asm::default();
+    let top = a.label();
+    a.emit(lui(2, DATA_BASE >> 12)); // x2 = the data memory
+    a.emit(addi(5, 0, 10)); // x5 = 10
+    a.emit(addi(6, 0, 0)); // x6 = i
+    a.emit(addi(10, 0, 0)); // x10 = the sum
+    a.place(top);
+    a.emit(addi(6, 6, 1));
+    a.emit(add(10, 10, 6));
+    a.to(top, |o| bne(6, 5, o));
+    a.emit(sw(10, 2, 64)); // the sum, well past the program
+    a.emit(halt());
+    (boot.words(), a.words())
+}
+
 pub fn random(seed: u64, len: usize) -> Vec<u32> {
     let mut s = seed.wrapping_mul(0x9e3779b97f4a7c15) | 1;
     let mut next = move || {

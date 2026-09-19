@@ -2,6 +2,7 @@
 //! The reference: RV32IMC as a program, one `step` per instruction,
 //! written against the decoder and nothing else. The core is checked
 //! against it, in lockstep, every cycle.
+use crate::core::IMEM_BYTES;
 use crate::isa::{
     compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT, CAUSE_ECALL,
     CAUSE_ILLEGAL, CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MSOFT,
@@ -125,6 +126,27 @@ pub fn misaligned(kind: Kind, addr: u32) -> bool {
 const DEVICES: u32 = DATA_BASE + DATA_BYTES;
 
 impl Model {
+    /// The instruction at `pc`, from the boot memory below
+    /// `IMEM_BYTES` or from the data memory above it, which is what
+    /// the core does once it fetches from the bus (issue 134).
+    fn fetch_at(&self, imem: &[u32], pc: u32) -> Option<(u32, u32)> {
+        if pc < IMEM_BYTES {
+            return fetch(imem, pc);
+        }
+        let half = |at: u32| -> Option<u16> {
+            let off = at.wrapping_sub(DATA_BASE);
+            (off < DATA_BYTES).then(|| {
+                (self.mem[(off / 4) as usize] >> (8 * (at & 2))) as u16
+            })
+        };
+        let lo = half(pc)?;
+        if crate::isa::is_compressed(lo) {
+            return Some((crate::isa::compressed(lo).unwrap_or(lo as u32), 2));
+        }
+        let hi = half(pc.wrapping_add(2))?;
+        Some(((hi as u32) << 16 | lo as u32, 4))
+    }
+
     /// A word of data memory by byte address, or, above it, the word
     /// the bus answered the core with, which the caller handed over;
     /// `None` below the data memory.
@@ -264,7 +286,7 @@ impl Model {
         if self.halted.is_some() {
             return;
         }
-        let Some((w, len)) = fetch(imem, self.pc) else {
+        let Some((w, len)) = self.fetch_at(imem, self.pc) else {
             self.halted = Some(Halt::Fault(self.pc));
             return;
         };

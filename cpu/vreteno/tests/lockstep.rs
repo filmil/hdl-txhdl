@@ -15,7 +15,7 @@ use vreteno32::isa::{
     decode, disasm, Kind, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER,
 };
 use vreteno32::model::{Halt, Model};
-use vreteno32::program::{demo, random, soft};
+use vreteno32::program::{demo, in_memory, random, soft};
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
@@ -43,7 +43,12 @@ type Serial = LiteBridge1<32, 32, 4, IW, 0x3000, 0xf000>;
 
 /// Runs `program` on both until the core halts, checking after every
 /// cycle; returns the model at the halt.
-fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
+fn lockstep(
+    program: &[u32],
+    data: &[u32],
+    what: &str,
+    seed: Option<u64>,
+) -> Model {
     let mut cpu = Vreteno::with(program);
     let (pc, ir_pc, valid, regs, halted) = (
         cpu.pc,
@@ -52,7 +57,11 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         cpu.regs.clone(),
         cpu.halted,
     );
-    let mut dmem = Dmem::<IW>::default();
+    // The data memory starts with `data` in it, which is how a program
+    // that lives above the boot memory gets there.
+    let bytes: Vec<u8> =
+        data.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let mut dmem = Dmem::<IW>::with(&bytes);
     let lanes = (
         dmem.lane0.clone(),
         dmem.lane1.clone(),
@@ -191,6 +200,9 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     sim.cycle();
     rst_out.set(Bit::Zero);
     let mut model = Model::default();
+    for (i, &w) in data.iter().enumerate() {
+        model.mem[i] = w;
+    }
     let mut retired = 0;
     // The interrupt line, from the seed: high now and then for the
     // random programs, one pulse in the loop for the demonstration.
@@ -396,15 +408,28 @@ fn a_program_that_interrupts_itself() {
     // takes another, and what the program guarantees is three or more.
     // The model takes them where the core does, which is what the
     // lockstep compares cycle by cycle.
-    let m = lockstep(&soft(), "soft", None);
+    let m = lockstep(&soft(), &[], "soft", None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert!(m.x[8] >= 3, "interrupts taken: {}", m.x[8]);
     assert_eq!(m.mem[0], m.x[8], "and the program wrote what it counted");
 }
 
 #[test]
+fn a_program_above_the_boot_memory_is_fetched_from_the_bus() {
+    // The boot memory holds a jump into the data memory, and the
+    // program itself is in the data memory, so every instruction after
+    // the jump comes back over the bus. It adds the first ten numbers
+    // and writes the sum where the test can read it.
+    let (boot, prog) = in_memory();
+    let m = lockstep(&boot, &prog, "in memory", None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[10], 55, "the sum the program computed");
+    assert_eq!(m.mem[16], 55, "and wrote at offset 64");
+}
+
+#[test]
 fn demo_program() {
-    let m = lockstep(&demo(), "demo", None);
+    let m = lockstep(&demo(), &[], "demo", None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[10], 110);
     assert_eq!(m.mem[0], 110);
@@ -447,7 +472,7 @@ fn a_multiply_right_after_a_load() {
         div(13, 12, 7),
         halt(),
     ];
-    let m = lockstep(&p, "a multiply right after a load", Some(1));
+    let m = lockstep(&p, &[], "a multiply right after a load", Some(1));
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[11], 255 * 1234, "mul of the loaded word");
     assert_eq!(m.x[13], 123, "div of the loaded word");
@@ -470,7 +495,7 @@ fn random_programs() {
             }
             at += n;
         }
-        let m = lockstep(&p, &format!("random seed {seed}"), Some(seed));
+        let m = lockstep(&p, &[], &format!("random seed {seed}"), Some(seed));
         assert_eq!(m.halted, Some(Halt::Break), "seed {seed} faulted");
     }
     let counts = format!("{short} compressed, {wide} whole, {straddle} across");
@@ -564,7 +589,7 @@ fn compressed_instructions() {
     a.wide(csrrw(0, CSR_MEPC, 22));
     a.wide(mret());
     let p = a.words();
-    let m = lockstep(&p, "compressed instructions", Some(7));
+    let m = lockstep(&p, &[], "compressed instructions", Some(7));
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[8], 0, "the loop's count");
     assert_eq!(m.x[9], 7 + 3 + 100 + 1000 + 3, "the loop and the calls");
@@ -623,7 +648,7 @@ fn an_unaligned_access_traps() {
     a.wide(csrrw(0, CSR_MEPC, 22));
     a.wide(mret());
     let p = a.words();
-    let m = lockstep(&p, "an unaligned access", Some(11));
+    let m = lockstep(&p, &[], "an unaligned access", Some(11));
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[4], (-2i32) as u32, "the aligned word went through");
     assert_eq!(m.x[9], (-2i32) as u32, "and a byte at an odd address");
