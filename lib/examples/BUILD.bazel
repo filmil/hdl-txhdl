@@ -3,7 +3,7 @@
 # One compiled example per concept in the runtime. The article's appendix
 # includes each file verbatim, so a listing there is also a build target
 # here, and a concept with no example is a concept nobody has checked.
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rustfmt_test")
 load("//lib:foreign.bzl", "verilog_unit", "vhdl_unit")
 
 package(default_visibility = ["//visibility:public"])
@@ -681,9 +681,10 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
-filegroup(
-    name = "sources",
-    srcs = [n + ".rs" for n in EXAMPLES] + [
+# The files the documents include verbatim. The filegroup hands them
+# to the document build and the formatter check below reads the same
+# list, so a new example joins both at once.
+SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_config.rs",
         "ex_blinky.rs",
         "ex_case.rs",
@@ -743,5 +744,20 @@ filegroup(
         "ex_names.rs",
         "ex_rename.rs",
         "ex_foreign.rs",
-    ],
+]
+
+filegroup(
+    name = "sources",
+    srcs = SOURCES,
+)
+
+# The documents set source at 80 columns and never break a line, so an
+# example wider than that overflows its frame. //:fmt_test checks the
+# crates but not this package, which is the one place the width is
+# load bearing (issue 281), so the check lives here, beside the list it
+# reads. Every one of those files is a target of its own named after
+# it; the three foreign wrappers have no Rust source and are not here.
+rustfmt_test(
+    name = "fmt_test",
+    targets = [":" + s[:-3] for s in SOURCES if s.endswith(".rs")],
 )
