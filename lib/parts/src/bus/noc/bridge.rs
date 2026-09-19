@@ -46,8 +46,12 @@ use crate::bus::axi::{Addr, BurstKind, Resp, B, R, W};
 /// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
 /// by `1 << YB` nodes at most.
 ///
-/// It holds nothing: a write is one packet, so there is no burst to
-/// keep track of between cycles.
+/// A write is one packet, so a write of one beat needs nothing kept
+/// between cycles. What it does hold is the refusal of a longer one:
+/// a burst of more than one beat cannot cross the network (issue
+/// 125), so the bridge eats such a burst and answers it `SlvErr`
+/// rather than sending a packet that would take the next burst's
+/// data with it.
 #[derive(Trace, Default)]
 pub struct HostBridge<
     const X: usize,
@@ -70,7 +74,17 @@ pub struct HostBridge<
     const M2: usize,
     const X2: usize,
     const Y2: usize,
-> {}
+> {
+    /// The beats of a refused burst are still to come, so every one
+    /// of them is taken and dropped until the one marked last.
+    eat: Reg<Bit>,
+    /// A refused burst has been eaten whole and owes its host an
+    /// answer, which goes out as soon as the response channel is free.
+    owe: Reg<Bit>,
+    /// The identifier that answer carries, kept from the address
+    /// phase that was refused.
+    bad: Reg<U<I>>,
+}
 // end{host}
 
 // begin{hostrun}
@@ -167,14 +181,38 @@ impl<
                 U::<YB>::from(Y0 as u32),
                 mux(ar1, U::<YB>::from(Y1 as u32), U::<YB>::from(Y2 as u32)),
             );
+            // A burst of more than one beat does not cross the
+            // network (issue 125): a write leaves as one packet, so
+            // the beats after the first would stay on the channel and
+            // be paired with the next burst's address phase. Such a
+            // burst is refused here rather than sent. Its address
+            // phase and every one of its beats are taken and dropped,
+            // and its host is answered `SlvErr`, because a peripheral
+            // that never sees the burst never answers it and the host
+            // would wait for ever.
+            let wh = w.head();
+            let eating = self.eat.get();
+            let long = ah.len != U::<8>::from(0u8);
+            let refuse = !eating & aw.peek().is_some() & long;
             // A write goes when its address phase and its beat are
             // both there, as one packet; a read goes on its own.
-            let wh = w.head();
-            let go_w = aw.peek().is_some() & w.peek().is_some() & room;
+            let go_w = !eating
+                & !refuse
+                & aw.peek().is_some()
+                & w.peek().is_some()
+                & room;
             let go_ar = !go_w & ar.peek().is_some() & room;
-            let _ = aw.recv_if(go_w);
-            let _ = w.recv_if(go_w);
+            let drop_w = (eating | refuse) & w.peek().is_some();
+            let ate_last = drop_w & wh.last;
+            let _ = aw.recv_if(go_w | refuse);
+            let _ = w.recv_if(go_w | drop_w);
             let _ = ar.recv_if(go_ar);
+            self.eat.set(mux(
+                ate_last,
+                Bit::Zero,
+                mux(refuse, Bit::One, eating),
+            ));
+            self.bad.set(mux(refuse, ah.id, self.bad.get()));
             // The answers, unpacked back into the two channels the
             // host's tracker reads.
             let ph = rsp.head();
@@ -182,6 +220,12 @@ impl<
             let to_b = rsp.peek().is_some() & is_b & b.ready();
             let to_r = rsp.peek().is_some() & !is_b & r.ready();
             let _ = rsp.recv_if(to_b | to_r);
+            // The refusal's own answer, which waits behind whatever
+            // the network is answering rather than racing it.
+            let owing = self.owe.get();
+            let say = owing & !to_b & b.ready();
+            self.owe
+                .set(mux(say, Bit::Zero, mux(ate_last, Bit::One, owing)));
             // One packet leaves, so its fields are chosen once: a
             // write beat's when a beat is going, else the address
             // phase's, and of the two phases the read's when it is
@@ -210,10 +254,12 @@ impl<
                     resp: Resp::Okay,
                 });
             }
-            if to_b.to_bool() {
+            // One send on the response channel, whichever answer it
+            // is: the network's, or the refusal's.
+            if (to_b | say).to_bool() {
                 b.send(B {
-                    id: ph.id,
-                    resp: ph.resp,
+                    id: mux(to_b, ph.id, self.bad.get()),
+                    resp: mux(to_b, ph.resp, Resp::SlvErr),
                 });
             }
             if to_r.to_bool() {
