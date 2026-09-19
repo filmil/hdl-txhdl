@@ -211,10 +211,12 @@ sets when the line is seen high and software clears; when it is set,
 enabled in \code{mie} and interrupts are enabled in
 \code{mstatus}, the next \code{step} traps instead of executing,
 with the interrupt's cause, and returns to the same address. The
-timer is four words at \code{TIMER\_BASE}, the count and the
-compare, each in two halves, read and written as memory is; its
-pending bit is its line, read in \code{mip} but not stored there,
-and its interrupt comes after the external one's. The model has no
+controller is five words in the window at \code{CLINT\_BASE}, the
+count and the compare, each in two halves, and \code{msip}, read and
+written as memory is; the timer's pending bit and the software one
+are its two lines, read in \code{mip} but not stored there, and the
+order they are taken in is the specification's: the external
+interrupt, then the software one, then the timer's. The model has no
 clock and no bus, so what a device answers is not its own. The caller
 sets \code{dev\_word} before a step to what the bus answered the
 core's load from a device, and \code{tirq} to the line as the core
@@ -431,8 +433,8 @@ identifier and counts no beat.
 
 Three devices sit behind the link's router, \code{Router3} of
 \code{txhdl\_parts}, whose type states the address map: the data
-memory at \code{0x1000}, the timer at \code{0x2000} and the serial
-port at \code{0x3000}, a nibble each, and every other address a hole
+memory at \code{0x1000}, the serial port at \code{0x3000}, and the
+interrupt controller the 64~KiB from \code{0x0200\_0000}, and every other address a hole
 the router answers \code{DecErr} itself. The data memory and the
 timer are each behind an \code{AxiPer}, so what each sees is a whole
 request and, for a write, its beat. The serial port is an AXI-Lite
@@ -971,6 +973,53 @@ by four after the rest; \code{rd} and \code{val} are the writeback,
 
 \lstinputlisting[style=ascii,caption={What \code{vreteno} printed when
 the build ran it.},label={lst:v-out}]{out_vreteno.txt}
+
+\section{The Interrupt Controller}
+\label{sec:v-clint}
+
+The timer is the core's interrupt controller, and it sits where every
+RISC-V platform puts one, because that is the whole of what a stock
+port of an operating system asks of a platform: \code{mtime} and
+\code{mtimecmp} at the conventional offsets, and \code{msip}, one bit
+whose writing raises a software interrupt.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+Offset & Name & What it is \\
+\midrule
+\code{0x0000} & \code{msip} & bit 0 raises the software interrupt \\
+\code{0x4000} & \code{mtimecmp} & the compare, low half \\
+\code{0x4004} & & its high half \\
+\code{0xbff8} & \code{mtime} & the count, low half \\
+\code{0xbffc} & & its high half \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The window is 64~KiB, which those offsets need, so the controller has
+a range of its own in the address map rather than the nibble the timer
+had. The offsets are far apart, so the decode is on the offset and not
+on two bits of it, and a word in the window that is none of the five
+reads as zero.
+
+\code{msip} is a register and a line: a program writes one to raise
+its own interrupt and zero to clear it, and the line is the register
+itself, so nothing in between can lose it. That is how a scheduler is
+entered: a port raises the software interrupt, the trap takes the
+machine into the handler, and the handler clears the bit and switches
+context.
+
+The core gains a line for it, \code{mip} bit 3 beside the timer's bit
+7 and the external bit 11, and \code{mie} gates it as it gates the
+others. When more than one is pending the core takes the external
+interrupt first, then the software one, then the timer's, which is the
+order the specification gives and the order the reference model keeps,
+so the lockstep compares them.
+
+\code{//cpu/vreteno:lockstep\_test} runs a program that raises the
+software interrupt for itself three times and counts the traps in the
+handler, against the model, cycle by cycle.
 
 \section{The Netlist}
 \label{sec:v-netlist}
