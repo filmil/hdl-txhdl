@@ -144,6 +144,20 @@ registers the core has, \code{mstatus}, \code{mtvec},
 causes it raises, are constants beside them, with \code{mie},
 \code{mip}, \code{mtval}, the external and the timer interrupt's
 bits and causes, and the timer's and the serial port's addresses.
+\code{wfi} is there as well, and it waits rather than spinning. The
+specification allows either, and a core that returned at once would be
+correct; this one stops fetching until an interrupt is pending and
+enabled, and the cycles between are cycles in which it retires nothing.
+The test measures that silence rather than trusting it: a spin would
+retire something in nearly every cycle.
+
+What the wait does not ask is whether interrupts are enabled globally.
+The specification lets a core resume with \code{mstatus} closed, and
+that is the case that matters, because a kernel idles inside its own
+interrupt lock: a wait that waited for the global bit would never end.
+So the line coming up ends the wait, and whether the trap is then
+taken is the usual question, answered the usual way.
+
 \code{mhalt} at \code{0x7c0} is this core's own, in the space the
 specification leaves to a design: it reads as zero, and a write of an
 odd value to it stops the core when that instruction retires, which
