@@ -36,6 +36,9 @@ use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, R, W};
 /// Words of instruction memory. The data memory is a device on the
 /// bus, `crate::dmem`, at `DATA_BASE` as the model has it.
 pub const IMEM_WORDS: usize = 1024;
+/// The boot memory's size in bytes, which is where it ends: a program
+/// counter at or above this is fetched from the bus (issue 134).
+pub const IMEM_BYTES: u32 = IMEM_WORDS as u32 * 4;
 pub const DATA_BASE: u32 = crate::model::DATA_BASE;
 
 /// What the core retired this cycle: `done` when an instruction
@@ -588,6 +591,19 @@ pub struct Vreteno<const IW: usize> {
     pub m_neg_r: Reg<Bit>,
     pub regs: Mem<U<32>, 32>,
     pub imem: Mem<U<32>, IMEM_WORDS>,
+    /// A fetch that is out on the bus, for a program above the boot
+    /// memory: whether one is out, the word it asked for, the two
+    /// words it has brought back, how many of them, and the address
+    /// they start at.
+    pub f_wait: Reg<Bit>,
+    pub f_asked: Reg<U<32>>,
+    pub f_w0: Reg<U<32>>,
+    pub f_w1: Reg<U<32>>,
+    pub f_have: Reg<U<2>>,
+    pub f_at: Reg<U<32>>,
+    /// Whether the fetch that is out is for the second word of a
+    /// thirty-two bit instruction that straddles two words.
+    pub f_second: Reg<Bit>,
 }
 
 impl<const IW: usize> Vreteno<IW> {
@@ -691,8 +707,18 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // halfword alone, and a thirty-two bit one takes its upper
             // half from the halfword after, which may be the next word.
             let widx = fetch_pc.slice::<2, 10>();
-            let w0 = self.imem.read(widx);
-            let w1 = self.imem.read(widx + 1);
+            // The program counter is above the boot memory: the words
+            // come from the bus instead, into a buffer of two, since a
+            // thirty-two bit instruction at an odd halfword takes its
+            // upper half from the word after.
+            let far = fetch_pc >= U::<32>::from(IMEM_BYTES);
+            let want = fetch_pc & U::<32>::from(0xffff_fffcu32);
+            let f_at = self.f_at.get();
+            let f_have = self.f_have.get();
+            let hit0 = (f_have != 0) & (f_at == want);
+            let hit1 = (f_have == 2) & (f_at == want);
+            let w0 = mux(far, self.f_w0.get(), self.imem.read(widx));
+            let w1 = mux(far, self.f_w1.get(), self.imem.read(widx + 1));
             let odd = fetch_pc.bit(1);
             let lo = mux(odd, w0.slice::<16, 16>(), w0.slice::<0, 16>());
             let hi = mux(odd, w1.slice::<0, 16>(), w0.slice::<16, 16>());
@@ -788,8 +814,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 & (is_load | is_store)
                 & !unaligned
                 & !(issue.ready() & wbeat.ready());
-            self.stall
-                .set(stall_ld | stall_m | stall_bus | self.dev_wait);
+            // A word of the instruction is still on the bus: the core
+            // waits for it, which is what makes a program above the
+            // boot memory slow and correct.
+            let need1 = far & odd & !short;
+            let f_ready = !far | (hit0 & (!need1 | hit1));
+            let stall_fetch = !f_ready;
+            self.stall.set(
+                stall_ld | stall_m | stall_bus | stall_fetch | self.dev_wait,
+            );
             let stall = self.stall.get();
             // The address after the instruction, which a jump links:
             // two bytes on for a compressed one, four for the rest.
@@ -988,11 +1021,23 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // of no use here and is dropped.
             let _ = grant.recv_if(grant.peek().is_some());
             let send_store = store & is_dev;
-            let send_any = send_load | send_store;
+            // A fetch goes out when the words it wants are not in the
+            // buffer, nothing else of the core's is out, and the
+            // channel has room. The second word is asked for after the
+            // first, since only the first says whether it is wanted.
+            let f_want = far & (!hit0 | (need1 & !hit1));
+            let f_addr = mux(hit0, want + 4, want);
+            let f_send = f_want
+                & !self.f_wait
+                & !self.dev_wait
+                & !send_load
+                & !send_store
+                & issue.ready();
+            let send_any = send_load | send_store | f_send;
             if bool::from(send_any) {
                 issue.send(Issue {
                     read: !send_store,
-                    addr,
+                    addr: mux(f_send, f_addr, addr),
                     len: U::<8>::from(0u8),
                     size: U::<3>::from(2u8),
                     burst: BurstKind::Incr,
@@ -1015,7 +1060,31 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     id: mux(take_done, dh.id, rh.id),
                 });
             }
-            when!(resp_valid => self { wb_dev: resp_data });
+            // An answer belongs to whichever of the two is out, and
+            // only one ever is.
+            let f_resp = resp_valid & self.f_wait;
+            let d_resp = resp_valid & !self.f_wait;
+            let second = self.f_second.get();
+            let asked = self.f_asked.get();
+            when!(d_resp => self { wb_dev: resp_data });
+            with!(self <= {
+                f_send ? {
+                    f_wait: Bit::One,
+                    f_asked: f_addr,
+                    f_second: hit0
+                },
+                f_resp ? f_wait: Bit::Zero,
+                f_resp & !second ? {
+                    f_w0: resp_data,
+                    f_at: asked,
+                    f_have: U::<2>::from(1u8)
+                },
+                f_resp & second ? {
+                    f_w1: resp_data,
+                    f_have: U::<2>::from(2u8)
+                },
+                rst ? { f_wait: Bit::Zero, f_have: U::<2>::from(0u8) },
+            });
             case!(rst => {
                 Bit::One => { self.dev_wait <= Bit::Zero },
                 _ if send_load.to_bool() => { self.dev_wait <= Bit::One },

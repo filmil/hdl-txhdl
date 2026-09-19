@@ -1021,6 +1021,43 @@ so the lockstep compares them.
 software interrupt for itself three times and counts the traps in the
 handler, against the model, cycle by cycle.
 
+\section{Fetching From the Bus}
+\label{sec:v-fetch}
+
+The core fetched only from the memory inside it, so the program was
+fixed when the bitstream was, and four kilobytes was all of it. That
+was the one thing in the way of everything else: a bootloader, an
+operating system that starts a task from an image, a test runner on
+the target.
+
+The counter now says where the instruction comes from. Below
+\code{IMEM\_BYTES} it is the memory inside the core, as before, and
+that memory is the boot ROM: what runs before there is anything else.
+At or above it, the core asks the bus, on the same channels its loads
+and stores use, and waits.
+
+Waiting is the whole of it. The core holds one transaction at a time,
+so a fetch goes out only when nothing else of the core's is out, and
+the pipeline stalls until the word comes back. A thirty-two bit
+instruction at an odd halfword takes its upper half from the word
+after, so the fetch keeps a buffer of two words and asks for the
+second only once the first says it is wanted; a run straight through
+memory therefore asks for a word every second instruction rather than
+every one.
+
+It is correct and it is slow. An instruction from the data memory is
+several cycles where one from the boot memory is none, and a program
+in the DDR3 across the router is slower still. What would make it fast
+is a prefetch buffer or a line cache, and neither is here: the order
+that pays is correct first, then measured.
+
+\code{//cpu/vreteno:lockstep\_test} runs a program that lives above the
+boot memory: the boot memory holds a jump into the data memory, the
+program itself is in the data memory, and every instruction after the
+jump comes back over the bus. The model fetches from the same place
+and the two agree cycle by cycle, which is what says the fetch is a
+fetch and not a guess.
+
 \section{The Netlist}
 \label{sec:v-netlist}
 
