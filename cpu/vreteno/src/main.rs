@@ -107,6 +107,12 @@ fn main() {
         w.add("rst", &rst);
         w.add("irq", &irq);
         w.add("tirq", &tirq);
+        // The software interrupt, which the timer raises from `msip`
+        // and the core takes as its third. It is a port of both
+        // lowered units, so a trace without it leaves the testbenches
+        // for them with a port they cannot drive; `fst2tb` says so and
+        // refuses. See issue 270.
+        w.add("sirq", &sirq);
         w.add("tx", &tx);
         w.add("rx", &rx);
         w.add("uirq", &uirq);
