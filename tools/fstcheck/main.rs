@@ -3,7 +3,7 @@
 //! print its time table and every variable's changes; or write small
 //! ones with fst-writer, to see which usage the pair agrees on.
 //!
-//! Usage: fstcheck read FILE.fst
+//! Usage: fstcheck read FILE.fst [HOW MANY TO PRINT]
 //!        fstcheck write FILE.fst [dup]
 use std::io::Write;
 
@@ -13,7 +13,7 @@ fn main() {
         Some("read") => read(&args[2]),
         Some("write") => write(&args[2], args.get(3).is_some()),
         Some("test") => write_test(&args[2]),
-        _ => eprintln!("usage: fstcheck read FILE | write FILE [dup]"),
+        _ => eprintln!("usage: fstcheck read FILE [N] | write FILE [dup]"),
     }
 }
 
@@ -31,7 +31,17 @@ fn read(path: &str) {
         .collect();
     let ids: Vec<wellen::SignalRef> = vars.iter().map(|(_, s)| *s).collect();
     w.load_signals(&ids);
-    for (name, s) in vars.iter().take(8) {
+    // How many there are, before any of them: a listing that stopped
+    // at the first few once read as a trace that held only those, and
+    // the hunt went looking for the writer rather than for the reader.
+    println!("variables: {}", vars.len());
+    // All of them unless a count is given, since the question is
+    // usually whether a signal is there at all.
+    let show: usize = std::env::args()
+        .nth(3)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(vars.len());
+    for (name, s) in vars.iter().take(show) {
         let sig = w.get_signal(*s).unwrap();
         let changes: Vec<String> = sig
             .iter_changes()
