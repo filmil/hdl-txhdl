@@ -336,6 +336,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A flash read as memory:  bazel run //lib/examples:ex_flashwin
+rust_binary(
+    name = "ex_flashwin",
+    srcs = ["ex_flashwin.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Four pulse width modulated outputs:  bazel run //lib/examples:ex_pwm
 rust_binary(
     name = "ex_pwm",
@@ -713,7 +725,8 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "blinker.v",
         "blinker.vhd",
         "ex_gpio.rs",
-        "ex_pwm.rs",
+        "ex_flashwin.rs",
+    "ex_pwm.rs",
         "ex_redundant.rs",
         "ex_tracer.rs",
         "ex_spi.rs",
