@@ -170,6 +170,194 @@ mod tests {
         );
     }
 
+    /// A write of two beats across the network, which the bridges do
+    /// not carry (issue 125), and which the host bridge therefore
+    /// refuses. Before the refusal this test hung: the write left as
+    /// one packet marked last, so the peripheral's tracker waited for
+    /// a beat that had stayed behind and answered nothing, and the
+    /// client waited for ever. Now the host is told `SlvErr` and the
+    /// memory is left alone.
+    #[test]
+    fn a_write_of_two_beats_is_refused_rather_than_carried() {
+        let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
+        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+
+        let Link {
+            host,
+            host_in,
+            host_out,
+            per_in: hp_in,
+            per_out: hp_out,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let mut htrk = AxiHost::<A, D, S, I, NIDS>::default();
+        let mut hbr = Bridge::default();
+        let hx = net.exits.remove(0);
+
+        let Link {
+            per,
+            per_in: pp_in,
+            per_out: pp_out,
+            host_in: ph_in,
+            host_out: ph_out,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let mut ptrk = AxiPer::<A, D, S, I>::default();
+        let mut pbr = Peri::default();
+        let px = net.exits.pop().unwrap();
+        let ram = Ram::<A, D, S, I>::new(2048);
+
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let out = got.clone();
+        let client = async move {
+            let w = host
+                .write(
+                    Wr::at(0x1010u32),
+                    &[U::from(0xaaaaaau32), U::from(0xbbbbbbu32)],
+                )
+                .await;
+            let wr = w.done().await;
+            out.borrow_mut().push(wr.resp);
+        };
+
+        let nodes = join_all(vec![
+            Box::pin(n00.run(net.ins.remove(0), net.outs.remove(0)))
+                as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
+            Box::pin(n10.run(net.ins.remove(0), net.outs.remove(0))),
+            Box::pin(n01.run(net.ins.remove(0), net.outs.remove(0))),
+            Box::pin(n11.run(net.ins.remove(0), net.outs.remove(0))),
+        ]);
+        let mut sim = Running::new(join2(
+            join2(
+                nodes,
+                join2(
+                    htrk.run(host_in, host_out),
+                    hbr.run(
+                        (hp_in.0, hp_in.1, hp_in.2, hx.p_out),
+                        (hx.q_in, hp_out.2, hp_out.3),
+                    ),
+                ),
+            ),
+            join2(
+                join2(
+                    ptrk.run(pp_in, pp_out),
+                    pbr.run(
+                        (px.q_out, ph_in.2, ph_in.3),
+                        (ph_out.0, ph_out.1, ph_out.2, px.p_in),
+                    ),
+                ),
+                join2(client, ram.clone().serve(per, 2)),
+            ),
+        ));
+        for _ in 0..600 {
+            sim.cycle();
+        }
+        let got = got.borrow();
+        assert_eq!(got.len(), 1, "the write never answered");
+        assert_eq!(got[0], Resp::SlvErr, "a long burst is refused");
+        assert_eq!(ram.word(0x1010 / 4).raw(), 0, "nothing was written");
+        assert_eq!(ram.word(0x1014 / 4).raw(), 0, "nor at the next word");
+    }
+
+    /// The refusal is of that burst and not of the bridge: a write of
+    /// one beat sent after a refused one still crosses and is
+    /// answered, so the eaten beats left nothing behind on the
+    /// channel.
+    #[test]
+    fn a_short_write_after_a_refused_one_still_works() {
+        let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
+        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+
+        let Link {
+            host,
+            host_in,
+            host_out,
+            per_in: hp_in,
+            per_out: hp_out,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let mut htrk = AxiHost::<A, D, S, I, NIDS>::default();
+        let mut hbr = Bridge::default();
+        let hx = net.exits.remove(0);
+
+        let Link {
+            per,
+            per_in: pp_in,
+            per_out: pp_out,
+            host_in: ph_in,
+            host_out: ph_out,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let mut ptrk = AxiPer::<A, D, S, I>::default();
+        let mut pbr = Peri::default();
+        let px = net.exits.pop().unwrap();
+        let ram = Ram::<A, D, S, I>::new(2048);
+
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let out = got.clone();
+        let client = async move {
+            let bad = host
+                .write(
+                    Wr::at(0x1010u32),
+                    &[U::from(0xaaaaaau32), U::from(0xbbbbbbu32)],
+                )
+                .await;
+            let first = bad.done().await;
+            let good =
+                host.write(Wr::at(0x1020u32), &[U::from(0xc0ffeeu32)]).await;
+            let second = good.done().await;
+            out.borrow_mut().push((first.resp, second.resp));
+        };
+
+        let nodes = join_all(vec![
+            Box::pin(n00.run(net.ins.remove(0), net.outs.remove(0)))
+                as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
+            Box::pin(n10.run(net.ins.remove(0), net.outs.remove(0))),
+            Box::pin(n01.run(net.ins.remove(0), net.outs.remove(0))),
+            Box::pin(n11.run(net.ins.remove(0), net.outs.remove(0))),
+        ]);
+        let mut sim = Running::new(join2(
+            join2(
+                nodes,
+                join2(
+                    htrk.run(host_in, host_out),
+                    hbr.run(
+                        (hp_in.0, hp_in.1, hp_in.2, hx.p_out),
+                        (hx.q_in, hp_out.2, hp_out.3),
+                    ),
+                ),
+            ),
+            join2(
+                join2(
+                    ptrk.run(pp_in, pp_out),
+                    pbr.run(
+                        (px.q_out, ph_in.2, ph_in.3),
+                        (ph_out.0, ph_out.1, ph_out.2, px.p_in),
+                    ),
+                ),
+                join2(client, ram.clone().serve(per, 2)),
+            ),
+        ));
+        for _ in 0..900 {
+            sim.cycle();
+        }
+        let got = got.borrow();
+        assert_eq!(got.len(), 1, "the writes never came back");
+        assert_eq!(got[0].0, Resp::SlvErr, "the long burst is refused");
+        assert_eq!(got[0].1, Resp::Okay, "the one after it is served");
+        assert_eq!(
+            ram.word(0x1020 / 4).raw(),
+            0xc0ffee,
+            "and its word reached the memory"
+        );
+    }
+
     /// Two hosts, at two corners, on one memory at a third. Each
     /// writes its own word and reads it back, and the answers have to
     /// find their way home: nothing keeps a table of who asked, so
