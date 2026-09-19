@@ -647,6 +647,8 @@ latex_document(
         ":gpio_timing",
         ":redundant_run",
         ":redundant_timing",
+        ":flashwin_run",
+        ":flashwin_timing",
         ":pwm_run",
         ":pwm_timing",
         ":tracer_run",
@@ -1297,6 +1299,24 @@ waveform(
         "//tracer/cursor=>cursor",
     ],
     until = 60,
+)
+
+# A flash read as memory: the fast read command going out on the wires
+# under one select, and the word coming back on the bus.
+waveform(
+    name = "flashwin",
+    example = "//lib/examples:ex_flashwin",
+    lowered = ("flashwin", "flashwin"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//cs_n=>cs_n",
+        "//sclk=>sclk",
+        "//mosi=>mosi",
+        "//miso=>miso",
+        "//win/phase=>phase",
+    ],
+    from_tick = 40,
+    until = 120,
 )
 
 waveform(

@@ -1,0 +1,58 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Flash Read As Memory}
+\label{sec:x-flashwin}
+
+A program lives in the instruction memory's initial contents, so
+changing it means building a bitstream. The board's configuration
+flash has room beside the bitstream for programs, and the master in
+Section~\ref{sec:x-spi} can read it, a byte at a time, under software
+that knows the command. That is the wrong shape for a bootloader and
+the wrong shape entirely for a core that fetches from the bus, because
+neither can run software to read the software it is about to run.
+
+\code{FlashWin} is the other way round: an address range in which an
+ordinary read is answered with what the flash holds there. Nothing is
+sequenced by software, and nothing has to be. A read at an address
+sends the fast read command \code{0x0b}, the three bytes of that
+address with its low two bits cleared, one byte the chip throws away,
+and then takes four, which are the word, lowest address in the lowest
+byte.
+
+Nine bytes on the wires for four on the bus is the trade. At the
+divider the run below uses, a word takes about three hundred cycles,
+which is slow beside a memory and fast beside a resynthesis. A cache
+in front of the window is the answer if it matters, and there is none
+here.
+
+The wires are mode 0, and only mode 0: the clock idles low, the chip
+takes a bit as the clock rises, and the master moves one as it falls.
+That is the mode every flash answers a fast read in, so the window
+needs neither the two mode bits the master has nor the register to
+hold them. The select is held low for the whole of a read and released
+after it, so each read is a command the chip sees whole, which is what
+a real chip requires and what the model checks.
+
+A write is answered \code{SLVERR} rather than ignored. The window is
+read only, and saying so is what makes it safe to fetch from: nothing
+on the bus can change what the instruction stream is reading, so the
+question of what a fetch sees when a write lands in the same cycle
+does not arise.
+
+The run reads two words that the chip model holds, checks each against
+what was put there, and then writes, which comes back refused. The
+chip is \code{FlashDevice}, the same model that checks the master, so
+the two ways of reaching a flash are checked against one description
+of one chip.
+
+\begin{figure}[htbp]
+\centering
+\input{flashwin_timing.tex}
+\caption{The start of a read: the select goes low, and the command
+goes out on \code{mosi} a bit at a time as \code{sclk} turns, with
+\code{phase} counting the nine bytes.}
+\label{fig:x-flashwin}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_flashwin.rs}. Run with \code{bazel run //lib/examples:ex\_flashwin}.},label={lst:x-flashwin}]{lib/examples/ex_flashwin.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_flashwin} printed when the build ran it: the two words read out of the chip, and the write it refused.},label={lst:x-flashwin-out}]{out_flashwin.txt}
