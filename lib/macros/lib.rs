@@ -6953,13 +6953,37 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // above. A constant, so that the answer is the same for every
     // type the unit is lowered at, and so that a generic unit needs no
     // instantiation to be right.
-    for (k, ((_, w, span), alt)) in named.iter().zip(&wire_alts).enumerate() {
+    // One per wire, and the wires are not only the `let`s: the
+    // inlining of a call makes a wire of its own for a value the body
+    // reads more than once, and those are in `wires` and not in
+    // `named`. The index is the wire's, which is what the references
+    // were written with.
+    let taken_names: Vec<String> = pnames
+        .iter()
+        .cloned()
+        .chain(wires.iter().map(|(w, _)| w.clone()))
+        .collect();
+    for (k, (w, _)) in wires.iter().enumerate() {
+        // The name the constant falls back to when a field has taken
+        // this one: `_w` until nothing else has it.
+        let mut alt = match wire_alts.get(k) {
+            Some(a) => a.clone(),
+            None => format!("{w}_w"),
+        };
+        while taken_names.contains(&alt) {
+            alt = format!("{alt}_w");
+        }
+        let span = named
+            .iter()
+            .find(|(_, net, _)| net == w)
+            .map(|(_, _, s)| *s)
+            .unwrap_or_else(Span::call_site);
         let text = format!(
             "#[doc(hidden)] const __TXHDL_WIRE_{k}: &'static str = \
              ::txhdl::netlist::wire_name(\
              <Self as ::txhdl::netlist::Fields>::NAMES, {w:?}, {alt:?});"
         );
-        checks.extend(placed_at(text.parse().unwrap(), *span));
+        checks.extend(placed_at(text.parse().unwrap(), span));
     }
     for (k, (net, msg, span)) in named_nets.iter().enumerate() {
         uses.push_str(&format!("let () = Self::__TXHDL_NAME_{k};\n"));
