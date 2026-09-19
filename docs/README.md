@@ -22,6 +22,7 @@ Those reasons live here.
 | `document-build-plan.md` | How the articles are built, what was tried before, and why the TeX packages are vendored |
 | `rust-embedding.md` | Working notes on embedding the language in Rust, with every probe result in full |
 | `on-chip-debug.md` | What the board shows today, the options for debugging the SoC on it, what each costs, and the order to do them in |
+| `vivado-setup.md` | Vivado for this repository from nothing: why the ordinary build needs none, the hermetic installation and the host one, and what goes in your own `user.bazelrc` |
 
 Seventeen documents are typeset here, and `cover.tex` names them all:
 `article.tex` with `sections/` is the merge, `//docs:article`;

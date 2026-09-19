@@ -44,6 +44,12 @@ The first build fetches a Debian rootfs, a Zig toolchain, graphviz built
 from source and a TeX installation, which is roughly 950 actions.
 Later builds reuse them.
 
+Neither command wants Vivado: every target that needs it is `manual`
+and runs only when asked for by name.
+When you do want one, synthesis, place and route or the board's
+simulation, `docs/vivado-setup.md` says what to do from nothing,
+including what belongs in your own `user.bazelrc`.
+
 ## Silicon
 
 The same netlist the board's bitstream is built from also goes through
