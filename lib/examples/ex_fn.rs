@@ -7,7 +7,9 @@
 //! reads as what it does. Checked under nvc and Verilator against its
 //! trace.
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::{now, signal, Clock, DefaultClock, In, Out, Reg, Running, Unit};
+use txhdl::comp::{
+    now, signal, Clock, DefaultClock, In, Out, Reg, Running, Unit,
+};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, when, Trace};
 
@@ -44,7 +46,11 @@ pub struct Gray {
 
 #[lower]
 impl Unit for Gray {
-    async fn run(&mut self, step: In<Bit>, (code, wrap, swap): (Out<U<4>>, Out<Bit>, Out<U<4>>)) {
+    async fn run(
+        &mut self,
+        step: In<Bit>,
+        (code, wrap, swap): (Out<U<4>>, Out<Bit>, Out<U<4>>),
+    ) {
         loop {
             DefaultClock::rising().await;
             let n = self.n.get();

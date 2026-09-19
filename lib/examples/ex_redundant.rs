@@ -61,11 +61,7 @@ pub struct Adder {
 
 #[lower]
 impl Unit for Adder {
-    async fn run(
-        &mut self,
-        (bump, inp): (In<U<8>>, Rx<Word>),
-        out: Tx<Word>,
-    ) {
+    async fn run(&mut self, (bump, inp): (In<U<8>>, Rx<Word>), out: Tx<Word>) {
         loop {
             DefaultClock::rising().await;
             let go = inp.peek().is_some() & out.ready();
