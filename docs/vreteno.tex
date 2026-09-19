@@ -1126,8 +1126,9 @@ wrote beside it says the same, and the build simulates both against
 the trace the Rust core wrote, the VHDL under nvc and the Verilog
 under Verilator, the testbench replaying the reset and checking every
 register and every output at every tick; the netlist agrees. The
-tests are \code{//docs:vreteno\_sim\_vreteno\_tb\_test} and
-\code{//docs:vreteno\_vsim\_test}.
+tests are \code{//docs:vreteno\_sim\_vreteno\_vreteno\_tb\_test}
+and \code{//docs:vreteno\_vsim\_vreteno\_test}: the run lowers six
+units, so each name carries the entity as well as the run's.
 
 The lowering grew in five ways for this, each stated and checked in
 the examples document~\cite{examples} before the core used it. A
