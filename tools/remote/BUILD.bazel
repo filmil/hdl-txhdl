@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The program at the other end of a Remote peripheral: it reads the
+# frames a design sends, answers the ones for the device it serves,
+# and writes the answers back. What it serves here is a memory; a
+# peripheral being designed replaces that with what it means to do,
+# which is what issue 297 is for.
+#
+#   bazel run //tools/remote -- -listen :9797 -device 3 -v
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+package(default_visibility = ["//visibility:public"])
+
+go_library(
+    name = "remote_lib",
+    srcs = [
+        "frame.go",
+        "main.go",
+    ],
+    importpath = "github.com/filmil/txhdl/tools/remote",
+)
+
+go_binary(
+    name = "remote",
+    embed = [":remote_lib"],
+    pure = "on",
+)
+
+# The protocol against the constants the hardware uses, rather than
+# against itself: the frame in `TestTheFrameIsTheOneTheHardwareSends`
+# is the one `a_transaction_leaves_as_a_frame` asserts in
+# lib/parts/src/remote/eth.rs.
+go_test(
+    name = "remote_test",
+    srcs = ["frame_test.go"],
+    embed = [":remote_lib"],
+)
