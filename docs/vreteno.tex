@@ -144,6 +144,25 @@ registers the core has, \code{mstatus}, \code{mtvec},
 causes it raises, are constants beside them, with \code{mie},
 \code{mip}, \code{mtval}, the external and the timer interrupt's
 bits and causes, and the timer's and the serial port's addresses.
+The two machine counters are there, \code{mcycle} and
+\code{minstret}, each 64 bits and each read as two words. They are
+what a profiler wants, and what lets the core's own numbers be
+measured by a program running on it rather than only from the
+simulation around it. \code{mcycle} counts while the core runs and
+stops when the halt stops it, since nothing restarts this machine and
+a count that ran on afterwards would be a number nobody could read.
+
+They are the one part of the core the lockstep test does not check,
+and the reason is worth stating. The model steps when the core
+retires, so it knows how many instructions have gone by and cannot
+know how many cycles the pipeline spent; a program that read
+\code{mcycle} into a register would get a number no model could
+produce without knowing the microarchitecture, which is the thing the
+model exists not to know. So the counters are checked by a run of
+their own, \code{//cpu/vreteno:counters\_test}, where a program reads
+both around a division and finds the cycles many more than the
+instructions.
+
 \code{wfi} is there as well, and it waits rather than spinning. The
 specification allows either, and a core that returned at once would be
 correct; this one stops fetching until an interrupt is pending and
