@@ -70,6 +70,16 @@ bit 0. \\
 a write keeps only that bit. Bit 7 reads as \code{tirq}. \\
 \code{0x7c0} & \code{mhalt} & Nothing: it reads as zero. A write of an
 odd value stops the core when that instruction retires. \\
+\code{0x301} & \code{misa} & Nothing: it reads
+\code{0x4000\_1104}, which is \code{MXL} of 1 and the letters
+\code{C}, \code{I} and \code{M}. Writable and ignored, as the
+specification allows. \\
+\code{0xf11} & \code{mvendorid} & Nothing: zero, which means
+unimplemented. Read only. \\
+\code{0xf12} & \code{marchid} & Nothing: zero. Read only. \\
+\code{0xf13} & \code{mimpid} & Nothing: zero. Read only. \\
+\code{0xf14} & \code{mhartid} & Nothing: zero, this machine's one
+hart. Read only. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -210,7 +220,13 @@ instruction retires with the word the previous device load left in
 \code{wb\_dev}. A store below \code{0x1000} writes nothing.
 
 A trap handler must start at a whole word: \code{mtvec} keeps no
-bits 1 and 0. The core has machine mode only and the nine control
-registers above, one of which, \code{mhalt}, is its own. It has one load in
+bits 1 and 0. The core has machine mode only and the fourteen control
+registers above, in three kinds: eight it keeps, \code{mhalt}, which
+is its own, and five that say what the machine is and hold nothing. A
+write to one of the four whose number begins \code{0xf} is an illegal
+instruction, which is what read only means in the specification;
+\code{misa} is writable and ignores what is written. There are no
+counters, so a read of \code{mcycle} or \code{minstret} still traps,
+which is issue 299. It has one load in
 flight at a time. On the board, \code{irq} is the interrupt
 controller's line.
