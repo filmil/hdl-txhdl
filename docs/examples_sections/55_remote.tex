@@ -8,10 +8,13 @@ against a simulation. \code{Remote} turns that round. It sits on
 AXI-Lite where any peripheral would, and answers nothing itself: each
 transaction it accepts leaves on a channel as an \code{Ask}, and an
 \code{Answer} comes back on another. What is at the far end of those
-two channels is not the peripheral's business. In this example it is
-a few lines of Rust in the same run; on a board it would be a frame
-on a wire and a program on another machine, which is what issue 297
-asks for.
+two channels is not the peripheral's business, and in this example
+it is a wire. \code{RemoteLink} turns an \code{Ask} into one Ethernet
+frame and a frame into an \code{Answer}; the Ethernet MAC of
+\code{//docs:eth} puts it on the wire and takes it off at the other
+end; and a program reads the frame, works out the answer, and
+sends a frame back. Nothing in the design knows that the device it
+is talking to is twenty lines of Rust.
 
 So a peripheral can be designed as software, against the bus it will
 really sit on, with the rest of the system running as it really runs.
@@ -34,21 +37,34 @@ writes a word and reads it back, so the program holds the state. It
 reads a word the program computes rather than stores, the number of
 writes it has seen, which is a line of software and a register file
 nobody would build. It reads an address the program has no word for,
-and the refusal arrives as \code{SlvErr} on the bus. Then it makes
-the program slow, twenty cycles a transaction, and every answer still
-arrives; then it stops the program answering at all, and the bus is
-told the device failed after forty cycles rather than waiting for
-ever; then the program comes back and the next read is answered.
+and the refusal arrives as \code{SlvErr} on the bus. Then the program
+ignores one frame, and the bus is told the device failed after the
+thousand cycles the peripheral waits rather than waiting for ever;
+then the program answers again and the next read is served.
 
-The peripheral is lowered, and the build simulates its netlist
-against this run under \code{nvc} and Verilator.
+A transaction is about seven hundred cycles here, because each frame
+is stored whole by a MAC before it goes and there are two of them
+each way. That is the price of the wire, and it is why the patience
+is a parameter: a program in the same simulation answers in two
+cycles and one across a network takes thousands.
+
+The same protocol is spoken by \code{//tools/remote}, a program in Go
+that serves a device over a connection an ssh tunnel can carry. Its
+test asserts the same frame, byte for byte, that the hardware sends,
+so the two implementations are held to one protocol rather than to
+each other.
+
+Both units are lowered, and the build simulates both netlists against
+this run under \code{nvc} and Verilator.
 
 \begin{figure}[htbp]
 \centering
 \input{remote_timing.tex}
-\caption{One transaction, end to end: \code{ask} carries it out of the
-peripheral, \code{busy} holds while \code{waited} counts, and the
-answer comes back and is given to the bus on \code{r}.}
+\caption{A transaction becoming a frame: \code{ask} carries it out of
+the peripheral, \code{at} counts the frame's twenty-seven bytes out
+on \code{byte}, and \code{tx\_en} goes high when the MAC has the
+whole frame and puts it on the wire. \code{busy} holds throughout,
+and for the six hundred cycles more that the answer takes.}
 \label{fig:x-remote}
 \end{figure}
 
