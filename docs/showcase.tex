@@ -67,9 +67,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 38\,119 lines of Rust: 11\,473 of runtime
-and macros, 10\,407 of parts, 7\,124 in fifty-seven examples, 6\,200 of
-Vreteno with its board, and 2\,915 of Razboj, DDR3, Ethernet, HDMI,
+Together they are 41\,752 lines of Rust: 12\,229 of runtime
+and macros, 11\,433 of parts, 7\,899 in sixty-two examples, 7\,273 of
+Vreteno with its board, and 2\,918 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -360,8 +360,8 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs a hundred and twenty targets, of
-which a hundred and four are netlists under both simulators; the rest are the
+its ports. \code{bazel test //...} runs a hundred and thirty-five targets, of
+which a hundred and sixteen are netlists under both simulators; the rest are the
 core's model and
 programs, the board's own run, Razboj, the parts, the SoC's run, and
 the tools. Four more are tagged manual: the board and its DDR3 under
@@ -373,11 +373,15 @@ including the ones whose answer was no.
 
 \section{What Is Not Done}
 
-The lowering names a wire as its \code{let} is written, so a
-\code{let} Rust accepts can still be refused, or renamed, on its way
-to the netlist. The core cannot load a program it
-was not built with, because its instruction memory is not on the bus.
-Razboj has no depth buffer, no interpolation and no texture. Each is an issue
-on the repository rather than a paragraph here.
+A wire may take a name other than the one its \code{let} is written
+with, and the netlist says which: it carries a line per renamed
+\code{let}. No \code{let} Rust accepts is refused any more. The core
+fetches from the bus above its boot memory, so it runs a program it
+was not built with, but the boot memory itself is not readable on the
+bus and a fetch that leaves the core stalls the pipeline until the word
+is back. A burst of more than one beat does not cross the network on
+chip; it is refused rather than carried. Razboj has no depth buffer, no
+interpolation and no texture. Each is an issue on the repository rather
+than a paragraph here.
 
 \end{document}
