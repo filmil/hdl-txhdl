@@ -190,6 +190,27 @@ vreteno_flat(
     program = ":hello_ram",
 )
 
+# A turning icosahedron on the board's HDMI output, drawn by the core
+# into the video peripheral's framebuffer with the logo in a corner.
+# Linked for the memory rather than the boot memory, and flattened, so
+# the loader sends it down the wire: the picture changes in a second
+# and the bitstream underneath it does not move.
+rust_binary(
+    name = "ico_hdmi",
+    srcs = ["ico_hdmi.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = ["//lib/logo:txhdl_logo"],
+)
+
+vreteno_flat(
+    name = "ico_hdmi_bin",
+    platform = ":vreteno",
+    program = ":ico_hdmi",
+)
+
 # The loader that lives in the boot memory and takes a program off the
 # serial port. Built for the board and for the runs that check it.
 rust_binary(
