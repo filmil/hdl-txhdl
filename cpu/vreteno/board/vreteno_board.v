@@ -110,6 +110,10 @@ module vreteno_board (
 
   // The design.
   wire halt;
+  // The pulse width modulator's four channels. The first drives the
+  // first LED, so a program can fade it; the other three go nowhere on
+  // this board and are left for a design that wants them.
+  wire [3:0] pwm_pins;
   board lowered (
     .clk(clk),
     .rst(rst),
@@ -121,6 +125,7 @@ module vreteno_board (
     .ddr3_rst_n(mem_rst_n),
     .halt(halt),
     .tx(uart_tx),
+    .pwm_pins(pwm_pins),
     .calib(calib),
     .ck_p(ddr3_clk_p),
     .ck_n(ddr3_clk_n),
@@ -154,7 +159,11 @@ module vreteno_board (
   reg [25:0] beat = 0;
   always @(posedge clk) beat <= beat + 1;
 
-  assign led1 = ~halt;
+  // The first LED is the modulator's first channel rather than the
+  // core's halt: a program sets its duty and the light follows. The
+  // halt still shows, on the same LED, by holding it on once the core
+  // stops, since a stopped core leaves the channel wherever it was.
+  assign led1 = ~(pwm_pins[0] | halt);
   assign led2 = ~said;
   assign led3 = ~calib;
   assign led4 = ~beat[25];

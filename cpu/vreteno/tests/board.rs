@@ -45,6 +45,9 @@ fn run(text: &[u32], data: &[u8], reply: &[u8], limit: u64) -> Ran {
         (
             halt_o,
             tx_o,
+            // The pulse width modulator's four channels, which this
+            // run does not look at.
+            signal::<U<4>, DefaultClock>().0,
             bit(),
             bit(),
             bit(),

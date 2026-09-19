@@ -33,10 +33,11 @@ use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerReq, B, R, W,
 };
 use txhdl_parts::bus::axi_lite::{
-    LiteAr, LiteAw, LiteB, LiteBridge1, LiteR, LiteW,
+    LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge2, LiteR, LiteW,
 };
 use txhdl_parts::bus::router::Router5;
 use txhdl_parts::plic::Plic2;
+use txhdl_parts::pwm::Pwm;
 
 // begin{map}
 /// The address map: each peripheral's base and the bits of an address
@@ -70,12 +71,19 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     pub router: BoardRouter,
     pub pdmem: AxiPer<32, 32, 4, 2>,
     pub ptimer: AxiPer<32, 32, 4, 2>,
-    pub puart: LiteBridge1<32, 32, 4, 2, 0x3000, 0xffff_f000>,
+    /// The serial port and the pulse width modulator share the
+    /// page at `0x3000`: the port at `0x3000`, the modulator at
+    /// `0x3100`, each a sixteenth of it. The router has five ports
+    /// and all five are taken, and a peripheral of six registers
+    /// does not want one of its own.
+    pub puart:
+        LiteBridge2<32, 32, 4, 2, 0x3000, 0xffff_ff00, 0x3100, 0xffff_ff00>,
     pub pddr3: AxiPer<32, 32, 4, 2>,
     pub pplic: LiteBridge1<32, 32, 4, 2, 0x0c00_0000, 0xfc00_0000>,
     pub dmem: Dmem<2>,
     pub timer: Timer<2>,
     pub uart: Uart<DIV>,
+    pub pwm: Pwm,
     pub ddr3: Ddr3Per<MICRON_SIM, BIST>,
     /// Both sources ask while their line is high.
     pub plic: Plic2<0>,
@@ -100,6 +108,7 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         (
             halt,
             tx,
+            pwm_pins,
             calib,
             ck_p,
             ck_n,
@@ -119,6 +128,7 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         ): (
             Out<Bit>,
             Out<Bit>,
+            Out<U<4>>,
             Out<Bit>,
             Out<Bit>,
             Out<Bit>,
@@ -202,6 +212,12 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         let (lw_tx, lw_rx) = chan::<LiteW<32, 4>, DefaultClock>();
         let (lb_tx, lb_rx) = chan::<LiteB, DefaultClock>();
         let (lr_tx, lr_rx) = chan::<LiteR<32>, DefaultClock>();
+        // The modulator's side of the same bridge.
+        let (paw_pwm_tx, paw_pwm_rx) = chan::<LiteAw<32>, DefaultClock>();
+        let (par_pwm_tx, par_pwm_rx) = chan::<LiteAr<32>, DefaultClock>();
+        let (pw_pwm_tx, pw_pwm_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (pb_pwm_tx, pb_pwm_rx) = chan::<LiteB, DefaultClock>();
+        let (pr_pwm_tx, pr_pwm_rx) = chan::<LiteR<32>, DefaultClock>();
         let (req3_tx, req3_rx) = chan::<PerReq<32, 2>, DefaultClock>();
         let (wd3_tx, wd3_rx) = chan::<W<32, 4>, DefaultClock>();
         let (ans3_tx, ans3_rx) = chan::<Answer<2>, DefaultClock>();
@@ -226,9 +242,15 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                         (ans1_tx, rb1_tx, tirq_o, sirq_o),
                     ),
                     join2(
-                        self.uart.run(
-                            (rst_uart, rx, law_rx, lar_rx, lw_rx),
-                            (lb_tx, lr_tx, tx, uirq_o),
+                        join2(
+                            self.uart.run(
+                                (rst_uart, rx, law_rx, lar_rx, lw_rx),
+                                (lb_tx, lr_tx, tx, uirq_o),
+                            ),
+                            self.pwm.run(
+                                (paw_pwm_rx, par_pwm_rx, pw_pwm_rx),
+                                (pb_pwm_tx, pr_pwm_tx, pwm_pins),
+                            ),
                         ),
                         self.plic.run(
                             (rst_plic, uirq_i, irq, paw_rx, par_rx, pw_rx),
@@ -282,8 +304,14 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                         ),
                         join2(
                             self.puart.run(
-                                (aw2_rx, ar2_rx, w2_rx, lb_rx, lr_rx),
-                                (law_tx, lar_tx, lw_tx, b2_tx, r2_tx),
+                                (
+                                    aw2_rx, ar2_rx, w2_rx, lb_rx, lr_rx,
+                                    pb_pwm_rx, pr_pwm_rx,
+                                ),
+                                (
+                                    law_tx, lar_tx, lw_tx, paw_pwm_tx,
+                                    par_pwm_tx, pw_pwm_tx, b2_tx, r2_tx,
+                                ),
                             ),
                             join2(
                                 self.pddr3.run(
