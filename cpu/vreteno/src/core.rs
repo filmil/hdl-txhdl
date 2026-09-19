@@ -473,18 +473,42 @@ fn csr_read(
         0x304 => mie,
         0x344 => mip,
         0x343 => mtval,
+        0x301 => U::<32>::from(isa::MISA),
+        // `mvendorid`, `marchid`, `mimpid` and `mhartid` all read as
+        // zero, which the default below gives them, and so does the
+        // halt. What makes them legal rather than illegal is
+        // `csr_known`, not an arm here.
         _ => U::<32>::from(0u32),
     })
 }
 
-/// Whether a CSR number is one of the nine the core has. The ninth is
-/// `mhalt`, which is this core's own: a write of an odd value to it
-/// stops the machine, and it reads as zero.
+/// Whether a CSR number is one the core has. Eight hold a trap and
+/// return from it; `mhalt` at `0x7c0` is this core's own, a write of
+/// an odd value to which stops the machine, and it reads as zero; and
+/// six say what the machine is, `misa` and the four machine
+/// information registers, which is what a stock kernel reads before it
+/// does anything else (issue 274).
 #[lower]
 fn csr_known(f12: U<12>) -> Bit {
     select!(f12.raw() => {
         0x300 | 0x305 | 0x340 | 0x341 | 0x342 | 0x304 | 0x344
-        | 0x343 | 0x7c0 => Bit::One,
+        | 0x343 | 0x7c0 | 0x301 | 0xf11 | 0xf12 | 0xf13
+        | 0xf14 => Bit::One,
+        _ => Bit::Zero,
+    })
+}
+
+/// Whether a CSR number is one of the read-only ones, whose address
+/// begins with two set bits. A write to one is an illegal
+/// instruction; a read is not.
+// The four addresses are consecutive, so Clippy asks for a range. The
+// lowering reads a `select!` arm's alternatives one by one and not a
+// range, which is the rule `AGENTS.md` states, so they are written out.
+#[allow(clippy::manual_range_patterns)]
+#[lower]
+fn csr_ro(f12: U<12>) -> Bit {
+    select!(f12.raw() => {
+        0xf11 | 0xf12 | 0xf13 | 0xf14 => Bit::One,
         _ => Bit::Zero,
     })
 }
@@ -891,6 +915,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 self.mtval.get(),
             );
             let csr_known = csr_known(f12);
+            // Whether the instruction writes at all: `csrrw` and
+            // `csrrwi` always do, and a set or a clear does only when
+            // its source is not `x0` or a zero immediate, which the
+            // specification states in terms of the field and not of
+            // the value it holds. A write to a read-only register is
+            // an illegal instruction; a read of one is not.
+            let csr_writes = ((f3 & U::<3>::from(3u8)) == U::<3>::from(1u8))
+                | (rs1 != U::<5>::from(0u8));
+            let csr_bad = csr_ro(f12) & csr_writes;
             let csr_src = mux(f3.bit(2), rs1.zext::<32>(), a);
             let csr_new = csr_value(f3, csr_old, csr_src);
             let sys0 = is_sys & (f3 == 0);
@@ -900,7 +933,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let known = select!(opcode.raw() => {
                 0x37 | 0x17 | 0x6f | 0x67 | 0x63 | 0x03 | 0x23 | 0x13 | 0x33
                 | 0x0f => Bit::One,
-                0x73 => (csr_op & csr_known) | is_ecall | is_ebreak | is_mret,
+                0x73 => (csr_op & csr_known & !csr_bad)
+                    | is_ecall
+                    | is_ebreak
+                    | is_mret,
                 _ => Bit::Zero,
             });
             // A trap: ecall, a word the core does not know, or the

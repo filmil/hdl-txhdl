@@ -6,9 +6,10 @@ use crate::core::IMEM_BYTES;
 use crate::isa::{
     compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT, CAUSE_ECALL,
     CAUSE_ILLEGAL, CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MSOFT,
-    CAUSE_MTIMER, CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK, CSR_MCAUSE,
-    CSR_MEPC, CSR_MHALT, CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS,
-    CSR_MTVAL, CSR_MTVEC, MEXT, MSOFT, MTIMECMP_OFF, MTIMER, UART_BASE,
+    CAUSE_MTIMER, CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK, CSR_MARCHID,
+    CSR_MCAUSE, CSR_MEPC, CSR_MHALT, CSR_MHARTID, CSR_MIE, CSR_MIMPID, CSR_MIP,
+    CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, CSR_MVENDORID,
+    MEXT, MISA, MSOFT, MTIMECMP_OFF, MTIMER, UART_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -220,6 +221,12 @@ impl Model {
             // The halt holds nothing: it reads as zero, and a write of
             // an odd value to it stops the machine.
             CSR_MHALT => 0,
+            // What the machine is. `misa` says RV32IMC; the four
+            // machine information registers say that the vendor, the
+            // architecture and the implementation are unassigned and
+            // that this is hart zero.
+            CSR_MISA => MISA,
+            CSR_MVENDORID | CSR_MARCHID | CSR_MIMPID | CSR_MHARTID => 0,
             _ => return None,
         })
     }
@@ -449,6 +456,22 @@ impl Model {
                     self.trap(CAUSE_ILLEGAL, w);
                     return;
                 };
+                // A write to a register whose address begins with two
+                // set bits is an illegal instruction. `csrrw` and
+                // `csrrwi` always write; a set or a clear writes only
+                // when its source field is not zero, which is what the
+                // specification says and is not the same as the value
+                // in the register being zero.
+                let writes = matches!(d.kind, Csrrw | Csrrwi) || d.rs1 != 0;
+                if writes
+                    && matches!(
+                        imm,
+                        CSR_MVENDORID | CSR_MARCHID | CSR_MIMPID | CSR_MHARTID
+                    )
+                {
+                    self.trap(CAUSE_ILLEGAL, w);
+                    return;
+                }
                 let src = match d.kind {
                     Csrrw | Csrrs | Csrrc => a,
                     _ => d.rs1,

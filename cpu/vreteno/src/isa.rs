@@ -77,6 +77,29 @@ pub const CSR_MIE: u32 = 0x304;
 pub const CSR_MIP: u32 = 0x344;
 pub const CSR_MTVAL: u32 = 0x343;
 
+/// What this core is, as `misa` reports it: `MXL` of 1 for a 32-bit
+/// machine in the top two bits, and the letters `I`, `M` and `C` in
+/// the extension bits, which are numbered from `A` at zero. So
+/// RV32IMC, which is what the core implements.
+pub const CSR_MISA: u32 = 0x301;
+pub const MISA: u32 = 0x4000_0000 | (1 << 12) | (1 << 8) | (1 << 2);
+
+/// The machine information registers. All four read as zero: a vendor
+/// of zero means unassigned, an architecture and an implementation of
+/// zero mean unspecified, and this machine has one hart, whose index
+/// is zero.
+///
+/// Their addresses begin `0xf`, whose top two bits are ones, and the
+/// privileged specification says a register numbered that way is read
+/// only and that a write to one raises an illegal instruction. That
+/// is what the core does, and it is why `misa` is not among them:
+/// `misa` is writable and may ignore what is written, so a write to
+/// it is legal and does nothing.
+pub const CSR_MVENDORID: u32 = 0xf11;
+pub const CSR_MARCHID: u32 = 0xf12;
+pub const CSR_MIMPID: u32 = 0xf13;
+pub const CSR_MHARTID: u32 = 0xf14;
+
 /// The halt: a write of an odd value to this custom machine register
 /// stops the core, and nothing restarts it. `csrwi 0x7c0, 1` is the
 /// whole of it, one instruction, which is what a program says when it
