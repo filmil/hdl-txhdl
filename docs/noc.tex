@@ -456,9 +456,18 @@ the four links before the exit, is the thing to watch when it does.
 The lattice is wired by a helper that makes the channels and hands out
 the ends, which does not lower; a design that is to be synthesised
 writes the same wiring as a unit of units and lets the lowering make
-the netlist. Bursts of more than one beat do not cross the network,
-and are refused rather than carried.
-The arbiter in a switch is a fixed priority. A switch moves one packet
+the netlist. Writes of more than one beat do not cross the network,
+and are refused rather than carried; reads of several beats do cross,
+since every beat of the answer is a packet of its own carrying its
+identifier, and a test crosses the lattice with four of them.
+Why the write is the hard one, what each way of carrying it would
+cost, and which to build are worked out in \code{docs/noc-bursts.md},
+which issue 125 implements.
+The arbiter in a switch is a fixed priority, and it starves: an input
+that offers every cycle keeps its output, and the exit, which is last
+in the order, moved nothing at all in two hundred cycles of a busy
+link. That is issue 315, and it is a defect rather than a limit.
+A switch moves one packet
 per cycle rather than one per port, which is what the rasteriser's
 stream pays for above.
 
