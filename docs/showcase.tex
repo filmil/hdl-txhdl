@@ -94,6 +94,9 @@ Network node, switch, 2 bridges & parts & not yet \\
 Pins; SPI; I2C; Ethernet's three; HDMI's two & parts & all eight \\
 System control: identity, cause, reset & parts & yes \\
 Watchdog: a countdown, a key, a window & parts & yes \\
+Four modulated outputs, shadowed duties & parts & yes \\
+A trace buffer, the last N entries & parts & yes \\
+A tee and a check, for running one thing twice & parts & both \\
 Vreteno; memory, timer, serial port & \code{cpu} & all four \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
@@ -112,6 +115,7 @@ The examples' own units & examples & all 21 \\
 System & Made of & Checked by \\
 \midrule
 Vreteno & core, router, 3 devices & model, 6 netlists \\
+A lockstep pair & 2 cores, 3 tees, 3 checks & 8 programs, a fault \\
 Razboj, a GPU & rasteriser, link, memory & model, 2 netlists \\
 The AXI link & host and peripheral & 2 netlists \\
 The AXI router & 1 host, 3 peripherals & its netlist \\
