@@ -2149,6 +2149,8 @@ latex_document(
         "//cpu/vreteno:sources",
         "//flagship:sources",
         "//lib/board:sources",
+        "//lib/logo:sources",
+        "//tools/logo2rs:sources",
     ],
     deps = ["housestyle.tex"],
 )

@@ -266,8 +266,10 @@ filegroup(
     name = "sources",
     srcs = [
         "ico.rs",
+        "ico_hdmi.rs",
         "hello.rs",
         "irq.rs",
         "vreteno.ld",
+        "vreteno_ram.ld",
     ],
 )

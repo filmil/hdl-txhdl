@@ -321,6 +321,55 @@ carry the core's AXI-Lite to the pixel clock are in columns 92 to 118,
 between the core and the video, which is where a crossing should be and
 is not something anything arranged.
 
+\section{The first program down the wire}
+\label{sec:f-first}
+
+The slot and the crossing are worth nothing until something writes the
+screen. The first program that does is a turning icosahedron, drawn by
+the core into the framebuffer with the TxHDL logo in a corner
+(Listing~\ref{lst:f-ico}). It is linked for the memory at
+\code{0x4000\_0000}, flattened, and sent by the loader: the picture
+on the flagship changed a dozen times in an afternoon and Vivado ran
+for none of them, which is the loop this document is about.
+
+Three things in it are worth reading. The twenty faces are not a table:
+they are found at startup by taking every triple of vertices that are
+pairwise one edge apart and winding each so its normal points away from
+the centre, and the program says how many it found, which on the board
+was twenty. The face normals are unit vectors turned with the solid, so
+one number decides whether a face is seen and how brightly it is lit,
+and for a convex solid that test is the whole of hidden surface
+removal. And nothing is cleared: a row is composed in a buffer and
+written once, because the raster reads the framebuffer while the core
+writes it, and a screen that is cleared and then drawn is seen in
+between. The first version cleared, and it flickered.
+
+Two things it got wrong on the way are in its comments, because they
+are the kind of thing a picture on a monitor teaches and a simulation
+does not: the eye was three radii from the solid, so the nearest face
+swelled to nearly the whole silhouette and read as a back face painted
+over the front; and each colour channel was shaded and rounded on its
+own, so a face turning smoothly changed hue rather than brightness.
+
+\lstinputlisting[caption={\code{cpu/vreteno/rust/ico\_hdmi.rs}: the
+icosahedron.},label={lst:f-ico}]{cpu/vreteno/rust/ico_hdmi.rs}
+
+The logo is data: one twelve-bit word per pixel at the size a corner
+wants, in a crate of constants that builds for the core as it builds
+for this machine (Listing~\ref{lst:f-logo}). It is written by
+\code{//tools/logo2rs} from the PNG and committed, as the layout
+numbers are committed, because a Bazel action cannot reach the drive
+the logo is kept on. The dark background of the source becomes a value
+that is not a colour, which a program skips, so the logo sits on
+whatever is drawn under it.
+
+\lstinputlisting[caption={\code{lib/logo/logo.rs}: the head of the
+logo, as \code{logo2rs} writes it.},label={lst:f-logo},%
+linerange={1-27}]{lib/logo/logo.rs}
+
+\lstinputlisting[caption={\code{tools/logo2rs/main.go}: the PNG to the
+crate.},label={lst:f-logo2rs},tabsize=2]{tools/logo2rs/main.go}
+
 \section{What is not done}
 \label{sec:f-todo}
 
@@ -330,8 +379,10 @@ exists~\cite{eth}; what is missing is a sixth slot to put it on and the
 crossing to the 125\,MHz domain, which is the same crossing the video
 already uses.
 
-\emph{The screen is painted by nothing yet.} The slot is there and the
-crossing is there; the program that draws is filed separately.
+\emph{One program paints the screen, and it is the whole of what is
+known about painting it.} Section~\ref{sec:f-first} says what it
+does not do: no second buffer, so a moving edge tears; no depth
+buffer, which a convex solid does not need and the next one will.
 
 \emph{There is one flagship.} The issue that asks for this one allows
 for several, named \code{flagship-0}, \code{flagship-1} and so on, if

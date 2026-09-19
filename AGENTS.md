@@ -118,6 +118,11 @@ all under `//docs`:
   and the bitstream underneath it does not move.
   `//flagship:flagship_synth`, `//flagship:flagship_pnr` and
   `//flagship:flagship_flash` are the targets.
+  The first program sent down the wire is `cpu/vreteno/rust/ico_hdmi.rs`,
+  a turning icosahedron the core draws into the video peripheral with
+  the TxHDL logo in a corner; every picture this system generates
+  carries that logo, which `//lib/logo` holds as data and
+  `//tools/logo2rs` writes from the PNG.
 * `//docs:pcie` is PCIe on the AX7A200B: AMD's XDMA endpoint, which
   `//pcie:xdma_x2` generates with `vivado_ip`; `AxiPins` in
   `//lib/parts` under `bus::axi_pins`, which joins a host's AXI4 pins to

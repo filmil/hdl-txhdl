@@ -16,3 +16,9 @@ go_binary(
     srcs = ["main.go"],
     pure = "on",
 )
+
+# The source by name, for the documents' listings.
+filegroup(
+    name = "sources",
+    srcs = ["main.go"],
+)
