@@ -831,17 +831,17 @@ mod tests {
     }
 
     /// One switch, with its north input never empty and its exit
-    /// asking for the same output. The choice among the inputs that
-    /// can move is a fixed order that serves the four links before
-    /// the exit, so the exit moves nothing for as long as the link
-    /// keeps offering: what goes in at a node while a link through it
-    /// is busy waits, without a bound.
+    /// asking for the same output. The two take turns, so a node can
+    /// always put its own traffic into a network whose links are
+    /// busy.
     ///
-    /// This is the arbitration question in issue 133, and it is not
-    /// only a question about bursts: a saturated link starves its
-    /// node's own traffic today.
+    /// This was the arbitration question in issue 133 and then the
+    /// defect in issue 315. Under the fixed order it answered, the
+    /// link moved 198 packets in two hundred cycles and the exit
+    /// moved none, for as long as the link kept offering and with no
+    /// bound on the wait. Under the round robin they alternate.
     #[test]
-    fn a_busy_link_starves_the_exit_of_its_switch() {
+    fn a_busy_link_and_the_exit_take_turns() {
         use super::pkt::{Chan, Pkt};
         use super::switch::Switch;
         use txhdl::types::Bit;
@@ -900,29 +900,30 @@ mod tests {
         let from_the_link = seen.iter().filter(|id| **id == 1).count();
         let from_the_exit = seen.iter().filter(|id| **id == 2).count();
         assert!(from_the_link > 50, "the link moved {from_the_link}");
-        assert_eq!(
-            from_the_exit, 0,
-            "the exit moved {from_the_exit} packets in 200 cycles, so it is \
-             not starved after all and this test should be rewritten as the \
-             check that it is not"
+        assert!(
+            from_the_exit > 50,
+            "the exit moved {from_the_exit} packets against the link's \
+             {from_the_link} in 200 cycles: it is being starved"
         );
+        // Neither had to wait on the other for more than its turn.
+        let gap = from_the_link.abs_diff(from_the_exit);
+        assert!(gap <= 2, "{from_the_link} against {from_the_exit}");
     }
 
     /// Two inputs of one switch leaving by the same port, in the two
-    /// regimes that matter. Both offering every cycle: the fixed
-    /// order gives the port to the higher input and the lower one
-    /// moves nothing at all. The higher offering now and then: the
-    /// two sources' packets mix at the output, one of the higher
-    /// between two of the lower.
+    /// regimes that matter. Both offering every cycle: they alternate,
+    /// one each. One offering every third cycle: the other takes the
+    /// port the rest of the time, and the two mix at the output.
     ///
-    /// That is blocker 2 of issue 133, measured rather than argued,
-    /// and the measurement corrects it. The blocker says beats from
-    /// different sources interleave wherever their paths merge. They
-    /// do, but only while the higher source pauses; while it does
-    /// not, the lower source is starved instead. Either way a burst's
-    /// beats do not stay together, which is what the blocker is
-    /// about, so whatever carries a multi-beat write has to keep them
-    /// together itself at every switch they pass.
+    /// That is blocker 2 of issue 133, measured rather than argued.
+    /// The blocker says beats from different sources interleave
+    /// wherever their paths merge, and they do; under the fixed order
+    /// this replaced, the lower source was starved instead while the
+    /// higher never paused, which is issue 315. Either way a burst's
+    /// beats do not stay together, so whatever carries a multi-beat
+    /// write has to keep them together itself at every switch they
+    /// pass, and the round robin makes that a certainty rather than a
+    /// matter of who is busy.
     #[test]
     fn two_inputs_of_a_switch_contend_for_their_shared_output() {
         use super::pkt::{Chan, Pkt};
@@ -980,14 +981,17 @@ mod tests {
             let _ = xo_rx.recv();
             sim.cycle();
         }
-        // Saturated: the higher input takes the port and keeps it.
+        // Saturated: they alternate, one each, and neither takes two
+        // in a row.
         assert!(saturated.len() > 20, "only {} moved", saturated.len());
-        assert_eq!(
-            saturated.iter().filter(|id| **id == 2).count(),
-            0,
-            "the lower input moved something while the higher never \
-             paused: {saturated:?}"
+        let north = saturated.iter().filter(|id| **id == 1).count();
+        let south = saturated.len() - north;
+        assert!(
+            north.abs_diff(south) <= 2,
+            "one input took the port: {saturated:?}"
         );
+        let runs = saturated.windows(2).filter(|w| w[0] == w[1]).count();
+        assert_eq!(runs, 0, "two together {runs} times: {saturated:?}");
         // Sharing: both get through, and the higher input's packets
         // land between the lower input's.
         assert!(sharing.contains(&1) && sharing.contains(&2), "{sharing:?}");
