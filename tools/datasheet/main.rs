@@ -35,6 +35,7 @@ use txhdl_parts::plic::Plic2;
 use txhdl_parts::spi::Spi;
 use txhdl_parts::station::Station3;
 use txhdl_parts::syscon::Syscon;
+use txhdl_parts::tracer::Tracer;
 use txhdl_parts::wdog::Wdog;
 use vreteno32::board::Board;
 use vreteno32::core::Vreteno;
@@ -446,6 +447,7 @@ fn main() {
     sheet("Plic", "Plic2<0>", Plic2::<0>::lowered("plic"));
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));
     sheet("Spi", "Spi", Spi::lowered("spi"));
+    sheet("Tracer", "Tracer<8>", Tracer::<8>::lowered("tracer"));
     sheet("I2c", "I2c", I2c::lowered("i2c"));
     sheet(
         "Wdog",

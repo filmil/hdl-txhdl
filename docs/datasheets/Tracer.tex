@@ -1,0 +1,141 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Tracer
+\datasheet{Tracer}{A ring of the last N things that happened, read out over AXI-Lite after the machine has stopped.}
+
+\dsfacts{\code{lib/parts/src/tracer.rs}}{\code{txhdl\_parts::tracer::Tracer}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{Tracer<N>} takes one 128-bit entry a cycle and keeps the last
+\code{N} of them. What it holds is always the most recent window: when
+the ring is full the oldest goes. A host reads the window out over
+AXI-Lite, oldest first, by writing a cursor and reading the four words
+of the entry the cursor names.
+
+It is meant for what a machine was doing when it stopped, which is why
+the readout is separate from the capture: a design raises \code{halt},
+the buffer freezes, and the window is read at leisure afterwards over
+the same bus the rest of the system uses.
+
+An entry is 128 bits because a retirement is. A program counter, an
+instruction, the register written and the word written come to a
+hundred and one bits, and a width that is a whole number of bus words
+is one the readout walks without shifting.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{N} & How many entries the ring holds. It is a power of two, since
+the ring wraps by masking. The tables use 8, as the example and the
+tests do. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Register map}
+
+Offsets from the peripheral's base. The buffer selects the word by bits
+4 to 2 of the address and looks at no other bits, so the bridge in
+front of it decides the base, and the seven words repeat every 32
+bytes.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.5\textwidth}@{}}
+\toprule
+Offset & Word & Access \\
+\midrule
+\code{0x00} & \code{ctrl} & Read and write. Bit 0, \code{CTRL\_RUN}, is
+whether the buffer takes what it is offered. Bit 1,
+\code{CTRL\_FREEZE}, is whether \code{halt} stops it. \\
+\code{0x04} & \code{count} & Read only. How many entries are held, up
+to \code{N}. A write is taken and does nothing. \\
+\code{0x08} & \code{cursor} & Read and write. Which held entry the four
+words below return, counting from the oldest. \\
+\code{0x0c} & & Reads as zero. \\
+\code{0x10} & \code{word0} & Read only. Bits 31 to 0 of that entry. \\
+\code{0x14} & \code{word1} & Read only. Bits 63 to 32. \\
+\code{0x18} & \code{word2} & Read only. Bits 95 to 64. \\
+\code{0x1c} & \code{word3} & Read only. Bits 127 to 96. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{tracer::word(k)} gives the offset of word \code{k}, which is
+\code{0x10 + 4k}.
+
+\dstables{Tracer}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item An entry is stored when the run bit is set, \code{take} is high,
+and the buffer is not freezing. It goes into the slot \code{head}
+names, \code{head} moves on by one and wraps by masking, and
+\code{count} rises until it reaches \code{N} and then stays there.
+\item What is held runs from the oldest to the slot before the head, so
+a read at cursor \code{k} is the entry \code{k} after the oldest:
+the slot is \code{(head - count + cursor)} masked to the ring.
+\item The freeze is a level, not an edge. While \code{CTRL\_FREEZE} is
+set and \code{halt} is high, the run bit is cleared, and it is cleared
+again in every such cycle, so a host cannot start the buffer while
+\code{halt} is still up. A host that reads \code{ctrl} back therefore
+learns why the buffer stopped.
+\item A write of the run bit while the buffer is stopped also zeroes
+\code{count} and \code{head}: a host that starts the buffer starts a
+new window rather than adding to the old one.
+\item A read is answered on \code{r} in the cycle its address beat is
+taken, with \code{OKAY}. It returns the registers as the last edge left
+them, so a read in the same cycle as a write of the same word returns
+the old value.
+\item A write needs its address beat and its data beat in the same
+cycle, and room on \code{b}; it is answered \code{OKAY} in that cycle.
+The buffer holds no write address between cycles.
+\item The cursor is a register, so a host writes it in one transaction
+and reads the entry in the next.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Five tests in \code{lib/parts/src/tracer.rs}, in
+\code{//lib/parts:parts\_test}, drive a \code{Tracer<8>} through a
+\code{LiteHost}. \code{what\_is\_held\_is\_the\_last\_n\_entries} offers
+twelve into a ring of eight and finds the fifth to the twelfth.
+\code{fewer\_than\_a\_ring\_are\_held\_oldest\_first} offers three and
+finds three, in order. \code{a\_halt\_freezes\_the\_window} offers three,
+raises \code{halt}, offers six more, and finds the three and a cleared
+run bit. \code{a\_start\_opens\_a\_new\_window} finds the count and the
+window reset by a start. \code{a\_stopped\_buffer\_takes\_nothing} finds
+nothing held when the buffer was never started.
+\item \code{//lib/examples:ex\_tracer} puts it behind a
+\code{LiteBridge1} on an AXI4 link at \code{0x1000}, offers twelve
+entries, raises \code{halt} and offers four more that the buffer must
+refuse.
+\item The build simulates \code{Tracer<8>}'s netlist against that run
+under nvc and Verilator:
+\code{//docs:tracer\_sim\_tracer\_tb\_test} and
+\code{//docs:tracer\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+Nothing in the tree yet. It is meant for the core's retirement wires,
+which the board computes and throws away; issue 240 says so.
+
+\subsection*{Limits}
+
+\code{N} must be a power of two. The entry width is 128 bits and the
+bus 32, and neither is a parameter. The buffer takes one entry a cycle,
+since the ring has one write port. Byte strobes are ignored: a write of
+\code{ctrl} or \code{cursor} takes the word's low bits whatever the
+strobe says. Nothing is refused: an offset that names no word reads as
+zero or as \code{ctrl}, and every read and every write is answered
+\code{OKAY}. The cursor is not masked when it is written, only when the
+slot is formed, so a cursor past \code{count} reads a slot that is in
+the ring but not in the window. There is no reset port, no interrupt,
+no timestamp and no flag that says the ring wrapped.
