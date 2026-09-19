@@ -307,31 +307,30 @@ board's pins.},label={lst:e-xdc}]{eth/board/ax7a200_eth.xdc}
 \section{What Is Not Done}
 \label{sec:e-not}
 
-The echo design has run on the board, and it is not finished. On
-September 18, 2026 the board linked at gigabit with a host, and frames
-sent to it came back: byte for byte, never twice, and a frame shorter
-than the minimum came back padded to sixty bytes. So the transmitter,
-the check sequence, the padding and the crossing between the two clocks
-all work on hardware.
+The echo design has run on the board and works. On September 19, 2026
+the board linked at gigabit with a host and returned every frame sent
+to it: five hundred of 1400 bytes and five hundred of four bytes, byte
+for byte, the short ones padded to sixty, with the host's adapter
+counting no frame with a bad check sequence.
 
-What is not finished is the receive side's timing at the pins, which is
-issue~231. The PHY adds no receive delay of its own, so with none in the
-FPGA either the MAC accepted nothing at all. The design now shifts the
-receive clock by 90 degrees, which is 2~ns of its 8~ns period, and that
-is the best of the settings measured: delaying the five data lines
-instead, with an \code{IDELAYE2} each at 20, 26 and 31 taps, let between
-a quarter and a third of the frames through, and delaying the clock the
-other way let none through.
+It took two changes, both to the timing at the pins, which is issue~231.
+The receive side had no delay, and the PHY adds none of its own, so the
+MAC accepted nothing at all; the receive clock now goes through an MMCM
+that shifts it a quarter cycle, which is 2~ns of its 8~ns period. The
+transmit side had the opposite fault: the design sent its clock a
+quarter cycle late, the PHY delays that clock again on its side, and
+the two together put the PHY's sampling edge where the data changes.
+The board received every frame and the host got most of them back
+corrupted, about one bit in ten thousand, which the host's adapter
+counted under \code{ethtool -S rx\_errors} while the kernel's own
+counter stayed at zero. The transmit clock now leaves the FPGA aligned
+with the data, which is what the vendor's own design for this board
+does; its routed checkpoint, opened in Vivado, says so, and it pings
+without loss over the same cable.
 
-At the best setting a 46-byte frame comes back three times in five, a
-200-byte frame one time in three, and a 1000-byte frame one time in ten.
-Loss that grows with length is bit errors rather than a race, at about
-one in ten thousand, so the sampling point is inside the eye and the eye
-is narrow. The next things to try are the PHY's own receive delay over
-the management interface, which the design leaves idle, and a look at
-the lines with an \code{ILA} or a scope. The I/O standard of the
-Ethernet pins is given as LVCMOS33, which the core board's banks
-support, since they are at 3.3~V.
+The I/O standard of the Ethernet pins is LVCMOS33 on both sides: the
+core board's banks are at 3.3~V, and the carrier sets the PHY's RGMII
+pins to 3.3~V.
 
 \code{//eth/hil:run} is the test that produced those numbers. It runs
 where the cable is, sends a frame and waits for it to come back before
