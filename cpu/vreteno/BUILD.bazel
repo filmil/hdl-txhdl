@@ -59,6 +59,7 @@ rust_binary(
         ":vreteno32",
         "//cpu/vreteno/rust:ddr3_board_program",
         "//cpu/vreteno/rust:ddr3_program",
+        "//cpu/vreteno/rust:fade_program",
         "//lib:txhdl",
     ],
 )
@@ -74,6 +75,15 @@ genrule(
     name = "board_v",
     outs = ["board.v"],
     cmd = "$(location :board_netlist) board > $@",
+    tools = [":board_netlist"],
+)
+
+# The same board with the fading program in it, for the LED
+# demonstration of the pulse width modulator.
+genrule(
+    name = "board_fade_v",
+    outs = ["board_fade.v"],
+    cmd = "$(location :board_netlist) fade > $@",
     tools = [":board_netlist"],
 )
 
@@ -309,6 +319,38 @@ vivado_place_and_route2(
     name = "vreteno_board_pnr",
     synthesis = ":vreteno_board_synth",
     xdcs = [":ax7a200_xdc"],
+    tags = ["manual"],
+)
+
+# The same board with the fading program in it: the demonstration of
+# the pulse width modulator on a real LED. See issue #248.
+vivado_synthesis2(
+    name = "vreteno_board_fade_synth",
+    # UberDDR3's RTL sets default_nettype none, which lasts into every
+    # file read after it, so the controller goes last.
+    srcs = [
+        ":board_fade_v",
+        "board/vreteno_board.v",
+        "//ddr3:hdl",
+    ],
+    part = "xc7a200tfbg484-2",
+    top = "vreteno_board",
+    xdcs = [":ax7a200_xdc"],
+    tags = ["manual"],
+)
+
+vivado_place_and_route2(
+    name = "vreteno_board_fade_pnr",
+    synthesis = ":vreteno_board_fade_synth",
+    xdcs = [":ax7a200_xdc"],
+    tags = ["manual"],
+)
+
+# Write the fading demonstration into the board.
+vivado_program_device(
+    name = "vreteno_board_fade_prog",
+    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
+    deps = [":vreteno_board_fade_pnr"],
     tags = ["manual"],
 )
 

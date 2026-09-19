@@ -51,8 +51,14 @@ fn main() {
             ddr3_board_program::TEXT,
             ddr3_board_program::DATA,
         ),
+        // The same board, with the program that fades an LED.
+        "fade" => (
+            Board::<868, 0, 0>::lowered("board"),
+            fade_program::TEXT,
+            fade_program::DATA,
+        ),
         _ => {
-            eprintln!("usage: board_netlist sim|board");
+            eprintln!("usage: board_netlist sim|board|fade");
             std::process::exit(2);
         }
     };

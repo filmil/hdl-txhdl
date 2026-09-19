@@ -135,6 +135,31 @@ rust_library(
     edition = "2021",
 )
 
+# A program that breathes an LED with the pulse width modulator, for
+# the board. Built for the board only: there is nothing for a
+# simulation to see in a light that fades over two seconds.
+rust_binary(
+    name = "fade",
+    srcs = ["fade.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    tags = ["manual"],
+)
+
+vreteno_image(
+    name = "fade_image",
+    platform = ":vreteno",
+    program = ":fade",
+)
+
+rust_library(
+    name = "fade_program",
+    srcs = [":fade_image"],
+    crate_name = "fade_program",
+    edition = "2021",
+)
+
 # Input by interrupt: the serial port's receive interrupt through the
 # interrupt controller, one interrupt per byte, run on the board's
 # design. Built exactly as the greeting is.
