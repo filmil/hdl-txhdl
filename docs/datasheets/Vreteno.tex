@@ -225,8 +225,13 @@ registers above, in three kinds: eight it keeps, \code{mhalt}, which
 is its own, and five that say what the machine is and hold nothing. A
 write to one of the four whose number begins \code{0xf} is an illegal
 instruction, which is what read only means in the specification;
-\code{misa} is writable and ignores what is written. There are no
-counters, so a read of \code{mcycle} or \code{minstret} still traps,
-which is issue 299. It has one load in
+\code{misa} is writable and ignores what is written. The two counters answer as well:
+\code{mcycle} at \code{0xb00} with its high half at \code{0xb80},
+and \code{minstret} at \code{0xb02} with \code{0xb82}, each 64 bits
+and each writable. \code{mcycle} counts while the core runs and stops
+when the halt stops it; \code{minstret} counts what retires. They are
+the one part of the core the lockstep test leaves alone, for the
+reason \code{//docs:vreteno} gives, and
+\code{//cpu/vreteno:counters\_test} checks them instead. It has one load in
 flight at a time. On the board, \code{irq} is the interrupt
 controller's line.

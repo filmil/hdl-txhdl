@@ -163,8 +163,11 @@ It does not stop the core and does not show its registers.
 What it costs: a bridge to write, or an IP to generate and wire, and a
 host-side script.
 The instruction memory is inside the core and is not on the bus
-(`cpu/vreteno/src/core.rs:580`), so loading a program this way also
-wants issue 134, fetch from the bus.
+(`cpu/vreteno/src/core.rs:580`), so loading a program this way wanted
+issue 134, fetch from the bus.
+That has since landed: the core fetches from the bus above its boot
+memory, so a program written into memory runs, and what is left is the
+boot memory itself, which is issue 268.
 
 ### 3.4 The RISC-V debug module over JTAG, issue 154
 
