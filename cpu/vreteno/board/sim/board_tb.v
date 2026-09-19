@@ -28,6 +28,8 @@ module board_tb;
 
   vreteno_board dut (
     .sys_clk_p(clk200), .sys_clk_n(~clk200), .reset_n(reset_n),
+    // KEY1 is a second reset, low while pressed, and nobody presses it.
+    .key1(1'b1),
     .led1(led1), .led2(led2), .led3(led3), .led4(led4),
     .uart_tx(tx), .uart_rx(1'b1),
     .ddr3_a(a), .ddr3_ba(ba), .ddr3_ras(ras), .ddr3_cas(cas),

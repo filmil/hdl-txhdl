@@ -302,6 +302,23 @@ as itself with nothing attached. Both take
 \code{-{}-hostport localhost:3122} and the device pattern, as the
 targets' comments state.
 
+A running program never returns to the loader on its own, and for a
+while the only way back was to reprogram the part. Three ways now, none
+of them Vivado. The RESET key on the carrier, and KEY1 beside it, reset
+the core: the memory keeps running through the press, so whatever the
+press caught in flight completes and the bus is clean when the core
+restarts in the loader, and the memory's contents survive, which is
+what a warm reset means. The first version reset the memory too, and
+a press that caught a fetch in flight stranded the bridge in front of
+the controller, which nothing resets; the loader then took three words
+and stopped. And from the host, the serial line held low for far longer
+than any byte, which the top turns into the same reset, so
+\code{load -{}-reset} brings the loader back and then sends. The low
+is one zero byte at 300 baud, 30 ms, and not a break: a break sent
+through the board's CP2102N as Linux drives it never reached the pin,
+which a slow zero byte proved by resetting the core where the break
+had not.
+
 The flash is a Micron MT25QL128 over a four-bit bus. It is the part
 this board answers with, read off the chip over JTAG rather than out of
 a manual, because board revisions differ here and the manual for this

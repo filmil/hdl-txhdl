@@ -4,7 +4,19 @@
 // memory and then watches the serial port, so that changing the
 // software on this machine is a second rather than a place and route.
 //
-//	load PORT BAUD ADDRESS IMAGE SECONDS
+//	load PORT BAUD ADDRESS IMAGE SECONDS [reset]
+//
+// With `reset`, the line is held low first, which the board's top
+// turns into a reset of the core, so that a program that has taken the
+// core gives it back to the loader without anybody reprogramming the
+// part. The low is a zero byte sent at 300 baud: nine bit times of low,
+// 30 ms, past the top's 20 ms threshold. It is not a break, because a
+// break sent through this board's CP2102N, as Linux's cp210x driver
+// drives it, never reached the pin, while the slow zero did; a zero at
+// a slow rate is a low any adapter can make. The loader's greeting goes
+// out while the port is still at 300 baud and is not readable, so this
+// does not wait for it: the acknowledgement of the header says whether
+// the loader is there.
 //
 // The stream is what `cpu/vreteno/rust/boot.rs` reads: the magic word
 // `TXLD`, the address, the length, the words, and their sum, every
@@ -30,10 +42,14 @@ import (
 // The flush request, which the syscall package leaves out.
 const tcflsh = 0x540B
 
+// The rate at which one zero byte holds the line low for 30 ms.
+const slowBaud = 300
+
 // What the loader says when it is ready for the next word.
 const ack = 'K'
 
 var speeds = map[int]uint32{
+	300:    syscall.B300,
 	9600:   syscall.B9600,
 	19200:  syscall.B19200,
 	38400:  syscall.B38400,
@@ -74,11 +90,12 @@ func raw(fd int, baud int) error {
 }
 
 func main() {
-	if len(os.Args) != 6 {
+	if len(os.Args) != 6 && len(os.Args) != 7 {
 		fmt.Fprintln(os.Stderr,
-			"usage: load PORT BAUD ADDRESS IMAGE SECONDS")
+			"usage: load PORT BAUD ADDRESS IMAGE SECONDS [reset]")
 		os.Exit(2)
 	}
+	reset := len(os.Args) == 7 && os.Args[6] == "reset"
 	port, baudText, addrText, image, secondsText :=
 		os.Args[1], os.Args[2], os.Args[3], os.Args[4], os.Args[5]
 	baud := atoi(baudText)
@@ -121,11 +138,26 @@ func main() {
 	// loader is waiting for the magic word whether or not anybody
 	// heard it say so, and the acknowledgements say whether it is
 	// listening.
-	fmt.Fprintf(os.Stderr, "[load] listening on %s\n", port)
-	if waitFor(said, "boot", time.Now().Add(2*time.Second)) {
-		fmt.Fprintln(os.Stderr, "[load] the loader is waiting")
+	if reset {
+		// The slow zero, then the rate back, then a moment for the
+		// core to come out of reset and the loader to start listening.
+		fmt.Fprintf(os.Stderr, "[load] holding %s low to reset the core\n", port)
+		check(raw(fd, slowBaud))
+		write(fd, []byte{0})
+		time.Sleep(100 * time.Millisecond)
+		check(raw(fd, baud))
+		time.Sleep(50 * time.Millisecond)
+		// Whatever the greeting became at the wrong rate is not it.
+		for len(said) > 0 {
+			<-said
+		}
 	} else {
-		fmt.Fprintln(os.Stderr, "[load] no greeting; sending anyway")
+		fmt.Fprintf(os.Stderr, "[load] listening on %s\n", port)
+		if waitFor(said, "boot", time.Now().Add(2*time.Second)) {
+			fmt.Fprintln(os.Stderr, "[load] the loader is waiting")
+		} else {
+			fmt.Fprintln(os.Stderr, "[load] no greeting; sending anyway")
+		}
 	}
 
 	words := len(blob) / 4

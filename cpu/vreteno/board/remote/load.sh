@@ -5,7 +5,12 @@
 # the image and runs the sender there over ssh, under a timeout.
 #
 #   load [--server=HOST] [--port=/dev/ttyUSB0] [--baud=115200]
-#        [--address=0x40000000] [--seconds=30] --image=PATH
+#        [--address=0x40000000] [--seconds=30] [--reset] --image=PATH
+#
+# With --reset the sender first holds the serial line low for 30 ms, a
+# zero byte at 300 baud, which the board's top turns into a reset of
+# the core, so the loader is back whatever program had the core, and no
+# reprogram is needed.
 set -euo pipefail
 
 # --- begin runfiles.bash initialization v3 ---
@@ -25,6 +30,7 @@ baud=115200
 address=0x40000000
 seconds=30
 image=""
+reset=""
 for a in "$@"; do
   case "$a" in
     --server=*) server="${a#*=}" ;;
@@ -33,6 +39,7 @@ for a in "$@"; do
     --address=*) address="${a#*=}" ;;
     --seconds=*) seconds="${a#*=}" ;;
     --image=*) image="${a#*=}" ;;
+    --reset) reset="reset" ;;
     *) echo "unknown argument: $a" >&2; exit 2 ;;
   esac
 done
@@ -48,4 +55,4 @@ ssh -o BatchMode=yes "$server" "mkdir -p $dir && rm -f $dir/load $dir/image.bin"
 scp -q -o BatchMode=yes "$sender" "$server:$dir/load"
 scp -q -o BatchMode=yes "$image" "$server:$dir/image.bin"
 ssh -o BatchMode=yes "$server" \
-  "timeout --signal=TERM --kill-after=5 $((seconds + 20)) $dir/load '$port' '$baud' '$address' $dir/image.bin '$seconds'"
+  "timeout --signal=TERM --kill-after=5 $((seconds + 20)) $dir/load '$port' '$baud' '$address' $dir/image.bin '$seconds' $reset"

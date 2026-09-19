@@ -38,6 +38,9 @@ module vreteno_board (
   input sys_clk_p,
   input sys_clk_n,
   input reset_n,
+  // A user key on the carrier, KEY1, low while pressed, as a second
+  // reset: the same as the RESET key, where a hand already is.
+  input key1,
   output led1,
   output led2,
   output led3,
@@ -113,12 +116,42 @@ module vreteno_board (
   // answers as it always does, and the bus is clean when it restarts.
   // The memory's contents survive a press, which is what a warm reset
   // means.
+  //
+  // The serial line held low resets the core as well: low for far
+  // longer than any byte, 20 ms against a byte's 87 us, which no
+  // program on the core produces and the host makes by sending one
+  // zero byte at 300 baud, 30 ms of low. Not a break: a break through
+  // this board's CP2102N, as Linux drives it, never reached the pin. It
+  // gives the host a reset that no software on the core can miss,
+  // because it is not software on the core, and it is what
+  // `load --reset` uses (issue #332). The line is brought into the
+  // design's clock through two flip-flops first. The reset is a pulse
+  // when the count reaches the threshold rather than a level while the
+  // line is low, so a line left floating low resets the core once and
+  // not forever. The pulse is a millisecond, not a few cycles: a fetch
+  // from the memory caught in flight answers long after a short pulse
+  // has ended, and the core, back in the loader by then, would take
+  // that answer as the reply to its first read of the serial port. A
+  // finger on the button holds the reset for a tenth of a second and
+  // never sees this; the break's reset has to be held on purpose.
+  (* ASYNC_REG = "TRUE" *) reg [1:0] rx_sync = 2'b11;
+  // The count is 22 bits: 2 100 000 does not fit in 21, and a literal
+  // wider than its register is silently cut down, which made the
+  // upper bound 2 848 and the pulse never come.
+  reg [21:0] low_for = 0;
+  reg brk = 0;
+  always @(posedge clk) begin
+    rx_sync <= {rx_sync[0], uart_rx};
+    if (rx_sync[1]) low_for <= 0;
+    else if (low_for != 22'h3fffff) low_for <= low_for + 1;
+    brk <= (low_for >= 22'd2_000_000) && (low_for < 22'd2_100_000);
+  end
   wire calib;
   reg [1:0] mem_sync = 2'b00;
   reg [1:0] core_sync = 2'b11;
   always @(posedge clk) begin
     mem_sync <= {mem_sync[0], locked};
-    core_sync <= {core_sync[0], ~(reset_n & locked & calib)};
+    core_sync <= {core_sync[0], ~(reset_n & key1 & locked & calib) | brk};
   end
   wire mem_rst_n = mem_sync[1];
   wire rst = core_sync[1];
