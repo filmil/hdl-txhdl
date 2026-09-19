@@ -340,8 +340,8 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                                 ),
                                 (
                                     law_tx, lar_tx, lw_tx, paw_pwm_tx,
-                                    par_pwm_tx, pw_pwm_tx, vaw, var, vw,
-                                    b2_tx, r2_tx,
+                                    par_pwm_tx, pw_pwm_tx, vaw, var, vw, b2_tx,
+                                    r2_tx,
                                 ),
                             ),
                             join2(
