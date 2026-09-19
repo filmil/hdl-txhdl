@@ -10,10 +10,16 @@
 // per line in.
 //
 // Transmit: the byte and `tx_en` are taken on `clk125`, and the PHY's
-// transmit clock is `clk125_90`, the same clock a quarter cycle late,
-// so the clock's edges fall in the middle of the data. That is the delay
-// RGMII asks of one side or the other; this wrapper supplies it rather
-// than relying on the PHY's internal delay.
+// transmit clock is the same clock through the same kind of register,
+// so the clock's edges leave the FPGA aligned with the data's. RGMII
+// asks one side or the other to delay the clock into the middle of the
+// data, and on this board the PHY does it. This wrapper used to supply
+// a quarter cycle of its own as well, and the two delays together put
+// the PHY's sampling edge where the data changes: the board received
+// every frame and the host got most of them back with a bad check
+// sequence, about one bit in ten thousand wrong. The vendor's own design
+// for this board sends the clock edge-aligned, and pings through it
+// without loss. See issue #231.
 //
 // Receive: the PHY's receive clock comes in through a global buffer and
 // clocks the IDDRs, and `rx_clk` is that clock, for the receiving half of
@@ -47,7 +53,6 @@ module eth_rgmii #(
 ) (
   // The transmit side, GMII, on clk125.
   input clk125,
-  input clk125_90,
   input [7:0] txd,
   input tx_en,
   // The receive side, GMII, on rx_clk.
@@ -78,9 +83,10 @@ module eth_rgmii #(
     .Q(eth_txctl), .C(clk125), .CE(1'b1),
     .D1(tx_en), .D2(tx_en), .R(1'b0), .S(1'b0)
   );
-  // The transmit clock: high then low, on the quarter-cycle-late clock.
+  // The transmit clock: high then low, on the same clock as the data,
+  // so the two leave the pins aligned and the PHY adds the delay.
   ODDR #(.DDR_CLK_EDGE("SAME_EDGE"), .INIT(1'b0), .SRTYPE("SYNC")) txck_oddr (
-    .Q(eth_txck), .C(clk125_90), .CE(1'b1),
+    .Q(eth_txck), .C(clk125), .CE(1'b1),
     .D1(1'b1), .D2(1'b0), .R(1'b0), .S(1'b0)
   );
 

@@ -11,9 +11,10 @@
 // from the receive clock to the transmit clock in `eth_cdc`.
 //
 // The clocks: the board's 200 MHz input into an MMCM, times five for a
-// 1000 MHz oscillator, divided by eight for 125 MHz and again for the
-// same clock a quarter cycle late, which the PHY's transmit clock is.
-// The receive half runs on the clock the PHY recovers from the line.
+// 1000 MHz oscillator, divided by eight for 125 MHz, which clocks the
+// transmit half and, through the same kind of register as the data,
+// the PHY's transmit clock. The receive half runs on the clock the PHY
+// recovers from the line, shifted a quarter cycle in `eth_rgmii`.
 //
 // The LEDs are lit when driven low: the MMCM locked, a frame received,
 // and a frame sent, the last two held for a while so a person sees them.
@@ -39,22 +40,20 @@ module eth_echo (
 );
   // The clocks.
   wire clk200, fb, fb_buf, locked;
-  wire mmcm125, mmcm125_90;
-  wire clk125, clk125_90;
+  wire mmcm125;
+  wire clk125;
   IBUFDS clkin (.I(sys_clk_p), .IB(sys_clk_n), .O(clk200));
   MMCME2_BASE #(
     .CLKIN1_PERIOD(5.0),
     .DIVCLK_DIVIDE(1),
     .CLKFBOUT_MULT_F(5.0),
-    .CLKOUT0_DIVIDE_F(8.0),
-    .CLKOUT1_DIVIDE(8),
-    .CLKOUT1_PHASE(90.0)
+    .CLKOUT0_DIVIDE_F(8.0)
   ) mmcm (
     .CLKIN1(clk200),
     .CLKFBIN(fb_buf),
     .CLKFBOUT(fb),
     .CLKOUT0(mmcm125),
-    .CLKOUT1(mmcm125_90),
+    .CLKOUT1(),
     .CLKOUT0B(), .CLKOUT1B(), .CLKOUT2(), .CLKOUT2B(), .CLKOUT3(),
     .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6(), .CLKFBOUTB(),
     .LOCKED(locked),
@@ -63,14 +62,13 @@ module eth_echo (
   );
   BUFG fb_bufg (.I(fb), .O(fb_buf));
   BUFG clk125_bufg (.I(mmcm125), .O(clk125));
-  BUFG clk125_90_bufg (.I(mmcm125_90), .O(clk125_90));
 
   // The PHY.
   wire rx_clk;
   wire [7:0] txd, rxd;
   wire tx_en, rx_dv, rx_er;
   eth_rgmii rgmii (
-    .clk125(clk125), .clk125_90(clk125_90), .txd(txd), .tx_en(tx_en),
+    .clk125(clk125), .txd(txd), .tx_en(tx_en),
     .rx_clk(rx_clk), .rxd(rxd), .rx_dv(rx_dv), .rx_er(rx_er),
     .eth_txck(eth_txck), .eth_txctl(eth_txctl), .eth_txd(eth_txd),
     .eth_rxck(eth_rxck), .eth_rxctl(eth_rxctl), .eth_rxd(eth_rxd)
