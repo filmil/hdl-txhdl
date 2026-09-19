@@ -1,2 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 bazel-*
+# Settings that are true of one machine and not of the project;
+# `.bazelrc` reads it last, so what is in it wins. See
+# docs/vivado-setup.md.
+user.bazelrc

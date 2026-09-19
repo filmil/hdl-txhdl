@@ -37,3 +37,16 @@ try-import /data/cache/ci.bazelrc
 # and the serial watcher read it, and `--server=HOST` on their command
 # line overrides it.
 run --run_env=TXHDL_BOARD_SERVER=srv.filmar.us
+
+# Whatever is true of this machine rather than of the project: a Vivado
+# somewhere else, a cache on another disk, a board on another host.
+# `user.bazelrc` is not committed, and `try-import` means the build
+# works whether or not it is there.
+#
+# It is read last so that it wins. Bazel takes the last setting of a
+# flag, but only among lines of the same command: a `build` line here
+# beats a `build` line above, and a `common` line does not, however
+# late it comes, because `build` is the more specific of the two. So
+# write a setting here with the same word the line above it uses.
+# This was checked, see docs/vivado-setup.md.
+try-import %workspace%/user.bazelrc
