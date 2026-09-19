@@ -21,9 +21,22 @@ pub struct Terminal {
     bit: u32,
     phase: u32,
     in_frame: bool,
-    /// What the terminal types once the core has said a line.
+    /// What the terminal types once the core has said a line. In
+    /// blocks, where a sender waits for the core to answer between
+    /// them: the first block goes after the first line, and each block
+    /// after it once one more byte has come back.
     reply: Vec<u8>,
     typed: usize,
+    /// The reply's blocks, in bytes: the terminal types one and waits
+    /// for the core to answer before the next. Empty means all of the
+    /// reply, back to back.
+    blocks: Vec<usize>,
+    /// Which block is being typed, and whether this terminal is
+    /// waiting at its end for the core to answer.
+    at_block: usize,
+    waiting: bool,
+    /// How many bytes the core had said when the block began.
+    said_at_block: usize,
     /// The frame going out, as bits, and how far along it is; none
     /// between frames.
     typing: Option<(u32, u32)>,
@@ -32,11 +45,28 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    /// A terminal that will type `reply` after the core's first line.
+    /// A terminal that will type `reply` after the core's first line,
+    /// back to back.
     pub fn new(reply: &[u8]) -> Self {
         Self {
             reply: reply.to_vec(),
             pause: PAUSE,
+            ..Default::default()
+        }
+    }
+
+    /// The same, in blocks: the terminal types one block and waits for
+    /// the core to say one more byte before the next, which is what a
+    /// sender does when the far end acknowledges. The blocks are given
+    /// in bytes and have to be the ones the far end acknowledges at,
+    /// since a sender that pauses anywhere else waits for a byte that
+    /// is not coming. A loader that writes into memory cannot keep up
+    /// with a line that never pauses, and a port buffers eight bytes.
+    pub fn paced(reply: &[u8], blocks: &[usize]) -> Self {
+        Self {
+            reply: reply.to_vec(),
+            pause: PAUSE,
+            blocks: blocks.to_vec(),
             ..Default::default()
         }
     }
@@ -83,6 +113,29 @@ impl Terminal {
         if !self.spoken_to || self.typed >= self.reply.len() {
             return true;
         }
+        // In blocks: at the end of each one the terminal waits for the
+        // core to say a byte it had not said when the block ended.
+        // Counting from the end rather than from the start matters: a
+        // sender that goes one block early is a block ahead of the far
+        // end for the whole stream, and the port buffers eight bytes.
+        if !self.blocks.is_empty() {
+            let ends: usize = self.blocks[..self.at_block + 1]
+                .iter()
+                .sum::<usize>()
+                .min(self.reply.len());
+            if self.typed == ends && self.at_block + 1 < self.blocks.len() {
+                if !self.waiting {
+                    self.waiting = true;
+                    self.said_at_block = self.said.len();
+                    return true;
+                }
+                if self.said.len() <= self.said_at_block {
+                    return true;
+                }
+                self.waiting = false;
+                self.at_block += 1;
+            }
+        }
         if self.pause > 0 {
             self.pause -= 1;
             return true;
@@ -91,6 +144,12 @@ impl Terminal {
         let frame = (self.reply[self.typed] as u32) << 1 | 1 << 9;
         self.typing = Some((frame, 1));
         false
+    }
+
+    /// How many bytes of the reply have been typed, for a test that
+    /// wants to say where a stream stopped.
+    pub fn typed(&self) -> usize {
+        self.typed
     }
 
     /// Whether a frame is on either line.

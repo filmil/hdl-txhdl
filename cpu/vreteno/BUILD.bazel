@@ -41,6 +41,7 @@ rust_test(
     edition = "2021",
     deps = [
         ":vreteno32",
+        "//cpu/vreteno/rust:boot_program",
         "//cpu/vreteno/rust:ddr3_program",
         "//cpu/vreteno/rust:hello_program",
         "//cpu/vreteno/rust:irq_program",
@@ -57,6 +58,7 @@ rust_binary(
     edition = "2021",
     deps = [
         ":vreteno32",
+        "//cpu/vreteno/rust:boot_program",
         "//cpu/vreteno/rust:ddr3_board_program",
         "//cpu/vreteno/rust:ddr3_program",
         "//cpu/vreteno/rust:fade_program",
@@ -84,6 +86,16 @@ genrule(
     name = "board_fade_v",
     outs = ["board_fade.v"],
     cmd = "$(location :board_netlist) fade > $@",
+    tools = [":board_netlist"],
+)
+
+# The board with the loader in its boot memory, which is the bitstream
+# that ends the resynthesis loop: what the core runs arrives on the
+# serial port and lives in the memory. See issue #135.
+genrule(
+    name = "board_boot_v",
+    outs = ["board_boot.v"],
+    cmd = "$(location :board_netlist) boot > $@",
     tools = [":board_netlist"],
 )
 
@@ -339,9 +351,30 @@ vivado_synthesis2(
     tags = ["manual"],
 )
 
+# The same board with the loader in it.
+vivado_synthesis2(
+    name = "vreteno_board_boot_synth",
+    srcs = [
+        ":board_boot_v",
+        "board/vreteno_board.v",
+        "//ddr3:hdl",
+    ],
+    part = "xc7a200tfbg484-2",
+    top = "vreteno_board",
+    xdcs = [":ax7a200_xdc"],
+    tags = ["manual"],
+)
+
 vivado_place_and_route2(
     name = "vreteno_board_fade_pnr",
     synthesis = ":vreteno_board_fade_synth",
+    xdcs = [":ax7a200_xdc"],
+    tags = ["manual"],
+)
+
+vivado_place_and_route2(
+    name = "vreteno_board_boot_pnr",
+    synthesis = ":vreteno_board_boot_synth",
     xdcs = [":ax7a200_xdc"],
     tags = ["manual"],
 )
@@ -351,6 +384,20 @@ vivado_program_device(
     name = "vreteno_board_fade_prog",
     prog_daemon = "//cpu/vreteno/board/remote:hw_server",
     deps = [":vreteno_board_fade_pnr"],
+    tags = ["manual"],
+)
+
+# Write the loader into the board, after which a program goes down the
+# serial port rather than through Vivado:
+#
+#   bazel run //cpu/vreteno:vreteno_board_boot_prog -- \
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+#   bazel run //cpu/vreteno/board/remote:load -- \
+#       --image=$PWD/bazel-bin/cpu/vreteno/rust/hello_ram_bin.bin
+vivado_program_device(
+    name = "vreteno_board_boot_prog",
+    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
+    deps = [":vreteno_board_boot_pnr"],
     tags = ["manual"],
 )
 
