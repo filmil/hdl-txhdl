@@ -1,0 +1,108 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Remote, Ask, Answer
+\datasheet{Remote}{A peripheral whose behaviour is a program somewhere else: every transaction leaves on a channel and the answer comes back on another.}
+
+\dsfacts{\code{lib/parts/src/remote.rs}}{\code{txhdl\_parts::remote::Remote}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{Remote} sits on AXI-Lite like any other peripheral and answers
+nothing itself. Every transaction it accepts leaves on \code{out} as
+an \code{Ask}, and the answer comes back on \code{back} as an
+\code{Answer}. What is at the other end is not the peripheral's
+business: in a simulation it is a model in the same program, and on a
+board it is a frame on a wire and a program on another machine.
+
+That is what it is for. A peripheral being designed can be written as
+software first, against the bus it will really sit on and with the
+rest of the system running as it really runs; when the software is
+right the hardware replaces it and nothing else changes. Issue 297
+says what that is worth.
+
+What the bus sees is a slow device, and the part is honest about it
+rather than hiding it: one transaction is outstanding at a time, and
+the channel carrying it is held until the answer arrives, which is
+what AXI-Lite allows and what a program at the far end of a wire
+needs.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{T} & How many cycles a transaction may go unanswered before the
+peripheral answers the bus \code{SLVERR} itself. A device that never
+answers must not be able to stop the bus. The tables use 40, as
+\code{ex\_remote} does. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Register map}
+
+None. Every address in the peripheral's range is the program's to
+decide, and the address is carried out whole in the \code{Ask}.
+
+\dstables{Remote}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item One transaction is outstanding at a time, which \code{busy}
+holds, and \code{writing} says which kind it is.
+\item A write is taken before a read. Both are offered on channels of
+their own, so a stream of reads could otherwise leave a write waiting
+for ever.
+\item Each transaction carries a \code{tag}, which counts up as each
+leaves. An answer is taken from \code{back} whenever it is offered,
+and counts only when its tag is the outstanding transaction's.
+\item That is what makes the timeout safe. A transaction unanswered
+for \code{T} cycles is answered \code{SLVERR} to the bus and finished
+with; if its answer then arrives, its tag is no longer the one
+outstanding and it is dropped rather than taken for the answer to
+whatever came next.
+\item The tag moves on when a transaction is finished with, not when
+it leaves, so the late answer above is told apart from the next
+transaction's.
+\item A read is answered on \code{r} with the word the answer brought,
+and a write on \code{b}; either carries \code{SLVERR} when the answer
+said the transaction failed or the wait ran out.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Four tests in \code{lib/parts/src/remote.rs}, in
+\code{//lib/parts:parts\_test}.
+\code{a\_word\_written\_to\_the\_program\_is\_read\_back\_from\_it} is
+the plain case.
+\code{the\_program\_says\_which\_transactions\_fail} is an answer that
+reports a failure.
+\code{a\_slow\_program\_is\_waited\_for} holds the answer back and
+finds the bus still served.
+\code{a\_program\_that\_never\_answers\_does\_not\_stop\_the\_bus} is
+the timeout, which is the test the part exists to pass.
+\item \code{//lib/examples:ex\_remote} runs it against a model in the
+same program, and the build simulates the netlist against that run
+under nvc and Verilator:
+\code{//docs:remote\_sim\_remote\_tb\_test} and
+\code{//docs:remote\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{ex\_remote} today. Issue 297 is what it is for: a peripheral and
+its software co-developed, with the far end eventually across a wire.
+
+\subsection*{Limits}
+
+AXI-Lite only, and one transaction outstanding, so the bus waits for
+the far end at the speed the far end answers. It carries no transport
+of its own: what moves an \code{Ask} to a program on another machine,
+and an \code{Answer} back, is somebody else's, and until that exists
+the far end is a model in the same program. The timeout is counted in
+cycles rather than in time, so a design that slows its clock waits
+proportionally longer.

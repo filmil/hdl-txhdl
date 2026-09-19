@@ -36,6 +36,7 @@ use txhdl_parts::i2c::I2c;
 use txhdl_parts::plic::Plic2;
 use txhdl_parts::pwm::Pwm;
 use txhdl_parts::redundant::{Check, Tee};
+use txhdl_parts::remote::Remote;
 use txhdl_parts::spi::Spi;
 use txhdl_parts::station::Station3;
 use txhdl_parts::syscon::Syscon;
@@ -466,6 +467,7 @@ fn main() {
         "FlashWin<1, 2>",
         FlashWin::<1, 2>::lowered("flashwin"),
     );
+    sheet("Remote", "Remote<40>", Remote::<40>::lowered("remote"));
     sheet("Spi", "Spi", Spi::lowered("spi"));
     sheet("Tracer", "Tracer<8>", Tracer::<8>::lowered("tracer"));
     sheet("I2c", "I2c", I2c::lowered("i2c"));
