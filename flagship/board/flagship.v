@@ -177,11 +177,24 @@ module flagship (
   // controller, each through two flip-flops into the design's clock.
   // The core's reset waits on the memory's calibration as well, so the
   // core starts only when the memory it may reach is ready.
+  //
+  // The button resets the core and not the memory. The memory's reset
+  // follows the PLL's lock alone, which is power-on. A reset that
+  // reached the controller while a transaction was in flight stranded
+  // the bus: the bridge in front of the controller waited on an
+  // acknowledgement the reset controller never gave, nothing resets
+  // that bridge, and every later access to the memory queued behind
+  // it, so the loader took three words after a press and then nothing
+  // (issue #333). With the memory running through the press, what was
+  // in flight completes while the core is held, the core drains the
+  // answers as it always does, and the bus is clean when it restarts.
+  // The memory's contents survive a press, which is what a warm reset
+  // means.
   wire calib;
   reg [1:0] mem_sync = 2'b00;
   reg [1:0] core_sync = 2'b11;
   always @(posedge clk) begin
-    mem_sync <= {mem_sync[0], reset_n & locked};
+    mem_sync <= {mem_sync[0], locked};
     core_sync <= {core_sync[0], ~(reset_n & locked & calib)};
   end
   wire mem_rst_n = mem_sync[1];
