@@ -28,13 +28,20 @@ vivado_library(
     ],
 )
 
+# The budget is `eternal`, an hour, and not `long`, which is fifteen
+# minutes. A run that works is about 35 us of simulated time: it took
+# under four minutes on a quiet machine and over fifteen on one with
+# other sessions on it, so `long` made a busy machine look like a
+# failing test. The target is manual, so nothing waits on the budget
+# but the person who asked for the run. See issue #347, where a budget
+# too small was also what hid a testbench that was stuck.
 vivado_test(
     name = "board_test",
     custom_tcl_script = "board_verdict.tcl",
     extra_modules = ["glbl.glbl"],
     library = ":board_tb",
     tags = ["manual"],
-    timeout = "long",
+    timeout = "eternal",
     top = "board_tb",
     xelab_args = [
         "--debug",
