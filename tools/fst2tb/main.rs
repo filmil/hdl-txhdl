@@ -211,6 +211,37 @@ fn main() {
             .filter(|s| !s.is_empty())
             .cloned()
     };
+    // A port the trace knows nothing about is a testbench that drives
+    // zeros into the entity and compares it against zeros, which fails
+    // from the first cycle the unit does anything and says nothing
+    // about why. It happens when a run gives a channel a name of its
+    // own: the trace is read by the port's name, so
+    // `Wave::add("inp", ..)` is what a port called `inp` wants, and a
+    // channel added as something else is not found. Say so here.
+    // A pad is the exception: the trace carries nothing on one, and
+    // the testbench neither drives nor checks it.
+    let missing: Vec<String> = ports
+        .iter()
+        .filter(|(n, d, _)| *n != clock && !inside(d) && d != "inout")
+        .map(|(n, d, _)| trace_name(n, d))
+        .filter(|t| !values.contains_key(t))
+        .collect();
+    if !missing.is_empty() {
+        let mut have: Vec<&String> = values.keys().collect();
+        have.sort();
+        let have: Vec<String> =
+            have.iter().take(40).map(|s| (*s).clone()).collect();
+        eprintln!(
+            "fst2tb: the trace holds nothing for {} of {entity}'s ports: \
+             {}\nThe trace is read by the port's name, so a channel \
+             must be added to the wave under the name the port has.\n\
+             What the trace does hold: {}",
+            missing.len(),
+            missing.join(", "),
+            have.join(", ")
+        );
+        std::process::exit(1);
+    }
     // The same testbench in Verilog, for Verilator. The clock's edges
     // sit at 2k + 0.5, so the inputs applied at time zero and at 2k+1
     // come before the edge that reads them, and a tenth of a tick
