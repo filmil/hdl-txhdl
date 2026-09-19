@@ -147,7 +147,29 @@ bits and causes, and the timer's and the serial port's addresses.
 \code{mhalt} at \code{0x7c0} is this core's own, in the space the
 specification leaves to a design: it reads as zero, and a write of an
 odd value to it stops the core when that instruction retires, which
-is what \code{halt} encodes and what a program ends with. The M extension is the
+is what \code{halt} encodes and what a program ends with.
+
+Five more say what the machine is rather than what it is doing.
+\code{misa} reports RV32IMC, and \code{mvendorid}, \code{marchid},
+\code{mimpid} and \code{mhartid} read as zero: an unassigned vendor,
+an unspecified architecture and implementation, and one hart, which is
+hart zero. They are there because a stock kernel reads one of them
+before it does anything else. Zephyr's reset code begins
+\code{csrr a0, mhartid}, and until the core answered it that
+instruction was an illegal one, so the kernel's first act was a trap
+into a handler it had not installed.
+
+The four that begin \code{0xf} are read only, and the specification
+means that strictly: a write to one is an illegal instruction rather
+than a write that is ignored. The core raises it, and only for an
+instruction that really writes. \code{csrrw} and \code{csrrwi} always
+do; a set or a clear writes only when its source field is not
+\code{x0} or a zero immediate, which is stated in terms of the field
+and not of the value the register happens to hold. A read is a set
+with \code{x0}, so the kernel's first instruction is answered.
+\code{misa} is not among them: the specification makes it writable and
+lets an implementation ignore what is written, which is what this one
+does. The M extension is the
 register format with \code{funct7} one: the four multiplies, which
 differ in which operand is signed and which half of the product they
 keep, and the two divides and two remainders, signed and unsigned. A
