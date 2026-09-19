@@ -15,8 +15,9 @@ generated tables, and each says where.
 A packet is one beat of one AXI channel, 113 bits wide for the
 configuration `//soc` uses, and it carries where it is going and where
 it came from (`docs:datasheets`, the Switch sheet).
-A switch is stateless, routes in dimension order and moves one packet
-per cycle.
+A switch routes in dimension order and moves one packet per cycle,
+and holds three bits: the round robin that says which input the
+choice starts from.
 A link holds two packets, because a channel is an elastic buffer of
 two.
 
@@ -48,41 +49,48 @@ so a `W` beat means nothing except by its position.
 That closes one line of issue 133 and removes it from the work of
 issue 125.
 
-### A switch does not keep one source's packets together
+### A switch still does not keep one source's packets together
 
 Two measurements on one switch, both inputs leaving by the same port
 (`two_inputs_of_a_switch_contend_for_their_shared_output`):
 
 | Both inputs offer | What leaves by the shared output |
 | --- | --- |
-| every cycle | the higher input's packets only; the lower moves nothing |
-| the higher every third cycle | the two sources mixed, the higher's between the lower's |
+| every cycle | one from each, alternating, and never two together |
+| one of them every third cycle | the two sources mixed, the sparse one's between the other's |
 
-This corrects blocker 2 as issue 133 states it.
+This corrects blocker 2 as issue 133 states it, twice over.
 The blocker says beats from different sources interleave wherever
 their paths merge.
-They do, but only while the higher source pauses; while it does not,
-the lower source is starved instead.
+Under the fixed order this replaced they did not: the higher input
+took the port and the lower was starved, which is issue 315, and the
+two only mixed while the higher paused.
+Under the round robin they always mix, one each.
 Either way a burst's beats do not stay together, which is what the
-blocker is about.
+blocker is about, and the round robin makes it a certainty rather than
+a matter of who is busy.
 
-### A busy link starves its node's exit, without a bound
+### A busy link starved its node's exit, and no longer does
 
-`a_busy_link_starves_the_exit_of_its_switch`: one switch, its north
-input and its exit both offering every cycle for the same output.
+`a_busy_link_and_the_exit_take_turns`: one switch, its north input and
+its exit both offering every cycle for the same output.
 
 ```
-200 cycles: 198 packets from the link, 0 from the exit
+before, 200 cycles: 198 packets from the link, 0 from the exit
+after,  200 cycles: the two alternate, within one of each other
 ```
 
-The choice among the inputs that can move is a fixed order, the four
-links and then the exit, so an input that never pauses keeps its
-output for ever.
-This is a defect in the tree now rather than a consequence of bursts,
-and it is filed as issue 315.
-It is also a prerequisite: every candidate below makes a path busy for
-longer, so whichever is chosen, an unfair switch turns a burst into a
-way of starving a node.
+The choice among the inputs that can move was a fixed order, the four
+links and then the exit, so an input that never paused kept its output
+for ever.
+That was issue 315, a defect in the tree rather than a consequence of
+bursts, and it is fixed: the choice is a round robin, the first input
+at or after the one whose turn it is, and the turn moves on to the one
+after whichever moved.
+
+It was also a prerequisite for everything below.
+Every candidate makes a path busy for longer, so an unfair switch
+would have turned a burst into a way of starving a node.
 
 ### What this tree's hosts actually send
 
@@ -103,9 +111,11 @@ Issue 133 lists four. After the measurements:
 1. **`HostBridge` keeps no state per burst.** Stands. Beats 2 to N
    carry no address, so the destination decoded from the address phase
    has to be remembered, and AXI4 allows `W` before `AW`.
-2. **`Switch` arbitrates per packet and keeps no state.** Stands, in
-   the corrected form above: a burst's beats are either cut by another
-   source's or starved behind them.
+2. **`Switch` arbitrates per packet and keeps almost no state.**
+   Stands, in the corrected form above. It now holds the round robin
+   of issue 315, three bits, which bounds the wait but keeps nothing
+   about a burst: a burst's beats are still cut by another source's
+   wherever their paths merge.
 3. **Locking `PerBridge` to a source until its last beat deadlocks.**
    Stands as an argument, and the sheet states the mechanism: "A
    request waits while the identifier whose turn it is has not been
@@ -122,21 +132,22 @@ State is counted for the configuration `//soc` uses: `A` 32, `D` 32,
 `S` 4, `I` 2, `XB` and `YB` 2, `NIDS` 4, and a length cap `L` of 16.
 A data beat carried across is 37 bits, data and strobe and `last`,
 which is the width of the `w` port on both bridges.
-Today `HostBridge` holds 4 bits and `PerBridge` 30, and a switch holds
-nothing.
+Today `HostBridge` holds 4 bits, `PerBridge` 30, and a switch 3.
 
-The switch's emptiness is measured rather than asserted.
+The baseline is measured rather than asserted.
 `//lib/parts:switch_synth` and `//lib/parts:node_synth` put one
 through Vivado for the board's part, and `//docs:noc` quotes the
-result: 266 look-up tables and **no registers** for a switch, 534 and
-none for a node, with five levels of logic between its pads.
-So candidate A would give a node its first flip-flops, and the
-comparison to make when one is written is against those numbers, on
-those targets.
+result: 271 look-up tables and 3 flip-flops for a switch, 554 and 6
+for a node, with four or five levels of logic on the worst path.
+Those three flip-flops are the round robin's `turn`, and they are all
+the state a node has; before it was fixed, issue 315, a switch had
+none at all and cost 266 look-up tables.
+The comparison to make when a candidate is written is against those
+numbers, on those targets.
 
 | Candidate | Where the state goes | Bits added | Deadlock argument | Cuts across |
 | --- | --- | ---: | --- | --- |
-| **A. Wormhole on the request channel** | every switch: which input holds each output, and whether it is held | 40 per node (4 bits x 5 ports x 2 channels) | A held output waits on an input that may itself be blocked; needs the request channel to drain independently, which is what the second virtual channel gives, and needs the lock released on the last beat of a burst that is refused | gives a switch state it does not have, and makes issue 315 worse until it is fixed |
+| **A. Wormhole on the request channel** | every switch: which input holds each output, and whether it is held | 40 per node (4 bits x 5 ports x 2 channels) | A held output waits on an input that may itself be blocked; needs the request channel to drain independently, which is what the second virtual channel gives, and needs the lock released on the last beat of a burst that is refused | a lock per output is state of a different order from the three bits the round robin keeps |
 | **B. A, plus store-and-forward at `HostBridge`** | A, plus a burst buffer at the sending bridge | 40 per node, plus 37 x L = 592 at each host bridge | as A | does not replace A: collecting a burst before sending it does not stop another source cutting into it downstream |
 | **C. Reassembly at `PerBridge` with end-to-end credits** | the receiving bridge: a slot per beat per outstanding burst, plus credits | 37 x L x NIDS = 2368 at each peripheral bridge, plus 4 x 5 credit bits, plus grants on the response channel | credits reserve the slots before the first beat enters, so a burst never occupies the network waiting for room | the true answer, and the only one that tolerates arbitrary reordering; two orders of magnitude more state than the others |
 | **D. Splitting at `HostBridge`** | the sending bridge: beats left, the running address, the answer so far | 44 per burst in flight (8 + 32 + 2 + 2) | nothing is held anywhere: each beat is an independent single-beat write, which is what the network already carries | a peripheral that distinguishes one burst of N from N writes of one sees the difference |
@@ -171,8 +182,8 @@ already 2368 bits.
 
 ## 6. The decision
 
-**D, splitting at `HostBridge`, with a cap and `SlvErr` above it, and
-issue 315 fixed first.**
+**D, splitting at `HostBridge`, with a cap and `SlvErr` above it.**
+Issue 315, the starving arbiter, was the prerequisite and is fixed.
 
 The reasons, in order:
 
@@ -202,8 +213,8 @@ it is, it is refused as a long write is refused now.
 
 ## 7. The order for issue 125
 
-1. Fix issue 315, round robin per output in the switch. Every step
-   after this one makes a path busier.
+1. Issue 315, the round robin in the switch. Done, and it came first
+   because every step after it makes a path busier.
 2. `HostBridge` splits an `INCR` write of `N` beats into `N` packets,
    each a single-beat write at its own address, and answers the host
    once, with the worst response it saw. The guard stays for `FIXED`

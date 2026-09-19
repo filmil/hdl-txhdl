@@ -403,52 +403,62 @@ the rest of the tree uses: \code{//lib/parts:node\_synth} and
 it, through synthesis for the Artix-7 the board has. Both are manual,
 as every Vivado target here is, and both take about a minute.
 
-A node holds no register. The flip-flops that bound its path are the
-channels' on either side of it, and those belong to whatever
-instantiates the node, so the question is the node's own delay from an
-input to an output; the constraint asks for that rather than for a
-clock period. Table~\ref{tab:n-timing} is the answer.
+A node holds three flip-flops per switch and six in all: the
+\code{turn} of each round robin, and nothing else. Everything that
+carries a packet is combinational, and the flip-flops that bound those
+paths are the channels' on either side of the node, which belong to
+whatever instantiates it. Table~\ref{tab:n-timing} is the answer.
 
 \begin{table}[htbp]
 \caption{One node, and one switch inside it, through synthesis for
-the \code{xc7a200tfbg484-2}. The delay is from an input pad to an
-output pad, so it carries an input buffer and an output buffer,
-3.23~ns of the total, which a node inside a design does not pay.}
+the \code{xc7a200tfbg484-2}. The path measured is the worst the tool
+found, which is now inside the switch, from one bit of \code{turn} to
+another, and carries no pad.}
 \label{tab:n-timing}
 \centering\footnotesize
 \begin{tabular}{@{}lrr@{}}
 \toprule
  & switch & node \\
 \midrule
-Look-up tables & 266 & 534 \\
-Registers & 0 & 0 \\
-Longest path, pad to pad & 7.73~ns & 7.61~ns \\
-Of that, the two pads & 3.23~ns & 3.23~ns \\
-Levels of logic between them & 5 & 5 \\
+Look-up tables & 271 & 554 \\
+Registers & 3 & 6 \\
+Longest path, register to register & 3.90~ns & 3.62~ns \\
+Levels of logic on it & 5 & 4 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Five levels of look-up table is the whole of it, and the same five in
-a node as in a switch, since a node is two switches that do not chain.
-At the tenth of a nanosecond a LUT costs on this part, that is about
-half a nanosecond of logic; the rest of the measured delay is the two
-pads and an unplaced estimate of the wires. So a node has room at
-100~MHz, and the shortening that was proposed for it, carrying the
-next hop's direction in the packet so that a node reads its direction
-rather than working it out, is not worth doing yet.
+Four or five levels of look-up table is the whole of it, and the path
+is the arbitration deciding what moves next rather than anything that
+carries a packet. At the tenth of a nanosecond a LUT costs on this
+part, about half a nanosecond of that is logic and the rest is an
+unplaced estimate of the wires. So a node has room at 100~MHz with
+more than half the period to spare, and the shortening that was
+proposed for it, carrying the next hop's direction in the packet so
+that a node reads its direction rather than working it out, is not
+worth doing yet.
+
+The round robin is what the registers are for, and what it cost is in
+that table: five look-up tables and three flip-flops in a switch,
+against an arbiter that starved. Before it, the choice was a fixed
+order and a link that never paused kept its output for ever; issue 315
+has the measurement, 198 packets against none in two hundred cycles.
 
 The path is not the one that was expected, and that is worth writing
-down. It runs from an output's \code{ready} to another output's
-\code{valid}, which is the backpressure chain through the arbitration,
-not the wide multiplexer on the packet. A switch that wanted to be
-faster would shorten that chain first.
+down. It is the arbitration deciding what moves next, from one bit of
+\code{turn} through the eligibility of the five inputs and back, and
+not the wide multiplexer that carries the packet. Before the round
+robin the measured path was the same chain without the registers, an
+output's \code{ready} to another output's \code{valid}. A switch that
+wanted to be faster would shorten that chain first, and it is the
+chain the arbiter is in.
 
 The two hardly contend. While the core works, the rasteriser only
 polls the count, one read at a time; by the time it draws, the core
 has halted. A program that kept writing while the GPU drew would
-contend for longer, and the fixed priority in a switch, which serves
-the four links before the exit, is the thing to watch when it does.
+contend for longer, and what that costs is now bounded: the round
+robin gives every input a turn within four of the others, where the
+fixed order it replaced could leave a node unable to speak at all.
 
 \section{What Is Not Here}
 \label{sec:n-not}
@@ -463,10 +473,9 @@ identifier, and a test crosses the lattice with four of them.
 Why the write is the hard one, what each way of carrying it would
 cost, and which to build are worked out in \code{docs/noc-bursts.md},
 which issue 125 implements.
-The arbiter in a switch is a fixed priority, and it starves: an input
-that offers every cycle keeps its output, and the exit, which is last
-in the order, moved nothing at all in two hundred cycles of a busy
-link. That is issue 315, and it is a defect rather than a limit.
+The arbiter in a switch is a round robin, so an input waits on at most
+four others; it was a fixed priority that starved the exit outright,
+which was issue 315.
 A switch moves one packet
 per cycle rather than one per port, which is what the rasteriser's
 stream pays for above.
