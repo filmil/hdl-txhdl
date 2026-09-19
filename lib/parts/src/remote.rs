@@ -26,6 +26,8 @@
 //! the one outstanding is dropped, which is what makes the timeout
 //! safe: the answer that arrives too late belongs to a transaction
 //! the bus has already finished with.
+
+pub mod eth;
 use txhdl::comp::{mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};

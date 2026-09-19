@@ -34,6 +34,7 @@ rust_library(
         "src/pwm.rs",
         "src/redundant.rs",
         "src/remote.rs",
+        "src/remote/eth.rs",
         "src/spi.rs",
         "src/station.rs",
         "src/tracer.rs",
