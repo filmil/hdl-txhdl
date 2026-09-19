@@ -15,7 +15,9 @@ use vreteno32::isa::{
     decode, disasm, Kind, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER, MISA,
 };
 use vreteno32::model::{Halt, Model};
-use vreteno32::program::{demo, in_memory, machine_info, random, soft};
+use vreteno32::program::{
+    demo, idle, in_memory, machine_info, random, soft,
+};
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
@@ -204,6 +206,10 @@ fn lockstep(
         model.mem[i] = w;
     }
     let mut retired = 0;
+    // The longest stretch of cycles in which nothing retired, which is
+    // what a `wfi` looks like from outside: a core that waits rather
+    // than spinning retires nothing at all while it waits.
+    let (mut quiet, mut longest_quiet) = (0usize, 0usize);
     // The interrupt line, from the seed: high now and then for the
     // random programs, one pulse in the loop for the demonstration.
     let mut noise = seed.unwrap_or(0).wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
@@ -284,6 +290,10 @@ fn lockstep(
             model.msip = soft_before;
             model.step(program, taken_before);
             retired += 1;
+            quiet = 0;
+        } else {
+            quiet += 1;
+            longest_quiet = longest_quiet.max(quiet);
         }
         taken_before = taken;
         line_before = line;
@@ -394,6 +404,17 @@ fn lockstep(
             // A pipeline retires at most one per cycle; the difference
             // is the bubbles, one per taken branch and jump.
             assert!(retired <= cycle + 1, "{what}: retired {retired}");
+            // The idle program stops at a `wfi` until the timer wakes
+            // it. A core that spun instead would retire something in
+            // nearly every cycle, so the long silence is the evidence
+            // that the wait is a wait.
+            if what == "idle" {
+                assert!(
+                    longest_quiet > 100,
+                    "idle: the longest silence was {longest_quiet} cycles, \
+                     which is a core that spun rather than waited"
+                );
+            }
             return model;
         }
     }
@@ -438,6 +459,20 @@ fn a_program_reads_what_the_machine_says_it_is() {
     for (bit, letter) in [(0, 'A'), (5, 'F'), (3, 'D')] {
         assert!(m.mem[1] & (1 << bit) == 0, "misa should not have {letter}");
     }
+}
+
+#[test]
+fn a_program_that_waits_for_an_interrupt_is_woken_by_one() {
+    // The program arms the timer and stops at a `wfi` until the line
+    // comes up, twice. The second wait runs with interrupts disabled
+    // globally, since the handler returns with `mstatus.MIE` as `mret`
+    // leaves it, and the core wakes from it anyway: a wait ends when
+    // an interrupt is pending and enabled, whether or not it may be
+    // taken, which is what lets a kernel idle inside its own lock.
+    let m = lockstep(&idle(), &[], "idle", None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert!(m.x[8] >= 2, "interrupts that woke it: {}", m.x[8]);
+    assert_eq!(m.mem[0], m.x[8], "and the program wrote what it counted");
 }
 
 #[test]

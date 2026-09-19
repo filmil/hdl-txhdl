@@ -373,6 +373,57 @@ pub fn machine_info() -> Vec<u32> {
     a.words()
 }
 
+/// A program that idles: it arms the timer, waits for it with `wfi`,
+/// and counts the interrupts that woke it.
+///
+/// This is the shape of an operating system with nothing to run. The
+/// core stops fetching at the `wfi` and starts again when the timer's
+/// line comes up, so the cycles between are cycles in which nothing
+/// retires, which is what the lockstep test measures.
+///
+/// The second half is the part worth having: the `wfi` after the
+/// handler returns runs with interrupts disabled, and the core wakes
+/// from it anyway, because the specification says a wait ends when an
+/// interrupt is pending and enabled whether or not `mstatus` lets it
+/// be taken. A kernel idles inside its own lock, so a core that waited
+/// for the global bit would never wake.
+pub fn idle() -> Vec<u32> {
+    let mut a = Asm::default();
+    let (top, handler) = (a.label(), a.label());
+    a.abs(handler, |h| addi(21, 0, h as i32)); // x21 = the handler
+    a.emit(csrrw(0, CSR_MTVEC, 21)); // mtvec = x21
+    a.emit(lui(2, DATA_BASE >> 12)); // x2 = the data base
+                                     // The compare and the count are too far apart in the controller's
+                                     // window for one base register to reach both with a twelve-bit
+                                     // offset, so each gets its own.
+    a.emit(lui(4, (CLINT_BASE + MTIMECMP_OFF) >> 12)); // x4 = compare
+    a.emit(lui(7, (CLINT_BASE + MTIME_OFF + 8) >> 12)); // x7 = count + 8
+    a.emit(addi(22, 0, 128)); // x22 = MTIMER, the timer's bit
+    a.emit(csrrw(0, CSR_MIE, 22)); // mie = MTIMER
+    a.emit(csrrsi(0, CSR_MSTATUS, 8)); // mstatus.MIE = 1
+    a.emit(addi(8, 0, 0)); // x8 = 0, how many woke it
+    a.emit(addi(5, 0, 2)); // x5 = 2, how many to wait for
+    a.place(top);
+    // Arm the timer a little ahead of the count, then wait for it.
+    a.emit(lw(3, 7, -8)); // x3 = the count's low half
+    a.emit(addi(3, 3, 300)); // x3 += 300, well past the stores
+    a.emit(sw(0, 4, 4)); // the compare's high half is zero
+    a.emit(sw(3, 4, 0)); // and its low half is the count plus 40
+    a.emit(wfi()); // stop here until the line comes up
+    a.to(top, |o| blt(8, 5, o)); // until two have woken it
+    a.emit(sw(8, 2, 0)); // mem[0] = how many woke it
+    a.emit(halt());
+    // The handler: push the compare out of reach so the line falls,
+    // count the wake, and return.
+    a.align();
+    a.place(handler);
+    a.emit(addi(6, 0, -1)); // x6 = the largest compare there is
+    a.emit(sw(6, 4, 4)); // the compare's high half, so the line falls
+    a.emit(addi(8, 8, 1)); // one more wake
+    a.emit(mret());
+    a.words()
+}
+
 /// The two halves of a program that lives above the boot memory: what
 /// the boot memory holds, which is a jump into the data memory, and
 /// what the data memory holds, which is the program itself.
