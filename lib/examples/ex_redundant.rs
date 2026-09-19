@@ -22,6 +22,34 @@ use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace, Transaction, Value};
 use txhdl_parts::redundant::{Check, Tee};
 
+// begin{source}
+/// The words the copies are given: one a cycle while the tee has
+/// room, counting up from one. A unit rather than a client, since a
+/// client's send lands in a channel between one cycle and the next
+/// and a combinational reader of that channel would see it a cycle
+/// later than the trace records it.
+#[derive(Trace, Default)]
+pub struct Source {
+    /// The last word sent.
+    pub n: Reg<U<8>>,
+}
+
+#[lower]
+impl Unit for Source {
+    async fn run(&mut self, go: In<Bit>, out: Tx<Word>) {
+        loop {
+            DefaultClock::rising().await;
+            let n = self.n.get();
+            let send = go.get() & out.ready() & (n < 6);
+            with!(self <= { send ? n: n + 1 });
+            if send.to_bool() {
+                out.send(Word { v: n + 1 });
+            }
+        }
+    }
+}
+// end{source}
+
 // begin{adder}
 /// One word in, that word plus `bump`, out. Two of these are the
 /// copies, and `bump` is what a fault changes.
@@ -62,6 +90,7 @@ pub struct Word {
 
 fn main() {
     let (src_tx, src_rx) = chan::<Word, DefaultClock>();
+    let (go_out, go) = signal::<Bit, DefaultClock>();
     let (a_tx, a_rx) = chan::<Word, DefaultClock>();
     let (b_tx, b_rx) = chan::<Word, DefaultClock>();
     let (ra_tx, ra_rx) = chan::<Word, DefaultClock>();
@@ -71,6 +100,7 @@ fn main() {
     let (bump1_out, bump1) = signal::<U<8>, DefaultClock>();
     let (bump2_out, bump2) = signal::<U<8>, DefaultClock>();
     let (differs_out, differs) = signal::<Bit, DefaultClock>();
+    let mut source = Source::default();
     let mut tee = Tee::<Word>::default();
     let mut one = Adder::default();
     let mut two = Adder::default();
@@ -78,11 +108,12 @@ fn main() {
 
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
-        w.add("src", &src_rx);
+        w.add("inp", &src_rx);
+        w.add("source", &source);
         w.add("a", &a_rx);
         w.add("b", &b_rx);
-        w.add("ra", &ra_rx);
-        w.add("rb", &rb_rx);
+        w.add("one", &ra_rx);
+        w.add("two", &rb_rx);
         w.add("out", &out_rx);
         w.add("rst", &rst);
         w.add("bump2", &bump2);
@@ -92,18 +123,6 @@ fn main() {
         w.start();
     }
 
-    let client = async move {
-        let mut v = 1u8;
-        while v <= 6 {
-            DefaultClock::rising().await;
-            // A word only when the tee has room for one, since a
-            // channel holds two and the tee waits for both copies.
-            if src_tx.ready().to_bool() {
-                src_tx.send(Word { v: U::from(v) });
-                v += 1;
-            }
-        }
-    };
     let sink = async move {
         loop {
             DefaultClock::rising().await;
@@ -117,31 +136,41 @@ fn main() {
             }
         }
     };
-    // Downstream first: a unit reads the readiness of the one after
-    // it in the same cycle, so the one after it has to have settled.
+    // The order is what keeps the run and the netlist in step. A
+    // unit reads, in one cycle, what the units around it have already
+    // done to the channels between them, and the trace records the
+    // end of the cycle; so each unit runs after whoever changes what
+    // it reads. The client fills the source, the sink and the check
+    // and the adders make room downstream, and the tee, which reads
+    // both the source and that room, runs last.
     let mut sim = Running::new(join2(
+        join2(sink, source.run(go, src_tx)),
         join2(
-            sink,
             check.run((rst, ra_rx, rb_rx), (out_tx, differs_out)),
-        ),
-        join2(
             join2(
-                one.run((bump1, a_rx), ra_tx),
-                two.run((bump2, b_rx), rb_tx),
+                join2(
+                    one.run((bump1, a_rx), ra_tx),
+                    two.run((bump2, b_rx), rb_tx),
+                ),
+                tee.run(src_rx, (a_tx, b_tx)),
             ),
-            join2(tee.run(src_rx, (a_tx, b_tx)), client),
         ),
     ));
     println!("  t  what left the check");
     rst_out.set(Bit::One);
+    // Nothing moves in the first cycles: no trace sample stands for
+    // the inputs of the run's first cycle, so a unit that acts in it
+    // has nothing to be replayed against.
+    go_out.set(Bit::Zero);
     bump1_out.set(U::from(1u8));
     bump2_out.set(U::from(1u8));
     sim.cycle();
     rst_out.set(Bit::Zero);
-    for c in 0..18 {
-        // The fault: from the fourth cycle the second copy adds two,
-        // so the first three words agree and the rest do not.
-        bump2_out.set(U::from(if c >= 4 { 2u8 } else { 1u8 }));
+    for c in 0..20 {
+        go_out.set(Bit::from_bool(c >= 2));
+        // The fault: from the sixth cycle the second copy adds two,
+        // so the first words agree and the rest do not.
+        bump2_out.set(U::from(if c >= 6 { 2u8 } else { 1u8 }));
         sim.cycle();
     }
     stop();

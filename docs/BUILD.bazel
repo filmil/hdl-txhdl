@@ -645,6 +645,8 @@ latex_document(
         ":blackbox_timing",
         ":gpio_run",
         ":gpio_timing",
+        ":redundant_run",
+        ":redundant_timing",
         ":spi_run",
         ":spi_timing",
         ":i2c_run",
@@ -1259,6 +1261,21 @@ waveform(
 
 # Pins behind AXI-Lite: the direction set, a pin read through its
 # synchroniser, and an edge raising the interrupt and being cleared.
+waveform(
+    name = "redundant",
+    example = "//lib/examples:ex_redundant",
+    lowered = [
+        ("tee", "tee"),
+        ("check", "check"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//inp/tx_data/v=>inp",
+        "//out/tx_data/v=>out",
+        "//differs=>differs",
+    ],
+)
+
 waveform(
     name = "gpio",
     example = "//lib/examples:ex_gpio",
