@@ -33,7 +33,7 @@ proc subsystem {name} {
   if {[string match "rgmii/*" $name]}       { return "ethernet" }
   if {[string match "mac_rx/*" $name]}      { return "ethernet" }
   if {[string match "mac_tx/*" $name]}      { return "ethernet" }
-  if {[string match "crossing/*" $name]}    { return "ethernet" }
+  if {[string match "*_crossing/*" $name]}  { return "ethernet" }
   if {[string match "video/*" $name]}       { return "video" }
   if {[string match "master/*" $name]}      { return "video" }
   if {[string match "v*_cdc/*" $name]}      { return "crossing" }

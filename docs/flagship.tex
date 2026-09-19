@@ -317,13 +317,14 @@ half an hour.
 \section{What it costs}
 \label{sec:f-cost}
 
-The whole flagship is a small part of an xc7a200t. Synthesis reports
-10\,305 slice LUTs, 7.7 per cent of the part; 7\,966 registers, 3.0 per
-cent; 16 block RAM tiles of 365; four DSPs; 126 of 285 bonded pins; and
-of the clocking, one PLL and three MMCMs, one of which is inside the
-RGMII wrapper. The part is not the constraint, which is worth saying
-plainly: the question for the next subsystem is whether it meets
-timing, not whether it fits.
+The whole flagship is a small part of an xc7a200t. Synthesis of
+\code{main} at \code{806a229}, with the Ethernet on the core's bus,
+reports 10\,999 slice LUTs, 8.2 per cent of the part; 8\,918
+registers, 3.3 per cent; 16.5 block RAM tiles of 365; four DSPs; 126 of
+285 bonded pins; and of the clocking, one PLL and three MMCMs, one of
+which is inside the RGMII wrapper. The part is not the constraint,
+which is worth saying plainly: the question for the next subsystem is
+whether it meets timing, not whether it fits.
 
 \section{Where it landed}
 \label{sec:f-place}
@@ -363,29 +364,36 @@ slices.}
 \input{flagshiptotals}
 \end{table}
 
-Three things are worth reading off it.
+Four things are worth reading off it.
 
-\emph{The subsystems are regions, not a mixture.} The Ethernet sits in
-slice columns 0 to 22 and the core in 93 to 147: they do not touch. The
-placer was told nothing about this. It follows from the pins, which is
-the point: the PHY is wired to one bank and the memory to another, and
-logic goes where its pins are.
+\emph{The subsystems are regions, not a mixture.} The memory
+controller holds the right edge, columns 133 to 163, against the
+memory's bank; the core sits beside it in 97 to 145; the video is a
+few patches on the left, near the encoder's pins. The placer was told
+nothing about this. It follows from the pins, which is the point: logic
+goes where its pins are, and where what it talks to is.
 
-\emph{The memory controller is the largest thing in the design}, larger
-than the core, its bus and all of its peripherals together, and it is
-pinned hard against the memory's bank. That is worth knowing before
-adding anything that wants to be near those pins.
+\emph{The Ethernet moved when it got something to say.} As an echo,
+with nothing to say to the core, the MAC sat hard against the PHY's
+bank, in columns 0 to 22, as far from the core as the part allows. Now
+that it is a peripheral on the core's bus it sits in 36 to 104, between
+its pins and the core, which is where the wires it carries want it. The
+same logic, the same pins, a different neighbour, and the placer moved
+it eighty columns.
 
-\emph{The crossing sits between what it crosses.} The five FIFOs that
-carry the core's AXI-Lite to the pixel clock are in columns 92 to 118,
-between the core and the video, which is where a crossing should be and
-is not something anything arranged.
+\emph{The memory controller is the largest thing in the design},
+larger than the core, its bus and all of its peripherals together, and
+it is pinned hard against the memory's bank. That is worth knowing
+before adding anything that wants to be near those pins.
 
-The map and the table are of the flagship as it was placed before the
-remote peripheral was added, since the extraction is a manual run of
-Vivado on a routed checkpoint and the peripheral has not been through
-one yet. It adds a small peripheral and two more of the same FIFO,
-where the third bullet says the others landed.
+\emph{A crossing sits between what it crosses.} The five FIFOs that
+carry the core's AXI-Lite to the pixel clock are in columns 104 to 122,
+between the core and the video; the two that carry frames between the
+core and the Ethernet clocks are counted with the Ethernet and sit at
+its edge nearest the core. Neither is something anything arranged.
+
+The map and the table are of \code{main} at \code{806a229}, routed
+for this purpose, the same checkpoint the numbers above come from.
 
 \section{The first program down the wire}
 \label{sec:f-first}
