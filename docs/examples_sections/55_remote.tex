@@ -1,0 +1,57 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Peripheral Written in Software}
+\label{sec:x-remote}
+
+A peripheral is usually hardware before it is anything else, and the
+program that drives it is written against a datasheet and debugged
+against a simulation. \code{Remote} turns that round. It sits on
+AXI-Lite where any peripheral would, and answers nothing itself: each
+transaction it accepts leaves on a channel as an \code{Ask}, and an
+\code{Answer} comes back on another. What is at the far end of those
+two channels is not the peripheral's business. In this example it is
+a few lines of Rust in the same run; on a board it would be a frame
+on a wire and a program on another machine, which is what issue 297
+asks for.
+
+So a peripheral can be designed as software, against the bus it will
+really sit on, with the rest of the system running as it really runs.
+When the software is right, hardware replaces it and nothing else in
+the design changes.
+
+What the bus sees is a slow device. One transaction is outstanding at
+a time and the channel that carries it is held until the answer
+arrives, which is what AXI-Lite allows and what a program on the far
+side of a wire needs. A device that never answers must not be able to
+stop the bus, so a transaction unanswered for \code{T} cycles is
+answered \code{SlvErr} by the peripheral itself. Each carries a tag
+and the answer repeats it, which is what makes that safe: an answer
+that arrives after the wait ran out carries a tag the peripheral has
+finished with, and is dropped rather than given to whatever
+transaction is outstanding by then.
+
+The run does four things, in the order a person would try them. It
+writes a word and reads it back, so the program holds the state. It
+reads a word the program computes rather than stores, the number of
+writes it has seen, which is a line of software and a register file
+nobody would build. It reads an address the program has no word for,
+and the refusal arrives as \code{SlvErr} on the bus. Then it makes
+the program slow, twenty cycles a transaction, and every answer still
+arrives; then it stops the program answering at all, and the bus is
+told the device failed after forty cycles rather than waiting for
+ever; then the program comes back and the next read is answered.
+
+The peripheral is lowered, and the build simulates its netlist
+against this run under \code{nvc} and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{remote_timing.tex}
+\caption{One transaction, end to end: \code{ask} carries it out of the
+peripheral, \code{busy} holds while \code{waited} counts, and the
+answer comes back and is given to the bus on \code{r}.}
+\label{fig:x-remote}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_remote.rs}. Run with \code{bazel run //lib/examples:ex\_remote}.},label={lst:x-remote}]{lib/examples/ex_remote.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_remote} printed when the build ran it: the bus and the program, then the lowering.},label={lst:x-remote-out}]{out_remote.txt}
