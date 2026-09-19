@@ -152,7 +152,14 @@ module vreteno_board (
     .var_data(), .var_valid(), .var_ready(1'b1),
     .vw_data(), .vw_valid(), .vw_ready(1'b1),
     .vb_data(2'd0), .vb_valid(1'b0), .vb_ready(),
-    .vr_data(34'd0), .vr_valid(1'b0), .vr_ready()
+    .vr_data(34'd0), .vr_valid(1'b0), .vr_ready(),
+    // The remote peripheral at `0x3300` sends its transactions out as
+    // Ethernet frames, and this board has no Ethernet port: the
+    // frames go nowhere and none come back, so a program that touches
+    // `0x3300` waits the peripheral's patience out and is told the
+    // device failed. //flagship is the board with the port.
+    .net_tx_data(), .net_tx_valid(), .net_tx_ready(1'b1),
+    .net_rx_data(9'd0), .net_rx_valid(1'b0), .net_rx_ready()
   );
 
   // The serial line idles high, so any byte begins by pulling it low.

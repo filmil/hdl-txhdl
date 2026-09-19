@@ -16,10 +16,14 @@
 //     it does not move. That is the flagship's point: the hardware is
 //     fixed and known, and the software is whatever was sent last.
 //   * The Ethernet port: the two lowered halves of the MAC with the
-//     PHY's RGMII and the crossing between the two clocks, echoing
-//     every good frame. The core does not reach the port yet, so the
-//     echo is what keeps the port alive and provable from the other end
-//     of the cable while a peripheral for it is written.
+//     PHY's RGMII, and behind them the remote peripheral at `0x3300`,
+//     whose behaviour is a program on another machine. A transaction
+//     the core makes there leaves as one frame and the answer arrives
+//     as one, so a device can be written as software on a laptop and
+//     the design does not change when it becomes hardware. See #297.
+//     The port echoed every good frame until this; a frame cannot be
+//     both echoed and answered, and what proves the port now is a
+//     program answering at the other end of the cable.
 //   * The HDMI output: the video peripheral with a picture already in
 //     its framebuffer, and the master that configures the encoder.
 //     The core reaches the peripheral, so a program can paint the
@@ -40,8 +44,8 @@
 //   * an MMCM, times 63 over ten and then over 50: 25.2 MHz for the
 //     pixel clock. This is `hdmi_demo.v`'s, unchanged.
 //
-// One thing crosses between the domains, and it is a channel rather
-// than a signal. The core's third AXI-Lite slot, the page at `0x3200`,
+// Two things cross between the domains, and both are channels rather
+// than signals. The core's third AXI-Lite slot, the page at `0x3200`,
 // leaves `board` as five channel ports and reaches the video
 // peripheral on the pixel clock through five `chan_cdc` FIFOs, one per
 // AXI-Lite channel, each carrying its words in the direction that
@@ -50,6 +54,12 @@
 // this board. The five channels of AXI-Lite have no timing
 // relationship to each other, so crossing each on its own is the whole
 // of what the protocol asks.
+//
+// The other is the remote peripheral's frames, one byte and a last bit
+// at a time: out on the core's clock to the transmit clock, and in on
+// the PHY's receive clock to the core's. Two more of the same FIFO,
+// and the one going in is 128 bytes deep because the port delivers a
+// byte every 8 ns and the core reads one every 10.
 //
 // Nothing else crosses: the Ethernet and the memory share the board,
 // the reset button and the LEDs with the rest, and nothing more.
@@ -212,7 +222,13 @@ module flagship (
     .var_data(var_data), .var_valid(var_valid), .var_ready(var_ready),
     .vw_data(vw_data), .vw_valid(vw_valid), .vw_ready(vw_ready),
     .vb_data(vb_data), .vb_valid(vb_valid), .vb_ready(vb_ready),
-    .vr_data(vr_data), .vr_valid(vr_valid), .vr_ready(vr_ready)
+    .vr_data(vr_data), .vr_valid(vr_valid), .vr_ready(vr_ready),
+    // The remote peripheral at `0x3300`, whose frames leave and
+    // arrive on the Ethernet port, crossed below.
+    .net_tx_data(net_tx_data), .net_tx_valid(net_tx_valid),
+    .net_tx_ready(net_tx_ready),
+    .net_rx_data(net_rx_data), .net_rx_valid(net_rx_valid),
+    .net_rx_ready(net_rx_ready)
   );
 
   // --------------------------------------------------------------
@@ -264,11 +280,32 @@ module flagship (
     .rx_data(rx_data), .rx_valid(rx_valid), .rx_ready(rx_ready)
   );
 
-  wire [8:0] tx_data;
-  wire tx_valid, tx_ready;
-  chan_cdc #(.W(9), .AW(4)) crossing (
+  // The received frames cross to the core's clock, where the remote
+  // peripheral's link reads them. The FIFO is 128 bytes rather than
+  // the echo's 16, because the port delivers a byte every 8 ns and the
+  // core reads one every 10, so a whole frame has to fit while the
+  // reader catches up. A frame that arrives while the last one is
+  // still coming out of the MAC is lost, and a lost frame is a
+  // transaction the peripheral's patience covers.
+  wire [8:0] net_rx_data;
+  wire net_rx_valid, net_rx_ready;
+  chan_cdc #(.W(9), .AW(7)) rx_crossing (
     .wr_clk(rx_clk), .wr_data(rx_data), .wr_valid(rx_valid),
     .wr_ready(rx_ready),
+    .rd_clk(clk), .rd_data(net_rx_data), .rd_valid(net_rx_valid),
+    .rd_ready(net_rx_ready)
+  );
+
+  // And the frames the peripheral sends cross the other way, to the
+  // transmit clock. The MAC stores a frame whole before it puts it on
+  // the wire, so it takes a byte a cycle and this side never fills.
+  wire [8:0] net_tx_data;
+  wire net_tx_valid, net_tx_ready;
+  wire [8:0] tx_data;
+  wire tx_valid, tx_ready;
+  chan_cdc #(.W(9), .AW(4)) tx_crossing (
+    .wr_clk(clk), .wr_data(net_tx_data), .wr_valid(net_tx_valid),
+    .wr_ready(net_tx_ready),
     .rd_clk(clk125), .rd_data(tx_data), .rd_valid(tx_valid),
     .rd_ready(tx_ready)
   );

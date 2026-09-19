@@ -15,19 +15,22 @@
 # domains except through the asynchronous FIFOs, so the three are told
 # apart for timing.
 
-# The pixel clock and the memory's clocks are generated from the same
-# input as the Ethernet's, so Vivado relates all of them and would time
-# paths that do not exist. The Ethernet's receive clock is already
-# grouped apart in eth/board/eth_pins.xdc, which names the generated
-# clocks of sys_clk_p as one group; this splits that group by
-# generator, since the core's AXI-Lite reaches the video peripheral
-# only through chan_cdc, whose two sides are asynchronous by
-# construction.
+# The pixel clock, the Ethernet's transmit clock and the memory's
+# clocks are generated from one input, so Vivado relates all of them
+# and would time paths that do not exist. The Ethernet's receive clock
+# is already grouped apart in eth/board/eth_pins.xdc, which names the
+# generated clocks of sys_clk_p as one group; this splits that group by
+# generator. The core's AXI-Lite reaches the video peripheral, and the
+# remote peripheral's frames reach the transmit half, only through
+# chan_cdc, whose two sides are asynchronous by construction.
 set core_clk [get_clocks -include_generated_clocks \
   -of_objects [get_pins pll/CLKOUT0]]
 set pixel_clk [get_clocks -include_generated_clocks \
   -of_objects [get_pins vid_mmcm/CLKOUT0]]
-set_clock_groups -asynchronous -group $core_clk -group $pixel_clk
+set eth_tx_clk [get_clocks -include_generated_clocks \
+  -of_objects [get_pins eth_mmcm/CLKOUT0]]
+set_clock_groups -asynchronous \
+  -group $core_clk -group $pixel_clk -group $eth_tx_clk
 
 # Unused pins float rather than being pulled down, so nothing the
 # design does not name is driven weakly on the board. See issue #232.
