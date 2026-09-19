@@ -231,7 +231,14 @@ fn put_row(row: &[u16; W as usize], y: i32) {
 /// and stops before the first at or after the right end. Two faces
 /// that share an edge compute the same edge, so between them they
 /// paint each pixel of it exactly once, with no crack and no overlap.
-fn span(row: &mut [u16; W as usize], left: i32, right: i32, colour: u16) {
+fn span(
+    row: &mut [u16; W as usize],
+    left: i32,
+    right: i32,
+    shades: &[u16; 16],
+    level: u8,
+    y: i32,
+) {
     let mut x = (left + 0xffff) >> 16;
     let end = (right + 0xffff) >> 16;
     if x < 0 {
@@ -239,7 +246,7 @@ fn span(row: &mut [u16; W as usize], left: i32, right: i32, colour: u16) {
     }
     let end = if end > W { W } else { end };
     while x < end {
-        row[x as usize] = colour;
+        row[x as usize] = shade(shades, level, x, y);
         x += 1;
     }
 }
@@ -390,7 +397,7 @@ struct Ready {
     p: [[i32; 2]; 3],
     y0: i32,
     y1: i32,
-    colour: u16,
+    level: u8,
 }
 
 impl Ready {
@@ -398,12 +405,12 @@ impl Ready {
         p: [[0, 0], [0, 0], [0, 0]],
         y0: 1,
         y1: 0,
-        colour: 0,
+        level: 0,
     };
 
     /// Sort the corners by row, which is three compares, and note the
     /// rows the triangle covers.
-    fn new(mut p: [[i32; 2]; 3], colour: u16) -> Ready {
+    fn new(mut p: [[i32; 2]; 3], level: u8) -> Ready {
         let mut i = 0;
         while i < 2 {
             let mut j = 0;
@@ -421,12 +428,12 @@ impl Ready {
             p,
             y0: p[0][1],
             y1: p[2][1],
-            colour,
+            level,
         }
     }
 
     /// Paint this face's part of one row, if it covers it.
-    fn row(&self, row: &mut [u16; W as usize], y: i32) {
+    fn row(&self, shades: &[u16; 16], row: &mut [u16; W as usize], y: i32) {
         if y < self.y0 || y > self.y1 {
             return;
         }
@@ -436,7 +443,9 @@ impl Ready {
                 row,
                 min3(top[0], mid[0], bot[0]) << 16,
                 max3(top[0], mid[0], bot[0]) << 16,
-                self.colour,
+                shades,
+                self.level,
+                y,
             );
             return;
         }
@@ -449,9 +458,9 @@ impl Ready {
             along(mid, bot, y)
         };
         if xa <= xb {
-            span(row, xa, xb, self.colour);
+            span(row, xa, xb, shades, self.level, y);
         } else {
-            span(row, xb, xa, self.colour);
+            span(row, xb, xa, shades, self.level, y);
         }
     }
 }
@@ -487,10 +496,27 @@ fn max3(a: i32, b: i32, c: i32) -> i32 {
     }
 }
 
+/// Whether a pixel between two steps of the ramp is dithered: a two
+/// by two pattern of the two steps rather than the nearer one alone,
+/// which quadruples the levels the eye sees at the cost of a fine
+/// checker on the face. A framebuffer pixel is four screen pixels
+/// square, so the checker is eight screen pixels, which is visible up
+/// close and reads as a level from a chair. Off, the nearer step alone.
+const DITHER: bool = true;
+
+/// How much of a face's light is there whatever way it faces. Below
+/// this the ramp's steps are far apart, a step of the darkest few is
+/// half the brightness of the last, and a face crossing one snaps.
+/// With the floor, a face uses the upper steps, where neighbours
+/// differ by a tenth.
+const AMBIENT: i32 = ONE * 2 / 5;
+
 /// The sixteen shades of the solid, from dark to the colour at full
-/// light, worked out once at startup: each is the full colour scaled
-/// by the step and rounded to the nearest sixteenth, so every step is
-/// the same tan a little brighter and nothing else.
+/// light, worked out once at startup. The step's brightness follows a
+/// square root rather than a line, which spaces the steps evenly to
+/// the eye rather than to a meter; each is the full colour scaled by
+/// that and rounded to the nearest sixteenth, so every step is the
+/// same tan a little brighter and nothing else.
 ///
 /// This replaced a formula that scaled each channel on its own and
 /// rounded each on its own. With four bits a channel the three
@@ -501,23 +527,70 @@ fn max3(a: i32, b: i32, c: i32) -> i32 {
 fn ramp(shades: &mut [u16; 16]) {
     let mut k = 0;
     while k < 16 {
-        let c = |full: i32| -> u16 { ((full * k as i32 + 7) / 15) as u16 };
+        // The square root of k / 15, in the fixed point.
+        let bright = sqrt((k as i32 * ONE) / 15);
+        let c =
+            |full: i32| -> u16 { ((full * bright + ONE / 2) >> SHIFT) as u16 };
         shades[k] = c(LIT_R) << 8 | c(LIT_G) << 4 | c(LIT_B);
         k += 1;
     }
 }
 
-/// The shade of a face lit by `light`, which runs from zero to `ONE`.
-/// The floor keeps a face just past the edge dark rather than absent.
-fn shade(shades: &[u16; 16], light: i32) -> u16 {
-    let mut k = (light * 15 + ONE / 2) >> SHIFT;
-    if k < 2 {
-        k = 2;
+/// The level of a face lit by `light`, which runs from zero to `ONE`:
+/// the ramp's step in the top four bits and the quarter of the way to
+/// the next step in the bottom two, for the dither.
+fn level(light: i32) -> u8 {
+    let lit = AMBIENT + ((ONE - AMBIENT) * light >> SHIFT);
+    let mut k = (lit * 60 + ONE / 2) >> SHIFT;
+    if k > 60 {
+        k = 60;
     }
-    if k > 15 {
-        k = 15;
+    k as u8
+}
+
+/// The colour of a pixel at a level: the step, or with the dither the
+/// step or the next by where the pixel is in the two by two pattern.
+fn shade(shades: &[u16; 16], level: u8, x: i32, y: i32) -> u16 {
+    let step = (level >> 2) as usize;
+    if !DITHER || step >= 15 {
+        return shades[step];
     }
-    shades[k as usize]
+    let frac = level & 3;
+    // The thresholds of a two by two ordered dither.
+    let threshold = match ((y & 1) << 1) | (x & 1) {
+        0 => 0,
+        1 => 2,
+        2 => 3,
+        _ => 1,
+    };
+    if frac > threshold {
+        shades[step + 1]
+    } else {
+        shades[step]
+    }
+}
+
+/// Whether the sixteen steps of the ramp are shown along the top of
+/// the screen, each an eight pixel square, so that a person at the
+/// monitor can tell a step that looks wrong from a face that crossed
+/// one. A check rather than a feature; off for a picture.
+const SWATCHES: bool = false;
+
+/// Compose the swatches into a row, if they reach it.
+fn swatch_row(shades: &[u16; 16], row: &mut [u16; W as usize], y: i32) {
+    if !SWATCHES || y < 2 || y >= 10 {
+        return;
+    }
+    let mut k = 0;
+    while k < 16 {
+        let x0 = 16 + k as i32 * 8;
+        let mut x = x0;
+        while x < x0 + 8 {
+            row[x as usize] = shades[k];
+            x += 1;
+        }
+        k += 1;
+    }
 }
 
 /// Where the logo sits: the bottom right corner, two pixels in from
@@ -608,7 +681,7 @@ extern "C" fn main() -> ! {
                         screen[face[f][1]],
                         screen[face[f][2]],
                     ],
-                    shade(&shades, n[2]),
+                    level(n[2]),
                 );
                 shown += 1;
             }
@@ -626,10 +699,11 @@ extern "C" fn main() -> ! {
             }
             let mut i = 0;
             while i < shown {
-                ready[i].row(&mut row, y);
+                ready[i].row(&shades, &mut row, y);
                 i += 1;
             }
             logo_row(&mut row, y);
+            swatch_row(&shades, &mut row, y);
             put_row(&row, y);
             y += 1;
         }

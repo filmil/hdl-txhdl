@@ -350,6 +350,12 @@ does not: the eye was three radii from the solid, so the nearest face
 swelled to nearly the whole silhouette and read as a back face painted
 over the front; and each colour channel was shaded and rounded on its
 own, so a face turning smoothly changed hue rather than brightness.
+The colour is now one ramp of the same tan, spaced by a square root so
+the steps are even to the eye, with a floor so no face goes near black;
+and because a flat face still snaps from one four-bit step to the next,
+a pixel between two steps is dithered between them in a two by two
+pattern, which quadruples the levels the eye sees. On the monitor that
+is what turned a solid that stepped into one that turns.
 
 \lstinputlisting[caption={\code{cpu/vreteno/rust/ico\_hdmi.rs}: the
 icosahedron.},label={lst:f-ico}]{cpu/vreteno/rust/ico_hdmi.rs}
