@@ -29,7 +29,22 @@ genrule(
 
 filegroup(
     name = "echo_xdc",
-    srcs = ["board/ax7a200_eth.xdc"],
+    srcs = [
+        "board/ax7a200_eth.xdc",
+        ":eth_pins",
+    ],
+)
+
+# The PHY's pins, which every design that drives the port reads.
+filegroup(
+    name = "eth_pins",
+    srcs = ["board/eth_pins.xdc"],
+)
+
+# The PHY's two edges, likewise.
+filegroup(
+    name = "eth_rgmii",
+    srcs = ["board/eth_rgmii.v"],
 )
 
 # The echo design through Vivado's synthesis, and then through place and
@@ -42,7 +57,7 @@ vivado_synthesis2(
     name = "echo_synth",
     srcs = [
         ":mac_v",
-        "board/eth_cdc.v",
+        "//lib/board:chan_cdc",
         "board/eth_rgmii.v",
         "board/eth_echo.v",
     ],

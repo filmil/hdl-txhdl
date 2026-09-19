@@ -29,7 +29,16 @@ genrule(
 
 filegroup(
     name = "demo_xdc",
-    srcs = ["board/ax7a200_hdmi.xdc"],
+    srcs = [
+        "board/ax7a200_hdmi.xdc",
+        ":hdmi_pins",
+    ],
+)
+
+# The encoder's pins, which every design that drives it reads.
+filegroup(
+    name = "hdmi_pins",
+    srcs = ["board/hdmi_pins.xdc"],
 )
 
 # The demonstration through Vivado's synthesis, and through place and

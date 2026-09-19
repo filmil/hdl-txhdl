@@ -11,8 +11,13 @@
 // FIFO full a little late and the reading side sees it empty a little
 // late, which only delays a word; neither loses one. `AW` is the
 // address width, so the FIFO holds `1 << AW` words.
+//
+// Every board design that has two clocks and a channel between them
+// reads this file: //eth's echo crosses the PHY's receive clock to the
+// transmit clock with it, and //flagship crosses the core's AXI-Lite,
+// a channel each way per AXI channel, to the pixel clock.
 `timescale 1ps / 1ps
-module eth_cdc #(
+module chan_cdc #(
   parameter W = 9,
   parameter AW = 4
 ) (

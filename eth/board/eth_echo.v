@@ -8,7 +8,7 @@
 // `eth_rx` and `eth_tx`, which `#[lower]` writes for `EthRx` and
 // `EthTx`. Around them is what a board needs and a lowered unit cannot
 // say: the clocks, the PHY's two edges in `eth_rgmii`, and the crossing
-// from the receive clock to the transmit clock in `eth_cdc`.
+// from the receive clock to the transmit clock in `chan_cdc`.
 //
 // The clocks: the board's 200 MHz input into an MMCM, times five for a
 // 1000 MHz oscillator, divided by eight for 125 MHz, which clocks the
@@ -89,7 +89,7 @@ module eth_echo (
   // From the receive clock to the transmit clock.
   wire [8:0] tx_data;
   wire tx_valid, tx_ready;
-  eth_cdc #(.W(9), .AW(4)) crossing (
+  chan_cdc #(.W(9), .AW(4)) crossing (
     .wr_clk(rx_clk), .wr_data(rx_data), .wr_valid(rx_valid),
     .wr_ready(rx_ready),
     .rd_clk(clk125), .rd_data(tx_data), .rd_valid(tx_valid),

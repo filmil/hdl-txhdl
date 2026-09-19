@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# Verilog a board design of any area wants: the pieces that are not
+# lowered from Rust because they are about clocks and pads rather than
+# about what the design computes, and that more than one area needs.
+package(default_visibility = ["//visibility:public"])
+
+# A lowered unit's channel, carried from one clock to another.
+filegroup(
+    name = "chan_cdc",
+    srcs = ["chan_cdc.v"],
+)
+
+# The sources by name, for the documents' listings.
+filegroup(
+    name = "sources",
+    srcs = glob(["*.v"]),
+)
