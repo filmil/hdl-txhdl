@@ -140,7 +140,8 @@ pub struct Pair<const IW: usize> {
 impl<const IW: usize> Unit for Pair<IW> {
     async fn run(
         &mut self,
-        (rst, irq, tirq, fault, rdata, done, grant): (
+        (rst, irq, tirq, sirq, fault, rdata, done, grant): (
+            In<Bit>,
             In<Bit>,
             In<Bit>,
             In<Bit>,
@@ -168,6 +169,7 @@ impl<const IW: usize> Unit for Pair<IW> {
         let irq_one = irq.clone();
         let irq2 = irq.clone();
         let tirq_two = tirq.clone();
+        let sirq_two = sirq.clone();
         // What the tees hand to each core.
         let (rd1_tx, rd1_rx) = chan::<R<32, IW>, DefaultClock>();
         let (rd2_tx, rd2_rx) = chan::<R<32, IW>, DefaultClock>();
@@ -207,11 +209,14 @@ impl<const IW: usize> Unit for Pair<IW> {
             join2(
                 join2(
                     self.one.run(
-                        (rst_one, irq_one, tirq, rd1_rx, dn1_rx, gr1_rx),
+                        (rst_one, irq_one, tirq, sirq, rd1_rx, dn1_rx, gr1_rx),
                         (halt1_o, instr1_o, wb1_o, is1_tx, beat1_tx, rl1_tx),
                     ),
                     self.two.run(
-                        (rst2_i, irq2, tirq_two, rd2_rx, dn2_rx, gr2_rx),
+                        (
+                            rst2_i, irq2, tirq_two, sirq_two, rd2_rx, dn2_rx,
+                            gr2_rx,
+                        ),
                         (halt2_o, instr2_o, wb2_o, is2_tx, beat2_tx, rl2_tx),
                     ),
                 ),

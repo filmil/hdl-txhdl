@@ -619,7 +619,8 @@ impl<const IW: usize> Vreteno<IW> {
 impl<const IW: usize> Unit for Vreteno<IW> {
     async fn run(
         &mut self,
-        (rst, irq, tirq, rdata, done, grant): (
+        (rst, irq, tirq, sirq, rdata, done, grant): (
+            In<Bit>,
             In<Bit>,
             In<Bit>,
             In<Bit>,
@@ -639,6 +640,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
         loop {
             DefaultClock::rising().await;
             let (rst, irq, tirq) = (rst.get(), irq.get(), tirq.get());
+            let sirq = sirq.get();
             // The registers a step takes apart or hands on as values;
             // the rest are read where they are used.
             let fetch_pc = self.pc.get();
@@ -739,8 +741,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // side, so it is read as state is.
             let mtip = tirq;
             let ext_ok = mie_r.bit(11) & mip.bit(11);
+            let soft_ok = mie_r.bit(3) & sirq;
             let tim_ok = mie_r.bit(7) & mtip;
-            let int_ok = mstatus.bit(3) & (ext_ok | tim_ok);
+            let int_ok = mstatus.bit(3) & (ext_ok | soft_ok | tim_ok);
             let stall_m = m_here & !int_ok & !m_done;
             // A load or store to the bus, which is everything above the
             // data memory. A store goes out when the bus has room; a
@@ -838,7 +841,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let f12 = ir.slice::<20, 12>();
             let is_sys = opcode == 0x73;
             let csr_op = is_sys & (f3 != 0);
-            let mip_now = mux(tirq, mip | isa::MTIMER, mip);
+            let mip_now = mux(
+                sirq,
+                mux(tirq, mip | isa::MTIMER, mip) | isa::MSOFT,
+                mux(tirq, mip | isa::MTIMER, mip),
+            );
             let csr_old = csr_read(
                 f12,
                 mstatus,
@@ -877,12 +884,19 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 U::<32>::from(isa::CAUSE_STORE_MISALIGNED),
                 U::<32>::from(isa::CAUSE_LOAD_MISALIGNED),
             );
+            // The order the specification gives: the external
+            // interrupt is taken before the software one, and that
+            // before the timer's.
             let cause = mux(
                 int_take,
                 mux(
                     ext_ok,
                     U::<32>::from(isa::CAUSE_MEXT),
-                    U::<32>::from(isa::CAUSE_MTIMER),
+                    mux(
+                        soft_ok,
+                        U::<32>::from(isa::CAUSE_MSOFT),
+                        U::<32>::from(isa::CAUSE_MTIMER),
+                    ),
                 ),
                 mux(
                     is_ecall,
@@ -1025,8 +1039,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 csr_write & (f12 == isa::CSR_MEPC) ?
                     mepc: csr_new & !U::<32>::from(1u32),
                 csr_write & (f12 == isa::CSR_MCAUSE) ? mcause: csr_new,
-                csr_write & (f12 == isa::CSR_MIE) ?
-                    mie: csr_new & U::<32>::from(isa::MEXT | isa::MTIMER),
+                csr_write & (f12 == isa::CSR_MIE) ? mie: csr_new
+                    & U::<32>::from(
+                        isa::MEXT | isa::MSOFT | isa::MTIMER,
+                    ),
                 csr_write & (f12 == isa::CSR_MTVAL) ? mtval: csr_new,
                 irq ? mip: mip | isa::MEXT,
                 csr_write & (f12 == isa::CSR_MIP) ? mip: csr_new & isa::MEXT,

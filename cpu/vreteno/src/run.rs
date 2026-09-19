@@ -25,8 +25,18 @@ const IW: usize = 2;
 const NIDS: usize = 4;
 
 /// The address map, stated in the router's type.
-type Rtr =
-    Router3<32, 32, 4, IW, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>;
+type Rtr = Router3<
+    32,
+    32,
+    4,
+    IW,
+    0x1000,
+    0xf000,
+    0x0200_0000,
+    0xffff_0000,
+    0x3000,
+    0xf000,
+>;
 
 /// The bridge the serial port sits behind: one AXI-Lite peripheral,
 /// at the range the router gives the port.
@@ -51,6 +61,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
+    let (sirq_out, sirq) = signal::<Bit, DefaultClock>();
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
     // The port's interrupt, which these programs do not use: none of
@@ -95,13 +106,13 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run((rst_t, treq, twd), (tans, trb, tirq_out)),
+                timer.run((rst_t, treq, twd), (tans, trb, tirq_out, sirq_out)),
                 uart.run((rst_u, rx, uaw, uar, uw), (ub, ur, tx_out, uirq_out)),
             ),
             join2(
                 dmem.run((dreq, dwd), (dans, drb)),
                 cpu.run(
-                    (rst, irq, tirq, crdata, cdone, grant),
+                    (rst, irq, tirq, sirq, crdata, cdone, grant),
                     (halt_out, instr_out, wb_out, issue, wbeat, release),
                 ),
             ),

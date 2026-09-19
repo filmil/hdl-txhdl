@@ -157,6 +157,9 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
+    // The system has no interrupt controller, so nothing raises a
+    // software interrupt in it.
+    let (_sirq_o, sirq) = signal::<Bit, DefaultClock>();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
     let (instr_out, _instr) = signal::<U<32>, DefaultClock>();
     let (wb_out, _wb) = signal::<Writeback, DefaultClock>();
@@ -266,7 +269,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let ends = join2(
         join2(
             cpu.run(
-                (rst_c, irq, tirq, crdata, cdone, grant),
+                (rst_c, irq, tirq, sirq, crdata, cdone, grant),
                 (halt_out, instr_out, wb_out, issue, wbeat, release),
             ),
             raster.run(

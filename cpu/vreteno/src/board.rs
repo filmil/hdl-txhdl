@@ -4,7 +4,8 @@
 //! The core, its tracker, a router, and five peripherals, each behind a
 //! tracker of its own or, for the serial port and the interrupt
 //! controller, an AXI-Lite bridge: the data memory at `0x1000`, the
-//! timer at `0x2000`, the serial port at `0x3000`, the board's DDR3
+//! interrupt controller, the timer and the software interrupt, the 64
+//! KiB from `0x0200_0000`; the serial port at `0x3000`, the board's DDR3
 //! memory from `0x4000_0000` to the end of the first two gigabytes,
 //! and the platform-level interrupt controller at `0x0c00_0000`, where
 //! RISC-V machines put it. The controller's source 1 is the serial
@@ -49,8 +50,8 @@ pub type BoardRouter = Router5<
     2,
     0x1000,
     0xffff_f000,
-    0x2000,
-    0xffff_f000,
+    0x0200_0000,
+    0xffff_0000,
     0x3000,
     0xffff_f000,
     0x4000_0000,
@@ -150,6 +151,8 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         let (instr_o, _instr_i) = signal::<U<32>, DefaultClock>();
         let (retire_o, _retire_i) = signal::<Writeback, DefaultClock>();
         let (tirq_o, tirq_i) = signal::<Bit, DefaultClock>();
+        // The software interrupt the controller raises for a program.
+        let (sirq_o, sirq_i) = signal::<Bit, DefaultClock>();
         let (uirq_o, uirq_i) = signal::<Bit, DefaultClock>();
         let (eirq_o, eirq_i) = signal::<Bit, DefaultClock>();
         // The tracker and the router.
@@ -220,7 +223,7 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                 join2(
                     self.timer.run(
                         (rst_timer, req1_rx, wd1_rx),
-                        (ans1_tx, rb1_tx, tirq_o),
+                        (ans1_tx, rb1_tx, tirq_o, sirq_o),
                     ),
                     join2(
                         self.uart.run(
@@ -236,7 +239,10 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                 join2(
                     self.dmem.run((req0_rx, wd0_rx), (ans0_tx, rb0_tx)),
                     self.cpu.run(
-                        (rst, eirq_i, tirq_i, rdata_rx, done_rx, grant_rx),
+                        (
+                            rst, eirq_i, tirq_i, sirq_i, rdata_rx, done_rx,
+                            grant_rx,
+                        ),
                         (
                             halt, instr_o, retire_o, issue_tx, wbeat_tx,
                             release_tx,
