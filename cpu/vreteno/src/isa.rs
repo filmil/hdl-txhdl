@@ -85,6 +85,19 @@ pub const CSR_MTVAL: u32 = 0x343;
 pub const CSR_MISA: u32 = 0x301;
 pub const MISA: u32 = 0x4000_0000 | (1 << 12) | (1 << 8) | (1 << 2);
 
+/// The two machine counters, each 64 bits and each read as two
+/// words. The specification makes them writable, so that software can
+/// set a starting point, and this core allows that.
+///
+/// `mcycle` counts cycles and `minstret` counts instructions retired,
+/// so the difference between them over a stretch is what the pipeline
+/// spent on stalls: a multiply, a divide, a load from the bus, a
+/// fetch above the boot memory, or a `wfi`.
+pub const CSR_MCYCLE: u32 = 0xb00;
+pub const CSR_MINSTRET: u32 = 0xb02;
+pub const CSR_MCYCLEH: u32 = 0xb80;
+pub const CSR_MINSTRETH: u32 = 0xb82;
+
 /// The machine information registers. All four read as zero: a vendor
 /// of zero means unassigned, an architecture and an implementation of
 /// zero mean unspecified, and this machine has one hart, whose index

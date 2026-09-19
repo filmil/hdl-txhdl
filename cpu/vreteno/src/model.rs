@@ -7,9 +7,10 @@ use crate::isa::{
     compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT, CAUSE_ECALL,
     CAUSE_ILLEGAL, CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MSOFT,
     CAUSE_MTIMER, CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK, CSR_MARCHID,
-    CSR_MCAUSE, CSR_MEPC, CSR_MHALT, CSR_MHARTID, CSR_MIE, CSR_MIMPID, CSR_MIP,
-    CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, CSR_MVENDORID,
-    MEXT, MISA, MSOFT, MTIMECMP_OFF, MTIMER, UART_BASE,
+    CSR_MCAUSE, CSR_MCYCLE, CSR_MCYCLEH, CSR_MEPC, CSR_MHALT, CSR_MHARTID,
+    CSR_MIE, CSR_MIMPID, CSR_MINSTRET, CSR_MINSTRETH, CSR_MIP, CSR_MISA,
+    CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, CSR_MVENDORID, MEXT, MISA,
+    MSOFT, MTIMECMP_OFF, MTIMER, UART_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -54,6 +55,11 @@ pub struct Model {
     /// bytes the serial port was given are the model's own.
     pub dev_word: u32,
     pub mtimecmp: u64,
+    /// Instructions retired. The core counts the same thing in
+    /// `minstret`, and this model counts it by stepping, so the two
+    /// can be compared; the cycles beside it cannot, which
+    /// `csr_read` says.
+    pub minstret: u64,
     pub uart: Vec<u8>,
     /// The timer's line as the core saw it, set by the caller with the
     /// count; the timer is a device on the bus, so its pending bit is
@@ -74,6 +80,7 @@ impl Default for Model {
             csr: Csr::default(),
             dev_word: 0,
             mtimecmp: 0,
+            minstret: 0,
             uart: Vec::new(),
             tirq: false,
             msip: false,
@@ -227,6 +234,18 @@ impl Model {
             // that this is hart zero.
             CSR_MISA => MISA,
             CSR_MVENDORID | CSR_MARCHID | CSR_MIMPID | CSR_MHARTID => 0,
+            // The counters are legal here, so that a program reading
+            // one traps in neither the core nor the model. What they
+            // read is another matter: this model steps on a
+            // retirement and has no idea how many cycles the pipeline
+            // spent, so it counts what it can, which is retirements,
+            // and answers zero for the cycles. A lockstep program must
+            // therefore not read `mcycle` into a register, and the
+            // counters are checked by a directed run instead, without
+            // a model beside it.
+            CSR_MINSTRET => self.minstret as u32,
+            CSR_MINSTRETH => (self.minstret >> 32) as u32,
+            CSR_MCYCLE | CSR_MCYCLEH => 0,
             _ => return None,
         })
     }
@@ -247,6 +266,13 @@ impl Model {
             CSR_MIE => self.csr.mie = v & (MEXT | MSOFT | MTIMER),
             CSR_MIP => self.csr.mip = v & MEXT,
             CSR_MTVAL => self.csr.mtval = v,
+            CSR_MINSTRET => {
+                self.minstret = (self.minstret & !0xffff_ffff) | u64::from(v)
+            }
+            CSR_MINSTRETH => {
+                self.minstret =
+                    (self.minstret & 0xffff_ffff) | (u64::from(v) << 32)
+            }
             _ => {}
         }
     }
@@ -293,6 +319,10 @@ impl Model {
         if self.halted.is_some() {
             return;
         }
+        // One more retired, counted before the instruction runs so
+        // that a read of `minstret` by this instruction does not count
+        // itself, which is what the specification asks for.
+        self.minstret = self.minstret.wrapping_add(1);
         let Some((w, len)) = self.fetch_at(imem, self.pc) else {
             self.halted = Some(Halt::Fault(self.pc));
             return;

@@ -455,6 +455,8 @@ fn store_lanes(f3: U<3>, lane: U<2>) -> U<4> {
 #[lower]
 fn csr_read(
     f12: U<12>,
+    mcycle: U<64>,
+    minstret: U<64>,
     mstatus: U<32>,
     mtvec: U<32>,
     mscratch: U<32>,
@@ -474,6 +476,10 @@ fn csr_read(
         0x344 => mip,
         0x343 => mtval,
         0x301 => U::<32>::from(isa::MISA),
+        0xb00 => mcycle.slice::<0, 32>(),
+        0xb80 => mcycle.slice::<32, 32>(),
+        0xb02 => minstret.slice::<0, 32>(),
+        0xb82 => minstret.slice::<32, 32>(),
         // `mvendorid`, `marchid`, `mimpid` and `mhartid` all read as
         // zero, which the default below gives them, and so does the
         // halt. What makes them legal rather than illegal is
@@ -493,7 +499,7 @@ fn csr_known(f12: U<12>) -> Bit {
     select!(f12.raw() => {
         0x300 | 0x305 | 0x340 | 0x341 | 0x342 | 0x304 | 0x344
         | 0x343 | 0x7c0 | 0x301 | 0xf11 | 0xf12 | 0xf13
-        | 0xf14 => Bit::One,
+        | 0xf14 | 0xb00 | 0xb02 | 0xb80 | 0xb82 => Bit::One,
         _ => Bit::Zero,
     })
 }
@@ -600,6 +606,12 @@ pub struct Vreteno<const IW: usize> {
     pub mtval: Reg<U<32>>,
     pub wb_dev: Reg<U<32>>,
     pub dev_wait: Reg<Bit>,
+    /// The two machine counters. `mcycle` counts every cycle the core
+    /// is running and `minstret` every instruction it retires, so the
+    /// difference between them is what the pipeline spent waiting
+    /// (issue 299).
+    pub mcycle: Reg<U<64>>,
+    pub minstret: Reg<U<64>>,
     /// Waiting for an interrupt, which `wfi` asks for: the core
     /// fetches nothing until one is pending and enabled (issue 275).
     pub waiting: Reg<Bit>,
@@ -920,6 +932,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             );
             let csr_old = csr_read(
                 f12,
+                self.mcycle.get(),
+                self.minstret.get(),
                 mstatus,
                 mtvec,
                 self.mscratch.get(),
@@ -1179,6 +1193,33 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 // already pending means there is nothing to wait for,
                 // and the wake below wins over the wait for that
                 // reason: the two arms are written in that order.
+                // The counters. `mcycle` runs while the core does and
+                // stops with it: the halt stops the machine for good,
+                // so a count that ran on afterwards would be a number
+                // nobody could ever read. `minstret` counts what
+                // retires, which is the same signal the writeback
+                // drives and the lockstep steps on.
+                !self.stopped ? mcycle: self.mcycle.get() + 1,
+                wb_here ? minstret: self.minstret.get() + 1,
+                // A write lands after the count, so a program that
+                // sets a counter gets what it wrote rather than what
+                // it wrote plus one.
+                csr_write & (f12 == isa::CSR_MCYCLE) ?
+                    mcycle: (self.mcycle.get()
+                        & U::<64>::from(0xffff_ffff_0000_0000u64))
+                        | csr_new.zext::<64>(),
+                csr_write & (f12 == isa::CSR_MCYCLEH) ?
+                    mcycle: (self.mcycle.get()
+                        & U::<64>::from(0xffff_ffffu64))
+                        | (csr_new.zext::<64>() << 32),
+                csr_write & (f12 == isa::CSR_MINSTRET) ?
+                    minstret: (self.minstret.get()
+                        & U::<64>::from(0xffff_ffff_0000_0000u64))
+                        | csr_new.zext::<64>(),
+                csr_write & (f12 == isa::CSR_MINSTRETH) ?
+                    minstret: (self.minstret.get()
+                        & U::<64>::from(0xffff_ffffu64))
+                        | (csr_new.zext::<64>() << 32),
                 run & is_wfi ? waiting: Bit::One,
                 wake ? waiting: Bit::Zero,
                 rst ? waiting: Bit::Zero,
