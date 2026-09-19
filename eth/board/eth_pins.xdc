@@ -9,9 +9,21 @@
 
 # The PHY's receive clock, 125 MHz at gigabit.
 create_clock -add -name eth_rxck -period 8.0 [get_ports {eth_rxck}]
+# The PHY's clock and the board's oscillator are unrelated, and so is
+# everything derived from either: the receive half runs on the quarter
+# cycle shift `eth_rgmii`'s MMCM makes from `eth_rxck`, and the only
+# path between that and the transmit clock goes through `chan_cdc`,
+# whose two sides are asynchronous by construction.
+#
+# Both groups say `-include_generated_clocks`. Naming `eth_rxck` alone
+# leaves the shifted clock out of the group, so the Gray pointers
+# crossing into the receive domain are timed against a clock that has
+# nothing to do with them; on the echo design those paths happened to
+# close, and on //flagship five of them missed by 365 ps. See issue
+# #314.
 set_clock_groups -asynchronous \
   -group [get_clocks -include_generated_clocks sys_clk_p] \
-  -group [get_clocks eth_rxck]
+  -group [get_clocks -include_generated_clocks eth_rxck]
 
 # Transmit.
 set_property PACKAGE_PIN P15 [get_ports {eth_txck}]
