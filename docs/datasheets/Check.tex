@@ -65,7 +65,7 @@ beats they send and the identifiers they release.
 
 It says that there was a difference, not which copy is wrong and not
 which word it was in; a design that wants either keeps its own record.
-It does not stop the stream on a difference. It holds a register,
-\code{last}, that nothing drives and nothing reads, which is issue 287.
-There is no timeout: two copies that stop offering stall the output for
-ever.
+It does not stop the stream on a difference. It keeps no word: the two
+heads are compared as they pass, so a difference is seen and not
+recorded. There is no timeout: two copies that stop offering stall the
+output for ever.
