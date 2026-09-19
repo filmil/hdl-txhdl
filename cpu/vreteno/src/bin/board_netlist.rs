@@ -57,8 +57,16 @@ fn main() {
             fade_program::TEXT,
             fade_program::DATA,
         ),
+        // The board with the loader in its boot memory: what the core
+        // runs arrives on the serial port and lives in the memory,
+        // rather than being built into this netlist.
+        "boot" => (
+            Board::<868, 0, 0>::lowered("board"),
+            boot_program::TEXT,
+            boot_program::DATA,
+        ),
         _ => {
-            eprintln!("usage: board_netlist sim|board|fade");
+            eprintln!("usage: board_netlist sim|board|fade|boot");
             std::process::exit(2);
         }
     };

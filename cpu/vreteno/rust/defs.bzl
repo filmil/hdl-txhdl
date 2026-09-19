@@ -59,3 +59,48 @@ vreteno_image = rule(
         ),
     },
 )
+
+def _vreteno_flat_impl(ctx):
+    """The flat image of a program built for the core.
+
+    A program that is loaded rather than built into the netlist goes to
+    the board as bytes, so it wants the linked ELF flattened. The
+    transition is the same one `vreteno_image` uses: without it the
+    program is built for this machine, where its inline assembly is not
+    even the right architecture.
+    """
+    elf = ctx.executable.program
+    out = ctx.actions.declare_file(ctx.label.name + ".bin")
+    ctx.actions.run(
+        inputs = [elf],
+        outputs = [out],
+        executable = ctx.executable._objcopy,
+        arguments = ["-O", "binary", elf.path, out.path],
+        mnemonic = "VretenoFlat",
+        progress_message = "Flattening %s for the board" % elf.short_path,
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+vreteno_flat = rule(
+    implementation = _vreteno_flat_impl,
+    doc = "The flat image of a program built for the core, for the " +
+          "loader to take off the serial port.",
+    attrs = {
+        "program": attr.label(
+            doc = "The `rust_binary` to build for the core.",
+            executable = True,
+            cfg = _vreteno_transition,
+            mandatory = True,
+        ),
+        "platform": attr.label(
+            doc = "The platform the core is.",
+            mandatory = True,
+        ),
+        "_objcopy": attr.label(
+            default = "@riscv_none_elf_gcc//:objcopy",
+            executable = True,
+            allow_single_file = True,
+            cfg = "exec",
+        ),
+    },
+)

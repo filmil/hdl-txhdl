@@ -33,3 +33,10 @@ filegroup(
     name = "objdump",
     srcs = ["bin/riscv-none-elf-objdump"],
 )
+
+# What turns a linked program into the flat image the board's loader
+# takes off the serial port.
+filegroup(
+    name = "objcopy",
+    srcs = ["bin/riscv-none-elf-objcopy"],
+)

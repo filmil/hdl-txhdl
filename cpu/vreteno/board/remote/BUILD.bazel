@@ -67,3 +67,27 @@ sh_binary(
     ],
     tags = ["manual"],
 )
+
+# The sender: one static binary for the board's machine, which puts a
+# program into the board's memory through the loader in its boot
+# memory.
+go_binary(
+    name = "load_bin",
+    srcs = ["load.go"],
+    pure = "on",
+    tags = ["manual"],
+)
+
+# Uploads the sender and an image and runs it there:
+#
+#   bazel run //cpu/vreteno/board/remote:load -- \
+#       --image=$PWD/bazel-bin/cpu/vreteno/rust/hello.bin
+sh_binary(
+    name = "load",
+    srcs = ["load.sh"],
+    data = [
+        ":load_bin",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
+    tags = ["manual"],
+)
