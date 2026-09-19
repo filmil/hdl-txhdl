@@ -473,6 +473,70 @@ is closed with what was measured and no pull request, which is a
 result; #162 went that way. And an issue found to be already fixed in
 step 1 is closed the same way.
 
+## Clean up the worktrees you are finished with
+
+A worktree costs a checkout of the tree and, once anything has been
+built in it, a Bazel output base of tens of gigabytes.
+Those outlive the work: a branch merges, the session ends, and the
+worktree sits there full.
+On September 19, 2026 there were forty-three of them on one machine
+and the disk reached 97 percent, which stops every session at once.
+
+So a worktree whose work is done is cleaned and removed, by whoever
+owns it, and the order matters.
+
+```sh
+git worktree list                 # what there is, and who holds what
+cd <worktree> && bazel clean      # first: this frees the build outputs
+git worktree remove <worktree>    # only after the clean returns
+git worktree prune                # once, at the end
+```
+
+* **Clean before removing.**
+  Removing the directory first leaves the output base behind with
+  nothing pointing at it, and nothing will ever clean it again.
+* **Plain `bazel clean`, not `--expunge`.**
+  An expunge is scoped to the workspace it runs in, so it is safe in
+  a worktree of your own, but the habit is dangerous next to output
+  bases that are not yours: one on this machine belongs to the
+  Forgejo Vivado runner, whose warm cache took forty minutes to
+  build.
+  A plain clean frees the outputs, which is the point.
+* **Only your own.**
+  A worktree another session is standing in is not yours to remove,
+  for the same reason its branch is not yours to rebase.
+  Say what you propose to remove, and let the owner answer.
+* **Anything dirty stays.**
+  If `bazel clean` fails, or the worktree has uncommitted changes,
+  leave it and say so rather than removing it.
+
+Deciding whether a branch is finished needs the right test, because
+the obvious ones all mislead here.
+A merged branch's tip is usually **not** an ancestor of `origin/main`,
+since pull requests land rebased; the remote branch usually still
+exists, since merging does not delete it; and a diff against `main` is
+large for every stale tree, since it counts what `main` gained.
+What answers the question is a comparison by patch:
+
+```sh
+git cherry origin/main <branch>   # no `+` lines: all of it is in main
+```
+
+Assert that the branch resolves before trusting a zero, since
+`git cherry` prints nothing when it fails and a counter reads that as
+"merged".
+
+Two things worth knowing while doing this:
+
+* A worktree's output base is named for the md5 of its path, so
+  `printf '%s' <worktree path> | md5sum` finds it under Bazel's output
+  root without starting a server.
+  That is how to be sure which base belongs to what before deleting
+  anything.
+* Removing a worktree does not delete its branch, and the branch is
+  usually on the remote as well, so a tree removed by mistake is
+  `git worktree add` away from being back.
+
 # Standing rule: one issue, one pull request, in topical commits
 
 An issue is a pull request of its own.
