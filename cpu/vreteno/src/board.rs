@@ -7,6 +7,8 @@
 //! interrupt controller, the timer and the software interrupt, the 64
 //! KiB from `0x0200_0000`; the serial port at `0x3000`, the board's DDR3
 //! memory from `0x4000_0000` to the end of the first two gigabytes,
+//! the remote peripheral at `0x3300`, whose behaviour is a program on
+//! another machine reached as frames on the Ethernet port,
 //! and the platform-level interrupt controller at `0x0c00_0000`, where
 //! RISC-V machines put it. The controller's source 1 is the serial
 //! port's receive interrupt and its source 2 the board's `irq` input,
@@ -35,11 +37,27 @@ use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerReq, B, R, W,
 };
 use txhdl_parts::bus::axi_lite::{
-    LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge3, LiteR, LiteW,
+    LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge4, LiteR, LiteW,
 };
 use txhdl_parts::bus::router::Router5;
+use txhdl_parts::eth::EthByte;
 use txhdl_parts::plic::Plic2;
 use txhdl_parts::pwm::Pwm;
+use txhdl_parts::remote::eth::RemoteLink;
+use txhdl_parts::remote::{Answer as RemoteAnswer, Ask, Remote};
+
+/// Which device this board answers to on the wire. Every frame the
+/// remote peripheral sends carries it, and a program answers each
+/// device by the number it was asked under, so a wire with two of
+/// these boards on it gives them a number each.
+pub const REMOTE_DEV: usize = 1;
+
+/// How long the remote peripheral waits for its program before it
+/// answers the bus `SlvErr` itself. Twenty milliseconds at 100 MHz: a
+/// round trip is two frames, a program on another machine, and
+/// whatever the network between them adds, and a device that has gone
+/// away must not stop the bus for longer than a person will wait.
+pub const REMOTE_WAIT: usize = 2_000_000;
 
 // begin{map}
 /// The address map: each peripheral's base and the bits of an address
@@ -74,12 +92,12 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     pub pdmem: AxiPer<32, 32, 4, 2>,
     pub ptimer: AxiPer<32, 32, 4, 2>,
     // begin{vslot}
-    /// Three small peripherals share the page at `0x3000`: the serial
-    /// port at `0x3000`, the pulse width modulator at `0x3100`, and
-    /// whatever the board hangs on the third slot at `0x3200`, each a
-    /// sixteenth of the page. The router has five ports and all five
-    /// are taken, and a peripheral of six registers does not want one
-    /// of its own.
+    /// Four small peripherals share the page at `0x3000`: the serial
+    /// port at `0x3000`, the pulse width modulator at `0x3100`,
+    /// whatever the board hangs on the third slot at `0x3200`, and the
+    /// remote peripheral at `0x3300`, each a sixteenth of the page.
+    /// The router has five ports and all five are taken, and a
+    /// peripheral of six registers does not want one of its own.
     ///
     /// The third slot leaves this unit as ports rather than reaching a
     /// field, because what sits there runs on a clock of its own: on
@@ -87,7 +105,7 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     /// the crossing between the two is the board top's business. A
     /// design with nothing there ties the slot off, and a read of it
     /// answers when the tie-off does.
-    pub puart: LiteBridge3<
+    pub puart: LiteBridge4<
         32,
         32,
         4,
@@ -98,6 +116,8 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
         0xffff_ff00,
         0x3200,
         0xffff_ff00,
+        0x3300,
+        0xffff_ff00,
     >,
     // end{vslot}
     pub pddr3: AxiPer<32, 32, 4, 2>,
@@ -107,6 +127,16 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     pub uart: Uart<DIV>,
     pub pwm: Pwm,
     pub ddr3: Ddr3Per<MICRON_SIM, BIST>,
+    // begin{remote}
+    /// The peripheral at `0x3300`, whose behaviour is a program on
+    /// another machine, and the link that puts its transactions on the
+    /// Ethernet port as frames. Both run on the core's clock; the
+    /// crossing to the port's two clocks is the board top's business,
+    /// as the video slot's is, and it carries a byte and a last bit,
+    /// which is what the MAC speaks.
+    pub remote: Remote<REMOTE_WAIT>,
+    pub link: RemoteLink<REMOTE_DEV>,
+    // end{remote}
     /// Both sources ask while their line is high.
     pub plic: Plic2<0>,
 }
@@ -118,7 +148,18 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
 {
     async fn run(
         &mut self,
-        (rst, irq, rx, ddr3_clk, ref_clk, ddr3_clk_90, ddr3_rst_n, vb, vr): (
+        (
+            rst,
+            irq,
+            rx,
+            ddr3_clk,
+            ref_clk,
+            ddr3_clk_90,
+            ddr3_rst_n,
+            vb,
+            vr,
+            net_rx,
+        ): (
             In<Bit>,
             In<Bit>,
             In<Bit>,
@@ -128,6 +169,7 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             In<Bit>,
             Rx<LiteB>,
             Rx<LiteR<32>>,
+            Rx<EthByte>,
         ),
         (
             halt,
@@ -152,6 +194,7 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             vaw,
             var,
             vw,
+            net_tx,
         ): (
             Out<Bit>,
             Out<Bit>,
@@ -175,6 +218,7 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             Tx<LiteAw<32>>,
             Tx<LiteAr<32>>,
             Tx<LiteW<32, 4>>,
+            Tx<EthByte>,
         ),
     ) {
         // The reset, read by the core, the timer and the serial port.
@@ -248,6 +292,15 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         let (pw_pwm_tx, pw_pwm_rx) = chan::<LiteW<32, 4>, DefaultClock>();
         let (pb_pwm_tx, pb_pwm_rx) = chan::<LiteB, DefaultClock>();
         let (pr_pwm_tx, pr_pwm_rx) = chan::<LiteR<32>, DefaultClock>();
+        // The remote peripheral's side of the same bridge, and the two
+        // channels between it and the link that makes the frames.
+        let (paw_rem_tx, paw_rem_rx) = chan::<LiteAw<32>, DefaultClock>();
+        let (par_rem_tx, par_rem_rx) = chan::<LiteAr<32>, DefaultClock>();
+        let (pw_rem_tx, pw_rem_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (pb_rem_tx, pb_rem_rx) = chan::<LiteB, DefaultClock>();
+        let (pr_rem_tx, pr_rem_rx) = chan::<LiteR<32>, DefaultClock>();
+        let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
+        let (ans_tx, ans_rx) = chan::<RemoteAnswer, DefaultClock>();
         let (req3_tx, req3_rx) = chan::<PerReq<32, 2>, DefaultClock>();
         let (wd3_tx, wd3_rx) = chan::<W<32, 4>, DefaultClock>();
         let (ans3_tx, ans3_rx) = chan::<Answer<2>, DefaultClock>();
@@ -336,11 +389,13 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                             self.puart.run(
                                 (
                                     aw2_rx, ar2_rx, w2_rx, lb_rx, lr_rx,
-                                    pb_pwm_rx, pr_pwm_rx, vb, vr,
+                                    pb_pwm_rx, pr_pwm_rx, vb, vr, pb_rem_rx,
+                                    pr_rem_rx,
                                 ),
                                 (
                                     law_tx, lar_tx, lw_tx, paw_pwm_tx,
-                                    par_pwm_tx, pw_pwm_tx, vaw, var, vw, b2_tx,
+                                    par_pwm_tx, pw_pwm_tx, vaw, var, vw,
+                                    paw_rem_tx, par_rem_tx, pw_rem_tx, b2_tx,
                                     r2_tx,
                                 ),
                             ),
@@ -349,9 +404,28 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                                     (aw3_rx, ar3_rx, w3_rx, ans3_rx, rb3_rx),
                                     (req3_tx, wd3_tx, b3_tx, r3_tx),
                                 ),
-                                self.pplic.run(
-                                    (aw4_rx, ar4_rx, w4_rx, pb_rx, pr_rx),
-                                    (paw_tx, par_tx, pw_tx, b4_tx, r4_tx),
+                                join2(
+                                    self.pplic.run(
+                                        (aw4_rx, ar4_rx, w4_rx, pb_rx, pr_rx),
+                                        (paw_tx, par_tx, pw_tx, b4_tx, r4_tx),
+                                    ),
+                                    // The peripheral before the link, so
+                                    // a transaction and the first byte of
+                                    // its frame are one step apart rather
+                                    // than two.
+                                    join2(
+                                        self.remote.run(
+                                            (
+                                                paw_rem_rx, par_rem_rx,
+                                                pw_rem_rx, ans_rx,
+                                            ),
+                                            (pb_rem_tx, pr_rem_tx, ask_tx),
+                                        ),
+                                        self.link.run(
+                                            (ask_rx, net_rx),
+                                            (ans_tx, net_tx),
+                                        ),
+                                    ),
                                 ),
                             ),
                         ),

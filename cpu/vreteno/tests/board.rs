@@ -4,12 +4,17 @@
 //! the serial port; the DDR3 test, which uses the memory's region
 //! through the bridge and the controller's model; and input by
 //! interrupt, which takes the serial port's receive interrupt through
-//! the interrupt controller. And its netlist, which holds the memory
-//! controller as a foreign module.
-use txhdl::comp::{chan, pad, signal, DefaultClock, Running, Unit};
+//! the interrupt controller; and the remote peripheral, which the core
+//! reaches as frames on the Ethernet port with a program in this file
+//! answering them. And its netlist, which holds the memory controller
+//! as a foreign module.
+use std::collections::HashMap;
+use txhdl::comp::{chan, pad, signal, DefaultClock, Running, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
-use vreteno32::board::Board;
+use txhdl_parts::eth::EthByte;
+use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
+use vreteno32::board::{Board, REMOTE_DEV};
 use vreteno32::core::Vreteno;
 use vreteno32::dmem::Dmem;
 use vreteno32::term::Terminal;
@@ -28,6 +33,9 @@ struct Ran {
     typed_at: u64,
     ran_for: u64,
     halted_at: Option<u64>,
+    /// Every frame that left the Ethernet port, whether or not a
+    /// program was there to answer it.
+    sent: Vec<Vec<u8>>,
 }
 
 /// Run `text` with `data` in the data memory, on the board's design,
@@ -35,6 +43,66 @@ struct Ran {
 /// types `reply` once the core has said a line.
 fn run(text: &[u32], data: &[u8], reply: &[u8], limit: u64) -> Ran {
     run_paced(text, data, reply, &[], limit)
+}
+
+/// The same, with a program on the other side of the Ethernet port
+/// answering the remote peripheral's frames.
+fn run_served(text: &[u32], data: &[u8], limit: u64) -> Ran {
+    run_all(text, data, b"", &[], limit, true)
+}
+
+/// The program at the other end of the wire, for one cycle: it reads
+/// the frames the peripheral sends, keeps what it is told to keep,
+/// refuses a read of an address nothing has written, and answers with
+/// the frame it was sent, four bytes of it changed. `//tools/remote`
+/// does the same thing in Go on another machine; this is the same
+/// protocol with the wire left out.
+fn device(
+    from: &Rx<EthByte>,
+    to: &Tx<EthByte>,
+    frame: &mut Vec<u8>,
+    reply: &mut Vec<EthByte>,
+    words: &mut HashMap<u32, u32>,
+    sent: &mut Vec<Vec<u8>>,
+    serve: bool,
+) {
+    if !reply.is_empty() && to.ready().to_bool() {
+        to.send(reply.remove(0));
+    }
+    let Some(byte) = from.recv() else {
+        return;
+    };
+    frame.push(byte.data.raw() as u8);
+    if !byte.last.to_bool() {
+        return;
+    }
+    sent.push(frame.clone());
+    if serve && frame.len() >= FRAME_LEN as usize {
+        let at = u32::from_be_bytes(frame[18..22].try_into().unwrap());
+        let data = u32::from_be_bytes(frame[22..26].try_into().unwrap());
+        let (answer, err) = if frame[17] & 1 == 1 {
+            words.insert(at, data);
+            (0, false)
+        } else {
+            match words.get(&at) {
+                Some(v) => (*v, false),
+                None => (0, true),
+            }
+        };
+        let mut out = frame.clone();
+        out.truncate(FRAME_LEN as usize);
+        out[14] = KIND_ANSWER as u8;
+        out[17] = err as u8;
+        out[22..26].copy_from_slice(&answer.to_be_bytes());
+        let n = out.len();
+        for (i, b) in out.into_iter().enumerate() {
+            reply.push(EthByte {
+                data: U::from(b),
+                last: Bit::from_bool(i + 1 == n),
+            });
+        }
+    }
+    frame.clear();
 }
 
 /// The same, with the terminal typing in blocks of `block` bytes and
@@ -46,6 +114,20 @@ fn run_paced(
     reply: &[u8],
     blocks: &[usize],
     limit: u64,
+) -> Ran {
+    run_all(text, data, reply, blocks, limit, false)
+}
+
+/// The run itself. `serve` says whether a program answers the frames
+/// the remote peripheral sends; without one its port is a wire with
+/// nothing at the other end, which is what every other run here wants.
+fn run_all(
+    text: &[u32],
+    data: &[u8],
+    reply: &[u8],
+    blocks: &[usize],
+    limit: u64,
+    serve: bool,
 ) -> Ran {
     let mut board = TestBoard {
         cpu: Vreteno::with(text),
@@ -59,6 +141,12 @@ fn run_paced(
     let bit = || signal::<Bit, DefaultClock>().0;
     let (halt_o, halt) = signal::<Bit, DefaultClock>();
     let (tx_o, tx) = signal::<Bit, DefaultClock>();
+    // The Ethernet port, as the board sees it: the frames the remote
+    // peripheral sends and the frames that answer them. There is no
+    // MAC in these runs, so a byte goes out a cycle and the program
+    // below reads them as they arrive.
+    let (net_out_tx, net_out_rx) = chan::<EthByte, DefaultClock>();
+    let (net_in_tx, net_in_rx) = chan::<EthByte, DefaultClock>();
     // The third slot of the page at `0x3000` is tied off: nothing in
     // these runs writes to `0x3200`, and a run that did would wait on
     // an answer that never comes, which is what the board top's own
@@ -74,6 +162,7 @@ fn run_paced(
             quiet(),
             chan::<LiteB, DefaultClock>().1,
             chan::<LiteR<32>, DefaultClock>().1,
+            net_in_rx,
         ),
         (
             halt_o,
@@ -100,6 +189,7 @@ fn run_paced(
             chan::<LiteAw<32>, DefaultClock>().0,
             chan::<LiteAr<32>, DefaultClock>().0,
             chan::<LiteW<32, 4>, DefaultClock>().0,
+            net_out_tx,
         ),
     ));
     rst_o.set(Bit::One);
@@ -116,7 +206,22 @@ fn run_paced(
     let mut typed_was = 0;
     let mut typed_at = 0;
     let mut ran_for = 0;
+    // The program at the other end of the Ethernet port, and what it
+    // has been told to remember.
+    let mut frame: Vec<u8> = Vec::new();
+    let mut reply: Vec<EthByte> = Vec::new();
+    let mut words: HashMap<u32, u32> = HashMap::new();
+    let mut sent: Vec<Vec<u8>> = Vec::new();
     for cycle in 0..limit {
+        device(
+            &net_out_rx,
+            &net_in_tx,
+            &mut frame,
+            &mut reply,
+            &mut words,
+            &mut sent,
+            serve,
+        );
         sim.cycle();
         term.see(tx.get().to_bool());
         rx_o.set(Bit::from_bool(term.level()));
@@ -141,6 +246,7 @@ fn run_paced(
         typed_at,
         ran_for,
         halted_at,
+        sent,
     }
 }
 
@@ -166,6 +272,84 @@ fn input_comes_by_interrupt_one_byte_each() {
     let ran = run(irq_program::TEXT, irq_program::DATA, b"ping", 20000);
     assert_eq!(ran.said, "ready\ngot ping in 4 interrupts\n");
     assert!(ran.halted_at.is_some(), "the core halted itself");
+}
+
+/// A byte at a time onto the serial port, waiting while it is busy.
+/// `x1` holds the page the port is on.
+fn say(a: &mut vreteno32::program::Asm, text: &[u8]) {
+    use vreteno32::isa::{addi, andi, bne, lw, sw};
+    for byte in text {
+        let wait = a.label();
+        a.place(wait);
+        a.emit(lw(2, 1, 4)); // x2 = the status
+        a.emit(andi(2, 2, 1)); // busy?
+        a.to(wait, |off| bne(2, 0, off));
+        a.emit(addi(3, 0, *byte as i32));
+        a.emit(sw(3, 1, 0)); // the byte goes out
+    }
+}
+
+/// A program that uses the remote peripheral: it writes a word to
+/// `0x3300`, reads it back, and says on the serial port whether what
+/// came back is what went out. Everything between the store and the
+/// load is a frame leaving the Ethernet port, a program reading it,
+/// and a frame coming back.
+fn remote_program() -> Vec<u32> {
+    use vreteno32::isa::{addi, beq, halt, jal, lui, lw, sw, UART_BASE};
+    let mut a = vreteno32::program::Asm::default();
+    // The serial port and the peripheral are on one page, so one
+    // register addresses both.
+    a.emit(lui(1, UART_BASE >> 12));
+    a.emit(lui(4, 0xdead0));
+    a.emit(addi(4, 4, 0x123)); // x4 = 0xdead0123
+    a.emit(sw(4, 1, 0x300)); // the peripheral, at 0x3300
+    a.emit(lw(5, 1, 0x300)); // and back from it
+    let same = a.label();
+    let done = a.label();
+    a.to(same, |off| beq(5, 4, off));
+    say(&mut a, b"remote bad\n");
+    a.to(done, |off| jal(0, off));
+    a.place(same);
+    say(&mut a, b"remote ok\n");
+    a.place(done);
+    a.emit(halt());
+    a.words()
+}
+
+/// The core writes a word to a device that is a program on the other
+/// side of the Ethernet port, reads it back, and gets what it wrote.
+/// Nothing on the bus knows the device is software: the transaction
+/// leaves the board as a frame and the answer arrives as one.
+#[test]
+fn the_core_reaches_a_program_across_the_ethernet_port() {
+    let ran = run_served(&remote_program(), b"", 8000);
+    assert_eq!(ran.said, "remote ok\n");
+    assert!(ran.halted_at.is_some(), "the core halted itself");
+    // Two transactions, two frames: the store and the load.
+    assert_eq!(ran.sent.len(), 2, "a frame each");
+}
+
+/// What leaves the board is the protocol's frame, read here off the
+/// port rather than out of the peripheral: the store the program above
+/// makes, addressed to the peripheral's own address, carrying the word
+/// and all four lanes, from this board's device number.
+#[test]
+fn a_transaction_leaves_the_board_as_a_frame() {
+    let ran = run(&remote_program(), b"", b"", 2000);
+    let frame = &ran.sent[0];
+    assert_eq!(frame.len(), FRAME_LEN as usize, "one frame, whole");
+    assert_eq!(frame[12..14], [0x88, 0xb5], "the type");
+    assert_eq!(frame[14], KIND_ASK as u8, "an ask");
+    assert_eq!(frame[15], REMOTE_DEV as u8, "this board");
+    assert_eq!(frame[17] & 1, 1, "a write");
+    assert_eq!(&frame[18..22], &0x3300u32.to_be_bytes(), "the address");
+    assert_eq!(&frame[22..26], &0xdead_0123u32.to_be_bytes(), "the word");
+    assert_eq!(frame[26], 0xf, "every lane");
+    // With nothing answering, the core waits on the peripheral, which
+    // waits `REMOTE_WAIT` cycles before it answers the bus itself.
+    // That is twenty milliseconds on the board, longer than this run.
+    assert_eq!(ran.said, "", "the core is still waiting");
+    assert!(ran.halted_at.is_none(), "and has not halted");
 }
 
 /// One module holds the rest, and the controller is an instance of its
@@ -281,7 +465,11 @@ fn the_loader_refuses_a_stream_whose_sum_is_wrong() {
         400_000,
     );
     assert!(ran.said.contains("bad sum "), "{}", ran.said);
-    assert!(ran.said.ends_with("boot\n"), "it waits for another: {}", ran.said);
+    assert!(
+        ran.said.ends_with("boot\n"),
+        "it waits for another: {}",
+        ran.said
+    );
     assert!(ran.halted_at.is_none(), "nothing was jumped into");
 }
 
