@@ -115,12 +115,17 @@ func main() {
 	}()
 
 	deadline := time.Now().Add(time.Duration(seconds) * time.Second)
-	// Wait for the loader to say it is there, so a stream is never
-	// sent at a program that is still running.
-	fmt.Fprintf(os.Stderr, "[load] waiting for the loader on %s\n", port)
-	if !waitFor(said, "boot", deadline) {
-		fmt.Fprintln(os.Stderr, "[load] the loader did not say boot")
-		os.Exit(1)
+	// The loader says `boot` when it starts and then waits, so on a
+	// board that was configured a while ago that word has long gone
+	// past. Listen briefly in case it is there, and send anyway: the
+	// loader is waiting for the magic word whether or not anybody
+	// heard it say so, and the acknowledgements say whether it is
+	// listening.
+	fmt.Fprintf(os.Stderr, "[load] listening on %s\n", port)
+	if waitFor(said, "boot", time.Now().Add(2*time.Second)) {
+		fmt.Fprintln(os.Stderr, "[load] the loader is waiting")
+	} else {
+		fmt.Fprintln(os.Stderr, "[load] no greeting; sending anyway")
 	}
 
 	words := len(blob) / 4
