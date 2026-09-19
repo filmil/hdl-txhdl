@@ -176,6 +176,13 @@ HDMI in TxHDL
     demonstration for the AX7A200B's SiI9134.
   & \code{//docs:hdmi} \\
 \addlinespace
+The TxHDL Flagship
+  & The one bitstream that holds all of it: the core with its memory,
+    the Ethernet port and the HDMI output in one part, three clock
+    domains kept apart, the loader in the boot memory, and the whole
+    written to the board's flash.
+  & \code{//docs:flagship} \\
+\addlinespace
 PCIe in TxHDL
   & TxHDL behind an endpoint the build generates: the part that joins
     an AXI master's pins to the link, the registers a host reaches in

@@ -1,0 +1,365 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% The flagship. Built by //docs:flagship. Every listing is included
+% from the tree.
+\documentclass[journal,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+\input{housestyle}
+
+% The colours of the placement map, one per subsystem, chosen to be
+% told apart in print as well as on a screen. //tools/fpgamap names
+% them, so they are defined here and nowhere else.
+\definecolor{flagdie}{gray}{0.92}
+\definecolor{flagcore}{RGB}{40,90,170}
+\definecolor{flagmem}{RGB}{200,110,30}
+\definecolor{flageth}{RGB}{50,130,60}
+\definecolor{flagvid}{RGB}{140,60,150}
+\definecolor{flagcdc}{RGB}{30,150,160}
+\definecolor{flagtop}{gray}{0.45}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{The TxHDL Flagship}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{This document is the system the board is kept in, for a reader
+who knows the core~\cite{vreteno} and the three subsystems it brings
+together~\cite{eth,hdmi,axi}. Every listing is included from the
+project repository \code{HDL/txhdl} at build time. The
+cover~\cite{cover} lists every document.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{The TxHDL Flagship}{Filmar and Janković: The TxHDL Flagship}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+The pieces of this project are proven on the Alinx AX7A200B one at a
+time: a core with a memory controller behind it, an Ethernet port that
+echoes, an HDMI output that draws a picture. Each is its own bitstream,
+and only one of them is in the part at a time. The flagship is the
+bitstream that holds all of them, written to the board's flash, so that
+the board powered on with nothing attached is the whole system rather
+than whichever experiment ran last. It is also the bitstream that stops
+moving: the core comes up running a loader, so the software changes in
+a second over the serial port and the hardware underneath it stays
+where it is. This document says what is in it, how the three clock
+domains are kept apart, what the lights mean, and how it is written to
+the flash.
+\end{abstract}
+
+\section{Why a flagship}
+\label{sec:f-why}
+
+A part holds one bitstream. Every demonstration in this repository is
+therefore a claim about a board that is not in that state any more:
+the Ethernet echo was in the part on Thursday, the HDMI picture on
+Friday, and by Saturday it is the DDR3 test again. Nothing is wrong
+with any of them, and the board still cannot be handed to somebody and
+switched on.
+
+The flagship answers that. One bitstream holds every part of the system
+that is proven here, it lives in the board's QSPI flash rather than in
+the FPGA's volatile configuration, and it is rebuilt whenever any of
+its pieces changes. A board with power and nothing else is the system.
+
+The second reason is the one that saves the most time. Place and route
+of this design is half an hour. A flagship whose core ran a program
+built into its netlist would cost half an hour per edit of that
+program, which is why the demonstrations so far have each been their
+own bitstream. The flagship's core instead comes up running the
+loader~\cite{vreteno}: it waits on the serial port, takes a program,
+writes it into the DDR3 memory and jumps to it. The hardware is fixed
+and known; the software is whatever was sent last. Changing what the
+flagship does costs a second.
+
+\section{What is in it}
+\label{sec:f-what}
+
+Three subsystems, each unchanged from the design that proved it.
+
+\emph{The core and its memory.} \code{board}, the netlist
+\code{\#[lower]} writes for \code{vreteno32::board::Board}: the Vreteno
+RV32IMC core, its AXI tracker, the router, the data memory, the timer
+and software interrupt, the platform-level interrupt controller, the
+pulse width modulator, the serial port, and the board's gigabyte of
+DDR3 behind UberDDR3's controller. The core's boot memory holds the
+loader.
+
+\emph{The Ethernet port.} The two lowered halves of the MAC with the
+PHY's RGMII around them and a crossing between the receive and
+transmit clocks, echoing every good frame~\cite{eth}. The core does not
+reach the port yet. The echo is what keeps the port alive and provable
+from the other end of the cable while a peripheral for it is written.
+
+\emph{The HDMI output.} The video peripheral with its framebuffer and
+the I2C master that configures the SiI9134 encoder~\cite{hdmi}. Here
+the flagship does add something the demonstration did not have: the
+core reaches the peripheral, so a program can paint the screen.
+
+\section{The third slot}
+\label{sec:f-slot}
+
+The core's router has five ports and all five are taken. The serial
+port and the pulse width modulator already share the page at
+\code{0x3000} behind an AXI-Lite bridge, each a sixteenth of it, for
+exactly that reason: a peripheral of six registers does not deserve a
+port of its own. The video peripheral is three registers, so it takes a
+third sixteenth, at \code{0x3200}, and the bridge becomes a
+\code{LiteBridge3}.
+
+What is different about the third slot is that it does not reach a
+field of \code{Board}. It leaves the unit as five channel ports:
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=vslot-vslot,caption={\code{cpu/vreteno/src/board.rs}: the
+third slot, and why it leaves the
+unit.},label={lst:f-slot}]{cpu/vreteno/src/board.rs}
+
+because what sits there runs on a clock of its own. The video
+peripheral's raster is timed by the pixel clock, 25.2\,MHz, and the
+core runs at 100\,MHz; a peripheral inside \code{Board} would have to
+run on the core's clock, and a VGA raster at 100\,MHz is not a VGA
+raster. So the slot is brought out, and joining it to something is the
+board top's business. A board with nothing there ties it off, which is
+what \code{cpu/vreteno/board/vreteno\_board.v} does; a program that
+touched \code{0x3200} on such a board would wait forever, and none
+does.
+
+\section{Three clocks, one input}
+\label{sec:f-clocks}
+
+The board has one 200\,MHz differential input. The flagship buffers it
+once and hangs three generators off it, each the generator its
+subsystem is already proven with, so that bringing the three designs
+together changes nothing about any of them.
+
+\begin{itemize}
+\item A PLL, times six to 1200\,MHz, giving 100\,MHz for the design and
+  the memory controller, 400\,MHz for the memory, the same 400\,MHz a
+  quarter cycle late, and 200\,MHz for the controller's delay control.
+\item An MMCM, times five to 1000\,MHz over eight, giving 125\,MHz for
+  the Ethernet transmit half. A second MMCM inside \code{eth\_rgmii}
+  shifts the clock the PHY recovers from the line by a quarter cycle,
+  because that PHY adds no receive delay of its own.
+\item An MMCM, times 63 over ten and then over 50, giving 25.2\,MHz for
+  the pixel clock, within half a per cent of the mode's 25.175\,MHz.
+\end{itemize}
+
+One thing crosses between the domains, and it is a channel rather than
+a signal: the core's AXI-Lite to the video peripheral. Each of the five
+AXI-Lite channels crosses on its own, through \code{chan\_cdc}, the
+asynchronous FIFO with Gray-coded pointers that the Ethernet echo
+already uses on this board. Crossing each channel on its own is the
+whole of what the protocol asks, because the five have no timing
+relationship to each other: a write is complete when its response
+arrives, whenever that is.
+
+\lstinputlisting[caption={\code{lib/board/chan\_cdc.v}: a lowered
+unit's channel, carried from one clock to
+another.},label={lst:f-cdc}]{lib/board/chan_cdc.v}
+
+That file used to be \code{eth/board/eth\_cdc.v}, and the flagship is
+what made it general: it now lives in \code{//lib/board}, which is
+where Verilog that more than one area's board design wants is kept.
+
+\section{The lights}
+\label{sec:f-leds}
+
+The board has four LEDs, lit when driven low, and the flagship has
+more than four things worth watching. These four are what a person at
+the board needs to tell a healthy flagship from a sick one.
+
+\begin{itemize}
+\item \textbf{LED1}, the pulse width modulator's first channel, or the
+  core halted. This is the software's own light: the loader leaves it
+  dark, and a program sent down the wire does with it what it likes.
+\item \textbf{LED2}, a frame seen on the Ethernet port, either
+  direction, held for about a fifth of a second so that a person sees
+  it.
+\item \textbf{LED3}, the DDR3 memory calibrated. The loader writes the
+  program it receives into that memory, so a dark LED3 explains
+  everything else that is wrong.
+\item \textbf{LED4}, the heartbeat, three times a second. It says the
+  PLL has locked and that this part holds a bitstream that is running,
+  which is the first question to ask of a board that does nothing.
+\end{itemize}
+
+The HDMI output has no light of its own. The monitor is its light.
+
+\section{The design}
+\label{sec:f-top}
+
+Everything above is one hand-written module, and it is the only new
+hardware in the flagship: the pins, the three generators, the resets,
+the five crossings and the lights.
+
+\lstinputlisting[caption={\code{flagship/board/flagship.v}: the
+flagship's top.},label={lst:f-top}]{flagship/board/flagship.v}
+
+The constraints are shared rather than copied. The board's clock, its
+reset, its LEDs, its serial port and its memory come from the two files
+under \code{cpu/vreteno/board/}; the PHY's pins from
+\code{eth/board/eth\_pins.xdc}; the encoder's from
+\code{hdmi/board/hdmi\_pins.xdc}. Each pin of this board is named in
+exactly one file in the tree, and every design that drives that pin
+reads it, so a pin corrected for one design is corrected for the
+flagship in the same change. What is left for the flagship's own file
+is the part no subsystem owns: telling the three generators apart for
+timing.
+
+\lstinputlisting[caption={\code{flagship/board/ax7a200\_flagship.xdc}:
+what no subsystem owns.},label={lst:f-xdc}]%
+{flagship/board/ax7a200_flagship.xdc}
+
+\section{Building it, and putting it in the flash}
+\label{sec:f-build}
+
+Every Vivado target in this repository is manual, because each is
+minutes of work that a plain build should not start.
+\code{bazel build //flagship:flagship\_synth} takes five minutes and
+\code{//flagship:flagship\_pnr} about twenty-five more, and the second
+depends on the first, so the second alone is the whole of it.
+
+Writing the result to the board needs the tunnel to the machine the
+board is attached to, which \code{bazel run
+//cpu/vreteno/board/remote:hw\_server} opens. Then either
+\code{//flagship:flagship\_prog} writes the FPGA itself, which the next
+power cycle forgets, or \code{//flagship:flagship\_flash} writes the
+QSPI flash, which is where a flagship belongs: the board then comes up
+as itself with nothing attached. Both take
+\code{-{}-hostport localhost:3122} and the device pattern, as the
+targets' comments state.
+
+The flash is a Micron MT25QL128 over a four-bit bus. It is the part
+this board answers with, read off the chip over JTAG rather than out of
+a manual, because board revisions differ here and the manual for this
+one names a larger part that Vivado then refuses.
+
+Once the flagship is in the part, a program goes to it over the serial
+port and no Vivado is involved at all: \code{bazel build
+//cpu/vreteno/rust:hello\_ram\_bin} for the image, and \code{bazel run
+//cpu/vreteno/board/remote:load -{}-image=...} to send it. That is the
+loop the flagship exists to make cheap, and it is seconds rather than
+half an hour.
+
+\section{What it costs}
+\label{sec:f-cost}
+
+The whole flagship is a small part of an xc7a200t. Synthesis reports
+10\,305 slice LUTs, 7.7 per cent of the part; 7\,966 registers, 3.0 per
+cent; 16 block RAM tiles of 365; four DSPs; 126 of 285 bonded pins; and
+of the clocking, one PLL and three MMCMs, one of which is inside the
+RGMII wrapper. The part is not the constraint, which is worth saying
+plainly: the question for the next subsystem is whether it meets
+timing, not whether it fits.
+
+\section{Where it landed}
+\label{sec:f-place}
+
+Counting says how much of the part is used. It does not say where, and
+where is the question a design of four subsystems raises: are they four
+regions of the part or one mixture, and which of them did the pins pull
+to an edge?
+
+Figure~\ref{fig:f-map} is the answer, read off the routed checkpoint
+rather than drawn by hand. \code{//flagship:place\_report} opens the
+checkpoint in Vivado, attributes every placed cell to a subsystem by the
+top level instance it sits under, and writes a count per subsystem per
+slice column and row into \code{docs/flagship\_place.tsv}, which is
+committed. \code{//tools/fpgamap} bins that and draws it at build time. The
+arrangement is the one the layout numbers already use: the extraction is
+manual because it is minutes of Vivado, and a Bazel action has no
+repository to write into.
+
+\begin{figure}[t]
+\centering
+\input{flagshipmap}
+\caption{Where the flagship's subsystems landed on the xc7a200t. A
+square is eight slices by eight; its colour is whichever subsystem
+holds the most cells in it and its shade how full it is. The grey is
+part that holds nothing.}
+\label{fig:f-map}
+\end{figure}
+
+\begin{table}[t]
+\caption{The same placement as numbers. A slice holds several cells,
+so these counts are larger than a utilisation report's, which counts
+slices.}
+\label{tab:f-place}
+\centering
+\footnotesize
+\input{flagshiptotals}
+\end{table}
+
+Three things are worth reading off it.
+
+\emph{The subsystems are regions, not a mixture.} The Ethernet sits in
+slice columns 0 to 22 and the core in 93 to 147: they do not touch. The
+placer was told nothing about this. It follows from the pins, which is
+the point: the PHY is wired to one bank and the memory to another, and
+logic goes where its pins are.
+
+\emph{The memory controller is the largest thing in the design}, larger
+than the core, its bus and all of its peripherals together, and it is
+pinned hard against the memory's bank. That is worth knowing before
+adding anything that wants to be near those pins.
+
+\emph{The crossing sits between what it crosses.} The five FIFOs that
+carry the core's AXI-Lite to the pixel clock are in columns 92 to 118,
+between the core and the video, which is where a crossing should be and
+is not something anything arranged.
+
+\section{What is not done}
+\label{sec:f-todo}
+
+\emph{The core does not reach the Ethernet port.} The port echoes, on
+its own, beside the core. The AXI-Lite peripheral for the MAC
+exists~\cite{eth}; what is missing is a sixth slot to put it on and the
+crossing to the 125\,MHz domain, which is the same crossing the video
+already uses.
+
+\emph{The screen is painted by nothing yet.} The slot is there and the
+crossing is there; the program that draws is filed separately.
+
+\emph{There is one flagship.} The issue that asks for this one allows
+for several, named \code{flagship-0}, \code{flagship-1} and so on, if
+the part ever fills up. It has not: see
+Section~\ref{sec:f-cost}.
+
+\begin{thebibliography}{9}
+
+\bibitem{vreteno}
+F.~Filmar and D.~Janković, ``Vreteno in TxHDL,'' project repository
+\code{HDL/txhdl}, \code{//docs:vreteno}, 2026.
+
+\bibitem{eth}
+F.~Filmar and D.~Janković, ``Ethernet in TxHDL,'' project repository
+\code{HDL/txhdl}, \code{//docs:eth}, 2026.
+
+\bibitem{hdmi}
+F.~Filmar and D.~Janković, ``HDMI in TxHDL,'' project repository
+\code{HDL/txhdl}, \code{//docs:hdmi}, 2026.
+
+\bibitem{axi}
+F.~Filmar and D.~Janković, ``AXI in TxHDL,'' project repository
+\code{HDL/txhdl}, \code{//docs:axi}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\end{thebibliography}
+
+\end{document}

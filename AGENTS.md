@@ -15,7 +15,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and twenty-two documents describe it,
+The language is a library, `//lib`, and twenty-three documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -107,6 +107,17 @@ all under `//docs`:
   for the AX7A200B's SiI9134, which `//hdmi:demo_synth` and
   `//hdmi:demo_pnr` put through Vivado to a bitstream.
   `ex_hdmi` is documented there and not in `//docs:examples`.
+* `//docs:flagship` is the flagship: the one bitstream that holds every
+  part of the system proven on the AX7A200B, kept in the board's QSPI
+  flash so that the board powered on with nothing attached is the whole
+  system. The Vreteno board with its DDR3, the Ethernet echo and the
+  HDMI output in one part, three clock generators off one input, the
+  five AXI-Lite channels of the core's third slot crossed to the pixel
+  clock by `chan_cdc` in `//lib/board`, and the loader in the core's
+  boot memory, so that the software on the flagship changes in a second
+  and the bitstream underneath it does not move.
+  `//flagship:flagship_synth`, `//flagship:flagship_pnr` and
+  `//flagship:flagship_flash` are the targets.
 * `//docs:pcie` is PCIe on the AX7A200B: AMD's XDMA endpoint, which
   `//pcie:xdma_x2` generates with `vivado_ip`; `AxiPins` in
   `//lib/parts` under `bus::axi_pins`, which joins a host's AXI4 pins to

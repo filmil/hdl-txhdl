@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Draws where the flagship's subsystems landed on the part, from the
+# grid //flagship:place_report reads off the routed checkpoint, and
+# sets the same numbers as a table.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "fpgamap",
+    srcs = ["main.rs"],
+    edition = "2021",
+)

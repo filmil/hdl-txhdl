@@ -15,10 +15,12 @@
 # the rest of the core's netlist, because it is the largest single
 # thing in the design and it is pinned to the memory's I/O bank.
 #
-# Only SLICE cells go into the map. They are the logic, their
-# coordinates are one grid, and the block RAMs and DSPs are counted in
-# the totals instead, where their own coordinate systems do not have to
-# be reconciled with anything.
+# Only cells in SLICE sites go into the map. They are the logic, and
+# their coordinates are one grid: a slice holds several cells, so these
+# are counts of cells rather than of slices, and they are larger than a
+# utilisation report's. The block RAMs and the DSPs are counted in the
+# totals instead, where their own coordinate systems do not have to be
+# reconciled with anything.
 #
 #   bazel run //flagship:place_report > docs/flagship_place.tsv
 
@@ -43,13 +45,16 @@ set dcp "flagship/flagship_pnr.pnr.dcp"
 if {![file exists $dcp]} { set dcp "flagship_pnr.pnr.dcp" }
 open_checkpoint $dcp
 
-set cells [get_cells -hier -filter {IS_PRIMITIVE == 1 && LOC != ""}]
-set names [get_property NAME $cells]
-set locs [get_property LOC $cells]
+# Every placed primitive, its name and its site, as two lists: one
+# call each rather than two per cell, which is what makes this seconds
+# rather than minutes.
+set placed [get_cells -hier -filter {IS_PRIMITIVE == 1 && LOC != ""}]
+set names [get_property NAME $placed]
+set locs [get_property LOC $placed]
 
 # The bins of the map, and the totals per subsystem.
 array set bin {}
-array set slices {}
+array set cells {}
 array set brams {}
 array set dsps {}
 array set minx {}
@@ -62,7 +67,7 @@ set gy 0
 foreach name $names loc $locs {
   set who [subsystem $name]
   if {[regexp {^SLICE_X(\d+)Y(\d+)$} $loc -> x y]} {
-    incr slices($who)
+    incr cells($who)
     incr bin($who,$x,$y)
     if {![info exists minx($who)] || $x < $minx($who)} { set minx($who) $x }
     if {![info exists maxx($who)] || $x > $maxx($who)} { set maxx($who) $x }
@@ -78,15 +83,15 @@ foreach name $names loc $locs {
 }
 
 puts "# part\t[get_property PART [current_design]]"
-puts "# slices\t[expr {$gx + 1}]\t[expr {$gy + 1}]"
+puts "# grid\t[expr {$gx + 1}]\t[expr {$gy + 1}]"
 puts "#"
-puts "# who\tslices\tbrams\tdsps\tx0\tx1\ty0\ty1"
-foreach who [lsort [array names slices]] {
+puts "# who\tcells\tbrams\tdsps\tx0\tx1\ty0\ty1"
+foreach who [lsort [array names cells]] {
   set b 0
   set d 0
   if {[info exists brams($who)]} { set b $brams($who) }
   if {[info exists dsps($who)]} { set d $dsps($who) }
-  puts "total\t$who\t$slices($who)\t$b\t$d\t$minx($who)\t$maxx($who)\t$miny($who)\t$maxy($who)"
+  puts "total\t$who\t$cells($who)\t$b\t$d\t$minx($who)\t$maxx($who)\t$miny($who)\t$maxy($who)"
 }
 
 puts "#"

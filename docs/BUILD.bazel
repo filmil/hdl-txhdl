@@ -2092,6 +2092,7 @@ latex_document(
         ":eth_run",
         ":eth_timing",
         "//eth:sources",
+        "//lib/board:sources",
         "//lib/examples:sources",
         "//lib/parts:sources",
     ],
@@ -2111,6 +2112,43 @@ latex_document(
         "//hdmi:sources",
         "//lib/examples:sources",
         "//lib/parts:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
+# Where the flagship's subsystems landed on the part, drawn and
+# tabulated from what //flagship:place_report read off the routed
+# checkpoint. The TSV is committed, as the layout numbers are.
+genrule(
+    name = "flagship_map",
+    srcs = ["flagship_place.tsv"],
+    outs = ["flagshipmap.tex"],
+    cmd = "$(location //tools/fpgamap) $(location flagship_place.tsv) > $@",
+    tools = ["//tools/fpgamap"],
+)
+
+genrule(
+    name = "flagship_totals",
+    srcs = ["flagship_place.tsv"],
+    outs = ["flagshiptotals.tex"],
+    cmd = "$(location //tools/fpgamap) --totals " +
+          "$(location flagship_place.tsv) > $@",
+    tools = ["//tools/fpgamap"],
+)
+
+# The TxHDL Flagship: the one bitstream that holds every part of the
+# system proven on the board, and lives in the board's flash.
+latex_document(
+    name = "flagship",
+    main = "flagship.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":flagship_map",
+        ":flagship_totals",
+        "//cpu/vreteno:sources",
+        "//flagship:sources",
+        "//lib/board:sources",
     ],
     deps = ["housestyle.tex"],
 )
@@ -2198,6 +2236,7 @@ combined_pdf(
         "A Network on Chip in TxHDL",
         "Ethernet in TxHDL",
         "HDMI in TxHDL",
+        "The TxHDL Flagship",
         "PCIe in TxHDL",
         "TxHDL Datasheets",
         "TxHDL: Unifying a Dataflow and a Transaction HDL",
@@ -2222,6 +2261,7 @@ combined_pdf(
         ":noc",
         ":eth",
         ":hdmi",
+        ":flagship",
         ":pcie",
         ":datasheets",
         ":article",
