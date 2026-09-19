@@ -824,7 +824,7 @@ programs.},label={lst:v-program}]{cpu/vreteno/src/program.rs}
 \label{sec:v-lockstep}
 
 Listing~\ref{lst:v-lockstep} is the test, \code{bazel test
-//cpu/vreteno:lockstep}. It builds the core with the program, keeps
+//cpu/vreteno:lockstep\_test}. It builds the core with the program, keeps
 handles on its program counters, valid bit, register file, data
 memory and halt bit, which \code{Reg} and \code{Mem} give out as
 clones, holds the reset for one cycle, and then runs the core a cycle
@@ -1494,8 +1494,10 @@ is a comparator nobody knows the state of, and holding one core in
 reset for a cycle is a divergence with a known cause that runs through
 every part of the comparison path. \code{//cpu/vreteno:pair\_test}
 does both halves: eight random programs run with the two cores agreeing
-throughout, and then the same programs with one cycle of \code{fault},
-after which the line is up and stays up to the end of the run.
+throughout, and then one of them run again with a single cycle of
+\code{fault}, after which the line is up. A third run reads the line
+again at the end of six hundred cycles and finds it still up, which is
+the half of the promise the first two do not check.
 
 What the pair does not do is decide what to do about a disagreement.
 It says that there was one; a design around it chooses between a

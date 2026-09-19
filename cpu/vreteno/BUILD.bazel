@@ -178,7 +178,7 @@ rust_test(
 
 # The core against the model, every cycle.
 rust_test(
-    name = "lockstep",
+    name = "lockstep_test",
     srcs = ["tests/lockstep.rs"],
     edition = "2021",
     deps = [
@@ -191,7 +191,7 @@ rust_test(
 # Two cores on one bus, with everything they say compared:
 #   bazel test //cpu/vreteno:pair_test
 rust_test(
-    name = "pair",
+    name = "pair_test",
     srcs = ["tests/pair.rs"],
     edition = "2021",
     deps = [

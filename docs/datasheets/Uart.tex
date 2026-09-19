@@ -93,7 +93,7 @@ zero.
 \subsection*{Verification}
 
 \begin{itemize}
-\item \code{//cpu/vreteno:lockstep} puts the terminal of
+\item \code{//cpu/vreteno:lockstep\_test} puts the terminal of
 \code{term.rs} on the two lines. At the halt it checks \code{sent} and
 \code{last} against the bytes the model was given, and that
 \code{dropped} is zero. In \code{demo\_program} the port must say

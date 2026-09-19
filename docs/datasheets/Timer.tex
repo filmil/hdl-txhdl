@@ -102,7 +102,7 @@ written word and the tick is lost.
 \subsection*{Verification}
 
 \begin{itemize}
-\item \code{//cpu/vreteno:lockstep} hands \code{pending} and
+\item \code{//cpu/vreteno:lockstep\_test} hands \code{pending} and
 \code{msip} to the model for each instruction and checks
 \code{mtimecmp} against the model at the halt, after draining the bus,
 since a store is posted and the compare lands some cycles after the
@@ -112,7 +112,7 @@ writes the compare 64 cycles beyond it, in sixty-four seeded programs.
 \item \code{a\_program\_that\_interrupts\_itself} writes
 \code{msip}, takes the trap, clears the bit in the handler and counts;
 it is the software interrupt's own test.
-\item \code{//cpu/vreteno:pair} and \code{//cpu/vreteno:board\_test}
+\item \code{//cpu/vreteno:pair\_test} and \code{//cpu/vreteno:board\_test}
 run the controller on a bus beside a core, though neither is about it.
 \item The build simulates \code{Timer<2>}'s netlist against the trace
 of \code{//cpu/vreteno:vreteno} under nvc and Verilator:

@@ -1263,8 +1263,9 @@ waveform(
     until = 616,
 )
 
-# Pins behind AXI-Lite: the direction set, a pin read through its
-# synchroniser, and an edge raising the interrupt and being cleared.
+# One thing run twice and compared: a tee hands each word to both
+# copies, a check compares what they answer, and one copy is given a
+# different addend halfway through.
 waveform(
     name = "redundant",
     example = "//lib/examples:ex_redundant",
@@ -1313,6 +1314,8 @@ waveform(
     until = 180,
 )
 
+# Pins behind AXI-Lite: the direction set, a pin read through its
+# synchroniser, and an edge raising the interrupt and being cleared.
 waveform(
     name = "gpio",
     example = "//lib/examples:ex_gpio",
