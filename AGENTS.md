@@ -187,6 +187,9 @@ Format with
 `bazel run @rules_rust//:rustfmt --@rules_rust//:rustfmt.toml=//:rustfmt.toml -- //lib/...`
 before including: the documents set source at 80 columns and never
 break a line, so a longer line overflows its frame.
+Two tests say so rather than leaving it to whoever remembers:
+`//:fmt_test` over the crates, and `//lib/examples:fmt_test` over every
+example, which is where the width is load bearing (issue 281).
 A listing that was typed into the article rather than included from a
 file is a defect, because it is the one copy nothing checks.
 
