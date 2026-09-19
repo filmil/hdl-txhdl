@@ -12,10 +12,10 @@ use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
 use vreteno32::isa::{
-    decode, disasm, Kind, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER,
+    decode, disasm, Kind, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER, MISA,
 };
 use vreteno32::model::{Halt, Model};
-use vreteno32::program::{demo, in_memory, random, soft};
+use vreteno32::program::{demo, in_memory, machine_info, random, soft};
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
@@ -412,6 +412,32 @@ fn a_program_that_interrupts_itself() {
     assert_eq!(m.halted, Some(Halt::Break));
     assert!(m.x[8] >= 3, "interrupts taken: {}", m.x[8]);
     assert_eq!(m.mem[0], m.x[8], "and the program wrote what it counted");
+}
+
+#[test]
+fn a_program_reads_what_the_machine_says_it_is() {
+    // `mhartid` is the first thing a stock kernel reads, and it used to
+    // trap. The program reads it and `misa`, then writes to a read-only
+    // register, which is an illegal instruction its handler counts.
+    // The model answers all of it the same way, which the lockstep
+    // compares every cycle rather than only at the end.
+    let m = lockstep(&machine_info(), &[], "machine info", None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.mem[0], 0, "mhartid, this machine's one hart");
+    assert_eq!(m.mem[1], MISA, "misa: RV32IMC");
+    assert_eq!(
+        m.mem[2], 1,
+        "one illegal instruction, the write to a read-only register"
+    );
+    // The letters, spelled out, so the number above is not the only
+    // thing that says what the core is.
+    assert_eq!(m.mem[1] >> 30, 1, "MXL: a 32-bit machine");
+    for (bit, letter) in [(8, 'I'), (12, 'M'), (2, 'C')] {
+        assert!(m.mem[1] & (1 << bit) != 0, "misa should have {letter}");
+    }
+    for (bit, letter) in [(0, 'A'), (5, 'F'), (3, 'D')] {
+        assert!(m.mem[1] & (1 << bit) == 0, "misa should not have {letter}");
+    }
 }
 
 #[test]

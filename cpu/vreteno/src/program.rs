@@ -331,6 +331,48 @@ pub fn soft() -> Vec<u32> {
     a.words()
 }
 
+/// What the machine says it is, read by a program: `mhartid`, `misa`
+/// and a write to a read-only register, which traps.
+///
+/// It is the first thing a stock kernel does. Zephyr's
+/// `arch/riscv/core/reset.S` begins `csrr a0, mhartid`, and before
+/// issue 274 that instruction was an illegal one, so the kernel took a
+/// trap into a handler it had not installed yet.
+///
+/// The program writes three words where the test can read them: the
+/// hart's index, what `misa` says the machine is, and how many illegal
+/// instructions the handler counted, which is one.
+pub fn machine_info() -> Vec<u32> {
+    let mut a = Asm::default();
+    let handler = a.label();
+    a.abs(handler, |h| addi(21, 0, h as i32)); // x21 = the handler
+    a.emit(csrrw(0, CSR_MTVEC, 21)); // mtvec = x21
+    a.emit(lui(2, DATA_BASE >> 12)); // x2 = the data base
+                                     // A read is `csrrs` with `x0` as its source, which the
+                                     // specification says is not a write, so a read-only register
+                                     // answers it.
+    a.emit(csrrs(8, CSR_MHARTID, 0)); // x8 = mhartid
+    a.emit(sw(8, 2, 0)); // mem[0] = mhartid
+    a.emit(csrrs(9, CSR_MISA, 0)); // x9 = misa
+    a.emit(sw(9, 2, 4)); // mem[1] = misa
+                         // A write to one of them is an illegal instruction, and the
+                         // handler counts it and steps over it.
+    a.emit(addi(5, 0, 1)); // x5 = 1, a source that is not x0
+    a.emit(csrrw(0, CSR_MHARTID, 5)); // illegal
+    a.emit(sw(6, 2, 8)); // mem[2] = how many were counted
+    a.emit(halt());
+    // The handler: count the trap, step over the instruction that
+    // caused it, and return.
+    a.align();
+    a.place(handler);
+    a.emit(addi(6, 6, 1)); // one more illegal instruction
+    a.emit(csrrs(7, CSR_MEPC, 0)); // x7 = mepc
+    a.emit(addi(7, 7, 4)); // past the instruction
+    a.emit(csrrw(0, CSR_MEPC, 7)); // mepc = x7
+    a.emit(mret());
+    a.words()
+}
+
 /// The two halves of a program that lives above the boot memory: what
 /// the boot memory holds, which is a jump into the data memory, and
 /// what the data memory holds, which is the program itself.
