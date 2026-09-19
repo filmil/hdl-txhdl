@@ -102,11 +102,28 @@ pub const CAUSE_STORE_MISALIGNED: u32 = 6;
 pub const CAUSE_ECALL: u32 = 11;
 pub const CAUSE_MEXT: u32 = 0x8000_000b;
 pub const CAUSE_MTIMER: u32 = 0x8000_0007;
-/// The external and the timer interrupt's bits in `mie` and `mip`.
+/// A software interrupt: what a program raises for itself by writing
+/// `msip`, and what an operating system enters its scheduler with.
+pub const CAUSE_MSOFT: u32 = 0x8000_0003;
+/// The external, the timer and the software interrupt's bits in `mie`
+/// and `mip`.
 pub const MEXT: u32 = 1 << 11;
 pub const MTIMER: u32 = 1 << 7;
-/// The timer's four words: mtime low and high, mtimecmp low and high.
-pub const TIMER_BASE: u32 = 0x2000;
+pub const MSOFT: u32 = 1 << 3;
+/// The core's interrupt controller, at the offsets every RISC-V
+/// platform puts them at, so that a stock port of an operating system
+/// finds them where it looks: `msip` first, the compare at `0x4000`
+/// and the count at `0xbff8`. The window is 64 KiB, which is what
+/// those offsets need.
+pub const CLINT_BASE: u32 = 0x0200_0000;
+pub const CLINT_MASK: u32 = 0xffff_0000;
+/// A write of one to `msip` raises the software interrupt; a write of
+/// zero clears it.
+pub const MSIP_OFF: u32 = 0x0000;
+/// The compare, low half then high.
+pub const MTIMECMP_OFF: u32 = 0x4000;
+/// The count, low half then high.
+pub const MTIME_OFF: u32 = 0xbff8;
 /// The serial port's two words: a byte to send, and the status, whose
 /// bit 0 is busy.
 pub const UART_BASE: u32 = 0x3000;
