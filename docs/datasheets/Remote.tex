@@ -35,8 +35,10 @@ Parameter & Meaning \\
 \midrule
 \code{T} & How many cycles a transaction may go unanswered before the
 peripheral answers the bus \code{SLVERR} itself. A device that never
-answers must not be able to stop the bus. The tables use 40, as
-\code{ex\_remote} does. \\
+answers must not be able to stop the bus. The tables use 40.
+\code{ex\_remote} uses 1000, since a frame each way through two MACs
+is about seven hundred cycles, and \code{Board} uses two million,
+20~ms at 100~MHz, which is a round trip to another machine. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -85,24 +87,28 @@ reports a failure.
 finds the bus still served.
 \code{a\_program\_that\_never\_answers\_does\_not\_stop\_the\_bus} is
 the timeout, which is the test the part exists to pass.
-\item \code{//lib/examples:ex\_remote} runs it against a model in the
-same program, and the build simulates the netlist against that run
-under nvc and Verilator:
-\code{//docs:remote\_sim\_remote\_tb\_test} and
-\code{//docs:remote\_vsim\_test}.
+\item \code{//lib/examples:ex\_remote} runs the whole chain, a
+\code{RemoteLink} and two MACs with a wire between them, and the build
+simulates this netlist against that run under nvc and Verilator:
+\code{//docs:remote\_sim\_remote\_remote\_tb\_test} and
+\code{//docs:remote\_vsim\_remote\_test}.
+\item \code{//cpu/vreteno:board\_test} runs the core against it on the
+board's design: a program writes a word to \code{0x3300} and reads it
+back, with a program in the test answering the frames.
 \end{itemize}
 
 \subsection*{Used by}
 
-\code{ex\_remote} today. Issue 297 is what it is for: a peripheral and
-its software co-developed, with the far end eventually across a wire.
+\code{ex\_remote}, and \code{Board} at \code{0x3300}, where a
+\code{RemoteLink<1>} carries it to the flagship's Ethernet port.
+Issue 297 is what it is for: a peripheral and its software
+co-developed, with the far end across a wire.
 
 \subsection*{Limits}
 
 AXI-Lite only, and one transaction outstanding, so the bus waits for
 the far end at the speed the far end answers. It carries no transport
-of its own: what moves an \code{Ask} to a program on another machine,
-and an \code{Answer} back, is somebody else's, and until that exists
-the far end is a model in the same program. The timeout is counted in
-cycles rather than in time, so a design that slows its clock waits
-proportionally longer.
+of its own: what moves an \code{Ask} to a program on another machine
+is \code{RemoteLink} and a MAC, or anything else that speaks those two
+channels. The timeout is counted in cycles rather than in time, so a
+design that slows its clock waits proportionally longer.

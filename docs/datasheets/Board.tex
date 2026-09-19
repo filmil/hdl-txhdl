@@ -10,9 +10,13 @@
 \code{Board} is everything that computes on the board, written as a
 unit of units so that \code{\#[lower]} makes its netlist as one module
 holding the rest. It holds the core and its tracker, a router of five,
-and five peripherals. The data memory and the timer each sit behind an
-\code{AxiPer}. The serial port sits behind the AXI-Lite bridge
-\code{LiteBridge1}. The DDR3 memory sits behind an \code{AxiPer} and
+and the peripherals behind its five ports. The data memory and the
+timer each sit behind an \code{AxiPer}. Four small peripherals share
+the page at \code{0x3000} behind the AXI-Lite bridge
+\code{LiteBridge4}, a sixteenth of the page each: the serial port at
+\code{0x3000}, the pulse width modulator at \code{0x3100}, whatever a
+board hangs on the slot at \code{0x3200}, and the remote peripheral at
+\code{0x3300}. The DDR3 memory sits behind an \code{AxiPer} and
 holds UberDDR3's controller as a foreign module. The interrupt
 controller, \code{Plic2}, sits behind a second \code{LiteBridge1}.
 
@@ -59,7 +63,13 @@ Base & Mask & Child & Behind \\
 \code{0x0200\_0000} & \code{0xffff\_0000} & \code{timer},
 \code{Timer<2>} & \code{ptimer}, \code{AxiPer} \\
 \code{0x3000} & \code{0xffff\_f000} & \code{uart}, \code{Uart<DIV>} &
-\code{puart}, \code{LiteBridge1} at \code{0x3000} \\
+\code{puart}, \code{LiteBridge4} at \code{0x3000} \\
+& \code{0xffff\_ff00} & \code{pwm}, \code{Pwm} &
+the same bridge, at \code{0x3100} \\
+& \code{0xffff\_ff00} & the board's, on its own clock &
+the same bridge, at \code{0x3200} \\
+& \code{0xffff\_ff00} & \code{remote},
+\code{Remote<REMOTE\_WAIT>} & the same bridge, at \code{0x3300} \\
 \code{0x4000\_0000} & \code{0xc000\_0000} & \code{ddr3},
 \code{Ddr3Per} & \code{pddr3}, \code{AxiPer} \\
 \code{0x0c00\_0000} & \code{0xfc00\_0000} & \code{plic},
@@ -95,6 +105,19 @@ interrupt controller before the core, for the same reason. \code{Ddr3Per} runs i
 before its bridge for the same reason.
 \item \code{calib} and the memory's pins are \code{Ddr3Per}'s,
 brought out as the unit's own ports.
+\item The slot at \code{0x3200} does not reach a field. It leaves as
+five channel ports, \code{vaw}, \code{var} and \code{vw} out and
+\code{vb} and \code{vr} back, because what sits there runs on a clock
+of its own and the crossing is the board top's business. A board with
+nothing there ties them off, and a program that touched \code{0x3200}
+on such a board would wait for ever.
+\item The remote peripheral at \code{0x3300} is the other way about:
+\code{remote} and \code{link} are fields, because both run on the
+core's clock. What leaves the unit is the frame stream, \code{net\_tx}
+out and \code{net\_rx} in, a byte and a last bit each, which is what
+the MAC speaks. \code{REMOTE\_DEV} is 1 and \code{REMOTE\_WAIT} is
+two million cycles, 20~ms at 100~MHz, after which an unanswered
+transaction is \code{SLVERR} on the bus.
 \item \code{board\_netlist} puts a program in the core's
 \code{imem} and in the data memory's \code{lane0} to \code{lane3} of
 the netlist, since nothing on the machine loads them at run time.
