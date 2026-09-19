@@ -85,11 +85,11 @@ pub struct RemoteLink<const DEV: usize> {
     /// of it says otherwise.
     pub alien: Reg<Bit>,
     /// The tag the answer carries.
-    pub back_tag: Reg<U<8>>,
+    pub ans_tag: Reg<U<8>>,
     /// Whether it says the transaction failed.
-    pub back_err: Reg<Bit>,
+    pub ans_err: Reg<Bit>,
     /// The word it brings.
-    pub back_data: Reg<U<32>>,
+    pub ans_word: Reg<U<32>>,
 }
 // end{ethstate}
 
@@ -201,20 +201,20 @@ impl<const DEV: usize> Unit for RemoteLink<DEV> {
                 took & inb.last ? got: 0,
                 took & bad ? alien: Bit::One,
                 took & inb.last ? alien: Bit::Zero,
-                took & (got == 16) ? back_tag: value,
-                took & (got == 17) ? back_err: value.bit(0),
-                took & (got == 22) ? back_data:
-                    value.concat::<_, 32>(self.back_data.get().slice::<0, 24>()),
-                took & (got == 23) ? back_data:
-                    self.back_data.get().slice::<24, 8>()
+                took & (got == 16) ? ans_tag: value,
+                took & (got == 17) ? ans_err: value.bit(0),
+                took & (got == 22) ? ans_word:
+                    value.concat::<_, 32>(self.ans_word.get().slice::<0, 24>()),
+                took & (got == 23) ? ans_word:
+                    self.ans_word.get().slice::<24, 8>()
                         .concat::<_, 16>(value)
-                        .concat::<_, 32>(self.back_data.get().slice::<0, 16>()),
-                took & (got == 24) ? back_data:
-                    self.back_data.get().slice::<16, 16>()
+                        .concat::<_, 32>(self.ans_word.get().slice::<0, 16>()),
+                took & (got == 24) ? ans_word:
+                    self.ans_word.get().slice::<16, 16>()
                         .concat::<_, 24>(value)
-                        .concat::<_, 32>(self.back_data.get().slice::<0, 8>()),
-                took & (got == 25) ? back_data:
-                    self.back_data.get().slice::<8, 24>().concat::<_, 32>(value),
+                        .concat::<_, 32>(self.ans_word.get().slice::<0, 8>()),
+                took & (got == 25) ? ans_word:
+                    self.ans_word.get().slice::<8, 24>().concat::<_, 32>(value),
             });
             if put.to_bool() {
                 tx.send(EthByte {
@@ -224,9 +224,9 @@ impl<const DEV: usize> Unit for RemoteLink<DEV> {
             }
             if answering.to_bool() {
                 back.send(Answer {
-                    tag: self.back_tag.get(),
-                    data: self.back_data.get(),
-                    err: self.back_err.get(),
+                    tag: self.ans_tag.get(),
+                    data: self.ans_word.get(),
+                    err: self.ans_err.get(),
                 });
             }
         }

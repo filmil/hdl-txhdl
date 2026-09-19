@@ -1326,18 +1326,21 @@ waveform(
 waveform(
     name = "remote",
     example = "//lib/examples:ex_remote",
-    lowered = ("remote", "remote"),
+    lowered = [
+        ("remote", "remote"),
+        ("remote_link", "remote_link"),
+    ],
     signals = [
         "//clocks/clk=>clk",
         "//out/tx_valid=>ask",
-        "//back/tx_valid=>answer",
+        "//tx/tx_valid=>byte",
+        "//tx_en=>tx_en",
+        "//wire/at=>at",
         "//remote/busy=>busy",
-        "//remote/waited=>waited",
         "//remote/tag=>tag",
-        "//r/rx_valid=>r",
     ],
-    from_tick = 26,
-    until = 76,
+    from_tick = 8,
+    until = 98,
 )
 
 waveform(
