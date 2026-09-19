@@ -51,8 +51,13 @@ node at 0,0 as \code{//soc} states it.
 \begin{itemize}
 \item The node has no logic of its own. It runs \code{req} on the ten
 \code{q} ports and \code{rsp} on the ten \code{p} ports, side by side.
+What it holds is its two switches' state, which is six bits: a
+\code{turn} of three in each.
 \item Each switch routes in dimension order and moves one packet per
-cycle, as the \code{Switch} sheet states.
+cycle, choosing among the inputs that can move by a round robin of its
+own, as the \code{Switch} sheet states. The two switches take turns
+independently: a busy request channel does not decide which response
+moves.
 \item A host's bridge sends requests into \code{qxi} and takes
 responses from \code{pxo}. A peripheral's bridge takes requests from
 \code{qxo} and sends responses into \code{pxi}.

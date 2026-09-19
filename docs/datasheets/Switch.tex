@@ -47,9 +47,11 @@ is the switch at 0,0, with two-bit coordinates, on the link that
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item The switch holds no state. The port a packet leaves by is a
-function of the packet's \code{dx} and \code{dy} and of \code{X} and
-\code{Y}.
+\item The switch holds one thing, \code{turn}, three bits: which
+input the choice starts from. The port a packet leaves by holds
+nothing, being a function of the packet's \code{dx} and \code{dy} and
+of \code{X} and \code{Y}; what needed a register is which input goes
+when several could (issue 315).
 \item The switch compares coordinates at \code{CW}, 8 bits. It sends a
 packet east when \code{dx} is above \code{X}, and west when \code{dx}
 is below \code{X}. In the right column, it sends the packet south when
@@ -58,8 +60,12 @@ is below \code{X}. In the right column, it sends the packet south when
 \item Each cycle the switch works out, for every input with a packet,
 the port that packet wants and whether that port is ready. An input
 whose port is full does not hold up the others.
-\item Of the inputs that can move, the switch takes one per cycle, by
-fixed priority: north, south, west, east, and the exit last.
+\item Of the inputs that can move, the switch takes one per cycle: the
+first at or after \code{turn}, going round the five, and \code{turn}
+becomes the one after whichever moved. So an input waits on at most
+four others, where the fixed priority it replaced could starve one
+outright: a busy link kept the exit from moving at all, since the exit
+was last and the links were never all quiet.
 \item The switch sends the packet it takes unchanged.
 \end{itemize}
 
