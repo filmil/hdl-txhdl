@@ -1,0 +1,133 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: RemoteLink
+\datasheet{RemoteLink}{The wire under a remote peripheral: each transaction one Ethernet frame, and each frame that answers it an answer.}
+
+\dsfacts{\code{lib/parts/src/remote/eth.rs}}{\code{txhdl\_parts::remote::eth::RemoteLink}}%
+{\code{//docs:flagship}}
+
+\subsection*{Function}
+
+\code{RemoteLink} sits between a \code{Remote}'s two channels and a
+MAC's. An \code{Ask} taken on \code{ask} becomes one frame of 27 bytes
+on \code{tx}; a frame arriving on \code{rx} that answers it becomes an
+\code{Answer} on \code{back}. The MAC of \code{//docs:eth} is what
+puts those bytes on a wire and takes them off, and neither end of the
+peripheral knows the wire is there.
+
+Nothing else on the wire is looked at, and nothing else has to be. A
+frame is this peripheral's when it carries this protocol's type, the
+answer kind, and this peripheral's device number, and any byte that
+says otherwise ends the matter for that frame.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{DEV} & The device number. It goes in every frame this sends and
+must match every frame it accepts, so several of these can share one
+wire and one program, each answered by the number it was asked under.
+It is a parameter rather than a register because a design knows how
+many peripherals it has. The tables use 3, as \code{ex\_remote} does;
+the board uses 1. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{The frame}
+
+27 bytes, before whatever padding the MAC adds to reach the minimum
+frame. An answer is read at the same offsets, so a program answers by
+changing four bytes of what it was sent.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.52\textwidth}@{}}
+\toprule
+Bytes & Field & What \\
+\midrule
+0 to 6 & destination & Broadcast. The peripheral does not know where
+the program is, and the program may move. \\
+6 to 12 & source & \code{02:00:00:00:00:\textit{dev}}, locally
+administered. \\
+12 to 14 & type & \code{0x88b5}, which IEEE leaves for local
+experimental use, so no registered protocol can be mistaken for it. \\
+14 & kind & \code{0x01} asks, \code{0x81} answers. \\
+15 & device & \code{DEV}. \\
+16 & tag & The transaction's, which the answer repeats. \\
+17 & flags & Bit 0 is a write on an ask, an error on an answer. \\
+18 to 22 & address & Most significant byte first. \\
+22 to 26 & word & The word written, or the word answered. \\
+26 & strobe & Which lanes a write means. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{RemoteLink}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item One frame goes out at a time. An \code{Ask} is taken when
+nothing is going out, and its fields are held in registers while the
+frame is spelled from them a byte per cycle that \code{tx} has room,
+\code{at} saying which byte is next.
+\item The bytes are a function of \code{at} and those registers
+rather than a buffer, so the frame costs no memory.
+\item A frame coming in is counted by \code{got}, and four bytes are
+checked as they pass: the two of the type, the kind, and the device.
+\item What the check sets is \code{alien} rather than a match, because
+a register starts at zero and a frame is this peripheral's until a
+byte of it says otherwise. It is cleared on the byte after the last,
+so the next frame starts innocent.
+\item The tag, the error bit and the four bytes of the word are
+latched as they arrive, at bytes 16, 17 and 22 to 25.
+\item An \code{Answer} is sent on \code{back} on the last byte of a
+frame that nothing objected to. A frame that is not this
+peripheral's ends with nothing sent, and its bytes are read and
+dropped rather than left to block the MAC.
+\item Sending and receiving are independent: a frame can arrive while
+one is going out.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Five tests in \code{lib/parts/src/remote/eth.rs}, in
+\code{//lib/parts:parts\_test}.
+\code{a\_transaction\_leaves\_as\_a\_frame} asserts all 27 bytes of a
+write, one by one.
+\code{a\_read\_leaves\_with\_no\_word\_and\_no\_strobe} is the other
+kind.
+\code{an\_answer\_frame\_becomes\_an\_answer} is the way back.
+\code{a\_frame\_that\_is\_not\_this\_devices\_is\_ignored} is another
+device's frame and another protocol's.
+\code{the\_bus\_is\_served\_by\_a\_program\_that\_speaks\_frames} puts
+a \code{Remote} in front of it and serves the bus from frames alone.
+\item \code{//lib/examples:ex\_remote} runs the whole chain, two MACs
+and a wire between them, and the build simulates this netlist against
+that run under nvc and Verilator:
+\code{//docs:remote\_sim\_remote\_link\_remote\_link\_tb\_test}
+and \code{//docs:remote\_vsim\_remote\_link\_test}.
+\item \code{//tools/remote:remote\_test} asserts the same 27 bytes
+from the Go end, against the same constants rather than against this
+implementation, so the two spellings of the protocol are held apart.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{ex\_remote}, and \code{Board}, where a \code{RemoteLink<1>}
+carries the remote peripheral at \code{0x3300} out to the flagship's
+Ethernet port.
+
+\subsection*{Limits}
+
+One frame out at a time and one transaction in flight, since that is
+all a \code{Remote} asks for. The frame is fixed at 27 bytes and
+carries one word, so a burst is as many frames as it has beats. There
+is no retry and no sequence number beyond the tag: a frame the wire
+loses is a transaction that goes unanswered, and what covers it is
+the peripheral's timeout. Nothing authenticates a frame, so anything
+on the wire that speaks this protocol and knows the device number can
+write the peripheral's address space.
