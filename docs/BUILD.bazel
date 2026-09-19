@@ -649,6 +649,8 @@ latex_document(
         ":redundant_timing",
         ":flashwin_run",
         ":flashwin_timing",
+        ":remote_run",
+        ":remote_timing",
         ":pwm_run",
         ":pwm_timing",
         ":tracer_run",
@@ -1317,6 +1319,25 @@ waveform(
     ],
     from_tick = 40,
     until = 120,
+)
+
+# A peripheral answered by a program: the transaction leaving on
+# `ask`, the wait, the answer coming back, and the bus told.
+waveform(
+    name = "remote",
+    example = "//lib/examples:ex_remote",
+    lowered = ("remote", "remote"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//out/tx_valid=>ask",
+        "//back/tx_valid=>answer",
+        "//remote/busy=>busy",
+        "//remote/waited=>waited",
+        "//remote/tag=>tag",
+        "//r/rx_valid=>r",
+    ],
+    from_tick = 26,
+    until = 76,
 )
 
 waveform(

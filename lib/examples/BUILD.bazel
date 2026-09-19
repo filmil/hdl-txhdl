@@ -348,6 +348,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A peripheral written in software:  bazel run //lib/examples:ex_remote
+rust_binary(
+    name = "ex_remote",
+    srcs = ["ex_remote.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Four pulse width modulated outputs:  bazel run //lib/examples:ex_pwm
 rust_binary(
     name = "ex_pwm",
@@ -726,7 +738,8 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "blinker.vhd",
         "ex_gpio.rs",
         "ex_flashwin.rs",
-    "ex_pwm.rs",
+        "ex_pwm.rs",
+        "ex_remote.rs",
         "ex_redundant.rs",
         "ex_tracer.rs",
         "ex_spi.rs",
