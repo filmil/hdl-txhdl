@@ -446,6 +446,13 @@ impl Model {
                 self.trap(CAUSE_ILLEGAL, w);
                 return;
             }
+            // The core waits for an interrupt rather than spinning,
+            // but nothing retires while it waits, and the lockstep
+            // steps this model on a retirement. So the model has no
+            // waiting state: it retires `wfi` and moves on, and the
+            // core's wait shows up as cycles in which it retires
+            // nothing, which is what the test measures.
+            Wfi => {}
             Mret => {
                 let mpie = self.csr.mstatus & MPIE != 0;
                 self.csr.mstatus = MPIE | if mpie { MIE } else { 0 };

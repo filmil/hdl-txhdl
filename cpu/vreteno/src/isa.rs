@@ -57,6 +57,7 @@ pub enum Kind {
     Ecall,
     Ebreak,
     Mret,
+    Wfi,
     Csrrw,
     Csrrs,
     Csrrc,
@@ -364,6 +365,12 @@ pub fn ebreak() -> u32 {
 }
 pub fn mret() -> u32 {
     i(OP_SYSTEM, 0, 0, 0, 0x302)
+}
+/// Wait for an interrupt: the core stops fetching until one is
+/// pending and enabled, whether or not interrupts are enabled
+/// globally, which is what lets a kernel idle inside its own lock.
+pub fn wfi() -> u32 {
+    i(OP_SYSTEM, 0, 0, 0, 0x105)
 }
 /// What a program says when it is finished: a write of one to
 /// `CSR_MHALT`, in one instruction. `ebreak` used to do this and now
@@ -848,6 +855,7 @@ pub fn decode(w: u32) -> Decoded {
             (0, 0) => d(Ecall, 0),
             (0, 1) => d(Ebreak, 0),
             (0, 0x302) => d(Mret, 0),
+            (0, 0x105) => d(Wfi, 0),
             (1, csr) => d(Csrrw, csr as i32),
             (2, csr) => d(Csrrs, csr as i32),
             (3, csr) => d(Csrrc, csr as i32),
@@ -888,7 +896,7 @@ pub fn disasm(w: u32) -> String {
         | Mulh | Mulhsu | Mulhu | Div | Divu | Rem | Remu => {
             format!("{m} x{rd}, x{rs1}, x{rs2}")
         }
-        Fence | Ecall | Ebreak | Mret => m,
+        Fence | Ecall | Ebreak | Mret | Wfi => m,
         Csrrw | Csrrs | Csrrc => format!("{m} x{rd}, {imm:#x}, x{rs1}"),
         Csrrwi | Csrrsi | Csrrci => format!("{m} x{rd}, {imm:#x}, {rs1}"),
         Illegal => format!("illegal {w:#010x}"),

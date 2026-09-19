@@ -600,6 +600,9 @@ pub struct Vreteno<const IW: usize> {
     pub mtval: Reg<U<32>>,
     pub wb_dev: Reg<U<32>>,
     pub dev_wait: Reg<Bit>,
+    /// Waiting for an interrupt, which `wfi` asks for: the core
+    /// fetches nothing until one is pending and enabled (issue 275).
+    pub waiting: Reg<Bit>,
     /// Three of the cycle's decisions, kept as wires so that a trace
     /// shows them: whether the instruction in execute is stalled, whether
     /// an interrupt takes its place, and whether the fetch is redirected.
@@ -844,8 +847,20 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let need1 = far & odd & !short;
             let f_ready = !far | (hit0 & (!need1 | hit1));
             let stall_fetch = !f_ready;
+            // `wfi` holds the core here until an interrupt is pending
+            // and enabled. The wait does not ask whether interrupts
+            // are enabled globally: the specification lets a core
+            // resume with `mstatus.MIE` clear, and a kernel idles
+            // inside its own interrupt lock, so a wait that waited for
+            // the global bit would never end.
+            let wake = ext_ok | soft_ok | tim_ok;
             self.stall.set(
-                stall_ld | stall_m | stall_bus | stall_fetch | self.dev_wait,
+                stall_ld
+                    | stall_m
+                    | stall_bus
+                    | stall_fetch
+                    | self.dev_wait
+                    | self.waiting,
             );
             let stall = self.stall.get();
             // The address after the instruction, which a jump links:
@@ -930,13 +945,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let is_ecall = sys0 & (f12 == 0);
             let is_ebreak = sys0 & (f12 == 1);
             let is_mret = sys0 & (f12 == 0x302);
+            let is_wfi = sys0 & (f12 == 0x105);
             let known = select!(opcode.raw() => {
                 0x37 | 0x17 | 0x6f | 0x67 | 0x63 | 0x03 | 0x23 | 0x13 | 0x33
                 | 0x0f => Bit::One,
                 0x73 => (csr_op & csr_known & !csr_bad)
                     | is_ecall
                     | is_ebreak
-                    | is_mret,
+                    | is_mret
+                    | is_wfi,
                 _ => Bit::Zero,
             });
             // A trap: ecall, a word the core does not know, or the
@@ -1158,6 +1175,13 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     mstatus: trap_status,
                 },
                 run & is_mret ? mstatus: mret_status,
+                // `wfi` retires and the core then waits. An interrupt
+                // already pending means there is nothing to wait for,
+                // and the wake below wins over the wait for that
+                // reason: the two arms are written in that order.
+                run & is_wfi ? waiting: Bit::One,
+                wake ? waiting: Bit::Zero,
+                rst ? waiting: Bit::Zero,
             });
             // The sequencer. It starts when an M instruction is in execute
             // with its operands ready, and is released when the
