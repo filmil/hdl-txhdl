@@ -829,4 +829,172 @@ mod tests {
             }
         }
     }
+
+    /// One switch, with its north input never empty and its exit
+    /// asking for the same output. The choice among the inputs that
+    /// can move is a fixed order that serves the four links before
+    /// the exit, so the exit moves nothing for as long as the link
+    /// keeps offering: what goes in at a node while a link through it
+    /// is busy waits, without a bound.
+    ///
+    /// This is the arbitration question in issue 133, and it is not
+    /// only a question about bursts: a saturated link starves its
+    /// node's own traffic today.
+    #[test]
+    fn a_busy_link_starves_the_exit_of_its_switch() {
+        use super::pkt::{Chan, Pkt};
+        use super::switch::Switch;
+        use txhdl::types::Bit;
+        let mut sw = Switch::<0, 0, XB, YB, A, D, S, I>::default();
+        // Five inputs and five outputs, as the switch takes them.
+        let (n_tx, n_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (s_tx, s_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (w_tx, w_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (e_tx, e_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (x_tx, x_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (no_tx, no_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (so_tx, so_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (wo_tx, wo_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (eo_tx, eo_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (xo_tx, xo_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        // A packet for the node one column east, which leaves by the
+        // east port whichever input it arrived on. `id` says who sent
+        // it: 1 from the link, 2 from the exit.
+        let pkt = |id: u32| Pkt::<XB, YB, A, D, S, I> {
+            dx: U::from(1u32),
+            dy: U::from(0u32),
+            sx: U::from(0u32),
+            sy: U::from(0u32),
+            chan: Chan::Ar,
+            id: U::from(id),
+            last: Bit::One,
+            ..Pkt::default()
+        };
+        let _ = (s_tx, w_tx, e_tx);
+        let mut sim = Running::new(sw.run(
+            (n_rx, s_rx, w_rx, e_rx, x_rx),
+            (no_tx, so_tx, wo_tx, eo_tx, xo_tx),
+        ));
+        let mut seen: Vec<u32> = Vec::new();
+        for _ in 0..200 {
+            // The link and the exit both offer, every cycle, for as
+            // long as there is room to offer.
+            if n_tx.ready().to_bool() {
+                n_tx.send(pkt(1));
+            }
+            if x_tx.ready().to_bool() {
+                x_tx.send(pkt(2));
+            }
+            // Whatever leaves by the east port is counted by who sent
+            // it, and the four ports nothing uses are drained so that
+            // the switch is never held up by one of them.
+            if let Some(p) = eo_rx.recv() {
+                seen.push(p.id.raw() as u32);
+            }
+            let _ = no_rx.recv();
+            let _ = so_rx.recv();
+            let _ = wo_rx.recv();
+            let _ = xo_rx.recv();
+            sim.cycle();
+        }
+        let from_the_link = seen.iter().filter(|id| **id == 1).count();
+        let from_the_exit = seen.iter().filter(|id| **id == 2).count();
+        assert!(from_the_link > 50, "the link moved {from_the_link}");
+        assert_eq!(
+            from_the_exit, 0,
+            "the exit moved {from_the_exit} packets in 200 cycles, so it is \
+             not starved after all and this test should be rewritten as the \
+             check that it is not"
+        );
+    }
+
+    /// Two inputs of one switch leaving by the same port, in the two
+    /// regimes that matter. Both offering every cycle: the fixed
+    /// order gives the port to the higher input and the lower one
+    /// moves nothing at all. The higher offering now and then: the
+    /// two sources' packets mix at the output, one of the higher
+    /// between two of the lower.
+    ///
+    /// That is blocker 2 of issue 133, measured rather than argued,
+    /// and the measurement corrects it. The blocker says beats from
+    /// different sources interleave wherever their paths merge. They
+    /// do, but only while the higher source pauses; while it does
+    /// not, the lower source is starved instead. Either way a burst's
+    /// beats do not stay together, which is what the blocker is
+    /// about, so whatever carries a multi-beat write has to keep them
+    /// together itself at every switch they pass.
+    #[test]
+    fn two_inputs_of_a_switch_contend_for_their_shared_output() {
+        use super::pkt::{Chan, Pkt};
+        use super::switch::Switch;
+        use txhdl::types::Bit;
+        let mut sw = Switch::<0, 0, XB, YB, A, D, S, I>::default();
+        let (n_tx, n_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (s_tx, s_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (w_tx, w_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (e_tx, e_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (x_tx, x_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (no_tx, no_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (so_tx, so_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (wo_tx, wo_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (eo_tx, eo_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        let (xo_tx, xo_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
+        // Both sources send to the node one column east, so both
+        // leave by the east port. `id` says which source.
+        let pkt = |id: u32| Pkt::<XB, YB, A, D, S, I> {
+            dx: U::from(1u32),
+            dy: U::from(0u32),
+            chan: Chan::W,
+            id: U::from(id),
+            last: Bit::One,
+            ..Pkt::default()
+        };
+        let _ = (w_tx, e_tx, x_tx);
+        let mut sim = Running::new(sw.run(
+            (n_rx, s_rx, w_rx, e_rx, x_rx),
+            (no_tx, so_tx, wo_tx, eo_tx, xo_tx),
+        ));
+        // Forty cycles with both offering always, then forty with the
+        // higher input offering every third cycle.
+        let mut saturated: Vec<u32> = Vec::new();
+        let mut sharing: Vec<u32> = Vec::new();
+        for c in 0..80 {
+            let north = c < 40 || c % 3 == 0;
+            if north && n_tx.ready().to_bool() {
+                n_tx.send(pkt(1));
+            }
+            if s_tx.ready().to_bool() {
+                s_tx.send(pkt(2));
+            }
+            if let Some(p) = eo_rx.recv() {
+                let id = p.id.raw() as u32;
+                if c < 40 {
+                    saturated.push(id)
+                } else {
+                    sharing.push(id)
+                }
+            }
+            let _ = no_rx.recv();
+            let _ = so_rx.recv();
+            let _ = wo_rx.recv();
+            let _ = xo_rx.recv();
+            sim.cycle();
+        }
+        // Saturated: the higher input takes the port and keeps it.
+        assert!(saturated.len() > 20, "only {} moved", saturated.len());
+        assert_eq!(
+            saturated.iter().filter(|id| **id == 2).count(),
+            0,
+            "the lower input moved something while the higher never \
+             paused: {saturated:?}"
+        );
+        // Sharing: both get through, and the higher input's packets
+        // land between the lower input's.
+        assert!(sharing.contains(&1) && sharing.contains(&2), "{sharing:?}");
+        let cuts = sharing.windows(3).filter(|w| w[1] != w[0]).count();
+        assert!(
+            cuts > 3,
+            "the two sources did not mix at the output: {sharing:?}"
+        );
+    }
 }
