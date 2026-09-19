@@ -72,8 +72,16 @@ module board_tb;
 
   reg ok = 0;
   initial begin
-    wait (led4 == 0);
-    $display("%0t ps: the PLL locked", $time);
+    // The PLL's lock is not on a light any more. It was `led4` until
+    // 7e8d37c gave that light the heartbeat, and the heartbeat is bit
+    // 25 of a counter at 100 MHz, which first rises after 335 ms: this
+    // process waited here for a light that this simulation will never
+    // see change, and every run since has been killed by the test's
+    // budget rather than reaching its verdict. See issue #347.
+    //
+    // Nothing is lost by not checking it. The memory cannot calibrate
+    // on a clock that is not there, so `led3` going low says the PLL
+    // locked as surely as `led4` used to.
     wait (led3 == 0);
     $display("%0t ps: the memory calibrated", $time);
     wait (led1 == 0);
@@ -84,10 +92,17 @@ module board_tb;
     $display("verdict %0d: the line ended %h", ok, last);
     $finish;
   end
+  // The guard, for a run that is never going to finish. It is 100 us,
+  // about three times a run that works: the memory calibrates by 14 us
+  // and the core has said its line and halted by 35. It used to be
+  // 20 ms, which at the speed this simulates is days of waiting, so a
+  // run that was stuck was killed by the test's budget instead and said
+  // nothing about how far it got, which is how the wait above went
+  // unnoticed. What this prints is how far it did get. See issue #347.
   initial begin
-    #(2.0e10);
-    $display("timed out: locked %0d calibrated %0d halted %0d",
-      !led4, !led3, !led1);
+    #(1.0e8);
+    $display("timed out: calibrated %0d halted %0d, the line said %h",
+      !led3, !led1, last);
     $finish;
   end
 endmodule
