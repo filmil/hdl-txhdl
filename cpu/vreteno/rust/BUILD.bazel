@@ -8,7 +8,7 @@
 # nothing is installed on the machine. The linker is `rust-lld`, which
 # comes with the toolchain, so there is no cross binutils either.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
-load(":defs.bzl", "vreteno_image")
+load(":defs.bzl", "vreteno_flat", "vreteno_image")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -33,6 +33,17 @@ VRETENO_FLAGS = [
     "-Cpanic=abort",
     "-Clinker=rust-lld",
     "-Clink-arg=-Tcpu/vreteno/rust/vreteno.ld",
+]
+
+# The same, for a program that is loaded into the board's memory and
+# runs there rather than living in the netlist.
+VRETENO_RAM_FLAGS = [
+    "-Copt-level=z",
+    "-Cdebug-assertions=no",
+    "-Coverflow-checks=no",
+    "-Cpanic=abort",
+    "-Clinker=rust-lld",
+    "-Clink-arg=-Tcpu/vreteno/rust/vreteno_ram.ld",
 ]
 
 rust_binary(
@@ -157,6 +168,49 @@ rust_library(
     name = "fade_program",
     srcs = [":fade_image"],
     crate_name = "fade_program",
+    edition = "2021",
+)
+
+# The greeting again, linked for the memory the loader puts a program
+# into, and flattened into the image the sender streams. This is what
+# the loop looks like once nothing has to be resynthesised: build this,
+# send it, watch it run.
+rust_binary(
+    name = "hello_ram",
+    srcs = ["hello.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+)
+
+vreteno_flat(
+    name = "hello_ram_bin",
+    platform = ":vreteno",
+    program = ":hello_ram",
+)
+
+# The loader that lives in the boot memory and takes a program off the
+# serial port. Built for the board and for the runs that check it.
+rust_binary(
+    name = "boot",
+    srcs = ["boot.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    tags = ["manual"],
+)
+
+vreteno_image(
+    name = "boot_image",
+    platform = ":vreteno",
+    program = ":boot",
+)
+
+rust_library(
+    name = "boot_program",
+    srcs = [":boot_image"],
+    crate_name = "boot_program",
     edition = "2021",
 )
 
