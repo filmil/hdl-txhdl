@@ -6,6 +6,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary")
 load(
     "@rules_vivado//build/vivado:rules.bzl",
     "vivado_place_and_route2",
+    "vivado_program_device",
     "vivado_synthesis2",
 )
 
@@ -53,6 +54,19 @@ vivado_place_and_route2(
     name = "demo_pnr",
     synthesis = ":demo_synth",
     xdcs = [":demo_xdc"],
+    tags = ["manual"],
+)
+
+# Write the demonstration into the board where it is, over the tunnel
+# the Vreteno board's daemon opens:
+#
+#   bazel run //cpu/vreteno/board/remote:hw_server
+#   bazel run //hdmi:demo_prog -- \
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+vivado_program_device(
+    name = "demo_prog",
+    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
+    deps = [":demo_pnr"],
     tags = ["manual"],
 )
 
