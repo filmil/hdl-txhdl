@@ -239,6 +239,17 @@ phase and its beat could not be told apart. A burst of more than one
 beat wants a virtual channel per source, or reassembly at the
 peripheral, and this bridge carries none.
 
+So it refuses one. The host half takes the address phase of a longer
+burst and every beat up to the one marked last, sends nothing onto the
+network, and answers the host \texttt{SlvErr}. That is not what the
+burst asked for, but it is an answer: before the refusal such a write
+left as a single packet marked last, the peripheral's tracker waited
+for a beat that had stayed behind on the host's channel, and the
+client waited for ever. A host that asks the network for something it
+cannot do now learns so in one burst's time, and the channel is left
+clean for the next write. Carrying the burst is issue 125, and the
+work that carries it is the work that takes the refusal out.
+
 \nocpart{bridge.rs}{hostrun}{The host half.}{lst:n-host}
 
 The peripheral half unpacks a request into the channels a
@@ -445,7 +456,8 @@ the four links before the exit, is the thing to watch when it does.
 The lattice is wired by a helper that makes the channels and hands out
 the ends, which does not lower; a design that is to be synthesised
 writes the same wiring as a unit of units and lets the lowering make
-the netlist. Bursts of more than one beat do not cross the network.
+the netlist. Bursts of more than one beat do not cross the network,
+and are refused rather than carried.
 The arbiter in a switch is a fixed priority. A switch moves one packet
 per cycle rather than one per port, which is what the rasteriser's
 stream pays for above.
