@@ -335,7 +335,8 @@ fj issue -R hd search -s open       # what is open
 fj issue -R hd view <number>        # the labels say what is taken
 ```
 
-Skip every issue that already carries `taken`.
+Skip every issue that already carries `taken`, and every issue that
+carries `later`.
 If the work is abandoned, the label comes off with a comment saying
 why, so that the next session finds it free rather than guessing from
 the silence.
@@ -355,10 +356,30 @@ issues that are free and unlabelled, or among several that carry
 fj issue -R hd search -s open -l priority   # what to take first
 ```
 
+## `later` means not now
+
+An issue carrying the `later` label is not taken, whatever else is
+true of it: not because it is wrong or done, but because the user has
+put it off.
+It is the opposite of `priority`, and it outranks everything below in
+the same way: a `later` issue is passed over even when it is the
+simplest one open and even when nothing else is free.
+
+```sh
+fj issue -R hd search -s open -l later   # what is put off
+```
+
+Nothing is done to such an issue and nothing is said on it.
+The label comes off when the user takes it off, and only then does the
+issue join the ones a session may choose from.
+If every free issue carries `later`, say so and stop rather than
+taking one anyway.
+
 ## Prefer the simpler issue
 
-Of the issues that are free and carry no `priority`, take the
-simplest one that is worth doing, not the most interesting one.
+Of the issues that are free and carry no `priority` and no `later`,
+take the simplest one that is worth doing, not the most interesting
+one.
 Simplest means the one whose fix is smallest and whose check is
 clearest: a one-line refusal with a probe beside it, a stale
 paragraph, a dependency that may no longer be needed.
@@ -373,6 +394,7 @@ is none.
 
 Reasons to pass over a simpler issue, and to say which applies:
 
+* it carries `later`, which settles it without any reading;
 * it is blocked by an issue nobody has done, and the issue says so;
 * it wants hardware, a board or a cable nobody has connected;
 * the user asked for a particular one, which settles it.
@@ -393,7 +415,8 @@ every time.
    An issue that is fixed and still open sends the next session to
    work that does not exist.
 2. **List and choose.** `priority` first, then the simplest free
-   issue, by the two rules above.
+   issue, by the rules above; an issue carrying `taken` or `later` is
+   not one of them.
 3. **Take it.** The `taken` label and a comment, before the first
    line of code.
 4. **Do it, and check it.** The three places rule, `bazel test
