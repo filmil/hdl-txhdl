@@ -446,8 +446,9 @@ returns; an interrupt line, pending in \code{mip} and enabled in
 \code{mie}, is taken in place of the instruction in execute, which
 retires writing nothing; a bus of two channels, a request out and
 the word read back, through a router that decodes a device per
-address range, on which a timer of sixty lines raises the second
-interrupt when its count reaches its compare, a serial port says what the program writes and takes what
+address range, on which the core-local interruptor raises the second
+interrupt when its count reaches its compare and the third when a
+program writes its own software bit, a serial port says what the program writes and takes what
 a terminal types, and the data memory itself is a device, the
 channels between them all being the runtime's buffer of two as
 hardware; the six CSR instructions read and write the
@@ -638,11 +639,11 @@ simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
 forty-one tests run under \code{bazel test //...}, and every one of them
 is hermetic, the simulators built from source and the synthesis tool
-installed by the build. Vreteno is 1132 lines of core, 78 of data
-memory, 98 of timer,
-62 of router and 89 of serial port, checked in lockstep against a
-422-line model on a demonstration program and sixty-four random
-ones, with interrupts raised at random, checked as a netlist on 647
+installed by the build. Vreteno is 1270 lines of core, 141 of data
+memory, 168 of interrupt controller and 253 of serial port, with the
+router a family the macro writes in the parts library rather than a
+file of its own, checked in lockstep against a 572-line model on a
+demonstration program and sixty-four random ones, with interrupts raised at random, checked as a netlist on 647
 ticks with every register compared at each, synthesized in two
 minutes to the figures of Table~\ref{tab:p-synth}, placed and
 routed at 100~MHz, and programmed into the board, where it said OK on
