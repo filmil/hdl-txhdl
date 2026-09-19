@@ -1281,8 +1281,11 @@ netlist \code{\#[lower]} writes for \code{vreteno32::board::Board}: a
 unit of units holding the core and its tracker, a router of five, a
 tracker for each peripheral but the serial port and the interrupt
 controller, which sit behind AXI-Lite bridges, the data memory at
-\code{0x1000}, the timer at \code{0x2000}, the serial port at
-\code{0x3000}, the board's DDR3 memory from \code{0x4000\_0000}, a
+\code{0x1000}, the timer at \code{0x2000}, the page at \code{0x3000}
+whose four sixteenths are the serial port, the pulse width modulator,
+a slot for a peripheral on a clock of its own, and the remote
+peripheral whose transactions leave the board as Ethernet frames, the
+board's DDR3 memory from \code{0x4000\_0000}, a
 gigabyte behind the bridge from AXI to Wishbone and UberDDR3's
 controller, and the interrupt controller at \code{0x0c00\_0000}, whose
 line is the core's external interrupt. The controller

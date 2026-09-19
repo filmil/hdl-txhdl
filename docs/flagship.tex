@@ -97,10 +97,14 @@ DDR3 behind UberDDR3's controller. The core's boot memory holds the
 loader.
 
 \emph{The Ethernet port.} The two lowered halves of the MAC with the
-PHY's RGMII around them and a crossing between the receive and
-transmit clocks, echoing every good frame~\cite{eth}. The core does not
-reach the port yet. The echo is what keeps the port alive and provable
-from the other end of the cable while a peripheral for it is written.
+PHY's RGMII around them~\cite{eth}, and behind them the remote
+peripheral at \code{0x3300}, whose behaviour is a program on another
+machine. A transaction the core makes there leaves the board as one
+frame and the answer arrives as one, so a device can be written as
+software on a laptop, against the bus it will really sit on, and the
+design does not change when the software becomes hardware.
+Section~\ref{sec:f-remote} is that peripheral. The port echoed every
+good frame until this; a frame cannot be both echoed and answered.
 
 \emph{The HDMI output.} The video peripheral with its framebuffer and
 the I2C master that configures the SiI9134 encoder~\cite{hdmi}. Here
@@ -115,8 +119,8 @@ port and the pulse width modulator already share the page at
 \code{0x3000} behind an AXI-Lite bridge, each a sixteenth of it, for
 exactly that reason: a peripheral of six registers does not deserve a
 port of its own. The video peripheral is three registers, so it takes a
-third sixteenth, at \code{0x3200}, and the bridge becomes a
-\code{LiteBridge3}.
+third sixteenth, at \code{0x3200}, and the remote peripheral a fourth
+at \code{0x3300}, so the bridge is a \code{LiteBridge4}.
 
 What is different about the third slot is that it does not reach a
 field of \code{Board}. It leaves the unit as five channel ports:
@@ -136,6 +140,13 @@ board top's business. A board with nothing there ties it off, which is
 what \code{cpu/vreteno/board/vreteno\_board.v} does; a program that
 touched \code{0x3200} on such a board would wait forever, and none
 does.
+
+The fourth slot is the other way about, and the contrast is the point.
+What sits on it runs on the core's clock, so it is a field of
+\code{Board} like the serial port, and what leaves the unit is not the
+slot but the peripheral's far side: the frames, a byte and a last bit
+at a time. A slot goes out when the thing on it has a clock of its
+own; nothing else is a reason.
 
 \section{Three clocks, one input}
 \label{sec:f-clocks}
@@ -157,14 +168,23 @@ together changes nothing about any of them.
   the pixel clock, within half a per cent of the mode's 25.175\,MHz.
 \end{itemize}
 
-One thing crosses between the domains, and it is a channel rather than
-a signal: the core's AXI-Lite to the video peripheral. Each of the five
-AXI-Lite channels crosses on its own, through \code{chan\_cdc}, the
-asynchronous FIFO with Gray-coded pointers that the Ethernet echo
-already uses on this board. Crossing each channel on its own is the
-whole of what the protocol asks, because the five have no timing
-relationship to each other: a write is complete when its response
-arrives, whenever that is.
+Two things cross between the domains, and both are channels rather
+than signals. The first is the core's AXI-Lite to the video
+peripheral. Each of the five AXI-Lite channels crosses on its own,
+through \code{chan\_cdc}, the asynchronous FIFO with Gray-coded
+pointers that the Ethernet echo used on this board before it.
+Crossing each channel on its own is the whole of what the protocol
+asks, because the five have no timing relationship to each other: a
+write is complete when its response arrives, whenever that is.
+
+The second is the remote peripheral's frames, one byte and a last bit
+at a time: out on the core's clock to the transmit clock, and in on
+the clock the PHY recovers to the core's. Two more of the same FIFO.
+The one coming in holds 128 bytes rather than the 16 the echo used,
+because the port delivers a byte every 8\,ns and the core reads one
+every 10, so a whole frame has to fit while the reader catches up.
+A frame that arrives while the last one is still coming out of the MAC
+is lost, which is a transaction the peripheral's patience covers.
 
 \lstinputlisting[caption={\code{lib/board/chan\_cdc.v}: a lowered
 unit's channel, carried from one clock to
@@ -173,6 +193,46 @@ another.},label={lst:f-cdc}]{lib/board/chan_cdc.v}
 That file used to be \code{eth/board/eth\_cdc.v}, and the flagship is
 what made it general: it now lives in \code{//lib/board}, which is
 where Verilog that more than one area's board design wants is kept.
+
+\section{The peripheral that is a program}
+\label{sec:f-remote}
+
+A peripheral is hardware, and hardware is the slow half of the work:
+it is written, simulated, synthesised, placed and routed, and only
+then does anybody find out that the registers were the wrong
+registers. The remote peripheral turns that round. \code{Remote} sits
+on the fourth slot like any other peripheral and answers nothing
+itself; every transaction it accepts leaves on a channel, and an
+answer comes back on another. \code{RemoteLink} turns the one into an
+Ethernet frame of 27 bytes and the other back, and the MAC puts it on
+the wire. What the core is talking to, then, is whatever answers those
+frames: on a laptop at the other end of the cable, in whatever
+language its author likes.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=remote-remote,caption={\code{cpu/vreteno/src/board.rs}: the
+peripheral and the link that puts it on the
+port.},label={lst:f-remote}]{cpu/vreteno/src/board.rs}
+
+Two numbers are fixed in the design rather than left to a board. The
+device number is 1: every frame carries it, a program answers each
+device by the number it was asked under, and a second board on the
+same wire is a second number. The patience is 20\,ms, two million
+cycles at 100\,MHz, after which a transaction nobody answered is
+\code{SlvErr} on the bus. A device that has gone away must not stop
+the bus, and a device on another machine must be given long enough to
+be slow.
+
+The other end of the wire in this repository is \code{//tools/remote},
+a program in Go that reads frames, serves a device, and writes the
+answers back. It speaks a length-prefixed stream rather than raw
+frames, because that is what an ssh tunnel carries; between it and the
+port there is a shim that puts frames on and off the wire, which is
+issue~\#335 and is not written yet. Until it is, what proves this on
+the board is the simulation: the core writes a word to \code{0x3300},
+reads it back, and gets what it wrote, with a program in the test
+answering the frames.
 
 \section{The lights}
 \label{sec:f-leds}
@@ -321,6 +381,12 @@ carry the core's AXI-Lite to the pixel clock are in columns 92 to 118,
 between the core and the video, which is where a crossing should be and
 is not something anything arranged.
 
+The map and the table are of the flagship as it was placed before the
+remote peripheral was added, since the extraction is a manual run of
+Vivado on a routed checkpoint and the peripheral has not been through
+one yet. It adds a small peripheral and two more of the same FIFO,
+where the third bullet says the others landed.
+
 \section{The first program down the wire}
 \label{sec:f-first}
 
@@ -379,11 +445,17 @@ crate.},label={lst:f-logo2rs},tabsize=2]{tools/logo2rs/main.go}
 \section{What is not done}
 \label{sec:f-todo}
 
-\emph{The core does not reach the Ethernet port.} The port echoes, on
-its own, beside the core. The AXI-Lite peripheral for the MAC
-exists~\cite{eth}; what is missing is a sixth slot to put it on and the
-crossing to the 125\,MHz domain, which is the same crossing the video
-already uses.
+\emph{Nothing on a real wire has answered the remote peripheral yet.}
+The design is here and the program is here, and what is between them
+is not: a shim beside the board that reads frames off an interface and
+writes them to the stream \code{//tools/remote} speaks, both ways.
+That is issue~\#335, and it wants a cable rather than a design.
+
+\emph{The core does not reach the MAC's own registers.} The AXI-Lite
+peripheral for the MAC exists~\cite{eth} and nothing in this bitstream
+puts the core on it, so a program cannot send a frame of its own
+choosing: the frames on the port are the remote peripheral's. A fifth
+slot would do it, and the crossing is the one the frames already use.
 
 \emph{One program paints the screen, and it is the whole of what is
 known about painting it.} Section~\ref{sec:f-first} says what it
