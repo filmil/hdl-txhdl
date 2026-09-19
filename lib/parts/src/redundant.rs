@@ -14,19 +14,30 @@
 //!
 //! Neither holds the stream up otherwise: a `Tee` is combinational,
 //! and a `Check` holds one bit, which is the disagreement it saw.
-use txhdl::comp::{Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, Transaction, Value};
 use txhdl::{lower, with, Trace};
 
 // begin{tee}
-/// One stream to two receivers, in step: a word moves when both have
-/// room, and both get it in the same cycle.
+/// One stream to two receivers, in step: a word is taken into the tee
+/// when both receivers have room, and both are offered it in the next
+/// cycle.
+///
+/// The word is registered rather than passed through. A unit that read
+/// a channel and drove one in the same cycle would be a combinational
+/// path from one side's handshake to the other's, which is the shape
+/// this repository keeps out of its channels, and its netlist could
+/// not be replayed against the run cycle by cycle.
 #[derive(Trace, Default)]
 pub struct Tee<T: Transaction + Value> {
-    /// The last word it passed on, which nothing reads: a unit must
-    /// mention what it carries, and a register is the cheapest way to
-    /// say so.
-    pub last: Reg<T>,
+    /// The word being offered to both, when `full` says there is one.
+    pub word: Reg<T>,
+    /// Whether the tee holds a word neither side has taken.
+    pub full: Reg<Bit>,
+    /// Whether the first side has taken the word it holds.
+    pub took_a: Reg<Bit>,
+    /// Whether the second side has.
+    pub took_b: Reg<Bit>,
 }
 
 #[lower]
@@ -34,14 +45,31 @@ impl<T: Transaction + Value> Unit for Tee<T> {
     async fn run(&mut self, inp: Rx<T>, (a, b): (Tx<T>, Tx<T>)) {
         loop {
             DefaultClock::rising().await;
-            // Both, or neither: a copy that took a word the other did
-            // not would be a cycle ahead from then on.
-            let go = inp.peek().is_some() & a.ready() & b.ready();
+            let full = self.full.get();
+            let took_a = self.took_a.get();
+            let took_b = self.took_b.get();
+            // What each side does with the word this cycle: it takes
+            // it if it has not already and has room now.
+            let takes_a = full & !took_a & a.ready();
+            let takes_b = full & !took_b & b.ready();
+            let done = (took_a | takes_a) & (took_b | takes_b);
+            // A new word is taken in the cycle the old one is done
+            // with, or when there is none.
+            let room = !full | done;
             let word = inp.head();
-            let _ = inp.recv_if(go);
-            if go.to_bool() {
-                a.send(word);
-                b.send(word);
+            let take = inp.peek().is_some() & room;
+            with!(self <= {
+                take ? word: word,
+                full: mux(take, Bit::One, mux(done, Bit::Zero, full)),
+                took_a: mux(take, Bit::Zero, took_a | takes_a),
+                took_b: mux(take, Bit::Zero, took_b | takes_b),
+            });
+            let _ = inp.recv_if(take);
+            if takes_a.to_bool() {
+                a.send(self.word.get());
+            }
+            if takes_b.to_bool() {
+                b.send(self.word.get());
             }
         }
     }
