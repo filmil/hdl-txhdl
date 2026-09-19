@@ -154,8 +154,6 @@
     "https://bcr.bazel.build/modules/protobuf/33.1/MODULE.bazel": "982c8a0cceab4d790076f72b7677faf836b0dfadc2b66a34aab7232116c4ae39",
     "https://bcr.bazel.build/modules/protobuf/33.4/MODULE.bazel": "114775b816b38b6d0ca620450d6b02550c60ceedfdc8d9a229833b34a223dc42",
     "https://bcr.bazel.build/modules/protobuf/35.0/MODULE.bazel": "ee97170c013d94c366bbb5fe8a97b0650477cbc00e5e0f6a2c297484bc34d81b",
-    "https://bcr.bazel.build/modules/protobuf/35.1/MODULE.bazel": "9f25044d646c9c1b1e03b25aa3818bf5250078eabadbd213ea940262dba99471",
-    "https://bcr.bazel.build/modules/protobuf/35.1/source.json": "5e256f85483431bd96fc9a6ae468e420326673e9d9f250d313725875597bf1ba",
     "https://bcr.bazel.build/modules/pybind11_bazel/2.11.1/MODULE.bazel": "88af1c246226d87e65be78ed49ecd1e6f5e98648558c14ce99176da041dc378e",
     "https://bcr.bazel.build/modules/pybind11_bazel/2.12.0/MODULE.bazel": "e6f4c20442eaa7c90d7190d8dc539d0ab422f95c65a57cc59562170c58ae3d34",
     "https://bcr.bazel.build/modules/pybind11_bazel/2.12.0/source.json": "6900fdc8a9e95866b8c0d4ad4aba4d4236317b5c1cd04c502df3f0d33afed680",
@@ -401,6 +399,8 @@
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/bazel_skylib/1.8.2/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/bazel_skylib/1.9.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/bazel_skylib_gazelle_plugin/1.9.0/MODULE.bazel": "not found",
+    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/bazel_toolchains_verilator/0.1.0/MODULE.bazel": "bef981cb10eaaf0eda03802d57f7be74297036199a8f5d7028659a9a20c4abfe",
+    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/bazel_toolchains_verilator/0.1.0/source.json": "8669b46e1c4e65c6317202ad501a6786ce7812af3d15fcd781e45d6e9e235681",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/bazel_worker_api/0.0.10/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/bazel_worker_api/0.0.11/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/bazel_worker_api/0.0.8/MODULE.bazel": "not found",
@@ -476,7 +476,8 @@
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/protobuf/33.1/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/protobuf/33.4/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/protobuf/35.0/MODULE.bazel": "not found",
-    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/protobuf/35.1/MODULE.bazel": "not found",
+    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/protobuf/35.1/MODULE.bazel": "d7384afcdebd7348b52e2e5a432986ca3e8af62f9bdb0660e106173ae4aaf1d0",
+    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/protobuf/35.1/source.json": "5e256f85483431bd96fc9a6ae468e420326673e9d9f250d313725875597bf1ba",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/pybind11_bazel/2.11.1/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/pybind11_bazel/2.12.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/re2/2023-09-01/MODULE.bazel": "not found",
@@ -680,10 +681,26 @@
         }
       }
     },
+    "@@bazel_toolchains_verilator+//verilator:extension.bzl%verilator_binary": {
+      "general": {
+        "bzlTransitiveDigest": "kojfQgQNUEt5zX4GxZvKoTV6HpVrjuu7g1+eLLdyklQ=",
+        "usagesDigest": "wTmlsk3A8sGFBBD288hH5F/QfQNbdbLq39aeTEJZSmI=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "verilator_prebuilt": {
+            "repoRuleId": "@@bazel_toolchains_verilator+//verilator:extension.bzl%_prebuilt",
+            "attributes": {
+              "url": "https://github.com/filmil/bazel_toolchains_verilator/releases/download/verilator-5.046/verilator-5.046-linux-amd64.tar.gz",
+              "sha256": "2234af808104af6f1c43d774966815d43bf131f946fd868d0e01045e9b626ca8"
+            }
+          }
+        }
+      }
+    },
     "@@protobuf+//python/dist:system_python.bzl%system_python_extension": {
       "general": {
         "bzlTransitiveDigest": "qh0n9IrXU/xS94wxKQrG1J63zrLkA1Wy2Y3BQxptPcI=",
-        "usagesDigest": "pThqQrj9/VP0slVqBRpV1aazFV6PEuk1iOgVBuwZcEU=",
+        "usagesDigest": "gM2v8KEcm9rpUrlYSngytVomDKFCsh+Qb9pL3rcZurY=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
           "system_python": {
