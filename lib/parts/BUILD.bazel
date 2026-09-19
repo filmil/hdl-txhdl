@@ -26,6 +26,7 @@ rust_library(
         "src/bus/wb.rs",
         "src/bus/wb/sim.rs",
         "src/fifo.rs",
+        "src/flashwin.rs",
         "src/gpio.rs",
         "src/hdmi.rs",
         "src/i2c.rs",

@@ -15,6 +15,7 @@ pub mod buffer;
 pub mod bus;
 pub mod eth;
 pub mod fifo;
+pub mod flashwin;
 pub mod gpio;
 pub mod hdmi;
 pub mod i2c;

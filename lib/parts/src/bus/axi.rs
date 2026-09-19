@@ -854,7 +854,12 @@ pub fn axi_to_unit<
 }
 
 /// The host end over a host client's channel ends.
-fn host_end<
+///
+/// `axi` uses this to build the client it hands back. It is public as
+/// well, because a design whose peripheral is hardware rather than a
+/// client takes its channels from `axi_units` and still wants the
+/// verbs on the host side; `ex_flashwin` is such a design.
+pub fn host_end<
     const A: usize,
     const D: usize,
     const S: usize,
