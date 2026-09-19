@@ -140,7 +140,21 @@ bazel_dep(name = "rules_verilator", version = "1.1.2")
 bazel_dep(name = "rules_verilog", version = "1.4.3")
 bazel_dep(name = "rules_cc", version = "0.2.22")
 
-register_toolchains("@rules_verilator//verilator:verilator_toolchain")
+# Verilator comes down as a binary rather than being compiled here.
+# Building it from source is about six minutes on a machine that has
+# not done it before, and it is the same binary everywhere, so it is
+# built once by `filmil/bazel_toolchains_verilator` and downloaded by
+# everybody. The rules are still `rules_verilator`'s; only where the
+# binary comes from changes.
+bazel_dep(name = "bazel_toolchains_verilator", version = "0.1.0")
+
+verilator_binary = use_extension(
+    "@bazel_toolchains_verilator//verilator:extension.bzl",
+    "verilator_binary",
+)
+use_repo(verilator_binary, "verilator_prebuilt")
+
+register_toolchains("@verilator_prebuilt//:toolchain")
 
 # Synthesis, hermetic: rules_vivado installs Vivado itself, from the AMD
 # installer archive named here, into a shared install cache, and every
