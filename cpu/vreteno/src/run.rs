@@ -47,6 +47,10 @@ type Serial = LiteBridge1<32, 32, 4, IW, 0x3000, 0xf000>;
 pub struct Ran {
     pub said: String,
     pub halted_at: Option<u64>,
+    /// The first words of the data memory at the end of the run, so
+    /// that a program can answer a test by writing rather than by
+    /// printing, which is what a test of a number wants.
+    pub mem: Vec<u32>,
 }
 
 /// Run `text` on the core with `data` in its memory, for at most
@@ -58,6 +62,12 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     // the instruction memory the program lives in is not on the bus,
     // so a load never reaches it.
     let mut dmem = Dmem::<IW>::with(data);
+    let lanes = (
+        dmem.lane0.clone(),
+        dmem.lane1.clone(),
+        dmem.lane2.clone(),
+        dmem.lane3.clone(),
+    );
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
@@ -185,9 +195,16 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
         term.see(tx.get().to_bool());
     }
     stop();
+    let word = |a: usize| -> u32 {
+        (lanes.0.read(a).raw() as u32)
+            | (lanes.1.read(a).raw() as u32) << 8
+            | (lanes.2.read(a).raw() as u32) << 16
+            | (lanes.3.read(a).raw() as u32) << 24
+    };
     Ran {
         said: term.said.clone(),
         halted_at,
+        mem: (0..16).map(word).collect(),
     }
 }
 

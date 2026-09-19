@@ -373,6 +373,36 @@ pub fn machine_info() -> Vec<u32> {
     a.words()
 }
 
+/// A program that measures itself with the two machine counters.
+///
+/// It reads `mcycle` and `minstret`, does a division, reads both
+/// again, and writes the two differences where a test can see them.
+/// A division is the point: the sequencer takes about thirty-three
+/// cycles and retires one instruction, so the cycles between the two
+/// reads are many more than the instructions, which is the whole
+/// reason a profiler wants both counters rather than either.
+pub fn measure() -> Vec<u32> {
+    let mut a = Asm::default();
+    a.emit(lui(2, DATA_BASE >> 12)); // x2 = the data base
+    a.emit(csrrs(10, CSR_MCYCLE, 0)); // x10 = cycles before
+    a.emit(csrrs(11, CSR_MINSTRET, 0)); // x11 = retired before
+                                        // The work: a division, which stalls, and a few plain
+                                        // instructions around it.
+    a.emit(addi(5, 0, 1000));
+    a.emit(addi(6, 0, 7));
+    a.emit(div(7, 5, 6)); // x7 = 1000 / 7, thirty-odd cycles
+    a.emit(addi(8, 7, 0));
+    a.emit(csrrs(12, CSR_MCYCLE, 0)); // x12 = cycles after
+    a.emit(csrrs(13, CSR_MINSTRET, 0)); // x13 = retired after
+    a.emit(sub(14, 12, 10)); // x14 = the cycles between
+    a.emit(sub(15, 13, 11)); // x15 = the instructions between
+    a.emit(sw(14, 2, 0)); // mem[0] = cycles
+    a.emit(sw(15, 2, 4)); // mem[1] = instructions
+    a.emit(sw(7, 2, 8)); // mem[2] = what the division came to
+    a.emit(halt());
+    a.words()
+}
+
 /// A program that idles: it arms the timer, waits for it with `wfi`,
 /// and counts the interrupts that woke it.
 ///

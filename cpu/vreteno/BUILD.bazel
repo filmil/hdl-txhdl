@@ -212,6 +212,20 @@ rust_test(
 
 # Two cores on one bus, with everything they say compared:
 #   bazel test //cpu/vreteno:pair_test
+# The two machine counters, against the core alone: a model that steps
+# on a retirement cannot say how many cycles went by.
+#   bazel test //cpu/vreteno:counters_test
+rust_test(
+    name = "counters_test",
+    srcs = ["tests/counters.rs"],
+    edition = "2021",
+    deps = [
+        ":vreteno32",
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+)
+
 rust_test(
     name = "pair_test",
     srcs = ["tests/pair.rs"],
