@@ -4,10 +4,10 @@
 //! against it, in lockstep, every cycle.
 use crate::isa::{
     compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT, CAUSE_ECALL,
-    CAUSE_ILLEGAL, CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MTIMER,
-    CAUSE_STORE_MISALIGNED, CSR_MCAUSE, CSR_MEPC, CSR_MHALT, CSR_MIE, CSR_MIP,
-    CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT, MTIMER, TIMER_BASE,
-    UART_BASE,
+    CAUSE_ILLEGAL, CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MSOFT,
+    CAUSE_MTIMER, CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK, CSR_MCAUSE,
+    CSR_MEPC, CSR_MHALT, CSR_MIE, CSR_MIP, CSR_MSCRATCH, CSR_MSTATUS,
+    CSR_MTVAL, CSR_MTVEC, MEXT, MSOFT, MTIMECMP_OFF, MTIMER, UART_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -57,6 +57,9 @@ pub struct Model {
     /// count; the timer is a device on the bus, so its pending bit is
     /// what the line says, not what the model could compute.
     pub tirq: bool,
+    /// The software interrupt the program raised for itself, which is
+    /// bit 0 of `msip` in the interrupt controller.
+    pub msip: bool,
     pub halted: Option<Halt>,
 }
 
@@ -71,6 +74,7 @@ impl Default for Model {
             mtimecmp: 0,
             uart: Vec::new(),
             tirq: false,
+            msip: false,
             halted: None,
         }
     }
@@ -115,12 +119,17 @@ pub fn misaligned(kind: Kind, addr: u32) -> bool {
     }
 }
 
+/// The first address above the data memory: everything there and
+/// beyond is a device's, and what a load there answers is what the bus
+/// gave the core, which the caller hands over.
+const DEVICES: u32 = DATA_BASE + DATA_BYTES;
+
 impl Model {
     /// A word of data memory by byte address, or, above it, the word
     /// the bus answered the core with, which the caller handed over;
     /// `None` below the data memory.
     fn word(&self, addr: u32) -> Option<u32> {
-        if addr >= TIMER_BASE {
+        if addr >= DEVICES {
             return Some(self.dev_word);
         }
         let off = addr.wrapping_sub(DATA_BASE);
@@ -131,12 +140,15 @@ impl Model {
     /// business; the model keeps what it can check at the end, the
     /// timer's compare and the bytes given to the serial port.
     fn set_word(&mut self, addr: u32, v: u32) -> bool {
-        let t = addr.wrapping_sub(TIMER_BASE);
-        if t < 16 {
-            if t >= 8 {
-                let shift = 8 * (t & 4);
+        if addr & CLINT_MASK == CLINT_BASE {
+            let off = addr & !CLINT_MASK;
+            if off == MTIMECMP_OFF || off == MTIMECMP_OFF + 4 {
+                let shift = 8 * (off & 4);
                 self.mtimecmp = (self.mtimecmp & !(0xffff_ffff << shift))
                     | (v as u64) << shift;
+            }
+            if off == 0 {
+                self.msip = v & 1 == 1;
             }
             return true;
         }
@@ -144,7 +156,7 @@ impl Model {
             self.uart.push(v as u8);
             return true;
         }
-        if addr >= TIMER_BASE {
+        if addr >= DEVICES {
             return true;
         }
         let off = addr.wrapping_sub(DATA_BASE);
@@ -163,6 +175,16 @@ impl Model {
         }
     }
 
+    /// The software interrupt's pending bit: the controller's `msip`,
+    /// as the core sees it on its line.
+    fn msip(&self) -> u32 {
+        if self.msip {
+            MSOFT
+        } else {
+            0
+        }
+    }
+
     fn csr_read(&self, addr: u32) -> Option<u32> {
         Some(match addr {
             CSR_MSTATUS => self.csr.mstatus,
@@ -171,7 +193,7 @@ impl Model {
             CSR_MEPC => self.csr.mepc,
             CSR_MCAUSE => self.csr.mcause,
             CSR_MIE => self.csr.mie,
-            CSR_MIP => self.csr.mip | self.mtip(),
+            CSR_MIP => self.csr.mip | self.mtip() | self.msip(),
             CSR_MTVAL => self.csr.mtval,
             // The halt holds nothing: it reads as zero, and a write of
             // an odd value to it stops the machine.
@@ -193,7 +215,7 @@ impl Model {
             CSR_MSCRATCH => self.csr.mscratch = v,
             CSR_MEPC => self.csr.mepc = v & !1,
             CSR_MCAUSE => self.csr.mcause = v,
-            CSR_MIE => self.csr.mie = v & (MEXT | MTIMER),
+            CSR_MIE => self.csr.mie = v & (MEXT | MSOFT | MTIMER),
             CSR_MIP => self.csr.mip = v & MEXT,
             CSR_MTVAL => self.csr.mtval = v,
             _ => {}
@@ -220,9 +242,13 @@ impl Model {
         if self.csr.mstatus & MIE == 0 {
             return None;
         }
-        let pending = (self.csr.mip | self.mtip()) & self.csr.mie;
+        let pending = (self.csr.mip | self.mtip() | self.msip()) & self.csr.mie;
+        // The order the specification gives: the external interrupt
+        // first, then the software one, then the timer's.
         if pending & MEXT != 0 {
             Some(CAUSE_MEXT)
+        } else if pending & MSOFT != 0 {
+            Some(CAUSE_MSOFT)
         } else if pending & MTIMER != 0 {
             Some(CAUSE_MTIMER)
         } else {

@@ -22,7 +22,18 @@ use vreteno32::uart::Uart;
 const IW: usize = 2;
 const NIDS: usize = 4;
 type Rtr =
-    Router3<32, 32, 4, IW, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>;
+    Router3<
+    32,
+    32,
+    4,
+    IW,
+    0x1000,
+    0xf000,
+    0x0200_0000,
+    0xffff_0000,
+    0x3000,
+    0xf000,
+>;
 type Serial = LiteBridge1<32, 32, 4, IW, 0x3000, 0xf000>;
 
 /// Runs `program` on a pair for `cycles` cycles, holding the second
@@ -41,6 +52,7 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
+    let (sirq_out, sirq) = signal::<Bit, DefaultClock>();
     let (fault_out, fault_in) = signal::<Bit, DefaultClock>();
     let (tx_out, _tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
@@ -68,13 +80,13 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run((rst_t, treq, twd), (tans, trb, tirq_out)),
+                timer.run((rst_t, treq, twd), (tans, trb, tirq_out, sirq_out)),
                 uart.run((rst_u, rx, uaw, uar, uw), (ub, ur, tx_out, uirq_out)),
             ),
             join2(
                 dmem.run((dreq, dwd), (dans, drb)),
                 pair.run(
-                    (rst, irq, tirq, fault_in, crdata, cdone, grant),
+                    (rst, irq, tirq, sirq, fault_in, crdata, cdone, grant),
                     (
                         halt_out, instr_out, wb_out, issue, wbeat, release,
                         differs_out,

@@ -11,9 +11,11 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
 use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
-use vreteno32::isa::{decode, disasm, Kind, CAUSE_MEXT, CAUSE_MTIMER};
+use vreteno32::isa::{
+    decode, disasm, Kind, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER,
+};
 use vreteno32::model::{Halt, Model};
-use vreteno32::program::{demo, random};
+use vreteno32::program::{demo, random, soft};
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
@@ -22,7 +24,18 @@ use vreteno32::uart::Uart;
 const IW: usize = 2;
 const NIDS: usize = 4;
 type Rtr =
-    Router3<32, 32, 4, IW, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>;
+    Router3<
+    32,
+    32,
+    4,
+    IW,
+    0x1000,
+    0xf000,
+    0x0200_0000,
+    0xffff_0000,
+    0x3000,
+    0xf000,
+>;
 
 /// The bridge the serial port sits behind: one AXI-Lite peripheral,
 /// at the range the router gives the port.
@@ -70,6 +83,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let mut uart = Uart::<4>::default();
     let mtimecmp = timer.mtimecmp;
     let (pending, wb_dev) = (timer.pending, cpu.wb_dev);
+    let msip = timer.msip;
     let (uart_sent, uart_last) = (uart.sent, uart.last);
     let (uart_received, uart_dropped) =
         (uart.received, uart.dropped);
@@ -87,6 +101,7 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
+    let (sirq_out, sirq) = signal::<Bit, DefaultClock>();
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
     let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
@@ -119,13 +134,13 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run((rst_t, treq, twd), (tans, trb, tirq_out)),
+                timer.run((rst_t, treq, twd), (tans, trb, tirq_out, sirq_out)),
                 uart.run((rst_u, rx, uaw, uar, uw), (ub, ur, tx_out, uirq_out)),
             ),
             join2(
                 dmem.run((dreq, dwd), (dans, drb)),
                 cpu.run(
-                    (rst, irq, tirq, crdata, cdone, grant),
+                    (rst, irq, tirq, sirq, crdata, cdone, grant),
                     (halt_out, instr_out, wb_out, issue, wbeat, release),
                 ),
             ),
@@ -195,6 +210,10 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
     // as the timer registered it goes with it.
     let mut line = false;
     let mut line_before = false;
+    // The software interrupt's line, the same cycle behind: the
+    // controller's `msip` as the core saw it.
+    let mut soft = false;
+    let mut soft_before = false;
     let mut answer;
     // The terminal on the port's lines: it answers the demonstration's
     // line with three bytes, which the program echoes; a random program
@@ -224,12 +243,17 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         // cycle, so it is read before that cycle.
         answer = wb_dev.get().raw() as u32;
         let line_now = pending.get().to_bool();
+        let soft_now = msip.get().to_bool();
         let ext = mip.get().bit(11).to_bool() && mie.get().bit(11).to_bool();
+        let sft = soft_now && mie.get().bit(3).to_bool();
         let tim = line_now && mie.get().bit(7).to_bool();
+        // The order the specification gives, which the core keeps.
         let taken_now = if !mstatus.get().bit(3).to_bool() {
             None
         } else if ext {
             Some(CAUSE_MEXT)
+        } else if sft {
+            Some(CAUSE_MSOFT)
         } else if tim {
             Some(CAUSE_MTIMER)
         } else {
@@ -239,16 +263,19 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         term.see(tx.get().to_bool());
         if executing && !stall.get().to_bool() {
             line = line_now;
+            soft = soft_now;
             taken = taken_now;
         }
         if wb.get().done.to_bool() {
             model.dev_word = answer;
             model.tirq = line_before;
+            model.msip = soft_before;
             model.step(program, taken_before);
             retired += 1;
         }
         taken_before = taken;
         line_before = line;
+        soft_before = soft;
         // The line sets the pending bit at this edge in both.
         if raised {
             model.raise();
@@ -344,7 +371,9 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
             // The terminal's bytes all came in and none found the
             // buffer full; the demonstration echoed every one.
             assert_eq!(uart_dropped.get().raw(), 0, "bytes dropped, {here}");
-            if seed.is_none() {
+            // The demonstration is the one that types at the port and
+            // echoes what it was given.
+            if what == "demo" {
                 assert_eq!(uart_received.get().raw(), 3, "bytes received");
             }
             for (a, &w) in model.mem.iter().enumerate() {
@@ -357,6 +386,20 @@ fn lockstep(program: &[u32], what: &str, seed: Option<u64>) -> Model {
         }
     }
     panic!("{what}: no halt in 32768 cycles");
+}
+
+#[test]
+fn a_program_that_interrupts_itself() {
+    // The program raises the software interrupt for itself and its
+    // handler clears it, until three have been taken; a return goes
+    // back to the store that raised it, so the last round of the loop
+    // takes another, and what the program guarantees is three or more.
+    // The model takes them where the core does, which is what the
+    // lockstep compares cycle by cycle.
+    let m = lockstep(&soft(), "soft", None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert!(m.x[8] >= 3, "interrupts taken: {}", m.x[8]);
+    assert_eq!(m.mem[0], m.x[8], "and the program wrote what it counted");
 }
 
 #[test]

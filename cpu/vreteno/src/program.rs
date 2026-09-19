@@ -169,9 +169,11 @@ pub fn demo() -> Vec<u32> {
     a.emit(csrrw(0, CSR_MTVEC, 21)); // mtvec = x21
     a.emit(lui(9, 1)); // x9 = 0x1000
     a.emit(srli(9, 9, 1)); // x9 = 0x800, the external interrupt's bit
-    a.emit(lui(4, TIMER_BASE >> 12)); // x4 = the timer
+                           // x4 = the compare's page in the interrupt controller, which is
+                           // where the two halves of `mtimecmp` are.
+    a.emit(lui(4, (CLINT_BASE + MTIMECMP_OFF) >> 12));
     a.emit(addi(3, 0, 150)); // x3 = 150
-    a.emit(sw(3, 4, 8)); // mtimecmp = 150: a timer interrupt then
+    a.emit(sw(3, 4, 0)); // mtimecmp = 150: a timer interrupt then
     a.emit(ori(9, 9, 0x80)); // x9 = MEXT | MTIMER, the handler's mask
     a.emit(addi(22, 0, 0x80)); // x22 = MTIMER
     a.emit(csrrw(0, CSR_MIE, 22)); // mie = the timer's, for now
@@ -257,9 +259,13 @@ pub fn demo() -> Vec<u32> {
     a.emit(andi(22, 23, 0xff)); // x22 = which interrupt
     a.emit(addi(3, 0, 7)); // x3 = the timer's
     a.to(count, |o| bne(22, 3, o)); // the line's: nothing more
-    a.emit(lw(22, 4, 0)); // the timer's: x22 = mtime
+                                    // The timer's: the count sits far from the compare in the
+                                    // controller's window, too far for one base register, so it is
+                                    // read through x22 and the compare is written through x4.
+    a.emit(lui(22, (CLINT_BASE + MTIME_OFF + 8) >> 12));
+    a.emit(lw(22, 22, -8)); // x22 = the count's low half
     a.emit(addi(22, 22, 1000)); // the next one well past the end
-    a.emit(sw(22, 4, 8)); // mtimecmp = x22
+    a.emit(sw(22, 4, 0)); // mtimecmp = x22
     a.place(count);
     a.emit(addi(8, 8, 1)); // count it,
     a.emit(mret()); // and return to the interrupted word
@@ -282,6 +288,49 @@ pub fn demo() -> Vec<u32> {
 /// written in it, and some branches and jumps are compressed ones, so
 /// the two lengths are mixed and a thirty-two bit instruction often
 /// starts in the upper half of a word. `seed` is the whole of it.
+/// A program that interrupts itself: it raises the software interrupt
+/// by writing `msip` in the interrupt controller, takes the trap,
+/// clears it in the handler and counts it, three times, and halts.
+///
+/// It is the shape an operating system's scheduler has, which is why
+/// the register is there: a port enters its scheduler by writing this
+/// one bit.
+pub fn soft() -> Vec<u32> {
+    let mut a = Asm {
+        compress: true,
+        ..Asm::default()
+    };
+    let (top, handler, done) = (a.label(), a.label(), a.label());
+    a.emit(lui(2, DATA_BASE >> 12)); // x2 = the data base
+    a.abs(handler, |h| addi(21, 0, h as i32)); // x21 = the handler
+    a.emit(csrrw(0, CSR_MTVEC, 21)); // mtvec = x21
+    a.emit(lui(4, CLINT_BASE >> 12)); // x4 = msip's page, which is
+    a.emit(addi(22, 0, 8)); // x22 = MSOFT, the software interrupt's bit
+    a.emit(csrrw(0, CSR_MIE, 22)); // mie = MSOFT
+    a.emit(csrrsi(0, CSR_MSTATUS, 8)); // mstatus.MIE = 1
+    a.emit(addi(8, 0, 0)); // x8 = 0, how many were taken
+    a.emit(addi(5, 0, 3)); // x5 = 3, how many to take
+    a.place(top);
+    a.emit(addi(3, 0, 1));
+    a.emit(sw(3, 4, 0)); // msip = 1: the interrupt is raised here
+    a.emit(addi(0, 0, 0)); // and taken in one of the cycles after it
+    a.emit(addi(0, 0, 0));
+    a.emit(addi(0, 0, 0));
+    a.emit(addi(0, 0, 0));
+    a.to(top, |o| blt(8, 5, o)); // until three have been taken
+    a.emit(sw(8, 2, 0)); // mem[0] = how many were taken
+    a.place(done);
+    a.emit(halt());
+    // The handler: clear `msip`, which is what makes the line fall,
+    // count the interrupt, and return.
+    a.align();
+    a.place(handler);
+    a.emit(sw(0, 4, 0)); // msip = 0
+    a.emit(addi(8, 8, 1)); // one more taken
+    a.emit(mret());
+    a.words()
+}
+
 pub fn random(seed: u64, len: usize) -> Vec<u32> {
     let mut s = seed.wrapping_mul(0x9e3779b97f4a7c15) | 1;
     let mut next = move || {
@@ -300,7 +349,8 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     a.emit(srli(31, 31, 1));
     a.emit(ori(31, 31, 0x80));
     a.emit(csrrw(0, CSR_MIE, 31)); // the line and the timer
-    a.emit(lui(30, TIMER_BASE >> 12)); // x30 = the timer, kept
+                                   // x30 = the compare's page, kept, since the handler writes it.
+    a.emit(lui(30, (CLINT_BASE + MTIMECMP_OFF) >> 12));
     a.emit(csrrsi(0, CSR_MSTATUS, 8));
     while a.halves.len() < 2 * len {
         let r = next();
@@ -451,11 +501,15 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     a.emit(lui(31, 1));
     a.emit(srli(31, 31, 1)); // 0x800, the external interrupt's bit
     a.emit(csrrc(0, CSR_MIP, 31));
-    a.emit(lw(31, 30, 4)); // and the timer's next: the count plus 64,
-    a.emit(sw(31, 30, 12)); // high word first, since a program may
-    a.emit(lw(31, 30, 0)); // have stored anything into the count
+    // And the timer's next: the count plus 64. The count sits far
+    // from the compare in the controller's window, too far for one
+    // base register, so it is reached through x31 and the compare's
+    // high half is written zero, which it is in a run this short.
+    a.emit(lui(31, (CLINT_BASE + MTIME_OFF + 8) >> 12));
+    a.emit(lw(31, 31, -8)); // x31 = the count's low half
     a.emit(addi(31, 31, 64));
-    a.emit(sw(31, 30, 8));
+    a.emit(sw(0, 30, 4)); // the compare's high half is zero
+    a.emit(sw(31, 30, 0)); // and its low half is the count plus 64
     a.emit(mret());
     // An exception returns past the instruction that trapped, which is
     // four bytes long for an ecall and for an illegal instruction whose
