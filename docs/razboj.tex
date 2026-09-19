@@ -220,7 +220,7 @@ and no more. A write's response is taken before a read's beat in the
 cycle both arrive, since only one identifier goes back a cycle, and
 the read waits a cycle for it.
 
-\begin{figure}[htbp]
+\begin{figure*}[t]
 \centering
 \input{razboj_timing.tex}
 \caption{The triangle fetched and begun. \code{phase} is one while
@@ -232,7 +232,7 @@ whether the pixel is inside it; where \code{hit} is low no burst is
 issued, so the row is walked and nothing is written. \code{inflight}
 is the writes whose response has not come back.}
 \label{fig:g-wave}
-\end{figure}
+\end{figure*}
 
 \section{The Framebuffer}
 \label{sec:g-fb}

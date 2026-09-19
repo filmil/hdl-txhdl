@@ -897,7 +897,7 @@ the netlist does; the memory, a model, reads the bridge's a cycle
 later, which is why its stall rises a cycle after the bridge has
 seen a request taken.
 
-\begin{figure}[htbp]
+\begin{figure*}[t]
 \centering
 \input{axi_wb_timing.tex}
 \caption{The first write through the bridge: the request and its
@@ -905,7 +905,7 @@ beat arriving, \code{stb} held through the memory's calibration until
 a cycle with no stall takes it, \code{cyc} held until the
 acknowledge, and the response going out on \code{ans}.}
 \label{fig:a-wb}
-\end{figure}
+\end{figure*}
 
 \lstinputlisting[caption={\code{ex\_axi\_wb.rs}. Run with
 \code{bazel run //lib/examples:ex\_axi\_wb}.},%
