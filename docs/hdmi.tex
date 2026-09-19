@@ -272,14 +272,31 @@ board's pins.},label={lst:h-xdc}]{hdmi/board/ax7a200_hdmi.xdc}
 \section{What Is Not Done}
 \label{sec:h-not}
 
-Nothing here has run on the board. Three things on the board side are
-assumptions to be confirmed there.
-The chip's register values, as above. The order of the chip's data
-inputs: the manual's table numbers them \code{D[0]} to \code{D[23]}
-and does not say which are red, green and blue, and the demonstration
-puts red on the top eight. And the I/O standard of the chip's pins,
-which the constraints give as LVCMOS33 like the board's other user
-pins.
+The demonstration has run on the board. On September 19, 2026 a monitor
+on the board's HDMI connector showed the test picture as the
+framebuffer holds it: eight colour bars over the top two thirds, white,
+yellow, cyan, green, magenta, red, blue and black, a grey ramp beneath
+them, and a white border. The chip's LEDs read locked and configured,
+with no byte refused, so every register write was acknowledged.
+
+That answers the three assumptions this section used to list. The
+register values are right, since the chip accepted them and put a
+picture out. The order of the data inputs is right, since the bars came
+out in the order the framebuffer holds them and a swapped red and blue
+would have turned yellow into cyan. The I/O standard is LVCMOS33, and
+the vendor's own demonstration for this board uses it on the same pins.
+
+One thing the board did add. The vendor's demonstration drives two
+reset outputs, on L18 and on Y17, the second named for revision 1.0 of
+the board, and this design drove only Y17, which the manual's table
+names. It now drives both, since which ball reaches the chip depends on
+the revision and a wrong guess holds the chip in reset with nothing to
+say why.
+
+What is still not done on the board side: the timing at the pins is not
+constrained, so nothing has been measured about the clock's edge against
+the data's at the connector, and the picture arriving says only that the
+margin is not zero.
 
 The whole peripheral runs on the pixel clock, bus port included. A
 host on the system clock reaches it through a crossing of the five
