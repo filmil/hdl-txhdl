@@ -1,0 +1,137 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Pwm
+\datasheet{Pwm}{Four pulse width modulated outputs on AXI-Lite: one counter, a duty a channel, and a shadow so a width never changes under a pulse.}
+
+\dsfacts{\code{lib/parts/src/pwm.rs}}{\code{txhdl\_parts::pwm::Pwm}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+A pin is on or off, and much of what a board drives wants a value
+between: an LED at a third of its brightness, a fan at half its speed, a
+servo told where to stand. \code{Pwm} switches four pins fast enough
+that the load cannot follow, and what the load sees is the fraction of
+each period a pin was high.
+
+One counter runs the period for all four channels, and a channel is
+high while the counter is below its duty. That comparison is what makes
+the ends flat: a duty of zero never wins it and a duty of the period or
+more always does, so neither end leaves a pulse one cycle wide.
+
+\subsection*{Parameters}
+
+None. The period, the duties and the four polarity bits are registers,
+so one instance drives four channels of different widths; the channel
+count and the 16-bit period are fixed in the unit.
+
+\subsection*{Register map}
+
+Offsets from the peripheral's base. The part selects the word by bits 4
+to 2 of the address and looks at no other bits, so the bridge in front
+of it decides the base and the map repeats every 32 bytes.
+\code{pwm::duty(i)} gives channel \code{i}'s offset, which is
+\code{8 + 4i}.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.5\textwidth}@{}}
+\toprule
+Offset & Word & Access \\
+\midrule
+\code{0x00} & \code{ctrl} & Read and write, eight bits. Bit 0 is
+\code{CTRL\_ENABLE}, bit 1 \code{CTRL\_CENTRE}, and bits 4 to 7 the
+polarity of channels 0 to 3, which \code{pwm::polarity(i)} names. \\
+\code{0x04} & \code{period} & Read and write. A read returns the
+shadow, not the period the counter is running. \\
+\code{0x08} & \code{duty0} & Read and write, the shadow again. \\
+\code{0x0c} & \code{duty1} & Read and write. \\
+\code{0x10} & \code{duty2} & Read and write. \\
+\code{0x14} & \code{duty3} & Read and write. \\
+\code{0x18} & \code{count} & Read only, and it is the live counter
+rather than a shadow. A write is taken and does nothing. \\
+\code{0x1c} & & Reads as zero. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A write takes the low 16 bits of the word for a period or a duty and
+the low 8 for \code{ctrl}, and the rest are dropped.
+
+\dstables{Pwm}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item Edge aligned, which is \code{CTRL\_CENTRE} clear, the counter
+runs from zero to the period less one and returns to zero, so a period
+is that many cycles and every pulse starts at the same moment.
+\item Centre aligned it counts up and then down, holding one cycle at
+each end, so a period is twice the count and a pulse is centred in it,
+as one run rather than two at the ends. A bank of outputs driven that
+way does not switch all at once, which is what a supply prefers.
+\item A write of a period or a duty goes to a shadow, and every shadow
+is loaded together when the counter wraps. A width that changed under
+the counter would make one pulse of neither the old width nor the new,
+which a load that averages sees as a step nobody asked for and a servo
+reads as a command.
+\item While the counter is stopped the shadows are loaded every cycle
+and the counter is held at zero, so a period written then takes effect
+at once: no pulse is under way to spoil.
+\item A channel's pin is the comparison exclusive-or'd with its
+polarity bit. While the counter is stopped the pins are the four
+polarity bits themselves, so a design chooses what a stopped output
+rests at.
+\item A period of zero stops the counter, since a period shorter than a
+cycle is no period at all.
+\item A read is answered on \code{r} in the cycle its address beat is
+taken, with \code{OKAY}. A write needs its address beat, its data beat
+and room on \code{b} in the same cycle, and is answered \code{OKAY} in
+that cycle.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Six tests in \code{lib/parts/src/pwm.rs}, in
+\code{//lib/parts:parts\_test}, drive it over AXI-Lite and count the
+cycles each pin was high.
+\code{a\_duty\_is\_the\_cycles\_high\_in\_a\_period} finds three and seven
+of ten, four periods over.
+\code{the\_ends\_are\_flat} finds a duty of zero never high and a duty of
+the period, or past it, never low.
+\code{polarity\_turns\_a\_channel\_over} finds the same duty high for
+nine cycles and for twenty-one.
+\code{a\_duty\_written\_mid\_period\_makes\_no\_runt} widens a duty in the
+middle of a period and finds every whole pulse two wide or eight, and
+the last of them eight.
+\code{a\_centred\_pulse\_is\_one\_run\_a\_period} finds four of eight,
+centred, as one run of eight in sixteen.
+\code{a\_stopped\_counter\_sits\_at\_the\_polarity} finds the pins at
+their polarity bits with the enable clear.
+\item \code{//lib/examples:ex\_pwm} drives it through a
+\code{LiteBridge1} on an AXI4 link and prints what the program
+measured: the duties as cycles high, the pulses around a change of
+width, a channel turned over, and the centred pulses.
+\item The build simulates the netlist against that run under nvc and
+Verilator: \code{//docs:pwm\_sim\_pwm\_tb\_test} and
+\code{//docs:pwm\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+Nothing in the tree yet. Issue 248 asks for a program on the board that
+fades an LED with it.
+
+\subsection*{Limits}
+
+Four channels of 16 bits, neither a parameter. The period is in system
+clock cycles, since there is no prescaler, so the slowest period is
+65\,535 cycles. Byte strobes are ignored. Nothing is refused: an
+address that names no word reads as zero or as the counter, and every
+read and write is answered \code{OKAY}. A read of a period or a duty
+returns what was written rather than what the counter is using, so
+there is no way to read the value in use. There is no interrupt, no
+dead time between complementary outputs, no fault input, no phase
+between channels and no period of its own for any of them. A period of
+zero written while the counter is enabled cannot take effect, because
+the load of the shadows is itself gated on the counter running; the
+enable has to come off first.

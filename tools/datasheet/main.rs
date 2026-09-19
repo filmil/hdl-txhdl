@@ -32,6 +32,7 @@ use txhdl_parts::gpio::Gpio;
 use txhdl_parts::hdmi::{vga, Hdmi, I2cInit};
 use txhdl_parts::i2c::I2c;
 use txhdl_parts::plic::Plic2;
+use txhdl_parts::pwm::Pwm;
 use txhdl_parts::spi::Spi;
 use txhdl_parts::station::Station3;
 use txhdl_parts::syscon::Syscon;
@@ -446,6 +447,7 @@ fn main() {
     sheet("Timer", "Timer<2>", Timer::<2>::lowered("timer"));
     sheet("Plic", "Plic2<0>", Plic2::<0>::lowered("plic"));
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));
+    sheet("Pwm", "Pwm", Pwm::lowered("pwm"));
     sheet("Spi", "Spi", Spi::lowered("spi"));
     sheet("Tracer", "Tracer<8>", Tracer::<8>::lowered("tracer"));
     sheet("I2c", "I2c", I2c::lowered("i2c"));
