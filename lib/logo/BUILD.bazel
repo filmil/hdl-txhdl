@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# The TxHDL logo as data: one 12-bit word per pixel, at the size a
+# framebuffer corner wants.
+#
+# The file is written by //tools/logo2rs and committed, because a Bazel
+# action cannot reach the drive the logo is kept on. That tool's comment
+# says how to write it again.
+#
+# The crate holds constants and nothing else, so it builds for the core
+# as readily as for this machine, and a program that draws a picture
+# depends on it wherever it runs.
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "txhdl_logo",
+    srcs = ["logo.rs"],
+    crate_name = "txhdl_logo",
+    edition = "2021",
+)
+
+# The source by name, for the documents' listings.
+filegroup(
+    name = "sources",
+    srcs = ["logo.rs"],
+)

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# The TxHDL logo, reduced to what a framebuffer pixel can hold.
+#
+# Run by hand, and its output committed, because a Bazel action cannot
+# reach the drive the logo is kept on:
+#
+#   bazel run //tools/logo2rs -- \
+#       -in $HOME/.../TxHDL/txhdl-icon.png -w 34 -h 34 \
+#       > lib/logo/logo.rs
+load("@rules_go//go:def.bzl", "go_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+go_binary(
+    name = "logo2rs",
+    srcs = ["main.go"],
+    pure = "on",
+)
