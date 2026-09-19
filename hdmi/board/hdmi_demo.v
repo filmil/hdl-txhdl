@@ -30,6 +30,12 @@ module hdmi_demo (
   output led2,
   output led3,
   output hdmi_nreset,
+  // The same reset again, on the ball the other board revision wires it
+  // to. The vendor's own demonstration for this board drives both, one
+  // named for revision 1.0, and which ball reaches the chip depends on
+  // which board this is. Driving both costs a pin that nothing else
+  // wants and removes the question. See issue #197.
+  output hdmi_nreset_alt,
   output hdmi_clk,
   output hdmi_hs,
   output hdmi_vs,
@@ -89,5 +95,6 @@ module hdmi_demo (
 
   assign led1 = !locked;
   assign led2 = !done;
+  assign hdmi_nreset_alt = hdmi_nreset;
   assign led3 = !failed;
 endmodule

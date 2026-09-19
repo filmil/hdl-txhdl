@@ -21,6 +21,10 @@ set_property IOSTANDARD LVCMOS33 [get_ports {led*}]
 
 # The encoder's reset, clock, syncs and enable.
 set_property PACKAGE_PIN Y17 [get_ports {hdmi_nreset}]
+# The chip's reset again, on the ball an earlier revision of this board
+# wires it to. The vendor's demonstration drives both, and this design
+# follows it rather than guessing which revision is on the desk.
+set_property PACKAGE_PIN L18 [get_ports {hdmi_nreset_alt}]
 set_property PACKAGE_PIN Y22 [get_ports {hdmi_clk}]
 set_property PACKAGE_PIN T18 [get_ports {hdmi_hs}]
 set_property PACKAGE_PIN R18 [get_ports {hdmi_vs}]
@@ -61,3 +65,8 @@ set_property IOSTANDARD LVCMOS33 [get_ports {hdmi_*}]
 
 set_property CONFIG_VOLTAGE 3.3 [current_design]
 set_property CFGBVS VCCO [current_design]
+
+# The board has four LEDs and this design names three, so K13 is an
+# unused pin, and a 7 series bitstream pulls unused pins down by
+# default, which leaves that LED glowing faintly. See issue #232.
+set_property BITSTREAM.CONFIG.UNUSEDPIN PULLNONE [current_design]
