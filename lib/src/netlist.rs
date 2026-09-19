@@ -1058,8 +1058,12 @@ impl Lowered {
     /// registered where a wire's are not.
     pub fn ports_file(&self) -> String {
         let mut out = String::new();
+        // A clock is marked as one rather than as an input, so that a
+        // testbench drives it as a clock and a unit of several clocks
+        // can be told apart from a unit with a clock-shaped input
+        // (issue 131).
         for c in self.clocks() {
-            out.push_str(&format!("{c} in 1\n"));
+            out.push_str(&format!("{c} clock 1\n"));
         }
         for (n, k, w) in &self.ports {
             let s = self.scope_col(n);

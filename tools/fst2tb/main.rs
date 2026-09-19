@@ -154,14 +154,31 @@ fn main() {
         }
         values.insert(name.clone(), per_tick);
     }
-    let clock = ports
+    // Every clock the netlist names, in the order it names them. The
+    // first is the one the testbench counts ticks by; the rest are
+    // driven beside it, each at its own period and phase, which is
+    // what lets a unit of several clocks be checked at all (issue
+    // 131). A ports file that marks none, which is one written before
+    // this, leaves `clk`.
+    let clocks: Vec<String> = ports
         .iter()
-        .find(|p| p.1 == "in" && p.0 == "clk")
+        .filter(|p| p.1 == "clock")
         .map(|p| p.0.clone())
-        .unwrap_or("clk".into());
+        .collect();
+    let clocks = if clocks.is_empty() {
+        vec!["clk".to_string()]
+    } else {
+        clocks
+    };
+
     // Directions: in, out, reg, and a channel's rxin, rxout, txin,
     // txout. A channel's wire is traced under the channel by its side.
-    let is_in = |d: &str| d == "in" || d == "rxin" || d == "txin";
+    // A clock is driven by the testbench as an input is, so it
+    // declares like one; `is_in` is what says "the testbench drives
+    // this", and the places that read a value from the trace ask for
+    // the direction by name instead.
+    let is_in =
+        |d: &str| d == "in" || d == "rxin" || d == "txin" || d == "clock";
     // A wire kept as a field is checked as an output is, but reached
     // inside the entity, as a register is.
     let is_out =
@@ -176,7 +193,11 @@ fn main() {
             .map(|(_, s)| s.clone())
     };
     let trace_name = |port: &str, dir: &str| -> String {
-        if inside(dir) {
+        if dir == "clock" {
+            // A wave records its clocks together, under `clocks`, so a
+            // clock is looked up there and not by its bare name.
+            format!("clocks.{port}")
+        } else if inside(dir) {
             format!("{unit}.{port}")
         } else if dir.starts_with("rx") || dir.starts_with("tx") {
             let (ch, part) = port.rsplit_once('_').unwrap_or((port, ""));
@@ -204,6 +225,29 @@ fn main() {
         None.or(Some(String::new())).filter(|_| i < times.len())
     };
     let _ = at;
+    // A clock's first rising tick and the ticks between its rising
+    // edges, read from the trace rather than assumed, so that a clock
+    // of any rate is replayed at the rate it ran (issue 131). A clock
+    // the trace says nothing about keeps the default clock's two ticks
+    // a cycle, rising at zero.
+    let clock_shape = |name: &str| -> (usize, usize) {
+        let Some(v) = values.get(name) else {
+            return (0, 2);
+        };
+        let high: Vec<usize> = (1..v.len())
+            .filter(|i| v[*i].ends_with('1') && !v[i - 1].ends_with('1'))
+            .collect();
+        let first = if v.first().is_some_and(|b| b.ends_with('1')) {
+            0
+        } else {
+            *high.first().unwrap_or(&0)
+        };
+        let period = match (high.first(), high.get(1)) {
+            (Some(a), Some(b)) => b - a,
+            _ => 2,
+        };
+        (first, period.max(1))
+    };
     let val = |name: &str, i: usize| -> Option<String> {
         values
             .get(name)
@@ -222,7 +266,7 @@ fn main() {
     // the testbench neither drives nor checks it.
     let missing: Vec<String> = ports
         .iter()
-        .filter(|(n, d, _)| *n != clock && !inside(d) && d != "inout")
+        .filter(|(_, d, _)| !inside(d) && d != "inout")
         .map(|(n, d, _)| trace_name(n, d))
         .filter(|t| !values.contains_key(t))
         .collect();
@@ -279,14 +323,24 @@ fn main() {
             .collect();
         o.push_str(&format!("  {entity} uut ({});\n", maps.join(", ")));
         let last = times.last().copied().unwrap_or(0) as usize;
-        o.push_str(&format!(
-            "  initial begin\n    #0.5;\n    repeat ({}) begin\n      \
-             {clock} = 1; #1;\n      {clock} = 0; #1;\n    end\n  end\n",
-            last / 2 + 2
-        ));
+        // One driver per clock, each at the period and phase its own
+        // trace shows. The half tick is the same offset the single
+        // clock always had: the edge falls between the tick the inputs
+        // are applied at and the tick they are checked at.
+        for c in &clocks {
+            let (phase, period) = clock_shape(&trace_name(c, "clock"));
+            let half = period as f64 / 2.0;
+            o.push_str(&format!(
+                "  initial begin\n    {c} = 0;\n    #{};\n    \
+                 repeat ({}) begin\n      {c} = 1; #{half};\n      \
+                 {c} = 0; #{half};\n    end\n  end\n",
+                phase as f64 + 0.5,
+                last / period + 2
+            ));
+        }
         o.push_str("  initial begin\n");
         for (n, d, w) in &ports {
-            if d == "in" && *n != clock {
+            if d == "in" && !clocks.contains(n) {
                 if let Some(v) = val(&trace_name(n, d), 0) {
                     o.push_str(&format!("    {n} = {};\n", vlit(*w, &v)));
                 }
@@ -304,7 +358,7 @@ fn main() {
         while t + 2 <= last {
             o.push_str("    #1;\n");
             for (n, d, w) in &ports {
-                if is_in(d) && *n != clock {
+                if is_in(d) && !clocks.contains(n) {
                     let at = if registered(d) { t } else { t + 2 };
                     if let Some(v) = val(&trace_name(n, d), at) {
                         o.push_str(&format!("    {n} = {};\n", vlit(*w, &v)));
@@ -409,20 +463,31 @@ fn main() {
         .collect();
     o.push_str(&format!("{});\n\n", maps.join(", ")));
     let last = times.last().copied().unwrap_or(0) as usize;
-    o.push_str(
-        "  -- The clock: rising at even ticks, one tick per nanosecond.\n\
-           clock : process\n  begin\n",
-    );
-    // The first edge is at time zero, where the inputs for it are
-    // applied too: a few deltas first, so the wires that follow those
-    // inputs have settled when the edge comes.
-    o.push_str(&format!(
-        "    for i in 1 to 8 loop wait for 0 ns; end loop;\n\
-         for i in 0 to {} loop\n      {clock} <= '1'; wait for 1 ns;\n\
-         {clock} <= '0'; wait for 1 ns;\n    end loop;\n    wait;\n\
-         end process;\n\n",
-        last / 2 + 1
-    ));
+    // One process per clock, each at the period and phase its own
+    // trace shows, one tick per nanosecond. The first edge is at the
+    // clock's phase, where the inputs for it are applied too: a few
+    // deltas first, so the wires that follow those inputs have settled
+    // when the edge comes.
+    for (k, c) in clocks.iter().enumerate() {
+        let (phase, period) = clock_shape(&trace_name(c, "clock"));
+        let half = period as f64 / 2.0;
+        o.push_str(&format!(
+            "  -- {c}: rising every {period} ticks from tick {phase}.\n\
+             clock{k} : process\n  begin\n"
+        ));
+        let wait = if phase == 0 {
+            String::new()
+        } else {
+            format!("    wait for {phase} ns;\n")
+        };
+        o.push_str(&format!(
+            "    for i in 1 to 8 loop wait for 0 ns; end loop;\n{wait}\
+             for i in 0 to {} loop\n      {c} <= '1'; wait for {half} ns;\n\
+             {c} <= '0'; wait for {half} ns;\n    end loop;\n    wait;\n\
+             end process;\n\n",
+            last / period + 1
+        ));
+    }
     o.push_str("  -- The trace, replayed and checked.\n  check : process\n");
     o.push_str(
         "    procedure expect(what : string; ok : boolean; at : time) is\n\
@@ -446,7 +511,7 @@ fn main() {
     // registered input starts as the channel does, empty.
     let mut first = String::new();
     for (n, d, w) in &ports {
-        if d == "in" && *n != clock {
+        if d == "in" && !clocks.contains(n) {
             if let Some(v) = val(&trace_name(n, d), 0) {
                 first.push_str(&format!("    {n} <= {};\n", lit(*w, &v)));
             }
@@ -481,7 +546,7 @@ fn main() {
     // as the Verilog testbench's do.
     let mut tick = String::from("      wait for 900 ps;\n");
     for (n, d, w) in &ports {
-        if is_in(d) && *n != clock {
+        if is_in(d) && !clocks.contains(n) {
             let v = take(*w);
             tick.push_str(&format!("      {n} <= {};\n", conv(*w, v)));
         }
@@ -553,7 +618,7 @@ fn main() {
     let mut frames: Vec<String> = Vec::new();
     let mut last_in: Vec<String> = ports
         .iter()
-        .filter(|(n, d, _)| is_in(d) && *n != clock)
+        .filter(|(n, d, _)| is_in(d) && !clocks.contains(n))
         .map(|(_, _, w)| "0".repeat(*w))
         .collect();
     let mut t = 0usize;
@@ -565,7 +630,7 @@ fn main() {
         let mut f = String::new();
         let mut i = 0;
         for (n, d, _) in &ports {
-            if is_in(d) && *n != clock {
+            if is_in(d) && !clocks.contains(n) {
                 let at = if registered(d) { t } else { t + 2 };
                 if let Some(v) = val(&trace_name(n, d), at) {
                     last_in[i] = v;
