@@ -333,8 +333,8 @@ bursts of whole words, and looks at nothing else. There is no
 address, because a router has already decided the burst is this
 peripheral's. There is no length, so a longer burst is not served
 correctly and must not be sent to it. There is no strobe, so every
-write replaces the whole word. The timer of the Vreteno
-core~\cite{vreteno} has the same shape, with four words and the
+write replaces the whole word. The interrupt controller of the
+Vreteno core~\cite{vreteno} has the same shape, with five words and the
 strobes. The framebuffer of Razboj~\cite{gpu} is the same idea with a
 whole memory and bursts.
 

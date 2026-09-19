@@ -56,8 +56,8 @@ Base & Mask & Child & Behind \\
 \midrule
 \code{0x1000} & \code{0xffff\_f000} & \code{dmem}, \code{Dmem<2>} &
 \code{pdmem}, \code{AxiPer} \\
-\code{0x2000} & \code{0xffff\_f000} & \code{timer}, \code{Timer<2>} &
-\code{ptimer}, \code{AxiPer} \\
+\code{0x0200\_0000} & \code{0xffff\_0000} & \code{timer},
+\code{Timer<2>} & \code{ptimer}, \code{AxiPer} \\
 \code{0x3000} & \code{0xffff\_f000} & \code{uart}, \code{Uart<DIV>} &
 \code{puart}, \code{LiteBridge1} at \code{0x3000} \\
 \code{0x4000\_0000} & \code{0xc000\_0000} & \code{ddr3},

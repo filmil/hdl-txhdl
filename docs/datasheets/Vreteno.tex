@@ -25,8 +25,9 @@ The bus side is an AXI host written as hardware. The core issues a
 burst on \code{issue}, sends a store's beat on \code{wbeat}, and hands
 identifiers back on \code{release}. It receives \code{grant},
 \code{done} and \code{rdata} from its tracker, an \code{AxiHost}. The
-other inputs are \code{rst}, the external interrupt \code{irq} and the
-timer's line \code{tirq}. The outputs are \code{halt}, \code{instr},
+other inputs are \code{rst}, the external interrupt \code{irq}, the
+timer's line \code{tirq} and the software interrupt \code{sirq}, which
+the controller raises from \code{msip}. The outputs are \code{halt}, \code{instr},
 the word retiring, and \code{wb}, a \code{Writeback} of \code{done},
 \code{rd} and \code{val}.
 
@@ -124,11 +125,13 @@ Every other trap writes zero to \code{mtval}.
 \code{mtvec}. \code{mret} sets bit 3 from bit 7, sets bit 7, and goes
 to \code{mepc}.
 \item The external interrupt is ready when bit 11 is set in both
-\code{mie} and \code{mip}. The timer's is ready when bit 7 of
-\code{mie} is set and \code{tirq} is high. Either is taken when bit 3
-of \code{mstatus} is set, in place of the instruction in execute.
-The external interrupt, cause \code{0x8000\_000b}, wins over the
-timer's, cause \code{0x8000\_0007}.
+\code{mie} and \code{mip}. The software interrupt is ready when bit 3
+of \code{mie} is set and \code{sirq} is high, and the timer's when bit
+7 of \code{mie} is set and \code{tirq} is high. Any of the three is
+taken when bit 3 of \code{mstatus} is set, in place of the instruction
+in execute. The external interrupt, cause \code{0x8000\_000b}, wins
+over the software interrupt, cause \code{0x8000\_0003}, which wins over
+the timer's, cause \code{0x8000\_0007}.
 \item A multiply or divide starts the sequencer and stalls in execute.
 A multiply is one step and a division thirty-two. \code{//docs:vreteno}
 states that a multiply takes three cycles and a division thirty-three.

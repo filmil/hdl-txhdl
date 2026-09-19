@@ -1,21 +1,30 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: Timer
-\datasheet{Timer}{Vreteno's timer: a count, a compare and an interrupt line, behind an AXI peripheral end.}
+\datasheet{Timer}{Vreteno's core-local interruptor: a count, a compare, a software interrupt and two lines, behind an AXI peripheral end.}
 
 \dsfacts{\code{cpu/vreteno/src/timer.rs}}{\code{vreteno32::timer::Timer}}%
 {\code{//docs:vreteno}, \code{//docs:axi}}
 
 \subsection*{Function}
 
-\code{Timer} is the machine timer of the Vreteno machine. It holds a
-64-bit count, \code{mtime}, and a 64-bit compare, \code{mtimecmp}, and
-shows each as two words on the bus. It raises \code{tirq} while the
-count has reached the compare. The core reads that line as bit 7 of
-\code{mip}.
+\code{Timer} is the core-local interruptor of the Vreteno machine, the
+CLINT. It holds a 64-bit count, \code{mtime}, a 64-bit compare,
+\code{mtimecmp}, and one bit, \code{msip}, and it drives two lines. It
+raises \code{tirq} while the count has reached the compare, which the
+core reads as bit 7 of \code{mip}, and it raises \code{sirq} while
+\code{msip} is set, which the core reads as bit 3. A program raises its
+own software interrupt by writing \code{msip} and clears it by writing
+it back to zero; nothing else touches that bit.
+
+The three registers are at the offsets every RISC-V platform puts them
+at, so that a stock port of an operating system finds them where it
+looks. That is what makes the window 64\,KiB: \code{mtime} sits at
+\code{0xbff8}, far from the compare, and the two cannot share a page.
 
 It is the peripheral client of an \code{AxiPer}: requests come on
 \code{req} and write beats on \code{wd}, and answers go out on
-\code{ans} and \code{rb}. The input \code{rst} clears the count.
+\code{ans} and \code{rb}. The input \code{rst} clears the count and
+nothing else.
 
 \subsection*{Parameters}
 
@@ -32,24 +41,33 @@ and \code{rb}, in bits. The tables use 2, as the board does. \\
 
 \subsection*{Register map}
 
-Offsets from the timer's base. On the board the base is
-\code{0x2000}, which is also \code{isa::TIMER\_BASE}.
+Offsets from the controller's base, which is
+\code{isa::CLINT\_BASE}, \code{0x0200\_0000}, under the mask
+\code{isa::CLINT\_MASK}, \code{0xffff\_0000}: a window of 64\,KiB.
 
 \begin{center}\footnotesize
 \begin{tabular}{@{}llp{0.55\textwidth}@{}}
 \toprule
 Offset & Word & Access \\
 \midrule
-\code{0x0} & \code{mtime}, bits 31 to 0 & Read and write. \\
-\code{0x4} & \code{mtime}, bits 63 to 32 & Read and write. \\
-\code{0x8} & \code{mtimecmp}, bits 31 to 0 & Read and write. \\
-\code{0xc} & \code{mtimecmp}, bits 63 to 32 & Read and write. \\
+\code{0x0000} & \code{msip}, bit 0 & Read and write. Bit 0 raises
+the software interrupt; the other 31 bits of a write are dropped and
+read back as zero. \\
+\code{0x4000} & \code{mtimecmp}, bits 31 to 0 & Read and write. \\
+\code{0x4004} & \code{mtimecmp}, bits 63 to 32 & Read and write. \\
+\code{0xbff8} & \code{mtime}, bits 31 to 0 & Read and write. \\
+\code{0xbffc} & \code{mtime}, bits 63 to 32 & Read and write. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The timer selects the word by bits 3 and 2 of the address and looks at
-no other bits.
+The controller selects the word by the whole 16-bit offset, bits 15 to
+0, and looks at no bit above them: the router sends it only the bursts
+in its window, so nothing higher has to be decoded. The offsets are far
+apart, which is why the decode is on the offset rather than on two bits
+of it. Every offset in the window that is not one of the four above
+reads and writes as \code{msip} does; there are five words in 64\,KiB
+and nothing answers for the rest.
 
 \dstables{Timer}
 
@@ -72,16 +90,30 @@ above \code{mtimecmp}, compared as unsigned numbers. \code{tirq} is
 what the timer decided in the cycle before.
 \item \code{mtimecmp} starts at zero and \code{rst} does not clear it,
 so the line is high until software writes a compare above the count.
+\item \code{sirq} is \code{msip} itself, with no register between, so
+the core sees a program's own software interrupt in the cycle the write
+lands rather than the cycle after. Nothing but a write to \code{0x0000}
+changes that bit: the controller neither sets it nor clears it.
+\item The count is driven every cycle, and a write to one of its halves
+is driven after that, so a write in the same cycle as a tick keeps the
+written word and the tick is lost.
 \end{itemize}
 
 \subsection*{Verification}
 
 \begin{itemize}
-\item \code{//cpu/vreteno:lockstep} hands \code{pending} to the model
-for each instruction and checks \code{mtimecmp} against the model at
-the halt. \code{demo\_program} sets the compare to 150 and counts the
-timer's interrupt. \code{random\_programs} writes the count and the
-compare with arbitrary words and runs with the timer firing.
+\item \code{//cpu/vreteno:lockstep} hands \code{pending} and
+\code{msip} to the model for each instruction and checks
+\code{mtimecmp} against the model at the halt, after draining the bus,
+since a store is posted and the compare lands some cycles after the
+core issued it. \code{demo\_program} sets the compare to 150 and counts
+the timer's interrupt. \code{random\_programs} reads the count and
+writes the compare 64 cycles beyond it, in sixty-four seeded programs.
+\item \code{a\_program\_that\_interrupts\_itself} writes
+\code{msip}, takes the trap, clears the bit in the handler and counts;
+it is the software interrupt's own test.
+\item \code{//cpu/vreteno:pair} and \code{//cpu/vreteno:board\_test}
+run the controller on a bus beside a core, though neither is about it.
 \item The build simulates \code{Timer<2>}'s netlist against the trace
 of \code{//cpu/vreteno:vreteno} under nvc and Verilator:
 \code{//docs:vreteno\_sim\_timer\_timer\_tb\_test} and
@@ -91,13 +123,20 @@ of \code{//cpu/vreteno:vreteno} under nvc and Verilator:
 \subsection*{Used by}
 
 \code{Board}, as \code{timer} behind the tracker \code{ptimer}, with
-its line wired to the core's \code{tirq}. The demonstration
+\code{tirq} and \code{sirq} wired to the core's two inputs of those
+names, in the 64\,KiB from \code{0x0200\_0000}. The demonstration
 \code{//cpu/vreteno:vreteno}, the lockstep test and \code{run.rs}.
 
 \subsection*{Limits}
 
-The count counts clock cycles. The timer serves bursts of one beat and
-checks no address beyond bits 3 and 2, since the router sends it only
-its own range. One write is held at a time, and no read is taken while
-it waits. A write updates 32 bits of a 64-bit register, so software
-sets a whole compare in two stores.
+The count counts clock cycles. The controller serves bursts of one
+beat: \code{len}, \code{size} and the rest of a request are not read,
+every read beat carries \code{last}, and a burst of more than one beat
+is not served correctly. It checks no address above bit 15, since the
+router sends it only its own window. One write is held at a time, and no
+read is taken while it waits, so a write blocks the reads behind it. A
+write updates 32 bits of a 64-bit register, so software sets a whole
+compare in two stores, and the count and the compare are too far apart
+in the window for one base register to reach both with a 12-bit offset,
+which the programs in \code{program.rs} work around with a second
+register. Every answer is \code{OKAY}; nothing returns an error.
