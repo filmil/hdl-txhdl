@@ -23,7 +23,7 @@ reached at linkedin.com/in/dragisa-jankovic.}%
 \thanks{A few pages on the whole of it, for a reader deciding whether
 to read the rest. Every claim here is a target in the project
 repository \code{HDL/txhdl} that the build runs; the cover document,
-\code{//docs:cover}, names the twenty-two documents that say more.}%
+\code{//docs:cover}, names the twenty-three documents that say more.}%
 \thanks{The authors used a large language model, Claude, as an
 assistant in exploring the concepts and in writing and constructing
 the documents and the programs; every commit of the repository says
@@ -67,8 +67,8 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 44\,097 lines of Rust: 12\,233 of runtime
-and macros, 12\,358 of parts, 8\,250 in sixty-four examples, 8\,338 of
+Together they are 45\,662 lines of Rust: 12\,233 of runtime
+and macros, 12\,845 of parts, 8\,298 in sixty-four examples, 9\,368 of
 Vreteno with its board, and 2\,918 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
@@ -99,6 +99,7 @@ A trace buffer, the last N entries & parts & yes \\
 A tee and a check, for running one thing twice & parts & both \\
 A flash read as memory, mode 0 only & parts & both \\
 A peripheral written as software, behind a channel & parts & both \\
+Its wire: each transaction one Ethernet frame & parts & both \\
 Vreteno; memory, timer, serial port & \code{cpu} & all four \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
@@ -129,6 +130,7 @@ The board & core, 5 devices, DDR3 & 3 runs, Vivado \\
 Ethernet & the MAC, the board's PHY & on the board \\
 Video & HDMI, its I2C, the board & on the board \\
 PCIe & XDMA endpoint, pins, registers & a run, Vivado \\
+The flagship & board, Ethernet, video, in one part & the board, routed \\
 On silicon & Vreteno, Yosys, OpenROAD & routed, no DRC \\
 \bottomrule
 \end{tabular}
@@ -366,8 +368,9 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs a hundred and forty targets, of
-which a hundred and twenty are netlists under both simulators; the rest are the
+its ports. \code{bazel test //...} runs a hundred and forty-three
+targets, of
+which a hundred and twenty-two are netlists under both simulators; the rest are the
 core's model and
 programs, the board's own run, Razboj, the parts, the SoC's run, and
 the tools. Four more are tagged manual: the board and its DDR3 under
