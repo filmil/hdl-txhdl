@@ -26,14 +26,16 @@ use crate::dmem::Dmem;
 use crate::timer::Timer;
 use crate::uart::Uart;
 use ddr3::Ddr3Per;
-use txhdl::comp::{chan, join2, signal, DefaultClock, In, Out, Pad, Unit};
+use txhdl::comp::{
+    chan, join2, signal, DefaultClock, In, Out, Pad, Rx, Tx, Unit,
+};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
 use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerReq, B, R, W,
 };
 use txhdl_parts::bus::axi_lite::{
-    LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge2, LiteR, LiteW,
+    LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge3, LiteR, LiteW,
 };
 use txhdl_parts::bus::router::Router5;
 use txhdl_parts::plic::Plic2;
@@ -71,13 +73,33 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     pub router: BoardRouter,
     pub pdmem: AxiPer<32, 32, 4, 2>,
     pub ptimer: AxiPer<32, 32, 4, 2>,
-    /// The serial port and the pulse width modulator share the
-    /// page at `0x3000`: the port at `0x3000`, the modulator at
-    /// `0x3100`, each a sixteenth of it. The router has five ports
-    /// and all five are taken, and a peripheral of six registers
-    /// does not want one of its own.
-    pub puart:
-        LiteBridge2<32, 32, 4, 2, 0x3000, 0xffff_ff00, 0x3100, 0xffff_ff00>,
+    // begin{vslot}
+    /// Three small peripherals share the page at `0x3000`: the serial
+    /// port at `0x3000`, the pulse width modulator at `0x3100`, and
+    /// whatever the board hangs on the third slot at `0x3200`, each a
+    /// sixteenth of the page. The router has five ports and all five
+    /// are taken, and a peripheral of six registers does not want one
+    /// of its own.
+    ///
+    /// The third slot leaves this unit as ports rather than reaching a
+    /// field, because what sits there runs on a clock of its own: on
+    /// the board it is the video peripheral on the pixel clock, and
+    /// the crossing between the two is the board top's business. A
+    /// design with nothing there ties the slot off, and a read of it
+    /// answers when the tie-off does.
+    pub puart: LiteBridge3<
+        32,
+        32,
+        4,
+        2,
+        0x3000,
+        0xffff_ff00,
+        0x3100,
+        0xffff_ff00,
+        0x3200,
+        0xffff_ff00,
+    >,
+    // end{vslot}
     pub pddr3: AxiPer<32, 32, 4, 2>,
     pub pplic: LiteBridge1<32, 32, 4, 2, 0x0c00_0000, 0xfc00_0000>,
     pub dmem: Dmem<2>,
@@ -96,7 +118,7 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
 {
     async fn run(
         &mut self,
-        (rst, irq, rx, ddr3_clk, ref_clk, ddr3_clk_90, ddr3_rst_n): (
+        (rst, irq, rx, ddr3_clk, ref_clk, ddr3_clk_90, ddr3_rst_n, vb, vr): (
             In<Bit>,
             In<Bit>,
             In<Bit>,
@@ -104,6 +126,8 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             In<Bit>,
             In<Bit>,
             In<Bit>,
+            Rx<LiteB>,
+            Rx<LiteR<32>>,
         ),
         (
             halt,
@@ -125,6 +149,9 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             dq,
             dqs,
             dqs_n,
+            vaw,
+            var,
+            vw,
         ): (
             Out<Bit>,
             Out<Bit>,
@@ -145,6 +172,9 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             Pad<U<32>>,
             Pad<U<4>>,
             Pad<U<4>>,
+            Tx<LiteAw<32>>,
+            Tx<LiteAr<32>>,
+            Tx<LiteW<32, 4>>,
         ),
     ) {
         // The reset, read by the core, the timer and the serial port.
@@ -306,11 +336,12 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                             self.puart.run(
                                 (
                                     aw2_rx, ar2_rx, w2_rx, lb_rx, lr_rx,
-                                    pb_pwm_rx, pr_pwm_rx,
+                                    pb_pwm_rx, pr_pwm_rx, vb, vr,
                                 ),
                                 (
                                     law_tx, lar_tx, lw_tx, paw_pwm_tx,
-                                    par_pwm_tx, pw_pwm_tx, b2_tx, r2_tx,
+                                    par_pwm_tx, pw_pwm_tx, vaw, var, vw,
+                                    b2_tx, r2_tx,
                                 ),
                             ),
                             join2(

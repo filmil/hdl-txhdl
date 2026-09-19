@@ -46,6 +46,7 @@ rust_test(
         "//cpu/vreteno/rust:hello_program",
         "//cpu/vreteno/rust:irq_program",
         "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
     ],
 )
 

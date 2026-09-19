@@ -6,8 +6,9 @@
 //! interrupt, which takes the serial port's receive interrupt through
 //! the interrupt controller. And its netlist, which holds the memory
 //! controller as a foreign module.
-use txhdl::comp::{pad, signal, DefaultClock, Running, Unit};
+use txhdl::comp::{chan, pad, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
+use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use vreteno32::board::Board;
 use vreteno32::core::Vreteno;
 use vreteno32::dmem::Dmem;
@@ -58,8 +59,22 @@ fn run_paced(
     let bit = || signal::<Bit, DefaultClock>().0;
     let (halt_o, halt) = signal::<Bit, DefaultClock>();
     let (tx_o, tx) = signal::<Bit, DefaultClock>();
+    // The third slot of the page at `0x3000` is tied off: nothing in
+    // these runs writes to `0x3200`, and a run that did would wait on
+    // an answer that never comes, which is what the board top's own
+    // tie-off does as well.
     let mut sim = Running::new(board.run(
-        (rst, irq, rx, quiet(), quiet(), quiet(), quiet()),
+        (
+            rst,
+            irq,
+            rx,
+            quiet(),
+            quiet(),
+            quiet(),
+            quiet(),
+            chan::<LiteB, DefaultClock>().1,
+            chan::<LiteR<32>, DefaultClock>().1,
+        ),
         (
             halt_o,
             tx_o,
@@ -82,6 +97,9 @@ fn run_paced(
             pad::<U<32>, DefaultClock>(),
             pad::<U<4>, DefaultClock>(),
             pad::<U<4>, DefaultClock>(),
+            chan::<LiteAw<32>, DefaultClock>().0,
+            chan::<LiteAr<32>, DefaultClock>().0,
+            chan::<LiteW<32, 4>, DefaultClock>().0,
         ),
     ));
     rst_o.set(Bit::One);

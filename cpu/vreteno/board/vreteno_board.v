@@ -141,7 +141,18 @@ module vreteno_board (
     .odt(ddr3_odt),
     .dq(ddr3_dq_p),
     .dqs(ddr3_dqs_p),
-    .dqs_n(ddr3_dqs_n)
+    .dqs_n(ddr3_dqs_n),
+    // The third slot of the page at `0x3000`, at `0x3200`, is for a
+    // peripheral on a clock of its own, and this board has none: its
+    // requests go nowhere and no answer comes back, so a program that
+    // touches `0x3200` waits forever, and nothing here touches it.
+    // //flagship is the board that fills the slot, with the video
+    // peripheral on the pixel clock.
+    .vaw_data(), .vaw_valid(), .vaw_ready(1'b1),
+    .var_data(), .var_valid(), .var_ready(1'b1),
+    .vw_data(), .vw_valid(), .vw_ready(1'b1),
+    .vb_data(2'd0), .vb_valid(1'b0), .vb_ready(),
+    .vr_data(34'd0), .vr_valid(1'b0), .vr_ready()
   );
 
   // The serial line idles high, so any byte begins by pulling it low.
