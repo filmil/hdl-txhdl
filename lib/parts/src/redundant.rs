@@ -12,8 +12,12 @@
 //! word from each copy, in the same cycle, passes the first copy's on,
 //! and raises a line that stays raised when the two differ.
 //!
-//! Neither holds the stream up otherwise: a `Tee` is combinational,
-//! and a `Check` holds one bit, which is the disagreement it saw.
+//! Neither holds the stream up otherwise. A `Tee` registers the word
+//! it is passing, so that its netlist has no combinational path from
+//! one side's handshake to the other's, and a `Check` holds one bit,
+//! which is the disagreement it saw.
+use std::marker::PhantomData;
+
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, Transaction, Value};
 use txhdl::{lower, with, Trace};
@@ -86,8 +90,12 @@ impl<T: Transaction + Value> Unit for Tee<T> {
 pub struct Check<T: Transaction + Value + PartialEq> {
     /// Whether a disagreement has been seen since the last reset.
     pub differed: Reg<Bit>,
-    /// The last word it passed on, which nothing reads.
-    pub last: Reg<T>,
+    /// What it compares. The check keeps no word: it compares the two
+    /// heads as they pass and holds only the bit. The payload is named
+    /// here because a type parameter a struct does not use is one Rust
+    /// refuses, and `PhantomData` is neither state nor an end of a
+    /// wire, so it is nothing in the netlist.
+    _t: PhantomData<T>,
 }
 
 #[lower]
