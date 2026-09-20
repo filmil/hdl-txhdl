@@ -35,7 +35,7 @@ mod tests {
     use super::node::Node;
     use crate::bus::axi::sim::Ram;
     use crate::bus::axi::{
-        axi, Ar, Aw, AxiHost, AxiPer, Link, Rd, Resp, Wr, B, R, W,
+        axi, Ar, Aw, AxiHost, AxiPer, BurstKind, Link, Rd, Resp, Wr, B, R, W,
     };
     use crate::bus::router::Router4;
     use std::cell::RefCell;
@@ -274,15 +274,15 @@ mod tests {
         );
     }
 
-    /// A write of two beats across the network, which the bridges do
-    /// not carry (issue 125), and which the host bridge therefore
-    /// refuses. Before the refusal this test hung: the write left as
-    /// one packet marked last, so the peripheral's tracker waited for
-    /// a beat that had stayed behind and answered nothing, and the
-    /// client waited for ever. Now the host is told `SlvErr` and the
-    /// memory is left alone.
+    /// A write of two beats across the network: the host bridge splits
+    /// it into two single-beat writes at consecutive addresses (issue
+    /// 125), the memory takes both, and the host is answered once,
+    /// `Okay`. Before the split such a burst was refused, and before
+    /// the refusal this test hung: the write left as one packet marked
+    /// last, the peripheral's tracker waited for a beat that had
+    /// stayed behind, and the client waited for ever.
     #[test]
-    fn a_write_of_two_beats_is_refused_rather_than_carried() {
+    fn a_write_of_two_beats_crosses_the_lattice_as_two_writes() {
         let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
         let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
         let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
@@ -361,17 +361,22 @@ mod tests {
         }
         let got = got.borrow();
         assert_eq!(got.len(), 1, "the write never answered");
-        assert_eq!(got[0], Resp::SlvErr, "a long burst is refused");
-        assert_eq!(ram.word(0x1010 / 4).raw(), 0, "nothing was written");
-        assert_eq!(ram.word(0x1014 / 4).raw(), 0, "nor at the next word");
+        assert_eq!(got[0], Resp::Okay, "a long burst is carried");
+        assert_eq!(ram.word(0x1010 / 4).raw(), 0xaaaaaa, "the first beat");
+        assert_eq!(
+            ram.word(0x1014 / 4).raw(),
+            0xbbbbbb,
+            "the second, after it"
+        );
     }
 
-    /// The refusal is of that burst and not of the bridge: a write of
-    /// one beat sent after a refused one still crosses and is
-    /// answered, so the eaten beats left nothing behind on the
+    /// A wrapping burst is the one still refused, since the wrap is
+    /// not computed at the bridge. The refusal is of that burst and not
+    /// of the bridge: a write of one beat sent after it still crosses
+    /// and is answered, so the eaten beats left nothing behind on the
     /// channel.
     #[test]
-    fn a_short_write_after_a_refused_one_still_works() {
+    fn a_wrapping_write_is_refused_and_the_one_after_it_is_served() {
         let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
         let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
         let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
@@ -408,7 +413,10 @@ mod tests {
         let client = async move {
             let bad = host
                 .write(
-                    Wr::at(0x1010u32),
+                    Wr {
+                        burst: BurstKind::Wrap,
+                        ..Wr::at(0x1010u32)
+                    },
                     &[U::from(0xaaaaaau32), U::from(0xbbbbbbu32)],
                 )
                 .await;
@@ -453,7 +461,7 @@ mod tests {
         }
         let got = got.borrow();
         assert_eq!(got.len(), 1, "the writes never came back");
-        assert_eq!(got[0].0, Resp::SlvErr, "the long burst is refused");
+        assert_eq!(got[0].0, Resp::SlvErr, "the wrapping burst is refused");
         assert_eq!(got[0].1, Resp::Okay, "the one after it is served");
         assert_eq!(
             ram.word(0x1020 / 4).raw(),
@@ -1000,5 +1008,242 @@ mod tests {
             cuts > 3,
             "the two sources did not mix at the output: {sharing:?}"
         );
+    }
+    /// A fixed burst is every beat at one address, and the split
+    /// keeps it so: three words to one address leave as three writes
+    /// there, and the word holds the last of them, with the one after
+    /// it untouched.
+    #[test]
+    fn a_fixed_write_lands_every_beat_on_one_word() {
+        let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
+        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+
+        let Link {
+            host,
+            host_in,
+            host_out,
+            per_in: hp_in,
+            per_out: hp_out,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let mut htrk = AxiHost::<A, D, S, I, NIDS>::default();
+        let mut hbr = Bridge::default();
+        let hx = net.exits.remove(0);
+
+        let Link {
+            per,
+            per_in: pp_in,
+            per_out: pp_out,
+            host_in: ph_in,
+            host_out: ph_out,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let mut ptrk = AxiPer::<A, D, S, I>::default();
+        let mut pbr = Peri::default();
+        let px = net.exits.pop().unwrap();
+        let ram = Ram::<A, D, S, I>::new(2048);
+
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let out = got.clone();
+        let client = async move {
+            let w = host
+                .write(
+                    Wr {
+                        burst: BurstKind::Fixed,
+                        ..Wr::at(0x1010u32)
+                    },
+                    &[U::from(1u32), U::from(2u32), U::from(3u32)],
+                )
+                .await;
+            let wr = w.done().await;
+            out.borrow_mut().push(wr.resp);
+        };
+
+        let nodes = join_all(vec![
+            Box::pin(n00.run(net.ins.remove(0), net.outs.remove(0)))
+                as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
+            Box::pin(n10.run(net.ins.remove(0), net.outs.remove(0))),
+            Box::pin(n01.run(net.ins.remove(0), net.outs.remove(0))),
+            Box::pin(n11.run(net.ins.remove(0), net.outs.remove(0))),
+        ]);
+        let mut sim = Running::new(join2(
+            join2(
+                nodes,
+                join2(
+                    htrk.run(host_in, host_out),
+                    hbr.run(
+                        (hp_in.0, hp_in.1, hp_in.2, hx.p_out),
+                        (hx.q_in, hp_out.2, hp_out.3),
+                    ),
+                ),
+            ),
+            join2(
+                join2(
+                    ptrk.run(pp_in, pp_out),
+                    pbr.run(
+                        (px.q_out, ph_in.2, ph_in.3),
+                        (ph_out.0, ph_out.1, ph_out.2, px.p_in),
+                    ),
+                ),
+                join2(client, ram.clone().serve(per, 2)),
+            ),
+        ));
+        for _ in 0..600 {
+            sim.cycle();
+        }
+        let got = got.borrow();
+        assert_eq!(got.len(), 1, "the write never answered");
+        assert_eq!(got[0], Resp::Okay, "a fixed burst is carried");
+        assert_eq!(ram.word(0x1010 / 4).raw(), 3, "the last beat stands");
+        assert_eq!(ram.word(0x1014 / 4).raw(), 0, "the next word untouched");
+    }
+
+    /// Two hosts, at two corners, each writing sixteen words at once
+    /// to one memory at a third, and reading them back. The two
+    /// bursts are in the network together, cut into each other
+    /// wherever their paths merge, and every word still lands in its
+    /// place and in its order, because each beat left as a whole
+    /// write of its own. This is what issue 125 asked for.
+    #[test]
+    fn two_hosts_write_sixteen_beats_at_once_and_every_word_lands() {
+        let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
+        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+        let nodes = join_all(vec![
+            Box::pin(n00.run(net.ins.remove(0), net.outs.remove(0)))
+                as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
+            Box::pin(n10.run(net.ins.remove(0), net.outs.remove(0))),
+            Box::pin(n01.run(net.ins.remove(0), net.outs.remove(0))),
+            Box::pin(n11.run(net.ins.remove(0), net.outs.remove(0))),
+        ]);
+        // The memory is at 1, 1 and the two hosts at 0, 0 and 1, 0.
+        let e00 = net.exits.remove(0);
+        let e10 = net.exits.remove(0);
+        let e11 = net.exits.pop().unwrap();
+
+        let ram = Ram::<A, D, S, I>::new(2048);
+        let Link {
+            per,
+            per_in: pp_in,
+            per_out: pp_out,
+            host_in: ph_in,
+            host_out: ph_out,
+            ..
+        } = axi::<A, D, S, I, NIDS>();
+        let mut ptrk = AxiPer::<A, D, S, I>::default();
+        let mut pbr = Peri::default();
+
+        const BEATS: usize = 16;
+        /// The word host `h` puts at beat `k`.
+        fn beat(h: u32, k: usize) -> u32 {
+            (h << 24) | 0x0011_0000 | k as u32
+        }
+        let got = Rc::new(RefCell::new(Vec::new()));
+        // One host's corner, its tracker, its bridge and its client.
+        let mk = |h: u32, at: u32| {
+            let Link {
+                host,
+                host_in,
+                host_out,
+                per_in,
+                per_out,
+                ..
+            } = axi::<A, D, S, I, NIDS>();
+            let out = got.clone();
+            let client = async move {
+                let words: Vec<U<D>> =
+                    (0..BEATS).map(|k| U::from(beat(h, k))).collect();
+                let w = host.write(Wr::at(at), &words).await;
+                assert_eq!(w.done().await.resp, Resp::Okay, "the burst");
+                let r = host.read(Rd::at(at, BEATS)).await;
+                let rd = r.done().await;
+                assert_eq!(rd.resp, Resp::Okay, "the read back");
+                let back: Vec<u128> = rd.data.iter().map(|d| d.raw()).collect();
+                out.borrow_mut().push((h, back));
+            };
+            (host_in, host_out, per_in, per_out, client)
+        };
+        let (ain, aout, apin, apout, aclient) = mk(0xa, 0x1100);
+        let (bin, bout, bpin, bpout, bclient) = mk(0xb, 0x1200);
+        let mut atrk = AxiHost::<A, D, S, I, NIDS>::default();
+        let mut btrk = AxiHost::<A, D, S, I, NIDS>::default();
+        let mut abr = Bridge::default();
+        let mut bbr = HostBridge::<
+            1,
+            0,
+            XB,
+            YB,
+            A,
+            D,
+            S,
+            I,
+            0x1000,
+            0xf000,
+            1,
+            1,
+            0x2000,
+            0xf000,
+            1,
+            1,
+            0,
+            0,
+            1,
+            1,
+        >::default();
+
+        let hosts = join2(
+            join2(
+                atrk.run(ain, aout),
+                abr.run(
+                    (apin.0, apin.1, apin.2, e00.p_out),
+                    (e00.q_in, apout.2, apout.3),
+                ),
+            ),
+            join2(
+                btrk.run(bin, bout),
+                bbr.run(
+                    (bpin.0, bpin.1, bpin.2, e10.p_out),
+                    (e10.q_in, bpout.2, bpout.3),
+                ),
+            ),
+        );
+        let memory = join2(
+            ptrk.run(pp_in, pp_out),
+            pbr.run(
+                (e11.q_out, ph_in.2, ph_in.3),
+                (ph_out.0, ph_out.1, ph_out.2, e11.p_in),
+            ),
+        );
+        let mut sim = Running::new(join2(
+            join2(nodes, hosts),
+            join2(
+                join2(memory, ram.clone().serve(per, 4)),
+                join2(aclient, bclient),
+            ),
+        ));
+        for _ in 0..3000 {
+            sim.cycle();
+        }
+        let mut got = got.borrow().clone();
+        got.sort();
+        assert_eq!(got.len(), 2, "both hosts did not finish");
+        for (h, at) in [(0xau32, 0x1100usize), (0xb, 0x1200)] {
+            let want: Vec<u128> =
+                (0..BEATS).map(|k| beat(h, k) as u128).collect();
+            let (_, back) = got.iter().find(|(g, _)| *g == h).unwrap();
+            assert_eq!(*back, want, "host {h:x} read back its burst in order");
+            for k in 0..BEATS {
+                assert_eq!(
+                    ram.word(at / 4 + k).raw(),
+                    beat(h, k) as u128,
+                    "host {h:x}, beat {k}, in the memory"
+                );
+            }
+        }
     }
 }
