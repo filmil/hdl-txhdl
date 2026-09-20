@@ -1,0 +1,50 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Two Clocks, One Run}
+\label{sec:x-twoclock}
+
+A unit's process waits on one clock, so a design of two clocks is a
+unit of units. \code{Two} holds a counter on the default clock and a
+counter on \code{Slow}, which takes six ticks a cycle where the
+default takes two, and names no clock itself. Each child names its
+own, in its register and at both its ports, and the clock a port is
+on is the second argument of its type: \code{Out<U<8>, Slow>}.
+
+Nothing crosses between the two domains here, and that is the point of
+the example rather than an omission. What it is for is the checking.
+A crossing would put the part worth watching inside a \code{Crossing},
+where a testbench cannot see it; two counters put it at the ports,
+where it can.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=clock-clock,caption={\code{lib/examples/ex\_twoclock.rs}:
+the second clock, which is three ticks of the first to one of
+its.},label={lst:x-slowclock}]{lib/examples/ex_twoclock.rs}
+
+Until this the build could not check such a unit at all, which is
+issue 131, and the reason is worth stating because it is the kind of
+thing a test suite hides rather than shows. The generated testbench
+advanced in cycles of the first clock and compared every output one of
+those cycles after driving it. For a port on a clock three times
+slower that is a value its own edge has not produced yet, so the two
+agreed for part of every period and disagreed for the rest.
+
+The fix is that a port carries its clock. The clock is written in the
+type and nowhere else by the time the netlist exists, so \code{\#[lower]}
+takes it from there into the lowering, the ports file names it after
+the port's width, and the generator reads it and checks each port one
+cycle of its own clock after driving it.
+
+That this works is not something the run can show by itself, since a
+testbench that is wrong in the same direction as the design agrees
+with it. What shows it is breaking it on purpose: with the offset put
+back to the first clock's period, the slow port differs at 5000,
+11000, 17000 and every six thousand after, which is that clock's
+period, and the co-simulation fails. With it right, both simulators
+agree with the run for the whole of it.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=units-units,caption={\code{lib/examples/ex\_twoclock.rs}:
+the two counters and the parent that holds
+them.},label={lst:x-twoclock}]{lib/examples/ex_twoclock.rs}

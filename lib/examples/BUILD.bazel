@@ -253,6 +253,17 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Two clocks in one netlist, checked against one run: a counter on
+# each, and a parent that holds both. The test of issue 131:
+#   bazel run //lib/examples:ex_twoclock
+rust_binary(
+    name = "ex_twoclock",
+    srcs = ["ex_twoclock.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A foreign module inside a netlist: a hand-written module, with a
 # parameter, a clock pin and an inout, instantiated by a unit of units:
 #   bazel run //lib/examples:ex_blackbox
@@ -733,6 +744,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "stream_alu.rs",
         "ex_stream_alu.rs",
         "ex_compose.rs",
+        "ex_twoclock.rs",
         "ex_blackbox.rs",
         "blinker.v",
         "blinker.vhd",

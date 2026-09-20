@@ -1222,6 +1222,25 @@ waveform(
     until = 54,
 )
 
+# Two clocks in one netlist, each port checked against its own edge.
+# The unit is two counters, one per clock, so what the co-simulation
+# proves is the timing of the check rather than any logic: before
+# issue 131 the slow port disagreed for part of every period.
+waveform(
+    name = "twoclock",
+    example = "//lib/examples:ex_twoclock",
+    lowered = ("two", "two"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//clocks/slow=>slow",
+        "//go=>go",
+        "//go_slow=>go_slow",
+        "//a=>a",
+        "//b=>b",
+    ],
+    until = 54,
+)
+
 # An SPI master reading a flash chip: the select held, the clock, the
 # byte going out and the byte coming back.
 waveform(
