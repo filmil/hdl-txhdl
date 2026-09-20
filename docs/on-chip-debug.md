@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # On-chip debugging for the SoC
 
-Status: analysis, September 18, 2026.
+Status: analysis, September 18, 2026; step 1 of section 4 built on
+September 20, 2026, under issue 239.
 Author: automated coding assistant, with human supervision.
 
 This note answers issue 136: what the options are for debugging the SoC
@@ -215,6 +216,14 @@ a pin, a clock, a PHY, a memory controller's calibration.
    beside the shipping one, which is issue 239.
    It is the smallest change that answers "which wire is wrong", the
    rules exist, and it costs no design change.
+   Built: `//cpu/vreteno:vreteno_board_ila_pnr`, with thirteen probes
+   listed and explained at the head of
+   `cpu/vreteno/board/vreteno_board_ila.v`, and
+   `//cpu/vreteno:vreteno_board_ila_read` to read a capture back.
+   The retire stream is not among the probes, because `instr` and
+   `wb` end inside the lowered module and are not its ports; that is
+   step 2's work.
+   No capture has been read yet: that wants the board.
 2. **The retire stream as a part**, issue 240, since the core already
    computes it and the board already throws it away.
    It is this repository's own shape of answer, and it makes the
