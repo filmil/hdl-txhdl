@@ -67,9 +67,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 45\,662 lines of Rust: 12\,233 of runtime
-and macros, 12\,845 of parts, 8\,298 in sixty-four examples, 9\,368 of
-Vreteno with its board, and 2\,918 of Razboj, DDR3, Ethernet, HDMI,
+Together they are 46\,566 lines of Rust: 12\,373 of runtime
+and macros, 12\,845 of parts, 8\,298 in sixty-four examples, 10\,125 of
+Vreteno with its board, and 2\,925 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -100,7 +100,7 @@ A tee and a check, for running one thing twice & parts & both \\
 A flash read as memory, mode 0 only & parts & both \\
 A peripheral written as software, behind a channel & parts & both \\
 Its wire: each transaction one Ethernet frame & parts & both \\
-Vreteno; memory, timer, serial port & \code{cpu} & all four \\
+Vreteno; boot and data memory, timer, serial port & \code{cpu} & four of five \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
 PCIe BAR registers; the BAR as one unit & \code{pcie} & not yet \\
@@ -117,7 +117,7 @@ The examples' own units & examples & all 21 \\
 \toprule
 System & Made of & Checked by \\
 \midrule
-Vreteno & core, router, 3 devices & model, 6 netlists \\
+Vreteno & core, router, 4 devices & model, 6 netlists \\
 A lockstep pair & 2 cores, 3 tees, 3 checks & 8 programs, a fault \\
 Razboj, a GPU & rasteriser, link, memory & model, 2 netlists \\
 The AXI link & host and peripheral & 2 netlists \\
@@ -126,7 +126,7 @@ The AXI-Lite bridge & 1 host, 2 banks & 3 netlists \\
 A lattice & 4 nodes, both bridges, RAM & 2 tests \\
 The SoC & core, GPU, RAM, serial & its run \\
 Composition & station, stream ALU & its netlist \\
-The board & core, 5 devices, DDR3 & 3 runs, Vivado \\
+The board & core, 6 devices, DDR3 & 3 runs, Vivado \\
 Ethernet & the MAC, the board's PHY & on the board \\
 Video & HDMI, its I2C, the board & on the board \\
 PCIe & XDMA endpoint, pins, registers & a run, Vivado \\
@@ -169,6 +169,7 @@ Fig.~\ref{fig:s-board} is the whole of it.
   \node[box] (cpu) at (0,0) {Vreteno\\core};
   \node[box] (host) at (2.0,0) {host\\tracker};
   \node[box] (rt) at (3.7,0) {router};
+  \node[box] (rom) at (5.9,2.3) {boot\\memory};
   \node[box] (dmem) at (5.9,1.4) {data\\memory};
   \node[box] (uart) at (5.9,0.5) {serial};
   \node[box] (ddr) at (5.9,-0.35) {DDR3\\peripheral};
@@ -177,6 +178,7 @@ Fig.~\ref{fig:s-board} is the whole of it.
   \node[box] (plic) at (5.9,-2.2) {interrupt\\controller};
   \draw[fl] (cpu) -- node[lbl, below=3pt] {AXI4} (host);
   \draw[fl] (host) -- (rt);
+  \draw[fl] (rt) -- (rom);
   \draw[fl] (rt) -- (dmem);
   \draw[fl] (rt) -- (uart);
   \draw[fl] (rt) -- (ddr);
@@ -193,7 +195,7 @@ Fig.~\ref{fig:s-board} is the whole of it.
     node[lbl, below, pos=0.72] {the interrupt controller's} -| (cpu.south);
 \end{tikzpicture}}
 \caption{The board: the core, its tracker, the router that decides by
-address, and the five peripherals behind it. The DDR3 controller is a
+address, and the six peripherals behind it. The DDR3 controller is a
 foreign module, wired rather than written; the serial port reaches two
 pins, and the interrupt controller and the timer reach the core's two
 lines.}
@@ -368,7 +370,7 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs a hundred and forty-four
+its ports. \code{bazel test //...} runs a hundred and forty-five
 targets, of
 which a hundred and twenty-two are netlists under both simulators; the rest are the
 core's model and
@@ -386,9 +388,9 @@ A wire may take a name other than the one its \code{let} is written
 with, and the netlist says which: it carries a line per renamed
 \code{let}. No \code{let} Rust accepts is refused any more. The core
 fetches from the bus above its boot memory, so it runs a program it
-was not built with, but the boot memory itself is not readable on the
-bus and a fetch that leaves the core stalls the pipeline until the word
-is back. A burst of more than one beat does not cross the network on
+was not built with, and the boot memory is on the bus too, readable
+and not writable; but a fetch that leaves the core stalls the
+pipeline until the word is back. A burst of more than one beat does not cross the network on
 chip; it is refused rather than carried. Razboj has no depth buffer, no
 interpolation and no texture. Each is an issue on the repository rather
 than a paragraph here.
