@@ -462,6 +462,16 @@ pub struct Lowered {
     pub procs: Vec<Process>,
     /// A memory's first words, as `Mem::with` gave them: a program.
     pub init: Vec<(String, Vec<u128>)>,
+    /// A register's value before the first edge, as `Reg::new` gave it.
+    ///
+    /// A register not named here starts at zero, which is what
+    /// `Reg::default` does. The lowering cannot read this from the
+    /// unit's type, for the same reason it cannot read a memory's
+    /// words: the value belongs to the instance the run made, and
+    /// `Fields::fields` is written from the field's type. So whoever
+    /// lowers a unit whose register starts at anything else says it
+    /// again here, as they already do for a memory (issue 359).
+    pub init_regs: Vec<(String, u128)>,
     /// A port's trace scope when it is not the port's own name: a
     /// channel two units share under one name in the run has a port
     /// name of its own on each side.
@@ -531,6 +541,7 @@ pub fn foreign(
         wire_names: Vec::new(),
         procs: Vec::new(),
         init: Vec::new(),
+        init_regs: Vec::new(),
         aliases: Vec::new(),
         nets: Vec::new(),
         instances: Vec::new(),
@@ -715,8 +726,14 @@ impl Lowered {
                 walk_stmt(s, &of);
             }
         }
-        // A memory's words are given under the memory's own name.
+        // A memory's words are given under the memory's own name,
+        // and a register's first value under the register's.
         for (n, _) in &mut self.init {
+            if let Some(net) = of(n) {
+                *n = net;
+            }
+        }
+        for (n, _) in &mut self.init_regs {
             if let Some(net) = of(n) {
                 *n = net;
             }
@@ -818,6 +835,25 @@ impl Lowered {
     /// again here.
     pub fn init(&mut self, mem: &str, words: &[u128]) {
         self.init.push((mem.to_string(), words.to_vec()));
+    }
+    /// Give a register its value before the first edge, as `Reg::new`
+    /// gave it at run time; the netlist cannot see that, so whoever
+    /// lowers the unit says it again here.
+    ///
+    /// A register left unsaid starts at zero, in both emitters and in
+    /// the runtime, so this is needed only where a unit is built with
+    /// `Reg::new` and a value that is not zero. Without it the netlist
+    /// and the run disagree from the first cycle, and nothing says so
+    /// (issue 359).
+    pub fn init_reg(&mut self, reg: &str, value: u128) {
+        self.init_regs.push((reg.to_string(), value));
+    }
+    /// What a register starts at: what `init_reg` was told, or zero.
+    fn reg_init(&self, reg: &str) -> u128 {
+        match self.init_regs.iter().find(|(n, _)| n == reg) {
+            Some((_, v)) => *v,
+            None => 0,
+        }
     }
     /// Say under which trace scope a port is found, when the run named
     /// the wire or channel otherwise than the port.
@@ -1153,10 +1189,16 @@ impl Lowered {
         writeln!(out, "module {name}(\n  {}\n);", plist.join(",\n  ")).unwrap();
         for (n, k, w, d) in &self.fields {
             match k {
-                // Zero at the start, as the runtime's register is.
-                Some(Kind::Reg) => {
-                    writeln!(out, "  reg {}{n} = 0;", range(*w)).unwrap()
-                }
+                // What the runtime's register starts at: zero, unless
+                // the unit was built with `Reg::new` and whoever
+                // lowered it said so.
+                Some(Kind::Reg) => writeln!(
+                    out,
+                    "  reg {}{n} = {w}'h{:x};",
+                    range(*w),
+                    self.reg_init(n)
+                )
+                .unwrap(),
                 // A wire kept as a field: declared here, driven below.
                 Some(Kind::Wire) => {
                     writeln!(out, "  wire {}{n};", range(*w)).unwrap()
@@ -1476,8 +1518,16 @@ impl Lowered {
                 "(others => '0')".to_string()
             };
             match k {
+                // Zero unless whoever lowered the unit said what
+                // `Reg::new` gave it, as for a memory's words.
                 Some(Kind::Reg) => {
-                    writeln!(out, "  signal {n} : {} := {init};", ty(*w))
+                    let v = self.reg_init(n);
+                    let start = match (v, *w) {
+                        (0, _) => init.clone(),
+                        (v, 1) => format!("'{v}'"),
+                        (v, w) => format!("\"{v:0w$b}\""),
+                    };
+                    writeln!(out, "  signal {n} : {} := {start};", ty(*w))
                         .unwrap()
                 }
                 Some(Kind::Wire) => {
@@ -2178,5 +2228,84 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
         Expr::Bin(op, a, b) => {
             format!("({} {op} {})", hval(a, w, l), hval(b, w, l))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A unit of three registers and nothing else, which is enough to
+    /// read the declarations both emitters write.
+    fn three_regs() -> Lowered {
+        Lowered {
+            name: "regs".to_string(),
+            fields: vec![
+                ("flag", Some(Kind::Reg), 1, 0),
+                ("count", Some(Kind::Reg), 8, 0),
+                ("wide", Some(Kind::Reg), 32, 0),
+            ],
+            ports: Vec::new(),
+            wires: Vec::new(),
+            wire_names: Vec::new(),
+            procs: Vec::new(),
+            init: Vec::new(),
+            init_regs: Vec::new(),
+            aliases: Vec::new(),
+            nets: Vec::new(),
+            instances: Vec::new(),
+            foreign: None,
+        }
+    }
+
+    /// A register nobody says anything about starts at zero, which is
+    /// what the runtime's `Reg::default` does.
+    #[test]
+    fn a_register_starts_at_zero_by_itself() {
+        let net = three_regs();
+        assert!(net.verilog().contains("reg flag = 1'h0;"), "the flag");
+        assert!(
+            net.verilog().contains("reg [7:0] count = 8'h0;"),
+            "the counter"
+        );
+        assert!(
+            net.vhdl().contains("signal flag : std_logic := '0';"),
+            "the flag in VHDL"
+        );
+        assert!(net.vhdl().contains("(others => '0')"), "the counter");
+    }
+
+    /// And one that `Reg::new` gave a value starts there, in both
+    /// netlists, once whoever lowered it has said so. Before issue 359
+    /// there was no way to say it and both emitters wrote zero, so a
+    /// unit built that way ran one way in Rust and another in hardware
+    /// with nothing said.
+    #[test]
+    fn a_registers_first_value_reaches_both_netlists() {
+        let mut net = three_regs();
+        net.init_reg("flag", 1);
+        net.init_reg("count", 0x2a);
+        net.init_reg("wide", 0xc0ff_ee11);
+        let v = net.verilog();
+        assert!(v.contains("reg flag = 1'h1;"), "the flag: {v}");
+        assert!(v.contains("reg [7:0] count = 8'h2a;"), "the counter");
+        assert!(v.contains("reg [31:0] wide = 32'hc0ffee11;"), "the word");
+        let h = net.vhdl();
+        assert!(h.contains("signal flag : std_logic := '1';"), "the flag");
+        assert!(h.contains(":= \"00101010\";"), "the counter: {h}");
+        assert!(
+            h.contains(":= \"11000000111111111110111000010001\";"),
+            "the word"
+        );
+    }
+
+    /// A field the struct renamed is said under the name the netlist
+    /// knows, as a memory's words already are.
+    #[test]
+    fn a_renamed_register_keeps_its_first_value() {
+        let mut net = three_regs();
+        net.init_reg("flag", 1);
+        let net = net.renamed(&[("flag", "banner")]);
+        assert_eq!(net.init_regs[0].0, "banner");
     }
 }

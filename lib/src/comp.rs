@@ -556,6 +556,16 @@ impl<T: Copy + Default + 'static, C: Clock> Default for Reg<T, C> {
 impl<T: Copy + 'static, C: Clock> Reg<T, C> {
     /// A register holding `v` before the first edge: its reset
     /// value, since nothing else sets one.
+    ///
+    /// A lowered unit's netlist does not learn this from the type. The
+    /// value belongs to the instance a run makes, and the lowering is
+    /// written from the field's type, exactly as a memory's first
+    /// words are not in the type either. So a unit that is lowered and
+    /// whose register starts at anything but zero says it again with
+    /// [`Lowered::init_reg`](crate::netlist::Lowered::init_reg), beside
+    /// [`Lowered::init`](crate::netlist::Lowered::init) for a memory's
+    /// words. Without that the netlist starts the register at zero and
+    /// disagrees with the run from the first cycle (issue 359).
     pub fn new(v: impl Into<T>) -> Self {
         Reg(
             Box::leak(Box::new(RegCell {

@@ -7018,6 +7018,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          wire_names: vec![{wire_names}],\n\
          procs: vec![{procs}],\n\
          init: Vec::new(),\n\
+         init_regs: Vec::new(),\n\
          aliases: Vec::new(),\n\
          nets: vec![{nets}],\n\
          instances: vec![{instances}],\n\

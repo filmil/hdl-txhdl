@@ -22,6 +22,14 @@ rust_test(
     edition = "2021",
 )
 
+# The library's own unit tests: what the two emitters write for a
+# declaration, which no example can assert as directly. See issue #359.
+rust_test(
+    name = "netlist_test",
+    crate = ":txhdl",
+    edition = "2021",
+)
+
 rust_library(
     name = "txhdl",
     srcs = [
