@@ -1091,6 +1091,20 @@ that memory is the boot ROM: what runs before there is anything else.
 At or above it, the core asks the bus, on the same channels its loads
 and stores use, and waits.
 
+The same words sit on the bus as well, at address zero, behind a
+tracker like the data memory's, readable and not writable
+(\code{crate::rom}, issue 268). The fetch reads the copy inside the
+core in the same cycle; a load reads the copy on the bus a few cycles
+later, like any memory; the netlist initialises both from one image,
+so they cannot disagree. A write to it is taken, its beat consumed so
+the channel does not jam, and answered \code{SlvErr}, which is what
+settles what a fetch sees when a write lands on the same address in
+the same cycle: nothing lands. So a program's constants live beside
+its code, \code{.rodata} is linked into the boot memory, and a
+debugger on the bus can read the program that is there. Every load
+and store goes to the bus; the core no longer keeps a hole below the
+data memory.
+
 Waiting is the whole of it. The core holds one transaction at a time,
 so a fetch goes out only when nothing else of the core's is out, and
 the pipeline stalls until the word comes back. A thirty-two bit
@@ -1469,8 +1483,8 @@ each section goes, and why it has to go
 there.},label={lst:v-ld}]{cpu/vreteno/rust/vreteno.ld}
 
 The run is the check. \code{//cpu/vreteno:hello} builds the image,
-puts it in the core's instruction memory and its constants in the
-data memory, runs the whole machine with the router, the timer and
+puts it and its constants in the boot memory and its initialised data
+in the data memory, runs the whole machine with the router, the timer and
 the serial port, and reads the port's line with the same terminal the
 demonstration uses. It asserts what came out, so a program that says
 nothing fails rather than passes quietly, and it asserts that the
