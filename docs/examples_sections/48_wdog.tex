@@ -63,7 +63,7 @@ changes nothing.
 \input{wdog_timing.tex}
 \caption{The second timeout: the count falling to zero with the
 warning already standing on \code{irq}, the reset asked for on
-\code{rst} and held while \code{hold} counts down, the status going
+\code{rst\_req} and held while \code{hold} counts down, the status going
 from warned to warned and failed, and the count reloaded so that the
 request ends rather than standing for ever.}
 \label{fig:x-wdog}

@@ -84,7 +84,7 @@ fn main() {
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
     let (paw, par, pw, pb, pr) = lite.per;
-    let (rst_out, rst) = signal::<Bit, DefaultClock>();
+    let (rst_req_out, rst_req) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
 
     let mut host_unit = HostUnit::default();
@@ -98,13 +98,13 @@ fn main() {
         wave.add("w", &pw);
         wave.add("b", &pb);
         wave.add("r", &pr);
-        wave.add("rst", &rst);
+        wave.add("rst_req", &rst_req);
         wave.add("irq", &irq);
         wave.add("block", &block);
         wave.start();
     }
 
-    let reset_line = rst.clone();
+    let reset_line = rst_req.clone();
     let warn_line = irq.clone();
 
     let client = async move {
@@ -227,7 +227,7 @@ fn main() {
             bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
         ),
         join2(
-            block.run((paw, par, pw), (pb, pr, rst_out, irq_out)),
+            block.run((paw, par, pw), (pb, pr, rst_req_out, irq_out)),
             client,
         ),
     ));

@@ -87,13 +87,13 @@ a failure. A write of anything else is a failure in either mode.
 happened, the warning bit sets, \code{irq} rises and the count
 reloads, which gives a program that is merely slow one more timeout to
 notice. Otherwise it is a failure.
-\item A failure sets the failed bit, drives \code{rst} and holds it
+\item A failure sets the failed bit, drives \code{rst\_req} and holds it
 for eight cycles, and reloads the count. The reload matters: the count
 is at zero when a timeout fails, so a watchdog that did not reload
 would ask for a reset on every cycle from then on and hold the machine
 down rather than restart it.
 \item \code{irq} is a level, standing while the warning bit is set and
-warning is on. \code{rst} is a request to \code{Syscon}, not a reset
+warning is on. \code{rst\_req} is a request to \code{Syscon}, not a reset
 line.
 \item Nothing in this block is reset by its own request, which is what
 lets a program read \code{status} after the restart.

@@ -36,7 +36,7 @@
 //! turn the watchdog off, and neither can a program that has gone
 //! wrong.
 //!
-//! The reset is a request rather than a reset: `rst` goes to the
+//! The reset is a request rather than a reset: `rst_req` goes to the
 //! system control block of `syscon`, which records the watchdog as the
 //! cause and drives the system's reset line. A program that restarts
 //! then reads why, which is the whole point of resetting it.
@@ -89,7 +89,7 @@ impl<const KEY: usize> Unit for Wdog<KEY> {
     async fn run(
         &mut self,
         (aw, ar, w): (Rx<LiteAw<32>>, Rx<LiteAr<32>>, Rx<LiteW<32, 4>>),
-        (b, r, rst, irq): (Tx<LiteB>, Tx<LiteR<32>>, Out<Bit>, Out<Bit>),
+        (b, r, rst_req, irq): (Tx<LiteB>, Tx<LiteR<32>>, Out<Bit>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -179,7 +179,7 @@ impl<const KEY: usize> Unit for Wdog<KEY> {
             // system control block's own is, so that every part of a
             // design sees it. The warning is a level: it stands until
             // a program clears the bit.
-            rst.set(failing | Bit::from(holding));
+            rst_req.set(failing | Bit::from(holding));
             irq.set(warned & warn);
         }
     }
