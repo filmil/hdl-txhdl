@@ -1,0 +1,60 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Reset Nothing Declares}
+\label{sec:x-reset}
+
+A clock is not a port. A unit waits for an edge of it, and the
+netlist gives every module a \code{clk} and joins each child to its
+parent's, because a clock reaches everything and a design that
+threaded it by hand would say nothing by doing so.
+
+The reset is the same, and for the same reason. No unit below
+declares one, and every module the netlist writes has an \code{rst}
+beside its \code{clk}. While it is high, every register goes back to
+what it held before the first edge, and the channels between units
+empty: what a channel holds is two values and two valid bits, and
+clearing the bits is what makes it empty, so the data behind them is
+left where it is and never read.
+
+That is what a reset is for. A register put back is a register whose
+value nobody has to reason about, and a design whose every register
+is back where it started is the design that came out of the
+configuration, which is the state that is known to work. Before this,
+a reset reached the core, the timer, the serial port and the
+interrupt controller, and reached nothing on the bus: a reset caught
+while a transaction was in flight left a bridge waiting for an
+acknowledgement that the reset had already cancelled, and the next
+access to that memory waited behind it for ever (issue 346).
+
+\code{Ticker} counts the ticks it is given, and says nothing about
+any of this. The run counts four, holds the reset for two cycles with
+the tick still high, and lets go.
+
+\lstinputlisting[caption={\code{ex\_reset.rs}. Run with \code{bazel run //lib/examples:ex\_reset}.},label={lst:x-reset}]{lib/examples/ex_reset.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_reset} printed when the build ran it: the count, then zero while the reset is held although the tick is still high, then counting again from there.},label={lst:x-reset-out}]{out_reset.txt}
+
+A unit that wants to \emph{do} something under reset, rather than
+merely forget, takes \code{rst} as an \code{In<Bit>} and reads it.
+The netlist joins that port to the same net instead of adding a
+second of the same name, and adds no clearing of its own: a unit that
+answered the reset itself has said what it means by it, and the Rust
+and the netlist run that same answer. The core does this, because
+forgetting where it was is not enough; it has to fetch from the
+reset vector. \code{rst} is therefore a name the netlist keeps, and a
+port of that name which is not an input is refused when the unit is
+lowered, which is why the watchdog's request to be reset is called
+\code{rst\_req}.
+
+The reset is in the trace like any other signal, so the testbenches
+drive it at the cycles the Rust run asserted it, and the VHDL under
+\code{nvc} and the Verilog under Verilator are checked against the
+Rust through the reset and out the other side.
+
+\begin{figure}[htbp]
+\centering
+\input{reset_timing.tex}
+\caption{\code{count} through a reset: four ticks counted,
+\code{rst} high for two cycles with \code{tick} still high, and the
+count away from zero again after it.}
+\label{fig:x-reset}
+\end{figure}
