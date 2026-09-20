@@ -765,17 +765,18 @@ On the board the controller is a \code{Plic2}. Its source 1 is the
 serial port's interrupt line and its source 2 the board's \code{irq}
 input, both level sources, and its line is the core's external
 interrupt. \code{irq.rs}, Listing~\ref{lst:v-irq}, is a program for the
-board that takes its input by interrupt. It enables source 1, sets
-\code{mtvec}, enables the external interrupt and says \code{ready},
-then waits in a loop that never reads the serial port. Each byte the
-terminal types lands in the port's buffer and raises its line. The
-controller raises the core's, and the handler claims, reads one byte
-and completes. A byte still in the buffer keeps the port's line high,
-so the controller asks again on the complete, and the next byte is the
-next interrupt. The core's pending bit for the external interrupt is
-set by its line and cleared only by software, so the handler clears it
-after the complete; the controller's line fell a cycle after the
-claim. \code{//cpu/vreteno:board\_test} runs the board's design on it,
+board that takes its input by interrupt. It enables source 1, installs
+the trap entry of \code{vreteno\_hal} (Section~\ref{sec:v-hal}),
+registers a handler for the external interrupt's line, allows that
+interrupt and says \code{ready}, then waits in a loop that never
+reads the serial port. Each byte the terminal types lands in the
+port's buffer and raises its line. The controller raises the core's,
+and the handler claims, reads one byte and completes. A byte still in
+the buffer keeps the port's line high, so the controller asks again on
+the complete, and the next byte is the next interrupt. The core's
+pending bit for the external interrupt is set by its line and cleared
+only by software, so the crate's dispatcher clears it after the
+handler; the controller's line fell a cycle after the claim. \code{//cpu/vreteno:board\_test} runs the board's design on it,
 with a terminal that types \code{ping}, and the program says
 \code{got ping in 4 interrupts}.
 
@@ -1467,12 +1468,14 @@ the core runs them, and the greeting is 25 words where it was 33
 without them.
 
 Two more things nothing else does: the stack pointer is zero at
-reset, and \code{.bss} is not cleared. The entry stub does both, in
+reset, and \code{.bss} is not cleared. An entry stub does both, in
 the assembly that has to come before Rust can run at all. And a
 program ends by writing an odd value to \code{mhalt},
 \code{csrwi 0x7c0, 1}, which is one instruction and needs no runtime;
 \code{ebreak} is a breakpoint here as the specification says, and
-traps.
+traps. Neither is in the greeting any more: they are
+\code{vreteno\_hal}'s, Section~\ref{sec:v-hal}, and the greeting is
+the program and nothing else.
 
 \lstinputlisting[caption={\code{cpu/vreteno/rust/hello.rs}: Rust
 compiled for the core. Run the whole machine on it with
@@ -1481,6 +1484,65 @@ compiled for the core. Run the whole machine on it with
 \lstinputlisting[caption={\code{cpu/vreteno/rust/vreteno.ld}: where
 each section goes, and why it has to go
 there.},label={lst:v-ld}]{cpu/vreteno/rust/vreteno.ld}
+
+\subsection*{What every program would otherwise write again}
+\label{sec:v-hal}
+
+The greeting was the right amount of machinery for a greeting and the
+wrong place to start the fourth program from: a naked \code{\_start},
+addresses copied from the board's map, a panic handler, and, in the
+program that takes input by interrupt, a trap vector that saved and
+restored sixteen registers by hand. \code{vreteno\_hal}, the crate
+under \code{cpu/vreteno/rust/hal}, holds that once.
+
+Listing~\ref{lst:v-hal} is the crate less its trap entry: the address
+map in one place; the serial port, the timer, the interrupt
+controller, the pulse width modulator and the video peripheral as
+types whose methods are volatile accesses at the map's addresses and
+nothing else; the control and status registers a program touches;
+\code{entry!}, which owns the reset path; and \code{halt}. The crate
+is inline RISC-V assembly from end to end, so it builds only for the
+core, through the transition a program's image applies, and a program
+names it in \code{deps}.
+
+\lstinputlisting[caption={\code{cpu/vreteno/rust/hal/lib.rs}: the
+map, the peripherals as types, the registers, the entry and the
+halt.},label={lst:v-hal}]{cpu/vreteno/rust/hal/lib.rs}
+
+Listing~\ref{lst:v-trap} is the trap entry and the dispatcher. The
+entry saves every register a call may change and \code{mepc} into a
+frame on the stack, hands the frame to the dispatcher, and on the way
+back restores the registers and \code{mepc} from the frame and returns
+with \code{mret}. So a handler is an ordinary Rust function that takes
+the frame, and one that wants to resume after a faulting or calling
+instruction moves \code{frame.mepc} on. The dispatcher reads
+\code{mcause} and calls the handler the program registered for that
+interrupt line or that exception cause; an interrupt nobody registered
+for is taken and ignored, and an exception nobody registered for halts
+the core, since a program that traps where it did not expect to has
+nothing sensible to resume. The core's pending bit for the external
+interrupt is cleared here, after the handler, which is the one thing
+about this core a portable dispatcher would not know.
+
+\lstinputlisting[caption={\code{cpu/vreteno/rust/hal/trap.rs}: the
+frame, the entry, the dispatcher, and how a handler is
+registered.},label={lst:v-trap}]{cpu/vreteno/rust/hal/trap.rs}
+
+Listing~\ref{lst:v-traps} exercises it. The program registers a
+handler for \code{ecall} that counts the call and moves \code{mepc}
+past it, makes three calls, registers a handler for the timer's line,
+asks the timer for an interrupt four hundred cycles on, turns
+interrupts on, and waits in a loop that touches nothing until the
+handler has run and disarmed the timer. It says
+\code{ecall 3 timer 1}, and \code{//cpu/vreteno:traps\_test} runs it
+on the machine of Section~\ref{sec:v-rust} and checks that it did.
+The greeting and \code{irq.rs} run on the crate as well, and their
+tests are unchanged, which is what says the crate is the same
+machinery and not different machinery.
+
+\lstinputlisting[caption={\code{cpu/vreteno/rust/traps.rs}: an
+environment call resumed past, and a timer interrupt taken, through
+the dispatcher.},label={lst:v-traps}]{cpu/vreteno/rust/traps.rs}
 
 The run is the check. \code{//cpu/vreteno:hello} builds the image,
 puts it and its constants in the boot memory and its initialised data

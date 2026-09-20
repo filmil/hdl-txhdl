@@ -1681,6 +1681,7 @@ latex_document(
         ":plic_timing",
         ":plic_source",
         "//cpu/vreteno:sources",
+        "//cpu/vreteno/rust/hal:sources",
         "//lib/examples:sources",
     ],
     deps = ["housestyle.tex"],
