@@ -1442,20 +1442,22 @@ anything else, with no flag to remember.
 
 \subsection*{What the machine will not let a compiler do}
 
-Two of the core's properties decide how a program has to be
-written, and each of them the core meets by going quietly wrong
-rather than by refusing.
+Two of the core's properties decided how a program had to be
+written, and each of them the core met by going quietly wrong rather
+than by refusing. One of them is gone.
 
-The first is the one that shapes the linker script. A load below the
-data base never leaves the core: \code{is\_dev} is false, no request
-is sent, and the instruction that was waiting retires with whatever
-word the previous device load left in its register. Instruction
-memory is not a device on the bus, so a constant placed there is a
-constant the program cannot read, and it is not an error, it is a
-wrong answer. So \code{.rodata} is linked into the data memory rather
-than beside the code, and the image carries the bytes the data memory
-starts with. That is what \code{Dmem::with} is for: there is no way
-for a program to put them there itself.
+The first was the one that shaped the linker script. A load below the
+data base never left the core: no request was sent, and the
+instruction that was waiting retired with whatever word the previous
+device load had left in its register. The instruction memory was not
+a device on the bus, so a constant placed there was a constant the
+program could not read, and it was not an error, it was a wrong
+answer. So \code{.rodata} was linked into the data memory rather than
+beside the code. Since issue 268 the boot memory is on the bus as
+well, read-only at address zero (Section~\ref{sec:v-fetch}), every
+load goes to the bus, and \code{.rodata} is linked beside the code
+where the linker script puts it; the data memory carries only what a
+program writes, and \code{Dmem::with} gives it its initial bytes.
 
 The second is the size. A program is 4096 bytes, 1024 words, the
 loader truncates a longer one without saying so, and the fetch takes
