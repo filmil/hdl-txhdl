@@ -7028,6 +7028,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          // name Rust knows, since `#[lower]` reads the `impl` and\n\
          // never sees the struct; this writes the netlist's name in.\n\
          .renamed(<Self as ::txhdl::netlist::Fields>::RENAMES)\n\
+         // And nothing may take a clock's name, which is a port of the\n\
+         // module the netlist adds by itself (issue 367).\n\
+         .checked()\n\
          }}\n\
          /// The Verilog of this unit.\n\
          pub fn verilog(name: &str) -> String {{\n\

@@ -741,6 +741,48 @@ impl Lowered {
         self
     }
 
+    /// This unit, once nothing it declares takes a clock's name.
+    ///
+    /// A clock reaches a module as a port named for the clock, beside
+    /// everything else the module declares, so a child, a register, a
+    /// port, a wire or a net of that name is declared twice. Verilog
+    /// gives an instance and a port one namespace and Verilator
+    /// refuses the module; VHDL keeps a label apart from a port and
+    /// nvc accepts it, so a design could pass one co-simulation and
+    /// fail the other, or fail only in synthesis. Refused here, at
+    /// lowering, naming the thing and the clock. The thing is the one
+    /// to rename: a clock's name is its type's, and every unit on that
+    /// clock shares it. A child's clock counts, since the parent takes
+    /// it as a port to pass on. This is issue 367.
+    pub fn checked(self) -> Self {
+        for c in self.clocks() {
+            let what = if self.instances.iter().any(|i| i.name == c) {
+                Some(("field", "holds a child, and the instance"))
+            } else if self.fields.iter().any(|(f, _, _, _)| *f == c) {
+                Some(("field", "is a register or a memory, and it"))
+            } else if self.ports.iter().any(|(p, _, _)| p == c) {
+                Some(("port", "is the unit's, and it"))
+            } else if self.wires.iter().any(|(w, _)| w == c) {
+                Some(("let", "is computed, and its wire"))
+            } else if self.nets.iter().any(|(n, _, _, _)| n == c) {
+                Some(("channel or wire", "joins the children, and its net"))
+            } else {
+                None
+            };
+            if let Some((kind, does)) = what {
+                panic!(
+                    "{kind} `{c}` of `{}` {does} would take the name of the \
+                     clock `{c}`, which the netlist declares as a port of \
+                     the module: Verilator refuses the two under one name. \
+                     Rename the {kind}; the clock's name is its type's, \
+                     shared by every unit on it (see issue 367)",
+                    self.name
+                );
+            }
+        }
+        self
+    }
+
     /// The clocks the processes wait for, and the children's, each
     /// once, in order.
     fn clocks(&self) -> Vec<&'static str> {
@@ -2307,5 +2349,67 @@ mod tests {
         net.init_reg("flag", 1);
         let net = net.renamed(&[("flag", "banner")]);
         assert_eq!(net.init_regs[0].0, "banner");
+    }
+
+    /// A parent holding a child on a clock called `slow`, in a field
+    /// of the name given: what the two-clock example of issue 131
+    /// wrote before it renamed the field to `ticker`.
+    fn parent_with_child_named(field: &str) -> Lowered {
+        let mut child = three_regs();
+        child.name = "two_slow".to_string();
+        child.procs.push(Process {
+            clock: "slow",
+            falling: false,
+            body: Vec::new(),
+        });
+        let mut parent = three_regs();
+        parent.name = "two".to_string();
+        parent.procs.push(Process {
+            clock: "clk",
+            falling: false,
+            body: Vec::new(),
+        });
+        parent.instances.push(Instance {
+            name: field.to_string(),
+            unit: child,
+            conns: Vec::new(),
+        });
+        parent
+    }
+
+    /// The instance and the clock pin would take one name, which
+    /// Verilator refuses and nvc does not; the lowering refuses it
+    /// first, and says which to rename (issue 367).
+    #[test]
+    #[should_panic(
+        expected = "field `slow` of `two` holds a child, and the instance would take the name of the clock `slow`"
+    )]
+    fn a_child_named_after_its_clock_is_refused() {
+        parent_with_child_named("slow").checked();
+    }
+
+    /// Under another name the same design lowers, and the clock
+    /// reaches the child through the parent's port of its name.
+    #[test]
+    fn a_child_named_otherwise_takes_the_clock_through_the_parent() {
+        let v = parent_with_child_named("ticker").checked().verilog();
+        assert!(v.contains("input slow"), "the parent takes the clock: {v}");
+        assert!(v.contains("two_slow ticker("), "the instance: {v}");
+        assert!(v.contains(".slow(slow)"), "and passes the clock on: {v}");
+    }
+
+    /// A register named after a clock is the same clash, and the
+    /// message says what the name is.
+    #[test]
+    #[should_panic(expected = "field `clk` of `regs` is a register")]
+    fn a_register_named_after_the_clock_is_refused() {
+        let mut net = three_regs();
+        net.fields.push(("clk", Some(Kind::Reg), 1, 0));
+        net.procs.push(Process {
+            clock: "clk",
+            falling: false,
+            body: Vec::new(),
+        });
+        net.checked();
     }
 }
