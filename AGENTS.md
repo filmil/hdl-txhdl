@@ -690,6 +690,11 @@ repository has had that happen twice.
 * `bazel test //...` exits 0: the lowered units agree with their traces.
 * Every PDF builds, every face is Type 1, every `\ref` and `\cite`
   resolves, and no listing line overflows its frame.
+* Every generated waveform fits the column it is put in:
+  `waveform()` gives each diagram a `<name>_width_test` that measures
+  the drawing from its coordinates and fails on a plain `figure` in a
+  two-column document that it would overrun, naming the placement and
+  the fix, which is `figure*` (issue 324).
 * Every page that holds a figure or a table was rendered and looked at:
   no float crosses into the other column or the margin, no float lies on
   another or on the text, and no label sits on a line or on another
