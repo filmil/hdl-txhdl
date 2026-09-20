@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Does a waveform fit the column it is put in? `waveform()` in
+# //docs/waveform.bzl gives every diagram a test of this, over the
+# documents' sources, since nothing in LaTeX or TikZ reports a drawing
+# wider than its column (issue 324).
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "figwidth",
+    srcs = ["main.rs"],
+    edition = "2021",
+)
+
+# The measurement and the placement finding, on sources the test
+# writes; the negative case on the real tree was proved by hand once,
+# a page-wide diagram in a plain figure, and is what the width tests
+# in //docs exist to catch.
+rust_test(
+    name = "figwidth_test",
+    crate = ":figwidth",
+    edition = "2021",
+)
+
+# The test's script: the tool, the diagram, and every source, as the
+# macro hands them over.
+exports_files(["check.sh"])
