@@ -284,9 +284,11 @@ filegroup(
 load(
     "@rules_vivado//build/vivado:rules.bzl",
     "vivado_place_and_route2",
+    "vivado_ila",
     "vivado_program_device",
     "vivado_program_flash",
     "vivado_project",
+    "vivado_read_ila",
     "vivado_synthesis",
 )
 load("//tools/vivado:defs.bzl", "vivado_synthesis2")
@@ -474,5 +476,62 @@ vivado_program_flash(
     flash_part = "mt25ql128-spi-x1_x2_x4",
     interface = "SPIx4",
     deps = [":vreteno_board_pnr"],
+    tags = ["manual"],
+)
+
+# The board with a logic analyser in it (issue 239): the same design
+# under a top that adds Vivado's integrated logic analyser on the
+# nets a reader of the board asks about first, listed at the head of
+# `board/vreteno_board_ila.v` with the reason for each. The analyser
+# is generated as an IP core with those probe widths, the bitstream
+# is built beside the shipping one and is not it, and a capture is
+# read back over the JTAG cable. Manual, as every Vivado target is.
+#
+#   bazel build //cpu/vreteno:vreteno_board_ila_pnr
+#   bazel run //cpu/vreteno/board/remote:hw_server
+#   bazel run //cpu/vreteno:vreteno_board_ila_prog -- \
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+#   bazel run //cpu/vreteno:vreteno_board_ila_read
+vivado_ila(
+    name = "board_ila",
+    data_depth = 4096,
+    part = "xc7a200tfbg484-2",
+    # rst, halt, calib, uart_tx, rx, brk, pwm_pins, vaw, var, vw,
+    # net_tx, said, mem_rst_n: each channel is its valid and its data.
+    probe_widths = [1, 1, 1, 1, 1, 1, 4, 36, 36, 37, 10, 1, 1],
+    tags = ["manual"],
+)
+
+vivado_synthesis2(
+    name = "vreteno_board_ila_synth",
+    srcs = [
+        ":board_v",
+        "board/vreteno_board_ila.v",
+        "//ddr3:hdl",
+    ],
+    part = "xc7a200tfbg484-2",
+    top = "vreteno_board_ila",
+    xdcs = [":ax7a200_xdc"],
+    deps = [":board_ila"],
+    tags = ["manual"],
+)
+
+vivado_place_and_route2(
+    name = "vreteno_board_ila_pnr",
+    synthesis = ":vreteno_board_ila_synth",
+    xdcs = [":ax7a200_xdc"],
+    tags = ["manual"],
+)
+
+vivado_program_device(
+    name = "vreteno_board_ila_prog",
+    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
+    deps = [":vreteno_board_ila_pnr"],
+    tags = ["manual"],
+)
+
+vivado_read_ila(
+    name = "vreteno_board_ila_read",
+    deps = [":vreteno_board_ila_pnr"],
     tags = ["manual"],
 )
