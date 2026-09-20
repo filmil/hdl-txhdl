@@ -126,8 +126,8 @@ fn figure(key: &str, net: &Lowered) -> String {
     let side = |want: &[Kind]| -> Vec<(String, Kind, usize)> {
         net.ports
             .iter()
-            .filter(|(_, k, _)| want.contains(k))
-            .map(|(n, k, w)| (n.clone(), *k, *w))
+            .filter(|(_, k, _, _)| want.contains(k))
+            .map(|(n, k, w, _)| (n.clone(), *k, *w))
             .collect()
     };
     let ins = side(&[Kind::In, Kind::Rx]);
@@ -195,7 +195,7 @@ fn figure(key: &str, net: &Lowered) -> String {
 /// lowering keeps their order and not their grouping.
 fn instance(ty: &str, net: &Lowered) -> String {
     let is_in = |k: &Kind| matches!(k, Kind::In | Kind::Rx);
-    let split = net.ports.iter().position(|(_, k, _)| !is_in(k));
+    let split = net.ports.iter().position(|(_, k, _, _)| !is_in(k));
     let tidy = ty.replace('<', "::<");
     let var = {
         let head: String =
@@ -220,7 +220,7 @@ fn instance(ty: &str, net: &Lowered) -> String {
     let all: Vec<(String, Kind, usize)> = net
         .ports
         .iter()
-        .map(|(n, k, w)| (n.clone(), *k, *w))
+        .map(|(n, k, w, _)| (n.clone(), *k, *w))
         .collect();
     let call = match split {
         Some(i) if all[i..].iter().all(|(_, k, _)| !is_in(k)) => {
@@ -252,7 +252,7 @@ fn sheet(key: &str, ty: &str, net: Lowered) {
     let ports: Vec<String> = net
         .ports
         .iter()
-        .map(|(n, k, w)| {
+        .map(|(n, k, w, _)| {
             format!("\\code{{{}}} & {} & {} \\\\", tex(n), kind(Some(*k)), w)
         })
         .collect();

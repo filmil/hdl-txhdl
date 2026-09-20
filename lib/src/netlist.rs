@@ -9,7 +9,7 @@
 //! lowering, which the proc-macro route closes by reading the
 //! `Unit` impl. Behaviour is not here at all; the bodies are empty.
 use crate::comp::trace::{collect, Kind, Probe, Traceable};
-use crate::comp::{Clock, In, Mem, Out, Reg, Rx, Tx, Wire};
+use crate::comp::{Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Wire};
 use crate::types::Value;
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -446,8 +446,11 @@ pub struct Lowered {
     /// The unit's fields, as [`Fields::fields`] gives them: the
     /// registers and memories the netlist declares.
     pub fields: Vec<(&'static str, Option<Kind>, usize, usize)>,
-    /// The ports, from `run`'s signature: name, what it is, width.
-    pub ports: Vec<(String, Kind, usize)>,
+    /// The ports, from `run`'s signature: name, what it is, width,
+    /// and the clock its domain is on, which is the second type
+    /// argument of `Out`, `In`, `Tx`, `Rx` or `Pad` and is the only
+    /// place a domain is still written down (issue 131).
+    pub ports: Vec<(String, Kind, usize, &'static str)>,
     /// The `let` names of the loops that are computed, each a wire
     /// driven by its expression; a read of a port or register is an
     /// alias and not here.
@@ -535,7 +538,17 @@ pub fn foreign(
         fields: Vec::new(),
         ports: ports
             .iter()
-            .map(|(p, k, w)| (p.to_string(), *k, *w))
+            // A foreign module's ports are on the clock its first
+            // pin is driven by, since the module is written outside
+            // and says nothing about domains itself.
+            .map(|(p, k, w)| {
+                (
+                    p.to_string(),
+                    *k,
+                    *w,
+                    clocks.first().map_or("clk", |(_, c)| *c),
+                )
+            })
             .collect(),
         wires: Vec::new(),
         wire_names: Vec::new(),
@@ -596,12 +609,12 @@ pub fn instance(unit: Lowered, name: &str, args: &[(&str, &str)]) -> Instance {
         args.len()
     );
     let mut conns: Vec<(String, String)> = Vec::new();
-    for ((p, _, _), (by, a)) in unit.ports.iter().zip(args) {
+    for ((p, _, _, _), (by, a)) in unit.ports.iter().zip(args) {
         let port = if by.is_empty() {
             p.clone()
         } else {
             assert!(
-                unit.ports.iter().any(|(n, _, _)| n == by),
+                unit.ports.iter().any(|(n, _, _, _)| n == by),
                 "`{name}` has no port `{by}`"
             );
             by.to_string()
@@ -823,11 +836,11 @@ impl Lowered {
     fn joins(&self, inst: &Instance) -> Vec<(String, String)> {
         let mut out = Vec::new();
         for (p, a) in &inst.conns {
-            let (_, k, _) = inst
+            let (_, k, _, _) = inst
                 .unit
                 .ports
                 .iter()
-                .find(|(n, _, _)| n == p)
+                .find(|(n, _, _, _)| n == p)
                 .expect("a joined port is a port of the child");
             let chan_net = self
                 .nets
@@ -906,6 +919,17 @@ impl Lowered {
         match self.aliases.iter().find(|(p, _)| p == port) {
             Some((_, s)) => format!(" {s}"),
             None => String::new(),
+        }
+    }
+    /// Which clock a port is on, for the ports file: `@` and the
+    /// clock's name, or nothing for a port on the default clock,
+    /// since that is what a reader assumes and every unit of one
+    /// clock would otherwise carry the same column (issue 131).
+    fn clock_col(c: &str) -> String {
+        if c == DefaultClock::NAME {
+            String::new()
+        } else {
+            format!(" @{c}")
         }
     }
     /// Verilog cannot part-select an expression, so every slice of
@@ -1110,7 +1134,7 @@ impl Lowered {
                 return *w;
             }
         }
-        for (p, k, w) in &self.ports {
+        for (p, k, w, _) in &self.ports {
             match k {
                 Kind::Tx | Kind::Rx => {
                     if n == format!("{p}_data") {
@@ -1143,8 +1167,13 @@ impl Lowered {
         for c in self.clocks() {
             out.push_str(&format!("{c} clock 1\n"));
         }
-        for (n, k, w) in &self.ports {
-            let s = self.scope_col(n);
+        for (n, k, w, c) in &self.ports {
+            // The clock the port is on, last on the line and marked,
+            // so that a reader which does not know about it is not
+            // confused by a column it was not expecting: the scope is
+            // the fourth field when there is one, and a memory's depth
+            // is the fourth field of its own line (issue 131).
+            let s = format!("{}{}", self.scope_col(n), Self::clock_col(c));
             match k {
                 Kind::Out => out.push_str(&format!("{n} out {w}{s}\n")),
                 Kind::In => out.push_str(&format!("{n} in {w}{s}\n")),
@@ -1210,7 +1239,7 @@ impl Lowered {
         let mut out = String::new();
         let mut plist: Vec<String> =
             self.clocks().iter().map(|c| format!("input {c}")).collect();
-        for (n, k, w) in &self.ports {
+        for (n, k, w, _) in &self.ports {
             match k {
                 Kind::Out => plist.push(format!("output {}{n}", range(*w))),
                 Kind::In => plist.push(format!("input {}{n}", range(*w))),
@@ -1498,7 +1527,7 @@ impl Lowered {
             .iter()
             .map(|c| format!("{c} : in std_logic"))
             .collect();
-        for (n, k, w) in &self.ports {
+        for (n, k, w, _) in &self.ports {
             match k {
                 Kind::Out => plist.push(format!("{n} : out {}", ty(*w))),
                 Kind::In => plist.push(format!("{n} : in {}", ty(*w))),
@@ -1645,7 +1674,7 @@ impl Lowered {
                 .clocks
                 .iter()
                 .map(|(p, _)| format!("{p} : in std_logic"))
-                .chain(inst.unit.ports.iter().map(|(p, k, w)| {
+                .chain(inst.unit.ports.iter().map(|(p, k, w, _)| {
                     let dir = match k {
                         Kind::Out => "out",
                         Kind::Pad => "inout",
@@ -1704,11 +1733,11 @@ impl Lowered {
                 // for an output. A pad is `std_logic_vector` on both.
                 let joins = self.joins(inst);
                 for (a, b) in &joins {
-                    let (_, k, w) = inst
+                    let (_, k, w, _) = inst
                         .unit
                         .ports
                         .iter()
-                        .find(|(n, _, _)| n == a)
+                        .find(|(n, _, _, _)| n == a)
                         .expect("a joined port is a port of the child");
                     conns.push(match k {
                         Kind::In if *w > 1 => {

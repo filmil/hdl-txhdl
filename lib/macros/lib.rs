@@ -6813,14 +6813,21 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             return err(span, "a port must be an Out, In, Tx, Rx or Pad");
         };
         // The transaction type: up to the clock argument, if any.
+        // What follows that comma is the port's clock, and it is the
+        // one place the domain is still written down: by the time the
+        // netlist is read the type is gone, and a testbench that does
+        // not know a port's clock checks it against the wrong edge
+        // (issue 131). A port that names none is on the default clock,
+        // as the type's own default argument says.
         let inner = inner.strip_suffix('>').unwrap_or(inner);
-        let inner = match depth0_comma(inner) {
-            Some(c) => &inner[..c],
-            None => inner,
+        let (inner, clock) = match depth0_comma(inner) {
+            Some(c) => (&inner[..c], inner[c + 1..].trim().to_string()),
+            None => (inner, "::txhdl::comp::DefaultClock".to_string()),
         };
         ports.push(format!(
             "(\"{pname}\".to_string(), ::txhdl::comp::trace::Kind::{kind}, \
-             <{inner} as ::txhdl::types::Value>::WIDTH)"
+             <{inner} as ::txhdl::types::Value>::WIDTH, \
+             <{clock} as ::txhdl::comp::Clock>::NAME)"
         ));
         pkinds.push((pname.clone(), kind.to_string()));
         if kind == "Tx" || kind == "Rx" {
