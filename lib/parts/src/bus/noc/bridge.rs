@@ -18,13 +18,18 @@
 //! answer for one.
 //!
 //! A write of one beat is one packet, carrying its address phase and
-//! its data together. That is what the two hosts in this tree make,
-//! and it is what keeps two of them from interleaving their write
-//! data at a peripheral that has one port: AXI4 puts no identifier on
-//! the write data channel, so a beat that arrived between another
-//! host's address phase and its beat could not be told apart. A burst
-//! of more than one beat wants a virtual channel per source, or
-//! reassembly at the peripheral, and this bridge carries none.
+//! its data together, and a write of more is that many packets: the
+//! host bridge splits a burst into single-beat writes, each at its own
+//! address, and answers the host once, when the last of them has been
+//! answered. That is what keeps two hosts from interleaving their
+//! write data at a peripheral that has one port: AXI4 puts no
+//! identifier on the write data channel, so a beat that arrived
+//! between another host's address phase and its beat could not be
+//! told apart, but a packet that is a whole write cannot be cut into.
+//! What a peripheral sees is `N` writes rather than one burst of `N`,
+//! which is the same thing to a memory and to every peripheral in this
+//! tree; `docs/noc-bursts.md` says what it would cost to do otherwise,
+//! and for whom.
 use txhdl::comp::{mux, Clock, DefaultClock, Mem, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
@@ -46,12 +51,17 @@ use crate::bus::axi::{Addr, BurstKind, Resp, B, R, W};
 /// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
 /// by `1 << YB` nodes at most.
 ///
-/// A write is one packet, so a write of one beat needs nothing kept
-/// between cycles. What it does hold is the refusal of a longer one:
-/// a burst of more than one beat cannot cross the network (issue
-/// 125), so the bridge eats such a burst and answers it `SlvErr`
-/// rather than sending a packet that would take the next burst's
-/// data with it.
+/// A write of one beat is one packet and needs nothing kept between
+/// cycles. A write of more is split (issue 125): its first beat leaves
+/// with the address phase, and each beat after it leaves as a
+/// single-beat write of its own at the next address, under the phase
+/// held here. Every one of those is answered by the far side, and the
+/// bridge answers the host once, when the last answer is in, with
+/// `SlvErr` if any of them was an error. One burst is split at a
+/// time, and the next long write waits until this one is answered; a
+/// write of one beat and a read do not wait. A wrapping burst is not
+/// split, since the wrap is not computed here: it is eaten whole and
+/// answered `SlvErr`, as every long write was before the split.
 #[derive(Trace, Default)]
 pub struct HostBridge<
     const X: usize,
@@ -75,6 +85,31 @@ pub struct HostBridge<
     const X2: usize,
     const Y2: usize,
 > {
+    /// Beats of the burst being split that are still to leave, after
+    /// the one leaving now; zero when no burst is being split.
+    left: Reg<U<8>>,
+    /// The address the next beat of that burst goes to.
+    saddr: Reg<U<A>>,
+    /// The address phase held for the beats after the first: its
+    /// identifier, which the merged answer also carries; whether it
+    /// is fixed, in which case the address does not move; and its
+    /// size and the hints AXI carries and nothing here acts on, sent
+    /// again with every beat so that the far side sees the same phase
+    /// each time.
+    sid: Reg<U<I>>,
+    ssize: Reg<U<3>>,
+    sfix: Reg<Bit>,
+    slock: Reg<Bit>,
+    scache: Reg<U<4>>,
+    sprot: Reg<U<3>>,
+    sqos: Reg<U<4>>,
+    sregion: Reg<U<4>>,
+    /// Answers still to come for the split burst before the host is
+    /// answered; zero when none is owed.
+    pend: Reg<U<8>>,
+    /// Whether any of the answers in so far was an error, which makes
+    /// the merged answer `SlvErr`.
+    err: Reg<Bit>,
     /// The beats of a refused burst are still to come, so every one
     /// of them is taken and dropped until the one marked last.
     eat: Reg<Bit>,
@@ -149,16 +184,29 @@ impl<
             let me_x = U::<XB>::from(X as u32);
             let me_y = U::<YB>::from(Y as u32);
             let room = req.ready();
-            // The two address phases, and the node each is for. The
-            // last range matches whatever the first two did not.
             let ah = aw.head();
             let rh = ar.head();
+            let wh = w.head();
+            // A burst being split: its beats after the first leave
+            // under the phase held in the registers, at the address
+            // held there, so the address a write packet is for is the
+            // held one while splitting and the offered phase's else.
+            let none = U::<8>::from(0u8);
+            let splitting = self.left.get() != none;
+            let merging = self.pend.get() != none;
+            let eating = self.eat.get();
+            let offered = aw.peek().is_some();
+            let long = ah.len != none;
+            let wrapping = ah.burst == BurstKind::Wrap;
+            let addr = mux(splitting, self.saddr.get(), ah.addr);
+            // The node each address is for. The last range matches
+            // whatever the first two did not.
             let m0 = U::<A>::from(M0 as u32);
             let c0 = U::<A>::from(B0 as u32);
             let m1 = U::<A>::from(M1 as u32);
             let c1 = U::<A>::from(B1 as u32);
-            let aw0 = (ah.addr & m0) == c0;
-            let aw1 = (ah.addr & m1) == c1;
+            let aw0 = (addr & m0) == c0;
+            let aw1 = (addr & m1) == c1;
             let ar0 = (rh.addr & m0) == c0;
             let ar1 = (rh.addr & m1) == c1;
             let awx = mux(
@@ -181,55 +229,104 @@ impl<
                 U::<YB>::from(Y0 as u32),
                 mux(ar1, U::<YB>::from(Y1 as u32), U::<YB>::from(Y2 as u32)),
             );
-            // A burst of more than one beat does not cross the
-            // network (issue 125): a write leaves as one packet, so
-            // the beats after the first would stay on the channel and
-            // be paired with the next burst's address phase. Such a
-            // burst is refused here rather than sent. Its address
-            // phase and every one of its beats are taken and dropped,
-            // and its host is answered `SlvErr`, because a peripheral
-            // that never sees the burst never answers it and the host
-            // would wait for ever.
-            let wh = w.head();
-            let eating = self.eat.get();
-            let long = ah.len != U::<8>::from(0u8);
-            let refuse = !eating & aw.peek().is_some() & long;
-            // A write goes when its address phase and its beat are
-            // both there, as one packet; a read goes on its own.
-            let go_w = !eating
+            // A wrapping burst is refused rather than split, since the
+            // wrap is not computed here: its address phase and every
+            // one of its beats are taken and dropped, and its host is
+            // answered `SlvErr`, because a peripheral that never sees
+            // the burst never answers it and the host would wait for
+            // ever.
+            let refuse = !eating & !splitting & offered & wrapping;
+            // A write's first beat goes when its address phase and
+            // its beat are both there, as one packet; a long write's
+            // first beat waits too until the last long write has been
+            // answered, since one answer is merged at a time. The
+            // beats after the first go as the channel offers them. A
+            // read goes on its own.
+            let first = !eating
+                & !splitting
                 & !refuse
-                & aw.peek().is_some()
+                & offered
                 & w.peek().is_some()
-                & room;
+                & room
+                & (!long | !merging);
+            let more = splitting & w.peek().is_some() & room;
+            let go_w = first | more;
             let go_ar = !go_w & ar.peek().is_some() & room;
             let drop_w = (eating | refuse) & w.peek().is_some();
             let ate_last = drop_w & wh.last;
-            let _ = aw.recv_if(go_w | refuse);
+            let _ = aw.recv_if(first | refuse);
             let _ = w.recv_if(go_w | drop_w);
             let _ = ar.recv_if(go_ar);
-            self.eat.set(mux(
-                ate_last,
-                Bit::Zero,
-                mux(refuse, Bit::One, eating),
-            ));
-            self.bad.set(mux(refuse, ah.id, self.bad.get()));
+            // The phase a write packet carries: the held one while
+            // splitting, the offered one for a first beat. The address
+            // moves by a beat, which is the link's width: every beat in
+            // this tree is a whole word, the memory model steps by the
+            // width, and `size` is carried and not acted on anywhere
+            // (issue 374). A fixed burst does not move at all.
+            let id = mux(splitting, self.sid.get(), ah.id);
+            let size = mux(splitting, self.ssize.get(), ah.size);
+            let is_fixed = Bit::from(ah.burst == BurstKind::Fixed);
+            let fixed = mux(splitting, self.sfix.get(), is_fixed);
+            let bytes = U::<A>::from(S as u32);
+            let step = mux(fixed, U::<A>::from(0u8), bytes);
+            let start = first & long;
             // The answers, unpacked back into the two channels the
-            // host's tracker reads.
+            // host's tracker reads. A write response for the burst
+            // being merged is counted rather than passed on, and the
+            // one that completes the count is answered to the host in
+            // its place, so it waits for room on `b` as a passed-on
+            // one does.
             let ph = rsp.head();
+            let got = rsp.peek().is_some();
             let is_b = ph.chan == Chan::B;
-            let to_b = rsp.peek().is_some() & is_b & b.ready();
-            let to_r = rsp.peek().is_some() & !is_b & r.ready();
-            let _ = rsp.recv_if(to_b | to_r);
+            let mine = is_b & merging & (ph.id == self.sid.get());
+            let last_one = self.pend.get() == U::<8>::from(1u8);
+            let done_b = got & mine & last_one & b.ready();
+            let merge = got & mine & (!last_one | b.ready());
+            let to_b = got & is_b & !mine & b.ready();
+            let to_r = got & !is_b & r.ready();
+            let _ = rsp.recv_if(to_b | merge | to_r);
+            let bad_resp =
+                !(ph.resp == Resp::Okay) & !(ph.resp == Resp::ExOkay);
+            let err_now = self.err.get() | (merge & bad_resp);
             // The refusal's own answer, which waits behind whatever
             // the network is answering rather than racing it.
             let owing = self.owe.get();
-            let say = owing & !to_b & b.ready();
-            self.owe
-                .set(mux(say, Bit::Zero, mux(ate_last, Bit::One, owing)));
+            let say = owing & !to_b & !done_b & b.ready();
+            with!(self <= {
+                eat: mux(ate_last, Bit::Zero, mux(refuse, Bit::One, eating)),
+                bad: mux(refuse, ah.id, self.bad.get()),
+                owe: mux(say, Bit::Zero, mux(ate_last, Bit::One, owing)),
+                first ? {
+                    left: ah.len,
+                    sid: ah.id,
+                    ssize: ah.size,
+                    sfix: is_fixed,
+                    slock: ah.lock,
+                    scache: ah.cache,
+                    sprot: ah.prot,
+                    sqos: ah.qos,
+                    sregion: ah.region,
+                } else {
+                    more ? left: self.left.get() - 1,
+                },
+                go_w ? saddr: addr + step,
+                start ? {
+                    pend: ah.len + 1,
+                    err: Bit::Zero,
+                } else {
+                    merge ? {
+                        pend: self.pend.get() - 1,
+                        err: err_now,
+                    },
+                },
+            });
             // One packet leaves, so its fields are chosen once: a
             // write beat's when a beat is going, else the address
             // phase's, and of the two phases the read's when it is
-            // the one being sent.
+            // the one being sent. A write packet is a single-beat
+            // write whatever the burst was, so its length is zero and
+            // it is marked last.
             let go = go_ar | go_w;
             if go.to_bool() {
                 req.send(Pkt {
@@ -238,16 +335,36 @@ impl<
                     sx: me_x,
                     sy: me_y,
                     chan: mux(go_ar, Chan::Ar, Chan::W),
-                    id: mux(go_ar, rh.id, ah.id),
-                    addr: mux(go_ar, rh.addr, ah.addr),
-                    len: mux(go_ar, rh.len, ah.len),
-                    size: mux(go_ar, rh.size, ah.size),
-                    burst: mux(go_ar, rh.burst, ah.burst),
-                    lock: mux(go_ar, rh.lock, ah.lock),
-                    cache: mux(go_ar, rh.cache, ah.cache),
-                    prot: mux(go_ar, rh.prot, ah.prot),
-                    qos: mux(go_ar, rh.qos, ah.qos),
-                    region: mux(go_ar, rh.region, ah.region),
+                    id: mux(go_ar, rh.id, id),
+                    addr: mux(go_ar, rh.addr, addr),
+                    len: mux(go_ar, rh.len, U::<8>::from(0u8)),
+                    size: mux(go_ar, rh.size, size),
+                    burst: mux(go_ar, rh.burst, BurstKind::Incr),
+                    lock: mux(
+                        go_ar,
+                        rh.lock,
+                        mux(splitting, self.slock.get(), ah.lock),
+                    ),
+                    cache: mux(
+                        go_ar,
+                        rh.cache,
+                        mux(splitting, self.scache.get(), ah.cache),
+                    ),
+                    prot: mux(
+                        go_ar,
+                        rh.prot,
+                        mux(splitting, self.sprot.get(), ah.prot),
+                    ),
+                    qos: mux(
+                        go_ar,
+                        rh.qos,
+                        mux(splitting, self.sqos.get(), ah.qos),
+                    ),
+                    region: mux(
+                        go_ar,
+                        rh.region,
+                        mux(splitting, self.sregion.get(), ah.region),
+                    ),
                     data: wh.data,
                     strb: wh.strb,
                     last: Bit::One,
@@ -255,11 +372,24 @@ impl<
                 });
             }
             // One send on the response channel, whichever answer it
-            // is: the network's, or the refusal's.
-            if (to_b | say).to_bool() {
+            // is: the network's passed on, the merged one for a split
+            // burst, or the refusal's.
+            if (to_b | done_b | say).to_bool() {
                 b.send(B {
-                    id: mux(to_b, ph.id, self.bad.get()),
-                    resp: mux(to_b, ph.resp, Resp::SlvErr),
+                    id: mux(
+                        to_b,
+                        ph.id,
+                        mux(done_b, self.sid.get(), self.bad.get()),
+                    ),
+                    resp: mux(
+                        to_b,
+                        ph.resp,
+                        mux(
+                            done_b,
+                            mux(err_now, Resp::SlvErr, Resp::Okay),
+                            Resp::SlvErr,
+                        ),
+                    ),
                 });
             }
             if to_r.to_bool() {
