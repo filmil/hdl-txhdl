@@ -2,6 +2,19 @@
 load("@rules_latex_host//latex:defs.bzl", "combined_pdf", "latex_document")
 load(":waveform.bzl", "waveform")
 
+# Every source of every document, for the checks that read them: the
+# width test each waveform gets in waveform.bzl reads these to find
+# where a diagram is put and in which document (issue 324).
+filegroup(
+    name = "tex_sources",
+    srcs = glob([
+        "*.tex",
+        "examples_sections/*.tex",
+        "runtime_sections/*.tex",
+        "datasheets/*.tex",
+    ]),
+)
+
 package(default_visibility = ["//visibility:public"])
 
 # The vendored class, package and drawing files live in //third_party, so

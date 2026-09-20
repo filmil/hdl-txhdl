@@ -11,6 +11,7 @@ NAME_timing.tex.
 """
 
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_nvc//nvc:rules.bzl", "vhdl_test")
 load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
 load("@rules_verilog//verilog:defs.bzl", "verilog_library")
@@ -129,4 +130,22 @@ def waveform(
               " --names $(location " + name + ".fst.names)" +
               " --signals '" + ",".join(signals) + "' > $@",
         tools = ["//tools/dt2tikz"],
+    )
+    # The diagram fits every column it is put in, or the test says
+    # which placement to make figure* (issue 324). The check reads the
+    # documents' sources, so a placement added later is caught too.
+    sh_test(
+        name = name + "_width_test",
+        srcs = ["//tools/figwidth:check.sh"],
+        args = [
+            "$(rootpath //tools/figwidth)",
+            "$(rootpath " + name + "_timing.tex)",
+            "$(rootpaths //docs:tex_sources)",
+        ],
+        data = [
+            name + "_timing.tex",
+            "//docs:tex_sources",
+            "//tools/figwidth",
+        ],
+        size = "small",
     )
