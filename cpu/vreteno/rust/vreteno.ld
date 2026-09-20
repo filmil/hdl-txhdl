@@ -2,13 +2,11 @@
 /*
  * Vreteno's memory as the linker sees it.
  *
- * Two regions, and which section goes where is forced by the machine
- * rather than by convention. Instruction memory holds the program and
- * nothing else: it is a memory inside the core, not a device on the
- * bus, so a load from it never leaves the core and reads nothing. A
- * constant placed there would be a constant the program cannot read.
- * Everything a load may touch, `.rodata` included, therefore lives in
- * the data memory, and the image carries its initial bytes.
+ * Two regions. The instruction memory holds the program and its
+ * constants: the core fetches from its own copy inside itself, and the
+ * same words sit on the bus at address zero, read-only, so a load
+ * reaches `.rodata` there. Everything a program writes lives in the
+ * data memory, and the image carries its initial bytes.
  *
  * Both are 4 KiB and both are hard limits: the core fetches by
  * `pc[11:2]`, so a program past 4096 bytes wraps into itself
@@ -34,7 +32,7 @@ SECTIONS
   .rodata : ALIGN(4) {
     *(.rodata .rodata.*)
     *(.srodata .srodata.*)
-  } > dmem
+  } > imem
 
   .data : ALIGN(4) {
     *(.data .data.*)

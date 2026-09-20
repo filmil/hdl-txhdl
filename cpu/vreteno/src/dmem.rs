@@ -37,11 +37,11 @@ pub struct Dmem<const I: usize> {
 
 impl<const I: usize> Dmem<I> {
     /// A memory holding `bytes` from its base before the first cycle:
-    /// the constants a compiled program reads. Nothing on this machine
-    /// can put them there at run time, because the instruction memory
-    /// a program is loaded into is not on the bus and a load never
-    /// reaches it, so what a program reads has to be here already.
-    /// The bytes go a lane each, as an address's low two bits choose.
+    /// a compiled program's initialised data. Its constants live in
+    /// the boot memory beside the code, which is on the bus read-only
+    /// (issue 268); what a program writes lives here, and the image
+    /// carries the initial bytes. The bytes go a lane each, as an
+    /// address's low two bits choose.
     pub fn with(bytes: &[u8]) -> Self {
         // A drive through `at` is deferred to the edge, as a register's
         // is, so the lanes are built whole and handed to `Mem::with`.

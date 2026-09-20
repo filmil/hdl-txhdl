@@ -23,7 +23,6 @@ const DMEM_BASE: u32 = 0x1000;
 const DMEM_BYTES: u32 = 4096;
 
 const SHF_ALLOC: u32 = 0x2;
-const SHF_EXEC: u32 = 0x4;
 const SHT_NOBITS: u32 = 8;
 
 #[derive(Debug)]
@@ -139,23 +138,15 @@ fn run() -> Result<String, String> {
                 DMEM_BASE + DMEM_BYTES
             ));
         }
-        // A section in instruction memory that a load would have to
-        // reach is a section the program cannot read: a load below the
-        // data base never leaves the core.
-        if in_imem && s.flags & SHF_EXEC == 0 {
-            return Err(format!(
-                "section `{}` holds data but is linked into the \
-                 instruction memory at {:#x}. Vreteno cannot read its \
-                 own instruction memory, so the program could never \
-                 read it. Link it into the data memory instead.",
-                s.name, s.addr
-            ));
-        }
+        // A section in the instruction memory need not hold code: the
+        // boot memory is on the bus as well, read-only, so a constant
+        // placed beside the code is a constant a load can reach. What
+        // goes into which image is decided by address, not by flags.
         if s.typ == SHT_NOBITS {
             continue; // `.bss`: space, not bytes. The stub zeroes it.
         }
         let bytes = &d[s.off as usize..(s.off + s.size) as usize];
-        if s.flags & SHF_EXEC != 0 {
+        if in_imem {
             put(&mut imem, (s.addr - IMEM_BASE) as usize, bytes);
         } else {
             put(&mut dmem, (s.addr - DMEM_BASE) as usize, bytes);

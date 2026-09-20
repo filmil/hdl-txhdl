@@ -200,6 +200,13 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
         })
         .collect();
     ram.load(DATA_BASE / 4, &words);
+    // The program's own words again, from address zero: the boot
+    // memory is on the bus read-only on the board (issue 268), so a
+    // program's constants sit beside its code, and a load of them
+    // reaches this memory here, which the bridge's default route sends
+    // every unmapped address to. Writable here, where nothing writes it.
+    let boot: Vec<U<32>> = text.iter().map(|&w| U::from(w)).collect();
+    ram.load(0, &boot);
 
     // 1,1: the serial port, behind a network bridge and an AXI-Lite
     // bridge.
