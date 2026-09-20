@@ -180,6 +180,27 @@ rust_test(
     edition = "2021",
 )
 
+# The trap dispatcher at work, on the same machine: three environment
+# calls and a timer interrupt through `vreteno_hal::trap`.
+#   bazel run //cpu/vreteno:traps
+rust_binary(
+    name = "traps",
+    srcs = ["src/bin/traps.rs"],
+    edition = "2021",
+    deps = [
+        ":vreteno32",
+        "//cpu/vreteno/rust:traps_program",
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+)
+
+rust_test(
+    name = "traps_test",
+    crate = ":traps",
+    edition = "2021",
+)
+
 # The same, in C++: the other toolchain, the same core.
 #   bazel run //cpu/vreteno:hello_cc
 rust_binary(

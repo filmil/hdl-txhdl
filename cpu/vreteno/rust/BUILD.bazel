@@ -54,6 +54,7 @@ rust_binary(
     rustc_flags = VRETENO_FLAGS,
     # Built through the transition below, not for this machine.
     tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
 # The image of that program, as Rust source: the instruction words and
@@ -182,6 +183,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
 vreteno_flat(
@@ -245,6 +247,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
 vreteno_image(
@@ -260,6 +263,32 @@ rust_library(
     edition = "2021",
 )
 
+# The trap dispatcher at work: an environment call handled and resumed
+# past, and a timer interrupt taken, through the crate rather than a
+# vector written by hand. Built exactly as the greeting is.
+rust_binary(
+    name = "traps",
+    srcs = ["traps.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_image(
+    name = "traps_image",
+    platform = ":vreteno",
+    program = ":traps",
+)
+
+rust_library(
+    name = "traps_program",
+    srcs = [":traps_image"],
+    crate_name = "traps_program",
+    edition = "2021",
+)
+
 # What the document lists: the program as written, and the script
 # that says where each of its sections may go.
 filegroup(
@@ -269,6 +298,7 @@ filegroup(
         "ico_hdmi.rs",
         "hello.rs",
         "irq.rs",
+        "traps.rs",
         "vreteno.ld",
         "vreteno_ram.ld",
     ],
