@@ -47,6 +47,7 @@ use vreteno32::board::Board;
 use vreteno32::core::Vreteno;
 use vreteno32::dmem::Dmem;
 use vreteno32::pair::{Inject, Pair, Watch};
+use vreteno32::rom::Rom;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
 
@@ -453,6 +454,7 @@ fn main() {
     sheet("Pair", "Pair<2>", Pair::<2>::lowered("pair"));
     sheet("Vreteno", "Vreteno<2>", Vreteno::<2>::lowered("vreteno"));
     sheet("Dmem", "Dmem<2>", Dmem::<2>::lowered("dmem"));
+    sheet("Rom", "Rom<2>", Rom::<2>::lowered("rom"));
     sheet("Timer", "Timer<2>", Timer::<2>::lowered("timer"));
     sheet("Plic", "Plic2<0>", Plic2::<0>::lowered("plic"));
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));

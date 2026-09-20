@@ -1,0 +1,104 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Rom
+\datasheet{Rom}{Vreteno's boot memory on the bus: the 1024 words the core fetches, readable and not writable, behind an AXI peripheral end.}
+
+\dsfacts{\code{cpu/vreteno/src/rom.rs}}{\code{vreteno32::rom::Rom}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+\code{Rom} is the boot memory of the Vreteno machine as a device on
+its bus: the same \code{IMEM\_WORDS}, 1024 words, that the core
+fetches from inside itself, at address zero, so that a load can read
+a constant that sits beside the code, and a debugger or a host on the
+bus can read the program that is there. The core keeps its own copy
+for the fetch, which reads it in the same cycle; this copy answers the
+bus a cycle after a read is taken, as the data memory does. Both are
+filled with the same image before the first cycle, so they cannot
+disagree, and neither is written at run time.
+
+It is the peripheral client of an \code{AxiPer}: it takes requests on
+\code{req} and write beats on \code{wd}, and answers on \code{ans}
+for a write and \code{rb} for a read. It answers single-beat bursts,
+which is all the core makes.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{I} & The width of the AXI identifier on \code{req}, \code{ans}
+and \code{rb}, in bits. The tables use 2, as the board does. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Address map}
+
+The word a burst names is bits 11 to 2 of its address. The memory
+looks at no other address bits.
+
+On the board, \code{BoardRouter} sends it the page at \code{0} with
+mask \code{0xffff\_f000}, so addresses \code{0x0} to \code{0xffc} are
+words 0 to 1023, which are the words the core fetches from
+\code{0x0} to \code{0xffc}. \code{run.rs} puts it at the same place.
+
+\dstables{Rom}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A read is taken when no write is waiting for its beat and the
+answer register is free or is being emptied in this cycle. The word
+is read into \code{word} at the edge, with its identifier in
+\code{rid}, and \code{answer} is set.
+\item The read is answered on \code{rb} the cycle after, with
+\code{rid}, \code{OKAY} and \code{last} set.
+\item A write is taken when no other write is waiting for its beat.
+Its identifier goes into \code{pid} and \code{pend} is set; nothing
+is written.
+\item The held write's beat is taken when it has arrived and
+\code{ans} has room, and dropped, so that the write data channel is
+not left holding it; \code{ans} sends \code{SLVERR} with \code{pid},
+which is what a peripheral that was reached and refused says.
+\item While a write waits for its beat, no request of either kind is
+taken.
+\item \code{Rom::with} fills the words from a program before the
+first cycle: the same words \code{Vreteno::with} puts in the core.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{the\_boot\_memory\_is\_readable\_and\_not\_writable}, in
+\code{//cpu/vreteno:board\_test}, runs the board under a program
+that loads a word of itself from address zero, stores over it, loads
+it again and says whether it kept; the first load is checked to
+have returned the program rather than the zero a hole answers.
+\item \code{//cpu/vreteno:hello\_test},
+\code{//cpu/vreteno:hello\_cc\_test} and
+\code{//cpu/vreteno:traps\_test} run compiled programs whose
+constants the linker put beside the code, in \code{.rodata}, which
+their loads read through it.
+\item Its netlist is part of the board's, which
+\code{//cpu/vreteno:vreteno\_board\_synth} synthesises and the manual
+\code{//cpu/vreteno/board/sim:board\_test} runs under Vivado's
+simulator; it is not simulated on its own.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Board}, as \code{rom} behind the tracker \code{prom}, at the
+router's first slot. \code{run.rs}, which every compiled program's
+test runs on, as \code{Rom<IW>}.
+
+\subsection*{Limits}
+
+It serves bursts of one beat and does not look at a burst's length. It
+checks no address, since the router sends it only its own range, so
+an address beyond word 1023 wraps. One write is held at a time. It is
+a second copy of the program, in block RAM beside the core's, and the
+two are the same only because the netlist fills both from one image:
+nothing at run time can change either.
