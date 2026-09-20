@@ -553,6 +553,20 @@ waveform(
     ],
 )
 
+# The reset, which no unit declares and every module has.
+waveform(
+    name = "reset",
+    example = "//lib/examples:ex_reset",
+    lowered = ("ticker", "ticker"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//rst=>rst",
+        "//tick=>tick",
+        "//ticker/count=>count",
+        "//total=>total",
+    ],
+)
+
 waveform(
     name = "stage",
     example = "//lib/examples:ex_stage",
@@ -674,6 +688,8 @@ latex_document(
         ":i2c_timing",
         ":syscon_run",
         ":syscon_timing",
+        ":reset_run",
+        ":reset_timing",
         ":wdog_run",
         ":wdog_timing",
         "//lib/examples:sources",
