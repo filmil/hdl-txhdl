@@ -95,6 +95,8 @@ fn main() {
     // it is not the port's own name: a channel two units share under
     // one name in the run, with a port name of their own on each side.
     let mut scopes: Vec<(String, String)> = Vec::new();
+    // Which clock each port is on, when it is not the default one.
+    let mut port_clocks: Vec<(String, String)> = Vec::new();
     let ports: Vec<(String, String, usize)> = std::fs::read_to_string(ports)
         .expect("ports")
         .lines()
@@ -108,14 +110,25 @@ fn main() {
                 return None;
             }
             // A memory's line has a depth as its fourth field and is not
-            // a port; a port's fourth field is its scope.
-            if f.len() == 4 && f[1] == "mem" {
+            // a port.
+            if f.len() >= 4 && f[1] == "mem" {
                 return None;
             }
-            if f.len() == 4 {
-                scopes.push((f[0].to_string(), f[3].to_string()));
+            // After the width a port's line carries two optional
+            // fields: its trace scope, and the clock it is on, which
+            // is marked with `@` so the two are told apart rather
+            // than counted (issue 131). A port on the default clock
+            // says nothing, which is what every unit of one clock
+            // does.
+            for x in f.iter().skip(3) {
+                match x.strip_prefix('@') {
+                    Some(c) => {
+                        port_clocks.push((f[0].to_string(), c.to_string()))
+                    }
+                    None => scopes.push((f[0].to_string(), x.to_string())),
+                }
             }
-            (f.len() == 3 || f.len() == 4).then(|| {
+            (f.len() >= 3).then(|| {
                 (f[0].to_string(), f[1].to_string(), f[2].parse().unwrap())
             })
         })
@@ -248,6 +261,20 @@ fn main() {
         };
         (first, period.max(1))
     };
+    // How many ticks a port's own clock takes for a cycle. A check
+    // one cycle after a drive means one cycle of the port's clock,
+    // not of the testbench's first one: before issue 131 every port
+    // was read two ticks on, so a port on a slower clock was compared
+    // against a value its own edge had not produced yet, and the two
+    // disagreed for part of every period.
+    let port_period = |port: &str| -> usize {
+        let named = port_clocks.iter().find(|(p, _)| p == port);
+        let c = match named {
+            Some((_, c)) => c.clone(),
+            None => clocks[0].clone(),
+        };
+        clock_shape(&trace_name(&c, "clock")).1
+    };
     let val = |name: &str, i: usize| -> Option<String> {
         values
             .get(name)
@@ -359,7 +386,7 @@ fn main() {
             o.push_str("    #1;\n");
             for (n, d, w) in &ports {
                 if is_in(d) && !clocks.contains(n) {
-                    let at = if registered(d) { t } else { t + 2 };
+                    let at = if registered(d) { t } else { t + port_period(n) };
                     if let Some(v) = val(&trace_name(n, d), at) {
                         o.push_str(&format!("    {n} = {};\n", vlit(*w, &v)));
                     }
@@ -384,11 +411,14 @@ fn main() {
                     if d == "txout" && n.ends_with("_data") {
                         let valid =
                             trace_name(&n.replace("_data", "_valid"), d);
-                        if val(&valid, t + 2).as_deref() != Some("1") {
+                        if val(&valid, t + port_period(n)).as_deref()
+                            != Some("1")
+                        {
                             continue;
                         }
                     }
-                    if let Some(v) = val(&trace_name(n, d), t + 2) {
+                    if let Some(v) = val(&trace_name(n, d), t + port_period(n))
+                    {
                         let sig = if d == "wire" {
                             format!("uut.{n}")
                         } else {
@@ -631,7 +661,7 @@ fn main() {
         let mut i = 0;
         for (n, d, _) in &ports {
             if is_in(d) && !clocks.contains(n) {
-                let at = if registered(d) { t } else { t + 2 };
+                let at = if registered(d) { t } else { t + port_period(n) };
                 if let Some(v) = val(&trace_name(n, d), at) {
                     last_in[i] = v;
                 }
@@ -660,10 +690,10 @@ fn main() {
         }
         for (n, d, w) in &ports {
             if is_out(d) {
-                let mut v = val(&trace_name(n, d), t + 2);
+                let mut v = val(&trace_name(n, d), t + port_period(n));
                 if d == "txout" && n.ends_with("_data") {
                     let valid = trace_name(&n.replace("_data", "_valid"), d);
-                    if val(&valid, t + 2).as_deref() != Some("1") {
+                    if val(&valid, t + port_period(n)).as_deref() != Some("1") {
                         v = None;
                     }
                 }
