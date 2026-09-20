@@ -19,6 +19,8 @@ fn load(net: &mut Lowered, text: &[u32], data: &[u8]) {
     for inst in &mut net.instances {
         match inst.name.as_str() {
             "cpu" => inst.unit.init("imem", &text),
+            // The same words again, on the bus, read-only.
+            "rom" => inst.unit.init("words", &text),
             "dmem" => {
                 for lane in 0..4 {
                     let bytes: Vec<u128> = data

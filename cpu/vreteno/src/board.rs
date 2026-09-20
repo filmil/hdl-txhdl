@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The whole of the design that goes on the board, as one lowered unit.
 //!
-//! The core, its tracker, a router, and five peripherals, each behind a
+//! The core, its tracker, a router, and six peripherals, each behind a
 //! tracker of its own or, for the serial port and the interrupt
 //! controller, an AXI-Lite bridge: the data memory at `0x1000`, the
 //! interrupt controller, the timer and the software interrupt, the 64
@@ -25,6 +25,7 @@
 //! `DIV` is the serial port's clock divider.
 use crate::core::{Vreteno, Writeback};
 use crate::dmem::Dmem;
+use crate::rom::Rom;
 use crate::timer::Timer;
 use crate::uart::Uart;
 use ddr3::Ddr3Per;
@@ -39,7 +40,7 @@ use txhdl_parts::bus::axi::{
 use txhdl_parts::bus::axi_lite::{
     LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge4, LiteR, LiteW,
 };
-use txhdl_parts::bus::router::Router5;
+use txhdl_parts::bus::router::Router6;
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::plic::Plic2;
 use txhdl_parts::pwm::Pwm;
@@ -64,7 +65,7 @@ pub const REMOTE_WAIT: usize = 2_000_000;
 /// that must equal it. The first three are a page each; the memory is
 /// the quarter of the address space from `0x4000_0000`, and the
 /// interrupt controller the 64 MiB from `0x0c00_0000`.
-pub type BoardRouter = Router5<
+pub type BoardRouter = Router6<
     32,
     32,
     4,
@@ -79,6 +80,8 @@ pub type BoardRouter = Router5<
     0xc000_0000,
     0x0c00_0000,
     0xfc00_0000,
+    0x0000_0000,
+    0xffff_f000,
 >;
 // end{map}
 
@@ -96,7 +99,8 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     /// port at `0x3000`, the pulse width modulator at `0x3100`,
     /// whatever the board hangs on the third slot at `0x3200`, and the
     /// remote peripheral at `0x3300`, each a sixteenth of the page.
-    /// The router has five ports and all five are taken, and a
+    /// The router's ports go to memories and to the bus's own
+    /// peripherals, and a
     /// peripheral of six registers does not want one of its own.
     ///
     /// The third slot leaves this unit as ports rather than reaching a
@@ -122,6 +126,11 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     // end{vslot}
     pub pddr3: AxiPer<32, 32, 4, 2>,
     pub pplic: LiteBridge1<32, 32, 4, 2, 0x0c00_0000, 0xfc00_0000>,
+    /// The boot memory on the bus, at address zero, readable and not
+    /// writable: the same words the core fetches from inside itself,
+    /// so a load can read a constant beside the code (#268).
+    pub prom: AxiPer<32, 32, 4, 2>,
+    pub rom: Rom<2>,
     pub dmem: Dmem<2>,
     pub timer: Timer<2>,
     pub uart: Uart<DIV>,
@@ -271,6 +280,16 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         let (w4_tx, w4_rx) = chan::<W<32, 4>, DefaultClock>();
         let (b4_tx, b4_rx) = chan::<B<2>, DefaultClock>();
         let (r4_tx, r4_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (aw5_tx, aw5_rx) = chan::<Aw<32, 2>, DefaultClock>();
+        let (ar5_tx, ar5_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (w5_tx, w5_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (b5_tx, b5_rx) = chan::<B<2>, DefaultClock>();
+        let (r5_tx, r5_rx) = chan::<R<32, 2>, DefaultClock>();
+        // The boot memory's tracker and the memory.
+        let (req5_tx, req5_rx) = chan::<PerReq<32, 2>, DefaultClock>();
+        let (wd5_tx, wd5_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (ans5_tx, ans5_rx) = chan::<Answer<2>, DefaultClock>();
+        let (rb5_tx, rb5_rx) = chan::<R<32, 2>, DefaultClock>();
         // Each peripheral's tracker and the peripheral.
         let (req0_tx, req0_rx) = chan::<PerReq<32, 2>, DefaultClock>();
         let (wd0_tx, wd0_rx) = chan::<W<32, 4>, DefaultClock>();
@@ -364,12 +383,14 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                     self.router.run(
                         (
                             aw_rx, ar_rx, w_rx, b0_rx, r0_rx, b1_rx, r1_rx,
-                            b2_rx, r2_rx, b3_rx, r3_rx, b4_rx, r4_rx,
+                            b2_rx, r2_rx, b3_rx, r3_rx, b4_rx, r4_rx, b5_rx,
+                            r5_rx,
                         ),
                         (
                             aw0_tx, ar0_tx, w0_tx, aw1_tx, ar1_tx, w1_tx,
                             aw2_tx, ar2_tx, w2_tx, aw3_tx, ar3_tx, w3_tx,
-                            aw4_tx, ar4_tx, w4_tx, b_tx, r_tx,
+                            aw4_tx, ar4_tx, w4_tx, aw5_tx, ar5_tx, w5_tx, b_tx,
+                            r_tx,
                         ),
                     ),
                 ),
@@ -405,9 +426,30 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                                     (req3_tx, wd3_tx, b3_tx, r3_tx),
                                 ),
                                 join2(
-                                    self.pplic.run(
-                                        (aw4_rx, ar4_rx, w4_rx, pb_rx, pr_rx),
-                                        (paw_tx, par_tx, pw_tx, b4_tx, r4_tx),
+                                    join2(
+                                        self.pplic.run(
+                                            (
+                                                aw4_rx, ar4_rx, w4_rx, pb_rx,
+                                                pr_rx,
+                                            ),
+                                            (
+                                                paw_tx, par_tx, pw_tx, b4_tx,
+                                                r4_tx,
+                                            ),
+                                        ),
+                                        join2(
+                                            self.prom.run(
+                                                (
+                                                    aw5_rx, ar5_rx, w5_rx,
+                                                    ans5_rx, rb5_rx,
+                                                ),
+                                                (req5_tx, wd5_tx, b5_tx, r5_tx),
+                                            ),
+                                            self.rom.run(
+                                                (req5_rx, wd5_rx),
+                                                (ans5_tx, rb5_tx),
+                                            ),
+                                        ),
                                     ),
                                     // The peripheral before the link, so
                                     // a transaction and the first byte of

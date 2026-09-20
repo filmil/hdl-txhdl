@@ -155,10 +155,15 @@ impl Model {
         Some(((hi as u32) << 16 | lo as u32, 4))
     }
 
-    /// A word of data memory by byte address, or, above it, the word
-    /// the bus answered the core with, which the caller handed over;
-    /// `None` below the data memory.
-    fn word(&self, addr: u32) -> Option<u32> {
+    /// A word by byte address: of the boot memory below `IMEM_BYTES`,
+    /// which is on the bus read-only and holds a program's constants
+    /// (issue 268); of the data memory; or, above it, the word the bus
+    /// answered the core with, which the caller handed over. `None`
+    /// between the boot memory and the data memory.
+    fn word(&self, imem: &[u32], addr: u32) -> Option<u32> {
+        if addr < IMEM_BYTES {
+            return Some(*imem.get((addr / 4) as usize).unwrap_or(&0));
+        }
         if addr >= DEVICES {
             return Some(self.dev_word);
         }
@@ -168,8 +173,14 @@ impl Model {
 
     /// A store's word. Above the data memory the store is a device's
     /// business; the model keeps what it can check at the end, the
-    /// timer's compare and the bytes given to the serial port.
+    /// timer's compare and the bytes given to the serial port. A store
+    /// into the boot memory is refused by the memory and ignored by the
+    /// core, which does not look at a write's answer, so it changes
+    /// nothing here either.
     fn set_word(&mut self, addr: u32, v: u32) -> bool {
+        if addr < IMEM_BYTES {
+            return true;
+        }
         if addr & CLINT_MASK == CLINT_BASE {
             let off = addr & !CLINT_MASK;
             if off == MTIMECMP_OFF || off == MTIMECMP_OFF + 4 {
@@ -377,7 +388,7 @@ impl Model {
                     self.trap(CAUSE_LOAD_MISALIGNED, addr);
                     return;
                 }
-                let Some(word) = self.word(addr) else {
+                let Some(word) = self.word(imem, addr) else {
                     self.halted = Some(Halt::Fault(addr));
                     return;
                 };
@@ -397,7 +408,7 @@ impl Model {
                     self.trap(CAUSE_STORE_MISALIGNED, addr);
                     return;
                 }
-                let Some(word) = self.word(addr) else {
+                let Some(word) = self.word(imem, addr) else {
                     self.halted = Some(Halt::Fault(addr));
                     return;
                 };

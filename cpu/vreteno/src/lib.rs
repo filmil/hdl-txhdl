@@ -8,6 +8,7 @@ pub mod isa;
 pub mod model;
 pub mod pair;
 pub mod program;
+pub mod rom;
 pub mod run;
 pub mod term;
 pub mod timer;

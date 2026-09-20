@@ -13,6 +13,7 @@ rust_library(
         "src/board.rs",
         "src/core.rs",
         "src/dmem.rs",
+        "src/rom.rs",
         "src/isa.rs",
         "src/lib.rs",
         "src/model.rs",

@@ -9,6 +9,7 @@
 //! in any language reaching the core is run and judged the same way.
 use crate::core::{Vreteno, Writeback};
 use crate::dmem::Dmem;
+use crate::rom::Rom;
 use crate::term::Terminal;
 use crate::timer::Timer;
 use crate::uart::Uart;
@@ -17,7 +18,7 @@ use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
-use txhdl_parts::bus::router::Router3;
+use txhdl_parts::bus::router::Router4;
 
 /// The link, as the demonstration has it: thirty-two bit addresses
 /// and words, four lanes, two-bit identifiers.
@@ -25,7 +26,7 @@ const IW: usize = 2;
 const NIDS: usize = 4;
 
 /// The address map, stated in the router's type.
-type Rtr = Router3<
+type Rtr = Router4<
     32,
     32,
     4,
@@ -35,6 +36,8 @@ type Rtr = Router3<
     0x0200_0000,
     0xffff_0000,
     0x3000,
+    0xf000,
+    0x0000,
     0xf000,
 >;
 
@@ -57,11 +60,11 @@ pub struct Ran {
 /// `limit` cycles.
 pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let mut cpu = Vreteno::with(text);
-    // The constants the program reads, in the data memory before the
-    // first cycle. Nothing on this machine could put them there later:
-    // the instruction memory the program lives in is not on the bus,
-    // so a load never reaches it.
+    // The data memory's initial bytes, and the boot memory on the bus:
+    // the same words the core fetches, readable by a load and not
+    // writable, so a program's constants can sit beside its code.
     let mut dmem = Dmem::<IW>::with(data);
+    let mut rom = Rom::<IW>::with(text);
     let lanes = (
         dmem.lane0.clone(),
         dmem.lane1.clone(),
@@ -86,9 +89,11 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let dl = axi_units::<32, 32, 4, IW>();
     let tl = axi_units::<32, 32, 4, IW>();
     let ul = axi_units::<32, 32, 4, IW>();
+    let rl = axi_units::<32, 32, 4, IW>();
     let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
     let (dreq, dwd, dans, drb) = dl.per_client;
     let (treq, twd, tans, trb) = tl.per_client;
+    let (rreq, rwd, rans, rrb) = rl.per_client;
     // The serial port is an AXI-Lite peripheral, behind a bridge
     // that takes the AXI4 channels the router gives it.
     let sl = axi_lite::<32, 32, 4>();
@@ -97,6 +102,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
     let mut dper = AxiPer::<32, 32, 4, IW>::default();
     let mut tper = AxiPer::<32, 32, 4, IW>::default();
+    let mut rper = AxiPer::<32, 32, 4, IW>::default();
     let mut ubridge = Serial::default();
     let mut router = Rtr::default();
     let mut timer = Timer::<IW>::default();
@@ -120,7 +126,10 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
                 uart.run((rst_u, rx, uaw, uar, uw), (ub, ur, tx_out, uirq_out)),
             ),
             join2(
-                dmem.run((dreq, dwd), (dans, drb)),
+                join2(
+                    dmem.run((dreq, dwd), (dans, drb)),
+                    rom.run((rreq, rwd), (rans, rrb)),
+                ),
                 cpu.run(
                     (rst, irq, tirq, sirq, crdata, cdone, grant),
                     (halt_out, instr_out, wb_out, issue, wbeat, release),
@@ -141,6 +150,8 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
                         tl.host_in.3,
                         ul.host_in.2,
                         ul.host_in.3,
+                        rl.host_in.2,
+                        rl.host_in.3,
                     ),
                     (
                         dl.host_out.0,
@@ -152,6 +163,9 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
                         ul.host_out.0,
                         ul.host_out.1,
                         ul.host_out.2,
+                        rl.host_out.0,
+                        rl.host_out.1,
+                        rl.host_out.2,
                         cl.per_out.2,
                         cl.per_out.3,
                     ),
@@ -159,8 +173,11 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
             ),
             join2(
                 join2(
-                    dper.run(dl.per_in, dl.per_out),
-                    tper.run(tl.per_in, tl.per_out),
+                    join2(
+                        dper.run(dl.per_in, dl.per_out),
+                        tper.run(tl.per_in, tl.per_out),
+                    ),
+                    rper.run(rl.per_in, rl.per_out),
                 ),
                 ubridge.run(
                     (ul.per_in.0, ul.per_in.1, ul.per_in.2, bb, br),

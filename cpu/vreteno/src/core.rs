@@ -840,8 +840,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let bad_half = ((f3 == 1) | (f3 == 5)) & addr.bit(0);
             let bad_word = (f3 == 2) & (addr.slice::<0, 2>() != 0);
             let unaligned = (is_load | is_store) & (bad_half | bad_word);
-            // Everything from the data memory up is on the bus.
-            let is_dev = addr.slice::<12, 20>() != 0;
+            // Every address is on the bus, the boot memory included:
+            // it sits there read-only at zero, so a load can reach a
+            // constant beside the code (issue 268).
             let here = self.valid & !rst & !self.stopped;
             // A load or a store waits for room on the bus whatever its
             // address, so that the fetch's hold does not hang on the
@@ -885,7 +886,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             self.int_take.set(live & int_ok);
             let int_take = self.int_take.get();
             let run = live & !int_take;
-            let send_load = run & is_load & is_dev & !unaligned;
+            let send_load = run & is_load & !unaligned;
 
             // The ALU, shared by the register and immediate forms; bit
             // 30 means subtract or arithmetic shift, except that an
@@ -1087,7 +1088,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // so the core writes none, and the grant it sends back is
             // of no use here and is dropped.
             let _ = grant.recv_if(grant.peek().is_some());
-            let send_store = store & is_dev;
+            let send_store = store;
             // A fetch goes out when the words it wants are not in the
             // buffer, nothing else of the core's is out, and the
             // channel has room. The second word is asked for after the

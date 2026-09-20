@@ -17,6 +17,7 @@ use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
 use vreteno32::board::{Board, REMOTE_DEV};
 use vreteno32::core::Vreteno;
 use vreteno32::dmem::Dmem;
+use vreteno32::rom::Rom;
 use vreteno32::term::Terminal;
 
 /// The serial port's divider in these runs: four cycles a bit, as the
@@ -131,6 +132,7 @@ fn run_all(
 ) -> Ran {
     let mut board = TestBoard {
         cpu: Vreteno::with(text),
+        rom: Rom::with(text),
         dmem: Dmem::with(data),
         ..Default::default()
     };
