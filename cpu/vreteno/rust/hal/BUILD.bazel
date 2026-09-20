@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: Apache-2.0
+# What every program for the core would otherwise write again: the
+# address map in one place, the peripherals as types, the control and
+# status registers, a trap entry that saves a frame and dispatches, and
+# the reset path. See issue #142.
+#
+# Built only for the core, through the transition a program's image
+# applies: the crate is inline RISC-V assembly from end to end, so it
+# is manual, and a program names it in `deps`.
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "vreteno_hal",
+    srcs = [
+        "lib.rs",
+        "trap.rs",
+    ],
+    crate_name = "vreteno_hal",
+    edition = "2021",
+    rustc_flags = [
+        "-Copt-level=z",
+        "-Cdebug-assertions=no",
+        "-Coverflow-checks=no",
+        "-Cpanic=abort",
+    ],
+    tags = ["manual"],
+)
+
+# The sources by name, for the documents' listings.
+filegroup(
+    name = "sources",
+    srcs = [
+        "lib.rs",
+        "trap.rs",
+    ],
+)
