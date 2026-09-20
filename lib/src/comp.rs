@@ -86,6 +86,37 @@ impl Clock for DefaultClock {
     const NAME: &'static str = "clk";
 }
 
+/// The name the netlist gives the reset, on every module that has
+/// anything clocked and on the net that joins a parent to its
+/// children. A unit that reads the reset takes a port of this name
+/// itself, and then the netlist uses that one rather than adding a
+/// second.
+pub const RESET_NAME: &str = "rst";
+
+/// Whether the reset is asserted.
+///
+/// The reset is not a port, for the same reason the clock is not: it
+/// reaches every unit, and a design that had to thread it by hand
+/// would say nothing by doing so. A unit that only holds registers
+/// needs to know nothing about it, because the registers go back to
+/// what they held before the first edge on their own. A unit that
+/// wants to *do* something under reset -- a core that must fetch from
+/// the reset vector rather than merely forget where it was -- takes
+/// an `In<Bit>` called `rst` and reads it, and the netlist joins that
+/// port to the same net.
+pub fn reset() -> bool {
+    clock::RESET.with(|r| r.get())
+}
+
+/// Assert or release the reset, for a testbench.
+///
+/// It takes effect at the next edge, as the netlist's `if (rst)`
+/// inside the clocked block does, so asserting it between edges does
+/// not change a register until the design's next tick.
+pub fn set_reset(on: bool) {
+    clock::RESET.with(|r| r.set(on))
+}
+
 // ---------------------------------------------------------------------
 // Wires and their ends
 
@@ -532,6 +563,10 @@ impl<T: Copy, C: Clock> Wire<T, C> {
 struct RegCell<T: Copy> {
     cur: Cell<T>,
     next: Cell<Option<T>>,
+    /// What the register held before the first edge, and what a reset
+    /// puts back. Kept rather than assumed zero so that the value
+    /// `Reg::new` was given is the one a reset restores.
+    init: T,
 }
 
 /// A drive scheduled for the end of the step.
@@ -541,6 +576,16 @@ trait Commit {
 
 impl<T: Copy> Commit for RegCell<T> {
     fn apply(&self) {
+        // A reset wins over the drive, and takes effect at the edge
+        // rather than the moment it is asserted, which is what the
+        // netlist's `if (rst)` inside the clocked block does. The
+        // drive is still taken off the cell, so a register does not
+        // latch a stale value on the edge after the reset.
+        if reset() {
+            self.next.take();
+            self.cur.set(self.init);
+            return;
+        }
         if let Some(v) = self.next.take() {
             self.cur.set(v)
         }
@@ -567,10 +612,12 @@ impl<T: Copy + 'static, C: Clock> Reg<T, C> {
     /// words. Without that the netlist starts the register at zero and
     /// disagrees with the run from the first cycle (issue 359).
     pub fn new(v: impl Into<T>) -> Self {
+        let v = v.into();
         Reg(
             Box::leak(Box::new(RegCell {
-                cur: Cell::new(v.into()),
+                cur: Cell::new(v),
                 next: Cell::new(None),
+                init: v,
             })),
             PhantomData,
         )
@@ -993,6 +1040,10 @@ mod clock {
     thread_local! {
         pub static TIME: Cell<u64> = const { Cell::new(0) };
         pub static NEXT: Cell<usize> = const { Cell::new(1) };
+        /// Whether the reset is asserted. One for the design, as the
+        /// default clock is one clock for the design; a register takes
+        /// its initial value back at the next edge while it is set.
+        pub static RESET: Cell<bool> = const { Cell::new(false) };
         /// How many `parallel!` groups are being polled.
         pub static PARALLEL: Cell<u32> = const { Cell::new(0) };
         /// The step at which the innermost group crossed its edge.
@@ -1356,6 +1407,38 @@ pub mod trace {
         static PROBES: RefCell<Vec<Probe>> = const { RefCell::new(Vec::new()) };
     }
 
+    /// Trace the reset, for every run and whether or not anything
+    /// asserts it.
+    ///
+    /// The netlist gives a module a port for the reset, and the
+    /// testbench generator reads each port's value from the trace by
+    /// name, so a trace without it leaves every co-simulation with a
+    /// port it cannot drive. A run that never asserts it records a
+    /// signal that is low throughout, which is what a testbench then
+    /// holds it at.
+    fn probe_reset() {
+        PROBES.with(|p| {
+            let mut p = p.borrow_mut();
+            if p.iter().any(|q| q.path == super::RESET_NAME) {
+                return;
+            }
+            p.push(Probe {
+                path: super::RESET_NAME.to_string(),
+                width: 1,
+                kind: Kind::In,
+                cell: 0,
+                sample: Box::new(|| {
+                    if super::reset() {
+                        "1".to_string()
+                    } else {
+                        "0".to_string()
+                    }
+                }),
+                names: None,
+            })
+        })
+    }
+
     /// Register a signal. What the `Traceable` impls call.
     pub fn probe(
         scope: &Scope,
@@ -1582,6 +1665,7 @@ pub mod trace {
         }
         /// Write the header and start recording.
         pub fn start(mut self) {
+            probe_reset();
             let probes: Vec<Probe> =
                 PROBES.with(|p| std::mem::take(&mut *p.borrow_mut()));
             let ids: Vec<String> =
@@ -1744,6 +1828,7 @@ pub mod trace {
                 open_fst, FstFileType, FstInfo, FstScopeType, FstSignalType,
                 FstVarDirection, FstVarType,
             };
+            probe_reset();
             let probes: Vec<Probe> =
                 PROBES.with(|p| std::mem::take(&mut *p.borrow_mut()));
             let info = FstInfo {

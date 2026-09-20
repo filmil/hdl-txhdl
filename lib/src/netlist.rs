@@ -796,6 +796,104 @@ impl Lowered {
         self
     }
 
+    /// Whether the unit's own `run` takes the reset as a port.
+    ///
+    /// A unit that reads the reset declares `rst: In<Bit>` and uses
+    /// it, as the core and the timer do. The netlist then joins that
+    /// port to the reset net rather than adding a second port of the
+    /// same name.
+    /// A port of that name that is not an input is refused, rather
+    /// than quietly shadowing the reset or colliding with it in the
+    /// netlist. A unit that drives a reset elsewhere is driving a
+    /// request for one, and names it accordingly.
+    fn declares_reset(&self) -> bool {
+        let r = crate::comp::RESET_NAME;
+        for (n, k, _, _) in &self.ports {
+            if n == r && *k != Kind::In {
+                panic!(
+                    "unit `{}` has a port `{r}` that is not an In: the \
+                     netlist keeps that name for the reset, which \
+                     reaches every module. Name it for what it is, such \
+                     as `{r}_req` for a reset a unit asks for.",
+                    self.name
+                );
+            }
+        }
+        self.ports
+            .iter()
+            .any(|(n, k, _, _)| n == r && *k == Kind::In)
+    }
+
+    /// Whether the module has a reset at all.
+    ///
+    /// Anything clocked has one: a register to put back, a channel to
+    /// empty, or a child with either. A module with nothing clocked
+    /// has nothing a reset would do, and takes no port for it.
+    fn has_reset(&self) -> bool {
+        self.foreign.is_none() && !self.clocks().is_empty()
+    }
+
+    /// Whether the netlist adds the reset port, rather than the unit
+    /// having declared it.
+    fn adds_reset_port(&self) -> bool {
+        self.has_reset() && !self.declares_reset()
+    }
+
+    /// The registers a process drives, which are the ones its clocked
+    /// block puts back on reset.
+    ///
+    /// Per process rather than per module, because two clocked blocks
+    /// that assigned one register would be two drivers of it. A
+    /// memory is not among them: it holds what was loaded into it,
+    /// and a reset is not a reload.
+    fn reset_regs(&self, p: &Process) -> Vec<String> {
+        fn walk(out: &mut Vec<String>, st: &Stmt) {
+            let mut name = |t: &Target| {
+                if let Target::Name(n) = t {
+                    if !out.contains(n) {
+                        out.push(n.clone())
+                    }
+                }
+            };
+            match st {
+                Stmt::Drive(t, _) => name(t),
+                Stmt::When(_, a, b) => {
+                    for (t, _) in a.iter().chain(b) {
+                        name(t)
+                    }
+                }
+                Stmt::Case(arms) => {
+                    for (_, ds) in arms {
+                        for (t, _) in ds {
+                            name(t)
+                        }
+                    }
+                }
+                Stmt::If(arms, els) => {
+                    for (_, ss) in arms {
+                        for s in ss {
+                            walk(out, s)
+                        }
+                    }
+                    for s in els {
+                        walk(out, s)
+                    }
+                }
+                Stmt::Guard(_) => {}
+            }
+        }
+        let mut out: Vec<String> = Vec::new();
+        for st in &p.body {
+            walk(&mut out, st);
+        }
+        out.retain(|n| {
+            self.fields
+                .iter()
+                .any(|(f, k, _, _)| f == n && *k == Some(Kind::Reg))
+        });
+        out
+    }
+
     /// The clocks the processes wait for, and the children's, each
     /// once, in order.
     fn clocks(&self) -> Vec<&'static str> {
@@ -1167,6 +1265,13 @@ impl Lowered {
         for c in self.clocks() {
             out.push_str(&format!("{c} clock 1\n"));
         }
+        // The reset is an input the testbench drives, and the trace
+        // holds it for every run, so it is read by its bare name like
+        // any other input. A unit that declared the port itself has
+        // it among `ports` already.
+        if self.adds_reset_port() {
+            out.push_str(&format!("{} in 1\n", crate::comp::RESET_NAME));
+        }
         for (n, k, w, c) in &self.ports {
             // The clock the port is on, last on the line and marked,
             // so that a reader which does not know about it is not
@@ -1239,6 +1344,14 @@ impl Lowered {
         let mut out = String::new();
         let mut plist: Vec<String> =
             self.clocks().iter().map(|c| format!("input {c}")).collect();
+        // The reset, beside the clocks and for the same reason: it
+        // reaches everything clocked, and a unit that does not read it
+        // still has registers to put back. A unit that does read it
+        // declared the port itself, and it is written below with the
+        // rest of the ports.
+        if self.adds_reset_port() {
+            plist.push(format!("input {}", crate::comp::RESET_NAME));
+        }
         for (n, k, w, _) in &self.ports {
             match k {
                 Kind::Out => plist.push(format!("output {}{n}", range(*w))),
@@ -1315,12 +1428,14 @@ impl Lowered {
                      wire {n}_tx_ready;\n  \
                      wire {r}{n}_rx_data;\n  wire {n}_rx_valid;\n  \
                      wire {n}_rx_ready;\n  \
-                     txhdl_chan #(.W({w})) {n}_chan(\n    .clk({c}),\n    \
+                     txhdl_chan #(.W({w})) {n}_chan(\n    .clk({c}), \
+                     .rst({rs}),\n    \
                      .tx_data({n}_tx_data), .tx_valid({n}_tx_valid), \
                      .tx_ready({n}_tx_ready),\n    \
                      .rx_data({n}_rx_data), .rx_valid({n}_rx_valid), \
                      .rx_ready({n}_rx_ready)\n  );",
-                    r = range(*w)
+                    r = range(*w),
+                    rs = crate::comp::RESET_NAME
                 )
                 .unwrap(),
                 _ => writeln!(out, "  wire {}{n};", range(*w)).unwrap(),
@@ -1340,6 +1455,14 @@ impl Lowered {
                     .map(|c| format!(".{c}({c})"))
                     .collect(),
             };
+            // The reset goes down to a lowered child by the name it
+            // has here, as a clock does. A child that declared the
+            // port itself is joined to it by `joins` below, with its
+            // other ports, so only the added one is wired here.
+            if inst.unit.adds_reset_port() {
+                let r = crate::comp::RESET_NAME;
+                conns.push(format!(".{r}({r})"));
+            }
             for (a, b) in self.joins(inst) {
                 conns.push(format!(".{a}({b})"));
             }
@@ -1478,8 +1601,35 @@ impl Lowered {
             if seq.iter().any(|l| l.contains("<=")) {
                 let edge = if p.falling { "negedge" } else { "posedge" };
                 writeln!(out, "  always @({edge} {}) begin", p.clock).unwrap();
+                // The reset, inside the clocked block: synchronous, so
+                // that it is a value on the edge like any other and
+                // needs no second sensitivity. Only the registers this
+                // process drives, since a register put back by two
+                // blocks would have two drivers.
+                // Only where the netlist added the port. A unit that
+                // declared `rst` itself answers it in its own body, in
+                // whatever way it means, and the runtime replays that
+                // body exactly; a clearing branch added on top would
+                // happen in the netlist and not in the Rust.
+                let regs = if self.adds_reset_port() {
+                    self.reset_regs(p)
+                } else {
+                    Vec::new()
+                };
+                if !regs.is_empty() {
+                    writeln!(out, "    if ({}) begin", crate::comp::RESET_NAME)
+                        .unwrap();
+                    for r in &regs {
+                        writeln!(out, "      {r} <= 0;").unwrap();
+                    }
+                    writeln!(out, "    end else begin").unwrap();
+                }
                 for l in &seq {
-                    writeln!(out, "{l}").unwrap();
+                    let pad = if regs.is_empty() { "" } else { "  " };
+                    writeln!(out, "{pad}{l}").unwrap();
+                }
+                if !regs.is_empty() {
+                    writeln!(out, "    end").unwrap();
                 }
                 writeln!(out, "  end").unwrap();
             }
@@ -1527,6 +1677,10 @@ impl Lowered {
             .iter()
             .map(|c| format!("{c} : in std_logic"))
             .collect();
+        // The reset, beside the clocks, as in the Verilog.
+        if self.adds_reset_port() {
+            plist.push(format!("{} : in std_logic", crate::comp::RESET_NAME));
+        }
         for (n, k, w, _) in &self.ports {
             match k {
                 Kind::Out => plist.push(format!("{n} : out {}", ty(*w))),
@@ -1701,11 +1855,13 @@ impl Lowered {
                 writeln!(
                     out,
                     "  {n}_chan : entity work.txhdl_chan \
-                     generic map (W => {w}) port map (\n    clk => {c},\n    \
+                     generic map (W => {w}) port map (\n    clk => {c}, \
+                     rst => {rs},\n    \
                      tx_data => {n}_tx_data, tx_valid => {n}_tx_valid, \
                      tx_ready => {n}_tx_ready,\n    \
                      rx_data => {n}_rx_data, rx_valid => {n}_rx_valid, \
-                     rx_ready => {n}_rx_ready\n  );"
+                     rx_ready => {n}_rx_ready\n  );",
+                    rs = crate::comp::RESET_NAME
                 )
                 .unwrap();
             }
@@ -1726,6 +1882,11 @@ impl Lowered {
                     .map(|c| format!("{c} => {c}"))
                     .collect(),
             };
+            // The reset down to a lowered child, as in the Verilog.
+            if inst.unit.adds_reset_port() {
+                let r = crate::comp::RESET_NAME;
+                conns.push(format!("{r} => {r}"));
+            }
             if let Some(f) = &inst.unit.foreign {
                 // The component's vectors are `std_logic_vector` and the
                 // netlist's are `unsigned`, so a vector crosses with a
@@ -1917,8 +2078,42 @@ impl Lowered {
                     "  process ({c})\n  begin\n    if {edge}_edge({c}) then"
                 )
                 .unwrap();
+                // The reset, inside the clocked part, as in the
+                // Verilog: only the registers this process drives.
+                let regs = if self.adds_reset_port() {
+                    self.reset_regs(p)
+                } else {
+                    Vec::new()
+                };
+                if !regs.is_empty() {
+                    writeln!(
+                        out,
+                        "      if {} = '1' then",
+                        crate::comp::RESET_NAME
+                    )
+                    .unwrap();
+                    for r in &regs {
+                        let w = self
+                            .fields
+                            .iter()
+                            .find(|(f, _, _, _)| f == r)
+                            .map(|(_, _, w, _)| *w)
+                            .unwrap_or(1);
+                        let z = if w == 1 {
+                            "'0'".to_string()
+                        } else {
+                            "(others => '0')".to_string()
+                        };
+                        writeln!(out, "        {r} <= {z};").unwrap();
+                    }
+                    writeln!(out, "      else").unwrap();
+                }
                 for l in &seq {
-                    writeln!(out, "{l}").unwrap();
+                    let pad = if regs.is_empty() { "" } else { "  " };
+                    writeln!(out, "{pad}{l}").unwrap();
+                }
+                if !regs.is_empty() {
+                    writeln!(out, "      end if;").unwrap();
                 }
                 writeln!(out, "    end if;\n  end process;").unwrap();
             }
@@ -1939,6 +2134,7 @@ impl Lowered {
 const CHAN_VERILOG: &str = "`timescale 1ns/1ps
 module txhdl_chan #(parameter W = 1)(
   input clk,
+  input rst,
   input [W-1:0] tx_data, input tx_valid, output tx_ready,
   output [W-1:0] rx_data, output rx_valid, input rx_ready
 );
@@ -1951,10 +2147,17 @@ module txhdl_chan #(parameter W = 1)(
   wire [W-1:0] h1 = pop ? tail : head;
   wire tv1 = pop ? 1'b0 : tail_v;
   always @(posedge clk) begin
-    head_v <= hv1 | tx_valid;
-    head <= (tx_valid & ~hv1) ? tx_data : h1;
-    tail_v <= tv1 | (tx_valid & hv1);
-    tail <= (tx_valid & hv1) ? tx_data : tail;
+    if (rst) begin
+      // The two valid bits and nothing else: a channel is empty when
+      // nothing in it is valid, and the data behind them is not read.
+      head_v <= 1'b0;
+      tail_v <= 1'b0;
+    end else begin
+      head_v <= hv1 | tx_valid;
+      head <= (tx_valid & ~hv1) ? tx_data : h1;
+      tail_v <= tv1 | (tx_valid & hv1);
+      tail <= (tx_valid & hv1) ? tx_data : tail;
+    end
   end
   assign rx_data = head;
   assign rx_valid = head_v;
@@ -1971,6 +2174,7 @@ entity txhdl_chan is
   generic (W : natural);
   port (
     clk : in std_logic;
+    rst : in std_logic;
     tx_data : in unsigned(W - 1 downto 0);
     tx_valid : in std_logic;
     tx_ready : out std_logic;
@@ -1989,15 +2193,21 @@ begin
     variable hv, tv : std_logic;
   begin
     if rising_edge(clk) then
-      h := head; t := tail; hv := head_v; tv := tail_v;
-      if rx_ready = '1' and head_v = '1' then
-        h := tail; hv := tail_v; tv := '0';
+      if rst = '1' then
+        -- The two valid bits and nothing else: a channel is empty
+        -- when nothing in it is valid, and the data is not read.
+        head_v <= '0'; tail_v <= '0';
+      else
+        h := head; t := tail; hv := head_v; tv := tail_v;
+        if rx_ready = '1' and head_v = '1' then
+          h := tail; hv := tail_v; tv := '0';
+        end if;
+        if tx_valid = '1' then
+          if hv = '0' then h := tx_data; hv := '1';
+          else t := tx_data; tv := '1'; end if;
+        end if;
+        head <= h; tail <= t; head_v <= hv; tail_v <= tv;
       end if;
-      if tx_valid = '1' then
-        if hv = '0' then h := tx_data; hv := '1';
-        else t := tx_data; tv := '1'; end if;
-      end if;
-      head <= h; tail <= t; head_v <= hv; tail_v <= tv;
     end if;
   end process;
   rx_data <= head;

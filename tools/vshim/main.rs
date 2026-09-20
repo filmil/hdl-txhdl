@@ -24,6 +24,16 @@
 //! where SCRIPT is the path, under the main repository's runfiles, of
 //! the script that runs nvc on the testbench.
 
+/// The reset port every lowered module has.
+///
+/// A module that comes back as a unit takes it from the runtime
+/// rather than from a port, so that a re-imported module resets with
+/// the design around it and a unit reads the same whether it is the
+/// Rust or the Verilog. It matches `comp::RESET_NAME`, which this
+/// tool cannot import: it runs on the netlist's text, not on the
+/// library.
+const RESET: &str = "rst";
+
 struct Port {
     name: String,
     input: bool,
@@ -455,6 +465,11 @@ fn unit(
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for it in items {
         match it {
+            // The reset is not a port of the unit, for the same
+            // reason the clock is not: the netlist gives every module
+            // one, and the runtime holds it for the whole design. The
+            // shim drives it from there, below.
+            Item::Wire(p) if p.name == RESET => {}
             Item::Wire(p) if p.input => {
                 in_ty.push(format!("In<{}>", ty(p.width)));
                 in_nm.push(p.name.clone());
@@ -501,6 +516,10 @@ fn unit(
     };
     for it in items {
         match it {
+            Item::Wire(p) if p.name == RESET => before.push_str(&format!(
+                "            m.set({}, txhdl::comp::reset() as u128);\n",
+                idx(&p.name)
+            )),
             Item::Wire(p) if p.input => before.push_str(&format!(
                 "            m.set({}, {});\n",
                 idx(&p.name),
