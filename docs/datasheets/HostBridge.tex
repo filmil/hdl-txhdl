@@ -73,24 +73,38 @@ above went to the serial port.
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item A write of one beat is one packet, so it needs nothing kept
-between cycles. What the bridge does hold is its refusal of a longer
-one: \code{eat}, whether the beats of a refused burst are still
-arriving; \code{owe}, whether such a burst is waiting to be answered;
-and \code{bad}, the identifier to answer it under.
 \item A write goes when \code{aw} offers an address phase, \code{w}
 offers a beat, and \code{req} has room. The bridge takes both and sends
-one packet with \code{chan} \code{W}. The packet holds the address
-phase from \code{aw}, the data and strobe from \code{w}, and
-\code{last} high.
-\item A write whose \code{len} is not zero is refused instead. The
-bridge takes its address phase, sends no packet for it, and takes and
-drops every beat that follows until the one marked \code{last}. Then
-it answers \code{b} with \code{SLVERR} under the identifier it kept,
-in the first cycle \code{b} is ready and the network is not answering.
-Issue 280 says why the refusal is there: before it, such a burst left
-as one packet marked \code{last}, the peripheral waited for a beat
-that had stayed behind, and the host waited for ever.
+one packet with \code{chan} \code{W}: the address phase from
+\code{aw} with \code{len} zero, the data and strobe from \code{w}, and
+\code{last} high. A write of one beat is done with that.
+\item A write whose \code{len} is not zero is split (issue 125). Its
+first beat goes as above, and the phase is held: \code{left}, the
+beats still to go; \code{saddr}, the address the next one is for;
+\code{sid}, its identifier; \code{sfix}, whether the burst is fixed;
+and \code{ssize}, \code{slock}, \code{scache}, \code{sprot},
+\code{sqos} and \code{sregion}, sent again with every beat. Each beat
+after the first goes when \code{w} offers it and \code{req} has room,
+as a single-beat write at \code{saddr}, which then moves by a beat's
+width, \code{S} bytes, or not at all for a fixed burst. The beats are
+routed by their own addresses.
+\item The answers to a split burst are merged: \code{pend} counts
+those still to come and \code{err} whether any was not \code{OKAY}. A
+\code{B} packet under the burst's identifier is counted rather than
+passed on, and the one that completes the count is answered to
+\code{b} in its place, \code{SLVERR} if \code{err} was set and
+\code{OKAY} otherwise, when \code{b} is ready. A long write whose
+first beat is offered while another is still being merged waits;
+writes of one beat and reads do not.
+\item A wrapping burst is refused rather than split, since the wrap is
+not computed here: \code{eat}, whether its beats are still arriving;
+\code{owe}, whether it is waiting to be answered; and \code{bad}, the
+identifier to answer it under. The bridge takes its address phase,
+sends no packet for it, drops every beat until the one marked
+\code{last}, and answers \code{b} with \code{SLVERR} in the first
+cycle \code{b} is ready and nothing else is being answered. Before
+the split every long write was refused so, which was issue 280, and
+before the refusal it hung.
 \item A read goes when no write goes in that cycle, \code{ar} offers an
 address phase, and \code{req} has room. The bridge takes it and sends
 one packet with \code{chan} \code{Ar}.
@@ -107,7 +121,7 @@ packet goes to \code{r} as its identifier, data, response and
 \subsection*{Verification}
 
 \begin{itemize}
-\item Five tests in \code{lib/parts/src/bus/noc.rs}, in
+\item Eight tests in \code{lib/parts/src/bus/noc.rs}, in
 \code{//lib/parts:parts\_test}, put host bridges on a two by two
 lattice with 16-bit addresses. Their map sends \code{0x1000} and
 \code{0x2000}, each under the mask \code{0xf000}, and the default, all
@@ -118,13 +132,20 @@ has one host, at 0,0.
 has hosts at 0,0 and 1,0 on one memory.
 \item \code{four\_peripherals\_share\_one\_node} has hosts at 0,0 and
 1,0, and four memories behind a router at 1,1.
-\item \code{a\_write\_of\_two\_beats\_is\_refused\_rather\_than\_carried}
-asks for two words at once and finds \code{SLVERR} and a memory
-nobody wrote. Before the refusal it did not fail an assertion about
-the data: it hung.
-\item \code{a\_short\_write\_after\_a\_refused\_one\_still\_works}
-sends one beat after that burst and finds it served, so the dropped
-beats left the channel clean.
+\item \code{a\_write\_of\_two\_beats\_crosses\_the\_lattice\_as\_two\_writes}
+asks for two words at once and finds both in the memory, each at its
+word, and \code{OKAY}.
+\item \code{a\_fixed\_write\_lands\_every\_beat\_on\_one\_word} sends
+three beats fixed and finds the last of them at the one word and the
+next word untouched.
+\item \code{two\_hosts\_write\_sixteen\_beats\_at\_once\_and\_every\_word\_lands}
+has hosts at 0,0 and 1,0 each writing sixteen words to one memory
+at once and reading them back: every word in its place and in order,
+with the two bursts cut into each other on the way.
+\item \code{a\_wrapping\_write\_is\_refused\_and\_the\_one\_after\_it\_is\_served}
+asks for a wrapping burst, finds \code{SLVERR} and a memory nobody
+wrote, and then a write of one beat served, so the dropped beats left
+the channel clean.
 \item \code{a\_core\_draws\_a\_solid\_and\_a\_gpu\_fills\_it}, in
 \code{//soc:demo\_test}, runs \code{soc::Bridge} at 0,0 for the core
 and at 1,0 for the rasteriser.
@@ -142,11 +163,13 @@ the rasteriser at 1,0. The tests of the network in
 
 \subsection*{Limits}
 
-A write of one beat is one packet. A burst of more than one beat does
-not cross the network: it would need a virtual channel per source, or
-reassembly at the peripheral, and the bridge has neither. Such a burst
-is refused with \code{SLVERR} rather than carried, which is issue 280;
-carrying it is issue 125, and that work takes the refusal out again. The map has
+A write of one beat is one packet, and a burst of more crosses as
+that many single-beat writes: a peripheral that means something by a
+burst, a controller that opens a row for one, sees the beats and not
+the burst. One burst is split at a time, so a second long write waits
+for the first's answer. The address moves by the link's width and
+not by \code{size}, which nothing in this tree acts on. A wrapping
+burst is refused with \code{SLVERR} rather than carried. The map has
 three ranges. The last one takes every address the others miss. So no
 address is unknown to the network, and neither bridge has to answer for
 one.

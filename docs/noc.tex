@@ -231,24 +231,34 @@ design that states its map that way has no address the network does
 not know, which is why neither half has to answer for one.
 
 A write of one beat is one packet, carrying its address phase and its
-data together. That is what the hosts in this tree make, and it is
-what keeps two of them from interleaving their write data at a
-peripheral that has one port: AXI4 puts no identifier on the write
-data channel, so a beat that arrived between another host's address
-phase and its beat could not be told apart. A burst of more than one
-beat wants a virtual channel per source, or reassembly at the
-peripheral, and this bridge carries none.
+data together, and a write of more is that many packets. The host
+half splits a burst: the first beat leaves with the address phase,
+and each beat after it leaves as a single-beat write of its own at
+the next address, under the phase the bridge holds for it. Every one
+of those the far side answers, and the bridge answers the host once,
+when the last answer is in, \texttt{SlvErr} if any of them was an
+error. That is what keeps two hosts from interleaving their write
+data at a peripheral that has one port: AXI4 puts no identifier on
+the write data channel, so a beat that arrived between another host's
+address phase and its beat could not be told apart, and a packet that
+is a whole write can be cut into by nothing. What the peripheral sees
+is $N$ writes rather than one burst of $N$, which is the same thing
+to a memory and to every peripheral here; \code{docs/noc-bursts.md}
+weighs that against carrying the burst whole, and says for whom it
+would matter.
 
-So it refuses one. The host half takes the address phase of a longer
-burst and every beat up to the one marked last, sends nothing onto the
-network, and answers the host \texttt{SlvErr}. That is not what the
-burst asked for, but it is an answer: before the refusal such a write
-left as a single packet marked last, the peripheral's tracker waited
-for a beat that had stayed behind on the host's channel, and the
-client waited for ever. A host that asks the network for something it
-cannot do now learns so in one burst's time, and the channel is left
-clean for the next write. Carrying the burst is issue 125, and the
-work that carries it is the work that takes the refusal out.
+One burst is split at a time, and the next long write waits until it
+has been answered; a write of one beat and a read do not wait. A
+fixed burst is every beat at one address, and leaves so. A wrapping
+burst is the one still refused, since the wrap is not computed at the
+bridge: the host half takes its address phase and every beat up to
+the one marked last, sends nothing onto the network, and answers the
+host \texttt{SlvErr}. That is not what the burst asked for, but it is
+an answer, in one burst's time, and the channel is left clean for the
+next write. Before the split every long write was refused so, and
+before the refusal it hung: the write left as a single packet marked
+last, the peripheral's tracker waited for a beat that had stayed
+behind on the host's channel, and the client waited for ever.
 
 \nocpart{bridge.rs}{hostrun}{The host half.}{lst:n-host}
 
@@ -466,13 +476,14 @@ fixed order it replaced could leave a node unable to speak at all.
 The lattice is wired by a helper that makes the channels and hands out
 the ends, which does not lower; a design that is to be synthesised
 writes the same wiring as a unit of units and lets the lowering make
-the netlist. Writes of more than one beat do not cross the network,
-and are refused rather than carried; reads of several beats do cross,
-since every beat of the answer is a packet of its own carrying its
-identifier, and a test crosses the lattice with four of them.
-Why the write is the hard one, what each way of carrying it would
-cost, and which to build are worked out in \code{docs/noc-bursts.md},
-which issue 125 implements.
+the netlist. Writes of more than one beat cross the network as that
+many writes of one, split at the host bridge and answered once, so a
+peripheral that means something by a burst sees the beats and not the
+burst; \code{docs/noc-bursts.md} says what carrying it whole would
+cost, and why the split was chosen (issue 125). A wrapping write is
+refused rather than carried. Reads of several beats cross as one
+request and a packet per beat of the answer, and a test crosses the
+lattice with four of them.
 The arbiter in a switch is a round robin, so an input waits on at most
 four others; it was a fixed priority that starved the exit outright,
 which was issue 315.

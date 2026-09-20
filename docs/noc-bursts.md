@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Multi-beat writes across the network on chip
 
-Status: analysis and decision, September 19, 2026.
+Status: analysis and decision, September 19, 2026; the split built,
+September 20, 2026, under issue 125. Section 7 says which steps are
+done and which are not, and why.
 Author: automated coding assistant, with human supervision.
 
 This answers issue 133: why the network cannot carry a multi-beat AXI4
@@ -217,20 +219,45 @@ it is, it is refused as a long write is refused now.
    because every step after it makes a path busier.
 2. `HostBridge` splits an `INCR` write of `N` beats into `N` packets,
    each a single-beat write at its own address, and answers the host
-   once, with the worst response it saw. The guard stays for `FIXED`
-   and `WRAP`.
-3. The cap `L` as a parameter, with `SlvErr` above it, and the
-   documents saying what it is.
-4. `FIXED`, which is the same address each time, and then `WRAP`.
-5. Tests: two hosts writing multi-beat bursts at once to peripherals
-   behind one node, with the words checked in place and in order; the
-   lowered bridges co-simulated against their traces.
+   once, with the worst response it saw. **Done.** The phase is held
+   in registers, 8 for the beats left, `A` for the address, `I` for
+   the identifier, one for fixed, and 18 for the size and hints sent
+   again with each beat; the merge is 8 for the answers still to come
+   and one for whether any was an error. One burst is split at a time
+   and the next long write waits for its answer; single-beat writes
+   and reads do not. The answer is `SlvErr` if any beat's was not
+   `Okay`, so a `DecErr` comes home as `SlvErr`. The address moves by
+   the link's width, `S` bytes, and not by `size`: nothing in this
+   tree acts on `size`, the memory model steps by the width, and the
+   simulation client leaves it at zero, which is its own issue.
+3. The cap `L` as a parameter, with `SlvErr` above it. **Not built,
+   on purpose.** Under D there is no buffer for a cap to size: the
+   counter is 8 bits whichever cap is chosen, since `len` is, and a
+   burst of 256 beats costs the bridge nothing a burst of two does
+   not. A parameter would be policy without a mechanism behind it,
+   and `HostBridge` has twenty parameters already. The 4 KiB rule is
+   the host's, as it is on any AXI link. If a cap is wanted later it
+   is one comparison in `refuse`.
+4. `FIXED`, which is the same address each time: **done**, the
+   address does not move. `WRAP` is **still refused**, as every long
+   write was, since the wrap is not computed at the bridge.
+5. Tests: **done** for the network,
+   `two_hosts_write_sixteen_beats_at_once_and_every_word_lands`,
+   `a_write_of_two_beats_crosses_the_lattice_as_two_writes`,
+   `a_fixed_write_lands_every_beat_on_one_word` and
+   `a_wrapping_write_is_refused_and_the_one_after_it_is_served`, all
+   in `lib/parts/src/bus/noc.rs`. No waveform lowers the bridges, so
+   there is still no co-simulation of them; the showcase lists the
+   network's netlists as not yet simulated, and that is unchanged.
 6. `docs/noc.tex` loses its line about multi-beat writes not crossing,
-   and says what happens instead.
+   and says what happens instead. **Done**, with the `HostBridge`
+   sheet.
 
 ## 8. What was not done
 
-No candidate was synthesised, because none of them is written.
+D is written and not yet synthesised: there is no `host_bridge_synth`
+target beside `switch_synth` and `node_synth`, and adding one is the
+next number this note wants.
 The state above is counted from the design and from the widths the
 generated tables give, which is exact for flip-flops and says nothing
 about the logic around them.
