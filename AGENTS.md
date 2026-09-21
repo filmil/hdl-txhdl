@@ -553,6 +553,89 @@ Two things worth knowing while doing this:
   usually on the remote as well, so a tree removed by mistake is
   `git worktree add` away from being back.
 
+### Who owns a worktree is the commit trailer
+
+The owner is the `Claude-Session` trailer on the branch's commits.
+Not the branch's name, not the directory it sits in, and not a list
+handed to you, including a list from the session that is
+orchestrating the cleanup.
+
+```sh
+git log -1 --format='%B' <branch> | grep Claude-Session
+```
+
+On September 21, 2026 a coordinated cleanup carried a session URL
+first reported on September 8 into its census as a third owner that
+did not exist, and offered a live worktree to a session that was not
+its owner on the grounds that it belonged to somebody else.
+The trailer caught it, because the id in the trailer was the id of
+the session being asked.
+Check the trailer against your own id yourself, whoever tells you
+what is yours.
+
+### Removing a worktree does not stop its server
+
+`git worktree remove` leaves the Bazel server running, against an
+output base whose workspace directory is now gone.
+So "the worktree is gone, nothing points at the base" is not a safe
+inference, and deleting the base under a live server is not a safe
+act.
+Read `<base>/server/server.pid.txt`, and shut the server down before
+deleting the base if that pid is alive.
+Two removals on September 21, 2026 left two live JVMs holding about
+1.1 GB between them.
+
+### Measuring what is on the disk
+
+A single `du -sm /data/bazel/output` is killed for memory on this
+host, and `nice` and `ionice` do not save it: they throttle processor
+and disk, not memory, and it is the walk being held in memory that is
+the problem.
+Reaching for them is the obvious next move, and it was made twice on
+the day this was written, by somebody who then reported that the
+machine could not measure its own disk.
+It can.
+The instinct was right and the instruments were aimed at the wrong
+resource, which is worth knowing before you spend an hour repeating
+it.
+Size one base at a time, appending as you go, and run the pass
+detached so that a watchdog cannot take it.
+Peak memory then stays flat and the pass finishes.
+
+That is not a small difference.
+On September 21, 2026 the shape above sized all 332 orphaned bases at
+227.7 GB while a throttled whole-tree `du` was killed twice, and a
+sample of twelve, which is what a killed pass leaves you guessing
+from, came out twenty-four per cent high.
+
+### What an orphaned base is, and which ones are not yours
+
+An output base is orphaned when the workspace it was built for no
+longer exists, which is what `--workspace_directory` in
+`<base>/server/cmdline` says.
+
+That test is what makes the rule above usable rather than a fence.
+Of the 393 bases the census classified on September 21, 2026, 58 had
+a live workspace, 332 did not, and 3 said nothing, and the 332 held
+227.7 GB, a quarter of the disk, against the twenty or so gigabytes
+that a day of removing worktrees recovered.
+A bare count of the directory drifts by a base or two between reads,
+since builds start and finish while you are reading, so the total to
+quote is the one the classification accounted for and not the one
+`ls` gave a minute later.
+Most of them, 302 bases and 206.7 GB, are the Forgejo runner's
+finished job bases under `/data/act`, and they are not yours to
+delete however dead they look.
+The runner's warm Vivado toolchain base, the one the forty minutes
+went into, has a live workspace and is among the 58, so it is never
+what a census of orphans is pointing at.
+Say the number to whoever owns the runner and let them decide.
+
+Measure again rather than quoting the figures above.
+They are what one day looked like, and the runner's side of them
+grows by a base per job unless something reclaims them, so a reader a
+month later is holding a date and not a property of the machine.
+
 # Standing rule: one issue, one pull request, in topical commits
 
 An issue is a pull request of its own.
