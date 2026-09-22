@@ -5,12 +5,13 @@
 use crate::core::IMEM_BYTES;
 use crate::isa::{
     compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT, CAUSE_ECALL,
-    CAUSE_ILLEGAL, CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MSOFT,
-    CAUSE_MTIMER, CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK, CSR_DCSR,
-    CSR_DPC, CSR_MARCHID, CSR_MCAUSE, CSR_MCYCLE, CSR_MCYCLEH, CSR_MEPC,
-    CSR_MHALT, CSR_MHARTID, CSR_MIE, CSR_MIMPID, CSR_MINSTRET, CSR_MINSTRETH,
-    CSR_MIP, CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC,
-    CSR_MVENDORID, MEXT, MISA, MSOFT, MTIMECMP_OFF, MTIMER, UART_BASE,
+    CAUSE_ILLEGAL, CAUSE_LOAD_ACCESS, CAUSE_LOAD_MISALIGNED, CAUSE_MEXT,
+    CAUSE_MSOFT, CAUSE_MTIMER, CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK,
+    CSR_DCSR, CSR_DPC, CSR_MARCHID, CSR_MBUSQUIET, CSR_MCAUSE, CSR_MCYCLE,
+    CSR_MCYCLEH, CSR_MEPC, CSR_MHALT, CSR_MHARTID, CSR_MIE, CSR_MIMPID,
+    CSR_MINSTRET, CSR_MINSTRETH, CSR_MIP, CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS,
+    CSR_MTVAL, CSR_MTVEC, CSR_MVENDORID, MEXT, MISA, MSOFT, MTIMECMP_OFF,
+    MTIMER, UART_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -40,6 +41,8 @@ pub struct Csr {
     pub mie: u32,
     pub mip: u32,
     pub mtval: u32,
+    /// `mbusquiet`, bit 0 (issue 417).
+    pub busquiet: bool,
 }
 
 /// The architectural state, and only that.
@@ -54,6 +57,9 @@ pub struct Model {
     /// before the step of a device load. The timer's compare and the
     /// bytes the serial port was given are the model's own.
     pub dev_word: u32,
+    /// Whether the bus refused that load: the answer came back as an
+    /// error, and the load traps instead of writing (issue 417).
+    pub dev_err: bool,
     pub mtimecmp: u64,
     /// Instructions retired. The core counts the same thing in
     /// `minstret`, and this model counts it by stepping, so the two
@@ -94,6 +100,7 @@ impl Default for Model {
             mem: vec![0; DATA_BYTES as usize / 4],
             csr: Csr::default(),
             dev_word: 0,
+            dev_err: false,
             // All ones, as the timer's reset leaves it: a compare of zero
             // beside a count of zero is an interrupt pending from the
             // first cycle (issue 419).
@@ -262,6 +269,7 @@ impl Model {
             // The halt holds nothing: it reads as zero, and a write of
             // an odd value to it stops the machine.
             CSR_MHALT => 0,
+            CSR_MBUSQUIET => self.csr.busquiet as u32,
             CSR_DCSR => self.dcsr,
             CSR_DPC => self.dpc,
             // What the machine is. `misa` says RV32IMC; the four
@@ -302,6 +310,7 @@ impl Model {
             CSR_MIE => self.csr.mie = v & (MEXT | MSOFT | MTIMER),
             CSR_MIP => self.csr.mip = v & MEXT,
             CSR_MTVAL => self.csr.mtval = v,
+            CSR_MBUSQUIET => self.csr.busquiet = v & 1 != 0,
             // `ebreakm` and `step` are the program's; the rest is the
             // core's to say.
             CSR_DCSR => {
@@ -472,6 +481,12 @@ impl Model {
                 // and issue 138 asked for, so the model does too.
                 if misaligned(d.kind, addr) {
                     self.trap(CAUSE_LOAD_MISALIGNED, addr);
+                    return;
+                }
+                // The bus refused: the caller says so with the answer,
+                // and the load is an access fault at its address.
+                if addr >= DEVICES && self.dev_err && !self.csr.busquiet {
+                    self.trap(CAUSE_LOAD_ACCESS, addr);
                     return;
                 }
                 let Some(word) = self.word(imem, addr) else {

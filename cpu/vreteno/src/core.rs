@@ -31,7 +31,7 @@ use txhdl::comp::{
 use txhdl::funcs::{lt_signed, sra};
 use txhdl::types::{Bit, U};
 use txhdl::{case, lower, select, when, with, Trace, Value};
-use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, R, W};
+use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, Resp, R, W};
 
 /// Words of instruction memory. The data memory is a device on the
 /// bus, `crate::dmem`, at `DATA_BASE` as the model has it.
@@ -467,6 +467,7 @@ fn csr_read(
     mtval: U<32>,
     dcsr: U<32>,
     dpc: U<32>,
+    busquiet: Bit,
 ) -> U<32> {
     select!(f12.raw() => {
         0x300 => mstatus,
@@ -476,6 +477,7 @@ fn csr_read(
         0x342 => mcause,
         0x7b0 => dcsr,
         0x7b1 => dpc,
+        0x7c1 => busquiet.zext::<32>(),
         0x304 => mie,
         0x344 => mip,
         0x343 => mtval,
@@ -502,7 +504,7 @@ fn csr_read(
 fn csr_known(f12: U<12>) -> Bit {
     select!(f12.raw() => {
         0x300 | 0x305 | 0x340 | 0x341 | 0x342 | 0x304 | 0x344
-        | 0x343 | 0x7c0 | 0x7b0 | 0x7b1 | 0x301 | 0xf11 | 0xf12 | 0xf13
+        | 0x343 | 0x7c0 | 0x7c1 | 0x7b0 | 0x7b1 | 0x301 | 0xf11 | 0xf12 | 0xf13
         | 0xf14 | 0xb00 | 0xb02 | 0xb80 | 0xb82 => Bit::One,
         _ => Bit::Zero,
     })
@@ -634,6 +636,18 @@ pub struct Vreteno<const IW: usize> {
     pub mip: Reg<U<32>>,
     pub mtval: Reg<U<32>>,
     pub wb_dev: Reg<U<32>>,
+    /// Whether the bus refused the load whose answer is in `wb_dev`:
+    /// the load then traps as it retires, a load access fault at its
+    /// address, and writes nothing (issue 417).
+    pub wb_err: Reg<Bit>,
+    /// A store the bus refused, kept until the trap for it is taken
+    /// before the next instruction to run: a store is posted, so its
+    /// fault is raised late and without the address (issue 417).
+    pub st_err: Reg<Bit>,
+    /// `mbusquiet`: bus refusals read zero and drop the store instead
+    /// of trapping, for a program that polls a peripheral which may
+    /// refuse on purpose (issue 417).
+    pub busquiet: Reg<Bit>,
     pub dev_wait: Reg<Bit>,
     /// The two machine counters. `mcycle` counts every cycle the core
     /// is running and `minstret` every instruction it retires, so the
@@ -759,6 +773,18 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let _ = rdata.recv_if(rel_room & !dv);
             let resp_valid = take_r;
             let resp_data = rh.data;
+            // Whether the answer is a refusal: the peripheral failed, or
+            // there is none at the address and the router said so.
+            let resp_bad = select!(rh.resp => {
+                Resp::Okay => Bit::Zero,
+                Resp::ExOkay => Bit::Zero,
+                _ => Bit::One,
+            });
+            let done_bad = select!(dh.resp => {
+                Resp::Okay => Bit::Zero,
+                Resp::ExOkay => Bit::Zero,
+                _ => Bit::One,
+            });
             let (m_hi, m_lo, m_d) =
                 (self.m_hi.get(), self.m_lo.get(), self.m_d.get());
             // The writeback stage: a loaded word's byte or half, by the
@@ -775,7 +801,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // A device load sits in writeback while its wait is on, and
             // retires the cycle after its answer has landed.
             let wb_here = self.wb_valid & !self.dev_wait;
-            let wb_write = wb_here & (wb_rd != 0);
+            // A refused load retires as a trap: nothing is written, the
+            // instruction behind it is squashed, and the fetch restarts
+            // at the handler. Its address is what the ALU computed.
+            let wb_fault =
+                wb_here & self.wb_load & self.wb_err & !self.busquiet;
+            let wb_write = wb_here & (wb_rd != 0) & !wb_fault;
             // The fetch stage: the instruction at the program counter,
             // into the instruction register unless the execute stage
             // redirects below. The memory holds little-endian words, so
@@ -920,7 +951,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 pc + mux(self.ir_c, U::<32>::from(2u32), U::<32>::from(4u32));
             // Live: an instruction in execute that is not stalled. It
             // runs unless the interrupt takes its place.
-            let live = !rst & !self.stopped & self.valid & !stall & !in_debug;
+            let live = !rst
+                & !self.stopped
+                & self.valid
+                & !stall
+                & !in_debug
+                & !wb_fault;
             // Debug mode is entered before the instruction in execute,
             // as an interrupt is taken, and ahead of one: on a halt
             // request, on the instruction after a single step, or on an
@@ -932,9 +968,13 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let dbg_req = haltreq | self.stepped | (is_ebreak & ebreakm);
             self.dbg_take.set(live & dbg_req);
             let dbg_take = self.dbg_take.get();
-            self.int_take.set(live & int_ok & !dbg_req);
+            // A store the bus refused is taken before the instruction,
+            // as an interrupt is, ahead of one, and whether or not
+            // interrupts are enabled: it is a trap.
+            let st_take = live & self.st_err & !dbg_req;
+            self.int_take.set(live & int_ok & !dbg_req & !self.st_err);
             let int_take = self.int_take.get();
-            let run = live & !int_take & !dbg_take;
+            let run = live & !int_take & !dbg_take & !st_take;
             // Resume: once per request, to `dpc`, arming a single step
             // when `dcsr.step` asks for one.
             let resume_take = in_debug & resumereq & !self.resume_seen;
@@ -997,6 +1037,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 self.mtval.get(),
                 dcsr,
                 dpc,
+                self.busquiet.get(),
             );
             let csr_known = csr_known(f12);
             // Whether the instruction writes at all: `csrrw` and
@@ -1029,8 +1070,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // interrupt. The cause, the address and the trap value go to
             // the CSRs, the interrupt enable is saved and cleared, and
             // the handler is the redirect.
-            let trap =
-                (run & (is_ecall | is_ebreak | !known | unaligned)) | int_take;
+            let trap = (run & (is_ecall | is_ebreak | !known | unaligned))
+                | int_take
+                | st_take;
             // The exception an unaligned access raises says which way
             // it was going, and its trap value is the address, which is
             // what a handler emulating the access needs.
@@ -1067,6 +1109,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     ),
                 ),
             );
+            let cause =
+                mux(st_take, U::<32>::from(isa::CAUSE_STORE_ACCESS), cause);
             // The trap value: the word for an instruction the core does
             // not know, the address for an unaligned access, and the
             // breakpoint's own address, which is what the
@@ -1077,6 +1121,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 ir,
                 mux(unaligned, addr, mux(is_ebreak, pc, U::<32>::from(0u32))),
             );
+            let tval = mux(st_take, U::<32>::from(0u32), tval);
             let mie_bit = mstatus.bit(3);
             let mpie = mstatus.bit(7);
             let trap_status =
@@ -1196,6 +1241,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let second = self.f_second.get();
             let asked = self.f_asked.get();
             when!(d_resp => self { wb_dev: resp_data });
+            when!(d_resp => self { wb_err: resp_bad });
             with!(self <= {
                 f_send ? {
                     f_wait: Bit::One,
@@ -1250,6 +1296,16 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     mtval: tval,
                     mstatus: trap_status,
                 },
+                wb_fault ? {
+                    mepc: self.wb_pc.get(),
+                    mcause: U::<32>::from(isa::CAUSE_LOAD_ACCESS),
+                    mtval: wb_alu,
+                    mstatus: trap_status,
+                },
+                st_take ? st_err: Bit::Zero,
+                take_done & done_bad & !self.busquiet ? st_err: Bit::One,
+                csr_write & (f12 == isa::CSR_MBUSQUIET) ?
+                    busquiet: csr_new.bit(0),
                 run & is_mret ? mstatus: mret_status,
                 // `wfi` retires and the core then waits. An interrupt
                 // already pending means there is nothing to wait for,
@@ -1348,6 +1404,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     step_armed: Bit::Zero,
                     resume_seen: Bit::Zero,
                     dcsr: U::<32>::from(0x4000_0003u32),
+                    wb_err: Bit::Zero,
+                    st_err: Bit::Zero,
+                    busquiet: Bit::Zero,
                 },
             });
             // The sequencer. It starts when an M instruction is in execute
@@ -1422,7 +1481,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     self.wb_pc <= pc;
                     self.wb_ir <= ir;
                     self.wb_rd <= mux(wrote, rd, U::from(0u8));
-                    self.wb_alu <= wval;
+                    // A load's value comes from the bus, so its slot
+                    // keeps the address, which its fault reports.
+                    self.wb_alu <= mux(is_load, addr, wval);
                     self.wb_f3 <= f3;
                     self.wb_lane <= lane;
                     self.wb_load <= is_load & run;
@@ -1443,7 +1504,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // hold are known early and the redirect late, so the two
             // candidates fold the early conditions in and the redirect
             // chooses last, one multiplexer from the instruction memory.
-            self.redirect.set((run & jump) | int_take | resume_take);
+            self.redirect.set(
+                (run & jump) | int_take | resume_take | st_take | wb_fault,
+            );
             let redirect = self.redirect.get();
             let park = run & stop;
             let hold = stall | (stop & !run) | in_debug;
@@ -1457,12 +1520,17 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 mux(
                     park,
                     link,
-                    mux(resume_take, dpc, mux(int_take, mtvec, target)),
+                    mux(
+                        resume_take,
+                        dpc,
+                        mux(int_take | st_take | wb_fault, mtvec, target),
+                    ),
                 ),
             );
             self.pc.set(mux(redirect, jmp, go));
             case!(rst => {
                 Bit::One => { self.valid <= Bit::Zero },
+                _ if wb_fault.to_bool() => { self.valid <= Bit::Zero },
                 _ if stall.to_bool() => {},
                 _ if stop.to_bool() => { self.valid <= Bit::Zero },
                 _ if (in_debug | dbg_take).to_bool() => {

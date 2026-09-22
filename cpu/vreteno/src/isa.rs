@@ -124,6 +124,13 @@ pub const CSR_MHARTID: u32 = 0xf14;
 /// needs, so a program that means to stop says so here. That is
 /// issue 139.
 pub const CSR_MHALT: u32 = 0x7c0;
+/// Bus refusals are quiet, bit 0: set, a load the bus refused reads
+/// the zero it answered and a store it refused is dropped, as before
+/// issue 417; clear, which is what reset leaves, either is an access
+/// fault. The remote peripheral refuses on purpose when its patience
+/// runs out (#397), and a program that polls it rather than trapping
+/// says so here.
+pub const CSR_MBUSQUIET: u32 = 0x7c1;
 
 /// The debug control and status register, as the RISC-V debug
 /// specification lays it out: `xdebugver` 4 in bits 31 to 28, `ebreakm`
@@ -146,7 +153,13 @@ pub const CAUSE_BREAKPOINT: u32 = 3;
 /// of the same. The specification lets a core either support such an
 /// access or raise these; this one raises them.
 pub const CAUSE_LOAD_MISALIGNED: u32 = 4;
+/// A load the bus refused: no peripheral at the address, or one that
+/// failed (issue 417).
+pub const CAUSE_LOAD_ACCESS: u32 = 5;
 pub const CAUSE_STORE_MISALIGNED: u32 = 6;
+/// A store the bus refused, raised before the next instruction to run,
+/// since a store is posted and its answer comes back later (issue 417).
+pub const CAUSE_STORE_ACCESS: u32 = 7;
 pub const CAUSE_ECALL: u32 = 11;
 pub const CAUSE_MEXT: u32 = 0x8000_000b;
 pub const CAUSE_MTIMER: u32 = 0x8000_0007;
