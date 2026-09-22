@@ -25,6 +25,7 @@ rust_library(
         "src/bus/router.rs",
         "src/bus/wb.rs",
         "src/bus/wb/sim.rs",
+        "src/cdc.rs",
         "src/fifo.rs",
         "src/flashwin.rs",
         "src/gpio.rs",
