@@ -18,6 +18,7 @@ go_library(
         "main.go",
     ],
     importpath = "github.com/filmil/txhdl/tools/remote",
+    deps = ["//tools/remote/stream"],
 )
 
 go_binary(
@@ -34,4 +35,5 @@ go_test(
     name = "remote_test",
     srcs = ["frame_test.go"],
     embed = [":remote_lib"],
+    deps = ["//tools/remote/stream"],
 )

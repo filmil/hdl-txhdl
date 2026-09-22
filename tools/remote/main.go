@@ -23,13 +23,14 @@
 package main
 
 import (
-	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
+
+	"github.com/filmil/txhdl/tools/remote/stream"
 )
 
 // A Device answers transactions. A read returns the word and whether
@@ -84,37 +85,12 @@ func serve(d Device, a Ask) Answer {
 	return ans
 }
 
-// A frame on the connection is its length in two bytes, most
-// significant first, and then the frame. That is enough framing for a
-// stream and it is what the shim writes.
-func readFrame(r io.Reader) ([]byte, error) {
-	var head [2]byte
-	if _, err := io.ReadFull(r, head[:]); err != nil {
-		return nil, err
-	}
-	n := binary.BigEndian.Uint16(head[:])
-	if n < FrameLen || n > 1522 {
-		return nil, fmt.Errorf("a frame of %d bytes", n)
-	}
-	f := make([]byte, n)
-	_, err := io.ReadFull(r, f)
-	return f, err
-}
-
-func writeFrame(w io.Writer, f []byte) error {
-	var head [2]byte
-	binary.BigEndian.PutUint16(head[:], uint16(len(f)))
-	if _, err := w.Write(head[:]); err != nil {
-		return err
-	}
-	_, err := w.Write(f)
-	return err
-}
-
+// A frame on the connection is its length in two bytes and then the
+// frame, which is what `stream` does and what the shim writes.
 // run serves one connection until it ends.
 func run(c io.ReadWriter, device uint8, d Device, verbose bool) error {
 	for {
-		f, err := readFrame(c)
+		f, err := stream.Read(c)
 		if err != nil {
 			return err
 		}
@@ -136,7 +112,7 @@ func run(c io.ReadWriter, device uint8, d Device, verbose bool) error {
 			log.Printf("%s %#08x tag %d -> %#08x err %v",
 				kind, ask.Addr, ask.Tag, ans.Data, ans.Err)
 		}
-		if err := writeFrame(c, ans.Frame()); err != nil {
+		if err := stream.Write(c, ans.Frame()); err != nil {
 			return err
 		}
 	}

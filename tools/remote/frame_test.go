@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"io"
 	"testing"
+
+	"github.com/filmil/txhdl/tools/remote/stream"
 )
 
 // The frame the hardware sends for a write, byte for byte. These are
@@ -103,11 +105,11 @@ func TestTheMemoryAnswersLikeADevice(t *testing.T) {
 // length prefix, the ask, the answer, and the answer's own prefix.
 func TestATransactionIsServedOverAConnection(t *testing.T) {
 	var in bytes.Buffer
-	writeFrame(&in, Ask{Device: 3, Tag: 1, Write: true, Addr: 0x80,
+	stream.Write(&in, Ask{Device: 3, Tag: 1, Write: true, Addr: 0x80,
 		Data: 0x1234, Strb: 0xf}.Frame())
-	writeFrame(&in, Ask{Device: 3, Tag: 2, Addr: 0x80}.Frame())
+	stream.Write(&in, Ask{Device: 3, Tag: 2, Addr: 0x80}.Frame())
 	// A frame for another device, which this program leaves alone.
-	writeFrame(&in, Ask{Device: 4, Tag: 3, Addr: 0x80}.Frame())
+	stream.Write(&in, Ask{Device: 4, Tag: 3, Addr: 0x80}.Frame())
 	var out bytes.Buffer
 	conn := struct {
 		io.Reader

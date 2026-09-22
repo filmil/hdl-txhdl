@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Frames on a byte stream, two bytes of length and then the frame:
+# what the program serving a Remote peripheral and the shim beside
+# the board both speak, so the two agree by construction.
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+package(default_visibility = ["//visibility:public"])
+
+go_library(
+    name = "stream",
+    srcs = ["stream.go"],
+    importpath = "github.com/filmil/txhdl/tools/remote/stream",
+)
+
+go_test(
+    name = "stream_test",
+    srcs = ["stream_test.go"],
+    embed = [":stream"],
+)
