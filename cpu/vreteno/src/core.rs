@@ -589,6 +589,9 @@ pub struct Vreteno<const IW: usize> {
     pub pc: Reg<U<32>>,
     pub ir: Reg<U<32>>,
     pub ir_c: Reg<Bit>,
+    /// The word in execute came from a refused fetch: it is zero, and
+    /// its trap is the instruction access fault (issue 423).
+    pub ir_bad: Reg<Bit>,
     pub ir_pc: Reg<U<32>>,
     pub valid: Reg<Bit>,
     pub stopped: Reg<Bit>,
@@ -681,6 +684,10 @@ pub struct Vreteno<const IW: usize> {
     pub f_asked: Reg<U<32>>,
     pub f_w0: Reg<U<32>>,
     pub f_w1: Reg<U<32>>,
+    /// Whether the bus refused each word: an instruction taken from a
+    /// refused word is the instruction access fault (issue 423).
+    pub f_bad0: Reg<Bit>,
+    pub f_bad1: Reg<Bit>,
     pub f_have: Reg<U<2>>,
     pub f_at: Reg<U<32>>,
     /// Whether the fetch that is out is for the second word of a
@@ -927,6 +934,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // waits for it, which is what makes a program above the
             // boot memory slow and correct.
             let need1 = far & odd & !short;
+            // A word the bus refused is fetched as zero, which decodes as
+            // an illegal instruction and so runs nothing; the mark goes
+            // with it into execute, where the cause is named.
+            let f_fault = far & (self.f_bad0 | (need1 & self.f_bad1));
+            let fetched = mux(f_fault, U::<32>::from(0u32), fetched);
             let f_ready = !far | (hit0 & (!need1 | hit1));
             let stall_fetch = !f_ready;
             // `wfi` holds the core here until an interrupt is pending
@@ -1111,6 +1123,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             );
             let cause =
                 mux(st_take, U::<32>::from(isa::CAUSE_STORE_ACCESS), cause);
+            let fetch_bad = run & self.ir_bad;
+            let cause =
+                mux(fetch_bad, U::<32>::from(isa::CAUSE_FETCH_ACCESS), cause);
             // The trap value: the word for an instruction the core does
             // not know, the address for an unaligned access, and the
             // breakpoint's own address, which is what the
@@ -1122,6 +1137,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 mux(unaligned, addr, mux(is_ebreak, pc, U::<32>::from(0u32))),
             );
             let tval = mux(st_take, U::<32>::from(0u32), tval);
+            let tval = mux(run & self.ir_bad, pc, tval);
             let mie_bit = mstatus.bit(3);
             let mpie = mstatus.bit(7);
             let trap_status =
@@ -1251,14 +1267,21 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 f_resp ? f_wait: Bit::Zero,
                 f_resp & !second ? {
                     f_w0: resp_data,
+                    f_bad0: resp_bad,
                     f_at: asked,
                     f_have: U::<2>::from(1u8)
                 },
                 f_resp & second ? {
                     f_w1: resp_data,
+                    f_bad1: resp_bad,
                     f_have: U::<2>::from(2u8)
                 },
-                rst ? { f_wait: Bit::Zero, f_have: U::<2>::from(0u8) },
+                rst ? {
+                    f_wait: Bit::Zero,
+                    f_have: U::<2>::from(0u8),
+                    f_bad0: Bit::Zero,
+                    f_bad1: Bit::Zero,
+                },
             });
             case!(rst => {
                 Bit::One => { self.dev_wait <= Bit::Zero },
@@ -1538,6 +1561,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 },
                 _ => {
                     self.ir <= fetched;
+                    self.ir_bad <= f_fault;
                     self.ir_c <= Bit::from(short);
                     self.ir_pc <= fetch_pc;
                     self.valid <= !redirect

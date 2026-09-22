@@ -145,6 +145,9 @@ pub const CSR_DPC: u32 = 0x7b1;
 
 /// The causes the core raises: five exceptions, and the external
 /// interrupt, whose cause has the top bit set.
+/// A fetch the bus refused: the instruction is at an address nothing
+/// decodes, or a peripheral that failed (issue 423).
+pub const CAUSE_FETCH_ACCESS: u32 = 1;
 pub const CAUSE_ILLEGAL: u32 = 2;
 /// `ebreak`, and anything else a debugger plants. The trap value is
 /// the address of the instruction that raised it.

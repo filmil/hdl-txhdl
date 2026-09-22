@@ -5,13 +5,13 @@
 use crate::core::IMEM_BYTES;
 use crate::isa::{
     compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT, CAUSE_ECALL,
-    CAUSE_ILLEGAL, CAUSE_LOAD_ACCESS, CAUSE_LOAD_MISALIGNED, CAUSE_MEXT,
-    CAUSE_MSOFT, CAUSE_MTIMER, CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK,
-    CSR_DCSR, CSR_DPC, CSR_MARCHID, CSR_MBUSQUIET, CSR_MCAUSE, CSR_MCYCLE,
-    CSR_MCYCLEH, CSR_MEPC, CSR_MHALT, CSR_MHARTID, CSR_MIE, CSR_MIMPID,
-    CSR_MINSTRET, CSR_MINSTRETH, CSR_MIP, CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS,
-    CSR_MTVAL, CSR_MTVEC, CSR_MVENDORID, MEXT, MISA, MSOFT, MTIMECMP_OFF,
-    MTIMER, UART_BASE,
+    CAUSE_FETCH_ACCESS, CAUSE_ILLEGAL, CAUSE_LOAD_ACCESS,
+    CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER,
+    CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK, CSR_DCSR, CSR_DPC,
+    CSR_MARCHID, CSR_MBUSQUIET, CSR_MCAUSE, CSR_MCYCLE, CSR_MCYCLEH, CSR_MEPC,
+    CSR_MHALT, CSR_MHARTID, CSR_MIE, CSR_MIMPID, CSR_MINSTRET, CSR_MINSTRETH,
+    CSR_MIP, CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC,
+    CSR_MVENDORID, MEXT, MISA, MSOFT, MTIMECMP_OFF, MTIMER, UART_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -423,8 +423,12 @@ impl Model {
         // that a read of `minstret` by this instruction does not count
         // itself, which is what the specification asks for.
         self.minstret = self.minstret.wrapping_add(1);
+        // A fetch from nowhere: the bus refuses it and the core raises
+        // the instruction access fault (issue 423). The model has no
+        // words for a device either, so a program run from one is
+        // beyond it.
         let Some((w, len)) = self.fetch_at(imem, self.pc) else {
-            self.halted = Some(Halt::Fault(self.pc));
+            self.trap(CAUSE_FETCH_ACCESS, self.pc);
             return;
         };
         if let Some(cause) = interrupt {
@@ -489,8 +493,10 @@ impl Model {
                     self.trap(CAUSE_LOAD_ACCESS, addr);
                     return;
                 }
+                // Between the boot memory and the data memory nothing
+                // answers, and the router says so: an access fault too.
                 let Some(word) = self.word(imem, addr) else {
-                    self.halted = Some(Halt::Fault(addr));
+                    self.trap(CAUSE_LOAD_ACCESS, addr);
                     return;
                 };
                 let byte = (word >> (8 * (addr & 3))) & 0xff;
