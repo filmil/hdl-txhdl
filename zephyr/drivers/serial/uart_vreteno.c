@@ -28,6 +28,15 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/init.h>
+/*
+ * `sys_read32` and `sys_write32` are the architecture's, not the
+ * generic header's: `zephyr/sys/sys_io.h` declares the port and bit
+ * helpers, and the memory-mapped pair arrives through
+ * `zephyr/arch/riscv/arch.h`, which this reaches. Including only the
+ * generic header compiles to an implicit declaration and a driver
+ * that reads the wrong width.
+ */
+#include <zephyr/arch/cpu.h>
 #include <zephyr/sys/sys_io.h>
 
 #define VRETENO_UART_DATA   0x00

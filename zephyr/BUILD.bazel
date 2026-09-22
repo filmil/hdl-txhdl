@@ -26,6 +26,8 @@ filegroup(
         "dts/riscv/hdlfactory/vreteno.dtsi",
         "drivers/serial/uart_vreteno.c",
         "soc/hdlfactory/vreteno/Kconfig",
+        "drivers/serial/Kconfig.vreteno",
+        "boards/hdlfactory/ax7a200b/ax7a200b_defconfig",
     ],
 )
 

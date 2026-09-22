@@ -20,7 +20,11 @@ const DRIVER: &str =
     include_str!("../../../zephyr/drivers/serial/uart_vreteno.c");
 const SOC_KCONFIG: &str =
     include_str!("../../../zephyr/soc/hdlfactory/vreteno/Kconfig");
-
+const UART_KCONFIG: &str =
+    include_str!("../../../zephyr/drivers/serial/Kconfig.vreteno");
+const BOARD_DEFCONFIG: &str = include_str!(
+    "../../../zephyr/boards/hdlfactory/ax7a200b/ax7a200b_defconfig"
+);
 
 /// The device tree's `reg` for a node, as its first address.
 fn reg_of(dts: &str, node: &str) -> u64 {
@@ -133,5 +137,33 @@ fn the_port_asks_for_the_instruction_set_the_core_has() {
     assert!(
         kconfig.contains("ATOMIC_OPERATIONS_C"),
         "so the atomics are the C ones"
+    );
+}
+
+/// The two ways this port has already built an image that says
+/// nothing. Both are silent: the build is green, the ELF links, and
+/// the board comes up with no console. Neither is visible in a diff
+/// of the driver, so both are asserted here.
+#[test]
+fn the_console_is_reachable_and_not_merely_compiled() {
+    // `UART_CONSOLE` depends on `SERIAL_HAS_DRIVER`, which every
+    // serial driver is expected to select. Without it the symbol
+    // never becomes visible, the board's `CONFIG_UART_CONSOLE=y` is
+    // dropped without a word, and the image has no console at all.
+    assert!(
+        UART_KCONFIG.contains("select SERIAL_HAS_DRIVER"),
+        "the driver must announce itself, or there is no console"
+    );
+    // `sys_read32` and `sys_write32` are declared by the
+    // architecture's header, which `zephyr/arch/cpu.h` reaches.
+    // `zephyr/sys/sys_io.h` alone leaves them implicit.
+    assert!(
+        DRIVER.contains("#include <zephyr/arch/cpu.h>"),
+        "the accessors come from the architecture, not the generic header"
+    );
+    // The board asks for the console the driver provides.
+    assert!(
+        BOARD_DEFCONFIG.contains("CONFIG_UART_CONSOLE=y"),
+        "and the board asks for it"
     );
 }
