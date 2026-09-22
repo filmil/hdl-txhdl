@@ -773,7 +773,7 @@ impl Lowered {
                 Some(("field", "holds a child, and the instance"))
             } else if self.fields.iter().any(|(f, _, _, _)| *f == c) {
                 Some(("field", "is a register or a memory, and it"))
-            } else if self.ports.iter().any(|(p, _, _)| p == c) {
+            } else if self.ports.iter().any(|(p, _, _, _)| p == c) {
                 Some(("port", "is the unit's, and it"))
             } else if self.wires.iter().any(|(w, _)| w == c) {
                 Some(("let", "is computed, and its wire"))
