@@ -1454,10 +1454,35 @@ clock boundary.
 A capture is read back over the JTAG cable through the probe file
 the implementation writes beside the bitstream, with
 \code{//cpu/vreteno:vreteno\_board\_ila\_read}, once the board has
-been programmed with \code{vreteno\_board\_ila\_prog}. That is the
-half of the issue that wants the board. The bitstream has been
-synthesised and routed; the capture waits for the next session at
-the hardware, and the issue stays open for it.
+been programmed with \code{vreteno\_board\_ila\_prog}. That was done
+on September 22, 2026, in a board window with nobody at the board:
+the analyser bitstream was programmed over the tunnel, the core was
+run with no trigger, so it captured the board as it stood, and the
+4096 samples came back as the VCD in Listing~\ref{lst:v-ila}, kept
+in the tree as \code{docs/ila\_capture.vcd}. Nothing in it changes
+for 41~$\mu$s, which is the board at rest a minute after
+configuration, and every probe says what the LEDs say and more:
+\code{calib} high, the memory calibrated; \code{halt} low and
+\code{said} high, the core running and the serial line driven at
+least once, which is the program having said its line and waiting
+for a key; \code{rst} and \code{brk} low, \code{uart\_tx} and
+\code{rx\_sync} idle high; the third slot's three channels with no
+valid, holding the last phases that crossed them; the remote
+peripheral's frame channel idle; the modulator's four channels low.
+The analyser's own three marks, \code{\_TRIGGER}, \code{\_WINDOW}
+and \code{\_GAP}, are Vivado's, and the trigger mark at sample 2048
+is where the run began.
+
+The read went through Vivado's Tcl by hand rather than through the
+rule's generated script, which failed twice before it reached the
+part: it looked for its log library under a name that exists in no
+repository, and it asked for \code{arm\_hw\_ila}, which is not a
+Vivado command. Both are fixed upstream in
+\code{bazel\_rules\_vivado}, with the Tcl the rule generates and the
+Tcl run by hand being the same after the fix.
+
+\lstinputlisting[style=ascii,caption={\code{docs/ila\_capture.vcd}: the capture,
+as Vivado wrote it.},label={lst:v-ila}]{ila_capture.vcd}
 \section{Programs in Rust and C++}
 \label{sec:v-rust}
 

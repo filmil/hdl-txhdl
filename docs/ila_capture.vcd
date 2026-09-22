@@ -1,0 +1,57 @@
+$date
+        2026-Sep-22 17:50:05
+$end
+$version
+        Vivado v2025.2 (64-bit)
+$end
+$timescale
+        1ps
+$end
+$scope module dut $end
+$var reg 1 " rst $end
+$var reg 1 # halt $end
+$var reg 1 $ calib $end
+$var reg 1 % uart_tx_OBUF $end
+$var reg 1 & rx_sync $end
+$var reg 1 ' brk $end
+$var reg 4 ( pwm_pins [3:0] $end
+$var reg 35 , vaw_data [34:0] $end
+$var reg 1 O vaw_valid $end
+$var reg 35 P var_data [34:0] $end
+$var reg 1 s var_valid $end
+$var reg 36 t vw_data [35:0] $end
+$var reg 1 :" vw_valid $end
+$var reg 9 ;" net_tx_data [8:0] $end
+$var reg 1 D" net_tx_valid $end
+$var reg 1 E" said $end
+$var reg 1 F" mem_rst_n $end
+$var reg 1 G" _TRIGGER $end
+$var reg 1 H" _WINDOW $end
+$var reg 1 I" _GAP $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+0"
+0#
+1$
+1%
+1&
+0'
+b0 (
+b11000000000100000 ,
+0O
+b11000000000100000 P
+0s
+b0 t
+0:"
+b111111110 ;"
+0D"
+1E"
+1F"
+0G"
+1H"
+0I"
+$end
+#2048
+1G"

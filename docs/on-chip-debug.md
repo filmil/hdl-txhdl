@@ -223,7 +223,10 @@ a pin, a clock, a PHY, a memory controller's calibration.
    The retire stream is not among the probes, because `instr` and
    `wb` end inside the lowered module and are not its ports; that is
    step 2's work.
-   No capture has been read yet: that wants the board.
+   A capture was read on September 22, 2026, in an unattended board
+   window, and is in `docs/ila_capture.vcd` and `docs/vreteno.tex`; the
+   rule's generated read script needed two fixes upstream first, which
+   are bazel_rules_vivado#134.
 2. **The retire stream as a part**, issue 240, since the core already
    computes it and the board already throws it away.
    It is this repository's own shape of answer, and it makes the
