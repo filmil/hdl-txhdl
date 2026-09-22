@@ -542,8 +542,10 @@ fn the_loader_refuses_a_stream_whose_sum_is_wrong() {
         400_000,
     );
     assert!(ran.said.contains("bad sum "), "{}", ran.said);
+    // The second pass of the loop says so, which is what tells a
+    // return from a loaded program apart from a reset (issue 413).
     assert!(
-        ran.said.ends_with("boot\n"),
+        ran.said.ends_with("boot again\n"),
         "it waits for another: {}",
         ran.said
     );

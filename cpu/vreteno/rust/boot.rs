@@ -40,6 +40,14 @@
 //! it jumps, and `bad magic`, `bad len` or `bad sum` when it will not.
 //! After a refusal it waits for another stream rather than stopping,
 //! since the usual cause is a half-typed command on the other end.
+//! Two more words tell a loaded program that came back from a reset,
+//! which read the same on the line otherwise (issue 413). Every pass
+//! of the loop after the first says `boot again`: a reset starts the
+//! loop from nothing, so the word means the program returned, by a
+//! `ret` before it replaced `ra`. And a trap taken before the program
+//! set `mtvec` lands at address zero, where the loader starts over;
+//! that pass says `trap`, the cause and the address first, since a
+//! reset clears `mcause` and a trap fills it.
 //!
 //! As in `hello.rs`, nothing here indexes a slice and nothing divides,
 //! so nothing asks for `core`'s panic path.
@@ -136,8 +144,36 @@ fn in_ram(addr: u32, len: u32) -> bool {
 
 #[no_mangle]
 extern "C" fn main() -> ! {
+    // The loader never sets `mtvec`, so a trap taken by a loaded
+    // program before it has set its own comes to address zero, which
+    // is `_start`, and the loader runs again as if from reset. A reset
+    // leaves `mcause` and `mepc` zero and a trap does not, so the
+    // loader says which it was, with the cause and the address, before
+    // the greeting (issue 413).
+    let (mcause, mepc): (u32, u32);
+    unsafe {
+        core::arch::asm!(
+            "csrr {0}, mcause",
+            "csrr {1}, mepc",
+            out(reg) mcause,
+            out(reg) mepc,
+        );
+    }
+    if mcause != 0 {
+        say(b"trap ");
+        say_hex(mcause);
+        say(b" at ");
+        say_hex(mepc);
+        put(b'\n');
+    }
+    let mut again = false;
     loop {
-        say(b"boot\n");
+        if again {
+            say(b"boot again\n");
+        } else {
+            say(b"boot\n");
+        }
+        again = true;
         // The magic word, one byte at a time, so that a stream which
         // starts late or is typed by hand finds its footing rather
         // than failing once and giving up.
