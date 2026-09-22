@@ -165,6 +165,11 @@ extern "C" fn main() -> ! {
         say(b" at ");
         say_hex(mepc);
         put(b'\n');
+        // Said once: the core's reset line leaves the CSRs as they
+        // were (issue 419), so a later start would repeat a stale cause.
+        unsafe {
+            core::arch::asm!("csrw mcause, zero", "csrw mepc, zero");
+        }
     }
     let mut again = false;
     loop {
