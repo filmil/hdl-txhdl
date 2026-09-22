@@ -567,6 +567,22 @@ waveform(
     ],
 )
 
+# Reading memory in bursts, and what it buys. Issue 151.
+waveform(
+    name = "dma",
+    example = "//lib/examples:ex_dma",
+    lowered = ("linefetch", "linefetch"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//go=>go",
+        "//running=>running",
+        "//linefetch/want=>want",
+        "//linefetch/left=>left",
+        "//out/rx_valid=>out_valid",
+        "//out/rx_data=>out",
+    ],
+)
+
 # The clock-crossing channel: two clocks, and the pointers between
 # them. Issue 370.
 waveform(

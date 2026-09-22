@@ -55,6 +55,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Reading memory in bursts:  bazel run //lib/examples:ex_dma
+rust_binary(
+    name = "ex_dma",
+    srcs = ["ex_dma.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # The clock-crossing channel, lowered:  bazel run //lib/examples:ex_cdc
 rust_binary(
     name = "ex_cdc",
@@ -753,6 +765,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_edges.rs",
         "ex_lower.rs",
         "ex_cdc.rs",
+        "ex_dma.rs",
         "ex_reset.rs",
         "ex_stage.rs",
         "ex_packet.rs",
