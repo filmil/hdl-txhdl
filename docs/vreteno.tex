@@ -181,6 +181,9 @@ taken is the usual question, answered the usual way.
 specification leaves to a design: it reads as zero, and a write of an
 odd value to it stops the core when that instruction retires, which
 is what \code{halt} encodes and what a program ends with.
+\code{dcsr} at \code{0x7b0} and \code{dpc} at \code{0x7b1} are the
+debug specification's two, and Section~\ref{sec:v-core} says what
+the core keeps in them.
 
 Five more say what the machine is rather than what it is doing.
 \code{misa} reports RV32IMC, and \code{mvendorid}, \code{marchid},
@@ -453,6 +456,31 @@ when the handler returns, on the registers as they are then: the
 sequencer must never step under an instruction other than its own,
 which is a defect the random programs found. The board's line is
 tied low; the run and the test drive it.
+
+Debug mode is the third thing that keeps a live instruction from
+running, and it is entered as an interrupt is taken: before the
+instruction, whose address goes to \code{dpc} and which runs when
+the mode is left. Three things ask for it, and the cause field of
+\code{dcsr} says which did: a halt request on the core's
+\code{haltreq} input, the instruction after a single step, and
+\code{ebreak} when \code{dcsr.ebreakm} is set, which otherwise
+raises the breakpoint trap. In the mode the fetch is held, nothing
+runs and nothing retires, and an interrupt that arrives waits with
+its pending bit set. A resume, \code{resumereq} held high for a
+cycle and acted on once per entry, redirects the fetch to
+\code{dpc}; with \code{dcsr.step} set it arms a step, and the next
+instruction to run asks to enter again before the one after it,
+which is how a debugger walks a program an instruction at a time.
+\code{dcsr} holds the specification's version, the privilege,
+\code{ebreakm}, \code{step} and the cause, and nothing else is
+written. The two requests are inputs of the core and the mode is
+its output \code{dbg}; the board ties the inputs low until the
+debug module of issue 154 drives them, and the lockstep test drives
+them from a plan, Section~\ref{sec:v-lockstep}. The CSR
+instructions read and write \code{dcsr} and \code{dpc} from any
+mode, where the specification allows them only in debug mode; the
+restriction waits for the module, since until then a test sets
+\code{step} and \code{ebreakm} by writing them from the program.
 
 The bus is everything from the data memory up in the address map,
 and it is two channels: a request out of the core, one word of the
@@ -888,7 +916,8 @@ at a time, stepping the model once whenever the writeback says an
 instruction retired. After each cycle the architectural program
 counter, that of the instruction about to execute or the fetch's
 when the stage is empty, the thirty-one registers, the eight control
-registers and the halt must agree, and the failure names the cycle
+registers, the two debug registers, the debug mode and the halt must
+agree, and the failure names the cycle
 and the instruction; at the halt every word of data memory must
 agree too, and the count of
 retired instructions must not exceed the count of cycles, which is
@@ -969,6 +998,32 @@ compare is checked with the control registers. The test
 skips the comparison in that cycle and requires it in every other,
 and the negative control above shows the allowance is narrow enough
 to catch a wrong status.
+
+The debugger is the test's as well, as a plan: the cycle of a halt
+request, held until the core is in debug mode; the cycles to hold it
+there; and how many resumes to give, each two cycles high, since the
+core acts on the level once per entry and the line must drop between.
+The model has no debugger, so it follows the core's mode register at
+each edge: entered, it records the cause and \code{dpc} as the core
+does, before the instruction in execute and after the one behind it
+retired; left, it goes to \code{dpc} and arms a step when
+\code{dcsr.step} is set. In debug mode the architectural program
+counter is \code{dpc}, since nothing is in flight and the fetch has
+run ahead. \code{dpc} and \code{dcsr} are compared with the other
+control registers and the mode itself in every cycle, so a core that
+ran an instruction while halted, or entered a cycle late, fails on
+the program counter or on a register. Three programs use the plan.
+The demonstration, halted at cycle two hundred, held for twenty
+cycles and resumed, ends as it does without the debugger, with one
+entry whose cause is the request. A program that sets
+\code{dcsr.step}, halted once and resumed as often as it asks, enters
+again after every instruction with the step as the cause until the
+instruction that clears the bit has run, and then runs to its halt
+with every step counted in a register. And a program that sets
+\code{dcsr.ebreakm} enters at its \code{ebreak}, with the breakpoint
+as the cause and the instruction's address in \code{dpc}, and is
+left there, held. The plan with no resume left ends the run in the
+mode, which is the one run that does not end in the halt.
 
 \lstinputlisting[caption={\code{lockstep.rs}: the core against the
 model.},label={lst:v-lockstep}]{cpu/vreteno/tests/lockstep.rs}

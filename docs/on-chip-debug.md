@@ -241,6 +241,9 @@ a pin, a clock, a PHY, a memory controller's calibration.
    the board on September 22, 2026.
 4. **The debug module of issue 154**, once the core has halt, resume
    and step, which is also what issue 139 wants `ebreak` to become.
+   The core's part is done, section 5; the module comes next as a
+   memory-mapped peripheral reached through step 3's host, so that it
+   is proved on the board before it has a transport of its own.
 
 Steps 1 and 2 are independent of each other and of the core.
 Steps 3 and 4 are the ones that change the core, and 4 subsumes much of
@@ -248,13 +251,22 @@ Steps 3 and 4 are the ones that change the core, and 4 subsumes much of
 
 ## 5. What the core needs before step 4
 
-Collected here so that the work is visible when it is taken:
+Collected here so that the work is visible when it is taken.
+Done on September 22, 2026, in the core, its model and the lockstep
+test, the first step of the plan on issue 154:
 
-* a halt request input and a resume, and the halt made clearable,
-  which today it is not (`cpu/vreteno/src/core.rs:915`);
-* single step, one instruction per resume;
-* `dcsr` and `dpc`, and `ebreak` entering debug mode rather than
-  stopping for good, which is issue 139's complaint from the other
-  side;
+* a halt request input and a resume, `haltreq` and `resumereq`, with
+  debug mode entered before a live instruction as an interrupt is
+  taken, and left to `dpc`;
+* single step, one instruction per resume, when `dcsr.step` is set;
+* `dcsr` and `dpc`, and `ebreak` entering debug mode when
+  `dcsr.ebreakm` is set and raising the breakpoint trap otherwise,
+  which is issue 139 from the other side.
+
+Still owed:
+
 * abstract access to the register file and to memory while halted,
-  which the register file's port count decides.
+  which the register file's port count decides;
+* `dcsr` and `dpc` only in debug mode, which waits for the module,
+  since until then a test sets `step` and `ebreakm` by writing them
+  from the program.
