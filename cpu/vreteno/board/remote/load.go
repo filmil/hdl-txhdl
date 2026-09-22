@@ -139,7 +139,6 @@ func main() {
 		}
 	}()
 
-	deadline := time.Now().Add(time.Duration(seconds) * time.Second)
 	// The loader says `boot` when it starts and then waits, so on a
 	// board that was configured a while ago that word has long gone
 	// past. Listen briefly in case it is there, and send anyway: the
@@ -194,7 +193,10 @@ func main() {
 	}
 	write(fd, binary.LittleEndian.AppendUint32(nil, sum))
 
-	// Whatever the loader and then the program have to say.
+	// Whatever the loader and then the program have to say: the seconds
+	// given are for this, counted from the end of the transfer, so that
+	// a long program is watched as long as a short one.
+	deadline := time.Now().Add(time.Duration(seconds) * time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case b := <-said:
