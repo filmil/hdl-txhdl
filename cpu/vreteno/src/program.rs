@@ -174,6 +174,8 @@ pub fn demo() -> Vec<u32> {
     a.emit(lui(4, (CLINT_BASE + MTIMECMP_OFF) >> 12));
     a.emit(addi(3, 0, 150)); // x3 = 150
     a.emit(sw(3, 4, 0)); // mtimecmp = 150: a timer interrupt then
+    a.emit(sw(0, 4, 4)); // and its high half zero: a reset leaves the
+                         // compare all ones (issue 419)
     a.emit(ori(9, 9, 0x80)); // x9 = MEXT | MTIMER, the handler's mask
     a.emit(addi(22, 0, 0x80)); // x22 = MTIMER
     a.emit(csrrw(0, CSR_MIE, 22)); // mie = the timer's, for now
@@ -266,6 +268,10 @@ pub fn demo() -> Vec<u32> {
     a.emit(lw(22, 22, -8)); // x22 = the count's low half
     a.emit(addi(22, 22, 1000)); // the next one well past the end
     a.emit(sw(22, 4, 0)); // mtimecmp = x22
+    a.emit(lw(22, 4, 0)); // and read back: the store is posted, and the
+                          // line drops only when it lands, which is before
+                          // this load returns; a return before that took
+                          // the interrupt twice (issue 420)
     a.place(count);
     a.emit(addi(8, 8, 1)); // count it,
     a.emit(mret()); // and return to the interrupted word
@@ -662,6 +668,8 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     a.emit(addi(31, 31, 64));
     a.emit(sw(0, 30, 4)); // the compare's high half is zero
     a.emit(sw(31, 30, 0)); // and its low half is the count plus 64
+    a.emit(lw(31, 30, 0)); // read back, so the store has landed and the
+                           // line has dropped before the return (issue 420)
     a.emit(mret());
     // An exception returns past the instruction that trapped, which is
     // four bytes long for an ecall and for an illegal instruction whose
