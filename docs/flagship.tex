@@ -490,10 +490,16 @@ crate.},label={lst:f-logo2rs},tabsize=2]{tools/logo2rs/main.go}
 
 \emph{Nothing on a real wire has answered the remote peripheral yet.}
 The design is here, the program is here, and so is the shim between
-them, \code{//tools/remote/shim}; what is not is the run: the shim on
-the machine the board is wired to, the program through a tunnel to
-it, and the core reading back what the program computed. That is
-issue~\#335, and it wants a cable rather than a design.
+them, \code{//tools/remote/shim}, with \code{//tools/remote/shim:deploy}
+to put it on the machine the board is wired to as a service that is
+given the one capability a raw socket wants at launch, so that
+nothing is stored on the binary and a redeploy needs no ceremony.
+What is not is the run: the service installed there, which is one
+sequence as root the deploy prints; the flagship in the part, since
+the board's interface has no carrier under any other bitstream; the
+program through a tunnel to the service; and the core reading back
+what the program computed. That is issue~\#335, and it wants a cable
+rather than a design.
 
 \emph{The core does not reach the MAC's own registers.} The AXI-Lite
 peripheral for the MAC exists~\cite{eth} and nothing in this bitstream
