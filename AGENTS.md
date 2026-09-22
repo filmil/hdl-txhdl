@@ -542,6 +542,16 @@ Assert that the branch resolves before trusting a zero, since
 `git cherry` prints nothing when it fails and a counter reads that as
 "merged".
 
+The dates mislead as well, and worse, because they look like facts
+rather than summaries.
+Rebase-merge rewrites the graph and leaves the author dates alone, so
+they can run backwards against it: on September 22, 2026 a commit
+authored at 05:06:48 was the descendant of one authored at 05:10:23,
+and reading the times told you the opposite of the order.
+On this repository only the graph is evidence about order.
+`git merge-base --is-ancestor A B` answers it; a timestamp, an ahead
+count and a branch's apparent age do not.
+
 Two things worth knowing while doing this:
 
 * A worktree's output base is named for the md5 of its path, so
@@ -573,6 +583,15 @@ the session being asked.
 Check the trailer against your own id yourself, whoever tells you
 what is yours.
 
+A convention in the names is the trap, because it looks like the
+check and costs nothing to believe.
+The day after that census a session skipped two fully merged trees
+because a list described suffixed names as a sibling's and the suffix
+was read as the marker; that cost a day and 3.1 GB.
+The trees happened to be finished. Had either been unfinished the
+same confidence would have thrown away work, and nothing about
+reading a name rather than a trailer would have felt different.
+
 ### Removing a worktree does not stop its server
 
 `git worktree remove` leaves the Bazel server running, against an
@@ -598,9 +617,19 @@ It can.
 The instinct was right and the instruments were aimed at the wrong
 resource, which is worth knowing before you spend an hour repeating
 it.
-Size one base at a time, appending as you go, and run the pass
-detached so that a watchdog cannot take it.
-Peak memory then stays flat and the pass finishes.
+Size one base at a time, appending as you go, and run the pass under
+`setsid nohup` so that a watchdog cannot take it.
+Peak memory then stays flat.
+
+Detached is not the same as a background shell task, and the
+difference showed the next day: a census run that way was killed at
+171 bases of 392, by something that was not the memory killer.
+So make the pass resumable as well as detached.
+It records as it goes and skips what it has already recorded, and a
+kill then costs only the bases it had not reached rather than the
+whole measurement.
+On a host that kills things, a measurement that cannot survive being
+killed is not a measurement.
 
 That is not a small difference.
 On September 21, 2026 the shape above sized all 332 orphaned bases at
@@ -635,6 +664,71 @@ Measure again rather than quoting the figures above.
 They are what one day looked like, and the runner's side of them
 grows by a base per job unless something reclaims them, so a reader a
 month later is holding a date and not a property of the machine.
+
+### A machine that keeps killing your work may be robbed
+
+Before concluding anything about your build, look at what else is on
+the box.
+
+On September 22, 2026 three orphaned Vivado `cs_server` processes
+were found at 99 per cent each, running since the thirteenth: three
+of eight cores, for nine days.
+That is what killed two full test suites here, one of them already
+reduced to `--jobs=1`, and what held the load at thirty to thirty
+seven while the work in flight could not account for it.
+The session losing the suites tuned `--jobs`, reached for `nice` and
+`ionice`, and then concluded that the machine could not measure its
+own disk.
+All three are the wrong move, and none of them finds a thief.
+
+What it was, because the shape is worth recognising.
+The server is started with `-D`, so it daemonises into a session of
+its own and a kill of the process tree it came from cannot reach it.
+Its client hung up, leaving one descriptor half closed, and a poll of
+a half-closed descriptor returns readable at once and for ever, so it
+spins.
+It is started with an idle timeout as well, which never fires,
+because a process that believes it is serving traffic never becomes
+idle: the fault disarms the safeguard meant to catch it.
+
+What to look for:
+
+* `ppid 1` together with `sid == pid`. A self-daemonised process is
+  its own session leader, which is both why a tree kill misses it and
+  how to end it, by session.
+* Days of accumulated processor time on something nobody started this
+  week.
+* **`State: S` beside 99 per cent processor is not a contradiction.**
+  Polling a readable descriptor is a sleep that returns instantly.
+  Reading `S` as "asleep, not my problem" is how this survived nine
+  days in plain sight.
+
+The fix for the class is a cgroup and not a trap, for the same reason
+the tree kill missed it: `-D` exists to escape the tree, and an
+`EXIT` trap is skipped on `SIGKILL`, which is what a watchdog sends.
+
+A **transient user service** is what does it, and not a scope, which
+is the obvious reading and the wrong one:
+
+```sh
+systemd-run --user --wait --pipe --pty --collect --same-dir -- <cmd>
+```
+
+A scope is not stopped when the thing that started it exits, so a
+self-daemonised child outlives it and the orphan survives exactly as
+before. A transient service is torn down with its unit, children
+included, and the flags above keep what a build needs: the exit
+status, the environment and the working directory.
+That was measured rather than reasoned, against a daemonised `sleep`,
+after the scope was proposed here first and would have left the bug
+in place.
+
+Where it goes matters as much as what it is. A Bazel action in a
+sandbox has no `XDG_RUNTIME_DIR` and so cannot reach the user manager
+at all, which means the wrapper belongs where the process is really
+spawned, at `bazel run`, and must stay silent in a sandboxed action
+rather than warn on every one. A guard that cannot run where the
+thing it guards is started is not a guard.
 
 # Standing rule: one issue, one pull request, in topical commits
 
@@ -712,6 +806,19 @@ fj pr -R hd status <number>     # mergeable, or not
   A conflict resolved by hand is a change nobody has built, and `main`
   may have added a rule the branch does not yet meet, as this one was
   added while four branches were open.
+* **A clean merge is not a building tree.**
+  `git merge-tree` and a rebase that reports no conflict both answer
+  whether the texts can be combined, and neither answers whether the
+  result compiles.
+  A semantic conflict has no textual overlap for either to find: on
+  September 22, 2026 one branch widened a tuple while another added a
+  use of the old arity, the merge was clean, and `main` stopped
+  building for every session at once.
+  Nothing warned, because there was nothing textual to warn about.
+  So build the merge, and say "it merges clean" only about merging.
+  This matters most where two branches add entries to one list, a
+  `srcs` in a `BUILD.bazel` say, since neither edit touches the
+  other's line and the damage appears only once both have landed.
 
 # Claims about Rust are compiled, not argued
 
