@@ -1,0 +1,92 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: LineStore
+\datasheet{LineStore}{A host on the bus that writes a run of memory
+from a channel, in bursts, to a count of bytes.}
+
+\dsfacts{\code{lib/parts/src/dma.rs}}{\code{txhdl\_parts::dma::LineStore}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+The mirror of \code{LineFetch}, and the half an Ethernet receiver
+wants. Words arrive on a channel and are written to memory as bursts,
+so a peripheral receiving bulk data puts it away itself rather than
+interrupting the core per word.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The width of an address, in bits. \\
+\code{I} & The width of a burst identifier, in bits. \\
+\code{BEATS} & How many beats a burst asks for. \\
+\code{WC} & The width of the byte count. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables below use \code{LineStore<32, 2, 16, 16>}, the engine of
+\code{ex\_dmaw}.
+
+\dstables{LineStore}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A run starts when \code{go} is high and nothing is in flight.
+\code{base} and \code{bytes} are read once, there.
+\item The beats wanted are \code{(bytes + 3) / 4}: a partial last
+word is still a beat, it is just not a whole one.
+\item A beat goes out when a word is offered and the beat channel has
+room. A producer that stops offering stops the burst, which is the
+backpressure in this direction.
+\item The last beat of the run is strobed down to the bytes that are
+real: \code{0x1}, \code{0x3} or \code{0x7}, and \code{0xf} when the
+count is a whole number of words.
+\end{itemize}
+
+\subsection*{Two differences from \code{LineFetch}, both the bus}
+
+\emph{A write burst is finished by its response, not by its last
+beat.} The host answers a read on the beat channel and a write on
+\code{done}, so the identifier goes back when the response arrives,
+which may be well after the last beat went out.
+
+\emph{AXI4 puts no identifier on the beats}, so a burst's beats
+belong to the oldest address phase outstanding. A second burst issued
+before the first one's beats were out would take them. \code{LineFetch}
+keeps one burst in flight because a second buys nothing; here it is a
+rule rather than a choice.
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_dmaw} writes sixty-four words across a real link with
+\code{AxiHost}, \code{AxiPer} and a memory on the far side, then
+reads the memory back. The netlist is checked against that run under
+nvc and Verilator: \code{//docs:dmaw\_sim\_linestore\_tb\_test} and
+\code{//docs:dmaw\_vsim\_test}.
+\item The assertions are on what the memory holds afterwards, not on
+what the beats looked like: every word at its own address, nothing
+past the run touched, and a last word holding one byte of the run
+over three bytes that were there before. The memory is poisoned with
+\code{0xaaaaaa00} first, because without it a correct strobe and an
+ignored one both leave zeros there.
+\item Sixty-four words in 94 cycles, under the same bound as the read
+direction.
+\end{itemize}
+
+\subsection*{Limits}
+
+The byte count's tail is the low two bits of \code{bytes}, so a run
+of zero bytes asks for zero beats and does nothing, and nothing
+checks that a caller meant that.
+
+The same 4\,KB boundary rule as \code{LineFetch}: a burst must not
+cross one, this does not check it, and \code{BEATS} of 256 is
+1\,KB, so a 1\,KB aligned base satisfies it without a special case.
+
+It runs on one clock, \code{DefaultClock}. It writes and never reads.

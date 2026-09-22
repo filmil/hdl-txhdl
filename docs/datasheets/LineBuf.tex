@@ -1,0 +1,86 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: LineBuf
+\datasheet{LineBuf}{A line of pixels on the clock that shows them,
+filled from a channel and read by column.}
+
+\dsfacts{\code{lib/parts/src/dma.rs}}{\code{txhdl\_parts::dma::LineBuf}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+The far end of a scanout. \code{LineFetch} reads a line from memory
+on the bus clock and \code{ChanCdc} carries the words to the pixel
+clock; this is what they arrive in. A word taken lands at the next
+place in the line, and the raster asks for a column and gets what is
+there.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{LEN} & How many pixels a line holds. \\
+\code{AW} & The width of a column index, in bits. \\
+\code{C} & The clock it runs on, which is the pixel clock. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables below use \code{LineBuf<32, 5, ClkPix>}, the buffer of
+\code{ex\_scanout}.
+
+\dstables{LineBuf}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A word is taken whenever one is offered. The buffer is the
+consumer that the fetch is held up by, so never refusing is what
+keeps the line filling.
+\item \code{shown} holds the pixel the column named at the last edge,
+and \code{pix} is that register.
+\item \code{sol} puts the write back to the start of the line, so a
+fetch that delivered too few words does not walk the buffer out of
+step for ever.
+\end{itemize}
+
+\subsection*{Why the output is registered}
+
+A block RAM has an output register, and a design that reads the
+memory straight out to a port asks it to settle combinationally
+within a pixel. A raster also wants a pixel that is stable for the
+whole cycle it is shown rather than one that moves when the column
+does. Both say the same thing, so the port is a register and not the
+memory.
+
+It costs one cycle of lead, which a raster has, since it knows the
+column it will want next.
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_scanout} joins \code{LineFetch}, \code{ChanCdc} and
+this over two clocks of period four and period six, and reads
+thirty-two pixels back a column at a time. The netlist is checked
+against that run under nvc and Verilator:
+\code{//docs:scanout\_sim\_linebuf\_tb\_test} and
+\code{//docs:scanout\_vsim\_test}.
+\item The memory it reads from holds its own address in each word, so
+a pixel that came from the wrong burst, crossed badly, or landed out
+of step says which place it came from.
+\end{itemize}
+
+\subsection*{Limits}
+
+Writing and reading are independent, and nothing here says the fill
+is far enough ahead of the beam. What "far enough" means belongs to
+the video timing rather than to a buffer. A line that is not filled
+in time shows the previous line's pixel at that column, which is a
+visible artefact rather than a hang.
+
+One word a pixel, which is what a framebuffer holds and what the
+crossing carries. It does not pack several pixels to a word.
+
+\code{LEN} and \code{AW} are not checked against each other.

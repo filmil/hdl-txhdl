@@ -29,7 +29,7 @@ use txhdl_parts::bus::noc::switch::Switch;
 use txhdl_parts::bus::router::Router3;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::cdc::ChanCdc;
-use txhdl_parts::dma::LineFetch;
+use txhdl_parts::dma::{LineBuf, LineFetch, LineStore};
 use txhdl_parts::eth::{EthLite, EthRx, EthTx};
 use txhdl_parts::fifo::Fifo;
 use txhdl_parts::flashwin::FlashWin;
@@ -364,9 +364,19 @@ fn main() {
         Fifo::<U<8>, 2, 4>::lowered("fifo"),
     );
     sheet(
+        "LineBuf",
+        "LineBuf<32, 5, ClkPix>",
+        LineBuf::<32, 5, ClkPix>::lowered("linebuf"),
+    );
+    sheet(
         "LineFetch",
         "LineFetch<32, 2, 16, 16>",
         LineFetch::<32, 2, 16, 16>::lowered("linefetch"),
+    );
+    sheet(
+        "LineStore",
+        "LineStore<32, 2, 16, 16>",
+        LineStore::<32, 2, 16, 16>::lowered("linestore"),
     );
     sheet(
         "Station",
