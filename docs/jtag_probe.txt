@@ -1,0 +1,10 @@
+# The probe against the board, 2026-09-22, from Vivado's hardware
+# manager over the cable, with the core running the board's own
+# program from the boot memory.
+jtag: master hw_axi_1
+jtag: data memory at 00001010: wrote c0ffee11, read c0ffee11: ok
+jtag: data memory at 00001014: wrote 5eed0241, read 5eed0241: ok
+jtag: DDR3 at 40000100: wrote deadbeef, read deadbeef: ok
+jtag: DDR3 at 40000104: wrote 0badf00d, read 0badf00d: ok
+jtag: timer at 0200bff8 read eeb87747 then f5ec804e: counting: ok
+jtag: every word came back: ok

@@ -1761,6 +1761,7 @@ latex_document(
     name = "vreteno",
     main = "vreteno.tex",
     data = [
+        "jtag_probe.txt",
         "ila_capture.vcd",
         ":buildstamp",
         ":vendored_tex",

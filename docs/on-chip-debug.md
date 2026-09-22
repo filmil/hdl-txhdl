@@ -234,6 +234,11 @@ a pin, a clock, a PHY, a memory controller's calibration.
 3. **A JTAG path to the bus**, issue 241, which turns a synthesis into
    a download and feeds the bootloader of issue 135 and fetch from the
    bus of issue 134.
+   Built: Vivado's JTAG-to-AXI master on a second host port of the
+   board, behind an arbiter, `//cpu/vreteno:vreteno_board_jtag_pnr`,
+   with `//cpu/vreteno:vreteno_board_jtag_probe` reading and writing
+   the memories and the timer from the hardware manager; proved on
+   the board on September 22, 2026.
 4. **The debug module of issue 154**, once the core has halt, resume
    and step, which is also what issue 139 wants `ebreak` to become.
 
