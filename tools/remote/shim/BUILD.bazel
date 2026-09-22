@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The shim beside the board: raw frames off the interface the board is
+# wired to, onto the stream `//tools/remote` speaks, and back. It runs
+# on the machine with the board, as root or with cap_net_raw.
+#
+#   bazel build //tools/remote/shim && scp bazel-bin/tools/remote/shim/shim_/shim board:
+#   shim -iface enp3s0 -listen :9797
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+package(default_visibility = ["//visibility:public"])
+
+go_library(
+    name = "shim_lib",
+    srcs = [
+        "main.go",
+        "packet_linux.go",
+        "shim.go",
+    ],
+    importpath = "github.com/filmil/txhdl/tools/remote/shim",
+    deps = ["//tools/remote/stream"],
+)
+
+go_binary(
+    name = "shim",
+    embed = [":shim_lib"],
+    pure = "on",
+)
+
+# The pump against a wire in memory and a stream in memory: what
+# arrives on the wire reaches the stream with its length in front, a
+# foreign frame does not, an answer on the stream leaves on the wire
+# as it was, and either side ending ends the pump.
+go_test(
+    name = "shim_test",
+    srcs = ["shim_test.go"],
+    embed = [":shim_lib"],
+    deps = ["//tools/remote/stream"],
+)
