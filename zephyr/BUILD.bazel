@@ -25,7 +25,7 @@ filegroup(
     srcs = [
         "dts/riscv/hdlfactory/vreteno.dtsi",
         "drivers/serial/uart_vreteno.c",
-        "soc/hdlfactory/vreteno/Kconfig.soc",
+        "soc/hdlfactory/vreteno/Kconfig",
     ],
 )
 

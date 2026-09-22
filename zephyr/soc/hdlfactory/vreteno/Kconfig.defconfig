@@ -12,7 +12,9 @@ config SYS_CLOCK_HW_CYCLES_PER_SEC
 	# timebase-frequency. Both come from the same 100 MHz.
 	default 100000000
 
-config RISCV_SOC_INTERRUPT_INIT
-	default y
+# `RISCV_SOC_INTERRUPT_INIT` is deliberately not set here. It makes
+# `z_prep_c` call `soc_interrupt_init()`, and this SoC has no such
+# function to call, so the image does not link. This machine's
+# controller is initialised by its own driver like any other.
 
 endif # SOC_VRETENO

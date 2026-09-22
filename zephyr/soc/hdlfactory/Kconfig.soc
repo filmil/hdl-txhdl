@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The family's symbol, and the SoCs under it. This file is read while
+# the build is still deciding what it is building, so it declares names
+# and nothing else; what a SoC turns on lives in `Kconfig` beside it.
+
+config SOC_FAMILY_HDLFACTORY
+	bool
+
+config SOC_FAMILY
+	default "hdlfactory" if SOC_FAMILY_HDLFACTORY
+
+rsource "*/Kconfig.soc"

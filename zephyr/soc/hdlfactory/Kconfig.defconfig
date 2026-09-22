@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The defaults each SoC sets once it is chosen: the clock, the memory
+# it runs from. Each SoC states its own, and this file only reaches
+# them.
+
+rsource "*/Kconfig.defconfig"

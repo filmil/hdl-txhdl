@@ -2,23 +2,14 @@
 
 config SOC_VRETENO
 	bool
-	select RISCV
-	select RISCV_PRIVILEGED
-	select RISCV_ISA_RV32I
-	select RISCV_ISA_EXT_M
-	select RISCV_ISA_EXT_C
-	select RISCV_ISA_EXT_ZICSR
-	select ATOMIC_OPERATIONS_C
+	select SOC_FAMILY_HDLFACTORY
 	help
 	  The Vreteno RV32IMC core with its bus, its timer and its
 	  interrupt controller.
 
-	  It has no A extension, so the atomic operations are the C
-	  ones rather than instructions. That is not an oversight in
-	  this file: the core is RV32IMC and `misa` says so.
+	  What the core is, rather than how it is configured, is said
+	  next door in `Kconfig`: the hardware model wants this file to
+	  name the SoC and its family and little else.
 
 config SOC
 	default "vreteno" if SOC_VRETENO
-
-config SOC_FAMILY
-	default "hdlfactory" if SOC_VRETENO

@@ -1,4 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 config SOC_VRETENO
-	select SOC_FAMILY_HDLFACTORY
+	select RISCV
+	select RISCV_PRIVILEGED
+	select RISCV_ISA_RV32I
+	select RISCV_ISA_EXT_M
+	select RISCV_ISA_EXT_C
+	select RISCV_ISA_EXT_ZICSR
+	select ATOMIC_OPERATIONS_C
+	select INCLUDE_RESET_VECTOR
+
+# The core is RV32IMC and `misa` says so, so there is no A extension
+# here and the atomic operations are the C ones. That is a statement
+# about the hardware rather than a configuration choice: selecting the
+# instructions would produce an image the core traps on.

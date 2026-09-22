@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# What the SoCs of this family select, read only when one of them is
+# the SoC being built. There is one so far, and the guard is here so
+# that a second arrives without touching this file.
+
+if SOC_FAMILY_HDLFACTORY
+
+rsource "*/Kconfig"
+
+endif # SOC_FAMILY_HDLFACTORY

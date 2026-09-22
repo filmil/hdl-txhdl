@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The family and its SoCs, at the vendor directory and not below it.
+# Zephyr's second hardware model reads this file here, one level above
+# the SoC, and an identical file inside `vreteno/` is a file nothing
+# opens: the board then names a SoC the build has never heard of, and
+# the error says only that the board is unknown.
+family:
+  - name: hdlfactory
+    socs:
+      - name: vreteno

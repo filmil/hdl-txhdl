@@ -19,7 +19,7 @@ const DTSI: &str =
 const DRIVER: &str =
     include_str!("../../../zephyr/drivers/serial/uart_vreteno.c");
 const SOC_KCONFIG: &str =
-    include_str!("../../../zephyr/soc/hdlfactory/vreteno/Kconfig.soc");
+    include_str!("../../../zephyr/soc/hdlfactory/vreteno/Kconfig");
 
 
 /// The device tree's `reg` for a node, as its first address.
