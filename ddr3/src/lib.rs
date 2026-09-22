@@ -169,7 +169,7 @@ impl<const MICRON_SIM: usize, const BIST: usize> Unit<CtlIn, CtlOut>
 /// the Wishbone lines. `MICRON_SIM` and `BIST` are the controller's.
 #[derive(Trace, Default)]
 pub struct Ddr3Per<const MICRON_SIM: usize, const BIST: usize> {
-    pub bridge: AxiWb<32, 2, AW>,
+    pub bridge: AxiWb<32, 4, AW>,
     pub ctl: Ddr3<MICRON_SIM, BIST>,
 }
 
@@ -180,7 +180,7 @@ impl<const MICRON_SIM: usize, const BIST: usize> Unit
     async fn run(
         &mut self,
         (req, wd, ddr3_clk, ref_clk, ddr3_clk_90, rst_n): (
-            Rx<PerReq<32, 2>>,
+            Rx<PerReq<32, 4>>,
             Rx<W<32, 4>>,
             In<Bit>,
             In<Bit>,
@@ -207,8 +207,8 @@ impl<const MICRON_SIM: usize, const BIST: usize> Unit
             dqs,
             dqs_n,
         ): (
-            Tx<Answer<2>>,
-            Tx<R<32, 2>>,
+            Tx<Answer<4>>,
+            Tx<R<32, 4>>,
             Out<Bit>,
             Out<Bit>,
             Out<Bit>,
@@ -292,7 +292,7 @@ mod tests {
             host_out,
             per_in,
             per_out,
-        } = axi_to_unit::<32, 32, 4, 2, 4>();
+        } = axi_to_unit::<32, 32, 4, 4, 16>();
         let (req, wd, ans, rb) = per_client;
         let (_ck_o, ck) = signal::<Bit, DefaultClock>();
         let (_rck_o, rck) = signal::<Bit, DefaultClock>();
@@ -300,8 +300,8 @@ mod tests {
         let (_rst_o, rst_n) = signal::<Bit, DefaultClock>();
         let (calib_o, calib) = signal::<Bit, DefaultClock>();
         let bits = || signal::<Bit, DefaultClock>().0;
-        let mut h = AxiHost::<32, 32, 4, 2, 4>::default();
-        let mut p = AxiPer::<32, 32, 4, 2>::default();
+        let mut h = AxiHost::<32, 32, 4, 4, 16>::default();
+        let mut p = AxiPer::<32, 32, 4, 4>::default();
         let mut mem = Ddr3Per::<0, 0>::default();
         let seen = Rc::new(RefCell::new(Vec::new()));
         let out = seen.clone();
