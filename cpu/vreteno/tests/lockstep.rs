@@ -13,9 +13,10 @@ use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
 use vreteno32::isa::{
-    addi, beq, csrrci, csrrs, csrrsi, csrrw, decode, disasm, ebreak, halt, jal,
-    lui, Kind, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER, CSR_DCSR, CSR_MIE,
-    CSR_MSTATUS, CSR_MTVEC, MISA,
+    add, addi, beq, csrrci, csrrs, csrrsi, csrrw, csrrwi, decode, disasm,
+    ebreak, halt, jal, lui, lw, mret, or, sw, Kind, CAUSE_MEXT, CAUSE_MSOFT,
+    CAUSE_MTIMER, CAUSE_STORE_ACCESS, CSR_DCSR, CSR_MBUSQUIET, CSR_MCAUSE,
+    CSR_MEPC, CSR_MIE, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MISA,
 };
 use vreteno32::model::{Halt, Model};
 use vreteno32::program::{demo, idle, in_memory, machine_info, random, soft};
@@ -103,6 +104,9 @@ fn lockstep(
     let mut uart = Uart::<4>::default();
     let mtimecmp = timer.mtimecmp;
     let (pending, wb_dev) = (timer.pending, cpu.wb_dev);
+    // The bus's refusals: of the load in writeback, and of a store,
+    // which the core raises before the next instruction (issue 417).
+    let (wb_err, st_err) = (cpu.wb_err, cpu.st_err);
     let msip = timer.msip;
     let (uart_sent, uart_last) = (uart.sent, uart.last);
     let (uart_received, uart_dropped) = (uart.received, uart.dropped);
@@ -322,13 +326,18 @@ fn lockstep(
         // which it retires, which is the next instruction's execute
         // cycle, so it is read before that cycle.
         answer = wb_dev.get().raw() as u32;
+        let refused = wb_err.get().to_bool();
         let line_now = pending.get().to_bool();
         let soft_now = msip.get().to_bool();
         let ext = mip.get().bit(11).to_bool() && mie.get().bit(11).to_bool();
         let sft = soft_now && mie.get().bit(3).to_bool();
         let tim = line_now && mie.get().bit(7).to_bool();
         // The order the specification gives, which the core keeps.
-        let taken_now = if !mstatus.get().bit(3).to_bool() {
+        // A refused store is taken first, and whether or not
+        // interrupts are enabled: it is a trap, not an interrupt.
+        let taken_now = if st_err.get().to_bool() {
+            Some(CAUSE_STORE_ACCESS)
+        } else if !mstatus.get().bit(3).to_bool() {
             None
         } else if ext {
             Some(CAUSE_MEXT)
@@ -348,6 +357,7 @@ fn lockstep(
         }
         if wb.get().done.to_bool() {
             model.dev_word = answer;
+            model.dev_err = refused;
             model.tirq = line_before;
             model.msip = soft_before;
             model.step(program, taken_before);
@@ -959,4 +969,66 @@ fn a_reset_puts_the_csrs_back_and_keeps_the_registers() {
     assert_eq!(m.csr.mie, 0, "the enables are clear");
     assert_eq!(m.csr.mstatus, 0, "interrupts are disabled");
     assert_eq!(m.mtimecmp, u64::MAX, "the timer's compare is all ones");
+}
+
+/// A load from an address nothing decodes is refused by the router,
+/// and the core traps on it as it retires: a load access fault with
+/// the address in `mtval`, the register unwritten, and the instruction
+/// after it run once the handler returns. A refused store is a store
+/// access fault taken before the next instruction to run, once the
+/// answer is back, without an address. With `mbusquiet` set neither
+/// traps: the load reads the zero the bus answered and the store is
+/// dropped (issue 417).
+#[test]
+fn a_refused_load_or_store_traps_unless_told_to_be_quiet() {
+    let handler = 15 * 4;
+    let p = [
+        addi(6, 0, handler),
+        csrrw(0, CSR_MTVEC, 6),
+        lui(4, 0x3000), // 0x0300_0000: nobody's
+        lw(5, 4, 0),    // refused: a load access fault, then on
+        addi(7, 0, 1),
+        sw(0, 4, 0),   // refused, later: a store access fault
+        lui(2, 0x1),   // the data memory
+        lw(11, 2, 0),  // waits, and the store's answer comes back first
+        addi(8, 0, 1), // the store's fault is taken before this, or earlier
+        csrrwi(0, CSR_MBUSQUIET, 1),
+        lw(12, 4, 0), // quiet: reads the zero the bus answered
+        sw(0, 4, 0),  // quiet: dropped
+        lw(11, 2, 0), // waits for that answer too
+        addi(9, 0, 1),
+        halt(),
+        // The handler, at 60: counts, sums the causes, keeps the trap
+        // values, and steps past a load; a store's fault returns to
+        // the instruction it was taken before.
+        csrrs(23, CSR_MCAUSE, 0),
+        csrrs(24, CSR_MTVAL, 0),
+        addi(25, 25, 1),
+        add(28, 28, 23),
+        or(29, 29, 24),
+        addi(26, 0, 7),
+        beq(23, 26, 4 * 4),
+        csrrs(27, CSR_MEPC, 0),
+        addi(27, 27, 4),
+        csrrw(0, CSR_MEPC, 27),
+        mret(),
+    ];
+    let m = lockstep(&p, &[], "refused accesses", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[25], 2, "two faults");
+    assert_eq!(
+        m.x[28],
+        5 + 7,
+        "a load access fault and a store access fault"
+    );
+    assert_eq!(
+        m.x[29], 0x0300_0000,
+        "the load's address; the store has none"
+    );
+    assert_eq!(m.x[5], 0, "the refused load wrote nothing");
+    assert_eq!(m.x[7], 1, "the instruction after the load ran, once");
+    assert_eq!(m.x[8], 1, "and the one the store's fault was taken before");
+    assert_eq!(m.x[12], 0, "quiet: the zero the bus answered");
+    assert_eq!(m.x[9], 1, "quiet: nothing trapped");
+    assert!(m.csr.busquiet, "the bit stays set");
 }

@@ -356,39 +356,54 @@ fn remote_program() -> Vec<u32> {
 
 /// A program that reads its own first word out of the boot memory over
 /// the bus, tries to overwrite it, reads it again, and says whether the
-/// memory kept it.
+/// memory kept it. The memory refuses the store, and the core raises
+/// the store access fault for it (issue 417), so the program has a
+/// handler that says so and returns to where the fault was taken.
 fn rom_program() -> Vec<u32> {
-    use vreteno32::isa::{addi, beq, halt, jal, lui, lw, sw, UART_BASE};
+    use vreteno32::isa::{
+        addi, beq, csrrw, halt, jal, lui, lw, mret, sw, CSR_MTVEC, UART_BASE,
+    };
     let mut a = vreteno32::program::Asm::default();
     a.emit(lui(1, UART_BASE >> 12)); // x1 = the serial port, for say
+    let handler = a.label();
+    a.abs(handler, |h| addi(7, 0, h as i32)); // x7 = the handler
+    a.emit(csrrw(0, CSR_MTVEC, 7));
     a.emit(lui(6, 0)); // x6 = 0, the boot memory
-    a.emit(lw(2, 6, 0)); // x2 = the program's first word
+    a.emit(lw(9, 6, 0)); // x9 = the program's first word, in a
+                         // register the handler's say leaves alone
     a.emit(lui(4, 0xdead0));
     a.emit(addi(4, 4, 0x123)); // x4 = 0xdead0123
     a.emit(sw(4, 6, 0)); // refused, and answered so
     a.emit(lw(5, 6, 0)); // x5 = the word again
     let kept = a.label();
     let done = a.label();
-    a.to(kept, |off| beq(5, 2, off));
+    a.to(kept, |off| beq(5, 9, off));
     say(&mut a, b"rom changed\n");
     a.to(done, |off| jal(0, off));
     a.place(kept);
     say(&mut a, b"rom kept\n");
     a.place(done);
     a.emit(halt());
+    // The store's fault: taken before whichever instruction was next
+    // when the answer came back, so the handler returns to it as is.
+    a.place(handler);
+    say(&mut a, b"refused\n");
+    a.emit(mret());
     a.words()
 }
 
 /// The boot memory is on the bus at zero: a load reads the program
-/// that is there, and a store does not change it. The core does not
-/// look at a write's answer, so the refusal shows only as the word
-/// being what it was; that the first load returned the program and
-/// not zero is checked too, since a hole answers zero as readily.
+/// that is there, and a store does not change it. The memory answers
+/// the store with a refusal, which the core raises as a store access
+/// fault (issue 417), so the program says `refused` from its handler
+/// and then that the word is what it was; that the first load returned
+/// the program and not zero is checked too, since a hole answers zero
+/// as readily.
 #[test]
 fn the_boot_memory_is_readable_and_not_writable() {
     let text = rom_program();
     let ran = run(&text, b"", b"", 4000);
-    assert_eq!(ran.said, "rom kept\n");
+    assert_eq!(ran.said, "refused\nrom kept\n");
     assert!(ran.halted_at.is_some(), "the core halted itself");
     assert_ne!(text[0], 0, "the word the program reads is not zero");
 }
