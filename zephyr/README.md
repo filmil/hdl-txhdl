@@ -99,7 +99,52 @@ a store of the byte, which is what the hardware asks for.
 An image of 14612 bytes links at `0x4000_0000`, RV32 with compressed
 instructions and the soft-float ABI.
 
-Building Zephyr from this repository's own hermetic Bazel, rather than
-from a Zephyr the reader supplies, is a separate piece of work: it
-wants CMake, ninja and a Python with the devicetree tooling, none of
-which this build has.
+## Building it hermetically
+
+Issue 390 is to build the image from this repository's own Bazel, so
+that `bazel test //...` checks what a person currently checks by
+following this file.
+
+That is not done, but the part of it that looked hardest is no longer
+a question.
+A throwaway workspace configured and built `samples/hello_world` for
+`ax7a200b` end to end with nothing from the system, and produced the
+ELF.
+The versions that did it are recorded here rather than in the issue,
+so that whoever writes the rule does not find them again by trial and
+error.
+
+| Module | Version | Note |
+|---|---|---|
+| `rules_python` | 2.3.4 | the interpreter, and the pip packages |
+| `rules_foreign_cc` | 0.16.0 | |
+| `rules_dtc` | 0.0.5 | |
+| `dtc` | 1.7.2.bcr.1 | |
+| `flex` | 2.6.4.bcr.6 | the pin is required; see below |
+| `ninja` | 1.13.2 | |
+| CMake | 3.31.6 | an `http_archive`, sha256 `5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf` |
+| `riscv_none_elf_gcc` | 14.2.0 | already in `MODULE.bazel` |
+
+Three things cost time, and would cost it again.
+
+**`flex` must be pinned to `2.6.4.bcr.6`.**
+The default resolution takes `2.6.4.bcr.2`, on which building `dtc`
+fails with `config.h:208: expected expression before '/'` and a
+`strrchr` called with too few arguments.
+
+**The pip packages need their transitive closure listed.**
+`rules_python` installs what is named and nothing else, so the first
+run died on `No module named 'six'`.
+
+**The rule must pass `-DZEPHYR_MODULES`, not `-DZEPHYR_EXTRA_MODULES`.**
+See the warning at the top of this file: without `west` the latter is
+collected and discarded.
+A rule written from the `west` line above would fetch Zephyr, run
+CMake, produce an ELF, pass, and be testing a Zephyr with none of this
+repository in it.
+
+That last point is what the rule should be built around.
+An ELF existing proves very little, as this port demonstrated four
+separate times before it ever printed: the check worth writing is that
+the generated configuration contains `CONFIG_UART_VRETENO=y` and
+`CONFIG_UART_CONSOLE=y`.
