@@ -13,8 +13,9 @@ use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
 use vreteno32::isa::{
-    addi, csrrci, csrrs, csrrsi, decode, disasm, ebreak, halt, lui, Kind,
-    CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER, CSR_DCSR, MISA,
+    addi, beq, csrrci, csrrs, csrrsi, csrrw, decode, disasm, ebreak, halt, jal,
+    lui, Kind, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER, CSR_DCSR, CSR_MIE,
+    CSR_MSTATUS, CSR_MTVEC, MISA,
 };
 use vreteno32::model::{Halt, Model};
 use vreteno32::program::{demo, idle, in_memory, machine_info, random, soft};
@@ -63,6 +64,7 @@ fn lockstep(
     what: &str,
     seed: Option<u64>,
     dbg: Option<&DebugPlan>,
+    reset_at: Option<u64>,
 ) -> Model {
     let mut cpu = Vreteno::with(program);
     let (pc, ir_pc, valid, regs, halted) =
@@ -305,6 +307,13 @@ fn lockstep(
         }
         haltreq_out.set(hreq);
         resumereq_out.set(rreq);
+        // The reset line, high for the one cycle the plan names: the
+        // core and the devices see it in this cycle, and the model is
+        // reset after it, once whatever retired in it has been stepped.
+        let resetting = reset_at == Some(cycle as u64);
+        if resetting {
+            rst_out.set(Bit::One);
+        }
         // The word about to execute this cycle, or zero on a bubble;
         // the illegal word is zero too, so the flag is kept apart.
         let executing = in_execute.get().to_bool();
@@ -363,6 +372,10 @@ fn lockstep(
             }
         } else if debugging && !debugging_now {
             model.resume();
+        }
+        if resetting {
+            rst_out.set(Bit::Zero);
+            model.reset();
         }
         // The line sets the pending bit at this edge in both.
         if raised {
@@ -512,7 +525,7 @@ fn a_program_that_interrupts_itself() {
     // takes another, and what the program guarantees is three or more.
     // The model takes them where the core does, which is what the
     // lockstep compares cycle by cycle.
-    let m = lockstep(&soft(), &[], "soft", None, None);
+    let m = lockstep(&soft(), &[], "soft", None, None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert!(m.x[8] >= 3, "interrupts taken: {}", m.x[8]);
     assert_eq!(m.mem[0], m.x[8], "and the program wrote what it counted");
@@ -525,7 +538,7 @@ fn a_program_reads_what_the_machine_says_it_is() {
     // register, which is an illegal instruction its handler counts.
     // The model answers all of it the same way, which the lockstep
     // compares every cycle rather than only at the end.
-    let m = lockstep(&machine_info(), &[], "machine info", None, None);
+    let m = lockstep(&machine_info(), &[], "machine info", None, None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.mem[0], 0, "mhartid, this machine's one hart");
     assert_eq!(m.mem[1], MISA, "misa: RV32IMC");
@@ -552,7 +565,7 @@ fn a_program_that_waits_for_an_interrupt_is_woken_by_one() {
     // leaves it, and the core wakes from it anyway: a wait ends when
     // an interrupt is pending and enabled, whether or not it may be
     // taken, which is what lets a kernel idle inside its own lock.
-    let m = lockstep(&idle(), &[], "idle", None, None);
+    let m = lockstep(&idle(), &[], "idle", None, None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert!(m.x[8] >= 2, "interrupts that woke it: {}", m.x[8]);
     assert_eq!(m.mem[0], m.x[8], "and the program wrote what it counted");
@@ -565,7 +578,7 @@ fn a_program_above_the_boot_memory_is_fetched_from_the_bus() {
     // the jump comes back over the bus. It adds the first ten numbers
     // and writes the sum where the test can read it.
     let (boot, prog) = in_memory();
-    let m = lockstep(&boot, &prog, "in memory", None, None);
+    let m = lockstep(&boot, &prog, "in memory", None, None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[10], 55, "the sum the program computed");
     assert_eq!(m.mem[16], 55, "and wrote at offset 64");
@@ -573,7 +586,7 @@ fn a_program_above_the_boot_memory_is_fetched_from_the_bus() {
 
 #[test]
 fn demo_program() {
-    let m = lockstep(&demo(), &[], "demo", None, None);
+    let m = lockstep(&demo(), &[], "demo", None, None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[10], 110);
     assert_eq!(m.mem[0], 110);
@@ -616,7 +629,14 @@ fn a_multiply_right_after_a_load() {
         div(13, 12, 7),
         halt(),
     ];
-    let m = lockstep(&p, &[], "a multiply right after a load", Some(1), None);
+    let m = lockstep(
+        &p,
+        &[],
+        "a multiply right after a load",
+        Some(1),
+        None,
+        None,
+    );
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[11], 255 * 1234, "mul of the loaded word");
     assert_eq!(m.x[13], 123, "div of the loaded word");
@@ -639,8 +659,14 @@ fn random_programs() {
             }
             at += n;
         }
-        let m =
-            lockstep(&p, &[], &format!("random seed {seed}"), Some(seed), None);
+        let m = lockstep(
+            &p,
+            &[],
+            &format!("random seed {seed}"),
+            Some(seed),
+            None,
+            None,
+        );
         assert_eq!(m.halted, Some(Halt::Break), "seed {seed} faulted");
     }
     let counts = format!("{short} compressed, {wide} whole, {straddle} across");
@@ -734,7 +760,7 @@ fn compressed_instructions() {
     a.wide(csrrw(0, CSR_MEPC, 22));
     a.wide(mret());
     let p = a.words();
-    let m = lockstep(&p, &[], "compressed instructions", Some(7), None);
+    let m = lockstep(&p, &[], "compressed instructions", Some(7), None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[8], 0, "the loop's count");
     assert_eq!(m.x[9], 7 + 3 + 100 + 1000 + 3, "the loop and the calls");
@@ -793,7 +819,7 @@ fn an_unaligned_access_traps() {
     a.wide(csrrw(0, CSR_MEPC, 22));
     a.wide(mret());
     let p = a.words();
-    let m = lockstep(&p, &[], "an unaligned access", Some(11), None);
+    let m = lockstep(&p, &[], "an unaligned access", Some(11), None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[4], (-2i32) as u32, "the aligned word went through");
     assert_eq!(m.x[9], (-2i32) as u32, "and a byte at an odd address");
@@ -831,7 +857,7 @@ fn debug_halt_and_resume() {
         resumes: 1,
         entries: RefCell::new(Vec::new()),
     };
-    let m = lockstep(&demo(), &[], "demo, halted", None, Some(&plan));
+    let m = lockstep(&demo(), &[], "demo, halted", None, Some(&plan), None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[10], 110);
     assert_eq!(m.uart, b"OK\nyes", "what the demonstration said and echoed");
@@ -857,7 +883,7 @@ fn debug_single_steps() {
         resumes: 60,
         entries: RefCell::new(Vec::new()),
     };
-    let m = lockstep(&p, &[], "single steps", None, Some(&plan));
+    let m = lockstep(&p, &[], "single steps", None, Some(&plan), None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[1], 40, "every step ran exactly one instruction");
     assert_eq!(m.x[2], 4);
@@ -894,7 +920,7 @@ fn debug_ebreak() {
         resumes: 0,
         entries: RefCell::new(Vec::new()),
     };
-    let m = lockstep(&p, &[], "ebreak", None, Some(&plan));
+    let m = lockstep(&p, &[], "ebreak", None, Some(&plan), None);
     assert!(m.debug, "held in debug mode");
     assert_eq!(m.halted, None, "no trap and no halt");
     assert_eq!(m.x[1], 7, "the instruction before the breakpoint ran");
@@ -903,4 +929,34 @@ fn debug_ebreak() {
     assert_eq!(entries.len(), 1);
     assert_eq!(cause(entries[0]), 1, "the cause is the breakpoint");
     assert_eq!(entries[0] & 0x8000, 0x8000, "ebreakm stays set");
+}
+
+/// The reset line in the middle of a program that has set its trap
+/// vector and enabled an interrupt: the core starts again at zero with
+/// the CSRs as configuration left them, agreeing with the model in
+/// every cycle, and the register file keeps what it held, which is how
+/// the program knows it is its second start and halts (issue 419).
+#[test]
+fn a_reset_puts_the_csrs_back_and_keeps_the_registers() {
+    let p = [
+        addi(2, 2, 1), // starts, in a register the reset leaves alone
+        addi(3, 0, 2),
+        beq(2, 3, 8 * 4), // the second start halts
+        lui(4, 0x40000),
+        csrrw(0, CSR_MTVEC, 4),
+        addi(5, 0, 0x80),
+        csrrs(0, CSR_MIE, 5),
+        csrrsi(0, CSR_MSTATUS, 8),
+        addi(1, 1, 1),
+        jal(0, -4),
+        halt(),
+    ];
+    let m = lockstep(&p, &[], "a reset mid-program", None, None, Some(30));
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[2], 2, "the program started twice");
+    assert!(m.x[1] > 0, "the loop ran before the reset");
+    assert_eq!(m.csr.mtvec, 0, "the trap vector is back to zero");
+    assert_eq!(m.csr.mie, 0, "the enables are clear");
+    assert_eq!(m.csr.mstatus, 0, "interrupts are disabled");
+    assert_eq!(m.mtimecmp, u64::MAX, "the timer's compare is all ones");
 }
