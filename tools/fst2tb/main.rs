@@ -328,6 +328,30 @@ fn main() {
         let (first, period) = clock_shape(&trace_name(&c, "clock"));
         tick >= first && (tick - first).is_multiple_of(period)
     };
+    // The first rising edge of a port's own clock at or after a tick:
+    // the edge a plain input applied before it is sampled at.
+    //
+    // An input is applied before every tick of the testbench's clock,
+    // and a port on a slower clock samples only the last application
+    // before its own edge; so what is applied at 2k+1 must be the
+    // value the trace holds at that next edge, not at 2k plus the
+    // period, which for a port six ticks a cycle is a value from up to
+    // four ticks after the edge: an input the run changed between two
+    // of the port's edges was then seen one edge early (issue 405).
+    // For the default clock the next edge is 2k+2, as before.
+    let port_next_edge = |port: &str, tick: usize| -> usize {
+        let named = port_clocks.iter().find(|(p, _)| p == port);
+        let c = match named {
+            Some((_, c)) => c.clone(),
+            None => clocks[0].clone(),
+        };
+        let (first, period) = clock_shape(&trace_name(&c, "clock"));
+        if tick <= first {
+            first
+        } else {
+            first + (tick - first).div_ceil(period) * period
+        }
+    };
     // A channel's handshake, which pulses, as against its data and the
     // plain wires, which are held.
     let pulsed = |port: &str, dir: &str| -> bool {
@@ -444,7 +468,11 @@ fn main() {
             o.push_str("    #1;\n");
             for (n, d, w) in &ports {
                 if is_in(d) && !clocks.contains(n) {
-                    let at = if registered(d) { t } else { t + port_period(n) };
+                    let at = if registered(d) {
+                        t
+                    } else {
+                        port_next_edge(n, t + 2)
+                    };
                     if let Some(v) = val(&trace_name(n, d), at) {
                         o.push_str(&format!("    {n} = {};\n", vlit(*w, &v)));
                     }
@@ -731,7 +759,11 @@ fn main() {
         let mut i = 0;
         for (n, d, _) in &ports {
             if is_in(d) && !clocks.contains(n) {
-                let at = if registered(d) { t } else { t + port_period(n) };
+                let at = if registered(d) {
+                    t
+                } else {
+                    port_next_edge(n, t + 2)
+                };
                 if let Some(v) = val(&trace_name(n, d), at) {
                     last_in[i] = v;
                 }
