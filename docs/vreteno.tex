@@ -183,7 +183,11 @@ odd value to it stops the core when that instruction retires, which
 is what \code{halt} encodes and what a program ends with.
 \code{dcsr} at \code{0x7b0} and \code{dpc} at \code{0x7b1} are the
 debug specification's two, and Section~\ref{sec:v-core} says what
-the core keeps in them.
+the core keeps in them. \code{mbusquiet} at \code{0x7c1} is the
+core's own, beside \code{mhalt}: its low bit set, a load the bus
+refused reads the zero the bus answered and a store it refused is
+dropped; clear, which reset leaves, either is an access fault, as
+Section~\ref{sec:v-core} says.
 
 Five more say what the machine is rather than what it is doing.
 \code{misa} reports RV32IMC, and \code{mvendorid}, \code{marchid},
@@ -518,6 +522,23 @@ address, so that the fetch's hold never hangs on the address; the
 devices keep up, so there is always room. A load that has gone out
 is not taken by an interrupt: the interrupt waits for the next
 instruction, so a device is never read twice for one load.
+
+The bus says how an access went, and the core listens. A load the
+bus refused, by a peripheral that failed or by the router for an
+address that is nobody's, retires as a trap: the load access fault,
+cause 5, with the address in \code{mtval} and the load's own address
+in \code{mepc}, nothing written, the instruction behind it squashed
+and the fetch restarted at the handler. A store is posted, so its
+refusal comes back later; the core keeps it and raises the store
+access fault, cause 7, before the next instruction to run, whether or
+not interrupts are enabled, with \code{mepc} naming that instruction
+and \code{mtval} zero, since the address is gone. Until this a load
+from nowhere read zero and a program carried on as though it had read
+a word, which two board programs paid for in silence (issue 417).
+The remote peripheral refuses on purpose when its patience runs out,
+so a program that means to poll it sets \code{mbusquiet} and reads
+the zeros as before. A fetch from nowhere reads zero, which is an
+illegal instruction, and traps under that name for now.
 
 The bus is AXI4~\cite{axi}. The core is a host, and a host written
 as hardware, so it holds the link's channel ends themselves rather
@@ -1049,6 +1070,19 @@ the model is reset the same way once whatever retired in that cycle
 has been stepped, and the two agree in every cycle after it. The
 register file keeps what it held, so the program's count of its own
 starts is two the second time, and it halts on that.
+
+The bus's refusals go across to the model as the timer's line does:
+the core's register for a refused load is read with the load's
+answer, and the model traps on the load instead of writing; the
+register for a refused store is read before each cycle, and when it
+is set the model is told the fault was taken before the instruction
+that retires next, as it is told of an interrupt, so \code{mepc}
+agrees however long the bus took. The program for it loads from and
+stores to an address nothing decodes, with a handler that counts,
+sums the causes, keeps the trap values and steps past a load, then
+sets \code{mbusquiet} and does both again to read a zero and drop the
+store. The board test's program that pokes the boot memory has a
+handler for the refusal too.
 
 \lstinputlisting[caption={\code{lockstep.rs}: the core against the
 model.},label={lst:v-lockstep}]{cpu/vreteno/tests/lockstep.rs}
