@@ -37,6 +37,16 @@ rust_library(
 # The board's design as one lowered unit, on the programs compiled for
 # the core, and its netlist with the DDR3 controller in it.
 rust_test(
+    name = "zephyr_port_test",
+    srcs = ["tests/zephyr_dts.rs"],
+    compile_data = [
+        "//zephyr:port_sources",
+    ],
+    edition = "2021",
+    deps = [":vreteno32"],
+)
+
+rust_test(
     name = "board_test",
     srcs = ["tests/board.rs"],
     edition = "2021",
