@@ -14,6 +14,7 @@
 pub mod buffer;
 pub mod bus;
 pub mod cdc;
+pub mod dma;
 pub mod eth;
 pub mod fifo;
 pub mod flashwin;
