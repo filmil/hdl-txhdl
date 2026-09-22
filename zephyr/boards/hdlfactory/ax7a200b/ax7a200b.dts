@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// The Alinx AX7A200B carrying the Vreteno flagship. What the board
+// adds to the machine is where an image lives: the DDR3, because a
+// kernel does not fit in the four kilobytes of boot memory and is
+// rebuilt too often to be synthesised into it.
+
+/dts-v1/;
+
+#include <hdlfactory/vreteno.dtsi>
+
+/ {
+	model = "Alinx AX7A200B (Vreteno)";
+	compatible = "hdlfactory,ax7a200b", "hdlfactory,vreteno";
+
+	chosen {
+		zephyr,sram = &ddr;
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+	};
+};
+
+&uart0 {
+	status = "okay";
+	current-speed = <115200>;
+};
+
+&ddr {
+	status = "okay";
+};

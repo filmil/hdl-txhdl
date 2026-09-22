@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+
+if SOC_VRETENO
+
+config NUM_IRQS
+	# The platform controller carries two sources, the serial port's
+	# receive line and the board's own input, above the local ones.
+	default 12
+
+config SYS_CLOCK_HW_CYCLES_PER_SEC
+	# The design clock on the board, which is also the device tree's
+	# timebase-frequency. Both come from the same 100 MHz.
+	default 100000000
+
+config RISCV_SOC_INTERRUPT_INIT
+	default y
+
+endif # SOC_VRETENO

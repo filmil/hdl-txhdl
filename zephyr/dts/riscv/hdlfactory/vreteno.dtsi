@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// The Vreteno machine as Zephyr sees it. Every address here is the
+// one the hardware decodes, and `cpu/vreteno/tests/zephyr_dts.rs`
+// checks that claim against the constants the design itself uses, so
+// this file cannot drift from the router's map without a test saying
+// so.
+//
+// The core is RV32IMC with the machine mode registers. It has no A
+// extension, which is why the SoC selects neither atomic instructions
+// nor the atomic emulation that would need them.
+
+/dts-v1/;
+#include <mem.h>
+#include <freq.h>
+
+/ {
+	compatible = "hdlfactory,vreteno";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	chosen {
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		timebase-frequency = <DT_FREQ_M(100)>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "hdlfactory,vreteno", "riscv";
+			reg = <0>;
+			riscv,isa = "rv32imc_zicsr";
+			status = "okay";
+
+			hlic: interrupt-controller {
+				compatible = "riscv,cpu-intc";
+				#address-cells = <0>;
+				#interrupt-cells = <1>;
+				interrupt-controller;
+			};
+		};
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "simple-bus";
+		ranges;
+
+		// The boot memory the core fetches from at reset. It is
+		// read-only on the bus: a write is answered SLVERR, which
+		// is issue 268's decision, so nothing in an image may be
+		// linked here that expects to be written.
+		boot: memory@0 {
+			compatible = "mmio-sram";
+			reg = <0x00000000 DT_SIZE_K(4)>;
+		};
+
+		// The data memory inside the design, small and fast.
+		dmem: memory@1000 {
+			compatible = "mmio-sram";
+			reg = <0x00001000 DT_SIZE_K(4)>;
+		};
+
+		// The machine timer and the software interrupt, at the
+		// offsets a stock CLINT driver expects: msip at 0, mtimecmp
+		// at 0x4000 and mtime at 0xbff8.
+		clint: timer@2000000 {
+			compatible = "sifive,clint0";
+			reg = <0x02000000 DT_SIZE_K(64)>;
+			interrupts-extended = <&hlic 3 &hlic 7>;
+			interrupt-names = "soft0", "timer0";
+		};
+
+		uart0: serial@3000 {
+			compatible = "hdlfactory,vreteno-uart";
+			reg = <0x00003000 0x100>;
+			interrupt-parent = <&plic>;
+			interrupts = <1 1>;
+			current-speed = <115200>;
+			status = "okay";
+		};
+
+		plic: interrupt-controller@c000000 {
+			compatible = "sifive,plic-1.0.0";
+			reg = <0x0c000000 DT_SIZE_M(64)>;
+			interrupts-extended = <&hlic 11>;
+			interrupt-controller;
+			#address-cells = <0>;
+			#interrupt-cells = <2>;
+			riscv,ndev = <2>;
+		};
+
+		// The board's DDR3, a gigabyte of it, which is where an
+		// image large enough to be a kernel lives.
+		ddr: memory@40000000 {
+			compatible = "mmio-sram";
+			reg = <0x40000000 DT_SIZE_M(1024)>;
+		};
+	};
+};

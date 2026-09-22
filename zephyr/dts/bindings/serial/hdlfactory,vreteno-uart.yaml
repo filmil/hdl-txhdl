@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The serial port of the Vreteno machine. Three registers rather than
+# a 16550's eight, because the hardware is three registers: a byte
+# written to the first goes out, the second is the status, and a read
+# of the third takes the oldest byte received.
+#
+# The register map is stated in `cpu/vreteno/src/uart.rs` and repeated
+# in `uart_vreteno.c`, and the two are held to each other by
+# `cpu/vreteno/tests/zephyr_dts.rs`.
+
+description: Vreteno serial port
+
+compatible: "hdlfactory,vreteno-uart"
+
+include: [uart-controller.yaml]
+
+properties:
+  reg:
+    required: true
+
+  interrupts:
+    description: |
+      The receive interrupt, which is high while the buffer of eight
+      holds a byte nobody has read. There is no transmit interrupt:
+      the port is busy for one byte's time and a program polls it.

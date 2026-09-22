@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The Zephyr port of this machine: a SoC, a board, a device tree and a
+# console driver, arranged as a Zephyr module so that a Zephyr of the
+# reader's choosing builds against it.
+#
+#   west build -b ax7a200b samples/hello_world \
+#     -- -DZEPHYR_EXTRA_MODULES=$(pwd)/zephyr
+#
+# Nothing here is built by Bazel. Zephyr's build is CMake and Kconfig
+# and its own Python, and vendoring that hermetically is a piece of
+# work in its own right rather than a detail of this port; see the
+# issue named in `zephyr/README.md`. What Bazel does own is the check
+# that the port still describes the hardware, which is
+# `//cpu/vreteno:zephyr_port_test`: it reads the files below at
+# compile time and holds their addresses to the design's own
+# constants.
+
+package(default_visibility = ["//visibility:public"])
+
+# The files the port test reads, so that editing any of them reruns
+# the check rather than leaving it stale.
+filegroup(
+    name = "port_sources",
+    srcs = [
+        "dts/riscv/hdlfactory/vreteno.dtsi",
+        "drivers/serial/uart_vreteno.c",
+        "soc/hdlfactory/vreteno/Kconfig.soc",
+    ],
+)
+
+# Every file of the port, for a document to list or an archive to
+# take.
+filegroup(
+    name = "sources",
+    srcs = glob([
+        "**/*.c",
+        "**/*.dts",
+        "**/*.dtsi",
+        "**/*.yaml",
+        "**/*.yml",
+        "**/*.txt",
+        "**/Kconfig*",
+        "**/*_defconfig",
+    ]),
+)

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config SOC_VRETENO
+	select SOC_FAMILY_HDLFACTORY

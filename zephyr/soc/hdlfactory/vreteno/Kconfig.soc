@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config SOC_VRETENO
+	bool
+	select RISCV
+	select RISCV_PRIVILEGED
+	select RISCV_ISA_RV32I
+	select RISCV_ISA_EXT_M
+	select RISCV_ISA_EXT_C
+	select RISCV_ISA_EXT_ZICSR
+	select ATOMIC_OPERATIONS_C
+	help
+	  The Vreteno RV32IMC core with its bus, its timer and its
+	  interrupt controller.
+
+	  It has no A extension, so the atomic operations are the C
+	  ones rather than instructions. That is not an oversight in
+	  this file: the core is RV32IMC and `misa` says so.
+
+config SOC
+	default "vreteno" if SOC_VRETENO
+
+config SOC_FAMILY
+	default "hdlfactory" if SOC_VRETENO

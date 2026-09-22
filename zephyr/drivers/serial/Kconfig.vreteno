@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config UART_VRETENO
+	bool "Vreteno serial port"
+	default y
+	depends on DT_HAS_HDLFACTORY_VRETENO_UART_ENABLED
+	help
+	  The serial port of the Vreteno machine: one data register, one
+	  status register and one receive register. Polled only, since
+	  the hardware raises an interrupt for a byte received and none
+	  for a byte sent, so there is nothing for an interrupt-driven
+	  transmit path to wait on.

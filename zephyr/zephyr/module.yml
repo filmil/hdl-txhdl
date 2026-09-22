@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# This repository as a Zephyr module. Zephyr is not vendored here and
+# is not a dependency of the Bazel build: what lives in this tree is
+# the port, and a Zephyr of the reader's choosing is pointed at it.
+#
+#   west build -b ax7a200b samples/hello_world \
+#     -- -DZEPHYR_EXTRA_MODULES=<txhdl>/zephyr
+#
+# The roots below are what make that work: the SoC, the board and the
+# bindings are found here rather than in Zephyr's own tree.
+name: vreteno
+build:
+  cmake: .
+  kconfig: Kconfig
+  settings:
+    board_root: .
+    soc_root: .
+    dts_root: .
