@@ -112,14 +112,22 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
     /// The address of beat `i` of a burst, as AXI counts them: fixed
     /// stays put, incrementing steps a beat's width, and wrapping
     /// steps and comes back to the start of its aligned block.
+    /// `size` is the burst's, a power of two in bytes, and the step
+    /// is taken from it rather than from the link's width, so that a
+    /// burst which describes itself wrongly lands where it said it
+    /// would rather than where the model assumed. That is what issue
+    /// 374 was: every burst from the client said one byte a beat
+    /// while carrying words, and nothing here looked, so nothing
+    /// disagreed.
     fn beat_addr(
         &self,
         start: u128,
         kind: BurstKind,
         len: usize,
         i: usize,
+        size: u128,
     ) -> u128 {
-        let step = Self::BYTES as u128;
+        let step = 1u128 << size;
         match kind {
             BurstKind::Fixed => start,
             BurstKind::Wrap => {
@@ -169,6 +177,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
                                 req.burst,
                                 beats.len() - 1,
                                 i,
+                                req.size.raw(),
                             );
                             match ram.index(a) {
                                 Some(at) => ram.write_beat(at, *d, *s),
@@ -192,6 +201,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
                                 req.burst,
                                 n - 1,
                                 i,
+                                req.size.raw(),
                             );
                             match ram.index(a) {
                                 Some(at) => out.push(ram.word(at)),
@@ -390,5 +400,32 @@ mod tests {
         let got = got.borrow();
         let raw: Vec<u128> = got[0].data.iter().map(|d| d.raw()).collect();
         assert_eq!(raw, (0..8).map(|i| 0x100 + i as u128).collect::<Vec<_>>());
+    }
+
+    /// The model steps a burst by the size the burst states, not by
+    /// the link's width.
+    ///
+    /// This is what makes issue 374 visible from here. While the step
+    /// was the width, every burst walked the same addresses whatever
+    /// it claimed, so a burst that said one byte a beat and carried
+    /// words was indistinguishable from an honest one and the model
+    /// could not have caught the fault. It can now: the beats of a
+    /// burst that says bytes land inside one word.
+    #[test]
+    fn the_model_steps_by_the_size_the_burst_states() {
+        let ram = TestRam::new(64);
+        // Words: four bytes a beat, which is two as a power of two.
+        assert_eq!(ram.beat_addr(0x10, BurstKind::Incr, 2, 0, 2), 0x10);
+        assert_eq!(ram.beat_addr(0x10, BurstKind::Incr, 2, 1, 2), 0x14);
+        assert_eq!(ram.beat_addr(0x10, BurstKind::Incr, 2, 2, 2), 0x18);
+        // Bytes, which is what every burst used to claim: three beats
+        // inside the one word at byte sixteen.
+        assert_eq!(ram.beat_addr(0x10, BurstKind::Incr, 2, 1, 0), 0x11);
+        assert_eq!(ram.beat_addr(0x10, BurstKind::Incr, 2, 2, 0), 0x12);
+        // Fixed stays put whatever the size says, and wrapping wraps
+        // at the block its length and size make, which is why the
+        // size has to be right for a wrapping burst to be right.
+        assert_eq!(ram.beat_addr(0x10, BurstKind::Fixed, 2, 2, 2), 0x10);
+        assert_eq!(ram.beat_addr(0x14, BurstKind::Wrap, 3, 3, 2), 0x10);
     }
 }
