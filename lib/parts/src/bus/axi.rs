@@ -895,7 +895,9 @@ pub struct Rd<const A: usize> {
     pub addr: U<A>,
     /// Beats in the burst, counted as beats and not as AXI's `len`.
     pub words: usize,
-    /// Bytes per beat, as a power of two.
+    /// Bytes per beat, as a power of two. Left at zero the host fills
+    /// in the width of a word, since that is what every beat here
+    /// carries; see `Host::read` and issue 374.
     pub size: U<3>,
     /// How the address moves from beat to beat.
     pub burst: BurstKind,
@@ -928,7 +930,9 @@ impl<const A: usize> Rd<A> {
 pub struct Wr<const A: usize> {
     /// The address the burst starts at.
     pub addr: U<A>,
-    /// Bytes per beat, as a power of two.
+    /// Bytes per beat, as a power of two. Left at zero the host fills
+    /// in the width of a word, since that is what every beat here
+    /// carries; see `Host::write` and issue 374.
     pub size: U<3>,
     /// How the address moves from beat to beat.
     pub burst: BurstKind,
@@ -1089,6 +1093,28 @@ pub struct Host<
     inbox: Rc<Inbox<D, I>>,
 }
 
+/// What a burst's `size` should say: what the client asked for, or,
+/// where the client said nothing, the width of a word.
+///
+/// A client writes an address and a slice of words and never a size,
+/// so `Wr` and `Rd` left it at `Default`, which is zero, and zero in
+/// AXI is one byte a beat. Every beat this host sends is a whole word
+/// of `D` bits with every strobe set, and every read expects a word
+/// back, so a burst that said zero was describing itself wrongly. A
+/// peripheral that acted on it, a DRAM controller say, would place
+/// its beats a byte apart; nothing here acted on it, which is why the
+/// tree ran for months without noticing. See issue 374.
+///
+/// A narrow burst cannot be asked for through this interface anyway,
+/// since the strobes are not the client's to set, so filling the
+/// field in takes nothing away.
+fn beat_size<const D: usize>(asked: U<3>) -> U<3> {
+    if asked.raw() != 0 {
+        return asked;
+    }
+    U::from((D / 8).trailing_zeros())
+}
+
 // begin{hostapi}
 impl<
         const A: usize,
@@ -1108,7 +1134,7 @@ impl<
                 read: Bit::One,
                 addr: rd.addr,
                 len: U::from(len),
-                size: rd.size,
+                size: beat_size::<D>(rd.size),
                 burst: rd.burst,
                 lock: rd.lock,
                 cache: rd.cache,
@@ -1136,7 +1162,7 @@ impl<
                 read: Bit::Zero,
                 addr: wr.addr,
                 len: U::from(len),
-                size: wr.size,
+                size: beat_size::<D>(wr.size),
                 burst: wr.burst,
                 lock: wr.lock,
                 cache: wr.cache,
@@ -1890,5 +1916,102 @@ mod tests {
             out.borrow().len()
         );
         assert!(!asked.borrow().is_empty(), "no writes were made at all");
+    }
+
+    /// A peripheral client that records what each burst said its beats
+    /// were, and answers so the run moves on.
+    async fn sizes(per: Per<16, 32, 4, 2>, seen: Rc<RefCell<Vec<u128>>>) {
+        loop {
+            match per.accept().await {
+                Xact::Write(w) => {
+                    seen.borrow_mut().push(w.req().size.raw());
+                    w.ok().await;
+                }
+                Xact::Read(r) => {
+                    seen.borrow_mut().push(r.req().size.raw());
+                    let n = r.words();
+                    r.data(&vec![U::<32>::from(0u32); n]).await;
+                }
+            }
+        }
+    }
+
+    /// A burst says it carries words, because that is what it carries.
+    ///
+    /// A client writes an address and a slice of words and never a
+    /// size, so `Wr` and `Rd` left it at `Default`, and zero in AXI is
+    /// one byte a beat. Every burst in the tree therefore described
+    /// itself wrongly, and nothing noticed because nothing here acts
+    /// on `size`: a peripheral that did, a DRAM controller say, would
+    /// have put the beats a byte apart. That is issue 374.
+    #[test]
+    fn a_burst_says_it_carries_words() {
+        let Link {
+            host,
+            per,
+            host_in,
+            host_out,
+            per_in,
+            per_out,
+        } = axi::<16, 32, 4, 2, 4>();
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let client = async move {
+            let beats = [U::from(0x11u32), U::from(0x22u32)];
+            host.write(Wr::at(0x100u32), &beats).await.done().await;
+            host.read(Rd::at(0x100u32, 2)).await.done().await;
+        };
+        run(
+            host_in,
+            host_out,
+            per_in,
+            per_out,
+            client,
+            sizes(per, seen.clone()),
+            120,
+        );
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 2, "both bursts reached the peripheral");
+        // Four bytes a beat on a thirty-two bit link, which is two as
+        // a power of two. Zero, the default, would be one byte.
+        assert_eq!(seen[0], 2, "the write said words");
+        assert_eq!(seen[1], 2, "the read said words");
+    }
+
+    /// A client that does mean something other than a word is still
+    /// heard, since the host fills the field in only where it was left
+    /// empty. Nothing in the tree asks for this, and a narrow beat
+    /// cannot be expressed here anyway, the strobes not being the
+    /// client's to set; what the test holds is that the host fills a
+    /// gap rather than overriding an answer.
+    #[test]
+    fn a_size_the_client_states_is_left_alone() {
+        let Link {
+            host,
+            per,
+            host_in,
+            host_out,
+            per_in,
+            per_out,
+        } = axi::<16, 32, 4, 2, 4>();
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let client = async move {
+            let half = Rd {
+                addr: U::from(0x100u32),
+                words: 2,
+                size: U::from(1u8),
+                ..Rd::default()
+            };
+            host.read(half).await.done().await;
+        };
+        run(
+            host_in,
+            host_out,
+            per_in,
+            per_out,
+            client,
+            sizes(per, seen.clone()),
+            120,
+        );
+        assert_eq!(seen.borrow()[0], 1, "two bytes, as the client said");
     }
 }
