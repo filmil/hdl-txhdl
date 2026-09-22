@@ -567,13 +567,32 @@ waveform(
     ],
 )
 
+# The clock-crossing channel: two clocks, and the pointers between
+# them. Issue 370.
+waveform(
+    name = "cdc",
+    example = "//lib/examples:ex_cdc",
+    lowered = ("cdc", "cdc"),
+    signals = [
+        "//clocks/clk_w=>clk_w",
+        "//clocks/clk_r=>clk_r",
+        "//inp/rx_ready=>inp_ready",
+        "//inp/rx_data=>inp",
+        "//cdc/wgray=>wgray",
+        "//cdc/wgray_r2=>wgray_r2",
+        "//cdc/rgray=>rgray",
+        "//out/tx_valid=>out_valid",
+        "//out/tx_data=>out",
+    ],
+)
+
 waveform(
     name = "stage",
     example = "//lib/examples:ex_stage",
     lowered = ("stage", "stage"),
     signals = [
         "//clocks/clk=>clk",
-        "//inp/rx_valid=>inp_valid",
+        "//inp/rx_ready=>inp_ready",
         "//inp/rx_data=>inp",
         "//inp/rx_ready=>inp_ready",
         "//out/tx_valid=>out_valid",
@@ -688,11 +707,17 @@ latex_document(
         ":i2c_timing",
         ":syscon_run",
         ":syscon_timing",
+        ":cdc_run",
+        ":cdc_timing",
         ":reset_run",
         ":reset_timing",
         ":wdog_run",
         ":wdog_timing",
         "//lib/examples:sources",
+        # The clock-crossing part's source, for the listing in the
+        # section on it: the part is in //lib/parts, not in the
+        # examples, because it is a part.
+        "//lib/parts:sources",
     ] + API.keys(),
     deps = ["housestyle.tex"] + glob(["examples_sections/*.tex"]),
 )
@@ -818,7 +843,7 @@ waveform(
     lowered = ("queue4", "queue"),
     signals = [
         "//clocks/clk=>clk",
-        "//inp/rx_valid=>inp_valid",
+        "//inp/rx_ready=>inp_ready",
         "//inp/rx_data=>inp",
         "//inp/rx_ready=>inp_ready",
         "//out/rx_valid=>out_valid",
@@ -860,7 +885,7 @@ waveform(
     lowered = ("stream_alu", "stream_alu"),
     signals = [
         "//clocks/clk=>clk",
-        "//inp/rx_valid=>inp_valid",
+        "//inp/rx_ready=>inp_ready",
         "//inp/rx_data/tag=>inp_tag",
         "//inp/rx_data/op=>inp_op",
         "//inp/rx_data/a=>inp_a",
@@ -1492,7 +1517,7 @@ waveform(
     lowered = ("tap", "tap"),
     signals = [
         "//clocks/clk=>clk",
-        "//inp/rx_valid=>inp_valid",
+        "//inp/rx_ready=>inp_ready",
         "//inp/rx_data=>inp",
         "//inp/rx_ready=>inp_ready",
         "//out/rx_valid=>out_valid",
@@ -1538,7 +1563,7 @@ waveform(
     example = "//lib/examples:ex_foreign",
     signals = [
         "//clocks/clk=>clk",
-        "//inp/rx_valid=>inp_valid",
+        "//inp/rx_ready=>inp_ready",
         "//inp/rx_data=>inp",
         "//out/rx_data=>out",
         "//vinp/rx_data=>vinp",

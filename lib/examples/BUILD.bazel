@@ -55,6 +55,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The clock-crossing channel, lowered:  bazel run //lib/examples:ex_cdc
+rust_binary(
+    name = "ex_cdc",
+    srcs = ["ex_cdc.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # An asynchronous FIFO between two clocks:  bazel run //lib/examples:ex_fifo
 rust_binary(
     name = "ex_fifo",
@@ -740,6 +752,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_netlist.rs",
         "ex_edges.rs",
         "ex_lower.rs",
+        "ex_cdc.rs",
         "ex_reset.rs",
         "ex_stage.rs",
         "ex_packet.rs",
