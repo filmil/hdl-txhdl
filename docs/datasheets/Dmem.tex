@@ -25,7 +25,8 @@ which is all the core makes.
 Parameter & Meaning \\
 \midrule
 \code{I} & The width of the AXI identifier on \code{req}, \code{ans}
-and \code{rb}, in bits. The tables use 2, as the board does. \\
+and \code{rb}, in bits. The tables use 4, as the board does since its bus
+has two hosts behind an arbiter (issue 241). \\
 \bottomrule
 \end{tabular}
 \end{center}

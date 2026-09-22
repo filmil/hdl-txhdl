@@ -476,9 +476,9 @@ fn main() {
     sheet("Inject", "Inject", Inject::lowered("inject"));
     sheet("Pair", "Pair<2>", Pair::<2>::lowered("pair"));
     sheet("Vreteno", "Vreteno<2>", Vreteno::<2>::lowered("vreteno"));
-    sheet("Dmem", "Dmem<2>", Dmem::<2>::lowered("dmem"));
-    sheet("Rom", "Rom<2>", Rom::<2>::lowered("rom"));
-    sheet("Timer", "Timer<2>", Timer::<2>::lowered("timer"));
+    sheet("Dmem", "Dmem<4>", Dmem::<4>::lowered("dmem"));
+    sheet("Rom", "Rom<4>", Rom::<4>::lowered("rom"));
+    sheet("Timer", "Timer<4>", Timer::<4>::lowered("timer"));
     sheet("Plic", "Plic2<0>", Plic2::<0>::lowered("plic"));
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));
     sheet("Pwm", "Pwm", Pwm::lowered("pwm"));

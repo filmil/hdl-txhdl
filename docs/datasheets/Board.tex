@@ -9,8 +9,13 @@
 
 \code{Board} is everything that computes on the board, written as a
 unit of units so that \code{\#[lower]} makes its netlist as one module
-holding the rest. It holds the core and its tracker, a router of five,
-and the peripherals behind its five ports. The data memory and the
+holding the rest. It holds the core and its tracker, a second host's
+pins, an arbiter that puts the two onto one link, a router of six,
+and the peripherals behind its six ports. The second host is Vivado's
+JTAG-to-AXI master on the board's top (issue 241), whose pins arrive
+under \code{jtag\_} and are joined by an \code{AxiPins}; the arbiter
+is an \code{Arbiter2}, so the peripheral side of the bus carries four
+bits of identifier, two for a host's own and two for the port. The data memory and the
 timer each sit behind an \code{AxiPer}. Four small peripherals share
 the page at \code{0x3000} behind the AXI-Lite bridge
 \code{LiteBridge4}, a sixteenth of the page each: the serial port at
@@ -49,8 +54,8 @@ runs \code{Board<4, 1, 0>}.
 
 \subsection*{Address map}
 
-\code{BoardRouter} states the map in its type, \code{Router5<32, 32, 4,
-2, ...>}. A peripheral gets an address when the address under the mask
+\code{BoardRouter} states the map in its type, \code{Router6<32, 32, 4,
+4, ...>}. A peripheral gets an address when the address under the mask
 equals the base.
 
 \begin{center}\footnotesize
@@ -58,10 +63,12 @@ equals the base.
 \toprule
 Base & Mask & Child & Behind \\
 \midrule
-\code{0x1000} & \code{0xffff\_f000} & \code{dmem}, \code{Dmem<2>} &
+\code{0x0000\_0000} & \code{0xffff\_f000} & \code{rom}, \code{Rom<4>} &
+\code{prom}, \code{AxiPer}: the boot memory, readable and not writable \\
+\code{0x1000} & \code{0xffff\_f000} & \code{dmem}, \code{Dmem<4>} &
 \code{pdmem}, \code{AxiPer} \\
 \code{0x0200\_0000} & \code{0xffff\_0000} & \code{timer},
-\code{Timer<2>} & \code{ptimer}, \code{AxiPer} \\
+\code{Timer<4>} & \code{ptimer}, \code{AxiPer} \\
 \code{0x3000} & \code{0xffff\_f000} & \code{uart}, \code{Uart<DIV>} &
 \code{puart}, \code{LiteBridge4} at \code{0x3000} \\
 & \code{0xffff\_ff00} & \code{pwm}, \code{Pwm} &
@@ -80,8 +87,9 @@ the same bridge, at \code{0x3200} \\
 \end{center}
 
 The router answers a burst that matches no range with \code{DecErr}.
-The core's instruction memory is not on the bus, and the core sends no
-request for an address below \code{0x1000}.
+The boot memory is on the bus at zero as well (issue 268), readable and
+not writable; the core fetches from its own copy below \code{0x1000}
+and from the bus above it.
 
 \dstables{Board}
 
@@ -186,4 +194,5 @@ as \code{board}. The test \code{cpu/vreteno/tests/board.rs}.
 the bus, has not yet been run on the board. The board run it reports
 was made with an earlier design without the memory. The program is
 fixed in the netlist. The board top ties \code{irq} low, so on the
-board the interrupt controller's second source never asks. The core is the only host.
+board the interrupt controller's second source never asks. The core and the JTAG master are the hosts, the core on port 0 of the
+arbiter.

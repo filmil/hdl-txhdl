@@ -81,7 +81,9 @@ Verilator: \code{//docs:axi\_pins\_sim\_axi\_pins\_tb\_test} and
 \subsection*{Used by}
 
 \code{PcieBar}, as its field \code{pins}, between the PCIe endpoint's
-master and a peripheral tracker. The example \code{ex\_axi\_pins}.
+master and a peripheral tracker. \code{Board}, as its field
+\code{jtag}, between Vivado's JTAG-to-AXI master on the board's top
+and the arbiter in front of the router (issue 241). The example \code{ex\_axi\_pins}.
 
 \subsection*{Limits}
 
