@@ -34,12 +34,14 @@ use txhdl::comp::{
 };
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
+use txhdl_parts::bus::arbiter::Arbiter2;
 use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerReq, B, R, W,
 };
 use txhdl_parts::bus::axi_lite::{
     LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge4, LiteR, LiteW,
 };
+use txhdl_parts::bus::axi_pins::{AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::router::Router6;
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::plic::Plic2;
@@ -77,7 +79,7 @@ pub type BoardRouter = Router6<
     32,
     32,
     4,
-    2,
+    4,
     0x1000,
     0xffff_f000,
     0x0200_0000,
@@ -99,9 +101,21 @@ pub type BoardRouter = Router6<
 pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     pub cpu: Vreteno<2>,
     pub host: AxiHost<32, 32, 4, 2, 4>,
+    /// The second host: Vivado's JTAG-to-AXI master, on the top beside
+    /// the board's, reached over the cable that programs the part, so
+    /// that memory and every peripheral can be read and written whatever
+    /// the core is doing (issue 241). Its pins arrive as the board's
+    /// own, and this joins them to the link's channels; a top with no
+    /// master ties them off.
+    pub jtag: AxiPins<32, 32, 4, 2>,
+    /// The two hosts onto one link. The peripheral side carries four
+    /// bits of identifier, two for the hosts' own and two for the port,
+    /// which is room for four hosts before anything widens again: a
+    /// direct memory access engine is the next (issue 151).
+    pub arb: Arbiter2<32, 32, 4, 2, 4, 0>,
     pub router: BoardRouter,
-    pub pdmem: AxiPer<32, 32, 4, 2>,
-    pub ptimer: AxiPer<32, 32, 4, 2>,
+    pub pdmem: AxiPer<32, 32, 4, 4>,
+    pub ptimer: AxiPer<32, 32, 4, 4>,
     // begin{vslot}
     /// Four small peripherals share the page at `0x3000`: the serial
     /// port at `0x3000`, the pulse width modulator at `0x3100`,
@@ -121,7 +135,7 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
         32,
         32,
         4,
-        2,
+        4,
         0x3000,
         0xffff_ff00,
         0x3100,
@@ -132,15 +146,15 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
         0xffff_ff00,
     >,
     // end{vslot}
-    pub pddr3: AxiPer<32, 32, 4, 2>,
-    pub pplic: LiteBridge1<32, 32, 4, 2, 0x0c00_0000, 0xfc00_0000>,
+    pub pddr3: AxiPer<32, 32, 4, 4>,
+    pub pplic: LiteBridge1<32, 32, 4, 4, 0x0c00_0000, 0xfc00_0000>,
     /// The boot memory on the bus, at address zero, readable and not
     /// writable: the same words the core fetches from inside itself,
     /// so a load can read a constant beside the code (#268).
-    pub prom: AxiPer<32, 32, 4, 2>,
-    pub rom: Rom<2>,
-    pub dmem: Dmem<2>,
-    pub timer: Timer<2>,
+    pub prom: AxiPer<32, 32, 4, 4>,
+    pub rom: Rom<4>,
+    pub dmem: Dmem<4>,
+    pub timer: Timer<4>,
     pub uart: Uart<DIV>,
     pub pwm: Pwm,
     pub ddr3: Ddr3Per<MICRON_SIM, BIST>,
@@ -159,13 +173,95 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
 }
 // end{board}
 
+// begin{ports}
+/// The board's inputs: the resets, the interrupt, the serial line, the
+/// memory's clocks, the video slot's answers, the frames arriving, and
+/// the JTAG master's pins, named as AXI4 names them under `jtag_`.
+pub struct BoardIn {
+    pub rst: In<Bit>,
+    pub irq: In<Bit>,
+    pub rx: In<Bit>,
+    pub ddr3_clk: In<Bit>,
+    pub ref_clk: In<Bit>,
+    pub ddr3_clk_90: In<Bit>,
+    pub ddr3_rst_n: In<Bit>,
+    pub vb: Rx<LiteB>,
+    pub vr: Rx<LiteR<32>>,
+    pub net_rx: Rx<EthByte>,
+    pub jtag_awid: In<U<2>>,
+    pub jtag_awaddr: In<U<32>>,
+    pub jtag_awlen: In<U<8>>,
+    pub jtag_awsize: In<U<3>>,
+    pub jtag_awburst: In<U<2>>,
+    pub jtag_awlock: In<Bit>,
+    pub jtag_awcache: In<U<4>>,
+    pub jtag_awprot: In<U<3>>,
+    pub jtag_awvalid: In<Bit>,
+    pub jtag_wdata: In<U<32>>,
+    pub jtag_wstrb: In<U<4>>,
+    pub jtag_wlast: In<Bit>,
+    pub jtag_wvalid: In<Bit>,
+    pub jtag_bready: In<Bit>,
+    pub jtag_arid: In<U<2>>,
+    pub jtag_araddr: In<U<32>>,
+    pub jtag_arlen: In<U<8>>,
+    pub jtag_arsize: In<U<3>>,
+    pub jtag_arburst: In<U<2>>,
+    pub jtag_arlock: In<Bit>,
+    pub jtag_arcache: In<U<4>>,
+    pub jtag_arprot: In<U<3>>,
+    pub jtag_arvalid: In<Bit>,
+    pub jtag_rready: In<Bit>,
+}
+
+/// The board's outputs: the halt and the serial line, the modulator,
+/// the memory's pins, the video slot's requests, the frames leaving,
+/// and the JTAG master's answers.
+pub struct BoardOut {
+    pub halt: Out<Bit>,
+    pub tx: Out<Bit>,
+    pub pwm_pins: Out<U<4>>,
+    pub calib: Out<Bit>,
+    pub ck_p: Out<Bit>,
+    pub ck_n: Out<Bit>,
+    pub mem_rst_n: Out<Bit>,
+    pub cke: Out<Bit>,
+    pub cs_n: Out<Bit>,
+    pub ras_n: Out<Bit>,
+    pub cas_n: Out<Bit>,
+    pub we_n: Out<Bit>,
+    pub row: Out<U<15>>,
+    pub bank: Out<U<3>>,
+    pub dm: Out<U<4>>,
+    pub odt: Out<Bit>,
+    pub dq: Pad<U<32>>,
+    pub dqs: Pad<U<4>>,
+    pub dqs_n: Pad<U<4>>,
+    pub vaw: Tx<LiteAw<32>>,
+    pub var: Tx<LiteAr<32>>,
+    pub vw: Tx<LiteW<32, 4>>,
+    pub net_tx: Tx<EthByte>,
+    pub jtag_awready: Out<Bit>,
+    pub jtag_wready: Out<Bit>,
+    pub jtag_bid: Out<U<2>>,
+    pub jtag_bresp: Out<U<2>>,
+    pub jtag_bvalid: Out<Bit>,
+    pub jtag_arready: Out<Bit>,
+    pub jtag_rid: Out<U<2>>,
+    pub jtag_rdata: Out<U<32>>,
+    pub jtag_rresp: Out<U<2>>,
+    pub jtag_rlast: Out<Bit>,
+    pub jtag_rvalid: Out<Bit>,
+}
+// end{ports}
+
 #[lower]
 impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
     for Board<DIV, MICRON_SIM, BIST>
 {
     async fn run(
         &mut self,
-        (
+        BoardIn {
             rst,
             irq,
             rx,
@@ -176,19 +272,32 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             vb,
             vr,
             net_rx,
-        ): (
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            Rx<LiteB>,
-            Rx<LiteR<32>>,
-            Rx<EthByte>,
-        ),
-        (
+            jtag_awid,
+            jtag_awaddr,
+            jtag_awlen,
+            jtag_awsize,
+            jtag_awburst,
+            jtag_awlock,
+            jtag_awcache,
+            jtag_awprot,
+            jtag_awvalid,
+            jtag_wdata,
+            jtag_wstrb,
+            jtag_wlast,
+            jtag_wvalid,
+            jtag_bready,
+            jtag_arid,
+            jtag_araddr,
+            jtag_arlen,
+            jtag_arsize,
+            jtag_arburst,
+            jtag_arlock,
+            jtag_arcache,
+            jtag_arprot,
+            jtag_arvalid,
+            jtag_rready,
+        }: BoardIn,
+        BoardOut {
             halt,
             tx,
             pwm_pins,
@@ -212,31 +321,18 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             var,
             vw,
             net_tx,
-        ): (
-            Out<Bit>,
-            Out<Bit>,
-            Out<U<4>>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<U<15>>,
-            Out<U<3>>,
-            Out<U<4>>,
-            Out<Bit>,
-            Pad<U<32>>,
-            Pad<U<4>>,
-            Pad<U<4>>,
-            Tx<LiteAw<32>>,
-            Tx<LiteAr<32>>,
-            Tx<LiteW<32, 4>>,
-            Tx<EthByte>,
-        ),
+            jtag_awready,
+            jtag_wready,
+            jtag_bid,
+            jtag_bresp,
+            jtag_bvalid,
+            jtag_arready,
+            jtag_rid,
+            jtag_rdata,
+            jtag_rresp,
+            jtag_rlast,
+            jtag_rvalid,
+        }: BoardOut,
     ) {
         // The reset, read by the core, the timer and the serial port.
         let rst_timer = rst.clone();
@@ -262,51 +358,63 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         let (w_tx, w_rx) = chan::<W<32, 4>, DefaultClock>();
         let (b_tx, b_rx) = chan::<B<2>, DefaultClock>();
         let (r_tx, r_rx) = chan::<R<32, 2>, DefaultClock>();
+        // The JTAG master's pins and the arbiter, under the hosts' own
+        // identifiers; and the arbiter and the router, under the wider.
+        let (jaw_tx, jaw_rx) = chan::<Aw<32, 2>, DefaultClock>();
+        let (jar_tx, jar_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (jw_tx, jw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (jb_tx, jb_rx) = chan::<B<2>, DefaultClock>();
+        let (jr_tx, jr_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (xaw_tx, xaw_rx) = chan::<Aw<32, 4>, DefaultClock>();
+        let (xar_tx, xar_rx) = chan::<Ar<32, 4>, DefaultClock>();
+        let (xw_tx, xw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (xb_tx, xb_rx) = chan::<B<4>, DefaultClock>();
+        let (xr_tx, xr_rx) = chan::<R<32, 4>, DefaultClock>();
         // The router and each peripheral's tracker.
-        let (aw0_tx, aw0_rx) = chan::<Aw<32, 2>, DefaultClock>();
-        let (ar0_tx, ar0_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (aw0_tx, aw0_rx) = chan::<Aw<32, 4>, DefaultClock>();
+        let (ar0_tx, ar0_rx) = chan::<Ar<32, 4>, DefaultClock>();
         let (w0_tx, w0_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b0_tx, b0_rx) = chan::<B<2>, DefaultClock>();
-        let (r0_tx, r0_rx) = chan::<R<32, 2>, DefaultClock>();
-        let (aw1_tx, aw1_rx) = chan::<Aw<32, 2>, DefaultClock>();
-        let (ar1_tx, ar1_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (b0_tx, b0_rx) = chan::<B<4>, DefaultClock>();
+        let (r0_tx, r0_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (aw1_tx, aw1_rx) = chan::<Aw<32, 4>, DefaultClock>();
+        let (ar1_tx, ar1_rx) = chan::<Ar<32, 4>, DefaultClock>();
         let (w1_tx, w1_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b1_tx, b1_rx) = chan::<B<2>, DefaultClock>();
-        let (r1_tx, r1_rx) = chan::<R<32, 2>, DefaultClock>();
-        let (aw2_tx, aw2_rx) = chan::<Aw<32, 2>, DefaultClock>();
-        let (ar2_tx, ar2_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (b1_tx, b1_rx) = chan::<B<4>, DefaultClock>();
+        let (r1_tx, r1_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (aw2_tx, aw2_rx) = chan::<Aw<32, 4>, DefaultClock>();
+        let (ar2_tx, ar2_rx) = chan::<Ar<32, 4>, DefaultClock>();
         let (w2_tx, w2_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b2_tx, b2_rx) = chan::<B<2>, DefaultClock>();
-        let (r2_tx, r2_rx) = chan::<R<32, 2>, DefaultClock>();
-        let (aw3_tx, aw3_rx) = chan::<Aw<32, 2>, DefaultClock>();
-        let (ar3_tx, ar3_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (b2_tx, b2_rx) = chan::<B<4>, DefaultClock>();
+        let (r2_tx, r2_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (aw3_tx, aw3_rx) = chan::<Aw<32, 4>, DefaultClock>();
+        let (ar3_tx, ar3_rx) = chan::<Ar<32, 4>, DefaultClock>();
         let (w3_tx, w3_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b3_tx, b3_rx) = chan::<B<2>, DefaultClock>();
-        let (r3_tx, r3_rx) = chan::<R<32, 2>, DefaultClock>();
-        let (aw4_tx, aw4_rx) = chan::<Aw<32, 2>, DefaultClock>();
-        let (ar4_tx, ar4_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (b3_tx, b3_rx) = chan::<B<4>, DefaultClock>();
+        let (r3_tx, r3_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (aw4_tx, aw4_rx) = chan::<Aw<32, 4>, DefaultClock>();
+        let (ar4_tx, ar4_rx) = chan::<Ar<32, 4>, DefaultClock>();
         let (w4_tx, w4_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b4_tx, b4_rx) = chan::<B<2>, DefaultClock>();
-        let (r4_tx, r4_rx) = chan::<R<32, 2>, DefaultClock>();
-        let (aw5_tx, aw5_rx) = chan::<Aw<32, 2>, DefaultClock>();
-        let (ar5_tx, ar5_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (b4_tx, b4_rx) = chan::<B<4>, DefaultClock>();
+        let (r4_tx, r4_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (aw5_tx, aw5_rx) = chan::<Aw<32, 4>, DefaultClock>();
+        let (ar5_tx, ar5_rx) = chan::<Ar<32, 4>, DefaultClock>();
         let (w5_tx, w5_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b5_tx, b5_rx) = chan::<B<2>, DefaultClock>();
-        let (r5_tx, r5_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (b5_tx, b5_rx) = chan::<B<4>, DefaultClock>();
+        let (r5_tx, r5_rx) = chan::<R<32, 4>, DefaultClock>();
         // The boot memory's tracker and the memory.
-        let (req5_tx, req5_rx) = chan::<PerReq<32, 2>, DefaultClock>();
+        let (req5_tx, req5_rx) = chan::<PerReq<32, 4>, DefaultClock>();
         let (wd5_tx, wd5_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (ans5_tx, ans5_rx) = chan::<Answer<2>, DefaultClock>();
-        let (rb5_tx, rb5_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (ans5_tx, ans5_rx) = chan::<Answer<4>, DefaultClock>();
+        let (rb5_tx, rb5_rx) = chan::<R<32, 4>, DefaultClock>();
         // Each peripheral's tracker and the peripheral.
-        let (req0_tx, req0_rx) = chan::<PerReq<32, 2>, DefaultClock>();
+        let (req0_tx, req0_rx) = chan::<PerReq<32, 4>, DefaultClock>();
         let (wd0_tx, wd0_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (ans0_tx, ans0_rx) = chan::<Answer<2>, DefaultClock>();
-        let (rb0_tx, rb0_rx) = chan::<R<32, 2>, DefaultClock>();
-        let (req1_tx, req1_rx) = chan::<PerReq<32, 2>, DefaultClock>();
+        let (ans0_tx, ans0_rx) = chan::<Answer<4>, DefaultClock>();
+        let (rb0_tx, rb0_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (req1_tx, req1_rx) = chan::<PerReq<32, 4>, DefaultClock>();
         let (wd1_tx, wd1_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (ans1_tx, ans1_rx) = chan::<Answer<2>, DefaultClock>();
-        let (rb1_tx, rb1_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (ans1_tx, ans1_rx) = chan::<Answer<4>, DefaultClock>();
+        let (rb1_tx, rb1_rx) = chan::<R<32, 4>, DefaultClock>();
         // The serial port speaks AXI-Lite, behind its bridge.
         let (law_tx, law_rx) = chan::<LiteAw<32>, DefaultClock>();
         let (lar_tx, lar_rx) = chan::<LiteAr<32>, DefaultClock>();
@@ -328,10 +436,10 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         let (pr_rem_tx, pr_rem_rx) = chan::<LiteR<32>, DefaultClock>();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
         let (ans_tx, ans_rx) = chan::<RemoteAnswer, DefaultClock>();
-        let (req3_tx, req3_rx) = chan::<PerReq<32, 2>, DefaultClock>();
+        let (req3_tx, req3_rx) = chan::<PerReq<32, 4>, DefaultClock>();
         let (wd3_tx, wd3_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (ans3_tx, ans3_rx) = chan::<Answer<2>, DefaultClock>();
-        let (rb3_tx, rb3_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (ans3_tx, ans3_rx) = chan::<Answer<4>, DefaultClock>();
+        let (rb3_tx, rb3_rx) = chan::<R<32, 4>, DefaultClock>();
         // The interrupt controller speaks AXI-Lite too, behind a
         // bridge of its own.
         let (paw_tx, paw_rx) = chan::<LiteAw<32>, DefaultClock>();
@@ -384,21 +492,84 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             ),
             join2(
                 join2(
-                    self.host.run(
-                        (issue_rx, wbeat_rx, b_rx, r_rx, release_rx),
-                        (aw_tx, ar_tx, w_tx, grant_tx, done_tx, rdata_tx),
+                    join2(
+                        join2(
+                            self.host.run(
+                                (issue_rx, wbeat_rx, b_rx, r_rx, release_rx),
+                                (
+                                    aw_tx, ar_tx, w_tx, grant_tx, done_tx,
+                                    rdata_tx,
+                                ),
+                            ),
+                            self.arb.run(
+                                (
+                                    aw_rx, ar_rx, w_rx, jaw_rx, jar_rx, jw_rx,
+                                    xb_rx, xr_rx,
+                                ),
+                                (
+                                    xaw_tx, xar_tx, xw_tx, b_tx, r_tx, jb_tx,
+                                    jr_tx,
+                                ),
+                            ),
+                        ),
+                        self.jtag.run(
+                            AxiPinsIn {
+                                awid: jtag_awid,
+                                awaddr: jtag_awaddr,
+                                awlen: jtag_awlen,
+                                awsize: jtag_awsize,
+                                awburst: jtag_awburst,
+                                awlock: jtag_awlock,
+                                awcache: jtag_awcache,
+                                awprot: jtag_awprot,
+                                awvalid: jtag_awvalid,
+                                wdata: jtag_wdata,
+                                wstrb: jtag_wstrb,
+                                wlast: jtag_wlast,
+                                wvalid: jtag_wvalid,
+                                bready: jtag_bready,
+                                arid: jtag_arid,
+                                araddr: jtag_araddr,
+                                arlen: jtag_arlen,
+                                arsize: jtag_arsize,
+                                arburst: jtag_arburst,
+                                arlock: jtag_arlock,
+                                arcache: jtag_arcache,
+                                arprot: jtag_arprot,
+                                arvalid: jtag_arvalid,
+                                rready: jtag_rready,
+                                b: jb_rx,
+                                r: jr_rx,
+                            },
+                            AxiPinsOut {
+                                aw: jaw_tx,
+                                ar: jar_tx,
+                                w: jw_tx,
+                                awready: jtag_awready,
+                                wready: jtag_wready,
+                                bid: jtag_bid,
+                                bresp: jtag_bresp,
+                                bvalid: jtag_bvalid,
+                                arready: jtag_arready,
+                                rid: jtag_rid,
+                                rdata: jtag_rdata,
+                                rresp: jtag_rresp,
+                                rlast: jtag_rlast,
+                                rvalid: jtag_rvalid,
+                            },
+                        ),
                     ),
                     self.router.run(
                         (
-                            aw_rx, ar_rx, w_rx, b0_rx, r0_rx, b1_rx, r1_rx,
+                            xaw_rx, xar_rx, xw_rx, b0_rx, r0_rx, b1_rx, r1_rx,
                             b2_rx, r2_rx, b3_rx, r3_rx, b4_rx, r4_rx, b5_rx,
                             r5_rx,
                         ),
                         (
                             aw0_tx, ar0_tx, w0_tx, aw1_tx, ar1_tx, w1_tx,
                             aw2_tx, ar2_tx, w2_tx, aw3_tx, ar3_tx, w3_tx,
-                            aw4_tx, ar4_tx, w4_tx, aw5_tx, ar5_tx, w5_tx, b_tx,
-                            r_tx,
+                            aw4_tx, ar4_tx, w4_tx, aw5_tx, ar5_tx, w5_tx,
+                            xb_tx, xr_tx,
                         ),
                     ),
                 ),

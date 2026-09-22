@@ -14,7 +14,7 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
-use vreteno32::board::{Board, REMOTE_DEV};
+use vreteno32::board::{Board, BoardIn, BoardOut, REMOTE_DEV};
 use vreteno32::core::Vreteno;
 use vreteno32::dmem::Dmem;
 use vreteno32::rom::Rom;
@@ -153,46 +153,82 @@ fn run_all(
     // these runs writes to `0x3200`, and a run that did would wait on
     // an answer that never comes, which is what the board top's own
     // tie-off does as well.
+    // The JTAG master's pins, with no master on them: every valid low
+    // and nothing else read.
+    let lo = || signal::<Bit, DefaultClock>().1;
     let mut sim = Running::new(board.run(
-        (
+        BoardIn {
             rst,
             irq,
             rx,
-            quiet(),
-            quiet(),
-            quiet(),
-            quiet(),
-            chan::<LiteB, DefaultClock>().1,
-            chan::<LiteR<32>, DefaultClock>().1,
-            net_in_rx,
-        ),
-        (
-            halt_o,
-            tx_o,
-            // The pulse width modulator's four channels, which this
-            // run does not look at.
-            signal::<U<4>, DefaultClock>().0,
-            bit(),
-            bit(),
-            bit(),
-            bit(),
-            bit(),
-            bit(),
-            bit(),
-            bit(),
-            bit(),
-            signal::<U<15>, DefaultClock>().0,
-            signal::<U<3>, DefaultClock>().0,
-            signal::<U<4>, DefaultClock>().0,
-            bit(),
-            pad::<U<32>, DefaultClock>(),
-            pad::<U<4>, DefaultClock>(),
-            pad::<U<4>, DefaultClock>(),
-            chan::<LiteAw<32>, DefaultClock>().0,
-            chan::<LiteAr<32>, DefaultClock>().0,
-            chan::<LiteW<32, 4>, DefaultClock>().0,
-            net_out_tx,
-        ),
+            ddr3_clk: quiet(),
+            ref_clk: quiet(),
+            ddr3_clk_90: quiet(),
+            ddr3_rst_n: quiet(),
+            vb: chan::<LiteB, DefaultClock>().1,
+            vr: chan::<LiteR<32>, DefaultClock>().1,
+            net_rx: net_in_rx,
+            jtag_awid: signal::<U<2>, DefaultClock>().1,
+            jtag_awaddr: signal::<U<32>, DefaultClock>().1,
+            jtag_awlen: signal::<U<8>, DefaultClock>().1,
+            jtag_awsize: signal::<U<3>, DefaultClock>().1,
+            jtag_awburst: signal::<U<2>, DefaultClock>().1,
+            jtag_awlock: lo(),
+            jtag_awcache: signal::<U<4>, DefaultClock>().1,
+            jtag_awprot: signal::<U<3>, DefaultClock>().1,
+            jtag_awvalid: lo(),
+            jtag_wdata: signal::<U<32>, DefaultClock>().1,
+            jtag_wstrb: signal::<U<4>, DefaultClock>().1,
+            jtag_wlast: lo(),
+            jtag_wvalid: lo(),
+            jtag_bready: lo(),
+            jtag_arid: signal::<U<2>, DefaultClock>().1,
+            jtag_araddr: signal::<U<32>, DefaultClock>().1,
+            jtag_arlen: signal::<U<8>, DefaultClock>().1,
+            jtag_arsize: signal::<U<3>, DefaultClock>().1,
+            jtag_arburst: signal::<U<2>, DefaultClock>().1,
+            jtag_arlock: lo(),
+            jtag_arcache: signal::<U<4>, DefaultClock>().1,
+            jtag_arprot: signal::<U<3>, DefaultClock>().1,
+            jtag_arvalid: lo(),
+            jtag_rready: lo(),
+        },
+        BoardOut {
+            halt: halt_o,
+            tx: tx_o,
+            pwm_pins: signal::<U<4>, DefaultClock>().0,
+            calib: bit(),
+            ck_p: bit(),
+            ck_n: bit(),
+            mem_rst_n: bit(),
+            cke: bit(),
+            cs_n: bit(),
+            ras_n: bit(),
+            cas_n: bit(),
+            we_n: bit(),
+            row: signal::<U<15>, DefaultClock>().0,
+            bank: signal::<U<3>, DefaultClock>().0,
+            dm: signal::<U<4>, DefaultClock>().0,
+            odt: bit(),
+            dq: pad::<U<32>, DefaultClock>(),
+            dqs: pad::<U<4>, DefaultClock>(),
+            dqs_n: pad::<U<4>, DefaultClock>(),
+            vaw: chan::<LiteAw<32>, DefaultClock>().0,
+            var: chan::<LiteAr<32>, DefaultClock>().0,
+            vw: chan::<LiteW<32, 4>, DefaultClock>().0,
+            net_tx: net_out_tx,
+            jtag_awready: bit(),
+            jtag_wready: bit(),
+            jtag_bid: signal::<U<2>, DefaultClock>().0,
+            jtag_bresp: signal::<U<2>, DefaultClock>().0,
+            jtag_bvalid: bit(),
+            jtag_arready: bit(),
+            jtag_rid: signal::<U<2>, DefaultClock>().0,
+            jtag_rdata: signal::<U<32>, DefaultClock>().0,
+            jtag_rresp: signal::<U<2>, DefaultClock>().0,
+            jtag_rlast: bit(),
+            jtag_rvalid: bit(),
+        },
     ));
     rst_o.set(Bit::One);
     sim.cycle();
