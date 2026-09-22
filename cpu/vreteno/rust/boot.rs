@@ -41,13 +41,18 @@
 //! After a refusal it waits for another stream rather than stopping,
 //! since the usual cause is a half-typed command on the other end.
 //! Two more words tell a loaded program that came back from a reset,
-//! which read the same on the line otherwise (issue 413). Every pass
-//! of the loop after the first says `boot again`: a reset starts the
-//! loop from nothing, so the word means the program returned, by a
-//! `ret` before it replaced `ra`. And a trap taken before the program
-//! set `mtvec` lands at address zero, where the loader starts over;
-//! that pass says `trap`, the cause and the address first, since a
-//! reset clears `mcause` and a trap fills it.
+//! which read the same on the line otherwise (issue 413). A trap taken
+//! before the program set `mtvec` lands at address zero, where the
+//! loader starts over; that pass says `trap`, the cause and the
+//! address first, since a trap fills `mcause` and a start from
+//! configuration finds it clear. On the board, a one-word `ebreak`
+//! image says `trap 00000003 at 40000000`, and a one-word `ret` says
+//! `trap 00000002 at` the word after the loader's jump: `entry` never
+//! returns as far as the compiler knows, so nothing runnable follows
+//! the jump, and a program that returns reads as that illegal word
+//! rather than as the loop going round. Every pass of the loop after
+//! the first therefore says `boot again` only after a refusal, and a
+//! reset, which starts the loop from nothing, cannot say it.
 //!
 //! As in `hello.rs`, nothing here indexes a slice and nothing divides,
 //! so nothing asks for `core`'s panic path.
