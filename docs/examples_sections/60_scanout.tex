@@ -1,0 +1,75 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Memory to Pixels, Across Two Clocks}
+\label{sec:x-scanout}
+
+\S\ref{sec:x-dma} reads memory in bursts and \S\ref{sec:x-cdc}
+carries words from one clock to another. A video scanout is both at
+once, and this is the two of them joined with a third part at the far
+end:
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}l@{}}
+\code{Rom -- AxiPer -- AxiHost -- LineFetch ]--- ChanCdc ---[ LineBuf} \\
+\hspace{1.1cm}\textit{bus clock, period four}
+\hspace{1.3cm}\textit{pixel clock, period six} \\
+\end{tabular}
+\end{center}
+
+\code{LineFetch} reads a line from memory on the bus clock,
+\code{ChanCdc} carries the words to the pixel clock, and
+\code{LineBuf} holds them for the raster to read a column at a time.
+All three are parts in \code{//lib/parts} and all three are lowered.
+The wiring in the example is the only thing here that is not
+hardware.
+
+\subsection{Why the line buffer registers its output}
+
+\code{LineBuf} could read the memory straight out to the port, and
+the first version did. It is wrong twice over.
+
+A block RAM has an output register and a design that does not use it
+is asking the memory to settle combinationally in the time a pixel
+lasts. And a raster wants a pixel that is stable for the whole cycle
+it is shown, not one that moves when the column moves. So
+\code{shown} holds the pixel the column named at the last edge, and
+the port is that register rather than the memory.
+
+The cost is one cycle of lead, which a raster has: it knows which
+column it will want next.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=linebuf-linebuf,caption={\code{lib/parts/src/dma.rs}: the
+far end of the scanout.},label={lst:x-scanout}]{lib/parts/src/dma.rs}
+
+\subsection{What the run checks}
+
+Thirty-two pixels, read back a column at a time on the pixel clock,
+each one the word that was at its own address in memory. The memory
+holds its address in each word, so a pixel that came from the wrong
+burst, crossed badly, or landed in the buffer out of step says which
+place it came from rather than merely being wrong.
+
+The two clocks are deliberately not in a simple ratio: period four
+and period six with a phase of two. A crossing whose clocks tick
+together is not crossing anything, and edges that stay in step are
+how a crossing fault hides.
+
+\subsection{The fault this example found}
+
+The netlist could not be checked against the run when this was
+written, and the reason was in the checking rather than in any of the
+three parts.
+
+A plain input was read from the trace one of its own clock's periods
+late, so a column set between two pixel edges reached the entity an
+edge early and \code{shown} moved one cycle before it should. Three
+testbench visits make up one pixel cycle, and there were 31 column
+changes after the first, which is the 93 differences the log
+showed. That is issue 405, and it is a sibling of issue 384: 384 was
+a handshake being compared where the trace holds nothing, this was a
+level being applied before its edge.
+
+Neither could appear under the default clock, where every tick the
+testbench visits is an edge of every port's clock. They needed a unit
+with ports on a slower one, which is what a scanout is.

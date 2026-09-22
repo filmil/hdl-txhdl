@@ -1,0 +1,82 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Writing Memory in Bursts}
+\label{sec:x-dmaw}
+
+\code{LineStore} is \code{LineFetch} the other way round, and the
+half an Ethernet receiver wants: words arrive on a channel and are
+written to memory in bursts, rather than the core taking each one and
+storing it.
+
+Two of its differences from the fetcher are the bus rather than
+choices made here.
+
+A write burst is finished by its response and not by its last beat.
+The host answers a read on the beat channel and a write on
+\code{done}, so the identifier goes back when the response arrives,
+which may be well after the last beat has gone out.
+
+AXI4 puts no identifier on the beats, so a burst's beats belong to
+the oldest address phase outstanding. A second burst issued before
+the first one's beats were out would take them. \code{LineFetch}
+keeps one burst in flight because a second buys nothing; here it is
+not an optimisation being declined but a rule being obeyed.
+
+\subsection{A frame is a count of bytes}
+
+A line of pixels is a whole number of words. A frame is not. An
+Ethernet frame is anything from 64 to 1518 bytes, so its last word
+usually holds one, two or three real bytes, and writing the other
+three puts whatever the channel happened to be carrying into memory
+past the end of the frame.
+
+So \code{LineStore} is told a count of bytes, not of words. It asks
+for \code{(bytes + 3) / 4} beats and strobes the last one down to
+the bytes that are real. Nothing about the burst changes; the beat
+goes out either way, and the strobe says which lanes of it are meant.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=store-store,caption={\code{lib/parts/src/dma.rs}: what it
+remembers, including how many bytes of the last word are
+real.},label={lst:x-dmaw}]{lib/parts/src/dma.rs}
+
+\subsection{Checking a write by reading it back}
+
+The run writes sixty-four words, of which the last holds one byte,
+and then reads the memory and checks it. Reading it back is the
+point: a write path watched only on the bus can be wrong in ways that
+look perfectly well formed going past.
+
+Three things are asserted. Every word is the one that belongs at its
+address, since each word written is its own index. Nothing past the
+run was touched, which is how a burst that overran its count would
+show. And the last word holds one byte of the frame over three bytes
+that were there before.
+
+That last check only works because the memory is poisoned first. The
+word is filled with \code{0xaaaaaa00} before the run, so a strobe
+that wrote the whole word wipes it and a strobe that wrote one byte
+leaves \code{0xaaaaaa3f}. Without the poison both cases leave zeros
+in those three bytes and look identical, and the check would pass on
+an engine that ignored the strobe entirely.
+
+\subsection{Where a test model goes to be wrong}
+
+The memory model in the example had to be corrected twice before it
+could see what it was for, and both faults were the same kind: a
+model permissive enough that a broken engine would have passed.
+
+It answered one beat per request at first, which makes a burst look
+like a word. The words all arrive, the cycle count passes, and
+nothing about bursting is demonstrated.
+
+Then it wrote whole words and ignored the strobe, which makes a
+byte-accurate engine and one that has never heard of byte enables
+indistinguishable.
+
+Neither showed up as a failure. Both showed up as a test that passed
+and proved less than it claimed, which is the failure mode worth
+looking for in the model rather than in the design.
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_dmaw} printed
+when the build ran it.},label={lst:x-dmaw-out}]{out_dmaw.txt}
