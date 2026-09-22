@@ -48,6 +48,14 @@ const slowBaud = 300
 // What the loader says when it is ready for the next word.
 const ack = 'K'
 
+// How long the sender waits for each acknowledgement. The loader
+// writes a word into memory and answers, which takes a few
+// milliseconds; a loader that has stopped answering is known in this
+// long, and a long program is not cut short by the seconds meant for
+// watching it run afterwards, which once bounded the transfer too and
+// stopped a 2496-word image at word 710 (HDL/txhdl#402).
+const ackPatience = 2 * time.Second
+
 var speeds = map[int]uint32{
 	300:    syscall.B300,
 	9600:   syscall.B9600,
@@ -172,16 +180,16 @@ func main() {
 	for i := 0; i < words; i++ {
 		// One word per acknowledgement: the loader writes each into
 		// memory, which takes longer than a word takes to arrive.
-		if !waitByte(said, ack, deadline) {
-			fmt.Fprintf(os.Stderr, "[load] no acknowledgement at word %d\n", i)
+		if !waitByte(said, ack, time.Now().Add(ackPatience)) {
+			fmt.Fprintf(os.Stderr, "[load] no acknowledgement within %v at word %d\n", ackPatience, i)
 			os.Exit(1)
 		}
 		word := binary.LittleEndian.Uint32(blob[i*4 : i*4+4])
 		sum += word
 		write(fd, blob[i*4:i*4+4])
 	}
-	if !waitByte(said, ack, deadline) {
-		fmt.Fprintln(os.Stderr, "[load] no acknowledgement for the last word")
+	if !waitByte(said, ack, time.Now().Add(ackPatience)) {
+		fmt.Fprintf(os.Stderr, "[load] no acknowledgement within %v for the last word\n", ackPatience)
 		os.Exit(1)
 	}
 	write(fd, binary.LittleEndian.AppendUint32(nil, sum))
