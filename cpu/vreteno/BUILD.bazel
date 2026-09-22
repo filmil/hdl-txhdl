@@ -46,6 +46,20 @@ rust_test(
     deps = [":vreteno32"],
 )
 
+# The board programs against the map they run on. They are built
+# `#[cfg(board_run)]`, so no other target compiles their constants,
+# and the core does not trap on a bus error, so a wrong address is
+# silent when it runs too (issues 415 and 417).
+rust_test(
+    name = "board_programs_test",
+    srcs = ["tests/board_programs.rs"],
+    compile_data = [
+        "//cpu/vreteno/rust:addressed_sources",
+    ],
+    edition = "2021",
+    deps = [":vreteno32"],
+)
+
 rust_test(
     name = "board_test",
     srcs = ["tests/board.rs"],
