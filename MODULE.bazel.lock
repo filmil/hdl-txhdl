@@ -1151,7 +1151,7 @@
     "@@rules_vivado+//:extensions.bzl%vivado": {
       "general": {
         "bzlTransitiveDigest": "3OZAD7ChRclbYIKDLdZkEt6JbY+hpdFcELMcEdeCC4w=",
-        "usagesDigest": "R2ET3rEbd/mCT0uWgrZQG1EBhW/HDoZMdcpAIVEnhdw=",
+        "usagesDigest": "T6rj6ItbHDYKMu6j+fvIgXxGD1hIuKPDYO+5LAF70tE=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
           "vivado_hermetic": {

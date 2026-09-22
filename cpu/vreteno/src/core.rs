@@ -1035,8 +1035,14 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // the halting instruction retires. `ebreak` used to do
             // this and now raises the breakpoint exception, so a
             // program that means to stop says so, which is issue 139.
+            // A reset of the core ends the stop, as it ends everything
+            // else: the core declares `rst` itself, so no register of
+            // its is put back by the netlist, and a stop that survived
+            // a reset kept the core halted for good, with the loader in
+            // the boot memory never restarting (issue 398).
             let halting = csr_write & (f12 == isa::CSR_MHALT) & csr_new.bit(0);
-            let stop = mux(run, halting, self.stopped.get());
+            let stop =
+                mux(rst, Bit::Zero, mux(run, halting, self.stopped.get()));
             let wrote = run & writes & (rd != 0) & !trap;
             let store = run & is_store & !unaligned;
             let wval = select!(opcode.raw() => {
@@ -1080,7 +1086,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // possible; the word fetched under a redirect is written
             // and marked empty.
             when!(wb_write => self { regs.at(wb_rd): wb_val });
-            self.halted.set(self.halted | self.wb_stop);
+            self.halted.set(!rst & (self.halted | self.wb_stop));
             // The bus: a load or a store is a burst of one beat at
             // the address, and a store's beat carries the data with
             // the lanes it covers as its strobe. The load's wait is a
