@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# The shim as a service on the machine the board is wired to. The raw
+# socket wants CAP_NET_RAW, and the service is given it at launch as an
+# ambient capability: nothing is stored on the binary, so a rebuilt and
+# recopied shim has it the moment the service restarts, and no user
+# holds it outside the service. The interface, the account and its home
+# are filled in by //tools/remote/shim:deploy for the machine it deploys to.
+[Unit]
+Description=TxHDL shim: the remote peripheral's frames between @IFACE@ and a stream on 127.0.0.1:9797
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=@USER@
+ExecStart=@HOME@/txhdl_shim/shim -iface @IFACE@ -listen 127.0.0.1:9797
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=yes
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

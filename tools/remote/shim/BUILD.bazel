@@ -7,6 +7,7 @@
 #   bazel build //tools/remote/shim && scp bazel-bin/tools/remote/shim/shim_/shim board:
 #   shim -iface enp3s0 -listen :9797
 load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -36,4 +37,23 @@ go_test(
     srcs = ["shim_test.go"],
     embed = [":shim_lib"],
     deps = ["//tools/remote/stream"],
+)
+
+# Puts the shim on the machine the board is wired to, as a systemd
+# service that is given CAP_NET_RAW at launch: the binary and a unit
+# filled in for that machine go to ~/txhdl_shim there, and the lines
+# the user runs once as root are printed, ending in the checks. Manual,
+# since it reaches the board's machine.
+#
+#   bazel run //tools/remote/shim:deploy -- --dry-run
+#   bazel run //tools/remote/shim:deploy
+sh_binary(
+    name = "deploy",
+    srcs = ["deploy.sh"],
+    data = [
+        "txhdl-shim.service.in",
+        ":shim",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
+    tags = ["manual"],
 )
