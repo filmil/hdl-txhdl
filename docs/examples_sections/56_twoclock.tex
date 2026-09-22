@@ -43,6 +43,27 @@ back to the first clock's period, the slow port differs at 5000,
 period, and the co-simulation fails. With it right, both simulators
 agree with the run for the whole of it.
 
+The slow counter's input tells a second story of the same kind, which
+is issue 405. The testbench applies every input before every tick of
+its own clock, and a port on the slower clock samples only the last
+application before its own edge. The generator read that value from
+the trace at the tick plus the port's period, which for the default
+clock is the next edge and for \code{Slow} is a tick up to four
+after it: an input the run changed between two of the slow edges was
+offered to the entity before the edge it belonged after, and the
+entity counted an edge early. Nothing in the tree changed an input
+between a slow clock's edges until a line buffer on a pixel clock was
+handed its column by the run, so this too was invisible. The
+generator now reads the value at the port's next edge, which is the
+same tick as before for the default clock and the right one for every
+other. The run here is the check: \code{go\_slow} is told on and off
+by turns one tick after each of the slow edges, so what the counter
+must count is the value in force at the edge and not the one after.
+With the old rule the slow count differs at 6950, 8950 and 10950,
+and at the same three offsets every twelve thousand after, which is
+every other period of its clock; with the new one both simulators
+agree with the run.
+
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=units-units,caption={\code{lib/examples/ex\_twoclock.rs}:
