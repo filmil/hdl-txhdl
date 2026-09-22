@@ -47,10 +47,12 @@ fn the_device_tree_holds_the_addresses_the_hardware_decodes() {
         UART_BASE as u64,
         "the serial port"
     );
+    // The timer's node names `mtime` first, since Zephyr's driver
+    // takes the two registers separately rather than the block.
     assert_eq!(
-        reg_of(dts, "clint: timer@"),
-        CLINT_BASE as u64,
-        "the machine timer"
+        reg_of(dts, "mtimer: timer@"),
+        (CLINT_BASE + MTIME_OFF) as u64,
+        "the machine timer's mtime"
     );
     // The interrupt controller is where RISC-V machines put it, and
     // the board's router decodes the 64 MiB from there.
@@ -73,9 +75,18 @@ fn the_timer_is_a_clint_at_the_offsets_a_driver_expects() {
     assert_eq!(MTIMECMP_OFF, 0x4000, "mtimecmp");
     assert_eq!(MTIME_OFF, 0xbff8, "mtime");
     let dts = DTSI;
+    // The node claims the binding Zephyr's own machine timer driver
+    // reads, and names the two registers it takes separately.
+    //
+    // It said `sifive,clint0` first, which is a different binding
+    // that `RISCV_MACHINE_TIMER` does not select on. The image built
+    // and had no clock, and the only sign was a Kconfig line saying
+    // the timer's dependency was unmet, several hundred lines up.
+    assert!(dts.contains("\"riscv,machine-timer\""), "the binding");
+    assert!(dts.contains("reg-names = \"mtime\", \"mtimecmp\""), "named");
     assert!(
-        dts.contains("\"sifive,clint0\""),
-        "the node claims the driver those offsets belong to"
+        !dts.contains("compatible = \"sifive,clint0\""),
+        "and not the binding nothing binds to"
     );
 }
 

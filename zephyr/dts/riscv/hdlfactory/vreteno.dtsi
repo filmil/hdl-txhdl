@@ -66,14 +66,22 @@
 			reg = <0x00001000 DT_SIZE_K(4)>;
 		};
 
-		// The machine timer and the software interrupt, at the
-		// offsets a stock CLINT driver expects: msip at 0, mtimecmp
-		// at 0x4000 and mtime at 0xbff8.
-		clint: timer@2000000 {
-			compatible = "sifive,clint0";
-			reg = <0x02000000 DT_SIZE_K(64)>;
-			interrupts-extended = <&hlic 3 &hlic 7>;
-			interrupt-names = "soft0", "timer0";
+		// The machine timer. The design puts `mtime` at `0xbff8`
+		// and `mtimecmp` at `0x4000` above `0x0200_0000`, which is
+		// where a RISC-V machine puts them and therefore exactly
+		// what Zephyr's own driver reads: the two registers are
+		// named rather than the block, because the driver takes
+		// them separately.
+		//
+		// `riscv,machine-timer` and not `sifive,clint0`: the
+		// latter is a different binding and `RISCV_MACHINE_TIMER`
+		// does not bind to it, which leaves a build with no clock
+		// and no error worth the name.
+		mtimer: timer@200bff8 {
+			compatible = "riscv,machine-timer";
+			reg = <0x0200bff8 0x8 0x02004000 0x8>;
+			reg-names = "mtime", "mtimecmp";
+			interrupts-extended = <&hlic 7>;
 		};
 
 		uart0: serial@3000 {
@@ -93,6 +101,9 @@
 			#address-cells = <0>;
 			#interrupt-cells = <2>;
 			riscv,ndev = <2>;
+			// Seven levels, as `lib/parts/src/plic.rs` states: a
+			// source priority runs 0 to 7 and 0 never interrupts.
+			riscv,max-priority = <7>;
 		};
 
 		// The board's DDR3, a gigabyte of it, which is where an
