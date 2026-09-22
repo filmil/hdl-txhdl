@@ -482,6 +482,19 @@ mode, where the specification allows them only in debug mode; the
 restriction waits for the module, since until then a test sets
 \code{step} and \code{ebreakm} by writing them from the program.
 
+The reset line puts the CSRs back as configuration left them: the
+status, the trap vector, the enables and the pending bits, the trap
+registers, the scratch register and both counters, and debug mode
+with its two registers. The core declares \code{rst} itself, so no
+register of its is put back by the netlist, and until the line did
+this a program started by it ran with the previous program's trap
+vector and interrupt enables (issue 419). The specification asks only
+that interrupts be disabled at reset; the rest is this design's
+decision, taken so that a program started by the line sees what a
+program started by configuration sees. The register file is not
+reset, which is what a register file is, and the lockstep test relies
+on that: its program counts its own starts in a register.
+
 The bus is everything from the data memory up in the address map,
 and it is two channels: a request out of the core, one word of the
 address, the data in its lanes, the lanes a store covers and whether
@@ -557,7 +570,9 @@ lines of the same subset. It takes every request offered,
 answers a read in the cycle after with the word addressed, or zero
 for an address that is not its own, writes the lanes a write covers
 into its word, counts from the reset one a cycle, and raises its
-line while the count has reached the compare. The line is a wire,
+line while the count has reached the compare; the reset puts the
+compare at all ones, since a compare of zero beside a count of zero
+is a line raised from the first cycle (issue 419). The line is a wire,
 not a channel, and a wire between units carries no promise about the
 step, so the timer drives it from a register, and the run and the
 test poll the timer before the core: then the core reads in a cycle
@@ -844,7 +859,8 @@ run and the timer fires in the middle of it. An \code{ecall} and then the
 word of all ones, which is illegal, enter the handler. The handler
 reads the cause into \code{x23} and branches on its sign: an
 interrupt is cleared in \code{mip}, the timer's has the compare
-moved past the end of the run, and either is counted in \code{x8}
+moved past the end of the run and read back, since the store is
+posted and the line drops only when it lands, and either is counted in \code{x8}
 and returned from to the word it interrupted; an exception has
 \code{mepc} read, stepped past the word that trapped and written
 back. The program then writes \code{mscratch} by immediate and
@@ -1024,6 +1040,15 @@ with every step counted in a register. And a program that sets
 as the cause and the instruction's address in \code{dpc}, and is
 left there, held. The plan with no resume left ends the run in the
 mode, which is the one run that does not end in the halt.
+
+The reset line is the test's too, high for one cycle when a run asks
+for it. A program that has set its trap vector, enabled the timer's
+interrupt and enabled interrupts is reset in its loop: the core starts
+again at zero with the CSRs cleared and the timer's compare all ones,
+the model is reset the same way once whatever retired in that cycle
+has been stepped, and the two agree in every cycle after it. The
+register file keeps what it held, so the program's count of its own
+starts is two the second time, and it halts on that.
 
 \lstinputlisting[caption={\code{lockstep.rs}: the core against the
 model.},label={lst:v-lockstep}]{cpu/vreteno/tests/lockstep.rs}
