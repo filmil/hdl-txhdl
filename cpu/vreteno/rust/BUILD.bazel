@@ -213,6 +213,25 @@ vreteno_flat(
     program = ":ico_hdmi",
 )
 
+# A word to the remote peripheral and back: the last hop of #335 seen
+# from the core, with a program on another machine answering the
+# frames. Sent down the wire like the icosahedron.
+rust_binary(
+    name = "remote_ram",
+    srcs = ["remote.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_flat(
+    name = "remote_ram_bin",
+    platform = ":vreteno",
+    program = ":remote_ram",
+)
+
 # The loader that lives in the boot memory and takes a program off the
 # serial port. Built for the board and for the runs that check it.
 rust_binary(
@@ -296,6 +315,7 @@ filegroup(
     srcs = [
         "ico.rs",
         "ico_hdmi.rs",
+        "remote.rs",
         "hello.rs",
         "irq.rs",
         "traps.rs",
