@@ -24,6 +24,35 @@
 //! where the trace has its valid high, since under a low valid the
 //! trace holds the last offer and the entity computes the wire anyway.
 //!
+//! Held and pulsed are the two kinds of signal here, and they are
+//! checked differently. A register and a wire are held: each keeps its
+//! value until the next edge, so reading one late gives the same value
+//! later and the only question is which edge to count from, which is
+//! what the per-port period above settles. A channel's `ready` and
+//! `valid` are not held. The runtime asserts one while the `recv` or
+//! `send` runs, so the trace has it high at that port's own clock edge
+//! and low at every tick between, while the entity computes the same
+//! wire combinationally and may legitimately show something else in
+//! between. There is no offset that turns a pulse into a held signal,
+//! so a handshake is compared only at a tick which is an edge of its
+//! own clock, and the frame says nothing about it elsewhere.
+//!
+//! That is the trace having no opinion between edges rather than the
+//! check being dropped where it was inconvenient, and the difference
+//! is worth stating because they look the same from outside. Only the
+//! value at an edge is read by anything synchronous: the handshake
+//! decides whether a transfer happened at that edge, and no register
+//! on either side samples it in between. So the entity's wire being
+//! high at a tick where the trace holds low is not two implementations
+//! disagreeing, it is a tick at which nothing asked. The boundary that
+//! follows is real and worth knowing: this testbench cannot catch an
+//! entity whose handshake is wrong strictly between its own edges.
+//! Nothing reads it there, and nothing here looks. A
+//! sender's data follows its valid, for the same reason and at the
+//! same ticks. Under the default clock every tick the testbench visits
+//! is an edge, which is why this was invisible until a unit had a
+//! channel on a slower clock (issue 384).
+//!
 //! Form: in VHDL, one procedure holds a tick; a cycle's inputs and
 //! expected values are one string of bits, a frame, kept as hex, and
 //! the replay is a loop over constant arrays of frames, each array a
@@ -275,6 +304,35 @@ fn main() {
         };
         clock_shape(&trace_name(&c, "clock")).1
     };
+    // Whether a tick is a rising edge of a port's own clock.
+    //
+    // A channel's `ready` and `valid` are not held between edges. The
+    // runtime asserts one while the `recv` or `send` runs, and the
+    // trace therefore has it high at that clock's edge tick and low at
+    // every tick between. The entity computes the same wire
+    // combinationally, so between those edges it may legitimately show
+    // something else, and the two are not comparable there: there is
+    // no value the trace can offer for a tick at which it holds
+    // nothing. A held signal, a wire or a register, is the other case
+    // and is checked at every tick as before.
+    //
+    // For the default clock every tick the testbench visits is an edge
+    // and this is always true, which is why the fault was invisible
+    // until a unit had a port on a slower clock (issue 384).
+    let port_edge = |port: &str, tick: usize| -> bool {
+        let named = port_clocks.iter().find(|(p, _)| p == port);
+        let c = match named {
+            Some((_, c)) => c.clone(),
+            None => clocks[0].clone(),
+        };
+        let (first, period) = clock_shape(&trace_name(&c, "clock"));
+        tick >= first && (tick - first).is_multiple_of(period)
+    };
+    // A channel's handshake, which pulses, as against its data and the
+    // plain wires, which are held.
+    let pulsed = |port: &str, dir: &str| -> bool {
+        (dir == "rxout" || dir == "txout") && !port.ends_with("_data")
+    };
     let val = |name: &str, i: usize| -> Option<String> {
         values
             .get(name)
@@ -408,9 +466,21 @@ fn main() {
             }
             for (n, d, w) in &ports {
                 if is_out(d) {
+                    // A handshake is only comparable at its own
+                    // clock's edge; between them the trace holds
+                    // nothing for it. The data's gate below reads the
+                    // valid at the same tick, so it follows this and
+                    // does not admit a cycle the valid cannot speak
+                    // for.
+                    if pulsed(n, d) && !port_edge(n, t + port_period(n)) {
+                        continue;
+                    }
                     if d == "txout" && n.ends_with("_data") {
-                        let valid =
-                            trace_name(&n.replace("_data", "_valid"), d);
+                        let valid = n.replace("_data", "_valid");
+                        if !port_edge(&valid, t + port_period(n)) {
+                            continue;
+                        }
+                        let valid = trace_name(&valid, d);
                         if val(&valid, t + port_period(n)).as_deref()
                             != Some("1")
                         {
@@ -691,10 +761,24 @@ fn main() {
         for (n, d, w) in &ports {
             if is_out(d) {
                 let mut v = val(&trace_name(n, d), t + port_period(n));
+                // A handshake between its own clock's edges: the
+                // trace holds nothing for it, so the frame says not
+                // to check rather than checking against a value the
+                // run never had (issue 384).
+                if pulsed(n, d) && !port_edge(n, t + port_period(n)) {
+                    v = None;
+                }
                 if d == "txout" && n.ends_with("_data") {
-                    let valid = trace_name(&n.replace("_data", "_valid"), d);
-                    if val(&valid, t + port_period(n)).as_deref() != Some("1") {
+                    let vn = n.replace("_data", "_valid");
+                    if !port_edge(&vn, t + port_period(n)) {
                         v = None;
+                    } else {
+                        let valid = trace_name(&vn, d);
+                        if val(&valid, t + port_period(n)).as_deref()
+                            != Some("1")
+                        {
+                            v = None;
+                        }
                     }
                 }
                 expected(&mut f, *w, v);
