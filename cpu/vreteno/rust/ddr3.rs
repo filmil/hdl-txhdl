@@ -29,9 +29,15 @@ use core::ptr::{read_volatile, write_volatile};
 
 /// The serial port, as `hello.rs` has it.
 const UART: *mut u32 = 0x3000 as *mut u32;
-/// The timer's count, low half, which runs one a cycle from the reset.
+/// The timer's count, low half, which runs one a cycle from the reset:
+/// `CLINT_BASE + MTIME_OFF`, as `fade.rs` has it. It said `0x2000`
+/// until issue 415, which is nobody's address: the router answers a
+/// burst that matches no range with `DecErr`, and this program has no
+/// trap handler and never sets `mtvec`, so the fault went to zero,
+/// which is the boot memory, and restarted the loader. The dots that
+/// exist to show the core is alive were what stopped it.
 #[cfg(board_run)]
-const MTIME: *mut u32 = 0x2000 as *mut u32;
+const MTIME: *mut u32 = 0x0200_bff8 as *mut u32;
 /// Ten seconds of the board's 100 MHz clock.
 #[cfg(board_run)]
 const TEN_SECONDS: u32 = 1_000_000_000;
