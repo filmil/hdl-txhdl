@@ -207,7 +207,22 @@ module vreteno_board (
     // `0x3300` waits the peripheral's patience out and is told the
     // device failed. //flagship is the board with the port.
     .net_tx_data(), .net_tx_valid(), .net_tx_ready(1'b1),
-    .net_rx_data(9'd0), .net_rx_valid(1'b0), .net_rx_ready()
+    .net_rx_data(9'd0), .net_rx_valid(1'b0), .net_rx_ready(),
+    // The JTAG master's pins (issue 241). This top has no master on
+    // them: every valid low, every ready low, and the answers unread.
+    // //cpu/vreteno:vreteno_board_jtag_pnr is the top that has one.
+    .jtag_awid(2'd0), .jtag_awaddr(32'd0), .jtag_awlen(8'd0),
+    .jtag_awsize(3'd0), .jtag_awburst(2'd0), .jtag_awlock(1'b0),
+    .jtag_awcache(4'd0), .jtag_awprot(3'd0), .jtag_awvalid(1'b0),
+    .jtag_wdata(32'd0), .jtag_wstrb(4'd0), .jtag_wlast(1'b0),
+    .jtag_wvalid(1'b0), .jtag_bready(1'b0),
+    .jtag_arid(2'd0), .jtag_araddr(32'd0), .jtag_arlen(8'd0),
+    .jtag_arsize(3'd0), .jtag_arburst(2'd0), .jtag_arlock(1'b0),
+    .jtag_arcache(4'd0), .jtag_arprot(3'd0), .jtag_arvalid(1'b0),
+    .jtag_rready(1'b0),
+    .jtag_awready(), .jtag_wready(), .jtag_bid(), .jtag_bresp(),
+    .jtag_bvalid(), .jtag_arready(), .jtag_rid(), .jtag_rdata(),
+    .jtag_rresp(), .jtag_rlast(), .jtag_rvalid()
   );
 
   // The serial line idles high, so any byte begins by pulling it low.

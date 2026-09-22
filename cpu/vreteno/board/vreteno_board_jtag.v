@@ -1,36 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-// The board with a logic analyser in it (issue 239): this file is
-// `vreteno_board.v` with one addition, an integrated logic analyser
-// on the nets a reader of the board asks about first, sampled on the
-// core's clock and read back over the JTAG cable with
-// `//cpu/vreteno:vreteno_board_ila_read`. It is the same design
-// otherwise, and it tracks the other file line for line; the
-// difference is the block at the end. It is not the shipping
-// bitstream: the analyser costs block RAM and a run of its own.
-//
-// What is probed, and why, in the order of the probes:
-//
-//   0  rst         the core's reset: the button, the lock, the
-//                  calibration and the serial break, all in one
-//   1  halt        the core has stopped
-//   2  calib       the memory controller finished calibrating
-//   3  uart_tx     what leaves on the serial line
-//   4  rx_sync[1]  what arrives on it, synchronised
-//   5  brk         the serial break that resets the core
-//   6  pwm_pins    the modulator's four channels
-//   7  vaw         the third slot's write address channel: a program
-//                  that touches 0x3200 on this board waits here
-//   8  var         its read address channel
-//   9  vw          its write data channel
-//  10  net_tx      the remote peripheral's frames, byte by byte
-//  11  said        the serial line was driven at least once
-//  12  mem_rst_n   the memory controller's reset
-//
-// The core's own retire stream, `instr` and `wb`, ends inside the
-// lowered module and is not a port of it, so it is not here; that is
-// the retire buffer of issue 240, a part on the bus rather than a
-// probe. The memory's command pins are on the 400 MHz clock and would
-// be sampled across a clock boundary, so they are left out too.
+// The board with a JTAG master on its bus (issue 241): this file is
+// `vreteno_board.v` with one addition, Vivado's JTAG-to-AXI master,
+// `//cpu/vreteno:jtag_axi`, on the second host port of the lowered
+// board, reached over the cable that programs the part. From the
+// hardware manager, `create_hw_axi_txn` reads and writes every address
+// the board's map names, whatever the core is doing: the data memory,
+// the timer, the serial port, the interrupt controller, the DDR3, the
+// boot memory. It tracks the other file line for line; the difference
+// is the block at the end and the pins it drives.
 //
 //
 // The Vreteno board on the Alinx AX7A200: the pin and clock wrapper
@@ -67,7 +44,7 @@
 // heartbeat in a new place is also how somebody at the board can tell
 // that a new bitstream is in the part.
 `timescale 1ps / 1ps
-module vreteno_board_ila (
+module vreteno_board_jtag (
   input sys_clk_p,
   input sys_clk_n,
   input reset_n,
@@ -195,14 +172,16 @@ module vreteno_board_ila (
   // first LED, so a program can fade it; the other three go nowhere on
   // this board and are left for a design that wants them.
   wire [3:0] pwm_pins;
-  // The third slot's channels and the remote peripheral's frames,
-  // as nets so that the analyser can see them; the slot is still
-  // unanswered and the frames still go nowhere, as on the board.
-  wire [34:0] vaw_data, var_data;
-  wire [35:0] vw_data;
-  wire vaw_valid, var_valid, vw_valid;
-  wire [8:0] net_tx_data;
-  wire net_tx_valid;
+  // The JTAG master's pins, between it and the lowered board. Its
+  // reset is active low and the board's is active high.
+  wire j_awid, j_arid, j_awvalid, j_awready, j_wvalid, j_wready;
+  wire j_bvalid, j_bready, j_arvalid, j_arready, j_rvalid, j_rready;
+  wire j_awlock, j_arlock, j_wlast, j_rlast;
+  wire [31:0] j_awaddr, j_araddr, j_wdata, j_rdata;
+  wire [7:0] j_awlen, j_arlen;
+  wire [2:0] j_awsize, j_arsize, j_awprot, j_arprot;
+  wire [1:0] j_awburst, j_arburst, j_bresp, j_rresp, j_bid, j_rid;
+  wire [3:0] j_awcache, j_arcache, j_wstrb;
   board lowered (
     .clk(clk),
     .rst(rst),
@@ -237,9 +216,9 @@ module vreteno_board_ila (
     // touches `0x3200` waits forever, and nothing here touches it.
     // //flagship is the board that fills the slot, with the video
     // peripheral on the pixel clock.
-    .vaw_data(vaw_data), .vaw_valid(vaw_valid), .vaw_ready(1'b1),
-    .var_data(var_data), .var_valid(var_valid), .var_ready(1'b1),
-    .vw_data(vw_data), .vw_valid(vw_valid), .vw_ready(1'b1),
+    .vaw_data(), .vaw_valid(), .vaw_ready(1'b1),
+    .var_data(), .var_valid(), .var_ready(1'b1),
+    .vw_data(), .vw_valid(), .vw_ready(1'b1),
     .vb_data(2'd0), .vb_valid(1'b0), .vb_ready(),
     .vr_data(34'd0), .vr_valid(1'b0), .vr_ready(),
     // The remote peripheral at `0x3300` sends its transactions out as
@@ -247,23 +226,27 @@ module vreteno_board_ila (
     // frames go nowhere and none come back, so a program that touches
     // `0x3300` waits the peripheral's patience out and is told the
     // device failed. //flagship is the board with the port.
-    .net_tx_data(net_tx_data), .net_tx_valid(net_tx_valid), .net_tx_ready(1'b1),
+    .net_tx_data(), .net_tx_valid(), .net_tx_ready(1'b1),
     .net_rx_data(9'd0), .net_rx_valid(1'b0), .net_rx_ready(),
-    // The JTAG master's pins (issue 241). This top has no master on
-    // them: every valid low, every ready low, and the answers unread.
-    // //cpu/vreteno:vreteno_board_jtag_pnr is the top that has one.
-    .jtag_awid(2'd0), .jtag_awaddr(32'd0), .jtag_awlen(8'd0),
-    .jtag_awsize(3'd0), .jtag_awburst(2'd0), .jtag_awlock(1'b0),
-    .jtag_awcache(4'd0), .jtag_awprot(3'd0), .jtag_awvalid(1'b0),
-    .jtag_wdata(32'd0), .jtag_wstrb(4'd0), .jtag_wlast(1'b0),
-    .jtag_wvalid(1'b0), .jtag_bready(1'b0),
-    .jtag_arid(2'd0), .jtag_araddr(32'd0), .jtag_arlen(8'd0),
-    .jtag_arsize(3'd0), .jtag_arburst(2'd0), .jtag_arlock(1'b0),
-    .jtag_arcache(4'd0), .jtag_arprot(3'd0), .jtag_arvalid(1'b0),
-    .jtag_rready(1'b0),
-    .jtag_awready(), .jtag_wready(), .jtag_bid(), .jtag_bresp(),
-    .jtag_bvalid(), .jtag_arready(), .jtag_rid(), .jtag_rdata(),
-    .jtag_rresp(), .jtag_rlast(), .jtag_rvalid()
+    // The JTAG master's pins (issue 241), driven by the master below.
+    // The master's identifier is one bit; the board's host ports carry
+    // two, so it is widened with a zero and narrowed back.
+    .jtag_awid({1'b0, j_awid}), .jtag_awaddr(j_awaddr),
+    .jtag_awlen(j_awlen), .jtag_awsize(j_awsize),
+    .jtag_awburst(j_awburst), .jtag_awlock(j_awlock),
+    .jtag_awcache(j_awcache), .jtag_awprot(j_awprot),
+    .jtag_awvalid(j_awvalid), .jtag_awready(j_awready),
+    .jtag_wdata(j_wdata), .jtag_wstrb(j_wstrb), .jtag_wlast(j_wlast),
+    .jtag_wvalid(j_wvalid), .jtag_wready(j_wready),
+    .jtag_bid(j_bid), .jtag_bresp(j_bresp), .jtag_bvalid(j_bvalid),
+    .jtag_bready(j_bready),
+    .jtag_arid({1'b0, j_arid}), .jtag_araddr(j_araddr),
+    .jtag_arlen(j_arlen), .jtag_arsize(j_arsize),
+    .jtag_arburst(j_arburst), .jtag_arlock(j_arlock),
+    .jtag_arcache(j_arcache), .jtag_arprot(j_arprot),
+    .jtag_arvalid(j_arvalid), .jtag_arready(j_arready),
+    .jtag_rid(j_rid), .jtag_rdata(j_rdata), .jtag_rresp(j_rresp),
+    .jtag_rlast(j_rlast), .jtag_rvalid(j_rvalid), .jtag_rready(j_rready)
   );
 
   // The serial line idles high, so any byte begins by pulling it low.
@@ -290,23 +273,27 @@ module vreteno_board_ila (
   assign led3 = ~calib;
   assign led4 = ~beat[25];
 
-  // The analyser: `//cpu/vreteno:board_ila`, generated by Vivado with
-  // these thirteen probes at these widths and 4096 samples deep. The
-  // list at the top of this file is the list here.
-  board_ila probes (
-    .clk(clk),
-    .probe0(rst),
-    .probe1(halt),
-    .probe2(calib),
-    .probe3(uart_tx),
-    .probe4(rx_sync[1]),
-    .probe5(brk),
-    .probe6(pwm_pins),
-    .probe7({vaw_valid, vaw_data}),
-    .probe8({var_valid, var_data}),
-    .probe9({vw_valid, vw_data}),
-    .probe10({net_tx_valid, net_tx_data}),
-    .probe11(said),
-    .probe12(mem_rst_n)
+  // The master: `//cpu/vreteno:jtag_axi`, generated by Vivado, AXI4
+  // with no bursts, since every peripheral on this bus serves one beat
+  // at a time. Its QoS pins go nowhere, as the board's host pins have
+  // none.
+  jtag_axi master (
+    .aclk(clk), .aresetn(~rst),
+    .m_axi_awid(j_awid), .m_axi_awaddr(j_awaddr), .m_axi_awlen(j_awlen),
+    .m_axi_awsize(j_awsize), .m_axi_awburst(j_awburst),
+    .m_axi_awlock(j_awlock), .m_axi_awcache(j_awcache),
+    .m_axi_awprot(j_awprot), .m_axi_awqos(),
+    .m_axi_awvalid(j_awvalid), .m_axi_awready(j_awready),
+    .m_axi_wdata(j_wdata), .m_axi_wstrb(j_wstrb), .m_axi_wlast(j_wlast),
+    .m_axi_wvalid(j_wvalid), .m_axi_wready(j_wready),
+    .m_axi_bid(j_bid[0]), .m_axi_bresp(j_bresp), .m_axi_bvalid(j_bvalid),
+    .m_axi_bready(j_bready),
+    .m_axi_arid(j_arid), .m_axi_araddr(j_araddr), .m_axi_arlen(j_arlen),
+    .m_axi_arsize(j_arsize), .m_axi_arburst(j_arburst),
+    .m_axi_arlock(j_arlock), .m_axi_arcache(j_arcache),
+    .m_axi_arprot(j_arprot), .m_axi_arqos(),
+    .m_axi_arvalid(j_arvalid), .m_axi_arready(j_arready),
+    .m_axi_rid(j_rid[0]), .m_axi_rdata(j_rdata), .m_axi_rresp(j_rresp),
+    .m_axi_rlast(j_rlast), .m_axi_rvalid(j_rvalid), .m_axi_rready(j_rready)
   );
 endmodule

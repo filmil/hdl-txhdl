@@ -277,6 +277,7 @@ filegroup(
         "src/bin/*.rs",
         "tests/*.rs",
         "board/*.v",
+        "board/jtag/*.tcl",
         # The program compiled for the core and its linker script are
         # a package of their own, so they come by label rather than by
         # a glob, which cannot cross a package boundary.
@@ -295,10 +296,12 @@ load(
     "@rules_vivado//build/vivado:rules.bzl",
     "vivado_place_and_route2",
     "vivado_ila",
+    "vivado_ip",
     "vivado_program_device",
     "vivado_program_flash",
     "vivado_project",
     "vivado_read_ila",
+    "vivado_repl",
     "vivado_synthesis",
 )
 load("//tools/vivado:defs.bzl", "vivado_synthesis2")
@@ -543,5 +546,76 @@ vivado_program_device(
 vivado_read_ila(
     name = "vreteno_board_ila_read",
     deps = [":vreteno_board_ila_pnr"],
+    tags = ["manual"],
+)
+
+# Vivado's JTAG-to-AXI master (issue 241): a host on the board's bus
+# reached over the JTAG cable, so that memory and every peripheral can
+# be read and written from the hardware manager whatever the core is
+# doing. Generated as an IP core; no bursts, since every peripheral on
+# this bus serves one beat at a time.
+vivado_ip(
+    name = "jtag_axi",
+    config = {
+        "PROTOCOL": "0",
+        "M_AXI_ADDR_WIDTH": "32",
+        "M_AXI_DATA_WIDTH": "32",
+        "M_HAS_BURST": "0",
+    },
+    part = "xc7a200tfbg484-2",
+    tags = ["manual"],
+    vlnv = "xilinx.com:ip:jtag_axi:1.2",
+)
+
+# The board with a JTAG master on its bus (issue 241): the same design
+# under a top that puts Vivado's JTAG-to-AXI master on the lowered
+# board's second host port, so that the hardware manager reads and
+# writes every address the map names, whatever the core is doing.
+# Manual, as every Vivado target is.
+#
+#   bazel build //cpu/vreteno:vreteno_board_jtag_pnr
+#   bazel run //cpu/vreteno:vreteno_board_jtag_prog -- \
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+vivado_synthesis2(
+    name = "vreteno_board_jtag_synth",
+    srcs = [
+        ":board_v",
+        "board/vreteno_board_jtag.v",
+        "//ddr3:hdl",
+    ],
+    part = "xc7a200tfbg484-2",
+    top = "vreteno_board_jtag",
+    xdcs = [":ax7a200_xdc"],
+    deps = [":jtag_axi"],
+    tags = ["manual"],
+)
+
+vivado_place_and_route2(
+    name = "vreteno_board_jtag_pnr",
+    synthesis = ":vreteno_board_jtag_synth",
+    xdcs = [":ax7a200_xdc"],
+    tags = ["manual"],
+)
+
+vivado_program_device(
+    name = "vreteno_board_jtag_prog",
+    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
+    deps = [":vreteno_board_jtag_pnr"],
+    tags = ["manual"],
+)
+
+# The bus from the cable: words written into the data memory and the
+# DDR3 through the JTAG master and read back, and the timer read
+# twice, from Vivado's hardware manager against the board. The
+# hardware server is at localhost:3122, as the programming targets
+# expect; HOSTPORT in the environment says otherwise.
+#
+#   bazel run //cpu/vreteno/board/remote:hw_server
+#   bazel run //cpu/vreteno:vreteno_board_jtag_probe
+vivado_repl(
+    name = "vreteno_board_jtag_probe",
+    data = [":vreteno_board_jtag_pnr"],
+    script = "board/jtag/probe.tcl",
+    use_terminal = False,
     tags = ["manual"],
 )
