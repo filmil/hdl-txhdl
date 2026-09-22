@@ -1,0 +1,92 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Channel Between Two Clocks}
+\label{sec:x-cdc}
+
+Two clocks that are not the same clock have no fixed relation. An
+edge of one falls wherever it falls with respect to the other, and a
+register written by the first and read by the second is read at an
+arbitrary moment in its life, including the moment it is changing.
+What comes out then is neither the old value nor the new one, and the
+design has read something that never existed.
+
+\code{ChanCdc} in \code{//lib/parts} carries words across that gap.
+It is one unit with two processes, one per clock, a memory written by
+the writing side and read by the reading side, and a pointer on each
+side saying how far it has got. What crosses is only the pointers.
+
+\subsection{Why the pointers are Gray coded}
+
+A binary pointer changes several bits at once. Seven to eight is
+\code{0111} to \code{1000}, four bits, and a sample caught in the
+middle of that can read any of sixteen values, most of which the
+pointer never held. A reader that believes one of them concludes the
+queue is a different length than it is, and the error is unbounded.
+
+A Gray code changes one bit per step, so a sample caught mid-change
+reads either the value before or the value after and nothing else.
+Both are safe, and they are safe in a particular direction: the
+reader concludes the queue is emptier than it is and the writer that
+it is fuller, so each is wrong in the direction that refuses work
+rather than the one that corrupts it. A pointer sampled stale costs a
+cycle; a pointer sampled impossible costs the data.
+
+The pointers are one bit wider than the address so that full and
+empty can be told apart, which the same number of bits cannot do:
+equal pointers would mean both. Empty is the two equal. Full is the
+two equal in every bit but the top two, which is what one lap apart
+looks like in Gray.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=state-state,caption={\code{lib/parts/src/cdc.rs}: the
+state the two processes share. Each side owns its own pointer and
+keeps the other's through two flops of its own clock.},%
+label={lst:x-cdc}]%
+{lib/parts/src/cdc.rs}
+
+\subsection{What the check covers, and what it cannot}
+
+The example runs the writing side on a clock of period four and the
+reading side on one of period six with a phase of two, so the edges
+drift past each other and every relative position happens somewhere
+in the run. The build checks the netlist against that run under
+\code{nvc} and under Verilator, at the ports and at every register:
+both Gray pointers and all four synchroniser flops are compared, so a
+pointer that advanced at the wrong moment, or a full test off by the
+wrap bit, is a failure rather than a difference nobody looks at.
+
+What it does not cover is the reason the two flops are there.
+Metastability is not modelled and cannot be: both sides are
+deterministic, and the sampling clock reads a register that has
+settled. The agreement demonstrated here is about the pointer
+protocol. The second flop is an argument about silicon, and no
+simulation in either language says anything about it. A green test
+beside a synchroniser invites the opposite conclusion, which is why
+this paragraph is here.
+
+Writing this example found a fault in the checking rather than in the
+design: a channel's \code{ready} and \code{valid} were compared
+against the trace at ticks which were not edges of the port's own
+clock, where the trace holds nothing for them. Under the default
+clock every tick the testbench visits is an edge, so it had never
+shown. That is issue 384, and it is the reason no example before this
+one had a channel on a slower clock.
+
+\begin{figure*}[htbp]
+\centering
+\input{cdc_timing.tex}
+\caption{Words crossing from \code{clk\_w} to \code{clk\_r}.
+\code{wgray} steps one bit at a time, \code{0,1,3,2,6,7,5,4},
+appears at \code{wgray\_r2} two reading edges later, and the word
+follows. \code{inp\_ready} is the wire whose checking was wrong
+until issue 384.}
+\label{fig:x-cdc}
+\end{figure*}
+
+\subsection{What it does not replace}
+
+\code{lib/board/chan\_cdc.v} is the hand-written Verilog this is
+shaped after, and the flagship holds five instances of it. Whether
+those become this is a separate decision and a separate change: that
+file is proven on hardware and this one is proven in simulation, and
+those are not the same claim.
