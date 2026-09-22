@@ -72,8 +72,8 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 47\,606 lines of Rust: 12\,811 of runtime
-and macros, 13\,220 of parts, 8\,525 in sixty-six examples, 10\,125 of
+Together they are 48\,848 lines of Rust: 12\,811 of runtime
+and macros, 13\,725 of parts, 8\,851 in sixty-eight examples, 10\,536 of
 Vreteno with its board, and 2\,925 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
@@ -109,7 +109,7 @@ Vreteno; boot and data memory, timer, serial port & \code{cpu} & four of five \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
 PCIe BAR registers; the BAR as one unit & \code{pcie} & not yet \\
-The examples' own units & examples & 35, all but one \\
+The examples' own units & examples & 36, all but one \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -131,7 +131,7 @@ The AXI-Lite bridge & 1 host, 2 banks & 3 netlists \\
 A lattice & 4 nodes, both bridges, RAM & 2 tests \\
 The SoC & core, GPU, RAM, serial & its run \\
 Composition & station, stream ALU & its netlist \\
-The board & core, 6 devices, DDR3 & 3 runs, Vivado \\
+The board & core, 6 devices, DDR3, a JTAG host & 3 runs, Vivado, the cable \\
 Ethernet & the MAC, the board's PHY & on the board \\
 Video & HDMI, its I2C, the board & on the board \\
 PCIe & XDMA endpoint, pins, registers & a run, Vivado \\
@@ -173,16 +173,20 @@ Fig.~\ref{fig:s-board} is the whole of it.
 \begin{tikzpicture}[x=1cm, y=1cm, every node/.style={font=\scriptsize}]
   \node[box] (cpu) at (0,0) {Vreteno\\core};
   \node[box] (host) at (2.0,0) {host\\tracker};
-  \node[box] (rt) at (3.7,0) {router};
-  \node[box] (rom) at (5.9,2.3) {boot\\memory};
-  \node[box] (dmem) at (5.9,1.4) {data\\memory};
-  \node[box] (uart) at (5.9,0.5) {serial};
-  \node[box] (ddr) at (5.9,-0.35) {DDR3\\peripheral};
-  \node[boxf] (uber) at (8.1,-0.35) {UberDDR3\\foreign};
-  \node[box] (tim) at (5.9,-1.35) {timer};
-  \node[box] (plic) at (5.9,-2.2) {interrupt\\controller};
+  \node[box] (arb) at (3.5,0) {arbiter};
+  \node[box] (jtag) at (2.0,1.4) {JTAG\\master};
+  \node[box] (rt) at (5.0,0) {router};
+  \node[box] (rom) at (7.2,2.3) {boot\\memory};
+  \node[box] (dmem) at (7.2,1.4) {data\\memory};
+  \node[box] (uart) at (7.2,0.5) {serial};
+  \node[box] (ddr) at (7.2,-0.35) {DDR3\\peripheral};
+  \node[boxf] (uber) at (9.4,-0.35) {UberDDR3\\foreign};
+  \node[box] (tim) at (7.2,-1.35) {timer};
+  \node[box] (plic) at (7.2,-2.2) {interrupt\\controller};
   \draw[fl] (cpu) -- node[lbl, below=3pt] {AXI4} (host);
-  \draw[fl] (host) -- (rt);
+  \draw[fl] (host) -- (arb);
+  \draw[fl] (jtag) -- (arb);
+  \draw[fl] (arb) -- (rt);
   \draw[fl] (rt) -- (rom);
   \draw[fl] (rt) -- (dmem);
   \draw[fl] (rt) -- (uart);
@@ -199,7 +203,8 @@ Fig.~\ref{fig:s-board} is the whole of it.
   \draw[fl] (plic.west) -- ++(-0.9,0) |- (0,-3.5)
     node[lbl, below, pos=0.72] {the interrupt controller's} -| (cpu.south);
 \end{tikzpicture}}
-\caption{The board: the core, its tracker, the router that decides by
+\caption{The board: the core, its tracker, the JTAG master that shares
+the bus with it through the arbiter, the router that decides by
 address, and the six peripherals behind it. The DDR3 controller is a
 foreign module, wired rather than written; the serial port reaches two
 pins, and the interrupt controller and the timer reach the core's two
@@ -375,9 +380,9 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs two hundred and ten
+its ports. \code{bazel test //...} runs two hundred and nineteen
 targets, of
-which a hundred and twenty-six are netlists under both simulators; the rest are the
+which a hundred and thirty are netlists under both simulators; the rest are the
 core's model and
 programs, the board's own run, Razboj, the parts, the SoC's run, and
 the tools. Four more are tagged manual: the board and its DDR3 under
