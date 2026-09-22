@@ -94,7 +94,53 @@ a word: the words would still all arrive, the cycle count would still
 pass, and nothing about bursting would be demonstrated.
 \end{itemize}
 
+\subsection*{Choosing \code{BEATS}}
+
+\code{BEATS} is the lever that decides whether real memory latency
+matters, and the number that looks like a measurement above does not
+say so on its own.
+
+The 93 cycles are measured against a memory model that answers a beat
+the cycle after the request: no activation, no CAS, no refresh. So
+that figure is a floor and not an estimate. What a real memory adds is
+one first-beat latency per burst, and the burst count is
+\code{ceil(words / BEATS)}, so the exposed latency is the burst count
+multiplied by whatever the controller's latency is. One burst is in
+flight at a time, so none of it is hidden.
+
+That makes the parameter, rather than the engine, the answer to a
+consumer that is faster than a raster. A frame of 1500 bytes is 375
+words, and at gigabit the wire takes about 1200 cycles at 100\,MHz:
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+\code{BEATS} & Bursts for a frame & Fits 1200 cycles while \\
+\midrule
+16 & 24 & latency is under about 27 cycles \\
+256 & 2 & latency is under about 327 cycles \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A realistic DDR3 first-beat latency is tens of cycles, so sixteen-beat
+bursts can lose that margin and 256-beat bursts cannot. The raster
+uses sixteen because its consumer takes a pixel per visible cycle and
+a longer burst buys it nothing; a MAC should use a longer one. Both
+are the same component with a different parameter, and neither needs a
+second burst in flight, which is what keeps a second identifier, a
+tracker and out-of-order answers out of the design.
+
 \subsection*{Limits}
+
+\textbf{A burst must not cross a 4\,KB address boundary}, which is
+AXI4's rule and not this component's, and nothing here checks it.
+\code{BEATS} of 256 is 1\,KB, so a run whose base is 1\,KB aligned
+satisfies it without a special case: every burst but the last is a
+full 1\,KB from a 1\,KB aligned address, and the last is shorter from
+one. A caller that starts a run at an arbitrary address with a long
+\code{BEATS} can violate the rule, and the symptom is a burst the
+interconnect is entitled to answer however it likes.
 
 One burst is in flight at a time, deliberately. A second would want a
 second identifier, a tracker to tell the two apart and an answer for
