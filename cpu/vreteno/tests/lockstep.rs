@@ -14,9 +14,10 @@ use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
 use vreteno32::isa::{
     add, addi, beq, csrrci, csrrs, csrrsi, csrrw, csrrwi, decode, disasm,
-    ebreak, halt, jal, lui, lw, mret, or, sw, Kind, CAUSE_MEXT, CAUSE_MSOFT,
-    CAUSE_MTIMER, CAUSE_STORE_ACCESS, CSR_DCSR, CSR_MBUSQUIET, CSR_MCAUSE,
-    CSR_MEPC, CSR_MIE, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MISA,
+    ebreak, halt, jal, jalr, lui, lw, mret, or, sw, Kind, CAUSE_FETCH_ACCESS,
+    CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER, CAUSE_STORE_ACCESS, CSR_DCSR,
+    CSR_MBUSQUIET, CSR_MCAUSE, CSR_MEPC, CSR_MIE, CSR_MSTATUS, CSR_MTVAL,
+    CSR_MTVEC, MISA,
 };
 use vreteno32::model::{Halt, Model};
 use vreteno32::program::{demo, idle, in_memory, machine_info, random, soft};
@@ -1031,4 +1032,30 @@ fn a_refused_load_or_store_traps_unless_told_to_be_quiet() {
     assert_eq!(m.x[12], 0, "quiet: the zero the bus answered");
     assert_eq!(m.x[9], 1, "quiet: nothing trapped");
     assert!(m.csr.busquiet, "the bit stays set");
+}
+
+/// A jump into an address nothing decodes: the fetch is refused, the
+/// word comes back zero, and the core raises the instruction access
+/// fault with the address in `mtval` rather than an illegal
+/// instruction; the handler returns to the link (issue 423).
+#[test]
+fn a_fetch_from_nowhere_is_an_instruction_access_fault() {
+    let handler = 6 * 4;
+    let p = [
+        addi(6, 0, handler),
+        csrrw(0, CSR_MTVEC, 6),
+        lui(4, 0x3000), // 0x0300_0000: nobody's
+        jalr(1, 4, 0),  // into it, with the link in x1
+        addi(7, 0, 1),  // run once the handler returns to the link
+        halt(),
+        csrrs(23, CSR_MCAUSE, 0),
+        csrrs(24, CSR_MTVAL, 0),
+        csrrw(0, CSR_MEPC, 1),
+        mret(),
+    ];
+    let m = lockstep(&p, &[], "a fetch from nowhere", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[23], CAUSE_FETCH_ACCESS, "the cause names the fetch");
+    assert_eq!(m.x[24], 0x0300_0000, "the address that was fetched");
+    assert_eq!(m.x[7], 1, "and the program went on");
 }
