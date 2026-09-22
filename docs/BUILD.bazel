@@ -2238,6 +2238,7 @@ latex_document(
     name = "flagship",
     main = "flagship.tex",
     data = [
+        "remote_run.txt",
         ":buildstamp",
         ":vendored_tex",
         ":flagship_map",

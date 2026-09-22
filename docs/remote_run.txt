@@ -1,0 +1,17 @@
+# The board, on its serial port, 2026-09-22 16:37Z: the flagship
+# programmed, the program sent by the loader, its two words out to
+# the peripheral at 0x3300 and back.
+load
+ok 40000000
+remote: write c0ffee11
+remote: read  c0ffee11
+remote: write 5eed0335
+remote: read  5eed0335
+remote ok
+
+# The program beside the shim on the board's machine, serving
+# device 1: the same four transactions, as it saw and answered them.
+write 0x00003300 tag 0 -> 0x00000000 err false
+read  0x00003300 tag 1 -> 0xc0ffee11 err false
+write 0x00003304 tag 2 -> 0x00000000 err false
+read  0x00003304 tag 3 -> 0x5eed0335 err false

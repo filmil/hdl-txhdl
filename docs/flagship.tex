@@ -233,11 +233,38 @@ port is \code{//tools/remote/shim}, a program for the machine the
 board is wired to, which reads the peripheral's frames off that
 interface with a raw socket bound to their type, writes each to the
 stream with its length in front, and puts the answers back on the
-wire as they are. Its pump is tested against a wire in memory. What
-proves the whole of it on the board is issue~\#335's last step, a run
-with a cable; until then the proof is the simulation: the core writes
-a word to \code{0x3300}, reads it back, and gets what it wrote, with a
-program in the test answering the frames.
+wire as they are. Its pump is tested against a wire in memory, and
+on the board's machine it runs as a service that is given the one
+capability a raw socket wants at launch, which
+\code{//tools/remote/shim:deploy} puts there.
+
+The whole of it ran on September 22, 2026, with nobody at the board:
+the flagship in the part, the shim serving, \code{//tools/remote}
+beside it as device~1, and the program of Listing~\ref{lst:f-remote-rs}
+sent down the serial line by the loader. The core wrote two words to
+the peripheral, read both back, and said so, and the program at the
+other end saw the four transactions and answered them; both are in
+Listing~\ref{lst:f-remote-run}, as they were printed. A store on the
+core's bus left the board as a frame, crossed a shim to a program, and
+the answer came back through the same port into a load.
+
+Two things the run found. The peripheral waits 20~ms for its answer,
+\code{REMOTE\_WAIT}, which is a budget for a program on the board's
+own network: with the program on the development machine instead,
+175~ms away by round trip through a tunnel, it answered the same
+four transactions and the core read zero both times, the bus having
+refused before the answer came; that is issue~\#397. And the loader's
+serial reset did not bring the loader back after the program had
+halted, where a reprogram did; that is issue~\#398.
+
+\lstinputlisting[caption={\code{cpu/vreteno/rust/remote.rs}: two
+words to the peripheral and back, with the verdict on the serial
+port.},label={lst:f-remote-rs}]{cpu/vreteno/rust/remote.rs}
+
+\lstinputlisting[style=ascii,caption={\code{docs/remote\_run.txt}:
+what the board said, and what the program beside the shim saw, on
+September 22, 2026.},label={lst:f-remote-run}]{remote_run.txt}
+
 
 \section{The lights}
 \label{sec:f-leds}
@@ -488,18 +515,13 @@ crate.},label={lst:f-logo2rs},tabsize=2]{tools/logo2rs/main.go}
 \section{What is not done}
 \label{sec:f-todo}
 
-\emph{Nothing on a real wire has answered the remote peripheral yet.}
-The design is here, the program is here, and so is the shim between
-them, \code{//tools/remote/shim}, with \code{//tools/remote/shim:deploy}
-to put it on the machine the board is wired to as a service that is
-given the one capability a raw socket wants at launch, so that
-nothing is stored on the binary and a redeploy needs no ceremony.
-What is not is the run: the service installed there, which is one
-sequence as root the deploy prints; the flagship in the part, since
-the board's interface has no carrier under any other bitstream; the
-program through a tunnel to the service; and the core reading back
-what the program computed. That is issue~\#335, and it wants a cable
-rather than a design.
+\emph{The remote peripheral waits 20~ms for its answer.} That is a
+budget for a program on the board's own network, and it rules out a
+program across a tunnel, which the run of Section~\ref{sec:f-remote}
+measured; the patience is issue~\#397. \emph{The loader's serial
+reset does not return the loader once a program has halted.} A
+reprogram does, at a minute instead of a second; that is
+issue~\#398.
 
 \emph{The core does not reach the MAC's own registers.} The AXI-Lite
 peripheral for the MAC exists~\cite{eth} and nothing in this bitstream
