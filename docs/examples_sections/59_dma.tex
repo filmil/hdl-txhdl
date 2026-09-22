@@ -1,0 +1,75 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Reading Memory in Bursts}
+\label{sec:x-dma}
+
+A peripheral that wants a lot of memory does not want the core to
+fetch it. The video peripheral holds its framebuffer inside the unit
+and the core writes it a pixel at a time over AXI-Lite: about
+420\,000 register writes for a frame of 720p, and a processor whose
+whole job during them is copying. The Ethernet peripheral is the same
+shape a byte at a time.
+
+The alternative is for the peripheral to be a host on the bus. The
+core says where the data is and how much of it there is; the
+peripheral fetches it. \code{LineFetch} in \code{//lib/parts} is that,
+and it is the half the video and the MAC both want: given an address
+and a count it issues read bursts and puts the words that come back
+into a channel. What consumes the channel is the peripheral's
+business. For the video it crosses to the pixel clock through the
+part of \S\ref{sec:x-cdc} and feeds the raster.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=state-state,caption={\code{lib/parts/src/dma.rs}: what it
+remembers between cycles.},label={lst:x-dma}]{lib/parts/src/dma.rs}
+
+\subsection{Two things the bus does backwards}
+
+Both of these were written the other way first, and both deadlock.
+
+\emph{The identifier arrives with the burst, not before it.} A host
+takes an \code{Issue}, chooses a free identifier and says which one on
+\code{grant}. So a client sends the burst and catches the identifier
+as it comes back. Asking for an identifier and waiting for it is a
+deadlock: nothing is granted until something is issued.
+
+\emph{A read burst is finished by its last beat, not by \code{done}.}
+The host puts a write's response on \code{done} and answers a read on
+the beat channel. So the identifier goes back as the last beat is
+taken, and the last beat is only taken when there is room to give it
+back, which is why the room for the release is part of the condition
+for accepting the beat.
+
+One burst is in flight at a time, deliberately. A second would want a
+second identifier, a tracker to tell the two apart, and an answer for
+what happens when they come back out of order. None of that buys
+anything while the consumer is a raster taking one pixel per visible
+cycle.
+
+\subsection{The gain, as something a test can fail}
+
+The run fetches sixty-four words through sixteen-beat bursts, across a
+real link with \code{AxiHost}, \code{AxiPer} and a memory on the far
+side. Four address phases carry what would otherwise take sixty-four.
+
+It asserts rather than prints. Every word arrived. Each word is the
+one at its own address, because the memory holds its address in each
+word, so a word from the wrong burst or out of order says so. And the
+run took fewer cycles than a path spending an address phase per word
+could manage: sixty-four words in 93 cycles, against a bound of 128.
+
+That last one is the point of the example. A throughput number in a
+log is a number somebody has to read and believe; a bound a run must
+come in under is a claim the build checks every time.
+
+The memory model in the example answers bursts rather than words, and
+that is not incidental. A burst arrives as one request carrying
+\code{len}, beats less one, and is owed \code{len + 1} beats with the
+last of them marked. A model that answered one beat per request would
+make a burst look like a word: the words would still all arrive, the
+cycle count would still pass, and the example would demonstrate
+nothing about bursting. Getting that wrong is the way this example
+could have been green and worthless.
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_dma} printed when
+the build ran it.},label={lst:x-dma-out}]{out_dma.txt}

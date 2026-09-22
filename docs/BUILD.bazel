@@ -725,6 +725,8 @@ latex_document(
         ":syscon_timing",
         ":cdc_run",
         ":cdc_timing",
+        ":dma_run",
+        ":dma_timing",
         ":reset_run",
         ":reset_timing",
         ":wdog_run",
