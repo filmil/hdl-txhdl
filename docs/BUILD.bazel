@@ -567,6 +567,39 @@ waveform(
     ],
 )
 
+# Writing memory in bursts, byte accurate. Issue 151.
+waveform(
+    name = "dmaw",
+    example = "//lib/examples:ex_dmaw",
+    lowered = ("linestore", "linestore"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//go=>go",
+        "//running=>running",
+        "//inp/rx_valid=>inp_valid",
+        "//inp/rx_data=>inp",
+        "//linestore/want=>want",
+        "//linestore/left=>left",
+        "//wbeat/tx_valid=>wbeat_valid",
+    ],
+)
+
+# The far end of the scanout, on the pixel clock. Issue 151.
+waveform(
+    name = "scanout",
+    example = "//lib/examples:ex_scanout",
+    lowered = ("linebuf", "linebuf"),
+    signals = [
+        "//clocks/clk_pix=>clk_pix",
+        "//inp/rx_valid=>inp_valid",
+        "//inp/rx_data=>inp",
+        "//linebuf/at=>at",
+        "//linebuf/shown=>shown",
+        "//col=>col",
+        "//pix=>pix",
+    ],
+)
+
 # Reading memory in bursts, and what it buys. Issue 151.
 waveform(
     name = "dma",
@@ -727,6 +760,10 @@ latex_document(
         ":cdc_timing",
         ":dma_run",
         ":dma_timing",
+        ":dmaw_run",
+        ":dmaw_timing",
+        ":scanout_run",
+        ":scanout_timing",
         ":reset_run",
         ":reset_timing",
         ":wdog_run",

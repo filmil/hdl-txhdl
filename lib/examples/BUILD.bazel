@@ -55,6 +55,30 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Writing memory in bursts:  bazel run //lib/examples:ex_dmaw
+rust_binary(
+    name = "ex_dmaw",
+    srcs = ["ex_dmaw.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# The scanout path, memory to pixels:  bazel run //lib/examples:ex_scanout
+rust_binary(
+    name = "ex_scanout",
+    srcs = ["ex_scanout.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Reading memory in bursts:  bazel run //lib/examples:ex_dma
 rust_binary(
     name = "ex_dma",
@@ -766,6 +790,8 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_lower.rs",
         "ex_cdc.rs",
         "ex_dma.rs",
+        "ex_dmaw.rs",
+        "ex_scanout.rs",
         "ex_reset.rs",
         "ex_stage.rs",
         "ex_packet.rs",
