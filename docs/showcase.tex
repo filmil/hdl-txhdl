@@ -41,7 +41,12 @@ TxHDL is a hardware description language that is a Rust library. It
 was built by deleting every construct Rust already provides. A
 transaction is a \code{struct}; a unit is a \code{struct} that
 implements \code{Unit}; a pipeline is an \code{async fn}; a
-configuration is a trait; a clock is a type. \code{rustc} is the
+configuration is a trait; a clock is a type, and so is the reset
+beside it: every module the netlist writes has one, every lowered
+child is joined to its parent's, and no unit declares a port for it,
+which a reset port would have asked of about 127 \code{.run} call
+sites; under it a register goes back to what it held before the
+first edge and a channel empties. \code{rustc} is the
 parser, and its type checker is the design rule checker: two drivers
 on a wire are a move error, a clock domain crossed without a
 \code{Crossing} is a type error, and a cycle counted in combinational
@@ -67,8 +72,8 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 46\,566 lines of Rust: 12\,373 of runtime
-and macros, 12\,845 of parts, 8\,298 in sixty-four examples, 10\,125 of
+Together they are 47\,606 lines of Rust: 12\,811 of runtime
+and macros, 13\,220 of parts, 8\,525 in sixty-six examples, 10\,125 of
 Vreteno with its board, and 2\,925 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
@@ -104,7 +109,7 @@ Vreteno; boot and data memory, timer, serial port & \code{cpu} & four of five \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
 PCIe BAR registers; the BAR as one unit & \code{pcie} & not yet \\
-The examples' own units & examples & all 21 \\
+The examples' own units & examples & 35, all but one \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -370,9 +375,9 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs a hundred and forty-five
+its ports. \code{bazel test //...} runs two hundred and ten
 targets, of
-which a hundred and twenty-two are netlists under both simulators; the rest are the
+which a hundred and twenty-six are netlists under both simulators; the rest are the
 core's model and
 programs, the board's own run, Razboj, the parts, the SoC's run, and
 the tools. Four more are tagged manual: the board and its DDR3 under
@@ -390,8 +395,9 @@ with, and the netlist says which: it carries a line per renamed
 fetches from the bus above its boot memory, so it runs a program it
 was not built with, and the boot memory is on the bus too, readable
 and not writable; but a fetch that leaves the core stalls the
-pipeline until the word is back. A burst of more than one beat does not cross the network on
-chip; it is refused rather than carried. Razboj has no depth buffer, no
+pipeline until the word is back. A wrapping burst does not cross the
+network on chip; it is refused rather than carried, and an
+incrementing one crosses as that many writes of one beat. Razboj has no depth buffer, no
 interpolation and no texture. Each is an issue on the repository rather
 than a paragraph here.
 
