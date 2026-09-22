@@ -54,11 +54,19 @@ use txhdl_parts::remote::{Answer as RemoteAnswer, Ask, Remote};
 pub const REMOTE_DEV: usize = 1;
 
 /// How long the remote peripheral waits for its program before it
-/// answers the bus `SlvErr` itself. Twenty milliseconds at 100 MHz: a
-/// round trip is two frames, a program on another machine, and
-/// whatever the network between them adds, and a device that has gone
-/// away must not stop the bus for longer than a person will wait.
-pub const REMOTE_WAIT: usize = 2_000_000;
+/// answers the bus `SlvErr` itself: one second, at the board's 100 MHz.
+/// A round trip is two frames, a program on another machine, and
+/// whatever the network between them adds. Twenty milliseconds, the
+/// first value, was a budget for a program on the board's own network
+/// and ruled out a program anywhere else: measured on September 22,
+/// 2026, a program 175 ms away by round trip answered every
+/// transaction and the core read zero, the bus having refused first
+/// (issue 397). One second is five times that path with room for a
+/// worse one, and it is what a device that has gone away costs the
+/// bus per access, which a person waits out and the serial watcher
+/// outlasts. The count is cycles of the board's clock; a board on
+/// another clock states its own.
+pub const REMOTE_WAIT: usize = 100_000_000;
 
 // begin{map}
 /// The address map: each peripheral's base and the bits of an address
