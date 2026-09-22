@@ -121,6 +121,21 @@ impl Uart {
         }
     }
 
+    /// The word in hexadecimal, eight digits, as a bus address or a
+    /// value read back is best read.
+    pub fn put_hex(v: u32) {
+        let mut shift = 32;
+        while shift > 0 {
+            shift -= 4;
+            let digit = ((v >> shift) & 0xf) as u8;
+            Self::put(if digit < 10 {
+                b'0' + digit
+            } else {
+                b'a' + digit - 10
+            });
+        }
+    }
+
     /// Whether a received byte waits.
     pub fn ready() -> bool {
         rd(Self::STATUS) & Self::RX_READY != 0
