@@ -1,0 +1,113 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: LineFetch
+\datasheet{LineFetch}{A host on the bus that reads a run of memory in
+bursts, into a channel.}
+
+\dsfacts{\code{lib/parts/src/dma.rs}}{\code{txhdl\_parts::dma::LineFetch}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+A peripheral that wants a lot of memory should not have the core copy
+it. The video peripheral's framebuffer is about 420\,000 register
+writes for a frame of 720p, and the Ethernet peripheral is the same
+shape a byte at a time; in both the processor's whole job during them
+is copying.
+
+\code{LineFetch} is the alternative, and it is the half the video and
+the MAC both want. Told an address and a count it issues read bursts
+and puts the words that come back into a channel. What consumes that
+channel is the peripheral's business: for the video it crosses to the
+pixel clock through \code{ChanCdc}, and for a MAC it feeds the
+transmitter.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The width of an address, in bits. \\
+\code{I} & The width of a burst identifier, in bits. \\
+\code{BEATS} & How many beats a burst asks for. \\
+\code{WC} & The width of the word count, which says how long a run is. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The identifier is a parameter and never a literal, so a link that
+widens its identifiers costs this component nothing. The tables below
+use \code{LineFetch<32, 2, 16, 16>}, the fetcher of \code{ex\_dma}:
+sixteen-beat bursts on a thirty-two bit address.
+
+\dstables{LineFetch}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A run starts when \code{go} is high and nothing is in flight.
+\code{base} and \code{words} are read once, there, so a register
+written under the engine does not move the run out from under it.
+\item A burst goes out when none is in flight and words are still
+wanted, asking for \code{BEATS} beats or the rest of the run,
+whichever is fewer.
+\item A beat is taken when one is offered and the channel out has
+room. That room is the backpressure: a consumer that stops taking
+stops the bursts.
+\item \code{running} is high while a run is unfinished.
+\end{itemize}
+
+Two things about the bus are the opposite of what they look like, and
+both were written the other way first, and both deadlock.
+
+\emph{The identifier arrives with the burst, not before it.} The host
+takes an \code{Issue}, chooses a free identifier and says which on
+\code{grant}, so a client sends the burst and catches the identifier
+as it comes back. Asking for one and waiting is a deadlock: nothing
+is granted until something is issued.
+
+\emph{A read burst is finished by its last beat, not by \code{done}.}
+The host puts a write's response on \code{done} and answers a read on
+the beat channel. So the identifier goes back as the last beat is
+taken, and the last beat is only taken when there is room to give it
+back.
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_dma} fetches sixty-four words through sixteen-beat
+bursts across a real link, with \code{AxiHost}, \code{AxiPer} and a
+memory on the far side. The build checks the netlist against that run
+under nvc and Verilator:
+\code{//docs:dma\_sim\_linefetch\_tb\_test} and
+\code{//docs:dma\_vsim\_test}.
+\item The example asserts rather than prints. Every word arrived;
+each word is the one at its own address, since the memory holds its
+address in each word, so a word from the wrong burst or out of order
+says so; and the run came in under a cycle bound a path spending an
+address phase per word could not meet. Sixty-four words in 93 cycles
+against a bound of 128.
+\item The memory model there answers bursts rather than words. A
+model that answered one beat per request would make a burst look like
+a word: the words would still all arrive, the cycle count would still
+pass, and nothing about bursting would be demonstrated.
+\end{itemize}
+
+\subsection*{Limits}
+
+One burst is in flight at a time, deliberately. A second would want a
+second identifier, a tracker to tell the two apart and an answer for
+what happens when they come back out of order, and none of that buys
+anything while the consumer is a raster taking one pixel per visible
+cycle.
+
+It reads and never writes. \code{done} is drained so that a write
+answer arriving from elsewhere cannot block the host, and is
+otherwise unused.
+
+It runs on one clock, \code{DefaultClock}, which is the bus clock.
+Crossing to a consumer on another clock is \code{ChanCdc}'s job and
+not this component's.
+
+Beats are words: \code{size} is fixed at two, four bytes a beat.

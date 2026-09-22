@@ -1,0 +1,111 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: ChanCdc
+\datasheet{ChanCdc}{A channel from one clock to another, with Gray
+coded pointers and two flops each way.}
+
+\dsfacts{\code{lib/parts/src/cdc.rs}}{\code{txhdl\_parts::cdc::ChanCdc}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+Two clocks that are not the same clock have no fixed relation, so a
+register written by one and read by the other is read at an arbitrary
+moment in its life, including while it is changing. \code{ChanCdc}
+carries words across that gap: a channel in on the writing clock, a
+channel out on the reading clock, and a memory between them written
+by one side and read by the other.
+
+It is one unit with two processes, one per clock. What crosses
+between them is only the two pointers, each through two flip-flops of
+the clock that reads it.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{T} & What it carries: a \code{Transaction} and \code{Value} type. \\
+\code{AW} & The width of the address, in bits. \\
+\code{D} & How many words it holds, which must be \code{1 << AW}. \\
+\code{PW} & The width of the pointers, which must be \code{AW + 1}. \\
+\code{W} & The writing clock. \\
+\code{R} & The reading clock. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{D} and \code{PW} are stated rather than computed, because an
+expression in a const parameter's position needs nightly Rust, which
+is the same reason \code{Fifo} takes both \code{AW} and \code{D}. The
+tables below use \code{ChanCdc<U<32>, 4, 16, 5, DefaultClock,
+ClkPix>}, the crossing of \code{ex\_cdc}: sixteen words of thirty-two
+bits.
+
+\dstables{ChanCdc}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \code{wbin} and \code{rbin} are the two pointers in binary, each
+on its own clock. \code{wgray} and \code{rgray} are the same pointers
+Gray coded, and they are what the other side samples.
+\item \code{rgray\_w1} and \code{rgray\_w2} are the reading pointer
+caught on the writing clock, and \code{wgray\_r1} and \code{wgray\_r2}
+the writing pointer caught on the reading clock. The second of each
+pair is the one its side reads.
+\item Empty is \code{rgray} equal to \code{wgray\_r2}. Full is
+\code{wgray} equal to \code{rgray\_w2} in every bit but the top two.
+\item A word is taken when one is offered and it is not full, and
+lands in the memory at the writing pointer. A word is offered out
+when it is not empty, read from the memory at the reading pointer.
+\end{itemize}
+
+The pointers are Gray coded because a binary pointer changes several
+bits at once: \code{0111} to \code{1000} is four bits, and a sample
+caught among them can read any of sixteen values, most of which the
+pointer never held. One bit per step means a sample caught mid-change
+reads the value before or the value after and nothing else. Both are
+safe, and safe in a particular direction: the reader concludes the
+queue is emptier than it is and the writer that it is fuller, so each
+errs towards refusing work rather than corrupting it.
+
+The pointers are one bit wider than the address so that full and empty
+are distinguishable, which equal pointers of the same width are not.
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_cdc} runs the writing side on a clock of period four
+and the reading side on one of period six with a phase of two, so the
+edges drift past each other and every relative position happens
+somewhere in the run. The build checks the netlist against that run
+under nvc and under Verilator:
+\code{//docs:cdc\_sim\_cdc\_tb\_test} and
+\code{//docs:cdc\_vsim\_test}.
+\item Those checks reach inside. Every register is compared by
+hierarchical name as well as every port, so both Gray pointers and all
+four synchroniser flops are checked tick by tick, and a pointer that
+advanced at the wrong moment or a full test off by the wrap bit is a
+failure rather than a difference nobody looks at.
+\end{itemize}
+
+\subsection*{Limits}
+
+\textbf{Metastability is not modelled and cannot be.} Both sides are
+deterministic and the sampling clock reads a register that has
+settled, so the two flops are never seen to do anything. What the
+co-simulation demonstrates is agreement about the pointer protocol.
+The second flop is an argument about silicon, and no simulation in
+either language says anything about it. A passing test beside a
+synchroniser invites the opposite conclusion, which is why this
+paragraph is here rather than in a comment.
+
+\code{D} must be \code{1 << AW} and \code{PW} must be \code{AW + 1},
+and nothing checks either.
+
+It does not replace \code{lib/board/chan\_cdc.v}, of which the
+flagship holds five instances. That is a separate decision and a
+separate change: the hand-written file is proven on hardware and this
+one is proven in simulation, and those are not the same claim.
