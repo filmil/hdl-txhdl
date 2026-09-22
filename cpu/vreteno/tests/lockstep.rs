@@ -4,6 +4,7 @@
 //! thirty-one registers, the control registers and the halt must
 //! agree, and the data memory at the end. The demonstration program
 //! and a batch of random ones.
+use std::cell::RefCell;
 use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
@@ -12,12 +13,11 @@ use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
 use vreteno32::isa::{
-    decode, disasm, Kind, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER, MISA,
+    addi, csrrci, csrrs, csrrsi, decode, disasm, ebreak, halt, lui, Kind,
+    CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER, CSR_DCSR, MISA,
 };
 use vreteno32::model::{Halt, Model};
-use vreteno32::program::{
-    demo, idle, in_memory, machine_info, random, soft,
-};
+use vreteno32::program::{demo, idle, in_memory, machine_info, random, soft};
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
@@ -25,8 +25,7 @@ use vreteno32::uart::Uart;
 /// The link the core sits on, as the demonstration has it.
 const IW: usize = 2;
 const NIDS: usize = 4;
-type Rtr =
-    Router3<
+type Rtr = Router3<
     32,
     32,
     4,
@@ -45,24 +44,33 @@ type Serial = LiteBridge1<32, 32, 4, IW, 0x3000, 0xf000>;
 
 /// Runs `program` on both until the core halts, checking after every
 /// cycle; returns the model at the halt.
+/// What a debugger does to the core during a run (issue 154): a halt
+/// request at a cycle, held until the core has entered debug mode; a
+/// hold of some cycles; a resume, for two cycles, since the core acts
+/// on the level once per entry; and that again, once per entry, as
+/// many times as `resumes` says. `entries` collects `dcsr` at each
+/// entry, so a test can read the causes back.
+pub struct DebugPlan {
+    pub halt_at: u64,
+    pub hold: u64,
+    pub resumes: u32,
+    pub entries: RefCell<Vec<u32>>,
+}
+
 fn lockstep(
     program: &[u32],
     data: &[u32],
     what: &str,
     seed: Option<u64>,
+    dbg: Option<&DebugPlan>,
 ) -> Model {
     let mut cpu = Vreteno::with(program);
-    let (pc, ir_pc, valid, regs, halted) = (
-        cpu.pc,
-        cpu.ir_pc,
-        cpu.valid,
-        cpu.regs.clone(),
-        cpu.halted,
-    );
+    let (pc, ir_pc, valid, regs, halted) =
+        (cpu.pc, cpu.ir_pc, cpu.valid, cpu.regs.clone(), cpu.halted);
+    let (in_debug, dpc, dcsr) = (cpu.debug, cpu.dpc, cpu.dcsr);
     // The data memory starts with `data` in it, which is how a program
     // that lives above the boot memory gets there.
-    let bytes: Vec<u8> =
-        data.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let bytes: Vec<u8> = data.iter().flat_map(|w| w.to_le_bytes()).collect();
     let mut dmem = Dmem::<IW>::with(&bytes);
     let lanes = (
         dmem.lane0.clone(),
@@ -87,8 +95,7 @@ fn lockstep(
         ("mip", cpu.mip),
         ("mtval", cpu.mtval),
     ];
-    let (mip, mie, mstatus) =
-        (cpu.mip, cpu.mie, cpu.mstatus);
+    let (mip, mie, mstatus) = (cpu.mip, cpu.mie, cpu.mstatus);
 
     let mut timer = Timer::<IW>::default();
     let mut uart = Uart::<4>::default();
@@ -96,12 +103,16 @@ fn lockstep(
     let (pending, wb_dev) = (timer.pending, cpu.wb_dev);
     let msip = timer.msip;
     let (uart_sent, uart_last) = (uart.sent, uart.last);
-    let (uart_received, uart_dropped) =
-        (uart.received, uart.dropped);
+    let (uart_received, uart_dropped) = (uart.received, uart.dropped);
     // The architectural program counter, as Vreteno::arch_pc has it:
     // the oldest instruction not yet retired.
+    let (dbg_on, dbg_pc) = (cpu.debug, cpu.dpc);
     let arch_pc = move || {
-        if wb_valid.get().to_bool() {
+        if dbg_on.get().to_bool() {
+            // In debug mode nothing is in flight and the fetch has run
+            // ahead: the next instruction is the one at `dpc`.
+            dbg_pc.get()
+        } else if wb_valid.get().to_bool() {
             wb_pc.get()
         } else if valid.get().to_bool() {
             ir_pc.get()
@@ -116,6 +127,12 @@ fn lockstep(
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
     let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
+    // The debugger's requests, driven by the plan, and what the core
+    // says about debug mode, read from its register rather than its
+    // port, which lags a cycle.
+    let (haltreq_out, haltreq) = signal::<Bit, DefaultClock>();
+    let (resumereq_out, resumereq) = signal::<Bit, DefaultClock>();
+    let (debug_out, _debug) = signal::<Bit, DefaultClock>();
     // The core's link, and one per peripheral, with the router
     // between the core's tracker and the three peripherals'.
     let cl = axi_units::<32, 32, 4, IW>();
@@ -151,8 +168,14 @@ fn lockstep(
             join2(
                 dmem.run((dreq, dwd), (dans, drb)),
                 cpu.run(
-                    (rst, irq, tirq, sirq, crdata, cdone, grant),
-                    (halt_out, instr_out, wb_out, issue, wbeat, release),
+                    (
+                        rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
+                        resumereq,
+                    ),
+                    (
+                        halt_out, instr_out, wb_out, issue, wbeat, release,
+                        debug_out,
+                    ),
                 ),
             ),
         ),
@@ -238,6 +261,10 @@ fn lockstep(
     // gets nothing typed. The port's interrupt joins the core's line,
     // as it does on the board.
     let mut term = Terminal::new(if seed.is_none() { b"yes" } else { b"" });
+    // The debugger's state, from the plan: cycles held in debug mode
+    // so far, resumes left, and the cycles left of the resume pulse.
+    let (mut held, mut resumes_left, mut resume_pulse) =
+        (0u64, dbg.map_or(0, |p| p.resumes), 0u8);
     for cycle in 0..32768 {
         let at = model.pc;
         let pulse = match seed {
@@ -252,6 +279,32 @@ fn lockstep(
         let raised = pulse || uirq.get().to_bool();
         irq_out.set(raised);
         rx_out.set(term.level());
+        // The debugger's lines for this cycle: the halt request from
+        // its cycle until the core is in debug mode, and a resume for
+        // two cycles once the hold has passed, since the core acts on
+        // the level once per entry and the line must drop between.
+        let debugging = in_debug.get().to_bool();
+        let (mut hreq, mut rreq) = (false, false);
+        if let Some(plan) = dbg {
+            if debugging {
+                held += 1;
+                if held > plan.hold && resumes_left > 0 && resume_pulse == 0 {
+                    resume_pulse = 2;
+                    resumes_left -= 1;
+                }
+            } else {
+                held = 0;
+            }
+            hreq = !debugging
+                && cycle as u64 >= plan.halt_at
+                && plan.entries.borrow().is_empty();
+            if resume_pulse > 0 {
+                rreq = true;
+                resume_pulse -= 1;
+            }
+        }
+        haltreq_out.set(hreq);
+        resumereq_out.set(rreq);
         // The word about to execute this cycle, or zero on a bubble;
         // the illegal word is zero too, so the flag is kept apart.
         let executing = in_execute.get().to_bool();
@@ -298,6 +351,19 @@ fn lockstep(
         taken_before = taken;
         line_before = line;
         soft_before = soft;
+        // Debug mode is entered before the instruction in execute,
+        // after the one behind it retired, and left to `dpc`; the
+        // model follows the core's register at each edge, and the
+        // plan keeps `dcsr` as it was written at the entry.
+        let debugging_now = in_debug.get().to_bool();
+        if debugging_now && !debugging {
+            model.enter_debug(program);
+            if let Some(plan) = dbg {
+                plan.entries.borrow_mut().push(dcsr.get().raw() as u32);
+            }
+        } else if debugging && !debugging_now {
+            model.resume();
+        }
         // The line sets the pending bit at this edge in both.
         if raised {
             model.raise();
@@ -367,6 +433,23 @@ fn lockstep(
                 assert_eq!(r.get().raw() as u32, w, "{name} after {here}");
             }
         }
+        if !system {
+            assert_eq!(dpc.get().raw() as u32, model.dpc, "dpc after {here}");
+            assert_eq!(
+                dcsr.get().raw() as u32,
+                model.dcsr,
+                "dcsr after {here}"
+            );
+        }
+        assert_eq!(debugging_now, model.debug, "debug mode after {here}");
+        // A plan with no resume left ends the run in debug mode, held
+        // there: the program does not halt, and the memory and the
+        // devices are not checked.
+        if let Some(plan) = dbg {
+            if debugging_now && resumes_left == 0 && held > plan.hold {
+                return model;
+            }
+        }
         // The compare lands in the timer some cycles after the core's
         // store, since a store is posted and the bus carries it, so it
         // is checked at the end, as the memory is, and the bus is let
@@ -429,7 +512,7 @@ fn a_program_that_interrupts_itself() {
     // takes another, and what the program guarantees is three or more.
     // The model takes them where the core does, which is what the
     // lockstep compares cycle by cycle.
-    let m = lockstep(&soft(), &[], "soft", None);
+    let m = lockstep(&soft(), &[], "soft", None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert!(m.x[8] >= 3, "interrupts taken: {}", m.x[8]);
     assert_eq!(m.mem[0], m.x[8], "and the program wrote what it counted");
@@ -442,7 +525,7 @@ fn a_program_reads_what_the_machine_says_it_is() {
     // register, which is an illegal instruction its handler counts.
     // The model answers all of it the same way, which the lockstep
     // compares every cycle rather than only at the end.
-    let m = lockstep(&machine_info(), &[], "machine info", None);
+    let m = lockstep(&machine_info(), &[], "machine info", None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.mem[0], 0, "mhartid, this machine's one hart");
     assert_eq!(m.mem[1], MISA, "misa: RV32IMC");
@@ -469,7 +552,7 @@ fn a_program_that_waits_for_an_interrupt_is_woken_by_one() {
     // leaves it, and the core wakes from it anyway: a wait ends when
     // an interrupt is pending and enabled, whether or not it may be
     // taken, which is what lets a kernel idle inside its own lock.
-    let m = lockstep(&idle(), &[], "idle", None);
+    let m = lockstep(&idle(), &[], "idle", None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert!(m.x[8] >= 2, "interrupts that woke it: {}", m.x[8]);
     assert_eq!(m.mem[0], m.x[8], "and the program wrote what it counted");
@@ -482,7 +565,7 @@ fn a_program_above_the_boot_memory_is_fetched_from_the_bus() {
     // the jump comes back over the bus. It adds the first ten numbers
     // and writes the sum where the test can read it.
     let (boot, prog) = in_memory();
-    let m = lockstep(&boot, &prog, "in memory", None);
+    let m = lockstep(&boot, &prog, "in memory", None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[10], 55, "the sum the program computed");
     assert_eq!(m.mem[16], 55, "and wrote at offset 64");
@@ -490,7 +573,7 @@ fn a_program_above_the_boot_memory_is_fetched_from_the_bus() {
 
 #[test]
 fn demo_program() {
-    let m = lockstep(&demo(), &[], "demo", None);
+    let m = lockstep(&demo(), &[], "demo", None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[10], 110);
     assert_eq!(m.mem[0], 110);
@@ -533,7 +616,7 @@ fn a_multiply_right_after_a_load() {
         div(13, 12, 7),
         halt(),
     ];
-    let m = lockstep(&p, &[], "a multiply right after a load", Some(1));
+    let m = lockstep(&p, &[], "a multiply right after a load", Some(1), None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[11], 255 * 1234, "mul of the loaded word");
     assert_eq!(m.x[13], 123, "div of the loaded word");
@@ -556,7 +639,8 @@ fn random_programs() {
             }
             at += n;
         }
-        let m = lockstep(&p, &[], &format!("random seed {seed}"), Some(seed));
+        let m =
+            lockstep(&p, &[], &format!("random seed {seed}"), Some(seed), None);
         assert_eq!(m.halted, Some(Halt::Break), "seed {seed} faulted");
     }
     let counts = format!("{short} compressed, {wide} whole, {straddle} across");
@@ -650,7 +734,7 @@ fn compressed_instructions() {
     a.wide(csrrw(0, CSR_MEPC, 22));
     a.wide(mret());
     let p = a.words();
-    let m = lockstep(&p, &[], "compressed instructions", Some(7));
+    let m = lockstep(&p, &[], "compressed instructions", Some(7), None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[8], 0, "the loop's count");
     assert_eq!(m.x[9], 7 + 3 + 100 + 1000 + 3, "the loop and the calls");
@@ -709,7 +793,7 @@ fn an_unaligned_access_traps() {
     a.wide(csrrw(0, CSR_MEPC, 22));
     a.wide(mret());
     let p = a.words();
-    let m = lockstep(&p, &[], "an unaligned access", Some(11));
+    let m = lockstep(&p, &[], "an unaligned access", Some(11), None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[4], (-2i32) as u32, "the aligned word went through");
     assert_eq!(m.x[9], (-2i32) as u32, "and a byte at an odd address");
@@ -728,4 +812,95 @@ fn an_unaligned_access_traps() {
         (-2i32) as u32,
         "the trapping stores wrote nothing"
     );
+}
+
+/// The cause field of a `dcsr` value, bits 8 to 6.
+fn cause(dcsr: u32) -> u32 {
+    (dcsr >> 6) & 7
+}
+
+/// A halt request in the middle of the demonstration stops the core
+/// before an instruction, holds it, and the resume runs the rest:
+/// the program ends as it does without the debugger, and the one entry
+/// says a halt request was the cause.
+#[test]
+fn debug_halt_and_resume() {
+    let plan = DebugPlan {
+        halt_at: 200,
+        hold: 20,
+        resumes: 1,
+        entries: RefCell::new(Vec::new()),
+    };
+    let m = lockstep(&demo(), &[], "demo, halted", None, Some(&plan));
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[10], 110);
+    assert_eq!(m.uart, b"OK\nyes", "what the demonstration said and echoed");
+    let entries = plan.entries.borrow();
+    assert_eq!(entries.len(), 1, "one entry, on the request");
+    assert_eq!(cause(entries[0]), 3, "the cause is the halt request");
+    assert!(!m.debug, "the core ran on after the resume");
+}
+
+/// With `dcsr.step` set, every resume runs one instruction and the
+/// core is back in debug mode with the step as the cause, until the
+/// program clears the bit, after which a resume runs it to the end.
+#[test]
+fn debug_single_steps() {
+    let mut p = vec![csrrsi(0, CSR_DCSR, 4)];
+    p.extend((0..40).map(|_| addi(1, 1, 1)));
+    p.push(csrrci(0, CSR_DCSR, 4));
+    p.extend((0..4).map(|_| addi(2, 2, 1)));
+    p.push(halt());
+    let plan = DebugPlan {
+        halt_at: 20,
+        hold: 3,
+        resumes: 60,
+        entries: RefCell::new(Vec::new()),
+    };
+    let m = lockstep(&p, &[], "single steps", None, Some(&plan));
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[1], 40, "every step ran exactly one instruction");
+    assert_eq!(m.x[2], 4);
+    let entries = plan.entries.borrow();
+    assert!(entries.len() > 4, "entries: {entries:x?}");
+    assert_eq!(cause(entries[0]), 3, "the first entry is the request");
+    // The last entry is the step that ran the clearing instruction,
+    // so the bit is set at every entry but that one.
+    let last = entries.len() - 1;
+    for (i, &e) in entries.iter().enumerate().skip(1) {
+        assert_eq!(cause(e), 4, "entry {i} is a step: {e:#x}");
+        assert_eq!(e & 4, if i < last { 4 } else { 0 }, "step bit, entry {i}");
+    }
+    assert_eq!(m.dcsr & 4, 0, "the program cleared the step bit");
+}
+
+/// With `dcsr.ebreakm` set, `ebreak` enters debug mode instead of
+/// trapping: `dpc` is its address, the cause is the breakpoint, and
+/// the instruction before it ran. The plan never resumes, so the run
+/// ends held in debug mode.
+#[test]
+fn debug_ebreak() {
+    let p = [
+        lui(5, 0x8),
+        csrrs(0, CSR_DCSR, 5),
+        addi(1, 0, 7),
+        ebreak(),
+        addi(1, 0, 9),
+        halt(),
+    ];
+    let plan = DebugPlan {
+        halt_at: u64::MAX,
+        hold: 10,
+        resumes: 0,
+        entries: RefCell::new(Vec::new()),
+    };
+    let m = lockstep(&p, &[], "ebreak", None, Some(&plan));
+    assert!(m.debug, "held in debug mode");
+    assert_eq!(m.halted, None, "no trap and no halt");
+    assert_eq!(m.x[1], 7, "the instruction before the breakpoint ran");
+    assert_eq!(m.dpc, 12, "dpc is the breakpoint's address");
+    let entries = plan.entries.borrow();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(cause(entries[0]), 1, "the cause is the breakpoint");
+    assert_eq!(entries[0] & 0x8000, 0x8000, "ebreakm stays set");
 }
