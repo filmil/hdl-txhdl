@@ -229,11 +229,15 @@ The other end of the wire in this repository is \code{//tools/remote},
 a program in Go that reads frames, serves a device, and writes the
 answers back. It speaks a length-prefixed stream rather than raw
 frames, because that is what an ssh tunnel carries; between it and the
-port there is a shim that puts frames on and off the wire, which is
-issue~\#335 and is not written yet. Until it is, what proves this on
-the board is the simulation: the core writes a word to \code{0x3300},
-reads it back, and gets what it wrote, with a program in the test
-answering the frames.
+port is \code{//tools/remote/shim}, a program for the machine the
+board is wired to, which reads the peripheral's frames off that
+interface with a raw socket bound to their type, writes each to the
+stream with its length in front, and puts the answers back on the
+wire as they are. Its pump is tested against a wire in memory. What
+proves the whole of it on the board is issue~\#335's last step, a run
+with a cable; until then the proof is the simulation: the core writes
+a word to \code{0x3300}, reads it back, and gets what it wrote, with a
+program in the test answering the frames.
 
 \section{The lights}
 \label{sec:f-leds}
@@ -485,10 +489,11 @@ crate.},label={lst:f-logo2rs},tabsize=2]{tools/logo2rs/main.go}
 \label{sec:f-todo}
 
 \emph{Nothing on a real wire has answered the remote peripheral yet.}
-The design is here and the program is here, and what is between them
-is not: a shim beside the board that reads frames off an interface and
-writes them to the stream \code{//tools/remote} speaks, both ways.
-That is issue~\#335, and it wants a cable rather than a design.
+The design is here, the program is here, and so is the shim between
+them, \code{//tools/remote/shim}; what is not is the run: the shim on
+the machine the board is wired to, the program through a tunnel to
+it, and the core reading back what the program computed. That is
+issue~\#335, and it wants a cable rather than a design.
 
 \emph{The core does not reach the MAC's own registers.} The AXI-Lite
 peripheral for the MAC exists~\cite{eth} and nothing in this bitstream
