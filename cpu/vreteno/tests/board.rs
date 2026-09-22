@@ -388,7 +388,7 @@ fn a_transaction_leaves_the_board_as_a_frame() {
     assert_eq!(frame[26], 0xf, "every lane");
     // With nothing answering, the core waits on the peripheral, which
     // waits `REMOTE_WAIT` cycles before it answers the bus itself.
-    // That is twenty milliseconds on the board, longer than this run.
+    // That is a second on the board, longer than this run.
     assert_eq!(ran.said, "", "the core is still waiting");
     assert!(ran.halted_at.is_none(), "and has not halted");
 }
