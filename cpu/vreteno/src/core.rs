@@ -1089,11 +1089,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // the halting instruction retires. `ebreak` used to do
             // this and now raises the breakpoint exception, so a
             // program that means to stop says so, which is issue 139.
-            // A reset of the core ends the stop, as it ends everything
-            // else: the core declares `rst` itself, so no register of
-            // its is put back by the netlist, and a stop that survived
-            // a reset kept the core halted for good, with the loader in
-            // the boot memory never restarting (issue 398).
+            // A reset of the core ends the stop: the core declares
+            // `rst` itself, so no register of its is put back by the
+            // netlist, and a stop that survived a reset kept the core
+            // halted for good, with the loader in the boot memory never
+            // restarting (issue 398). The CSRs are put back by the same
+            // line, below, which that fix left as they were (issue 419).
             let halting = csr_write & (f12 == isa::CSR_MHALT) & csr_new.bit(0);
             let stop =
                 mux(rst, Bit::Zero, mux(run, halting, self.stopped.get()));
@@ -1322,7 +1323,26 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                         | (dcsr & U::<32>::from(0x1c0u32)),
                 csr_write & (f12 == isa::CSR_DPC) ?
                     dpc: csr_new & U::<32>::from(0xffff_fffeu32),
+                // A reset puts the CSRs back as configuration left
+                // them, so a program started by the reset line sees
+                // what a program started by configuration sees: the
+                // previous program's trap vector and interrupt enables
+                // would otherwise outlive it (issue 419). The
+                // specification asks only for `mstatus.MIE` clear; the
+                // rest is this design's decision, and the counters go
+                // with them. The register file is not reset, which is
+                // what a register file is.
                 rst ? {
+                    mstatus: U::<32>::from(0u32),
+                    mtvec: U::<32>::from(0u32),
+                    mscratch: U::<32>::from(0u32),
+                    mepc: U::<32>::from(0u32),
+                    mcause: U::<32>::from(0u32),
+                    mie: U::<32>::from(0u32),
+                    mip: U::<32>::from(0u32),
+                    mtval: U::<32>::from(0u32),
+                    mcycle: U::<64>::from(0u64),
+                    minstret: U::<64>::from(0u64),
                     debug: Bit::Zero,
                     stepped: Bit::Zero,
                     step_armed: Bit::Zero,

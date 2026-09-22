@@ -94,7 +94,10 @@ impl Default for Model {
             mem: vec![0; DATA_BYTES as usize / 4],
             csr: Csr::default(),
             dev_word: 0,
-            mtimecmp: 0,
+            // All ones, as the timer's reset leaves it: a compare of zero
+            // beside a count of zero is an interrupt pending from the
+            // first cycle (issue 419).
+            mtimecmp: u64::MAX,
             minstret: 0,
             uart: Vec::new(),
             tirq: false,
@@ -372,6 +375,25 @@ impl Model {
         self.dcsr = 0x4000_0003 | (self.dcsr & 0x8004) | (cause << 6);
         self.dpc = self.pc;
         self.debug = true;
+        self.stepped = false;
+    }
+
+    /// The reset line: the program counter to zero, every CSR and both
+    /// counters as configuration left them, the timer's compare to all
+    /// ones, debug mode left and the halt ended. The register file and
+    /// the memory keep what they hold, as the hardware's do; so do the
+    /// bytes the serial port was given, which are the run's record
+    /// rather than the machine's state (issue 419).
+    pub fn reset(&mut self) {
+        self.pc = 0;
+        self.csr = Csr::default();
+        self.minstret = 0;
+        self.mtimecmp = u64::MAX;
+        self.halted = None;
+        self.debug = false;
+        self.dpc = 0;
+        self.dcsr = 0x4000_0003;
+        self.step_armed = false;
         self.stepped = false;
     }
 

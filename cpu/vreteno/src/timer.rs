@@ -143,6 +143,11 @@ impl<const I: usize> Unit for Timer<I> {
                     mtime: mtime.slice::<32, 32>().concat::<_, 64>(merged),
                 wgo & (wsel == 4) ?
                     mtime: merged.concat::<_, 64>(mtime.slice::<0, 32>()),
+                // The compare goes to all ones with the count to zero:
+                // a compare left by the previous program would fire from
+                // nowhere once the count reached it, and a compare of
+                // zero would fire at once (issue 419).
+                rst ? mtimecmp: U::<64>::from(u64::MAX),
             });
             if take_read.to_bool() {
                 rb.send(R {
