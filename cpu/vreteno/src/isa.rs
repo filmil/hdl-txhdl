@@ -125,6 +125,17 @@ pub const CSR_MHARTID: u32 = 0xf14;
 /// issue 139.
 pub const CSR_MHALT: u32 = 0x7c0;
 
+/// The debug control and status register, as the RISC-V debug
+/// specification lays it out: `xdebugver` 4 in bits 31 to 28, `ebreakm`
+/// bit 15, `cause` bits 8 to 6 (1 an `ebreak`, 3 a halt request, 4 a
+/// step), `step` bit 2, and `prv` 3 in bits 1 and 0. A program or a
+/// debugger writes `ebreakm` and `step`; the rest is what the core says.
+pub const CSR_DCSR: u32 = 0x7b0;
+/// The debug program counter: the instruction the core will execute on
+/// resume, which is the one it did not execute when it entered debug
+/// mode.
+pub const CSR_DPC: u32 = 0x7b1;
+
 /// The causes the core raises: five exceptions, and the external
 /// interrupt, whose cause has the top bit set.
 pub const CAUSE_ILLEGAL: u32 = 2;

@@ -161,6 +161,11 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     // software interrupt in it.
     let (_sirq_o, sirq) = signal::<Bit, DefaultClock>();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
+    // No debugger here: its request lines stay low and what the
+    // core says about debug mode is not read (issue 154).
+    let (_haltreq_o, haltreq) = signal::<Bit, DefaultClock>();
+    let (_resumereq_o, resumereq) = signal::<Bit, DefaultClock>();
+    let (debug_o, _debug) = signal::<Bit, DefaultClock>();
     let (instr_out, _instr) = signal::<U<32>, DefaultClock>();
     let (wb_out, _wb) = signal::<Writeback, DefaultClock>();
 
@@ -276,8 +281,11 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let ends = join2(
         join2(
             cpu.run(
-                (rst_c, irq, tirq, sirq, crdata, cdone, grant),
-                (halt_out, instr_out, wb_out, issue, wbeat, release),
+                (
+                    rst_c, irq, tirq, sirq, crdata, cdone, grant, haltreq,
+                    resumereq,
+                ),
+                (halt_out, instr_out, wb_out, issue, wbeat, release, debug_o),
             ),
             raster.run(
                 (ggrant, gdone, grdata),

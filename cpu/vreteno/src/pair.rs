@@ -195,6 +195,14 @@ impl<const IW: usize> Unit for Pair<IW> {
         let (d2_o, d2_i) = signal::<Bit, DefaultClock>();
         let (d3_o, d3_i) = signal::<Bit, DefaultClock>();
         let (rst2_o, rst2_i) = signal::<Bit, DefaultClock>();
+        // No debugger on either core: the requests stay low, and what
+        // each says about debug mode goes nowhere.
+        let (_hr1_o, hr1_i) = signal::<Bit, DefaultClock>();
+        let (_rr1_o, rr1_i) = signal::<Bit, DefaultClock>();
+        let (dbg1_o, _dbg1_i) = signal::<Bit, DefaultClock>();
+        let (_hr2_o, hr2_i) = signal::<Bit, DefaultClock>();
+        let (_rr2_o, rr2_i) = signal::<Bit, DefaultClock>();
+        let (dbg2_o, _dbg2_i) = signal::<Bit, DefaultClock>();
         join2(
             join2(
                 join2(
@@ -209,15 +217,24 @@ impl<const IW: usize> Unit for Pair<IW> {
             join2(
                 join2(
                     self.one.run(
-                        (rst_one, irq_one, tirq, sirq, rd1_rx, dn1_rx, gr1_rx),
-                        (halt1_o, instr1_o, wb1_o, is1_tx, beat1_tx, rl1_tx),
+                        (
+                            rst_one, irq_one, tirq, sirq, rd1_rx, dn1_rx,
+                            gr1_rx, hr1_i, rr1_i,
+                        ),
+                        (
+                            halt1_o, instr1_o, wb1_o, is1_tx, beat1_tx, rl1_tx,
+                            dbg1_o,
+                        ),
                     ),
                     self.two.run(
                         (
                             rst2_i, irq2, tirq_two, sirq_two, rd2_rx, dn2_rx,
-                            gr2_rx,
+                            gr2_rx, hr2_i, rr2_i,
                         ),
-                        (halt2_o, instr2_o, wb2_o, is2_tx, beat2_tx, rl2_tx),
+                        (
+                            halt2_o, instr2_o, wb2_o, is2_tx, beat2_tx, rl2_tx,
+                            dbg2_o,
+                        ),
                     ),
                 ),
                 join2(

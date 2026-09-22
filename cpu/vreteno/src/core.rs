@@ -465,6 +465,8 @@ fn csr_read(
     mie: U<32>,
     mip: U<32>,
     mtval: U<32>,
+    dcsr: U<32>,
+    dpc: U<32>,
 ) -> U<32> {
     select!(f12.raw() => {
         0x300 => mstatus,
@@ -472,6 +474,8 @@ fn csr_read(
         0x340 => mscratch,
         0x341 => mepc,
         0x342 => mcause,
+        0x7b0 => dcsr,
+        0x7b1 => dpc,
         0x304 => mie,
         0x344 => mip,
         0x343 => mtval,
@@ -498,7 +502,7 @@ fn csr_read(
 fn csr_known(f12: U<12>) -> Bit {
     select!(f12.raw() => {
         0x300 | 0x305 | 0x340 | 0x341 | 0x342 | 0x304 | 0x344
-        | 0x343 | 0x7c0 | 0x301 | 0xf11 | 0xf12 | 0xf13
+        | 0x343 | 0x7c0 | 0x7b0 | 0x7b1 | 0x301 | 0xf11 | 0xf12 | 0xf13
         | 0xf14 | 0xb00 | 0xb02 | 0xb80 | 0xb82 => Bit::One,
         _ => Bit::Zero,
     })
@@ -596,6 +600,31 @@ pub struct Vreteno<const IW: usize> {
     pub wb_load: Reg<Bit>,
     pub wb_stop: Reg<Bit>,
     pub halted: Reg<Bit>,
+    // begin{debug}
+    /// Debug mode (issue 154): the core is halted by a debugger and
+    /// resumable, where `halted` is a program's own end. Entered on a
+    /// halt request, on the instruction after a single step, or on an
+    /// `ebreak` when `dcsr.ebreakm` says so; left on a resume request,
+    /// to `dpc`. No instruction executes and no interrupt is taken
+    /// while in it.
+    pub debug: Reg<Bit>,
+    /// The instruction to execute on resume: the one not executed on
+    /// entry.
+    pub dpc: Reg<U<32>>,
+    /// `dcsr` as read: the version, `ebreakm`, the cause, `step`, the
+    /// privilege.
+    pub dcsr: Reg<U<32>>,
+    /// Entry this cycle, as a wire: the instruction in execute is not
+    /// run and no interrupt is taken in its place.
+    pub dbg_take: Wire<Bit>,
+    /// A single step in progress: armed on a resume with `dcsr.step`
+    /// set, and once one instruction has run, `stepped`, which is a
+    /// request to enter again before the next.
+    pub step_armed: Reg<Bit>,
+    pub stepped: Reg<Bit>,
+    /// The resume request seen: a level acted on once per entry.
+    pub resume_seen: Reg<Bit>,
+    // end{debug}
     pub mstatus: Reg<U<32>>,
     pub mtvec: Reg<U<32>>,
     pub mscratch: Reg<U<32>>,
@@ -660,7 +689,9 @@ impl<const IW: usize> Vreteno<IW> {
     /// else the fetch's. What the model's program counter is compared
     /// against.
     pub fn arch_pc(&self) -> U<32> {
-        if self.wb_valid.get().to_bool() {
+        if self.debug.get().to_bool() {
+            self.dpc.get()
+        } else if self.wb_valid.get().to_bool() {
             self.wb_pc.get()
         } else if self.valid.get().to_bool() {
             self.ir_pc.get()
@@ -674,7 +705,7 @@ impl<const IW: usize> Vreteno<IW> {
 impl<const IW: usize> Unit for Vreteno<IW> {
     async fn run(
         &mut self,
-        (rst, irq, tirq, sirq, rdata, done, grant): (
+        (rst, irq, tirq, sirq, rdata, done, grant, haltreq, resumereq): (
             In<Bit>,
             In<Bit>,
             In<Bit>,
@@ -682,20 +713,27 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             Rx<R<32, IW>>,
             Rx<Done<IW>>,
             Rx<Grant<IW>>,
+            In<Bit>,
+            In<Bit>,
         ),
-        (halt, instr, wb, issue, wbeat, release): (
+        (halt, instr, wb, issue, wbeat, release, dbg): (
             Out<Bit>,
             Out<U<32>>,
             Out<Writeback>,
             Tx<Issue<32>>,
             Tx<W<32, 4>>,
             Tx<Grant<IW>>,
+            Out<Bit>,
         ),
     ) {
         loop {
             DefaultClock::rising().await;
             let (rst, irq, tirq) = (rst.get(), irq.get(), tirq.get());
             let sirq = sirq.get();
+            // The debugger's two requests, and the debug state.
+            let (haltreq, resumereq) = (haltreq.get(), resumereq.get());
+            let in_debug = self.debug.get();
+            let (dcsr, dpc) = (self.dcsr.get(), self.dpc.get());
             // The registers a step takes apart or hands on as values;
             // the rest are read where they are used.
             let fetch_pc = self.pc.get();
@@ -843,7 +881,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // Every address is on the bus, the boot memory included:
             // it sits there read-only at zero, so a load can reach a
             // constant beside the code (issue 268).
-            let here = self.valid & !rst & !self.stopped;
+            let here = self.valid & !rst & !self.stopped & !in_debug;
             // A load or a store waits for room on the bus whatever its
             // address, so that the fetch's hold does not hang on the
             // address's decode, which was the path that limited the
@@ -882,10 +920,24 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 pc + mux(self.ir_c, U::<32>::from(2u32), U::<32>::from(4u32));
             // Live: an instruction in execute that is not stalled. It
             // runs unless the interrupt takes its place.
-            let live = !rst & !self.stopped & self.valid & !stall;
-            self.int_take.set(live & int_ok);
+            let live = !rst & !self.stopped & self.valid & !stall & !in_debug;
+            // Debug mode is entered before the instruction in execute,
+            // as an interrupt is taken, and ahead of one: on a halt
+            // request, on the instruction after a single step, or on an
+            // `ebreak` that `dcsr.ebreakm` sends here rather than to the
+            // trap (issue 154).
+            let ebreakm = dcsr.bit(15);
+            let is_ebreak =
+                (opcode == 0x73) & (f3 == 0) & (ir.slice::<20, 12>() == 1);
+            let dbg_req = haltreq | self.stepped | (is_ebreak & ebreakm);
+            self.dbg_take.set(live & dbg_req);
+            let dbg_take = self.dbg_take.get();
+            self.int_take.set(live & int_ok & !dbg_req);
             let int_take = self.int_take.get();
-            let run = live & !int_take;
+            let run = live & !int_take & !dbg_take;
+            // Resume: once per request, to `dpc`, arming a single step
+            // when `dcsr.step` asks for one.
+            let resume_take = in_debug & resumereq & !self.resume_seen;
             let send_load = run & is_load & !unaligned;
 
             // The ALU, shared by the register and immediate forms; bit
@@ -943,6 +995,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 mie_r,
                 mip_now,
                 self.mtval.get(),
+                dcsr,
+                dpc,
             );
             let csr_known = csr_known(f12);
             // Whether the instruction writes at all: `csrrw` and
@@ -958,7 +1012,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let csr_new = csr_value(f3, csr_old, csr_src);
             let sys0 = is_sys & (f3 == 0);
             let is_ecall = sys0 & (f12 == 0);
-            let is_ebreak = sys0 & (f12 == 1);
+            // `is_ebreak` is decoded above, where debug entry needs it.
             let is_mret = sys0 & (f12 == 0x302);
             let is_wfi = sys0 & (f12 == 0x105);
             let known = select!(opcode.raw() => {
@@ -1230,6 +1284,51 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 run & is_wfi ? waiting: Bit::One,
                 wake ? waiting: Bit::Zero,
                 rst ? waiting: Bit::Zero,
+                // Debug mode. On entry the cause says why, in bits 8
+                // to 6: 1 an `ebreak`, 3 a halt request, 4 a step; the
+                // version and the privilege are fixed, and `ebreakm`
+                // and `step` are kept. A resume leaves, arming a step
+                // when asked; one instruction later the step has run
+                // and the next entry is requested.
+                dbg_take ? {
+                    debug: Bit::One,
+                    dpc: pc,
+                    dcsr: U::<32>::from(0x4000_0003u32)
+                        | (dcsr & U::<32>::from(0x8004u32))
+                        | mux(
+                            is_ebreak & ebreakm,
+                            U::<32>::from(0x40u32),
+                            mux(
+                                self.stepped,
+                                U::<32>::from(0x100u32),
+                                U::<32>::from(0xc0u32),
+                            ),
+                        ),
+                    stepped: Bit::Zero,
+                },
+                resume_take ? {
+                    debug: Bit::Zero,
+                    step_armed: dcsr.bit(2),
+                    resume_seen: Bit::One,
+                },
+                !resumereq ? resume_seen: Bit::Zero,
+                run & self.step_armed ? {
+                    step_armed: Bit::Zero,
+                    stepped: Bit::One,
+                },
+                csr_write & (f12 == isa::CSR_DCSR) ?
+                    dcsr: U::<32>::from(0x4000_0003u32)
+                        | (csr_new & U::<32>::from(0x8004u32))
+                        | (dcsr & U::<32>::from(0x1c0u32)),
+                csr_write & (f12 == isa::CSR_DPC) ?
+                    dpc: csr_new & U::<32>::from(0xffff_fffeu32),
+                rst ? {
+                    debug: Bit::Zero,
+                    stepped: Bit::Zero,
+                    step_armed: Bit::Zero,
+                    resume_seen: Bit::Zero,
+                    dcsr: U::<32>::from(0x4000_0003u32),
+                },
             });
             // The sequencer. It starts when an M instruction is in execute
             // with its operands ready, and is released when the
@@ -1266,6 +1365,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             case!(rst => {
                 Bit::One => { self.m_busy <= Bit::Zero },
                 _ if int_take.to_bool() => { self.m_busy <= Bit::Zero },
+                _ if dbg_take.to_bool() => { self.m_busy <= Bit::Zero },
                 _ if m_start.to_bool() => {
                     self.m_busy <= Bit::One;
                     self.m_count <= mux(m_is_div, U::from(0u8), U::from(31u8));
@@ -1323,21 +1423,31 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // hold are known early and the redirect late, so the two
             // candidates fold the early conditions in and the redirect
             // chooses last, one multiplexer from the instruction memory.
-            self.redirect.set((run & jump) | int_take);
+            self.redirect.set((run & jump) | int_take | resume_take);
             let redirect = self.redirect.get();
             let park = run & stop;
-            let hold = stall | (stop & !run);
+            let hold = stall | (stop & !run) | in_debug;
             let zero = U::<32>::from(0u32);
             let width = mux(short, U::<32>::from(2u32), U::<32>::from(4u32));
             let advance = mux(hold, fetch_pc, fetch_pc + width);
             let go = mux(rst, zero, mux(park, link, advance));
-            let jmp =
-                mux(rst, zero, mux(park, link, mux(int_take, mtvec, target)));
+            let jmp = mux(
+                rst,
+                zero,
+                mux(
+                    park,
+                    link,
+                    mux(resume_take, dpc, mux(int_take, mtvec, target)),
+                ),
+            );
             self.pc.set(mux(redirect, jmp, go));
             case!(rst => {
                 Bit::One => { self.valid <= Bit::Zero },
                 _ if stall.to_bool() => {},
                 _ if stop.to_bool() => { self.valid <= Bit::Zero },
+                _ if (in_debug | dbg_take).to_bool() => {
+                    self.valid <= Bit::Zero
+                },
                 _ => {
                     self.ir <= fetched;
                     self.ir_c <= Bit::from(short);
@@ -1348,6 +1458,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // end{fetch}
             self.stopped.set(stop);
             halt.set(self.halted);
+            dbg.set(self.debug);
             instr.set(mux(wb_here, self.wb_ir.get(), U::<32>::from(0u32)));
             wb.set(Writeback {
                 done: wb_here,

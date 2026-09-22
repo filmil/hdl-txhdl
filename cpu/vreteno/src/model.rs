@@ -6,11 +6,11 @@ use crate::core::IMEM_BYTES;
 use crate::isa::{
     compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT, CAUSE_ECALL,
     CAUSE_ILLEGAL, CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MSOFT,
-    CAUSE_MTIMER, CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK, CSR_MARCHID,
-    CSR_MCAUSE, CSR_MCYCLE, CSR_MCYCLEH, CSR_MEPC, CSR_MHALT, CSR_MHARTID,
-    CSR_MIE, CSR_MIMPID, CSR_MINSTRET, CSR_MINSTRETH, CSR_MIP, CSR_MISA,
-    CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, CSR_MVENDORID, MEXT, MISA,
-    MSOFT, MTIMECMP_OFF, MTIMER, UART_BASE,
+    CAUSE_MTIMER, CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK, CSR_DCSR,
+    CSR_DPC, CSR_MARCHID, CSR_MCAUSE, CSR_MCYCLE, CSR_MCYCLEH, CSR_MEPC,
+    CSR_MHALT, CSR_MHARTID, CSR_MIE, CSR_MIMPID, CSR_MINSTRET, CSR_MINSTRETH,
+    CSR_MIP, CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC,
+    CSR_MVENDORID, MEXT, MISA, MSOFT, MTIMECMP_OFF, MTIMER, UART_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -69,6 +69,21 @@ pub struct Model {
     /// bit 0 of `msip` in the interrupt controller.
     pub msip: bool,
     pub halted: Option<Halt>,
+    /// Debug mode (issue 154): halted by a debugger and resumable. The
+    /// core enters it before an instruction, on a halt request, on the
+    /// instruction after a single step, or on an `ebreak` that
+    /// `dcsr.ebreakm` sends here; the harness tells the model when the
+    /// core has, since the model steps only on a retirement and an
+    /// entry retires nothing.
+    pub debug: bool,
+    /// The instruction to execute on resume.
+    pub dpc: u32,
+    /// `dcsr` as read: version 4, `ebreakm`, the cause, `step`, privilege 3.
+    pub dcsr: u32,
+    /// A single step: armed by a resume with `dcsr.step`, and once one
+    /// instruction has run, stepped, which asks to enter again.
+    pub step_armed: bool,
+    pub stepped: bool,
 }
 
 impl Default for Model {
@@ -85,6 +100,11 @@ impl Default for Model {
             tirq: false,
             msip: false,
             halted: None,
+            debug: false,
+            dpc: 0,
+            dcsr: 0x4000_0003,
+            step_armed: false,
+            stepped: false,
         }
     }
 }
@@ -239,6 +259,8 @@ impl Model {
             // The halt holds nothing: it reads as zero, and a write of
             // an odd value to it stops the machine.
             CSR_MHALT => 0,
+            CSR_DCSR => self.dcsr,
+            CSR_DPC => self.dpc,
             // What the machine is. `misa` says RV32IMC; the four
             // machine information registers say that the vendor, the
             // architecture and the implementation are unassigned and
@@ -277,6 +299,12 @@ impl Model {
             CSR_MIE => self.csr.mie = v & (MEXT | MSOFT | MTIMER),
             CSR_MIP => self.csr.mip = v & MEXT,
             CSR_MTVAL => self.csr.mtval = v,
+            // `ebreakm` and `step` are the program's; the rest is the
+            // core's to say.
+            CSR_DCSR => {
+                self.dcsr = 0x4000_0003 | (v & 0x8004) | (self.dcsr & 0x1c0)
+            }
+            CSR_DPC => self.dpc = v & !1,
             CSR_MINSTRET => {
                 self.minstret = (self.minstret & !0xffff_ffff) | u64::from(v)
             }
@@ -325,9 +353,39 @@ impl Model {
     /// One instruction, or the interrupt taken instead of it when
     /// `interrupt` names one: the caller decides, since the core decides
     /// on the pending bits and the count as they stood a cycle earlier.
+    /// Debug mode entered, before the instruction at `pc`, which
+    /// becomes `dpc`: the cause is a step when one has just run, an
+    /// `ebreak` when that is the instruction and `dcsr.ebreakm` is set,
+    /// and a halt request otherwise.
+    pub fn enter_debug(&mut self, imem: &[u32]) {
+        let at_ebreak = self
+            .fetch_at(imem, self.pc)
+            .map(|(w, _)| matches!(decode(w).kind, Kind::Ebreak))
+            .unwrap_or(false);
+        let cause = if self.stepped {
+            4
+        } else if at_ebreak && self.dcsr & 0x8000 != 0 {
+            1
+        } else {
+            3
+        };
+        self.dcsr = 0x4000_0003 | (self.dcsr & 0x8004) | (cause << 6);
+        self.dpc = self.pc;
+        self.debug = true;
+        self.stepped = false;
+    }
+
+    /// Debug mode left, to `dpc`, arming a single step when `dcsr.step`
+    /// asks for one.
+    pub fn resume(&mut self) {
+        self.debug = false;
+        self.pc = self.dpc;
+        self.step_armed = self.dcsr & 4 != 0;
+    }
+
     /// Does nothing once halted.
     pub fn step(&mut self, imem: &[u32], interrupt: Option<u32>) {
-        if self.halted.is_some() {
+        if self.halted.is_some() || self.debug {
             return;
         }
         // One more retired, counted before the instruction runs so
@@ -341,6 +399,12 @@ impl Model {
         if let Some(cause) = interrupt {
             self.trap(cause, 0);
             return;
+        }
+        // The instruction about to run is the stepped one, if a step
+        // was armed: the core asks to enter again before the next.
+        if self.step_armed {
+            self.step_armed = false;
+            self.stepped = true;
         }
         let d = decode(w);
         let a = self.x[d.rs1 as usize];

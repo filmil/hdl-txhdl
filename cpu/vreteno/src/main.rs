@@ -27,8 +27,7 @@ const NIDS: usize = 4;
 /// The address map, as the router's type states it: the data memory,
 /// the timer and the serial port, a nibble each, and every other
 /// address a hole the router answers itself.
-type Rtr =
-    Router3<
+type Rtr = Router3<
     32,
     32,
     4,
@@ -100,6 +99,11 @@ fn main() {
     let mut timer = Timer::<IW>::default();
     let mut uart = Uart::<4>::default();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
+    // No debugger here: its request lines stay low and what the
+    // core says about debug mode is not read (issue 154).
+    let (_haltreq_o, haltreq) = signal::<Bit, DefaultClock>();
+    let (_resumereq_o, resumereq) = signal::<Bit, DefaultClock>();
+    let (debug_o, dbg) = signal::<Bit, DefaultClock>();
     let (instr_out, instr) = signal::<U<32>, DefaultClock>();
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
     if let Some(mut w) = Wave::from_env() {
@@ -171,6 +175,11 @@ fn main() {
         w.add("instr", &instr);
         w.add("wb", &wb);
         w.add("halt", &halt);
+        // The debugger's lines, quiet here, traced because the
+        // testbench reads every port of the core from the wave.
+        w.add("haltreq", &haltreq);
+        w.add("resumereq", &resumereq);
+        w.add("dbg", &dbg);
         w.start();
     }
     // The timer first: its line is a wire the core reads in the same
@@ -186,8 +195,14 @@ fn main() {
             join2(
                 dmem.run((dreq, dwd), (dans, drb)),
                 cpu.run(
-                    (rst, irq, tirq, sirq, crdata, cdone, grant),
-                    (halt_out, instr_out, wb_out, issue, wbeat, release),
+                    (
+                        rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
+                        resumereq,
+                    ),
+                    (
+                        halt_out, instr_out, wb_out, issue, wbeat, release,
+                        debug_o,
+                    ),
                 ),
             ),
         ),

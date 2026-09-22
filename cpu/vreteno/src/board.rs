@@ -346,6 +346,11 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         let (done_tx, done_rx) = chan::<Done<2>, DefaultClock>();
         let (rdata_tx, rdata_rx) = chan::<R<32, 2>, DefaultClock>();
         let (instr_o, _instr_i) = signal::<U<32>, DefaultClock>();
+        // The debugger's requests, low until a debug module sits on
+        // the bus (issue 154).
+        let (_haltreq_o, haltreq_i) = signal::<Bit, DefaultClock>();
+        let (_resumereq_o, resumereq_i) = signal::<Bit, DefaultClock>();
+        let (debug_o, _debug_i) = signal::<Bit, DefaultClock>();
         let (retire_o, _retire_i) = signal::<Writeback, DefaultClock>();
         let (tirq_o, tirq_i) = signal::<Bit, DefaultClock>();
         // The software interrupt the controller raises for a program.
@@ -480,12 +485,19 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                     self.dmem.run((req0_rx, wd0_rx), (ans0_tx, rb0_tx)),
                     self.cpu.run(
                         (
-                            rst, eirq_i, tirq_i, sirq_i, rdata_rx, done_rx,
+                            rst,
+                            eirq_i,
+                            tirq_i,
+                            sirq_i,
+                            rdata_rx,
+                            done_rx,
                             grant_rx,
+                            haltreq_i,
+                            resumereq_i,
                         ),
                         (
                             halt, instr_o, retire_o, issue_tx, wbeat_tx,
-                            release_tx,
+                            release_tx, debug_o,
                         ),
                     ),
                 ),

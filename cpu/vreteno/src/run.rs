@@ -77,6 +77,10 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let (sirq_out, sirq) = signal::<Bit, DefaultClock>();
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
+    // No debugger on this machine: its requests stay low.
+    let (_haltreq_o, haltreq) = signal::<Bit, DefaultClock>();
+    let (_resumereq_o, resumereq) = signal::<Bit, DefaultClock>();
+    let (debug_o, _debug) = signal::<Bit, DefaultClock>();
     // The port's interrupt, which these programs do not use: none of
     // them waits for input or installs a handler.
     let (uirq_out, _uirq) = signal::<Bit, DefaultClock>();
@@ -131,8 +135,14 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
                     rom.run((rreq, rwd), (rans, rrb)),
                 ),
                 cpu.run(
-                    (rst, irq, tirq, sirq, crdata, cdone, grant),
-                    (halt_out, instr_out, wb_out, issue, wbeat, release),
+                    (
+                        rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
+                        resumereq,
+                    ),
+                    (
+                        halt_out, instr_out, wb_out, issue, wbeat, release,
+                        debug_o,
+                    ),
                 ),
             ),
         ),
