@@ -537,8 +537,11 @@ from nowhere read zero and a program carried on as though it had read
 a word, which two board programs paid for in silence (issue 417).
 The remote peripheral refuses on purpose when its patience runs out,
 so a program that means to poll it sets \code{mbusquiet} and reads
-the zeros as before. A fetch from nowhere reads zero, which is an
-illegal instruction, and traps under that name for now.
+the zeros as before. A fetch the bus refused comes back as a zero
+word with a mark, and the instruction taken from it raises the
+instruction access fault, cause 1, with its own address in
+\code{mtval}, rather than the illegal instruction the zero would be
+(issue 423).
 
 The bus is AXI4~\cite{axi}. The core is a host, and a host written
 as hardware, so it holds the link's channel ends themselves rather
@@ -1082,7 +1085,8 @@ stores to an address nothing decodes, with a handler that counts,
 sums the causes, keeps the trap values and steps past a load, then
 sets \code{mbusquiet} and does both again to read a zero and drop the
 store. The board test's program that pokes the boot memory has a
-handler for the refusal too.
+handler for the refusal too. A third program jumps into nowhere and
+comes back through its handler with the fetch's cause and address.
 
 \lstinputlisting[caption={\code{lockstep.rs}: the core against the
 model.},label={lst:v-lockstep}]{cpu/vreteno/tests/lockstep.rs}
