@@ -118,11 +118,15 @@ fn main() {
     let mut sim = Running::new(two.run((go, go_slow), (a_o, b_o)));
     println!("   t  the fast count  the slow count");
     for tick in 0..60 {
-        // Both are told to count from the third tick, and the fast one
-        // stops halfway, so neither port is a function of the other's
-        // clock and a testbench that mixed them up would be caught.
+        // The fast one is told to count from the third tick and stops
+        // halfway, so neither port is a function of the other's clock
+        // and a testbench that mixed them up would be caught. The slow
+        // one is told on and off by turns, one tick after each of its
+        // own edges, which come every third tick: what it counts is
+        // what was in force at the edge, and a testbench that offered
+        // it the value from after the edge is caught (issue 405).
         go_o.set(Bit::from_bool((3..30).contains(&tick)));
-        slow_o.set(Bit::from_bool(tick >= 3));
+        slow_o.set(Bit::from_bool(tick >= 1 && ((tick - 1) / 3) % 2 == 0));
         sim.cycle();
         if tick % 6 == 0 {
             println!("{tick:4}  {:14}  {:14}", a.get().raw(), b.get().raw());
