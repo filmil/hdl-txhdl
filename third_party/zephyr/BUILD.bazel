@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# What Zephyr's build needs, named where the other fetched trees are
+# named. `zephyr.BUILD.bazel` is the build file the archive is given;
+# `requirements.txt` is the Python closure its header generation
+# imports.
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "requirements.txt",
+    "zephyr.BUILD.bazel",
+])

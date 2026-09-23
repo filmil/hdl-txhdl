@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Zephyr as this build sees it: a tree of sources its own CMake reads,
+# rather than anything Bazel compiles. Bazel's part is to hand the
+# whole of it to that CMake with every tool pinned.
+
+package(default_visibility = ["//visibility:public"])
+
+# Everything. Zephyr's build finds its own tree by paths it works out
+# from CMake, Kconfig and Python as it goes, so naming a subset here
+# would be a guess that fails later and further from its cause.
+#
+# Paths holding a space are dropped because Bazel cannot name them.
+# Zephyr has a few in its test data and none of them are read here.
+filegroup(
+    name = "all",
+    srcs = glob(
+        ["**"],
+        exclude = ["**/* *"],
+    ),
+)

@@ -237,3 +237,78 @@ filegroup(name = "all", srcs = glob(["tree/**"]))
 """,
     locks = ["//third_party/nangate45:nangate45.lock.tsv"],
 )
+
+# Zephyr, and what its build needs, so that the port under `//zephyr`
+# is compiled by this build rather than by a reader following a README
+# (issue 390).
+#
+# Nothing here is used by any other target. The cost is a cold build's
+# fetches, about ninety megabytes of Zephyr and rather less of the
+# rest; the gain is that a device tree which does not parse, a Kconfig
+# symbol that does not exist, or a driver that does not compile fails
+# `bazel test //...` instead of waiting for somebody to try it. That
+# port shipped four faults of exactly those kinds, every one of them
+# leaving a green build, before it ever printed on a board.
+#
+# Python is here because Zephyr's build generates its headers with
+# Python and there is no way to have the one without the other. It is
+# a vendored toolchain rather than a language this repository writes
+# in: nothing under `//tools` becomes Python because of this.
+bazel_dep(name = "rules_python", version = "2.3.4")
+bazel_dep(name = "rules_foreign_cc", version = "0.16.0")
+bazel_dep(name = "rules_dtc", version = "0.0.5")
+bazel_dep(name = "dtc", version = "1.7.2.bcr.1")
+
+# `flex` is pinned rather than resolved. The default resolution takes
+# `2.6.4.bcr.2`, on which building `dtc` fails with `config.h:208:
+# expected expression before '/'` and a `strrchr` called with too few
+# arguments.
+bazel_dep(name = "flex", version = "2.6.4.bcr.6")
+bazel_dep(name = "ninja", version = "1.13.2")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(is_default = True, python_version = "3.12")
+use_repo(python, "python_3_12_host")
+
+# The devicetree tooling Zephyr's build imports. The closure is listed
+# and not just the four packages that are named in Zephyr's own
+# documentation: `rules_python` installs what it is given and nothing
+# else, so a missing transitive dependency is a `No module named` at
+# the end of a configure rather than at the start of one.
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "zephyr_py",
+    python_version = "3.12",
+    requirements_lock = "//third_party/zephyr:requirements.txt",
+)
+use_repo(pip, "zephyr_py")
+
+# CMake, prebuilt and by checksum, as the RISC-V compiler above is.
+# Zephyr drives its build with CMake, so what is wanted is the binary
+# rather than a library rule.
+http_archive(
+    name = "cmake_host",
+    build_file_content = """
+package(default_visibility = ["//visibility:public"])
+filegroup(name = "cmake", srcs = ["bin/cmake"])
+filegroup(name = "all", srcs = glob(["**"]))
+""",
+    sha256 = "5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf",
+    strip_prefix = "cmake-3.31.6-linux-x86_64",
+    urls = [
+        "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz",
+    ],
+)
+
+# Zephyr itself, at the release the port was written against. The
+# module under `//zephyr` is pointed at this tree rather than vendored
+# into it, which is the same arrangement a reader gets with `west`.
+http_archive(
+    name = "zephyr",
+    build_file = "//third_party/zephyr:zephyr.BUILD.bazel",
+    sha256 = "b98623e68d9eb220331ad7447ceae465673a3538704d94add30ac3b66721f992",
+    strip_prefix = "zephyr-4.1.0",
+    urls = [
+        "https://github.com/zephyrproject-rtos/zephyr/archive/refs/tags/v4.1.0.tar.gz",
+    ],
+)

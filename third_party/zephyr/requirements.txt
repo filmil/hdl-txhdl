@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# What Zephyr's build imports while it generates its headers. This is
+# the transitive closure and not the four packages Zephyr's own
+# documentation names: `rules_python` installs what it is given and
+# nothing else, so a missing dependency here is a `No module named`
+# raised part way through a configure rather than at the start of one.
+# `six` was the first one found that way.
+PyYAML==6.0.2
+pykwalify==1.8.0
+pyelftools==0.31
+packaging==24.2
+anytree==2.12.1
+intelhex==2.3.0
+six==1.17.0
+docopt==0.6.2
+python-dateutil==2.9.0.post0
+ruamel.yaml==0.18.10
+ruamel.yaml.clib==0.2.12
