@@ -2,10 +2,47 @@
 
 if SOC_VRETENO
 
-config NUM_IRQS
-	# The platform controller carries two sources, the serial port's
-	# receive line and the board's own input, above the local ones.
+# The platform controller is a second level of interrupts, and until
+# something connected one this was never configured: the console is
+# polled and the machine timer is a local interrupt, so nothing had
+# ever asked the controller for a line. The first thing that did, the
+# Ethernet driver, failed the build with `IRQ 11 not present in parent
+# offsets`, which is this block missing rather than anything wrong
+# with the driver.
+config MULTI_LEVEL_INTERRUPTS
+	default y
+
+config 2ND_LEVEL_INTERRUPTS
+	default y
+
+# One controller, reached through the core's external interrupt, which
+# is cause 11 and is what the device tree gives as the controller's
+# own `interrupts-extended`.
+config NUM_2ND_LEVEL_AGGREGATORS
+	default 1
+
+config 2ND_LVL_INTR_00_OFFSET
+	default 11
+
+# The local interrupts come first and the controller's sources after
+# them, so the second level starts where the first ends.
+config 2ND_LVL_ISR_TBL_OFFSET
 	default 12
+
+# Three sources, numbered from one: the serial port's receive line,
+# the board's own input, and a frame arriving on the Ethernet port.
+# The device tree says three in `riscv,ndev`; the table needs a slot
+# for the unused zero as well, so it is four wide and the highest
+# number is `2ND_LVL_ISR_TBL_OFFSET` plus three, which is fifteen.
+config MAX_IRQ_PER_AGGREGATOR
+	default 4
+
+config NUM_IRQS
+	# Twelve local, then the controller's table through fifteen, so
+	# sixteen entries. Counting three here rather than four is the
+	# off-by-one this arrangement invites, and the build says
+	# "IRQ 15 exceeds the maximum of 14" when it is made.
+	default 16
 
 config SYS_CLOCK_HW_CYCLES_PER_SEC
 	# The design clock on the board, which is also the device tree's
