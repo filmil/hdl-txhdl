@@ -859,6 +859,40 @@ A probe whose answer is "no" is kept, tagged `manual` so it stays out of
 The first draft of the embedding article argued from the language
 reference and was wrong twice in eleven claims.
 
+# Prefer the interface somebody else already maintains
+
+Where the choice is between an interface that already has maintained
+software on the other side of it and one this repository would define,
+take the first, and take it even when defining one looks like less
+work today.
+The implementation is the cheap half and the interface is the
+expensive one, so the interface should be the one somebody else is
+already paying to keep.
+
+Four decisions have gone that way, and three of the four were a
+session's call rather than something the user asked for:
+
+* fastboot as the loading protocol, because the host tool ships on
+  every desktop and needs nothing written for it (#143).
+* Zephyr's networking for TCP, rather than a stack written here
+  (#411, and #143 behind it).
+* Zephyr's Ethernet driver model, so the peripheral's registers are a
+  port of a driver that already works rather than a map invented here
+  (#411).
+* The RISC-V debug transport and debug module, so that gdb and
+  OpenOCD speak to this core, rather than a debug module of our own
+  (#154).
+
+The fourth one is what made this worth writing down: the principle was
+already operating, and each of us was rediscovering it and arguing it
+again from the beginning.
+
+It is a default and not a law.
+An interface with maintained software behind it can still be the wrong
+one, and the way to say so is to name what it costs here rather than
+to reach for a fresh design because the fresh design is more
+interesting.
+
 # Building
 
 Everything is hermetic.
