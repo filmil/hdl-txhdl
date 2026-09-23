@@ -240,9 +240,17 @@ trains at Gen2 over two lanes, that the host enumerates the device and
 its BAR, and that a read and a write reach the registers; it needs the
 board in a slot and a small program on the host~\cite{i180}.
 
-The endpoint is not simulated. The IP's simulation library that the
-build makes holds only the core's top wrapper, and there is no root
-port model in the build to train a link against~\cite{i178}.
+The endpoint is simulated only so far. The core's simulation library
+holds every source the core needs, since the build compiles it from
+Vivado's own exported simulation rather than from the top wrapper
+alone, and \code{//pcie/sim:xdma\_test} elaborates the board's top,
+the core inside it and \code{BarRegs} behind BAR0 under Vivado's
+simulator and runs them: the reference clock driven, the reset
+released, nothing on the lanes, and the link staying down, read as a
+known zero rather than an unknown. There is still no root port model
+in the build to train a link against and enumerate the endpoint,
+which is what would let a read and a write be followed from the host
+side to the registers~\cite{i178}.
 
 \code{vivado\_ip} reports success when Vivado refuses a core's
 settings, so a mistyped setting shows only in the log~\cite{i177}. The
