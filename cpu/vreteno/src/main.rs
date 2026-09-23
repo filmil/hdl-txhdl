@@ -104,6 +104,12 @@ fn main() {
     let (_haltreq_o, haltreq) = signal::<Bit, DefaultClock>();
     let (_resumereq_o, resumereq) = signal::<Bit, DefaultClock>();
     let (debug_o, dbg) = signal::<Bit, DefaultClock>();
+    // The debug module's register access, absent here but traced, since
+    // the testbench reads every port of the core from the wave.
+    let (_dbg_regno_o, dbg_regno) = signal::<U<16>, DefaultClock>();
+    let (_dbg_wdata_o, dbg_wdata) = signal::<U<32>, DefaultClock>();
+    let (_dbg_we_o, dbg_we) = signal::<Bit, DefaultClock>();
+    let (dbg_rdata_o, dbg_rdata) = signal::<U<32>, DefaultClock>();
     let (instr_out, instr) = signal::<U<32>, DefaultClock>();
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
     if let Some(mut w) = Wave::from_env() {
@@ -180,6 +186,10 @@ fn main() {
         w.add("haltreq", &haltreq);
         w.add("resumereq", &resumereq);
         w.add("dbg", &dbg);
+        w.add("dbg_regno", &dbg_regno);
+        w.add("dbg_wdata", &dbg_wdata);
+        w.add("dbg_we", &dbg_we);
+        w.add("dbg_rdata", &dbg_rdata);
         w.start();
     }
     // The timer first: its line is a wire the core reads in the same
@@ -197,11 +207,17 @@ fn main() {
                 cpu.run(
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
-                        resumereq,
+                        resumereq, dbg_regno, dbg_wdata, dbg_we,
                     ),
                     (
-                        halt_out, instr_out, wb_out, issue, wbeat, release,
+                        halt_out,
+                        instr_out,
+                        wb_out,
+                        issue,
+                        wbeat,
+                        release,
                         debug_o,
+                        dbg_rdata_o,
                     ),
                 ),
             ),

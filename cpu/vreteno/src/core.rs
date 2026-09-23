@@ -726,7 +726,20 @@ impl<const IW: usize> Vreteno<IW> {
 impl<const IW: usize> Unit for Vreteno<IW> {
     async fn run(
         &mut self,
-        (rst, irq, tirq, sirq, rdata, done, grant, haltreq, resumereq): (
+        (
+            rst,
+            irq,
+            tirq,
+            sirq,
+            rdata,
+            done,
+            grant,
+            haltreq,
+            resumereq,
+            dbg_regno,
+            dbg_wdata,
+            dbg_we,
+        ): (
             In<Bit>,
             In<Bit>,
             In<Bit>,
@@ -736,8 +749,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             Rx<Grant<IW>>,
             In<Bit>,
             In<Bit>,
+            In<U<16>>,
+            In<U<32>>,
+            In<Bit>,
         ),
-        (halt, instr, wb, issue, wbeat, release, dbg): (
+        (halt, instr, wb, issue, wbeat, release, dbg, dbg_rdata): (
             Out<Bit>,
             Out<U<32>>,
             Out<Writeback>,
@@ -745,6 +761,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             Tx<W<32, 4>>,
             Tx<Grant<IW>>,
             Out<Bit>,
+            Out<U<32>>,
         ),
     ) {
         loop {
@@ -753,6 +770,16 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let sirq = sirq.get();
             // The debugger's two requests, and the debug state.
             let (haltreq, resumereq) = (haltreq.get(), resumereq.get());
+            // The debug module's register access, honoured in debug mode
+            // only: a number in the specification's space, 0x1000 and
+            // up a general register, below that a CSR, the word to
+            // write and whether to. The register file's first read port
+            // and its write port are lent to it, since nothing runs.
+            let (dbg_regno, dbg_wdata, dbg_we) =
+                (dbg_regno.get(), dbg_wdata.get(), dbg_we.get());
+            let dbg_gpr = dbg_regno.slice::<0, 5>();
+            let dbg_is_gpr = dbg_regno.bit(12);
+            let dbg_csr = dbg_regno.slice::<0, 12>();
             let in_debug = self.debug.get();
             let (dcsr, dpc) = (self.dcsr.get(), self.dpc.get());
             // The registers a step takes apart or hands on as values;
@@ -890,11 +917,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // data memory. A store goes out when the bus has room; a
             // load goes out and moves on to writeback, which holds it
             // until the answer has landed in its register there.
-            let a = mux(
-                rs1 == 0,
-                U::<32>::from(0u32),
-                mux(fwd_a, wb_alu, self.regs.read(rs1)),
-            );
+            let ra = self.regs.read(mux(in_debug, dbg_gpr, rs1));
+            let a = mux(rs1 == 0, U::<32>::from(0u32), mux(fwd_a, wb_alu, ra));
             let b = mux(
                 rs2 == 0,
                 U::<32>::from(0u32),
@@ -1036,7 +1060,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 mux(tirq, mip | isa::MTIMER, mip),
             );
             let csr_old = csr_read(
-                f12,
+                mux(in_debug, dbg_csr, f12),
                 self.mcycle.get(),
                 self.minstret.get(),
                 mstatus,
@@ -1201,7 +1225,14 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // the last value to settle, passes through as little as
             // possible; the word fetched under a redirect is written
             // and marked empty.
-            when!(wb_write => self { regs.at(wb_rd): wb_val });
+            // The register file's write port: the writeback's, or the
+            // debug module's while the core is halted and nothing
+            // retires; `x0` is not written for it either.
+            let dbg_gpr_we = in_debug & dbg_we & dbg_is_gpr & (dbg_gpr != 0);
+            let rf_we = wb_write | dbg_gpr_we;
+            let rf_at = mux(dbg_gpr_we, dbg_gpr, wb_rd);
+            let rf_val = mux(dbg_gpr_we, dbg_wdata, wb_val);
+            when!(rf_we => self { regs.at(rf_at): rf_val });
             self.halted.set(!rst & (self.halted | self.wb_stop));
             // The bus: a load or a store is a burst of one beat at
             // the address, and a store's beat carries the data with
@@ -1402,6 +1433,14 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                         | (dcsr & U::<32>::from(0x1c0u32)),
                 csr_write & (f12 == isa::CSR_DPC) ?
                     dpc: csr_new & U::<32>::from(0xffff_fffeu32),
+                // The debug module writes the two, from outside, while
+                // the core is halted.
+                in_debug & dbg_we & !dbg_is_gpr & (dbg_csr == isa::CSR_DCSR) ?
+                    dcsr: U::<32>::from(0x4000_0003u32)
+                        | (dbg_wdata & U::<32>::from(0x8004u32))
+                        | (dcsr & U::<32>::from(0x1c0u32)),
+                in_debug & dbg_we & !dbg_is_gpr & (dbg_csr == isa::CSR_DPC) ?
+                    dpc: dbg_wdata & U::<32>::from(0xffff_fffeu32),
                 // A reset puts the CSRs back as configuration left
                 // them, so a program started by the reset line sees
                 // what a program started by configuration sees: the
@@ -1571,6 +1610,14 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             self.stopped.set(stop);
             halt.set(self.halted);
             dbg.set(self.debug);
+            // What the debug module asked for: a general register through
+            // the lent read port, `x0` as zero, or a CSR through the
+            // CSR read, whose number is the module's in debug mode.
+            dbg_rdata.set(mux(
+                dbg_is_gpr,
+                mux(dbg_gpr == 0, U::<32>::from(0u32), ra),
+                csr_old,
+            ));
             instr.set(mux(wb_here, self.wb_ir.get(), U::<32>::from(0u32)));
             wb.set(Writeback {
                 done: wb_here,

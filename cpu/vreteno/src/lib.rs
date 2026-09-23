@@ -3,6 +3,7 @@
 //! checked against and the programs it runs.
 pub mod board;
 pub mod core;
+pub mod debug;
 pub mod dmem;
 pub mod isa;
 pub mod model;

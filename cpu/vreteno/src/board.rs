@@ -24,6 +24,7 @@
 //! ports. `MICRON_SIM` and `BIST` are the memory controller's, and
 //! `DIV` is the serial port's clock divider.
 use crate::core::{Vreteno, Writeback};
+use crate::debug::Dm;
 use crate::dmem::Dmem;
 use crate::rom::Rom;
 use crate::timer::Timer;
@@ -42,7 +43,7 @@ use txhdl_parts::bus::axi_lite::{
     LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge4, LiteR, LiteW,
 };
 use txhdl_parts::bus::axi_pins::{AxiPins, AxiPinsIn, AxiPinsOut};
-use txhdl_parts::bus::router::Router6;
+use txhdl_parts::bus::router::Router7;
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::plic::Plic2;
 use txhdl_parts::pwm::Pwm;
@@ -74,8 +75,9 @@ pub const REMOTE_WAIT: usize = 100_000_000;
 /// The address map: each peripheral's base and the bits of an address
 /// that must equal it. The first three are a page each; the memory is
 /// the quarter of the address space from `0x4000_0000`, and the
-/// interrupt controller the 64 MiB from `0x0c00_0000`.
-pub type BoardRouter = Router6<
+/// interrupt controller the 64 MiB from `0x0c00_0000`; the debug
+/// module has the 64 KiB from `0x1000_0000` (issue 154).
+pub type BoardRouter = Router7<
     32,
     32,
     4,
@@ -92,6 +94,8 @@ pub type BoardRouter = Router6<
     0xfc00_0000,
     0x0000_0000,
     0xffff_f000,
+    0x1000_0000,
+    0xffff_0000,
 >;
 // end{map}
 
@@ -148,6 +152,11 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     // end{vslot}
     pub pddr3: AxiPer<32, 32, 4, 4>,
     pub pplic: LiteBridge1<32, 32, 4, 4, 0x0c00_0000, 0xfc00_0000>,
+    /// The debug module, on a router port of its own behind a bridge
+    /// of its own, so the JTAG host reaches it while the core is
+    /// halted (issue 154).
+    pub pdm: LiteBridge1<32, 32, 4, 4, 0x1000_0000, 0xffff_0000>,
+    pub dmod: Dm,
     /// The boot memory on the bus, at address zero, readable and not
     /// writable: the same words the core fetches from inside itself,
     /// so a load can read a constant beside the code (#268).
@@ -346,11 +355,16 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         let (done_tx, done_rx) = chan::<Done<2>, DefaultClock>();
         let (rdata_tx, rdata_rx) = chan::<R<32, 2>, DefaultClock>();
         let (instr_o, _instr_i) = signal::<U<32>, DefaultClock>();
-        // The debugger's requests, low until a debug module sits on
-        // the bus (issue 154).
-        let (_haltreq_o, haltreq_i) = signal::<Bit, DefaultClock>();
-        let (_resumereq_o, resumereq_i) = signal::<Bit, DefaultClock>();
-        let (debug_o, _debug_i) = signal::<Bit, DefaultClock>();
+        // The debug module's lines to the core and back: the two
+        // requests, the register access, and debug mode with the word
+        // read (issue 154).
+        let (haltreq_o, haltreq_i) = signal::<Bit, DefaultClock>();
+        let (resumereq_o, resumereq_i) = signal::<Bit, DefaultClock>();
+        let (dbg_regno_o, dbg_regno_i) = signal::<U<16>, DefaultClock>();
+        let (dbg_wdata_o, dbg_wdata_i) = signal::<U<32>, DefaultClock>();
+        let (dbg_we_o, dbg_we_i) = signal::<Bit, DefaultClock>();
+        let (debug_o, debug_i) = signal::<Bit, DefaultClock>();
+        let (dbg_rdata_o, dbg_rdata_i) = signal::<U<32>, DefaultClock>();
         let (retire_o, _retire_i) = signal::<Writeback, DefaultClock>();
         let (tirq_o, tirq_i) = signal::<Bit, DefaultClock>();
         // The software interrupt the controller raises for a program.
@@ -452,6 +466,17 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         let (pw_tx, pw_rx) = chan::<LiteW<32, 4>, DefaultClock>();
         let (pb_tx, pb_rx) = chan::<LiteB, DefaultClock>();
         let (pr_tx, pr_rx) = chan::<LiteR<32>, DefaultClock>();
+        // And the debug module, on the seventh port.
+        let (aw6_tx, aw6_rx) = chan::<Aw<32, 4>, DefaultClock>();
+        let (ar6_tx, ar6_rx) = chan::<Ar<32, 4>, DefaultClock>();
+        let (w6_tx, w6_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (b6_tx, b6_rx) = chan::<B<4>, DefaultClock>();
+        let (r6_tx, r6_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (daw_tx, daw_rx) = chan::<LiteAw<32>, DefaultClock>();
+        let (dar_tx, dar_rx) = chan::<LiteAr<32>, DefaultClock>();
+        let (dw_tx, dw_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (db_tx, db_rx) = chan::<LiteB, DefaultClock>();
+        let (dr_tx, dr_rx) = chan::<LiteR<32>, DefaultClock>();
         // The timer first, since the core reads its line in the same
         // step, and the memory controller before the bridge inside its
         // own unit, for the same reason. The serial port before the
@@ -460,9 +485,31 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         join2(
             join2(
                 join2(
-                    self.timer.run(
-                        (rst_timer, req1_rx, wd1_rx),
-                        (ans1_tx, rb1_tx, tirq_o, sirq_o),
+                    join2(
+                        // The debug module before the core, whose
+                        // requests the core reads in the same step.
+                        join2(
+                            self.dmod.run(
+                                (daw_rx, dar_rx, dw_rx, debug_i, dbg_rdata_i),
+                                (
+                                    db_tx,
+                                    dr_tx,
+                                    haltreq_o,
+                                    resumereq_o,
+                                    dbg_regno_o,
+                                    dbg_wdata_o,
+                                    dbg_we_o,
+                                ),
+                            ),
+                            self.pdm.run(
+                                (aw6_rx, ar6_rx, w6_rx, db_rx, dr_rx),
+                                (daw_tx, dar_tx, dw_tx, b6_tx, r6_tx),
+                            ),
+                        ),
+                        self.timer.run(
+                            (rst_timer, req1_rx, wd1_rx),
+                            (ans1_tx, rb1_tx, tirq_o, sirq_o),
+                        ),
                     ),
                     join2(
                         join2(
@@ -494,10 +541,19 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                             grant_rx,
                             haltreq_i,
                             resumereq_i,
+                            dbg_regno_i,
+                            dbg_wdata_i,
+                            dbg_we_i,
                         ),
                         (
-                            halt, instr_o, retire_o, issue_tx, wbeat_tx,
-                            release_tx, debug_o,
+                            halt,
+                            instr_o,
+                            retire_o,
+                            issue_tx,
+                            wbeat_tx,
+                            release_tx,
+                            debug_o,
+                            dbg_rdata_o,
                         ),
                     ),
                 ),
@@ -575,13 +631,13 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                         (
                             xaw_rx, xar_rx, xw_rx, b0_rx, r0_rx, b1_rx, r1_rx,
                             b2_rx, r2_rx, b3_rx, r3_rx, b4_rx, r4_rx, b5_rx,
-                            r5_rx,
+                            r5_rx, b6_rx, r6_rx,
                         ),
                         (
                             aw0_tx, ar0_tx, w0_tx, aw1_tx, ar1_tx, w1_tx,
                             aw2_tx, ar2_tx, w2_tx, aw3_tx, ar3_tx, w3_tx,
                             aw4_tx, ar4_tx, w4_tx, aw5_tx, ar5_tx, w5_tx,
-                            xb_tx, xr_tx,
+                            aw6_tx, ar6_tx, w6_tx, xb_tx, xr_tx,
                         ),
                     ),
                 ),

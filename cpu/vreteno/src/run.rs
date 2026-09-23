@@ -81,6 +81,12 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let (_haltreq_o, haltreq) = signal::<Bit, DefaultClock>();
     let (_resumereq_o, resumereq) = signal::<Bit, DefaultClock>();
     let (debug_o, _debug) = signal::<Bit, DefaultClock>();
+    // The debug module's register access, absent here: the number and
+    // the word stay zero, the write never comes, the answer is unread.
+    let (_dbg_regno_o, dbg_regno) = signal::<U<16>, DefaultClock>();
+    let (_dbg_wdata_o, dbg_wdata) = signal::<U<32>, DefaultClock>();
+    let (_dbg_we_o, dbg_we) = signal::<Bit, DefaultClock>();
+    let (dbg_rdata_o, _dbg_rdata) = signal::<U<32>, DefaultClock>();
     // The port's interrupt, which these programs do not use: none of
     // them waits for input or installs a handler.
     let (uirq_out, _uirq) = signal::<Bit, DefaultClock>();
@@ -137,11 +143,17 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
                 cpu.run(
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
-                        resumereq,
+                        resumereq, dbg_regno, dbg_wdata, dbg_we,
                     ),
                     (
-                        halt_out, instr_out, wb_out, issue, wbeat, release,
+                        halt_out,
+                        instr_out,
+                        wb_out,
+                        issue,
+                        wbeat,
+                        release,
                         debug_o,
+                        dbg_rdata_o,
                     ),
                 ),
             ),

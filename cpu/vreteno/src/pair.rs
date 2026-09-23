@@ -203,6 +203,15 @@ impl<const IW: usize> Unit for Pair<IW> {
         let (_hr2_o, hr2_i) = signal::<Bit, DefaultClock>();
         let (_rr2_o, rr2_i) = signal::<Bit, DefaultClock>();
         let (dbg2_o, _dbg2_i) = signal::<Bit, DefaultClock>();
+        // Nor a debug module: no register access on either.
+        let (_rn1_o, rn1_i) = signal::<U<16>, DefaultClock>();
+        let (_wd1_o, wd1_i) = signal::<U<32>, DefaultClock>();
+        let (_we1_o, we1_i) = signal::<Bit, DefaultClock>();
+        let (rd1_o, _rd1_i) = signal::<U<32>, DefaultClock>();
+        let (_rn2_o, rn2_i) = signal::<U<16>, DefaultClock>();
+        let (_wd2_o, wd2_i) = signal::<U<32>, DefaultClock>();
+        let (_we2_o, we2_i) = signal::<Bit, DefaultClock>();
+        let (rd2_o, _rd2_i) = signal::<U<32>, DefaultClock>();
         join2(
             join2(
                 join2(
@@ -219,21 +228,21 @@ impl<const IW: usize> Unit for Pair<IW> {
                     self.one.run(
                         (
                             rst_one, irq_one, tirq, sirq, rd1_rx, dn1_rx,
-                            gr1_rx, hr1_i, rr1_i,
+                            gr1_rx, hr1_i, rr1_i, rn1_i, wd1_i, we1_i,
                         ),
                         (
                             halt1_o, instr1_o, wb1_o, is1_tx, beat1_tx, rl1_tx,
-                            dbg1_o,
+                            dbg1_o, rd1_o,
                         ),
                     ),
                     self.two.run(
                         (
                             rst2_i, irq2, tirq_two, sirq_two, rd2_rx, dn2_rx,
-                            gr2_rx, hr2_i, rr2_i,
+                            gr2_rx, hr2_i, rr2_i, rn2_i, wd2_i, we2_i,
                         ),
                         (
                             halt2_o, instr2_o, wb2_o, is2_tx, beat2_tx, rl2_tx,
-                            dbg2_o,
+                            dbg2_o, rd2_o,
                         ),
                     ),
                 ),

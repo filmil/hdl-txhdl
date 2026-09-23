@@ -12,6 +12,7 @@ rust_library(
     srcs = [
         "src/board.rs",
         "src/core.rs",
+        "src/debug.rs",
         "src/dmem.rs",
         "src/rom.rs",
         "src/isa.rs",
@@ -630,6 +631,19 @@ vivado_repl(
     name = "vreteno_board_jtag_probe",
     data = [":vreteno_board_jtag_pnr"],
     script = "board/jtag/probe.tcl",
+    use_terminal = False,
+    tags = ["manual"],
+)
+
+# The debug module from the cable (issue 154): halt the core, read its
+# registers by the abstract command, resume it. Same bitstream, any
+# program running.
+#
+#   bazel run //cpu/vreteno:vreteno_board_dm_probe
+vivado_repl(
+    name = "vreteno_board_dm_probe",
+    data = [":vreteno_board_jtag_pnr"],
+    script = "board/jtag/dm_probe.tcl",
     use_terminal = False,
     tags = ["manual"],
 )
