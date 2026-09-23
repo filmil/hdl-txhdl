@@ -240,17 +240,26 @@ trains at Gen2 over two lanes, that the host enumerates the device and
 its BAR, and that a read and a write reach the registers; it needs the
 board in a slot and a small program on the host~\cite{i180}.
 
-The endpoint is simulated only so far. The core's simulation library
-holds every source the core needs, since the build compiles it from
-Vivado's own exported simulation rather than from the top wrapper
-alone, and \code{//pcie/sim:xdma\_test} elaborates the board's top,
-the core inside it and \code{BarRegs} behind BAR0 under Vivado's
-simulator and runs them: the reference clock driven, the reset
-released, nothing on the lanes, and the link staying down, read as a
-known zero rather than an unknown. There is still no root port model
-in the build to train a link against and enumerate the endpoint,
-which is what would let a read and a write be followed from the host
-side to the registers~\cite{i178}.
+The endpoint is simulated, on its own and against a root port. The
+core's simulation library holds every source the core needs, since
+the build compiles it from Vivado's own exported simulation rather
+than from the top wrapper alone. \code{//pcie/sim:xdma\_test}
+elaborates the board's top, the core inside it and \code{BarRegs}
+behind BAR0 under Vivado's simulator and runs them with nothing on
+the lanes: the link stays down, read as a known zero rather than an
+unknown. \code{//pcie/sim:rp\_test} puts the same top on two lanes
+against the behavioural root port and the host that Vivado writes
+into the core's example design, which the build keeps beside the
+core~\cite{i178}. The host trains the link, at Gen2 over both lanes,
+reads the device and vendor identifiers, scans and programs the BARs,
+and then runs \code{pcie/sim/rp/tests.vh}: it reads the two words of
+the identifier, writes the scratch word and reads it back, and reads
+the count of writes, expecting what \code{BarRegs} keeps. It takes
+twenty-six minutes, and it does not pass: BAR0 is 64~KiB and its
+first word is the core's own, \code{0x1fc0\_0006}, because Vivado
+ignores the bridge mode on this part and the core is a DMA
+engine~\cite{i451}. The test is the measurement of that, and goes
+green with the fix.
 
 \code{vivado\_ip} reports success when Vivado refuses a core's
 settings, so a mistyped setting shows only in the log~\cite{i177}. The
@@ -289,6 +298,11 @@ project repository \code{HDL/txhdl}, 2026.
 \bibitem{i180}
 Issue 180, ``test(pcie): run the endpoint in a PC and read its BAR from
 the host,'' project repository \code{HDL/txhdl}, 2026.
+
+\bibitem{i451}
+Issue 451, ``fix(pcie): the endpoint is a DMA engine, not a bridge;
+the Artix-7 XDMA ignores functional\_mode,'' project repository
+\code{HDL/txhdl}, 2026.
 
 \bibitem{cover}
 F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
