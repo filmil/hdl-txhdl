@@ -270,11 +270,11 @@ pub struct EthRx {
 
 // begin{rx}
 #[lower]
-impl Unit for EthRx {
+impl Unit<(In<U<8>>, In<Bit>, In<Bit>), (Tx<EthByte>, Out<U<16>>)> for EthRx {
     async fn run(
         &mut self,
         (rxd, rx_dv, rx_er): (In<U<8>>, In<Bit>, In<Bit>),
-        rx: Tx<EthByte>,
+        (rx, rx_len): (Tx<EthByte>, Out<U<16>>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -340,6 +340,22 @@ impl Unit for EthRx {
             if store {
                 self.frame.at(len).set(d);
             }
+            // The frame's length, for anything that must know it
+            // before it has consumed the frame. A store engine is
+            // told how many bytes to write when it starts, and by
+            // then the bytes are still in this unit, so counting
+            // them on the way past is too late. The value is here
+            // already: a whole frame is taken and checked before any
+            // of it is offered, so `len` is settled while `phase` is
+            // offering. It reads zero at every other time rather than
+            // holding the last frame's length, so that a reader
+            // cannot mistake a stale length for a current one.
+            rx_len.set(mux(
+                Bit::from(offering),
+                payload.resize::<16>(),
+                U::<16>::from(0u8),
+            ));
+
             if offer_go {
                 rx.send(EthByte {
                     data: self.frame.read(pos),
@@ -503,9 +519,12 @@ mod tests {
         let mut mac_tx = EthTx::default();
         let mut mac_rx = EthRx::default();
         let dropped = mac_rx.dropped;
+        // The length the receiver reports is not what this test
+        // checks; it reads the bytes and counts them itself.
+        let (rxlen_out, _rxlen) = signal::<U<16>, DefaultClock>();
         let mut sim = Running::new(join2(
             mac_tx.run(in_rx, (txd_out, en_out)),
-            mac_rx.run((rxd, dv, er), out_tx),
+            mac_rx.run((rxd, dv, er), (out_tx, rxlen_out)),
         ));
         let mut queue: Vec<EthByte> = Vec::new();
         for f in frames {

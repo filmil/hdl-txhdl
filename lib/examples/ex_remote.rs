@@ -96,6 +96,11 @@ fn main() {
     let mut remote = Remote::<PATIENCE>::default();
     let mut wire = RemoteLink::<DEVICE>::default();
     let mut mac_tx = EthTx::default();
+    // Each receive half says how long the frame it is offering is.
+    // This example carries whole frames between two links and never
+    // needs the length, so both ports are taken and ignored.
+    let (alen_out, _alen) = signal::<U<16>, DefaultClock>();
+    let (blen_out, _blen) = signal::<U<16>, DefaultClock>();
     let mut mac_rx = EthRx::default();
     let mut prog_mac_tx = EthTx::default();
     let mut prog_mac_rx = EthRx::default();
@@ -187,12 +192,12 @@ fn main() {
         join2(
             join2(
                 mac_tx.run(out_rx, (atxd_out, aen_out)),
-                mac_rx.run((arxd, adv, aer), prog_tx),
+                mac_rx.run((arxd, adv, aer), (prog_tx, alen_out)),
             ),
             join2(
                 join2(
                     prog_mac_tx.run(back_rx, (btxd_out, ben_out)),
-                    prog_mac_rx.run((brxd, bdv, ber), in_tx),
+                    prog_mac_rx.run((brxd, bdv, ber), (in_tx, blen_out)),
                 ),
                 client,
             ),

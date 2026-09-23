@@ -83,6 +83,12 @@ fn main() {
     let (rxd_out, rxd) = signal::<U<8>, DefaultClock>();
     let (dv_out, rx_dv) = signal::<Bit, DefaultClock>();
     let (er_out, rx_er) = signal::<Bit, DefaultClock>();
+    // The receive half now says how long the frame it is offering
+    // is, which this example does not use: it reads the bytes and
+    // counts them itself. It is still recorded, because the netlist
+    // is simulated against this trace and a port the trace holds
+    // nothing for is a port the testbench cannot drive.
+    let (rxlen_out, rx_len) = signal::<U<16>, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
 
     let mut host_unit = HostUnit::default();
@@ -101,6 +107,7 @@ fn main() {
         wave.add("r", &pr);
         wave.add("tx", &tx_rx);
         wave.add("rx", &rx_rx);
+        wave.add("rx_len", &rx_len);
         wave.add("txd", &txd);
         wave.add("tx_en", &tx_en);
         wave.add("rxd", &rxd);
@@ -174,7 +181,7 @@ fn main() {
             lite_unit.run((paw, par, pw, rx_rx), (pb, pr, tx_tx, irq_out)),
             join2(
                 mac_tx.run(tx_rx, (txd_out, en_out)),
-                mac_rx.run((rxd, rx_dv, rx_er), rx_tx),
+                mac_rx.run((rxd, rx_dv, rx_er), (rx_tx, rxlen_out)),
             ),
         ),
     );
