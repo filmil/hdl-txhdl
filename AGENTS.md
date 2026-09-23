@@ -542,6 +542,36 @@ Assert that the branch resolves before trusting a zero, since
 `git cherry` prints nothing when it fails and a counter reads that as
 "merged".
 
+That test is necessary and it is not sufficient, and the gap cost six
+days.
+It compares patch identifiers, so it answers whether a **patch**
+landed and not whether the **work** did.
+Anything reshaped on the way in reads as unmerged for ever:
+renumbered, reworded, rebased, split, or corrected by somebody else.
+On September 23, 2026 five worktrees were held on that basis and four
+of them had nothing pending.
+`i2c` was in `main` with its document section renumbered from `48_i2c`
+to `49_i2c`; `pcie` was in `main` with `docs/pcie.tex` present;
+`tuple-let` was in `main`, its text at `lib/macros/lib.rs:5888`; only
+`names` was genuinely absent.
+So the question was never "is the patch merged" but "is the content in
+`main`".
+Before calling a branch unfinished, look for its content under
+whatever name it landed as.
+
+**And a stale branch is not always a thing to preserve.**
+The fifth of those, `csrs`, had an unlanded commit saying "Six more
+say what the machine is" where `main` says "Five more", because that
+sentence had already been corrected days earlier in a commit that
+merged.
+Merging that branch would have reintroduced a counting error that was
+already fixed.
+Every procedure here, this file included, treats an unmerged branch as
+a thing to keep; sometimes it is a thing to discard, and the only way
+to tell is to read what it would change.
+That is the pair with the trailer rule below: in both, the obvious
+signal was also the wrong one.
+
 The dates mislead as well, and worse, because they look like facts
 rather than summaries.
 Rebase-merge rewrites the graph and leaves the author dates alone, so
