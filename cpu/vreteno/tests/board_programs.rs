@@ -16,7 +16,9 @@
 //! printed its header and then nothing at all.
 //!
 //! This test is what stands in the way of the next one.
-use vreteno32::isa::{CLINT_BASE, MTIME_OFF, UART_BASE};
+use vreteno32::isa::{
+    CLINT_BASE, ETH_BASE, ETH_BUF_BASE, MTIME_OFF, UART_BASE,
+};
 
 const BOOT: &str = include_str!("../rust/boot.rs");
 const DDR3: &str = include_str!("../rust/ddr3.rs");
@@ -124,4 +126,45 @@ fn the_peripherals_on_a_slot_are_inside_the_page_they_share() {
         );
         assert_eq!(addr & 0xff, 0, "{file}'s `{name}` is not on a slot");
     }
+}
+
+/// The Ethernet port's registers are on a slot the page decodes, and
+/// its buffers are in the memory the router answers for.
+///
+/// Issue 415 was an address that decoded to nothing, and the symptom
+/// was a board that printed its header and then stopped for ever. A
+/// peripheral base is the same kind of constant and fails the same
+/// silent way, so it is checked the same way.
+#[test]
+fn the_ethernet_port_is_somewhere_the_board_answers() {
+    // On the peripheral page, which the router gives 4 KiB.
+    assert_eq!(
+        decoded_by(ETH_BASE),
+        Some("the peripheral page"),
+        "the Ethernet registers"
+    );
+
+    // The page holds sixteen slots of 256 bytes and this is the
+    // fifth, after the serial port, the modulator, the video slot and
+    // the remote peripheral. Nothing before it moved to make room.
+    assert_eq!(ETH_BASE & 0xff, 0, "a slot starts on a 256 byte boundary");
+    assert_eq!(ETH_BASE, UART_BASE + 0x400, "the fifth slot");
+    assert_ne!(ETH_BASE, UART_BASE, "and not the serial port's");
+
+    // The buffers are in the DDR3 rather than inside the peripheral,
+    // so the engines reach them over the bus like any other memory.
+    assert_eq!(decoded_by(ETH_BUF_BASE), Some("the DDR3"), "the buffers");
+
+    // 1 KiB aligned, which is what lets a 256 beat burst of words run
+    // without crossing AXI4's 4 KiB boundary.
+    assert_eq!(ETH_BUF_BASE & 0x3ff, 0, "and aligned for a full burst");
+
+    // Clear of where a program is loaded, by a stated margin rather
+    // than a vague one: sixteen megabytes above the memory's base,
+    // where an image of a few tens of kilobytes goes.
+    assert_eq!(
+        (ETH_BUF_BASE - 0x4000_0000) >> 20,
+        16,
+        "megabytes above the address a program loads at"
+    );
 }
