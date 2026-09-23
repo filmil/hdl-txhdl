@@ -9,7 +9,9 @@
 //! answering them. And its netlist, which holds the memory controller
 //! as a foreign module.
 use std::collections::HashMap;
-use txhdl::comp::{chan, pad, signal, DefaultClock, Running, Rx, Tx, Unit};
+use txhdl::comp::{
+    chan, pad, signal, DefaultClock, In, Out, Running, Rx, Tx, Unit,
+};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::eth::EthByte;
@@ -37,6 +39,10 @@ struct Ran {
     /// Every frame that left the Ethernet port, whether or not a
     /// program was there to answer it.
     sent: Vec<Vec<u8>>,
+    /// What the debugger on the JTAG cable read, in order, and how
+    /// many steps of its plan it got through.
+    got: Vec<u32>,
+    steps: usize,
 }
 
 /// Run `text` with `data` in the data memory, on the board's design,
@@ -49,7 +55,12 @@ fn run(text: &[u32], data: &[u8], reply: &[u8], limit: u64) -> Ran {
 /// The same, with a program on the other side of the Ethernet port
 /// answering the remote peripheral's frames.
 fn run_served(text: &[u32], data: &[u8], limit: u64) -> Ran {
-    run_all(text, data, b"", &[], limit, true)
+    run_all(text, data, b"", &[], limit, true, &[])
+}
+
+/// The same, with a debugger on the JTAG cable following `plan`.
+fn run_debugged(text: &[u32], data: &[u8], limit: u64, plan: &[Op]) -> Ran {
+    run_all(text, data, b"", &[], limit, false, plan)
 }
 
 /// The program at the other end of the wire, for one cycle: it reads
@@ -106,6 +117,132 @@ fn device(
     frame.clear();
 }
 
+/// What a debugger on the JTAG cable does during a run, one step at a
+/// time, as single-beat transactions on the master's pins: a write of a
+/// word, a read of one, whose answer is kept, or a wait. The master
+/// model in the run drives the pins as the JTAG-to-AXI core does, one
+/// transaction at a time (issue 154).
+#[derive(Clone, Copy, Debug)]
+enum Op {
+    Write(u32, u32),
+    Read(u32),
+    Wait(u64),
+}
+
+/// The pins the model drives and reads, kept out of the board's port
+/// struct so the run can move them.
+struct Jtag {
+    awaddr: Out<U<32>>,
+    awvalid: Out<Bit>,
+    wdata: Out<U<32>>,
+    wvalid: Out<Bit>,
+    bready: Out<Bit>,
+    araddr: Out<U<32>>,
+    arvalid: Out<Bit>,
+    rready: Out<Bit>,
+    awready: In<Bit>,
+    wready: In<Bit>,
+    bvalid: In<Bit>,
+    arready: In<Bit>,
+    rdata: In<U<32>>,
+    rvalid: In<Bit>,
+}
+
+/// The master model's state between cycles: which op, and which of its
+/// handshakes are done.
+#[derive(Default)]
+struct Master {
+    at: usize,
+    aw_done: bool,
+    w_done: bool,
+    ar_done: bool,
+    /// What was driven valid this cycle, since a ready seen without a
+    /// valid is not a handshake.
+    awv: bool,
+    wv: bool,
+    arv: bool,
+    waited: u64,
+    got: Vec<u32>,
+}
+
+impl Master {
+    /// Before a cycle: drive the pins for the op in hand.
+    fn drive(&mut self, plan: &[Op], j: &Jtag) {
+        let (mut awv, mut wv, mut arv) = (false, false, false);
+        if let Some(op) = plan.get(self.at) {
+            match *op {
+                Op::Write(addr, data) => {
+                    j.awaddr.set(U::from(addr));
+                    j.wdata.set(U::from(data));
+                    // The data beat after the address has gone, as
+                    // the JTAG-to-AXI master sends them.
+                    awv = !self.aw_done;
+                    wv = self.aw_done && !self.w_done;
+                }
+                Op::Read(addr) => {
+                    j.araddr.set(U::from(addr));
+                    arv = !self.ar_done;
+                }
+                Op::Wait(_) => {}
+            }
+        }
+        j.awvalid.set(Bit::from_bool(awv));
+        j.wvalid.set(Bit::from_bool(wv));
+        j.arvalid.set(Bit::from_bool(arv));
+        self.awv = awv;
+        self.wv = wv;
+        self.arv = arv;
+        j.bready.set(Bit::One);
+        j.rready.set(Bit::One);
+    }
+
+    /// After the cycle: what the pins say happened at its edge. A
+    /// valid the model held meets a ready the pins computed in the
+    /// same step, so the beat went; a response present in the step was
+    /// taken, since ready is always high on the model's side.
+    fn observe(&mut self, plan: &[Op], j: &Jtag) {
+        let Some(op) = plan.get(self.at) else {
+            return;
+        };
+        match *op {
+            Op::Write(..) => {
+                if self.awv && j.awready.get().to_bool() {
+                    self.aw_done = true;
+                }
+                if self.wv && j.wready.get().to_bool() {
+                    self.w_done = true;
+                }
+                if self.aw_done && self.w_done && j.bvalid.get().to_bool() {
+                    self.next();
+                }
+            }
+            Op::Read(_) => {
+                if self.arv && j.arready.get().to_bool() {
+                    self.ar_done = true;
+                }
+                if self.ar_done && j.rvalid.get().to_bool() {
+                    self.got.push(j.rdata.get().raw() as u32);
+                    self.next();
+                }
+            }
+            Op::Wait(n) => {
+                self.waited += 1;
+                if self.waited >= n {
+                    self.next();
+                }
+            }
+        }
+    }
+
+    fn next(&mut self) {
+        self.at += 1;
+        self.aw_done = false;
+        self.w_done = false;
+        self.ar_done = false;
+        self.waited = 0;
+    }
+}
+
 /// The same, with the terminal typing in blocks of `block` bytes and
 /// waiting for a byte back between them, which is how a sender talks
 /// to the loader.
@@ -116,7 +253,7 @@ fn run_paced(
     blocks: &[usize],
     limit: u64,
 ) -> Ran {
-    run_all(text, data, reply, blocks, limit, false)
+    run_all(text, data, reply, blocks, limit, false, &[])
 }
 
 /// The run itself. `serve` says whether a program answers the frames
@@ -129,6 +266,7 @@ fn run_all(
     blocks: &[usize],
     limit: u64,
     serve: bool,
+    plan: &[Op],
 ) -> Ran {
     let mut board = TestBoard {
         cpu: Vreteno::with(text),
@@ -156,6 +294,53 @@ fn run_all(
     // The JTAG master's pins, with no master on them: every valid low
     // and nothing else read.
     let lo = || signal::<Bit, DefaultClock>().1;
+    let (awaddr_o, awaddr) = signal::<U<32>, DefaultClock>();
+    let (awvalid_o, awvalid) = signal::<Bit, DefaultClock>();
+    let (wdata_o, wdata) = signal::<U<32>, DefaultClock>();
+    let (wvalid_o, wvalid) = signal::<Bit, DefaultClock>();
+    let (bready_o, bready) = signal::<Bit, DefaultClock>();
+    let (araddr_o, araddr) = signal::<U<32>, DefaultClock>();
+    let (arvalid_o, arvalid) = signal::<Bit, DefaultClock>();
+    let (rready_o, rready) = signal::<Bit, DefaultClock>();
+    let (awready_o, awready) = signal::<Bit, DefaultClock>();
+    let (wready_o, wready) = signal::<Bit, DefaultClock>();
+    let (bvalid_o, bvalid) = signal::<Bit, DefaultClock>();
+    let (arready_o, arready) = signal::<Bit, DefaultClock>();
+    let (rdata_o, rdata) = signal::<U<32>, DefaultClock>();
+    let (rvalid_o, rvalid) = signal::<Bit, DefaultClock>();
+    let jtag = Jtag {
+        awaddr: awaddr_o,
+        awvalid: awvalid_o,
+        wdata: wdata_o,
+        wvalid: wvalid_o,
+        bready: bready_o,
+        araddr: araddr_o,
+        arvalid: arvalid_o,
+        rready: rready_o,
+        awready,
+        wready,
+        bvalid,
+        arready,
+        rdata,
+        rvalid,
+    };
+    // A single beat, a word wide, incrementing: what the master sends.
+    let (awlen_o, awlen) = signal::<U<8>, DefaultClock>();
+    let (awsize_o, awsize) = signal::<U<3>, DefaultClock>();
+    let (awburst_o, awburst) = signal::<U<2>, DefaultClock>();
+    let (wstrb_o, wstrb) = signal::<U<4>, DefaultClock>();
+    let (wlast_o, wlast) = signal::<Bit, DefaultClock>();
+    let (arlen_o, arlen) = signal::<U<8>, DefaultClock>();
+    let (arsize_o, arsize) = signal::<U<3>, DefaultClock>();
+    let (arburst_o, arburst) = signal::<U<2>, DefaultClock>();
+    awlen_o.set(U::from(0u8));
+    awsize_o.set(U::from(2u8));
+    awburst_o.set(U::from(1u8));
+    wstrb_o.set(U::from(0xfu8));
+    wlast_o.set(Bit::One);
+    arlen_o.set(U::from(0u8));
+    arsize_o.set(U::from(2u8));
+    arburst_o.set(U::from(1u8));
     let mut sim = Running::new(board.run(
         BoardIn {
             rst,
@@ -169,29 +354,29 @@ fn run_all(
             vr: chan::<LiteR<32>, DefaultClock>().1,
             net_rx: net_in_rx,
             jtag_awid: signal::<U<2>, DefaultClock>().1,
-            jtag_awaddr: signal::<U<32>, DefaultClock>().1,
-            jtag_awlen: signal::<U<8>, DefaultClock>().1,
-            jtag_awsize: signal::<U<3>, DefaultClock>().1,
-            jtag_awburst: signal::<U<2>, DefaultClock>().1,
+            jtag_awaddr: awaddr,
+            jtag_awlen: awlen,
+            jtag_awsize: awsize,
+            jtag_awburst: awburst,
             jtag_awlock: lo(),
             jtag_awcache: signal::<U<4>, DefaultClock>().1,
             jtag_awprot: signal::<U<3>, DefaultClock>().1,
-            jtag_awvalid: lo(),
-            jtag_wdata: signal::<U<32>, DefaultClock>().1,
-            jtag_wstrb: signal::<U<4>, DefaultClock>().1,
-            jtag_wlast: lo(),
-            jtag_wvalid: lo(),
-            jtag_bready: lo(),
+            jtag_awvalid: awvalid,
+            jtag_wdata: wdata,
+            jtag_wstrb: wstrb,
+            jtag_wlast: wlast,
+            jtag_wvalid: wvalid,
+            jtag_bready: bready,
             jtag_arid: signal::<U<2>, DefaultClock>().1,
-            jtag_araddr: signal::<U<32>, DefaultClock>().1,
-            jtag_arlen: signal::<U<8>, DefaultClock>().1,
-            jtag_arsize: signal::<U<3>, DefaultClock>().1,
-            jtag_arburst: signal::<U<2>, DefaultClock>().1,
+            jtag_araddr: araddr,
+            jtag_arlen: arlen,
+            jtag_arsize: arsize,
+            jtag_arburst: arburst,
             jtag_arlock: lo(),
             jtag_arcache: signal::<U<4>, DefaultClock>().1,
             jtag_arprot: signal::<U<3>, DefaultClock>().1,
-            jtag_arvalid: lo(),
-            jtag_rready: lo(),
+            jtag_arvalid: arvalid,
+            jtag_rready: rready,
         },
         BoardOut {
             halt: halt_o,
@@ -217,17 +402,17 @@ fn run_all(
             var: chan::<LiteAr<32>, DefaultClock>().0,
             vw: chan::<LiteW<32, 4>, DefaultClock>().0,
             net_tx: net_out_tx,
-            jtag_awready: bit(),
-            jtag_wready: bit(),
+            jtag_awready: awready_o,
+            jtag_wready: wready_o,
             jtag_bid: signal::<U<2>, DefaultClock>().0,
             jtag_bresp: signal::<U<2>, DefaultClock>().0,
-            jtag_bvalid: bit(),
-            jtag_arready: bit(),
+            jtag_bvalid: bvalid_o,
+            jtag_arready: arready_o,
             jtag_rid: signal::<U<2>, DefaultClock>().0,
-            jtag_rdata: signal::<U<32>, DefaultClock>().0,
+            jtag_rdata: rdata_o,
             jtag_rresp: signal::<U<2>, DefaultClock>().0,
             jtag_rlast: bit(),
-            jtag_rvalid: bit(),
+            jtag_rvalid: rvalid_o,
         },
     ));
     rst_o.set(Bit::One);
@@ -250,7 +435,9 @@ fn run_all(
     let mut reply: Vec<EthByte> = Vec::new();
     let mut words: HashMap<u32, u32> = HashMap::new();
     let mut sent: Vec<Vec<u8>> = Vec::new();
+    let mut master = Master::default();
     for cycle in 0..limit {
+        master.drive(plan, &jtag);
         device(
             &net_out_rx,
             &net_in_tx,
@@ -261,6 +448,7 @@ fn run_all(
             serve,
         );
         sim.cycle();
+        master.observe(plan, &jtag);
         term.see(tx.get().to_bool());
         rx_o.set(Bit::from_bool(term.level()));
         ran_for = cycle;
@@ -285,6 +473,8 @@ fn run_all(
         ran_for,
         halted_at,
         sent,
+        got: master.got,
+        steps: master.at,
     }
 }
 
@@ -580,4 +770,84 @@ fn the_loader_refuses_an_address_outside_the_memory() {
     );
     assert!(ran.said.starts_with("boot\nload\nbad len "), "{}", ran.said);
     assert!(ran.halted_at.is_none(), "nothing was jumped into");
+}
+
+/// A program that counts in `x5` to three thousand, says `done` and
+/// halts: long enough to be caught in the middle by a debugger.
+fn count_program() -> Vec<u32> {
+    use vreteno32::isa::{addi, blt, halt, lui, UART_BASE};
+    let mut a = vreteno32::program::Asm::default();
+    a.emit(lui(1, UART_BASE >> 12)); // x1 = the serial port, for say
+    a.emit(addi(5, 0, 0));
+    a.emit(addi(6, 0, 1500));
+    a.emit(addi(6, 6, 1500)); // x6 = 3000
+    let again = a.label();
+    a.place(again);
+    a.emit(addi(5, 5, 1));
+    a.to(again, |off| blt(5, 6, off));
+    say(&mut a, b"done\n");
+    a.emit(halt());
+    a.words()
+}
+
+/// The debug module from the cable (issue 154): a debugger on the
+/// JTAG pins halts the counting program, sees it halted, reads the
+/// count and `dpc` by the abstract command, writes the count to its
+/// end, resumes, and sees the core running with the resume
+/// acknowledged. The program then finishes at once, which is the write
+/// having landed in the register file: three thousand iterations take
+/// nine thousand cycles, and the run ends well before that.
+#[test]
+fn the_debug_module_halts_reads_writes_and_resumes_the_core() {
+    use vreteno32::debug::{
+        access, at, ABSTRACTCS, ALLHALTED, ALLRESUMEACK, ALLRUNNING, COMMAND,
+        DATA0, DMACTIVE, DMCONTROL, DMSTATUS, HALTREQ, HALTSUM0, REGNO_GPR,
+        RESUMEREQ,
+    };
+    let plan = [
+        Op::Wait(300),
+        Op::Write(at(DMCONTROL), DMACTIVE),
+        Op::Write(at(DMCONTROL), HALTREQ | DMACTIVE),
+        Op::Wait(20),
+        Op::Read(at(DMSTATUS)), // 0
+        Op::Read(at(HALTSUM0)), // 1
+        Op::Write(at(COMMAND), access(REGNO_GPR + 5, false)),
+        Op::Wait(6),
+        Op::Read(at(DATA0)), // 2: the count
+        Op::Write(at(COMMAND), access(0x7b1, false)),
+        Op::Wait(6),
+        Op::Read(at(DATA0)),      // 3: dpc
+        Op::Read(at(ABSTRACTCS)), // 4
+        Op::Write(at(DATA0), 2999),
+        Op::Write(at(COMMAND), access(REGNO_GPR + 5, true)),
+        Op::Wait(6),
+        Op::Read(at(ABSTRACTCS)), // 5
+        Op::Write(at(DMCONTROL), DMACTIVE),
+        Op::Write(at(DMCONTROL), RESUMEREQ | DMACTIVE),
+        Op::Wait(20),
+        Op::Read(at(DMSTATUS)), // 6
+    ];
+    let ran = run_debugged(&count_program(), &[], 12000, &plan);
+    assert_eq!(
+        ran.steps,
+        plan.len(),
+        "the plan ran through: {:x?}",
+        ran.got
+    );
+    let got = &ran.got;
+    assert_eq!(got[0] & ALLHALTED, ALLHALTED, "halted: {:#x}", got[0]);
+    assert_eq!(got[0] & ALLRUNNING, 0);
+    assert_eq!(got[1], 1, "haltsum0");
+    assert!(got[2] > 0 && got[2] < 3000, "the count so far: {}", got[2]);
+    assert!((16..24).contains(&got[3]), "dpc in the loop: {:#x}", got[3]);
+    assert_eq!(got[4] >> 8 & 7, 0, "no command error");
+    assert_eq!(got[5] >> 8 & 7, 0, "no command error on the write");
+    assert_eq!(got[6] & ALLRUNNING, ALLRUNNING, "running: {:#x}", got[6]);
+    assert_eq!(got[6] & ALLRESUMEACK, ALLRESUMEACK, "acknowledged");
+    assert_eq!(ran.said, "done\n");
+    let halted_at = ran.halted_at.expect("the program halted itself");
+    assert!(
+        halted_at < 3000,
+        "the write to x5 ended the loop: {halted_at}"
+    );
 }

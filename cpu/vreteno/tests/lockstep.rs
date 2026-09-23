@@ -140,6 +140,12 @@ fn lockstep(
     let (haltreq_out, haltreq) = signal::<Bit, DefaultClock>();
     let (resumereq_out, resumereq) = signal::<Bit, DefaultClock>();
     let (debug_out, _debug) = signal::<Bit, DefaultClock>();
+    // The debug module's register access, absent here: the number and
+    // the word stay zero, the write never comes, the answer is unread.
+    let (_dbg_regno_o, dbg_regno) = signal::<U<16>, DefaultClock>();
+    let (_dbg_wdata_o, dbg_wdata) = signal::<U<32>, DefaultClock>();
+    let (_dbg_we_o, dbg_we) = signal::<Bit, DefaultClock>();
+    let (dbg_rdata_o, _dbg_rdata) = signal::<U<32>, DefaultClock>();
     // The core's link, and one per peripheral, with the router
     // between the core's tracker and the three peripherals'.
     let cl = axi_units::<32, 32, 4, IW>();
@@ -177,11 +183,17 @@ fn lockstep(
                 cpu.run(
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
-                        resumereq,
+                        resumereq, dbg_regno, dbg_wdata, dbg_we,
                     ),
                     (
-                        halt_out, instr_out, wb_out, issue, wbeat, release,
+                        halt_out,
+                        instr_out,
+                        wb_out,
+                        issue,
+                        wbeat,
+                        release,
                         debug_out,
+                        dbg_rdata_o,
                     ),
                 ),
             ),
