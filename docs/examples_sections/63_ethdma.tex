@@ -1,0 +1,106 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Words to a Frame and Back}
+\label{sec:x-ethdma}
+
+\S\ref{sec:x-dma} and \S\ref{sec:x-dmaw} move 32-bit words, because
+that is what the bus moves. \S\ref{sec:x-ethslots} counts bytes,
+because that is what a frame is. The two units here are that
+difference and nothing else: neither touches the bus, and neither
+knows where in memory the frame is.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}l@{}}
+\code{words -- FrameOut --bytes-- EthTx --wire-- EthRx --bytes--
+FrameIn -- words} \\
+\end{tabular}
+\end{center}
+
+The run sends two frames out through the real transmitter, loops the
+wire back, and checks what the receiver's bytes pack into. Putting
+the MAC in the middle rather than joining the two adapters directly
+is what makes the check worth running: the bytes that come back have
+been framed, padded, checked and stripped, so the two units are
+tested against the thing they will actually be joined to.
+
+\subsection{Why the length is carried rather than counted}
+
+A word says nothing about how many of its bytes are real. On the way
+out the count is \code{tx\_length}, which the driver wrote. On the
+way in it cannot be counted as the bytes go past, because the engine
+that writes them to memory is told how many bytes to write when it
+starts, and by then the bytes have not been seen.
+
+So the receiver says. It takes a whole frame and checks it before
+offering any of it, so the length is settled before the first byte
+is offered, and this change gives it a port that says so. It reads
+zero at every other time rather than holding the last frame's
+length, so that a reader cannot mistake a stale length for a
+current one.
+
+\subsection{Two frames, not one}
+
+The first version of this run sent one frame and proved less than it
+looked.
+
+A \code{FrameOut} that read whole words rather than stopping at the
+byte count still marks the frame's last byte in the right place. The
+frame on the wire is the right length, the words come back right, the
+receiver reports the right count, and every check passes. The three
+bytes it read past the frame do not lengthen that frame: they stay in
+the transmitter, which has seen no last byte for them, and they go
+out in front of the \emph{next} frame.
+
+That fault was put into the unit deliberately to see whether the run
+would catch it. With one frame it did not. With two it fails on the
+second frame's first word and every word after it, because the whole
+frame has moved along by three bytes.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+& one frame & two frames \\
+\midrule
+\code{FrameOut} reads past the count & passes & fails \\
+\code{FrameIn} misaligns a partial word & fails & fails \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The lengths are 101 and 67 bytes. Both are above the 60 the
+transmitter pads to, so no padding is in the way, and neither
+divides by four: 101 leaves one real byte in its last word and 67
+leaves three, so two of the three partial widths are covered rather
+than the same one twice.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=in-in,caption={\code{lib/parts/src/ethdma.rs}: the
+receiving half, which packs bytes into words and says how long the
+frame was.},label={lst:x-ethdma}]{lib/parts/src/ethdma.rs}
+
+\subsection{Two faults in the tools, found by simulating the netlist}
+
+The Rust run passed before either netlist did, which is what the
+netlist simulation is for.
+
+A one-bit register incremented lowers to \code{slot + '1'}, and
+\code{'1'} is a character rather than an unsigned, so \code{nvc}
+refuses it. At every other width the same expression lowers to
+\code{to\_unsigned(1, N)} correctly. Nothing in the tree had
+incremented a one-bit register before, because a one-bit register is
+usually a flag and a flag is set rather than counted. That is issue
+461, and the slot here is written as a toggle instead.
+
+A testbench reads the trace by port name, and both units had a port
+called \code{out}. The second bound to the first's recorded signal
+and failed in the generated VHDL, complaining about the length of a
+string literal, 41 elements against 35: six hex digits, which is 24
+bits, which is 32 less 9. Two more ports collided in the same run,
+\code{bytes} and \code{go}, and neither was reported, because a
+collision is only noticed when the widths differ. That is issue 462,
+and it is the worse half: a silent collision is a co-simulation that
+passes for the wrong reason. The ports here are named apart.
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_ethdma} printed
+when the build ran it.},%
+label={lst:x-ethdma-out}]{out_ethdma.txt}
