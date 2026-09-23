@@ -241,9 +241,17 @@ a pin, a clock, a PHY, a memory controller's calibration.
    the board on September 22, 2026.
 4. **The debug module of issue 154**, once the core has halt, resume
    and step, which is also what issue 139 wants `ebreak` to become.
-   The core's part is done, section 5; the module comes next as a
-   memory-mapped peripheral reached through step 3's host, so that it
-   is proved on the board before it has a transport of its own.
+   The core's part is done, section 5.
+   The module is done too, on September 23, 2026, as
+   `cpu/vreteno/src/debug.rs`: an AXI-Lite peripheral on a router
+   port of its own at `0x1000_0000`, the specification's registers a
+   word each at four times their number, halt, resume, `dmstatus`, and
+   the access-register command for the general registers and the
+   CSRs, reached through step 3's host by
+   `//cpu/vreteno:vreteno_board_dm_probe`.
+   What is left of step 4 is the transport, `BSCANE2` and a debug
+   transport module, and then OpenOCD; and system bus access, which
+   the JTAG host makes unnecessary until then.
 
 Steps 1 and 2 are independent of each other and of the core.
 Steps 3 and 4 are the ones that change the core, and 4 subsumes much of

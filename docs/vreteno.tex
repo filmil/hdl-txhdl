@@ -1655,6 +1655,42 @@ master and the arbiter add a stage on the bus's paths.
 
 \lstinputlisting[style=ascii,caption={\code{docs/jtag\_probe.txt}: what
 the probe said.},label={lst:v-jtag-run}]{jtag_probe.txt}
+\subsection{The debug module}
+\label{sec:v-dm}
+
+The core's debug mode, Section~\ref{sec:v-core}, is reached from
+outside through the debug module, the RISC-V debug specification's
+module as far as a debugger on the bus needs it: the second of the
+three steps of issue 154, after the mode and before a transport of
+its own. The specification puts the module behind a small address
+space of registers a transport reaches from the cable; here that
+space is on the bus, an AXI-Lite peripheral behind a bridge of its
+own on the router's seventh port, the 64~KiB from \code{0x1000\_0000},
+each register a word at four times its number. So the JTAG host of
+the last section reaches it from the hardware manager today, and a
+transport reaches it the same way when there is one. \code{dmcontrol}
+carries the halt and resume requests and \code{dmactive};
+\code{dmstatus} says whether the core is halted or running and
+whether a resume was acknowledged; \code{abstractcs}, \code{command}
+and \code{data0} are the abstract command, access-register only, one
+32-bit word: a general register, which the core reads and writes for
+the module through its register file's lent ports, or a CSR, which
+it reads through its CSR read and writes only for \code{dpc} and
+\code{dcsr}. A command while the core runs is \code{cmderr}~4, an
+unsupported one 2, one while another is in flight 1, and a command
+under a standing error is ignored, as the specification says. There
+is no program buffer and no system bus access: memory is reached
+through the bus the module sits on.
+
+The module's own test plays the core, sets halted and the word read,
+and reads the lines back; the board test puts a debugger on the JTAG
+pins, a master model that follows a plan of writes, reads and waits,
+against a program counting to three thousand: it halts the core, reads
+the count and \code{dpc}, writes the count to its end, resumes, and the
+program finishes at once, which is the write having landed. On the
+board, \code{vreteno\_board\_dm\_probe} does the same from the hardware
+manager against whatever program runs.
+
 \section{Programs in Rust and C++}
 \label{sec:v-rust}
 
