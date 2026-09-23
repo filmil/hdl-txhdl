@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+# The PCIe endpoint under Vivado's simulator (issue 305): the board's
+# top with the XDMA core and the lowered design behind BAR0, from the
+# core's exported simulation library, which holds every source the
+# core needs rather than its top wrapper alone. Manual, as every Vivado
+# target is; the elaboration is the test, since a module the library
+# lacked would end it there:
+#
+#   bazel test //pcie/sim:xdma_test
+load("@rules_vivado//build/vivado:rules.bzl", "vivado_library", "vivado_test")
+
+package(default_visibility = ["//visibility:public"])
+
+vivado_library(
+    name = "xdma_tb",
+    srcs = [
+        "//pcie:bar_v",
+        "//pcie:board/pcie_top.v",
+        "xdma_tb.v",
+    ],
+    tags = ["manual"],
+    deps = ["//pcie:xdma_x2"],
+)
+
+# The libraries beyond the core's own are the ones Vivado's exported
+# simulation names for its elaboration, precompiled in the
+# installation: the primitives, the IP libraries the core uses, and
+# `glbl` from the core's library, where the export put it.
+vivado_test(
+    name = "xdma_test",
+    custom_tcl_script = "xdma_verdict.tcl",
+    extra_modules = ["xdma_x2.glbl"],
+    library = ":xdma_tb",
+    tags = ["manual"],
+    timeout = "eternal",
+    top = "xdma_tb",
+    xelab_args = [
+        "--debug",
+        "typical",
+        "-L",
+        "unisims_ver",
+        "-L",
+        "unimacro_ver",
+        "-L",
+        "secureip",
+        "-L",
+        "xpm",
+        "-L",
+        "xdma_v4_2_2",
+        "-L",
+        "blk_mem_gen_v8_4_12",
+        "-L",
+        "fifo_generator_v13_2_14",
+        "-L",
+        "uvm",
+    ],
+    xelab_relaxed = True,
+)

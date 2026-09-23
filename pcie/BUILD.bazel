@@ -9,6 +9,8 @@ load(
 )
 load("//tools/vivado:defs.bzl", "vivado_synthesis2")
 
+exports_files(["board/pcie_top.v"])
+
 package(default_visibility = ["//visibility:public"])
 
 rust_library(
