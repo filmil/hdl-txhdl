@@ -275,6 +275,87 @@ mod tests {
         U::from(v)
     }
 
+    /// Does a load see a store that has not been answered yet?
+    ///
+    /// This machine's stores are posted and `fence` orders nothing
+    /// (issue 432), so software handing a buffer to a bus host reads
+    /// the last word back to force the write to land. That
+    /// workaround is only correct if the link serialises a read
+    /// behind an outstanding write to the same address, and AXI does
+    /// not promise it: reads and writes are separate channels and a
+    /// slave may answer them in either order.
+    ///
+    /// So this measures it rather than assuming it. The write's
+    /// response is deliberately not awaited before the read is
+    /// issued, which is what posted means.
+    ///
+    /// Whichever way it comes out is worth knowing. Serialised, and
+    /// the read-back in a driver is justified and can say so with a
+    /// test behind it. Not serialised, and every driver that hands a
+    /// buffer to an engine on this machine has an intermittent fault
+    /// waiting in it.
+    #[test]
+    fn a_load_behind_an_unanswered_store_to_one_address() {
+        let ram = TestRam::new(64);
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let out = got.clone();
+        drive(
+            ram.clone(),
+            move |host| {
+                Box::new(Box::pin(async move {
+                    // Something to overwrite, so a stale read is
+                    // distinguishable from an empty one.
+                    let z = host.write(Wr::at(0x20u32), &[w(0xdead)]).await;
+                    assert_eq!(z.done().await.resp, Resp::Okay);
+                    // The store, issued and NOT awaited.
+                    let a = host.write(Wr::at(0x20u32), &[w(0xbeef)]).await;
+                    let t_issue = crate::bus::axi::now();
+                    // The load of the same address, with the store
+                    // still open.
+                    let r = host.read(Rd::at(0x20u32, 1)).await;
+                    let reply = r.done().await;
+                    let t_read = crate::bus::axi::now();
+                    let wr = a.done().await;
+                    let t_write = crate::bus::axi::now();
+                    out.borrow_mut().push((
+                        reply.data[0].raw(),
+                        wr.resp,
+                        t_read,
+                        t_write,
+                    ));
+                    let _ = t_issue;
+                }))
+            },
+            300,
+        );
+        let got = got.borrow();
+        assert_eq!(got.len(), 1, "the read was never answered");
+        let (seen, resp, t_read, t_write) = got[0];
+        assert_eq!(resp, Resp::Okay);
+        // That the race happened at all. Without this the test goes
+        // quietly vacuous the day the write starts completing first:
+        // it would still pass, and would be checking that a load sees
+        // a store that already landed, which nobody doubted. Measured
+        // when this was written: read answered at 44, write at 46.
+        assert!(
+            t_read < t_write,
+            "the store was answered at {t_write}, before the load at \
+             {t_read}, so the load did not overtake anything and this \
+             test no longer exercises what it names"
+        );
+        // The claim under test. If this fails, the read-back that
+        // every driver on this machine relies on does not order, and
+        // issue 432 is a gap in what the machine can express rather
+        // than a tidiness fix.
+        assert_eq!(
+            seen, 0xbeef,
+            "a load issued behind an unanswered store to the same \
+             address returned {seen:#x}, the value from before it: \
+             the link does not serialise them, so reading a word back \
+             does not force a posted store to land (issue 432)"
+        );
+    }
+
     #[test]
     fn a_burst_reads_what_a_burst_wrote() {
         let ram = TestRam::new(64);
