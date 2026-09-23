@@ -1,4 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# The build file for the fetched UberDDR3 repository lives beside this
-# one, and this package exports it.
-exports_files(["uberddr3.BUILD.bazel"])
