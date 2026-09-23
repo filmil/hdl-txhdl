@@ -93,7 +93,7 @@ Three subsystems, each unchanged from the design that proved it.
 RV32IMC core, its AXI tracker, the router, the data memory, the timer
 and software interrupt, the platform-level interrupt controller, the
 pulse width modulator, the serial port, and the board's gigabyte of
-DDR3 behind UberDDR3's controller. The core's boot memory holds the
+DDR3 behind AMD's MIG controller. The core's boot memory holds the
 loader.
 
 \emph{The Ethernet port.} The two lowered halves of the MAC with the
@@ -158,9 +158,9 @@ subsystem is already proven with, so that bringing the three designs
 together changes nothing about any of them.
 
 \begin{itemize}
-\item A PLL, times six to 1200\,MHz, giving 100\,MHz for the design and
-  the memory controller, 400\,MHz for the memory, the same 400\,MHz a
-  quarter cycle late, and 200\,MHz for the controller's delay control.
+\item The memory controller's own: it takes the 200\,MHz, which is
+  also its delay reference, runs the memory at 400\,MHz and hands back
+  100\,MHz for the design and the serial port.
 \item An MMCM, times five to 1000\,MHz over eight, giving 125\,MHz for
   the Ethernet transmit half. A second MMCM inside \code{eth\_rgmii}
   shifts the clock the PHY recovers from the line by a quarter cycle,
@@ -290,7 +290,8 @@ the board needs to tell a healthy flagship from a sick one.
   program it receives into that memory, so a dark LED3 explains
   everything else that is wrong.
 \item \textbf{LED4}, the heartbeat, three times a second. It says the
-  PLL has locked and that this part holds a bitstream that is running,
+  memory controller's clock is good and that this part holds a
+  bitstream that is running,
   which is the first question to ask of a board that does nothing.
 \end{itemize}
 
@@ -390,7 +391,10 @@ The whole flagship is a small part of an xc7a200t. Synthesis of
 reports 10\,999 slice LUTs, 8.2 per cent of the part; 8\,918
 registers, 3.3 per cent; 16.5 block RAM tiles of 365; four DSPs; 126 of
 285 bonded pins; and of the clocking, one PLL and three MMCMs, one of
-which is inside the RGMII wrapper. The part is not the constraint,
+which is inside the RGMII wrapper. With AMD's MIG as the memory
+controller (issue 188) the clocking is one PLL and four MMCMs, the PLL
+and one of the MMCMs the controller's own, and the rest is measured
+again at the next full run of the flow. The part is not the constraint,
 which is worth saying plainly: the question for the next subsystem is
 whether it meets timing, not whether it fits.
 

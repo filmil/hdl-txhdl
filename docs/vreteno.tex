@@ -1429,8 +1429,8 @@ whose four sixteenths are the serial port, the pulse width modulator,
 a slot for a peripheral on a clock of its own, and the remote
 peripheral whose transactions leave the board as Ethernet frames, the
 board's DDR3 memory from \code{0x4000\_0000}, a
-gigabyte behind the bridge from AXI to Wishbone and UberDDR3's
-controller, and the interrupt controller at \code{0x0c00\_0000}, whose
+gigabyte behind the bridge from AXI to Wishbone and AMD's MIG
+controller, which the build generates, and the interrupt controller at \code{0x0c00\_0000}, whose
 line is the core's external interrupt. The controller
 is a module from elsewhere, so the netlist names its wrapper and does
 not write it, and the memory's pins, the data and strobe lines among
@@ -1439,18 +1439,20 @@ a program already in the instruction memory and the data memory,
 since nothing on the machine loads them at run time.
 
 Listing~\ref{lst:v-board} is the one file written by hand, and it
-holds only what a board needs and a lowered unit cannot say. One PLL
-makes the four clocks, 100~MHz for the design and the controller,
-400~MHz for the memory and the same a quarter cycle late, and
-200~MHz for the controller's delay control. The memory's reset
-follows the button and the lock; the core's follows those and the
-controller's calibration as well, so the core starts only once the
-memory it may reach is ready. The LEDs, lit when driven low, show the
+holds only what a board needs and a lowered unit cannot say. The
+controller makes the clocks: it takes the board's 200~MHz, which is
+also its delay reference, runs the memory at 400~MHz, and hands back
+the 100~MHz the design runs on, with a reset that holds until that
+clock is good, so the board has no clock generator of its own. The
+controller's reset is a pulse at power-on and nothing else; the core's
+follows the button, the controller's clock being good and its
+calibration, so the core starts only once the memory it may reach is
+ready. The LEDs, lit when driven low, show the
 core halted, the serial line driven at least once, the memory
 calibrated, and a heartbeat. The second LED held the heartbeat until
 the board was first run, and the heartbeat moved to the fourth, which
-held the PLL's lock: a blinking heartbeat says the lock as well, since
-the counter behind it runs on the PLL's output. What no LED said was
+held the clock generator's lock: a blinking heartbeat says as much,
+since the counter behind it runs on the clock the controller makes. What no LED said was
 whether a byte ever left the core's serial port. That question is
 issue~195, where the board halts with every LED on and the host's
 serial port stays silent, so the second LED now latches the first start
@@ -1472,24 +1474,25 @@ The whole of it is simulated under Vivado's simulator by
 \code{//cpu/vreteno/board/sim:board\_test}: the top, the netlist with
 the DDR3 test in its memories, the controller, and two Micron models
 of the board's chips on its pins. The program writes sixteen words
-across the memory's region and reads them back. In the run the PLL
-locks at 0.27~microseconds, the memory calibrates at 12.26, and the
-core says \code{ddr3 ok} on the serial port and halts at 31.4, which
-is what the test's terminal reads. The controller alone is checked
-the same way, against the same models, by
-\code{//ddr3/sim:wrapper\_test}.
+across the memory's region and reads them back. In the run the memory
+calibrates at 108.1~microseconds, the controller's fast calibration
+being what its simulation variant carries, and the core says
+\code{ddr3 ok} on the serial port and halts at 130.4, which is what
+the test's terminal reads. The controller alone is checked the same
+way, against the same models, by \code{//ddr3/sim:wrapper\_test}, and
+AMD's own example design, its traffic generator writing and reading
+the memory through the controller, by \code{//ddr3/sim:example\_test}.
 
 \code{bazel build //cpu/vreteno:vreteno\_board\_pnr} synthesises it,
 places and routes it with the board's pins and the memory's, and
 writes the bitstream. Every timing constraint is
-met: the worst setup slack is 0.432~ns, the worst hold slack
-0.031~ns, over 18\,795 endpoints on the four clocks Vivado derives
-from the one constraint on the board's 200~MHz input. No register is
-without a clock, no internal endpoint is unconstrained, and neither
-synthesis nor implementation raises a critical warning. The design
-takes 8\,100 LUTs, 6\,959 flip-flops, four block RAM tiles, four DSP
-blocks, 80 pins, the PLL, and the controller's 65 output and 36 input
-serialisers. The memory's pins carry no input or output delay, as in
+met: the worst setup slack is 0.547~ns, the worst hold slack
+0.039~ns, over 28\,309 endpoints on the clocks the controller's
+generators derive from the one constraint on the board's 200~MHz
+input. No register is without a clock, and no internal endpoint is
+unconstrained. The design takes 10\,964 LUTs, 9\,850 flip-flops, four
+block RAM tiles, four DSP blocks, 81 pins, the controller's PLL and
+MMCM, and its 64 output and 32 input serialisers with 32 delays. The memory's pins carry no input or output delay, as in
 the a200t examples, since the controller calibrates their timing
 itself.
 
@@ -1945,7 +1948,10 @@ memory's range and read back, every one of them correct. It ran twice,
 once written into the part over JTAG and once from the board's own QSPI
 flash after a power cycle, with nothing attached but power. So the
 whole path is proven on hardware: the core, the AXI link, \code{AxiWb},
-UberDDR3's controller and the board's memory chips.
+the controller and the board's memory chips. That run was made with
+UberDDR3 as the controller; the board carries AMD's MIG since issue
+188, GPL-3.0 having no place in a design this tree claims as
+Apache-2.0, and the run with MIG is owed the same way.
 
 \begin{thebibliography}{10}
 
