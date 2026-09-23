@@ -37,7 +37,9 @@
 //! debug mode out, which is what `dmstatus` reports; the resume
 //! request drops and is acknowledged when the core has left debug
 //! mode. A halt request stays as written, as the specification has
-//! it: a debugger clears it before it resumes.
+//! it: a debugger clears it before it resumes. A resume request is an
+//! action: a one asks, if the core is halted as the write lands, and
+//! clears the acknowledgement; a zero does nothing.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
@@ -203,13 +205,28 @@ impl Unit for Dm {
             let go = cmd & !busy & supported & halted & transfer;
             let asking = Bit::from(stage == 1);
             let answered = Bit::from(stage == 2);
+            // The arms apply in order and the last drive of a field wins,
+            // so what fires together is ordered by who should win: the
+            // core's completion of a resume before the debugger's write,
+            // which may be a new request in the same cycle (issue 439).
             with!(self <= {
                 ctl ? active: wd.bit(0),
-                on ? { haltreq: wd.bit(31), resumereq: wd.bit(30) },
-                on & wd.bit(30) ? resumeack: Bit::Zero,
                 // The core left debug mode: the request is done.
                 rreq & !halted ? { resumereq: Bit::Zero, resumeack: Bit::One },
-                wgo & (wsel == DATA0) ? data0: wd,
+                // `haltreq` is a level, written as such; `resumereq` is an
+                // action: a one asks for a resume if the core is halted
+                // as the write lands and does nothing if it is running, a
+                // zero does nothing, and either way the one clears the
+                // acknowledgement.
+                on ? haltreq: wd.bit(31),
+                on & wd.bit(30) ? resumeack: Bit::Zero,
+                on & wd.bit(30) & halted ? resumereq: Bit::One,
+                // `data0` is the debugger's between commands; touched while
+                // one is in flight, the access is the busy error and
+                // writes nothing, as the specification says.
+                wgo & (wsel == DATA0) & !busy ? data0: wd,
+                wgo & (wsel == DATA0) & busy & (cmderr == 0) ?
+                    cmderr: U::<3>::from(1u8),
                 wgo & (wsel == ABSTRACTCS) ? cmderr: cmderr & !wd.slice::<8, 3>(),
                 err_busy ? cmderr: U::<3>::from(1u8),
                 err_unsupported ? cmderr: U::<3>::from(2u8),
@@ -484,6 +501,102 @@ mod tests {
             write(h, at(ABSTRACTCS), 7 << 8).await;
             write(h, at(COMMAND), 1 << 24).await;
             assert_eq!(read(h, at(ABSTRACTCS)).await >> 8 & 7, 2);
+        });
+    }
+
+    /// The debugger writes `resumereq` again in the very cycle the core
+    /// leaves debug mode from the last request. The core is running as
+    /// the write lands, so the write asks nothing; but it clears the
+    /// acknowledgement, and the acknowledgement of the resume that
+    /// completed in that same cycle must not stand over it. The two
+    /// arms fire in one cycle, and the one written last in the module
+    /// wins, so this is the case the order is for.
+    #[test]
+    fn a_resume_request_written_as_the_core_resumes_clears_the_ack() {
+        run(|rig| async move {
+            let h = &rig.host;
+            write(h, at(DMCONTROL), HALTREQ | DMACTIVE).await;
+            rig.halted.set(Bit::One);
+            cycles(2).await;
+            write(h, at(DMCONTROL), DMACTIVE).await;
+            write(h, at(DMCONTROL), RESUMEREQ | DMACTIVE).await;
+            cycles(2).await;
+            assert!(bit(&rig.resumereq));
+            // The write goes out, and the core resumes in the same
+            // cycle the module takes it.
+            let (aw, _, w, b, _) = h;
+            aw.send(LiteAw {
+                addr: U::from(at(DMCONTROL)),
+                prot: U::from(0u8),
+            });
+            w.send(LiteW {
+                data: U::from(RESUMEREQ | DMACTIVE),
+                strb: U::from(0xfu8),
+            });
+            rig.halted.set(Bit::Zero);
+            loop {
+                DefaultClock::rising().await;
+                if b.recv().is_some() {
+                    break;
+                }
+            }
+            cycles(2).await;
+            assert!(
+                !bit(&rig.resumereq),
+                "a request to a running core asks nothing"
+            );
+            let s = read(h, at(DMSTATUS)).await;
+            assert_eq!(
+                s & ALLRESUMEACK,
+                0,
+                "the write cleared the ack: {s:#x}"
+            );
+        });
+    }
+
+    /// `data0` written while a command is in flight: the specification
+    /// makes it a busy error, and the answer, not the write, is what
+    /// `data0` holds afterwards.
+    #[test]
+    fn data0_written_while_a_command_is_in_flight_is_a_busy_error() {
+        run(|rig| async move {
+            let h = &rig.host;
+            write(h, at(DMCONTROL), HALTREQ | DMACTIVE).await;
+            rig.halted.set(Bit::One);
+            rig.rdata.set(U::from(0x1234_5678u32));
+            cycles(2).await;
+            // The command, and the write of data0 right behind it, so
+            // the write lands while the command is in flight.
+            let (aw, _, w, b, _) = h;
+            aw.send(LiteAw {
+                addr: U::from(at(COMMAND)),
+                prot: U::from(0u8),
+            });
+            w.send(LiteW {
+                data: U::from(access(REGNO_GPR + 1, false)),
+                strb: U::from(0xfu8),
+            });
+            DefaultClock::rising().await;
+            let _ = b.recv();
+            aw.send(LiteAw {
+                addr: U::from(at(DATA0)),
+                prot: U::from(0u8),
+            });
+            w.send(LiteW {
+                data: U::from(0xdead_beefu32),
+                strb: U::from(0xfu8),
+            });
+            let mut answered = 0;
+            for _ in 0..8 {
+                DefaultClock::rising().await;
+                if b.recv().is_some() {
+                    answered += 1;
+                }
+            }
+            assert!(answered >= 1, "the writes were answered");
+            assert_eq!(read(h, at(ABSTRACTCS)).await >> 8 & 7, 1, "busy");
+            write(h, at(ABSTRACTCS), 7 << 8).await;
+            assert_eq!(read(h, at(DATA0)).await, 0x1234_5678, "the answer");
         });
     }
 
