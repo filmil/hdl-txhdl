@@ -21,10 +21,11 @@
 //! top has to do by hand is the clocks, the reset and the pins.
 //!
 //! The DDR3 controller is a foreign module inside it, so the netlist
-//! names UberDDR3's wrapper and does not write it, and the memory's
-//! pins, the data and strobe pads among them, are this unit's own
-//! ports. `MICRON_SIM` and `BIST` are the memory controller's, and
-//! `DIV` is the serial port's clock divider.
+//! names the controller's wrapper and does not write it, and the
+//! memory's pins, the data and strobe pads among them, are this unit's
+//! own ports, as are the board's clock going in and the design's clock
+//! coming out, since the controller makes it. `DIV` is the serial
+//! port's clock divider.
 use crate::core::{Vreteno, Writeback};
 use crate::debug::Dm;
 use crate::dmem::Dmem;
@@ -106,7 +107,7 @@ pub type BoardRouter = Router7<
 // begin{board}
 /// The board's design.
 #[derive(Trace, Default)]
-pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
+pub struct Board<const DIV: u32> {
     pub cpu: Vreteno<2>,
     pub host: AxiHost<32, 32, 4, 2, 4>,
     /// The second host: Vivado's JTAG-to-AXI master, on the top beside
@@ -182,7 +183,7 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     pub timer: Timer<4>,
     pub uart: Uart<DIV>,
     pub pwm: Pwm,
-    pub ddr3: Ddr3Per<MICRON_SIM, BIST>,
+    pub ddr3: Ddr3Per,
     // begin{remote}
     /// The peripheral at `0x3300`, whose behaviour is a program on
     /// another machine, and the link that puts its transactions on the
@@ -224,16 +225,14 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
 
 // begin{ports}
 /// The board's inputs: the resets, the interrupt, the serial line, the
-/// memory's clocks, the video slot's answers, the frames arriving, and
+/// board's clock and the controller's reset, the video slot's answers, the frames arriving, and
 /// the JTAG master's pins, named as AXI4 names them under `jtag_`.
 pub struct BoardIn {
     pub rst: In<Bit>,
     pub irq: In<Bit>,
     pub rx: In<Bit>,
-    pub ddr3_clk: In<Bit>,
-    pub ref_clk: In<Bit>,
-    pub ddr3_clk_90: In<Bit>,
-    pub ddr3_rst_n: In<Bit>,
+    pub sys_clk: In<Bit>,
+    pub sys_rst: In<Bit>,
     pub vb: Rx<LiteB>,
     pub vr: Rx<LiteR<32>>,
     pub net_rx: Rx<EthByte>,
@@ -271,6 +270,8 @@ pub struct BoardOut {
     pub tx: Out<Bit>,
     pub pwm_pins: Out<U<4>>,
     pub calib: Out<Bit>,
+    pub ui_clk: Out<Bit>,
+    pub ui_rst: Out<Bit>,
     pub ck_p: Out<Bit>,
     pub ck_n: Out<Bit>,
     pub mem_rst_n: Out<Bit>,
@@ -305,19 +306,15 @@ pub struct BoardOut {
 // end{ports}
 
 #[lower]
-impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
-    for Board<DIV, MICRON_SIM, BIST>
-{
+impl<const DIV: u32> Unit for Board<DIV> {
     async fn run(
         &mut self,
         BoardIn {
             rst,
             irq,
             rx,
-            ddr3_clk,
-            ref_clk,
-            ddr3_clk_90,
-            ddr3_rst_n,
+            sys_clk,
+            sys_rst,
             vb,
             vr,
             net_rx,
@@ -351,6 +348,8 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             tx,
             pwm_pins,
             calib,
+            ui_clk,
+            ui_rst,
             ck_p,
             ck_n,
             mem_rst_n,
@@ -811,18 +810,11 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                         ),
                     ),
                     self.ddr3.run(
+                        (req3_rx, wd3_rx, sys_clk, sys_rst),
                         (
-                            req3_rx,
-                            wd3_rx,
-                            ddr3_clk,
-                            ref_clk,
-                            ddr3_clk_90,
-                            ddr3_rst_n,
-                        ),
-                        (
-                            ans3_tx, rb3_tx, calib, ck_p, ck_n, mem_rst_n, cke,
-                            cs_n, ras_n, cas_n, we_n, row, bank, dm, odt, dq,
-                            dqs, dqs_n,
+                            ans3_tx, rb3_tx, calib, ui_clk, ui_rst, ck_p, ck_n,
+                            mem_rst_n, cke, cs_n, ras_n, cas_n, we_n, row,
+                            bank, dm, odt, dq, dqs, dqs_n,
                         ),
                     ),
                 ),

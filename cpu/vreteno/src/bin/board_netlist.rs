@@ -43,19 +43,19 @@ fn main() {
     let (mut net, text, data) = match mode.as_str() {
         // Sixteen cycles a bit, and the controller's simulation waits.
         "sim" => (
-            Board::<16, 1, 0>::lowered("board"),
+            Board::<16>::lowered("board"),
             ddr3_program::TEXT,
             ddr3_program::DATA,
         ),
         // 100 MHz over 115200 baud is 868 cycles a bit.
         "board" => (
-            Board::<868, 0, 0>::lowered("board"),
+            Board::<868>::lowered("board"),
             ddr3_board_program::TEXT,
             ddr3_board_program::DATA,
         ),
         // The same board, with the program that fades an LED.
         "fade" => (
-            Board::<868, 0, 0>::lowered("board"),
+            Board::<868>::lowered("board"),
             fade_program::TEXT,
             fade_program::DATA,
         ),
@@ -63,7 +63,7 @@ fn main() {
         // runs arrives on the serial port and lives in the memory,
         // rather than being built into this netlist.
         "boot" => (
-            Board::<868, 0, 0>::lowered("board"),
+            Board::<868>::lowered("board"),
             boot_program::TEXT,
             boot_program::DATA,
         ),

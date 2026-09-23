@@ -2,20 +2,22 @@
 //! The board's DDR3 memory as an AXI peripheral, with the controller
 //! a module from elsewhere.
 //!
-//! [`Ddr3`] is UberDDR3's controller behind the thin wrapper in
-//! `hdl/ddr3_wb32.v`, which gives it a Wishbone of thirty-two bit
-//! words. It is a foreign unit: its netlist is an instance of that
-//! module, and its `run` is a model of it, a memory behind the same
-//! Wishbone lines that stalls while it calibrates. The model does not
-//! drive the memory's pins; nothing in a simulation reads them, and
-//! the pins only have to be in the netlist.
+//! [`Ddr3`] is AMD's MIG 7 Series controller, which the build generates
+//! (`//ddr3:ddr3_mig`), behind the thin wrapper in `hdl/ddr3_wb32.v`,
+//! which gives it a Wishbone of thirty-two bit words. It is a foreign
+//! unit: its netlist is an instance of that module, and its `run` is a
+//! model of it, a memory behind the same Wishbone lines that stalls
+//! while it calibrates. The model does not drive the memory's pins;
+//! nothing in a simulation reads them, and the pins only have to be in
+//! the netlist. The controller makes the design's clock from the
+//! board's, and the model leaves that clock and its reset alone.
 //!
 //! [`Ddr3Per`] is the peripheral a design puts on its link: the AXI to
 //! Wishbone bridge of `txhdl_parts` joined to the controller. It is a
 //! unit of units and lowers as one, with the controller's module
 //! instantiated in it and the memory's pins among its ports, so a
-//! board top has only to join those pins to the package's and give it
-//! its clocks.
+//! board top has only to join those pins to the package's, give it the
+//! board's clock, and take the design's clock back from it.
 use txhdl::comp::trace::Kind;
 use txhdl::comp::{
     join2, signal, Clock, DefaultClock, In, Out, Pad, Reg, Rx, Tx, Unit,
@@ -31,13 +33,12 @@ use txhdl_parts::bus::wb::AxiWb;
 /// three bank bits, the last three the lane of a word in its burst.
 pub const AW: usize = 28;
 
-/// The controller's inputs: the memory clock, the reference clock, the
-/// memory clock a quarter cycle late, the reset, active low, and the
-/// Wishbone host's lines. The controller clock is the design's own and
-/// is not a port.
+/// The controller's inputs: the board's 200 MHz clock, which the
+/// controller runs the memory from and takes as its delay reference;
+/// its reset, active high at power-on and never again; and the
+/// Wishbone host's lines. The design's clock is the controller's own
+/// making, bound to the module's clock pin, and is not a port here.
 pub type CtlIn = (
-    In<Bit>,
-    In<Bit>,
     In<Bit>,
     In<Bit>,
     In<Bit>,
@@ -49,13 +50,16 @@ pub type CtlIn = (
 );
 
 /// The controller's outputs: stall, acknowledge and the word read;
-/// calibration done; the memory's clock pair, reset, clock enable,
+/// calibration done; the design's clock and its reset, which the
+/// controller makes; the memory's clock pair, reset, clock enable,
 /// chip select, the three command strobes, row address, bank, strobe
 /// masks and termination; and the memory's data and strobe pads.
 pub type CtlOut = (
     Out<Bit>,
     Out<Bit>,
     Out<U<32>>,
+    Out<Bit>,
+    Out<Bit>,
     Out<Bit>,
     Out<Bit>,
     Out<Bit>,
@@ -75,28 +79,24 @@ pub type CtlOut = (
 );
 
 // begin{ctl}
-/// The controller. `MICRON_SIM` shortens its power-on waits for the
-/// Micron model, one in simulation and zero on the board; `BIST` is its
-/// self test after calibration, which walks the whole memory once and
-/// is zero where a simulation cannot wait for that.
+/// The controller: AMD's MIG 7 Series behind the wrapper, which
+/// calibrates in hardware and, in simulation, is the variant with the
+/// fast calibration the build compiles into its library, so it takes no
+/// parameter for either.
 #[derive(Trace, Default)]
-pub struct Ddr3<const MICRON_SIM: usize, const BIST: usize> {
+pub struct Ddr3 {
     /// Whether calibration is done, in the model.
     pub calibrated: Reg<Bit>,
 }
 
-impl<const MICRON_SIM: usize, const BIST: usize> Lower
-    for Ddr3<MICRON_SIM, BIST>
-{
+impl Lower for Ddr3 {
     fn lowered_as(name: &str) -> Lowered {
         foreign(
             name,
             "ddr3_wb32",
             &[
-                ("i_ddr3_clk", Kind::In, 1),
-                ("i_ref_clk", Kind::In, 1),
-                ("i_ddr3_clk_90", Kind::In, 1),
-                ("i_rst_n", Kind::In, 1),
+                ("i_sys_clk", Kind::In, 1),
+                ("i_sys_rst", Kind::In, 1),
                 ("i_wb_cyc", Kind::In, 1),
                 ("i_wb_stb", Kind::In, 1),
                 ("i_wb_we", Kind::In, 1),
@@ -107,6 +107,8 @@ impl<const MICRON_SIM: usize, const BIST: usize> Lower
                 ("o_wb_ack", Kind::Out, 1),
                 ("o_wb_data", Kind::Out, 32),
                 ("o_calib_complete", Kind::Out, 1),
+                ("o_ui_clk", Kind::Out, 1),
+                ("o_ui_rst", Kind::Out, 1),
                 ("o_ddr3_clk_p", Kind::Out, 1),
                 ("o_ddr3_clk_n", Kind::Out, 1),
                 ("o_ddr3_reset_n", Kind::Out, 1),
@@ -123,11 +125,8 @@ impl<const MICRON_SIM: usize, const BIST: usize> Lower
                 ("io_ddr3_dqs", Kind::Pad, 4),
                 ("io_ddr3_dqs_n", Kind::Pad, 4),
             ],
-            &[
-                ("MICRON_SIM", MICRON_SIM as i128),
-                ("BIST_MODE", BIST as i128),
-            ],
-            &[("i_controller_clk", DefaultClock::NAME)],
+            &[],
+            &[("i_ui_clk", DefaultClock::NAME)],
         )
     }
 }
@@ -136,12 +135,10 @@ impl<const MICRON_SIM: usize, const BIST: usize> Lower
 /// Cycles the model stalls for before it has calibrated.
 pub const MODEL_WARMUP: u32 = 64;
 
-impl<const MICRON_SIM: usize, const BIST: usize> Unit<CtlIn, CtlOut>
-    for Ddr3<MICRON_SIM, BIST>
-{
+impl Unit<CtlIn, CtlOut> for Ddr3 {
     async fn run(
         &mut self,
-        (_ck, _rck, _ck90, _rst_n, cyc, stb, we, adr, dat, sel): CtlIn,
+        (_sys_clk, _sys_rst, cyc, stb, we, adr, dat, sel): CtlIn,
         (stall, ack, rdat, calib, ..): CtlOut,
     ) {
         // The memory: a word a request, answered a cycle after it is
@@ -166,24 +163,20 @@ impl<const MICRON_SIM: usize, const BIST: usize> Unit<CtlIn, CtlOut>
 
 // begin{per}
 /// The memory as a peripheral: the bridge and the controller, joined by
-/// the Wishbone lines. `MICRON_SIM` and `BIST` are the controller's.
+/// the Wishbone lines.
 #[derive(Trace, Default)]
-pub struct Ddr3Per<const MICRON_SIM: usize, const BIST: usize> {
+pub struct Ddr3Per {
     pub bridge: AxiWb<32, 4, AW>,
-    pub ctl: Ddr3<MICRON_SIM, BIST>,
+    pub ctl: Ddr3,
 }
 
 #[lower]
-impl<const MICRON_SIM: usize, const BIST: usize> Unit
-    for Ddr3Per<MICRON_SIM, BIST>
-{
+impl Unit for Ddr3Per {
     async fn run(
         &mut self,
-        (req, wd, ddr3_clk, ref_clk, ddr3_clk_90, rst_n): (
+        (req, wd, sys_clk, sys_rst): (
             Rx<PerReq<32, 4>>,
             Rx<W<32, 4>>,
-            In<Bit>,
-            In<Bit>,
             In<Bit>,
             In<Bit>,
         ),
@@ -191,6 +184,8 @@ impl<const MICRON_SIM: usize, const BIST: usize> Unit
             ans,
             rb,
             calib,
+            ui_clk,
+            ui_rst,
             ck_p,
             ck_n,
             mem_rst_n,
@@ -209,6 +204,8 @@ impl<const MICRON_SIM: usize, const BIST: usize> Unit
         ): (
             Tx<Answer<4>>,
             Tx<R<32, 4>>,
+            Out<Bit>,
+            Out<Bit>,
             Out<Bit>,
             Out<Bit>,
             Out<Bit>,
@@ -239,21 +236,13 @@ impl<const MICRON_SIM: usize, const BIST: usize> Unit
         join2(
             self.ctl.run(
                 (
-                    ddr3_clk,
-                    ref_clk,
-                    ddr3_clk_90,
-                    rst_n,
-                    wb_cyc_i,
-                    wb_stb_i,
-                    wb_we_i,
-                    wb_adr_i,
-                    wb_dat_i,
-                    wb_sel_i,
+                    sys_clk, sys_rst, wb_cyc_i, wb_stb_i, wb_we_i, wb_adr_i,
+                    wb_dat_i, wb_sel_i,
                 ),
                 (
-                    wb_stall_o, wb_ack_o, wb_rdat_o, calib, ck_p, ck_n,
-                    mem_rst_n, cke, cs_n, ras_n, cas_n, we_n, row, bank, dm,
-                    odt, dq, dqs, dqs_n,
+                    wb_stall_o, wb_ack_o, wb_rdat_o, calib, ui_clk, ui_rst,
+                    ck_p, ck_n, mem_rst_n, cke, cs_n, ras_n, cas_n, we_n, row,
+                    bank, dm, odt, dq, dqs, dqs_n,
                 ),
             ),
             self.bridge.run(
@@ -294,15 +283,13 @@ mod tests {
             per_out,
         } = axi_to_unit::<32, 32, 4, 4, 16>();
         let (req, wd, ans, rb) = per_client;
-        let (_ck_o, ck) = signal::<Bit, DefaultClock>();
-        let (_rck_o, rck) = signal::<Bit, DefaultClock>();
-        let (_ck90_o, ck90) = signal::<Bit, DefaultClock>();
-        let (_rst_o, rst_n) = signal::<Bit, DefaultClock>();
+        let (_sys_clk_o, sys_clk) = signal::<Bit, DefaultClock>();
+        let (_sys_rst_o, sys_rst) = signal::<Bit, DefaultClock>();
         let (calib_o, calib) = signal::<Bit, DefaultClock>();
         let bits = || signal::<Bit, DefaultClock>().0;
         let mut h = AxiHost::<32, 32, 4, 4, 16>::default();
         let mut p = AxiPer::<32, 32, 4, 4>::default();
-        let mut mem = Ddr3Per::<0, 0>::default();
+        let mut mem = Ddr3Per::default();
         let seen = Rc::new(RefCell::new(Vec::new()));
         let out = seen.clone();
         let client = async move {
@@ -321,11 +308,13 @@ mod tests {
             join2(h.run(host_in, host_out), p.run(per_in, per_out)),
             join2(
                 mem.run(
-                    (req, wd, ck, rck, ck90, rst_n),
+                    (req, wd, sys_clk, sys_rst),
                     (
                         ans,
                         rb,
                         calib_o,
+                        bits(),
+                        bits(),
                         bits(),
                         bits(),
                         bits(),
@@ -361,26 +350,23 @@ mod tests {
     }
 
     /// The netlist holds the controller as an instance of the wrapper,
-    /// with its parameters, its clock pin on the design's clock and its
-    /// pads running out to the peripheral's ports, and no module of its
-    /// own; the bridge is written, as a lowered child is.
+    /// its clock pin on the design's clock, the clock it makes and the
+    /// board's clock among the peripheral's ports beside the pads, and
+    /// no module of its own; the bridge is written, as a lowered child
+    /// is.
     #[test]
     fn the_controller_is_instantiated_and_not_written() {
-        let v = Ddr3Per::<1, 0>::verilog("ddr3_per");
-        assert!(v.contains("ddr3_wb32 #("), "{v}");
-        assert!(v.contains(".MICRON_SIM(1)"), "{v}");
-        assert!(v.contains(".BIST_MODE(0)"), "{v}");
-        assert!(v.contains(".i_controller_clk(clk)"), "{v}");
+        let v = Ddr3Per::verilog("ddr3_per");
+        assert!(v.contains("ddr3_wb32 "), "{v}");
+        assert!(v.contains(".i_ui_clk(clk)"), "{v}");
+        assert!(v.contains(".i_sys_clk(sys_clk)"), "{v}");
+        assert!(v.contains(".o_ui_clk(ui_clk)"), "{v}");
         assert!(v.contains("inout [31:0] dq"), "{v}");
         assert!(v.contains(".io_ddr3_dq(dq)"), "{v}");
         assert!(v.contains("module ddr3_per_bridge("), "{v}");
         assert!(!v.contains("module ddr3_wb32"), "{v}");
-        let h = Ddr3Per::<1, 0>::vhdl("ddr3_per");
+        let h = Ddr3Per::vhdl("ddr3_per");
         assert!(h.contains("component ddr3_wb32"), "{h}");
-        assert!(
-            h.contains("generic map (MICRON_SIM => 1, BIST_MODE => 0)"),
-            "{h}"
-        );
         assert!(
             h.contains("dq : inout std_logic_vector(31 downto 0)"),
             "{h}"

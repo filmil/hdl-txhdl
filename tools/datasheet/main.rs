@@ -531,12 +531,8 @@ fn main() {
         Syscon::<0x7478_0001, 0x1_0000, 0, 0, 0x5253_5421>::lowered("syscon"),
     );
     sheet("Uart", "Uart<868>", Uart::<868>::lowered("uart"));
-    sheet("Ddr3Per", "Ddr3Per<0, 0>", Ddr3Per::<0, 0>::lowered("ddr3"));
-    sheet(
-        "Board",
-        "Board<868, 0, 0>",
-        Board::<868, 0, 0>::lowered("board"),
-    );
+    sheet("Ddr3Per", "Ddr3Per", Ddr3Per::lowered("ddr3"));
+    sheet("Board", "Board<868>", Board::<868>::lowered("board"));
     sheet("BarRegs", "BarRegs<4>", BarRegs::<4>::lowered("bar_regs"));
     sheet("PcieBar", "PcieBar", PcieBar::lowered("pcie_bar"));
     sheet("Fb", "Fb<16, 2, 1024>", Fb::<16, 2, 1024>::lowered("fb"));

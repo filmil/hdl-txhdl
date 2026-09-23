@@ -24,7 +24,7 @@ use vreteno32::term::Terminal;
 
 /// The serial port's divider in these runs: four cycles a bit, as the
 /// demonstration has it.
-type TestBoard = Board<4, 1, 0>;
+type TestBoard = Board<4>;
 
 /// What a run came to: what the serial line said, and the cycle the
 /// core halted on.
@@ -346,10 +346,8 @@ fn run_all(
             rst,
             irq,
             rx,
-            ddr3_clk: quiet(),
-            ref_clk: quiet(),
-            ddr3_clk_90: quiet(),
-            ddr3_rst_n: quiet(),
+            sys_clk: quiet(),
+            sys_rst: quiet(),
             vb: chan::<LiteB, DefaultClock>().1,
             vr: chan::<LiteR<32>, DefaultClock>().1,
             net_rx: net_in_rx,
@@ -383,6 +381,8 @@ fn run_all(
             tx: tx_o,
             pwm_pins: signal::<U<4>, DefaultClock>().0,
             calib: bit(),
+            ui_clk: bit(),
+            ui_rst: bit(),
             ck_p: bit(),
             ck_n: bit(),
             mem_rst_n: bit(),
@@ -643,7 +643,7 @@ fn the_netlist_holds_the_controller() {
     assert!(v.contains("module board("), "the top");
     assert!(v.contains("module board_cpu("), "the core");
     assert!(v.contains("module board_ddr3_bridge("), "the bridge");
-    assert!(v.contains("ddr3_wb32 #("), "the controller");
+    assert!(v.contains("ddr3_wb32 "), "the controller");
     assert!(!v.contains("module ddr3_wb32"), "not written");
     assert!(v.contains("inout [31:0] dq"), "the data pads");
 }
