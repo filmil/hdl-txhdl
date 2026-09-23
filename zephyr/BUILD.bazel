@@ -39,6 +39,32 @@ zephyr_image(
 # What the image proves. Not that it exists, which this port showed to
 # be worth almost nothing, but that the configuration the build
 # generated is this machine's.
+# The same sample with a network stack, which is what compiles the
+# Ethernet driver. Without it `ETH_VRETENO` is off, nothing hands
+# `eth_vreteno.c` to a compiler, and the driver is checked only as
+# text: the state `uart_vreteno.c` was in when it kept an implicit
+# declaration of `sys_read32`.
+zephyr_image(
+    name = "hello_world_net",
+    board = "ax7a200b",
+    conf = "net.conf",
+    module = ":module",
+    sample = "samples/hello_world",
+)
+
+filegroup(
+    name = "hello_world_net_config",
+    srcs = [":hello_world_net"],
+    output_group = "config",
+)
+
+sh_test(
+    name = "eth_config_test",
+    srcs = ["eth_config_test.sh"],
+    args = ["$(location :hello_world_net_config)"],
+    data = [":hello_world_net_config"],
+)
+
 filegroup(
     name = "hello_world_config",
     srcs = [":hello_world"],

@@ -48,6 +48,9 @@ def _zephyr_image_impl(ctx):
             "MODULE_DIR": module,
             "BOARD": ctx.attr.board,
             "SAMPLE": ctx.attr.sample,
+            "EXTRA_CONF": (
+                ctx.file.conf.path if ctx.file.conf else ""
+            ),
             "OUT_ELF": elf.path,
             "OUT_BIN": binary.path,
             "OUT_CONFIG": config.path,
@@ -104,8 +107,13 @@ rm -rf "$build"
 # `ZEPHYR_MODULES` and not `ZEPHYR_EXTRA_MODULES`: see this file's
 # module docstring. The roots are given as well, since the board and
 # the SoC live here rather than in Zephyr's tree.
+conf_arg=""
+if [ -n "$EXTRA_CONF" ]; then
+  conf_arg="-DEXTRA_CONF_FILE=$root/$EXTRA_CONF"
+fi
+
 "$root/$CMAKE" -B "$build" -S "$zbase/$SAMPLE" -G Ninja \
-  -DBOARD="$BOARD" \
+  -DBOARD="$BOARD" $conf_arg \
   -DBOARD_ROOT="$root/$MODULE_DIR" \
   -DSOC_ROOT="$root/$MODULE_DIR" \
   -DDTS_ROOT="$root/$MODULE_DIR" \
@@ -135,6 +143,11 @@ zephyr_image = rule(
             doc = "The port: this repository as a Zephyr module.",
             allow_files = True,
             mandatory = True,
+        ),
+        "conf": attr.label(
+            doc = "An extra Kconfig fragment merged into the build, " +
+                  "for turning on what a sample does not.",
+            allow_single_file = [".conf"],
         ),
         "sample": attr.string(
             doc = "The application, as a path inside Zephyr's tree.",
