@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Everything behind BAR0, driven through the endpoint's master pins as
+//! Everything behind BAR1, driven through the endpoint's master pins as
 //! the endpoint drives them when a host reads and writes the BAR, and
 //! its netlist.
 use pcie::bar::{PcieBar, PcieBarIn, PcieBarOut, IDENT};

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-// PCIe on the Alinx AX7A200B: the XDMA endpoint in AXI bridge mode, and
-// `pcie_bar`, which `#[lower]` writes for `pcie::bar::PcieBar`, behind
-// its BAR0. Written by hand, since it holds what a lowered unit cannot
-// say: the transceivers' reference clock buffer, the endpoint core, and
+// PCIe on the Alinx AX7A200B: the XDMA endpoint, whose bypass window,
+// BAR1, is a PCIe-to-AXI bridge, and `pcie_bar`, which `#[lower]` writes
+// for `pcie::bar::PcieBar`, behind that window. The core's DMA engine
+// and its register block, BAR0, are there and unused (issue 451).
+// Written by hand, since it holds what a lowered unit cannot say: the transceivers' reference clock buffer, the endpoint core, and
 // its clock and reset handed to the lowered design.
 //
 // The lowered design runs on the endpoint's user clock, so nothing
@@ -49,22 +50,29 @@ module pcie_top (
       .axi_aclk(aclk), .axi_aresetn(aresetn),
       .usr_irq_req(1'b0), .usr_irq_ack(), .msi_enable(),
       .msi_vector_width(),
-      .m_axi_awid(awid), .m_axi_awaddr(awaddr), .m_axi_awlen(awlen),
-      .m_axi_awsize(awsize), .m_axi_awburst(awburst),
-      .m_axi_awprot(awprot), .m_axi_awvalid(awvalid),
-      .m_axi_awlock(awlock), .m_axi_awcache(awcache),
-      .m_axi_awready(awready),
-      .m_axi_wdata(wdata), .m_axi_wstrb(wstrb), .m_axi_wlast(wlast),
-      .m_axi_wvalid(wvalid), .m_axi_wready(wready),
-      .m_axi_bid(bid), .m_axi_bresp(bresp), .m_axi_bvalid(bvalid),
-      .m_axi_bready(bready),
-      .m_axi_arid(arid), .m_axi_araddr(araddr), .m_axi_arlen(arlen),
-      .m_axi_arsize(arsize), .m_axi_arburst(arburst),
-      .m_axi_arprot(arprot), .m_axi_arvalid(arvalid),
-      .m_axi_arlock(arlock), .m_axi_arcache(arcache),
-      .m_axi_arready(arready),
-      .m_axi_rid(rid), .m_axi_rdata(rdata), .m_axi_rresp(rresp),
-      .m_axi_rlast(rlast), .m_axi_rvalid(rvalid), .m_axi_rready(rready),
+      .m_axib_awid(awid), .m_axib_awaddr(awaddr), .m_axib_awlen(awlen),
+      .m_axib_awsize(awsize), .m_axib_awburst(awburst),
+      .m_axib_awprot(awprot), .m_axib_awvalid(awvalid),
+      .m_axib_awlock(awlock), .m_axib_awcache(awcache),
+      .m_axib_awready(awready),
+      .m_axib_wdata(wdata), .m_axib_wstrb(wstrb), .m_axib_wlast(wlast),
+      .m_axib_wvalid(wvalid), .m_axib_wready(wready),
+      .m_axib_bid(bid), .m_axib_bresp(bresp), .m_axib_bvalid(bvalid),
+      .m_axib_bready(bready),
+      .m_axib_arid(arid), .m_axib_araddr(araddr), .m_axib_arlen(arlen),
+      .m_axib_arsize(arsize), .m_axib_arburst(arburst),
+      .m_axib_arprot(arprot), .m_axib_arvalid(arvalid),
+      .m_axib_arlock(arlock), .m_axib_arcache(arcache),
+      .m_axib_arready(arready),
+      .m_axib_rid(rid), .m_axib_rdata(rdata), .m_axib_rresp(rresp),
+      .m_axib_rlast(rlast), .m_axib_rvalid(rvalid), .m_axib_rready(rready),
+      // The DMA master, which no descriptor ever drives: its ready and
+      // valid inputs held low, its outputs left open.
+      .m_axi_awready(1'b0), .m_axi_wready(1'b0),
+      .m_axi_bid(4'd0), .m_axi_bresp(2'd0), .m_axi_bvalid(1'b0),
+      .m_axi_arready(1'b0),
+      .m_axi_rid(4'd0), .m_axi_rdata(64'd0), .m_axi_rresp(2'd0),
+      .m_axi_rlast(1'b0), .m_axi_rvalid(1'b0),
       .cfg_mgmt_addr(19'd0), .cfg_mgmt_write(1'b0),
       .cfg_mgmt_write_data(32'd0), .cfg_mgmt_byte_enable(4'd0),
       .cfg_mgmt_read(1'b0), .cfg_mgmt_read_data(),

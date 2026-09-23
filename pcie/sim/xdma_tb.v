@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // The endpoint and the design behind it under Vivado's simulator (issue
 // 305): the board's top, `pcie_top`, with the XDMA core inside it and
-// the lowered `BarRegs` behind BAR0, elaborated whole and run. The
+// the lowered `BarRegs` behind BAR1, elaborated whole and run. The
 // reference clock is driven and the reset released; the lanes have
 // nothing on them, so the link never trains and `user_lnk_up` stays
 // low, which is what the verdict reads. A link that trains and a root

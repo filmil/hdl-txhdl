@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! What BAR0 reaches: four words of registers behind the endpoint's
+//! What BAR1 reaches: four words of registers behind the endpoint's
 //! AXI master, and the unit of units that joins them to its pins.
 use txhdl::comp::{
     chan, join2, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit,
@@ -14,7 +14,7 @@ pub const IDENT: u64 = 0x5478_4844_4c00_0001;
 
 // begin{regs}
 /// Four 64-bit words behind a peripheral tracker, at offsets `0x0`,
-/// `0x8`, `0x10` and `0x18` of BAR0: the identifier, read only; a
+/// `0x8`, `0x10` and `0x18` of BAR1: the identifier, read only; a
 /// scratch word a host reads back; two LEDs, in the low bits; and a
 /// count of the writes served, read only. It takes one request at a
 /// time, as the timer does: a read is answered in the cycle it is
@@ -190,7 +190,7 @@ pub struct PcieBarOut {
     pub leds: Out<U<2>>,
 }
 
-/// Everything behind BAR0, as one lowered unit: the pins, a peripheral
+/// Everything behind BAR1, as one lowered unit: the pins, a peripheral
 /// tracker, and the registers. The board's top wires the endpoint's
 /// master pins to its ports and its clock to the endpoint's user clock.
 #[derive(Trace, Default)]

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # The PCIe endpoint under Vivado's simulator: the board's top with
-# the XDMA core and the lowered design behind BAR0, from the core's
+# the XDMA core and the lowered design behind BAR1, from the core's
 # exported simulation library, which holds every source the core needs
 # rather than its top wrapper alone. On its own (issue 305), where the
 # elaboration is the test, since a module the library lacked would end
@@ -64,7 +64,7 @@ vivado_test(
 # The root port (issue 178): the behavioural root port and the host
 # AMD ships in the core's example design, which `example_design` on
 # `//pcie:xdma_x2` keeps beside the core, against the board's top. The
-# host trains the link, programs BAR0 and, in `rp/tests.vh`, reads and
+# host trains the link, programs the BARs and, in `rp/tests.vh`, reads and
 # writes it through to `BarRegs`. Manual, as every Vivado target is:
 #
 #   bazel test //pcie/sim:rp_test
@@ -122,7 +122,7 @@ vivado_test(
     name = "rp_test",
     args = [
         "-testplusarg",
-        "TESTNAME=bar0",
+        "TESTNAME=bridge",
     ],
     custom_tcl_script = "rp/verdict.tcl",
     extra_modules = ["xdma_x2.glbl"],

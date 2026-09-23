@@ -5,7 +5,7 @@
 // with the host that lives inside it. The host trains the link,
 // scans and programs the BARs, and runs the test named on the
 // simulator's command line, `tests.vh` beside this file, which reads
-// and writes BAR0 through to `BarRegs` and sets `ok`. The module is
+// and writes BAR1 through to `BarRegs` and sets `ok`. The module is
 // named `board`, as the example's is, because every task of the host
 // reaches its root port by that name: `board.RP.tx_usrapp` and the
 // rest.
