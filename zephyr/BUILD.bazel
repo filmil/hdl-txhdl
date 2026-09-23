@@ -16,6 +16,7 @@
 # compile time and holds their addresses to the design's own
 # constants.
 
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(":defs.bzl", "zephyr_image")
 
 package(default_visibility = ["//visibility:public"])
@@ -33,4 +34,49 @@ zephyr_image(
     board = "ax7a200b",
     module = ":module",
     sample = "samples/hello_world",
+)
+
+# What the image proves. Not that it exists, which this port showed to
+# be worth almost nothing, but that the configuration the build
+# generated is this machine's.
+filegroup(
+    name = "hello_world_config",
+    srcs = [":hello_world"],
+    output_group = "config",
+)
+
+sh_test(
+    name = "config_test",
+    srcs = ["config_test.sh"],
+    args = ["$(location :hello_world_config)"],
+    data = [":hello_world_config"],
+)
+
+# The files the port test reads, so that editing any of them reruns
+# the check rather than leaving it stale.
+filegroup(
+    name = "port_sources",
+    srcs = [
+        "dts/riscv/hdlfactory/vreteno.dtsi",
+        "drivers/serial/uart_vreteno.c",
+        "soc/hdlfactory/vreteno/Kconfig",
+        "drivers/serial/Kconfig.vreteno",
+        "boards/hdlfactory/ax7a200b/ax7a200b_defconfig",
+    ],
+)
+
+# Every file of the port, for a document to list or an archive to
+# take.
+filegroup(
+    name = "sources",
+    srcs = glob([
+        "**/*.c",
+        "**/*.dts",
+        "**/*.dtsi",
+        "**/*.yaml",
+        "**/*.yml",
+        "**/*.txt",
+        "**/Kconfig*",
+        "**/*_defconfig",
+    ]),
 )
