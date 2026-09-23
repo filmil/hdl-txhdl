@@ -55,6 +55,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Words to a frame and back:  bazel run //lib/examples:ex_ethdma
+rust_binary(
+    name = "ex_ethdma",
+    srcs = ["ex_ethdma.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # The Ethernet slot registers:  bazel run //lib/examples:ex_ethslots
 rust_binary(
     name = "ex_ethslots",
@@ -803,6 +815,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_cdc.rs",
         "ex_dma.rs",
         "ex_dmaw.rs",
+        "ex_ethdma.rs",
         "ex_ethslots.rs",
         "ex_scanout.rs",
         "ex_reset.rs",

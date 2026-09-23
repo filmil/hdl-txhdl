@@ -567,6 +567,24 @@ waveform(
     ],
 )
 
+# Words to a frame and back, through the MAC. Issue 151.
+waveform(
+    name = "ethdma",
+    example = "//lib/examples:ex_ethdma",
+    lowered = [
+        ("frame_out", "frame_out"),
+        ("frame_in", "frame_in"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//go=>go",
+        "//running=>running",
+        "//frame_out/have=>out_have",
+        "//frame_in/have=>in_have",
+        "//in_go=>in_go",
+    ],
+)
+
 # The Ethernet slot registers, as a driver drives them. Issue 411.
 waveform(
     name = "ethslots",
@@ -775,6 +793,8 @@ latex_document(
         ":dma_timing",
         ":dmaw_run",
         ":dmaw_timing",
+        ":ethdma_run",
+        ":ethdma_timing",
         ":ethslots_run",
         ":ethslots_timing",
         ":scanout_run",
