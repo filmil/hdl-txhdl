@@ -796,6 +796,31 @@ When one issue's work genuinely needs another's, the branch is stacked
 on it rather than merged into it, and the pull request says so in its
 first line.
 
+## Never write "does not close" beside a number
+
+Forgejo scans a commit message and a pull request body for a number
+after a closing word, and it does not read the sentence around it.
+So "this does not close #411" closes #411 on the merge, silently.
+
+The phrasing is the natural one to reach for, because a change that
+does part of a job wants to say which part, and a stacked branch
+always does part of a job.
+Say it with the number first and no closing word near it:
+
+* **#411 stays open**, since this is only the register map.
+* Towards #390. The rest of it is the rule itself.
+* Part of #151; the ring manager is not here.
+
+Not "does not close", "does not fix", "does not resolve", nor any of
+them with a number following.
+The same goes for a comment on the issue, since the scan does not care
+which field it read.
+
+This was met on a pull request whose body said a change "does not
+close #411" while two sessions were working through #411; the merge
+would have closed it under both of them, and the issue's own history
+would have been the only place it showed.
+
 ## A pull request is watched until it lands
 
 Opening a pull request is not the end of the work on it.
