@@ -4,8 +4,8 @@
 //! bus, which is what controllers written elsewhere often speak.
 //!
 //! [`AxiWb`] is a peripheral client written as hardware, as Razboj's
-//! framebuffer is. It takes one single-beat burst at a time and puts it
-//! on the Wishbone lines as one request: `cyc` and `stb` held until the
+//! framebuffer is. It takes one burst at a time and puts each of its
+//! words on the Wishbone lines as its own request: `cyc` and `stb` held until the
 //! peripheral takes it, a cycle with `cyc`, `stb` and no `stall`; then
 //! `cyc` alone until `ack`; then the answer on the link. Every line it
 //! drives is a register, so nothing combinational crosses from the link
@@ -48,6 +48,12 @@ pub struct AxiWb<const A: usize, const I: usize, const AW: usize> {
     pub wdat: Reg<U<32>>,
     /// The lanes a write writes, all four for a read.
     pub wsel: Reg<U<4>>,
+    /// Beats of the burst still owed, the one in hand included.
+    ///
+    /// A burst is `len + 1` words at consecutive addresses, and the
+    /// lines carry one word per request, so this counts the requests
+    /// the burst still has to make.
+    pub left: Reg<U<9>>,
 }
 // end{state}
 
@@ -94,19 +100,25 @@ impl<const A: usize, const I: usize, const AW: usize> Unit for AxiWb<A, I, AW> {
             let answering = st == 4;
             let sent_r = answering & read & rb.ready();
             let sent_b = answering & !read & ans.ready();
-            let finished = sent_r | sent_b;
             // A read goes on the lines at once; a write waits for its
             // beat first.
             let first = mux(q.read, U::<3>::from(2u8), U::<3>::from(1u8));
             let is_read = q.read.zext::<1>();
             let word = (q.addr >> WORD).resize::<AW>();
             let answer = mux(read, rdat.get(), self.wdat.get());
+            // The burst's last word, which is what ends it. Every
+            // other word goes round again at the next address.
+            let at_last = Bit::from(self.left.get() == 1);
+            let more = !at_last;
+            let next_adr = self.wadr.get() + 1;
+            let next_left = self.left.get() - 1;
             with!(self <= {
                 take ? {
                     reading: is_read,
                     rid: q.id,
                     wadr: word,
                     wsel: U::<4>::from(15u8),
+                    left: (q.len.resize::<9>() + 1),
                     stage: first,
                 },
                 beat ? {
@@ -119,14 +131,30 @@ impl<const A: usize, const I: usize, const AW: usize> Unit for AxiWb<A, I, AW> {
                     stage: U::<3>::from(4u8),
                     wdat: answer,
                 },
-                finished ? stage: U::<3>::from(0u8),
+                // A write is answered once, when its last beat has
+                // been acknowledged; before that each acknowledgement
+                // sends the bridge back for the next beat.
+                acked & !read & more ? {
+                    stage: U::<3>::from(1u8),
+                    wadr: next_adr,
+                    left: next_left,
+                },
+                // A read beat that is not the last sends the bridge
+                // back to the lines for the next word.
+                sent_r & more ? {
+                    stage: U::<3>::from(2u8),
+                    wadr: next_adr,
+                    left: next_left,
+                },
+                sent_r & at_last ? stage: U::<3>::from(0u8),
+                sent_b ? stage: U::<3>::from(0u8),
             });
             if sent_r.to_bool() {
                 rb.send(R {
                     id: self.rid.get(),
                     data: self.wdat.get(),
                     resp: Resp::Okay,
-                    last: Bit::One,
+                    last: at_last,
                 });
             }
             if sent_b.to_bool() {
@@ -246,6 +274,68 @@ mod tests {
         assert_eq!(got[0].data[0].raw(), 0xdead_beef);
         // Word 4 of the region, the base above the address's bits.
         assert_eq!(mem.word(4), 0xdead_beef);
+    }
+
+    /// A burst of eight words, written and read back as one burst
+    /// each way.
+    ///
+    /// This is what a direct memory access engine issues, and it is
+    /// what the bridge could not do before issue 471: it answered any
+    /// read with one beat marked last, whatever `len` asked for, so
+    /// `LineFetch`, which counts beats itself and never reads the
+    /// returned flag, took one word and waited for the rest for ever.
+    /// A write fared worse and more quietly, since the beats it had
+    /// not taken stayed in the channel.
+    ///
+    /// So the assertion that matters here is the count. Checking the
+    /// words alone would pass on a bridge that answered one beat,
+    /// because the one beat it answered would hold the right word.
+    #[test]
+    fn a_burst_is_served_word_by_word() {
+        // Sixteen, which is what `LineFetch` issues by default, and
+        // which crosses the eight-word burst the controller's own
+        // Wishbone carries per address.
+        const N: usize = 16;
+        let mem = WbMem::<28>::new(1, 0);
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let out = got.clone();
+        drive(
+            mem.clone(),
+            move |host| {
+                Box::new(Box::pin(async move {
+                    // Each word its own value, so a beat that came
+                    // back in the wrong place says where it is from.
+                    let words: Vec<U<32>> = (0..N)
+                        .map(|i| U::from(0xb00c_0000u32 + i as u32))
+                        .collect();
+                    let a = host.write(Wr::at(0x4000_0000u32), &words).await;
+                    assert_eq!(a.done().await.resp, Resp::Okay);
+                    let r = host.read(Rd::at(0x4000_0000u32, N)).await;
+                    let done = r.done().await;
+                    out.borrow_mut().push(done);
+                }))
+            },
+            900,
+        );
+        let got = got.borrow();
+        assert_eq!(got.len(), 1, "the burst read was never answered");
+        assert_eq!(
+            got[0].data.len(),
+            N,
+            "every beat of the burst came back, not just the first"
+        );
+        for i in 0..N {
+            assert_eq!(
+                got[0].data[i].raw(),
+                0xb00c_0000u128 + i as u128,
+                "beat {i} of the read"
+            );
+            assert_eq!(
+                mem.word(i as u128),
+                0xb00c_0000u32 + i as u32,
+                "word {i} the write left in memory"
+            );
+        }
     }
 
     /// Words written at pseudorandom addresses, with a memory that
