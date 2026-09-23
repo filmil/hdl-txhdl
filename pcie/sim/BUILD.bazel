@@ -93,6 +93,10 @@ genrule(
     name = "rp_imports",
     srcs = ["//pcie:xdma_x2"],
     outs = ["rp/imports/" + f for f in RP_MODEL + RP_HEADERS],
+    # Manual, as `rp_tb` and `rp_test` are. It reaches `//pcie:xdma_x2`,
+    # whose toolchain is the hermetic Vivado, and a wildcard build must not
+    # ask CI for a 102.7 GB installation it has no reason to hold.
+    tags = ["manual"],
     cmd = """
 for d in $(locations //pcie:xdma_x2); do
   case "$$d" in *.ip_gen) src="$$d/example/imports" ;; esac
