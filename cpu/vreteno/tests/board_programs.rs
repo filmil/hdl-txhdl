@@ -25,15 +25,26 @@ const DDR3: &str = include_str!("../rust/ddr3.rs");
 const FADE: &str = include_str!("../rust/fade.rs");
 const ICO_HDMI: &str = include_str!("../rust/ico_hdmi.rs");
 
-/// The board's address map, as `cpu/vreteno/src/board.rs` states it:
-/// each port's base and the bits of an address that must equal it.
-const MAP: [(u32, u32, &str); 6] = [
+/// The board's address map, as `BoardRouter` in
+/// `cpu/vreteno/src/board.rs` states it: each port's base and the bits
+/// of an address that must equal it, in the router's own order.
+///
+/// This is a copy and copies go stale. It was written against a
+/// six-port router and stayed at six when the debug module took a
+/// seventh (issue 154), so an address in its range would have been
+/// reported as decoding nowhere: a test that lies in the direction of
+/// failure, which is the better direction but is still a lie. Issue
+/// 444 is the argument for generating this rather than keeping it by
+/// hand; until then, a port added to `BoardRouter` is added here in
+/// the same change.
+const MAP: [(u32, u32, &str); 7] = [
     (0x0000_1000, 0xffff_f000, "the data memory"),
     (0x0200_0000, 0xffff_0000, "the timer"),
     (0x0000_3000, 0xffff_f000, "the peripheral page"),
     (0x4000_0000, 0xc000_0000, "the DDR3"),
     (0x0c00_0000, 0xfc00_0000, "the interrupt controller"),
     (0x0000_0000, 0xffff_f000, "the boot memory"),
+    (0x1000_0000, 0xffff_0000, "the debug module"),
 ];
 
 /// The value of a `const NAME: *mut u32 = 0x...` in a program.
@@ -166,5 +177,32 @@ fn the_ethernet_port_is_somewhere_the_board_answers() {
         (ETH_BUF_BASE - 0x4000_0000) >> 20,
         16,
         "megabytes above the address a program loads at"
+    );
+}
+
+/// The map above has a port for every port the router has.
+///
+/// It cannot compare itself with `BoardRouter` directly, since that is
+/// a type and its bases are const parameters. What it can do is read
+/// the source and count, which is enough to catch the failure that
+/// actually happened: a port added to the router and not added here.
+#[test]
+fn the_map_has_every_port_the_router_has() {
+    const BOARD: &str = include_str!("../src/board.rs");
+
+    let at = BOARD
+        .find("pub type BoardRouter = Router")
+        .expect("no `BoardRouter` in the board");
+    let tail = &BOARD[at + "pub type BoardRouter = Router".len()..];
+    let end = tail.find('<').expect("a router that never opens");
+    let ports: usize = tail[..end].parse().expect("a router of no count");
+
+    assert_eq!(
+        MAP.len(),
+        ports,
+        "`BoardRouter` is a Router{ports} and the map here has \
+         {} ports; a port added to the router is added here in the \
+         same change",
+        MAP.len()
     );
 }
