@@ -16,33 +16,21 @@
 # compile time and holds their addresses to the design's own
 # constants.
 
+load(":defs.bzl", "zephyr_image")
+
 package(default_visibility = ["//visibility:public"])
 
-# The files the port test reads, so that editing any of them reruns
-# the check rather than leaving it stale.
+# Every file of the port, as the module CMake is pointed at.
 filegroup(
-    name = "port_sources",
-    srcs = [
-        "dts/riscv/hdlfactory/vreteno.dtsi",
-        "drivers/serial/uart_vreteno.c",
-        "soc/hdlfactory/vreteno/Kconfig",
-        "drivers/serial/Kconfig.vreteno",
-        "boards/hdlfactory/ax7a200b/ax7a200b_defconfig",
-    ],
+    name = "module",
+    srcs = glob(["**"]),
 )
 
-# Every file of the port, for a document to list or an archive to
-# take.
-filegroup(
-    name = "sources",
-    srcs = glob([
-        "**/*.c",
-        "**/*.dts",
-        "**/*.dtsi",
-        "**/*.yaml",
-        "**/*.yml",
-        "**/*.txt",
-        "**/Kconfig*",
-        "**/*_defconfig",
-    ]),
+# `hello_world` for this board, built by this repository's own
+# toolchain rather than by a reader following the README above.
+zephyr_image(
+    name = "hello_world",
+    board = "ax7a200b",
+    module = ":module",
+    sample = "samples/hello_world",
 )
