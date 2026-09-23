@@ -72,9 +72,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 48\,848 lines of Rust: 12\,811 of runtime
-and macros, 13\,725 of parts, 8\,851 in sixty-eight examples, 10\,536 of
-Vreteno with its board, and 2\,925 of Razboj, DDR3, Ethernet, HDMI,
+Together they are 52\,245 lines of Rust: 12\,811 of runtime
+and macros, 14\,338 of parts, 9\,467 in seventy-one examples, 12\,681 of
+Vreteno with its board, and 2\,948 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -109,7 +109,7 @@ Vreteno; boot and data memory, timer, serial port & \code{cpu} & four of five \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
 PCIe BAR registers; the BAR as one unit & \code{pcie} & not yet \\
-The examples' own units & examples & 36, all but one \\
+The examples' own units & examples & 40, in 30 files, all 30 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -131,7 +131,7 @@ The AXI-Lite bridge & 1 host, 2 banks & 3 netlists \\
 A lattice & 4 nodes, both bridges, RAM & 2 tests \\
 The SoC & core, GPU, RAM, serial & its run \\
 Composition & station, stream ALU & its netlist \\
-The board & core, 6 devices, DDR3, a JTAG host & 3 runs, Vivado, the cable \\
+The board & core, 7 devices, DDR3, a JTAG host & 3 runs, Vivado, the cable \\
 Ethernet & the MAC, the board's PHY & on the board \\
 Video & HDMI, its I2C, the board & on the board \\
 PCIe & XDMA endpoint, pins, registers & a run, Vivado \\
@@ -183,6 +183,7 @@ Fig.~\ref{fig:s-board} is the whole of it.
   \node[boxf] (uber) at (9.4,-0.35) {UberDDR3\\foreign};
   \node[box] (tim) at (7.2,-1.35) {timer};
   \node[box] (plic) at (7.2,-2.2) {interrupt\\controller};
+  \node[box] (dm) at (7.2,3.2) {debug\\module};
   \draw[fl] (cpu) -- node[lbl, below=3pt] {AXI4} (host);
   \draw[fl] (host) -- (arb);
   \draw[fl] (jtag) -- (arb);
@@ -193,6 +194,9 @@ Fig.~\ref{fig:s-board} is the whole of it.
   \draw[fl] (rt) -- (ddr);
   \draw[fl] (rt) -- (tim);
   \draw[fl] (rt) -- (plic);
+  \draw[fl] (rt) -- (dm);
+  \draw[fl] (dm.west) -| (cpu.north)
+    node[lbl, above, pos=0.3] {halt, resume, the registers};
   \draw[fl] (ddr) -- (uber);
   \draw[fl] (uber.east) -- ++(0.75,0) node[lbl, right] {pads};
   \draw[fl] (uart.east) -- ++(0.75,0) node[lbl, right] {tx, rx};
@@ -205,10 +209,10 @@ Fig.~\ref{fig:s-board} is the whole of it.
 \end{tikzpicture}}
 \caption{The board: the core, its tracker, the JTAG master that shares
 the bus with it through the arbiter, the router that decides by
-address, and the six peripherals behind it. The DDR3 controller is a
+address, and the seven peripherals behind it. The DDR3 controller is a
 foreign module, wired rather than written; the serial port reaches two
-pins, and the interrupt controller and the timer reach the core's two
-lines.}
+pins, the interrupt controller and the timer reach the core's two
+lines, and the debug module reaches its halt, resume and registers.}
 \label{fig:s-board}
 \end{figure}
 
@@ -380,15 +384,16 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs two hundred and nineteen
+its ports. \code{bazel test //...} runs two hundred and thirty
 targets, of
-which a hundred and thirty are netlists under both simulators; the rest are the
+which a hundred and thirty-six are netlists under both simulators; the rest are the
 core's model and
 programs, the board's own run, Razboj, the parts, the SoC's run, and
-the tools. Four more are tagged manual: the board and its DDR3 under
-Vivado's simulator, the AXI link's fuzzing over many seeds, which the
-nightly run does, and the check that every component has a datasheet,
-which a sweep of the documents runs. Every claim about what
+the tools. Five more are tagged manual: the board and its DDR3 under
+Vivado's simulator, the PCIe endpoint and its core under the same, the
+AXI link's fuzzing over many seeds, which the nightly run does, and the
+check that every component has a datasheet, which a sweep of the
+documents runs. Every claim about what
 Rust accepts was compiled first, as a probe kept in the tree,
 including the ones whose answer was no.
 
