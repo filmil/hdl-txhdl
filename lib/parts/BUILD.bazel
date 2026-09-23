@@ -9,6 +9,7 @@ rust_library(
     srcs = [
         "src/buffer.rs",
         "src/eth.rs",
+        "src/ethslots.rs",
         "src/bus/axi.rs",
         "src/bus/axi_lite.rs",
         "src/bus/axi_pins.rs",
