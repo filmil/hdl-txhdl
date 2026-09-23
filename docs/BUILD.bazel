@@ -567,6 +567,19 @@ waveform(
     ],
 )
 
+# The Ethernet slot registers, as a driver drives them. Issue 411.
+waveform(
+    name = "ethslots",
+    example = "//lib/examples:ex_ethslots",
+    lowered = ("ethslots", "ethslots"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//ethslots/rx_pending=>rx_pending",
+        "//ethslots/tx_go=>tx_go",
+        "//irq=>irq",
+    ],
+)
+
 # Writing memory in bursts, byte accurate. Issue 151.
 waveform(
     name = "dmaw",
@@ -762,6 +775,8 @@ latex_document(
         ":dma_timing",
         ":dmaw_run",
         ":dmaw_timing",
+        ":ethslots_run",
+        ":ethslots_timing",
         ":scanout_run",
         ":scanout_timing",
         ":reset_run",
