@@ -87,6 +87,8 @@ filegroup(
         "drivers/serial/uart_vreteno.c",
         "soc/hdlfactory/vreteno/Kconfig",
         "drivers/serial/Kconfig.vreteno",
+        "drivers/ethernet/eth_vreteno.c",
+        "drivers/ethernet/Kconfig.vreteno",
         "boards/hdlfactory/ax7a200b/ax7a200b_defconfig",
     ],
 )

@@ -42,6 +42,10 @@ rust_test(
     srcs = ["tests/zephyr_dts.rs"],
     compile_data = [
         "//zephyr:port_sources",
+        # The Ethernet peripheral's own source, so the driver's
+        # register map is held to the hardware's rather than to a
+        # document that agrees with neither.
+        "//lib/parts:sources",
     ],
     edition = "2021",
     deps = [":vreteno32"],

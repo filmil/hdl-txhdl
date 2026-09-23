@@ -10,7 +10,10 @@
 //! So the numbers are checked here, against the constants the
 //! hardware itself uses. A port that disagrees with the router's map
 //! fails this test rather than the board.
-use vreteno32::isa::{CLINT_BASE, MSIP_OFF, MTIMECMP_OFF, MTIME_OFF, UART_BASE};
+use vreteno32::isa::{
+    CLINT_BASE, ETH_BASE, ETH_BUF_BASE, MSIP_OFF, MTIMECMP_OFF, MTIME_OFF,
+    UART_BASE,
+};
 
 // The port, read at compile time, so the test needs no runfiles and
 // the build knows these files are inputs: editing one reruns this.
@@ -22,6 +25,14 @@ const SOC_KCONFIG: &str =
     include_str!("../../../zephyr/soc/hdlfactory/vreteno/Kconfig");
 const UART_KCONFIG: &str =
     include_str!("../../../zephyr/drivers/serial/Kconfig.vreteno");
+const ETH_DRIVER: &str =
+    include_str!("../../../zephyr/drivers/ethernet/eth_vreteno.c");
+const ETH_KCONFIG: &str =
+    include_str!("../../../zephyr/drivers/ethernet/Kconfig.vreteno");
+/// The hardware the Ethernet driver talks to. The two register maps
+/// are held to each other rather than each to a document, which is
+/// the only arrangement in which they cannot quietly disagree.
+const ETHSLOTS: &str = include_str!("../../../lib/parts/src/ethslots.rs");
 const BOARD_DEFCONFIG: &str = include_str!(
     "../../../zephyr/boards/hdlfactory/ax7a200b/ax7a200b_defconfig"
 );
@@ -165,5 +176,148 @@ fn the_console_is_reachable_and_not_merely_compiled() {
     assert!(
         BOARD_DEFCONFIG.contains("CONFIG_UART_CONSOLE=y"),
         "and the board asks for it"
+    );
+}
+
+/// The word a `#define VRETENO_ETH_<NAME>   0x..` in the driver names.
+fn eth_word(name: &str) -> u32 {
+    let pat = format!("#define VRETENO_ETH_{name}");
+    let at = ETH_DRIVER
+        .find(&pat)
+        .unwrap_or_else(|| panic!("no `{name}` in the driver"));
+    let tail = &ETH_DRIVER[at + pat.len()..];
+    let end = tail.find('\n').expect("a define that never ends");
+    let text = tail[..end].trim().trim_start_matches("0x");
+    let off = u32::from_str_radix(text, 16)
+        .unwrap_or_else(|_| panic!("`{name}` is not an offset"));
+    assert_eq!(off % 4, 0, "`{name}` is not on a word boundary");
+    off / 4
+}
+
+/// The driver's register map is the one the hardware decodes.
+///
+/// Both files are read here, so neither can be edited into
+/// disagreement on its own. That is the whole point: the serial
+/// port's map lived in two places and agreed only because nobody had
+/// touched either, and this one is the same shape with four more
+/// registers.
+#[test]
+fn the_ethernet_driver_reads_the_words_the_hardware_decodes() {
+    // The hardware selects a word and the driver names a byte
+    // offset. They have to be the same register.
+    for (name, word) in [
+        ("RX_SLOT", 0),
+        ("RX_LENGTH", 1),
+        ("RX_EV_PENDING", 2),
+        ("RX_EV_ENABLE", 3),
+        ("TX_SLOT", 4),
+        ("TX_LENGTH", 5),
+        ("TX_START", 6),
+        ("TX_READY", 7),
+        ("TX_EV_PENDING", 8),
+        ("TX_EV_ENABLE", 9),
+    ] {
+        assert_eq!(eth_word(name), word, "`{name}` should be word {word}");
+    }
+
+    // And the hardware decodes each of them, rather than the driver
+    // naming an offset nothing answers, which is issue 415 in a
+    // peripheral instead of a program. Reads and writes are decoded
+    // separately there, so each is checked on the side it is used.
+    for word in [0, 1, 7, 8] {
+        assert!(
+            ETHSLOTS.contains(&format!("rsel == {word}")),
+            "the hardware does not answer a read of word {word}"
+        );
+    }
+    for word in [2, 3, 4, 5, 6, 8, 9] {
+        assert!(
+            ETHSLOTS.contains(&format!("wsel == {word}")),
+            "the hardware does not take a write of word {word}"
+        );
+    }
+}
+
+/// An arrival is acknowledged by writing one, on both sides.
+///
+/// A driver that wrote zero would leave the bit set, take the
+/// interrupt again at once, and spin. `lib/examples/ex_ethslots.rs`
+/// says the same thing from the other direction: it writes zero and
+/// checks the bit survives.
+#[test]
+fn the_ethernet_driver_acknowledges_by_writing_one() {
+    assert!(
+        ETHSLOTS.contains("wsel == 2) & data.bit(0)"),
+        "the hardware clears the arrival on a written one"
+    );
+    assert!(
+        ETH_DRIVER.contains("VRETENO_ETH_EVENT"),
+        "and the driver has a one to write"
+    );
+
+    // The acknowledgement is after the receive and not before it.
+    // The hardware applies acknowledgements before arrivals so that a
+    // frame landing in the same cycle keeps the pending bit set; this
+    // order is what puts the driver inside that window. Acknowledging
+    // first would leave the hardware correct and the case untested.
+    let recv = ETH_DRIVER
+        .find("eth_vreteno_receive(dev);")
+        .expect("the handler does not receive");
+    let ack = ETH_DRIVER[recv..]
+        .find("VRETENO_ETH_RX_EV_PENDING")
+        .expect("the handler never acknowledges");
+    assert!(ack > 0, "the acknowledgement comes after the receive");
+}
+
+/// The port is where the design puts it, and so are its buffers.
+#[test]
+fn the_ethernet_node_is_at_the_address_the_board_decodes() {
+    assert_eq!(
+        reg_of(DTSI, "eth0: ethernet@"),
+        ETH_BASE as u64,
+        "the Ethernet registers"
+    );
+
+    // The buffers are two regions and not one of four slots. One
+    // region lets a transmit slot be computed at a receive slot's
+    // address, which is a frame landing on one waiting to go out: it
+    // compiles, and it simulates whenever a test drives one direction
+    // at a time. The hardware had exactly that once.
+    assert!(
+        DTSI.contains(
+            r#"reg-names = "registers", "rx_buffers", "tx_buffers""#
+        ),
+        "named separately, so the two directions cannot alias"
+    );
+    assert!(
+        DTSI.contains(&format!("{:x}", ETH_BUF_BASE)),
+        "the buffers at `ETH_BUF_BASE`"
+    );
+}
+
+/// The two things that would leave the driver silently absent.
+///
+/// `SERIAL_HAS_DRIVER` taught this on the console: a driver that does
+/// not announce itself is one the subsystem never looks for, and the
+/// build stays green while the interface never appears. `ETH_DRIVER`
+/// is that bit for the network stack.
+#[test]
+fn the_ethernet_driver_is_reachable_and_not_merely_present() {
+    assert!(
+        ETH_KCONFIG.contains("select ETH_DRIVER"),
+        "the driver must announce itself to the stack"
+    );
+    // And only where there is a stack: `ETH_DRIVER` depends on
+    // `NETWORKING`, so selecting it in a build without one refuses
+    // the configuration outright.
+    assert!(
+        ETH_KCONFIG.contains("depends on NETWORKING"),
+        "and only where there is a stack to announce itself to"
+    );
+    // The accessors are the architecture's, as in the console's
+    // driver: `zephyr/sys/sys_io.h` alone leaves them implicit.
+    assert!(
+        ETH_DRIVER.contains("#include <zephyr/arch/cpu.h>"),
+        "the accessors come from the architecture"
     );
 }
