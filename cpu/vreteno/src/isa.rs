@@ -192,6 +192,23 @@ pub const MTIME_OFF: u32 = 0xbff8;
 /// bit 0 is busy.
 pub const UART_BASE: u32 = 0x3000;
 
+/// The Ethernet port's registers, the fifth of the sixteen slots the
+/// peripheral page holds. The four before it are the serial port, the
+/// modulator, the slot the board hangs a video peripheral on, and the
+/// remote peripheral; none of them move to make room, since the page
+/// had twelve slots free and only the bridge in front of it was full.
+pub const ETH_BASE: u32 = 0x3400;
+
+/// Where the Ethernet port's four frame buffers live, which is in the
+/// DDR3 rather than inside the peripheral: two for receiving and two
+/// for sending, 2 KiB each, so 8 KiB from here.
+///
+/// Sixteen megabytes into the memory, which is clear of where a
+/// program is loaded at `0x4000_0000` by a wide margin. Zephyr is told
+/// to keep off it by a `reserved-memory` node; a kernel that is not
+/// told will allocate it and the frames will land in somebody's heap.
+pub const ETH_BUF_BASE: u32 = 0x4100_0000;
+
 /// A decoded instruction: the mnemonic and its fields, the immediate
 /// already extended to a signed word.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
