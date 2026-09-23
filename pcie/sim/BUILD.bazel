@@ -1,15 +1,42 @@
 # SPDX-License-Identifier: Apache-2.0
-# The PCIe endpoint under Vivado's simulator (issue 305): the board's
-# top with the XDMA core and the lowered design behind BAR0, from the
-# core's exported simulation library, which holds every source the
-# core needs rather than its top wrapper alone. Manual, as every Vivado
-# target is; the elaboration is the test, since a module the library
-# lacked would end it there:
+# The PCIe endpoint under Vivado's simulator: the board's top with
+# the XDMA core and the lowered design behind BAR0, from the core's
+# exported simulation library, which holds every source the core needs
+# rather than its top wrapper alone. On its own (issue 305), where the
+# elaboration is the test, since a module the library lacked would end
+# it there; and against a root port (issue 178). Manual, as every
+# Vivado target is:
 #
 #   bazel test //pcie/sim:xdma_test
+#   bazel test //pcie/sim:rp_test
 load("@rules_vivado//build/vivado:rules.bzl", "vivado_library", "vivado_test")
 
 package(default_visibility = ["//visibility:public"])
+
+# The libraries beyond the core's own that Vivado's exported simulation
+# names for its elaboration, precompiled in the installation: the
+# primitives and the IP libraries the core uses. `glbl` comes from the
+# core's library, where the export put it.
+XSIM_LIBS = [
+    "--debug",
+    "typical",
+    "-L",
+    "unisims_ver",
+    "-L",
+    "unimacro_ver",
+    "-L",
+    "secureip",
+    "-L",
+    "xpm",
+    "-L",
+    "xdma_v4_2_2",
+    "-L",
+    "blk_mem_gen_v8_4_12",
+    "-L",
+    "fifo_generator_v13_2_14",
+    "-L",
+    "uvm",
+]
 
 vivado_library(
     name = "xdma_tb",
@@ -22,10 +49,6 @@ vivado_library(
     deps = ["//pcie:xdma_x2"],
 )
 
-# The libraries beyond the core's own are the ones Vivado's exported
-# simulation names for its elaboration, precompiled in the
-# installation: the primitives, the IP libraries the core uses, and
-# `glbl` from the core's library, where the export put it.
 vivado_test(
     name = "xdma_test",
     custom_tcl_script = "xdma_verdict.tcl",
@@ -34,25 +57,75 @@ vivado_test(
     tags = ["manual"],
     timeout = "eternal",
     top = "xdma_tb",
-    xelab_args = [
-        "--debug",
-        "typical",
-        "-L",
-        "unisims_ver",
-        "-L",
-        "unimacro_ver",
-        "-L",
-        "secureip",
-        "-L",
-        "xpm",
-        "-L",
-        "xdma_v4_2_2",
-        "-L",
-        "blk_mem_gen_v8_4_12",
-        "-L",
-        "fifo_generator_v13_2_14",
-        "-L",
-        "uvm",
+    xelab_args = XSIM_LIBS,
+    xelab_relaxed = True,
+)
+
+# The root port (issue 178): the behavioural root port and the host
+# AMD ships in the core's example design, which `example_design` on
+# `//pcie:xdma_x2` keeps beside the core, against the board's top. The
+# host trains the link, programs BAR0 and, in `rp/tests.vh`, reads and
+# writes it through to `BarRegs`. Manual, as every Vivado target is:
+#
+#   bazel test //pcie/sim:rp_test
+RP_MODEL = [
+    "pci_exp_usrapp_cfg.v",
+    "pci_exp_usrapp_com.v",
+    "pci_exp_usrapp_pl.v",
+    "pci_exp_usrapp_rx.v",
+    "pci_exp_usrapp_tx.v",
+    "pcie3_uscale_rp_core_top.v",
+    "pcie3_uscale_rp_top.v",
+    "sys_clk_gen.v",
+    "sys_clk_gen_ds.v",
+    "xilinx_pcie_uscale_rp.v",
+]
+
+RP_HEADERS = [
+    "board_common.vh",
+    "pci_exp_expect_tasks.vh",
+]
+
+# The example's board, its endpoint and its tests stay behind: the
+# board and the endpoint are this package's, and `tests.vh` is the
+# arm the host includes, which is `rp/tests.vh` here.
+genrule(
+    name = "rp_imports",
+    srcs = ["//pcie:xdma_x2"],
+    outs = ["rp/imports/" + f for f in RP_MODEL + RP_HEADERS],
+    cmd = """
+for d in $(locations //pcie:xdma_x2); do
+  case "$$d" in *.ip_gen) src="$$d/example/imports" ;; esac
+done
+for f in $(OUTS); do cp "$$src/$$(basename "$$f")" "$$f"; done
+""",
+)
+
+vivado_library(
+    name = "rp_tb",
+    srcs = [
+        "//pcie:bar_v",
+        "//pcie:board/pcie_top.v",
+        "rp/board.v",
+        "rp/endpoint.v",
+    ] + [":rp/imports/" + f for f in RP_MODEL],
+    hdrs = ["rp/tests.vh"] + [":rp/imports/" + f for f in RP_HEADERS],
+    tags = ["manual"],
+    deps = ["//pcie:xdma_x2"],
+)
+
+vivado_test(
+    name = "rp_test",
+    args = [
+        "-testplusarg",
+        "TESTNAME=bar0",
     ],
+    custom_tcl_script = "rp/verdict.tcl",
+    extra_modules = ["xdma_x2.glbl"],
+    library = ":rp_tb",
+    tags = ["manual"],
+    timeout = "eternal",
+    top = "board",
+    xelab_args = XSIM_LIBS,
     xelab_relaxed = True,
 )

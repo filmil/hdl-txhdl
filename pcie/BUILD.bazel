@@ -58,8 +58,10 @@ genrule(
 # The endpoint: XDMA in AXI bridge mode, Gen2 over the board's two
 # lanes, from the slot's 100 MHz reference clock, with BAR0 a megabyte
 # of memory on the AXI master and no AXI slave. Its user clock is
-# 125 MHz, which is the only one Gen2 x2 allows. Manual, as every Vivado
-# target is:
+# 125 MHz, which is the only one Gen2 x2 allows. The example design
+# Vivado writes for the core is kept beside it, for the root port and
+# the host in it that `//pcie/sim:rp_test` runs. Manual, as every
+# Vivado target is:
 #
 #   bazel build //pcie:xdma_x2
 vivado_ip(
@@ -77,6 +79,7 @@ vivado_ip(
         "pf0_bar0_scale": "Megabytes",
         "pf0_bar0_size": "1",
     },
+    example_design = True,
     part = "xc7a200tfbg484-2",
     tags = ["manual"],
     vlnv = "xilinx.com:ip:xdma:4.2",
