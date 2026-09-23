@@ -521,7 +521,13 @@ clock. A load or a store also waits for room on the bus whatever its
 address, so that the fetch's hold never hangs on the address; the
 devices keep up, so there is always room. A load that has gone out
 is not taken by an interrupt: the interrupt waits for the next
-instruction, so a device is never read twice for one load.
+instruction, so a device is never read twice for one load. A store
+is posted, and a program that needs it to have landed before it
+goes on says \code{fence}: the core counts the stores it has posted
+and not yet had answered, and a fence waits in execute until the
+count is zero. A load already waits for its answer, so that is the
+whole of what a fence has to wait for; until issue 432 the
+instruction retired at once and ordered nothing.
 
 The bus says how an access went, and the core listens. A load the
 bus refused, by a peripheral that failed or by the router for an
@@ -883,8 +889,8 @@ run and the timer fires in the middle of it. An \code{ecall} and then the
 word of all ones, which is illegal, enter the handler. The handler
 reads the cause into \code{x23} and branches on its sign: an
 interrupt is cleared in \code{mip}, the timer's has the compare
-moved past the end of the run and read back, since the store is
-posted and the line drops only when it lands, and either is counted in \code{x8}
+moved past the end of the run and a \code{fence} after it, since the
+store is posted and the line drops only when it lands, and either is counted in \code{x8}
 and returned from to the word it interrupted; an exception has
 \code{mepc} read, stepped past the word that trapped and written
 back. The program then writes \code{mscratch} by immediate and
@@ -1087,6 +1093,10 @@ sets \code{mbusquiet} and does both again to read a zero and drop the
 store. The board test's program that pokes the boot memory has a
 handler for the refusal too. A third program jumps into nowhere and
 comes back through its handler with the fetch's cause and address.
+The fence has a negative control of its own: with the instruction
+retiring at once, as it did before issue 432, the demonstration's
+handler returns before its compare has landed and the run counts
+three interrupts where it counts two.
 
 \lstinputlisting[caption={\code{lockstep.rs}: the core against the
 model.},label={lst:v-lockstep}]{cpu/vreteno/tests/lockstep.rs}
