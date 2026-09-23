@@ -51,7 +51,7 @@ jobs:
             bazel-
 
       - name: Build everything
-        run: bazel build //...
+        run: bazel build //... 2>&1 | tee -a /tmp/ci-bazel.log
 
       # Bazel exits 4 when testing is requested and no test target exists,
       # which is the state until the specification's examples become a test
@@ -60,8 +60,45 @@ jobs:
       - name: Test everything
         run: |
           set -o pipefail
-          bazel test //... --test_output=errors || {
+          bazel test //... --test_output=errors 2>&1 | tee -a /tmp/ci-bazel.log || {
             status=$?
             [ "$status" -eq 4 ] || exit "$status"
             echo "no test targets yet; build is the only gate"
           }
+
+      # `fj` cannot read Actions logs and the API's log routes answer 404
+      # even with a token, so a failing run exports its own. It lands on the
+      # `ci-logs` branch, readable by anyone who can clone:
+      #
+      #   git fetch origin ci-logs && git show origin/ci-logs:<file>
+      #
+      # #466. The branch is fetched rather than re-initialised, so a run can
+      # be compared with the one before it; most of what was wanted on 737
+      # was seeing how it differed from 733.
+      - name: Export the log on failure
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "=== run ${GITHUB_RUN_NUMBER} on ${GITHUB_SHA} (${GITHUB_EVENT_NAME}) ==="
+            echo "=== df -h ==="; df -h / /data/cache/bazel 2>/dev/null | sort -u
+            echo "=== free -m ==="; free -m
+            echo "=== bazel log tail ==="
+            tail -c 60000 /tmp/ci-bazel.log 2>/dev/null || echo "(no bazel log)"
+          } > /tmp/ci-tail.log 2>&1 || echo "(capture failed)" >> /tmp/ci-tail.log
+          d=$(mktemp -d)
+          url="https://ci:${GITHUB_TOKEN}@git.hdlfactory.com/${GITHUB_REPOSITORY}.git"
+          # Add to the branch when it exists; start it when it does not.
+          if git -C "$d" clone -q --depth 1 --branch ci-logs "$url" . 2>/dev/null; then
+            :
+          else
+            git -C "$d" init -q -b ci-logs
+            git -C "$d" remote add origin "$url"
+          fi
+          cp /tmp/ci-tail.log \
+            "$d/run-${GITHUB_RUN_NUMBER}-$(date -u +%Y%m%dT%H%M%S)-${GITHUB_SHA:0:8}.log"
+          git -C "$d" add -A
+          git -C "$d" -c user.name=ci -c user.email=ci@invalid \
+            commit -qm "ci log for run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
+          git -C "$d" push -q origin ci-logs
