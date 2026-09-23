@@ -20,6 +20,11 @@ rustfmt_test(
         "//gpu/razboj",
         "//lib:txhdl",
         "//lib:txhdl_macros",
+        # Generated and committed, and skipped inside rather than left
+        # out here: what the two must agree on is that the file the
+        # generator writes is the file the formatter leaves alone
+        # (issue 437).
+        "//lib/logo:txhdl_logo",
         "//lib/parts:txhdl_parts",
         "//pcie",
         "//soc",

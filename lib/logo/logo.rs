@@ -22,6 +22,13 @@ pub const H: usize = 36;
 pub const TRANSPARENT: u16 = 0x1000;
 
 /// The logo, a row at a time from the top.
+///
+/// Eight to a line, which rustfmt would reflow to as many as fit. It
+/// is told not to: nothing here is written by hand, so there is
+/// nothing for a formatter to improve, and without this the pass that
+/// the repository requires before a commit rewrites this file in
+/// every branch that runs it (issue 437).
+#[rustfmt::skip]
 pub const PIXELS: [u16; W * H] = [
     0x1000, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000,
     0x1000, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000,
