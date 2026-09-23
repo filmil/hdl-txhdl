@@ -96,7 +96,7 @@ AXI to Wishbone bridge & parts & yes \\
 AXI host pins to the link's channels & parts & yes \\
 Interrupt controllers, 1 to 8 sources & parts & 3 \\
 Network node, switch, 2 bridges & parts & not yet \\
-Pins; SPI; I2C; Ethernet's three; HDMI's two & parts & all eight \\
+Pins; SPI; I2C; Ethernet's four; HDMI's two & parts & all nine \\
 System control: identity, cause, reset & parts & yes \\
 Watchdog: a countdown, a key, a window & parts & yes \\
 Four modulated outputs, shadowed duties & parts & yes \\
@@ -384,7 +384,7 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs two hundred and thirty
+its ports. \code{bazel test //...} runs two hundred and thirty-one
 targets, of
 which a hundred and thirty-six are netlists under both simulators; the rest are the
 core's model and
