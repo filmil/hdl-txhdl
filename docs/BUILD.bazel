@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 load("@rules_latex_host//latex:defs.bzl", "combined_pdf", "latex_document")
 load(":waveform.bzl", "waveform")
+load("//tools/pdfedge:defs.bzl", "pdf_edge_test")
 
 # Every source of every document, for the checks that read them: the
 # width test each waveform gets in waveform.bzl reads these to find
@@ -2392,6 +2393,42 @@ latex_document(
     deps = ["housestyle.tex"],
 )
 
+# Every document, in the order the combined file and the cover give them.
+DOCUMENTS = [
+    ":cover",
+    ":showcase",
+    ":cheatsheet",
+    ":tutorial",
+    ":zero",
+    ":station",
+    ":axi",
+    ":razboj",
+    ":noc",
+    ":eth",
+    ":hdmi",
+    ":flagship",
+    ":pcie",
+    ":datasheets",
+    ":article",
+    ":embedding",
+    ":runtime",
+    ":examples",
+    ":vreteno",
+    ":tapeout",
+    ":paper",
+    ":stats",
+    ":dynamics",
+]
+
+# Every word of every document lies on its page, or the test names
+# the document, the page and the word (issue 457). A table wider than
+# its column loses its right edge without a word from LaTeX; this
+# reads the rendered pages back, which is what a reader sees.
+pdf_edge_test(
+    name = "edge_test",
+    pdfs = DOCUMENTS,
+)
+
 # Every document in sequence, one file, with a bookmark per document.
 combined_pdf(
     name = "all",
@@ -2421,29 +2458,5 @@ combined_pdf(
         "TxHDL by the Numbers",
         "The Dynamics of a Project",
     ],
-    parts = [
-        ":cover",
-        ":showcase",
-        ":cheatsheet",
-        ":tutorial",
-        ":zero",
-        ":station",
-        ":axi",
-        ":razboj",
-        ":noc",
-        ":eth",
-        ":hdmi",
-        ":flagship",
-        ":pcie",
-        ":datasheets",
-        ":article",
-        ":embedding",
-        ":runtime",
-        ":examples",
-        ":vreteno",
-        ":tapeout",
-        ":paper",
-        ":stats",
-        ":dynamics",
-    ],
+    parts = DOCUMENTS,
 )

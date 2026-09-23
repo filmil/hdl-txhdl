@@ -974,6 +974,12 @@ repository has had that happen twice.
   the drawing from its coordinates and fails on a plain `figure` in a
   two-column document that it would overrun, naming the placement and
   the fix, which is `figure*` (issue 324).
+* Every word of every document lies on its page: `//docs:edge_test`
+  reads every rendered page back with `pdftotext -bbox`, from the
+  pinned tree in `//third_party/poppler`, and fails naming the document,
+  the page and the word whose box ends past the page's edge, which is
+  what a table wider than its column does without a word from LaTeX
+  (issue 457).
 * Every page that holds a figure or a table was rendered and looked at:
   no float crosses into the other column or the margin, no float lies on
   another or on the text, and no label sits on a line or on another

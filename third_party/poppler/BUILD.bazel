@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# Poppler's utilities, for `pdftotext`, which the documents' edge check
+# runs over every rendered page (issue 457). Fetched as the Debian
+# package it is published as, with the closure of the libraries it
+# names; `trixie.lock.tsv` is that closure, written by
+# //tools/debclosure and pinned by checksum, less the packages that
+# are not libraries (key rings, account tools, fonts, readline), which
+# reading a page's text needs nothing of.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["trixie.lock.tsv"])
+
+alias(
+    name = "tree",
+    actual = "@poppler_tree//:all",
+)

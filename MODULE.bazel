@@ -210,6 +210,14 @@ deb_tree(
     ],
 )
 
+# Poppler's `pdftotext`, which reads a rendered page back with the
+# position of every word, for the check that no document runs off its
+# page (issue 457).
+deb_tree(
+    name = "poppler_tree",
+    locks = ["//third_party/poppler:trixie.lock.tsv"],
+)
+
 # The solver OpenROAD's global placer uses. The package links against
 # it and does not carry it: its runpath names `/opt/or-tools`, which is
 # where the project's own build puts this archive.

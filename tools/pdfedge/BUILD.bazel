@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Does every word of a rendered document lie on its page? `pdf_edge_test`
+# in defs.bzl gives the documents a test of this over their PDFs, since
+# LaTeX sets a table wider than its column without a word and the page
+# loses the text off its edge (issue 457).
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "pdfedge",
+    srcs = ["main.rs"],
+    edition = "2021",
+)
+
+# The reading of pdftotext's output, on samples the test writes; the
+# negative case on a real page was proved once on the showcase as it
+# was before the fix, which is what the test in //docs exists to catch.
+rust_test(
+    name = "pdfedge_test",
+    crate = ":pdfedge",
+    edition = "2021",
+)
