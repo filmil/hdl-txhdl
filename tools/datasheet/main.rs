@@ -31,6 +31,7 @@ use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::cdc::ChanCdc;
 use txhdl_parts::dma::{LineBuf, LineFetch, LineStore};
 use txhdl_parts::eth::{EthLite, EthRx, EthTx};
+use txhdl_parts::ethslots::EthSlots;
 use txhdl_parts::fifo::Fifo;
 use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::gpio::Gpio;
@@ -463,6 +464,11 @@ fn main() {
     sheet("EthTx", "EthTx", EthTx::lowered("eth_tx"));
     sheet("EthRx", "EthRx", EthRx::lowered("eth_rx"));
     sheet("EthLite", "EthLite", EthLite::lowered("eth_lite"));
+    sheet(
+        "EthSlots",
+        "EthSlots<0x4100_0000>",
+        EthSlots::<0x4100_0000>::lowered("ethslots"),
+    );
     sheet(
         "Hdmi",
         "Hdmi<640, 16, 96, 48, 480, 10, 2, 33, 2>",

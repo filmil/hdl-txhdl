@@ -1,0 +1,207 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: EthSlots
+\datasheet{EthSlots}{The Ethernet slot registers on AXI-Lite: LiteEth's
+map, with the frame buffers in main memory.}
+
+\dsfacts{\code{lib/parts/src/ethslots.rs}}%
+{\code{txhdl\_parts::ethslots::EthSlots}}{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{EthSlots} is the register map of Zephyr's
+\code{drivers/ethernet/eth\_litex\_liteeth.c} in hardware, so that
+bringing up Ethernet is a port of a driver that already works rather
+than a design nobody has driven.
+
+Its AXI-Lite side is \code{aw}, \code{ar} and \code{w} in and
+\code{b} and \code{r} out, with 32-bit addresses and words. Seven
+further ports face the engines that move the bytes: \code{tx\_busy},
+\code{rx\_busy}, \code{rx\_len} and \code{rx\_which} in, and
+\code{tx\_base}, \code{tx\_bytes}, \code{tx\_start} and
+\code{rx\_base} out. \code{irq} is high while a received frame is
+unacknowledged and the receive interrupt is enabled.
+
+It holds no frame. There are two slots each way, used in turn, and
+each is a flat buffer of 2048 bytes in main memory rather than inside
+the peripheral, so that \code{LineFetch} and \code{LineStore} move
+the bytes instead of the processor. The unit's work is to say which
+buffer and how many bytes, and to tell the driver when a frame has
+landed.
+
+Two slots a direction rather than a descriptor ring, because Zephyr's
+driver model never hands a chain to hardware:
+\code{net\_pkt\_read(pkt, buf, len)} and \code{net\_pkt\_write(pkt,
+buf, len)} take a flat pointer and a byte count, so the hardware only
+ever sees one contiguous region per frame.
+
+\subsection*{Parameters}
+
+\code{BASE}, where the four buffers begin. A slot is \code{BASE + n *
+2048}, receive slots first and transmit slots 4096 bytes above them.
+The board uses \code{0x4100\_0000}, which \code{isa::ETH\_BUF\_BASE}
+states.
+
+The two directions are separate regions and have to be. A slot number
+alone would make transmit slot zero and receive slot zero the same
+address, and a frame arriving would land on one waiting to go out.
+
+\textbf{\code{BASE} must be 1 KB aligned, and nothing checks it.} A
+slot is then 1 KB aligned too, since the slots are 2 KB apart, and a
+256 beat burst of words is exactly 1 KB, so no burst can cross AXI4's
+4 KB boundary. An unaligned \code{BASE} puts that obligation on the
+caller, and a burst that straddles a boundary is a protocol violation
+rather than a wrong address, so it will not look like a fault in this
+unit.
+
+\subsection*{Register map}
+
+The unit decodes the word from address bits 5 to 2, so the words are
+at offsets \code{0x0} to \code{0x3c} of its range. The board puts
+them at \code{0x3400}, which \code{isa::ETH\_BASE} states.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lllp{0.46\textwidth}@{}}
+\toprule
+Word & Offset & Access & What it is \\
+\midrule
+0, \code{rx\_slot} & \code{0x00} & read & Which slot the last received
+frame is in. \\
+1, \code{rx\_length} & \code{0x04} & read & Its length in bytes. \\
+2, \code{rx\_ev\_pending} & \code{0x08} & read, write one to clear &
+A frame has arrived and has not been acknowledged. \\
+3, \code{rx\_ev\_enable} & \code{0x0c} & read, write & Whether an
+arrival raises \code{irq}. \\
+4, \code{tx\_slot} & \code{0x10} & write & Which slot the next
+transmit reads from. \\
+5, \code{tx\_length} & \code{0x14} & write & How many bytes of it to
+send. \\
+6, \code{tx\_start} & \code{0x18} & write & Writing one asks for the
+frame to go. \\
+7, \code{tx\_ready} & \code{0x1c} & read & One when the transmit
+engine is idle and no request is waiting. \\
+8, \code{tx\_ev\_pending} & \code{0x20} & read, write one to clear &
+Never set. See below. \\
+9, \code{tx\_ev\_enable} & \code{0x24} & read, write & Kept, and does
+nothing. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\emph{An unnamed word does not read as zero.} Words 4, 5 and 6, which
+are write only, and words 10 to 15, which are nothing, all read as
+\code{tx\_ev\_enable}. That is issue 454 and it is a fault rather
+than a decision: a driver that writes \code{tx\_length} and reads it
+back gets neither its value nor zero but an unrelated bit, so neither
+a match nor a mismatch means anything. It reads as zero only while
+\code{tx\_ev\_enable} is clear, which is why nothing had noticed.
+
+\emph{The transmit side has no interrupt.} LiteEth's driver disables
+it and polls \code{tx\_ready}, because Zephyr's send may block, so
+\code{tx\_ev\_pending} is never set by anything and
+\code{tx\_ev\_enable} gates nothing. Both words exist because the
+driver acknowledges them. A driver that waited on
+\code{tx\_ev\_pending} would wait for ever.
+
+\dstables{EthSlots}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A read is answered in the cycle the request is taken, and a
+write is answered with \code{b}. The unit never stalls: it needs
+nothing the other AXI-Lite peripherals do not.
+\item \textbf{An arrival is the store engine falling idle, not the
+frame being received.} \code{LineStore} holds \code{running} high
+until the write response comes back from memory, so its fall is the
+first moment the frame is certainly there. The unit takes that level
+rather than a completion pulse, deliberately: a pulse could be joined
+to the receiver by somebody reading the map and not the comment, and
+the interrupt would then tell a driver to read a frame whose last
+beats are still in flight.
+\item On an arrival the unit latches \code{rx\_which} into
+\code{rx\_slot} and \code{rx\_len} into \code{rx\_length}, and sets
+\code{rx\_ev\_pending}.
+\item \textbf{An acknowledgement in the same cycle as an arrival does
+not lose the frame.} The drives are written with the acknowledgements
+first and the arrival after them, because \code{with!} applies its
+entries in order and the last drive of a field wins. The other order
+reads more naturally and clears the pending bit that an arrival has
+just set, leaving the frame in memory, whole and correct, announced
+to nobody. It is the cycle where a busy link acknowledges one frame
+as the next one lands.
+\item \code{tx\_start} is a request rather than a pulse the engine
+must catch. Writing one sets a flag; the unit drives \code{tx\_start}
+high while the flag is set and the engine is not busy, and clears the
+flag when the engine goes busy. So the request lasts until it is
+taken.
+\item \code{tx\_base} is \code{BASE + 4096 + tx\_slot * 2048} and
+\code{rx\_base} is \code{BASE + rx\_which * 2048}. The receiving side
+is told where the slot it is filling begins, and which slot that is
+comes from the engine, so that a frame lands somewhere the driver is
+not reading.
+\item \code{irq} is \code{rx\_ev\_pending} and \code{rx\_ev\_enable}
+together.
+\end{itemize}
+
+\subsection*{What a driver must do}
+
+\textbf{Read the last word of a frame back before writing
+\code{tx\_start}.} Stores on this machine are posted and \code{fence}
+orders nothing, which is issue 432, so without that read the fetch
+engine may read the slot before the frame has landed and send what
+was there before.
+
+What makes the obligation dischargeable is measured rather than
+assumed: this link answers a load behind an unanswered store to the
+same address with the stored value, which
+\code{a\_load\_behind\_an\_unanswered\_store\_to\_one\_address} in
+\code{lib/parts/src/bus/axi/sim.rs} asserts, and \code{//docs:axi}
+states.
+
+\textbf{That is this interconnect's behaviour and not AXI's
+guarantee.} AXI does not order a read behind a write, and a driver
+written for another fabric on the strength of this paragraph would be
+wrong. The reason the read works here is the link, not the memory
+being a serialisation point.
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{EthSlots} has no \code{\#[test]} of its own.
+\item \code{ex\_ethslots} drives the map as
+\code{eth\_litex\_liteeth.c} will, in the order that driver does it:
+\code{tx\_ready} one while idle and zero while a frame is going, no
+interrupt while the store is in flight and one after it, and the
+pending bit tested both ways, since a write of zero must not
+acknowledge.
+\item It also tests the cycle where an acknowledgement meets an
+arrival. The cycle to issue at was measured against both orders of
+the drives rather than reasoned about, because two earlier attempts
+at that test passed against the faulty order.
+\item The build simulates the netlist against that run under nvc and
+Verilator: \code{//docs:ethslots\_sim\_ethslots\_tb\_test} and
+\code{//docs:ethslots\_vsim\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+The board, at \code{cpu/vreteno/src/board.rs}, on the fifth AXI-Lite
+slot at \code{0x3400}, with its arrival as the third source of
+\code{Plic3}. The example \code{ex\_ethslots}.
+
+\subsection*{Limits}
+
+\textbf{It moves no frames.} The seven engine-facing ports are tied
+off on the board: the busy lines it reads are low and what it drives
+goes nowhere. A driver binds and reads and writes every register, and
+no frame arrives or leaves. The engines, \code{LineFetch} and
+\code{LineStore} with an adapter between the words they move and the
+bytes a frame counts, are issue 151.
+
+Two slots a direction is queue depth and not throughput. A ring, if
+it is ever wanted, is an addition rather than a rewrite: a descriptor
+states the same three values \code{tx\_slot}, \code{tx\_length} and
+\code{tx\_start} already state.
+
+The unit checks no more of the address than the word, because the
+bridge in front of it sends it only its own range.
