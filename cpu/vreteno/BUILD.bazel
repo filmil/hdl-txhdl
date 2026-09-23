@@ -389,8 +389,6 @@ filegroup(
 
 vivado_synthesis2(
     name = "vreteno_board_synth",
-    # UberDDR3's RTL sets default_nettype none, which lasts into every
-    # file read after it, so the controller goes last.
     srcs = [
         ":board_v",
         "board/vreteno_board.v",
@@ -399,6 +397,7 @@ vivado_synthesis2(
     part = "xc7a200tfbg484-2",
     top = "vreteno_board",
     xdcs = [":ax7a200_xdc"],
+    deps = ["//ddr3:ddr3_mig"],
     tags = ["manual"],
 )
 
@@ -413,8 +412,6 @@ vivado_place_and_route2(
 # the pulse width modulator on a real LED. See issue #248.
 vivado_synthesis2(
     name = "vreteno_board_fade_synth",
-    # UberDDR3's RTL sets default_nettype none, which lasts into every
-    # file read after it, so the controller goes last.
     srcs = [
         ":board_fade_v",
         "board/vreteno_board.v",
@@ -423,6 +420,7 @@ vivado_synthesis2(
     part = "xc7a200tfbg484-2",
     top = "vreteno_board",
     xdcs = [":ax7a200_xdc"],
+    deps = ["//ddr3:ddr3_mig"],
     tags = ["manual"],
 )
 
@@ -437,6 +435,7 @@ vivado_synthesis2(
     part = "xc7a200tfbg484-2",
     top = "vreteno_board",
     xdcs = [":ax7a200_xdc"],
+    deps = ["//ddr3:ddr3_mig"],
     tags = ["manual"],
 )
 
@@ -548,7 +547,10 @@ vivado_synthesis2(
     part = "xc7a200tfbg484-2",
     top = "vreteno_board_ila",
     xdcs = [":ax7a200_xdc"],
-    deps = [":board_ila"],
+    deps = [
+        ":board_ila",
+        "//ddr3:ddr3_mig",
+    ],
     tags = ["manual"],
 )
 
@@ -609,7 +611,10 @@ vivado_synthesis2(
     part = "xc7a200tfbg484-2",
     top = "vreteno_board_jtag",
     xdcs = [":ax7a200_xdc"],
-    deps = [":jtag_axi"],
+    deps = [
+        ":jtag_axi",
+        "//ddr3:ddr3_mig",
+    ],
     tags = ["manual"],
 )
 

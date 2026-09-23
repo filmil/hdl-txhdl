@@ -34,10 +34,10 @@
 // unrelated frequencies and each is already proven with the generator
 // it has:
 //
-//   * a PLL, times six to 1200 MHz: 100 MHz for the design and the
-//     memory controller, 400 MHz for the memory, the same 400 MHz a
-//     quarter cycle late, and 200 MHz for the controller's delay
-//     control. This is `vreteno_board.v`'s PLL, unchanged.
+//   * the memory controller's own: it takes the 200 MHz, which is also
+//     its delay reference, runs the memory at 400 MHz and hands back
+//     100 MHz for the design and the serial port. This is
+//     `vreteno_board.v`'s arrangement, unchanged.
 //   * an MMCM, times five to 1000 MHz over eight: 125 MHz for the
 //     Ethernet transmit half. This is `eth_echo.v`'s, unchanged. A
 //     second MMCM inside `eth_rgmii` shifts the PHY's receive clock.
@@ -76,8 +76,9 @@
 //         for about a fifth of a second.
 //   led3  the DDR3 memory calibrated. The loader writes a program into
 //         that memory, so a dark led3 explains everything else.
-//   led4  the heartbeat, three times a second, which says the PLL has
-//         locked and this part holds a bitstream that is running.
+//   led4  the heartbeat, three times a second, which says the memory
+//         controller's clock is good and this part holds a bitstream
+//         that is running.
 //
 // The HDMI has no light of its own; the monitor is its light.
 `timescale 1ps / 1ps
@@ -142,47 +143,23 @@ module flagship (
   // The core, the memory and the serial port.
   // --------------------------------------------------------------
 
-  wire fb, fb_buf, locked;
-  wire pll100, pll400, pll200, pll400_90;
-  wire clk, clk400, clk200, clk400_90;
-  PLLE2_BASE #(
-    .BANDWIDTH("OPTIMIZED"),
-    .CLKIN1_PERIOD(5.0),
-    .CLKFBOUT_MULT(6),
-    .CLKOUT0_DIVIDE(12),
-    .CLKOUT1_DIVIDE(3),
-    .CLKOUT2_DIVIDE(6),
-    .CLKOUT3_DIVIDE(3),
-    .CLKOUT3_PHASE(90.0),
-    .DIVCLK_DIVIDE(1),
-    .STARTUP_WAIT("FALSE")
-  ) pll (
-    .CLKIN1(clk200_in),
-    .CLKFBIN(fb_buf),
-    .CLKFBOUT(fb),
-    .CLKOUT0(pll100),
-    .CLKOUT1(pll400),
-    .CLKOUT2(pll200),
-    .CLKOUT3(pll400_90),
-    .CLKOUT4(),
-    .CLKOUT5(),
-    .LOCKED(locked),
-    .PWRDWN(1'b0),
-    .RST(1'b0)
-  );
-  BUFG fbbuf (.I(fb), .O(fb_buf));
-  BUFG buf100 (.I(pll100), .O(clk));
-  BUFG buf400 (.I(pll400), .O(clk400));
-  BUFG buf200 (.I(pll200), .O(clk200));
-  BUFG buf400_90 (.I(pll400_90), .O(clk400_90));
+  // The memory controller makes the design's clock: it takes the 200 MHz
+  // and hands back `clk`, the 100 MHz the core, the memory and the
+  // serial port run on, with `ui_rst` high until that clock is good.
+  // The controller's own reset is a pulse at power-on, counted on the
+  // board's clock, and nothing else.
+  wire clk, ui_rst;
+  reg [7:0] por = 8'd0;
+  always @(posedge clk200_in) if (por != 8'hff) por <= por + 1;
+  wire sys_rst = (por != 8'hff);
 
-  // The resets, active high for the design and active low for the
-  // controller, each through two flip-flops into the design's clock.
+  // The reset, active high for the design, through two flip-flops into
+  // the design's clock.
   // The core's reset waits on the memory's calibration as well, so the
   // core starts only when the memory it may reach is ready.
   //
-  // The button resets the core and not the memory. The memory's reset
-  // follows the PLL's lock alone, which is power-on. A reset that
+  // The button resets the core and not the memory. The controller's
+  // reset is the power-on pulse alone. A reset that
   // reached the controller while a transaction was in flight stranded
   // the bus: the bridge in front of the controller waited on an
   // acknowledgement the reset controller never gave, nothing resets
@@ -224,13 +201,10 @@ module flagship (
     brk <= (low_for >= 22'd2_000_000) && (low_for < 22'd2_100_000);
   end
   wire calib;
-  reg [1:0] mem_sync = 2'b00;
   reg [1:0] core_sync = 2'b11;
   always @(posedge clk) begin
-    mem_sync <= {mem_sync[0], locked};
-    core_sync <= {core_sync[0], ~(reset_n & key1 & locked & calib) | brk};
+    core_sync <= {core_sync[0], ~(reset_n & key1 & ~ui_rst & calib) | brk};
   end
-  wire mem_rst_n = mem_sync[1];
   wire rst = core_sync[1];
 
   wire halt;
@@ -240,14 +214,14 @@ module flagship (
     .rst(rst),
     .irq(1'b0),
     .rx(uart_rx),
-    .ddr3_clk(clk400),
-    .ref_clk(clk200),
-    .ddr3_clk_90(clk400_90),
-    .ddr3_rst_n(mem_rst_n),
+    .sys_clk(clk200_in),
+    .sys_rst(sys_rst),
     .halt(halt),
     .tx(uart_tx),
     .pwm_pins(pwm_pins),
     .calib(calib),
+    .ui_clk(clk),
+    .ui_rst(ui_rst),
     .ck_p(ddr3_clk_p),
     .ck_n(ddr3_clk_n),
     .mem_rst_n(ddr3_reset),
