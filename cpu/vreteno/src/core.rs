@@ -647,6 +647,10 @@ pub struct Vreteno<const IW: usize> {
     /// before the next instruction to run: a store is posted, so its
     /// fault is raised late and without the address (issue 417).
     pub st_err: Reg<Bit>,
+    /// Stores posted and not yet answered, which is what a `fence`
+    /// waits for: the tracker gives out four identifiers, so at most
+    /// four are out (issue 432).
+    pub stores_out: Reg<U<3>>,
     /// `mbusquiet`: bus refusals read zero and drop the store instead
     /// of trapping, for a program that polls a peripheral which may
     /// refuse on purpose (issue 417).
@@ -913,6 +917,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let tim_ok = mie_r.bit(7) & mtip;
             let int_ok = mstatus.bit(3) & (ext_ok | soft_ok | tim_ok);
             let stall_m = m_here & !int_ok & !m_done;
+            // A `fence` orders what came before it against what comes
+            // after: it waits in execute until every store the core
+            // has posted has been answered, and a load already waits
+            // for its answer, so nothing else is outstanding. Both
+            // fences share the opcode; there is no cache to flush.
+            let is_fence = opcode == 0x0f;
+            let stall_fence = self.valid
+                & Bit::from(is_fence)
+                & Bit::from(self.stores_out.get() != 0);
             // A load or store to the bus, which is everything above the
             // data memory. A store goes out when the bus has room; a
             // load goes out and moves on to writeback, which holds it
@@ -975,6 +988,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             self.stall.set(
                 stall_ld
                     | stall_m
+                    | stall_fence
                     | stall_bus
                     | stall_fetch
                     | self.dev_wait
@@ -1372,6 +1386,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 // retires, which is the same signal the writeback
                 // drives and the lockstep steps on.
                 !self.stopped ? mcycle: self.mcycle.get() + 1,
+                // The stores out: one more as one goes, one fewer as one
+                // is answered, and the count when both happen at once.
+                send_store & !take_done ?
+                    stores_out: self.stores_out.get() + 1,
+                take_done & !send_store ?
+                    stores_out: self.stores_out.get() - 1,
                 wb_here ? minstret: self.minstret.get() + 1,
                 // A write lands after the count, so a program that
                 // sets a counter gets what it wrote rather than what
@@ -1468,6 +1488,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     dcsr: U::<32>::from(0x4000_0003u32),
                     wb_err: Bit::Zero,
                     st_err: Bit::Zero,
+                    stores_out: U::<3>::from(0u8),
                     busquiet: Bit::Zero,
                 },
             });
