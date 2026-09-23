@@ -667,8 +667,8 @@
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vhdl/0.3.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vhdl/0.4.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vhdl/0.4.1/MODULE.bazel": "not found",
-    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vivado/3.11.0/MODULE.bazel": "69d8f82ea8de538be385240c625a372e728b49918f5cae2bef0a5eead92b7490",
-    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vivado/3.11.0/source.json": "0a3214fb3367baf1a4e03fa87279218a0aee062a430cbe6614b99748d19c1896",
+    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vivado/3.12.0/MODULE.bazel": "b9bd1fef370cd2fbd43095d1387372ebbf2016ebf62e861c267c5353b96d64d8",
+    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vivado/3.12.0/source.json": "3791efa3a7885243d767f1de393c03d804e9fca525b39cc9df9c1738917115e1",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/stardoc/0.5.1/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/stardoc/0.5.3/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/stardoc/0.6.2/MODULE.bazel": "not found",
@@ -934,7 +934,7 @@
     },
     "@@rules_rust+//crate_universe/private:internal_extensions.bzl%cu_nr": {
       "general": {
-        "bzlTransitiveDigest": "T9P5TPLHJzgZy/KsClSVePOVrzKD3vEZcFIOdHNcoQM=",
+        "bzlTransitiveDigest": "A+7YrHu1QDXRk3iolyn9V/gXGTG+bHjMGPYcmoIxmwc=",
         "usagesDigest": "McimNXAztVHDzspa1Kng94T+YeyY/44zx9FkNqIMn2s=",
         "recordedInputs": [
           "REPO_MAPPING:apple_support+,bazel_skylib bazel_skylib+",
@@ -1038,7 +1038,7 @@
     "@@rules_vivado+//:extensions.bzl%vivado": {
       "general": {
         "bzlTransitiveDigest": "3OZAD7ChRclbYIKDLdZkEt6JbY+hpdFcELMcEdeCC4w=",
-        "usagesDigest": "lf82TF2bEjuCPcEShf0Y4rqlEtBTpp/oWIekjalGadY=",
+        "usagesDigest": "NhyCaqc1Dd/knqc8WQFRnXcMT3EpRHvRYqgOFY9oE8o=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
           "vivado_hermetic": {

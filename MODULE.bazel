@@ -166,7 +166,7 @@ register_toolchains("@verilator_prebuilt//:toolchain")
 # key is the URL and the selection with no `sha256`, exactly as the
 # other workspaces on this machine state them, so that the key matches
 # theirs and the installation is shared rather than redone.
-bazel_dep(name = "rules_vivado", version = "3.11.0")
+bazel_dep(name = "rules_vivado", version = "3.12.0")
 # Shell binaries: the remote programmer and the serial watcher.
 bazel_dep(name = "rules_shell", version = "0.8.0")
 
