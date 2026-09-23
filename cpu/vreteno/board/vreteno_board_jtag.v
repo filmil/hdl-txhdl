@@ -221,6 +221,14 @@ module vreteno_board_jtag (
     .vw_data(), .vw_valid(), .vw_ready(1'b1),
     .vb_data(2'd0), .vb_valid(1'b0), .vb_ready(),
     .vr_data(34'd0), .vr_valid(1'b0), .vr_ready(),
+    // The Ethernet slot at `0x3400`, tied off: the registers are on
+    // the bus but the engines that move frames are not written yet
+    // (issue 151), so a read of it answers as this tie-off does.
+    .eaw_data(), .eaw_valid(), .eaw_ready(1'b1),
+    .ear_data(), .ear_valid(), .ear_ready(1'b1),
+    .ew_data(), .ew_valid(), .ew_ready(1'b1),
+    .eb_data(2'd0), .eb_valid(1'b0), .eb_ready(),
+    .er_data(34'd0), .er_valid(1'b0), .er_ready(),
     // The remote peripheral at `0x3300` sends its transactions out as
     // Ethernet frames, and this board has no Ethernet port: the
     // frames go nowhere and none come back, so a program that touches

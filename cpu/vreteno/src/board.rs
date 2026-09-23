@@ -40,7 +40,7 @@ use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerReq, B, R, W,
 };
 use txhdl_parts::bus::axi_lite::{
-    LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge4, LiteR, LiteW,
+    LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge5, LiteR, LiteW,
 };
 use txhdl_parts::bus::axi_pins::{AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::router::Router7;
@@ -121,21 +121,40 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     pub pdmem: AxiPer<32, 32, 4, 4>,
     pub ptimer: AxiPer<32, 32, 4, 4>,
     // begin{vslot}
-    /// Four small peripherals share the page at `0x3000`: the serial
+    /// Five small peripherals share the page at `0x3000`: the serial
     /// port at `0x3000`, the pulse width modulator at `0x3100`,
-    /// whatever the board hangs on the third slot at `0x3200`, and the
-    /// remote peripheral at `0x3300`, each a sixteenth of the page.
-    /// The router's ports go to memories and to the bus's own
-    /// peripherals, and a
+    /// whatever the board hangs on the third slot at `0x3200`, the
+    /// remote peripheral at `0x3300`, and the Ethernet port's
+    /// registers on the fifth slot at `0x3400`, each a sixteenth of
+    /// the page. The router's ports go to memories and to the bus's
+    /// own peripherals, and a
     /// peripheral of six registers does not want one of its own.
     ///
-    /// The third slot leaves this unit as ports rather than reaching a
-    /// field, because what sits there runs on a clock of its own: on
-    /// the board it is the video peripheral on the pixel clock, and
-    /// the crossing between the two is the board top's business. A
-    /// design with nothing there ties the slot off, and a read of it
+    /// The page was never the constraint and is not now. It is 4 KiB
+    /// and a slot is 256 bytes, so it holds sixteen and eleven are
+    /// still free; what was full was the bridge in front of it, which
+    /// had four ports. So no address moves to make room for the fifth,
+    /// and nothing that names one of the first four changes.
+    ///
+    /// The third and fifth slots leave this unit as ports rather than
+    /// reaching a field, and for different reasons, which is worth
+    /// saying because the difference decides what wiring them costs.
+    ///
+    /// The third is ports because what sits there runs on a clock of
+    /// its own: on the board it is the video peripheral on the pixel
+    /// clock, and the crossing between the two is the board top's.
+    ///
+    /// The fifth is ports only because what sits there is not written
+    /// yet. `EthSlots` runs on the bus clock like every other
+    /// peripheral here, so wiring it needs no crossing at all: it
+    /// becomes a field and these ports go away. What it waits for is
+    /// the engines that move the frames, `LineFetch` and `LineStore`
+    /// joined to its seven other ports, which are the direct memory
+    /// access of issue 151 and no part of this bridge.
+    ///
+    /// A design with nothing on a slot ties it off, and a read of it
     /// answers when the tie-off does.
-    pub puart: LiteBridge4<
+    pub puart: LiteBridge5<
         32,
         32,
         4,
@@ -147,6 +166,8 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
         0x3200,
         0xffff_ff00,
         0x3300,
+        0xffff_ff00,
+        0x3400,
         0xffff_ff00,
     >,
     // end{vslot}
@@ -196,6 +217,12 @@ pub struct BoardIn {
     pub ddr3_rst_n: In<Bit>,
     pub vb: Rx<LiteB>,
     pub vr: Rx<LiteR<32>>,
+    /// The fifth slot's answers, from the Ethernet port at `0x3400`.
+    /// Ports rather than a field for the same reason the video slot's
+    /// are: the MAC's halves run on the clocks the PHY keeps, and the
+    /// crossing is the board top's.
+    pub eb: Rx<LiteB>,
+    pub er: Rx<LiteR<32>>,
     pub net_rx: Rx<EthByte>,
     pub jtag_awid: In<U<2>>,
     pub jtag_awaddr: In<U<32>>,
@@ -249,6 +276,10 @@ pub struct BoardOut {
     pub vaw: Tx<LiteAw<32>>,
     pub var: Tx<LiteAr<32>>,
     pub vw: Tx<LiteW<32, 4>>,
+    /// The fifth slot's transactions, to the Ethernet port.
+    pub eaw: Tx<LiteAw<32>>,
+    pub ear: Tx<LiteAr<32>>,
+    pub ew: Tx<LiteW<32, 4>>,
     pub net_tx: Tx<EthByte>,
     pub jtag_awready: Out<Bit>,
     pub jtag_wready: Out<Bit>,
@@ -280,6 +311,8 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             ddr3_rst_n,
             vb,
             vr,
+            eb,
+            er,
             net_rx,
             jtag_awid,
             jtag_awaddr,
@@ -329,6 +362,9 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             vaw,
             var,
             vw,
+            eaw,
+            ear,
+            ew,
             net_tx,
             jtag_awready,
             jtag_wready,
@@ -658,13 +694,13 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                                 (
                                     aw2_rx, ar2_rx, w2_rx, lb_rx, lr_rx,
                                     pb_pwm_rx, pr_pwm_rx, vb, vr, pb_rem_rx,
-                                    pr_rem_rx,
+                                    pr_rem_rx, eb, er,
                                 ),
                                 (
                                     law_tx, lar_tx, lw_tx, paw_pwm_tx,
                                     par_pwm_tx, pw_pwm_tx, vaw, var, vw,
-                                    paw_rem_tx, par_rem_tx, pw_rem_tx, b2_tx,
-                                    r2_tx,
+                                    paw_rem_tx, par_rem_tx, pw_rem_tx, eaw,
+                                    ear, ew, b2_tx, r2_tx,
                                 ),
                             ),
                             join2(
