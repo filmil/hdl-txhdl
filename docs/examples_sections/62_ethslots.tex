@@ -1,0 +1,153 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Registers a Driver Talks To}
+\label{sec:x-ethslots}
+
+An interface is the expensive part and an implementation is the cheap
+one, so the interface worth having is the one somebody else is
+already paying to maintain.
+
+Zephyr's tree contains \code{drivers/ethernet/eth\_litex\_liteeth.c},
+a maintained driver for a soft MAC on an FPGA whose slot size is
+\code{0x800}, which is exactly this repository's \code{FRAME\_MAX}.
+\code{EthSlots} is that driver's register map in hardware, so that
+bringing up Ethernet under Zephyr is a port of a file that already
+works rather than a design nobody has driven.
+
+\subsection{Two slots a direction, not a ring}
+
+A descriptor ring was the obvious design and it is the wrong one.
+Zephyr's driver model never hands a chain to hardware: it calls
+\code{net\_pkt\_read(pkt, buf, len)} to copy a frame out into one
+flat buffer before transmitting, and \code{net\_pkt\_write(pkt, buf,
+len)} to copy one in after receiving. Both take a flat pointer and a
+byte count, so the hardware only ever sees one contiguous region per
+frame.
+
+So there are two slots each way, used in turn, each a flat buffer of
+2048 bytes. A ring buys queue depth rather than throughput, and if it
+is wanted later it is an addition: a descriptor carries the same
+three values \code{tx\_slot}, \code{tx\_length} and \code{tx\_start}
+already carry.
+
+\subsection{Where the buffers are}
+
+LiteEth's slots are memory inside the peripheral, and its driver
+copies each frame into them over the bus. That is the cost this is
+meant to remove, only at word granularity rather than byte.
+
+Here the slots are a region of main memory, and the peripheral reads
+from it with \code{LineFetch} and fills it with \code{LineStore}
+(\S\ref{sec:x-dma}, \S\ref{sec:x-dmaw}). The driver cannot tell the
+difference: it is handed a base address either way and writes a frame
+there. What changes is whether the processor moves the bytes.
+
+The two directions are separate regions, receive first and transmit
+4096 bytes above it. They have to be. A slot number alone would make
+transmit slot zero and receive slot zero the same address, and a
+frame arriving would land on one waiting to go out: the run below
+prints \code{0x41001800} and \code{0x41000800} for the two, which is
+the check that they do not meet.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=state-state,caption={\code{lib/parts/src/ethslots.rs}: the
+registers, as LiteEth lays them out.},%
+label={lst:x-ethslots}]{lib/parts/src/ethslots.rs}
+
+\subsection{What the run checks, and why each}
+
+The example does what the driver does, in the order the driver does
+it.
+
+\emph{The transmit side has no interrupt.} LiteEth's driver disables
+it and polls \code{tx\_ready}, because Zephyr's send may block. So
+the run reads \code{tx\_ready} as one while idle and as zero while a
+frame is going, which is the whole of the transmit handshake.
+
+\emph{The receive interrupt follows the store, not the frame.}
+\code{LineStore} holds its \code{running} high until the write
+response comes back from memory, and the interrupt is raised on its
+fall. The run asserts no interrupt while the store is in flight and
+one after it, so a driver told a frame has arrived can read it
+without a barrier. The register block takes the engine's busy line
+rather than a completion pulse for that reason: a pulse could be
+joined to the receiver by somebody reading the map and not the
+comment.
+
+\emph{The pending bit is write-one-to-clear, and that is tested both
+ways.} Writing zero must not acknowledge, and writing one must.
+Nothing about a register's value says which behaviour it has, and
+hardware that cleared on any write would let a driver acknowledge an
+interrupt it had not looked at, dropping the frame rather than
+reading it. Only a run that writes zero and finds the bit still set
+can tell those apart.
+
+Four signals say the whole of it: \code{tx\_go} while the transmit
+request waits for the engine to take it, \code{rx\_pending} from the
+arrival to the acknowledgement, and \code{irq} following it.
+
+\input{ethslots_timing.tex}
+
+\subsection{The cycle where the two meet}
+
+The registers are written with \code{with!}, whose entries apply in
+order with the last drive of a field winning. That makes the order of
+two of them a decision about frames rather than about style.
+
+An arrival sets \code{rx\_pending} and an acknowledgement clears it.
+Written in the order they read most naturally, arrival first, an
+acknowledgement in the same cycle as an arrival clears the bit the
+arrival has just set. The frame is in memory, whole and correct, and
+nothing ever tells the driver it is there. It is the cycle where a
+busy link acknowledges one frame as the next one lands, so the fault
+appears under load and not in a quiet test.
+
+So the acknowledgements are written first and the arrival after them,
+and a frame arriving as one is acknowledged survives.
+
+The test for it was vacuous twice before it was worth anything, which
+is the part worth reporting. An acknowledgement aimed at the arrival
+by reasoning about the bus latency landed a cycle early, where the
+arrival sets the bit afterwards whichever order the entries are in.
+The example passed against the faulty order, which is the only reason
+the mistake was visible at all.
+
+What settled it was running the whole sweep against both orders:
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+issued at & 199 & 200 & 201 & 202 & 203 \\
+\midrule
+acknowledgements first & ok & ok & ok & fails & fails \\
+arrival first & ok & ok & fails & fails & fails \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+At 199 and 200 the acknowledgement is early and proves nothing. At
+202 and later it falls in a cycle of its own, after the arrival,
+where clearing the bit is what should happen and both orders fail.
+One cycle out of the five, 201, is the one where the two coincide,
+and it is the only column that tells the orders apart.
+
+A delay chosen so that a test passes is worth nothing, and this one
+is chosen so that it fails on the fault it names.
+
+\subsection{What the driver must still do}
+
+Stores on this machine are posted and \code{fence} orders nothing
+(issue 432), so a driver must read the last word of a frame back
+before writing \code{tx\_start}. Otherwise the engine may fetch
+before the frame has landed and send what was in the slot before.
+
+That obligation is on the component's datasheet rather than only in
+the driver, because the next driver written against this peripheral
+will not read the first one. What makes it dischargeable is measured
+in the AXI document~\cite{axi}: this link answers a load behind an
+unanswered store to the same address with the stored value, which AXI
+does not require and this interconnect does.
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_ethslots}
+printed when the build ran it.},%
+label={lst:x-ethslots-out}]{out_ethslots.txt}
