@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The Vreteno Ethernet port: ten registers in front of the MAC's two
+# halves, and four buffers of a whole frame each, two per direction.
+#
+# The registers and the buffers are named separately because they are
+# separate regions: the registers are a peripheral on the bus and the
+# buffers are memory in the DDR3 that the engines read and write.
+
+description: The Vreteno Ethernet port
+
+compatible: "hdlfactory,vreteno-eth"
+
+include: ethernet-controller.yaml
+
+properties:
+  reg:
+    required: true
+
+  reg-names:
+    required: true
+    description: |
+      `registers` for the ten control words, then `rx_buffers` and
+      `tx_buffers`, two slots each of 2048 bytes, which is the largest
+      frame the MAC stores.
+
+      The two directions are separate regions rather than one of four
+      slots. One region would let a driver compute a transmit slot at
+      the address of a receive slot, which is a frame arriving on top
+      of one waiting to go out: it compiles, and it simulates whenever
+      a test drives one direction at a time. The hardware had exactly
+      that before the regions were split.
+
+  interrupts:
+    required: true
+    description: |
+      Raised while a received frame is waiting. There is no transmit
+      interrupt: the hardware has the event and this port leaves it
+      disabled, because a sender polls `tx_ready` instead.
+
+  local-mac-address:
+    required: true
+    description: |
+      The board has no EEPROM to read one from, so the address is
+      stated here.

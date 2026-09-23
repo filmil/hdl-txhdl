@@ -84,6 +84,29 @@
 			interrupts-extended = <&hlic 7>;
 		};
 
+		// The Ethernet port. Its registers are the fifth slot of
+		// the peripheral page; its four frame buffers are in the
+		// DDR3, two for each direction, and are named separately
+		// so that a transmit slot can never be computed at the
+		// address of a receive one.
+		//
+		// It answers its registers and moves no frames until the
+		// engines that carry the bytes exist, which is issue 151.
+		// The driver binds either way, which is the point: it is
+		// compiled and checked from the first commit rather than
+		// when somebody next has a board.
+		eth0: ethernet@3400 {
+			compatible = "hdlfactory,vreteno-eth";
+			reg = <0x00003400 0x100>,
+			      <0x41000000 0x1000>,
+			      <0x41001000 0x1000>;
+			reg-names = "registers", "rx_buffers", "tx_buffers";
+			interrupt-parent = <&plic>;
+			interrupts = <3 1>;
+			local-mac-address = [00 0a 35 00 00 01];
+			status = "okay";
+		};
+
 		uart0: serial@3000 {
 			compatible = "hdlfactory,vreteno-uart";
 			reg = <0x00003000 0x100>;
@@ -100,7 +123,7 @@
 			interrupt-controller;
 			#address-cells = <0>;
 			#interrupt-cells = <2>;
-			riscv,ndev = <2>;
+			riscv,ndev = <3>;
 			// Seven levels, as `lib/parts/src/plic.rs` states: a
 			// source priority runs 0 to 7 and 0 never interrupts.
 			riscv,max-priority = <7>;
@@ -111,6 +134,21 @@
 		ddr: memory@40000000 {
 			compatible = "mmio-sram";
 			reg = <0x40000000 DT_SIZE_M(1024)>;
+		};
+
+		// The Ethernet port's frame buffers, kept out of the
+		// allocator's hands. Without this the kernel hands the
+		// region out and the engines write frames into somebody
+		// else's heap, which is a fault a long way from its cause
+		// and only under load.
+		reserved-memory {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+
+			eth_bufs: memory@41000000 {
+				reg = <0x41000000 0x2000>;
+			};
 		};
 	};
 };

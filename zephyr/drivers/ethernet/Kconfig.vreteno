@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config ETH_VRETENO
+	bool "Vreteno Ethernet port"
+	default y
+	depends on DT_HAS_HDLFACTORY_VRETENO_ETH_ENABLED
+	depends on NETWORKING
+	select ETH_DRIVER
+	help
+	  The Ethernet port of the Vreteno machine: two slots each way
+	  with a whole frame in each, and ten registers in front of
+	  them.
+
+	  `ETH_DRIVER` is what the networking subsystem counts, and a
+	  driver that does not select it is a driver the stack never
+	  looks for. The serial port made the same mistake with
+	  `SERIAL_HAS_DRIVER`, where the symptom was a console that was
+	  silently not a console; here it would be an interface that
+	  never appears.
+
+	  The dependency on `NETWORKING` is not decoration. `ETH_DRIVER`
+	  itself depends on it, so a build without a network stack, which
+	  is every build of `hello_world`, refuses the configuration
+	  outright rather than quietly building a driver nothing can use.
+	  That is what the hermetic build of issue 390 found the first
+	  time it compiled this file.
+
+	  Frames are copied into the slots rather than handed over,
+	  because Zephyr's `net_pkt` is a chain of fragments and both
+	  `net_pkt_read` and `net_pkt_write` linearise. That is why the
+	  hardware needs no scatter-gather.
