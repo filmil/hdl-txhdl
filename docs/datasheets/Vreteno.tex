@@ -27,9 +27,13 @@ identifiers back on \code{release}. It receives \code{grant},
 \code{done} and \code{rdata} from its tracker, an \code{AxiHost}. The
 other inputs are \code{rst}, the external interrupt \code{irq}, the
 timer's line \code{tirq} and the software interrupt \code{sirq}, which
-the controller raises from \code{msip}. The outputs are \code{halt}, \code{instr},
-the word retiring, and \code{wb}, a \code{Writeback} of \code{done},
-\code{rd} and \code{val}.
+the controller raises from \code{msip}; and the debug module's, the
+halt and resume requests \code{haltreq} and \code{resumereq} and its
+register access, \code{dbg\_regno}, \code{dbg\_wdata} and
+\code{dbg\_we}, honoured in debug mode (issue 154). The outputs are
+\code{halt}, \code{instr}, the word retiring, \code{wb}, a
+\code{Writeback} of \code{done}, \code{rd} and \code{val}, \code{dbg},
+debug mode, and \code{dbg\_rdata}, the register the module asked for.
 
 \subsection*{Parameters}
 

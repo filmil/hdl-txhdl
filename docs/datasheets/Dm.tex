@@ -1,0 +1,151 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Dm
+\datasheet{Dm}{The RISC-V debug module on the bus: halt, resume and status, and the general registers, \code{dpc} and \code{dcsr} read and written by the abstract command.}
+
+\dsfacts{\code{cpu/vreteno/src/debug.rs}}{\code{vreteno32::debug::Dm}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+The RISC-V debug specification puts a debugger's reach into a core
+behind a debug module, a small address space of 32-bit registers a
+transport carries from the cable. \code{Dm} is that module as far as
+a debugger on the bus needs it, with the address space on the bus:
+an AXI-Lite peripheral whose registers are the specification's, at
+their numbers, each a word at four times its number. Through it the
+JTAG host on the board's bus halts the core from the hardware manager,
+reads its registers and resumes it (issue 154), and a transport of its
+own reaches the same registers the same way when there is one.
+
+The core's side is three lines and a word: a halt request and a
+resume request in, debug mode out, and the register access, a number
+in the specification's space, the word to write and whether to,
+answered by the word read. The core lends the module its register
+file's first read port and its write port while it is halted, and its
+CSR read takes the module's number then.
+
+\subsection*{Parameters}
+
+None. One hart, so \code{hartsel} is not decoded; 32-bit registers,
+so the command's \code{aarsize} must be 2.
+
+\subsection*{Register map}
+
+Offsets from the module's base, which on the board is
+\code{0x1000\_0000}, a router port of its own; the part selects a
+register by bits 8 to 2 of the address, the specification's number,
+and looks at no other bits. \code{debug::at(number)} gives a
+register's address on the board.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lllp{0.45\textwidth}@{}}
+\toprule
+Offset & Number & Register & Access \\
+\midrule
+\code{0x10} & \code{0x04} & \code{data0} & Read and write, the
+abstract command's one data word: what a read brought back, or what
+a write sends. Written while a command is in flight it is the busy
+error and unchanged. \\
+\code{0x40} & \code{0x10} & \code{dmcontrol} & Read and write.
+\code{haltreq} bit 31, a level; \code{resumereq} bit 30, an action,
+which asks if the core is halted as the write lands and clears the
+acknowledgement, and does nothing as a zero; \code{dmactive} bit 0,
+which clear holds the module at nothing. \\
+\code{0x44} & \code{0x11} & \code{dmstatus} & Read only.
+\code{allhalted} and \code{anyhalted} bits 9 and 8, \code{allrunning}
+and \code{anyrunning} bits 11 and 10, \code{allresumeack} and
+\code{anyresumeack} bits 17 and 16, \code{authenticated} bit 7, and
+the version, 2 for the 0.13 specification, in bits 3 to 0. \\
+\code{0x48} & \code{0x12} & \code{hartinfo} & Reads as zero: no
+scratch registers and no data window. \\
+\code{0x58} & \code{0x16} & \code{abstractcs} & \code{busy} bit 12,
+\code{cmderr} bits 10 to 8, cleared by writing ones, and
+\code{datacount} 1 in bits 3 to 0. \\
+\code{0x5c} & \code{0x17} & \code{command} & Write only, the
+access-register command: \code{cmdtype} 0, \code{aarsize} 2,
+\code{transfer} bit 17, \code{write} bit 16, \code{regno} bits 15 to
+0, \code{0x1000} to \code{0x101f} a general register and below that
+a CSR. \code{debug::access(regno, write)} builds one. \\
+\code{0x100} & \code{0x40} & \code{haltsum0} & Read only, bit 0 the
+one hart, halted. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{Dm}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \code{haltreq} and \code{resumereq} go to the core as written
+and held, and \code{halted} from the core is what \code{dmstatus}
+reports. A resume request drops and is acknowledged when the core has
+left debug mode; a halt request stays as written, and a debugger
+clears it before it resumes.
+\item A command is accepted when the module is active, nothing is in
+flight and no error stands, and refused otherwise as the
+specification says: \code{cmderr} 1 while one is in flight, 2 for a
+command the module does not do, 4 while the core runs; under a
+standing error a command is ignored. A command takes two cycles, one
+for the number to reach the core and one for the word to come back
+into \code{data0} or go in from it.
+\item The module reads any general register and any CSR the core's
+CSR read knows, and writes the general registers, \code{dpc} and
+\code{dcsr}; a write of another CSR is \code{cmderr} 2.
+\item The arms of its one \code{with!} are ordered for what may fire
+together: the core's completion of a resume before the debugger's
+write, so a request written in the cycle the core resumes clears the
+acknowledgement rather than losing to it (issue 439).
+\item A read is answered on \code{r} in the cycle its address beat is
+taken, with \code{OKAY}; a write needs its address and data beats and
+room on \code{b} in one cycle, and is answered \code{OKAY} there.
+Inactive, the module holds nothing and answers zeros.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Thirteen tests in \code{cpu/vreteno/src/debug.rs}, in
+\code{//cpu/vreteno:isa\_test}, play the core: they set halted and
+the word read, drive the module over AXI-Lite, and read its lines
+back. Among them:
+\begin{itemize}
+\item \code{a\_register\_is\_read\_and\_written\_by\_the\_abstract\_command};
+\item \code{an\_unsupported\_command\_or\_a\_running\_core\_is}\-\code{\_an\_error\_that\_sticks};
+\item \code{a\_resume\_request\_written\_as\_the\_core\_resumes}\-\code{\_clears\_the\_ack};
+\item \code{data0\_written\_while\_a\_command\_is\_in\_flight}\-\code{\_is\_a\_busy\_error}.
+\end{itemize}
+The last two were constructed to fail against the arms as they were
+before issue 439.
+\item \code{the\_debug\_module\_halts\_reads\_writes\_and\_resumes\_the\_core},
+in \code{//cpu/vreteno:board\_test}, puts a debugger on the board's
+JTAG pins, a master model following a plan of writes, reads and
+waits, against a program counting to three thousand: it halts the
+core, reads the count and \code{dpc}, writes the count to its end,
+resumes, and the program finishes at once.
+\item \code{//cpu/vreteno:vreteno\_board\_dm\_probe} does the same from
+Vivado's hardware manager through the JTAG host, against whatever
+program runs; its transcript is owed to the document once the board
+is reached again.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Dm} in the board's design, \code{Board}, as its field
+\code{dmod} behind the bridge \code{pdm}, a \code{LiteBridge1} on the
+router's seventh port at \code{0x1000\_0000}; its lines go to the
+core's \code{haltreq}, \code{resumereq}, \code{dbg\_regno},
+\code{dbg\_wdata} and \code{dbg\_we}, and take the core's \code{dbg}
+and \code{dbg\_rdata}.
+
+\subsection*{Limits}
+
+One hart. The access-register command only: no program buffer, no
+system bus access and no abstract access to memory, which the bus the
+module sits on reaches directly. A CSR other than \code{dpc} and
+\code{dcsr} is read but not written. No authentication, no reset of
+the hart through \code{ndmreset}, no \code{havereset}. Not the transport:
+the module is reached over the bus, and the debug transport module on
+the cable is issue 154's third step. The module sits at
+\code{0x1000\_0000} and not nearer the interrupt controller, whose
+64~MiB window from \code{0x0c00\_0000} the router would match first.

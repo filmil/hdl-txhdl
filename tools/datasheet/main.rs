@@ -48,6 +48,7 @@ use txhdl_parts::tracer::Tracer;
 use txhdl_parts::wdog::Wdog;
 use vreteno32::board::Board;
 use vreteno32::core::Vreteno;
+use vreteno32::debug::Dm;
 use vreteno32::dmem::Dmem;
 use vreteno32::pair::{Inject, Pair, Watch};
 use vreteno32::rom::Rom;
@@ -490,6 +491,7 @@ fn main() {
     sheet("Rom", "Rom<4>", Rom::<4>::lowered("rom"));
     sheet("Timer", "Timer<4>", Timer::<4>::lowered("timer"));
     sheet("Plic", "Plic2<0>", Plic2::<0>::lowered("plic"));
+    sheet("Dm", "Dm", Dm::lowered("dm"));
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));
     sheet("Pwm", "Pwm", Pwm::lowered("pwm"));
     sheet("Tee", "Tee<R<32, 2>>", Tee::<R<32, 2>>::lowered("tee"));

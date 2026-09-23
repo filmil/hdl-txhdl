@@ -10,8 +10,8 @@
 \code{Board} is everything that computes on the board, written as a
 unit of units so that \code{\#[lower]} makes its netlist as one module
 holding the rest. It holds the core and its tracker, a second host's
-pins, an arbiter that puts the two onto one link, a router of six,
-and the peripherals behind its six ports. The second host is Vivado's
+pins, an arbiter that puts the two onto one link, a router of seven,
+and the peripherals behind its seven ports. The second host is Vivado's
 JTAG-to-AXI master on the board's top (issue 241), whose pins arrive
 under \code{jtag\_} and are joined by an \code{AxiPins}; the arbiter
 is an \code{Arbiter2}, so the peripheral side of the bus carries four
@@ -23,7 +23,10 @@ the page at \code{0x3000} behind the AXI-Lite bridge
 board hangs on the slot at \code{0x3200}, and the remote peripheral at
 \code{0x3300}. The DDR3 memory sits behind an \code{AxiPer} and
 holds UberDDR3's controller as a foreign module. The interrupt
-controller, \code{Plic2}, sits behind a second \code{LiteBridge1}.
+controller, \code{Plic2}, and the debug module, \code{Dm}, each sit
+behind a \code{LiteBridge1} of their own; the module's lines go to
+the core's halt and resume requests and its register access, and take
+the core's debug mode and the word read (issue 154).
 
 \code{run.rs} wires the same parts for a simulation. \code{Board} is
 that wiring as a unit, so a board top has to supply only the clocks,
@@ -54,7 +57,7 @@ runs \code{Board<4, 1, 0>}.
 
 \subsection*{Address map}
 
-\code{BoardRouter} states the map in its type, \code{Router6<32, 32, 4,
+\code{BoardRouter} states the map in its type, \code{Router7<32, 32, 4,
 4, ...>}. A peripheral gets an address when the address under the mask
 equals the base.
 
@@ -82,6 +85,9 @@ the same bridge, at \code{0x3200} \\
 \code{0x0c00\_0000} & \code{0xfc00\_0000} & \code{plic},
 \code{Plic2<0>} & \code{pplic}, \code{LiteBridge1} at
 \code{0x0c00\_0000} \\
+\code{0x1000\_0000} & \code{0xffff\_0000} & \code{dmod}, \code{Dm} &
+\code{pdm}, \code{LiteBridge1} at \code{0x1000\_0000}; not nearer the
+interrupt controller, whose 64~MiB window the router would match first \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -106,7 +112,9 @@ interrupt line, and its source 2 is \code{irq}; both ask while high.
 Its line is the core's external interrupt. The timer's line goes to
 the core's \code{tirq}.
 \item Of the core's outputs, only \code{halt} is a port. \code{instr}
-and the \code{Writeback} go nowhere.
+and the \code{Writeback} go nowhere; \code{dbg} and \code{dbg\_rdata}
+go to the debug module, whose requests and register access come back
+to the core.
 \item The join runs the timer before the core, since the core reads
 the timer's line in the same step, and the serial port before the
 interrupt controller before the core, for the same reason. \code{Ddr3Per} runs its controller
