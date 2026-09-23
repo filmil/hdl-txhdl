@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // The Vreteno board as it goes on the Alinx AX7A200, simulated whole:
-// the top with its PLL and resets, the lowered design with the DDR3
-// test in its memories, UberDDR3's controller, and two Micron models of
+// the top with its resets, the lowered design with the DDR3 test in
+// its memories, AMD's MIG controller, and two Micron models of
 // the board's x16 chips on the memory's pins.
 //
 // The program writes words across the memory, reads them back, says
@@ -38,13 +38,13 @@ module board_tb;
     .ddr3_dm(dm), .ddr3_dq_p(dq), .ddr3_dqs_p(dqs), .ddr3_dqs_n(dqs_n)
   );
 
-  ddr3 m0 (.rst_n(mrst), .ck(ckp), .ck_n(ckn), .cke(cke), .cs_n(s0),
+  ddr3_model m0 (.rst_n(mrst), .ck(ckp), .ck_n(ckn), .cke(cke), .cs_n(s0),
     .ras_n(ras), .cas_n(cas), .we_n(we), .dm_tdqs(dm[1:0]), .ba(ba),
-    .addr({1'b0, a}), .dq(dq[15:0]), .dqs(dqs[1:0]), .dqs_n(dqs_n[1:0]),
+    .addr(a), .dq(dq[15:0]), .dqs(dqs[1:0]), .dqs_n(dqs_n[1:0]),
     .tdqs_n(), .odt(odt));
-  ddr3 m1 (.rst_n(mrst), .ck(ckp), .ck_n(ckn), .cke(cke), .cs_n(s0),
+  ddr3_model m1 (.rst_n(mrst), .ck(ckp), .ck_n(ckn), .cke(cke), .cs_n(s0),
     .ras_n(ras), .cas_n(cas), .we_n(we), .dm_tdqs(dm[3:2]), .ba(ba),
-    .addr({1'b0, a}), .dq(dq[31:16]), .dqs(dqs[3:2]), .dqs_n(dqs_n[3:2]),
+    .addr(a), .dq(dq[31:16]), .dqs(dqs[3:2]), .dqs_n(dqs_n[3:2]),
     .tdqs_n(), .odt(odt));
 
   // The terminal: a frame is a low start bit, eight bits least
@@ -82,8 +82,8 @@ module board_tb;
     // budget rather than reaching its verdict. See issue #347.
     //
     // Nothing is lost by not checking it. The memory cannot calibrate
-    // on a clock that is not there, so `led3` going low says the PLL
-    // locked as surely as `led4` used to.
+    // on a clock that is not there, so `led3` going low says the
+    // controller's clock is good as surely as `led4` used to.
     wait (led3 == 0);
     $display("%0t ps: the memory calibrated", $time);
     wait (led1 == 0);
@@ -94,15 +94,17 @@ module board_tb;
     $display("verdict %0d: the line ended %h", ok, last);
     $finish;
   end
-  // The guard, for a run that is never going to finish. It is 100 us,
-  // about three times a run that works: the memory calibrates by 14 us
-  // and the core has said its line and halted by 35. It used to be
+  // The guard, for a run that is never going to finish. It is 500 us,
+  // about three times a run that works: the controller's fast
+  // calibration, the one its simulation variant carries, is done by
+  // about 110 us, and the core has said its line and halted soon
+  // after. It used to be
   // 20 ms, which at the speed this simulates is days of waiting, so a
   // run that was stuck was killed by the test's budget instead and said
   // nothing about how far it got, which is how the wait above went
   // unnoticed. What this prints is how far it did get. See issue #347.
   initial begin
-    #(1.0e8);
+    #(5.0e8);
     $display("timed out: calibrated %0d halted %0d, the line said %h",
       !led3, !led1, last);
     $finish;

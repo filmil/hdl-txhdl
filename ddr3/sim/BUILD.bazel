@@ -1,14 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # The DDR3 controller under Vivado's simulator, against the Micron model
-# of the board's memory: UberDDR3 behind the narrow Wishbone wrapper,
-# calibrated, written and read back. Manual, as every Vivado target in
-# the tree is, since it needs the hermetic Vivado install:
-#   bazel test //ddr3/sim:wrapper_test
+# of the board's memory. Two tests, both manual, as every Vivado target
+# in the tree is, since they need the hermetic Vivado install:
+#
+#   bazel test //ddr3/sim:example_test   # AMD's own: the traffic generator
+#   bazel test //ddr3/sim:wrapper_test   # ours: the narrow Wishbone wrapper
+#
+# The model and the vendor's testbench come out of the controller's
+# example design, which `//ddr3:ddr3_mig` keeps beside the core.
 load("@rules_vivado//build/vivado:rules.bzl", "vivado_library", "vivado_test")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["wrapper_verdict.tcl"])
+exports_files([
+    "example_verdict.tcl",
+    "wrapper_verdict.tcl",
+])
 
 # Vivado's global reset and tristate module, which the primitives read.
 vivado_library(
@@ -18,16 +25,102 @@ vivado_library(
     use_glbl = True,
 )
 
-# The Micron model of one chip. The upstream defines file picks x16 chips
-# of 8 Gb, whose timing covers the DDR3-1066 the controller runs.
-vivado_library(
-    name = "micron",
-    srcs = ["@uberddr3//:micron_model"],
-    hdrs = ["@uberddr3//:micron_model_headers"],
-    includes = ["//external/+git_repository+uberddr3/testbench"],
+# The Micron model of one DDR3 chip, with the parameters header the
+# example writes for the part the controller was configured for.
+MODEL = ["ddr3_model.sv"]
+
+MODEL_HEADERS = ["ddr3_model_parameters.vh"]
+
+# The example design's testbench: its top, the example's top with the
+# controller and the traffic generator in it, the wire delay model, and
+# the traffic generator's own files.
+EXAMPLE = [
+    "sim_tb_top.v",
+    "example_top.v",
+    "wiredly.v",
+    "mig_7series_v4_2_afifo.v",
+    "mig_7series_v4_2_cmd_gen.v",
+    "mig_7series_v4_2_cmd_prbs_gen.v",
+    "mig_7series_v4_2_data_prbs_gen.v",
+    "mig_7series_v4_2_init_mem_pattern_ctr.v",
+    "mig_7series_v4_2_memc_flow_vcontrol.v",
+    "mig_7series_v4_2_memc_traffic_gen.v",
+    "mig_7series_v4_2_rd_data_gen.v",
+    "mig_7series_v4_2_read_data_path.v",
+    "mig_7series_v4_2_read_posted_fifo.v",
+    "mig_7series_v4_2_s7ven_data_gen.v",
+    "mig_7series_v4_2_tg_prbs_gen.v",
+    "mig_7series_v4_2_tg_status.v",
+    "mig_7series_v4_2_traffic_gen_top.v",
+    "mig_7series_v4_2_vio_init_pattern_bram.v",
+    "mig_7series_v4_2_wr_data_gen.v",
+    "mig_7series_v4_2_write_data_path.v",
+]
+
+# Manual, as everything reaching `//ddr3:ddr3_mig` must be: the core's
+# generation wants the hermetic Vivado, which a wildcard build must not
+# ask of a machine that has no reason to hold it.
+genrule(
+    name = "imports",
+    srcs = ["//ddr3:ddr3_mig"],
+    outs = ["imports/" + f for f in MODEL + MODEL_HEADERS + EXAMPLE],
+    cmd = """
+for d in $(locations //ddr3:ddr3_mig); do
+  case "$$d" in *.ip_gen) src="$$d/example/imports" ;; esac
+done
+for f in $(OUTS); do cp "$$src/$$(basename "$$f")" "$$f"; done
+""",
     tags = ["manual"],
 )
 
+vivado_library(
+    name = "micron",
+    srcs = [":imports/" + f for f in MODEL],
+    hdrs = [":imports/" + f for f in MODEL_HEADERS],
+    tags = ["manual"],
+)
+
+# AMD's own proof of the controller as configured: the example design's
+# traffic generator writes the memory and reads it back through the
+# controller, against the model, and says TEST PASSED.
+vivado_library(
+    name = "example_tb",
+    srcs = [":imports/" + f for f in EXAMPLE],
+    tags = ["manual"],
+    deps = [
+        ":glbl",
+        ":micron",
+        "//ddr3:ddr3_mig",
+    ],
+)
+
+# The primitives the PHY instantiates come from Vivado's own compiled
+# libraries, the serialisers' encrypted parts among them. The default
+# script logs every signal first, which fails on a design elaborated
+# without trace information and stops before the run, and xsim exits
+# cleanly on a failed check anyway, so the scripts here run and then
+# read the testbench's verdict.
+vivado_test(
+    name = "example_test",
+    custom_tcl_script = "example_verdict.tcl",
+    extra_modules = ["glbl.glbl"],
+    library = ":example_tb",
+    tags = ["manual"],
+    timeout = "eternal",
+    top = "sim_tb_top",
+    xelab_args = [
+        "--debug",
+        "typical",
+        "-L",
+        "unisims_ver",
+        "-L",
+        "secureip",
+    ],
+    xelab_relaxed = True,
+)
+
+# Ours: the wrapper the design instantiates, calibrated, written and
+# read back through the narrow Wishbone.
 vivado_library(
     name = "wrapper_tb",
     srcs = [
@@ -38,21 +131,17 @@ vivado_library(
     deps = [
         ":glbl",
         ":micron",
+        "//ddr3:ddr3_mig",
     ],
 )
 
-# The primitives the PHY instantiates come from Vivado's own compiled
-# libraries, the serialisers' encrypted parts among them. The default
-# script logs every signal first, which fails on a design elaborated
-# without trace information and stops before the run, and xsim exits
-# cleanly on a failed check anyway, so the script here runs and then
-# reads the testbench's verdict.
 vivado_test(
     name = "wrapper_test",
     custom_tcl_script = "wrapper_verdict.tcl",
     extra_modules = ["glbl.glbl"],
     library = ":wrapper_tb",
     tags = ["manual"],
+    timeout = "eternal",
     top = "wrapper_tb",
     xelab_args = [
         "--debug",

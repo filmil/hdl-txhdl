@@ -23,6 +23,7 @@ vivado_library(
     ],
     tags = ["manual"],
     deps = [
+        "//ddr3:ddr3_mig",
         "//ddr3/sim:glbl",
         "//ddr3/sim:micron",
     ],

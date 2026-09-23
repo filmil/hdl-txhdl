@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // The controller as the board will run it, against the memory it will
-// run with: `ddr3_wb32`, UberDDR3 behind it, and two Micron models of
-// the x16 chips the Alinx AX7A200 carries, on the clocks the board's
-// PLL gives, 100 MHz for the controller, 400 MHz for the memory and the
-// same a quarter cycle late, and 200 MHz for the delay control.
+// run with: `ddr3_wb32`, AMD's MIG controller behind it, and two
+// Micron models of the x16 chips the Alinx AX7A200 carries, on the
+// board's 200 MHz clock. The controller makes the design's clock, and
+// the Wishbone side of this bench runs on what it hands out.
 //
 // It waits for calibration, then writes two words through the narrow
 // Wishbone, at different addresses and different lanes of their
@@ -14,14 +14,13 @@
 // low.
 `timescale 1ps / 1ps
 module wrapper_tb;
-  reg ck = 1, dck = 1, dck90 = 1, rck = 1;
-  always #5000 ck = ~ck;
-  always #1250 dck = ~dck;
-  always #2500 rck = ~rck;
-  initial begin #625; forever #1250 dck90 = ~dck90; end
-  reg rst_n = 0;
-  initial #100000 rst_n = 1;
+  reg sys_clk = 1;
+  always #2500 sys_clk = ~sys_clk;
+  // The controller's reset: high at power-on, as the board holds it.
+  reg sys_rst = 1;
+  initial #200000 sys_rst = 0;
 
+  wire ck, ui_rst;
   reg cyc = 0, stb = 0, we = 0;
   reg [27:0] adr = 0;
   reg [31:0] dat = 0;
@@ -35,13 +34,12 @@ module wrapper_tb;
   wire [31:0] dq;
   wire [3:0] dqs, dqs_n;
 
-  ddr3_wb32 #(.MICRON_SIM(1), .BIST_MODE(0)) dut (
-    .i_controller_clk(ck), .i_ddr3_clk(dck), .i_ref_clk(rck),
-    .i_ddr3_clk_90(dck90), .i_rst_n(rst_n),
+  ddr3_wb32 dut (
+    .i_ui_clk(ck), .i_sys_clk(sys_clk), .i_sys_rst(sys_rst),
     .i_wb_cyc(cyc), .i_wb_stb(stb), .i_wb_we(we), .i_wb_addr(adr),
     .i_wb_data(dat), .i_wb_sel(sel),
     .o_wb_stall(stall), .o_wb_ack(ack), .o_wb_data(rdat),
-    .o_calib_complete(calib),
+    .o_calib_complete(calib), .o_ui_clk(ck), .o_ui_rst(ui_rst),
     .o_ddr3_clk_p(ckp), .o_ddr3_clk_n(ckn), .o_ddr3_reset_n(mrst),
     .o_ddr3_cke(cke), .o_ddr3_cs_n(csn), .o_ddr3_ras_n(rasn),
     .o_ddr3_cas_n(casn), .o_ddr3_we_n(wen), .o_ddr3_addr(a),
@@ -49,16 +47,15 @@ module wrapper_tb;
     .io_ddr3_dq(dq), .io_ddr3_dqs(dqs), .io_ddr3_dqs_n(dqs_n)
   );
 
-  // Two x16 chips, a pair of lanes each. The model's address is sixteen
-  // bits and the controller drives fifteen.
-  ddr3 m0 (.rst_n(mrst), .ck(ckp), .ck_n(ckn), .cke(cke), .cs_n(csn),
-    .ras_n(rasn), .cas_n(casn), .we_n(wen), .dm_tdqs(dm[1:0]), .ba(ba),
-    .addr({1'b0, a}), .dq(dq[15:0]), .dqs(dqs[1:0]), .dqs_n(dqs_n[1:0]),
-    .tdqs_n(), .odt(odt));
-  ddr3 m1 (.rst_n(mrst), .ck(ckp), .ck_n(ckn), .cke(cke), .cs_n(csn),
-    .ras_n(rasn), .cas_n(casn), .we_n(wen), .dm_tdqs(dm[3:2]), .ba(ba),
-    .addr({1'b0, a}), .dq(dq[31:16]), .dqs(dqs[3:2]), .dqs_n(dqs_n[3:2]),
-    .tdqs_n(), .odt(odt));
+  // Two x16 chips, a pair of lanes each.
+  ddr3_model m0 (.rst_n(mrst), .ck(ckp), .ck_n(ckn), .cke(cke),
+    .cs_n(csn), .ras_n(rasn), .cas_n(casn), .we_n(wen),
+    .dm_tdqs(dm[1:0]), .ba(ba), .addr(a), .dq(dq[15:0]), .dqs(dqs[1:0]),
+    .dqs_n(dqs_n[1:0]), .tdqs_n(), .odt(odt));
+  ddr3_model m1 (.rst_n(mrst), .ck(ckp), .ck_n(ckn), .cke(cke),
+    .cs_n(csn), .ras_n(rasn), .cas_n(casn), .we_n(wen),
+    .dm_tdqs(dm[3:2]), .ba(ba), .addr(a), .dq(dq[31:16]), .dqs(dqs[3:2]),
+    .dqs_n(dqs_n[3:2]), .tdqs_n(), .odt(odt));
 
   // One request on the pipelined Wishbone: offered until a cycle with no
   // stall takes it, then waited on until the acknowledge.
