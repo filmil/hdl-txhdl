@@ -9,9 +9,11 @@
 //! memory from `0x4000_0000` to the end of the first two gigabytes,
 //! the remote peripheral at `0x3300`, whose behaviour is a program on
 //! another machine reached as frames on the Ethernet port,
+//! the Ethernet port's registers at `0x3400`,
 //! and the platform-level interrupt controller at `0x0c00_0000`, where
 //! RISC-V machines put it. The controller's source 1 is the serial
-//! port's receive interrupt and its source 2 the board's `irq` input,
+//! port's receive interrupt, its source 2 the board's `irq` input and
+//! its source 3 a frame arriving on the Ethernet port,
 //! and its line is the core's external interrupt. `run.rs` wires
 //! the same parts for a simulation, with a Rust `join` of their runs;
 //! this is that wiring written as a unit of units, so `#[lower]` makes
@@ -26,6 +28,7 @@
 use crate::core::{Vreteno, Writeback};
 use crate::debug::Dm;
 use crate::dmem::Dmem;
+use crate::isa;
 use crate::rom::Rom;
 use crate::timer::Timer;
 use crate::uart::Uart;
@@ -45,7 +48,8 @@ use txhdl_parts::bus::axi_lite::{
 use txhdl_parts::bus::axi_pins::{AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::router::Router7;
 use txhdl_parts::eth::EthByte;
-use txhdl_parts::plic::Plic2;
+use txhdl_parts::ethslots::EthSlots;
+use txhdl_parts::plic::Plic3;
 use txhdl_parts::pwm::Pwm;
 use txhdl_parts::remote::eth::RemoteLink;
 use txhdl_parts::remote::{Answer as RemoteAnswer, Ask, Remote};
@@ -136,24 +140,15 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     /// had four ports. So no address moves to make room for the fifth,
     /// and nothing that names one of the first four changes.
     ///
-    /// The third and fifth slots leave this unit as ports rather than
-    /// reaching a field, and for different reasons, which is worth
-    /// saying because the difference decides what wiring them costs.
-    ///
-    /// The third is ports because what sits there runs on a clock of
-    /// its own: on the board it is the video peripheral on the pixel
-    /// clock, and the crossing between the two is the board top's.
-    ///
-    /// The fifth is ports only because what sits there is not written
-    /// yet. `EthSlots` runs on the bus clock like every other
-    /// peripheral here, so wiring it needs no crossing at all: it
-    /// becomes a field and these ports go away. What it waits for is
-    /// the engines that move the frames, `LineFetch` and `LineStore`
-    /// joined to its seven other ports, which are the direct memory
-    /// access of issue 151 and no part of this bridge.
-    ///
-    /// A design with nothing on a slot ties it off, and a read of it
+    /// The third slot leaves this unit as ports rather than reaching a
+    /// field, because what sits there runs on a clock of its own: on
+    /// the board it is the video peripheral on the pixel clock, and
+    /// the crossing between the two is the board top's business. A
+    /// design with nothing there ties the slot off, and a read of it
     /// answers when the tie-off does.
+    ///
+    /// The fifth is a field, because `EthSlots` runs on the bus clock
+    /// like every other peripheral here and wants no crossing.
     pub puart: LiteBridge5<
         32,
         32,
@@ -198,8 +193,32 @@ pub struct Board<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> {
     pub remote: Remote<REMOTE_WAIT>,
     pub link: RemoteLink<REMOTE_DEV>,
     // end{remote}
-    /// Both sources ask while their line is high.
-    pub plic: Plic2<0>,
+    // begin{ethslot}
+    /// The Ethernet port's registers, on the fifth slot at `0x3400`,
+    /// with its four frame buffers in the memory from
+    /// [`isa::ETH_BUF_BASE`](crate::isa::ETH_BUF_BASE).
+    ///
+    /// It answers its registers and moves no frames. The seven ports
+    /// it has besides the bus face the engines that would carry the
+    /// bytes, `LineFetch` and `LineStore` with an adapter between the
+    /// words they move and the bytes a frame counts, and those are
+    /// issue 151 and are not written. Until they are, the busy lines
+    /// it reads are tied low and what it drives goes nowhere: a driver
+    /// binds, reads and writes every register, and no frame arrives or
+    /// leaves.
+    ///
+    /// That is worth having before the engines rather than after. The
+    /// device tree describes a peripheral that is really there, the
+    /// driver is compiled by `bazel test //...` from the first commit
+    /// that enables it rather than whenever somebody next tries a
+    /// board, and the register map has two implementations to
+    /// disagree with each other rather than one and a document.
+    pub eth: EthSlots<{ isa::ETH_BUF_BASE as usize }>,
+    // end{ethslot}
+    /// Three sources, each asking while its line is high: the serial
+    /// port's receive interrupt, the board's own `irq` input, and the
+    /// Ethernet port's arrival.
+    pub plic: Plic3<0>,
 }
 // end{board}
 
@@ -217,12 +236,6 @@ pub struct BoardIn {
     pub ddr3_rst_n: In<Bit>,
     pub vb: Rx<LiteB>,
     pub vr: Rx<LiteR<32>>,
-    /// The fifth slot's answers, from the Ethernet port at `0x3400`.
-    /// Ports rather than a field for the same reason the video slot's
-    /// are: the MAC's halves run on the clocks the PHY keeps, and the
-    /// crossing is the board top's.
-    pub eb: Rx<LiteB>,
-    pub er: Rx<LiteR<32>>,
     pub net_rx: Rx<EthByte>,
     pub jtag_awid: In<U<2>>,
     pub jtag_awaddr: In<U<32>>,
@@ -276,10 +289,6 @@ pub struct BoardOut {
     pub vaw: Tx<LiteAw<32>>,
     pub var: Tx<LiteAr<32>>,
     pub vw: Tx<LiteW<32, 4>>,
-    /// The fifth slot's transactions, to the Ethernet port.
-    pub eaw: Tx<LiteAw<32>>,
-    pub ear: Tx<LiteAr<32>>,
-    pub ew: Tx<LiteW<32, 4>>,
     pub net_tx: Tx<EthByte>,
     pub jtag_awready: Out<Bit>,
     pub jtag_wready: Out<Bit>,
@@ -311,8 +320,6 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             ddr3_rst_n,
             vb,
             vr,
-            eb,
-            er,
             net_rx,
             jtag_awid,
             jtag_awaddr,
@@ -362,9 +369,6 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
             vaw,
             var,
             vw,
-            eaw,
-            ear,
-            ew,
             net_tx,
             jtag_awready,
             jtag_wready,
@@ -491,6 +495,31 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
         let (pr_rem_tx, pr_rem_rx) = chan::<LiteR<32>, DefaultClock>();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
         let (ans_tx, ans_rx) = chan::<RemoteAnswer, DefaultClock>();
+        // The fifth slot, to the Ethernet port's registers.
+        let (paw_eth_tx, paw_eth_rx) = chan::<LiteAw<32>, DefaultClock>();
+        let (par_eth_tx, par_eth_rx) = chan::<LiteAr<32>, DefaultClock>();
+        let (pw_eth_tx, pw_eth_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (pb_eth_tx, pb_eth_rx) = chan::<LiteB, DefaultClock>();
+        let (pr_eth_tx, pr_eth_rx) = chan::<LiteR<32>, DefaultClock>();
+        // Its arrival line, which is the interrupt controller's third
+        // source.
+        let (eth_irq_o, eth_irq_i) = signal::<Bit, DefaultClock>();
+        // What it says to the engines that would move the frames, and
+        // what they would say back. There are no engines yet (issue
+        // 151), so the lines it reads are driven low and nothing reads
+        // what it drives: it answers its registers and no frame moves.
+        // `tx_busy` low is what lets `tx_ready` read one until a
+        // driver starts a transmit; nothing then clears `tx_go`, so
+        // the second transmit waits, which is the truth about a port
+        // with no engine behind it.
+        let (_eth_tx_busy_o, eth_tx_busy_i) = signal::<Bit, DefaultClock>();
+        let (_eth_rx_busy_o, eth_rx_busy_i) = signal::<Bit, DefaultClock>();
+        let (_eth_rx_len_o, eth_rx_len_i) = signal::<U<16>, DefaultClock>();
+        let (_eth_rx_which_o, eth_rx_which_i) = signal::<U<1>, DefaultClock>();
+        let (eth_tx_base_o, _eth_tx_base_i) = signal::<U<32>, DefaultClock>();
+        let (eth_tx_bytes_o, _eth_tx_bytes_i) = signal::<U<16>, DefaultClock>();
+        let (eth_tx_start_o, _eth_tx_start_i) = signal::<Bit, DefaultClock>();
+        let (eth_rx_base_o, _eth_rx_base_i) = signal::<U<32>, DefaultClock>();
         let (req3_tx, req3_rx) = chan::<PerReq<32, 4>, DefaultClock>();
         let (wd3_tx, wd3_rx) = chan::<W<32, 4>, DefaultClock>();
         let (ans3_tx, ans3_rx) = chan::<Answer<4>, DefaultClock>();
@@ -558,9 +587,34 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                                 (pb_pwm_tx, pr_pwm_tx, pwm_pins),
                             ),
                         ),
-                        self.plic.run(
-                            (rst_plic, uirq_i, irq, paw_rx, par_rx, pw_rx),
-                            (pb_tx, pr_tx, eirq_o),
+                        join2(
+                            self.plic.run(
+                                (
+                                    rst_plic, uirq_i, irq, eth_irq_i, paw_rx,
+                                    par_rx, pw_rx,
+                                ),
+                                (pb_tx, pr_tx, eirq_o),
+                            ),
+                            self.eth.run(
+                                (
+                                    paw_eth_rx,
+                                    par_eth_rx,
+                                    pw_eth_rx,
+                                    eth_tx_busy_i,
+                                    eth_rx_busy_i,
+                                    eth_rx_len_i,
+                                    eth_rx_which_i,
+                                ),
+                                (
+                                    pb_eth_tx,
+                                    pr_eth_tx,
+                                    eth_tx_base_o,
+                                    eth_tx_bytes_o,
+                                    eth_tx_start_o,
+                                    eth_rx_base_o,
+                                    eth_irq_o,
+                                ),
+                            ),
                         ),
                     ),
                 ),
@@ -694,13 +748,14 @@ impl<const DIV: u32, const MICRON_SIM: usize, const BIST: usize> Unit
                                 (
                                     aw2_rx, ar2_rx, w2_rx, lb_rx, lr_rx,
                                     pb_pwm_rx, pr_pwm_rx, vb, vr, pb_rem_rx,
-                                    pr_rem_rx, eb, er,
+                                    pr_rem_rx, pb_eth_rx, pr_eth_rx,
                                 ),
                                 (
                                     law_tx, lar_tx, lw_tx, paw_pwm_tx,
                                     par_pwm_tx, pw_pwm_tx, vaw, var, vw,
-                                    paw_rem_tx, par_rem_tx, pw_rem_tx, eaw,
-                                    ear, ew, b2_tx, r2_tx,
+                                    paw_rem_tx, par_rem_tx, pw_rem_tx,
+                                    paw_eth_tx, par_eth_tx, pw_eth_tx, b2_tx,
+                                    r2_tx,
                                 ),
                             ),
                             join2(

@@ -269,15 +269,6 @@ module flagship (
     .vw_data(vw_data), .vw_valid(vw_valid), .vw_ready(vw_ready),
     .vb_data(vb_data), .vb_valid(vb_valid), .vb_ready(vb_ready),
     .vr_data(vr_data), .vr_valid(vr_valid), .vr_ready(vr_ready),
-    // The Ethernet slot at `0x3400`, tied off. Unlike the video slot
-    // above it wants no crossing, since `EthSlots` runs on the core's
-    // clock; what it waits for is the engines that move frames
-    // (issue 151). A read of it answers as this tie-off does.
-    .eaw_data(), .eaw_valid(), .eaw_ready(1'b1),
-    .ear_data(), .ear_valid(), .ear_ready(1'b1),
-    .ew_data(), .ew_valid(), .ew_ready(1'b1),
-    .eb_data(2'd0), .eb_valid(1'b0), .eb_ready(),
-    .er_data(34'd0), .er_valid(1'b0), .er_ready(),
     // The remote peripheral at `0x3300`, whose frames leave and
     // arrive on the Ethernet port, crossed below.
     .net_tx_data(net_tx_data), .net_tx_valid(net_tx_valid),

@@ -352,10 +352,6 @@ fn run_all(
             ddr3_rst_n: quiet(),
             vb: chan::<LiteB, DefaultClock>().1,
             vr: chan::<LiteR<32>, DefaultClock>().1,
-            // The Ethernet slot, tied off as the video slot is: this
-            // test drives the bus and not the port.
-            eb: chan::<LiteB, DefaultClock>().1,
-            er: chan::<LiteR<32>, DefaultClock>().1,
             net_rx: net_in_rx,
             jtag_awid: signal::<U<2>, DefaultClock>().1,
             jtag_awaddr: awaddr,
@@ -405,9 +401,6 @@ fn run_all(
             vaw: chan::<LiteAw<32>, DefaultClock>().0,
             var: chan::<LiteAr<32>, DefaultClock>().0,
             vw: chan::<LiteW<32, 4>, DefaultClock>().0,
-            eaw: chan::<LiteAw<32>, DefaultClock>().0,
-            ear: chan::<LiteAr<32>, DefaultClock>().0,
-            ew: chan::<LiteW<32, 4>, DefaultClock>().0,
             net_tx: net_out_tx,
             jtag_awready: awready_o,
             jtag_wready: wready_o,
