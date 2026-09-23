@@ -224,6 +224,59 @@ prototype pays that in stated parameters rather than in a nightly
 toolchain, exactly as \code{Fifo} states its depth and
 \code{Station} its line count.
 
+\section{What This Link Orders}
+\label{sec:a-order}
+
+AXI does not order a read against a write. They are separate
+channels, and a slave may answer them in either order; the
+architectural way a master orders a write against a later access is
+to wait for the write's response.
+
+That is a problem on this machine, because its stores are posted and
+its \code{fence} decodes, retires and orders nothing (issue 432). So
+software that hands a buffer to a host on the bus, which is what the
+video scanout and the Ethernet engines are, has no architectural way
+to make sure the buffer has landed before it rings the doorbell. The
+frame is written to memory through one port of the router and the
+start bit through another, and nothing between them is ordered.
+
+What every such driver does instead is read the last word back before
+the doorbell. The load stalls the core until memory answers, and the
+question is whether memory can answer it with the old value while the
+store is still in flight.
+
+On this link it cannot, and that is measured rather than assumed:
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}ll@{}}
+\toprule
+the store issued & tick 28 \\
+the load answered & tick 44 \\
+the store answered & tick 46 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The load was answered two ticks before the store's response arrived,
+so the store was genuinely outstanding, and the load returned the
+stored value. \code{a\_load\_behind\_an\_unanswered\_store\_to\_one\_address}
+in \code{//lib/parts:parts\_test} is that run, and it asserts the race
+as well as the result: if the store ever begins completing first the
+test fails, rather than passing while checking something nobody
+doubted.
+
+Two things follow, and they are worth keeping apart.
+
+A driver on this machine may read a word back to force a posted store
+to land, and it is correct to do so. That is why the obligation on
+\code{EthSlots}' datasheet is dischargeable at all.
+
+And it is correct \emph{for this link}, not because AXI says so. It is
+a property of the interconnect as it is built, measured by one test.
+An interconnect that answered reads from a buffer ahead of writes
+would break every driver that relies on it, and the test is what would
+say so.
+
 \section{The Trackers}
 \label{sec:a-trackers}
 
