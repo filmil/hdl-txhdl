@@ -47,10 +47,10 @@ so and carries the prompts that led to it, verbatim.}%
 The Alinx AX7A200B has a PCIe x2 edge connector wired to the FPGA's
 GTP transceivers. A PCIe endpoint sits on those transceivers and on
 the FPGA's integrated PCIe block, and AMD provides it as an IP core.
-The build generates it, the DMA/Bridge Subsystem for PCI Express in its
-AXI bridge mode at Gen2 over both lanes, and puts TxHDL behind it. A
-read or a write of the endpoint's BAR0 by a host comes out of the core
-as a burst on an AXI4 master, at its pins. A new part, \code{AxiPins},
+The build generates it, the DMA/Bridge Subsystem for PCI Express at
+Gen2 over both lanes with its bypass window open, and puts TxHDL
+behind that window. A read or a write of the endpoint's BAR1 by a
+host comes out of the core as a burst on an AXI4 master, at its pins. A new part, \code{AxiPins},
 joins those pins to the AXI link's channels, and a lowered design of
 four registers answers them. The part is simulated against its run
 under \code{nvc} and Verilator, the design is driven through the pins
@@ -67,7 +67,7 @@ Three things, in three places in the tree.
 a host's AXI4 pins joined to the link's channels. It goes wherever a
 host tracker would.
 
-\code{pcie::bar}, under \code{//pcie}, is what BAR0 reaches:
+\code{pcie::bar}, under \code{//pcie}, is what BAR1 reaches:
 \code{BarRegs}, four 64-bit words behind a peripheral tracker, and
 \code{PcieBar}, one lowered unit that holds \code{AxiPins}, the
 tracker and the registers.
@@ -86,18 +86,26 @@ synthesises the core with the design.
 
 Two of AMD's cores give a BAR as an AXI master on an Artix-7: the AXI
 Memory Mapped to PCI Express bridge, \code{axi\_pcie}, and the
-DMA/Bridge Subsystem, \code{xdma}, in its AXI bridge mode. Both were
-tried at Gen2 over two lanes, with the board's pins. Both placed on the
+DMA/Bridge Subsystem, \code{xdma}. Both were tried at Gen2 over two
+lanes, with the board's pins. Both placed on the
 two GTP channels and the one integrated PCIe block with no error.
 \code{axi\_pcie} missed timing by 0.097~ns on three paths, all inside
 its AXI slave bridge, which nothing here uses and which it cannot leave
 out. \code{xdma} can leave its slave out, and met timing. Its user
 clock is 125~MHz: at Gen2 over two lanes the core refuses 62.5.
 
-The core's settings are in \code{pcie/BUILD.bazel}: AXI bridge mode,
-Gen2, two lanes, the slot's 100~MHz reference clock, 64-bit data on the
-master, and BAR0 a megabyte of memory. The master's addresses are 64
-bits wide; the design behind it takes the low 32.
+The core's settings are in \code{pcie/BUILD.bazel}: Gen2, two lanes,
+the slot's 100~MHz reference clock, 64-bit data on the master, and
+the bypass window open, a megabyte of memory at BAR1. On this part
+the core has no bridge mode: a request for one is silently ignored,
+and the core is a DMA engine, with its own registers at BAR0 and a
+descriptor-driven master that nothing here drives. The bypass window
+is the bridge: what a host reads or writes in BAR1 comes straight out
+of the \code{m\_axib} master, with no descriptor in between. The
+build asked for the bridge mode and got the DMA engine,
+unnoticed until the root port simulation read BAR0~\cite{i451}. The
+master's addresses are 64 bits wide; the design behind it takes the
+low 32.
 
 \section{The Pins}
 \label{sec:p-pins}
@@ -150,11 +158,11 @@ The unit is lowered, and its netlist agrees with this run under
 \code{nvc} and under Verilator: \code{//docs:axi\_pins\_sim\_axi\_pins\_tb\_test}
 and \code{//docs:axi\_pins\_vsim\_test}.
 
-\section{Behind BAR0}
+\section{Behind BAR1}
 \label{sec:p-bar}
 
 \code{BarRegs} is four words, at the offsets a host reads and writes in
-BAR0.
+BAR1.
 
 \begin{center}\footnotesize
 \begin{tabular}{@{}llp{0.55\columnwidth}@{}}
@@ -185,7 +193,7 @@ registers, joined by channels. Its ports are the endpoint's master
 pins, a reset and the LEDs, so the board's top wires the core to it
 pin for pin.
 
-\barpart{bar}{\code{PcieBar}: everything behind BAR0, as one
+\barpart{bar}{\code{PcieBar}: everything behind BAR1, as one
 unit.}{lst:p-bar}
 
 \code{//pcie:bar\_test} drives \code{PcieBar} through the pins as the
@@ -245,7 +253,7 @@ core's simulation library holds every source the core needs, since
 the build compiles it from Vivado's own exported simulation rather
 than from the top wrapper alone. \code{//pcie/sim:xdma\_test}
 elaborates the board's top, the core inside it and \code{BarRegs}
-behind BAR0 under Vivado's simulator and runs them with nothing on
+behind BAR1 under Vivado's simulator and runs them with nothing on
 the lanes: the link stays down, read as a known zero rather than an
 unknown. \code{//pcie/sim:rp\_test} puts the same top on two lanes
 against the behavioural root port and the host that Vivado writes
@@ -255,11 +263,11 @@ reads the device and vendor identifiers, scans and programs the BARs,
 and then runs \code{pcie/sim/rp/tests.vh}: it reads the two words of
 the identifier, writes the scratch word and reads it back, and reads
 the count of writes, expecting what \code{BarRegs} keeps. It takes
-twenty-six minutes, and it does not pass: BAR0 is 64~KiB and its
-first word is the core's own, \code{0x1fc0\_0006}, because Vivado
-ignores the bridge mode on this part and the core is a DMA
-engine~\cite{i451}. The test is the measurement of that, and goes
-green with the fix.
+twenty-six minutes and passes. Its first run, with the core as it
+was, read BAR0 and found 64~KiB whose first word was the core's
+own, \code{0x1fc0\_0006}: the request for the bridge mode had been
+ignored and the core was a DMA engine~\cite{i451}. The bypass window
+is the answer, above.
 
 \code{vivado\_ip} reports success when Vivado refuses a core's
 settings, so a mistyped setting shows only in the log~\cite{i177}. The

@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: BarRegs
-\datasheet{BarRegs}{Four 64-bit registers behind a peripheral tracker: what a host reaches in the PCIe endpoint's BAR0.}
+\datasheet{BarRegs}{Four 64-bit registers behind a peripheral tracker: what a host reaches in the PCIe endpoint's BAR1.}
 
 \dsfacts{\code{pcie/src/bar.rs}}{\code{pcie::bar::BarRegs}}%
 {\code{//docs:pcie}}
@@ -28,7 +28,7 @@ and \code{rb}, in bits. The tables use 4, as \code{PcieBar} does. \\
 
 \subsection*{Register map}
 
-Offsets from BAR0.
+Offsets from BAR1.
 
 \begin{center}\footnotesize
 \begin{tabular}{@{}llp{0.55\textwidth}@{}}

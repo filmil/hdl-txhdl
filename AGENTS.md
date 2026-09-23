@@ -127,7 +127,7 @@ all under `//docs`:
   `//pcie:xdma_x2` generates with `vivado_ip`; `AxiPins` in
   `//lib/parts` under `bus::axi_pins`, which joins a host's AXI4 pins to
   the link's channels, with its example `ex_axi_pins`; and `//pcie`, the
-  lowered design behind BAR0 and the hand-written top, which
+  lowered design behind BAR1 and the hand-written top, which
   `//pcie:endpoint_synth` and `//pcie:endpoint_pnr` put through Vivado
   to a bitstream.
   `ex_axi_pins` is documented there and not in `//docs:examples`.

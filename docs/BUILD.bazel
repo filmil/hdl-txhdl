@@ -2326,7 +2326,7 @@ latex_document(
 )
 
 # PCIe in TxHDL: the endpoint the build generates, the part that joins
-# its master's pins to the link, the design behind BAR0, and the board.
+# its master's pins to the link, the design behind BAR1, and the board.
 latex_document(
     name = "pcie",
     main = "pcie.tex",
