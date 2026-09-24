@@ -26,7 +26,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Reply, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::wdog::{
     Wdog, CTRL_ENABLE, CTRL_LOCK, CTRL_WARN, CTRL_WINDOW, STATUS_FAILED,
     STATUS_WARNED,
@@ -83,7 +83,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let (paw, par, pw, pb, pr) = lite.per;
+    let bus: LitePort<32, 32, 4> = lite.per.into();
     let (rst_req_out, rst_req) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
 
@@ -93,11 +93,11 @@ fn main() {
 
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<DefaultClock>();
-        wave.add("aw", &paw);
-        wave.add("ar", &par);
-        wave.add("w", &pw);
-        wave.add("b", &pb);
-        wave.add("r", &pr);
+        wave.add("bus_aw", &bus.aw);
+        wave.add("bus_ar", &bus.ar);
+        wave.add("bus_w", &bus.w);
+        wave.add("bus_b", &bus.b);
+        wave.add("bus_r", &bus.r);
         wave.add("rst_req", &rst_req);
         wave.add("irq", &irq);
         wave.add("block", &block);
@@ -226,10 +226,7 @@ fn main() {
             host_unit.run(host_in, host_out),
             bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
         ),
-        join2(
-            block.run((paw, par, pw), (pb, pr, rst_req_out, irq_out)),
-            client,
-        ),
+        join2(block.run(bus, (rst_req_out, irq_out)), client),
     ));
 
     println!("  t  what the program saw");

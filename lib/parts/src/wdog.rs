@@ -40,12 +40,12 @@
 //! system control block of `syscon`, which records the watchdog as the
 //! cause and drives the system's reset line. A program that restarts
 //! then reads why, which is the whole point of resetting it.
-use txhdl::comp::{mux, Clock, DefaultClock, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 
 use crate::bus::axi::Resp;
-use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 /// `ctrl` bit 0: the watchdog counts.
 pub const CTRL_ENABLE: u32 = 1;
@@ -88,8 +88,8 @@ pub struct Wdog<const KEY: usize> {
 impl<const KEY: usize> Unit for Wdog<KEY> {
     async fn run(
         &mut self,
-        (aw, ar, w): (Rx<LiteAw<32>>, Rx<LiteAr<32>>, Rx<LiteW<32, 4>>),
-        (b, r, rst_req, irq): (Tx<LiteB>, Tx<LiteR<32>>, Out<Bit>, Out<Bit>),
+        bus: LitePort<32, 32, 4>,
+        (rst_req, irq): (Out<Bit>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -100,16 +100,18 @@ impl<const KEY: usize> Unit for Wdog<KEY> {
             let status = self.status.get();
             let hold = self.hold.get();
             // The bus.
-            let arh = ar.head();
-            let awh = aw.head();
-            let wh = w.head();
+            let arh = bus.ar.head();
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
             let rsel = arh.addr.slice::<2, 3>();
             let wsel = awh.addr.slice::<2, 3>();
-            let rgo = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let written = wh.data;
             let enabled = ctrl.bit(0);
             let window = ctrl.bit(1);
@@ -167,13 +169,13 @@ impl<const KEY: usize> Unit for Wdog<KEY> {
                 holding & !failing ? hold: hold - 1,
             });
             if rgo.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: word,
                     resp: Resp::Okay,
                 });
             }
             if wgo.to_bool() {
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
             // The reset is asked for over several cycles, as the
             // system control block's own is, so that every part of a
