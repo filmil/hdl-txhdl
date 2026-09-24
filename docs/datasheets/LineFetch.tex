@@ -133,6 +133,20 @@ tracker and out-of-order answers out of the design.
 
 \subsection*{Limits}
 
+\textbf{It counts the beats of a burst itself and never reads the
+returned beat's \code{last}.} So it cannot notice a peripheral that
+answers fewer beats than the burst asked for: it takes what arrives
+and waits for the rest, holding \code{running} high, with nothing to
+say why. Against the Wishbone bridge before issue 471, which answered
+any read with one beat, sixty four words became one and the run did
+not end.
+
+That is worth knowing before joining it to a peripheral written
+elsewhere. The engine assumes AXI4 is obeyed, and a peripheral that
+under-delivers is outside what it can detect rather than something it
+reports.
+
+
 \textbf{A burst must not cross a 4\,KB address boundary}, which is
 AXI4's rule and not this component's, and nothing here checks it.
 \code{BEATS} of 256 is 1\,KB, so a run whose base is 1\,KB aligned

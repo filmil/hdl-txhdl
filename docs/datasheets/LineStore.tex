@@ -81,6 +81,19 @@ direction.
 
 \subsection*{Limits}
 
+\textbf{It counts the beats of a burst itself, and a write burst is
+finished by its response rather than by its last beat.} So a
+peripheral that answers before it has taken every beat leaves the
+rest of the burst in the channel, and what follows is neither refused
+nor written where it was meant to go. Against the Wishbone bridge
+before issue 471 nine words of sixty four landed and the rest of
+memory was left as it was.
+
+That failure is silent, which is what makes it worth stating here: a
+read that stops announces itself by never finishing, and a write that
+stops looks exactly like a write that worked.
+
+
 The byte count's tail is the low two bits of \code{bytes}, so a run
 of zero bytes asks for zero beats and does nothing, and nothing
 checks that a caller meant that.
