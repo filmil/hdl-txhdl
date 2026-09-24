@@ -601,18 +601,18 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                 (pb_tx, pr_tx, eirq_o),
                             ),
                             self.eth.run(
+                                LitePort {
+                                    aw: paw_eth_rx,
+                                    ar: par_eth_rx,
+                                    w: pw_eth_rx,
+                                    b: pb_eth_tx,
+                                    r: pr_eth_tx,
+                                },
                                 (
-                                    paw_eth_rx,
-                                    par_eth_rx,
-                                    pw_eth_rx,
                                     eth_tx_busy_i,
                                     eth_rx_busy_i,
                                     eth_rx_len_i,
                                     eth_rx_which_i,
-                                ),
-                                (
-                                    pb_eth_tx,
-                                    pr_eth_tx,
                                     eth_tx_base_o,
                                     eth_tx_bytes_o,
                                     eth_tx_start_o,

@@ -29,11 +29,11 @@
 //! bit and a start bit, and only receive raises a line. `tx_ev_pending`
 //! and `tx_ev_enable` exist because the driver acknowledges them, and
 //! do nothing else.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 
-use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 /// A slot is this many bytes, which is `FRAME_MAX`.
 pub const SLOT: usize = 2048;
@@ -79,42 +79,25 @@ pub struct EthSlots<const BASE: usize> {
 // end{state}
 
 #[lower]
-impl<const BASE: usize>
-    Unit<
-        (
-            Rx<LiteAw<32>>,
-            Rx<LiteAr<32>>,
-            Rx<LiteW<32, 4>>,
-            In<Bit>,
-            In<Bit>,
-            In<U<16>>,
-            In<U<1>>,
-        ),
-        (
-            Tx<LiteB>,
-            Tx<LiteR<32>>,
-            Out<U<32>>,
-            Out<U<16>>,
-            Out<Bit>,
-            Out<U<32>>,
-            Out<Bit>,
-        ),
-    > for EthSlots<BASE>
-{
+impl<const BASE: usize> Unit for EthSlots<BASE> {
     async fn run(
         &mut self,
-        (aw, ar, w, tx_busy, rx_busy, rx_len, rx_which): (
-            Rx<LiteAw<32>>,
-            Rx<LiteAr<32>>,
-            Rx<LiteW<32, 4>>,
+        bus: LitePort<32, 32, 4>,
+        (
+            tx_busy,
+            rx_busy,
+            rx_len,
+            rx_which,
+            tx_base,
+            tx_bytes,
+            tx_start,
+            rx_base,
+            irq,
+        ): (
             In<Bit>,
             In<Bit>,
             In<U<16>>,
             In<U<1>>,
-        ),
-        (b, r, tx_base, tx_bytes, tx_start, rx_base, irq): (
-            Tx<LiteB>,
-            Tx<LiteR<32>>,
             Out<U<32>>,
             Out<U<16>>,
             Out<Bit>,
@@ -124,16 +107,18 @@ impl<const BASE: usize>
     ) {
         loop {
             DefaultClock::rising().await;
-            let arh = ar.head();
-            let awh = aw.head();
-            let wh = w.head();
+            let arh = bus.ar.head();
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
             let rsel = arh.addr.slice::<2, 4>();
             let wsel = awh.addr.slice::<2, 4>();
-            let rgo = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let data = wh.data;
 
             // The engine took the request when it went busy, so the
@@ -260,13 +245,13 @@ impl<const BASE: usize>
                         ),
                     ),
                 );
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: mux(rsel < 4, v0, v1),
                     resp: crate::bus::axi::Resp::Okay,
                 });
             }
             if wgo.to_bool() {
-                b.send(LiteB {
+                bus.b.send(LiteB {
                     resp: crate::bus::axi::Resp::Okay,
                 });
             }
@@ -280,7 +265,7 @@ impl<const BASE: usize>
 mod tests {
     use super::*;
     use crate::bus::axi::Resp;
-    use crate::bus::axi_lite::{axi_lite, LiteHost};
+    use crate::bus::axi_lite::{axi_lite, LiteAr, LiteAw, LiteHost, LiteW};
     use std::cell::RefCell;
     use std::rc::Rc;
     use txhdl::comp::{join2, signal, Running};
@@ -326,7 +311,7 @@ mod tests {
     #[test]
     fn only_word_9_reads_tx_ev_enable() {
         let link = axi_lite::<32, 32, 4>();
-        let (aw, ar, w, b, r) = link.per;
+        let bus: LitePort<32, 32, 4> = link.per.into();
         let host = link.host;
         let (_tx_busy_o, tx_busy) = signal::<Bit, DefaultClock>();
         let (_rx_busy_o, rx_busy) = signal::<Bit, DefaultClock>();
@@ -350,8 +335,11 @@ mod tests {
         let mut slots = EthSlots::<0x4100_0000>::default();
         let mut sim = Running::new(join2(
             slots.run(
-                (aw, ar, w, tx_busy, rx_busy, rx_len, rx_which),
-                (b, r, tx_base, tx_bytes, tx_start, rx_base, irq),
+                bus,
+                (
+                    tx_busy, rx_busy, rx_len, rx_which, tx_base, tx_bytes,
+                    tx_start, rx_base, irq,
+                ),
             ),
             client,
         ));

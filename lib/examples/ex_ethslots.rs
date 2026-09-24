@@ -25,7 +25,7 @@ use txhdl::comp::{
 use txhdl::types::{Bit, U};
 use txhdl::Trace;
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::ethslots::EthSlots;
 
 /// Where the four buffers begin: sixteen megabytes into the board's
@@ -108,7 +108,7 @@ fn main() {
     } = axi::<32, 32, 4, 2, 4>();
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let (paw, par, pw, pb, pr) = lite.per;
+    let bus: LitePort<32, 32, 4> = lite.per.into();
 
     // The engines are not here: this run is about the registers, and
     // what the engines do is checked in ex_dma and ex_dmaw. Their
@@ -131,11 +131,11 @@ fn main() {
 
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<DefaultClock>();
-        wave.add("aw", &paw);
-        wave.add("ar", &par);
-        wave.add("w", &pw);
-        wave.add("b", &pb);
-        wave.add("r", &pr);
+        wave.add("bus_aw", &bus.aw);
+        wave.add("bus_ar", &bus.ar);
+        wave.add("bus_w", &bus.w);
+        wave.add("bus_b", &bus.b);
+        wave.add("bus_r", &bus.r);
         // Every port under the name the port has: the generator
         // reads the trace by those names and refuses what it cannot
         // find.
@@ -296,8 +296,11 @@ fn main() {
             join2(
                 engines.run((), (tx_busy_o, rx_busy_o, rx_len_o, rx_which_o)),
                 slots.run(
-                    (paw, par, pw, tx_busy, rx_busy, rx_len, rx_which),
-                    (pb, pr, txb_o, txn_o, txs_o, rxb_o, irq_o),
+                    bus,
+                    (
+                        tx_busy, rx_busy, rx_len, rx_which, txb_o, txn_o,
+                        txs_o, rxb_o, irq_o,
+                    ),
                 ),
             ),
             client,
