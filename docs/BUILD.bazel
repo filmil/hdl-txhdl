@@ -568,6 +568,20 @@ waveform(
     ],
 )
 
+# The engines through the real Wishbone bridge. Issues 151, 471.
+waveform(
+    name = "dmawb",
+    example = "//lib/examples:ex_dmawb",
+    signals = [
+        "//clocks/clk=>clk",
+        "//r_running=>fetch_running",
+        "//r_cyc=>fetch_cyc",
+        "//r_ack=>fetch_ack",
+        "//w_running=>store_running",
+        "//w_ack=>store_ack",
+    ],
+)
+
 # Words to a frame and back, through the MAC. Issue 151.
 waveform(
     name = "ethdma",
@@ -794,6 +808,8 @@ latex_document(
         ":dma_timing",
         ":dmaw_run",
         ":dmaw_timing",
+        ":dmawb_run",
+        ":dmawb_timing",
         ":ethdma_run",
         ":ethdma_timing",
         ":ethslots_run",

@@ -55,6 +55,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The engines through the real bridge:  bazel run //lib/examples:ex_dmawb
+rust_binary(
+    name = "ex_dmawb",
+    srcs = ["ex_dmawb.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Words to a frame and back:  bazel run //lib/examples:ex_ethdma
 rust_binary(
     name = "ex_ethdma",
@@ -815,6 +827,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_cdc.rs",
         "ex_dma.rs",
         "ex_dmaw.rs",
+        "ex_dmawb.rs",
         "ex_ethdma.rs",
         "ex_ethslots.rs",
         "ex_scanout.rs",
