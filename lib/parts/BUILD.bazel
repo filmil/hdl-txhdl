@@ -10,6 +10,7 @@ rust_library(
         "src/buffer.rs",
         "src/eth.rs",
         "src/ethdma.rs",
+        "src/ethshare.rs",
         "src/ethslots.rs",
         "src/bus/axi.rs",
         "src/bus/axi_lite.rs",

@@ -17,6 +17,7 @@ pub mod cdc;
 pub mod dma;
 pub mod eth;
 pub mod ethdma;
+pub mod ethshare;
 pub mod ethslots;
 pub mod fifo;
 pub mod flashwin;
