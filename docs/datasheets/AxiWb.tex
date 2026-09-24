@@ -10,8 +10,9 @@
 A controller written elsewhere often speaks Wishbone rather than AXI.
 \code{AxiWb} puts such a controller on a link. It is a peripheral
 client written as hardware. On one side it holds the channel ends an
-\code{AxiPer} gives a client: requests on \code{req} and write beats on
-\code{wd} in, answers on \code{ans} and read beats on \code{rb} out.
+\code{AxiPer} gives a client, as one port, \code{bus}, a
+\code{PerPort} of the four channels: requests on \code{bus\_req} and write beats on
+\code{bus\_w} in, answers on \code{bus\_ans} and read beats on \code{bus\_r} out.
 On the other side it drives the host lines of a pipelined Wishbone
 bus, \code{cyc}, \code{stb}, \code{we}, \code{adr}, \code{dat} and
 \code{sel}, and reads \code{stall}, \code{ack} and the peripheral's
@@ -46,12 +47,12 @@ below use \code{AxiWb<32, 2, 28>}. There \code{AW} is \code{ddr3::AW},
 \code{stage} says where the request is. The source names five values.
 
 \begin{itemize}
-\item \textbf{0, waiting.} A request on \code{req} is taken when one
+\item \textbf{0, waiting.} A request on \code{bus\_req} is taken when one
 offers. The bridge keeps its identifier and its word address, sets
 \code{wsel} to all four lanes, and latches \code{left}, the count of
 words the burst still has to put on the lines, as \code{len + 1}. A
 read goes to stage 2 at once, and a write to stage 1.
-\item \textbf{1, a write waiting for its beat.} The beat on \code{wd}
+\item \textbf{1, a write waiting for its beat.} The beat on \code{bus\_w}
 is taken when it offers. Its \code{data} goes to \code{wdat} and its
 \code{strb} to \code{wsel}. Then stage 2.
 \item \textbf{2, offered.} \code{cyc} and \code{stb} are high. A cycle
@@ -61,14 +62,14 @@ and the stage moves to 3.
 An \code{ack} in the cycle of the take counts too. On \code{ack} the
 stage moves to 4, and a read keeps the word on \code{rdat} in
 \code{wdat}.
-\item \textbf{4, answering.} A read sends a beat on \code{rb}: the
+\item \textbf{4, answering.} A read sends a beat on \code{bus\_r}: the
 identifier, \code{wdat}, \code{Okay}, and \code{last} high only on
 the burst's last word. If words remain the stage returns to 2 at the
 next word address with \code{left} one lower; otherwise to 0.
 \item A write is answered once, after its last word. Each
 acknowledgement before that sends the bridge back to stage 1 for the
 next beat, at the next word address. The \code{Answer} of \code{Okay}
-on \code{ans} is sent from stage 4, and each answer waits for room on
+on \code{bus\_ans} is sent from stage 4, and each answer waits for room on
 its channel.
 \item \code{we} is high unless the request is a read. \code{adr},
 \code{dat} and \code{sel} are \code{wadr}, \code{wdat} and \code{wsel}.
