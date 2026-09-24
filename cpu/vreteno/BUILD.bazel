@@ -78,6 +78,7 @@ rust_test(
         "//cpu/vreteno/rust:boot_program",
         "//cpu/vreteno/rust:ddr3_program",
         "//cpu/vreteno/rust:ethrx_program",
+        "//cpu/vreteno/rust:ethtx_program",
         "//cpu/vreteno/rust:hello_program",
         "//cpu/vreteno/rust:irq_program",
         "//lib:txhdl",

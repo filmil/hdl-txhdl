@@ -146,6 +146,30 @@ rust_library(
     edition = "2021",
 )
 
+# A frame the core writes into DDR3 and the Ethernet port fetches onto
+# the wire (issue 151). Built exactly as the greeting is.
+rust_binary(
+    name = "ethtx",
+    srcs = ["ethtx.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    tags = ["manual"],
+)
+
+vreteno_image(
+    name = "ethtx_image",
+    platform = ":vreteno",
+    program = ":ethtx",
+)
+
+rust_library(
+    name = "ethtx_program",
+    srcs = [":ethtx_image"],
+    crate_name = "ethtx_program",
+    edition = "2021",
+)
+
 # The same test, built for the board: `--cfg=board_run` adds the header
 # line and a dot every ten seconds around the test, which a simulation
 # would pay for in simulated time and which the tests that read the

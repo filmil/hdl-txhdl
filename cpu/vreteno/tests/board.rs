@@ -560,6 +560,36 @@ fn a_frame_received_lands_in_memory_and_the_core_reads_it_back() {
     assert!(ran.halted_at.is_some(), "the core acknowledged and halted");
 }
 
+/// The core writes a frame into a transmit slot in DDR3 and asks the
+/// Ethernet port to send it; the port's engines fetch it back out of
+/// memory and put it on the wire without the core (issue 151).
+///
+/// What left the port is the only evidence taken, and it is compared
+/// byte for byte with what the core wrote, so a pass covers the whole
+/// sending path: the fetch engine's bursts through the arbiter, the
+/// router and the bridge, the word count `FrameOut` works out, its bytes
+/// with the frame's last one marked, and the sharing unit's merge onto
+/// the wire.
+///
+/// Twenty three bytes, so the last word holds three real bytes over one
+/// that is not the frame's, and a byte side that sent the whole word
+/// would put a twenty fourth byte on the wire that this would see.
+#[test]
+fn a_frame_written_to_memory_leaves_the_port_as_written() {
+    let len = 23u32;
+    let frame: Vec<u8> = (0..len)
+        .map(|i| match i {
+            12 => 0x08,
+            13 => 0x00,
+            _ => (0x60 + i) as u8,
+        })
+        .collect();
+    let ran = run(ethtx_program::TEXT, ethtx_program::DATA, b"", 40000);
+    assert!(ran.halted_at.is_some(), "the frame went and the core halted");
+    assert_eq!(ran.sent.len(), 1, "exactly one frame left the port");
+    assert_eq!(ran.sent[0], frame, "and it is the frame the core wrote");
+}
+
 /// The terminal types four bytes, and the program takes each through
 /// the interrupt controller, one interrupt a byte, never polling the
 /// serial port for input.
