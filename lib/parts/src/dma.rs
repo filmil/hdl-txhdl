@@ -430,3 +430,60 @@ impl<const A: usize, const I: usize, const BEATS: usize, const WC: usize>
         }
     }
 }
+
+// begin{tie}
+/// The write-beat channel of a host whose client only reads.
+///
+/// A host takes write beats from its client whether the client writes
+/// or not, and a board joins every channel it makes to a unit: an end
+/// that nothing holds is refused rather than left floating. A fetch
+/// engine never writes, so this holds that channel and offers nothing
+/// on it. In the netlist its valid is low for ever, which is what a
+/// client that never writes would drive.
+#[derive(Trace, Default)]
+pub struct NoBeats {
+    /// Nothing is kept. A unit's state is its fields, and this unit has
+    /// none worth the name; the register is here only because a unit
+    /// is a struct of them.
+    pub idle: Reg<Bit>,
+}
+
+#[lower]
+impl Unit<(), Tx<W<32, 4>>> for NoBeats {
+    async fn run(&mut self, _i: (), beats: Tx<W<32, 4>>) {
+        loop {
+            DefaultClock::rising().await;
+            if self.idle.get().to_bool() {
+                beats.send(W {
+                    data: U::<32>::from(0u8),
+                    strb: U::<4>::from(0u8),
+                    last: Bit::Zero,
+                });
+            }
+        }
+    }
+}
+
+/// The read-data channel of a host whose client only writes.
+///
+/// The other half of [`NoBeats`]: a store engine never reads, so its
+/// host's read answers have nobody to go to. This holds that channel
+/// and takes nothing from it. Nothing is ever sent on it either, since
+/// a client that issues no reads is answered with no read data, so
+/// never taking is never a stall.
+#[derive(Trace, Default)]
+pub struct NoReads {
+    /// As for [`NoBeats`]: a unit is a struct of registers.
+    pub idle: Reg<Bit>,
+}
+
+#[lower]
+impl Unit<Rx<R<32, 2>>, ()> for NoReads {
+    async fn run(&mut self, reads: Rx<R<32, 2>>, _o: ()) {
+        loop {
+            DefaultClock::rising().await;
+            let _ = reads.recv_if(self.idle.get());
+        }
+    }
+}
+// end{tie}

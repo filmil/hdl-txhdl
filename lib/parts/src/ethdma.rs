@@ -26,11 +26,11 @@
 //! puts whatever the channel was carrying on the wire, or into memory
 //! past the end of the frame, and the frame still looks well formed
 //! going past.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 
-use crate::eth::EthByte;
+use crate::eth::{EthByte, FRAME_MAX};
 
 // begin{out}
 /// Words from a fetch engine, bytes to the transmitter.
@@ -54,13 +54,13 @@ pub struct FrameOut {
 }
 
 #[lower]
-impl Unit<(Rx<U<32>>, In<U<16>>, In<Bit>), (Tx<EthByte>, Out<Bit>)>
+impl Unit<(Rx<U<32>>, In<U<16>>, In<Bit>), (Tx<EthByte>, Out<Bit>, Out<U<16>>)>
     for FrameOut
 {
     async fn run(
         &mut self,
         (inp, bytes, go): (Rx<U<32>>, In<U<16>>, In<Bit>),
-        (out, running): (Tx<EthByte>, Out<Bit>),
+        (out, running, nwords): (Tx<EthByte>, Out<Bit>, Out<U<16>>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -113,6 +113,15 @@ impl Unit<(Rx<U<32>>, In<U<16>>, In<Bit>), (Tx<EthByte>, Out<Bit>)>
             });
 
             running.set(run);
+            // The words a fetch engine must bring for a frame of
+            // `bytes`, the last of them partial. The engine counts
+            // words and the register block counts bytes, and a board
+            // is only wires between its units, so the one unit that
+            // stands between the two is where the division is done.
+            // Driven from `bytes` itself rather than from the length
+            // latched at the start, since the engine reads it in the
+            // same cycle it is told to go.
+            nwords.set((bytes.get() + 3) >> 2u32);
 
             if emit.to_bool() {
                 out.send(EthByte {
@@ -160,12 +169,14 @@ pub struct FrameIn {
 
 #[lower]
 impl
-    Unit<(Rx<EthByte>, In<U<16>>), (Tx<U<32>>, Out<U<16>>, Out<Bit>, Out<U<1>>)>
-    for FrameIn
+    Unit<
+        (Rx<EthByte>, In<U<16>>, In<Bit>),
+        (Tx<U<32>>, Out<U<16>>, Out<Bit>, Out<U<1>>),
+    > for FrameIn
 {
     async fn run(
         &mut self,
-        (rx, len): (Rx<EthByte>, In<U<16>>),
+        (rx, len, hold): (Rx<EthByte>, In<U<16>>, In<Bit>),
         (words, count, store, which): (
             Tx<U<32>>,
             Out<U<16>>,
@@ -184,7 +195,18 @@ impl
             // its length is settled by then: the receiver takes a
             // whole frame and checks it before offering any of it.
             let offered = Bit::from(rx.peek().is_some());
-            let start = !run & offered & Bit::from(len.get() != 0);
+            // Not while the store engine is still busy with the frame
+            // before. This unit finishes handing words over well before
+            // the engine has its write answered, and the register
+            // block reads this unit's length and slot at the moment the
+            // engine goes idle. Starting the next frame early would
+            // change both under the frame still being stored, so the
+            // driver would be told the new frame's length and slot for
+            // the old frame's bytes. Nothing in a run without a real
+            // store engine behind this unit can see that, which is how
+            // it was found: by reading the board join, not by a test.
+            let start =
+                !run & offered & Bit::from(len.get() != 0) & !hold.get();
 
             let more = pos < want;
             let full = have == 4;
@@ -240,3 +262,95 @@ impl
     }
 }
 // end{in}
+
+// begin{len}
+/// A frame's bytes, held whole and handed on with their count.
+///
+/// [`FrameIn`] must know a frame's length before the store engine
+/// starts, since the engine is told how many bytes to write when it
+/// begins. [`crate::eth::EthRx`] knows it and says so, but on the board
+/// the receiver is in the top, on the clock the PHY recovers, and only
+/// the bytes cross to the core's clock. The length cannot follow them
+/// on a wire of its own, because it would arrive on the wrong clock
+/// and out of step with the frame it describes; and it cannot ride
+/// inside the stream, because the remote peripheral reads the same
+/// stream and would read the length as a byte of its frame.
+///
+/// So the length is found again after the crossing. This unit takes a
+/// frame a byte at a time, holds all of it, and then offers it back
+/// with its count on `len`, which is exactly what `EthRx` offers. It
+/// is the receiver's output side without the receiver: a unit joined
+/// to `FrameIn` in place of an `EthRx` cannot tell the difference.
+///
+/// It costs a frame of memory and a frame of latency, since the frame
+/// was already held whole once, before the crossing. That is the price
+/// of the length not crossing with it.
+#[derive(Trace, Default)]
+pub struct FrameLen {
+    /// The frame being taken, or being handed on.
+    pub frame: Mem<U<8>, FRAME_MAX>,
+    /// Bytes held.
+    pub held: Reg<U<11>>,
+    /// The next byte to hand on.
+    pub pos: Reg<U<11>>,
+    /// Taking 0, handing on 1.
+    pub phase: Reg<Bit>,
+}
+
+#[lower]
+impl Unit<Rx<EthByte>, (Tx<EthByte>, Out<U<16>>)> for FrameLen {
+    async fn run(
+        &mut self,
+        inp: Rx<EthByte>,
+        (out, len): (Tx<EthByte>, Out<U<16>>),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            let phase = self.phase.get();
+            let n = self.held.get();
+            let pos = self.pos.get();
+            let b = inp.head();
+
+            // Taking: every byte is held, and the last one ends the
+            // frame. The last slot is kept rather than overrun, as the
+            // receiver does, so a frame longer than the memory keeps
+            // overwriting its final byte instead of wrapping.
+            let taking = !phase;
+            let take = taking & Bit::from(inp.peek().is_some());
+            let _ = inp.recv_if(take);
+            let full = Bit::from(n == 2047);
+
+            // Handing on: the held bytes in order, the last marked.
+            let giving = phase;
+            let give = giving & out.ready();
+            let at_last = Bit::from((pos + 1) == n);
+
+            with!(self <= {
+                take ? frame.at(n): b.data,
+                take & !full ? held: n + 1,
+                take & b.last ? {
+                    phase: Bit::One,
+                    pos: U::<11>::from(0u8),
+                },
+                give ? pos: pos + 1,
+                give & at_last ? {
+                    phase: Bit::Zero,
+                    held: U::<11>::from(0u8),
+                },
+            });
+
+            // Zero whenever no frame is being handed on, as the
+            // receiver's own length is, so that a stale count cannot be
+            // read as a current one.
+            len.set(mux(giving, n.resize::<16>(), U::<16>::from(0u8)));
+
+            if give.to_bool() {
+                out.send(EthByte {
+                    data: self.frame.read(pos),
+                    last: at_last,
+                });
+            }
+        }
+    }
+}
+// end{len}

@@ -55,6 +55,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A frame's length after the crossing:  bazel run //lib/examples:ex_framelen
+rust_binary(
+    name = "ex_framelen",
+    srcs = ["ex_framelen.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # One Ethernet wire, two users:  bazel run //lib/examples:ex_ethshare
 rust_binary(
     name = "ex_ethshare",
@@ -855,6 +867,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_dmawb.rs",
         "ex_ethdma.rs",
         "ex_ethshare.rs",
+        "ex_framelen.rs",
         "ex_ethslots.rs",
         "ex_scanout.rs",
         "ex_reset.rs",

@@ -102,6 +102,7 @@ fn main() {
     let (bytes_o, bytes) = signal::<U<16>, DefaultClock>();
     let (go_o, go) = signal::<Bit, DefaultClock>();
     let (run_o, running) = signal::<Bit, DefaultClock>();
+    let (nwords_o, nwords) = signal::<U<16>, DefaultClock>();
     let (txd_o, txd) = signal::<U<8>, DefaultClock>();
     let (en_o, tx_en) = signal::<Bit, DefaultClock>();
     let (rxd_o, rxd) = signal::<U<8>, DefaultClock>();
@@ -111,6 +112,8 @@ fn main() {
     let (inbytes_o, in_bytes) = signal::<U<16>, DefaultClock>();
     let (ingo_o, in_go) = signal::<Bit, DefaultClock>();
     let (which_o, which) = signal::<U<1>, DefaultClock>();
+    // No store engine here, so nothing holds the next frame off.
+    let (_hold_o, hold) = signal::<Bit, DefaultClock>();
 
     let mut fout = FrameOut::default();
     let mut fin = FrameIn::default();
@@ -131,12 +134,14 @@ fn main() {
         w.add("go", &go);
         w.add("out", &out_rx);
         w.add("running", &running);
+        w.add("nwords", &nwords);
         w.add("rx", &rx_rx);
         w.add("len", &rx_len);
         w.add("words", &back_rx);
         w.add("count", &in_bytes);
         w.add("store", &in_go);
         w.add("which", &which);
+        w.add("hold", &hold);
         w.add("frame_out", &fout);
         w.add("frame_in", &fin);
         w.start();
@@ -147,13 +152,16 @@ fn main() {
 
     let mut sim = Running::new(join2(
         join2(
-            fout.run((src_rx, bytes, go), (out_tx, run_o)),
+            fout.run((src_rx, bytes, go), (out_tx, run_o, nwords_o)),
             mac_tx.run(out_rx, (txd_o, en_o)),
         ),
         join2(
             mac_rx.run((rxd, rx_dv, rx_er), (rx_tx, rxlen_o)),
             join2(
-                fin.run((rx_rx, rx_len), (back_tx, inbytes_o, ingo_o, which_o)),
+                fin.run(
+                    (rx_rx, rx_len, hold),
+                    (back_tx, inbytes_o, ingo_o, which_o),
+                ),
                 sink.run(back_rx, ()),
             ),
         ),
