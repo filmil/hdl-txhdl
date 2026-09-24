@@ -33,12 +33,12 @@
 //! bit, which with `cpha` set has to be on the wire before the first
 //! leading edge and must not be moved by it; the run counts half
 //! edges, so that is the one leading edge it does not shift on.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 
 use crate::bus::axi::Resp;
-use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 // begin{state}
 /// An SPI master: one byte each way at a time, under a chip select a
@@ -77,15 +77,9 @@ pub struct Spi {
 impl Unit for Spi {
     async fn run(
         &mut self,
-        (aw, ar, w, miso): (
-            Rx<LiteAw<32>>,
-            Rx<LiteAr<32>>,
-            Rx<LiteW<32, 4>>,
+        bus: LitePort<32, 32, 4>,
+        (miso, sclk, mosi, cs_n, irq): (
             In<Bit>,
-        ),
-        (b, r, sclk, mosi, cs_n, irq): (
-            Tx<LiteB>,
-            Tx<LiteR<32>>,
             Out<Bit>,
             Out<Bit>,
             Out<Bit>,
@@ -119,16 +113,18 @@ impl Unit for Spi {
             let moving = mux(cpha, leading & (count != 0), trailing);
             let last = strobe & (count == 15);
             // The bus.
-            let arh = ar.head();
-            let awh = aw.head();
-            let wh = w.head();
+            let arh = bus.ar.head();
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
             let rsel = arh.addr.slice::<2, 2>();
             let wsel = awh.addr.slice::<2, 2>();
-            let rgo = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let written = wh.data;
             // A write to `data` starts a transfer, and is ignored
             // while one is running: a program reads `state` first.
@@ -184,13 +180,13 @@ impl Unit for Spi {
                 clearing & !last ? fired: Bit::Zero,
             });
             if rgo.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: word,
                     resp: Resp::Okay,
                 });
             }
             if wgo.to_bool() {
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
             sclk.set(cpol ^ half);
             mosi.set(txb.bit(7));

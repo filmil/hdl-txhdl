@@ -24,7 +24,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::spi::{FlashDevice, Spi};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -88,7 +88,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let (paw, par, pw, pb, pr) = lite.per;
+    let bus: LitePort<32, 32, 4> = lite.per.into();
     let (miso_drive, miso) = signal::<Bit, DefaultClock>();
     let (sclk_out, sclk) = signal::<Bit, DefaultClock>();
     let (mosi_out, mosi) = signal::<Bit, DefaultClock>();
@@ -101,11 +101,11 @@ fn main() {
 
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<DefaultClock>();
-        wave.add("aw", &paw);
-        wave.add("ar", &par);
-        wave.add("w", &pw);
-        wave.add("b", &pb);
-        wave.add("r", &pr);
+        wave.add("bus_aw", &bus.aw);
+        wave.add("bus_ar", &bus.ar);
+        wave.add("bus_w", &bus.w);
+        wave.add("bus_b", &bus.b);
+        wave.add("bus_r", &bus.r);
         wave.add("miso", &miso);
         wave.add("sclk", &sclk);
         wave.add("mosi", &mosi);
@@ -149,10 +149,7 @@ fn main() {
             bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
         ),
         join2(
-            spi.run(
-                (paw, par, pw, miso),
-                (pb, pr, sclk_out, mosi_out, cs_out, irq_out),
-            ),
+            spi.run(bus, (miso, sclk_out, mosi_out, cs_out, irq_out)),
             client,
         ),
     ));
