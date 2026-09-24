@@ -72,9 +72,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 52\,245 lines of Rust: 12\,811 of runtime
-and macros, 14\,338 of parts, 9\,467 in seventy-one examples, 12\,681 of
-Vreteno with its board, and 2\,948 of Razboj, DDR3, Ethernet, HDMI,
+Together they are 53\,349 lines of Rust: 12\,811 of runtime
+and macros, 14\,694 of parts, 9\,977 in seventy-two examples, 12\,933 of
+Vreteno with its board, and 2\,934 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -180,7 +180,7 @@ Fig.~\ref{fig:s-board} is the whole of it.
   \node[box] (dmem) at (7.2,1.4) {data\\memory};
   \node[box] (uart) at (7.2,0.5) {serial};
   \node[box] (ddr) at (7.2,-0.35) {DDR3\\peripheral};
-  \node[boxf] (uber) at (9.4,-0.35) {UberDDR3\\foreign};
+  \node[boxf] (mig) at (9.4,-0.35) {MIG\\foreign};
   \node[box] (tim) at (7.2,-1.35) {timer};
   \node[box] (plic) at (7.2,-2.2) {interrupt\\controller};
   \node[box] (dm) at (7.2,3.2) {debug\\module};
@@ -197,8 +197,8 @@ Fig.~\ref{fig:s-board} is the whole of it.
   \draw[fl] (rt) -- (dm);
   \draw[fl] (dm.west) -| (cpu.north)
     node[lbl, above, pos=0.3] {halt, resume, the registers};
-  \draw[fl] (ddr) -- (uber);
-  \draw[fl] (uber.east) -- ++(0.75,0) node[lbl, right] {pads};
+  \draw[fl] (ddr) -- (mig);
+  \draw[fl] (mig.east) -- ++(0.75,0) node[lbl, right] {pads};
   \draw[fl] (uart.east) -- ++(0.75,0) node[lbl, right] {tx, rx};
   % The two lines the core waits on run in lanes of their own, below
   % every box, so neither crosses one.
@@ -384,16 +384,17 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs two hundred and thirty-one
+its ports. \code{bazel test //...} runs two hundred and thirty-eight
 targets, of
-which a hundred and thirty-six are netlists under both simulators; the rest are the
+which a hundred and forty are netlists under both simulators; the rest are the
 core's model and
 programs, the board's own run, Razboj, the parts, the SoC's run, and
-the tools. Five more are tagged manual: the board and its DDR3 under
-Vivado's simulator, the PCIe endpoint and its core under the same, the
-AXI link's fuzzing over many seeds, which the nightly run does, and the
-check that every component has a datasheet, which a sweep of the
-documents runs. Every claim about what
+the tools. Seven more are tagged manual: the board and its DDR3 under
+Vivado's simulator, the DDR3 controller alone and AMD's own test of
+it under the same, the PCIe endpoint on its own and against a root
+port under the same, the AXI link's fuzzing over many seeds, which
+the nightly run does, and the check that every component has a
+datasheet, which a sweep of the documents runs. Every claim about what
 Rust accepts was compiled first, as a probe kept in the tree,
 including the ones whose answer was no.
 
