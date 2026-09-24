@@ -55,12 +55,16 @@ fn run(text: &[u32], data: &[u8], reply: &[u8], limit: u64) -> Ran {
 /// The same, with a program on the other side of the Ethernet port
 /// answering the remote peripheral's frames.
 fn run_served(text: &[u32], data: &[u8], limit: u64) -> Ran {
-    run_all(text, data, b"", &[], limit, true, &[])
+    let net = Net {
+        serve: true,
+        ..Default::default()
+    };
+    run_all(text, data, b"", &[], limit, net, &[])
 }
 
 /// The same, with a debugger on the JTAG cable following `plan`.
 fn run_debugged(text: &[u32], data: &[u8], limit: u64, plan: &[Op]) -> Ran {
-    run_all(text, data, b"", &[], limit, false, plan)
+    run_all(text, data, b"", &[], limit, Net::default(), plan)
 }
 
 /// The program at the other end of the wire, for one cycle: it reads
@@ -253,21 +257,31 @@ fn run_paced(
     blocks: &[usize],
     limit: u64,
 ) -> Ran {
-    run_all(text, data, reply, blocks, limit, false, &[])
+    run_all(text, data, reply, blocks, limit, Net::default(), &[])
 }
 
 /// The run itself. `serve` says whether a program answers the frames
 /// the remote peripheral sends; without one its port is a wire with
 /// nothing at the other end, which is what every other run here wants.
+/// What is at the other end of the Ethernet port during a run.
+#[derive(Default)]
+struct Net<'a> {
+    /// A program answering the remote peripheral's frames.
+    serve: bool,
+    /// Frames put on the wire from the start, unasked.
+    inject: &'a [Vec<u8>],
+}
+
 fn run_all(
     text: &[u32],
     data: &[u8],
     reply: &[u8],
     blocks: &[usize],
     limit: u64,
-    serve: bool,
+    net: Net,
     plan: &[Op],
 ) -> Ran {
+    let Net { serve, inject } = net;
     let mut board = TestBoard {
         cpu: Vreteno::with(text),
         rom: Rom::with(text),
@@ -433,6 +447,17 @@ fn run_all(
     // has been told to remember.
     let mut frame: Vec<u8> = Vec::new();
     let mut reply: Vec<EthByte> = Vec::new();
+    // Frames put on the wire from the start, before anything is asked
+    // of the program at the other end. They leave a byte a cycle, as
+    // the answers do.
+    for f in inject {
+        for (i, b) in f.iter().enumerate() {
+            reply.push(EthByte {
+                data: U::from(*b),
+                last: Bit::from_bool(i + 1 == f.len()),
+            });
+        }
+    }
     let mut words: HashMap<u32, u32> = HashMap::new();
     let mut sent: Vec<Vec<u8>> = Vec::new();
     let mut master = Master::default();
@@ -490,6 +515,49 @@ fn the_memory_test_runs_on_the_board() {
     let ran = run(ddr3_program::TEXT, ddr3_program::DATA, b"", 40000);
     assert_eq!(ran.said, "ddr3 ok\n");
     assert!(ran.halted_at.is_some(), "the core halted itself");
+}
+
+/// A frame arrives on the wire, and the Ethernet port's engines store
+/// it in DDR3 without the core touching a byte of it. The core then
+/// reads it back out of memory as the Zephyr driver will, and says what
+/// it read (issue 151).
+///
+/// The bytes the core says are the only evidence this test takes, and
+/// they come out of the real memory through the real bus, so a pass
+/// covers the whole receive path: the split by EtherType, the length
+/// found again after the crossing, the packing into words, the store
+/// engine's bursts through the arbiter, the router and the bridge, and
+/// the register block's arrival. That is what the engines' own
+/// examples could not show, since each ran against a memory it defined
+/// itself.
+#[test]
+fn a_frame_received_lands_in_memory_and_the_core_reads_it_back() {
+    // Not the remote peripheral's type, so the sharing unit sends it to
+    // the Ethernet port rather than to the remote peripheral. Twenty one
+    // bytes, so the last word holds one real byte and the store engine
+    // strobes away the other three, which is a write the memory must
+    // honour lane by lane.
+    let mut frame: Vec<u8> = (0..21u8).map(|i| 0x40 + i).collect();
+    frame[12] = 0x08;
+    frame[13] = 0x00;
+    let bytes: String = frame.iter().map(|b| format!("{b:02x}")).collect();
+    let want = format!("rx {:04x} {bytes}\n", frame.len());
+    let frames = [frame];
+    let net = Net {
+        inject: &frames,
+        ..Default::default()
+    };
+    let ran = run_all(
+        ethrx_program::TEXT,
+        ethrx_program::DATA,
+        b"",
+        &[],
+        40000,
+        net,
+        &[],
+    );
+    assert_eq!(ran.said, want, "what the core read back out of DDR3");
+    assert!(ran.halted_at.is_some(), "the core acknowledged and halted");
 }
 
 /// The terminal types four bytes, and the program takes each through
