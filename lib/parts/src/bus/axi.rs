@@ -50,7 +50,10 @@ pub mod sim;
 #[cfg(test)]
 mod fuzz;
 use txhdl::{lower, with, Trace};
-use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
+use txhdl::{
+    Ports as PortsDerive, Transaction as TransactionDerive,
+    Value as ValueDerive,
+};
 
 // ---------------------------------------------------------------------
 // The values on the wire
@@ -662,6 +665,38 @@ pub type PerClient<
     const S: usize,
     const I: usize,
 > = (Rx<PerReq<A, I>>, Rx<W<D, S>>, Tx<Answer<I>>, Tx<R<D, I>>);
+
+/// What a peripheral unit holds on an AXI4 link, as one port rather
+/// than four: `run(&mut self, bus: PerPort<32, 32, 4, 4>, ..)` and
+/// `bus.req` in the body. The fields are [`PerClient`]'s, in its
+/// order, so `link.per_client.into()` makes one. The netlist names
+/// each port for the side and the field, `bus_req_valid`,
+/// `bus_r_data`, as [`LitePort`](super::axi_lite::LitePort) does for
+/// AXI-Lite (issue 483).
+#[derive(PortsDerive)]
+pub struct PerPort<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+> {
+    /// Requests, in: one per burst, reads and writes both.
+    pub req: Rx<PerReq<A, I>>,
+    /// Write beats, in.
+    pub w: Rx<W<D, S>>,
+    /// Answers to writes, out.
+    pub ans: Tx<Answer<I>>,
+    /// Read beats, out.
+    pub r: Tx<R<D, I>>,
+}
+
+impl<const A: usize, const D: usize, const S: usize, const I: usize>
+    From<PerClient<A, D, S, I>> for PerPort<A, D, S, I>
+{
+    fn from((req, w, ans, r): PerClient<A, D, S, I>) -> Self {
+        PerPort { req, w, ans, r }
+    }
+}
 
 /// A link whose clients are units: the ports of the two trackers, and
 /// the channel ends a hardware client holds on each side. [`axi`] is
