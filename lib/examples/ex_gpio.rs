@@ -23,7 +23,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::gpio::Gpio;
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -58,7 +58,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let (paw, par, pw, pb, pr) = lite.per;
+    let bus: LitePort<32, 32, 4> = lite.per.into();
     let (pins_drive, pins) = signal::<U<8>, DefaultClock>();
     let (drive_out, drive) = signal::<U<8>, DefaultClock>();
     let (dirs_out, dirs) = signal::<U<8>, DefaultClock>();
@@ -70,11 +70,11 @@ fn main() {
 
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<DefaultClock>();
-        wave.add("aw", &paw);
-        wave.add("ar", &par);
-        wave.add("w", &pw);
-        wave.add("b", &pb);
-        wave.add("r", &pr);
+        wave.add("bus_aw", &bus.aw);
+        wave.add("bus_ar", &bus.ar);
+        wave.add("bus_w", &bus.w);
+        wave.add("bus_b", &bus.b);
+        wave.add("bus_r", &bus.r);
         wave.add("pins", &pins);
         wave.add("drive", &drive);
         wave.add("dirs", &dirs);
@@ -172,13 +172,7 @@ fn main() {
             host_unit.run(host_in, host_out),
             bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
         ),
-        join2(
-            gpio.run(
-                (paw, par, pw, pins),
-                (pb, pr, drive_out, dirs_out, irq_out),
-            ),
-            client,
-        ),
+        join2(gpio.run(bus, (pins, drive_out, dirs_out, irq_out)), client),
     ));
     println!("  t  what the program saw");
     for _ in 0..220 {

@@ -31,12 +31,12 @@
 //! a zero, so two programs clearing different pins cannot lose each
 //! other's. A pin set for a level sets its bit again as soon as it is
 //! cleared while the level lasts, which is what a level means.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 
 use crate::bus::axi::Resp;
-use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 // begin{state}
 /// `N` pins on an AXI-Lite link.
@@ -75,19 +75,8 @@ pub struct Gpio<const N: usize> {
 impl<const N: usize> Unit for Gpio<N> {
     async fn run(
         &mut self,
-        (aw, ar, w, pins): (
-            Rx<LiteAw<32>>,
-            Rx<LiteAr<32>>,
-            Rx<LiteW<32, 4>>,
-            In<U<N>>,
-        ),
-        (b, r, drive, dirs, irq): (
-            Tx<LiteB>,
-            Tx<LiteR<32>>,
-            Out<U<N>>,
-            Out<U<N>>,
-            Out<Bit>,
-        ),
+        bus: LitePort<32, 32, 4>,
+        (pins, drive, dirs, irq): (In<U<N>>, Out<U<N>>, Out<U<N>>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -111,16 +100,18 @@ impl<const N: usize> Unit for Gpio<N> {
             let fired = ((kind & crossed) | (!kind & level)) & ie;
             // The bus. A read is answered in the cycle it is taken; a
             // write needs its beat and room for its response.
-            let arh = ar.head();
-            let awh = aw.head();
-            let wh = w.head();
+            let arh = bus.ar.head();
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
             let rsel = arh.addr.slice::<2, 3>();
             let wsel = awh.addr.slice::<2, 3>();
-            let rgo = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let written = wh.data.slice::<0, N>();
             let word = select!(rsel.raw() => {
                 0 => dout.zext::<32>(),
@@ -147,13 +138,13 @@ impl<const N: usize> Unit for Gpio<N> {
                 wgo & (wsel == 5) ? pol: written,
             });
             if rgo.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: word,
                     resp: Resp::Okay,
                 });
             }
             if wgo.to_bool() {
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
             drive.set(dout);
             dirs.set(dir);
