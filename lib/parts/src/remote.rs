@@ -34,7 +34,7 @@ use txhdl::{lower, with, Trace};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
 use crate::bus::axi::Resp;
-use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 // begin{wire}
 /// What leaves the peripheral: one AXI-Lite transaction, whole.
@@ -109,13 +109,8 @@ pub struct Remote<const T: usize> {
 impl<const T: usize> Unit for Remote<T> {
     async fn run(
         &mut self,
-        (aw, ar, w, back): (
-            Rx<LiteAw<32>>,
-            Rx<LiteAr<32>>,
-            Rx<LiteW<32, 4>>,
-            Rx<Answer>,
-        ),
-        (b, r, out): (Tx<LiteB>, Tx<LiteR<32>>, Tx<Ask>),
+        bus: LitePort<32, 32, 4>,
+        (back, out): (Rx<Answer>, Tx<Ask>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -123,20 +118,20 @@ impl<const T: usize> Unit for Remote<T> {
             let writing = self.writing.get();
             let tag = self.tag.get();
             let answered = self.answered.get();
-            let awh = aw.head();
-            let arh = ar.head();
-            let wh = w.head();
+            let awh = bus.aw.head();
+            let arh = bus.ar.head();
+            let wh = bus.w.head();
             // A transaction leaves when nothing is outstanding, the
             // channel that carries it has room, and the bus is
             // offering one whole: a write wants its address and its
             // beat together, a read only its address. A write is
             // taken first, so a read cannot starve one.
-            let wr = !busy & aw.peek().is_some() & w.peek().is_some();
-            let rd = !busy & !wr & ar.peek().is_some();
+            let wr = !busy & bus.aw.peek().is_some() & bus.w.peek().is_some();
+            let rd = !busy & !wr & bus.ar.peek().is_some();
             let go = (wr | rd) & out.ready();
-            let _ = aw.recv_if(go & wr);
-            let _ = w.recv_if(go & wr);
-            let _ = ar.recv_if(go & rd);
+            let _ = bus.aw.recv_if(go & wr);
+            let _ = bus.w.recv_if(go & wr);
+            let _ = bus.ar.recv_if(go & rd);
             // The answer. One is taken whenever it is offered, so a
             // late one cannot block the channel, and it counts only
             // when its tag is the outstanding transaction's.
@@ -151,8 +146,8 @@ impl<const T: usize> Unit for Remote<T> {
             let have = (answered | mine) | late;
             // The bus is answered when there is something to say and
             // the channel it goes on has room.
-            let say_b = busy & writing & have & b.ready();
-            let say_r = busy & !writing & have & r.ready();
+            let say_b = busy & writing & have & bus.b.ready();
+            let say_r = busy & !writing & have & bus.r.ready();
             let done = say_b | say_r;
             let bad = mux(mine, ans.err, self.failed.get()) | late;
             let word = mux(mine, ans.data, self.word.get());
@@ -178,12 +173,12 @@ impl<const T: usize> Unit for Remote<T> {
                 });
             }
             if say_b.to_bool() {
-                b.send(LiteB {
+                bus.b.send(LiteB {
                     resp: mux(bad, Resp::SlvErr, Resp::Okay),
                 });
             }
             if say_r.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: word,
                     resp: mux(bad, Resp::SlvErr, Resp::Okay),
                 });
@@ -196,7 +191,7 @@ impl<const T: usize> Unit for Remote<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bus::axi_lite::{axi_lite, LiteHost};
+    use crate::bus::axi_lite::{axi_lite, LiteAr, LiteAw, LiteHost, LiteW};
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::rc::Rc;
@@ -290,7 +285,7 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let (aw, ar, w, b, r) = link.per;
+        let bus: LitePort<32, 32, 4> = link.per.into();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
         let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
         let done = Rc::new(RefCell::new(false));
@@ -308,7 +303,7 @@ mod tests {
                 },
                 device(ask_rx, ans_tx, delay, deaf),
             ),
-            remote.run((aw, ar, w, ans_rx), (b, r, ask_tx)),
+            remote.run(bus, (ans_rx, ask_tx)),
         ));
         for _ in 0..4000 {
             sim.cycle();

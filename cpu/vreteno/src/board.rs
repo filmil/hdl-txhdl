@@ -834,11 +834,14 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                     // than two.
                                     join2(
                                         self.remote.run(
-                                            (
-                                                paw_rem_rx, par_rem_rx,
-                                                pw_rem_rx, ans_rx,
-                                            ),
-                                            (pb_rem_tx, pr_rem_tx, ask_tx),
+                                            LitePort {
+                                                aw: paw_rem_rx,
+                                                ar: par_rem_rx,
+                                                w: pw_rem_rx,
+                                                b: pb_rem_tx,
+                                                r: pr_rem_tx,
+                                            },
+                                            (ans_rx, ask_tx),
                                         ),
                                         self.link.run(
                                             (ask_rx, net_rx),

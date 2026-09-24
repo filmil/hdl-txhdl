@@ -33,7 +33,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::eth::{EthByte, EthRx, EthTx};
 use txhdl_parts::remote::eth::{RemoteLink, FRAME_LEN, KIND_ANSWER};
 use txhdl_parts::remote::Remote;
@@ -71,7 +71,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let (paw, par, pw, pb, pr) = lite.per;
+    let bus: LitePort<32, 32, 4> = lite.per.into();
     let (ask_tx, ask_rx) = chan::<_, DefaultClock>();
     let (ans_tx, ans_rx) = chan::<_, DefaultClock>();
     // The bytes of a frame, between the link and a MAC at each end.
@@ -113,11 +113,11 @@ fn main() {
         // Two channels are a port of each unit and so appear twice:
         // the transactions are `out` to the peripheral and `ask` to
         // the link, and the answers are `back` to both.
-        wave.add("aw", &paw);
-        wave.add("ar", &par);
-        wave.add("w", &pw);
-        wave.add("b", &pb);
-        wave.add("r", &pr);
+        wave.add("bus_aw", &bus.aw);
+        wave.add("bus_ar", &bus.ar);
+        wave.add("bus_w", &bus.w);
+        wave.add("bus_b", &bus.b);
+        wave.add("bus_r", &bus.r);
         wave.add("out", &ask_rx);
         wave.add("ask", &ask_rx);
         wave.add("back", &ans_rx);
@@ -185,7 +185,7 @@ fn main() {
                 bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
             ),
             join2(
-                remote.run((paw, par, pw, ans_rx), (pb, pr, ask_tx)),
+                remote.run(bus, (ans_rx, ask_tx)),
                 wire.run((ask_rx, in_rx), (ans_tx, out_tx)),
             ),
         ),

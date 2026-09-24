@@ -238,7 +238,9 @@ impl<const DEV: usize> Unit for RemoteLink<DEV> {
 mod tests {
     use super::*;
     use crate::bus::axi::Resp;
-    use crate::bus::axi_lite::{axi_lite, LiteAr, LiteAw, LiteHost, LiteW};
+    use crate::bus::axi_lite::{
+        axi_lite, LiteAr, LiteAw, LiteHost, LitePort, LiteW,
+    };
     use crate::remote::Remote;
     use std::cell::RefCell;
     use std::collections::HashMap;
@@ -388,7 +390,7 @@ mod tests {
     #[test]
     fn the_bus_is_served_by_a_program_that_speaks_frames() {
         let link = axi_lite::<32, 32, 4>();
-        let (aw, ar, w, b, r) = link.per;
+        let bus: LitePort<32, 32, 4> = link.per.into();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
         let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
         let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
@@ -432,7 +434,7 @@ mod tests {
         };
         let mut sim = Running::new(join2(
             join2(
-                remote.run((aw, ar, w, ans_rx), (b, r, ask_tx)),
+                remote.run(bus, (ans_rx, ask_tx)),
                 wire.run((ask_rx, in_rx), (ans_tx, out_tx)),
             ),
             client,
