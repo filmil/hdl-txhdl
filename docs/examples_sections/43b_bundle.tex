@@ -1,0 +1,47 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Struct of Ports from Another Crate}
+\label{sec:x-bundle}
+
+The structs of the last section are read from the unit's own file.
+A struct that many units share is declared once, somewhere else,
+and possibly in another crate, whose source the compiler of this one
+never sees. Such a struct derives \code{Ports}, and that is all
+\code{\#[lower]} asks of it. The lowering reads each \code{side.f}
+of the body as a port. The derive says what each port is, its kind,
+width, clock and the layout of its value, when \code{lowered} runs.
+
+\code{LitePort} is such a struct, declared in \code{txhdl\_parts}
+beside the AXI-Lite beats: the five channels a peripheral holds on a
+link. \code{Shared} is one word behind two links, \code{left} and
+\code{right}, as a mailbox between two processors would be. Both
+sides have the same type, so a port is named for its side as well as
+its field. \code{left.aw} is the port \code{left\_aw} and
+\code{right.r} is \code{right\_r}, each with the usual
+\code{\_data}, \code{\_valid} and \code{\_ready}. A write from both
+sides in one cycle keeps the left one's word.
+
+A parent that passes such a struct to a child writes a struct
+literal, \code{LitePort \{ aw: x, .. \}}. It sees the fields and not
+the child's side, so each field joins the one port of the child
+whose name ends in \code{\_aw}. Two such ports on one child are
+refused with both names. A unit of units cannot yet take such a
+struct as a side of its own, since its joins are checked where the
+fields cannot be seen.
+
+The run writes on each side and reads on the other, then writes on
+both at once and reads the word back from both. Every read is
+checked against Rust. The netlist is checked against this run under
+both simulators, at its ports.
+
+\begin{figure}[htbp]
+\centering
+\input{bundle_timing.tex}
+\caption{One word behind two links: a write on the left read on the
+right, a write on the right read on the left, and two writes in one
+cycle, of which the left one is kept.}
+\label{fig:x-bundle}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_bundle.rs}. Run with \code{bazel run //lib/examples:ex\_bundle}.},label={lst:x-bundle}]{lib/examples/ex_bundle.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_bundle} printed when the build ran it: the three steps, and the netlist with both links' ports.},label={lst:x-bundle-out}]{out_bundle.txt}

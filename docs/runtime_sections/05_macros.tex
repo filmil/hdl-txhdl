@@ -79,8 +79,19 @@ type, and each field is a port named for the field, in declaration
 order. Before the body is read, \code{port\_fields} rewrites every
 \code{inp.a} of such a side to the port \code{a}, so the rest of the
 lowering sees the names it sees for a tuple. A type that is neither a
-port nor a struct of the file is refused by name, and so is a port
-name that two sides both give.
+port nor a struct of the file is taken to implement \code{Ports},
+which \code{\#[derive(Ports)]} writes, so a struct declared in any
+file of any crate can be a side (issue 483). Its fields cannot be
+seen here, so \code{port\_fields} rewrites each \code{bus.f} the body
+reads to the port \code{bus\_f}, named for the side as well as the
+field so that two sides of one type stay apart. The ports come from
+\code{bundle\_ports} when \code{lowered} runs, each field's kind,
+width and clock from its type through \code{PortEnd}, and a field of
+a port's value is found by \code{bundle\_field} from the same
+layout. \code{instance} joins a parent's struct literal to such a
+child by the one port that ends in the field's name. A unit of units
+cannot take such a side yet, since its joins are checked here. A port
+name that two sides both give is refused.
 A name the netlist would hold as written is checked where it is
 chosen, since a name that fails there fails as an analysis error in a
 generated file. The \code{Trace} derive refuses a field, and

@@ -15,8 +15,8 @@ type, \code{Rx<U<W>>}, declared as the fields \code{minuend} and
 when the subtraction borrowed. \code{run} takes the input side apart
 by field, \code{DiffIn \{ minuend, subtrahend \}}, and names the
 output side \code{out}, so it sends on \code{out.diff}. Both forms
-work for \code{\#[lower]}. It reads the struct from the file the unit
-is in, and makes each field a port under the field's name, in the
+work for \code{\#[lower]}. It reads the struct where it is declared,
+and makes each field a port under the field's name, in the
 order the struct declares them. A generic struct is read with the
 side's arguments, so \code{DiffIn<W>} has ports of \code{W} bits.
 
@@ -31,11 +31,12 @@ port of that name, whatever order the literal uses. \code{Top} passes
 its output side whole, as \code{out}, and the netlist joins its
 fields in order.
 
-The struct must be declared in the same file as the unit.
+A struct declared in the same file is read from the file.
 \code{\#[lower]} sees one item at a time and reads the file for
-anything else, as it does for the functions it inlines. A side whose
-type is neither a port nor such a struct is refused with a message
-naming the type, and so is a port name that two sides both use.
+anything else, as it does for the functions it inlines. A struct
+declared anywhere else derives \code{Ports} instead, and the next
+section shows one taken from another crate. A port name that two
+sides both use is refused.
 
 The run offers a minuend every cycle and a subtrahend every other
 cycle, and the sink takes nothing for three cycles. Every difference
