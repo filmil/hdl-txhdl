@@ -17,7 +17,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{
-    axi_units, host_end, AxiHost, AxiPer, Rd, Resp, Wr,
+    axi_units, host_end, AxiHost, AxiPer, PerPort, Rd, Resp, Wr,
 };
 use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::spi::FlashDevice;
@@ -38,7 +38,7 @@ const WORDS: [u32; 2] = [0xdead_beef, 0x0123_4567];
 fn main() {
     let u = axi_units::<32, 32, 4, IW>();
     let host = host_end::<32, 32, 4, IW, NIDS>(u.host_client);
-    let (req, wd, ans, rb) = u.per_client;
+    let bus: PerPort<32, 32, 4, IW> = u.per_client.into();
     let (miso_drive, miso) = signal::<Bit, DefaultClock>();
     let (sclk_out, sclk) = signal::<Bit, DefaultClock>();
     let (mosi_out, mosi) = signal::<Bit, DefaultClock>();
@@ -51,10 +51,10 @@ fn main() {
 
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<DefaultClock>();
-        wave.add("req", &req);
-        wave.add("wd", &wd);
-        wave.add("ans", &ans);
-        wave.add("rb", &rb);
+        wave.add("bus_req", &bus.req);
+        wave.add("bus_w", &bus.w);
+        wave.add("bus_ans", &bus.ans);
+        wave.add("bus_r", &bus.r);
         wave.add("rst", &rst);
         wave.add("miso", &miso);
         wave.add("sclk", &sclk);
@@ -88,10 +88,7 @@ fn main() {
             per_unit.run(u.per_in, u.per_out),
         ),
         txhdl::comp::join2(
-            win.run(
-                (rst, req, wd, miso),
-                (ans, rb, sclk_out, mosi_out, cs_out),
-            ),
+            win.run(bus, (rst, miso, sclk_out, mosi_out, cs_out)),
             client,
         ),
     ));

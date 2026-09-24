@@ -26,11 +26,11 @@
 //! A write is answered `SLVERR`. The window is read only, which is
 //! what makes it safe to fetch from: nothing on the bus can change
 //! what the instruction stream is reading.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 
-use crate::bus::axi::{Answer, PerReq, Resp, R, W};
+use crate::bus::axi::{Answer, PerPort, Resp, R};
 
 // begin{state}
 /// The window. `DIV` sets the clock: a half of a bit takes `DIV + 1`
@@ -75,15 +75,10 @@ pub struct FlashWin<const DIV: usize, const I: usize> {
 impl<const DIV: usize, const I: usize> Unit for FlashWin<DIV, I> {
     async fn run(
         &mut self,
-        (rst, req, wd, miso): (
+        bus: PerPort<32, 32, 4, I>,
+        (rst, miso, sclk, mosi, cs_n): (
             In<Bit>,
-            Rx<PerReq<32, I>>,
-            Rx<W<32, 4>>,
             In<Bit>,
-        ),
-        (ans, rb, sclk, mosi, cs_n): (
-            Tx<Answer<I>>,
-            Tx<R<32, I>>,
             Out<Bit>,
             Out<Bit>,
             Out<Bit>,
@@ -112,14 +107,14 @@ impl<const DIV: usize, const I: usize> Unit for FlashWin<DIV, I> {
             // The bus. A read is taken when nothing is on the wires
             // and no answer is waiting; a write is taken when no other
             // write is waiting for its beat.
-            let q = req.head();
-            let q_off = req.peek().is_some();
+            let q = bus.req.head();
+            let q_off = bus.req.peek().is_some();
             let take_read = q_off & q.read & !busy & !waiting & !held;
             let take_write = q_off & !q.read & !held;
-            let _ = req.recv_if(take_read | take_write);
-            let w_go = held & wd.peek().is_some() & ans.ready();
-            let _ = wd.recv_if(w_go);
-            let send = waiting & rb.ready();
+            let _ = bus.req.recv_if(take_read | take_write);
+            let w_go = held & bus.w.peek().is_some() & bus.ans.ready();
+            let _ = bus.w.recv_if(w_go);
+            let send = waiting & bus.r.ready();
             // The byte this phase puts on the wires: the command, then
             // the address from the top down, then nothing, since the
             // chip is doing the talking from there.
@@ -190,7 +185,7 @@ impl<const DIV: usize, const I: usize> Unit for FlashWin<DIV, I> {
                 },
             });
             if send.to_bool() {
-                rb.send(R {
+                bus.r.send(R {
                     id: self.rid.get(),
                     data: self.word.get(),
                     resp: Resp::Okay,
@@ -198,7 +193,7 @@ impl<const DIV: usize, const I: usize> Unit for FlashWin<DIV, I> {
                 });
             }
             if w_go.to_bool() {
-                ans.send(Answer {
+                bus.ans.send(Answer {
                     id: self.wid.get(),
                     resp: Resp::SlvErr,
                 });
