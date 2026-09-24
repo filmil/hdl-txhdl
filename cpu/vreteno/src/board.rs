@@ -41,7 +41,8 @@ use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
 use txhdl_parts::bus::arbiter::Arbiter2;
 use txhdl_parts::bus::axi::{
-    Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerReq, B, R, W,
+    Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerPort, PerReq, B, R,
+    W,
 };
 use txhdl_parts::bus::axi_lite::{
     LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge5, LitePort, LiteR, LiteW,
@@ -831,11 +832,16 @@ impl<const DIV: u32> Unit for Board<DIV> {
                         ),
                     ),
                     self.ddr3.run(
-                        (req3_rx, wd3_rx, sys_clk, sys_rst),
+                        PerPort {
+                            req: req3_rx,
+                            w: wd3_rx,
+                            ans: ans3_tx,
+                            r: rb3_tx,
+                        },
                         (
-                            ans3_tx, rb3_tx, calib, ui_clk, ui_rst, ck_p, ck_n,
-                            mem_rst_n, cke, cs_n, ras_n, cas_n, we_n, row,
-                            bank, dm, odt, dq, dqs, dqs_n,
+                            sys_clk, sys_rst, calib, ui_clk, ui_rst, ck_p,
+                            ck_n, mem_rst_n, cke, cs_n, ras_n, cas_n, we_n,
+                            row, bank, dm, odt, dq, dqs, dqs_n,
                         ),
                     ),
                 ),

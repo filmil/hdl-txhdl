@@ -20,12 +20,12 @@
 //! board's clock, and take the design's clock back from it.
 use txhdl::comp::trace::Kind;
 use txhdl::comp::{
-    join2, signal, Clock, DefaultClock, In, Out, Pad, Reg, Rx, Tx, Unit,
+    join2, signal, Clock, DefaultClock, In, Out, Pad, Reg, Unit,
 };
 use txhdl::netlist::{foreign, Lower, Lowered};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
-use txhdl_parts::bus::axi::{Answer, PerReq, R, W};
+use txhdl_parts::bus::axi::PerPort;
 use txhdl_parts::bus::wb::sim::WbMem;
 use txhdl_parts::bus::wb::AxiWb;
 
@@ -174,15 +174,10 @@ pub struct Ddr3Per {
 impl Unit for Ddr3Per {
     async fn run(
         &mut self,
-        (req, wd, sys_clk, sys_rst): (
-            Rx<PerReq<32, 4>>,
-            Rx<W<32, 4>>,
-            In<Bit>,
-            In<Bit>,
-        ),
+        bus: PerPort<32, 32, 4, 4>,
         (
-            ans,
-            rb,
+            sys_clk,
+            sys_rst,
             calib,
             ui_clk,
             ui_rst,
@@ -202,8 +197,8 @@ impl Unit for Ddr3Per {
             dqs,
             dqs_n,
         ): (
-            Tx<Answer<4>>,
-            Tx<R<32, 4>>,
+            In<Bit>,
+            In<Bit>,
             Out<Bit>,
             Out<Bit>,
             Out<Bit>,
@@ -246,10 +241,10 @@ impl Unit for Ddr3Per {
                 ),
             ),
             self.bridge.run(
-                (req, wd, wb_stall_i, wb_ack_i, wb_rdat_i),
+                (bus.req, bus.w, wb_stall_i, wb_ack_i, wb_rdat_i),
                 (
-                    ans, rb, wb_cyc_o, wb_stb_o, wb_we_o, wb_adr_o, wb_dat_o,
-                    wb_sel_o,
+                    bus.ans, bus.r, wb_cyc_o, wb_stb_o, wb_we_o, wb_adr_o,
+                    wb_dat_o, wb_sel_o,
                 ),
             ),
         )
@@ -267,7 +262,7 @@ mod tests {
     use txhdl::comp::{join2, pad, signal, DefaultClock, Running, Unit};
     use txhdl::types::{Bit, U};
     use txhdl_parts::bus::axi::{
-        axi_to_unit, AxiHost, AxiPer, HostLink, Rd, Resp, Wr,
+        axi_to_unit, AxiHost, AxiPer, HostLink, PerPort, Rd, Resp, Wr,
     };
 
     /// Words written across the memory and read back, the first ones
@@ -282,7 +277,7 @@ mod tests {
             per_in,
             per_out,
         } = axi_to_unit::<32, 32, 4, 4, 16>();
-        let (req, wd, ans, rb) = per_client;
+        let bus: PerPort<32, 32, 4, 4> = per_client.into();
         let (_sys_clk_o, sys_clk) = signal::<Bit, DefaultClock>();
         let (_sys_rst_o, sys_rst) = signal::<Bit, DefaultClock>();
         let (calib_o, calib) = signal::<Bit, DefaultClock>();
@@ -308,10 +303,10 @@ mod tests {
             join2(h.run(host_in, host_out), p.run(per_in, per_out)),
             join2(
                 mem.run(
-                    (req, wd, sys_clk, sys_rst),
+                    bus,
                     (
-                        ans,
-                        rb,
+                        sys_clk,
+                        sys_rst,
                         calib_o,
                         bits(),
                         bits(),
