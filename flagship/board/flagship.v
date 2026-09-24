@@ -422,11 +422,11 @@ module flagship (
 
   hdmi_video video (
     .clk(pixclk),
-    .aw_data(qaw_data), .aw_valid(qaw_valid), .aw_ready(qaw_ready),
-    .ar_data(qar_data), .ar_valid(qar_valid), .ar_ready(qar_ready),
-    .w_data(qw_data), .w_valid(qw_valid), .w_ready(qw_ready),
-    .b_data(qb_data), .b_valid(qb_valid), .b_ready(qb_ready),
-    .r_data(qr_data), .r_valid(qr_valid), .r_ready(qr_ready),
+    .bus_aw_data(qaw_data), .bus_aw_valid(qaw_valid), .bus_aw_ready(qaw_ready),
+    .bus_ar_data(qar_data), .bus_ar_valid(qar_valid), .bus_ar_ready(qar_ready),
+    .bus_w_data(qw_data), .bus_w_valid(qw_valid), .bus_w_ready(qw_ready),
+    .bus_b_data(qb_data), .bus_b_valid(qb_valid), .bus_b_ready(qb_ready),
+    .bus_r_data(qr_data), .bus_r_valid(qr_valid), .bus_r_ready(qr_ready),
     .rgb(hdmi_d), .hsync(hdmi_hs), .vsync(hdmi_vs), .de(hdmi_de)
   );
   // The chip's clock is the pixel clock turned over, so the chip's

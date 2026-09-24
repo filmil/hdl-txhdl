@@ -18,7 +18,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::hdmi::{Hdmi, I2cDevice, I2cInit, SII9134_WRITES};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -77,7 +77,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let (paw, par, pw, pb, pr) = lite.per;
+    let bus: LitePort<32, 32, 4> = lite.per.into();
     let (rgb_out, rgb) = signal::<U<24>, DefaultClock>();
     let (hs_out, hsync) = signal::<Bit, DefaultClock>();
     let (vs_out, vsync) = signal::<Bit, DefaultClock>();
@@ -96,11 +96,11 @@ fn main() {
 
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<DefaultClock>();
-        wave.add("aw", &paw);
-        wave.add("ar", &par);
-        wave.add("w", &pw);
-        wave.add("b", &pb);
-        wave.add("r", &pr);
+        wave.add("bus_aw", &bus.aw);
+        wave.add("bus_ar", &bus.ar);
+        wave.add("bus_w", &bus.w);
+        wave.add("bus_b", &bus.b);
+        wave.add("bus_r", &bus.r);
         wave.add("rgb", &rgb);
         wave.add("hsync", &hsync);
         wave.add("vsync", &vsync);
@@ -146,8 +146,7 @@ fn main() {
             bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
         ),
         join2(
-            video
-                .run((paw, par, pw), (pb, pr, rgb_out, hs_out, vs_out, de_out)),
+            video.run(bus, (rgb_out, hs_out, vs_out, de_out)),
             master
                 .run(sda_in, (rst_out, scl_out, sdal_out, done_out, fail_out)),
         ),

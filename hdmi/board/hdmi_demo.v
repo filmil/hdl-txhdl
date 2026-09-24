@@ -70,11 +70,11 @@ module hdmi_demo (
   // The video.
   hdmi_video video (
     .clk(clk),
-    .aw_data(35'd0), .aw_valid(1'b0), .aw_ready(),
-    .ar_data(35'd0), .ar_valid(1'b0), .ar_ready(),
-    .w_data(36'd0), .w_valid(1'b0), .w_ready(),
-    .b_data(), .b_valid(), .b_ready(1'b1),
-    .r_data(), .r_valid(), .r_ready(1'b1),
+    .bus_aw_data(35'd0), .bus_aw_valid(1'b0), .bus_aw_ready(),
+    .bus_ar_data(35'd0), .bus_ar_valid(1'b0), .bus_ar_ready(),
+    .bus_w_data(36'd0), .bus_w_valid(1'b0), .bus_w_ready(),
+    .bus_b_data(), .bus_b_valid(), .bus_b_ready(1'b1),
+    .bus_r_data(), .bus_r_valid(), .bus_r_ready(1'b1),
     .rgb(hdmi_d), .hsync(hdmi_hs), .vsync(hdmi_vs), .de(hdmi_de)
   );
   ODDR #(.DDR_CLK_EDGE("SAME_EDGE"), .INIT(1'b0), .SRTYPE("SYNC")) clk_oddr (

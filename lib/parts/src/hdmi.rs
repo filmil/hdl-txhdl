@@ -18,12 +18,12 @@
 //!
 //! [`I2cInit`] holds the chip in reset, then writes its configuration
 //! registers over I2C, and says whether every byte was acknowledged.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 
 use crate::bus::axi::Resp;
-use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 /// Words in the framebuffer: an address is the row in its top seven
 /// bits and the column in its low eight, so the picture is at most
@@ -176,15 +176,8 @@ impl<
 {
     async fn run(
         &mut self,
-        (aw, ar, w): (Rx<LiteAw<32>>, Rx<LiteAr<32>>, Rx<LiteW<32, 4>>),
-        (b, r, rgb, hsync, vsync, de): (
-            Tx<LiteB>,
-            Tx<LiteR<32>>,
-            Out<U<24>>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-        ),
+        bus: LitePort<32, 32, 4>,
+        (rgb, hsync, vsync, de): (Out<U<24>>, Out<Bit>, Out<Bit>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -207,16 +200,18 @@ impl<
             let green = shade.slice::<4, 4>();
             let blue = shade.slice::<0, 4>();
             // The bus.
-            let arh = ar.head();
-            let awh = aw.head();
-            let wh = w.head();
+            let arh = bus.ar.head();
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
             let rsel = arh.addr.slice::<2, 2>();
             let wsel = awh.addr.slice::<2, 2>();
-            let rgo = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let written = wh.data;
             let cx = self.cx.get();
             let cy = self.cy.get();
@@ -260,13 +255,13 @@ impl<
                 },
             });
             if rgo.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: word,
                     resp: Resp::Okay,
                 });
             }
             if wgo.to_bool() {
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
             rgb.set(
                 wide(red)
@@ -547,15 +542,14 @@ mod tests {
     #[test]
     fn the_raster_is_where_the_mode_puts_it() {
         let lite = crate::bus::axi_lite::axi_lite::<32, 32, 4>();
-        let (paw, par, pw, pb, pr) = lite.per;
+        let bus: LitePort<32, 32, 4> = lite.per.into();
         let (rgb_out, _rgb) = signal::<U<24>, DefaultClock>();
         let (hs_out, hs) = signal::<Bit, DefaultClock>();
         let (vs_out, vs) = signal::<Bit, DefaultClock>();
         let (de_out, de) = signal::<Bit, DefaultClock>();
         let mut unit = Tiny::default();
-        let mut sim = Running::new(
-            unit.run((paw, par, pw), (pb, pr, rgb_out, hs_out, vs_out, de_out)),
-        );
+        let mut sim =
+            Running::new(unit.run(bus, (rgb_out, hs_out, vs_out, de_out)));
         let (width, height) = (16usize, 11usize);
         let mut seen: Vec<(bool, bool, bool)> = Vec::new();
         for _ in 0..(2 * width * height) {

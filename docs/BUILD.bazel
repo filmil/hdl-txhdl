@@ -1301,7 +1301,7 @@ waveform(
         ("hdmi_i2c", "master"),
     ],
     signals = [
-        "//w/rx_valid=>w",
+        "//bus_w/rx_valid=>w",
         "//vsync=>vsync",
         "//hsync=>hsync",
         "//de=>de",
