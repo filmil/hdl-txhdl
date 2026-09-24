@@ -31,12 +31,12 @@
 //! `scratch` and `cause` are the two registers a reset does not
 //! touch, which is what makes them useful: a bootloader leaves a word
 //! in `scratch` and resets into the program that reads it.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 
 use crate::bus::axi::Resp;
-use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 /// Why the system reset, a bit each.
 pub const CAUSE_POWER: u32 = 1;
@@ -83,15 +83,8 @@ impl<
 {
     async fn run(
         &mut self,
-        (aw, ar, w, por, button, wdog): (
-            Rx<LiteAw<32>>,
-            Rx<LiteAr<32>>,
-            Rx<LiteW<32, 4>>,
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-        ),
-        (b, r, srst): (Tx<LiteB>, Tx<LiteR<32>>, Out<Bit>),
+        bus: LitePort<32, 32, 4>,
+        (por, button, wdog, srst): (In<Bit>, In<Bit>, In<Bit>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -102,16 +95,18 @@ impl<
             let button = button.get();
             let wdog = wdog.get();
             // The bus.
-            let arh = ar.head();
-            let awh = aw.head();
-            let wh = w.head();
+            let arh = bus.ar.head();
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
             let rsel = arh.addr.slice::<2, 3>();
             let wsel = awh.addr.slice::<2, 3>();
-            let rgo = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let written = wh.data;
             // A reset happens when the key is written and not
             // otherwise, so that a store to the wrong address cannot
@@ -143,13 +138,13 @@ impl<
                 wgo & (wsel == 6) ? scratch: written,
             });
             if rgo.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: word,
                     resp: Resp::Okay,
                 });
             }
             if wgo.to_bool() {
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
             // The reset the rest of the system takes: whatever the
             // outside is asserting, and the tail of a reset a program
