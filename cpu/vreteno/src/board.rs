@@ -39,7 +39,7 @@ use txhdl::comp::{
 };
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
-use txhdl_parts::bus::arbiter::Arbiter2;
+use txhdl_parts::bus::arbiter::Arbiter4;
 use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerPort, PerReq, B, R,
     W,
@@ -49,11 +49,14 @@ use txhdl_parts::bus::axi_lite::{
 };
 use txhdl_parts::bus::axi_pins::{AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::router::Router7;
+use txhdl_parts::dma::{LineFetch, LineStore, NoBeats, NoReads};
 use txhdl_parts::eth::EthByte;
+use txhdl_parts::ethdma::{FrameIn, FrameLen, FrameOut};
+use txhdl_parts::ethshare::EthShare;
 use txhdl_parts::ethslots::EthSlots;
 use txhdl_parts::plic::Plic3;
 use txhdl_parts::pwm::Pwm;
-use txhdl_parts::remote::eth::RemoteLink;
+use txhdl_parts::remote::eth::{RemoteLink, ETHERTYPE};
 use txhdl_parts::remote::{Answer as RemoteAnswer, Ask, Remote};
 
 /// Which device this board answers to on the wire. Every frame the
@@ -118,11 +121,17 @@ pub struct Board<const DIV: u32> {
     /// own, and this joins them to the link's channels; a top with no
     /// master ties them off.
     pub jtag: AxiPins<32, 32, 4, 2>,
-    /// The two hosts onto one link. The peripheral side carries four
-    /// bits of identifier, two for the hosts' own and two for the port,
-    /// which is room for four hosts before anything widens again: a
-    /// direct memory access engine is the next (issue 151).
-    pub arb: Arbiter2<32, 32, 4, 2, 4, 0>,
+    /// The four hosts onto one link: the core, the JTAG master, and
+    /// the Ethernet port's two engines, the one that fetches a frame to
+    /// send and the one that stores a frame received (issue 151). The
+    /// peripheral side carries four bits of identifier, two for the
+    /// hosts' own and two for the port, which was room for exactly
+    /// these four and is now full: a fifth host widens it.
+    ///
+    /// Taking turns rather than fixed priority, so that an engine
+    /// moving a frame cannot hold the core off the bus for the length
+    /// of it.
+    pub arb: Arbiter4<32, 32, 4, 2, 4, 0>,
     pub router: BoardRouter,
     pub pdmem: AxiPer<32, 32, 4, 4>,
     pub ptimer: AxiPer<32, 32, 4, 4>,
@@ -217,6 +226,36 @@ pub struct Board<const DIV: u32> {
     /// disagree with each other rather than one and a document.
     pub eth: EthSlots<{ isa::ETH_BUF_BASE as usize }>,
     // end{ethslot}
+    // begin{ethdma}
+    /// The engines behind the Ethernet port's registers, and what
+    /// stands between them and the wire (issue 151).
+    ///
+    /// Sending: the fetch engine reads the frame's words out of its
+    /// slot and `FrameOut` turns them into bytes, the last of them the
+    /// frame's last. Receiving: `FrameLen` finds the frame's length
+    /// again after the clock crossing, `FrameIn` packs its bytes into
+    /// words, and the store engine writes them into a slot.
+    ///
+    /// Each engine is a host of its own on the link, since each issues
+    /// bursts of its own, and the wire is shared with the remote
+    /// peripheral by EtherType.
+    pub fhost: AxiHost<32, 32, 4, 2, 4>,
+    pub shost: AxiHost<32, 32, 4, 2, 4>,
+    pub fetch: LineFetch<32, 2, 16, 16>,
+    pub store: LineStore<32, 2, 16, 16>,
+    pub fout: FrameOut,
+    pub flen: FrameLen,
+    pub fin: FrameIn,
+    /// The one wire, split by EtherType: the remote peripheral's frames
+    /// to it, every other frame to the Ethernet port.
+    pub share: EthShare<{ ETHERTYPE as usize }>,
+    /// Each engine uses one direction of its host, and a board joins
+    /// every channel to a unit, so the direction each engine never uses
+    /// is held by one that uses it no more: the fetch engine's write
+    /// beats, and the store engine's read data.
+    pub fnobeats: NoBeats,
+    pub snoreads: NoReads,
+    // end{ethdma}
     /// Three sources, each asking while its line is high: the serial
     /// port's receive interrupt, the board's own `irq` input, and the
     /// Ethernet port's arrival.
@@ -504,22 +543,76 @@ impl<const DIV: u32> Unit for Board<DIV> {
         // Its arrival line, which is the interrupt controller's third
         // source.
         let (eth_irq_o, eth_irq_i) = signal::<Bit, DefaultClock>();
-        // What it says to the engines that would move the frames, and
-        // what they would say back. There are no engines yet (issue
-        // 151), so the lines it reads are driven low and nothing reads
-        // what it drives: it answers its registers and no frame moves.
-        // `tx_busy` low is what lets `tx_ready` read one until a
-        // driver starts a transmit; nothing then clears `tx_go`, so
-        // the second transmit waits, which is the truth about a port
-        // with no engine behind it.
-        let (_eth_tx_busy_o, eth_tx_busy_i) = signal::<Bit, DefaultClock>();
-        let (_eth_rx_busy_o, eth_rx_busy_i) = signal::<Bit, DefaultClock>();
-        let (_eth_rx_len_o, eth_rx_len_i) = signal::<U<16>, DefaultClock>();
-        let (_eth_rx_which_o, eth_rx_which_i) = signal::<U<1>, DefaultClock>();
-        let (eth_tx_base_o, _eth_tx_base_i) = signal::<U<32>, DefaultClock>();
-        let (eth_tx_bytes_o, _eth_tx_bytes_i) = signal::<U<16>, DefaultClock>();
-        let (eth_tx_start_o, _eth_tx_start_i) = signal::<Bit, DefaultClock>();
-        let (eth_rx_base_o, _eth_rx_base_i) = signal::<U<32>, DefaultClock>();
+        // What it says to the engines that move the frames, and what
+        // they say back (issue 151).
+        //
+        // `tx_busy` is the byte side's `running` rather than the fetch
+        // engine's, and there is no race in that. The fetch engine
+        // goes idle the cycle after it hands over its last word, and
+        // the byte side cannot finish until it has taken that word and
+        // sent at least one more byte, so the fetch engine is always
+        // idle strictly before the byte side is. A second transmit
+        // therefore never finds the fetch engine still busy.
+        //
+        // `rx_busy` is the store engine's `running`, whose fall is the
+        // first moment a received frame is certainly in memory, which
+        // is what the register block waits for before it raises the
+        // arrival.
+        let (eth_tx_busy_o, eth_tx_busy_i) = signal::<Bit, DefaultClock>();
+        let (eth_rx_busy_o, eth_rx_busy_i) = signal::<Bit, DefaultClock>();
+        let (eth_rx_len_o, eth_rx_len_i) = signal::<U<16>, DefaultClock>();
+        let (eth_rx_which_o, eth_rx_which_i) = signal::<U<1>, DefaultClock>();
+        let (eth_tx_base_o, eth_tx_base_i) = signal::<U<32>, DefaultClock>();
+        let (eth_tx_bytes_o, eth_tx_bytes_i) = signal::<U<16>, DefaultClock>();
+        let (eth_tx_start_o, eth_tx_start_i) = signal::<Bit, DefaultClock>();
+        let (eth_rx_base_o, eth_rx_base_i) = signal::<U<32>, DefaultClock>();
+        // A start goes to both sending units; a received frame's length
+        // to both the store engine and the register block; and the
+        // store engine's busy line to the register block and to the
+        // unit that must not start the next frame under it.
+        let eth_tx_start_fetch = eth_tx_start_i.clone();
+        let eth_rx_len_store = eth_rx_len_i.clone();
+        let eth_rx_busy_hold = eth_rx_busy_i.clone();
+        // Sending: words from the fetch engine to the byte side, and the
+        // word count the byte side works out for the engine.
+        let (fword_tx, fword_rx) = chan::<U<32>, DefaultClock>();
+        let (fnwords_o, fnwords_i) = signal::<U<16>, DefaultClock>();
+        let (fetch_run_o, _fetch_run_i) = signal::<Bit, DefaultClock>();
+        // Receiving: a frame with its length found again, then words to
+        // the store engine.
+        let (lenbyte_tx, lenbyte_rx) = chan::<EthByte, DefaultClock>();
+        let (flen_len_o, flen_len_i) = signal::<U<16>, DefaultClock>();
+        let (sword_tx, sword_rx) = chan::<U<32>, DefaultClock>();
+        let (store_go_o, store_go_i) = signal::<Bit, DefaultClock>();
+        // The one wire, with its two users on the sharing unit's sides:
+        // the remote peripheral's link, and the Ethernet port.
+        let (tolink_tx, tolink_rx) = chan::<EthByte, DefaultClock>();
+        let (fromlink_tx, fromlink_rx) = chan::<EthByte, DefaultClock>();
+        let (toeth_tx, toeth_rx) = chan::<EthByte, DefaultClock>();
+        let (frometh_tx, frometh_rx) = chan::<EthByte, DefaultClock>();
+        // Each engine's host, and its place on the arbiter.
+        let (fissue_tx, fissue_rx) = chan::<Issue<32>, DefaultClock>();
+        let (fwbeat_tx, fwbeat_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (frelease_tx, frelease_rx) = chan::<Grant<2>, DefaultClock>();
+        let (fgrant_tx, fgrant_rx) = chan::<Grant<2>, DefaultClock>();
+        let (fdone_tx, fdone_rx) = chan::<Done<2>, DefaultClock>();
+        let (frdata_tx, frdata_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (faw_tx, faw_rx) = chan::<Aw<32, 2>, DefaultClock>();
+        let (far_tx, far_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (fw_tx, fw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (fb_tx, fb_rx) = chan::<B<2>, DefaultClock>();
+        let (fr_tx, fr_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (sissue_tx, sissue_rx) = chan::<Issue<32>, DefaultClock>();
+        let (swbeat_tx, swbeat_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (srelease_tx, srelease_rx) = chan::<Grant<2>, DefaultClock>();
+        let (sgrant_tx, sgrant_rx) = chan::<Grant<2>, DefaultClock>();
+        let (sdone_tx, sdone_rx) = chan::<Done<2>, DefaultClock>();
+        let (srdata_tx, srdata_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (saw_tx, saw_rx) = chan::<Aw<32, 2>, DefaultClock>();
+        let (sar_tx, sar_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (sw_tx, sw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (sb_tx, sb_rx) = chan::<B<2>, DefaultClock>();
+        let (sr_tx, sr_rx) = chan::<R<32, 2>, DefaultClock>();
         let (req3_tx, req3_rx) = chan::<PerReq<32, 4>, DefaultClock>();
         let (wd3_tx, wd3_rx) = chan::<W<32, 4>, DefaultClock>();
         let (ans3_tx, ans3_rx) = chan::<Answer<4>, DefaultClock>();
@@ -547,322 +640,442 @@ impl<const DIV: u32> Unit for Board<DIV> {
         // own unit, for the same reason. The serial port before the
         // interrupt controller, and the controller before the core,
         // for the same reason again.
+        //
+        // The Ethernet port's units are split around the register block,
+        // for the same reason. The ones that drive what the block reads
+        // come before it: the receive side's slot number, which the block
+        // turns into the address the store engine writes to, and its
+        // length. The ones that read what the block drives come after it:
+        // the store engine, which takes that address, and the sending
+        // side, which takes the start. With the receive side after the
+        // block, the block read last step's slot, so the store engine
+        // wrote the first frame to slot zero while the block told the
+        // core slot one; the board test caught it as a frame of the right
+        // length whose every byte read back zero.
         join2(
             join2(
                 join2(
                     join2(
-                        // The debug module before the core, whose
-                        // requests the core reads in the same step.
+                        self.share.run(
+                            (net_rx, fromlink_rx, frometh_rx),
+                            (net_tx, tolink_tx, toeth_tx),
+                        ),
+                        self.flen.run(toeth_rx, (lenbyte_tx, flen_len_o)),
+                    ),
+                    self.fin.run(
+                        (lenbyte_rx, flen_len_i, eth_rx_busy_hold),
+                        (sword_tx, eth_rx_len_o, store_go_o, eth_rx_which_o),
+                    ),
+                ),
+                join2(
+                    join2(
                         join2(
-                            self.dmod.run(
-                                LitePort {
-                                    aw: daw_rx,
-                                    ar: dar_rx,
-                                    w: dw_rx,
-                                    b: db_tx,
-                                    r: dr_tx,
-                                },
-                                (
-                                    debug_i,
-                                    dbg_rdata_i,
-                                    haltreq_o,
-                                    resumereq_o,
-                                    dbg_regno_o,
-                                    dbg_wdata_o,
-                                    dbg_we_o,
+                            join2(
+                                // The debug module before the core, whose
+                                // requests the core reads in the same step.
+                                join2(
+                                    self.dmod.run(
+                                        LitePort {
+                                            aw: daw_rx,
+                                            ar: dar_rx,
+                                            w: dw_rx,
+                                            b: db_tx,
+                                            r: dr_tx,
+                                        },
+                                        (
+                                            debug_i,
+                                            dbg_rdata_i,
+                                            haltreq_o,
+                                            resumereq_o,
+                                            dbg_regno_o,
+                                            dbg_wdata_o,
+                                            dbg_we_o,
+                                        ),
+                                    ),
+                                    self.pdm.run(
+                                        (aw6_rx, ar6_rx, w6_rx, db_rx, dr_rx),
+                                        (daw_tx, dar_tx, dw_tx, b6_tx, r6_tx),
+                                    ),
+                                ),
+                                self.timer.run(
+                                    PerPort {
+                                        req: req1_rx,
+                                        w: wd1_rx,
+                                        ans: ans1_tx,
+                                        r: rb1_tx,
+                                    },
+                                    (rst_timer, tirq_o, sirq_o),
                                 ),
                             ),
-                            self.pdm.run(
-                                (aw6_rx, ar6_rx, w6_rx, db_rx, dr_rx),
-                                (daw_tx, dar_tx, dw_tx, b6_tx, r6_tx),
+                            join2(
+                                join2(
+                                    self.uart.run(
+                                        LitePort {
+                                            aw: law_rx,
+                                            ar: lar_rx,
+                                            w: lw_rx,
+                                            b: lb_tx,
+                                            r: lr_tx,
+                                        },
+                                        (rst_uart, rx, tx, uirq_o),
+                                    ),
+                                    self.pwm.run(
+                                        LitePort {
+                                            aw: paw_pwm_rx,
+                                            ar: par_pwm_rx,
+                                            w: pw_pwm_rx,
+                                            b: pb_pwm_tx,
+                                            r: pr_pwm_tx,
+                                        },
+                                        pwm_pins,
+                                    ),
+                                ),
+                                join2(
+                                    self.plic.run(
+                                        LitePort {
+                                            aw: paw_rx,
+                                            ar: par_rx,
+                                            w: pw_rx,
+                                            b: pb_tx,
+                                            r: pr_tx,
+                                        },
+                                        (
+                                            rst_plic, uirq_i, irq, eth_irq_i,
+                                            eirq_o,
+                                        ),
+                                    ),
+                                    self.eth.run(
+                                        LitePort {
+                                            aw: paw_eth_rx,
+                                            ar: par_eth_rx,
+                                            w: pw_eth_rx,
+                                            b: pb_eth_tx,
+                                            r: pr_eth_tx,
+                                        },
+                                        (
+                                            eth_tx_busy_i,
+                                            eth_rx_busy_i,
+                                            eth_rx_len_i,
+                                            eth_rx_which_i,
+                                            eth_tx_base_o,
+                                            eth_tx_bytes_o,
+                                            eth_tx_start_o,
+                                            eth_rx_base_o,
+                                            eth_irq_o,
+                                        ),
+                                    ),
+                                ),
                             ),
                         ),
-                        self.timer.run(
-                            PerPort {
-                                req: req1_rx,
-                                w: wd1_rx,
-                                ans: ans1_tx,
-                                r: rb1_tx,
-                            },
-                            (rst_timer, tirq_o, sirq_o),
+                        join2(
+                            self.dmem.run(
+                                PerPort {
+                                    req: req0_rx,
+                                    w: wd0_rx,
+                                    ans: ans0_tx,
+                                    r: rb0_tx,
+                                },
+                                (),
+                            ),
+                            self.cpu.run(
+                                (
+                                    rst,
+                                    eirq_i,
+                                    tirq_i,
+                                    sirq_i,
+                                    rdata_rx,
+                                    done_rx,
+                                    grant_rx,
+                                    haltreq_i,
+                                    resumereq_i,
+                                    dbg_regno_i,
+                                    dbg_wdata_i,
+                                    dbg_we_i,
+                                ),
+                                (
+                                    halt,
+                                    instr_o,
+                                    retire_o,
+                                    issue_tx,
+                                    wbeat_tx,
+                                    release_tx,
+                                    debug_o,
+                                    dbg_rdata_o,
+                                ),
+                            ),
                         ),
                     ),
                     join2(
                         join2(
-                            self.uart.run(
-                                LitePort {
-                                    aw: law_rx,
-                                    ar: lar_rx,
-                                    w: lw_rx,
-                                    b: lb_tx,
-                                    r: lr_tx,
-                                },
-                                (rst_uart, rx, tx, uirq_o),
+                            join2(
+                                join2(
+                                    self.host.run(
+                                        (
+                                            issue_rx, wbeat_rx, b_rx, r_rx,
+                                            release_rx,
+                                        ),
+                                        (
+                                            aw_tx, ar_tx, w_tx, grant_tx,
+                                            done_tx, rdata_tx,
+                                        ),
+                                    ),
+                                    self.arb.run(
+                                        (
+                                            aw_rx, ar_rx, w_rx, jaw_rx, jar_rx,
+                                            jw_rx, faw_rx, far_rx, fw_rx,
+                                            saw_rx, sar_rx, sw_rx, xb_rx,
+                                            xr_rx,
+                                        ),
+                                        (
+                                            xaw_tx, xar_tx, xw_tx, b_tx, r_tx,
+                                            jb_tx, jr_tx, fb_tx, fr_tx, sb_tx,
+                                            sr_tx,
+                                        ),
+                                    ),
+                                ),
+                                self.jtag.run(
+                                    AxiPinsIn {
+                                        awid: jtag_awid,
+                                        awaddr: jtag_awaddr,
+                                        awlen: jtag_awlen,
+                                        awsize: jtag_awsize,
+                                        awburst: jtag_awburst,
+                                        awlock: jtag_awlock,
+                                        awcache: jtag_awcache,
+                                        awprot: jtag_awprot,
+                                        awvalid: jtag_awvalid,
+                                        wdata: jtag_wdata,
+                                        wstrb: jtag_wstrb,
+                                        wlast: jtag_wlast,
+                                        wvalid: jtag_wvalid,
+                                        bready: jtag_bready,
+                                        arid: jtag_arid,
+                                        araddr: jtag_araddr,
+                                        arlen: jtag_arlen,
+                                        arsize: jtag_arsize,
+                                        arburst: jtag_arburst,
+                                        arlock: jtag_arlock,
+                                        arcache: jtag_arcache,
+                                        arprot: jtag_arprot,
+                                        arvalid: jtag_arvalid,
+                                        rready: jtag_rready,
+                                        b: jb_rx,
+                                        r: jr_rx,
+                                    },
+                                    AxiPinsOut {
+                                        aw: jaw_tx,
+                                        ar: jar_tx,
+                                        w: jw_tx,
+                                        awready: jtag_awready,
+                                        wready: jtag_wready,
+                                        bid: jtag_bid,
+                                        bresp: jtag_bresp,
+                                        bvalid: jtag_bvalid,
+                                        arready: jtag_arready,
+                                        rid: jtag_rid,
+                                        rdata: jtag_rdata,
+                                        rresp: jtag_rresp,
+                                        rlast: jtag_rlast,
+                                        rvalid: jtag_rvalid,
+                                    },
+                                ),
                             ),
-                            self.pwm.run(
-                                LitePort {
-                                    aw: paw_pwm_rx,
-                                    ar: par_pwm_rx,
-                                    w: pw_pwm_rx,
-                                    b: pb_pwm_tx,
-                                    r: pr_pwm_tx,
-                                },
-                                pwm_pins,
-                            ),
-                        ),
-                        join2(
-                            self.plic.run(
-                                LitePort {
-                                    aw: paw_rx,
-                                    ar: par_rx,
-                                    w: pw_rx,
-                                    b: pb_tx,
-                                    r: pr_tx,
-                                },
-                                (rst_plic, uirq_i, irq, eth_irq_i, eirq_o),
-                            ),
-                            self.eth.run(
-                                LitePort {
-                                    aw: paw_eth_rx,
-                                    ar: par_eth_rx,
-                                    w: pw_eth_rx,
-                                    b: pb_eth_tx,
-                                    r: pr_eth_tx,
-                                },
+                            self.router.run(
                                 (
-                                    eth_tx_busy_i,
-                                    eth_rx_busy_i,
-                                    eth_rx_len_i,
-                                    eth_rx_which_i,
-                                    eth_tx_base_o,
-                                    eth_tx_bytes_o,
-                                    eth_tx_start_o,
-                                    eth_rx_base_o,
-                                    eth_irq_o,
+                                    xaw_rx, xar_rx, xw_rx, b0_rx, r0_rx, b1_rx,
+                                    r1_rx, b2_rx, r2_rx, b3_rx, r3_rx, b4_rx,
+                                    r4_rx, b5_rx, r5_rx, b6_rx, r6_rx,
+                                ),
+                                (
+                                    aw0_tx, ar0_tx, w0_tx, aw1_tx, ar1_tx,
+                                    w1_tx, aw2_tx, ar2_tx, w2_tx, aw3_tx,
+                                    ar3_tx, w3_tx, aw4_tx, ar4_tx, w4_tx,
+                                    aw5_tx, ar5_tx, w5_tx, aw6_tx, ar6_tx,
+                                    w6_tx, xb_tx, xr_tx,
                                 ),
                             ),
                         ),
-                    ),
-                ),
-                join2(
-                    self.dmem.run(
-                        PerPort {
-                            req: req0_rx,
-                            w: wd0_rx,
-                            ans: ans0_tx,
-                            r: rb0_tx,
-                        },
-                        (),
-                    ),
-                    self.cpu.run(
-                        (
-                            rst,
-                            eirq_i,
-                            tirq_i,
-                            sirq_i,
-                            rdata_rx,
-                            done_rx,
-                            grant_rx,
-                            haltreq_i,
-                            resumereq_i,
-                            dbg_regno_i,
-                            dbg_wdata_i,
-                            dbg_we_i,
-                        ),
-                        (
-                            halt,
-                            instr_o,
-                            retire_o,
-                            issue_tx,
-                            wbeat_tx,
-                            release_tx,
-                            debug_o,
-                            dbg_rdata_o,
+                        join2(
+                            join2(
+                                join2(
+                                    self.pdmem.run(
+                                        (
+                                            aw0_rx, ar0_rx, w0_rx, ans0_rx,
+                                            rb0_rx,
+                                        ),
+                                        (req0_tx, wd0_tx, b0_tx, r0_tx),
+                                    ),
+                                    self.ptimer.run(
+                                        (
+                                            aw1_rx, ar1_rx, w1_rx, ans1_rx,
+                                            rb1_rx,
+                                        ),
+                                        (req1_tx, wd1_tx, b1_tx, r1_tx),
+                                    ),
+                                ),
+                                join2(
+                                    self.puart.run(
+                                        (
+                                            aw2_rx, ar2_rx, w2_rx, lb_rx,
+                                            lr_rx, pb_pwm_rx, pr_pwm_rx, vb,
+                                            vr, pb_rem_rx, pr_rem_rx,
+                                            pb_eth_rx, pr_eth_rx,
+                                        ),
+                                        (
+                                            law_tx, lar_tx, lw_tx, paw_pwm_tx,
+                                            par_pwm_tx, pw_pwm_tx, vaw, var,
+                                            vw, paw_rem_tx, par_rem_tx,
+                                            pw_rem_tx, paw_eth_tx, par_eth_tx,
+                                            pw_eth_tx, b2_tx, r2_tx,
+                                        ),
+                                    ),
+                                    join2(
+                                        self.pddr3.run(
+                                            (
+                                                aw3_rx, ar3_rx, w3_rx, ans3_rx,
+                                                rb3_rx,
+                                            ),
+                                            (req3_tx, wd3_tx, b3_tx, r3_tx),
+                                        ),
+                                        join2(
+                                            join2(
+                                                self.pplic.run(
+                                                    (
+                                                        aw4_rx, ar4_rx, w4_rx,
+                                                        pb_rx, pr_rx,
+                                                    ),
+                                                    (
+                                                        paw_tx, par_tx, pw_tx,
+                                                        b4_tx, r4_tx,
+                                                    ),
+                                                ),
+                                                join2(
+                                                    self.prom.run(
+                                                        (
+                                                            aw5_rx, ar5_rx,
+                                                            w5_rx, ans5_rx,
+                                                            rb5_rx,
+                                                        ),
+                                                        (
+                                                            req5_tx, wd5_tx,
+                                                            b5_tx, r5_tx,
+                                                        ),
+                                                    ),
+                                                    self.rom.run(
+                                                        PerPort {
+                                                            req: req5_rx,
+                                                            w: wd5_rx,
+                                                            ans: ans5_tx,
+                                                            r: rb5_tx,
+                                                        },
+                                                        (),
+                                                    ),
+                                                ),
+                                            ),
+                                            // The peripheral before the link, so
+                                            // a transaction and the first byte of
+                                            // its frame are one step apart rather
+                                            // than two.
+                                            join2(
+                                                self.remote.run(
+                                                    LitePort {
+                                                        aw: paw_rem_rx,
+                                                        ar: par_rem_rx,
+                                                        w: pw_rem_rx,
+                                                        b: pb_rem_tx,
+                                                        r: pr_rem_tx,
+                                                    },
+                                                    (ans_rx, ask_tx),
+                                                ),
+                                                self.link.run(
+                                                    (ask_rx, tolink_rx),
+                                                    (ans_tx, fromlink_tx),
+                                                ),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                            self.ddr3.run(
+                                PerPort {
+                                    req: req3_rx,
+                                    w: wd3_rx,
+                                    ans: ans3_tx,
+                                    r: rb3_tx,
+                                },
+                                (
+                                    sys_clk, sys_rst, calib, ui_clk, ui_rst,
+                                    ck_p, ck_n, mem_rst_n, cke, cs_n, ras_n,
+                                    cas_n, we_n, row, bank, dm, odt, dq, dqs,
+                                    dqs_n,
+                                ),
+                            ),
                         ),
                     ),
                 ),
             ),
             join2(
-                join2(
-                    join2(
-                        join2(
-                            self.host.run(
-                                (issue_rx, wbeat_rx, b_rx, r_rx, release_rx),
-                                (
-                                    aw_tx, ar_tx, w_tx, grant_tx, done_tx,
-                                    rdata_tx,
-                                ),
-                            ),
-                            self.arb.run(
-                                (
-                                    aw_rx, ar_rx, w_rx, jaw_rx, jar_rx, jw_rx,
-                                    xb_rx, xr_rx,
-                                ),
-                                (
-                                    xaw_tx, xar_tx, xw_tx, b_tx, r_tx, jb_tx,
-                                    jr_tx,
-                                ),
-                            ),
-                        ),
-                        self.jtag.run(
-                            AxiPinsIn {
-                                awid: jtag_awid,
-                                awaddr: jtag_awaddr,
-                                awlen: jtag_awlen,
-                                awsize: jtag_awsize,
-                                awburst: jtag_awburst,
-                                awlock: jtag_awlock,
-                                awcache: jtag_awcache,
-                                awprot: jtag_awprot,
-                                awvalid: jtag_awvalid,
-                                wdata: jtag_wdata,
-                                wstrb: jtag_wstrb,
-                                wlast: jtag_wlast,
-                                wvalid: jtag_wvalid,
-                                bready: jtag_bready,
-                                arid: jtag_arid,
-                                araddr: jtag_araddr,
-                                arlen: jtag_arlen,
-                                arsize: jtag_arsize,
-                                arburst: jtag_arburst,
-                                arlock: jtag_arlock,
-                                arcache: jtag_arcache,
-                                arprot: jtag_arprot,
-                                arvalid: jtag_arvalid,
-                                rready: jtag_rready,
-                                b: jb_rx,
-                                r: jr_rx,
-                            },
-                            AxiPinsOut {
-                                aw: jaw_tx,
-                                ar: jar_tx,
-                                w: jw_tx,
-                                awready: jtag_awready,
-                                wready: jtag_wready,
-                                bid: jtag_bid,
-                                bresp: jtag_bresp,
-                                bvalid: jtag_bvalid,
-                                arready: jtag_arready,
-                                rid: jtag_rid,
-                                rdata: jtag_rdata,
-                                rresp: jtag_rresp,
-                                rlast: jtag_rlast,
-                                rvalid: jtag_rvalid,
-                            },
-                        ),
+                self.store.run(
+                    (
+                        sgrant_rx,
+                        sdone_rx,
+                        sword_rx,
+                        eth_rx_base_i,
+                        eth_rx_len_store,
+                        store_go_i,
                     ),
-                    self.router.run(
-                        (
-                            xaw_rx, xar_rx, xw_rx, b0_rx, r0_rx, b1_rx, r1_rx,
-                            b2_rx, r2_rx, b3_rx, r3_rx, b4_rx, r4_rx, b5_rx,
-                            r5_rx, b6_rx, r6_rx,
-                        ),
-                        (
-                            aw0_tx, ar0_tx, w0_tx, aw1_tx, ar1_tx, w1_tx,
-                            aw2_tx, ar2_tx, w2_tx, aw3_tx, ar3_tx, w3_tx,
-                            aw4_tx, ar4_tx, w4_tx, aw5_tx, ar5_tx, w5_tx,
-                            aw6_tx, ar6_tx, w6_tx, xb_tx, xr_tx,
-                        ),
-                    ),
+                    (sissue_tx, swbeat_tx, srelease_tx, eth_rx_busy_o),
                 ),
                 join2(
                     join2(
-                        join2(
-                            self.pdmem.run(
-                                (aw0_rx, ar0_rx, w0_rx, ans0_rx, rb0_rx),
-                                (req0_tx, wd0_tx, b0_tx, r0_tx),
-                            ),
-                            self.ptimer.run(
-                                (aw1_rx, ar1_rx, w1_rx, ans1_rx, rb1_rx),
-                                (req1_tx, wd1_tx, b1_tx, r1_tx),
-                            ),
+                        self.fout.run(
+                            (fword_rx, eth_tx_bytes_i, eth_tx_start_i),
+                            (frometh_tx, eth_tx_busy_o, fnwords_o),
                         ),
-                        join2(
-                            self.puart.run(
-                                (
-                                    aw2_rx, ar2_rx, w2_rx, lb_rx, lr_rx,
-                                    pb_pwm_rx, pr_pwm_rx, vb, vr, pb_rem_rx,
-                                    pr_rem_rx, pb_eth_rx, pr_eth_rx,
-                                ),
-                                (
-                                    law_tx, lar_tx, lw_tx, paw_pwm_tx,
-                                    par_pwm_tx, pw_pwm_tx, vaw, var, vw,
-                                    paw_rem_tx, par_rem_tx, pw_rem_tx,
-                                    paw_eth_tx, par_eth_tx, pw_eth_tx, b2_tx,
-                                    r2_tx,
-                                ),
+                        self.fetch.run(
+                            (
+                                fgrant_rx,
+                                fdone_rx,
+                                frdata_rx,
+                                eth_tx_base_i,
+                                fnwords_i,
+                                eth_tx_start_fetch,
                             ),
-                            join2(
-                                self.pddr3.run(
-                                    (aw3_rx, ar3_rx, w3_rx, ans3_rx, rb3_rx),
-                                    (req3_tx, wd3_tx, b3_tx, r3_tx),
-                                ),
-                                join2(
-                                    join2(
-                                        self.pplic.run(
-                                            (
-                                                aw4_rx, ar4_rx, w4_rx, pb_rx,
-                                                pr_rx,
-                                            ),
-                                            (
-                                                paw_tx, par_tx, pw_tx, b4_tx,
-                                                r4_tx,
-                                            ),
-                                        ),
-                                        join2(
-                                            self.prom.run(
-                                                (
-                                                    aw5_rx, ar5_rx, w5_rx,
-                                                    ans5_rx, rb5_rx,
-                                                ),
-                                                (req5_tx, wd5_tx, b5_tx, r5_tx),
-                                            ),
-                                            self.rom.run(
-                                                PerPort {
-                                                    req: req5_rx,
-                                                    w: wd5_rx,
-                                                    ans: ans5_tx,
-                                                    r: rb5_tx,
-                                                },
-                                                (),
-                                            ),
-                                        ),
-                                    ),
-                                    // The peripheral before the link, so
-                                    // a transaction and the first byte of
-                                    // its frame are one step apart rather
-                                    // than two.
-                                    join2(
-                                        self.remote.run(
-                                            LitePort {
-                                                aw: paw_rem_rx,
-                                                ar: par_rem_rx,
-                                                w: pw_rem_rx,
-                                                b: pb_rem_tx,
-                                                r: pr_rem_tx,
-                                            },
-                                            (ans_rx, ask_tx),
-                                        ),
-                                        self.link.run(
-                                            (ask_rx, net_rx),
-                                            (ans_tx, net_tx),
-                                        ),
-                                    ),
-                                ),
-                            ),
+                            (fissue_tx, frelease_tx, fword_tx, fetch_run_o),
                         ),
                     ),
-                    self.ddr3.run(
-                        PerPort {
-                            req: req3_rx,
-                            w: wd3_rx,
-                            ans: ans3_tx,
-                            r: rb3_tx,
-                        },
-                        (
-                            sys_clk, sys_rst, calib, ui_clk, ui_rst, ck_p,
-                            ck_n, mem_rst_n, cke, cs_n, ras_n, cas_n, we_n,
-                            row, bank, dm, odt, dq, dqs, dqs_n,
+                    join2(
+                        join2(
+                            self.fhost.run(
+                                (
+                                    fissue_rx,
+                                    fwbeat_rx,
+                                    fb_rx,
+                                    fr_rx,
+                                    frelease_rx,
+                                ),
+                                (
+                                    faw_tx, far_tx, fw_tx, fgrant_tx, fdone_tx,
+                                    frdata_tx,
+                                ),
+                            ),
+                            self.shost.run(
+                                (
+                                    sissue_rx,
+                                    swbeat_rx,
+                                    sb_rx,
+                                    sr_rx,
+                                    srelease_rx,
+                                ),
+                                (
+                                    saw_tx, sar_tx, sw_tx, sgrant_tx, sdone_tx,
+                                    srdata_tx,
+                                ),
+                            ),
+                        ),
+                        join2(
+                            self.fnobeats.run((), fwbeat_tx),
+                            self.snoreads.run(srdata_rx, ()),
                         ),
                     ),
                 ),
