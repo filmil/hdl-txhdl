@@ -69,9 +69,9 @@ whatever came next.
 \item The tag moves on when a transaction is finished with, not when
 it leaves, so the late answer above is told apart from the next
 transaction's.
-\item A read is answered on \code{r} with the word the answer brought,
-and a write on \code{b}; either carries \code{SLVERR} when the answer
-said the transaction failed or the wait ran out.
+\item A read is answered on \code{bus\_r} with the word the answer
+brought, and a write on \code{bus\_b}; either carries \code{SLVERR}
+when the answer said the transaction failed or the wait ran out.
 \end{itemize}
 
 \subsection*{Verification}

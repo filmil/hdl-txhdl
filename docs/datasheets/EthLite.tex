@@ -10,9 +10,10 @@
 \code{EthLite} stands between an AXI-Lite host and the two halves of
 the MAC. It takes bytes from AXI-Lite writes and sends them to
 \code{EthTx} on \code{tx}. It answers AXI-Lite reads with the bytes
-\code{EthRx} offers on \code{rx}. Its AXI-Lite side is \code{aw},
-\code{ar} and \code{w} in and \code{b} and \code{r} out, with 32-bit
-addresses and words. \code{irq} is high while a received byte waits.
+\code{EthRx} offers on \code{rx}. Its AXI-Lite side is one port,
+\code{bus}, a \code{LitePort} with 32-bit addresses and words:
+\code{bus\_aw}, \code{bus\_ar} and \code{bus\_w} in, and \code{bus\_b}
+and \code{bus\_r} out. \code{irq} is high while a received byte waits.
 
 \subsection*{Parameters}
 
@@ -45,15 +46,17 @@ high on a frame's last byte. 9: high when a byte was there. \\
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item A write goes when \code{aw} and \code{w} both offer and \code{b}
-is ready. A write to the transmit word also waits until \code{tx} is
-ready, so the unit answers it only when the transmitter has taken the
+\item A write goes when \code{bus\_aw} and \code{bus\_w} both offer
+and \code{bus\_b} is ready. A write to the transmit word also waits
+until \code{tx} is ready, so the unit answers it only when the
+transmitter has taken the
 byte. A client that writes faster than the transmitter takes is held
 off rather than losing bytes.
 \item A write to the transmit word sends bits 7 to 0 and bit 8 of the
 written data on \code{tx}. The unit answers every write
 \code{Okay}; a write to any other word does nothing else.
-\item A read goes when \code{ar} offers and \code{r} is ready. The unit
+\item A read goes when \code{bus\_ar} offers and \code{bus\_r} is ready.
+The unit
 answers every read \code{Okay}. A read of word 1 or word 3 answers
 zero.
 \item A read of the receive word takes the waiting byte, if one waits,

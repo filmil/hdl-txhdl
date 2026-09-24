@@ -12,8 +12,9 @@ SiI9134 on the Alinx AX7A200B. It is one unit on the pixel clock. It
 counts the raster, reads its framebuffer under the beam, and drives
 \code{rgb}, 24 bits with red on top, \code{hsync}, \code{vsync} and
 \code{de} from registers. A host paints the framebuffer through the
-unit's AXI-Lite side: \code{aw}, \code{ar} and \code{w} in, \code{b}
-and \code{r} out, with 32-bit addresses and words.
+unit's AXI-Lite side, one port, \code{bus}, a \code{LitePort} with
+32-bit addresses and words: \code{bus\_aw}, \code{bus\_ar} and
+\code{bus\_w} in, \code{bus\_b} and \code{bus\_r} out.
 
 \subsection*{Parameters}
 
@@ -87,8 +88,9 @@ by repeating its bits, so 15 is full scale.
 the cursor, and moves the cursor to the next column. From the last
 column it moves to the first column of the next row, and from the last
 row to the first. A fixed burst to this word paints a run of pixels.
-\item A write goes when \code{aw} and \code{w} both offer and \code{b}
-is ready. A read goes when \code{ar} offers and \code{r} is ready. The
+\item A write goes when \code{bus\_aw} and \code{bus\_w} both offer
+and \code{bus\_b} is ready. A read goes when \code{bus\_ar} offers and
+\code{bus\_r} is ready. The
 unit answers every transaction \code{Okay}. A read of word 2 or word 3
 answers zero, and a write to word 0 or word 3 does nothing else.
 \end{itemize}
