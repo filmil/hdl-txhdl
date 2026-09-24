@@ -32,4 +32,5 @@ pub mod spi;
 pub mod station;
 pub mod syscon;
 pub mod tracer;
+pub mod trng;
 pub mod wdog;

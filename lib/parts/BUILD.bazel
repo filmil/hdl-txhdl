@@ -43,6 +43,7 @@ rust_library(
         "src/spi.rs",
         "src/station.rs",
         "src/tracer.rs",
+        "src/trng.rs",
         "src/syscon.rs",
         "src/wdog.rs",
         "src/lib.rs",
