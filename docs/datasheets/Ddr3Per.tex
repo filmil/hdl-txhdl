@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: Ddr3Per
-\datasheet{Ddr3Per}{The board's DDR3 memory as an AXI peripheral: the Wishbone bridge and UberDDR3's controller.}
+\datasheet{Ddr3Per}{The board's DDR3 memory as an AXI peripheral: the Wishbone bridge and AMD's MIG controller, which makes the design's clock.}
 
 \dsfacts{\code{ddr3/src/lib.rs}}{\code{ddr3::Ddr3Per}}%
 {\code{//docs:vreteno}, \code{//docs:axi}}
@@ -9,11 +9,12 @@
 
 \code{Ddr3Per} puts the DDR3 memory of the Alinx AX7A200 on an AXI
 link. It is a unit of units with two children. \code{bridge} is
-\code{AxiWb} of \code{txhdl\_parts}, which turns single-beat bursts
-into requests on a pipelined Wishbone bus. \code{ctl} is \code{Ddr3},
-UberDDR3's controller behind the wrapper \code{ddr3/hdl/ddr3\_wb32.v},
-which gives it a Wishbone of 32-bit words. Nine Wishbone signals join
-the two.
+\code{AxiWb} of \code{txhdl\_parts}, which serves a burst a word at a
+time as requests on a pipelined Wishbone bus. \code{ctl} is
+\code{Ddr3}, AMD's MIG 7 Series controller, which the build generates
+as \code{//ddr3:ddr3\_mig}, behind the wrapper
+\code{ddr3/hdl/ddr3\_wb32.v}, which gives it a Wishbone of 32-bit
+words. Nine Wishbone signals join the two.
 
 \code{Ddr3} is a foreign unit. Its netlist is an instance of the
 module \code{ddr3\_wb32}, which the lowering names and does not write.
@@ -23,28 +24,16 @@ pins.
 
 On the link side the peripheral is the client of an \code{AxiPer}:
 \code{req} and \code{wd} in, \code{ans} and \code{rb} out. On the
-memory side its ports are the controller's clocks and reset, the
-\code{calib} output, and the memory's pins, with \code{dq},
-\code{dqs} and \code{dqs\_n} as pads both ways.
+memory side its ports are the board's clock and the controller's
+reset in, the design's clock and its reset out, since the controller
+makes them, the \code{calib} output, and the memory's pins, with
+\code{dq}, \code{dqs} and \code{dqs\_n} as pads both ways.
 
 \subsection*{Parameters}
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}lp{0.7\textwidth}@{}}
-\toprule
-Parameter & Meaning \\
-\midrule
-\code{MICRON\_SIM} & Passed to the controller as \code{MICRON\_SIM}. It
-shortens the controller's power-on waits for the Micron model: one in
-simulation, zero on the board. \\
-\code{BIST} & Passed to the controller as \code{BIST\_MODE}. It is
-the controller's self test after calibration, which walks the whole
-memory once; zero where a simulation cannot wait for it. \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-The tables use \code{Ddr3Per<0, 0>}. The bridge inside is
+None. The controller calibrates in hardware, and its simulation
+library carries the variant with the fast calibration, so neither
+wants a parameter. The bridge inside is
 \code{AxiWb<32, 2, 28>}, with \code{AW} equal to 28.
 
 \subsection*{Address map}
@@ -66,21 +55,28 @@ The cut to 28 bits removes the base, so the memory sees offsets from
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item The bridge takes one single-beat burst at a time. A read goes on
-the lines at once, and a write once its beat has arrived.
+\item The bridge takes one burst at a time and serves it a word at a
+time at consecutive word addresses. A read's words go on the lines
+one after another and its beats go back as they are acknowledged,
+the last of them marked; a write goes a beat at a time as its beats
+arrive and is answered once after the last.
 \item The bridge offers a request with \code{cyc} and \code{stb}, and
 the controller takes it in a cycle with no \code{stall}. The bridge
 then holds \code{cyc} alone until \code{ack}, which brings the word
 for a read. The answer goes on the link when the link has room.
 \item Every Wishbone line the bridge drives is a register.
-\item The wrapper repeats the word across the controller's burst and
-sets the lane bits of that one word, so a write touches only its word.
-It returns the lane on the controller's \code{aux} lines and picks the
-word read out of the burst by it. The wrapper holds no register.
-\item In the netlist the controller's \code{i\_controller\_clk} is the
-design's clock. \code{ddr3\_clk}, \code{ref\_clk},
-\code{ddr3\_clk\_90} and \code{rst\_n} are ports. \code{rst\_n} is
-active low.
+\item The wrapper repeats the word across the controller's burst of
+eight with the mask clear on that one word alone, so a write touches
+only its word; a read keeps its lane until the burst comes back and
+picks its word out of it. One request is in flight at a time, and a
+write is acknowledged the cycle after the controller takes it.
+\item The controller makes the clocks. It takes the board's 200~MHz on
+\code{sys\_clk}, which is also its delay reference, runs the memory
+at 400~MHz, and hands out \code{ui\_clk}, the 100~MHz the design
+runs on, with \code{ui\_rst} high until that clock is good. In the
+netlist the controller's \code{i\_ui\_clk} is the design's clock,
+which is that same clock fed back. \code{sys\_rst} is active high, a
+pulse at power-on on the board.
 \item \code{calib} is the controller's \code{o\_calib\_complete}.
 \item In simulation the model stalls for \code{MODEL\_WARMUP}, 64
 cycles, and then answers each request a cycle after it takes it.
@@ -97,17 +93,21 @@ first while the model still calibrates. It reads them back and checks
 that \code{calib} did not rise before the warm-up.
 \item \code{//ddr3:ddr3\_test} also runs
 \code{the\_controller\_is\_instantiated\_and\_not\_written}. It checks
-that the Verilog and the VHDL of \code{Ddr3Per<1, 0>} instantiate
-\code{ddr3\_wb32} with its parameters. The controller's clock must be
-on \code{clk} and its pads on the ports. The bridge's module must be
+that the Verilog and the VHDL of \code{Ddr3Per} instantiate
+\code{ddr3\_wb32}. The controller's clock must be on \code{clk}, the
+board's clock and the clock it makes on the ports, and its pads on
+the ports. The bridge's module must be
 written and the controller's must not.
 \item \code{//cpu/vreteno:board\_test} runs
 \code{the\_memory\_test\_runs\_on\_the\_board}, a compiled program that
 writes and reads the memory through the model and must print
 \code{ddr3 ok}, and \code{the\_netlist\_holds\_the\_controller}.
-\item \code{//ddr3/sim:wrapper\_test} simulates the wrapper and
-UberDDR3's controller against the Micron model under Vivado's
-simulator: calibrated, written and read back. It is manual.
+\item \code{//ddr3/sim:wrapper\_test} simulates the wrapper and the
+controller against the Micron model under Vivado's simulator:
+calibrated, two words written at different lanes and read back. It
+is manual. \code{//ddr3/sim:example\_test} is AMD's own proof of the
+controller as configured, the example design's traffic generator
+writing the memory and reading it back through it; manual too.
 \item \code{//cpu/vreteno/board/sim:}\allowbreak\code{board\_test} simulates the whole
 board, this controller included, against two Micron models. It is
 manual.
@@ -121,7 +121,10 @@ manual.
 \subsection*{Limits}
 
 The Rust run of \code{Ddr3} is a model and not the controller. A
-lowered netlist needs \code{//ddr3:hdl}, the wrapper and UberDDR3's
-RTL, beside it. The bridge serves one single-beat burst at a time.
-\code{//docs:vreteno} states that the design with the DDR3 memory has
-a bitstream that meets timing, and has not yet been run on the board.
+lowered netlist needs \code{//ddr3:hdl}, the wrapper, beside it, and
+the controller's library, \code{//ddr3:ddr3\_mig}, which the build
+generates under Vivado and which stays out of the tree, being AMD's.
+The bridge serves one burst at a time. \code{//docs:vreteno} states
+that the design with MIG as the controller has a bitstream that meets
+timing, and that its run on the board is owed: the run it reports was
+made with the controller before it.

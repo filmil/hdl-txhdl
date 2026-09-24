@@ -22,7 +22,8 @@ the page at \code{0x3000} behind the AXI-Lite bridge
 \code{0x3000}, the pulse width modulator at \code{0x3100}, whatever a
 board hangs on the slot at \code{0x3200}, and the remote peripheral at
 \code{0x3300}. The DDR3 memory sits behind an \code{AxiPer} and
-holds UberDDR3's controller as a foreign module. The interrupt
+holds AMD's MIG controller as a foreign module, which makes the
+design's clock from the board's. The interrupt
 controller, \code{Plic2}, and the debug module, \code{Dm}, each sit
 behind a \code{LiteBridge1} of their own; the module's lines go to
 the core's halt and resume requests and its register access, and take
@@ -43,17 +44,13 @@ Parameter & Meaning \\
 \code{DIV} & The serial port's cycles per bit, as \code{Uart<DIV>}.
 The tables use 868, the value \code{board\_netlist board} writes for
 115200 baud at 100~MHz. \\
-\code{MICRON\_SIM} & The DDR3 controller's \code{MICRON\_SIM}: one to
-shorten its power-on waits for the Micron model, zero on the board. \\
-\code{BIST} & The DDR3 controller's \code{BIST\_MODE}, its self test
-after calibration. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\code{board\_netlist} lowers \code{Board<868, 0, 0>} for the board and
-\code{Board<16, 1, 0>} for simulation. \code{//cpu/vreteno:board\_test}
-runs \code{Board<4, 1, 0>}.
+\code{board\_netlist} lowers \code{Board<868>} for the board and
+\code{Board<16>} for simulation. \code{//cpu/vreteno:board\_test}
+runs \code{Board<4>}.
 
 \subsection*{Address map}
 
@@ -105,8 +102,9 @@ and from the bus above it.
 \item The core's tracker is \code{AxiHost<32, 32, 4, 2, 4>}: 32-bit
 addresses and words, four lanes, two-bit identifiers, four of them.
 \item \code{rst} goes to the core, the timer, the serial port and the
-interrupt controller. The DDR3 controller has its own active-low
-\code{ddr3\_rst\_n}.
+interrupt controller. The DDR3 controller has its own reset,
+\code{sys\_rst}, active high, and hands back \code{ui\_rst}, high
+until the clock it makes is good.
 \item The interrupt controller's source 1 is the serial port's
 interrupt line, and its source 2 is \code{irq}; both ask while high.
 Its line is the core's external interrupt. The timer's line goes to
@@ -143,23 +141,24 @@ The top, \code{vreteno\_board.v}, does the following around the
 lowered \code{board}:
 
 \begin{itemize}
-\item One PLL on the board's 200~MHz differential clock makes 100~MHz
-for the design, 400~MHz for \code{ddr3\_clk}, the same 400~MHz a
-quarter cycle late for \code{ddr3\_clk\_90}, and 200~MHz for
-\code{ref\_clk}.
-\item The memory's reset follows the button and the PLL's lock. The
-core's reset also waits for \code{calib}. Each passes through two
-flip-flops on the design's clock.
+\item It hands the board's 200~MHz differential clock to the memory
+controller on \code{sys\_clk}, which makes the design's 100~MHz,
+\code{ui\_clk}, from it; the board has no clock generator of its own.
+\item The controller's reset, \code{sys\_rst}, is a pulse at power-on
+counted on the board's clock and nothing else. The core's reset
+follows the button, \code{ui\_rst} being low and \code{calib}, through
+two flip-flops on the design's clock.
 \item It ties \code{irq} low.
-\item Its four LEDs, lit when driven low, show the core halted, a
-heartbeat from bit 25 of a counter, the memory calibrated, and the PLL
-locked.
+\item Its four LEDs, lit when driven low, show the modulator's first
+channel or the core halted, the serial line driven at least once, the
+memory calibrated, and a heartbeat from bit 25 of a counter, which
+says the controller's clock is good.
 \end{itemize}
 
 \subsection*{Verification}
 
 \begin{itemize}
-\item \code{//cpu/vreteno:board\_test} runs \code{Board<4, 1, 0>} in
+\item \code{//cpu/vreteno:board\_test} runs \code{Board<4>} in
 Rust. \code{the\_greeting\_runs\_on\_the\_board} must print
 \code{hello from rust} and halt within 8000 cycles.
 \code{the\_memory\_test\_runs\_on\_the\_board} must print
