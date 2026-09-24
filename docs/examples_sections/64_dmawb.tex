@@ -1,0 +1,85 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Engines Against the Bridge They Really Talk Through}
+\label{sec:x-dmawb}
+
+\S\ref{sec:x-dma} and \S\ref{sec:x-dmaw} measure \code{LineFetch} and
+\code{LineStore} against a memory the example defines: local, on the
+peripheral side of the link, and answering a burst in full. That is
+the right model for measuring an engine. It is not the path to the
+board's memory.
+
+That path goes through \code{AxiWb}, which puts each word of a burst
+on a pipelined Wishbone as its own request. This run is the engines
+behind a real one.
+
+\subsection{The comment that was aimed at the wrong thing}
+
+\code{ex\_dma} defines its own memory, and says of it:
+
+\begin{quote}
+A model that answered one beat per request would make a burst look
+like a word and the run would prove nothing about bursting, which is
+the whole of what is being measured here.
+\end{quote}
+
+That was written to justify making the \emph{test model} stricter.
+The peripheral the engines were meant to be pointed at answered one
+beat per request, which is the model that comment rejects as proving
+nothing. The test had been hardened against a behaviour the system
+was never checked for, and issue 471 is what the system turned out to
+do.
+
+So this example exists because an example is not the system. The
+model was never wrong; it was answering a question nobody had asked
+of the real path.
+
+\subsection{What the run does}
+
+The two engines are chained rather than checked apart. The fetch
+engine reads a memory through one bridge, its words feed the store
+engine, and that writes them to a second memory through a second
+bridge. The check at the end, that the far memory holds what the near
+one held, is therefore a check of both engines and both bridges at
+once, and a word lost anywhere in the path is a word missing at the
+end.
+
+A bridge and a memory each rather than an arbiter between them: a
+host sharing one link is the board's business, and one set of
+Wishbone lines cannot carry two bridges.
+
+Both memories stall for ten cycles before they answer anything and
+answer after two thereafter, which is nearer a controller that
+calibrates than a memory that answers at once.
+
+\subsection{That the run ended is its own assertion}
+
+The interesting failure here is not a wrong word. Both engines count
+the beats of a burst themselves and neither reads the returned beat's
+\code{last}, so a peripheral that answers too few beats leaves them
+waiting for the rest for ever. The fault is a run that does not
+finish.
+
+Asserted separately for that reason. Without it the failure would be
+reported as missing data and the reason would be a guess.
+
+Against the bridge as it was before issue 471, with everything else
+the same, the run reaches its cycle cap with both engines still
+running and one word of sixty four landed. Against the bridge as it
+is, sixty four words cross in 435 cycles and both engines go idle.
+
+\subsection{What it costs, measured}
+
+\S\ref{sec:x-dma} moves sixty four words in 93 cycles against a local
+memory that answers at once. The same sixty four words through two
+real bridges, chained through both engines, with a memory that
+calibrates and then answers after two cycles, take 435.
+
+Neither number is the other's competitor: the first measures an
+engine and the second measures a path. The figure worth carrying is
+that the path is where the cycles are, which is what a burst served
+a word at a time costs, and what issuing several requests before
+their acknowledgements would win back.
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_dmawb} printed
+when the build ran it.},%
+label={lst:x-dmawb-out}]{out_dmawb.txt}
