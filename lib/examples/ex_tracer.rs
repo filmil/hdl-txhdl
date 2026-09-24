@@ -23,7 +23,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, Clock, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::tracer::{word, Tracer, CTRL_FREEZE, CTRL_RUN};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -55,7 +55,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let (paw, par, pw, pb, pr) = lite.per;
+    let bus: LitePort<32, 32, 4> = lite.per.into();
     let (take_out, take) = signal::<Bit, DefaultClock>();
     let (entry_out, entry) = signal::<U<128>, DefaultClock>();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
@@ -69,11 +69,11 @@ fn main() {
         wave.add("take", &take);
         wave.add("entry", &entry);
         wave.add("halt", &halt);
-        wave.add("aw", &paw);
-        wave.add("ar", &par);
-        wave.add("w", &pw);
-        wave.add("b", &pb);
-        wave.add("r", &pr);
+        wave.add("bus_aw", &bus.aw);
+        wave.add("bus_ar", &bus.ar);
+        wave.add("bus_w", &bus.w);
+        wave.add("bus_b", &bus.b);
+        wave.add("bus_r", &bus.r);
         wave.add("tracer", &tracer);
         wave.start();
     }
@@ -150,7 +150,7 @@ fn main() {
                 bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
             ),
         ),
-        tracer.run((take, entry, halt, paw, par, pw), (pb, pr)),
+        tracer.run(bus, (take, entry, halt)),
     ));
     println!("  t  what the program saw");
     for _ in 0..300 {
