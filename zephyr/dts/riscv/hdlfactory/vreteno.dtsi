@@ -22,6 +22,7 @@
 	chosen {
 		zephyr,console = &uart0;
 		zephyr,shell-uart = &uart0;
+		zephyr,entropy = &trng0;
 	};
 
 	cpus {
@@ -104,6 +105,15 @@
 			interrupt-parent = <&plic>;
 			interrupts = <3 1>;
 			local-mac-address = [00 0a 35 00 00 01];
+			status = "okay";
+		};
+
+		// The entropy source, the sixth slot of the peripheral page.
+		// Named as the chosen entropy device above, so the random
+		// subsystem takes its numbers from it and not from a counter.
+		trng0: rng@3500 {
+			compatible = "hdlfactory,vreteno-trng";
+			reg = <0x00003500 0x100>;
 			status = "okay";
 		};
 

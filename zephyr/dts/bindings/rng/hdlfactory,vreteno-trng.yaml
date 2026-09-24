@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The entropy source of the Vreteno machine: four words, a word of
+# entropy taken by the read, the status, the control and the raw
+# samples. The register map is stated in `lib/parts/src/trng.rs` and
+# repeated in `entropy_vreteno.c`, and the two are held to each other
+# by `cpu/vreteno/tests/zephyr_dts.rs`.
+
+description: Vreteno entropy source
+
+compatible: "hdlfactory,vreteno-trng"
+
+include: base.yaml
+
+properties:
+  reg:
+    required: true

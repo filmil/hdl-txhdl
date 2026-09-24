@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config ENTROPY_VRETENO
+	bool "Vreteno entropy source"
+	default y
+	depends on DT_HAS_HDLFACTORY_VRETENO_TRNG_ENABLED
+	depends on ENTROPY_GENERATOR
+	select ENTROPY_HAS_DRIVER
+	help
+	  The entropy source of the Vreteno machine: ring oscillators
+	  sampled, folded, debiased and buffered by the hardware, read a
+	  word at a time. `ENTROPY_HAS_DRIVER` is what makes the random
+	  subsystem take its numbers from a device rather than from the
+	  test generator, which is a counter.

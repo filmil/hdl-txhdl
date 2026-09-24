@@ -43,6 +43,8 @@ cmake -B build -S samples/hello_world -GNinja \
 | `dts/riscv/hdlfactory/vreteno.dtsi` | the machine, at the addresses it decodes |
 | `dts/bindings/serial/` | the binding for the serial port |
 | `drivers/serial/uart_vreteno.c` | the console driver, polled |
+| `dts/bindings/rng/` | the binding for the entropy source |
+| `drivers/entropy/entropy_vreteno.c` | the entropy driver, which the network stack's random numbers come from |
 
 ## Why a driver rather than a 16550
 

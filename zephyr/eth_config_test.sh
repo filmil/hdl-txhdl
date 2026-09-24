@@ -36,6 +36,20 @@ want "CONFIG_ETH_DRIVER=y"
 # And the interface is an Ethernet one.
 want "CONFIG_NET_L2_ETHERNET=y"
 
+# The stack's random numbers come from the entropy source and not
+# from the test generator, which is a counter (issue 458). The first
+# line is the driver, the second what makes the subsystem look for a
+# device, the third the generator it then picks.
+want "CONFIG_ENTROPY_VRETENO=y"
+want "CONFIG_ENTROPY_HAS_DRIVER=y"
+want "CONFIG_ENTROPY_DEVICE_RANDOM_GENERATOR=y"
+if grep -qx "CONFIG_TEST_RANDOM_GENERATOR=y" "$config"; then
+	echo "PRESENT CONFIG_TEST_RANDOM_GENERATOR=y, a counter is not random"
+	fail=1
+else
+	echo "ok      no test random generator"
+fi
+
 if [ "$fail" -ne 0 ]; then
 	echo
 	echo "The Ethernet driver is not in this image."
