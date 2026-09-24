@@ -9,7 +9,7 @@
 //! lowering, which the proc-macro route closes by reading the
 //! `Unit` impl. Behaviour is not here at all; the bodies are empty.
 use crate::comp::trace::{collect, Kind, Probe, Traceable};
-use crate::comp::{Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Wire};
+use crate::comp::{Clock, DefaultClock, In, Mem, Out, Pad, Reg, Rx, Tx, Wire};
 use crate::types::Value;
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -287,6 +287,109 @@ pub fn field<V: Value>(e: Expr, name: &str) -> Expr {
         }
     }
     panic!("`{name}` is not a field of the value")
+}
+
+/// One end a unit may take as a port, as the netlist needs it: what
+/// it is, how wide, on which clock, and how its value is laid out.
+/// `#[derive(Ports)]` reads a struct's fields through this, so a
+/// struct of ports declared anywhere, in any crate, is a side of a
+/// unit (issue 483).
+pub trait PortEnd {
+    /// `In`, `Out`, `Tx`, `Rx` or `Pad`.
+    const KIND: Kind;
+    /// The width of the value, in bits.
+    const WIDTH: usize;
+    /// The name of the clock the end is on.
+    const CLOCK: &'static str;
+    /// The fields of the value, as [`Value::layout`] gives them.
+    fn layout() -> Vec<(&'static str, usize)>;
+}
+macro_rules! port_end {
+    ($t:ident, $k:ident, $($b:tt)*) => {
+        impl<T: Value + $($b)*, C: Clock> PortEnd for $t<T, C> {
+            const KIND: Kind = Kind::$k;
+            const WIDTH: usize = T::WIDTH;
+            const CLOCK: &'static str = C::NAME;
+            fn layout() -> Vec<(&'static str, usize)> {
+                T::layout()
+            }
+        }
+    };
+}
+port_end!(In, In, Copy + 'static);
+port_end!(Out, Out, Copy + 'static);
+port_end!(Pad, Pad, Copy + 'static);
+port_end!(Tx, Tx, crate::types::Transaction + 'static);
+port_end!(Rx, Rx, crate::types::Transaction + 'static);
+
+/// A port of a struct of ports: its field's name and what
+/// [`PortEnd`] says of the field's type.
+pub struct BundlePort {
+    /// The field's name, which is the port's name in the netlist.
+    pub name: &'static str,
+    /// What the port is.
+    pub kind: Kind,
+    /// Its width.
+    pub width: usize,
+    /// Its clock.
+    pub clock: &'static str,
+    /// The layout of its value, for a field of it read in a body.
+    pub layout: Vec<(&'static str, usize)>,
+}
+
+/// The port a field of type `P` named `name` is.
+pub fn bundle_port<P: PortEnd>(name: &'static str) -> BundlePort {
+    BundlePort {
+        name,
+        kind: P::KIND,
+        width: P::WIDTH,
+        clock: P::CLOCK,
+        layout: P::layout(),
+    }
+}
+
+/// A struct whose fields are ports, so that one name on a side of
+/// `run` stands for all of them: `bus: LitePort<32, 32, 4>` and
+/// `bus.ar` in the body. Derived with `#[derive(Ports)]`; the fields
+/// are the ports in declaration order, each named `side_field`, so
+/// `bus.ar` is the port `bus_ar` of the netlist.
+pub trait Ports {
+    /// The ports, in declaration order.
+    fn ports() -> Vec<BundlePort>;
+}
+
+/// The ports of `B` as a lowered unit lists its own, when the unit
+/// takes it as the side `side`: each named `side_field`, so a unit can
+/// take two sides of one type and their ports stay apart.
+#[doc(hidden)]
+pub fn bundle_ports<B: Ports>(
+    side: &str,
+) -> Vec<(String, Kind, usize, &'static str)> {
+    B::ports()
+        .into_iter()
+        .map(|p| (format!("{side}_{}", p.name), p.kind, p.width, p.clock))
+        .collect()
+}
+
+/// A field of the value on the port `port` of `B`, as [`field`] finds
+/// one on a port whose type the lowering could read.
+#[doc(hidden)]
+pub fn bundle_field<B: Ports>(e: Expr, port: &str, name: &str) -> Expr {
+    let Some(p) = B::ports().into_iter().find(|p| p.name == port) else {
+        panic!("`{port}` is not a port of the struct of ports")
+    };
+    let mut hi = p.width;
+    for (n, w) in p.layout {
+        hi -= w;
+        if n == name {
+            return if w == 1 {
+                Expr::index(e, Expr::Num(hi as u128))
+            } else {
+                Expr::slice(e, hi, w)
+            };
+        }
+    }
+    panic!("`{name}` is not a field of the value on `{port}`")
 }
 
 /// An expression of a lowered body, as `#[lower]` builds it: what both
@@ -612,12 +715,29 @@ pub fn instance(unit: Lowered, name: &str, args: &[(&str, &str)]) -> Instance {
     for ((p, _, _, _), (by, a)) in unit.ports.iter().zip(args) {
         let port = if by.is_empty() {
             p.clone()
-        } else {
-            assert!(
-                unit.ports.iter().any(|(n, _, _, _)| n == by),
-                "`{name}` has no port `{by}`"
-            );
+        } else if unit.ports.iter().any(|(n, _, _, _)| n == by) {
             by.to_string()
+        } else {
+            // A field of a struct implementing `Ports`, which the child
+            // names `side_field`; the parent sees the field and not the
+            // child's side, so the field finds the one port so named.
+            let tail = format!("_{by}");
+            let hits: Vec<&String> = unit
+                .ports
+                .iter()
+                .map(|(n, _, _, _)| n)
+                .filter(|n| n.ends_with(&tail))
+                .collect();
+            assert!(!hits.is_empty(), "`{name}` has no port `{by}`");
+            assert!(
+                hits.len() == 1,
+                "`{name}` has more than one port for the field `{by}`: {}",
+                hits.iter()
+                    .map(|h| h.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            hits[0].clone()
         };
         assert!(
             !conns.iter().any(|(c, _)| *c == port),

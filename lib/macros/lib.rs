@@ -369,6 +369,38 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
     out.parse().unwrap()
 }
 
+/// `#[derive(Ports)]`: a struct whose fields are the ends a unit takes,
+/// so that a side of `run` is the struct under one name. The fields
+/// are the ports in declaration order, each named for its field, and
+/// what each is comes from its type through `PortEnd` when `lowered`
+/// runs, so `#[lower]` needs nothing but the trait and the struct can
+/// be declared in any file of any crate (issue 483).
+#[proc_macro_derive(Ports)]
+pub fn derive_ports(input: TokenStream) -> TokenStream {
+    let item = parse_item(input);
+    let (Some(body), "struct") = (&item.body, item.kind.as_str()) else {
+        return err(
+            Span::call_site(),
+            "Ports needs a struct with named fields",
+        );
+    };
+    let ports = field_names(body)
+        .iter()
+        .zip(field_types(body))
+        .map(|(n, t)| format!("::txhdl::netlist::bundle_port::<{t}>(\"{n}\")"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "impl{b} ::txhdl::netlist::Ports for {n}{a} {{\n\
+         fn ports() -> Vec<::txhdl::netlist::BundlePort> {{ vec![{ports}] }}\n}}",
+        b = item.bounds,
+        n = item.name,
+        a = item.args
+    )
+    .parse()
+    .unwrap()
+}
+
 /// `#[derive(Trace)]`: every field is registered under its own name,
 /// or under the name `#[rename("...")]` gives it in the netlist.
 #[proc_macro_derive(Trace, attributes(rename))]
@@ -4237,6 +4269,15 @@ thread_local! {
     /// value's type, so a field of a port's value can be sliced out.
     static PTYPES: std::cell::RefCell<Vec<(String, String)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// The sides of the unit that are structs implementing `Ports`,
+    /// each by name with its type's text.
+    static BUNDLES: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// The ports the body reads through such a side, `side.f`, each
+    /// with the side's type and the field, so a field of its value
+    /// finds its layout.
+    static BUNDLED: std::cell::RefCell<Vec<(String, String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// The names of the ports of the unit being lowered, for the check
     /// below: an expression that names one of them is not a constant.
     static PNAMES: std::cell::RefCell<Vec<String>> =
@@ -4382,7 +4423,21 @@ fn field_of(base: &str, f: &str) -> Result<String, String> {
             .map(|(_, t)| t.clone())
     });
     let Some(ty) = ty else {
-        return Err(format!("`{port}` is not a port, so `.{f}` has no layout"));
+        let side = BUNDLED.with(|d| {
+            d.borrow()
+                .iter()
+                .find(|(n, _, _)| n == port)
+                .map(|(_, t, fld)| (t.clone(), fld.clone()))
+        });
+        return match side {
+            Some((s, fld)) => Ok(format!(
+                "::txhdl::netlist::bundle_field::<{s}>({base}, \"{fld}\", \
+                 \"{f}\")"
+            )),
+            None => {
+                Err(format!("`{port}` is not a port, so `.{f}` has no layout"))
+            }
+        };
     };
     Ok(format!("::txhdl::netlist::field::<{ty}>({base}, \"{f}\")"))
 }
@@ -4808,14 +4863,22 @@ fn substitute(
     out
 }
 
+/// What a side whose type is not a port is: a struct of this file,
+/// read here, each field with its type; or a struct of anywhere else,
+/// which must implement `Ports`, its fields found when `lowered` runs.
+enum StructSide {
+    Read(Vec<(String, String)>),
+    Ports,
+}
+
 /// The ports of a side whose type is a struct of the file, each field
 /// with its type, the struct's parameters bound to the side's
-/// arguments; `None` for a side that is a port or a tuple, and an
-/// error for a type that is neither a port nor such a struct.
+/// arguments; `StructSide::Ports` for a struct declared elsewhere,
+/// and `None` for a side that is a port or a tuple.
 fn port_struct_fields(
     ty: &[TokenTree],
     structs: &[PortStruct],
-) -> Result<Option<Vec<(String, String)>>, String> {
+) -> Result<Option<StructSide>, String> {
     let lt = ty
         .iter()
         .position(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == '<'))
@@ -4828,10 +4891,7 @@ fn port_struct_fields(
         return Ok(None);
     }
     let Some(s) = structs.iter().find(|s| s.name == head) else {
-        return Err(format!(
-            "`{head}` is not a port, and no struct `{head}` in this file \
-             names ports"
-        ));
+        return Ok(Some(StructSide::Ports));
     };
     let args: Vec<Vec<TokenTree>> = if lt < ty.len() {
         angle_args(ty, lt)
@@ -4856,7 +4916,7 @@ fn port_struct_fields(
         };
         map.push((pn.clone(), v));
     }
-    Ok(Some(
+    Ok(Some(StructSide::Read(
         s.fields
             .iter()
             .map(|(n, t)| {
@@ -4865,7 +4925,7 @@ fn port_struct_fields(
                 (n.clone(), t)
             })
             .collect(),
-    ))
+    )))
 }
 
 /// `run`'s body with every `side.field` of a side that is a port
@@ -4884,6 +4944,31 @@ fn port_fields(
         {
             let after_dot = i > 0 && punct_at(&ts, i - 1, '.');
             let (b, f) = (b.to_string(), f.to_string());
+            let wild = bound.iter().any(|(n, fs)| *n == b && fs == &["*"]);
+            // A side implementing `Ports`: `bus.aw` is the port
+            // `bus_aw`, named for the side as well as the field, so a
+            // unit may take two sides of one type and two units of one
+            // run may take the same type without their ports meeting.
+            if wild && !after_dot {
+                let port = format!("{b}_{f}");
+                let ty = BUNDLES.with(|s| {
+                    s.borrow()
+                        .iter()
+                        .find(|(n, _)| *n == b)
+                        .map(|(_, t)| t.clone())
+                });
+                BUNDLED.with(|d| {
+                    let mut d = d.borrow_mut();
+                    if let (Some(ty), false) =
+                        (ty, d.iter().any(|(p, _, _)| *p == port))
+                    {
+                        d.push((port.clone(), ty, f.clone()));
+                    }
+                });
+                out.push(TokenTree::Ident(Ident::new(&port, ts[i + 2].span())));
+                i += 3;
+                continue;
+            }
             if !after_dot
                 && bound.iter().any(|(n, fs)| *n == b && fs.contains(&f))
             {
@@ -6632,6 +6717,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         *h.borrow_mut() = find_helpers(Span::call_site().local_file())
     });
     PTYPES.with(|p| p.borrow_mut().clear());
+    BUNDLES.with(|p| p.borrow_mut().clear());
+    BUNDLED.with(|p| p.borrow_mut().clear());
     PNAMES.with(|p| p.borrow_mut().clear());
     // The wires the inlining names are numbered from one in each
     // unit, so the same source lowers to the same netlist whatever
@@ -6717,7 +6804,29 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             Ok(f) => f,
             Err(e) => return err(p[colon + 1].span(), &e),
         };
-        if let Some(fields) = fields {
+        // A struct declared elsewhere: its fields are not visible here,
+        // so each `side.f` the body reads is taken as the port `f`,
+        // and the ports themselves come from `Ports` when `lowered`
+        // runs. A marker in `pairs` holds its place among the sides.
+        if let Some(StructSide::Ports) = fields {
+            let n = match &p[..colon] {
+                [TokenTree::Ident(n)] => n.to_string(),
+                [m, TokenTree::Ident(n)] if is_ident(m, "mut") => n.to_string(),
+                _ => {
+                    return err(
+                        p[0].span(),
+                        "a side whose struct is declared in another file \
+                         is `name: S`, and `S` implements `Ports`",
+                    )
+                }
+            };
+            let ty = text_of(&p[colon + 1..]);
+            bound.push((n.clone(), vec!["*".to_string()]));
+            BUNDLES.with(|b| b.borrow_mut().push((n.clone(), ty.clone())));
+            pairs.push((n, format!("@ports {ty}"), p[0].span()));
+            continue;
+        }
+        if let Some(StructSide::Read(fields)) = fields {
             let names: Vec<String> =
                 fields.iter().map(|(n, _)| n.clone()).collect();
             match &p[..colon] {
@@ -6787,7 +6896,11 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             return err(*s, &format!("port `{n}` is named twice"));
         }
     }
-    let pnames: Vec<String> = pairs.iter().map(|(n, _, _)| n.clone()).collect();
+    let mut pnames: Vec<String> = pairs
+        .iter()
+        .filter(|(_, t, _)| !t.starts_with("@ports "))
+        .map(|(n, _, _)| n.clone())
+        .collect();
     let mut ports: Vec<String> = Vec::new();
     // The ports by name and kind, for a unit of units' joins.
     let mut pkinds: Vec<(String, String)> = Vec::new();
@@ -6797,6 +6910,12 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut refused = TokenStream::new();
     for (pname, ty, span) in pairs {
         if ty == "()" {
+            continue;
+        }
+        if let Some(b) = ty.strip_prefix("@ports ") {
+            ports.push(format!(
+                "p.extend(::txhdl::netlist::bundle_ports::<{b}>(\"{pname}\"));"
+            ));
             continue;
         }
         let (kind, inner) = if let Some(x) = ty.strip_prefix("Out<") {
@@ -6825,9 +6944,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             None => (inner, "::txhdl::comp::DefaultClock".to_string()),
         };
         ports.push(format!(
-            "(\"{pname}\".to_string(), ::txhdl::comp::trace::Kind::{kind}, \
+            "p.push((\"{pname}\".to_string(), ::txhdl::comp::trace::Kind::{kind}, \
              <{inner} as ::txhdl::types::Value>::WIDTH, \
-             <{clock} as ::txhdl::comp::Clock>::NAME)"
+             <{clock} as ::txhdl::comp::Clock>::NAME));"
         ));
         pkinds.push((pname.clone(), kind.to_string()));
         if kind == "Tx" || kind == "Rx" {
@@ -6854,6 +6973,14 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         Group::new(fbody.delimiter(), port_fields(fbody.stream(), &bound));
     fbody_ports.set_span(fbody.span());
     let fbody = &fbody_ports;
+    // The ports read through a `Ports` side are names of the unit's
+    // ports as much as any other, for the checks on wires' names.
+    for (f, _, _) in BUNDLED.with(|d| d.borrow().clone()) {
+        if !pnames.contains(&f) {
+            PNAMES.with(|p| p.borrow_mut().push(f.clone()));
+            pnames.push(f);
+        }
+    }
     // Every `loop` in run's body is a process: one, or several under
     // `join2(async { loop .. }, async { loop .. })`.
     fn find_loops(ts: &[TokenTree], out: &mut Vec<Group>) {
@@ -6884,6 +7011,14 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // No loop: a unit of units, whose run joins its children.
     let mut nets: Vec<String> = Vec::new();
     let mut instances: Vec<String> = Vec::new();
+    if loops.is_empty() && BUNDLES.with(|b| !b.borrow().is_empty()) {
+        return err(
+            body.span(),
+            "a unit of units cannot yet take a side whose struct is declared \
+             in another file: its joins are checked here, where the struct's \
+             fields cannot be seen (issue 483)",
+        );
+    }
     if loops.is_empty() {
         match lower_structural(fbody, &pkinds, &bound) {
             Ok((n, i)) => {
@@ -7020,7 +7155,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          ::txhdl::netlist::Lowered {{\n\
          name: name.to_string(),\n\
          fields: <Self as ::txhdl::netlist::Fields>::fields(),\n\
-         ports: vec![{ports}],\n\
+         ports: {{ let mut p = Vec::new(); {ports} p }},\n\
          wires: vec![{wires}],\n\
          wire_names: vec![{wire_names}],\n\
          procs: vec![{procs}],\n\
@@ -7048,7 +7183,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          impl{generics} ::txhdl::netlist::Lower for {unit} {{\n\
          fn lowered_as(name: &str) -> ::txhdl::netlist::Lowered {{\n\
          Self::lowered(name) }}\n}}",
-        ports = ports.join(", "),
+        ports = ports.join(" "),
         nets = nets.join(",\n"),
         instances = instances.join(",\n"),
         wires = wires
