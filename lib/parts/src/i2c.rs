@@ -39,12 +39,12 @@
 //! rather than counting; a data line that reads low while the master
 //! released it is another master winning the bus, which sets
 //! arbitration lost and ends the command.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 
 use crate::bus::axi::Resp;
-use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 // begin{state}
 /// An I2C master: one piece of a transaction per command, on two open
@@ -103,16 +103,10 @@ pub struct I2c {
 impl Unit for I2c {
     async fn run(
         &mut self,
-        (aw, ar, w, scl_in, sda_in): (
-            Rx<LiteAw<32>>,
-            Rx<LiteAr<32>>,
-            Rx<LiteW<32, 4>>,
+        bus: LitePort<32, 32, 4>,
+        (scl_in, sda_in, scl_low, sda_low, irq): (
             In<Bit>,
             In<Bit>,
-        ),
-        (b, r, scl_low, sda_low, irq): (
-            Tx<LiteB>,
-            Tx<LiteR<32>>,
             Out<Bit>,
             Out<Bit>,
             Out<Bit>,
@@ -189,16 +183,18 @@ impl Unit for I2c {
             // this one released it.
             let stolen = took_ack & shift.bit(7) & !taken;
             // The bus.
-            let arh = ar.head();
-            let awh = aw.head();
-            let wh = w.head();
+            let arh = bus.ar.head();
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
             let rsel = arh.addr.slice::<2, 2>();
             let wsel = awh.addr.slice::<2, 2>();
-            let rgo = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let written = wh.data;
             // A write to `cmd` starts a command, and is ignored while
             // one is running: a program reads `state` first.
@@ -283,13 +279,13 @@ impl Unit for I2c {
                 clearing & written.bit(3) ? lost: Bit::Zero,
             });
             if rgo.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: word,
                     resp: Resp::Okay,
                 });
             }
             if wgo.to_bool() {
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
             scl_low.set(!scl_want);
             sda_low.set(!sda_want);
@@ -526,7 +522,7 @@ pub mod sim {
 mod tests {
     use super::sim::I2cDev;
     use super::{cmd, reg, I2c};
-    use crate::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LiteW};
+    use crate::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
     use std::cell::RefCell;
     use std::rc::Rc;
     use txhdl::comp::{join2, signal, Clock, DefaultClock, Running, Unit};
@@ -594,7 +590,7 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let (aw, ar, w, b, r) = link.per;
+        let bus: LitePort<32, 32, 4> = link.per.into();
         let (scl_in_o, scl_in) = signal::<Bit, DefaultClock>();
         let (sda_in_o, sda_in) = signal::<Bit, DefaultClock>();
         let (scl_low_o, scl_low) = signal::<Bit, DefaultClock>();
@@ -609,10 +605,7 @@ mod tests {
                 body.await;
                 *fin.borrow_mut() = true;
             },
-            master.run(
-                (aw, ar, w, scl_in, sda_in),
-                (b, r, scl_low_o, sda_low_o, irq_o),
-            ),
+            master.run(bus, (scl_in, sda_in, scl_low_o, sda_low_o, irq_o)),
         ));
         let dev = RefCell::new(dev);
         scl_in_o.set(Bit::One);

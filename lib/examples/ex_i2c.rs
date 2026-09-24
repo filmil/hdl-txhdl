@@ -15,7 +15,7 @@
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, Clock, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LiteW};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
 use txhdl_parts::i2c::sim::I2cDev;
 use txhdl_parts::i2c::{cmd, reg, I2c};
 
@@ -75,7 +75,7 @@ async fn command(h: &Host, word: u32) -> u32 {
 
 fn main() {
     let link = axi_lite::<32, 32, 4>();
-    let (aw, ar, w, b, r) = link.per;
+    let bus: LitePort<32, 32, 4> = link.per.into();
     let host = link.host;
     let (scl_in_o, scl_in) = signal::<Bit, DefaultClock>();
     let (sda_in_o, sda_in) = signal::<Bit, DefaultClock>();
@@ -86,11 +86,11 @@ fn main() {
 
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<DefaultClock>();
-        wave.add("aw", &aw);
-        wave.add("ar", &ar);
-        wave.add("w", &w);
-        wave.add("b", &b);
-        wave.add("r", &r);
+        wave.add("bus_aw", &bus.aw);
+        wave.add("bus_ar", &bus.ar);
+        wave.add("bus_w", &bus.w);
+        wave.add("bus_b", &bus.b);
+        wave.add("bus_r", &bus.r);
         wave.add("scl_in", &scl_in);
         wave.add("sda_in", &sda_in);
         wave.add("scl_low", &scl_low);
@@ -132,10 +132,7 @@ fn main() {
 
     let mut sim = Running::new(join2(
         client,
-        master.run(
-            (aw, ar, w, scl_in, sda_in),
-            (b, r, scl_low_o, sda_low_o, irq_o),
-        ),
+        master.run(bus, (scl_in, sda_in, scl_low_o, sda_low_o, irq_o)),
     ));
     let mut dev = I2cDev::new(ADDR, &REGS);
     dev.stretch = 3;
