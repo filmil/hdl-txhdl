@@ -20,6 +20,7 @@ vivado_library(
         "//cpu/vreteno:board/vreteno_board.v",
         "board_tb.v",
         "//ddr3:hdl",
+        "//lib/parts:hdl",
     ],
     tags = ["manual"],
     deps = [

@@ -78,6 +78,21 @@ rust_test(
 # The sources by name, for the documents' API extraction.
 exports_files(glob(["src/*.rs", "src/bus/*.rs", "src/bus/axi/*.rs", "src/bus/noc/*.rs", "src/bus/wb/*.rs"]))
 
+# The hand-written Verilog the netlists instantiate and do not
+# write: the ring oscillators of the entropy source, and the
+# constraints that keep the timer off their loops.
+filegroup(
+    name = "hdl",
+    srcs = ["hdl/ring_osc.v"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "hdl_xdc",
+    srcs = ["hdl/ring_osc.xdc"],
+    visibility = ["//visibility:public"],
+)
+
 filegroup(
     name = "sources",
     srcs = glob(["src/*.rs", "src/bus/*.rs", "src/bus/axi/*.rs", "src/bus/noc/*.rs", "src/bus/wb/*.rs"]),

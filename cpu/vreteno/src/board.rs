@@ -9,7 +9,8 @@
 //! memory from `0x4000_0000` to the end of the first two gigabytes,
 //! the remote peripheral at `0x3300`, whose behaviour is a program on
 //! another machine reached as frames on the Ethernet port,
-//! the Ethernet port's registers at `0x3400`,
+//! the Ethernet port's registers at `0x3400`, the entropy source at
+//! `0x3500`,
 //! and the platform-level interrupt controller at `0x0c00_0000`, where
 //! RISC-V machines put it. The controller's source 1 is the serial
 //! port's receive interrupt, its source 2 the board's `irq` input and
@@ -45,7 +46,7 @@ use txhdl_parts::bus::axi::{
     W,
 };
 use txhdl_parts::bus::axi_lite::{
-    LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge5, LitePort, LiteR, LiteW,
+    LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge6, LitePort, LiteR, LiteW,
 };
 use txhdl_parts::bus::axi_pins::{AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::router::Router7;
@@ -58,6 +59,7 @@ use txhdl_parts::plic::Plic3;
 use txhdl_parts::pwm::Pwm;
 use txhdl_parts::remote::eth::{RemoteLink, ETHERTYPE};
 use txhdl_parts::remote::{Answer as RemoteAnswer, Ask, Remote};
+use txhdl_parts::trng::Entropy;
 
 /// Which device this board answers to on the wire. Every frame the
 /// remote peripheral sends carries it, and a program answers each
@@ -136,17 +138,17 @@ pub struct Board<const DIV: u32> {
     pub pdmem: AxiPer<32, 32, 4, 4>,
     pub ptimer: AxiPer<32, 32, 4, 4>,
     // begin{vslot}
-    /// Five small peripherals share the page at `0x3000`: the serial
+    /// Six small peripherals share the page at `0x3000`: the serial
     /// port at `0x3000`, the pulse width modulator at `0x3100`,
     /// whatever the board hangs on the third slot at `0x3200`, the
-    /// remote peripheral at `0x3300`, and the Ethernet port's
-    /// registers on the fifth slot at `0x3400`, each a sixteenth of
-    /// the page. The router's ports go to memories and to the bus's
+    /// remote peripheral at `0x3300`, the Ethernet port's registers
+    /// on the fifth slot at `0x3400`, and the entropy source on the
+    /// sixth at `0x3500`, each a sixteenth of the page. The router's ports go to memories and to the bus's
     /// own peripherals, and a
     /// peripheral of six registers does not want one of its own.
     ///
     /// The page was never the constraint and is not now. It is 4 KiB
-    /// and a slot is 256 bytes, so it holds sixteen and eleven are
+    /// and a slot is 256 bytes, so it holds sixteen and ten are
     /// still free; what was full was the bridge in front of it, which
     /// had four ports. So no address moves to make room for the fifth,
     /// and nothing that names one of the first four changes.
@@ -160,7 +162,7 @@ pub struct Board<const DIV: u32> {
     ///
     /// The fifth is a field, because `EthSlots` runs on the bus clock
     /// like every other peripheral here and wants no crossing.
-    pub puart: LiteBridge5<
+    pub puart: LiteBridge6<
         32,
         32,
         4,
@@ -174,6 +176,8 @@ pub struct Board<const DIV: u32> {
         0x3300,
         0xffff_ff00,
         0x3400,
+        0xffff_ff00,
+        0x3500,
         0xffff_ff00,
     >,
     // end{vslot}
@@ -226,6 +230,14 @@ pub struct Board<const DIV: u32> {
     /// disagree with each other rather than one and a document.
     pub eth: EthSlots<{ isa::ETH_BUF_BASE as usize }>,
     // end{ethslot}
+    // begin{entropy}
+    /// The entropy source, on the sixth slot at `0x3500`: eight ring
+    /// oscillators as a foreign module, and the peripheral that folds,
+    /// checks, debiases and buffers their samples (issue 458). Zephyr's
+    /// entropy driver reads it, and the network stack's random numbers
+    /// come from there rather than from a counter.
+    pub entropy: Entropy,
+    // end{entropy}
     // begin{ethdma}
     /// The engines behind the Ethernet port's registers, and what
     /// stands between them and the wire (issue 151).
@@ -525,6 +537,12 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (pw_pwm_tx, pw_pwm_rx) = chan::<LiteW<32, 4>, DefaultClock>();
         let (pb_pwm_tx, pb_pwm_rx) = chan::<LiteB, DefaultClock>();
         let (pr_pwm_tx, pr_pwm_rx) = chan::<LiteR<32>, DefaultClock>();
+        // The entropy source's side of the same bridge.
+        let (paw_trng_tx, paw_trng_rx) = chan::<LiteAw<32>, DefaultClock>();
+        let (par_trng_tx, par_trng_rx) = chan::<LiteAr<32>, DefaultClock>();
+        let (pw_trng_tx, pw_trng_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (pb_trng_tx, pb_trng_rx) = chan::<LiteB, DefaultClock>();
+        let (pr_trng_tx, pr_trng_rx) = chan::<LiteR<32>, DefaultClock>();
         // The remote peripheral's side of the same bridge, and the two
         // channels between it and the link that makes the frames.
         let (paw_rem_tx, paw_rem_rx) = chan::<LiteAw<32>, DefaultClock>();
@@ -719,15 +737,27 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                         },
                                         (rst_uart, rx, tx, uirq_o),
                                     ),
-                                    self.pwm.run(
-                                        LitePort {
-                                            aw: paw_pwm_rx,
-                                            ar: par_pwm_rx,
-                                            w: pw_pwm_rx,
-                                            b: pb_pwm_tx,
-                                            r: pr_pwm_tx,
-                                        },
-                                        pwm_pins,
+                                    join2(
+                                        self.pwm.run(
+                                            LitePort {
+                                                aw: paw_pwm_rx,
+                                                ar: par_pwm_rx,
+                                                w: pw_pwm_rx,
+                                                b: pb_pwm_tx,
+                                                r: pr_pwm_tx,
+                                            },
+                                            pwm_pins,
+                                        ),
+                                        self.entropy.run(
+                                            LitePort {
+                                                aw: paw_trng_rx,
+                                                ar: par_trng_rx,
+                                                w: pw_trng_rx,
+                                                b: pb_trng_tx,
+                                                r: pr_trng_tx,
+                                            },
+                                            (),
+                                        ),
                                     ),
                                 ),
                                 join2(
@@ -919,14 +949,30 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             aw2_rx, ar2_rx, w2_rx, lb_rx,
                                             lr_rx, pb_pwm_rx, pr_pwm_rx, vb,
                                             vr, pb_rem_rx, pr_rem_rx,
-                                            pb_eth_rx, pr_eth_rx,
+                                            pb_eth_rx, pr_eth_rx, pb_trng_rx,
+                                            pr_trng_rx,
                                         ),
                                         (
-                                            law_tx, lar_tx, lw_tx, paw_pwm_tx,
-                                            par_pwm_tx, pw_pwm_tx, vaw, var,
-                                            vw, paw_rem_tx, par_rem_tx,
-                                            pw_rem_tx, paw_eth_tx, par_eth_tx,
-                                            pw_eth_tx, b2_tx, r2_tx,
+                                            law_tx,
+                                            lar_tx,
+                                            lw_tx,
+                                            paw_pwm_tx,
+                                            par_pwm_tx,
+                                            pw_pwm_tx,
+                                            vaw,
+                                            var,
+                                            vw,
+                                            paw_rem_tx,
+                                            par_rem_tx,
+                                            pw_rem_tx,
+                                            paw_eth_tx,
+                                            par_eth_tx,
+                                            pw_eth_tx,
+                                            paw_trng_tx,
+                                            par_trng_tx,
+                                            pw_trng_tx,
+                                            b2_tx,
+                                            r2_tx,
                                         ),
                                     ),
                                     join2(

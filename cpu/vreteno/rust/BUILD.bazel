@@ -170,6 +170,31 @@ rust_library(
     edition = "2021",
 )
 
+# The entropy source read by the core: four words taken and compared,
+# and the verdict on the serial port. Built exactly as the greeting is.
+rust_binary(
+    name = "trng",
+    srcs = ["trng.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_image(
+    name = "trng_image",
+    platform = ":vreteno",
+    program = ":trng",
+)
+
+rust_library(
+    name = "trng_program",
+    srcs = [":trng_image"],
+    crate_name = "trng_program",
+    edition = "2021",
+)
+
 # The same test, built for the board: `--cfg=board_run` adds the header
 # line and a dot every ten seconds around the test, which a simulation
 # would pay for in simulated time and which the tests that read the
@@ -239,6 +264,27 @@ vreteno_flat(
     name = "hello_ram_bin",
     platform = ":vreteno",
     program = ":hello_ram",
+)
+
+# The entropy source measured, for the loader: the test above, then
+# 4096 raw words and 4096 words of the extractor's output up the serial
+# line, which is what a host estimates the source's bias and entropy
+# from (issue 458). Linked for the memory and flattened, since the
+# measurement is a program sent down the wire and not a bitstream.
+rust_binary(
+    name = "trng_ram",
+    srcs = ["trng.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS + ["--cfg=board_run"],
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_flat(
+    name = "trng_ram_bin",
+    platform = ":vreteno",
+    program = ":trng_ram",
 )
 
 # A turning icosahedron on the board's HDMI output, drawn by the core

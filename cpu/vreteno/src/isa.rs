@@ -199,6 +199,10 @@ pub const UART_BASE: u32 = 0x3000;
 /// had twelve slots free and only the bridge in front of it was full.
 pub const ETH_BASE: u32 = 0x3400;
 
+/// Where the entropy source is: the sixth slot of the same page, four
+/// words from `data` to `raw` (issue 458).
+pub const TRNG_BASE: u32 = 0x3500;
+
 /// Where the Ethernet port's four frame buffers live, which is in the
 /// DDR3 rather than inside the peripheral: two for receiving and two
 /// for sending, 2 KiB each, so 8 KiB from here.

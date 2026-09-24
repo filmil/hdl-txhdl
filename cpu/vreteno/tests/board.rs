@@ -605,6 +605,17 @@ fn two_frames_written_to_memory_leave_the_port_as_written_in_order() {
     assert_eq!(ran.sent[1], b, "then the second, as the core wrote it");
 }
 
+/// The entropy source on its slot: the program turns it on, takes four
+/// words, and says they came and differed. The rings are the model in
+/// this run, so this is the slot, the bridge and the peripheral proven
+/// and nothing about randomness (issue 458).
+#[test]
+fn the_entropy_source_answers_on_the_board() {
+    let ran = run(trng_program::TEXT, trng_program::DATA, b"", 20000);
+    assert_eq!(ran.said, "trng ok\n");
+    assert!(ran.halted_at.is_some(), "and halted");
+}
+
 /// The terminal types four bytes, and the program takes each through
 /// the interrupt controller, one interrupt a byte, never polling the
 /// serial port for input.
@@ -758,6 +769,8 @@ fn the_netlist_holds_the_controller() {
     assert!(v.contains("module board_ddr3_bridge("), "the bridge");
     assert!(v.contains("ddr3_wb32 "), "the controller");
     assert!(!v.contains("module ddr3_wb32"), "not written");
+    assert!(v.contains("ring_osc "), "the rings");
+    assert!(!v.contains("module ring_osc"), "not written either");
     assert!(v.contains("inout [31:0] dq"), "the data pads");
 }
 

@@ -28,6 +28,7 @@ filegroup(
         "//eth:eth_pins",
         "//hdmi:hdmi_pins",
         "board/ax7a200_flagship.xdc",
+        "//lib/parts:hdl_xdc",
     ],
 )
 
@@ -45,6 +46,7 @@ vivado_synthesis2(
         "//eth:eth_rgmii",
         "board/flagship.v",
         "//ddr3:hdl",
+        "//lib/parts:hdl",
     ],
     part = "xc7a200tfbg484-2",
     top = "flagship",
