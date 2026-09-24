@@ -2402,6 +2402,22 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
         Expr::Num(k) => k.to_string(),
         Expr::Bits(bw, b) if *bw == 1 => format!("'{b}'"),
         Expr::Bits(_, b) => format!("unsigned'(\"{b}\")"),
+        // One bit is a `std_logic`, which has no `+`, `-` or `*`. Its
+        // arithmetic is modulo two: a sum and a difference are both
+        // the exclusive or, and a product the and, of the two bits,
+        // which is what a one-bit register incremented wraps to and
+        // what the Verilog does at that width by itself. A number is
+        // its low bit there, so `+ 2` adds nothing. See issue 461.
+        Expr::Bin(op @ ("+" | "-" | "*"), a, b)
+            if w == 1 || (w == 0 && l.ewidth(e) == 1) =>
+        {
+            let bit = |x: &Expr| match x {
+                Expr::Num(k) => format!("'{}'", k & 1),
+                x => hval(x, 1, l),
+            };
+            let vop = if *op == "*" { "and" } else { "xor" };
+            format!("({} {vop} {})", bit(a), bit(b))
+        }
         Expr::Bin(op @ ("+" | "-"), a, b) => {
             format!("({} {op} {})", hval(a, w, l), hval(b, w, l))
         }
@@ -2554,6 +2570,41 @@ mod tests {
             "the flag in VHDL"
         );
         assert!(net.vhdl().contains("(others => '0')"), "the counter");
+    }
+
+    /// A one-bit register incremented is its exclusive or with the
+    /// number's low bit in VHDL, since a `std_logic` has no `+`;
+    /// before issue 461 it was written `flag + '1'`, which nvc refuses
+    /// as having no such subprogram. A subtraction is the same, a
+    /// product is the and, and the Verilog keeps its own arithmetic,
+    /// which wraps at that width by itself.
+    #[test]
+    fn a_one_bit_register_counts_modulo_two() {
+        let flag = || Box::new(Expr::Name("flag".to_string()));
+        let mut net = three_regs();
+        // One process per drive, each of the one-bit register itself.
+        for e in [
+            Expr::Bin("+", flag(), Box::new(Expr::Num(1))),
+            Expr::Bin("-", flag(), Box::new(Expr::Num(2))),
+            Expr::Bin("*", flag(), flag()),
+        ] {
+            net.procs.push(Process {
+                clock: "clk",
+                falling: false,
+                body: vec![Stmt::Drive(Target::Name("flag".to_string()), e)],
+            });
+        }
+        let h = net.vhdl();
+        assert!(h.contains("flag <= (flag xor '1');"), "the sum: {h}");
+        assert!(!h.contains("flag + '1'"), "no plus on a bit: {h}");
+        assert!(
+            h.contains("flag <= (flag xor '0');"),
+            "two adds nothing: {h}"
+        );
+
+        assert!(h.contains("flag <= (flag and flag);"), "the product: {h}");
+        let v = net.verilog();
+        assert!(v.contains("flag <= (flag + 1'h1);"), "the Verilog: {v}");
     }
 
     /// And one that `Reg::new` gave a value starts there, in both
