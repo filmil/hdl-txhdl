@@ -560,34 +560,49 @@ fn a_frame_received_lands_in_memory_and_the_core_reads_it_back() {
     assert!(ran.halted_at.is_some(), "the core acknowledged and halted");
 }
 
-/// The core writes a frame into a transmit slot in DDR3 and asks the
-/// Ethernet port to send it; the port's engines fetch it back out of
-/// memory and put it on the wire without the core (issue 151).
+/// The core writes two frames into the two transmit slots in DDR3 and
+/// sends them back to back, in the Zephyr driver's shape: wait until the
+/// port is ready, give it the slot, the length and the start, return.
+/// The port's engines fetch each out of memory and put it on the wire
+/// without the core (issue 151).
 ///
-/// What left the port is the only evidence taken, and it is compared
-/// byte for byte with what the core wrote, so a pass covers the whole
-/// sending path: the fetch engine's bursts through the arbiter, the
-/// router and the bridge, the word count `FrameOut` works out, its bytes
-/// with the frame's last one marked, and the sharing unit's merge onto
-/// the wire.
+/// What left the port is the only evidence taken, compared byte for
+/// byte and in order with what the core wrote, so a pass covers the
+/// whole sending path: the fetch engine's bursts through the arbiter,
+/// the router and the bridge, the word count `FrameOut` works out, its
+/// bytes with each frame's last one marked, and the merge onto the wire.
 ///
-/// Twenty three bytes, so the last word holds three real bytes over one
-/// that is not the frame's, and a byte side that sent the whole word
-/// would put a twenty fourth byte on the wire that this would see.
+/// TWO frames, for two reasons. A byte side that read past a frame's
+/// count leaves the extra bytes in front of the next frame, which one
+/// frame cannot show. And the second send's wait for ready comes as
+/// soon after the first start as it can, with nothing between, which is
+/// where a stale ready from a posted start would bite: the driver's own
+/// shape copies the next frame between sends and so has more slack than
+/// this, so this passing is the tighter case passing.
 #[test]
-fn a_frame_written_to_memory_leaves_the_port_as_written() {
-    let len = 23u32;
-    let frame: Vec<u8> = (0..len)
-        .map(|i| match i {
-            12 => 0x08,
-            13 => 0x00,
-            _ => (0x60 + i) as u8,
-        })
-        .collect();
+fn two_frames_written_to_memory_leave_the_port_as_written_in_order() {
+    let frame = |f: u32, len: u32| -> Vec<u8> {
+        (0..len)
+            .map(|i| match i {
+                12 => 0x08,
+                13 => {
+                    if f == 0 {
+                        0x00
+                    } else {
+                        0x06
+                    }
+                }
+                _ => (if f == 0 { 0x60 } else { 0x90 } + i) as u8,
+            })
+            .collect()
+    };
+    let a = frame(0, 23);
+    let b = frame(1, 18);
     let ran = run(ethtx_program::TEXT, ethtx_program::DATA, b"", 40000);
-    assert!(ran.halted_at.is_some(), "the frame went and the core halted");
-    assert_eq!(ran.sent.len(), 1, "exactly one frame left the port");
-    assert_eq!(ran.sent[0], frame, "and it is the frame the core wrote");
+    assert!(ran.halted_at.is_some(), "both frames went and the core halted");
+    assert_eq!(ran.sent.len(), 2, "exactly two frames left the port");
+    assert_eq!(ran.sent[0], a, "the first, as the core wrote it");
+    assert_eq!(ran.sent[1], b, "then the second, as the core wrote it");
 }
 
 /// The terminal types four bytes, and the program takes each through
