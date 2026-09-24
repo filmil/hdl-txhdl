@@ -217,12 +217,8 @@ impl
                     want: len.get(),
                     pos: U::<16>::from(0u8),
                     have: U::<3>::from(0u8),
-                    // Alternating, written as a toggle rather than
-                    // as `+ 1`: a one-bit register incremented lowers
-                    // to `slot + '1'` in VHDL, which is a character
-                    // and not an unsigned, and nvc refuses it
-                    // (issue 461).
-                    slot: !self.slot.get(),
+                    // The other slot, by counting round.
+                    slot: self.slot.get() + 1,
                 },
                 take ? {
                     word: packed,
