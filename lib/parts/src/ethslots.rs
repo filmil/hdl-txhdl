@@ -246,9 +246,16 @@ impl<const BASE: usize>
                             U::<32>::from(1u8),
                             U::<32>::from(0u8),
                         ),
+                        // Word 9 by name, so that the write-only words
+                        // 4 to 6 and the unnamed 10 to 15 fall through
+                        // to zero rather than mirror it (issue 454).
                         mux(
-                            self.tx_enable.get(),
-                            U::<32>::from(1u8),
+                            rsel == 9,
+                            mux(
+                                self.tx_enable.get(),
+                                U::<32>::from(1u8),
+                                U::<32>::from(0u8),
+                            ),
                             U::<32>::from(0u8),
                         ),
                     ),
@@ -263,6 +270,99 @@ impl<const BASE: usize>
                     resp: crate::bus::axi::Resp::Okay,
                 });
             }
+        }
+    }
+}
+
+/// The map read with `tx_ev_enable` set, which is what issue 454 found
+/// mirrored into every word the read path did not name.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bus::axi::Resp;
+    use crate::bus::axi_lite::{axi_lite, LiteHost};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use txhdl::comp::{join2, signal, Running};
+
+    type Host = LiteHost<32, 32, 4>;
+
+    async fn write(h: &Host, word: u32, data: u32) {
+        let (aw, _, w, b, _) = h;
+        aw.send(LiteAw {
+            addr: U::from(4 * word),
+            prot: U::from(0u8),
+        });
+        w.send(LiteW {
+            data: U::from(data),
+            strb: U::from(0xfu8),
+        });
+        loop {
+            DefaultClock::rising().await;
+            if b.recv().is_some() {
+                return;
+            }
+        }
+    }
+
+    async fn read(h: &Host, word: u32) -> u32 {
+        let (_, ar, _, _, r) = h;
+        ar.send(LiteAr {
+            addr: U::from(4 * word),
+            prot: U::from(0u8),
+        });
+        loop {
+            DefaultClock::rising().await;
+            if let Some(v) = r.recv() {
+                assert!(matches!(v.resp, Resp::Okay));
+                return v.data.raw() as u32;
+            }
+        }
+    }
+
+    /// Word 9 reads its bit, and nothing else reads it: not the three
+    /// write-only words 4 to 6, which read zero rather than an unrelated
+    /// bit, and not the unnamed tail 10 to 15.
+    #[test]
+    fn only_word_9_reads_tx_ev_enable() {
+        let link = axi_lite::<32, 32, 4>();
+        let (aw, ar, w, b, r) = link.per;
+        let host = link.host;
+        let (_tx_busy_o, tx_busy) = signal::<Bit, DefaultClock>();
+        let (_rx_busy_o, rx_busy) = signal::<Bit, DefaultClock>();
+        let (_rx_len_o, rx_len) = signal::<U<16>, DefaultClock>();
+        let (_rx_which_o, rx_which) = signal::<U<1>, DefaultClock>();
+        let (tx_base, _) = signal::<U<32>, DefaultClock>();
+        let (tx_bytes, _) = signal::<U<16>, DefaultClock>();
+        let (tx_start, _) = signal::<Bit, DefaultClock>();
+        let (rx_base, _) = signal::<U<32>, DefaultClock>();
+        let (irq, _) = signal::<Bit, DefaultClock>();
+        let seen: Rc<RefCell<Vec<(u32, u32)>>> = Rc::default();
+        let log = seen.clone();
+        let client = async move {
+            write(&host, 9, 1).await;
+            write(&host, 5, 0x5a).await;
+            for word in [4, 5, 6, 9, 10, 11, 12, 13, 14, 15] {
+                let v = read(&host, word).await;
+                log.borrow_mut().push((word, v));
+            }
+        };
+        let mut slots = EthSlots::<0x4100_0000>::default();
+        let mut sim = Running::new(join2(
+            slots.run(
+                (aw, ar, w, tx_busy, rx_busy, rx_len, rx_which),
+                (b, r, tx_base, tx_bytes, tx_start, rx_base, irq),
+            ),
+            client,
+        ));
+        for _ in 0..200 {
+            sim.cycle();
+        }
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 10, "every read answered");
+        for (word, v) in seen.iter() {
+            let want = if *word == 9 { 1 } else { 0 };
+            assert_eq!(*v, want, "word {word}");
         }
     }
 }
