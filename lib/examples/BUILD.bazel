@@ -475,6 +475,19 @@ rust_binary(
     ],
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
+# One word behind two AXI-Lite links, each taken as one port:
+#   bazel run //lib/examples:ex_bundle
+rust_binary(
+    name = "ex_bundle",
+    srcs = ["ex_bundle.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 
 # Four pulse width modulated outputs:  bazel run //lib/examples:ex_pwm
 rust_binary(
@@ -865,6 +878,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_gpio.rs",
         "ex_flashwin.rs",
         "ex_pwm.rs",
+        "ex_bundle.rs",
         "ex_remote.rs",
         "ex_redundant.rs",
         "ex_tracer.rs",

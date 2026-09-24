@@ -796,6 +796,8 @@ latex_document(
         ":compose_timing",
         ":ports_run",
         ":ports_timing",
+        ":bundle_run",
+        ":bundle_timing",
         ":blackbox_run",
         ":blackbox_timing",
         ":gpio_run",
@@ -1570,6 +1572,26 @@ waveform(
         "//irq=>irq",
     ],
     until = 200,
+)
+
+# One word behind two AXI-Lite links, each link one port of the unit:
+# a write on each side, a read on the other, then both writes at once.
+waveform(
+    name = "bundle",
+    example = "//lib/examples:ex_bundle",
+    lowered = ("mailbox", "shared"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//left_w/rx_valid=>left_w_valid",
+        "//left_w/rx_data=>left_w_data",
+        "//right_w/rx_valid=>right_w_valid",
+        "//right_w/rx_data=>right_w_data",
+        "//shared/word=>word",
+        "//left_r/tx_valid=>left_r_valid",
+        "//left_r/tx_data=>left_r_data",
+        "//right_r/tx_valid=>right_r_valid",
+        "//right_r/tx_data=>right_r_data",
+    ],
 )
 
 waveform(
