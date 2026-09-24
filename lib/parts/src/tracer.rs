@@ -35,12 +35,12 @@
 //! instruction, the register written and the word written come to a
 //! hundred and one bits, and a width that is a whole number of bus
 //! words is one the readout can walk without shifting.
-use txhdl::comp::{Clock, DefaultClock, In, Mem, Reg, Rx, Tx, Unit};
+use txhdl::comp::{Clock, DefaultClock, In, Mem, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 
 use crate::bus::axi::Resp;
-use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 /// `ctrl` bit 0: the buffer takes what it is offered.
 pub const CTRL_RUN: u32 = 1;
@@ -76,15 +76,8 @@ pub struct Tracer<const N: usize> {
 impl<const N: usize> Unit for Tracer<N> {
     async fn run(
         &mut self,
-        (take, entry, halt, aw, ar, w): (
-            In<Bit>,
-            In<U<128>>,
-            In<Bit>,
-            Rx<LiteAw<32>>,
-            Rx<LiteAr<32>>,
-            Rx<LiteW<32, 4>>,
-        ),
-        (b, r): (Tx<LiteB>, Tx<LiteR<32>>),
+        bus: LitePort<32, 32, 4>,
+        (take, entry, halt): (In<Bit>, In<U<128>>, In<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -93,16 +86,18 @@ impl<const N: usize> Unit for Tracer<N> {
             let count = self.count.get();
             let cursor = self.cursor.get();
             // The bus.
-            let arh = ar.head();
-            let awh = aw.head();
-            let wh = w.head();
+            let arh = bus.ar.head();
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
             let rsel = arh.addr.slice::<2, 3>();
             let wsel = awh.addr.slice::<2, 3>();
-            let rgo = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let written = wh.data;
             let running = ctrl.bit(0);
             let freezing = ctrl.bit(1) & halt.get();
@@ -142,13 +137,13 @@ impl<const N: usize> Unit for Tracer<N> {
                 storing & !full ? count: count + 1,
             });
             if rgo.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: answer,
                     resp: Resp::Okay,
                 });
             }
             if wgo.to_bool() {
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
         }
     }
@@ -158,7 +153,7 @@ impl<const N: usize> Unit for Tracer<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bus::axi_lite::{axi_lite, LiteHost};
+    use crate::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LiteW};
     use std::cell::RefCell;
     use std::rc::Rc;
     use txhdl::comp::{join2, signal, Out, Running};
@@ -229,7 +224,7 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let (aw, ar, w, b, r) = link.per;
+        let bus: LitePort<32, 32, 4> = link.per.into();
         let (take_o, take) = signal::<Bit, DefaultClock>();
         let (entry_o, entry) = signal::<U<128>, DefaultClock>();
         let (halt_o, halt) = signal::<Bit, DefaultClock>();
@@ -247,7 +242,7 @@ mod tests {
                 body.await;
                 *d.borrow_mut() = true;
             },
-            tracer.run((take, entry, halt, aw, ar, w), (b, r)),
+            tracer.run(bus, (take, entry, halt)),
         ));
         for _ in 0..20000 {
             sim.cycle();
