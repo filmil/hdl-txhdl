@@ -97,7 +97,15 @@ chosen, since a name that fails there fails as an analysis error in a
 generated file. The \code{Trace} derive refuses a field, and
 \code{\#[lower]} a port or a computed \code{let}, whose name VHDL or
 SystemVerilog reserves: \code{next}, \code{out} and \code{inside}
-among them, VHDL's without regard to case. A computed \code{let} or a
+among them, VHDL's without regard to case. The module's own name is
+a string given to \code{lowered} when it runs, which the macro never
+sees, so each emitter refuses one its own language reserves as it
+writes it: a unit may be lowered under a name only VHDL reserves and
+still have its Verilog, or its tables drawn (issue 485). The
+two word lists are one file, \code{lib/src/reserved.rs}, below: the
+runtime compiles it as a module of its own, and the macro crate,
+which cannot depend on the runtime since the runtime depends on it,
+includes the same file by path. A computed \code{let} or a
 port whose netlist name is also a field's would be declared twice.
 \code{\#[lower]} does not see the struct, so for each such name it
 writes a constant, placed at the name, that tests the name against the
@@ -175,3 +183,5 @@ only by \code{=>}, \code{,} or \code{;}, so \code{lhs <= rhs} cannot be
 matched declaratively at all.
 
 \lstinputlisting[caption={\code{lib/macros/lib.rs}.},label={lst:r-macros}]{lib/macros/lib.rs}
+
+\lstinputlisting[caption={\code{lib/src/reserved.rs}: the words the two targets reserve, shared by the macros and the runtime.},label={lst:r-reserved}]{lib/src/reserved.rs}
