@@ -1498,6 +1498,27 @@ waveform(
     ],
 )
 
+# The entropy source starting: the rings' samples arriving once the
+# run bit is set, the extractor keeping a bit of a pair, and the word
+# filling.
+waveform(
+    name = "trng",
+    example = "//lib/examples:ex_trng",
+    lowered = ("trng", "trng"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//en=>en",
+        "//raw=>raw",
+        "//trng/have=>have",
+        "//trng/first=>first",
+        "//trng/nbits=>nbits",
+        "//trng/runlen=>runlen",
+        "//trng/count=>count",
+    ],
+    from_tick = 14,
+    until = 74,
+)
+
 # The trace buffer filling and freezing: the ring walking, the count
 # stopping at the ring's size, and the halt taking the run bit.
 waveform(

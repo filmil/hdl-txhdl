@@ -452,6 +452,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An entropy source:  bazel run //lib/examples:ex_trng
+rust_binary(
+    name = "ex_trng",
+    srcs = ["ex_trng.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A trace buffer read out after a halt:  bazel run //lib/examples:ex_tracer
 rust_binary(
     name = "ex_tracer",
@@ -895,6 +907,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_remote.rs",
         "ex_redundant.rs",
         "ex_tracer.rs",
+        "ex_trng.rs",
         "ex_spi.rs",
         "ex_syscon.rs",
         "ex_wdog.rs",
