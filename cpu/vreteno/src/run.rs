@@ -16,7 +16,7 @@ use crate::uart::Uart;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
+use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::bus::router::Router4;
 
@@ -101,9 +101,9 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let ul = axi_units::<32, 32, 4, IW>();
     let rl = axi_units::<32, 32, 4, IW>();
     let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
-    let (dreq, dwd, dans, drb) = dl.per_client;
-    let (treq, twd, tans, trb) = tl.per_client;
-    let (rreq, rwd, rans, rrb) = rl.per_client;
+    let dbus = PerPort::from(dl.per_client);
+    let tbus = PerPort::from(tl.per_client);
+    let rbus = PerPort::from(rl.per_client);
     // The serial port is an AXI-Lite peripheral, behind a bridge
     // that takes the AXI4 channels the router gives it.
     let sl = axi_lite::<32, 32, 4>();
@@ -132,14 +132,11 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run((rst_t, treq, twd), (tans, trb, tirq_out, sirq_out)),
+                timer.run(tbus, (rst_t, tirq_out, sirq_out)),
                 uart.run(ubus, (rst_u, rx, tx_out, uirq_out)),
             ),
             join2(
-                join2(
-                    dmem.run((dreq, dwd), (dans, drb)),
-                    rom.run((rreq, rwd), (rans, rrb)),
-                ),
+                join2(dmem.run(dbus, ()), rom.run(rbus, ())),
                 cpu.run(
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,

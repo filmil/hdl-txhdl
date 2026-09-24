@@ -9,7 +9,7 @@
 //! design is wired as it would be around one core.
 use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
+use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
@@ -65,8 +65,8 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
     let tl = axi_units::<32, 32, 4, IW>();
     let ul = axi_units::<32, 32, 4, IW>();
     let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
-    let (dreq, dwd, dans, drb) = dl.per_client;
-    let (treq, twd, tans, trb) = tl.per_client;
+    let dbus = PerPort::from(dl.per_client);
+    let tbus = PerPort::from(tl.per_client);
     let sl = axi_lite::<32, 32, 4>();
     let ubus: LitePort<32, 32, 4> = sl.per.into();
     let (baw, bar, bw, bb, br) = sl.host;
@@ -79,11 +79,11 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run((rst_t, treq, twd), (tans, trb, tirq_out, sirq_out)),
+                timer.run(tbus, (rst_t, tirq_out, sirq_out)),
                 uart.run(ubus, (rst_u, rx, tx_out, uirq_out)),
             ),
             join2(
-                dmem.run((dreq, dwd), (dans, drb)),
+                dmem.run(dbus, ()),
                 pair.run(
                     (rst, irq, tirq, sirq, fault_in, crdata, cdone, grant),
                     (

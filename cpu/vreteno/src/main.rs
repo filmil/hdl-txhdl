@@ -6,7 +6,7 @@
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
+use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
@@ -84,8 +84,8 @@ fn main() {
     let tl = axi_units::<32, 32, 4, IW>();
     let ul = axi_units::<32, 32, 4, IW>();
     let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
-    let (dreq, dwd, dans, drb) = dl.per_client;
-    let (treq, twd, tans, trb) = tl.per_client;
+    let dbus = PerPort::from(dl.per_client);
+    let tbus = PerPort::from(tl.per_client);
     // The serial port is an AXI-Lite peripheral, behind a bridge
     // that takes the AXI4 channels the router gives it.
     let sl = axi_lite::<32, 32, 4>();
@@ -156,14 +156,14 @@ fn main() {
         w.add("b2", &ul.host_in.2);
         w.add("r2", &ul.host_in.3);
         // The transaction level at each peripheral.
-        w.add("dreq", &dreq);
-        w.add("dwd", &dwd);
-        w.add("dans", &dans);
-        w.add("drb", &drb);
-        w.add("treq", &treq);
-        w.add("twd", &twd);
-        w.add("tans", &tans);
-        w.add("trb", &trb);
+        w.add("dreq", &dbus.req);
+        w.add("dwd", &dbus.w);
+        w.add("dans", &dbus.ans);
+        w.add("drb", &dbus.r);
+        w.add("treq", &tbus.req);
+        w.add("twd", &tbus.w);
+        w.add("tans", &tbus.ans);
+        w.add("trb", &tbus.r);
         w.add("uaw", &ubus.aw);
         w.add("uar", &ubus.ar);
         w.add("uw", &ubus.w);
@@ -199,11 +199,11 @@ fn main() {
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run((rst_t, treq, twd), (tans, trb, tirq_out, sirq_out)),
+                timer.run(tbus, (rst_t, tirq_out, sirq_out)),
                 uart.run(ubus, (rst_u, rx, tx_out, uirq_out)),
             ),
             join2(
-                dmem.run((dreq, dwd), (dans, drb)),
+                dmem.run(dbus, ()),
                 cpu.run(
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
@@ -360,15 +360,15 @@ fn main() {
     // AXI document already checks but which the board needs too.
     let router = Rtr::lowered("router");
     let mut dmem = Dmem::<IW>::lowered("dmem");
-    dmem.trace_as("req", "dreq");
-    dmem.trace_as("wd", "dwd");
-    dmem.trace_as("ans", "dans");
-    dmem.trace_as("rb", "drb");
+    dmem.trace_as("bus_req", "dreq");
+    dmem.trace_as("bus_w", "dwd");
+    dmem.trace_as("bus_ans", "dans");
+    dmem.trace_as("bus_r", "drb");
     let mut timer = Timer::<IW>::lowered("timer");
-    timer.trace_as("req", "treq");
-    timer.trace_as("wd", "twd");
-    timer.trace_as("ans", "tans");
-    timer.trace_as("rb", "trb");
+    timer.trace_as("bus_req", "treq");
+    timer.trace_as("bus_w", "twd");
+    timer.trace_as("bus_ans", "tans");
+    timer.trace_as("bus_r", "trb");
     let mut uart4 = Uart::<4>::lowered("uart4");
     uart4.trace_as("bus_aw", "uaw");
     uart4.trace_as("bus_ar", "uar");

@@ -22,10 +22,10 @@
 //! The window is 64 KiB, which those offsets need, and the router
 //! sends it only the bursts in it, so the decode is on the offset and
 //! not on the whole address.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
-use txhdl_parts::bus::axi::{Answer, PerReq, Resp, R, W};
+use txhdl_parts::bus::axi::{Answer, PerPort, Resp, R};
 
 /// Which of the five words an offset names, counting from zero:
 /// `msip`, the compare's two halves, the count's two halves. An offset
@@ -62,28 +62,23 @@ pub struct Timer<const I: usize> {
 impl<const I: usize> Unit for Timer<I> {
     async fn run(
         &mut self,
-        (rst, req, wd): (In<Bit>, Rx<PerReq<32, I>>, Rx<W<32, 4>>),
-        (ans, rb, tirq, sirq): (
-            Tx<Answer<I>>,
-            Tx<R<32, I>>,
-            Out<Bit>,
-            Out<Bit>,
-        ),
+        bus: PerPort<32, 32, 4, I>,
+        (rst, tirq, sirq): (In<Bit>, Out<Bit>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
             let rst = rst.get();
             // The two words are sliced below, so they are read once.
             let (mtime, mtimecmp) = (self.mtime.get(), self.mtimecmp.get());
-            let q = req.head();
-            let qoff = req.peek().is_some();
+            let q = bus.req.head();
+            let qoff = bus.req.peek().is_some();
             let held = self.pend.get() == 1;
-            let take_read = qoff & q.read & rb.ready() & !held;
+            let take_read = qoff & q.read & bus.r.ready() & !held;
             let take_write = qoff & !q.read & !held;
-            let _ = req.recv_if(take_read | take_write);
-            let wh = wd.head();
-            let wgo = held & wd.peek().is_some() & ans.ready();
-            let _ = wd.recv_if(wgo);
+            let _ = bus.req.recv_if(take_read | take_write);
+            let wh = bus.w.head();
+            let wgo = held & bus.w.peek().is_some() & bus.ans.ready();
+            let _ = bus.w.recv_if(wgo);
             // Which of the five words an address names, as a number
             // from zero: the offsets are far apart, so the decode is
             // on the whole offset rather than on two bits of it, and
@@ -150,7 +145,7 @@ impl<const I: usize> Unit for Timer<I> {
                 rst ? mtimecmp: U::<64>::from(u64::MAX),
             });
             if take_read.to_bool() {
-                rb.send(R {
+                bus.r.send(R {
                     id: q.id,
                     data: word,
                     resp: Resp::Okay,
@@ -158,7 +153,7 @@ impl<const I: usize> Unit for Timer<I> {
                 });
             }
             if wgo.to_bool() {
-                ans.send(Answer {
+                bus.ans.send(Answer {
                     id: self.pid.get(),
                     resp: Resp::Okay,
                 });

@@ -9,10 +9,10 @@
 //! held until its beat arrives, because AXI4 puts no identifier on the
 //! write data channel. The router sends this peripheral only the
 //! bursts in its range, so it checks no address.
-use txhdl::comp::{Clock, DefaultClock, Mem, Reg, Rx, Tx, Unit};
+use txhdl::comp::{Clock, DefaultClock, Mem, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
-use txhdl_parts::bus::axi::{Answer, PerReq, Resp, R, W};
+use txhdl_parts::bus::axi::{Answer, PerPort, Resp, R};
 
 /// Words of data memory.
 pub const DMEM_WORDS: usize = 1024;
@@ -72,15 +72,11 @@ impl<const I: usize> Dmem<I> {
 
 #[lower]
 impl<const I: usize> Unit for Dmem<I> {
-    async fn run(
-        &mut self,
-        (req, wd): (Rx<PerReq<32, I>>, Rx<W<32, 4>>),
-        (ans, rb): (Tx<Answer<I>>, Tx<R<32, I>>),
-    ) {
+    async fn run(&mut self, bus: PerPort<32, 32, 4, I>, _o: ()) {
         loop {
             DefaultClock::rising().await;
-            let q = req.head();
-            let qoff = req.peek().is_some();
+            let q = bus.req.head();
+            let qoff = bus.req.peek().is_some();
             let held = self.pend.get() == 1;
             let queued = self.answer.to_bool();
             // The word this burst names, within the memory.
@@ -88,13 +84,13 @@ impl<const I: usize> Unit for Dmem<I> {
             // A read is taken when the register it lands in is free or
             // is being emptied this cycle; a write is taken when no
             // other write is waiting for its beat.
-            let send = queued & rb.ready();
-            let take_read = qoff & q.read & !held & (!queued | rb.ready());
+            let send = queued & bus.r.ready();
+            let take_read = qoff & q.read & !held & (!queued | bus.r.ready());
             let take_write = qoff & !q.read & !held;
-            let _ = req.recv_if(take_read | take_write);
-            let wh = wd.head();
-            let wgo = held & wd.peek().is_some() & ans.ready();
-            let _ = wd.recv_if(wgo);
+            let _ = bus.req.recv_if(take_read | take_write);
+            let wh = bus.w.head();
+            let wgo = held & bus.w.peek().is_some() & bus.ans.ready();
+            let _ = bus.w.recv_if(wgo);
             let data = wh.data;
             let strb = wh.strb;
             let to = self.paddr.get();
@@ -123,7 +119,7 @@ impl<const I: usize> Unit for Dmem<I> {
                 },
             });
             if send.to_bool() {
-                rb.send(R {
+                bus.r.send(R {
                     id: self.rid.get(),
                     data: self.word.get(),
                     resp: Resp::Okay,
@@ -131,7 +127,7 @@ impl<const I: usize> Unit for Dmem<I> {
                 });
             }
             if wgo.to_bool() {
-                ans.send(Answer {
+                bus.ans.send(Answer {
                     id: self.pid.get(),
                     resp: Resp::Okay,
                 });

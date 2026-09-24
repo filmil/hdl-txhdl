@@ -578,8 +578,13 @@ impl<const DIV: u32> Unit for Board<DIV> {
                             ),
                         ),
                         self.timer.run(
-                            (rst_timer, req1_rx, wd1_rx),
-                            (ans1_tx, rb1_tx, tirq_o, sirq_o),
+                            PerPort {
+                                req: req1_rx,
+                                w: wd1_rx,
+                                ans: ans1_tx,
+                                r: rb1_tx,
+                            },
+                            (rst_timer, tirq_o, sirq_o),
                         ),
                     ),
                     join2(
@@ -640,7 +645,15 @@ impl<const DIV: u32> Unit for Board<DIV> {
                     ),
                 ),
                 join2(
-                    self.dmem.run((req0_rx, wd0_rx), (ans0_tx, rb0_tx)),
+                    self.dmem.run(
+                        PerPort {
+                            req: req0_rx,
+                            w: wd0_rx,
+                            ans: ans0_tx,
+                            r: rb0_tx,
+                        },
+                        (),
+                    ),
                     self.cpu.run(
                         (
                             rst,
@@ -805,8 +818,13 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                 (req5_tx, wd5_tx, b5_tx, r5_tx),
                                             ),
                                             self.rom.run(
-                                                (req5_rx, wd5_rx),
-                                                (ans5_tx, rb5_tx),
+                                                PerPort {
+                                                    req: req5_rx,
+                                                    w: wd5_rx,
+                                                    ans: ans5_tx,
+                                                    r: rb5_tx,
+                                                },
+                                                (),
                                             ),
                                         ),
                                     ),
