@@ -22,7 +22,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, Clock, DefaultClock, Running, Unit};
 use txhdl::types::U;
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::pwm::{duty, polarity, Pwm, CTRL_CENTRE, CTRL_ENABLE};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -50,7 +50,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let (paw, par, pw, pb, pr) = lite.per;
+    let bus: LitePort<32, 32, 4> = lite.per.into();
     let (pins_out, pins) = signal::<U<4>, DefaultClock>();
 
     let mut host_unit = HostUnit::default();
@@ -59,11 +59,11 @@ fn main() {
 
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<DefaultClock>();
-        wave.add("aw", &paw);
-        wave.add("ar", &par);
-        wave.add("w", &pw);
-        wave.add("b", &pb);
-        wave.add("r", &pr);
+        wave.add("bus_aw", &bus.aw);
+        wave.add("bus_ar", &bus.ar);
+        wave.add("bus_w", &bus.w);
+        wave.add("bus_b", &bus.b);
+        wave.add("bus_r", &bus.r);
         wave.add("pins", &pins);
         wave.add("pwm", &pwm);
         wave.start();
@@ -168,7 +168,7 @@ fn main() {
             host_unit.run(host_in, host_out),
             bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
         ),
-        join2(pwm.run((paw, par, pw), (pb, pr, pins_out)), client),
+        join2(pwm.run(bus, pins_out), client),
     ));
     println!("  t  what the program saw");
     for _ in 0..400 {

@@ -26,7 +26,10 @@ use crate::bus::axi::Resp;
 use txhdl::comp::{chan, DefaultClock, Rx, Tx};
 use txhdl::lite_bridge;
 use txhdl::types::U;
-use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
+use txhdl::{
+    Ports as PortsDerive, Transaction as TransactionDerive,
+    Value as ValueDerive,
+};
 
 // begin{beats}
 /// The address phase of an AXI-Lite transaction, on either address
@@ -91,6 +94,36 @@ pub type LitePer<const A: usize, const D: usize, const S: usize> = (
     Tx<LiteB>,
     Tx<LiteR<D>>,
 );
+
+/// What a peripheral holds on an AXI-Lite link, as one port rather
+/// than five: `run(&mut self, bus: LitePort<32, 32, 4>, ..)` and
+/// `bus.ar` in the body. Each field is one channel, its beat one of
+/// the structs above, and the netlist names each port for the side and
+/// the field, `bus_aw_valid`, `bus_r_data` and so on, as AXI's own
+/// signals are named with a prefix. The fields are in [`LitePer`]'s
+/// order. Any unit in any crate may take it, since `#[derive(Ports)]`
+/// is all `#[lower]` needs of it (issue 483).
+#[derive(PortsDerive)]
+pub struct LitePort<const A: usize, const D: usize, const S: usize> {
+    /// Write addresses, in.
+    pub aw: Rx<LiteAw<A>>,
+    /// Read addresses, in.
+    pub ar: Rx<LiteAr<A>>,
+    /// Write data, in.
+    pub w: Rx<LiteW<D, S>>,
+    /// Write responses, out.
+    pub b: Tx<LiteB>,
+    /// Read data, out.
+    pub r: Tx<LiteR<D>>,
+}
+
+impl<const A: usize, const D: usize, const S: usize> From<LitePer<A, D, S>>
+    for LitePort<A, D, S>
+{
+    fn from((aw, ar, w, b, r): LitePer<A, D, S>) -> Self {
+        LitePort { aw, ar, w, b, r }
+    }
+}
 
 /// An AXI-Lite link: the ends of its five channels, by side.
 pub struct LiteLink<const A: usize, const D: usize, const S: usize> {

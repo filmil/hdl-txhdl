@@ -34,12 +34,12 @@
 //! The ends are exact. A duty of zero is a pin that never goes high,
 //! and a duty of the period or more is a pin that never comes down;
 //! neither is a pulse one cycle wide.
-use txhdl::comp::{mux, Clock, DefaultClock, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 
 use crate::bus::axi::Resp;
-use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 /// `ctrl` bit 0: the counter runs.
 pub const CTRL_ENABLE: u32 = 1;
@@ -79,11 +79,7 @@ pub struct Pwm {
 // begin{run}
 #[lower]
 impl Unit for Pwm {
-    async fn run(
-        &mut self,
-        (aw, ar, w): (Rx<LiteAw<32>>, Rx<LiteAr<32>>, Rx<LiteW<32, 4>>),
-        (b, r, pins): (Tx<LiteB>, Tx<LiteR<32>>, Out<U<4>>),
-    ) {
+    async fn run(&mut self, bus: LitePort<32, 32, 4>, pins: Out<U<4>>) {
         loop {
             DefaultClock::rising().await;
             let ctrl = self.ctrl.get();
@@ -93,16 +89,18 @@ impl Unit for Pwm {
             let shadow = self.duty_next.get();
             let down = self.down.get();
             // The bus.
-            let arh = ar.head();
-            let awh = aw.head();
-            let wh = w.head();
+            let arh = bus.ar.head();
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
             let rsel = arh.addr.slice::<2, 3>();
             let wsel = awh.addr.slice::<2, 3>();
-            let rgo = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let written = wh.data.slice::<0, 16>();
             let enabled = ctrl.bit(0);
             let centred = ctrl.bit(1);
@@ -175,13 +173,13 @@ impl Unit for Pwm {
                 !enabled ? down: Bit::Zero,
             });
             if rgo.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: word,
                     resp: Resp::Okay,
                 });
             }
             if wgo.to_bool() {
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
             pins.set(mux(enabled, lines, ctrl.slice::<4, 4>()));
         }
@@ -192,7 +190,7 @@ impl Unit for Pwm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bus::axi_lite::{axi_lite, LiteHost};
+    use crate::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LiteW};
     use std::cell::RefCell;
     use std::rc::Rc;
     use txhdl::comp::{join2, signal, In, Running};
@@ -237,7 +235,6 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let (aw, ar, w, b, r) = link.per;
         let (pins_o, pins) = signal::<U<4>, DefaultClock>();
         let done = Rc::new(RefCell::new(false));
         let d = done.clone();
@@ -251,7 +248,7 @@ mod tests {
                 body.await;
                 *d.borrow_mut() = true;
             },
-            pwm.run((aw, ar, w), (b, r, pins_o)),
+            pwm.run(link.per.into(), pins_o),
         ));
         for _ in 0..20000 {
             sim.cycle();

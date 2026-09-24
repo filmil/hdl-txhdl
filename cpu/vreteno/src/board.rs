@@ -44,7 +44,7 @@ use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerReq, B, R, W,
 };
 use txhdl_parts::bus::axi_lite::{
-    LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge5, LiteR, LiteW,
+    LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge5, LitePort, LiteR, LiteW,
 };
 use txhdl_parts::bus::axi_pins::{AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::router::Router7;
@@ -582,8 +582,14 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                 (lb_tx, lr_tx, tx, uirq_o),
                             ),
                             self.pwm.run(
-                                (paw_pwm_rx, par_pwm_rx, pw_pwm_rx),
-                                (pb_pwm_tx, pr_pwm_tx, pwm_pins),
+                                LitePort {
+                                    aw: paw_pwm_rx,
+                                    ar: par_pwm_rx,
+                                    w: pw_pwm_rx,
+                                    b: pb_pwm_tx,
+                                    r: pr_pwm_tx,
+                                },
+                                pwm_pins,
                             ),
                         ),
                         join2(
