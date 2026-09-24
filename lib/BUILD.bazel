@@ -10,7 +10,11 @@ package(default_visibility = ["//visibility:public"])
 
 rust_proc_macro(
     name = "txhdl_macros",
-    srcs = ["macros/lib.rs"],
+    srcs = [
+        "macros/lib.rs",
+        # The reserved words, shared with the runtime (issue 485).
+        "src/reserved.rs",
+    ],
     crate_name = "txhdl_macros",
     edition = "2021",
 )
@@ -38,6 +42,7 @@ rust_library(
         "src/foreign.rs",
         "src/funcs.rs",
         "src/netlist.rs",
+        "src/reserved.rs",
         "src/pipeline.rs",
         "src/types.rs",
     ],
@@ -60,6 +65,7 @@ filegroup(
         "src/pipeline.rs",
         "src/types.rs",
         "src/netlist.rs",
+        "src/reserved.rs",
     ],
 )
 
