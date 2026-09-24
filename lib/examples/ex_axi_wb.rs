@@ -12,7 +12,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{
-    axi_to_unit, AxiHost, AxiPer, HostLink, Rd, Resp, Wr,
+    axi_to_unit, AxiHost, AxiPer, HostLink, PerPort, Rd, Resp, Wr,
 };
 use txhdl_parts::bus::wb::sim::WbMem;
 use txhdl_parts::bus::wb::AxiWb;
@@ -29,7 +29,7 @@ fn main() {
         per_in,
         per_out,
     } = axi_to_unit::<32, 32, 4, 2, 4>();
-    let (req, wd, ans, rb) = per_client;
+    let bus = PerPort::from(per_client);
     let (cyc_o, cyc) = signal::<Bit, DefaultClock>();
     let (stb_o, stb) = signal::<Bit, DefaultClock>();
     let (we_o, we) = signal::<Bit, DefaultClock>();
@@ -47,10 +47,10 @@ fn main() {
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         // Every channel and wire under the name of the bridge's port.
-        w.add("req", &req);
-        w.add("wd", &wd);
-        w.add("ans", &ans);
-        w.add("rb", &rb);
+        w.add("bus_req", &bus.req);
+        w.add("bus_w", &bus.w);
+        w.add("bus_ans", &bus.ans);
+        w.add("bus_r", &bus.r);
         w.add("stall", &stall);
         w.add("ack", &ack);
         w.add("rdat", &rdat);
@@ -94,8 +94,8 @@ fn main() {
                     (stall_o, ack_o, rdat_o),
                 ),
                 bridge.run(
-                    (req, wd, stall, ack, rdat),
-                    (ans, rb, cyc_o, stb_o, we_o, adr_o, dat_o, sel_o),
+                    bus,
+                    (stall, ack, rdat, cyc_o, stb_o, we_o, adr_o, dat_o, sel_o),
                 ),
             ),
             client,

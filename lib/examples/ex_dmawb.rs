@@ -36,7 +36,7 @@
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
+use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::wb::sim::WbMem;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::dma::{LineFetch, LineStore};
@@ -61,7 +61,7 @@ fn main() {
     let rd = axi_units::<ADDR, 32, 4, IDB>();
     let (r_issue, _r_wbeat, r_release, r_grant, r_done, r_rdata) =
         rd.host_client;
-    let (r_req, r_wd, r_ans, r_rb) = rd.per_client;
+    let r_bus = PerPort::from(rd.per_client);
     let (rbase_o, r_base) = signal::<U<ADDR>, DefaultClock>();
     let (rwords_o, r_words) = signal::<U<16>, DefaultClock>();
     let (rgo_o, r_go) = signal::<Bit, DefaultClock>();
@@ -94,7 +94,7 @@ fn main() {
     let wr = axi_units::<ADDR, 32, 4, IDB>();
     let (w_issue, w_wbeat, w_release, w_grant, w_done, _w_rdata) =
         wr.host_client;
-    let (w_req, w_wd, w_ans, w_rb) = wr.per_client;
+    let w_bus = PerPort::from(wr.per_client);
     let (wbase_o, w_base) = signal::<U<ADDR>, DefaultClock>();
     let (wbytes_o, w_bytes) = signal::<U<16>, DefaultClock>();
     let (wgo_o, w_go) = signal::<Bit, DefaultClock>();
@@ -149,10 +149,10 @@ fn main() {
                     (r_issue, r_release, feed_tx, rrun_o),
                 ),
                 r_bridge.run(
-                    (r_req, r_wd, r_stall, r_ack, r_rdat),
+                    r_bus,
                     (
-                        r_ans, r_rb, r_cyc_o, r_stb_o, r_we_o, r_adr_o,
-                        r_dat_o, r_sel_o,
+                        r_stall, r_ack, r_rdat, r_cyc_o, r_stb_o, r_we_o,
+                        r_adr_o, r_dat_o, r_sel_o,
                     ),
                 ),
             ),
@@ -174,10 +174,10 @@ fn main() {
                     (w_issue, w_wbeat, w_release, wrun_o),
                 ),
                 w_bridge.run(
-                    (w_req, w_wd, w_stall, w_ack, w_rdat),
+                    w_bus,
                     (
-                        w_ans, w_rb, w_cyc_o, w_stb_o, w_we_o, w_adr_o,
-                        w_dat_o, w_sel_o,
+                        w_stall, w_ack, w_rdat, w_cyc_o, w_stb_o, w_we_o,
+                        w_adr_o, w_dat_o, w_sel_o,
                     ),
                 ),
             ),

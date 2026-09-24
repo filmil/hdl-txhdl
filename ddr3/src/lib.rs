@@ -241,10 +241,15 @@ impl Unit for Ddr3Per {
                 ),
             ),
             self.bridge.run(
-                (bus.req, bus.w, wb_stall_i, wb_ack_i, wb_rdat_i),
+                PerPort {
+                    req: bus.req,
+                    w: bus.w,
+                    ans: bus.ans,
+                    r: bus.r,
+                },
                 (
-                    bus.ans, bus.r, wb_cyc_o, wb_stb_o, wb_we_o, wb_adr_o,
-                    wb_dat_o, wb_sel_o,
+                    wb_stall_i, wb_ack_i, wb_rdat_i, wb_cyc_o, wb_stb_o,
+                    wb_we_o, wb_adr_o, wb_dat_o, wb_sel_o,
                 ),
             ),
         )

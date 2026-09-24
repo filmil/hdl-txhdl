@@ -16,11 +16,11 @@
 //! cut to `AW` bits. A peripheral that decodes a region of the link's
 //! address map gets the region's offset for free, as long as the base
 //! lies above those bits.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 
-use crate::bus::axi::{Answer, PerReq, Resp, R, W};
+use crate::bus::axi::{Answer, PerPort, Resp, R};
 
 pub mod sim;
 
@@ -62,16 +62,11 @@ pub struct AxiWb<const A: usize, const I: usize, const AW: usize> {
 impl<const A: usize, const I: usize, const AW: usize> Unit for AxiWb<A, I, AW> {
     async fn run(
         &mut self,
-        (req, wd, stall, ack, rdat): (
-            Rx<PerReq<A, I>>,
-            Rx<W<32, 4>>,
+        bus: PerPort<A, 32, 4, I>,
+        (stall, ack, rdat, cyc, stb, we, adr, dat, sel): (
             In<Bit>,
             In<Bit>,
             In<U<32>>,
-        ),
-        (ans, rb, cyc, stb, we, adr, dat, sel): (
-            Tx<Answer<I>>,
-            Tx<R<32, I>>,
             Out<Bit>,
             Out<Bit>,
             Out<Bit>,
@@ -84,13 +79,13 @@ impl<const A: usize, const I: usize, const AW: usize> Unit for AxiWb<A, I, AW> {
             DefaultClock::rising().await;
             let st = self.stage.get();
             // A request, taken when there is none in hand.
-            let q = req.head();
-            let take = (st == 0) & req.peek().is_some();
-            let _ = req.recv_if(take);
+            let q = bus.req.head();
+            let take = (st == 0) & bus.req.peek().is_some();
+            let _ = bus.req.recv_if(take);
             // A write's beat, which comes when it comes.
-            let wh = wd.head();
-            let beat = (st == 1) & wd.peek().is_some();
-            let _ = wd.recv_if(beat);
+            let wh = bus.w.head();
+            let beat = (st == 1) & bus.w.peek().is_some();
+            let _ = bus.w.recv_if(beat);
             // The lines: offered, taken, acknowledged.
             let offered = st == 2;
             let taken = offered & !stall.get();
@@ -98,8 +93,8 @@ impl<const A: usize, const I: usize, const AW: usize> Unit for AxiWb<A, I, AW> {
             // The answer, sent when the link has room for it.
             let read = self.reading.get() == 1;
             let answering = st == 4;
-            let sent_r = answering & read & rb.ready();
-            let sent_b = answering & !read & ans.ready();
+            let sent_r = answering & read & bus.r.ready();
+            let sent_b = answering & !read & bus.ans.ready();
             // A read goes on the lines at once; a write waits for its
             // beat first.
             let first = mux(q.read, U::<3>::from(2u8), U::<3>::from(1u8));
@@ -150,7 +145,7 @@ impl<const A: usize, const I: usize, const AW: usize> Unit for AxiWb<A, I, AW> {
                 sent_b ? stage: U::<3>::from(0u8),
             });
             if sent_r.to_bool() {
-                rb.send(R {
+                bus.r.send(R {
                     id: self.rid.get(),
                     data: self.wdat.get(),
                     resp: Resp::Okay,
@@ -158,7 +153,7 @@ impl<const A: usize, const I: usize, const AW: usize> Unit for AxiWb<A, I, AW> {
                 });
             }
             if sent_b.to_bool() {
-                ans.send(Answer {
+                bus.ans.send(Answer {
                     id: self.rid.get(),
                     resp: Resp::Okay,
                 });
@@ -181,7 +176,7 @@ mod tests {
     use super::sim::WbMem;
     use super::AxiWb;
     use crate::bus::axi::{
-        axi_to_unit, AxiHost, AxiPer, Host, HostLink, Rd, Resp, Wr,
+        axi_to_unit, AxiHost, AxiPer, Host, HostLink, PerPort, Rd, Resp, Wr,
     };
     use std::cell::RefCell;
     use std::future::Future;
@@ -206,7 +201,7 @@ mod tests {
             per_in,
             per_out,
         } = axi_to_unit::<32, 32, 4, 2, 4>();
-        let (req, wd, ans, rb) = per_client;
+        let bus = PerPort::from(per_client);
         let (cyc_o, cyc) = signal::<Bit, DefaultClock>();
         let (stb_o, stb) = signal::<Bit, DefaultClock>();
         let (we_o, we) = signal::<Bit, DefaultClock>();
@@ -231,8 +226,11 @@ mod tests {
                         (stall_o, ack_o, rdat_o),
                     ),
                     bridge.run(
-                        (req, wd, stall, ack, rdat),
-                        (ans, rb, cyc_o, stb_o, we_o, adr_o, dat_o, sel_o),
+                        bus,
+                        (
+                            stall, ack, rdat, cyc_o, stb_o, we_o, adr_o, dat_o,
+                            sel_o,
+                        ),
                     ),
                 ),
                 client(host),
