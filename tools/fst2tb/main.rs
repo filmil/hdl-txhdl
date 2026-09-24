@@ -78,6 +78,35 @@ use std::collections::BTreeMap;
 /// channel is not, and a unit that acts in its first cycle, as the
 /// rasteriser does when it goes looking for its display list, is
 /// then a cycle out for the whole run.
+/// The names a trace carries more than once, each with the widths it
+/// was carried at, in the order the trace names them.
+///
+/// The width is in the message rather than in the decision: a name
+/// carried twice is a fault whether or not the widths agree, and
+/// agreeing widths are the worse case because nothing downstream
+/// notices. Reporting both lets a reader see which unit's signal the
+/// testbench had been reading.
+fn collisions(read: &[(String, Vec<String>)]) -> Vec<(String, Vec<usize>)> {
+    let mut seen: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    let mut order: Vec<&str> = Vec::new();
+    for (name, per_tick) in read {
+        let width = per_tick
+            .iter()
+            .find(|v| !v.is_empty())
+            .map_or(0, |v| v.len());
+        let e = seen.entry(name.as_str()).or_default();
+        if e.is_empty() {
+            order.push(name.as_str());
+        }
+        e.push(width);
+    }
+    order
+        .into_iter()
+        .filter(|n| seen[n].len() > 1)
+        .map(|n| (n.to_string(), seen[n].clone()))
+        .collect()
+}
+
 fn empty_ready(name: &str, dir: &str) -> bool {
     dir == "txin" && name.ends_with("_ready")
 }
@@ -177,7 +206,10 @@ fn main() {
         .collect();
     let ids: Vec<wellen::SignalRef> = vars.iter().map(|(_, s)| *s).collect();
     w.load_signals(&ids);
-    let mut values: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Read every signal first and look for a name carried twice
+    // before any of it goes into a map keyed by name, since the map
+    // is where the second one would replace the first.
+    let mut read: Vec<(String, Vec<String>)> = Vec::new();
     for (name, s) in &vars {
         let sig = w.get_signal(*s).unwrap();
         let mut per_tick = vec![String::new(); times.len()];
@@ -194,8 +226,47 @@ fn main() {
             }
             per_tick[i] = last.clone();
         }
-        values.insert(name.clone(), per_tick);
+        read.push((name.clone(), per_tick));
     }
+
+    // A wave records a signal under its port's name, so two lowered
+    // units in one run that both have a port called `out` record two
+    // signals called `out`, and whichever is read second would win.
+    // The testbench then compares one unit's port against the other
+    // unit's trace.
+    //
+    // That is only loud when the widths differ, and then it is loud
+    // in the wrong place: nvc says "expected 41 elements in string
+    // literal but have 35" about the generated file, which says
+    // nothing about a collision. When the widths agree it is silent,
+    // and a testbench that compares the wrong signal can pass. Issue
+    // 462 had three collisions in one run, `out`, `bytes` and `go`,
+    // and only `out` was reported.
+    let clash = collisions(&read);
+    if !clash.is_empty() {
+        let each: Vec<String> = clash
+            .iter()
+            .map(|(n, w)| {
+                let w: Vec<String> = w.iter().map(|b| b.to_string()).collect();
+                format!("`{n}` at {} bits", w.join(" and "))
+            })
+            .collect();
+        eprintln!(
+            "fst2tb: the trace of {entity} carries {} name{} more than \
+             once: {}.\nTwo lowered units in one run share a port \
+             name, so the wave holds a signal of that name for each \
+             and a testbench cannot say which it meant.\nGive the \
+             channels distinct names where they are added to the \
+             wave, as `Wave::add(\"frame_out\", ..)` rather than \
+             `Wave::add(\"out\", ..)` for each.",
+            clash.len(),
+            if clash.len() == 1 { "" } else { "s" },
+            each.join(", ")
+        );
+        std::process::exit(1);
+    }
+
+    let values: BTreeMap<String, Vec<String>> = read.into_iter().collect();
     // Every clock the netlist names, in the order it names them. The
     // first is the one the testbench counts ticks by; the rest are
     // driven beside it, each at its own period and phase, which is
@@ -871,6 +942,76 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::aliases;
+
+    use super::collisions;
+
+    fn read(v: &[(&str, usize)]) -> Vec<(String, Vec<String>)> {
+        v.iter()
+            .map(|(n, w)| (n.to_string(), vec!["0".repeat(*w)]))
+            .collect()
+    }
+
+    /// The case of issue 462, as `ex_ethdma` met it: `FrameOut` has
+    /// `out: Tx<EthByte>` at 9 bits and `FrameIn` has `out: Tx<U<32>>`
+    /// at 32, both recorded, and the second testbench took the first
+    /// signal.
+    #[test]
+    fn a_name_carried_twice_is_reported_with_both_widths() {
+        let r = read(&[("clk", 1), ("out", 9), ("out", 32)]);
+        let c = collisions(&r);
+        assert_eq!(c.len(), 1, "one name is carried twice");
+        assert_eq!(c[0].0, "out");
+        assert_eq!(c[0].1, vec![9, 32], "both widths, in trace order");
+    }
+
+    /// The silent half, and the reason this is a collision check and
+    /// not a width check. That run had three collisions and nvc
+    /// reported one, because only `out` had widths that differed;
+    /// `bytes` and `go` matched, so the testbench compared the wrong
+    /// unit's signal and said nothing.
+    #[test]
+    fn a_collision_is_reported_even_when_the_widths_agree() {
+        let r = read(&[
+            ("clk", 1),
+            ("out", 9),
+            ("bytes", 16),
+            ("go", 1),
+            ("out", 32),
+            ("bytes", 16),
+            ("go", 1),
+        ]);
+        let c = collisions(&r);
+        let names: Vec<&str> = c.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["out", "bytes", "go"],
+            "all three, and not only the one whose widths differ"
+        );
+        assert_eq!(c[1].1, vec![16, 16], "`bytes` agreed and still counts");
+        assert_eq!(c[2].1, vec![1, 1], "so did `go`");
+    }
+
+    /// A trace with no repeated name is not a fault, and the common
+    /// case must not be made to look like one.
+    #[test]
+    fn distinct_names_are_not_a_collision() {
+        let r = read(&[("clk", 1), ("inp", 8), ("out", 8), ("go", 1)]);
+        assert!(collisions(&r).is_empty());
+    }
+
+    /// A signal that never changed has no recorded value to measure,
+    /// and it is still a collision. Reporting its width as zero is
+    /// better than dropping it: the name is the fault.
+    #[test]
+    fn a_signal_that_never_changed_still_collides() {
+        let r = vec![
+            ("go".to_string(), vec![String::new(), String::new()]),
+            ("go".to_string(), vec![String::new(), "1".to_string()]),
+        ];
+        let c = collisions(&r);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].1, vec![0, 1]);
+    }
 
     fn names(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
