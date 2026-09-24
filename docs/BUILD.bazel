@@ -823,6 +823,8 @@ latex_document(
         ":remote_timing",
         ":pwm_run",
         ":pwm_timing",
+        ":trng_run",
+        ":trng_timing",
         ":tracer_run",
         ":tracer_timing",
         ":spi_run",

@@ -1,0 +1,57 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Numbers Nobody Can Predict}
+\label{sec:x-trng}
+
+A network stack wants numbers nobody can guess: the first sequence
+number of a connection, a nonce, a key. A machine with no clock of the
+day, which boots into the same state every time, has nowhere to get
+them but physics, and until this part the Vreteno machine had nowhere
+at all: Zephyr's build with a network stack took a counter and called
+it random (issue 458).
+
+The physics is the jitter of a ring oscillator. A loop of an odd
+number of inverters runs at a rate set by its own gates, wandering
+with temperature and supply, and where the clock's edge catches it in
+its period is not something a program can know. Eight such rings are
+\code{RingOsc}, a Verilog module the netlist instantiates and does not
+write, since a loop of gates is not a thing this language says; the
+attributes on it stop Vivado folding the loops to nothing. In a Rust
+run it is a model, a shift register with feedback per ring, and the
+example says so: nothing it prints is evidence of randomness, only of
+the machinery. Only a board is evidence of that, and the issue says
+how far it has been measured.
+
+\code{Trng} is the other half and is ordinary hardware. Each cycle it
+folds the eight samples to one bit by exclusive or, which is less
+biased than any one of them, and does three things with the stream.
+It watches it: forty identical bits in a row, the repetition count
+test of NIST SP 800-90B at a false alarm rate of one in a million,
+raise a sticky fault and stop the buffer filling, since a ring that
+has stopped is worse than none. It debiases it: von Neumann's
+extractor takes the bits in pairs, \code{01} a zero, \code{10} a one,
+and the two equal pairs nothing, so whatever a ring's bias is, it
+cancels, at the cost of three bits in four. And it buffers it: the
+bits that survive fill a word, and whole words wait in a buffer of
+four, which a host takes one at a time from \code{data} after
+\code{status} says one is ready. A fourth word, \code{raw}, is the
+last thirty-two samples before the extractor, and is what a program
+on the board reads in a loop to measure the source.
+
+\code{Entropy} is the two joined, the samples one way and the run bit
+the other, so that a design holds one unit and its netlist holds the
+module inside.
+
+\begin{figure}[htbp]
+\centering
+\input{trng_timing.tex}
+\caption{The source starting: \code{en} rises with the run bit, the
+samples arrive on \code{raw}, \code{have} and \code{first} hold the
+first bit of each pair, \code{nbits} climbs by the pairs that
+differ, and \code{runlen} counts the identical samples the health
+test watches.}
+\label{fig:x-trng}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_trng.rs}. Run with \code{bazel run //lib/examples:ex\_trng}.},label={lst:x-trng}]{lib/examples/ex_trng.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_trng} printed when the build ran it: the eight words, the raw samples, and the buffer drained after the stop.},label={lst:x-trng-out}]{out_trng.txt}
