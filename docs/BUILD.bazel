@@ -582,6 +582,19 @@ waveform(
     ],
 )
 
+# A frame's length found again after the clock crossing. Issue 151.
+waveform(
+    name = "framelen",
+    example = "//lib/examples:ex_framelen",
+    lowered = ("framelen", "framelen"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//framelen/phase=>giving",
+        "//framelen/held=>held",
+        "//len=>len",
+    ],
+)
+
 # One Ethernet wire, two users, split by EtherType. Issue 480.
 waveform(
     name = "ethshare",
@@ -828,6 +841,8 @@ latex_document(
         ":dmawb_timing",
         ":ethdma_run",
         ":ethshare_run",
+        ":framelen_run",
+        ":framelen_timing",
         ":ethshare_timing",
         ":ethdma_timing",
         ":ethslots_run",

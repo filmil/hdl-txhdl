@@ -1,0 +1,55 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Frame's Length, Found Again}
+\label{sec:x-framelen}
+
+\code{FrameIn} (\S\ref{sec:x-ethdma}) must know a frame's length
+before the store engine starts, since the engine is told how many
+bytes to write when it begins. \code{EthRx} knows it and says so. On
+the board it cannot, and the reason is the clock.
+
+The board's receiver is in the top, on the clock the PHY recovers from
+the line, and only the frame's bytes cross to the core's clock. The
+length cannot follow them on a wire of its own: it would arrive on the
+wrong clock, out of step with the frame it describes. Nor can it ride
+inside the stream, because the remote peripheral reads that same
+stream, through the sharing unit of \S\ref{sec:x-ethshare}, and would
+take the length for a byte of its own frame.
+
+So the length is found again after the crossing. \code{FrameLen} takes
+a frame a byte at a time, holds all of it, and then offers it back with
+its count on \code{len}, which is exactly what \code{EthRx} offers. A
+unit joined to \code{FrameIn} in its place cannot tell the difference.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=len-len,caption={\code{lib/parts/src/ethdma.rs}: a frame held
+whole and handed on with its count.},%
+label={lst:x-framelen}]{lib/parts/src/ethdma.rs}
+
+\subsection{What it costs}
+
+A frame of memory and a frame of latency. The frame was already held
+whole once, before the crossing, by the receiver; it is held whole
+again here. That is the price of the length not crossing with the
+bytes, and it is paid in block RAM rather than in a second clock
+domain's worth of logic.
+
+\subsection{What the run checks}
+
+The run is \code{FrameOut}, then \code{FrameLen}, then \code{FrameIn},
+with two frames of 101 and 67 bytes, the same two \code{ex\_ethdma}
+sends through the real MAC, so the two runs can be read side by side.
+Every word is checked where it landed, and the length \code{FrameIn}
+was told is checked against the frame's.
+
+Made to report every length one short, \code{FrameLen} fails the run at
+once: the first frame's last word comes back without its last byte, and
+the second frame arrives shifted by the byte the first one left behind.
+A length that is wrong by one is the fault this unit exists to prevent,
+and the run is built to see it.
+
+\input{framelen_timing.tex}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_framelen} printed
+when the build ran it.},%
+label={lst:x-framelen-out}]{out_framelen.txt}
