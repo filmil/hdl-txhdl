@@ -76,9 +76,9 @@ of the byte. That is the turn at \code{count} zero.
 \code{fired} and the interrupt enable.
 \item \code{mosi} is the top bit of \code{txb} and \code{cs\_n} is the
 inverse of the select bit, both combinational.
-\item A read is answered on \code{r} in the cycle it is taken, with
+\item A read is answered on \code{bus\_r} in the cycle it is taken, with
 \code{OKAY}. A write is taken when its address phase, its beat and
-room on \code{b} are all there.
+room on \code{bus\_b} are all there.
 \end{itemize}
 
 \subsection*{Verification}

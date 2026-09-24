@@ -81,9 +81,9 @@ zero. It is combinational from those and from a register.
 \item Nothing in this block is cleared by \code{srst}. That is what
 lets \code{cause} and \code{scratch} survive a reset, and it is why
 the block sits outside whatever \code{srst} drives.
-\item A read is answered on \code{r} in the cycle it is taken, with
+\item A read is answered on \code{bus\_r} in the cycle it is taken, with
 \code{OKAY}. A write is taken when its address phase, its beat and
-room on \code{b} are all there.
+room on \code{bus\_b} are all there.
 \end{itemize}
 
 \subsection*{Verification}

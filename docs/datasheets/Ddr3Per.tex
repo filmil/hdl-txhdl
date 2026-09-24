@@ -22,8 +22,10 @@ Its \code{run} is a model for simulation: a Wishbone memory that
 stalls while it calibrates. The model does not drive the memory's
 pins.
 
-On the link side the peripheral is the client of an \code{AxiPer}:
-\code{req} and \code{wd} in, \code{ans} and \code{rb} out. On the
+On the link side the peripheral is the client of an \code{AxiPer},
+and the link is one port, \code{bus}, a \code{PerPort}:
+\code{bus\_req} and \code{bus\_w} in, \code{bus\_ans} and
+\code{bus\_r} out. On the
 memory side its ports are the board's clock and the controller's
 reset in, the design's clock and its reset out, since the controller
 makes them, the \code{calib} output, and the memory's pins, with

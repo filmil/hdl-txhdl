@@ -34,8 +34,9 @@ Parameter & Meaning \\
 so the flash is clocked at the system's rate over
 \code{2 * (DIV + 1)}. The tables use 1, as the example does; a board
 divides further. \\
-\code{I} & The width of the AXI identifier on \code{req}, \code{ans}
-and \code{rb}, in bits. The tables use 2, as every design here does. \\
+\code{I} & The width of the AXI identifier on \code{bus\_req},
+\code{bus\_ans} and \code{bus\_r}, in bits. The tables use 2, as every
+design here does. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -63,7 +64,7 @@ chip takes a bit as the clock rises and the master moves one as it
 falls. Every flash answers a fast read in that mode, so the part needs
 neither the master's two mode bits nor a register to hold them.
 \item The four bytes of data are assembled as they arrive, the first
-into the low eight bits. The answer goes out on \code{rb} in the first
+into the low eight bits. The answer goes out on \code{bus\_r} in the first
 cycle the channel has room after the ninth byte.
 \item A write is taken, its beat is dropped and it is answered
 \code{SLVERR}. The window is read only, and saying so is what makes it

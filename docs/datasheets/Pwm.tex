@@ -82,9 +82,9 @@ polarity bits themselves, so a design chooses what a stopped output
 rests at.
 \item A period of zero stops the counter, since a period shorter than a
 cycle is no period at all.
-\item A read is answered on \code{r} in the cycle its address beat is
+\item A read is answered on \code{bus\_r} in the cycle its address beat is
 taken, with \code{OKAY}. A write needs its address beat, its data beat
-and room on \code{b} in the same cycle, and is answered \code{OKAY} in
+and room on \code{bus\_b} in the same cycle, and is answered \code{OKAY} in
 that cycle.
 \end{itemize}
 

@@ -88,12 +88,12 @@ learns why the buffer stopped.
 \item A write of the run bit while the buffer is stopped also zeroes
 \code{count} and \code{head}: a host that starts the buffer starts a
 new window rather than adding to the old one.
-\item A read is answered on \code{r} in the cycle its address beat is
+\item A read is answered on \code{bus\_r} in the cycle its address beat is
 taken, with \code{OKAY}. It returns the registers as the last edge left
 them, so a read in the same cycle as a write of the same word returns
 the old value.
 \item A write needs its address beat and its data beat in the same
-cycle, and room on \code{b}; it is answered \code{OKAY} in that cycle.
+cycle, and room on \code{bus\_b}; it is answered \code{OKAY} in that cycle.
 The buffer holds no write address between cycles.
 \item The cursor is a register, so a host writes it in one transaction
 and reads the entry in the next.

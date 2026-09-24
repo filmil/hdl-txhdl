@@ -15,9 +15,11 @@ holds any.
 
 It is an AXI-Lite peripheral. It sits behind a \code{LiteBridge1},
 which hands it one transaction at a time with no identifier and no
-burst. Reads come on \code{ar} and are answered on \code{r}; writes
-come on \code{aw} and \code{w} and are answered on \code{b}. The input
-\code{rst} stops both sides and empties the buffer.
+burst. Its link is one port, \code{bus}, a \code{LitePort} of the
+five channels: reads come on \code{bus\_ar} and are answered on
+\code{bus\_r}; writes come on \code{bus\_aw} and \code{bus\_w} and
+are answered on \code{bus\_b}. The input \code{rst} stops both sides
+and empties the buffer.
 
 \subsection*{Parameters}
 
@@ -61,11 +63,11 @@ it from the buffer. & Ignored. \\
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item A read is taken when \code{r} has room and a request is on
-\code{ar}, and it is answered with \code{OKAY} in the same cycle.
-\item A write is taken when \code{b} has room and both \code{aw} and
-\code{w} hold a request. It is answered with \code{OKAY} in the same
-cycle, whichever word it names.
+\item A read is taken when \code{bus\_r} has room and a request is on
+\code{bus\_ar}, and it is answered with \code{OKAY} in the same cycle.
+\item A write is taken when \code{bus\_b} has room and both
+\code{bus\_aw} and \code{bus\_w} hold a request. It is answered with
+\code{OKAY} in the same cycle, whichever word it names.
 \item A byte written to word 0 while the port is idle loads the ten
 bits of its frame into \code{shift} and ten into \code{bits}. It also
 goes into \code{last}, and \code{sent} counts it.

@@ -90,9 +90,9 @@ other's work.
 \item \code{irq} is high while any bit of \code{status} is set. It is
 combinational from \code{status}, which is a register, so it follows
 the register by no cycles.
-\item A read is answered on \code{r} in the cycle it is taken, with
+\item A read is answered on \code{bus\_r} in the cycle it is taken, with
 \code{OKAY}. A write is taken when its address phase, its beat and
-room on \code{b} are all there, and is answered \code{OKAY} in that
+room on \code{bus\_b} are all there, and is answered \code{OKAY} in that
 cycle.
 \item An address that selects no word reads as zero and a write to it
 is answered and does nothing.

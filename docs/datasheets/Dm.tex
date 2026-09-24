@@ -96,9 +96,9 @@ CSR read knows, and writes the general registers, \code{dpc} and
 together: the core's completion of a resume before the debugger's
 write, so a request written in the cycle the core resumes clears the
 acknowledgement rather than losing to it (issue 439).
-\item A read is answered on \code{r} in the cycle its address beat is
+\item A read is answered on \code{bus\_r} in the cycle its address beat is
 taken, with \code{OKAY}; a write needs its address and data beats and
-room on \code{b} in one cycle, and is answered \code{OKAY} there.
+room on \code{bus\_b} in one cycle, and is answered \code{OKAY} there.
 Inactive, the module holds nothing and answers zeros.
 \end{itemize}
 

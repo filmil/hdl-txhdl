@@ -17,9 +17,11 @@ bus a cycle after a read is taken, as the data memory does. Both are
 filled with the same image before the first cycle, so they cannot
 disagree, and neither is written at run time.
 
-It is the peripheral client of an \code{AxiPer}: it takes requests on
-\code{req} and write beats on \code{wd}, and answers on \code{ans}
-for a write and \code{rb} for a read. It answers single-beat bursts,
+It is the peripheral client of an \code{AxiPer}, and its link is one
+port, \code{bus}, a \code{PerPort} of the four channels: it takes
+requests on \code{bus\_req} and write beats on \code{bus\_w}, and
+answers on \code{bus\_ans} for a write and \code{bus\_r} for a read.
+It answers single-beat bursts,
 which is all the core makes.
 
 \subsection*{Parameters}
@@ -29,9 +31,9 @@ which is all the core makes.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{I} & The width of the AXI identifier on \code{req}, \code{ans}
-and \code{rb}, in bits. The tables use 4, as the board does since its bus
-has two hosts behind an arbiter (issue 241). \\
+\code{I} & The width of the AXI identifier on \code{bus\_req},
+\code{bus\_ans} and \code{bus\_r}, in bits. The tables use 4, as the board
+does since its bus has two hosts behind an arbiter (issue 241). \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -55,14 +57,14 @@ words 0 to 1023, which are the words the core fetches from
 answer register is free or is being emptied in this cycle. The word
 is read into \code{word} at the edge, with its identifier in
 \code{rid}, and \code{answer} is set.
-\item The read is answered on \code{rb} the cycle after, with
+\item The read is answered on \code{bus\_r} the cycle after, with
 \code{rid}, \code{OKAY} and \code{last} set.
 \item A write is taken when no other write is waiting for its beat.
 Its identifier goes into \code{pid} and \code{pend} is set; nothing
 is written.
 \item The held write's beat is taken when it has arrived and
-\code{ans} has room, and dropped, so that the write data channel is
-not left holding it; \code{ans} sends \code{SLVERR} with \code{pid},
+\code{bus\_ans} has room, and dropped, so that the write data channel is
+not left holding it; \code{bus\_ans} sends \code{SLVERR} with \code{pid},
 which is what a peripheral that was reached and refused says.
 \item While a write waits for its beat, no request of either kind is
 taken.

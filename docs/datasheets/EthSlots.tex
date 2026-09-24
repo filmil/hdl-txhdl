@@ -13,8 +13,9 @@ map, with the frame buffers in main memory.}
 bringing up Ethernet is a port of a driver that already works rather
 than a design nobody has driven.
 
-Its AXI-Lite side is \code{aw}, \code{ar} and \code{w} in and
-\code{b} and \code{r} out, with 32-bit addresses and words. Seven
+Its AXI-Lite side is one port, \code{bus}, a \code{LitePort} with
+32-bit addresses and words: \code{bus\_aw}, \code{bus\_ar} and
+\code{bus\_w} in, and \code{bus\_b} and \code{bus\_r} out. Seven
 further ports face the engines that move the bytes: \code{tx\_busy},
 \code{rx\_busy}, \code{rx\_len} and \code{rx\_which} in, and
 \code{tx\_base}, \code{tx\_bytes}, \code{tx\_start} and
@@ -108,7 +109,7 @@ driver acknowledges them. A driver that waited on
 
 \begin{itemize}
 \item A read is answered in the cycle the request is taken, and a
-write is answered with \code{b}. The unit never stalls: it needs
+write is answered with \code{bus\_b}. The unit never stalls: it needs
 nothing the other AXI-Lite peripherals do not.
 \item \textbf{An arrival is the store engine falling idle, not the
 frame being received.} \code{LineStore} holds \code{running} high

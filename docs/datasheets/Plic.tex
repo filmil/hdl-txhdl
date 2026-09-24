@@ -13,9 +13,11 @@ line for one target, a hart's machine mode, and lets software ask which
 source to serve. Each source \textit{i} is an input line,
 \code{src}\textit{i}, numbered from 1. The output \code{irq} is the
 target's line. Software reaches the controller as an AXI-Lite
-peripheral: reads come on \code{ar} and are answered on \code{r}, and
-writes come on \code{aw} and \code{w} and are answered on \code{b}. It
-sits behind a \code{LiteBridge1}, which sends it only its own range.
+peripheral whose link is one port, \code{bus}, a \code{LitePort} of
+the five channels: reads come on \code{bus\_ar} and are answered on
+\code{bus\_r}, and writes come on \code{bus\_aw} and \code{bus\_w}
+and are answered on \code{bus\_b}. It sits behind a
+\code{LiteBridge1}, which sends it only its own range.
 The input \code{rst} clears the requests, the line, the priorities, the
 enable bits and the threshold.
 

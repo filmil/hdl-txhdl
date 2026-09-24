@@ -12,9 +12,11 @@ peripheral end of an AXI link. A pixel is one word. The rasteriser
 writes pixels into it, and in Razboj's runs the same memory also
 holds the display list and its count, which the rasteriser reads.
 
-It is the peripheral client of an \code{AxiPer}: requests come on
-\code{req} and write beats on \code{wd}, and answers go out on
-\code{ans} and \code{rb}. It answers single-beat bursts, which is all
+It is the peripheral client of an \code{AxiPer}, and its link is one
+port, \code{bus}, a \code{PerPort} of the four channels: requests
+come on \code{bus\_req} and write beats on \code{bus\_w}, and answers
+go out on \code{bus\_ans} and \code{bus\_r}. It answers single-beat
+bursts, which is all
 the rasteriser makes.
 
 \subsection*{Parameters}
@@ -59,15 +61,15 @@ each. \\
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item A read is taken when \code{rb} has room and no write is waiting
-for its beat. It is answered on \code{rb} in the cycle it is taken,
+\item A read is taken when \code{bus\_r} has room and no write is waiting
+for its beat. It is answered on \code{bus\_r} in the cycle it is taken,
 with the word from \code{px}, \code{OKAY} and \code{last} set.
 \item A write is taken when no write is waiting. Its word and its
 identifier go into \code{paddr} and \code{pid}, and \code{pend} is
 set.
 \item The held write's beat is taken when it has arrived and
-\code{ans} has room. The whole beat is written to the word, and
-\code{ans} sends \code{OKAY} with \code{pid}. The strobe is not read.
+\code{bus\_ans} has room. The whole beat is written to the word, and
+\code{bus\_ans} sends \code{OKAY} with \code{pid}. The strobe is not read.
 \item While a write waits for its beat, no request of either kind is
 taken.
 \item An address beyond the memory wraps rather than ending the run.

@@ -12,9 +12,11 @@ bus. It holds \code{DMEM\_WORDS}, 1024 words, in four memories of a
 byte, \code{lane0} to \code{lane3}, one per lane of the word. A store
 of a byte or a half writes only its lanes and reads nothing.
 
-It is the peripheral client of an \code{AxiPer}: it takes requests on
-\code{req} and write beats on \code{wd}, and answers on \code{ans}
-for a write and \code{rb} for a read. It answers single-beat bursts,
+It is the peripheral client of an \code{AxiPer}, and its link is one
+port, \code{bus}, a \code{PerPort} of the four channels: it takes
+requests on \code{bus\_req} and write beats on \code{bus\_w}, and
+answers on \code{bus\_ans} for a write and \code{bus\_r} for a read.
+It answers single-beat bursts,
 which is all the core makes.
 
 \subsection*{Parameters}
@@ -24,9 +26,9 @@ which is all the core makes.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{I} & The width of the AXI identifier on \code{req}, \code{ans}
-and \code{rb}, in bits. The tables use 4, as the board does since its bus
-has two hosts behind an arbiter (issue 241). \\
+\code{I} & The width of the AXI identifier on \code{bus\_req},
+\code{bus\_ans} and \code{bus\_r}, in bits. The tables use 4, as the board
+does since its bus has two hosts behind an arbiter (issue 241). \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -51,12 +53,12 @@ the same \code{0x1000}.
 Its word and identifier go into \code{paddr} and \code{pid}, and
 \code{pend} is set.
 \item The held write's beat is taken when it has arrived and
-\code{ans} has room. Each lane whose strobe bit is set takes its byte
-of the beat, and \code{ans} sends \code{OKAY} with \code{pid}.
+\code{bus\_ans} has room. Each lane whose strobe bit is set takes its byte
+of the beat, and \code{bus\_ans} sends \code{OKAY} with \code{pid}.
 \item A read is taken when no write is waiting and the answer register
 is free or is being emptied in this cycle. The four lanes are read
 into \code{word} at the edge, the synchronous read a block RAM has.
-\item The read is answered on \code{rb} the cycle after, with
+\item The read is answered on \code{bus\_r} the cycle after, with
 \code{rid}, \code{OKAY} and \code{last} set.
 \item While a write waits for its beat, no request of either kind is
 taken.
