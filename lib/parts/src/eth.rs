@@ -30,7 +30,7 @@ use txhdl::{lower, select, with, Trace};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
 use crate::bus::axi::Resp;
-use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 // begin{byte}
 /// A byte of a frame, on the channels between the MAC and its client:
@@ -391,33 +391,28 @@ pub struct EthLite {}
 impl Unit for EthLite {
     async fn run(
         &mut self,
-        (aw, ar, w, rx): (
-            Rx<LiteAw<32>>,
-            Rx<LiteAr<32>>,
-            Rx<LiteW<32, 4>>,
-            Rx<EthByte>,
-        ),
-        (b, r, tx, irq): (Tx<LiteB>, Tx<LiteR<32>>, Tx<EthByte>, Out<Bit>),
+        bus: LitePort<32, 32, 4>,
+        (rx, tx, irq): (Rx<EthByte>, Tx<EthByte>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
-            let arh = ar.head();
-            let awh = aw.head();
-            let wh = w.head();
+            let arh = bus.ar.head();
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
             let rsel = arh.addr.slice::<2, 2>();
             let wsel = awh.addr.slice::<2, 2>();
             let waiting = rx.peek().is_some();
             let rxh = rx.head();
             // A write to the transmit word waits for the transmitter.
             let wroom = (wsel != 1) | tx.ready().to_bool();
-            let wgo = b.ready().to_bool()
-                & aw.peek().is_some()
-                & w.peek().is_some()
+            let wgo = bus.b.ready().to_bool()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some()
                 & wroom;
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
-            let rgo = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
             // A read of the receive word takes the byte, if one waits.
             let _ = rx.recv_if(rgo & (rsel == 2));
             let status = U::<30>::from(0u32)
@@ -439,10 +434,10 @@ impl Unit for EthLite {
                 });
             }
             if wgo {
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
             if rgo.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: word,
                     resp: Resp::Okay,
                 });
@@ -604,10 +599,15 @@ mod tests {
     fn a_bit_of_a_channel_field_is_one_select_in_both_netlists() {
         let v = EthLite::verilog("eth_lite");
         let h = EthLite::vhdl("eth_lite");
-        assert!(v.contains("{w_data[11:4], w_data[12]}"), "one select each");
+        // `bus_w`, since the link is one port and its channels are
+        // named for it (issue 483); the select is what is checked.
+        assert!(
+            v.contains("{bus_w_data[11:4], bus_w_data[12]}"),
+            "one select each"
+        );
         assert!(!v.contains("]["), "no select of a select");
         assert!(
-            h.contains("w_data(11 downto 4) & w_data(12)"),
+            h.contains("bus_w_data(11 downto 4) & bus_w_data(12)"),
             "the same in VHDL"
         );
     }

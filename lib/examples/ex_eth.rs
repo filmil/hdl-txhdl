@@ -18,7 +18,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::eth::{EthByte, EthLite, EthRx, EthTx};
 
 /// The link: thirty-two-bit addresses and words, four lanes,
@@ -73,7 +73,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let (paw, par, pw, pb, pr) = lite.per;
+    let bus: LitePort<32, 32, 4> = lite.per.into();
     // The byte channels between the peripheral and the MAC.
     let (tx_tx, tx_rx) = chan::<EthByte, DefaultClock>();
     let (rx_tx, rx_rx) = chan::<EthByte, DefaultClock>();
@@ -100,11 +100,11 @@ fn main() {
 
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<DefaultClock>();
-        wave.add("aw", &paw);
-        wave.add("ar", &par);
-        wave.add("w", &pw);
-        wave.add("b", &pb);
-        wave.add("r", &pr);
+        wave.add("bus_aw", &bus.aw);
+        wave.add("bus_ar", &bus.ar);
+        wave.add("bus_w", &bus.w);
+        wave.add("bus_b", &bus.b);
+        wave.add("bus_r", &bus.r);
         wave.add("tx", &tx_rx);
         wave.add("rx", &rx_rx);
         wave.add("rx_len", &rx_len);
@@ -178,7 +178,7 @@ fn main() {
             bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
         ),
         join2(
-            lite_unit.run((paw, par, pw, rx_rx), (pb, pr, tx_tx, irq_out)),
+            lite_unit.run(bus, (rx_rx, tx_tx, irq_out)),
             join2(
                 mac_tx.run(tx_rx, (txd_out, en_out)),
                 mac_rx.run((rxd, rx_dv, rx_er), (rx_tx, rxlen_out)),
