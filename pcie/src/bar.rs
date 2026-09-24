@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! What BAR1 reaches: four words of registers behind the endpoint's
 //! AXI master, and the unit of units that joins them to its pins.
-use txhdl::comp::{
-    chan, join2, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit,
-};
+use txhdl::comp::{chan, join2, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
-use txhdl_parts::bus::axi::{Answer, Ar, Aw, AxiPer, PerReq, Resp, B, R, W};
+use txhdl_parts::bus::axi::{
+    Answer, Ar, Aw, AxiPer, PerPort, PerReq, Resp, B, R, W,
+};
 use txhdl_parts::bus::axi_pins::{AxiPins, AxiPinsIn, AxiPinsOut};
 
 /// The identifier word, at offset 0: `TxHDL` in ASCII, and a version.
@@ -41,21 +41,21 @@ pub struct BarRegs<const I: usize> {
 impl<const I: usize> Unit for BarRegs<I> {
     async fn run(
         &mut self,
-        (rst, req, wd): (In<Bit>, Rx<PerReq<32, I>>, Rx<W<64, 8>>),
-        (ans, rb, leds): (Tx<Answer<I>>, Tx<R<64, I>>, Out<U<2>>),
+        bus: PerPort<32, 64, 8, I>,
+        (rst, leds): (In<Bit>, Out<U<2>>),
     ) {
         loop {
             DefaultClock::rising().await;
             let rst = rst.get();
-            let q = req.head();
-            let qoff = req.peek().is_some();
+            let q = bus.req.head();
+            let qoff = bus.req.peek().is_some();
             let held = self.pend.get() == 1;
-            let take_read = qoff & q.read & rb.ready() & !held;
+            let take_read = qoff & q.read & bus.r.ready() & !held;
             let take_write = qoff & !q.read & !held;
-            let _ = req.recv_if(take_read | take_write);
-            let wh = wd.head();
-            let wgo = held & wd.peek().is_some() & ans.ready();
-            let _ = wd.recv_if(wgo);
+            let _ = bus.req.recv_if(take_read | take_write);
+            let wh = bus.w.head();
+            let wgo = held & bus.w.peek().is_some() & bus.ans.ready();
+            let _ = bus.w.recv_if(wgo);
             let sel = q.addr.slice::<3, 2>();
             let word = select!(sel.raw() => {
                 0 => U::<64>::from(IDENT),
@@ -85,7 +85,7 @@ impl<const I: usize> Unit for BarRegs<I> {
                 },
             });
             if take_read.to_bool() {
-                rb.send(R {
+                bus.r.send(R {
                     id: q.id,
                     data: word,
                     resp: Resp::Okay,
@@ -93,7 +93,7 @@ impl<const I: usize> Unit for BarRegs<I> {
                 });
             }
             if wgo.to_bool() {
-                ans.send(Answer {
+                bus.ans.send(Answer {
                     id: self.pid.get(),
                     resp: Resp::Okay,
                 });
@@ -311,7 +311,15 @@ impl Unit for PcieBar {
                     (req_tx, wd_tx, b_tx, r_tx),
                 ),
             ),
-            self.regs.run((rst, req_rx, wd_rx), (ans_tx, rb_tx, leds)),
+            self.regs.run(
+                PerPort {
+                    req: req_rx,
+                    w: wd_rx,
+                    ans: ans_tx,
+                    r: rb_tx,
+                },
+                (rst, leds),
+            ),
         )
         .await;
     }
