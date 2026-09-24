@@ -8,13 +8,11 @@
 //! and reads each back, printing the time each answer came, and the
 //! build checks the register's netlist against the run.
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::{
-    join2, now, Clock, DefaultClock, Reg, Running, Rx, Tx, Unit,
-};
+use txhdl::comp::{join2, now, Clock, DefaultClock, Reg, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{
-    axi_to_unit, Answer, AxiHost, AxiPer, HostLink, PerReq, Rd, Resp, Wr, R, W,
+    axi_to_unit, Answer, AxiHost, AxiPer, HostLink, PerPort, Rd, Resp, Wr, R,
 };
 
 // begin{register}
@@ -26,25 +24,22 @@ pub struct Register {
 
 #[lower]
 impl Unit for Register {
-    async fn run(
-        &mut self,
-        (req, wd): (Rx<PerReq<32, 2>>, Rx<W<32, 4>>),
-        (ans, rb): (Tx<Answer<2>>, Tx<R<32, 2>>),
-    ) {
+    async fn run(&mut self, bus: PerPort<32, 32, 4, 2>, _out: ()) {
         loop {
             DefaultClock::rising().await;
-            let q = req.head();
-            let there = req.peek().is_some();
+            let q = bus.req.head();
+            let there = bus.req.peek().is_some();
             // A read needs room for its beat; a write needs its beat
             // and room for its response.
-            let read = there & q.read & rb.ready();
-            let write = there & !q.read & wd.peek().is_some() & ans.ready();
-            let _ = req.recv_if(read | write);
-            let beat = wd.head();
-            let _ = wd.recv_if(write);
+            let read = there & q.read & bus.r.ready();
+            let write =
+                there & !q.read & bus.w.peek().is_some() & bus.ans.ready();
+            let _ = bus.req.recv_if(read | write);
+            let beat = bus.w.head();
+            let _ = bus.w.recv_if(write);
             with!(self <= { write ? word: beat.data });
             if read.to_bool() {
-                rb.send(R {
+                bus.r.send(R {
                     id: q.id,
                     data: self.word.get(),
                     resp: Resp::Okay,
@@ -52,7 +47,7 @@ impl Unit for Register {
                 });
             }
             if write.to_bool() {
-                ans.send(Answer {
+                bus.ans.send(Answer {
                     id: q.id,
                     resp: Resp::Okay,
                 });
@@ -72,16 +67,16 @@ fn main() {
         per_in,
         per_out,
     } = axi_to_unit::<32, 32, 4, 2, 4>();
-    let (req, wd, ans, rb) = per_client;
+    let bus: PerPort<32, 32, 4, 2> = per_client.into();
     let mut h = AxiHost::<32, 32, 4, 2, 4>::default();
     let mut p = AxiPer::<32, 32, 4, 2>::default();
     let mut reg = Register::default();
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
-        w.add("req", &req);
-        w.add("wd", &wd);
-        w.add("ans", &ans);
-        w.add("rb", &rb);
+        w.add("bus_req", &bus.req);
+        w.add("bus_w", &bus.w);
+        w.add("bus_ans", &bus.ans);
+        w.add("bus_r", &bus.r);
         w.add("reg", &reg);
         w.start();
     }
@@ -97,7 +92,7 @@ fn main() {
     };
     let mut sim = Running::new(join2(
         join2(h.run(host_in, host_out), p.run(per_in, per_out)),
-        join2(reg.run((req, wd), (ans, rb)), client),
+        join2(reg.run(bus, ()), client),
     ));
     println!("  t  answer");
     for _ in 0..40 {

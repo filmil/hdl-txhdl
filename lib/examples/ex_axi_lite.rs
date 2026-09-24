@@ -13,14 +13,12 @@
 //! are lowered, and the build simulates the three netlists against
 //! this run under nvc and under Verilator.
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::{
-    join2, now, Clock, DefaultClock, Mem, Running, Rx, Tx, Unit,
-};
+use txhdl::comp::{join2, now, Clock, DefaultClock, Mem, Running, Unit};
 use txhdl::types::U;
 use txhdl::{lower, Trace};
 use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{
-    axi_lite, LiteAr, LiteAw, LiteB, LiteBridge2, LiteR, LiteW,
+    axi_lite, LiteB, LiteBridge2, LitePort, LiteR,
 };
 
 /// The link: sixteen-bit addresses, thirty-two-bit words, four lanes,
@@ -44,29 +42,27 @@ pub struct Regs {
 
 #[lower]
 impl Unit for Regs {
-    async fn run(
-        &mut self,
-        (aw, ar, w): (Rx<LiteAw<16>>, Rx<LiteAr<16>>, Rx<LiteW<32, 4>>),
-        (b, r): (Tx<LiteB>, Tx<LiteR<32>>),
-    ) {
+    async fn run(&mut self, bus: LitePort<16, 32, 4>, _out: ()) {
         loop {
             DefaultClock::rising().await;
-            let arh = ar.head();
-            let rgo = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let awh = aw.head();
-            let wh = w.head();
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let arh = bus.ar.head();
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let rsel = arh.addr.slice::<2, 2>();
             let wsel = awh.addr.slice::<2, 2>();
             if wgo.to_bool() {
                 self.words.at(wsel).set(wh.data);
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
             if rgo.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: self.words.read(rsel),
                     resp: Resp::Okay,
                 });
@@ -203,10 +199,7 @@ fn main() {
                 (aw0, ar0, w0, aw1, ar1, w1, b, r),
             ),
         ),
-        join2(
-            regs0.run((l0.per.0, l0.per.1, l0.per.2), (l0.per.3, l0.per.4)),
-            regs1.run((l1.per.0, l1.per.1, l1.per.2), (l1.per.3, l1.per.4)),
-        ),
+        join2(regs0.run(l0.per.into(), ()), regs1.run(l1.per.into(), ())),
     );
     let mut sim = Running::new(join2(hardware, client));
     for _ in 0..100 {
@@ -216,11 +209,16 @@ fn main() {
     let net = Bridge::lowered("axi_lite_bridge");
     let mut bank0 = Regs::lowered("lite_regs0");
     let mut bank1 = Regs::lowered("lite_regs1");
-    for (port, k) in [("aw", "aw"), ("ar", "ar"), ("w", "w"), ("b", "b")] {
+    for (port, k) in [
+        ("bus_aw", "aw"),
+        ("bus_ar", "ar"),
+        ("bus_w", "w"),
+        ("bus_b", "b"),
+    ] {
         bank0.trace_as(port, &format!("{k}0"));
         bank1.trace_as(port, &format!("{k}1"));
     }
-    bank0.trace_as("r", "r0");
-    bank1.trace_as("r", "r1");
+    bank0.trace_as("bus_r", "r0");
+    bank1.trace_as("bus_r", "r1");
     txhdl::netlist::write_netlists_from_env(&[&net, &bank0, &bank1]);
 }

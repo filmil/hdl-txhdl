@@ -26,13 +26,12 @@
 //! the wrong column, which is what the check at the end reads.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{
-    chan, join2, now, signal, Clock, DefaultClock, Mem, Reg, Running, Rx, Tx,
-    Unit,
+    chan, join2, now, signal, Clock, DefaultClock, Mem, Reg, Running, Unit,
 };
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{
-    axi_units, Answer, AxiHost, AxiPer, PerReq, Resp, R, W,
+    axi_units, Answer, AxiHost, AxiPer, PerPort, Resp, R,
 };
 use txhdl_parts::cdc::ChanCdc;
 use txhdl_parts::dma::{LineBuf, LineFetch};
@@ -74,23 +73,19 @@ pub struct Rom<const A: usize, const I: usize, const M: usize> {
 
 #[lower]
 impl<const A: usize, const I: usize, const M: usize> Unit for Rom<A, I, M> {
-    async fn run(
-        &mut self,
-        (req, wd): (Rx<PerReq<A, I>>, Rx<W<32, 4>>),
-        (ans, rb): (Tx<Answer<I>>, Tx<R<32, I>>),
-    ) {
+    async fn run(&mut self, bus: PerPort<A, 32, 4, I>, _out: ()) {
         loop {
             DefaultClock::rising().await;
-            let q = req.head();
-            let offered = Bit::from(req.peek().is_some());
+            let q = bus.req.head();
+            let offered = Bit::from(bus.req.peek().is_some());
             let busy = self.busy.get();
             let mask = U::<16>::from((M - 1) as u32);
             let qat = (q.addr >> 2u32).resize::<16>() & mask;
             let take = offered & q.read & !busy;
-            let write = offered & !q.read & ans.ready();
-            let _ = req.recv_if(take | write);
-            let _ = wd.recv_if(write);
-            let beat = busy & rb.ready();
+            let write = offered & !q.read & bus.ans.ready();
+            let _ = bus.req.recv_if(take | write);
+            let _ = bus.w.recv_if(write);
+            let beat = busy & bus.r.ready();
             let last = beat & (self.left.get() == 1);
             with!(self <= {
                 take ? {
@@ -106,7 +101,7 @@ impl<const A: usize, const I: usize, const M: usize> Unit for Rom<A, I, M> {
                 last ? busy: Bit::Zero,
             });
             if beat.to_bool() {
-                rb.send(R {
+                bus.r.send(R {
                     id: self.rid.get(),
                     data: self.px.read(self.at.get().slice::<0, 8>()),
                     resp: Resp::Okay,
@@ -114,7 +109,7 @@ impl<const A: usize, const I: usize, const M: usize> Unit for Rom<A, I, M> {
                 });
             }
             if write.to_bool() {
-                ans.send(Answer {
+                bus.ans.send(Answer {
                     id: q.id,
                     resp: Resp::Okay,
                 });
@@ -126,7 +121,7 @@ impl<const A: usize, const I: usize, const M: usize> Unit for Rom<A, I, M> {
 fn main() {
     let link = axi_units::<ADDR, 32, 4, IDB>();
     let (issue, wbeat, release, grant, done, rdata) = link.host_client;
-    let (req, wd, ans, rb) = link.per_client;
+    let bus: PerPort<ADDR, 32, 4, IDB> = link.per_client.into();
     let (base_o, base) = signal::<U<ADDR>, DefaultClock>();
     let (words_o, words) = signal::<U<16>, DefaultClock>();
     let (go_o, go) = signal::<Bit, DefaultClock>();
@@ -178,7 +173,7 @@ fn main() {
                 host.run(link.host_in, link.host_out),
                 per.run(link.per_in, link.per_out),
             ),
-            rom.run((req, wd), (ans, rb)),
+            rom.run(bus, ()),
         ),
         join2(
             fetch.run(

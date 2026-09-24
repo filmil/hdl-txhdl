@@ -14,13 +14,12 @@
 //! holds afterwards rather than on what the beats looked like.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{
-    chan, join2, mux, now, signal, Clock, DefaultClock, Mem, Reg, Running, Rx,
-    Tx, Unit,
+    chan, join2, mux, now, signal, Clock, DefaultClock, Mem, Reg, Running, Unit,
 };
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{
-    axi_units, Answer, AxiHost, AxiPer, PerReq, Resp, R, W,
+    axi_units, Answer, AxiHost, AxiPer, PerPort, Resp, R,
 };
 use txhdl_parts::dma::LineStore;
 
@@ -59,27 +58,23 @@ pub struct Ram<const A: usize, const I: usize, const M: usize> {
 
 #[lower]
 impl<const A: usize, const I: usize, const M: usize> Unit for Ram<A, I, M> {
-    async fn run(
-        &mut self,
-        (req, wd): (Rx<PerReq<A, I>>, Rx<W<32, 4>>),
-        (ans, rb): (Tx<Answer<I>>, Tx<R<32, I>>),
-    ) {
+    async fn run(&mut self, bus: PerPort<A, 32, 4, I>, _out: ()) {
         loop {
             DefaultClock::rising().await;
-            let q = req.head();
-            let offered = Bit::from(req.peek().is_some());
+            let q = bus.req.head();
+            let offered = Bit::from(bus.req.peek().is_some());
             let busy = self.busy.get();
             let wr = self.wr.get();
             let mask = U::<16>::from((M - 1) as u32);
             let qat = (q.addr >> 2u32).resize::<16>() & mask;
             let take = offered & !busy;
-            let _ = req.recv_if(take);
+            let _ = bus.req.recv_if(take);
 
             // A read beat goes out when there is room; a write beat is
             // taken when one is offered.
-            let rbeat = busy & !wr & rb.ready();
-            let wbeat = busy & wr & Bit::from(wd.peek().is_some());
-            let word = wd.recv_if(busy & wr).unwrap_or_default();
+            let rbeat = busy & !wr & bus.r.ready();
+            let wbeat = busy & wr & Bit::from(bus.w.peek().is_some());
+            let word = bus.w.recv_if(busy & wr).unwrap_or_default();
             // The strobe says which bytes are meant. A model that
             // wrote the whole word would let an engine that ignores
             // the strobe look correct, which is exactly the fault a
@@ -112,7 +107,7 @@ impl<const A: usize, const I: usize, const M: usize> Unit for Ram<A, I, M> {
             let at_last = self.left.get() == 1;
             let rlast = rbeat & at_last;
             // The write is answered once, when its last beat lands.
-            let wlast = wbeat & at_last & ans.ready();
+            let wlast = wbeat & at_last & bus.ans.ready();
 
             with!(self <= {
                 take ? {
@@ -136,7 +131,7 @@ impl<const A: usize, const I: usize, const M: usize> Unit for Ram<A, I, M> {
             });
 
             if rbeat.to_bool() {
-                rb.send(R {
+                bus.r.send(R {
                     id: self.rid.get(),
                     data: self.px.read(self.at.get().slice::<0, 8>()),
                     resp: Resp::Okay,
@@ -144,7 +139,7 @@ impl<const A: usize, const I: usize, const M: usize> Unit for Ram<A, I, M> {
                 });
             }
             if wlast.to_bool() {
-                ans.send(Answer {
+                bus.ans.send(Answer {
                     id: self.rid.get(),
                     resp: Resp::Okay,
                 });
@@ -156,7 +151,7 @@ impl<const A: usize, const I: usize, const M: usize> Unit for Ram<A, I, M> {
 fn main() {
     let link = axi_units::<ADDR, 32, 4, IDB>();
     let (issue, wbeat, release, grant, done, rdata) = link.host_client;
-    let (req, wd, ans, rb) = link.per_client;
+    let bus: PerPort<ADDR, 32, 4, IDB> = link.per_client.into();
     let (base_o, base) = signal::<U<ADDR>, DefaultClock>();
     let (bytes_o, bytes) = signal::<U<16>, DefaultClock>();
     let (go_o, go) = signal::<Bit, DefaultClock>();
@@ -208,7 +203,7 @@ fn main() {
                 (grant, done, src_rx, base, bytes, go),
                 (issue, wbeat, release, run_o),
             ),
-            ram.run((req, wd), (ans, rb)),
+            ram.run(bus, ()),
         ),
     ));
     let _ = rdata;
