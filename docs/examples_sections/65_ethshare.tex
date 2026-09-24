@@ -1,0 +1,77 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{One Ethernet Wire, Two Users}
+\label{sec:x-ethshare}
+
+The board has one Ethernet port and two things that want it: the
+remote peripheral, whose transport is one frame per transaction, and
+the port a Zephyr driver talks to through \code{EthSlots}
+(\S\ref{sec:x-ethslots}). Neither can have the wire to itself.
+
+Nothing new had to be invented to share it. Ethernet already carries
+several protocols on one wire and says which is which: bytes twelve
+and thirteen of every frame are its EtherType. The remote peripheral
+sends \code{0x88b5}, which IEEE leaves for local use, and Zephyr's
+stack sends only the standard types, so the two cannot be confused.
+\code{EthShare} splits arriving frames by that type and merges
+departing ones a frame at a time.
+
+\subsection{Why the header is held}
+
+A frame's user is not known until its fourteenth byte, and the
+thirteen before it belong to that user too. So the unit holds the
+first fourteen bytes, reads the type from the last two of them, and
+then hands the whole frame on, held bytes first.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=state-state,caption={\code{lib/parts/src/ethshare.rs}: what
+the unit holds while it learns whose a frame is.},%
+label={lst:x-ethshare}]{lib/parts/src/ethshare.rs}
+
+\subsection{The three edges, and a test that passed by luck}
+
+Every assertion passed on the first run, which is when a test is
+worth breaking on purpose. Three cases were, each with the unit
+changed to be wrong about it and nothing else.
+
+\emph{A frame of exactly fourteen bytes} ends on the second byte of
+its own type, so the unit learns its user and that it is over in the
+same cycle. Marking no last byte there made the unit wait for the
+rest of a frame that had ended; that frame never arrived, and the run
+failed with it missing.
+
+\emph{Two users sending at once} must take turns. Letting the first
+always go first sent both its frames before either of the second's,
+and the run failed on the order.
+
+\emph{A frame that ends before its type is known} is the one that
+taught something. The unit must not read a type it has not reached,
+and the first version of the run passed with that check removed. The
+type it would have read was the high byte left behind by the frame
+before, \code{0x88}, beside the short frame's last byte; that byte
+happened to be \code{0xc9}, so the stale type was \code{0x88c9}, it
+matched nothing, and the frame went the right way by luck of its
+data.
+
+So the short frame is now built so that its last byte is
+\code{0xb5}. A unit reading a type it has not reached sees
+\code{0x88b5}, sends the frame to the wrong user, and the run fails:
+the first user takes four frames and the second one. A test is only
+adversarial when its data is chosen to be, and this one was not until
+it was broken on purpose and did not notice.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+The unit made wrong about & first run & now \\
+\midrule
+a frame ending on its type & fails & fails \\
+taking turns & fails & fails \\
+a type it has not reached & \textbf{passes} & fails \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_ethshare}
+printed when the build ran it.},%
+label={lst:x-ethshare-out}]{out_ethshare.txt}
