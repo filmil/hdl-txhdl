@@ -32,6 +32,7 @@ pub mod foreign;
 pub mod funcs;
 pub mod netlist;
 pub mod pipeline;
+mod reserved;
 pub mod types;
 
 pub use txhdl_macros::{

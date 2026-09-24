@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Names a netlist cannot hold: the words VHDL and SystemVerilog
-//! reserve. `#[lower]` includes this file by path and checks ports,
-//! fields and wires where they are declared (issue 77). It is a file
-//! of its own so that the runtime can compile the same list.
+//! reserve. One list for both crates, so the checks cannot drift: the
+//! runtime compiles this file as the module `reserved` and checks the
+//! module names it writes, and `#[lower]` includes the same file by
+//! path and checks ports, fields and wires where they are declared
+//! (issues 77 and 485).
 
 /// The reserved words of VHDL-2008, which are not case sensitive.
 pub const VHDL_RESERVED: &[&str] = &[
@@ -378,6 +380,10 @@ pub const VERILOG_RESERVED: &[&str] = &[
 
 /// Which of the two targets reserve `name`, if either does. A unit
 /// lowers to both, so a name either one reserves is refused.
+///
+/// The macros use this; the runtime checks each target against its
+/// own list, since a netlist is written one language at a time.
+#[allow(dead_code)]
 pub fn reserved_by(name: &str) -> Option<&'static str> {
     let vhdl = VHDL_RESERVED.contains(&name.to_ascii_lowercase().as_str());
     let verilog = VERILOG_RESERVED.contains(&name);

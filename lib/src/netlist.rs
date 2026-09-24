@@ -1428,8 +1428,42 @@ impl Lowered {
         out
     }
 
+    /// Refuse a module name the target being written reserves, before
+    /// writing it. Ports, fields and wires are checked by `#[lower]`
+    /// where they are declared, but the name is a string given when
+    /// `lowered` runs, and a reserved one reached the simulator:
+    /// `lowered("shared")` wrote `entity shared is`, which nvc refused
+    /// as a parse error in a generated file (issue 485). The check is
+    /// here rather than in `checked` because a unit is lowered for more
+    /// than its netlist: the datasheets lower `Buffer` as `buffer`,
+    /// which VHDL reserves, and write only its tables. A child's name
+    /// is checked with its parent's; a foreign module's is its
+    /// vendor's and is left alone.
+    fn check_module_names(&self, target: &str, words: &[&str]) {
+        if self.foreign.is_some() {
+            return;
+        }
+        let name = if target == "VHDL" {
+            self.name.to_ascii_lowercase()
+        } else {
+            self.name.clone()
+        };
+        if words.contains(&name.as_str()) {
+            panic!(
+                "the module `{}` is named with a reserved word of {target}, \
+                 so its {target} would not analyse: lower it under another \
+                 name (see issue 485)",
+                self.name
+            );
+        }
+        for i in &self.instances {
+            i.unit.check_module_names(target, words);
+        }
+    }
+
     /// The Verilog.
     pub fn verilog(&self) -> String {
+        self.check_module_names("Verilog", crate::reserved::VERILOG_RESERVED);
         let mut out = self.verilog_in();
         if self.has_chan_nets() {
             out.push('\n');
@@ -1769,6 +1803,7 @@ impl Lowered {
     /// The VHDL, 2008: an entity, one process on the rising edge for
     /// the registers, a concurrent assignment per wire.
     pub fn vhdl(&self) -> String {
+        self.check_module_names("VHDL", crate::reserved::VHDL_RESERVED);
         let mut out = String::new();
         if self.has_chan_nets() {
             out.push_str(CHAN_VHDL);
@@ -2785,6 +2820,58 @@ mod tests {
             conns: Vec::new(),
         });
         parent
+    }
+
+    /// The case of issue 485: a module lowered as `shared`, which VHDL
+    /// reserves. Its VHDL is refused as it is written, and not by nvc
+    /// as a parse error.
+    #[test]
+    #[should_panic(
+        expected = "the module `shared` is named with a reserved word of VHDL"
+    )]
+    fn a_module_named_with_a_vhdl_word_has_no_vhdl() {
+        let mut net = three_regs();
+        net.name = "shared".to_string();
+        net.vhdl();
+    }
+
+    /// Each target refuses only its own words. `shared` is not a word
+    /// of Verilog, so its Verilog is written; `always` is, so its
+    /// Verilog is refused and its VHDL written. VHDL is not case
+    /// sensitive, so `Signal` is refused as `signal` would be. A unit
+    /// may be lowered under such a name for anything but its netlist,
+    /// as the datasheets lower `Buffer` as `buffer`.
+    #[test]
+    fn each_target_refuses_its_own_words() {
+        let named = |n: &str| {
+            let mut net = three_regs();
+            net.name = n.to_string();
+            net
+        };
+        let refused = |f: &dyn Fn() -> String| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(f())))
+                .is_err()
+        };
+        let shared = named("shared");
+        assert!(!refused(&|| shared.verilog()), "shared in Verilog");
+        let always = named("always");
+        assert!(refused(&|| always.verilog()), "always in Verilog");
+        assert!(!refused(&|| always.vhdl()), "always in VHDL");
+        let signal = named("Signal");
+        assert!(refused(&|| signal.vhdl()), "Signal in VHDL");
+        assert!(named("buffer")
+            .checked()
+            .verilog()
+            .contains("module buffer"));
+    }
+
+    /// A child's name is checked with its parent's.
+    #[test]
+    #[should_panic(expected = "the module `out` is named with")]
+    fn a_child_named_with_a_reserved_word_is_refused() {
+        let mut parent = parent_with_child_named("ticker");
+        parent.instances[0].unit.name = "out".to_string();
+        parent.vhdl();
     }
 
     /// The instance and the clock pin would take one name, which
