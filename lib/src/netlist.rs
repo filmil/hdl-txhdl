@@ -888,6 +888,31 @@ impl Lowered {
     /// clock shares it. A child's clock counts, since the parent takes
     /// it as a port to pass on. This is issue 367.
     pub fn checked(self) -> Self {
+        // A unit of units joins each channel port of its own to one
+        // child, once. `#[lower]` checks that for a port it can see; a
+        // port that is a field of a struct of ports declared elsewhere
+        // has a kind the macro cannot see, so it is checked here, where
+        // every port's kind is known (issue 483).
+        if !self.instances.is_empty() && self.procs.is_empty() {
+            for (p, k, _, _) in &self.ports {
+                if !matches!(k, Kind::Tx | Kind::Rx) {
+                    continue;
+                }
+                let n = self
+                    .instances
+                    .iter()
+                    .flat_map(|i| &i.conns)
+                    .filter(|(_, a)| a == p)
+                    .count();
+                assert!(
+                    n == 1,
+                    "port `{p}` of `{}` is a channel joined to {n} children; \
+                     a channel has one sender and one receiver, so join it \
+                     to exactly one",
+                    self.name
+                );
+            }
+        }
         for c in self.clocks() {
             let what = if self.instances.iter().any(|i| i.name == c) {
                 Some(("field", "holds a child, and the instance"))
@@ -2820,6 +2845,42 @@ mod tests {
             conns: Vec::new(),
         });
         parent
+    }
+
+    /// A unit of units with a channel port, `bus_req`, joined to its
+    /// child `n` times: what `#[lower]` cannot check for a field of a
+    /// struct of ports it cannot see, and `checked` does (issue 483).
+    fn parent_joining_a_channel(n: usize) -> Lowered {
+        let mut parent = parent_with_child_named("ticker");
+        parent.procs.clear();
+        parent
+            .ports
+            .push(("bus_req".to_string(), Kind::Rx, 8, "clk"));
+        parent.instances[0].conns = (0..n)
+            .map(|k| (format!("in{k}"), "bus_req".to_string()))
+            .collect();
+        parent
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "port `bus_req` of `two` is a channel joined to 2"
+    )]
+    fn a_channel_port_joined_twice_is_refused() {
+        parent_joining_a_channel(2).checked();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "port `bus_req` of `two` is a channel joined to 0"
+    )]
+    fn a_channel_port_joined_nowhere_is_refused() {
+        parent_joining_a_channel(0).checked();
+    }
+
+    #[test]
+    fn a_channel_port_joined_once_is_accepted() {
+        parent_joining_a_channel(1).checked();
     }
 
     /// The case of issue 485: a module lowered as `shared`, which VHDL

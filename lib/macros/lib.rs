@@ -6165,6 +6165,18 @@ fn lower_structural(
                     [TokenTree::Ident(id)] => {
                         let id = id.to_string();
                         match bound.iter().find(|(b, _)| *b == id) {
+                            Some((_, fs)) if fs == &["*"] => {
+                                return Err(err(
+                                    span,
+                                    &format!(
+                                        "`{id}` is a struct declared in \
+                                         another file, whose fields cannot \
+                                         be seen here: pass them one by \
+                                         one, `{id}.f`, rather than the \
+                                         whole side (issue 483)"
+                                    ),
+                                ))
+                            }
                             Some((_, fs)) => names.extend(
                                 fs.iter().map(|f| (String::new(), f.clone())),
                             ),
@@ -6590,9 +6602,14 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let fbody = &fbody_ports;
     // The ports read through a `Ports` side are names of the unit's
     // ports as much as any other, for the checks on wires' names.
+    // A unit of units joins them to its children as it joins any port,
+    // but their kinds are the struct's and cannot be seen here, so the
+    // checks that a channel is joined once, and joined at all, are made
+    // by `Lowered::checked` when `lowered` runs.
     for (f, _, _) in BUNDLED.with(|d| d.borrow().clone()) {
         if !pnames.contains(&f) {
             PNAMES.with(|p| p.borrow_mut().push(f.clone()));
+            pkinds.push((f.clone(), "Ports".to_string()));
             pnames.push(f);
         }
     }
@@ -6626,14 +6643,6 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // No loop: a unit of units, whose run joins its children.
     let mut nets: Vec<String> = Vec::new();
     let mut instances: Vec<String> = Vec::new();
-    if loops.is_empty() && BUNDLES.with(|b| !b.borrow().is_empty()) {
-        return err(
-            body.span(),
-            "a unit of units cannot yet take a side whose struct is declared \
-             in another file: its joins are checked here, where the struct's \
-             fields cannot be seen (issue 483)",
-        );
-    }
     if loops.is_empty() {
         match lower_structural(fbody, &pkinds, &bound) {
             Ok((n, i)) => {
