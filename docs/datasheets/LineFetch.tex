@@ -9,10 +9,10 @@ bursts, into a channel.}
 \subsection*{Function}
 
 A peripheral that wants a lot of memory should not have the core copy
-it. The video peripheral's framebuffer is about 420\,000 register
-writes for a frame of 720p, and the Ethernet peripheral is the same
-shape a byte at a time; in both the processor's whole job during them
-is copying.
+it. The video peripheral's framebuffer is 19\,200 register writes for
+a frame of the board's 160 by 120, and would be 307\,200 for a full
+640 by 480. The Ethernet peripheral is the same shape a byte at a
+time, and in both the processor's whole job during them is copying.
 
 \code{LineFetch} is the alternative, and it is the half the video and
 the MAC both want. Told an address and a count it issues read bursts

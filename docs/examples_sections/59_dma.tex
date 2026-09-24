@@ -4,8 +4,9 @@
 
 A peripheral that wants a lot of memory does not want the core to
 fetch it. The video peripheral holds its framebuffer inside the unit
-and the core writes it a pixel at a time over AXI-Lite: about
-420\,000 register writes for a frame of 720p, and a processor whose
+and the core writes it a pixel at a time over AXI-Lite: 19\,200
+register writes for a frame of the board's 160 by 120, 307\,200 for
+a full 640 by 480, and a processor whose
 whole job during them is copying. The Ethernet peripheral is the same
 shape a byte at a time.
 
