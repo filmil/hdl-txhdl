@@ -9,10 +9,10 @@
 //! comes when it comes. The word address is the byte address shifted
 //! by two and masked to the memory, so a stray address wraps instead
 //! of ending the run.
-use txhdl::comp::{Clock, DefaultClock, Mem, Reg, Rx, Tx, Unit};
+use txhdl::comp::{Clock, DefaultClock, Mem, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
-use txhdl_parts::bus::axi::{Answer, PerReq, Resp, R, W};
+use txhdl_parts::bus::axi::{Answer, PerPort, Resp, R};
 
 /// A pixel is one word, so the word a byte address names is the
 /// address shifted by this.
@@ -34,15 +34,11 @@ pub struct Fb<const A: usize, const I: usize, const N: usize> {
 // begin{run}
 #[lower]
 impl<const A: usize, const I: usize, const N: usize> Unit for Fb<A, I, N> {
-    async fn run(
-        &mut self,
-        (req, wd): (Rx<PerReq<A, I>>, Rx<W<32, 4>>),
-        (ans, rb): (Tx<Answer<I>>, Tx<R<32, I>>),
-    ) {
+    async fn run(&mut self, bus: PerPort<A, 32, 4, I>, _o: ()) {
         loop {
             DefaultClock::rising().await;
-            let q = req.head();
-            let qoff = req.peek().is_some();
+            let q = bus.req.head();
+            let qoff = bus.req.peek().is_some();
             let held = self.pend.get() == 1;
             // The word this request names, within the memory. The
             // shift comes before the widening, so an address wider
@@ -52,12 +48,12 @@ impl<const A: usize, const I: usize, const N: usize> Unit for Fb<A, I, N> {
                 (q.addr >> WORD).resize::<16>() & U::<16>::from((N - 1) as u32);
             // A read is answered at once; a write is held until its
             // beat arrives, and only one is held at a time.
-            let take_read = qoff & q.read & rb.ready() & !held;
+            let take_read = qoff & q.read & bus.r.ready() & !held;
             let take_write = qoff & !q.read & !held;
-            let _ = req.recv_if(take_read | take_write);
-            let wh = wd.head();
-            let wgo = held & wd.peek().is_some() & ans.ready();
-            let _ = wd.recv_if(wgo);
+            let _ = bus.req.recv_if(take_read | take_write);
+            let wh = bus.w.head();
+            let wgo = held & bus.w.peek().is_some() & bus.ans.ready();
+            let _ = bus.w.recv_if(wgo);
             with!(self <= {
                 take_write ? {
                     pend: U::<1>::from(1u8),
@@ -70,7 +66,7 @@ impl<const A: usize, const I: usize, const N: usize> Unit for Fb<A, I, N> {
                 },
             });
             if take_read.to_bool() {
-                rb.send(R {
+                bus.r.send(R {
                     id: q.id,
                     data: self.px.read(at),
                     resp: Resp::Okay,
@@ -78,7 +74,7 @@ impl<const A: usize, const I: usize, const N: usize> Unit for Fb<A, I, N> {
                 });
             }
             if wgo.to_bool() {
-                ans.send(Answer {
+                bus.ans.send(Answer {
                     id: self.pid.get(),
                     resp: Resp::Okay,
                 });

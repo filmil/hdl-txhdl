@@ -9,7 +9,7 @@
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Mem, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, UnitLink};
+use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort, UnitLink};
 
 use crate::fb::Fb;
 use crate::op::{assemble, Insn, Op};
@@ -89,7 +89,7 @@ pub fn run_list<
         per_out,
     } = axi_units::<ADDR, 32, 4, IDB>();
     let (issue, wbeat, release, grant, done, rdata) = host_client;
-    let (req, wd, ans, rb) = per_client;
+    let bus = PerPort::from(per_client);
     let (idle_out, idle) = signal::<Bit, DefaultClock>();
 
     let mut host = AxiHost::<ADDR, 32, 4, IDB, IDS>::default();
@@ -131,7 +131,7 @@ pub fn run_list<
         join2(host.run(host_in, host_out), per.run(per_in, per_out)),
         join2(
             raster.run((grant, done, rdata), (issue, wbeat, release, idle_out)),
-            fb.run((req, wd), (ans, rb)),
+            fb.run(bus, ()),
         ),
     ));
     // The rasteriser finds its own work, so the run only waits for it
@@ -158,6 +158,13 @@ pub fn run_list<
         // against. Only as far as the last word that says anything,
         // since the rest is the zero the array already starts at.
         let mut f = Fb::<ADDR, IDB, N>::lowered("fb");
+        // The link's four channels are traced under the names the run
+        // gives them, which the waveform names too; the netlist calls
+        // them the bundle's.
+        f.trace_as("bus_req", "req");
+        f.trace_as("bus_w", "wd");
+        f.trace_as("bus_ans", "ans");
+        f.trace_as("bus_r", "rb");
         let last = image
             .iter()
             .rposition(|w| w.raw() != 0)
