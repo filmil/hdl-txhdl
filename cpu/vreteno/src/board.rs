@@ -554,10 +554,16 @@ impl<const DIV: u32> Unit for Board<DIV> {
                         // requests the core reads in the same step.
                         join2(
                             self.dmod.run(
-                                (daw_rx, dar_rx, dw_rx, debug_i, dbg_rdata_i),
+                                LitePort {
+                                    aw: daw_rx,
+                                    ar: dar_rx,
+                                    w: dw_rx,
+                                    b: db_tx,
+                                    r: dr_tx,
+                                },
                                 (
-                                    db_tx,
-                                    dr_tx,
+                                    debug_i,
+                                    dbg_rdata_i,
                                     haltreq_o,
                                     resumereq_o,
                                     dbg_regno_o,
@@ -578,8 +584,14 @@ impl<const DIV: u32> Unit for Board<DIV> {
                     join2(
                         join2(
                             self.uart.run(
-                                (rst_uart, rx, law_rx, lar_rx, lw_rx),
-                                (lb_tx, lr_tx, tx, uirq_o),
+                                LitePort {
+                                    aw: law_rx,
+                                    ar: lar_rx,
+                                    w: lw_rx,
+                                    b: lb_tx,
+                                    r: lr_tx,
+                                },
+                                (rst_uart, rx, tx, uirq_o),
                             ),
                             self.pwm.run(
                                 LitePort {

@@ -30,7 +30,7 @@ use txhdl::comp::{join2, join_all, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::sim::Ram;
 use txhdl_parts::bus::axi::{axi, axi_units, AxiHost, AxiPer, Link};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
 use txhdl_parts::bus::noc::mesh::lattice;
 use txhdl_parts::bus::noc::node::Node;
@@ -225,7 +225,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     // The serial port is an AXI-Lite peripheral, behind a bridge
     // from its corner's AXI4 link.
     let sl = axi_lite::<32, 32, 4>();
-    let (uaw, uar, uw, ub, ur) = sl.per;
+    let ubus: LitePort<32, 32, 4> = sl.per.into();
     let (baw, bar, bw, bb, br) = sl.host;
     let mut ubridge = LiteBridge1::<32, 32, 4, IW, 0x3000, 0xf000>::default();
     let mut ubr = PerBridge::<1, 1, XB, YB, 32, 32, 4, IW, NIDS>::default();
@@ -308,7 +308,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
             ),
         ),
         join2(
-            uart.run((rst_u, rx, uaw, uar, uw), (ub, ur, tx_out, uirq_out)),
+            uart.run(ubus, (rst_u, rx, tx_out, uirq_out)),
             ram.clone().serve(ram_end, 4),
         ),
     );

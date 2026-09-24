@@ -18,11 +18,11 @@
 //! lines rest high. `DIV` is 868 for 115200 baud at 100 MHz, and 4 in
 //! the runs that are checked, so that a byte takes forty cycles rather
 //! than nine thousand.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 use txhdl_parts::bus::axi::Resp;
-use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use txhdl_parts::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 // The pieces of the step, each a function of its own, inlined by the
 // lowering where the step calls it.
@@ -119,14 +119,8 @@ pub struct Uart<const DIV: u32> {
 impl<const DIV: u32> Unit for Uart<DIV> {
     async fn run(
         &mut self,
-        (rst, rx, aw, ar, w): (
-            In<Bit>,
-            In<Bit>,
-            Rx<LiteAw<32>>,
-            Rx<LiteAr<32>>,
-            Rx<LiteW<32, 4>>,
-        ),
-        (b, r, tx, irq): (Tx<LiteB>, Tx<LiteR<32>>, Out<Bit>, Out<Bit>),
+        bus: LitePort<32, 32, 4>,
+        (rst, rx, tx, irq): (In<Bit>, In<Bit>, Out<Bit>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -139,14 +133,16 @@ impl<const DIV: u32> Unit for Uart<DIV> {
             // its range, so it checks no address. A read is answered in
             // the cycle it is taken, and a write is taken when its
             // address and its word are both there, and answered at once.
-            let arh = ar.head();
-            let take_read = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let awh = aw.head();
-            let wh = w.head();
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let arh = bus.ar.head();
+            let take_read = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let sel = arh.addr.slice::<2, 2>();
             let wsel = awh.addr.slice::<2, 2>();
             let read_rx = take_read.to_bool() & (sel == 2);
@@ -173,7 +169,7 @@ impl<const DIV: u32> Unit for Uart<DIV> {
                 }
             }
             if take_read.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: word(
                         sel,
                         busy,
@@ -186,7 +182,7 @@ impl<const DIV: u32> Unit for Uart<DIV> {
                 });
             }
             if wgo.to_bool() {
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
             tx.set(mux(busy, self.shift.get().bit(0), Bit::One));
             // The receive side. A low on the resting line is a start

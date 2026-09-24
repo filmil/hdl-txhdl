@@ -40,11 +40,11 @@
 //! it: a debugger clears it before it resumes. A resume request is an
 //! action: a one asks, if the core is halted as the write lands, and
 //! clears the acknowledgement; a zero does nothing.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 use txhdl_parts::bus::axi::Resp;
-use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use txhdl_parts::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 /// Where the module sits on the board's bus, and the bits an address
 /// must match: 64 KiB at `0x1000_0000`, a router port of its own. Not
@@ -122,16 +122,10 @@ pub struct Dm {
 impl Unit for Dm {
     async fn run(
         &mut self,
-        (aw, ar, w, halted, rdata): (
-            Rx<LiteAw<32>>,
-            Rx<LiteAr<32>>,
-            Rx<LiteW<32, 4>>,
+        bus: LitePort<32, 32, 4>,
+        (halted, rdata, haltreq_o, resumereq_o, regno_o, wdata_o, we_o): (
             In<Bit>,
             In<U<32>>,
-        ),
-        (b, r, haltreq_o, resumereq_o, regno_o, wdata_o, we_o): (
-            Tx<LiteB>,
-            Tx<LiteR<32>>,
             Out<Bit>,
             Out<Bit>,
             Out<U<16>>,
@@ -150,16 +144,18 @@ impl Unit for Dm {
             let busy = Bit::from(stage != 0);
             // The bus: one read and one write a cycle, as any of the
             // small peripherals; the number is the word address.
-            let arh = ar.head();
-            let awh = aw.head();
-            let wh = w.head();
+            let arh = bus.ar.head();
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
             let rsel = arh.addr.slice::<2, 7>();
             let wsel = awh.addr.slice::<2, 7>();
-            let rgo = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let wd = wh.data;
             // What the registers read as.
             let dmcontrol = hreq
@@ -245,13 +241,13 @@ impl Unit for Dm {
                 },
             });
             if rgo.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: word,
                     resp: Resp::Okay,
                 });
             }
             if wgo.to_bool() {
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
             haltreq_o.set(hreq);
             resumereq_o.set(rreq);
@@ -267,7 +263,7 @@ impl Unit for Dm {
 mod tests {
     use super::*;
     use txhdl::comp::{join2, signal, Running};
-    use txhdl_parts::bus::axi_lite::{axi_lite, LiteHost};
+    use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LiteW};
 
     type Host = LiteHost<32, 32, 4>;
 
@@ -332,7 +328,7 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let (aw, ar, w, b, r) = link.per;
+        let bus: LitePort<32, 32, 4> = link.per.into();
         let (halted_o, halted) = signal::<Bit, DefaultClock>();
         let (rdata_o, rdata) = signal::<U<32>, DefaultClock>();
         let (haltreq_o, haltreq) = signal::<Bit, DefaultClock>();
@@ -356,8 +352,16 @@ mod tests {
         let mut dm = Dm::default();
         let mut sim = Running::new(join2(
             dm.run(
-                (aw, ar, w, halted, rdata),
-                (b, r, haltreq_o, resumereq_o, regno_o, wdata_o, we_o),
+                bus,
+                (
+                    halted,
+                    rdata,
+                    haltreq_o,
+                    resumereq_o,
+                    regno_o,
+                    wdata_o,
+                    we_o,
+                ),
             ),
             async move {
                 body.await;

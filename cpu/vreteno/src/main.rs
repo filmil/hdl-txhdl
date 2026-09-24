@@ -7,7 +7,7 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
@@ -89,7 +89,7 @@ fn main() {
     // The serial port is an AXI-Lite peripheral, behind a bridge
     // that takes the AXI4 channels the router gives it.
     let sl = axi_lite::<32, 32, 4>();
-    let (uaw, uar, uw, ub, ur) = sl.per;
+    let ubus: LitePort<32, 32, 4> = sl.per.into();
     let (baw, bar, bw, bb, br) = sl.host;
     let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
     let mut dper = AxiPer::<32, 32, 4, IW>::default();
@@ -164,11 +164,11 @@ fn main() {
         w.add("twd", &twd);
         w.add("tans", &tans);
         w.add("trb", &trb);
-        w.add("uaw", &uaw);
-        w.add("uar", &uar);
-        w.add("uw", &uw);
-        w.add("ub", &ub);
-        w.add("ur", &ur);
+        w.add("uaw", &ubus.aw);
+        w.add("uar", &ubus.ar);
+        w.add("uw", &ubus.w);
+        w.add("ub", &ubus.b);
+        w.add("ur", &ubus.r);
         w.add("cpu", &cpu);
         w.add("dmem", &dmem);
         w.add("router", &router);
@@ -200,7 +200,7 @@ fn main() {
         join2(
             join2(
                 timer.run((rst_t, treq, twd), (tans, trb, tirq_out, sirq_out)),
-                uart.run((rst_u, rx, uaw, uar, uw), (ub, ur, tx_out, uirq_out)),
+                uart.run(ubus, (rst_u, rx, tx_out, uirq_out)),
             ),
             join2(
                 dmem.run((dreq, dwd), (dans, drb)),
@@ -370,11 +370,11 @@ fn main() {
     timer.trace_as("ans", "tans");
     timer.trace_as("rb", "trb");
     let mut uart4 = Uart::<4>::lowered("uart4");
-    uart4.trace_as("aw", "uaw");
-    uart4.trace_as("ar", "uar");
-    uart4.trace_as("w", "uw");
-    uart4.trace_as("b", "ub");
-    uart4.trace_as("r", "ur");
+    uart4.trace_as("bus_aw", "uaw");
+    uart4.trace_as("bus_ar", "uar");
+    uart4.trace_as("bus_w", "uw");
+    uart4.trace_as("bus_b", "ub");
+    uart4.trace_as("bus_r", "ur");
     uart4.trace_as("irq", "uirq");
     // The port's bridge: the AXI4 side under the router's names for
     // the third peripheral, the AXI-Lite side under the port's.

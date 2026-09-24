@@ -10,7 +10,7 @@
 use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
@@ -21,8 +21,7 @@ use vreteno32::uart::Uart;
 
 const IW: usize = 2;
 const NIDS: usize = 4;
-type Rtr =
-    Router3<
+type Rtr = Router3<
     32,
     32,
     4,
@@ -69,7 +68,7 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
     let (dreq, dwd, dans, drb) = dl.per_client;
     let (treq, twd, tans, trb) = tl.per_client;
     let sl = axi_lite::<32, 32, 4>();
-    let (uaw, uar, uw, ub, ur) = sl.per;
+    let ubus: LitePort<32, 32, 4> = sl.per.into();
     let (baw, bar, bw, bb, br) = sl.host;
     let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
     let mut dper = AxiPer::<32, 32, 4, IW>::default();
@@ -81,14 +80,19 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
         join2(
             join2(
                 timer.run((rst_t, treq, twd), (tans, trb, tirq_out, sirq_out)),
-                uart.run((rst_u, rx, uaw, uar, uw), (ub, ur, tx_out, uirq_out)),
+                uart.run(ubus, (rst_u, rx, tx_out, uirq_out)),
             ),
             join2(
                 dmem.run((dreq, dwd), (dans, drb)),
                 pair.run(
                     (rst, irq, tirq, sirq, fault_in, crdata, cdone, grant),
                     (
-                        halt_out, instr_out, wb_out, issue, wbeat, release,
+                        halt_out,
+                        instr_out,
+                        wb_out,
+                        issue,
+                        wbeat,
+                        release,
                         differs_out,
                     ),
                 ),

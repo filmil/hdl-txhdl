@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::bus::router::Router3;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
@@ -158,7 +158,7 @@ fn lockstep(
     // The serial port is an AXI-Lite peripheral, behind a bridge
     // that takes the AXI4 channels the router gives it.
     let sl = axi_lite::<32, 32, 4>();
-    let (uaw, uar, uw, ub, ur) = sl.per;
+    let ubus: LitePort<32, 32, 4> = sl.per.into();
     let (baw, bar, bw, bb, br) = sl.host;
     let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
     let mut dper = AxiPer::<32, 32, 4, IW>::default();
@@ -176,7 +176,7 @@ fn lockstep(
         join2(
             join2(
                 timer.run((rst_t, treq, twd), (tans, trb, tirq_out, sirq_out)),
-                uart.run((rst_u, rx, uaw, uar, uw), (ub, ur, tx_out, uirq_out)),
+                uart.run(ubus, (rst_u, rx, tx_out, uirq_out)),
             ),
             join2(
                 dmem.run((dreq, dwd), (dans, drb)),
