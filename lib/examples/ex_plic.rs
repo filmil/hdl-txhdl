@@ -12,7 +12,7 @@
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, Clock, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LiteW};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
 use txhdl_parts::plic::{priority, Plic3, CLAIM, ENABLE, PENDING, THRESHOLD};
 
 /// Three sources; the second asks on an edge.
@@ -68,7 +68,7 @@ fn main() {
         return;
     }
     let link = axi_lite::<32, 32, 4>();
-    let (aw, ar, w, b, r) = link.per;
+    let bus: LitePort<32, 32, 4> = link.per.into();
     let host = link.host;
     let (rst_o, rst) = signal::<Bit, DefaultClock>();
     let (src1_o, src1) = signal::<Bit, DefaultClock>();
@@ -83,11 +83,11 @@ fn main() {
         wave.add("src1", &src1);
         wave.add("src2", &src2);
         wave.add("src3", &src3);
-        wave.add("aw", &aw);
-        wave.add("ar", &ar);
-        wave.add("w", &w);
-        wave.add("b", &b);
-        wave.add("r", &r);
+        wave.add("bus_aw", &bus.aw);
+        wave.add("bus_ar", &bus.ar);
+        wave.add("bus_w", &bus.w);
+        wave.add("bus_b", &bus.b);
+        wave.add("bus_r", &bus.r);
         wave.add("irq", &irq);
         wave.add("plic", &plic);
         wave.start();
@@ -173,7 +173,7 @@ fn main() {
 
     // The client first: it drives the source lines, which are wires,
     // and the controller reads them in the same step.
-    let hardware = plic.run((rst, src1, src2, src3, aw, ar, w), (b, r, irq_o));
+    let hardware = plic.run(bus, (rst, src1, src2, src3, irq_o));
     let mut sim = Running::new(join2(client, hardware));
     rst_o.set(Bit::One);
     sim.cycle();

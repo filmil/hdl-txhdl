@@ -60,7 +60,7 @@ pub const fn priority(i: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LiteW};
+    use crate::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
     use std::cell::RefCell;
     use std::rc::Rc;
     use txhdl::comp::{join2, signal, Clock, DefaultClock, Out, Running, Unit};
@@ -116,7 +116,7 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let (aw, ar, w, b, r) = link.per;
+        let bus: LitePort<32, 32, 4> = link.per.into();
         let (rst_o, rst) = signal::<Bit, DefaultClock>();
         let (s1_o, s1) = signal::<Bit, DefaultClock>();
         let (s2_o, s2) = signal::<Bit, DefaultClock>();
@@ -132,7 +132,7 @@ mod tests {
         let body = client(rig);
         let mut plic = Plic3::<EDGE>::default();
         let mut sim = Running::new(join2(
-            plic.run((rst, s1, s2, s3, aw, ar, w), (b, r, irq_o)),
+            plic.run(bus, (rst, s1, s2, s3, irq_o)),
             async move {
                 body.await;
                 *d.borrow_mut() = true;

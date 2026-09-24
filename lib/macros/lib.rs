@@ -2997,8 +2997,8 @@ fn plic_text(name: &str, n: usize) -> String {
 /// Written by `plic!`; see [`@NAME@`].
 pub mod @MODULE@ {
 use crate::bus::axi::Resp;
-use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
-use ::txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
+use ::txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use ::txhdl::types::{Bit, U};
 use ::txhdl::{lower, with, Trace};
 
@@ -3048,20 +3048,16 @@ pub struct @NAME@<const EDGE: usize> {
 impl<const EDGE: usize> Unit for @NAME@<EDGE> {
     async fn run(
         &mut self,
+        bus: LitePort<32, 32, 4>,
         (
             rst,
 @SRC_NAMES@
-            aw,
-            ar,
-            w,
+            irq,
         ): (
             In<Bit>,
 @SRC_TYPES@
-            Rx<LiteAw<32>>,
-            Rx<LiteAr<32>>,
-            Rx<LiteW<32, 4>>,
+            Out<Bit>,
         ),
-        (b, r, irq): (Tx<LiteB>, Tx<LiteR<32>>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -3098,14 +3094,14 @@ impl<const EDGE: usize> Unit for @NAME@<EDGE> {
             // A read is answered in the cycle it is taken, and a write
             // is taken when its address and its word are both there,
             // and answered at once.
-            let arh = ar.head();
-            let take_read = r.ready() & ar.peek().is_some();
-            let _ = ar.recv_if(r.ready());
-            let awh = aw.head();
-            let wh = w.head();
-            let wgo = b.ready() & aw.peek().is_some() & w.peek().is_some();
-            let _ = aw.recv_if(wgo);
-            let _ = w.recv_if(wgo);
+            let arh = bus.ar.head();
+            let take_read = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
+            let wgo = bus.b.ready() & bus.aw.peek().is_some() & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
             let roff = arh.addr.slice::<0, 22>();
             let woff = awh.addr.slice::<0, 22>();
             let wdata = wh.data;
@@ -3141,13 +3137,13 @@ impl<const EDGE: usize> Unit for @NAME@<EDGE> {
             );
 @WORDS@
             if take_read.to_bool() {
-                r.send(LiteR {
+                bus.r.send(LiteR {
                     data: word1,
                     resp: Resp::Okay,
                 });
             }
             if wgo.to_bool() {
-                b.send(LiteB { resp: Resp::Okay });
+                bus.b.send(LiteB { resp: Resp::Okay });
             }
 // end{bus}
 // begin{drives}

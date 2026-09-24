@@ -1795,9 +1795,9 @@ waveform(
         "//src3=>src3",
         "//plic/pending=>pending",
         "//plic/active=>active",
-        "//ar/rx_valid=>ar",
-        "//r/tx_valid=>r",
-        "//r/tx_data/data=>r_data",
+        "//bus_ar/rx_valid=>ar",
+        "//bus_r/tx_valid=>r",
+        "//bus_r/tx_data/data=>r_data",
         "//irq=>irq",
     ],
 )

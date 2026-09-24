@@ -606,11 +606,14 @@ impl<const DIV: u32> Unit for Board<DIV> {
                         ),
                         join2(
                             self.plic.run(
-                                (
-                                    rst_plic, uirq_i, irq, eth_irq_i, paw_rx,
-                                    par_rx, pw_rx,
-                                ),
-                                (pb_tx, pr_tx, eirq_o),
+                                LitePort {
+                                    aw: paw_rx,
+                                    ar: par_rx,
+                                    w: pw_rx,
+                                    b: pb_tx,
+                                    r: pr_tx,
+                                },
+                                (rst_plic, uirq_i, irq, eth_irq_i, eirq_o),
                             ),
                             self.eth.run(
                                 LitePort {
