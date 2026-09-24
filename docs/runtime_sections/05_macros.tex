@@ -90,8 +90,12 @@ width and clock from its type through \code{PortEnd}, and a field of
 a port's value is found by \code{bundle\_field} from the same
 layout. \code{instance} joins a parent's struct literal to such a
 child by the one port that ends in the field's name. A unit of units
-cannot take such a side yet, since its joins are checked here. A port
-name that two sides both give is refused.
+may take such a side and pass its fields, \code{bus.req}, to its
+children, which join as the parent's ports; their kinds cannot be
+seen here, so \code{Lowered::checked} checks when \code{lowered}
+runs that each channel port of a unit of units is joined to exactly
+one child. Passing the whole side to a child is refused. A port name
+that two sides both give is refused.
 A name the netlist would hold as written is checked where it is
 chosen, since a name that fails there fails as an analysis error in a
 generated file. The \code{Trace} derive refuses a field, and

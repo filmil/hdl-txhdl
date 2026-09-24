@@ -24,9 +24,10 @@ A parent that passes such a struct to a child writes a struct
 literal, \code{LitePort \{ aw: x, .. \}}. It sees the fields and not
 the child's side, so each field joins the one port of the child
 whose name ends in \code{\_aw}. Two such ports on one child are
-refused with both names. A unit of units cannot yet take such a
-struct as a side of its own, since its joins are checked where the
-fields cannot be seen.
+refused with both names. A unit of units may take such a struct
+as a side of its own and pass its fields to its children one by one,
+as the DDR3 peripheral passes its link to its bridge; passing the
+whole side on is refused, since its fields cannot be seen.
 
 The run writes on each side and reads on the other, then writes on
 both at once and reads the word back from both. Every read is
