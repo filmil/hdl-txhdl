@@ -582,6 +582,20 @@ waveform(
     ],
 )
 
+# One Ethernet wire, two users, split by EtherType. Issue 480.
+waveform(
+    name = "ethshare",
+    example = "//lib/examples:ex_ethshare",
+    lowered = ("ethshare", "ethshare"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//ethshare/rph=>rx_phase",
+        "//ethshare/to_a=>to_a",
+        "//ethshare/tbusy=>tx_busy",
+        "//ethshare/tsel=>tx_from_b",
+    ],
+)
+
 # Words to a frame and back, through the MAC. Issue 151.
 waveform(
     name = "ethdma",
@@ -811,6 +825,8 @@ latex_document(
         ":dmawb_run",
         ":dmawb_timing",
         ":ethdma_run",
+        ":ethshare_run",
+        ":ethshare_timing",
         ":ethdma_timing",
         ":ethslots_run",
         ":ethslots_timing",
