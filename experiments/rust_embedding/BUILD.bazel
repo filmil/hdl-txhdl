@@ -44,6 +44,9 @@ MACROS = ["//lib:txhdl_macros"]
         "probe_shadow",
         "probe_shadow_generic",
         "probe_attr_order",
+        # Refused until issue 497, escaped since: `next_rw`, `out_rw`.
+        "probe_reserved_field",
+        "probe_reserved_let",
     ]
 ]
 
@@ -81,8 +84,6 @@ rust_binary(
         "probe_infer_bad",             # E0284: a width nothing fixes
         "probe_infer_lower",           # the macro's own message
         "probe_wide",                  # E0080: wider than 128 bits
-        "probe_reserved_field",        # the macro's own message
-        "probe_reserved_let",          # the macro's own message, twice
         "probe_tuple_let",             # the macro's own message
         "probe_lit_signal",            # the macro's own message
     ]

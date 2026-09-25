@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Probe 25b. Expected to fail: a `let` and a port named for reserved
-//! words. A computed `let` is a wire of the netlist named as the `let`
-//! is, and `inside` is a keyword of SystemVerilog, which Verilator
-//! reads; a port called `out` is a VHDL port called `out`. Both are
-//! refused where they are named (issue 77).
+//! Probe 25b. A `let` and a port named for reserved words. A computed
+//! `let` is a wire of the netlist, and `inside` is a keyword of
+//! SystemVerilog, which Verilator reads; a port called `out` would be a
+//! VHDL port called `out`. Both were refused where they are named
+//! (issue 77). Since issue 171 the wire is `inside_w`, and since issue
+//! 497 the port is `out_rw` in both targets, so this compiles.
 use txhdl::comp::{Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::U;
 use txhdl::{lower, Trace};
