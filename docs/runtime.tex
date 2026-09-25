@@ -52,15 +52,9 @@ runtime, simulation.
 
 {\footnotesize\tableofcontents}
 
-\input{runtime_sections/01_overview}
-\input{runtime_sections/02_types}
-\input{runtime_sections/03_comp}
-\input{runtime_sections/04_operators}
-\input{runtime_sections/05_macros}
-\input{runtime_sections/06_parts}
-\input{runtime_sections/07_foreign}
-\input{runtime_sections/08_regmap}
-\input{runtime_sections/09_formal}
+% One \input per file in runtime_sections, in the order of the names,
+% written by the build (issue 586): a new section is its file alone.
+\input{runtime_sections_list}
 
 \begin{thebibliography}{10}
 

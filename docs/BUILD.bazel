@@ -13,10 +13,31 @@ filegroup(
         "examples_sections/*.tex",
         "runtime_sections/*.tex",
         "datasheets/*.tex",
-    ]),
+    ]) + [
+        # The lists the build writes, so a section is still found through
+        # its document (issue 586).
+        ":examples_sections_list",
+        ":runtime_sections_list",
+    ],
 )
 
 package(default_visibility = ["//visibility:public"])
+
+# The sections of the examples and the runtime documents, one \input per
+# file in the directory, sorted by name. The names carry the order, so a
+# new section is its file alone and two branches that each add one do
+# not meet in a hand-kept list (issue 586).
+[
+    genrule(
+        name = d + "_sections_list",
+        srcs = glob([d + "_sections/*.tex"]),
+        outs = [d + "_sections_list.tex"],
+        cmd = "for f in $$(printf '%s\\n' $(SRCS) | LC_ALL=C sort); do" +
+              " echo \"\\\\input{" + d + "_sections/$$(basename $$f .tex)}\";" +
+              " done > $@",
+    )
+    for d in ["examples", "runtime"]
+]
 
 # The vendored class, package and drawing files live in //third_party, so
 # every vendored byte is tracked in one place. They cannot be used from
@@ -377,6 +398,7 @@ latex_document(
     main = "runtime.tex",
     data = [
         ":buildstamp",
+        ":runtime_sections_list",
         ":vendored_tex",
         "//lib:sources",
         "//lib/parts:sources",
@@ -746,6 +768,7 @@ latex_document(
     main = "examples.tex",
     data = [
         ":buildstamp",
+        ":examples_sections_list",
         ":vendored_tex",
         ":example_outputs",
         ":counter_dt",
