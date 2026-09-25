@@ -72,9 +72,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 56\,734 lines of Rust: 13\,286 of runtime
-and macros, 15\,738 of parts, 10\,945 in seventy-seven examples, 13\,820
-of Vreteno with its board, and 2\,945 of Razboj, DDR3, Ethernet, HDMI,
+Together they are 56\,825 lines of Rust: 13\,286 of runtime
+and macros, 15\,738 of parts, 10\,945 in seventy-seven examples, 13\,911 of
+Vreteno with its board, and 2\,945 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -87,6 +87,8 @@ Unit & Where & Simulated \\
 \midrule
 The channel, a buffer of two & runtime & inside a parent \\
 Buffer; FIFO & parts & both \\
+A channel across two clocks & parts & yes \\
+Memory engines, 3; tie-offs, 2 & parts & the engines \\
 Stations of 2 to 10 inputs & parts & 2 and 3 \\
 AXI routers, 2 to 8 peripherals & parts & 3 \\
 AXI arbiters, 2 to 8 hosts & parts & 2 \\
@@ -96,7 +98,8 @@ AXI to Wishbone bridge & parts & yes \\
 AXI host pins to the link's channels & parts & yes \\
 Interrupt controllers, 1 to 8 sources & parts & 3 \\
 Network node, switch, 2 bridges & parts & not yet \\
-Pins; SPI; I2C; Ethernet's four; HDMI's two & parts & all nine \\
+Pins; SPI; I2C; Ethernet's five; HDMI's two & parts & all ten \\
+Words to frames and back; a frame's length & parts & all three \\
 System control: identity, cause, reset & parts & yes \\
 Watchdog: a countdown, a key, a window & parts & yes \\
 Four modulated outputs, shadowed duties & parts & yes \\
@@ -385,7 +388,7 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs two hundred and fifty-three
+its ports. \code{bazel test //...} runs two hundred and fifty-six
 targets, of
 which a hundred and forty-eight are netlists under both simulators; the rest are the
 core's model and
