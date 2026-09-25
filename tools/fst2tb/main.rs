@@ -412,23 +412,22 @@ fn main() {
     // of any rate is replayed at the rate it ran (issue 131). A clock
     // the trace says nothing about keeps the default clock's two ticks
     // a cycle, rising at zero.
+    //
+    // A shape is a constant of the trace, and it is asked for per port
+    // per cycle, so it is found once per clock and kept; only the first
+    // two rising edges are ever used, so the search stops there. Found
+    // afresh each time, it made a run's testbench cost the square of
+    // the run's length: over an hour for the SD host's (issue 629).
+    let shapes: std::cell::RefCell<
+        std::collections::HashMap<String, (usize, usize)>,
+    > = Default::default();
     let clock_shape = |name: &str| -> (usize, usize) {
-        let Some(v) = values.get(name) else {
-            return (0, 2);
-        };
-        let high: Vec<usize> = (1..v.len())
-            .filter(|i| v[*i].ends_with('1') && !v[i - 1].ends_with('1'))
-            .collect();
-        let first = if v.first().is_some_and(|b| b.ends_with('1')) {
-            0
-        } else {
-            *high.first().unwrap_or(&0)
-        };
-        let period = match (high.first(), high.get(1)) {
-            (Some(a), Some(b)) => b - a,
-            _ => 2,
-        };
-        (first, period.max(1))
+        if let Some(s) = shapes.borrow().get(name) {
+            return *s;
+        }
+        let s = find_clock_shape(values.get(name));
+        shapes.borrow_mut().insert(name.to_string(), s);
+        s
     };
     // How many ticks a port's own clock takes for a cycle. A check
     // one cycle after a drive means one cycle of the port's clock,
@@ -1039,6 +1038,36 @@ fn main() {
          end if;\n    std.env.finish;\n  end process;\nend architecture;\n",
     );
     print!("{packages}{o}");
+}
+
+/// A clock's first rising tick and the ticks between its first two
+/// rising edges, from its value at every tick; the default clock's
+/// shape, rising at zero every two ticks, for a clock the trace does
+/// not hold. Only the first two rising edges after tick 0 are looked
+/// for, so the search ends as soon as it has them (issue 629).
+fn find_clock_shape(v: Option<&Vec<String>>) -> (usize, usize) {
+    let Some(v) = v else {
+        return (0, 2);
+    };
+    let mut high: Vec<usize> = Vec::with_capacity(2);
+    for i in 1..v.len() {
+        if v[i].ends_with('1') && !v[i - 1].ends_with('1') {
+            high.push(i);
+            if high.len() == 2 {
+                break;
+            }
+        }
+    }
+    let first = if v.first().is_some_and(|b| b.ends_with('1')) {
+        0
+    } else {
+        *high.first().unwrap_or(&0)
+    };
+    let period = match (high.first(), high.get(1)) {
+        (Some(a), Some(b)) => b - a,
+        _ => 2,
+    };
+    (first, period.max(1))
 }
 
 #[cfg(test)]
