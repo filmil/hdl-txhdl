@@ -998,6 +998,10 @@ fn substituted(
     var: &str,
     with: &[TokenTree],
 ) -> Vec<TokenTree> {
+    // `_` names nothing, and a nested `for _` keeps its own `_`.
+    if var == "_" {
+        return ts.to_vec();
+    }
     let mut out = Vec::with_capacity(ts.len());
     let mut prev_dot = false;
     for t in ts {
