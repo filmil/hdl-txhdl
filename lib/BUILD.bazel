@@ -13,6 +13,8 @@ rust_proc_macro(
     srcs = [
         "macros/lib.rs",
         "macros/regmap.rs",
+        # A process of several waits, lowered to a state machine (issue 501).
+        "macros/seq.rs",
         # The reserved words, shared with the runtime (issue 485).
         "src/reserved.rs",
     ],

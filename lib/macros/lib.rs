@@ -544,6 +544,11 @@ fn err(span: Span, msg: &str) -> TokenStream {
 mod reserved;
 use reserved::{escaped, reserved_by};
 
+// ---------------------------------------------------------------------
+// A process of several waits
+
+mod seq;
+
 /// `ts` with every token given `span`: a check the macro writes then
 /// reports at the name it checks. Every path in such a check is
 /// absolute, so where its names resolve does not change.
@@ -7398,6 +7403,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut wire_alts: Vec<String> = Vec::new();
     let mut named: Vec<(String, String, Span)> = Vec::new();
     let mut procs: Vec<String> = Vec::new();
+    // The hidden registers of the processes of several waits: the
+    // name and the width of each (issue 501).
+    let mut hidden: Vec<(String, usize, Span)> = Vec::new();
     for lbody in &loops {
         let toks: Vec<TokenTree> = lbody.stream().into_iter().collect();
         let mut cx = Cx {
@@ -7412,9 +7420,25 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             hoisted: Vec::new(),
             loops: Vec::new(),
         };
-        let mut stmts = match lower_stmts(&mut cx, &toks, None) {
-            Ok(s) => s,
-            Err(e) => return e,
+        // A loop of one wait is one clocked block; a loop of several
+        // is a state machine, a state per wait, its number in a
+        // register the unit does not declare (issue 501).
+        let sts = stmts_of(&toks);
+        let waits = sts.iter().filter(|s| seq::is_wait(s)).count();
+        let mut stmts = if waits > 1 {
+            let reg = seq::reg_name(hidden.len() + 1);
+            match seq::lower(&mut cx, &sts, &reg, &pnames, lbody.span()) {
+                Ok((s, w)) => {
+                    hidden.push((reg, w, lbody.span()));
+                    s
+                }
+                Err(e) => return e,
+            }
+        } else {
+            match lower_stmts(&mut cx, &toks, None) {
+                Ok(s) => s,
+                Err(e) => return e,
+            }
         };
         stmts.append(&mut cx.hoisted);
         let (clock, falling) = (cx.clock.clone(), cx.falling);
@@ -7450,6 +7474,20 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 "port `{pname}` is `{net}` in the netlist, and the unit has a \
                  field `{net}`: the netlist would declare `{net}` twice, so \
                  rename one (see issue 77)"
+            ),
+            *span,
+        ));
+    }
+    // The hidden register of a process of several waits is a field of
+    // the netlist the struct does not have, so a field of that name
+    // would be declared twice (issue 501).
+    for (reg, _, span) in &hidden {
+        named_nets.push((
+            reg.clone(),
+            format!(
+                "the loop waits more than once, so the netlist keeps the \
+                 wait it is at in a register `{reg}`, and the unit has a \
+                 field `{reg}`: rename the field"
             ),
             *span,
         ));
@@ -7523,7 +7561,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          let __procs: Vec<::txhdl::netlist::Process> = vec![{procs}];\n\
          ::txhdl::netlist::Lowered {{\n\
          name: name.to_string(),\n\
-         fields: <Self as ::txhdl::netlist::Fields>::fields(),\n\
+         fields: {{ let mut f = <Self as ::txhdl::netlist::Fields>::fields();\n\
+         {hidden_fields} f }},\n\
          ports: {{ let mut p = Vec::new(); {ports} p }},\n\
          wires: {{ let mut __w = vec![{wires}]; __w.extend(__dynw); __w }},\n\
          wire_names: vec![{wire_names}],\n\
@@ -7589,6 +7628,16 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             .collect::<Vec<_>>()
             .join(",\n"),
         procs = procs.join(",\n"),
+        hidden_fields = hidden
+            .iter()
+            .map(|(reg, w, _)| {
+                format!(
+                    "f.push((\"{reg}\", Some(::txhdl::comp::trace::Kind::Reg), \
+                     {w}, 0));"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
     );
     // A name built from a loop's variable, formatted with it (issue 500).
     let generated_text = dyn_names(&generated_text);
