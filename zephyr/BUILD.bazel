@@ -1,20 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# The Zephyr port of this machine: a SoC, a board, a device tree and a
-# console driver, arranged as a Zephyr module so that a Zephyr of the
+# The Zephyr port of this machine: a SoC, a board, a device tree and
+# the drivers, arranged as a Zephyr module so that a Zephyr of the
 # reader's choosing builds against it.
 #
-#   west build -b ax7a200b samples/hello_world \
-#     -- -DZEPHYR_EXTRA_MODULES=$(pwd)/zephyr
-#
-# Nothing here is built by Bazel. Zephyr's build is CMake and Kconfig
-# and its own Python, and vendoring that hermetically is a piece of
-# work in its own right rather than a detail of this port; see the
-# issue named in `zephyr/README.md`. What Bazel does own is the check
-# that the port still describes the hardware, which is
-# `//cpu/vreteno:zephyr_port_test`: it reads the files below at
-# compile time and holds their addresses to the design's own
-# constants.
+# Bazel builds images against it too, with nothing from the system
+# (issue 390): `zephyr_image` in `defs.bzl` fetches Zephyr 4.1.0 and
+# runs its own CMake and Kconfig with this repository's toolchain, and
+# the tests below read the configuration each build generated. The
+# port is also held to the hardware by
+# `//cpu/vreteno:zephyr_port_test`, which reads the files below at
+# compile time and checks their addresses against the design's own
+# constants. `README.md` says what each target is.
 
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")

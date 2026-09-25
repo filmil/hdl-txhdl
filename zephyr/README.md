@@ -1,9 +1,12 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Zephyr on Vreteno
 
-This directory is a Zephyr module: a SoC, a board, a device tree and a
-console driver that describe the Vreteno machine to Zephyr.
-Zephyr itself is not vendored here and is not part of the Bazel build.
+This directory is a Zephyr module: a SoC, a board, a device tree and
+the drivers that describe the Vreteno machine to Zephyr.
+Zephyr itself is not vendored here.
+Bazel fetches Zephyr 4.1.0 by checksum and builds images against this
+module with this repository's own toolchain; see "Building it
+hermetically" below.
 
 ## Building an image
 
@@ -43,6 +46,8 @@ cmake -B build -S samples/hello_world -GNinja \
 | `dts/riscv/hdlfactory/vreteno.dtsi` | the machine, at the addresses it decodes |
 | `dts/bindings/serial/` | the binding for the serial port |
 | `drivers/serial/uart_vreteno.c` | the console driver, polled |
+| `dts/bindings/ethernet/` | the binding for the Ethernet port |
+| `drivers/ethernet/eth_vreteno.c` | the Ethernet driver, a port of LiteEth's, over the port's frame engines |
 | `dts/bindings/rng/` | the binding for the entropy source |
 | `drivers/entropy/entropy_vreteno.c` | the entropy driver, which the network stack's random numbers come from |
 | `fastboot/` | fastboot over TCP: the protocol, its host harness and tests, and the server for the board |
@@ -159,18 +164,27 @@ instructions and the soft-float ABI.
 
 ## Building it hermetically
 
-Issue 390 is to build the image from this repository's own Bazel, so
-that `bazel test //...` checks what a person currently checks by
-following this file.
+Bazel builds images from this module with nothing from the system
+(issue 390): `zephyr_image` in `zephyr/defs.bzl` hands Zephyr's own
+CMake, Kconfig and Python every tool by checksum and takes the ELF,
+the raw image and the generated configuration out.
 
-That is not done, but the part of it that looked hardest is no longer
-a question.
-A throwaway workspace configured and built `samples/hello_world` for
-`ax7a200b` end to end with nothing from the system, and produced the
-ELF.
-The versions that did it are recorded here rather than in the issue,
-so that whoever writes the rule does not find them again by trial and
-error.
+| Target | What it is | What checks it |
+|---|---|---|
+| `//zephyr:hello_world` | Zephyr's `samples/hello_world` for `ax7a200b` | `//zephyr:config_test` |
+| `//zephyr:hello_world_net` | the same with `net.conf`, a network stack | `//zephyr:eth_config_test` |
+| `//zephyr:fastboot` | the fastboot server, an application in `fastboot/app` | the fastboot tests above |
+
+The two configuration tests read the `.config` each build generated,
+because an ELF existing proves very little, as this port showed four
+separate times: each built an ELF that would not have printed.
+`config_test` wants the serial driver, the console, the SoC, the board
+and the machine timer; `eth_config_test` wants the Ethernet driver,
+Ethernet L2 and the entropy driver.
+All of them are in `bazel build //...` and `bazel test //...`.
+
+The versions it is built with are in `MODULE.bazel`; these are the
+ones that matter to Zephyr, with why where it is not obvious.
 
 | Module | Version | Note |
 |---|---|---|
@@ -181,9 +195,9 @@ error.
 | `flex` | 2.6.4.bcr.6 | the pin is required; see below |
 | `ninja` | 1.13.2 | |
 | CMake | 3.31.6 | an `http_archive`, sha256 `5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf` |
-| `riscv_none_elf_gcc` | 14.2.0 | already in `MODULE.bazel` |
+| `riscv_none_elf_gcc` | 14.2.0 | |
 
-Three things cost time, and would cost it again.
+Three things cost time getting there, and would cost it again.
 
 **`flex` must be pinned to `2.6.4.bcr.6`.**
 The default resolution takes `2.6.4.bcr.2`, on which building `dtc`
@@ -194,15 +208,8 @@ fails with `config.h:208: expected expression before '/'` and a
 `rules_python` installs what is named and nothing else, so the first
 run died on `No module named 'six'`.
 
-**The rule must pass `-DZEPHYR_MODULES`, not `-DZEPHYR_EXTRA_MODULES`.**
-See the warning at the top of this file: without `west` the latter is
-collected and discarded.
-A rule written from the `west` line above would fetch Zephyr, run
-CMake, produce an ELF, pass, and be testing a Zephyr with none of this
-repository in it.
-
-That last point is what the rule should be built around.
-An ELF existing proves very little, as this port demonstrated four
-separate times before it ever printed: the check worth writing is that
-the generated configuration contains `CONFIG_UART_VRETENO=y` and
-`CONFIG_UART_CONSOLE=y`.
+**The rule passes `-DZEPHYR_MODULES`, not `-DZEPHYR_EXTRA_MODULES`.**
+See "Building an image" at the top of this file: without `west` the
+latter is collected and discarded, and the build would fetch Zephyr,
+run CMake, produce an ELF, pass, and be testing a Zephyr with none of
+this repository in it.
