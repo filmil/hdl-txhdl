@@ -1,0 +1,154 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Sd
+\datasheet{Sd}{A native-mode SD card host on AXI-Lite: one command and
+at most one block at a time, the block through a buffer of 128 words.}
+
+\dsfacts{\code{lib/parts/src/sd.rs}}{\code{txhdl\_parts::sd::Sd}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+A card in SPI mode gives a few hundred kilobytes a second on one data
+line, which is what \code{Spi} gives. The native mode is the card's
+own protocol: a command line, \code{CMD}, that carries 48-bit commands
+out and 48- or 136-bit responses back, and one or four data lines,
+\code{DAT}, that carry blocks of 512 bytes either way, each line with
+a CRC-16 of its own. Every command carries a CRC-7, and so does every
+response except the one to \code{ACMD41}, whose CRC field is all
+ones.
+
+\code{Sd} is that host behind one AXI-Lite port, \code{bus}. A program
+writes the argument and then the command word, and the command word
+says what follows: no response, a short one or a long one; a block to
+read or a block to write; whether to wait for the card's busy line
+afterwards; and whether to check the response's CRC. The host sends
+the command, takes the response, moves the block through its buffer,
+which the program reads or fills a word at a time through
+\code{data}, and says in \code{status} how it went.
+
+A multi-block transfer is one command, \code{CMD18} or \code{CMD25},
+then one data-only transfer for each further block, then
+\code{CMD12}. The card's side is eight wires: \code{sclk}, the command
+line in, out and its output enable, the four data lines in, out and
+their output enable, and \code{irq}.
+
+\subsection*{Parameters}
+
+None.
+
+\subsection*{Register map}
+
+The word is address bits 5 to 2. A word the map does not name reads as
+zero.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.62\textwidth}@{}}
+\toprule
+Offset & Name & What it is \\
+\midrule
+\code{0x00} & \code{ctrl} & The divider in bits 0 to 7, four lines in
+bit 8, the interrupt enable in bit 9. Writing bit 10 sets both buffer
+pointers to zero. \\
+\code{0x04} & \code{cmd} & The index in bits 0 to 5; the response in
+bits 6 and 7, 0 none, 1 short, 2 long; read a block in bit 8, write
+one in bit 9; wait for busy in bit 10; skip the response's CRC in bit
+11; data only, no command, in bit 12. Writing it starts the command. \\
+\code{0x08} & \code{arg} & The argument. \\
+\code{0x0c} & \code{status} & Busy in bit 0 and done in bit 1; no
+response in bit 2, a wrong response CRC in bit 3, no block or a card
+that never left busy in bit 4, a wrong block CRC or a refused block in
+bit 5; the card's CRC status in bits 6 to 8; the first data line's
+level in bit 9; the response's index in bits 10 to 15; the write
+pointer in bits 16 to 23 and the read pointer in bits 24 to 31.
+Writing bit 1 clears done and the faults. \\
+\code{0x10} to \code{0x1c} & \code{resp0} to \code{resp3} & The
+response. \\
+\code{0x20} & \code{data} & Read: the next word out of the buffer.
+Written: the next word into it. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A half of a card clock takes \code{div + 1} cycles, so the card's
+clock is the system's over \code{2 * (div + 1)}: at 100~MHz, 124 is
+the 400~kHz a card starts at, 1 is 25~MHz and 0 is 50~MHz.
+
+\dstables{Sd}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \textbf{A write to \code{cmd} while a command runs is ignored.}
+A program reads \code{status} first.
+\item The host drives its lines on the falling edge of the clock it
+makes and samples the card's on the rising edge. The clock runs only
+while a command runs, and is low otherwise.
+\item A response that has not started 64 card clocks after the command
+ends is a timeout. A block, the CRC status token after a written
+block, and the end of the card's busy are each given $2^{24} - 1$ card
+clocks.
+\item A CRC is checked the way a shift register checks one: the
+received CRC goes into the same register after the data, and what is
+left is zero when the two agree. For a long response the CRC covers
+the 120 bits after the header. With four lines each line has its own
+CRC-16, and any of the four being wrong sets bit 5.
+\item A written block is accepted only when the card's CRC status
+token is \code{010}; anything else sets bit 5. A command whose
+response CRC is wrong goes no further: its block does not move.
+\item Starting a read sets the write pointer to zero, and starting a
+write sets the read pointer to zero, so a block fills or empties the
+buffer from its start. A read of \code{data} moves the read pointer
+and a write moves the write pointer, each modulo 128.
+\item \code{irq} is done and the interrupt enable together, so it
+stays high until the program clears done.
+\item Every AXI-Lite access is answered \code{OKAY}.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_sd} does what a driver does, through an AXI4 host and
+\code{LiteBridge1}, against \code{SdCard}, the model of a card in \code{sd.rs},
+stepped on the wires every cycle. It brings the card up with
+\code{CMD0}, \code{CMD8}, \code{ACMD41}, \code{CMD2}, \code{CMD3},
+\code{CMD7} and \code{ACMD6}, reads block 3 on one line, then writes
+block 5 on four and reads it back, and checks both blocks.
+\item The netlist is checked against that run under nvc and
+Verilator: \code{//docs:sd\_sim\_sd\_tb\_test} and
+\code{//docs:sd\_vsim\_test}.
+\item \code{//lib/parts:parts\_test} holds six tests of it:
+\begin{itemize}
+\item the card comes up and gives its CID;
+\item a block is read on one line;
+\item a block is written and read back on four lines, the card's CRC
+status accepting it;
+\item two blocks each way, as a command, a data-only transfer and
+\code{CMD12};
+\item a spoiled response CRC sets bit 3 and the next command is
+clean; a command the card does not answer sets bit 2; a spoiled block
+sets bit 5;
+\item the CRC-7 of \code{CMD0} with a zero argument is \code{0x4a} and
+the CRC-16 of 512 bytes of \code{0xff} is \code{0x7fa1}, the
+specification's own examples.
+\end{itemize}
+\end{itemize}
+
+\subsection*{Used by}
+
+The example \code{ex\_sd}. Nothing on a board holds it yet.
+
+\subsection*{Limits}
+
+\textbf{Not yet on hardware.} The board half of issue 153, the card
+slot, reading the card's CID and block 0 from a real card, is owed,
+and nothing here has met a real card.
+
+One command and at most one block at a time, and the block moves
+through a register. A card streams a multi-block read back to back,
+and keeping up with that at 25~MHz a word at a time is what direct
+memory access would be for; there is none.
+
+\code{SdCard}, the model, is not a component: nothing lowers it, and
+it is only as right as the tests that check the host against it.
+
+It runs on one clock, \code{DefaultClock}.
