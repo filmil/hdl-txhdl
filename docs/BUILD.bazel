@@ -777,6 +777,8 @@ latex_document(
         ":twoproc_timing",
         ":mul_run",
         ":mul_timing",
+        ":wide_run",
+        ":wide_timing",
         ":tap_run",
         ":tap_timing",
         ":buffer_run",
@@ -1749,6 +1751,18 @@ waveform(
         "//clear=>clear",
         "//mac/acc=>acc",
         "//sum=>sum",
+    ],
+)
+
+waveform(
+    name = "wide",
+    example = "//lib/examples:ex_wide",
+    lowered = ("acc", "acc"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//clear=>clear",
+        "//mid=>mid",
+        "//top=>top",
     ],
 )
 
