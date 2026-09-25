@@ -46,11 +46,12 @@ design is a struct whose state is registers, its behaviour an
 \code{async fn} that waits for a clock edge, reads, and drives; the
 same file simulates under Rust, writes a waveform, and lowers to
 Verilog and VHDL that the build checks against the simulation. This
-tutorial takes you from nothing to that, in six steps, each on one
-small example the build runs: a counter, the model of time, the three
-ways of choosing, channels between units, the waveform, and the
-netlist with its checks. It ends with how to add an example of your
-own, which is how everything here was added.
+tutorial takes you from nothing to that in eight steps, each on a
+small example the build runs: a counter, the model of time, the ways
+of choosing, channels between units, ports with names, units made of
+units on more than one clock, the waveform, and the netlist with its
+checks. A ninth step shows how to add an example of your own, which
+is how everything here was added.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -119,7 +120,9 @@ assigned twice; that is the shape every unit has.
 Now run it. \code{bazel run //lib/examples:ex\_cheat} runs the
 \code{main} below the unit, which you will read in
 Section~\ref{sec:t-testbench}, and prints Listing~\ref{lst:t-counter-out}:
-the counter's Verilog, which is Step Six. Fig.~\ref{fig:t-counter}
+the counter's Verilog, which is Step Eight. The \code{rst} among its
+ports is the reset, which every module gets without asking; Step Six
+says what it does. Fig.~\ref{fig:t-counter}
 is its waveform, drawn by the build from the run: \code{n} counts
 while \code{enable} is high, \code{tick} marks the sevens, and both
 stop when the enable drops.
@@ -207,10 +210,14 @@ three cycles of \code{Run}, \code{Done}, and back to \code{Idle}.}
 The third way is \code{select!}, which chooses a \emph{value} rather
 than a drive: \code{select!(f3.raw() => \{ 0 => a + b, 1 => a << b,
 .. \})} is a multiplexer, and the Vreteno core's ALU is one of
-these. \code{mux(c, a, b)} is the two-way form. You choose between
-values with \code{select!} and \code{mux}, between drives with
-\code{with!}, \code{when!}, \code{case!} and \code{if}, and that is
-the whole vocabulary of choice.
+these. \code{mux(c, a, b)} is the two-way form. Rust's own forms
+work as well: an \code{if} with an \code{else} that yields a value,
+and a \code{match}, lower to the same chain of conditions, and a
+pattern may be a range, \code{0x30..=0x39}, as may
+\code{(lo..=hi).contains(\&x)}. You choose between values with
+\code{select!}, \code{mux}, a value \code{if} or a \code{match};
+between drives with \code{with!}, \code{when!}, \code{case!} and
+\code{if}. That is the whole vocabulary of choice.
 
 \section{Step Four: Talking Between Units}
 \label{sec:t-channels}
@@ -263,7 +270,108 @@ When you need a wire between units, drive it from a register and run
 the unit that drives it first; the Vreteno document has the one
 case where that was needed, and the reasons.
 
-\section{Step Five: Running and Watching}
+\section{Step Five: Ports With Names}
+\label{sec:t-ports}
+
+The units so far had one port on each side. A unit with more could
+take a tuple, but a tuple is read by position, so swapping two ports
+of the same type compiles and is wrong. Name them instead. A side of
+a unit may be any struct of ports: its fields are the ends of
+channels and wires, or smaller structs of ports, and each is named
+where it is declared, where it is passed and where it is read.
+Listing~\ref{lst:t-ports} is a subtractor whose two operands have the
+same type and cannot be swapped by accident.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={Ports as structs: \code{Diff} takes \code{DiffIn} and gives \code{DiffOut}, and \code{Top} takes the sink of an \code{interface!}. From \code{ex\_ports.rs}.},label={lst:t-ports}]{lib/examples/ex_ports.rs}
+
+\code{Diff} takes \code{DiffIn} and gives \code{DiffOut}. Its
+\code{run} takes the input side apart in its signature, as any Rust
+function may, and reads the output side by field: \code{out.diff},
+\code{out.borrow}. A struct of ports may be generic, as these are
+over the width, and it may be declared in another crate:
+\code{\#[derive(Ports)]} on it is all the lowering asks. Every
+AXI-Lite peripheral in \code{//lib/parts} is handed its link as one
+such struct, \code{LitePort}.
+
+\code{interface!} declares the members of a link once and writes a
+struct per \emph{role}, each role saying which way each member goes.
+\code{Operands} has two channels: its \code{Source} role sends on
+both, its \code{Sink} receives on both, and \code{Operands::new()}
+makes the two roles, joined. \code{Top} takes the sink and passes its
+members to \code{Diff} in a struct literal, by name, so the order in
+which they are written no longer matters.
+
+The netlist flattens each struct into its fields.
+Listing~\ref{lst:t-ports-out} is the top of the module the lowering
+wrote: each channel is its data, its \code{valid} and its
+\code{ready}, under the field's name. Fig.~\ref{fig:t-ports} is the
+run.
+
+\lstinputlisting[style=ascii,linerange={20-27},caption={The ports of the module \code{ex\_ports} printed: every field, flattened, under its name.},label={lst:t-ports-out}]{out_ports.txt}
+
+\begin{figure}[htbp]
+\centering
+\input{paper_ports_timing.tex}
+\caption{The subtractor: a pair is taken when both operands are
+offered and the output has room, and the difference leaves a cycle
+later. \code{3 - 7} raises \code{borrow} and leaves 252, \code{fc} in hex.}
+\label{fig:t-ports}
+\end{figure}
+
+\section{Step Six: Units of Units, and Their Clocks}
+\label{sec:t-units}
+
+A design bigger than a counter is a unit that holds units. The
+children are fields of the parent. Its \code{run} hands each child its
+ports and runs them together, with \code{join2} for two and nested
+\code{join2}s for more, and the lowering reads that as one module
+with an instance of each child. \code{Top} in
+Listing~\ref{lst:t-ports} is one already, with a single child.
+
+A unit's process waits on one clock, so a second clock is the other
+reason to have children. A clock is a type: a struct that implements
+\code{Clock}, with a name and a period in ticks. \code{DefaultClock}
+has a period of two. Listing~\ref{lst:t-twoclock} declares a clock
+three times slower, and two counters. One runs on the default clock,
+which it never names. The other runs on \code{Slow}, and names it in
+its wait, its register and both its ports: \code{Reg<U<8>, Slow>},
+\code{In<Bit, Slow>}, \code{Out<U<8>, Slow>}. The parent, \code{Two},
+names no clock at all. The module the lowering writes has an input
+for each clock, and the build checks each port against the edges of
+its own clock. Fig.~\ref{fig:t-twoclock} shows the two counts, one
+step of the slow count to three of the fast.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange={clock-clock,units-units},caption={A clock three times slower, a counter on each clock, and a parent that holds both. From \code{ex\_twoclock.rs}.},label={lst:t-twoclock}]{lib/examples/ex_twoclock.rs}
+
+\begin{figure}[htbp]
+\centering
+\input{paper_twoclock_timing.tex}
+\caption{Two clocks in one module: \code{a} counts on \code{clk} and
+\code{b} on \code{slow}, each while its own \code{go} is high.}
+\label{fig:t-twoclock}
+\end{figure}
+
+Nothing passes between the two counters, and that is deliberate. The
+clock is part of a port's type, so a signal on one clock cannot be
+handed to a unit that wants another; \code{Crossing<T, A, B>} is the
+one thing that turns one into the other. A channel crosses through
+\code{ChanCdc} from \code{//lib/parts}: two processes, one on each
+clock, a memory between them, and each side keeping the other's Gray
+pointer through two flops of its own clock. The example
+\code{ex\_cdc} runs one, and the build checks its netlist as it checks
+any other.
+
+One port you never write is the reset. Every module the lowering
+writes gets an \code{rst} input, as it gets its clocks; while it is
+high, every register goes back to what it held before the first edge,
+and the channels empty. The counter's Verilog in
+Listing~\ref{lst:t-counter-out} has it. A unit that must do something
+under reset, rather than just forget, takes \code{rst: In<Bit>} and
+reads it, and the netlist joins that port to the same net. The
+Vreteno core does this, because it has to fetch from its reset
+vector.
+
+\section{Step Seven: Running and Watching}
 \label{sec:t-testbench}
 
 The \code{main} of an example is its testbench. Listing~\ref{lst:t-main}
@@ -313,9 +421,9 @@ of its own. Compare the unit's registers after a cycle, not its
 output wires, which a process sets during the step from the state
 before it. A \code{\#[test]} is the place for assertions about
 values; the netlist check needs a trace, and comes from the
-\code{waveform()} entry of Step Seven.
+\code{waveform()} entry of Step Nine.
 
-\section{Step Six: From Rust to Hardware}
+\section{Step Eight: From Rust to Hardware}
 \label{sec:t-netlist}
 
 You have seen the counter's Verilog in Listing~\ref{lst:t-counter-out}.
@@ -348,6 +456,16 @@ call the lowering does not know, or a loop with a variable count.
 The macro says so at compile time, with a message that names the
 construct.
 
+A function the lowering does know is one that carries
+\code{\#[lower]} itself, in the same file: it stays plain Rust for
+the simulation and is inlined at every call, so a step can keep its
+arithmetic in named pieces, as \code{ex\_fn} does. Names are yours to
+choose. A port called \code{next}, \code{begin} or \code{out}, or a
+register called \code{signal}, is a word VHDL or SystemVerilog
+reserves; the netlist writes it with \code{\_rw} after it, the same
+in both and in the generated testbench, so \code{next} is
+\code{next\_rw} and the co-simulation still finds it.
+
 The lowering is checked, not trusted. For every lowered example the
 build runs the Rust simulation, keeps its trace, writes the VHDL and
 the Verilog, and generates a testbench from the trace that replays
@@ -358,9 +476,9 @@ tests are \code{//docs:cheat\_sim\_counter\_tb\_test} and
 \code{//docs:cheat\_vsim\_test} for the counter, and there is a pair
 for every unit in this tutorial. When you write a unit that lowers,
 the same two tests appear for it the moment you add it to the build,
-which is Step Seven.
+which is Step Nine.
 
-\section{Step Seven: Adding Your Own}
+\section{Step Nine: Adding Your Own}
 \label{sec:t-adding}
 
 Every example you have read was added the same way, and it is the
@@ -394,9 +512,14 @@ test.
 \section{Where Next}
 \label{sec:t-next}
 
-The examples document~\cite{examples} has thirty of these, one per
-concept, in the order of the language, with the runtime's public
-interface at the end for looking things up. The embedding
+The examples document~\cite{examples} has one of these per concept,
+in the order of the language, with the runtime's public interface at
+the end for looking things up. Three more tutorials pick up where
+this one stops: \code{//docs:zero} builds a blinky in an empty
+directory against the published repository, \code{//docs:axi} is the
+AXI bus from one register to a router of peripherals, and
+\code{//docs:station} is the reservation station read cycle by
+cycle. The embedding
 article~\cite{embedding} states the language: the rule that every
 construct Rust provides is deleted, and what is left. The runtime
 document~\cite{runtime} is the library itself, verbatim, with the
@@ -404,7 +527,7 @@ model of time stated in prose, for when you want to know what a
 construct does inside. And the Vreteno document is a RISC-V core
 written in the subset you have just read, checked every cycle against
 a reference model, lowered, and placed and routed at 100~MHz, which
-is what the six steps add up to.
+is what the eight steps add up to.
 
 \begin{thebibliography}{10}
 

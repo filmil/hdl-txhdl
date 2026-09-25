@@ -2131,6 +2131,25 @@ genrule(
             "",
         ),
         (
+            "ports",
+            "clk,minuend_valid,minuend_data,subtrahend_valid," +
+            "subtrahend_data,diff_valid,diff_data,borrow",
+            "//clocks/clk=>clk,//minuend/rx_valid=>minuend_valid," +
+            "//minuend/rx_data=>minuend_data," +
+            "//subtrahend/rx_valid=>subtrahend_valid," +
+            "//subtrahend/rx_data=>subtrahend_data," +
+            "//diff/rx_valid=>diff_valid,//diff/rx_data=>diff_data," +
+            "//borrow=>borrow",
+            "",
+        ),
+        (
+            "twoclock",
+            "clk,slow,go,go_slow,a,b",
+            "//clocks/clk=>clk,//clocks/slow=>slow,//go=>go," +
+            "//go_slow=>go_slow,//a=>a,//b=>b",
+            " --until 36",
+        ),
+        (
             "vreteno_out",
             "clk,uaw_valid,tx",
             "//clocks/clk=>clk,//uaw/rx_valid=>uaw_valid,//tx=>tx",
@@ -2237,6 +2256,10 @@ latex_document(
         ":paper_case_timing",
         ":stage_run",
         ":paper_stage_timing",
+        ":ports_run",
+        ":paper_ports_timing",
+        ":twoclock_run",
+        ":paper_twoclock_timing",
         "//lib/examples:sources",
     ],
     deps = ["housestyle.tex"],
