@@ -1,0 +1,46 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Output Held Across States}
+\label{sec:x-hold}
+
+The run's wire keeps its value between sets. An output set in one
+state and left alone in the next is still what it was, and a
+protocol leans on that: a \code{busy} raised when work is taken and
+dropped when it is done is set in two states and read in all of
+them. A wire of the netlist has no memory, so a process of several
+waits cannot drive such an output as a wire selected on the state.
+
+The lowering holds it instead. Each output a state sets gets a
+register the unit does not declare, \code{<port>\_held}, driven
+inside the state's arm of the clocked block, so it takes the state's
+value at the edge that leaves the state and keeps it until another
+state's edge. The port itself is the state's expression while the
+state is about to leave, that is while the register holds the state's
+number and the wait's condition holds, and the register otherwise.
+The two halves are one wire, \code{cond ? value : held}, chained
+over the states that set the port.
+
+Why both halves, when the register alone would hold the value: the
+netlist's wires run a cycle ahead of the run's. The run sets a wire
+at the edge from what stood before it, and the netlist's wire is
+computed from what stands now, which is the same values one cycle
+earlier; the testbench compares them with that offset. A register
+alone would be a cycle late at every change, and a wire alone would
+show the next state's value while the wait stalled. The combination
+is exact, and the build checks it: the stepper below is
+\code{ex\_seq}'s with a \code{phase} output set in two of its three
+states and a \code{busy} output raised when a word is taken and
+dropped when the sum goes out, and its netlist agrees with its run
+under nvc and Verilator, stalls included.
+
+\begin{figure}[htbp]
+\centering
+\input{hold_timing.tex}
+\caption{The stepper with held outputs: \code{phase} moves with the
+state and stays at two through the wait for \code{go}; \code{busy}
+is up from the word to the sum.}
+\label{fig:x-hold}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_hold.rs}. Run with \code{bazel run //lib/examples:ex\_hold}.},label={lst:x-hold}]{lib/examples/ex_hold.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_hold} printed when the build ran it: the stepper cycle by cycle, then the Verilog, with a register behind each output and the wire that reads ahead of it.},label={lst:x-hold-out}]{out_hold.txt}

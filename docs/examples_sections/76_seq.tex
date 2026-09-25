@@ -33,12 +33,11 @@ wait, and each kind of statement lowers as it did, under the state:
         data of the state it is in;
   \item a receive takes in its state alone, so \code{ready} is the
         state's condition;
-  \item an output port is a wire, with no memory of what an earlier
-        state set, so it is set after every wait and the wire selects
-        the state's expression on the register. That reproduces the
-        run only when no wait can stall, so an output is refused in a
-        process that waits on a condition or on a channel; such a
-        process drives a register, or sends, as the stepper does;
+  \item an output port keeps what a state set until a state sets it
+        again, as the run's wire does: the lowering holds it in a
+        register the unit does not declare, and the port is the
+        state's expression while the state is about to leave and the
+        register otherwise, which Section~\ref{sec:x-hold} shows;
   \item a \code{let} is a wire too, and a wire computed in one state is
         not what it was by the next, so a name bound in one state is
         refused in a later one. What crosses a wait is held in a
