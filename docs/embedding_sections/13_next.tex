@@ -28,9 +28,9 @@ direction: an \code{await} is a \code{seq} boundary, and
 driving the groups; this paper's lowering, Section~\ref{sec:e-next},
 reads a loop of one wait and lowers it to a module, and a loop of
 several waits to a state machine with a state per wait, which is
-Calyx's control program in its plainest form, a \code{seq} of groups.
-A wait under \code{if}, the control program with a branch in it, it
-does not lower.
+Calyx's control program in its plainest form, a \code{seq} of groups,
+with a wait under \code{if} the branch in it and a \code{for} of a
+constant count unrolled.
 
 \textbf{Filament}~\cite{filament} types each signal with the interval of
 cycles over which it is valid, so that composing two components with
@@ -196,8 +196,8 @@ clocked block of its own; and a loop of several waits is a state
 machine, its register numbered by the lowering, so a protocol of
 several steps is written as the steps rather than as a machine by
 hand. Of the three things known to be hard, control flow across an
-await is done for a plain sequence and a loop of a constant count and
-not for a branch, and resource sharing remains.
+await is done, for a plain sequence, a loop of a constant count and a
+wait under \code{if}, and resource sharing remains.
 
 \subsection{What it does not need}
 

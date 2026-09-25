@@ -1,0 +1,49 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Wait Under If}
+\label{sec:x-frame}
+
+Section~\ref{sec:x-seq} numbered a loop's waits into states and
+Section~\ref{sec:x-serial} unrolled a counted step. The step left is
+the one taken only sometimes: a wait under \code{if}. Its state is
+made like any other, and the state before the \code{if} gets a way
+around it. When the condition holds at that state's edge the
+register goes to the wait inside; when it fails, the register goes
+past the \code{if}, to whatever wait comes next. So the register's
+next value is a choice on the condition rather than a number, and
+that choice is the whole of the control flow the \code{if} asked
+for.
+
+The statements around the \code{if} keep their meaning by being
+placed where they happen. What sits in an arm before its wait
+happens in the state before the \code{if}, under the arm's
+condition and the failure of the arms above it; what sits in an arm
+after its wait happens in the state the wait made, under nothing,
+since being there says the condition held. What follows the
+\code{if} happens in every state the \code{if} can end in: the last
+state of each arm, and the state before the \code{if} when there is
+no \code{else}, under the failure of every arm. An \code{if} inside
+an \code{if} nests the same way, and a \code{for} that waits inside
+an arm is unrolled there first. A \code{let} still does not cross a
+wait, and an output port is still a wire set after every wait, as
+Section~\ref{sec:x-seq} says.
+
+The framer below sends a byte as a serial frame: a start bit, eight
+data bits low bit first, a parity bit when \code{parity} asks for
+one at the last data bit, and a stop bit. Twelve states, and the
+parity state is the one under \code{if}; the netlist shows the
+choice, \code{parity ? 10 : 11}, where the state of the last data
+bit picks its successor. The build checks the netlist against the
+run under nvc and Verilator, with one frame of each length.
+
+\begin{figure}[htbp]
+\centering
+\input{frame_timing.tex}
+\caption{The framer: a start bit, the eight bits of the byte, and a
+stop bit; the second frame has a parity bit before its stop bit,
+since \code{parity} is high by then.}
+\label{fig:x-frame}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_frame.rs}. Run with \code{bazel run //lib/examples:ex\_frame}.},label={lst:x-frame}]{lib/examples/ex_frame.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_frame} printed when the build ran it: the two frames bit by bit, then the Verilog, with the choice of the next state in it.},label={lst:x-frame-out}]{out_frame.txt}
