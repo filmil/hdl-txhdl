@@ -820,6 +820,8 @@ latex_document(
         ":serial_timing",
         ":frame_run",
         ":frame_timing",
+        ":hold_run",
+        ":hold_timing",
         ":rename_run",
         ":rename_timing",
         ":foreign_run",
@@ -2007,6 +2009,25 @@ waveform(
         "//framer/sr=>sr",
         "//line/tx_valid=>line_valid",
         "//line/tx_data=>line",
+    ],
+)
+
+# An output set in some states of a process and held through the rest
+# (issue 501).
+waveform(
+    name = "hold",
+    example = "//lib/examples:ex_hold",
+    lowered = ("hold", "stepper"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//words/rx_valid=>word_valid",
+        "//words/rx_data=>word",
+        "//go=>go",
+        "//stepper/held=>held",
+        "//phase=>phase",
+        "//busy=>busy",
+        "//sums/tx_valid=>sum_valid",
+        "//sums/tx_data=>sum",
     ],
 )
 
