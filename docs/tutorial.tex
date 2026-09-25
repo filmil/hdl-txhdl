@@ -274,7 +274,7 @@ for one; runs the unit with \code{Running::new}; and then drives
 \code{sim.cycle()}, which is where a testbench looks at wires and
 registers between steps.
 
-\lstinputlisting[linerange={32-48},caption={The counter's testbench: wires, a waveform, the unit running, twelve cycles. From \code{ex\_cheat.rs}.},label={lst:t-main}]{lib/examples/ex_cheat.rs}
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=main-main,caption={The counter's testbench: wires, a waveform, the unit running, twelve cycles. From \code{ex\_cheat.rs}.},label={lst:t-main}]{lib/examples/ex_cheat.rs}
 
 The waveform is the part you will use most. \code{Wave::from\_env()}
 returns a writer when \code{TXHDL\_FST} or \code{TXHDL\_VCD} names a

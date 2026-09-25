@@ -26,6 +26,7 @@ impl Unit for Counter {
 }
 // end{unit}
 
+// begin{main}
 fn main() {
     let (en_out, enable) = signal::<Bit, DefaultClock>();
     let (tick_out, tick) = signal::<Bit, DefaultClock>();
@@ -46,3 +47,4 @@ fn main() {
     print!("{}", Counter::verilog("counter"));
     txhdl::netlist::write_vhdl_from_env(&Counter::lowered("counter"));
 }
+// end{main}
