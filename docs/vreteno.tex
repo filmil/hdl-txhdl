@@ -1633,8 +1633,9 @@ part.
 
 The board changed in two places for it. Its ports are two structs
 now, \code{BoardIn} and \code{BoardOut}, the old ports under their old
-names and the master's pins under \code{jtag\_}, joined inside by an
-\code{AxiPins} to the link's channels. And the router has an arbiter in
+names and the master's pins under \code{jtag\_}, one field of type
+\code{AxiHostPins}, passed whole to an \code{AxiPins} that joins them
+to the link's channels. And the router has an arbiter in
 front of it, \code{Arbiter2}, with the core's tracker on one port and
 the pins on the other. An arbiter puts the port number above a host's
 own identifier, so the peripheral side of the bus carries four bits

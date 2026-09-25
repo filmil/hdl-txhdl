@@ -118,6 +118,15 @@ stands between the two, and holds nothing.
 
 \pinspart{ports}{The pins, as the unit's two sides.}{lst:p-ports}
 
+The host's 24 pins are a struct of their own, \code{AxiHostPins},
+which derives \code{Ports}, and the inputs hold them as one field,
+\code{pins}, beside the two channels from the link; the unit's ports
+are \code{pins\_awid} and the rest. A design that has a host's pins
+among its own ports keeps them as one field too and passes it whole:
+Vreteno's board holds its JTAG master's as \code{jtag}, whose ports
+are \code{jtag\_awid} and the rest, and this design builds the field
+from its own ports where it passes it (issue~\#579).
+
 An address phase or a write beat the host offers goes onto its channel
 in the step the channel has room, and the room is the host's
 \code{ready}. A write response or a read beat at the head of its

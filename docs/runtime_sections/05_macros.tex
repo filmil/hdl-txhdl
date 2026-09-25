@@ -216,6 +216,12 @@ whole, is its fields in order, and a struct literal
 \code{S \{ b: x, a \}} joins each field to the child's port of that
 name, whatever order the literal writes them in; a channel end or
 channel port joined twice or never is refused by name, as is anything else in the body.
+A field of the literal that is itself a struct of ports takes a
+literal of its own, \code{pins: P \{ awid, .. \}}, which joins the
+child's \code{pins\_awid}, or the parent's own nested struct whole,
+\code{pins: jtag}, which joins the child's \code{pins\_} ports to the
+parent's \code{jtag\_} ones in order through \code{bundle\_args\_named}
+when \code{lowered} runs (issue 579).
 An input passed \code{tie(v)} is held at the constant \code{v}: in
 the run it is a wire \code{comp::tie} sets once, and in the netlist
 a wire of the parent, \code{FIELD\_tieK}, driven by \code{lit(v)},
