@@ -767,9 +767,11 @@ The core has one external interrupt line, and a machine has more
 sources than one. On the board a platform-level interrupt controller,
 Listing~\ref{lst:v-plic-gateway} and those after it, stands between
 them, at \code{0x0c00\_0000}, where RISC-V machines put it. It is a
-part of \code{txhdl\_parts}, \code{Plic1} to \code{Plic8}, one unit per
-count of sources written out by \code{plic!}, as the routers are, and
-an AXI-Lite peripheral behind a bridge of its own. Its words are the
+part of \code{txhdl\_parts}, \code{Plic<N, EDGE>}, one unit for every
+count of sources, whose sources are an array of ports and whose
+priorities are an array of registers, \code{Plic1} to \code{Plic8}
+naming the counts; it is an AXI-Lite peripheral behind a bridge of
+its own. Its words are the
 RISC-V PLIC's for one target: a priority per source from \code{0x4},
 three bits, where 0 never interrupts; the pending bits at
 \code{0x1000}; the enable bits at \code{0x2000}; the threshold at
@@ -784,8 +786,8 @@ pending, only when the source has none in service: service runs from
 the claim that took the last request to the complete that ended it.
 An edge during a service is held, one deep, and asks on the complete;
 a level source still high on the complete asks again at once.
-The choice, Listing~\ref{lst:v-plic-choice}, is a chain of wires from
-the highest number down. A source is a candidate when it is pending,
+The choice, Listing~\ref{lst:v-plic-choice}, is a loop over the
+sources that keeps the best so far. A source is a candidate when it is pending,
 enabled and above the threshold, and the best has the highest
 priority, the lowest number winning a tie. A read of the claim word
 answers with the best source's number, or 0, and clears its pending
@@ -815,8 +817,8 @@ rises again when source 1, completed and still high, asks again.}
 \label{fig:v-plic}
 \end{figure}
 
-\plicpart{gateway}{The gateway, as \code{plic!} wrote it for three
-sources.}{lst:v-plic-gateway}
+\plicpart{gateway}{The gateway: the lines as one word, and the
+requests that go forward.}{lst:v-plic-gateway}
 
 \plicpart{choice}{The choice of the source a claim takes.}%
 {lst:v-plic-choice}
@@ -833,9 +835,9 @@ sources, claimed and completed.},label={lst:v-plic-ex}]{lib/examples/ex_plic.rs}
 \lstinputlisting[style=ascii,caption={What \code{ex\_plic} printed when
 the build ran it.},label={lst:v-plic-out}]{out_plic.txt}
 
-On the board the controller is a \code{Plic2}. Its source 1 is the
-serial port's interrupt line and its source 2 the board's \code{irq}
-input, both level sources, and its line is the core's external
+On the board the controller is a \code{Plic3}. Its source 1 is the
+serial port's interrupt line, its source 2 the board's \code{irq}
+input and its source 3 the Ethernet peripheral's, all level sources, and its line is the core's external
 interrupt. \code{irq.rs}, Listing~\ref{lst:v-irq}, is a program for the
 board that takes its input by interrupt. It enables source 1, installs
 the trap entry of \code{vreteno\_hal} (Section~\ref{sec:v-hal}),
