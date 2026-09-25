@@ -74,10 +74,10 @@ pub struct I2c {
     /// Another master held the data line low while this one released
     /// it.
     pub lost: Reg<Bit>,
-    /// The clock line as the engine drives it, high meaning released.
-    pub scl_r: Reg<Bit>,
-    /// The data line as the engine drives it, high meaning released.
-    pub sda_r: Reg<Bit>,
+    /// The clock line pulled low by the engine; clear is released.
+    pub scl_pull: Reg<Bit>,
+    /// The data line pulled low by the engine; clear is released.
+    pub sda_pull: Reg<Bit>,
     /// Up for the one cycle after a command ends, when what it found
     /// is latched.
     pub done: Reg<Bit>,
@@ -112,8 +112,8 @@ fn cmd_go(wgo: Bit, wsel: U<2>, busy: Bit) -> Bit {
 /// the clock is not being stretched by a device holding it low where
 /// the master released it, and the quarter's cycles are up.
 #[lower]
-fn q_go(busy: Bit, scl_r: Bit, scl_in: Bit, tick: U<16>, div: U<16>) -> Bit {
-    busy & !(scl_r & !scl_in) & Bit::from(tick == div)
+fn q_go(busy: Bit, scl_pull: Bit, scl_in: Bit, tick: U<16>, div: U<16>) -> Bit {
+    busy & (scl_pull | scl_in) & Bit::from(tick == div)
 }
 
 #[lower]
@@ -168,7 +168,7 @@ impl Unit for I2c {
                     // A quarter of a bit is `div` cycles and one, and
                     // the count pauses while a device stretches the
                     // clock.
-                    let stretch = self.scl_r.get() & !scl_in.get();
+                    let stretch = !(self.scl_pull.get() | scl_in.get());
                     let running = busy & !stretch;
                     let q_last = tick == div;
                     let ctrl =
@@ -221,10 +221,10 @@ impl Unit for I2c {
                     if wgo.to_bool() {
                         bus.b.send(LiteB { resp: Resp::Okay });
                     }
-                    // The lines as the engine drives them, high
-                    // meaning released.
-                    scl_low.set(!self.scl_r.get());
-                    sda_low.set(!self.sda_r.get());
+                    // The lines as the engine pulls them; a line not
+                    // pulled is released and reads high.
+                    scl_low.set(self.scl_pull.get());
+                    sda_low.set(self.sda_pull.get());
                     irq.set(fired & ie);
                 }
             },
@@ -261,11 +261,14 @@ impl Unit for I2c {
                     // falls while the clock is high, then the clock
                     // falls.
                     if written.bit(0).to_bool() {
-                        with!(self <= { scl_r: Bit::One, sda_r: Bit::One });
+                        with!(self <= {
+                            scl_pull: Bit::Zero,
+                            sda_pull: Bit::Zero,
+                        });
                         until(DefaultClock::rising, || {
                             q_go(
                                 self.busy.get(),
-                                self.scl_r.get(),
+                                self.scl_pull.get(),
                                 scl_in.get(),
                                 self.tick.get(),
                                 self.div.get(),
@@ -273,11 +276,11 @@ impl Unit for I2c {
                             .to_bool()
                         })
                         .await;
-                        with!(self <= { sda_r: Bit::Zero });
+                        with!(self <= { sda_pull: Bit::One });
                         until(DefaultClock::rising, || {
                             q_go(
                                 self.busy.get(),
-                                self.scl_r.get(),
+                                self.scl_pull.get(),
                                 scl_in.get(),
                                 self.tick.get(),
                                 self.div.get(),
@@ -285,11 +288,11 @@ impl Unit for I2c {
                             .to_bool()
                         })
                         .await;
-                        with!(self <= { scl_r: Bit::Zero });
+                        with!(self <= { scl_pull: Bit::One });
                         until(DefaultClock::rising, || {
                             q_go(
                                 self.busy.get(),
-                                self.scl_r.get(),
+                                self.scl_pull.get(),
                                 scl_in.get(),
                                 self.tick.get(),
                                 self.div.get(),
@@ -300,7 +303,7 @@ impl Unit for I2c {
                         until(DefaultClock::rising, || {
                             q_go(
                                 self.busy.get(),
-                                self.scl_r.get(),
+                                self.scl_pull.get(),
                                 scl_in.get(),
                                 self.tick.get(),
                                 self.div.get(),
@@ -320,17 +323,17 @@ impl Unit for I2c {
                         for _ in 0..8 {
                             if !self.lost_hit.get().to_bool() {
                                 with!(self <= {
-                                    scl_r: Bit::Zero,
-                                    sda_r: mux(
+                                    scl_pull: Bit::One,
+                                    sda_pull: mux(
                                         self.req_write.get(),
-                                        self.shift.get().bit(7),
-                                        Bit::One
+                                        !self.shift.get().bit(7),
+                                        Bit::Zero
                                     ),
                                 });
                                 until(DefaultClock::rising, || {
                                     q_go(
                                         self.busy.get(),
-                                        self.scl_r.get(),
+                                        self.scl_pull.get(),
                                         scl_in.get(),
                                         self.tick.get(),
                                         self.div.get(),
@@ -338,11 +341,11 @@ impl Unit for I2c {
                                     .to_bool()
                                 })
                                 .await;
-                                with!(self <= { scl_r: Bit::One });
+                                with!(self <= { scl_pull: Bit::Zero });
                                 until(DefaultClock::rising, || {
                                     q_go(
                                         self.busy.get(),
-                                        self.scl_r.get(),
+                                        self.scl_pull.get(),
                                         scl_in.get(),
                                         self.tick.get(),
                                         self.div.get(),
@@ -353,7 +356,7 @@ impl Unit for I2c {
                                 until(DefaultClock::rising, || {
                                     q_go(
                                         self.busy.get(),
-                                        self.scl_r.get(),
+                                        self.scl_pull.get(),
                                         scl_in.get(),
                                         self.tick.get(),
                                         self.div.get(),
@@ -369,12 +372,12 @@ impl Unit for I2c {
                                     self.req_write.get() ? shift: shift << 1,
                                     self.req_write.get() & shift.bit(7) & !taken
                                         ? lost_hit: Bit::One,
-                                    scl_r: Bit::Zero,
+                                    scl_pull: Bit::One,
                                 });
                                 until(DefaultClock::rising, || {
                                     q_go(
                                         self.busy.get(),
-                                        self.scl_r.get(),
+                                        self.scl_pull.get(),
                                         scl_in.get(),
                                         self.tick.get(),
                                         self.div.get(),
@@ -390,17 +393,17 @@ impl Unit for I2c {
                         if !self.lost_hit.get().to_bool() {
                             with!(self <= {
                                 self.req_read.get() ? data: self.shift.get(),
-                                scl_r: Bit::Zero,
-                                sda_r: mux(
+                                scl_pull: Bit::One,
+                                sda_pull: mux(
                                     self.req_write.get(),
-                                    Bit::One,
-                                    self.req_nack.get()
+                                    Bit::Zero,
+                                    !self.req_nack.get()
                                 ),
                             });
                             until(DefaultClock::rising, || {
                                 q_go(
                                     self.busy.get(),
-                                    self.scl_r.get(),
+                                    self.scl_pull.get(),
                                     scl_in.get(),
                                     self.tick.get(),
                                     self.div.get(),
@@ -408,11 +411,11 @@ impl Unit for I2c {
                                 .to_bool()
                             })
                             .await;
-                            with!(self <= { scl_r: Bit::One });
+                            with!(self <= { scl_pull: Bit::Zero });
                             until(DefaultClock::rising, || {
                                 q_go(
                                     self.busy.get(),
-                                    self.scl_r.get(),
+                                    self.scl_pull.get(),
                                     scl_in.get(),
                                     self.tick.get(),
                                     self.div.get(),
@@ -423,7 +426,7 @@ impl Unit for I2c {
                             until(DefaultClock::rising, || {
                                 q_go(
                                     self.busy.get(),
-                                    self.scl_r.get(),
+                                    self.scl_pull.get(),
                                     scl_in.get(),
                                     self.tick.get(),
                                     self.div.get(),
@@ -433,12 +436,12 @@ impl Unit for I2c {
                             .await;
                             with!(self <= {
                                 self.req_write.get() ? nack_hit: sda_in.get(),
-                                scl_r: Bit::Zero,
+                                scl_pull: Bit::One,
                             });
                             until(DefaultClock::rising, || {
                                 q_go(
                                     self.busy.get(),
-                                    self.scl_r.get(),
+                                    self.scl_pull.get(),
                                     scl_in.get(),
                                     self.tick.get(),
                                     self.div.get(),
@@ -451,11 +454,14 @@ impl Unit for I2c {
                     // The stop: the data line rises while the clock is
                     // high, and the transaction is over.
                     if (self.req_stop.get() & !self.lost_hit.get()).to_bool() {
-                        with!(self <= { scl_r: Bit::Zero, sda_r: Bit::Zero });
+                        with!(self <= {
+                            scl_pull: Bit::One,
+                            sda_pull: Bit::One,
+                        });
                         until(DefaultClock::rising, || {
                             q_go(
                                 self.busy.get(),
-                                self.scl_r.get(),
+                                self.scl_pull.get(),
                                 scl_in.get(),
                                 self.tick.get(),
                                 self.div.get(),
@@ -463,11 +469,11 @@ impl Unit for I2c {
                             .to_bool()
                         })
                         .await;
-                        with!(self <= { scl_r: Bit::One });
+                        with!(self <= { scl_pull: Bit::Zero });
                         until(DefaultClock::rising, || {
                             q_go(
                                 self.busy.get(),
-                                self.scl_r.get(),
+                                self.scl_pull.get(),
                                 scl_in.get(),
                                 self.tick.get(),
                                 self.div.get(),
@@ -475,11 +481,11 @@ impl Unit for I2c {
                             .to_bool()
                         })
                         .await;
-                        with!(self <= { sda_r: Bit::One });
+                        with!(self <= { sda_pull: Bit::Zero });
                         until(DefaultClock::rising, || {
                             q_go(
                                 self.busy.get(),
-                                self.scl_r.get(),
+                                self.scl_pull.get(),
                                 scl_in.get(),
                                 self.tick.get(),
                                 self.div.get(),
@@ -490,7 +496,7 @@ impl Unit for I2c {
                         until(DefaultClock::rising, || {
                             q_go(
                                 self.busy.get(),
-                                self.scl_r.get(),
+                                self.scl_pull.get(),
                                 scl_in.get(),
                                 self.tick.get(),
                                 self.div.get(),
@@ -509,8 +515,8 @@ impl Unit for I2c {
                     let over = self.req_stop.get() | self.lost_hit.get();
                     with!(self <= {
                         self.lost_hit.get() ? held: Bit::Zero,
-                        scl_r: over | !self.held.get(),
-                        sda_r: Bit::One,
+                        scl_pull: !over & self.held.get(),
+                        sda_pull: Bit::Zero,
                         done: Bit::One,
                     });
                     DefaultClock::rising().await;
@@ -817,6 +823,26 @@ mod tests {
     where
         F: std::future::Future<Output = ()>,
     {
+        let (dev, ended, _) = on_the_bus_with(dev, |_| false, client);
+        (dev, ended)
+    }
+
+    /// What the lines did in one cycle: whether this master pulled the
+    /// clock and the data line, whether the rival pulled the data
+    /// line, and how the two lines read.
+    type Cycle = (bool, bool, bool, bool, bool);
+
+    /// `on_the_bus` with another master on the data line: `rival`
+    /// says, per cycle, whether it pulls the line low. Returns what
+    /// the lines did, a record per cycle.
+    fn on_the_bus_with<F>(
+        dev: I2cDev,
+        rival: impl Fn(u64) -> bool,
+        client: impl FnOnce(Host) -> F,
+    ) -> (I2cDev, bool, Vec<Cycle>)
+    where
+        F: std::future::Future<Output = ()>,
+    {
         let link = axi_lite::<32, 32, 4>();
         let bus: LitePort<32, 32, 4> = link.per.into();
         let (scl_in_o, scl_in) = signal::<Bit, DefaultClock>();
@@ -836,21 +862,27 @@ mod tests {
             master.run(bus, (scl_in, sda_in, scl_low_o, sda_low_o, irq_o)),
         ));
         let dev = RefCell::new(dev);
+        let mut lines: Vec<Cycle> = Vec::new();
         scl_in_o.set(Bit::One);
         sda_in_o.set(Bit::One);
-        for _ in 0..40000 {
+        for cycle in 0..40000u64 {
             sim.cycle();
             let (sc, sd) = (scl_low.get().to_bool(), sda_low.get().to_bool());
+            let other = rival(cycle);
             let mut d = dev.borrow_mut();
-            d.step(sc, sd);
-            scl_in_o.set(Bit::from_bool(!sc && !d.pulls_scl()));
-            sda_in_o.set(Bit::from_bool(!sd && !d.pulls_sda()));
+            // The device sees the line as everybody pulls it.
+            d.step(sc, sd || other);
+            let scl = !sc && !d.pulls_scl();
+            let sda = !sd && !d.pulls_sda() && !other;
+            scl_in_o.set(Bit::from_bool(scl));
+            sda_in_o.set(Bit::from_bool(sda));
             drop(d);
+            lines.push((sc, sd, other, scl, sda));
             if *done.borrow() {
-                return (dev.into_inner(), true);
+                return (dev.into_inner(), true, lines);
             }
         }
-        (dev.into_inner(), false)
+        (dev.into_inner(), false, lines)
     }
 
     /// The address and two bytes, as a driver writes a register of a
@@ -932,6 +964,54 @@ mod tests {
         });
         assert!(ended, "the client finished");
         assert_eq!(dev.regs[1], 0x77, "the byte landed through the stretch");
+    }
+
+    /// Another master holds the data line low through the address this
+    /// one sends, and wins the third bit, where this one drove a one.
+    /// The specification (NXP UM10204, arbitration) asks the loser to
+    /// stop driving the data line at once, and lets it clock on to the
+    /// end of the byte or not; so the master reports arbitration lost
+    /// and never pulls the data line again in that command, and
+    /// nothing is said about its clock.
+    #[test]
+    fn a_master_that_loses_arbitration_lets_go_of_the_data_line() {
+        let dev = I2cDev::new(0x50, &[0; 4]);
+        let (_, ended, lines) = on_the_bus_with(
+            dev,
+            |_| true,
+            |h| async move {
+                poke(&h, reg::CTRL, DIV).await;
+                let state = command(
+                    &h,
+                    cmd::START | cmd::WRITE | cmd::STOP | cmd::byte(0x20),
+                )
+                .await;
+                assert_eq!(state & 8, 8, "arbitration lost");
+            },
+        );
+        assert!(ended, "the client finished");
+        // Where it lost: past the bits it drove, the first cycle the
+        // clock read high while the master had released the data line
+        // and the rival held it.
+        let drove = lines
+            .iter()
+            .position(|&(_, sda_pull, ..)| sda_pull)
+            .expect("the master drove the zeros first");
+        let lost = drove
+            + lines[drove..]
+                .iter()
+                .position(|&(scl_pull, sda_pull, other, scl, _)| {
+                    scl && !scl_pull && !sda_pull && other
+                })
+                .expect("the master drove a one against the rival");
+        assert!(
+            lines[..lost].iter().any(|&(_, sda_pull, ..)| sda_pull),
+            "the master drove the zeros before it"
+        );
+        assert!(
+            lines[lost..].iter().all(|&(_, sda_pull, ..)| !sda_pull),
+            "the data line is never pulled again"
+        );
     }
 
     /// The master lowers: one module, with the two open drain pulls and
