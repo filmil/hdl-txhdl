@@ -1,0 +1,16 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/*
+ * Where a download is staged: 16 MiB of DDR3 at 0x4800_0000, above
+ * this image and out of the allocator's hands, since `boot` copies
+ * from here over the image that is running (issue 143). Beside the
+ * Ethernet buffers, in the port's own `reserved-memory` under `soc`.
+ */
+/ {
+	soc {
+		reserved-memory {
+			fastboot_stage: memory@48000000 {
+				reg = <0x48000000 0x01000000>;
+			};
+		};
+	};
+};
