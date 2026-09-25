@@ -454,6 +454,35 @@ pub fn bundle_args_at<B: Ports>(
         .collect()
 }
 
+/// The nets of a bundle `B` made whole in a unit of units, `let (host,
+/// per) = link::<B>()`: one per port of `B`, each named `net_field`, a
+/// channel's as a channel and a wire's as a wire (issue 498).
+#[doc(hidden)]
+pub fn link_nets<B: Ports>(
+    net: &str,
+) -> Vec<(String, Kind, usize, &'static str)> {
+    B::ports()
+        .into_iter()
+        .map(|p| {
+            let kind = match p.kind {
+                Kind::Tx | Kind::Rx => Kind::Tx,
+                _ => Kind::Out,
+            };
+            (format!("{net}_{}", p.name), kind, p.width, p.clock)
+        })
+        .collect()
+}
+
+/// What a unit of units passes a child when it passes one side of a
+/// bundle made whole: each net in the order `B` declares its ports.
+#[doc(hidden)]
+pub fn link_args<B: Ports>(net: &str) -> Vec<(String, String)> {
+    B::ports()
+        .into_iter()
+        .map(|p| (String::new(), format!("{net}_{}", p.name)))
+        .collect()
+}
+
 /// [`instance`] with its joins made when `lowered` runs rather than
 /// written out, which a side passed whole needs.
 #[doc(hidden)]
@@ -1186,6 +1215,29 @@ impl Lowered {
                     self.name
                 );
             }
+        }
+        // A channel between children has one sender and one receiver,
+        // so its net is joined to exactly two ports. `#[lower]` counts
+        // the ends it can see; a bundle made whole, `link::<B>()`, has
+        // channels only `lowered` can list, so all are counted here
+        // (issue 498).
+        for (n, k, _, _) in &self.nets {
+            if *k != Kind::Tx {
+                continue;
+            }
+            let joins = self
+                .instances
+                .iter()
+                .flat_map(|i| &i.conns)
+                .filter(|(_, a)| a == n)
+                .count();
+            assert!(
+                joins == 2,
+                "the channel `{n}` of `{}` is joined to {joins} ports; a \
+                 channel joins one sender to one receiver, so join each \
+                 side of it once",
+                self.name
+            );
         }
         // A wire of the parent's own, which a tie-off is, drives what it
         // is joined to, so it may only be joined to a child's input: an
@@ -3351,6 +3403,28 @@ mod tests {
                                which is not an input")]
     fn a_constant_joined_to_an_output_is_refused() {
         tied_to(Kind::Out).checked();
+    }
+
+    /// A channel between children joined to one port only: what a
+    /// bundle made whole, `link::<B>()`, would leave if one side were
+    /// never passed, which only `lowered` can count (issue 498).
+    #[test]
+    #[should_panic(expected = "the channel `link_aw` of `two` is joined to 1 \
+                               ports")]
+    fn a_channel_joined_to_one_port_is_refused() {
+        let mut parent = parent_with_child_named("ticker");
+        parent
+            .nets
+            .push(("link_aw".to_string(), Kind::Tx, 8, "clk"));
+        parent.instances[0].unit.ports.push((
+            "aw".to_string(),
+            Kind::Tx,
+            8,
+            "clk",
+        ));
+        parent.instances[0].conns =
+            vec![("aw".to_string(), "link_aw".to_string())];
+        parent.checked();
     }
 
     /// The instance and the clock pin would take one name, which

@@ -399,6 +399,29 @@ pub fn tie<T: Copy + Default, C: Clock>(v: T) -> In<T, C> {
     inp
 }
 
+/// A struct of ports that can be made whole, with the struct the other
+/// side holds: what `link::<B>()` makes (issue 498).
+///
+/// `B` is one side of a bundle of channels, a peripheral's say, and
+/// `Host` the other, the same channels by the same names with each end
+/// turned round. A unit of units makes both with one line, rather than
+/// a `chan` per channel, and passes each on whole or a channel at a
+/// time.
+pub trait Link: Sized {
+    /// The struct the other side holds.
+    type Host;
+    /// Both sides of a new bundle, as `chan` makes a channel's two
+    /// ends.
+    fn link() -> (Self::Host, Self);
+}
+
+/// A bundle made whole: the other side's struct, and `B` (issue 498).
+/// Under `#[lower]`, `let (host, per) = link::<B>()` is a net per port
+/// of `B`, each named for the net and the field.
+pub fn link<B: Link>() -> (B::Host, B) {
+    B::link()
+}
+
 /// Create a channel and get its two ends.
 pub fn chan<T: Transaction, C: Clock>() -> (Tx<T, C>, Rx<T, C>) {
     Chan::<T, C>::new().split()

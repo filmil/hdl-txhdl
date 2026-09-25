@@ -23,7 +23,7 @@
 //! address width, `D` the data width and `S` the strobe width, which
 //! is `D / 8`.
 use crate::bus::axi::Resp;
-use txhdl::comp::{chan, DefaultClock, Rx, Tx};
+use txhdl::comp::{chan, DefaultClock, Link, Rx, Tx};
 use txhdl::lite_bridge;
 use txhdl::types::U;
 use txhdl::{
@@ -122,6 +122,35 @@ impl<const A: usize, const D: usize, const S: usize> From<LitePer<A, D, S>>
 {
     fn from((aw, ar, w, b, r): LitePer<A, D, S>) -> Self {
         LitePort { aw, ar, w, b, r }
+    }
+}
+
+/// What a host holds on an AXI-Lite link, as one port: [`LitePort`]'s
+/// five channels by the same names, each end turned round. `link` makes
+/// the two at once: `let (host, per) = link::<LitePort<32, 32, 4>>()`
+/// (issue 498).
+#[derive(PortsDerive)]
+pub struct LiteHostPort<const A: usize, const D: usize, const S: usize> {
+    /// Write addresses, out.
+    pub aw: Tx<LiteAw<A>>,
+    /// Read addresses, out.
+    pub ar: Tx<LiteAr<A>>,
+    /// Write data, out.
+    pub w: Tx<LiteW<D, S>>,
+    /// Write responses, in.
+    pub b: Rx<LiteB>,
+    /// Read data, in.
+    pub r: Rx<LiteR<D>>,
+}
+
+impl<const A: usize, const D: usize, const S: usize> Link
+    for LitePort<A, D, S>
+{
+    type Host = LiteHostPort<A, D, S>;
+    fn link() -> (Self::Host, Self) {
+        let LiteLink { host, per } = axi_lite::<A, D, S>();
+        let (aw, ar, w, b, r) = host;
+        (LiteHostPort { aw, ar, w, b, r }, per.into())
     }
 }
 

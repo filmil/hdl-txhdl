@@ -6562,6 +6562,9 @@ fn lower_structural(
     let mut ties: Vec<String> = Vec::new();
     // The ends made in `run`: the end, its net, whether a channel.
     let mut ends: Vec<(String, String, bool)> = Vec::new();
+    // The two sides of each bundle made whole, `let (h, p) = link::<B>()`:
+    // the side, `B`, and the net its channels are named for (issue 498).
+    let mut links: Vec<(String, String, String)> = Vec::new();
     let mut nets: Vec<String> = Vec::new();
     let mut instances: Vec<String> = Vec::new();
     // The channel ends and channel ports joined so far, each once.
@@ -6642,7 +6645,8 @@ fn lower_structural(
                 return Err(bad(&ts[0]));
             };
             let chan = is_ident(f, "chan");
-            if !chan && !is_ident(f, "signal") {
+            let whole = is_ident(f, "link");
+            if !chan && !whole && !is_ident(f, "signal") {
                 return Err(bad(f));
             }
             // The payload: the first argument of the turbofish.
@@ -6685,6 +6689,14 @@ fn lower_structural(
                     &format!("net `{net}` is named twice"),
                 ));
             }
+            // A bundle made whole: its nets are listed when `lowered`
+            // runs, one per port of the type the turbofish names.
+            if whole {
+                nets.push(format!("@link {ty}|{net}"));
+                links.push((a, ty.clone(), net.clone()));
+                links.push((b, ty, net));
+                continue;
+            }
             let kind = if chan { "Tx" } else { "Out" };
             nets.push(format!(
                 "(\"{net}\".to_string(), ::txhdl::comp::trace::Kind::{kind}, \
@@ -6722,6 +6734,23 @@ fn lower_structural(
                         if g.delimiter() == Delimiter::Parenthesis =>
                     {
                         for n in split_commas(g) {
+                            // One channel of a bundle made whole: `h.aw`.
+                            if let [TokenTree::Ident(h), TokenTree::Punct(d), TokenTree::Ident(f)] =
+                                n.as_slice()
+                            {
+                                if let (true, Some((_, _, net))) = (
+                                    d.as_char() == '.',
+                                    links
+                                        .iter()
+                                        .find(|(e, _, _)| *e == h.to_string()),
+                                ) {
+                                    names.push((
+                                        String::new(),
+                                        format!("@net {net}_{f}"),
+                                    ));
+                                    continue;
+                                }
+                            }
                             if let Some(v) = tied(&n) {
                                 let net = format!("{field}_tie{}", ties.len());
                                 ties.push(format!(
@@ -6819,6 +6848,19 @@ fn lower_structural(
                             names.push((port.to_string(), net.to_string()));
                         }
                     }
+                    [TokenTree::Ident(h), TokenTree::Punct(d), TokenTree::Ident(f)]
+                        if d.as_char() == '.'
+                            && links
+                                .iter()
+                                .any(|(e, _, _)| *e == h.to_string()) =>
+                    {
+                        let net = links
+                            .iter()
+                            .find(|(e, _, _)| *e == h.to_string())
+                            .map(|(_, _, n)| n.clone())
+                            .unwrap_or_default();
+                        names.push((String::new(), format!("@net {net}_{f}")));
+                    }
                     side if tied(side).is_some() => {
                         let v = tied(side).unwrap_or_default();
                         let net = format!("{field}_tie{}", ties.len());
@@ -6839,6 +6881,20 @@ fn lower_structural(
             }
             let mut joined: Vec<String> = Vec::new();
             for (port, n) in names {
+                if let Some(net) = n.strip_prefix("@net ") {
+                    joined.push(format!(
+                        "a.push((\"{port}\".to_string(), \"{net}\".to_string()));"
+                    ));
+                    continue;
+                }
+                if let Some((_, ty, net)) =
+                    links.iter().find(|(e, _, _)| *e == n)
+                {
+                    joined.push(format!(
+                        "a.extend(::txhdl::netlist::link_args::<{ty}>(\"{net}\"));"
+                    ));
+                    continue;
+                }
                 if let Some(net) = n.strip_prefix("@tie ") {
                     joined.push(format!("a.push((\"{port}\".to_string(), \"{net}\".to_string()));"));
                     continue;
@@ -7465,7 +7521,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          init: Vec::new(),\n\
          init_regs: Vec::new(),\n\
          aliases: Vec::new(),\n\
-         nets: vec![{nets}],\n\
+         nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, usize, &'static str)> = Vec::new(); {nets} n }},\n\
          instances: vec![{instances}],\n\
          foreign: None,\n\
          }}\n\
@@ -7487,7 +7543,17 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          fn lowered_as(name: &str) -> ::txhdl::netlist::Lowered {{\n\
          Self::lowered(name) }}\n}}",
         ports = ports.join(" "),
-        nets = nets.join(",\n"),
+        nets = nets
+            .iter()
+            .map(|n| match n.strip_prefix("@link ") {
+                Some(l) => {
+                    let (ty, net) = l.rsplit_once('|').unwrap_or((l, ""));
+                    format!("n.extend(::txhdl::netlist::link_nets::<{ty}>(\"{net}\"));")
+                }
+                None => format!("n.push({n});"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         instances = instances.join(",\n"),
         wires = wires
             .iter()
