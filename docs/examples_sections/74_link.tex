@@ -1,0 +1,48 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Whole Link Made in One Line}
+\label{sec:x-link}
+
+A unit of units makes the channels between its children, and it made
+them one at a time: a \code{chan::<T, C>()} per channel, each with a
+pair of names. An AXI-Lite link is five channels, so it was five
+lines and ten names, and a board with a dozen links between its
+bridges and its peripherals was a hundred and twenty.
+
+\code{link::<B>()} makes a whole bundle. \code{B} is one side's
+struct of ports, here \code{LitePort}, what a peripheral holds, and
+what comes back is the other side's struct, \code{LiteHostPort}, and
+\code{B}: the same five channels by the same names with each end
+turned round. A struct of ports that can be made this way implements
+\code{Link}, which names the other side's struct and makes the two.
+In the netlist each channel is a net named for the link and the
+field, so the one below is \code{host\_aw}, \code{host\_ar} and the
+rest. Each side is passed on whole, which joins its channels in the
+order the struct declares them, or a channel at a time as
+\code{host.aw}, which a bridge that takes its channels in two tuples
+needs.
+
+The macro cannot see how many channels a bundle has, so it cannot
+check that each is joined at both ends. When the unit is lowered,
+every channel between its children is counted, and one that joins
+anything but one sender and one receiver is refused.
+
+\code{Relay} forwards each channel of a link from one side to the
+other, as a register slice does, and \code{Word} is one word behind a
+link. The parent takes the link from the testbench, passes it to the
+relay, and joins the relay to the word with a link it makes whole.
+The build checks the parent's netlist against the run under nvc and
+Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{link_timing.tex}
+\caption{Two writes and two reads through the relay: the word behind
+it takes each written value and returns it.}
+\label{fig:x-link}
+\end{figure}
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=unit-unit,caption={The units of \code{ex\_link.rs}. Run with \code{bazel run //lib/examples:ex\_link}.},label={lst:x-link}]{lib/examples/ex_link.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_link} printed when the build ran it: the two exchanges, then the Verilog, the link's five channels made in the parent.},label={lst:x-link-out}]{out_link.txt}

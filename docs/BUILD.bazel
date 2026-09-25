@@ -809,6 +809,8 @@ latex_document(
         ":side_timing",
         ":nested_run",
         ":nested_timing",
+        ":link_run",
+        ":link_timing",
         ":rename_run",
         ":rename_timing",
         ":foreign_run",

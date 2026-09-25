@@ -199,7 +199,15 @@ each child's module is named for the parent and the field. A net
 made by \code{chan} is the runtime's channel in the netlist, a
 buffer of two with the receiver's \code{valid} and \code{data} and
 the sender's \code{ready} registered, one module \code{txhdl\_chan}
-put into the file once; a net made by \code{signal} is a wire.
+put into the file once; a net made by \code{signal} is a wire. A
+bundle is made whole by \code{let (host, per) = link::<B>()}, where
+\code{B} is one side's struct of ports and implements \code{Link},
+whose \code{Host} is the other side's: its nets are listed by
+\code{link\_nets} when \code{lowered} runs, one per port of
+\code{B}, each named for the net and the field, and a side passed
+whole joins them in order through \code{link\_args}, or one at a time
+as \code{host.aw}. \code{Lowered::checked} then counts every channel
+between children, which must join exactly two ports (issue 498).
 A child need not be lowered. A unit that implements \code{Lower} by
 hand with \code{netlist::foreign} is a module the netlist does not
 write: its lowering names the module, its ports by their own names in
