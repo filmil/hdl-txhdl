@@ -51,7 +51,15 @@
 \setlength{\itemsep}{1pt}
 \setlength{\parsep}{0pt}
 
-\newcommand{\code}[1]{\texttt{#1}}
+% Code in the running text. The typewriter face under T1 ligates `<<`
+% and `>>` into guillemets, so a shift printed as \code{<<} came out as
+% a French quotation mark (issue 571). microtype's \DisableLigatures is
+% not in the pinned distribution, but the primitive it rests on is
+% pdfTeX's own: \pdfnoligatures strips every ligature from the font it
+% is given, and the current font inside \texttt is the typewriter face
+% at the size in use, so each size is stripped the first time \code
+% sets it. Code wants no ligature at all: two quotes are two quotes.
+\newcommand{\code}[1]{\texttt{\ifdefined\pdfnoligatures\pdfnoligatures\font\fi #1}}
 \newcommand{\term}[1]{\emph{#1}}
 
 % Syntax highlighting. Four roles, distinguishable in colour and still
