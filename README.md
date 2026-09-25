@@ -44,6 +44,14 @@ The first build fetches a Debian rootfs, a Zig toolchain, graphviz built
 from source and a TeX installation, which is roughly 950 actions.
 Later builds reuse them.
 
+A test that reports `(cached)` has the result its exact inputs gave
+before, which may have been in another worktree or in CI: on this
+project's host every build shares one disk cache, so a suite can come
+back green in seconds after a rebase without running anything.
+`tools/suite.sh` runs the suite and says how many results ran here,
+how many came from this checkout's cache and how many from the shared
+one; `tools/suite.sh --fresh` runs every test here.
+
 Neither command wants Vivado: every target that needs it is `manual`
 and runs only when asked for by name.
 When you do want one, synthesis, place and route or the board's
