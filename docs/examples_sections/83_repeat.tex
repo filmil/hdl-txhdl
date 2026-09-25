@@ -1,0 +1,41 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Loop Bounded by a Register}
+\label{sec:x-repeat}
+
+Section~\ref{sec:x-serial} counted a loop of eight turns. A loop
+whose length is known only when it is entered, a frame's byte count
+say, is a \code{for} bounded by a register:
+\code{for \_ in 0..self.times.get().raw() as usize}. Rust's range
+wants an integer, hence the \code{raw} and the cast; the lowering
+takes them off and compares the counter with the register itself, so
+the register must hold still while the loop runs, which a register
+the sequence sets before the loop and nothing else touches does. The
+counter is as wide as the register, which \code{lowered} reads off
+the unit's fields by name; a bound that reads a port or a \code{let}
+is refused, since neither has a width the netlist can find that way.
+
+One thing to know about the register: a register set in a step holds
+its old value until the edge, so a count set from a channel's data
+and read as the loop's bound in the same step would be last time's.
+The repeater below sets \code{times} from the job and waits one edge
+before its loop, and that edge is the state between taking and
+sending in the netlist.
+
+The repeater takes a word and a count on one channel and sends the
+word that many times, one a cycle. Three states, the wait for the
+job, the edge that lets the count settle, and the turn, with a
+four-bit counter beside them, and the turn goes round while the
+counter is short of \code{times - 1}. The build checks the netlist
+against the run under nvc and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{repeat_timing.tex}
+\caption{The repeater: three jobs, and each word sent as many times
+as its job asks, one a cycle.}
+\label{fig:x-repeat}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_repeat.rs}. Run with \code{bazel run //lib/examples:ex\_repeat}.},label={lst:x-repeat}]{lib/examples/ex_repeat.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_repeat} printed when the build ran it: the jobs and the words as they go out, then the Verilog, the counter compared with the register.},label={lst:x-repeat-out}]{out_repeat.txt}
