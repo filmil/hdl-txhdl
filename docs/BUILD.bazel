@@ -849,6 +849,8 @@ latex_document(
         ":hold_timing",
         ":helpers_run",
         ":helpers_timing",
+        ":repeat_run",
+        ":repeat_timing",
         ":rename_run",
         ":rename_timing",
         ":foreign_run",
@@ -2087,6 +2089,21 @@ waveform(
         "//busy=>busy",
         "//sums/tx_valid=>sum_valid",
         "//sums/tx_data=>sum",
+    ],
+)
+
+# A counted loop bounded by a register (issue 611).
+waveform(
+    name = "repeat",
+    example = "//lib/examples:ex_repeat",
+    lowered = ("repeater", "repeater"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//jobs/rx_valid=>job_valid",
+        "//jobs/rx_data=>job",
+        "//repeater/times=>times",
+        "//out/tx_valid=>out_valid",
+        "//out/tx_data=>out",
     ],
 )
 
