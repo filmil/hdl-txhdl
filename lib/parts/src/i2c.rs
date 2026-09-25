@@ -317,75 +317,79 @@ impl Unit for I2c {
                     // low, carried through the two quarters the clock
                     // is high, and read at the end of the second of
                     // them. A master writing a one that reads back a
-                    // zero has lost the bus to another master, and
-                    // skips the rest of the byte.
+                    // zero has lost the bus to another master: it
+                    // releases both lines for the rest of the byte,
+                    // which the counted loop still walks through, and
+                    // skips the acknowledge and the stop.
                     if (self.req_write.get() | self.req_read.get()).to_bool() {
                         for _ in 0..8 {
-                            if !self.lost_hit.get().to_bool() {
-                                with!(self <= {
-                                    scl_pull: Bit::One,
-                                    sda_pull: mux(
-                                        self.req_write.get(),
-                                        !self.shift.get().bit(7),
-                                        Bit::Zero
-                                    ),
-                                });
-                                until(DefaultClock::rising, || {
-                                    q_go(
-                                        self.busy.get(),
-                                        self.scl_pull.get(),
-                                        scl_in.get(),
-                                        self.tick.get(),
-                                        self.div.get(),
-                                    )
-                                    .to_bool()
-                                })
-                                .await;
-                                with!(self <= { scl_pull: Bit::Zero });
-                                until(DefaultClock::rising, || {
-                                    q_go(
-                                        self.busy.get(),
-                                        self.scl_pull.get(),
-                                        scl_in.get(),
-                                        self.tick.get(),
-                                        self.div.get(),
-                                    )
-                                    .to_bool()
-                                })
-                                .await;
-                                until(DefaultClock::rising, || {
-                                    q_go(
-                                        self.busy.get(),
-                                        self.scl_pull.get(),
-                                        scl_in.get(),
-                                        self.tick.get(),
-                                        self.div.get(),
-                                    )
-                                    .to_bool()
-                                })
-                                .await;
-                                let taken = sda_in.get();
-                                let shift = self.shift.get();
-                                with!(self <= {
-                                    self.req_read.get() ? shift:
-                                        (shift << 1) | taken.zext::<8>(),
-                                    self.req_write.get() ? shift: shift << 1,
-                                    self.req_write.get() & shift.bit(7) & !taken
-                                        ? lost_hit: Bit::One,
-                                    scl_pull: Bit::One,
-                                });
-                                until(DefaultClock::rising, || {
-                                    q_go(
-                                        self.busy.get(),
-                                        self.scl_pull.get(),
-                                        scl_in.get(),
-                                        self.tick.get(),
-                                        self.div.get(),
-                                    )
-                                    .to_bool()
-                                })
-                                .await;
-                            }
+                            let lost = self.lost_hit.get();
+                            with!(self <= {
+                                scl_pull: !lost,
+                                sda_pull: mux(
+                                    self.req_write.get() & !lost,
+                                    !self.shift.get().bit(7),
+                                    Bit::Zero
+                                ),
+                            });
+                            until(DefaultClock::rising, || {
+                                q_go(
+                                    self.busy.get(),
+                                    self.scl_pull.get(),
+                                    scl_in.get(),
+                                    self.tick.get(),
+                                    self.div.get(),
+                                )
+                                .to_bool()
+                            })
+                            .await;
+                            with!(self <= { scl_pull: Bit::Zero });
+                            until(DefaultClock::rising, || {
+                                q_go(
+                                    self.busy.get(),
+                                    self.scl_pull.get(),
+                                    scl_in.get(),
+                                    self.tick.get(),
+                                    self.div.get(),
+                                )
+                                .to_bool()
+                            })
+                            .await;
+                            until(DefaultClock::rising, || {
+                                q_go(
+                                    self.busy.get(),
+                                    self.scl_pull.get(),
+                                    scl_in.get(),
+                                    self.tick.get(),
+                                    self.div.get(),
+                                )
+                                .to_bool()
+                            })
+                            .await;
+                            let taken = sda_in.get();
+                            let shift = self.shift.get();
+                            let keeping = !self.lost_hit.get();
+                            with!(self <= {
+                                self.req_read.get() & keeping ? shift:
+                                    (shift << 1) | taken.zext::<8>(),
+                                self.req_write.get() & keeping ? shift:
+                                    shift << 1,
+                                self.req_write.get() & keeping
+                                    & shift.bit(7) & !taken
+                                    ? lost_hit: Bit::One,
+                                scl_pull: keeping,
+                            });
+                            until(DefaultClock::rising, || {
+                                q_go(
+                                    self.busy.get(),
+                                    self.scl_pull.get(),
+                                    scl_in.get(),
+                                    self.tick.get(),
+                                    self.div.get(),
+                                )
+                                .to_bool()
+                            })
+                            .await;
                         }
                         // The acknowledge: the master releases the
                         // line for a byte it wrote and reads the
