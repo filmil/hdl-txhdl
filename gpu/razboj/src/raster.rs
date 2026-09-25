@@ -18,8 +18,9 @@
 //! format `crate::dl` states, and the rasteriser reads it over the
 //! same link it writes pixels on: it reads the count at `CTRL` until
 //! it is not zero, then the six words of each instruction at `DL`,
-//! one read at a time, then walks what they say. `phase` is which of
-//! those it is doing: polling, fetching, drawing, or done.
+//! one read at a time, then walks what they say. That front end is
+//! written as the sequence it is, and a second process takes the
+//! link's answers every cycle.
 //!
 //! It is an AXI host, and it writes as a host client writes: a burst
 //! of one beat per pixel, issued on `issue` with its beat on `wbeat`
@@ -30,7 +31,9 @@
 //!
 //! The framebuffer's first word is at `BASE` and a pixel is one word,
 //! so a pixel's address is `BASE + ((y << LOGW) + x) * 4`.
-use txhdl::comp::{mux, Clock, DefaultClock, Out, Reg, Rx, Tx, Unit, Wire};
+use txhdl::comp::{
+    join2, mux, until, Clock, DefaultClock, Out, Reg, Rx, Tx, Unit, Wire,
+};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, R, W};
@@ -62,9 +65,6 @@ pub struct Raster<
     const DL: usize,
     const CTRL: usize,
 > {
-    /// What the front end is doing: nought polling the count, one
-    /// fetching an instruction, two walking it, three finished.
-    pub phase: Reg<U<2>>,
     /// Which entry is being walked. A triangle is the one whose edge
     /// functions are tested, and the waveform names it.
     pub kind: Reg<Kind>,
@@ -92,20 +92,25 @@ pub struct Raster<
     pub d0y: Reg<U<32>>,
     pub d1y: Reg<U<32>>,
     pub d2y: Reg<U<32>>,
+    /// Pixels written, and responses taken, each counted round; their
+    /// difference is what is in flight, and the two are apart so that
+    /// the walk and the answers each keep a count of their own.
+    pub issued: Reg<U<4>>,
+    pub answered: Reg<U<4>>,
     /// Writes issued whose response has not come back.
-    pub inflight: Reg<U<4>>,
+    pub inflight: Wire<U<4>>,
     /// Whether this pixel is in the primitive. A wire and not a
     /// `let`, so that it has a name in the trace and in the netlist:
-    /// it is the one thing a waveform of a triangle wants to show.
+    /// it is the one thing a waveform of a triangle wants to show,
+    /// and the walk waits on it.
     pub hit: Wire<Bit>,
-    /// Instructions still to draw, this one included.
+    /// Instructions in the list, once the count has been read.
     pub left: Reg<U<8>>,
     /// Which instruction is being fetched, and which of its words.
     pub insn: Reg<U<8>>,
     pub word: Reg<U<3>>,
-    /// Whether a read is out and its answer not yet back. One at a
-    /// time, since the front end has nothing to do until it lands.
-    pub waiting: Reg<U<1>>,
+    /// The list is drawn.
+    pub finished: Reg<Bit>,
     /// The instruction being assembled, word by word. The third
     /// vertex is not here: its word is the last one, so it is read
     /// straight off the bus in the cycle the walk is set up.
@@ -122,6 +127,14 @@ pub struct Raster<
 }
 // end{state}
 
+/// Whether a read's beat is taken this cycle: one is offered, the
+/// release has room for its identifier, and no write response is
+/// ahead of it.
+#[lower]
+fn landing(rv: bool, rel_room: Bit, dv: bool) -> Bit {
+    rv & rel_room & !dv
+}
+
 // begin{run}
 #[lower]
 impl<
@@ -134,6 +147,15 @@ impl<
         const CTRL: usize,
     > Unit for Raster<A, I, LOGW, H, BASE, DL, CTRL>
 {
+    /// Two processes. The first takes the link's answers every cycle:
+    /// a write's response and a read's beat come back on channels of
+    /// their own and one identifier goes back a cycle, so a write's
+    /// is taken first and a read's waits; it also says whether the
+    /// pixel under the walk is in the primitive, and whether the
+    /// rasteriser is idle. The second is the front end as a
+    /// sequence: poll the count until the list is ready, then for
+    /// each instruction fetch its six words and walk its box a pixel
+    /// a turn, and when the list is drawn wait for ever.
     async fn run(
         &mut self,
         (grant, done, rdata): (Rx<Grant<I>>, Rx<Done<I>>, Rx<R<32, I>>),
@@ -144,229 +166,316 @@ impl<
             Out<Bit>,
         ),
     ) {
-        loop {
-            DefaultClock::rising().await;
-            // The answers. A write response and a read's beat come
-            // back on channels of their own and one identifier goes
-            // back a cycle, so a write's is taken first and a read's
-            // waits; the front end has one read out at a time, so
-            // waiting a cycle for it costs the walk nothing.
-            let rel_room = release.ready();
-            let dh = done.head();
-            let dv = done.peek().is_some();
-            let rh = rdata.head();
-            let dgo = dv & rel_room;
-            let got = rdata.peek().is_some() & rel_room & !dv;
-            let _ = done.recv_if(rel_room);
-            let _ = rdata.recv_if(rel_room & !dv);
-            let _ = grant.recv_if(grant.peek().is_some());
-
-            // Where the walk is, and whether this pixel is in the
-            // primitive: every pixel of a box, and of a triangle the
-            // pixels at which no edge function is negative.
-            // The locals may not take a register's name: two
-            // declarations of one name is what the lowering would
-            // write. The pixel is `px`, `py`; the steps taken from a
-            // new entry are `t0x` and its like.
-            let px = self.x.get();
-            let py = self.y.get();
-            let phase = self.phase.get();
-            let polling = phase == 0;
-            let fetching = phase == 1;
-            let going = phase == 2;
-            // The register's name as well: the wire is `waiting_w`
-            // (issue 171).
-            let waiting = self.waiting.get() == 1;
-            let w = self.word.get();
-            let n0 = !self.e0.get().bit(31);
-            let n1 = !self.e1.get().bit(31);
-            let n2 = !self.e2.get().bit(31);
-            // The wire's name as well: the `let` is `hit_w` (issue
-            // 171).
-            let hit = (self.kind.get() != Kind::Tri) | (n0 & n1 & n2);
-            self.hit.set(hit);
-            // A pixel is written when there is room for the burst and
-            // for its beat; the walk steps when the pixel wanted no
-            // write, or when its write went out.
-            let room = issue.ready() & wbeat.ready();
-            let write = going & hit & room;
-            let step = going & (!hit | room);
-            let eol = px == self.xb.get();
-            let eof = eol & (py == self.yb.get());
-
-            // The instruction's words as they land. The count says
-            // the list is ready, so a zero means poll again.
-            let word0 = rh.data.slice::<0, 2>();
-            let taking = polling & got & (rh.data != 0);
-            let latch = fetching & got;
-            let start = latch & (w == 5);
-
-            // The setup the walk asks for: per edge, the two steps
-            // and the value at the box's first pixel. A vertex is
-            // two's complement and is widened by its sign; the box's
-            // first pixel is a screen coordinate and is widened by
-            // zero. The third vertex is the word that is landing.
-            let ax = self.sax.get().sext::<32>();
-            let ay = self.say.get().sext::<32>();
-            let bx = self.sbx.get().sext::<32>();
-            let by = self.sby.get().sext::<32>();
-            let cx = rh.data.slice::<0, 12>().sext::<32>();
-            let cy = rh.data.slice::<16, 12>().sext::<32>();
-            // The box. A clear says only its colour, so its box is
-            // the screen, which the rasteriser knows from its own
-            // type; a rectangle and a triangle carry theirs.
-            let clearing = self.skind.get() == Kind::Clear;
-            let zero16 = U::<16>::from(0u8);
-            let last_x = U::<16>::from(((1usize << LOGW) - 1) as u32);
-            let last_y = U::<16>::from((H - 1) as u32);
-            let wx = mux(clearing, zero16, self.sx0.get().resize::<16>());
-            let wy = mux(clearing, zero16, self.sy0.get().resize::<16>());
-            let bx1 = mux(clearing, last_x, self.sx1.get().resize::<16>());
-            let by1 = mux(clearing, last_y, self.sy1.get().resize::<16>());
-            let sx = wx.resize::<32>();
-            let sy = wy.resize::<32>();
-            let zero = U::<32>::from(0u8);
-            let t0x = zero - (by - ay);
-            let t0y = bx - ax;
-            let s0 =
-                (bx - ax).mul::<32>(sy - ay) - (by - ay).mul::<32>(sx - ax);
-            let t1x = zero - (cy - by);
-            let t1y = cx - bx;
-            let s1 =
-                (cx - bx).mul::<32>(sy - by) - (cy - by).mul::<32>(sx - bx);
-            let t2x = zero - (ay - cy);
-            let t2y = ax - cx;
-            let s2 =
-                (ax - cx).mul::<32>(sy - cy) - (ay - cy).mul::<32>(sx - cx);
-            // The next row's values, wanted in two places below.
-            let q0 = self.r0.get() + self.d0y.get();
-            let q1 = self.r1.get() + self.d1y.get();
-            let q2 = self.r2.get() + self.d2y.get();
-
-            // The read the front end wants: the count while polling,
-            // else the word of the instruction being fetched.
-            let at_word = U::<A>::from(DL as u32)
-                + (self.insn.get().resize::<A>() << SHIFT)
-                + (w.resize::<A>() << WORD);
-            let raddr = mux(polling, U::<A>::from(CTRL as u32), at_word);
-            let reading = (polling | fetching) & !waiting & issue.ready();
-            // The last instruction's walk has ended, so there is
-            // nothing left to draw.
-            let ends = step & eof;
-            let again = ends & (self.left.get() > 1);
-
-            with!(self <= {
-                reading ? waiting: U::<1>::from(1u8),
-                got ? waiting: U::<1>::from(0u8),
-                taking ? {
-                    phase: U::<2>::from(1u8),
-                    left: rh.data.slice::<0, 8>(),
-                    insn: U::<8>::from(0u8),
-                    word: U::<3>::from(0u8),
-                },
-                latch & (w == 0) ? {
-                    skind: mux(
-                        word0 == 0,
-                        Kind::Clear,
-                        mux(word0 == 1, Kind::Rect, Kind::Tri),
-                    ),
-                    scol: rh.data.slice::<2, 24>(),
-                },
-                latch & (w == 1) ? {
-                    sx0: rh.data.slice::<0, 10>(),
-                    sy0: rh.data.slice::<16, 10>(),
-                },
-                latch & (w == 2) ? {
-                    sx1: rh.data.slice::<0, 10>(),
-                    sy1: rh.data.slice::<16, 10>(),
-                },
-                latch & (w == 3) ? {
-                    sax: rh.data.slice::<0, 12>(),
-                    say: rh.data.slice::<16, 12>(),
-                },
-                latch & (w == 4) ? {
-                    sbx: rh.data.slice::<0, 12>(),
-                    sby: rh.data.slice::<16, 12>(),
-                },
-                latch & !start ? word: w + 1,
-                start ? {
-                    phase: U::<2>::from(2u8),
-                    kind: self.skind.get(),
-                    colour: self.scol.get(),
-                    x: wx,
-                    y: wy,
-                    xa: wx,
-                    xb: bx1,
-                    yb: by1,
-                    e0: s0, r0: s0, d0x: t0x, d0y: t0y,
-                    e1: s1, r1: s1, d1x: t1x, d1y: t1y,
-                    e2: s2, r2: s2, d2x: t2x, d2y: t2y,
-                },
-                again ? {
-                    phase: U::<2>::from(1u8),
-                    insn: self.insn.get() + 1,
-                    word: U::<3>::from(0u8),
-                    left: self.left.get() - 1,
-                },
-                ends & !again ? phase: U::<2>::from(3u8),
-                step & !eol ? {
-                    x: px + 1,
-                    e0: self.e0.get() + self.d0x.get(),
-                    e1: self.e1.get() + self.d1x.get(),
-                    e2: self.e2.get() + self.d2x.get(),
-                },
-                step & eol & !eof ? {
-                    x: self.xa.get(),
-                    y: py + 1,
-                    e0: q0, r0: q0,
-                    e1: q1, r1: q1,
-                    e2: q2, r2: q2,
-                },
-                inflight: self.inflight.get() + write.zext::<4>()
-                    - dgo.zext::<4>(),
-            });
-
-            // One pixel, as a burst of one beat at the pixel's word.
-            // The address is worked out at the link's width, not at
-            // the sixteen bits the walk is counted in: the offset
-            // into the framebuffer fits in sixteen, but the
-            // framebuffer's own base need not, and an address that
-            // wrapped would land on whatever else the map has there.
-            let addr = (((py << LOGW) + px) << WORD).resize::<A>()
-                + U::<A>::from(BASE as u32);
-            if (write | reading).to_bool() {
-                issue.send(Issue {
-                    read: mux(write, Bit::Zero, Bit::One),
-                    addr: mux(write, addr, raddr),
-                    len: U::<8>::from(0u8),
-                    size: U::<3>::from(2u8),
-                    burst: BurstKind::Incr,
-                    lock: Bit::Zero,
-                    cache: U::<4>::from(0u8),
-                    prot: U::<3>::from(0u8),
-                    qos: U::<4>::from(0u8),
-                    region: U::<4>::from(0u8),
-                });
-            }
-            // Only a pixel carries a beat; a read is an address and
-            // nothing else.
-            if write.to_bool() {
-                wbeat.send(W {
-                    data: self.colour.get().resize::<32>(),
-                    strb: U::<4>::from(15u8),
-                    last: Bit::One,
-                });
-            }
-            // Both a write's response and a read's beat give an
-            // identifier back, and one goes out a cycle.
-            if (dgo | got).to_bool() {
-                release.send(Grant {
-                    id: mux(dgo, dh.id, rh.id),
-                });
-            }
-            // Nothing left to draw and nothing left in flight.
-            idle.set((phase == 3) & (self.inflight.get() == 0));
-        }
+        join2(
+            async {
+                loop {
+                    DefaultClock::rising().await;
+                    let rel_room = release.ready();
+                    let dh = done.head();
+                    let dv = done.peek().is_some();
+                    let rh = rdata.head();
+                    let dgo = dv & rel_room;
+                    let got = landing(rdata.peek().is_some(), rel_room, dv);
+                    let _ = done.recv_if(rel_room);
+                    let _ = rdata.recv_if(rel_room & !dv);
+                    let _ = grant.recv_if(grant.peek().is_some());
+                    // Whether this pixel is in the primitive: every
+                    // pixel of a box, and of a triangle the pixels at
+                    // which no edge function is negative.
+                    let n0 = !self.e0.get().bit(31);
+                    let n1 = !self.e1.get().bit(31);
+                    let n2 = !self.e2.get().bit(31);
+                    self.hit
+                        .set((self.kind.get() != Kind::Tri) | (n0 & n1 & n2));
+                    let open = self.issued.get() - self.answered.get();
+                    self.inflight.set(open);
+                    with!(self <= {
+                        dgo ? answered: self.answered.get() + 1,
+                    });
+                    // Both a write's response and a read's beat give
+                    // an identifier back, and one goes out a cycle.
+                    if (dgo | got).to_bool() {
+                        release.send(Grant {
+                            id: mux(dgo, dh.id, rh.id),
+                        });
+                    }
+                    // Nothing left to draw and nothing left in flight.
+                    idle.set(self.finished.get() & Bit::from(open == 0));
+                }
+            },
+            async {
+                loop {
+                    // The count, which says the list is ready; a zero
+                    // means poll again. A read is issued once the link
+                    // has room for it.
+                    until(DefaultClock::rising, || issue.ready().to_bool()).await;
+                    issue.send(Issue {
+                        read: Bit::One,
+                        addr: U::<A>::from(CTRL as u32),
+                        len: U::<8>::from(0u8),
+                        size: U::<3>::from(2u8),
+                        burst: BurstKind::Incr,
+                        lock: Bit::Zero,
+                        cache: U::<4>::from(0u8),
+                        prot: U::<3>::from(0u8),
+                        qos: U::<4>::from(0u8),
+                        region: U::<4>::from(0u8),
+                    });
+                    until(DefaultClock::rising, || {
+                        landing(
+                            rdata.peek().is_some(),
+                            release.ready(),
+                            done.peek().is_some(),
+                        )
+                        .to_bool()
+                    })
+                    .await;
+                    with!(self <= {
+                        left: rdata.head().data.slice::<0, 8>(),
+                        insn: U::<8>::from(0u8),
+                    });
+                    DefaultClock::rising().await;
+                    if self.left.get() != 0 {
+                        for _ in 0..self.left.get().raw() as usize {
+                            // An edge for the instruction's index to
+                            // read back, and for the sequence to
+                            // begin a turn with.
+                            DefaultClock::rising().await;
+                            self.word.set(U::<3>::from(0u8));
+                            // The instruction's six words, one read
+                            // at a time, each latched as it lands.
+                            for _ in 0..6 {
+                                until(DefaultClock::rising, || {
+                                    issue.ready().to_bool()
+                                })
+                                .await;
+                                issue.send(Issue {
+                                    read: Bit::One,
+                                    addr: U::<A>::from(DL as u32)
+                                        + (self.insn.get().resize::<A>()
+                                            << SHIFT)
+                                        + (self.word.get().resize::<A>() << WORD),
+                                    len: U::<8>::from(0u8),
+                                    size: U::<3>::from(2u8),
+                                    burst: BurstKind::Incr,
+                                    lock: Bit::Zero,
+                                    cache: U::<4>::from(0u8),
+                                    prot: U::<3>::from(0u8),
+                                    qos: U::<4>::from(0u8),
+                                    region: U::<4>::from(0u8),
+                                });
+                                until(DefaultClock::rising, || {
+                                    landing(
+                                        rdata.peek().is_some(),
+                                        release.ready(),
+                                        done.peek().is_some(),
+                                    )
+                                    .to_bool()
+                                })
+                                .await;
+                                let rh = rdata.head();
+                                self.word.set(self.word.get() + 1);
+                                let word0 = rh.data.slice::<0, 2>();
+                                // The setup the walk asks for: per
+                                // edge, the two steps and the value at
+                                // the box's first pixel. A vertex is
+                                // two's complement and is widened by
+                                // its sign; the box's first pixel is a
+                                // screen coordinate and is widened by
+                                // zero. The third vertex is the word
+                                // that is landing.
+                                let ax = self.sax.get().sext::<32>();
+                                let ay = self.say.get().sext::<32>();
+                                let bx = self.sbx.get().sext::<32>();
+                                let by = self.sby.get().sext::<32>();
+                                let cx = rh.data.slice::<0, 12>().sext::<32>();
+                                let cy = rh.data.slice::<16, 12>().sext::<32>();
+                                // The box. A clear says only its
+                                // colour, so its box is the screen,
+                                // which the rasteriser knows from its
+                                // own type; a rectangle and a triangle
+                                // carry theirs.
+                                let clearing = self.skind.get() == Kind::Clear;
+                                let zero16 = U::<16>::from(0u8);
+                                let last_x =
+                                    U::<16>::from(((1usize << LOGW) - 1) as u32);
+                                let last_y = U::<16>::from((H - 1) as u32);
+                                let wx = mux(
+                                    clearing,
+                                    zero16,
+                                    self.sx0.get().resize::<16>(),
+                                );
+                                let wy = mux(
+                                    clearing,
+                                    zero16,
+                                    self.sy0.get().resize::<16>(),
+                                );
+                                let bx1 = mux(
+                                    clearing,
+                                    last_x,
+                                    self.sx1.get().resize::<16>(),
+                                );
+                                let by1 = mux(
+                                    clearing,
+                                    last_y,
+                                    self.sy1.get().resize::<16>(),
+                                );
+                                let sx = wx.resize::<32>();
+                                let sy = wy.resize::<32>();
+                                let zero = U::<32>::from(0u8);
+                                let t0x = zero - (by - ay);
+                                let t0y = bx - ax;
+                                let s0 = (bx - ax).mul::<32>(sy - ay)
+                                    - (by - ay).mul::<32>(sx - ax);
+                                let t1x = zero - (cy - by);
+                                let t1y = cx - bx;
+                                let s1 = (cx - bx).mul::<32>(sy - by)
+                                    - (cy - by).mul::<32>(sx - bx);
+                                let t2x = zero - (ay - cy);
+                                let t2y = ax - cx;
+                                let s2 = (ax - cx).mul::<32>(sy - cy)
+                                    - (ay - cy).mul::<32>(sx - cx);
+                                if self.word.get() == 0 {
+                                    with!(self <= {
+                                        skind: mux(
+                                            word0 == 0,
+                                            Kind::Clear,
+                                            mux(word0 == 1, Kind::Rect, Kind::Tri),
+                                        ),
+                                        scol: rh.data.slice::<2, 24>(),
+                                    });
+                                }
+                                if self.word.get() == 1 {
+                                    with!(self <= {
+                                        sx0: rh.data.slice::<0, 10>(),
+                                        sy0: rh.data.slice::<16, 10>(),
+                                    });
+                                }
+                                if self.word.get() == 2 {
+                                    with!(self <= {
+                                        sx1: rh.data.slice::<0, 10>(),
+                                        sy1: rh.data.slice::<16, 10>(),
+                                    });
+                                }
+                                if self.word.get() == 3 {
+                                    with!(self <= {
+                                        sax: rh.data.slice::<0, 12>(),
+                                        say: rh.data.slice::<16, 12>(),
+                                    });
+                                }
+                                if self.word.get() == 4 {
+                                    with!(self <= {
+                                        sbx: rh.data.slice::<0, 12>(),
+                                        sby: rh.data.slice::<16, 12>(),
+                                    });
+                                }
+                                if self.word.get() == 5 {
+                                    with!(self <= {
+                                        kind: self.skind.get(),
+                                        colour: self.scol.get(),
+                                        x: wx,
+                                        y: wy,
+                                        xa: wx,
+                                        xb: bx1,
+                                        yb: by1,
+                                        e0: s0, r0: s0, d0x: t0x, d0y: t0y,
+                                        e1: s1, r1: s1, d1x: t1x, d1y: t1y,
+                                        e2: s2, r2: s2, d2x: t2x, d2y: t2y,
+                                    });
+                                }
+                            }
+                            // An edge, for the box to read back.
+                            DefaultClock::rising().await;
+                            // The walk: every row of the box, and
+                            // every column of the row, a pixel a
+                            // turn. A pixel is written when there is
+                            // room for the burst and for its beat; the
+                            // turn ends when the pixel wanted no
+                            // write, or when its write went out.
+                            for _ in self.y.get().raw() as usize
+                                ..=self.yb.get().raw() as usize
+                            {
+                                DefaultClock::rising().await;
+                                for _ in self.xa.get().raw() as usize
+                                    ..=self.xb.get().raw() as usize
+                                {
+                                    until(DefaultClock::rising, || {
+                                        (!self.hit.get()
+                                            | (issue.ready() & wbeat.ready()))
+                                        .to_bool()
+                                    })
+                                    .await;
+                                    let px = self.x.get();
+                                    let py = self.y.get();
+                                    // One pixel, as a burst of one
+                                    // beat at the pixel's word. The
+                                    // address is worked out at the
+                                    // link's width, not at the sixteen
+                                    // bits the walk is counted in: the
+                                    // offset into the framebuffer fits
+                                    // in sixteen, but the framebuffer's
+                                    // own base need not, and an address
+                                    // that wrapped would land on
+                                    // whatever else the map has there.
+                                    let addr = (((py << LOGW) + px) << WORD)
+                                        .resize::<A>()
+                                        + U::<A>::from(BASE as u32);
+                                    if self.hit.get().to_bool() {
+                                        issue.send(Issue {
+                                            read: Bit::Zero,
+                                            addr,
+                                            len: U::<8>::from(0u8),
+                                            size: U::<3>::from(2u8),
+                                            burst: BurstKind::Incr,
+                                            lock: Bit::Zero,
+                                            cache: U::<4>::from(0u8),
+                                            prot: U::<3>::from(0u8),
+                                            qos: U::<4>::from(0u8),
+                                            region: U::<4>::from(0u8),
+                                        });
+                                        wbeat.send(W {
+                                            data: self.colour.get().resize::<32>(),
+                                            strb: U::<4>::from(15u8),
+                                            last: Bit::One,
+                                        });
+                                        self.issued.set(self.issued.get() + 1);
+                                    }
+                                    // The column advances and each edge
+                                    // takes its column step.
+                                    with!(self <= {
+                                        x: px + 1,
+                                        e0: self.e0.get() + self.d0x.get(),
+                                        e1: self.e1.get() + self.d1x.get(),
+                                        e2: self.e2.get() + self.d2x.get(),
+                                    });
+                                }
+                                // The next row: the column goes back to
+                                // the first and each edge is reloaded
+                                // from its row value plus its row step.
+                                let q0 = self.r0.get() + self.d0y.get();
+                                let q1 = self.r1.get() + self.d1y.get();
+                                let q2 = self.r2.get() + self.d2y.get();
+                                with!(self <= {
+                                    x: self.xa.get(),
+                                    y: self.y.get() + 1,
+                                    e0: q0, r0: q0,
+                                    e1: q1, r1: q1,
+                                    e2: q2, r2: q2,
+                                });
+                            }
+                            self.insn.set(self.insn.get() + 1);
+                        }
+                        // The list is drawn; nothing follows.
+                        self.finished.set(Bit::One);
+                        until(DefaultClock::rising, || {
+                            !self.finished.get().to_bool()
+                        })
+                        .await;
+                    }
+                }
+            },
+        )
+        .await;
     }
 }
 // end{run}
