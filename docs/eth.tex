@@ -276,6 +276,14 @@ side, its pointers in Gray code, each crossing to the other clock
 through two flip-flops. The halves of the MAC store whole frames, so
 the FIFO may hold the bytes up for a cycle or two without harm.
 
+Each half of the MAC has a reset on the clock it runs on: the clock
+manager's lock, which is also what holds the PHY in reset, through
+two flip-flops in each domain, so that each release lands on an edge
+of its own clock. The receive clock is the PHY's and does not run
+until the PHY does, so its synchroniser holds the reset from its
+initial value until the first edges arrive. A lowered module's reset
+arm runs from its \code{rst} input and from nothing else (issue 509).
+
 \lstinputlisting[caption={\code{lib/board/chan\_cdc.v}: a channel from
 one clock to another.},label={lst:e-cdc}]{lib/board/chan_cdc.v}
 

@@ -370,6 +370,13 @@ is one zero byte at 300 baud, 30 ms, and not a break: a break sent
 through the board's CP2102N as Linux drives it never reached the pin,
 which a slow zero byte proved by resetting the core where the break
 had not.
+The same press, the same key and the same low on the line reset the
+MAC's two halves and the video peripheral as well, each through two
+flip-flops on its own clock and each held while its clock manager has
+no lock, since the core's reset is on the core's clock and a lowered
+module's reset arm runs from its \code{rst} input alone; the first
+version left those inputs unconnected, so a press reset the core and
+left the rest running on stale state (issue 509).
 
 The flash is a Micron MT25QL128 over a four-bit bus. It is the part
 this board answers with, read off the chip over JTAG rather than out of

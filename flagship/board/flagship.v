@@ -294,6 +294,24 @@ module flagship (
   wire rx_clk;
   wire [7:0] txd, rxd;
   wire tx_en, rx_dv, rx_er;
+  // A reset for each half of the MAC, on the clock that half runs on.
+  // What asks for it is what asks for the core's: the button, the key
+  // and the break on the serial line, and besides those the Ethernet
+  // clock manager's lock, since the halves are nothing until their
+  // clocks are. Each goes through two flip-flops in its own domain, so
+  // that its release lands on an edge of the clock it releases; the
+  // core's `rst` is not wired across, since it is on the core's clock
+  // (issue 509). The receive clock is the PHY's and does not run until
+  // the PHY does, so its synchroniser holds the reset from its initial
+  // value until the first edges arrive.
+  wire eth_rst_ask = ~(reset_n & key1 & eth_locked) | brk;
+  (* ASYNC_REG = "TRUE" *) reg [1:0] rx_rst_sync = 2'b11;
+  (* ASYNC_REG = "TRUE" *) reg [1:0] tx_rst_sync = 2'b11;
+  always @(posedge rx_clk) rx_rst_sync <= {rx_rst_sync[0], eth_rst_ask};
+  always @(posedge clk125) tx_rst_sync <= {tx_rst_sync[0], eth_rst_ask};
+  wire rx_rst = rx_rst_sync[1];
+  wire tx_rst = tx_rst_sync[1];
+
   eth_rgmii rgmii (
     .clk125(clk125), .txd(txd), .tx_en(tx_en),
     .rx_clk(rx_clk), .rxd(rxd), .rx_dv(rx_dv), .rx_er(rx_er),
@@ -311,6 +329,7 @@ module flagship (
   wire rx_valid, rx_ready;
   eth_rx mac_rx (
     .clk(rx_clk),
+    .rst(rx_rst),
     .rxd(rxd), .rx_dv(rx_dv), .rx_er(rx_er),
     .rx_data(rx_data), .rx_valid(rx_valid), .rx_ready(rx_ready)
   );
@@ -347,6 +366,7 @@ module flagship (
 
   eth_tx mac_tx (
     .clk(clk125),
+    .rst(tx_rst),
     .tx_data(tx_data), .tx_valid(tx_valid), .tx_ready(tx_ready),
     .txd(txd), .tx_en(tx_en)
   );
@@ -375,6 +395,16 @@ module flagship (
   );
   BUFG vid_fb_bufg (.I(vid_fb), .O(vid_fb_buf));
   BUFG pixclk_bufg (.I(mmcm25), .O(pixclk));
+
+  // The reset for the video peripheral and the I2C master, on the
+  // pixel clock, asked for by the same things as the MAC's and by the
+  // video clock manager's lock. A press of the button therefore
+  // re-runs the encoder's configuration, since the master drives the
+  // chip's reset from its own (issue 509).
+  wire vid_rst_ask = ~(reset_n & key1 & vid_locked) | brk;
+  (* ASYNC_REG = "TRUE" *) reg [1:0] pix_rst_sync = 2'b11;
+  always @(posedge pixclk) pix_rst_sync <= {pix_rst_sync[0], vid_rst_ask};
+  wire pix_rst = pix_rst_sync[1];
 
   // The core's side of the crossing, declared here because the board
   // above drives it and the FIFOs below carry it.
@@ -422,6 +452,7 @@ module flagship (
 
   hdmi_video video (
     .clk(pixclk),
+    .rst(pix_rst),
     .bus_aw_data(qaw_data), .bus_aw_valid(qaw_valid), .bus_aw_ready(qaw_ready),
     .bus_ar_data(qar_data), .bus_ar_valid(qar_valid), .bus_ar_ready(qar_ready),
     .bus_w_data(qw_data), .bus_w_valid(qw_valid), .bus_w_ready(qw_ready),
@@ -441,6 +472,7 @@ module flagship (
   wire scl_low, sda_low, vid_done, vid_failed;
   hdmi_i2c master (
     .clk(pixclk),
+    .rst(pix_rst),
     .sda_in(hdmi_sda),
     .nreset(hdmi_nreset), .scl_low(scl_low), .sda_low(sda_low),
     .done(vid_done), .failed(vid_failed)

@@ -245,6 +245,12 @@ divided by 50 is 25.2~MHz, within half a per cent of the mode's
 \code{ODDR}, so the chip's rising edge falls in the middle of each
 pixel. The I2C lines are open drain: the pad is driven low while the
 master pulls, and left floating otherwise.
+The two units' reset is the clock manager's lock, low until the pixel
+clock is good, through two flip-flops on that clock, so that the
+release lands on an edge of the clock it releases. A lowered module's
+reset arm runs from its \code{rst} input and from nothing else, so a
+top that left the input unconnected had the units start from the
+power-on values alone and never reset them (issue 509).
 
 \lstinputlisting[caption={\code{hdmi/board/hdmi\_demo.v}: the
 demonstration.},label={lst:h-demo}]{hdmi/board/hdmi_demo.v}

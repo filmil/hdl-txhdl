@@ -67,9 +67,19 @@ module hdmi_demo (
   BUFG fb_bufg (.I(fb), .O(fb_buf));
   BUFG clk_bufg (.I(mmcm25), .O(clk));
 
+  // The reset for the two units, on their own clock: the clock
+  // manager's lock, low until the pixel clock is good, through two
+  // flip-flops, so that the release lands on an edge of the clock it
+  // releases. The units run from their reset arms rather than from the
+  // power-on values alone (issue 509).
+  (* ASYNC_REG = "TRUE" *) reg [1:0] rst_sync = 2'b11;
+  always @(posedge clk) rst_sync <= {rst_sync[0], ~locked};
+  wire rst = rst_sync[1];
+
   // The video.
   hdmi_video video (
     .clk(clk),
+    .rst(rst),
     .bus_aw_data(35'd0), .bus_aw_valid(1'b0), .bus_aw_ready(),
     .bus_ar_data(35'd0), .bus_ar_valid(1'b0), .bus_ar_ready(),
     .bus_w_data(36'd0), .bus_w_valid(1'b0), .bus_w_ready(),
@@ -86,6 +96,7 @@ module hdmi_demo (
   wire scl_low, sda_low, done, failed;
   hdmi_i2c master (
     .clk(clk),
+    .rst(rst),
     .sda_in(hdmi_sda),
     .nreset(hdmi_nreset), .scl_low(scl_low), .sda_low(sda_low),
     .done(done), .failed(failed)

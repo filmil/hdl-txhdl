@@ -63,10 +63,24 @@ module eth_echo (
   BUFG fb_bufg (.I(fb), .O(fb_buf));
   BUFG clk125_bufg (.I(mmcm125), .O(clk125));
 
+  // A reset for each half of the MAC, on the clock that half runs on:
+  // the clock manager's lock, low until the transmit clock is good and
+  // the PHY is out of reset, through two flip-flops in each domain, so
+  // that each release lands on an edge of the clock it releases. The
+  // receive clock is the PHY's and does not run until the PHY does, so
+  // its synchroniser holds the reset from its initial value until the
+  // first edges arrive (issue 509).
+  (* ASYNC_REG = "TRUE" *) reg [1:0] rx_rst_sync = 2'b11;
+  (* ASYNC_REG = "TRUE" *) reg [1:0] tx_rst_sync = 2'b11;
+
   // The PHY.
   wire rx_clk;
   wire [7:0] txd, rxd;
   wire tx_en, rx_dv, rx_er;
+  always @(posedge rx_clk) rx_rst_sync <= {rx_rst_sync[0], ~locked};
+  always @(posedge clk125) tx_rst_sync <= {tx_rst_sync[0], ~locked};
+  wire rx_rst = rx_rst_sync[1];
+  wire tx_rst = tx_rst_sync[1];
   eth_rgmii rgmii (
     .clk125(clk125), .txd(txd), .tx_en(tx_en),
     .rx_clk(rx_clk), .rxd(rxd), .rx_dv(rx_dv), .rx_er(rx_er),
@@ -82,6 +96,7 @@ module eth_echo (
   wire rx_valid, rx_ready;
   eth_rx mac_rx (
     .clk(rx_clk),
+    .rst(rx_rst),
     .rxd(rxd), .rx_dv(rx_dv), .rx_er(rx_er),
     .rx_data(rx_data), .rx_valid(rx_valid), .rx_ready(rx_ready)
   );
@@ -99,6 +114,7 @@ module eth_echo (
   // The sending half, on the transmit clock.
   eth_tx mac_tx (
     .clk(clk125),
+    .rst(tx_rst),
     .tx_data(tx_data), .tx_valid(tx_valid), .tx_ready(tx_ready),
     .txd(txd), .tx_en(tx_en)
   );

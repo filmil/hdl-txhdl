@@ -4,9 +4,3 @@
 # these rather than failing on them, and FAILS once one is connected
 # everywhere, so the change that closes a gap deletes its line here.
 #
-# The implicit reset of #368 is unconnected wherever a top instantiates
-# a lowered module directly rather than through `board`.
-hdmi_video.rst #509
-hdmi_i2c.rst #509
-eth_rx.rst #509
-eth_tx.rst #509
