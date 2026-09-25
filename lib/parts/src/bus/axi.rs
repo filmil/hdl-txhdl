@@ -333,8 +333,9 @@ pub struct AxiHost<
     const NIDS: usize,
 > {
     /// The identifier whose turn it is: the one the next burst takes.
-    /// Not called `next`, which VHDL reserves.
-    pub turn: Reg<U<I>>,
+    /// VHDL reserves `next`, so the netlist calls it `next_rw` (issue
+    /// 497).
+    pub next: Reg<U<I>>,
     /// Which identifiers are outstanding, a bit each.
     pub busy: Reg<U<NIDS>>,
 }
@@ -370,7 +371,7 @@ impl<
             DefaultClock::rising().await;
             // The identifier this burst would take, and whether it is
             // free.
-            let id = self.turn.get();
+            let id = self.next.get();
             let free = !self.busy.get().bit(id.raw() as usize);
             let offered = issue.peek().is_some();
             let head = issue.head();
@@ -406,7 +407,7 @@ impl<
             // also when the identifier is still out, so a burst waits
             // for a free identifier rather than for this one (#184).
             with!(self <= {
-                go | !free ? turn: id + 1,
+                go | !free ? next: id + 1,
                 busy: (self.busy.get() | mux(go, id_bit, zero)) & !freed,
             });
             if (go & read).to_bool() {

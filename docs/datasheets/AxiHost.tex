@@ -53,19 +53,19 @@ its board.
 
 \begin{itemize}
 \item At each rising edge it looks at the issue at the head of
-\code{issue}. The identifier that burst would take is \code{turn}.
+\code{issue}. The identifier that burst would take is \code{next}.
 \item The burst goes out when that identifier's bit of \code{busy} is
 clear, \code{grant} has room, and the address channel it needs has
 room: \code{ar} for a read, \code{aw} for a write.
-\item A burst that goes out is sent with \code{turn} as its \code{id}.
+\item A burst that goes out is sent with \code{next} as its \code{id}.
 Its \code{addr}, \code{len}, \code{size}, \code{burst}, \code{lock},
 \code{cache}, \code{prot}, \code{qos} and \code{region} are the
 issue's.
-\item In that cycle \code{grant} sends the identifier, \code{turn}
+\item In that cycle \code{grant} sends the identifier, \code{next}
 moves on by one, and the identifier's bit of \code{busy} is set. At
 most one burst goes out per cycle.
-\item In a cycle in which the identifier \code{turn} names is
-outstanding, \code{turn} moves on by one as well. So the identifiers
+\item In a cycle in which the identifier \code{next} names is
+outstanding, \code{next} moves on by one as well. So the identifiers
 go round, and a burst waits only while every identifier is
 outstanding; it finds a free one within \code{NIDS} cycles.
 \item \code{release} is taken whenever it offers, and it clears the
