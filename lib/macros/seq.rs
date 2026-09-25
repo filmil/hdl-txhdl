@@ -29,9 +29,13 @@
 //!   what it was by the next, so a name bound in one segment is not
 //!   read in a later one; what crosses a wait is held in a register.
 //!
-//! A `for` whose body waits is unrolled first, a state per turn with
-//! the variable a number in each, so its bounds are written out; a
-//! `for` that does not wait is left to the state's own lowering.
+//! A `for` whose body waits is a counted loop: its states once, and a
+//! register the unit does not declare counting the turns, so its
+//! bound may be anything `lowered` can evaluate. A body whose waits
+//! are all under `if` may take no edge on a turn, so such a loop is
+//! unrolled instead, a state per turn, and its bounds are written
+//! out. A `for` that does not wait is left to the state's own
+//! lowering.
 //!
 //! A wait under `if` is a state with a way around it: the state before
 //! the `if` goes to the wait inside when the condition holds at its
@@ -272,11 +276,185 @@ fn same_members(a: &[(usize, Path)], b: &[(usize, Path)]) -> bool {
             .all(|((s, p), (t, q))| s == t && same_path(p, q))
 }
 
-/// What the walk builds: the states, the tails, and their order.
+/// What the walk builds: the states, the tails, their order, and the
+/// counters of the `for` loops that wait, each a register the unit
+/// does not declare, with its name and the Rust of its width.
 struct Plan {
     states: Vec<State>,
     tails: Vec<Tail>,
     order: Vec<Piece>,
+    counters: Vec<(String, String)>,
+}
+
+/// A statement into every open state: the one state's items when the
+/// walk is in one, otherwise the tail those states share, the last
+/// piece's if it is for them or a new one.
+fn push_item(plan: &mut Plan, open: &[(usize, Path)], st: Vec<TokenTree>) {
+    if let [(s, p)] = open {
+        plan.states[*s].items.push((p.clone(), st));
+        return;
+    }
+    let same = match plan.order.last() {
+        Some(Piece::Tail(t)) => same_members(&plan.tails[*t].members, open),
+        _ => false,
+    };
+    if !same {
+        plan.order.push(Piece::Tail(plan.tails.len()));
+        plan.tails.push(Tail {
+            members: open.to_vec(),
+            items: Vec::new(),
+        });
+    }
+    plan.tails.last_mut().unwrap().items.push(st);
+}
+
+/// `name.set(e)` as tokens, a drive of a register the unit does not
+/// declare, which the lowering reads as any register's.
+fn set_stmt(name: &str, e: &[TokenTree], span: Span) -> Vec<TokenTree> {
+    let mut g = Group::new(Delimiter::Parenthesis, e.iter().cloned().collect());
+    g.set_span(span);
+    let mut dot = Punct::new('.', Spacing::Alone);
+    dot.set_span(span);
+    vec![
+        TokenTree::Ident(Ident::new(name, span)),
+        TokenTree::Punct(dot),
+        TokenTree::Ident(Ident::new("set", span)),
+        TokenTree::Group(g),
+    ]
+}
+
+/// A `for` that waits, as a counted loop rather than unrolled (issue
+/// 602): a register the unit does not declare counts the turns.
+/// Entering the loop sets it to the low bound; the statements before
+/// the body's first wait happen in the state before, with the
+/// variable read as the low bound; the body's states read the
+/// variable as the counter; the body's last state goes back to its
+/// first while the counter is short of the last value, adding one,
+/// the set-up statements happening there with the variable read as
+/// the counter plus one; otherwise it goes on.
+fn walk_for(
+    plan: &mut Plan,
+    var: &str,
+    range: &[TokenTree],
+    body: &[TokenTree],
+    open: Vec<(usize, Path)>,
+    span: Span,
+) -> Result<Vec<(usize, Path)>, TokenStream> {
+    // The bounds: `lo..hi` or `lo..=hi`, as tokens the netlist
+    // evaluates when `lowered` runs, so a const parameter will do.
+    let dots = range
+        .iter()
+        .position(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == '.'))
+        .ok_or_else(|| {
+            err(
+                span,
+                "a `for` in a lowered body goes over a range, `lo..hi`",
+            )
+        })?;
+    let lo: Vec<TokenTree> = range[..dots].to_vec();
+    let punct = |t: Option<&TokenTree>, c: char| {
+        matches!(t, Some(TokenTree::Punct(p))
+                if p.as_char() == c)
+    };
+    let mut after = dots;
+    while punct(range.get(after), '.') {
+        after += 1;
+    }
+    let closed = punct(range.get(after), '=');
+    if closed {
+        after += 1;
+    }
+    let hi: Vec<TokenTree> = range[after..].to_vec();
+    if lo.is_empty() || hi.is_empty() {
+        return Err(err(
+            span,
+            "a `for` that waits needs both bounds, `lo..hi`",
+        ));
+    }
+    // The last value the counter takes: `hi` itself for `..=`, one
+    // less otherwise.
+    let last_text = if closed {
+        format!("({})", text(&hi))
+    } else {
+        format!("(({}) - 1)", text(&hi))
+    };
+    last_text
+        .parse::<TokenStream>()
+        .map_err(|_| err(span, "the bound of the `for` does not parse"))?;
+    let n = plan.counters.len();
+    let reg = format!("for{n}");
+    plan.counters.push((
+        reg.clone(),
+        format!(
+            "{{ let l = ({last_text}) as usize; \
+             std::cmp::max(1, (usize::BITS - l.leading_zeros()) as usize) }}"
+        ),
+    ));
+    let sts = stmts_of(body);
+    // The set-up: the statements before the body's first wait, which
+    // must be plain, since they are repeated at the loop's end.
+    let first = sts.iter().position(|st| is_wait(st)).ok_or_else(|| {
+        err(span, "a `for` that waits has a wait at the top of its body")
+    })?;
+    for st in &sts[..first] {
+        if waits_in(std::slice::from_ref(st)) > 0 {
+            return Err(err(
+                st[0].span(),
+                "a `for` that waits begins with plain statements and a wait; \
+                 an `if` that waits comes after the first wait",
+            ));
+        }
+    }
+    let counter: Vec<TokenTree> =
+        vec![TokenTree::Ident(Ident::new(&reg, span))];
+    let plus_one: Vec<TokenTree> = format!("({reg} + 1)")
+        .parse::<TokenStream>()
+        .unwrap()
+        .into_iter()
+        .collect();
+    // Entering: the counter to the low bound, and the set-up with the
+    // variable as the low bound.
+    push_item(plan, &open, set_stmt(&reg, &lo, span));
+    for st in &sts[..first] {
+        push_item(plan, &open, substituted(st, var, &lo));
+    }
+    // The body from its first wait, the variable the counter.
+    let body_from = plan.states.len();
+    let rest: Vec<Vec<TokenTree>> = sts[first..]
+        .iter()
+        .map(|st| substituted(st, var, &counter))
+        .collect();
+    let ends = walk(plan, &rest, open)?;
+    // Going round: while the counter is short of the last value, the
+    // counter plus one, the set-up with the variable as that, and back
+    // to the body's first state; otherwise on.
+    let more: Vec<TokenTree> = format!("{reg} != {last_text}")
+        .parse::<TokenStream>()
+        .unwrap()
+        .into_iter()
+        .collect();
+    let again: Vec<(usize, Path)> = ends
+        .iter()
+        .map(|(s, q)| {
+            let mut q = q.clone();
+            q.push((more.clone(), false));
+            (*s, q)
+        })
+        .collect();
+    push_item(plan, &again, set_stmt(&reg, &plus_one, span));
+    for st in &sts[..first] {
+        push_item(plan, &again, substituted(st, var, &plus_one));
+    }
+    for (s, q) in &again {
+        plan.states[*s].branches.push((q.clone(), body_from));
+    }
+    Ok(ends
+        .into_iter()
+        .map(|(s, mut q)| {
+            q.push((more.clone(), true));
+            (s, q)
+        })
+        .collect())
 }
 
 /// The states of a body, walked in order. `open` are the states the
@@ -354,26 +532,20 @@ fn walk(
                 continue;
             }
         }
-        if let [(s, p)] = open.as_slice() {
-            plan.states[*s].items.push((p.clone(), st.clone()));
-            continue;
-        }
-        // Shared: the tail the last piece made, if it is for these
-        // states, or a new one.
-        let same = match plan.order.last() {
-            Some(Piece::Tail(t)) => {
-                same_members(&plan.tails[*t].members, &open)
+        if let Some((var, range, body)) = for_parts(st) {
+            let sts = stmts_of(&body);
+            if waits_in(&sts) > 0 {
+                let span = st[0].span();
+                if counted(&sts) {
+                    open = walk_for(plan, &var, &range, &body, open, span)?;
+                } else {
+                    let turns = unrolled(&var, &range, &sts, span)?;
+                    open = walk(plan, &turns, open)?;
+                }
+                continue;
             }
-            _ => false,
-        };
-        if !same {
-            plan.order.push(Piece::Tail(plan.tails.len()));
-            plan.tails.push(Tail {
-                members: open.clone(),
-                items: Vec::new(),
-            });
         }
-        plan.tails.last_mut().unwrap().items.push(st.clone());
+        push_item(plan, &open, st.clone());
     }
     Ok(open)
 }
@@ -512,13 +684,14 @@ pub(crate) fn lower(
     pnames: &[String],
     span: Span,
 ) -> Result<(Vec<String>, usize, Vec<(String, String)>), TokenStream> {
-    // A `for` that waits is unrolled first; then the states, one per
-    // wait, and what follows the last wait goes back to the first.
-    let sts = unrolled(sts)?;
+    // The states, one per wait, and what follows the last wait goes
+    // back to the first.
+    let sts: Vec<Vec<TokenTree>> = sts.to_vec();
     let mut plan = Plan {
         states: Vec::new(),
         tails: Vec::new(),
         order: Vec::new(),
+        counters: Vec::new(),
     };
     let open = walk(&mut plan, &sts, Vec::new())?;
     for (s, p) in open {
@@ -752,6 +925,7 @@ pub(crate) fn lower(
             format!("<{ty} as ::txhdl::types::Value>::WIDTH"),
         ));
     }
+    regs.extend(plan.counters.iter().cloned());
     stmts.extend(arms);
     Ok((stmts, width, regs))
 }
@@ -798,6 +972,51 @@ pub(crate) fn waits_in(sts: &[Vec<TokenTree>]) -> usize {
         .sum()
 }
 
+/// `ts` with the name `var` replaced by the tokens `with`, in
+/// parentheses, at any depth; a name after `.` is a field or a method
+/// and is left alone.
+fn substituted(
+    ts: &[TokenTree],
+    var: &str,
+    with: &[TokenTree],
+) -> Vec<TokenTree> {
+    let mut out = Vec::with_capacity(ts.len());
+    let mut prev_dot = false;
+    for t in ts {
+        let is_dot = matches!(t, TokenTree::Punct(p) if p.as_char() == '.');
+        out.push(match t {
+            TokenTree::Ident(i) if !prev_dot && i.to_string() == var => {
+                let mut g = Group::new(
+                    Delimiter::Parenthesis,
+                    with.iter().cloned().collect(),
+                );
+                g.set_span(i.span());
+                TokenTree::Group(g)
+            }
+            TokenTree::Group(g) => {
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                let mut n = Group::new(
+                    g.delimiter(),
+                    substituted(&inner, var, with).into_iter().collect(),
+                );
+                n.set_span(g.span());
+                TokenTree::Group(n)
+            }
+            t => t.clone(),
+        });
+        prev_dot = is_dot;
+    }
+    out
+}
+
+/// Whether two paths are the same conditions, token for token.
+fn same_path(a: &Path, b: &Path) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|((x, f), (y, g))| f == g && text(x) == text(y))
+}
+
 /// The bounds of a range written as numbers, `lo..hi` or `lo..=hi`.
 fn bounds(range: &[TokenTree]) -> Option<(usize, usize)> {
     let t: String = range.iter().map(|t| t.to_string()).collect();
@@ -817,102 +1036,48 @@ fn bounds(range: &[TokenTree]) -> Option<(usize, usize)> {
     Some((lo, if closed { hi + 1 } else { hi }))
 }
 
-/// `ts` with the name `var` replaced by the number `k`, at any depth;
-/// a name after `.` is a field or a method and is left alone.
-fn substituted(ts: &[TokenTree], var: &str, k: usize) -> Vec<TokenTree> {
-    let mut out = Vec::with_capacity(ts.len());
-    let mut prev_dot = false;
-    for t in ts {
-        let is_dot = matches!(t, TokenTree::Punct(p) if p.as_char() == '.');
-        out.push(match t {
-            TokenTree::Ident(i) if !prev_dot && i.to_string() == var => {
-                let mut l = Literal::usize_unsuffixed(k);
-                l.set_span(i.span());
-                TokenTree::Literal(l)
-            }
-            TokenTree::Group(g) => {
-                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
-                let mut n = Group::new(
-                    g.delimiter(),
-                    substituted(&inner, var, k).into_iter().collect(),
-                );
-                n.set_span(g.span());
-                TokenTree::Group(n)
-            }
-            t => t.clone(),
-        });
-        prev_dot = is_dot;
+/// Whether a `for` body is counted: it has a wait at its top level,
+/// and nothing before that wait waits, so every turn takes at least
+/// the one edge and the counter can move once per turn. A body whose
+/// waits are all under `if` may take no edge at all on a turn, and is
+/// unrolled instead.
+fn counted(body: &[Vec<TokenTree>]) -> bool {
+    match body.iter().position(|st| is_wait(st)) {
+        Some(first) => body[..first]
+            .iter()
+            .all(|st| waits_in(std::slice::from_ref(st)) == 0),
+        None => false,
     }
-    out
 }
 
-/// The statements with every `for` that waits unrolled: the body once
-/// per value of the range, the variable a number in each, nested
-/// ones unrolled inside. A `for` that does not wait is left to the
-/// state's lowering, which unrolls it when `lowered` runs and so
-/// takes a bound the macro cannot see; a `for` that waits is a state
-/// per turn, and the macro must count them, so its bounds are written
-/// out.
+/// A `for` that waits only under `if`, unrolled: the body once per
+/// value of the range, the variable a number in each. The bounds are
+/// written out, since the macro counts the turns.
 fn unrolled(
-    sts: &[Vec<TokenTree>],
+    var: &str,
+    range: &[TokenTree],
+    body: &[Vec<TokenTree>],
+    span: Span,
 ) -> Result<Vec<Vec<TokenTree>>, TokenStream> {
+    let Some((lo, hi)) = bounds(range) else {
+        return Err(err(
+            span,
+            "a `for` whose waits are all under `if` is unrolled, a turn at a \
+             time, so its bounds are numbers written out: `for i in 0..8`; \
+             a `for` with a wait at the top of its body is counted, and \
+             takes any bound",
+        ));
+    };
     let mut out = Vec::new();
-    for st in sts {
-        // An `if` whose arms hold a `for` that waits: the arms are
-        // unrolled in place, the chain kept.
-        if if_parts(st).is_some() && waits_in(std::slice::from_ref(st)) > 0 {
-            let mut rebuilt: Vec<TokenTree> = Vec::new();
-            for t in st {
-                rebuilt.push(match t {
-                    TokenTree::Group(g)
-                        if g.delimiter() == Delimiter::Brace =>
-                    {
-                        let inner: Vec<TokenTree> =
-                            g.stream().into_iter().collect();
-                        let body = unrolled(&stmts_of(&inner))?;
-                        let mut n = Group::new(Delimiter::Brace, joined(&body));
-                        n.set_span(g.span());
-                        TokenTree::Group(n)
-                    }
-                    t => t.clone(),
-                });
-            }
-            out.push(rebuilt);
-            continue;
-        }
-        let Some((var, range, body)) = for_parts(st) else {
-            out.push(st.clone());
-            continue;
-        };
-        let inner = stmts_of(&body);
-        if waits_in(&inner) == 0 {
-            out.push(st.clone());
-            continue;
-        }
-        let Some((lo, hi)) = bounds(&range) else {
-            return Err(err(
-                st[0].span(),
-                "a `for` that waits is a state per turn, counted by the \
-                 macro, so its bounds are numbers written out: `for i in \
-                 0..8`",
-            ));
-        };
-        for k in lo..hi {
-            let turn: Vec<Vec<TokenTree>> =
-                inner.iter().map(|s| substituted(s, &var, k)).collect();
-            out.extend(unrolled(&turn)?);
-        }
+    for k in lo..hi {
+        let mut lit = Literal::usize_unsuffixed(k);
+        lit.set_span(span);
+        let with = [TokenTree::Literal(lit)];
+        out.extend(body.iter().map(|st| substituted(st, var, &with)));
     }
     Ok(out)
 }
 
-/// Whether two paths are the same conditions, token for token.
-fn same_path(a: &Path, b: &Path) -> bool {
-    a.len() == b.len()
-        && a.iter()
-            .zip(b)
-            .all(|((x, f), (y, g))| f == g && text(x) == text(y))
-}
 #[cfg(test)]
 mod tests {
     use super::{bits, drive_of, driven, reg_name};
