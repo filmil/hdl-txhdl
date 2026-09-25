@@ -390,7 +390,8 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
         .zip(field_types(body))
         .map(|(n, t)| {
             format!(
-                "v.extend(<{t} as ::txhdl::netlist::PortField>::ports_of(\"{n}\"));"
+                "v.extend(<{t} as ::txhdl::netlist::PortField>\
+                 ::ports_of(\"{n}\"));"
             )
         })
         .collect::<Vec<_>>()
@@ -404,7 +405,8 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
          impl{b} ::txhdl::netlist::PortField for {n}{a} {{\n\
          fn ports_of(name: &str) -> Vec<::txhdl::netlist::BundlePort> {{ \
          <Self as ::txhdl::netlist::Ports>::ports().into_iter().map(|mut p| \
-         {{ p.name = format!(\"{{name}}_{{}}\", p.name); p }}).collect() }}\n}}",
+         {{ p.name = format!(\"{{name}}_{{}}\", p.name); p }})\
+         .collect() }}\n}}",
         b = item.bounds,
         n = item.name,
         a = item.args
@@ -6523,6 +6525,25 @@ fn lower_stmts(
     Ok(stmts)
 }
 
+/// The net of `h.f`, one channel of a bundle made whole whose side `h`
+/// is one of `links`: `NET_f` (issue 498). `None` for anything else.
+fn link_field(
+    ts: &[TokenTree],
+    links: &[(String, String, String)],
+) -> Option<String> {
+    let [TokenTree::Ident(h), d, TokenTree::Ident(f)] = ts else {
+        return None;
+    };
+    if !matches!(d, TokenTree::Punct(p) if p.as_char() == '.') {
+        return None;
+    }
+    let h = h.to_string();
+    links
+        .iter()
+        .find(|(e, _, _)| *e == h)
+        .map(|(_, _, net)| format!("{net}_{f}"))
+}
+
 /// The value of `tie(v)`, or of a path ending in `tie`, as text: what a
 /// unit of units passes a child's input to hold it at a constant
 /// (issue 498). `None` for anything else.
@@ -6735,21 +6756,12 @@ fn lower_structural(
                     {
                         for n in split_commas(g) {
                             // One channel of a bundle made whole: `h.aw`.
-                            if let [TokenTree::Ident(h), TokenTree::Punct(d), TokenTree::Ident(f)] =
-                                n.as_slice()
-                            {
-                                if let (true, Some((_, _, net))) = (
-                                    d.as_char() == '.',
-                                    links
-                                        .iter()
-                                        .find(|(e, _, _)| *e == h.to_string()),
-                                ) {
-                                    names.push((
-                                        String::new(),
-                                        format!("@net {net}_{f}"),
-                                    ));
-                                    continue;
-                                }
+                            if let Some(net) = link_field(&n, &links) {
+                                names.push((
+                                    String::new(),
+                                    format!("@net {net}"),
+                                ));
+                                continue;
                             }
                             if let Some(v) = tied(&n) {
                                 let net = format!("{field}_tie{}", ties.len());
@@ -6848,18 +6860,9 @@ fn lower_structural(
                             names.push((port.to_string(), net.to_string()));
                         }
                     }
-                    [TokenTree::Ident(h), TokenTree::Punct(d), TokenTree::Ident(f)]
-                        if d.as_char() == '.'
-                            && links
-                                .iter()
-                                .any(|(e, _, _)| *e == h.to_string()) =>
-                    {
-                        let net = links
-                            .iter()
-                            .find(|(e, _, _)| *e == h.to_string())
-                            .map(|(_, _, n)| n.clone())
-                            .unwrap_or_default();
-                        names.push((String::new(), format!("@net {net}_{f}")));
+                    side if link_field(side, &links).is_some() => {
+                        let net = link_field(side, &links).unwrap_or_default();
+                        names.push((String::new(), format!("@net {net}")));
                     }
                     side if tied(side).is_some() => {
                         let v = tied(side).unwrap_or_default();
@@ -6883,7 +6886,8 @@ fn lower_structural(
             for (port, n) in names {
                 if let Some(net) = n.strip_prefix("@net ") {
                     joined.push(format!(
-                        "a.push((\"{port}\".to_string(), \"{net}\".to_string()));"
+                        "a.push((\"{port}\".to_string(), \
+                         \"{net}\".to_string()));"
                     ));
                     continue;
                 }
@@ -6891,12 +6895,16 @@ fn lower_structural(
                     links.iter().find(|(e, _, _)| *e == n)
                 {
                     joined.push(format!(
-                        "a.extend(::txhdl::netlist::link_args::<{ty}>(\"{net}\"));"
+                        "a.extend(::txhdl::netlist::link_args::<{ty}>\
+                         (\"{net}\"));"
                     ));
                     continue;
                 }
                 if let Some(net) = n.strip_prefix("@tie ") {
-                    joined.push(format!("a.push((\"{port}\".to_string(), \"{net}\".to_string()));"));
+                    joined.push(format!(
+                        "a.push((\"{port}\".to_string(), \
+                         \"{net}\".to_string()));"
+                    ));
                     continue;
                 }
                 // `side.path` of a side declared in another file: one of
@@ -6917,14 +6925,16 @@ fn lower_structural(
                     (at, port.is_empty(), ends.iter().any(|(e, _, _)| *e == n))
                 {
                     joined.push(format!(
-                        "a.extend(::txhdl::netlist::bundle_args_at::<{ty}>(\"{side}\", \"{path}\"));"
+                        "a.extend(::txhdl::netlist::bundle_args_at::<{ty}>\
+                         (\"{side}\", \"{path}\"));"
                     ));
                     continue;
                 }
                 if let Some(b) = n.strip_prefix("@bundle ") {
                     let (ty, side) = b.rsplit_once(' ').unwrap_or((b, ""));
                     joined.push(format!(
-                        "a.extend(::txhdl::netlist::bundle_args::<{ty}>(\"{side}\"));"
+                        "a.extend(::txhdl::netlist::bundle_args::<{ty}>\
+                         (\"{side}\"));"
                     ));
                     continue;
                 }
@@ -7521,7 +7531,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          init: Vec::new(),\n\
          init_regs: Vec::new(),\n\
          aliases: Vec::new(),\n\
-         nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, usize, &'static str)> = Vec::new(); {nets} n }},\n\
+         nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, \
+         usize, &'static str)> = Vec::new(); {nets} n }},\n\
          instances: vec![{instances}],\n\
          foreign: None,\n\
          }}\n\
@@ -7548,7 +7559,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             .map(|n| match n.strip_prefix("@link ") {
                 Some(l) => {
                     let (ty, net) = l.rsplit_once('|').unwrap_or((l, ""));
-                    format!("n.extend(::txhdl::netlist::link_nets::<{ty}>(\"{net}\"));")
+                    format!(
+                        "n.extend(::txhdl::netlist::link_nets::<{ty}>\
+                         (\"{net}\"));"
+                    )
                 }
                 None => format!("n.push({n});"),
             })
