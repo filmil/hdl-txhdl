@@ -46,6 +46,7 @@ use txhdl_parts::spi::Spi;
 use txhdl_parts::station::Station3;
 use txhdl_parts::syscon::Syscon;
 use txhdl_parts::tracer::Tracer;
+use txhdl_parts::trng::{Entropy, Trng};
 use txhdl_parts::wdog::Wdog;
 use vreteno32::board::Board;
 use vreteno32::core::Vreteno;
@@ -532,6 +533,8 @@ fn main() {
     );
     sheet("Uart", "Uart<868>", Uart::<868>::lowered("uart"));
     sheet("Ddr3Per", "Ddr3Per", Ddr3Per::lowered("ddr3"));
+    sheet("Entropy", "Entropy", Entropy::lowered("entropy"));
+    sheet("Trng", "Trng", Trng::lowered("trng"));
     sheet("Board", "Board<868>", Board::<868>::lowered("board"));
     sheet("BarRegs", "BarRegs<4>", BarRegs::<4>::lowered("bar_regs"));
     sheet("PcieBar", "PcieBar", PcieBar::lowered("pcie_bar"));

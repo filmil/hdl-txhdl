@@ -1,0 +1,93 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Entropy, RingOsc
+\datasheet{Entropy}{The entropy source whole: eight ring oscillators as a foreign module, and the peripheral that conditions their samples.}
+
+\dsfacts{\code{lib/parts/src/trng.rs}}{\code{txhdl\_parts::trng::Entropy}}%
+{\code{//docs:examples}, \code{//docs:vreteno}}
+
+\subsection*{Function}
+
+\code{Entropy} is a unit of units with two children. \code{ring} is
+\code{RingOsc}, the physics: eight ring oscillators, each a loop of an
+odd number of inverters through a gate that holds it still while
+\code{en} is low, each sampled by a flip-flop on the clock. A ring
+runs at a rate set by its own gates, wandering with temperature and
+supply, and where the clock's edge catches it in its period is the
+jitter that is the randomness. \code{trng} is \code{Trng}, which folds
+the eight samples, watches, debiases and buffers them. The samples go
+one way between the two and the run bit the other, so that a design
+holds one unit and its netlist holds the module inside.
+
+\code{RingOsc} is a foreign unit. Its netlist is an instance of the
+module \code{ring\_osc} in \code{lib/parts/hdl/ring\_osc.v}, which
+the lowering names and does not write, with the attributes that keep
+Vivado from folding the loops or merging the rings, and
+\code{ring\_osc.xdc} beside it, which turns the loop check into a
+warning and keeps the timer off the loops. Under a simulator, where a
+loop of zero-delay gates is an infinite event loop, the module's own
+branch without \code{SYNTHESIS} defined replaces each ring with a
+shift register with feedback; the unit's \code{run} in a Rust run is
+the same model, seeded apart per ring as the module is, and the code
+says so.
+
+On the link side the unit is an AXI-Lite peripheral whose link is one
+port, \code{bus}, a \code{LitePort}: \code{bus\_aw}, \code{bus\_ar}
+and \code{bus\_w} in, \code{bus\_b} and \code{bus\_r} out. It has no
+other port: the rings are inside.
+
+\subsection*{Parameters}
+
+None. The module takes \code{N}, the rings, and \code{L}, the
+inverters in a ring, and the lowering passes \code{RINGS}, eight, and
+\code{RING\_LENGTH}, seven, from \code{trng.rs}.
+
+\subsection*{Register map}
+
+The four words of \code{Trng}: \code{data}, \code{status},
+\code{ctrl} and \code{raw}, at \code{0x0} to \code{0xc}.
+
+\dstables{Entropy}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item The rings run while \code{Trng}'s run bit is set and are held
+still otherwise, their samples at zero.
+\item Each ring's sample is a flip-flop that may go metastable, which
+is the point of it; \code{Trng} registers the bit again before it
+reads it.
+\item The join runs the rings before the peripheral, so a sample the
+rings drive in a step is what the peripheral folds in that step.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/parts:parts\_test} runs
+\code{the\_netlist\_holds\_the\_rings\_as\_a\_module}: the Verilog
+and the VHDL of \code{Entropy} instantiate \code{ring\_osc} with
+\code{N} eight and do not write it.
+\item \code{//cpu/vreteno:board\_test} runs
+\code{the\_netlist\_holds\_the\_controller}, which also checks that
+the board's netlist instantiates \code{ring\_osc} and does not write
+it, and \code{the\_entropy\_source\_answers\_on\_the\_board}.
+\item \code{//cpu/vreteno/board/sim:board\_test} simulates the board
+with the module's simulation branch inside; manual.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Board}, as \code{entropy} on the sixth slot of the peripheral
+page at \code{0x3500}, behind \code{LiteBridge6}, and Zephyr's entropy
+driver \code{zephyr/drivers/entropy/entropy\_vreteno.c} through it.
+\code{ex\_trng} holds the two children apart, so that the samples are
+a traced port of the lowered \code{Trng}.
+
+\subsection*{Limits}
+
+The Rust run and every simulation are a model of the rings, and a
+model is evidence of the machinery and of nothing else. Whether the
+rings are random is measured on the board and nowhere else, and
+issue 458 records how far that has gone. A netlist that holds this
+unit needs \code{//lib/parts:hdl}, the module, beside it, and
+\code{//lib/parts:hdl\_xdc} among its constraints.

@@ -1,0 +1,112 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Trng
+\datasheet{Trng}{The entropy source's conditioning: the rings' samples folded, watched, debiased and buffered as words behind AXI-Lite.}
+
+\dsfacts{\code{lib/parts/src/trng.rs}}{\code{txhdl\_parts::trng::Trng}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{Trng} takes eight samples a cycle on \code{raw}, one from each
+ring oscillator of \code{RingOsc}, and makes words of entropy a host
+reads. Each cycle it folds the eight to one bit by exclusive or, which
+is less biased than any one of them, and does three things with the
+stream. It watches it: the repetition count test of NIST SP 800-90B,
+a count of identical bits in a row, raises a sticky fault at
+\code{RCT\_CUTOFF}, forty, and the buffer stops filling. It debiases
+it: von Neumann's extractor takes the bits in pairs, \code{01} a zero,
+\code{10} a one, \code{00} and \code{11} nothing, so a bias in the
+source cancels at the cost of three bits in four. And it buffers it:
+the bits that survive fill a word from the top, and whole words wait
+in a buffer of \code{WORDS}, four, which a host takes one at a time.
+A word that finds the buffer full is dropped.
+
+It is an AXI-Lite peripheral whose link is one port, \code{bus}, a
+\code{LitePort} of the five channels: \code{bus\_aw}, \code{bus\_ar}
+and \code{bus\_w} in, \code{bus\_b} and \code{bus\_r} out. Its other
+two ports face the rings: \code{raw} in, and \code{en} out, the run
+bit, which holds the rings still while it is low.
+
+\subsection*{Parameters}
+
+None. \code{RINGS}, eight, \code{RCT\_CUTOFF}, forty, and
+\code{WORDS}, four, are constants of \code{trng.rs}. The cutoff is
+\code{1 + 20 / H} for a false alarm rate of one in a million at a
+min-entropy \code{H} of half a bit per sample, rounded to forty.
+
+\subsection*{Register map}
+
+Offsets from the peripheral's base. The port selects the word by bits
+3 and 2 of the address.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.38\textwidth}p{0.38\textwidth}@{}}
+\toprule
+Offset & Read & Write \\
+\midrule
+\code{0x0} & \code{data}: a word of entropy, taken by the read; zero
+when none is waiting. & Ignored. \\
+\code{0x4} & \code{status}: bit 0 a word is ready, bits 3 to 1 how
+many are waiting, bit 8 the fault, bit 9 the run bit. & Ignored. \\
+\code{0x8} & \code{ctrl}: bit 0 the run bit. & Bit 0 sets the run
+bit; bit 1 clears the fault. \\
+\code{0xc} & \code{raw}: the last 32 folded samples, before the
+extractor. & Ignored. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{Trng}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item With the run bit clear nothing is sampled, \code{en} is low and
+the buffer keeps what it holds, so a host stops the source and reads
+out what is waiting.
+\item The test runs on every folded sample while the run bit is set,
+before the extractor. A trip in the cycle of a clear stays tripped.
+While the fault is set no pair is taken, so no word is made.
+\item A read of \code{data} takes the oldest word when one is waiting
+and answers zero otherwise; a word arriving in the cycle of a read
+that empties the buffer is kept.
+\item A read is answered on \code{bus\_r} in the cycle its address
+beat is taken, with \code{OKAY}. A write needs its address beat, its
+data beat and room on \code{bus\_b} in the same cycle, and is answered
+\code{OKAY} in that cycle.
+\item \code{raw} shifts in one folded sample a cycle while the run
+bit is set, newest lowest, and is what a program on the board reads
+in a loop to measure the source.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/parts:parts\_test} drives it over AXI-Lite from the
+model rings and from stated streams: nothing comes before the run bit,
+eight words come and differ, the buffer holds four and drains oldest
+first, an alternating stream gives all zeros or all ones by the order
+of its pairs, a stuck stream trips the fault after the cutoff and a
+clear takes while a stream just under the cutoff does not.
+\item \code{//docs:trng\_sim\_trng\_tb\_test} and
+\code{//docs:trng\_vsim\_test} simulate the netlist against the run of
+\code{ex\_trng} under nvc and Verilator, with the model rings' samples
+as the run recorded them.
+\item \code{//cpu/vreteno:board\_test} runs
+\code{the\_entropy\_source\_answers\_on\_the\_board}: a program on the
+core turns the source on, takes four words and says they differed.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Entropy}, as \code{trng}, and through it \code{Board} at
+\code{0x3500}. \code{ex\_trng}.
+
+\subsection*{Limits}
+
+Nothing here is evidence of randomness: every run is against a model
+of the rings, and what the tests prove is the folding, the test, the
+extractor and the buffer. The source's bias and entropy are measured
+on the board, from \code{raw} and \code{data}, and issue 458 records
+how far that has gone. The test is the repetition count alone; the
+adaptive proportion test of the same standard is not implemented.
