@@ -1065,7 +1065,14 @@ impl Lowered {
                 _ => declared.push(n.clone()),
             }
         }
-        declared.extend(l.fields.iter().map(|(n, _, _, _)| n.to_string()));
+        // A field that holds a child is the instance, counted below, and
+        // not a second declaration of the name.
+        declared.extend(
+            l.fields
+                .iter()
+                .filter(|(_, k, _, _)| k.is_some())
+                .map(|(n, _, _, _)| n.to_string()),
+        );
         declared.extend(l.wires.iter().map(|(n, _)| n.clone()));
         declared.extend(l.instances.iter().map(|i| i.name.clone()));
         for (was, e) in &moved {
@@ -3175,6 +3182,17 @@ mod tests {
         let v = parent.verilog();
         assert!(v.contains("module out_rw("), "the child's module: {v}");
         assert!(v.contains("out_rw next_rw("), "the instance: {v}");
+    }
+
+    /// A child in a field whose name a target reserves: the derive
+    /// escapes the field and the netlist the instance, and the two are
+    /// one name, not a collision.
+    #[test]
+    fn a_child_in_a_reserved_field_is_one_name() {
+        let mut parent = parent_with_child_named("shared");
+        parent.fields.push(("shared_rw", None, 0, 0));
+        let v = parent.verilog();
+        assert!(v.contains("two_slow shared_rw("), "the instance: {v}");
     }
 
     /// A unit with a port and a register a target reserves, and a wire
