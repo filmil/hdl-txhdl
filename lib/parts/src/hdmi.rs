@@ -18,7 +18,9 @@
 //!
 //! [`I2cInit`] holds the chip in reset, then writes its configuration
 //! registers over I2C, and says whether every byte was acknowledged.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
+use txhdl::comp::{
+    join2, mux, until, Clock, DefaultClock, In, Mem, Out, Reg, Unit,
+};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 
@@ -325,10 +327,14 @@ fn quarter_end<const DIV: usize>(tick: U<16>) -> bool {
     tick == DIV - 1
 }
 
-/// Whether the reset or the settling time is over.
+/// The byte `b` of entry `e`: the address, the register, the value.
 #[lower]
-fn hold_end<const HOLD: usize>(timer: U<24>) -> bool {
-    timer == HOLD - 1
+fn table_byte(e: U<3>, b: U<2>) -> U<8> {
+    select!(b.raw() => {
+        0 => table_dev(e),
+        1 => table_reg(e),
+        _ => table_val(e),
+    })
 }
 
 /// The I2C master that configures the chip.
@@ -343,27 +349,29 @@ fn hold_end<const HOLD: usize>(timer: U<24>) -> bool {
 /// pulled is high through the board's pull-up. A byte the chip does not
 /// acknowledge sets `failed`, and `done` rises when the table is
 /// written.
+///
+/// Two processes. The first is the quarter clock, `tick` counting the
+/// cycles of a quarter over and over, and it carries `failed` and
+/// `done` out from their registers. The second is the sequence: the
+/// two holds as counted loops, then each entry's transaction quarter
+/// by quarter, a line set at the start of a quarter and held to its
+/// end, and the acknowledge read at the end of its second quarter.
+/// Its last wait never returns, since `written` stays up.
 // begin{i2cstate}
 #[derive(Trace, Default)]
 pub struct I2cInit<const DIV: usize, const HOLD: usize> {
-    /// Reset held 0, settling 1, writing 2, done 3.
-    pub phase: Reg<U<2>>,
-    /// Cycles into the reset or the settling.
-    pub timer: Reg<U<24>>,
     /// Cycles into the quarter.
     pub tick: Reg<U<16>>,
-    /// The quarter of the bit.
-    pub quarter: Reg<U<2>>,
-    /// The step of the transaction: the start 0, the address's bits 1
-    /// to 8 and its acknowledge 9, the register's 10 to 17 and 18, the
-    /// value's 19 to 26 and 27, and the stop 28.
-    pub step: Reg<U<5>>,
     /// The entry being written.
     pub entry: Reg<U<3>>,
+    /// The byte of the entry being sent.
+    pub byte: Reg<U<2>>,
     /// The byte going out, its next bit on top.
     pub shift: Reg<U<8>>,
     /// A byte was not acknowledged.
     pub nak: Reg<Bit>,
+    /// The table is written.
+    pub written: Reg<Bit>,
 }
 // end{i2cstate}
 
@@ -381,74 +389,159 @@ impl<const DIV: usize, const HOLD: usize> Unit for I2cInit<DIV, HOLD> {
             Out<Bit>,
         ),
     ) {
-        loop {
-            DefaultClock::rising().await;
-            let phase = self.phase.get();
-            let timer = self.timer.get();
-            let tick = self.tick.get();
-            let q = self.quarter.get();
-            let step = self.step.get();
-            let entry = self.entry.get();
-            let shift = self.shift.get();
-            let writing = phase == 2;
-            let timed = hold_end::<HOLD>(timer);
-            let q_last = quarter_end::<DIV>(tick);
-            let q_go = writing & q_last;
-            let step_go = q_go & (q == 3);
-            // Where in the transaction the step is.
-            let starting = step == 0;
-            let stopping = step == 28;
-            let acking = (step == 9) | (step == 18) | (step == 27);
-            // The lines as the step and the quarter want them, high
-            // meaning released.
-            let clock_in_bit = (q == 1) | (q == 2);
-            let scl = mux(starting, q < 2, mux(stopping, q != 0, clock_in_bit));
-            let data_bit = shift.bit(7).to_bool();
-            let sda = mux(
-                starting,
-                q == 0,
-                mux(stopping, q >= 2, mux(acking, true, data_bit)),
-            );
-            let last_entry = entry == 1;
-            // The next byte, loaded as its first bit begins.
-            let next_byte = select!(step.raw() => {
-                0 => table_dev(entry),
-                9 => table_reg(entry),
-                _ => table_val(entry),
-            });
-            let loading = (step == 0) | (step == 9) | (step == 18);
-            with!(self <= {
-                (phase != 2) & (phase != 3) ? timer: timer + 1,
-                (phase == 0) & timed ? {
-                    phase: U::<2>::from(1u8),
-                    timer: U::<24>::from(0u8),
-                },
-                (phase == 1) & timed ? {
-                    phase: U::<2>::from(2u8),
-                    tick: U::<16>::from(0u8),
-                    quarter: U::<2>::from(0u8),
-                    step: U::<5>::from(0u8),
-                    entry: U::<3>::from(0u8),
-                },
-                writing ? tick: mux(q_last, U::<16>::from(0u8), tick + 1),
-                q_go ? quarter: q + 1,
-                q_go & (q == 2) & acking ?
-                    nak: self.nak.get() | sda_in.get(),
-                step_go ? step: step + 1,
-                step_go & !acking & !starting & !stopping ? shift: shift << 1,
-                step_go & loading ? shift: next_byte,
-                step_go & stopping ? {
-                    step: U::<5>::from(0u8),
-                    entry: entry + 1,
-                },
-                step_go & stopping & last_entry ? phase: U::<2>::from(3u8),
-            });
-            nreset.set(Bit::from(phase != 0));
-            scl_low.set(Bit::from(writing & !scl));
-            sda_low.set(Bit::from(writing & !sda));
-            done.set(Bit::from(phase == 3));
-            failed.set(self.nak.get());
-        }
+        join2(
+            async {
+                loop {
+                    DefaultClock::rising().await;
+                    let tick = self.tick.get();
+                    with!(self <= {
+                        tick: mux(
+                            quarter_end::<DIV>(tick),
+                            U::<16>::from(0u8),
+                            tick + 1,
+                        ),
+                    });
+                    done.set(self.written.get());
+                    failed.set(self.nak.get());
+                }
+            },
+            async {
+                loop {
+                    // The reset, held low for HOLD cycles, then
+                    // released and given HOLD cycles to settle.
+                    DefaultClock::rising().await;
+                    nreset.set(Bit::Zero);
+                    for _ in 0..HOLD {
+                        DefaultClock::rising().await;
+                    }
+                    nreset.set(Bit::One);
+                    for _ in 0..HOLD {
+                        DefaultClock::rising().await;
+                    }
+                    // Each entry of the table is one transaction.
+                    for _ in 0..2 {
+                        // The start: the data line falls while the
+                        // clock is high, then the clock falls.
+                        until(DefaultClock::rising, || {
+                            quarter_end::<DIV>(self.tick.get())
+                        })
+                        .await;
+                        with!(self <= {
+                            byte: U::<2>::from(0u8),
+                            shift: table_byte(
+                                self.entry.get(),
+                                U::<2>::from(0u8),
+                            ),
+                        });
+                        scl_low.set(Bit::Zero);
+                        sda_low.set(Bit::Zero);
+                        until(DefaultClock::rising, || {
+                            quarter_end::<DIV>(self.tick.get())
+                        })
+                        .await;
+                        sda_low.set(Bit::One);
+                        until(DefaultClock::rising, || {
+                            quarter_end::<DIV>(self.tick.get())
+                        })
+                        .await;
+                        scl_low.set(Bit::One);
+                        until(DefaultClock::rising, || {
+                            quarter_end::<DIV>(self.tick.get())
+                        })
+                        .await;
+                        // The address, the register and the value,
+                        // each followed by the chip's acknowledge.
+                        for _ in 0..3 {
+                            // The eight bits, high bit first: the
+                            // data line set while the clock is low,
+                            // the clock high through the two middle
+                            // quarters.
+                            for _ in 0..8 {
+                                until(DefaultClock::rising, || {
+                                    quarter_end::<DIV>(self.tick.get())
+                                })
+                                .await;
+                                sda_low.set(!self.shift.get().bit(7));
+                                until(DefaultClock::rising, || {
+                                    quarter_end::<DIV>(self.tick.get())
+                                })
+                                .await;
+                                scl_low.set(Bit::Zero);
+                                until(DefaultClock::rising, || {
+                                    quarter_end::<DIV>(self.tick.get())
+                                })
+                                .await;
+                                until(DefaultClock::rising, || {
+                                    quarter_end::<DIV>(self.tick.get())
+                                })
+                                .await;
+                                scl_low.set(Bit::One);
+                                self.shift.set(self.shift.get() << 1);
+                            }
+                            // The acknowledge: the data line released
+                            // and read at the end of the clock's high
+                            // half; a one is a byte not taken.
+                            until(DefaultClock::rising, || {
+                                quarter_end::<DIV>(self.tick.get())
+                            })
+                            .await;
+                            sda_low.set(Bit::Zero);
+                            until(DefaultClock::rising, || {
+                                quarter_end::<DIV>(self.tick.get())
+                            })
+                            .await;
+                            scl_low.set(Bit::Zero);
+                            until(DefaultClock::rising, || {
+                                quarter_end::<DIV>(self.tick.get())
+                            })
+                            .await;
+                            until(DefaultClock::rising, || {
+                                quarter_end::<DIV>(self.tick.get())
+                            })
+                            .await;
+                            scl_low.set(Bit::One);
+                            with!(self <= {
+                                nak: self.nak.get() | sda_in.get(),
+                                byte: self.byte.get() + 1,
+                                shift: table_byte(
+                                    self.entry.get(),
+                                    self.byte.get() + 1,
+                                ),
+                            });
+                        }
+                        // The stop: the clock rises while the data
+                        // line is low, then the data line rises.
+                        until(DefaultClock::rising, || {
+                            quarter_end::<DIV>(self.tick.get())
+                        })
+                        .await;
+                        sda_low.set(Bit::One);
+                        until(DefaultClock::rising, || {
+                            quarter_end::<DIV>(self.tick.get())
+                        })
+                        .await;
+                        scl_low.set(Bit::Zero);
+                        until(DefaultClock::rising, || {
+                            quarter_end::<DIV>(self.tick.get())
+                        })
+                        .await;
+                        sda_low.set(Bit::Zero);
+                        until(DefaultClock::rising, || {
+                            quarter_end::<DIV>(self.tick.get())
+                        })
+                        .await;
+                        self.entry.set(self.entry.get() + 1);
+                    }
+                    self.written.set(Bit::One);
+                    // The table is written; nothing follows.
+                    until(DefaultClock::rising, || {
+                        !self.written.get().to_bool()
+                    })
+                    .await;
+                }
+            },
+        )
+        .await;
     }
 }
 // end{i2c}
