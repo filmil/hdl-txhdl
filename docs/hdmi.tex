@@ -163,12 +163,25 @@ the clock low in the first and the last. A transaction is 29 steps of
 four quarters: the start, the device's address and its acknowledge, the
 register and its acknowledge, the value and its acknowledge, and the
 stop. \code{scl\_low} and \code{sda\_low} high pull a line low, and the
-data line comes back in on \code{sda\_in}, where the master reads it in
-the third quarter of each acknowledge.
+data line comes back in on \code{sda\_in}, where the master reads it at
+the end of the acknowledge's second quarter.
 
-\hdmipart{i2cstate}{The master's state.}{lst:h-i2cstate}
+The master is two processes. The first is the quarter clock, one
+counter that wraps every \code{DIV} cycles, and it carries \code{done}
+and \code{failed} out from their registers. The second is the sequence,
+written as the transaction reads: the reset held and then left to
+settle, each a counted loop of \code{HOLD} waits; then, for each entry
+of the table, the start, the three bytes each followed by its
+acknowledge, and the stop, every quarter a line set and a wait for the
+quarter's end. The lowering numbers the waits into a state register of
+its own and gives each counted loop a counter, so the netlist keeps
+what a hand-numbered machine would have kept in a phase, a step and a
+quarter without the source naming any of them. The sequence ends in a
+wait that never returns, since \code{written} stays up.
 
-\hdmipart{i2c}{The master's step.}{lst:h-i2c}
+\hdmipart{i2cstate}{The master's registers.}{lst:h-i2cstate}
+
+\hdmipart{i2c}{The master's two processes.}{lst:h-i2c}
 
 Listing~\ref{lst:h-table} is the table the master writes: a register
 that takes the chip out of power-down for the input the board wires,
