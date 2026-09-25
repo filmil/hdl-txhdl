@@ -179,6 +179,34 @@ genrule(
     ],
 )
 
+# Fastboot's copy-and-jump (issue 143), assembled from the file the
+# Zephyr image builds, as the bytes of the routine alone.
+genrule(
+    name = "fastboot_jump_bin",
+    srcs = ["//zephyr:fastboot/app/src/jump.S"],
+    outs = ["fastboot_jump.bin"],
+    cmd = """
+        t=$$(mktemp -d)
+        $(location @riscv_none_elf_gcc//:as) -march=rv32imc -o $$t/j.o $<
+        $(location @riscv_none_elf_gcc//:objcopy) -O binary -j .text.fb_jump $$t/j.o $@
+        rm -rf $$t
+    """,
+    tools = [
+        "@riscv_none_elf_gcc//:as",
+        "@riscv_none_elf_gcc//:objcopy",
+    ],
+)
+
+# That routine run on the model, from places it was not assembled for.
+rust_test(
+    name = "fastboot_jump_test",
+    srcs = ["tests/fastboot_jump.rs"],
+    data = [":fastboot_jump_bin"],
+    edition = "2021",
+    env = {"FB_JUMP": "$(rootpath :fastboot_jump_bin)"},
+    deps = [":vreteno32"],
+)
+
 # The decoder of compressed instructions against that listing.
 rust_test(
     name = "compressed_test",
