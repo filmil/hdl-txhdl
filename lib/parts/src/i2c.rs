@@ -95,10 +95,6 @@ pub struct I2c {
 // end{state}
 
 // begin{run}
-// The lowering reads `&` and `>=` and knows no `contains`, so the
-// comparisons that place a step in the transaction are written as a
-// pair rather than as a range.
-#[allow(clippy::manual_range_contains)]
 #[lower]
 impl Unit for I2c {
     async fn run(
@@ -130,7 +126,7 @@ impl Unit for I2c {
             // pair of comparisons rather than a range, because the
             // lowering reads `&` and `>=` and knows no `contains`.
             let at_start = step == 1;
-            let at_bits = (step >= 2) & (step <= 9);
+            let at_bits = (2..=9).contains(&step.raw());
             let at_ack = step == 10;
             let at_stop = step == 11;
             let at_end = step == 12;

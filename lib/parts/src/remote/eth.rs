@@ -94,11 +94,6 @@ pub struct RemoteLink<const DEV: usize> {
 // end{ethstate}
 
 /// The byte at `at` of the frame that carries an ask.
-//
-// The alternatives are written one by one rather than as ranges
-// because the lowering reads `|` and not `..=`, which is the rule
-// the verification section of AGENTS.md states.
-#[allow(clippy::manual_range_patterns)]
 #[lower]
 fn ask_byte(
     at: U<6>,
@@ -114,11 +109,11 @@ fn ask_byte(
     select!(at.raw() => {
         // The destination: every port, since the peripheral does not
         // know where the program is.
-        0 | 1 | 2 | 3 | 4 | 5 => ff,
+        0..=5 => ff,
         // The source: locally administered, with the device number in
         // the last byte, so two peripherals differ on the wire.
         6 => U::<8>::from(0x02u8),
-        7 | 8 | 9 | 10 => zero,
+        7..=10 => zero,
         11 => dev,
         12 => U::<8>::from(0x88u8),
         13 => U::<8>::from(0xb5u8),

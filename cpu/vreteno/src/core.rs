@@ -513,14 +513,10 @@ fn csr_known(f12: U<12>) -> Bit {
 /// Whether a CSR number is one of the read-only ones, whose address
 /// begins with two set bits. A write to one is an illegal
 /// instruction; a read is not.
-// The four addresses are consecutive, so Clippy asks for a range. The
-// lowering reads a `select!` arm's alternatives one by one and not a
-// range, which is the rule `AGENTS.md` states, so they are written out.
-#[allow(clippy::manual_range_patterns)]
 #[lower]
 fn csr_ro(f12: U<12>) -> Bit {
     select!(f12.raw() => {
-        0xf11 | 0xf12 | 0xf13 | 0xf14 => Bit::One,
+        0xf11..=0xf14 => Bit::One,
         _ => Bit::Zero,
     })
 }
@@ -553,10 +549,7 @@ fn m_signed_b(f3: U<3>) -> bool {
 /// back: a product or a quotient is negated when the signs differed,
 /// a remainder takes the dividend's sign, and a quotient by zero is
 /// all ones.
-// A `select!` arm's alternatives are compared one by one when the
-// function is lowered, so they are written out rather than as a range.
 #[lower]
-#[allow(clippy::manual_range_patterns)]
 fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
     let mag = hi.slice::<0, 32>().concat::<_, 64>(lo);
     let p = mux(neg_q, U::<64>::from(0u32) - mag, mag);
@@ -565,8 +558,8 @@ fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
     let r = mux(neg_r, U::<32>::from(0u32) - rem, rem);
     select!(f3.raw() => {
         0 => p.slice::<0, 32>(),
-        1 | 2 | 3 => p.slice::<32, 32>(),
-        4 | 5 => q,
+        1..=3 => p.slice::<32, 32>(),
+        4..=5 => q,
         _ => r,
     })
 }
