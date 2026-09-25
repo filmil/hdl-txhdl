@@ -138,9 +138,11 @@ all under `//docs`:
   `//tools/datasheet` from the component's own lowering.
   A component's sheet is written in a sweep rather than in the change
   that adds it; see the standing rule below.
-* `//docs:cheatsheet` is the one-page cheat sheet, also as a PNG
-  (`//docs:cheatsheet_png`); it shows `ex_cheat.rs`, its netlist and
-  its waveform, all produced by the build.
+* `//docs:cheatsheet` is the cheat sheet, two landscape pages printed
+  on the two sides of one sheet, also as a PNG per side
+  (`//docs:cheatsheet_png`). The front shows `ex_cheat.rs`, its
+  netlist and its waveform, all produced by the build; the back is
+  the vocabulary.
 * `//docs:stats` is the repository in numbers, lines per topic,
   measured once on September 13, 2026, and typed in; it is not kept up
   to date, and `tools/repostats.sh` measures again.

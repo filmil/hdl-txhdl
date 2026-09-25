@@ -35,7 +35,7 @@ Seventeen documents are typeset here, and `cover.tex` names them all:
 `paper.tex` is the expository paper, `//docs:paper`;
 `cover.tex` is the cover, `//docs:cover`;
 `showcase.tex` is at most five pages on the whole of it, `//docs:showcase`;
-`cheatsheet.tex` is the one-page cheat sheet, `//docs:cheatsheet` and `//docs:cheatsheet_png`;
+`cheatsheet.tex` is the two-sided cheat sheet, `//docs:cheatsheet` and `//docs:cheatsheet_png` (a PNG per side);
 `tutorial.tex` is the tutorial, `//docs:tutorial`;
 `zero.tex` is the tutorial from an empty directory, `//docs:zero`, on `tutorial/blinky/`;
 `station.tex` is the tutorial on the reservation station, `//docs:station`;
