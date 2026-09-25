@@ -1,0 +1,44 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Helpers From Another File}
+\label{sec:x-helpers}
+
+A function under \code{\#[lower]} is inlined into the lowered units
+that call it (Section~\ref{sec:x-fn}). It used to be found by reading
+the unit's own file, since a procedural macro sees only the item it is
+on, so a helper had to live beside every unit that called it. And it
+took each value as a parameter of its own: the core's CSR read took
+fourteen, one per register it chooses between.
+
+Both limits are gone. \code{\#[lower]} on a function now also gives it
+a lowering of its own, which the macro reaches by the path the unit
+calls the function by, so a helper may be \code{pub} in any module of
+the crate or of a dependency, and a \code{use} of it brings both. A
+helper may take and give a struct: a field of a parameter is read by
+its type, and a struct literal is the concatenation of its fields. The
+core's CSR read takes the number and one struct of the registers now.
+
+The helpers below are in \code{helpers/codes.rs}, a module of this
+crate that the unit's file does not hold. \code{swap} takes a
+\code{Pair} and gives one back, and \code{mix} calls \code{gray} twice
+on the fields of its \code{Pair}. The netlist shows what a helper
+reached this way keeps of the inlining in the unit's own file: the
+parameter \code{gray} reads twice is a wire at each call, named for
+the function and the parameter and numbered, so a chain of calls
+grows by a wire a call. The build checks the netlist against the run
+under nvc and Verilator.
+
+\lstinputlisting[caption={\code{helpers/codes.rs}, the helpers, in a file of their own.},label={lst:x-helpers-codes}]{lib/examples/helpers/codes.rs}
+
+\begin{figure}[htbp]
+\centering
+\input{helpers_timing.tex}
+\caption{Two bytes in, the first's Gray code out, and the swapped
+pair mixed into the register a cycle later.}
+\label{fig:x-helpers}
+\end{figure}
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=unit-unit,caption={The unit of \code{ex\_helpers.rs}. Run with \code{bazel run //lib/examples:ex\_helpers}.},label={lst:x-helpers}]{lib/examples/ex_helpers.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_helpers} printed when the build ran it: the codes cycle by cycle, then the Verilog, the helpers' expressions in place and the parameter \code{gray} reads twice a wire at each call.},label={lst:x-helpers-out}]{out_helpers.txt}

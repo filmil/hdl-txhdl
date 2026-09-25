@@ -847,6 +847,8 @@ latex_document(
         ":frame_timing",
         ":hold_run",
         ":hold_timing",
+        ":helpers_run",
+        ":helpers_timing",
         ":rename_run",
         ":rename_timing",
         ":foreign_run",

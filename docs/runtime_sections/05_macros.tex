@@ -41,7 +41,22 @@ reads more than once, and that is worth more than a name, is given a
 wire of its own instead, called after the function and the name it had
 there and numbered. That keeps an expression written once whatever the
 body does with it, so calls that nest cost a wire each rather than a
-power of the reads, which is issue 126. It reads \code{case!} and \code{select!},
+power of the reads, which is issue 126.
+A helper that is not in the unit's file is reached another way, since
+the file is all the macro reads. \code{\#[lower]} on a function adds,
+beside it, a type of the same name in the other namespace, whose
+\code{lowered} builds the function's expression when a unit is
+lowered; a call the file does not explain, \code{f(x)} or
+\code{m::f::<K>(x)}, lowers to \code{f::lowered(x)} or
+\code{m::f::lowered::<K>(x)}, which Rust resolves wherever it resolves
+the function, through a path or a \code{use}. Inside it a value read
+twice is bound by \code{inline\_bind} to a wire of the unit, which
+the unit's \code{lowered} collects between \code{inlined\_begin} and
+\code{inlined\_end}, a frame per unit so that a child lowered inside
+it keeps its own. A parameter typed as a struct is known by its type
+while the body is read, so \code{p.f} is a field of it, whatever
+computed the value; and a struct literal passed for it, or given back,
+is the concatenation of its fields (issue 504). It reads \code{case!} and \code{select!},
 and a \code{match} that yields a value, as chains on the value, with
 an enum variant, an integer, a range \code{lo..=hi} or \code{lo..hi}
 or \code{\_} as a pattern and a guard joined by \code{\&\&}; a
