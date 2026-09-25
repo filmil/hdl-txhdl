@@ -383,6 +383,14 @@ impl Unit for Sd {
             let bclear = rising & in_busy & (n >= 4) & dat0;
             let bgiveup = rising & in_busy & (waited == 0xff_ffff);
             // What follows the response, or the command with none.
+            // The CRC of a short response covers its start bit, so the
+            // register starts with it fed; a long one's covers only the
+            // payload, so it starts empty.
+            let crc7_first = mux(
+                rlong,
+                U::<7>::from(0u8),
+                crc7_step(U::<7>::from(0u8), cin),
+            );
             let after_data =
                 mux(waitbusy, U::<4>::from(BUSY), U::<4>::from(FINISH));
             let obit1 = U::<3>::from(7u8).concat::<1, 4>(obit.zext::<1>());
@@ -523,9 +531,7 @@ impl Unit for Sd {
                 rstart ? {
                     phase: U::<4>::from(RESP),
                     resp: cin.zext::<128>(),
-                    // The start bit is a zero into an empty CRC, which
-                    // leaves it empty, so it is not fed (issue 555).
-                    crc7: U::<7>::from(0u8),
+                    crc7: crc7_first,
                     n: U::<13>::from(1u8),
                 },
                 rgiveup ? {
