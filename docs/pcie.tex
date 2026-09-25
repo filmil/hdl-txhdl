@@ -274,8 +274,10 @@ settings, so a mistyped setting shows only in the log~\cite{i177}. The
 slot's PERST\# is not wired, as above~\cite{i179}.
 
 \code{PcieBar} is its own bus, on the endpoint's clock. Putting the BAR
-on Vreteno's bus instead is a crossing between two clocks, which the
-lowering cannot yet co-simulate~\cite{i131}. \code{BarRegs} answers one
+on Vreteno's bus instead is a crossing between two clocks, which
+\code{ChanCdc} writes in the language and the lowering co-simulates
+since issue 131~\cite{i131}; it is not done here, and the endpoint
+keeps its own bus. \code{BarRegs} answers one
 beat a burst and ignores a write's strobe, which a host reading and
 writing whole registers does not notice.
 

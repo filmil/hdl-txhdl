@@ -301,9 +301,12 @@ margin is not zero.
 The whole peripheral runs on the pixel clock, bus port included. A
 host on the system clock reaches it through a crossing of the five
 AXI-Lite channels, which the demonstration does not need and nothing
-here provides. The lowering cannot yet co-simulate a unit of two
-clocks, which is what a crossing written in the language would
-be~\cite{i131}.
+here provides. Such a crossing written in the language is
+\code{ChanCdc}, the clock-crossing channel in \code{//lib/parts}
+under \code{cdc}, and the lowering co-simulates a unit of two clocks
+against one run, each port checked on the edge of its own clock, since
+issue 131~\cite{i131}; the flagship crosses these five channels with
+the hand-written \code{chan\_cdc} instead, five instances in its top.
 
 The framebuffer is 12 bits a pixel and at most 256 by 128. The mode
 is fixed when the type is named, and there is one I2C table.
