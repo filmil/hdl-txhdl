@@ -58,9 +58,9 @@ all under `//docs`:
 * `//docs:paper` is the expository paper: the system as it is and its
   results, with diagrams, for a reader meeting TxHDL for the first
   time; no history.
-* `//docs:tutorial` is the tutorial, six steps on six examples for a
-  reader new to the language; every listing is included from the
-  examples and every printout is the build's.
+* `//docs:tutorial` is the tutorial, eight steps on the examples for a
+  reader new to the language, and a ninth on adding one; every listing
+  is included from the examples and every printout is the build's.
 * `//docs:zero` is the tutorial for an empty directory: four files
   that build a blinky with Bazel against the GitHub mirror, kept under
   `tutorial/blinky/`, which the tree builds as a check.
