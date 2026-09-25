@@ -811,6 +811,8 @@ latex_document(
         ":nested_timing",
         ":link_run",
         ":link_timing",
+        ":seq_run",
+        ":seq_timing",
         ":rename_run",
         ":rename_timing",
         ":foreign_run",
@@ -1931,6 +1933,24 @@ waveform(
         "//begin=>begin",
         "//latch/signal_rw=>signal",
         "//out=>out",
+    ],
+)
+
+# A process of several waits, lowered to a state machine whose
+# register the unit does not declare (issue 501).
+waveform(
+    name = "seq",
+    example = "//lib/examples:ex_seq",
+    lowered = ("stepper", "stepper"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//words/rx_valid=>word_valid",
+        "//words/rx_data=>word",
+        "//words/rx_ready=>word_ready",
+        "//go=>go",
+        "//stepper/held=>held",
+        "//sums/tx_valid=>sum_valid",
+        "//sums/tx_data=>sum",
     ],
 )
 
