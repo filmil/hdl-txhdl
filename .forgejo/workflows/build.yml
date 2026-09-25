@@ -40,11 +40,22 @@ jobs:
       # A cold build fetches a Debian rootfs, a Zig toolchain, graphviz built
       # from source and a TeX installation, which is roughly 950 actions. The
       # runner is serial, so a cache miss costs every other queued run.
+      #
+      # Everything under ~/.cache/bazel except Bazel's install base (#540).
+      # Bazel dates the install base's files ten years ahead on purpose, so
+      # restoring it printed a tar warning per file, about 440 lines at the
+      # top of every log, and Bazel re-extracts it in a few seconds anyway.
+      # The cache tars each matched path whole and a `!` line drops only an
+      # exact match, so excluding `install` means listing its siblings:
+      # `_bazel_root` is itself excluded and its children listed instead.
       - name: Cache Bazel
         uses: https://code.forgejo.org/actions/cache@v4
         with:
           path: |
-            ~/.cache/bazel
+            ~/.cache/bazel/*
+            !~/.cache/bazel/_bazel_root
+            ~/.cache/bazel/_bazel_root/*
+            !~/.cache/bazel/_bazel_root/install
             ~/.cache/bazelisk
           key: bazel-${{ hashFiles('.bazelversion', '.bazelrc', 'MODULE.bazel', 'MODULE.bazel.lock') }}
           restore-keys: |
