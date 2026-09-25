@@ -176,7 +176,13 @@ channel has one receiver. A side of the parent's that is a struct, passed
 whole, is its fields in order, and a struct literal
 \code{S \{ b: x, a \}} joins each field to the child's port of that
 name, whatever order the literal writes them in; a channel end or
-channel port joined twice or never is refused by name, as is anything else in the body. The
+channel port joined twice or never is refused by name, as is anything else in the body.
+An input passed \code{tie(v)} is held at the constant \code{v}: in
+the run it is a wire \code{comp::tie} sets once, and in the netlist
+a wire of the parent, \code{FIELD\_tieK}, driven by \code{lit(v)},
+so \code{v} is evaluated when \code{lowered} runs and is a constant.
+\code{Lowered::checked} refuses such a wire joined to anything but a
+child's input, which it would drive twice (issue 498). The
 parent's \code{lowered} reaches each child through a value of
 itself, so a unit of units is \code{Default}, as every unit is, and
 each child's module is named for the parent and the field. A net

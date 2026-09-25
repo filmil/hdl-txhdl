@@ -1,0 +1,44 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Input Held at a Constant}
+\label{sec:x-tie}
+
+A unit of units joins each of its children's ports to one of its own
+ports, or to a channel or a wire it makes in \code{run}. Sometimes an
+input has nothing to be joined to: the design wants it at one value
+for good, a step of three or an enable that is always on.
+\code{tie(v)} is that value, written where the input is passed.
+
+In the run, \code{tie(v)} is a wire set to \code{v} once and never
+driven again, so the child reads \code{v} on every step. In the
+parent's netlist it is a wire of the parent's own, named for the
+child and numbered, driven by the constant and joined to the child's
+input. The constant is evaluated when the parent is lowered as well
+as when it runs, so it is a literal or a value made from literals, and
+the two cannot disagree.
+
+Before \code{tie}, a design that wanted an input held made a
+\code{signal}, drove nothing into it, and passed its reading end.
+That holds the type's default, which is a constant, but always zero,
+and nothing in the source said it was meant.
+
+A constant drives what it is joined to, so it may only be joined to an
+input. Joined to an output it would be driven twice, and a channel is
+three nets and not one, so the lowering refuses both, naming the wire,
+the port and the child.
+
+The accumulator below adds its input and a step to a total while it
+is enabled; the parent holds the step at three and the enable on. The
+build checks the parent's netlist against this run under nvc and
+Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{tie_timing.tex}
+\caption{The accumulator with its step tied to three and its enable
+on: the total grows by the input and three on every edge, and wraps.}
+\label{fig:x-tie}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_tie.rs}. Run with \code{bazel run //lib/examples:ex\_tie}.},label={lst:x-tie}]{lib/examples/ex_tie.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_tie} printed when the build ran it: the total and the output cycle by cycle, then the Verilog, the two constants the wires \code{acc\_tie0} and \code{acc\_tie1}.},label={lst:x-tie-out}]{out_tie.txt}

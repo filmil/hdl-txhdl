@@ -803,6 +803,8 @@ latex_document(
         ":names_timing",
         ":reserved_run",
         ":reserved_timing",
+        ":tie_run",
+        ":tie_timing",
         ":rename_run",
         ":rename_timing",
         ":foreign_run",
