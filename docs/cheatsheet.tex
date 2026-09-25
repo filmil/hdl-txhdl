@@ -1,10 +1,14 @@
 % SPDX-License-Identifier: Apache-2.0
 %
-% The TxHDL cheat sheet: one page, landscape. Built by //docs:cheatsheet,
-% and as a PNG by //docs:cheatsheet_png.
+% The TxHDL cheat sheet: two pages, landscape, meant to be printed on
+% the two sides of one sheet. The front walks one small unit from its
+% source to its netlist and its waveform; the back is the vocabulary.
+% Each side stands on its own. Built by //docs:cheatsheet, and as one
+% PNG per side by //docs:cheatsheet_png.
 \documentclass[10pt]{article}
 \usepackage[paperwidth=11in,paperheight=8.5in,margin=0.4in,top=0.35in,bottom=0.35in]{geometry}
 \usepackage{multicol}
+\usepackage{array}
 \newcommand{\listingsize}{\fontsize{6.2}{7.2}\selectfont}
 \input{housestyle}
 \pagestyle{empty}
@@ -15,95 +19,267 @@
 \definecolor{tint}{RGB}{232,238,250}
 
 % A section head: a coloured bar.
-\newcommand{\head}[1]{\vspace{4pt}\noindent\colorbox{bar}{\parbox{\dimexpr\linewidth-2\fboxsep}{\color{white}\bfseries\small #1}}\vspace{2pt}\par}
+% A heading never sits alone at the foot of a column: when less than
+% five lines are left, the column breaks before it.
+\newcommand{\keep}{\par\vskip 0pt plus 5\baselineskip\penalty-200\vskip 0pt plus -5\baselineskip}
+\newcommand{\head}[1]{\keep\vspace{4pt}\noindent\colorbox{bar}{\parbox{\dimexpr\linewidth-2\fboxsep}{\color{white}\bfseries\small #1}}\vspace{2pt}\par}
+
+% The banner across the top of a side.
+\newcommand{\banner}[2]{\noindent\colorbox{bar}{\parbox{\dimexpr\textwidth-2\fboxsep}{\color{white}
+{\LARGE\bfseries #1}\hfill{\small #2}}}\vspace{4pt}\par}
+
+% A two-column table of code and what it means, a column wide.
+\newenvironment{vocab}{\par\footnotesize\setlength{\tabcolsep}{3pt}\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.53\linewidth}>{\raggedright\arraybackslash}p{0.44\linewidth}@{}}}{\end{tabular}\par}
 
 \begin{document}
 \small
 
-\noindent\colorbox{bar}{\parbox{\dimexpr\textwidth-2\fboxsep}{\color{white}
-{\LARGE\bfseries TxHDL cheat sheet}\hfill{\small a hardware description language that is a Rust library; every construct Rust already has was deleted, and this is what is left}}}
-\vspace{4pt}
+% ---------------------------------------------------------------- front
+\banner{TxHDL cheat sheet}{hardware in Rust: the front walks one unit
+through; the back is the vocabulary}
 
 \begin{multicols}{3}
 
-\head{The rule}
-\textbf{Delete every construct Rust provides.} A transaction is a
-\code{struct}; a unit is a \code{struct} that implements
-\code{Unit<In, Out>}; a pipeline is an \code{async fn}; a
-configuration is a trait with associated types and constants; a
-clock is a type. \code{rustc} is the parser, and the type checker
-finds two drivers on a wire (a move error), a clock-domain crossing
-without a \code{Crossing} (a type error) and a cycle count in a
-combinational body (no \code{.await} to write).
+\head{The idea}
+You already know most of TxHDL, because it is Rust. Where Rust has a
+way to say something, TxHDL uses it and adds nothing: a transaction
+is a \code{struct}, a unit is a \code{struct} with an \code{async fn
+run}, a pipeline is an \code{async fn}, a clock is a type. So
+\code{rustc} does the checking for you. Two drivers on one wire is a
+move error. A signal handed to the wrong clock is a type error. A
+cycle count in combinational code can't happen, because there is no
+\code{.await} to write.
 
-\head{Time}
-A process \textbf{waits for an event, then reads state}. The waits
-are \code{C::rising()}, \code{C::falling()}, \code{rx.wait()} and
-\code{until(C::rising, || cond)}. Reads are plain: \code{reg} is what
-the last edge latched; drives commit at the tick's end.
-\textbf{Every \code{.await} is a cycle boundary}; events that share an
-edge are written \code{parallel!(a, b).await}. Time runs in ticks,
-two per cycle, so a falling edge is a tick of its own.
+\head{The one rule about time}
+A process \textbf{waits for an edge, then reads, then drives}.
+Every \code{.await} is a cycle boundary. After the wait, a register
+reads as the edge left it, and anything you drive lands at the end
+of the step, all at once. That is why you can read and drive the
+same register in one step and still mean hardware.
 
-\head{Vocabulary}
-\begin{tabular}{@{}p{0.47\linewidth}p{0.5\linewidth}@{}}
-\code{Bit}, \code{Logic}, \code{U<N>}, \code{I<N>} & values; the operators are Rust's \\
-\code{\#[derive(Transaction)]} & a struct that moves over a channel \\
-\code{Reg<T, C>} & state, in clock \code{C}; a value; \code{set} \\
-\code{signal()} $\to$ \code{(Out, In)} & a wire's two ends; \code{Out} is not \code{Clone} \\
-\code{chan()} $\to$ \code{(Tx, Rx)} & a channel, a buffer of two; \code{send}, \code{ready}, \code{wait}, \code{take} \\
-\code{Crossing<T, A, B>} & the only way between clocks \\
-\code{interface!} & members and roles, a struct per role \\
-\code{with!(self <= \{..\})}, \code{when!(c => self \{..\})} & drives of one struct; \code{if c \{..\}} a chain \\
-\code{case!(v => \{ p => \{..\} \})} & many arms, first match wins \\
-\code{select!(v => \{ p => e, .. \})} & a value by pattern; a mux chain \\
-\code{Mem<T, N>} & words; \code{read}, \code{at(a) <= v} \\
-\code{pipeline::drive(f, rx, tx)} & one invocation of \code{f} per cycle \\
-\code{config! \{ Fpga: C for Top<Fpga> \{..\} \}} & a build, as one item \\
-\code{\#[derive(Trace)]}, \code{Wave} & signals named from fields; VCD or FST \\
-\code{\#[lower]}, \code{\#[pipeline(..)]} & a netlist from \code{run} or an \code{async fn}; a \code{fn} inlined \\
-\end{tabular}
+The waits you'll use: \code{C::rising()}, \code{C::falling()}, and
+\code{until(C::rising, || cond)} for ``the first edge where
+\code{cond} holds''. Two events on one edge are
+\code{parallel!(a, b).await}. Time counts in ticks, two per cycle of
+the default clock, so a falling edge has a tick of its own.
+
+\head{Build it, run it, look at it}
+All you install is \code{bazelisk}. The toolchains, the simulators
+and the \LaTeX{} for this page come through the build.
+\begin{lstlisting}[style=ascii,frame=none,backgroundcolor=\color{tint},xleftmargin=2pt]
+bazel build //...                 # everything
+bazel test  //...                 # and check it
+bazel run //lib/examples:ex_cheat # the netlist
+TXHDL_FST=c.fst bazel run \
+  //lib/examples:ex_cheat         # and a waveform
+bazel build //docs/...            # every document
+\end{lstlisting}
+
+\head{Where to read more}
+\code{//docs:tutorial} takes you through in nine steps, one example
+each. \code{//docs:examples} has one example per idea, with what each
+printed. \code{//docs:zero} starts from an empty directory.
+\code{//docs:cover} lists every document there is.
+
+\head{Adding your own}
+Copy \code{lib/examples/ex\_cheat.rs} to \code{ex\_\emph{name}.rs},
+add it to \code{lib/examples/BUILD.bazel} and its \code{sources},
+give it a \code{waveform()} entry, and write its section in the
+examples document. An idea lives in three places: the library, an
+example, and a document. The example is the test.
+
 
 \columnbreak
 
-\head{A unit}
+\head{A whole unit: a counter}
+This counts while \code{enable} is high and raises \code{tick} on
+seven. Read it top to bottom: the struct is the state, the
+\code{impl} is the behaviour, and the ports are in the signature.
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,frame=none,backgroundcolor=\color{tint},xleftmargin=2pt]{lib/examples/ex_cheat.rs}
+\code{\#[lower]} is what makes the same code a netlist too. Leave it
+off and the unit still simulates.
 
-\head{Its netlist}
-What \code{Counter::verilog("counter")} printed when the build ran it; the same lowering, as VHDL, is simulated by \code{nvc} against the waveform on the right, in the build:
+\head{What it turns into}
+Here is what \code{Counter::verilog("counter")} printed when the
+build ran it. The \code{rst} is the reset every module gets for free.
+The build also writes the VHDL, and simulates both against the Rust
+run on the right, tick by tick.
 \lstinputlisting[style=ascii,frame=none,backgroundcolor=\color{tint},xleftmargin=2pt]{out_cheat.txt}
 
 \columnbreak
 
-\head{Its waveform}
-Drawn by the build from the FST the example wrote, time in ticks:
-\code{enable} drops at cycle 10, \code{n} counts while it is high,
-\code{tick} marks 7.
+\head{And what it did}
+The build drew this from the waveform the run wrote, so it can't
+disagree with the code. \code{enable} drops at cycle 10, \code{n}
+counts while it's high, and \code{tick} marks each seven.
 \begin{center}
 \input{cheat_timing_color.tex}
 \end{center}
 
-\head{Build and run}
-\begin{lstlisting}[style=ascii,frame=none,backgroundcolor=\color{tint},xleftmargin=2pt]
-bazel build //...                 # everything, hermetically
-bazel run //lib/examples:ex_cheat # prints the netlist
-TXHDL_FST=c.fst bazel run \
-  //lib/examples:ex_cheat         # and writes the waveform
-bazel build //docs/...            # every document
-\end{lstlisting}
+\head{The shape every unit has}
+\begin{itemize}\setlength{\itemsep}{0pt}\setlength{\leftmargin}{8pt}
+\item One \code{loop}, and its first line is the wait.
+\item Then reads: inputs with \code{get}, registers just by name.
+\item Then \code{let}s, each a named wire in the netlist.
+\item Then drives, each written once: \code{with!} for registers,
+  \code{set} for outputs, \code{send} for channels.
+\end{itemize}
+Nothing is assigned twice and nothing branches around a drive. If
+you keep to that shape, the lowering can read your unit.
 
-\head{Documents}
-\code{//docs:cover} names them: \code{article} (the merge),
-\code{embedding} (the language), \code{runtime} (the library,
-verbatim), \code{examples} (one per concept, with what each printed
-and its waveform), \code{vreteno} (the RV32I core), and \code{all}
-(every one, in order). Every listing
-is included from the tree at build time; every claim about Rust was
-compiled first.
+\head{How the netlist is checked}
+For every lowered example the build keeps the Rust run's trace,
+writes VHDL and Verilog, and replays the inputs into both, asserting
+every register and output at every tick: VHDL under nvc and Verilog
+under Verilator. Add \code{lowered = (entity, unit)} to a
+\code{waveform()} in \code{docs/BUILD.bazel} and your unit gets the
+same two tests.
 
+
+\head{When something goes wrong}
+The macros refuse what they can't lower, at compile time, with a
+message that names the construct. If the Rust run and the netlist
+ever disagree, the co-simulation test fails at the first tick where
+they differ. Look at the waveform first; it usually tells you why.
+
+\vfill
 \InputIfFileExists{buildstamp.tex}{}{}
 \providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
-{\footnotesize\buildstamp\ Written with a large language model, Claude, as an assistant, as every commit says.}
+{\footnotesize\buildstamp\ Written with a large language model,
+Claude, as an assistant, as every commit says. Turn over for the
+vocabulary.}
+
+\end{multicols}
+
+% ---------------------------------------------------------------- back
+\newpage
+\banner{TxHDL, the vocabulary}{everything you'll reach for, and how it
+lowers}
+
+\begin{multicols}{3}
+
+\head{Values and state}
+\begin{vocab}
+\code{Bit}, \code{U<N>}, \code{I<N>} & bits and words; Rust's operators work on them \\
+\code{\#[derive(Value)]} & your own enum or struct as a value, shown by name in a trace \\
+\code{\#[derive(Transaction)]} & a struct that can travel on a channel \\
+\code{Reg<T, C>} & a register on clock \code{C} (default if left out); read it by name \\
+\code{Wire<T>} & a \code{let} kept as a field, so the waveform can see it \\
+\code{Mem<T, N>} & a memory; \code{read(a)}, and write with \code{at(a)} in \code{with!} \\
+\code{slice}, \code{concat}, \code{sext}, \code{zext} & take words apart, put them together \\
+\code{mul::<M>()} & a product wider than its operands \\
+\end{vocab}
+
+\head{Driving}
+\begin{vocab}
+\code{with!(self <= \{ c ? n: v \})} & drive registers, each under its condition \\
+\code{when!(c => self \{ .. \})} & the same, condition first \\
+\code{case!(v => \{ p => \{..\} \})} & many arms; the first match wins \\
+\code{if c \{ .. \}} & Rust's own \code{if}, around drives \\
+\code{out.set(v)} & drive an output wire this cycle \\
+\end{vocab}
+
+\head{Choosing a value}
+\begin{vocab}
+\code{mux(c, a, b)} & two ways \\
+\code{select!(v => \{ p => e, .. \})} & many ways, by pattern \\
+\code{if c \{ a \} else \{ b \}} & Rust's form, lowered as a \code{mux} \\
+\code{match v \{ .. \}} & lowered as a \code{select!} \\
+\code{0x30..=0x39}, \code{(lo..=hi).contains(\&x)} & ranges, as patterns or tests \\
+\end{vocab}
+Hardware has no branch: both sides exist and the condition picks.
+The names are there so the code reads the way the circuit works.
+
+\head{Wires and channels}
+\begin{vocab}
+\code{signal()} $\to$ \code{(Out, In)} & a wire's two ends; \code{Out} can't be cloned, so one driver \\
+\code{chan()} $\to$ \code{(Tx, Rx)} & a channel with a buffer of two \\
+\code{tx.send(v)}, \code{tx.ready()} & offer a word; is there room \\
+\code{rx.peek()}, \code{rx.recv()} & look at the head; take it \\
+\code{rx.recv\_if(c)}, \code{rx.take()} & take under a condition; take whatever is there \\
+\code{pad()} & a pin driven from both sides \\
+\end{vocab}
+In the netlist a channel is its data, a \code{valid} and a
+\code{ready}. A wait on \code{until} becomes the guard of everything
+after it.
+
+\head{Ports with names}
+One port per side is fine for a counter. For more, give each side a
+struct and name the fields, so two ports of the same type can't be
+swapped by accident:
+\begin{vocab}
+\code{run(\&mut self, i: DiffIn, o: DiffOut)} & each side any struct of ports \\
+\code{DiffIn \{ minuend, subtrahend \}: DiffIn} & take it apart right in the signature \\
+\code{\#[derive(Ports)]} & all a struct from another crate needs \\
+\code{interface! \{ Ops \{..\} role Source \{..\} \}} & declare a link once, get a struct per role \\
+\end{vocab}
+The netlist flattens each struct into its fields, under their names.
+Every AXI-Lite peripheral takes its link as one struct,
+\code{LitePort}.
+
+\head{Units of units}
+A parent keeps its children as fields, hands each its ports in
+\code{run}, and runs them with \code{join2} (nest it for more). The
+lowering writes one module with an instance per child.
+
+\head{Clocks}
+\begin{vocab}
+\code{struct Slow; impl Clock for Slow} & a clock: a name and a period in ticks \\
+\code{Reg<T, Slow>}, \code{In<T, Slow>} & state and ports on that clock \\
+\code{Slow::rising().await} & a process waits on one clock \\
+\code{Crossing<T, A, B>} & the only way a signal changes clock \\
+\code{ChanCdc} & a channel between clocks, in \code{//lib/parts} \\
+\end{vocab}
+A design with two clocks is a parent with a child on each; the parent
+names neither. \code{DefaultClock} you never have to name at all.
+
+\head{Reset}
+You don't write one. Every module gets \code{rst}, and while it's
+high every register returns to its first value and every channel
+empties. If a unit must \emph{do} something on reset, take
+\code{rst: In<Bit>} and read it; it joins the same net.
+
+\head{Other people's hardware}
+A hand-written Verilog or VHDL module can be a child: give it a Rust
+model for the simulation and an \code{impl Lower} that returns
+\code{netlist::foreign(..)}. The netlist instantiates it by its own
+name. Going the other way, the build rules \code{verilog\_unit()}
+and \code{vhdl\_unit()} turn a netlist back into a unit you can run
+next to the Rust it came from.
+
+\head{What the lowering reads}
+A loop of one wait, then reads, \code{let}s and drives. Inside it,
+Rust's operators: \code{+ - * \% \& | \^{} ! <{}< >{}>}, unary \code{-},
+the compares, and \code{as} to an unsigned type. Calls to a
+\code{fn} marked \code{\#[lower]} in the same file are inlined. What
+you can't have is what hardware can't: a call the lowering doesn't
+know, or a loop whose count varies.
+
+\head{Names}
+Call things what they are. A port named \code{next} or \code{begin},
+or a register named \code{signal}, is reserved in VHDL or Verilog;
+the netlist writes it as \code{next\_rw}, the same in both, and the
+testbench follows. Want a nicer name in the netlist?
+\code{\#[rename("nxt")]} on the field.
+
+\head{Pipelines and builds}
+\begin{vocab}
+\code{\#[pipeline(..)] async fn} & a pipeline; stages fall where you \code{.await} \\
+\code{pipeline::drive(f, rx, tx)} & one call of \code{f} per cycle \\
+\code{config! \{ Fpga: C for Top<Fpga> \{..\} \}} & a build as one item \\
+\end{vocab}
+
+\head{Watching and testing}
+\begin{vocab}
+\code{\#[derive(Trace)]} & fields named in the waveform \\
+\code{Wave::from\_env()} & a writer when \code{TXHDL\_FST} or \code{TXHDL\_VCD} is set \\
+\code{w.add("name", \&x)}, \code{start()}, \code{stop()} & choose what to watch \\
+\code{Running::new(u.run(..))} & start the design \\
+\code{sim.cycle()} & one cycle; look at things between calls \\
+\end{vocab}
+A unit runs in a plain \code{\#[test]} too, each test with its own
+time. In a test, compare registers after a cycle rather than output
+wires.
 
 \end{multicols}
 \end{document}
