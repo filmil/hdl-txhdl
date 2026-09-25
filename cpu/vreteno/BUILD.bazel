@@ -7,6 +7,13 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
+# The hand-written tops, for //tools/topcheck (issue 508).
+exports_files([
+    "board/vreteno_board.v",
+    "board/vreteno_board_ila.v",
+    "board/vreteno_board_jtag.v",
+])
+
 rust_library(
     name = "vreteno32",
     srcs = [

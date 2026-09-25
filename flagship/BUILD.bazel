@@ -19,6 +19,9 @@ load("//tools/vivado:defs.bzl", "vivado_synthesis2")
 
 package(default_visibility = ["//visibility:public"])
 
+# The hand-written tops, for //tools/topcheck (issue 508).
+exports_files(["board/flagship.v"])
+
 # Every pin the flagship drives, each named in the file that owns it,
 # and the flagship's own constraints last.
 filegroup(

@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+# Does each hand-written Verilog top still fit the lowered modules it
+# instantiates? Every top is synthesised only by Vivado, which is
+# manual, so without this a lowered unit whose ports change leaves a
+# broken top behind a green suite (issue 508).
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "topcheck",
+    srcs = ["main.rs"],
+    edition = "2021",
+)
+
+rust_test(
+    name = "topcheck_test",
+    crate = ":topcheck",
+    edition = "2021",
+)
+
+# Each group is the tops and the generated netlists they instantiate.
+# Only generated netlists are named: the hand-written modules, such as
+# `chan_cdc` and `eth_rgmii`, and the vendor IP are not this check's,
+# and naming Vivado's outputs would pull Vivado into `bazel test //...`.
+TOPS = [
+    (
+        ["//hdmi:board/hdmi_demo.v"],
+        ["//hdmi:demo_v"],
+    ),
+    (
+        ["//eth:board/eth_echo.v"],
+        ["//eth:mac_v"],
+    ),
+    (
+        ["//pcie:board/pcie_top.v"],
+        ["//pcie:bar_v"],
+    ),
+    (
+        ["//flagship:board/flagship.v"],
+        [
+            "//cpu/vreteno:board_boot_v",
+            "//eth:mac_v",
+            "//hdmi:demo_v",
+        ],
+    ),
+    (
+        [
+            "//cpu/vreteno:board/vreteno_board.v",
+            "//cpu/vreteno:board/vreteno_board_ila.v",
+            "//cpu/vreteno:board/vreteno_board_jtag.v",
+        ],
+        ["//cpu/vreteno:board_v"],
+    ),
+]
+
+sh_test(
+    name = "tops_test",
+    srcs = ["tops_test.sh"],
+    args = ["$(rootpath :topcheck)", "--known", "$(rootpath :known.txt)"] + [
+        a
+        for tops, nets in TOPS
+        for a in ["--group", "--tops"] + ["$(rootpath %s)" % t for t in tops] +
+                 ["--netlists"] + ["$(rootpath %s)" % n for n in nets]
+    ],
+    data = [
+        ":known.txt",
+        ":topcheck",
+    ] + depset([
+        f
+        for tops, nets in TOPS
+        for f in tops + nets
+    ]).to_list(),
+)

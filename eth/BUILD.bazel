@@ -12,6 +12,9 @@ load("//tools/vivado:defs.bzl", "vivado_synthesis2")
 
 package(default_visibility = ["//visibility:public"])
 
+# The hand-written tops, for //tools/topcheck (issue 508).
+exports_files(["board/eth_echo.v"])
+
 # The Verilog of `eth_rx` and `eth_tx`.
 rust_binary(
     name = "netlist",
