@@ -663,6 +663,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An array of ports and a loop over it (issue 500):  bazel run //lib/examples:ex_loop
+rust_binary(
+    name = "ex_loop",
+    srcs = ["ex_loop.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A lowered function on a literal (issue 555):  bazel run //lib/examples:ex_litfn
 rust_binary(
     name = "ex_litfn",
@@ -1018,6 +1027,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_valif.rs",
         "ex_range.rs",
         "ex_cast.rs",
+        "ex_loop.rs",
         "ex_names.rs",
         "ex_reserved.rs",
         "ex_rename.rs",
