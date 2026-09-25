@@ -1,0 +1,44 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Struct of Ports That Holds Structs of Ports}
+\label{sec:x-nested}
+
+A struct of ports could not hold another: each field had to be one
+port, an \code{In}, an \code{Out}, a \code{Tx}, an \code{Rx} or a
+\code{Pad}. So a design that took a host's AXI4 pins as part of a
+larger side wrote the pins out one by one, each under a prefix, and
+packed them back into the host's own struct by hand where it passed
+them on.
+
+A field may now be a struct of ports itself. Its ports are the
+netlist's under the field's name: the \code{left} link of the
+\code{Links} below is \code{left\_aw}, \code{left\_ar} and the rest,
+and \code{right}'s likewise. In a body, every name of a chain up to a
+method call is part of the port's, so \code{links.left.aw.peek()}
+reads the port \code{left\_aw}; a port has no fields of its own to
+read without one. Passed whole to a child, a side joins each nested
+struct whole, in the order the struct declares it.
+
+The nesting works at every level. \code{Links} is declared in this
+file, and each of its fields is \code{LitePort}, declared in
+\code{txhdl\_parts}. \code{Links} derives \code{Ports} as well, so a
+unit in another crate could take it, and the run checks the ports the
+derive lists: the two links', flattened, in order.
+
+\code{Mailbox} is a unit of units that takes both links as one side
+and passes it on whole, and the word behind them reads through it.
+The run is \code{ex\_bundle}'s. The build checks the netlist of
+\code{Mailbox} against it under nvc and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{nested_timing.tex}
+\caption{The word behind two nested links: \code{ex\_bundle}'s run,
+the links reaching the child through the parent's side.}
+\label{fig:x-nested}
+\end{figure}
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=unit-unit,caption={The units of \code{ex\_nested.rs}; the rest is \code{ex\_bundle}'s run. Run with \code{bazel run //lib/examples:ex\_nested}.},label={lst:x-nested}]{lib/examples/ex_nested.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_nested} printed when the build ran it: the three exchanges, the ports \code{Links} derives, then the Verilog.},label={lst:x-nested-out}]{out_nested.txt}

@@ -807,6 +807,8 @@ latex_document(
         ":tie_timing",
         ":side_run",
         ":side_timing",
+        ":nested_run",
+        ":nested_timing",
         ":rename_run",
         ":rename_timing",
         ":foreign_run",

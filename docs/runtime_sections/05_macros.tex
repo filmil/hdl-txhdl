@@ -101,7 +101,14 @@ field so that two sides of one type stay apart. The ports come from
 \code{bundle\_ports} when \code{lowered} runs, each field's kind,
 width and clock from its type through \code{PortEnd}, and a field of
 a port's value is found by \code{bundle\_field} from the same
-layout. \code{instance} joins a parent's struct literal to such a
+layout. A struct of ports may hold another: \code{PortField} is what
+a field is, one port for an end and every port for a struct of ports,
+each \code{field\_sub}, so the netlist sees them flattened, and
+\code{port\_fields} reads \code{bus.pins.awid} as the port
+\code{bus\_pins\_awid}, every name of the chain up to a method call
+being the port's. A struct of the unit's own file may hold one the
+same way, and a side passed whole joins each nested struct whole
+(issue 498). \code{instance} joins a parent's struct literal to such a
 child by the one port that ends in the field's name. A unit of units
 may take such a side and pass its fields, \code{bus.req}, to its
 children, which join as the parent's ports; their kinds cannot be
