@@ -441,7 +441,9 @@ everything after it. A memory, \code{Mem<T, N>}, is an array,
 written through \code{at} and read by index.
 
 That is the subset: a loop of one wait, then reads, \code{let}s that
-are functions of what was read, and drives. Inside it you have
+are functions of what was read, and drives. A loop of several waits
+is read too, as a state machine with a state per wait, which
+\code{ex\_seq} in the examples document shows. Inside it you have
 Rust's operators on the value types, \code{+}, \code{-}, \code{*},
 \code{\%}, unary \code{-}, \code{\&}, \code{|}, \code{\^{}}, \code{!},
 \code{<{}<}, \code{>{}>}, the compares and \code{as} to an unsigned

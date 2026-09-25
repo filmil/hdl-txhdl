@@ -1,0 +1,71 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Process of Several Waits}
+\label{sec:x-seq}
+
+Every lowered loop so far waited once, at its top, and the loop was
+one clocked block. A protocol of several steps was therefore written
+as a machine by hand: a \code{step} register, and \code{step == 3}
+beside every statement that belongs to the third step, as the
+sequencer of Section~\ref{sec:x-case} does with \code{case!}. That
+is the shape the language's first premise promised to spare the
+writer, a transaction as a sequence of awaits.
+
+A loop may now wait more than once. The lowering cuts the body at
+its waits, and each piece is a state: a register the unit does not
+declare, \code{at\_wait}, holds the number of the wait the process is
+at, and the statements after a wait happen at the edge that leaves
+it, when the register holds that wait's number and the wait's own
+condition holds. The register then moves to the next wait, and after
+the last one back to the first, which is the loop. The register is a
+field of the netlist and is reset with the others; it is not in the
+trace, so the testbench does not check it, and checks everything the
+unit does through it.
+
+What a state may hold is what a loop of one wait may hold after its
+wait, and each kind of statement lowers as it did, under the state:
+
+\begin{itemize}
+  \item a register is driven inside the state's arm of the clocked
+        block, so it changes only at the edge that leaves the state;
+  \item a \code{send} offers while the process is in the state and the
+        wait's condition holds, so \code{valid} is the state's
+        condition, and a channel sent from several states offers the
+        data of the state it is in;
+  \item a receive takes in its state alone, so \code{ready} is the
+        state's condition;
+  \item an output port is a wire, with no memory of what an earlier
+        state set, so it is set after every wait and the wire selects
+        the state's expression on the register. That reproduces the
+        run only when no wait can stall, so an output is refused in a
+        process that waits on a condition or on a channel; such a
+        process drives a register, or sends, as the stepper does;
+  \item a \code{let} is a wire too, and a wire computed in one state is
+        not what it was by the next, so a name bound in one state is
+        refused in a later one. What crosses a wait is held in a
+        register, which is what a register is for.
+\end{itemize}
+
+Every wait is on one clock and one edge, since the machine is one
+clocked block; a wait on a channel names no clock and takes the
+process's. A wait under \code{if} is refused as before.
+
+The stepper below waits three times, once of each kind. It takes a
+word as it comes, adds one at the next edge, and holds the sum until
+\code{go}, when it offers it. The netlist at the end of the printout
+is the machine: three arms on \code{at\_wait}, the ready of the word
+channel asserted in the first state, the valid of the sum channel in
+the third, and \code{held} driven in the first two. The build checks
+the netlist against the run under nvc and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{seq_timing.tex}
+\caption{The stepper: a word is taken, one is added at the next
+edge, and the sum is offered when \code{go} holds. The third word
+is held to the end, since \code{go} never comes for it.}
+\label{fig:x-seq}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_seq.rs}. Run with \code{bazel run //lib/examples:ex\_seq}.},label={lst:x-seq}]{lib/examples/ex_seq.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_seq} printed when the build ran it: the stepper cycle by cycle, then the Verilog, with the machine the lowering numbered.},label={lst:x-seq-out}]{out_seq.txt}

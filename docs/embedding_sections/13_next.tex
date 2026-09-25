@@ -26,9 +26,11 @@ Section~\ref{sec:e-units} arrives at the same two operators from the other
 direction: an \code{await} is a \code{seq} boundary, and
 \code{parallel!} is \code{par}. Calyx lowers both to a state machine
 driving the groups; this paper's lowering, Section~\ref{sec:e-next},
-reads a loop of one wait and lowers it to a module, and has not lowered
-a sequence of several waits, which is where Calyx's control program
-would be needed.
+reads a loop of one wait and lowers it to a module, and a loop of
+several waits to a state machine with a state per wait, which is
+Calyx's control program in its plainest form, a \code{seq} of groups.
+A wait under \code{if}, the control program with a branch in it, it
+does not lower.
 
 \textbf{Filament}~\cite{filament} types each signal with the interval of
 cycles over which it is valid, so that composing two components with
@@ -190,8 +192,12 @@ checked in lockstep against a reference model and, as a netlist,
 against its own trace, placed and routed at 100~MHz on an Artix-7,
 and run on the board, where it said what its simulation said; and a
 unit's processes are its loops, on either edge, each a
-clocked block of its own. Of the three things known to be hard,
-control flow across an await and resource sharing remain.
+clocked block of its own; and a loop of several waits is a state
+machine, its register numbered by the lowering, so a protocol of
+several steps is written as the steps rather than as a machine by
+hand. Of the three things known to be hard, control flow across an
+await is done for a plain sequence and not for a branch, and resource
+sharing remains.
 
 \subsection{What it does not need}
 
