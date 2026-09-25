@@ -7444,7 +7444,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut procs: Vec<String> = Vec::new();
     // The hidden registers of the processes of several waits: the
     // name and the width of each (issue 501).
-    let mut hidden: Vec<(String, usize, Span)> = Vec::new();
+    let mut hidden: Vec<(String, String, Span)> = Vec::new();
     for lbody in &loops {
         let toks: Vec<TokenTree> = lbody.stream().into_iter().collect();
         let mut cx = Cx {
@@ -7465,10 +7465,17 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         let sts = stmts_of(&toks);
         let waits = seq::waits_in(&sts);
         let mut stmts = if waits > 1 {
-            let reg = seq::reg_name(hidden.len() + 1);
+            let machines = hidden
+                .iter()
+                .filter(|(r, _, _)| r.starts_with("at_wait"))
+                .count();
+            let reg = seq::reg_name(machines + 1);
             match seq::lower(&mut cx, &sts, &reg, &pnames, lbody.span()) {
-                Ok((s, w)) => {
-                    hidden.push((reg, w, lbody.span()));
+                Ok((s, w, regs)) => {
+                    hidden.push((reg, w.to_string(), lbody.span()));
+                    for (r, w) in regs {
+                        hidden.push((r, w, lbody.span()));
+                    }
                     s
                 }
                 Err(e) => return e,

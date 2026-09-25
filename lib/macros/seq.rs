@@ -19,12 +19,12 @@
 //!   channel sent from several states offers the state's data;
 //! * a receive takes in its state alone, so `ready` is the state's
 //!   condition;
-//! * an output port is a wire and has no memory, so it is set after
-//!   every wait, and the wire is the state's expression, selected on
-//!   the register. That reproduces the run only when no wait can
-//!   stall, so an output is refused in a process that waits on a
-//!   condition or on a channel; such a process drives a register, or
-//!   sends;
+//! * an output port keeps what a state set until a state sets it
+//!   again, as the run's wire does, so it is held in a register the
+//!   unit does not declare, `<port>_held`, set in the state's arm; the
+//!   port is the state's expression while the state is about to leave
+//!   and the register otherwise, which is the run's wire seen a cycle
+//!   ahead, as every wire of the netlist is;
 //! * a `let` is a wire too, and a wire computed in one state is not
 //!   what it was by the next, so a name bound in one segment is not
 //!   read in a later one; what crosses a wait is held in a register.
@@ -335,7 +335,7 @@ pub(crate) fn lower(
     reg: &str,
     pnames: &[String],
     span: Span,
-) -> Result<(Vec<String>, usize), TokenStream> {
+) -> Result<(Vec<String>, usize, Vec<(String, String)>), TokenStream> {
     // A `for` that waits is unrolled first; then the states, one per
     // wait, and what follows the last wait goes back to the first.
     let sts = unrolled(sts)?;
@@ -365,11 +365,19 @@ pub(crate) fn lower(
     // its condition, and the expression.
     let mut comb: Vec<(String, usize, String, String)> = Vec::new();
     let mut arms: Vec<String> = Vec::new();
+    // An output port set in a state keeps what it was set to until a
+    // state sets it again, as the run's wire does, so it is driven
+    // from a register the unit does not declare, `<port>_held`, set
+    // inside the state's arm; these are the ports so held.
+    let mut held: Vec<String> = Vec::new();
+    let is_output = |net: &str| pnames.iter().any(|p| p == net);
+    let held_drive = |net: &str, e: &str| {
+        format!("NlS::Drive(NlT::Name(\"{net}_held\".to_string()), {e})")
+    };
     // Names bound by earlier states' `let`s, which a later one may
     // not read.
     let mut earlier: Vec<String> = Vec::new();
     let mut clock: Option<(String, bool)> = None;
-    let mut guarded = false;
     for (k, state) in states.iter().enumerate() {
         let start = cx.subst.len();
         cx.guard = None;
@@ -385,9 +393,15 @@ pub(crate) fn lower(
             if let Some(g) = s.strip_prefix("NlS::Guard(") {
                 let g = g.strip_suffix(')').unwrap_or(g);
                 cond = ebin("&&", &cond, g);
-                guarded = true;
             } else if let Some(net) = driven(&s) {
-                if is_port_net(net) {
+                if is_output(net) {
+                    let e = drive_of(&s, net).unwrap_or("");
+                    seq.push(held_drive(net, e));
+                    if !held.contains(&net.to_string()) {
+                        held.push(net.to_string());
+                    }
+                    comb.push((net.to_string(), k, cond.clone(), e.into()));
+                } else if is_port_net(net) {
                     let e = drive_of(&s, net).unwrap_or("").to_string();
                     comb.push((net.to_string(), k, cond.clone(), e));
                 } else {
@@ -464,6 +478,14 @@ pub(crate) fn lower(
             };
             for s in out.drain(..) {
                 match driven(&s) {
+                    Some(net) if is_output(net) => {
+                        let e = drive_of(&s, net).unwrap_or("");
+                        seq.push(held_drive(net, e));
+                        if !held.contains(&net.to_string()) {
+                            held.push(net.to_string());
+                        }
+                        comb.push((net.to_string(), k, cond.clone(), e.into()));
+                    }
                     Some(net) if is_port_net(net) => {
                         let e = drive_of(&s, net).unwrap_or("").to_string();
                         comb.push((net.to_string(), k, cond.clone(), e));
@@ -541,35 +563,24 @@ pub(crate) fn lower(
                 });
             }
             acc.unwrap_or_default()
-        } else {
-            let is_out = !net.ends_with("_data");
-            if is_out {
-                if guarded {
-                    return Err(err(
-                        span,
-                        &format!(
-                            "`{net}` is an output, a wire, and a wire cannot \
-                             hold what one state set while the next waits: \
-                             a process that waits on a condition or a \
-                             channel drives a register, or sends"
-                        ),
-                    ));
-                }
-                for k in 0..n {
-                    let sets =
-                        mine.iter().filter(|(_, s, _, _)| *s == k).count();
-                    if sets != 1 {
-                        return Err(err(
-                            span,
-                            &format!(
-                                "`{net}` is set {sets} times after wait {k}: \
-                                 an output of a process of several waits is \
-                                 a wire, and is set once after every wait"
-                            ),
-                        ));
-                    }
-                }
+        } else if is_output(&net) {
+            // An output is what the state about to leave sets, while
+            // its wait's condition holds, and otherwise what it was
+            // last set to, which its register holds. That is the run's
+            // wire seen a cycle ahead, as the netlist's wires are: the
+            // run sets it at the edge from what stood before the edge.
+            let mut sorted: Vec<&&(String, usize, String, String)> =
+                mine.iter().collect();
+            sorted.sort_by_key(|(_, k, _, _)| *k);
+            let mut acc = ename(&format!("{net}_held"));
+            for (_, _, cond, e) in sorted.iter().rev() {
+                acc = format!(
+                    "NlE::Cond(Box::new({cond}), Box::new({e}), \
+                     Box::new({acc}))"
+                );
             }
+            acc
+        } else {
             // A channel sent from several states offers the state's
             // data, and where the data is the same in every state it
             // is one expression rather than a choice among copies.
@@ -592,8 +603,29 @@ pub(crate) fn lower(
         stmts
             .push(format!("NlS::Drive(NlT::Name(\"{net}\".to_string()), {e})"));
     }
+    // A held output's register is as wide as the port, which the
+    // generated code asks the value's type for.
+    let mut regs: Vec<(String, String)> = Vec::new();
+    for net in &held {
+        let ty = super::PTYPES.with(|p| {
+            p.borrow()
+                .iter()
+                .find(|(n, _)| n == net)
+                .map(|(_, t)| t.clone())
+        });
+        let Some(ty) = ty else {
+            return Err(err(
+                span,
+                &format!("the type of the output `{net}` is not known"),
+            ));
+        };
+        regs.push((
+            format!("{net}_held"),
+            format!("<{ty} as ::txhdl::types::Value>::WIDTH"),
+        ));
+    }
     stmts.extend(arms);
-    Ok((stmts, width))
+    Ok((stmts, width, regs))
 }
 
 /// `for v in lo..hi { .. }`: the variable, the range's tokens and the
