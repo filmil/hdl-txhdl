@@ -1,9 +1,9 @@
 % SPDX-License-Identifier: Apache-2.0
-% covers: Arbiter2, Arbiter3, Arbiter4, Arbiter5, Arbiter6, Arbiter7, Arbiter8
-\datasheet{Arbiter}{AXI4 arbiters: two to eight hosts merged onto one peripheral link, answered by identifier.}
+% covers: Arbiter, Arbiter2, Arbiter3, Arbiter4, Arbiter5, Arbiter6, Arbiter7, Arbiter8
+\datasheet{Arbiter}{The AXI4 arbiter: up to eight hosts merged onto one peripheral link, answered by identifier.}
 
-\dsfacts{\code{lib/parts/src/bus/arbiter.rs}; generator \code{arbiter\_text} in \code{lib/macros/lib.rs}}%
-{\code{txhdl\_parts::bus::arbiter::Arbiter2} to \code{Arbiter8}}%
+\dsfacts{\code{lib/parts/src/bus/arbiter.rs}}%
+{\code{txhdl\_parts::bus::arbiter::Arbiter<N, ..>}, and \code{Arbiter2} to \code{Arbiter8}, which name the counts}%
 {\code{//docs:axi}}
 
 \subsection*{Function}
@@ -11,10 +11,10 @@
 An arbiter puts several hosts on one peripheral link. It is the
 mirror of the \code{Router}: the router decides on the address and
 fans out, the arbiter decides whose turn it is and merges. It takes
-\code{aw}\textit{i}, \code{ar}\textit{i} and \code{w}\textit{i} from
+\code{aws\_}\textit{i}, \code{ars\_}\textit{i} and \code{ws\_}\textit{i} from
 each host \textit{i} and gives the peripheral side one \code{aw}, one
 \code{ar} and one \code{w}; it takes that side's \code{b} and
-\code{r} and gives each host its own.
+\code{r} and gives each host its own, \code{bs\_}\textit{i} and \code{rs\_}\textit{i}.
 
 Two things follow from AXI4 rather than from any choice made here.
 
@@ -31,10 +31,11 @@ arbiter holds that channel for the host whose write address phase it
 granted until that burst's last beat, and a second host's address
 phase waits. Reads need no such lock.
 
-\code{arbiter!(ArbiterN, N)} writes one unit per count of hosts,
-because the lowering reads a body and not a loop over ports.
-\code{arbiter.rs} writes \code{Arbiter2} to \code{Arbiter8}; the macro
-refuses a count outside 2 to 8.
+It is one unit for any count of hosts, \code{N} a const parameter:
+the hosts' channels are arrays of ports, and the grants are loops
+over them that the lowering unrolls for each \code{N} (issue 500).
+\code{Arbiter2} to \code{Arbiter8} are type aliases that name the
+counts.
 
 \subsection*{Parameters}
 
@@ -43,6 +44,7 @@ refuses a count outside 2 to 8.
 \toprule
 Parameter & Meaning \\
 \midrule
+\code{N} & The number of hosts, two to eight. \\
 \code{A} & The address width, in bits. \\
 \code{D} & The data width, in bits. \\
 \code{S} & The write strobe width, one bit per byte lane, so \code{D / 8}. \\
@@ -125,7 +127,8 @@ bits of identifier, which four hosts fill, so a fifth widens the bus.
 
 \subsection*{Limits}
 
-The turn is three bits, which is what eight hosts need and no more.
+The turn is three bits, which is what eight hosts need and no more,
+and nothing checks that \code{N} is at most eight.
 \code{J} is not checked against \code{I} and the count. There is no
 arbitration on quality of service, though the address phase carries
 the field. A host that stops taking its answers stops the peripheral
