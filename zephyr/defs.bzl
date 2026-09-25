@@ -17,6 +17,8 @@ repository in it.
 """
 
 def _zephyr_image_impl(ctx):
+    if bool(ctx.attr.sample) == bool(ctx.attr.app):
+        fail("give exactly one of `sample` and `app`")
     elf = ctx.actions.declare_file(ctx.label.name + ".elf")
     binary = ctx.actions.declare_file(ctx.label.name + ".bin")
     config = ctx.actions.declare_file(ctx.label.name + ".config")
@@ -48,6 +50,7 @@ def _zephyr_image_impl(ctx):
             "MODULE_DIR": module,
             "BOARD": ctx.attr.board,
             "SAMPLE": ctx.attr.sample,
+            "APP": ctx.attr.app,
             "EXTRA_CONF": (
                 ctx.file.conf.path if ctx.file.conf else ""
             ),
@@ -57,7 +60,7 @@ def _zephyr_image_impl(ctx):
         },
         mnemonic = "ZephyrImage",
         progress_message = "Building Zephyr %s for %s" % (
-            ctx.attr.sample,
+            ctx.attr.sample or ctx.attr.app,
             ctx.attr.board,
         ),
     )
@@ -112,7 +115,14 @@ if [ -n "$EXTRA_CONF" ]; then
   conf_arg="-DEXTRA_CONF_FILE=$root/$EXTRA_CONF"
 fi
 
-"$root/$CMAKE" -B "$build" -S "$zbase/$SAMPLE" -G Ninja \
+# An application of this repository is inside the module, one of
+# Zephyr's own samples inside Zephyr.
+src="$zbase/$SAMPLE"
+if [ -n "$APP" ]; then
+  src="$root/$MODULE_DIR/$APP"
+fi
+
+"$root/$CMAKE" -B "$build" -S "$src" -G Ninja \
   -DBOARD="$BOARD" $conf_arg \
   -DBOARD_ROOT="$root/$MODULE_DIR" \
   -DSOC_ROOT="$root/$MODULE_DIR" \
@@ -150,8 +160,12 @@ zephyr_image = rule(
             allow_single_file = [".conf"],
         ),
         "sample": attr.string(
-            doc = "The application, as a path inside Zephyr's tree.",
-            mandatory = True,
+            doc = "The application, as a path inside Zephyr's tree. " +
+                  "Exactly one of this and `app`.",
+        ),
+        "app": attr.string(
+            doc = "The application, as a path inside the module, for " +
+                  "one this repository writes (issue 143).",
         ),
         "_cmake": attr.label(
             default = "@cmake_host//:cmake",
