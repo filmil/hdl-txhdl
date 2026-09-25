@@ -1,0 +1,48 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: NoBeats
+\datasheet{NoBeats}{The write-beat channel of a host whose client only
+reads, held and never offered on.}
+
+\dsfacts{\code{lib/parts/src/dma.rs}}{\code{txhdl\_parts::dma::NoBeats}}%
+{\code{//docs:datasheets}}
+
+\subsection*{Function}
+
+A host takes write beats from its client whether the client writes or
+not, and a board joins every channel it makes to a unit: an end that
+nothing holds is refused rather than left floating. A fetch engine
+never writes, so something has to hold its host's write-beat channel.
+\code{NoBeats} holds it and offers nothing on it.
+
+\subsection*{Parameters}
+
+None. The beat is the tree's write beat, \code{W<32, 4>}.
+
+\dstables{NoBeats}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item It never offers a beat. In the netlist its valid is low for
+ever, which is what a client that never writes would drive.
+\item \code{idle} is its one register, and nothing sets it. It is
+there only because a unit is a struct of registers; it keeps nothing.
+\end{itemize}
+
+\subsection*{Verification}
+
+It has no example and no test of its own; what it does is nothing. It
+is in the board's netlist, and the board tests in
+\code{cpu/vreteno/tests/board.rs} run with it in place.
+
+\subsection*{Used by}
+
+\code{Board}, as \code{fnobeats}, on the write-beat channel of the
+fetch engine's host \code{fhost}.
+
+\subsection*{Limits}
+
+A host whose client does write must not be given one: its writes would
+wait for beats that never come.
+
+The mirror for a client that only writes is \code{NoReads}.

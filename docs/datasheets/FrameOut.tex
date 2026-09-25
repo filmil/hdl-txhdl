@@ -1,0 +1,91 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: FrameOut
+\datasheet{FrameOut}{Words from a fetch engine, bytes to the Ethernet
+transmitter, the last of them the frame's last.}
+
+\dsfacts{\code{lib/parts/src/ethdma.rs}}{\code{txhdl\_parts::ethdma::FrameOut}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{LineFetch} moves 32-bit words, because that is what the bus
+moves. A frame is a count of bytes, from 64 to 1518 of them, so its
+last word holds one, two or three real bytes as often as four.
+\code{FrameOut} is that difference on the way out, and nothing else:
+it does not touch the bus and does not know where the frame is in
+memory.
+
+It takes a word at a time on its input channel and emits its bytes,
+lowest first, as \code{EthByte}s. It marks the last byte of the
+\emph{frame}, not the last byte of the last word, so the bytes that
+sit above the frame's end in a partial last word are never sent.
+
+\code{bytes} is the frame's length and \code{go} asks for a frame.
+\code{running} is high while one is going. \code{nwords} is the word
+count a fetch engine needs for a frame of \code{bytes}, that is
+\code{(bytes + 3) >> 2}.
+
+\subsection*{Parameters}
+
+None. The byte count is 16 bits wide and the words are 32.
+
+\dstables{FrameOut}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \code{go} is a level, not a pulse. A request is taken when the
+unit is idle, and \code{bytes} is latched then, so the register block
+may hold \code{go} until \code{running} says it was taken.
+\item A run ends when the bytes emitted reach the count latched at
+the start. A count of zero ends the run as it starts and sends
+nothing.
+\item A word is taken when the last one is spent, which leaves one
+cycle in five with no byte. That costs nothing on the wire: the
+transmitter stores a whole frame before it sends any of it, so this
+side is never what the line waits for.
+\item \code{nwords} is driven from \code{bytes} as it is, not from the
+count latched at the start, because the fetch engine reads it in the
+cycle it is told to go. The division is here because a board is only
+wires between its units, and this is the one unit that stands between
+a count of bytes and a count of words.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_ethdma} sends two frames, of 101 and 67 bytes, from
+\code{FrameOut} through the real \code{EthTx} and \code{EthRx} to
+\code{FrameIn}, and checks every word that comes back. Neither length
+divides by four, and the two leave one and three real bytes in their
+last words.
+\item Two frames, because one cannot catch a byte side that reads past
+the count. Such a unit still marks the right byte as the last, so the
+first frame is the right length and passes every check. The bytes it
+read past that frame wait in the transmitter, which saw no last byte
+for them, and go out in front of the next frame.
+\item The netlist is checked against that run under nvc and
+Verilator: \code{//docs:ethdma\_sim\_frame\_out\_frame\_out\_tb\_test}
+and \code{//docs:ethdma\_vsim\_frame\_out\_test}.
+\item \code{ex\_framelen} runs it again in front of \code{FrameLen},
+with the same two frames.
+\item On the board,
+\code{two\_frames\_written\_to\_memory\_leave\_the\_port\_as\_written\_in\_order}
+in \code{cpu/vreteno/tests/board.rs} has the core write two frames of
+23 and 18 bytes and ask for both back to back, and it checks the bytes
+that leave the port.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Board}, as \code{fout}, between the fetch engine \code{fetch}
+and \code{EthShare}. \code{EthSlots} gives it \code{bytes} and
+\code{go}, and reads \code{running} as \code{tx\_busy}. The examples
+\code{ex\_ethdma} and \code{ex\_framelen}.
+
+\subsection*{Limits}
+
+It trusts the count. A count larger than the frame in memory sends
+whatever the fetch engine read past it, and nothing here can tell.
+
+It runs on one clock, \code{DefaultClock}.

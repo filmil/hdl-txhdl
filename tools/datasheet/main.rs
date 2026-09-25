@@ -29,8 +29,9 @@ use txhdl_parts::bus::noc::switch::Switch;
 use txhdl_parts::bus::router::Router3;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::cdc::ChanCdc;
-use txhdl_parts::dma::{LineBuf, LineFetch, LineStore};
+use txhdl_parts::dma::{LineBuf, LineFetch, LineStore, NoBeats, NoReads};
 use txhdl_parts::eth::{EthLite, EthRx, EthTx};
+use txhdl_parts::ethdma::{FrameIn, FrameLen, FrameOut};
 use txhdl_parts::ethslots::EthSlots;
 use txhdl_parts::fifo::Fifo;
 use txhdl_parts::flashwin::FlashWin;
@@ -381,6 +382,8 @@ fn main() {
         "LineStore<32, 2, 16, 16>",
         LineStore::<32, 2, 16, 16>::lowered("linestore"),
     );
+    sheet("NoBeats", "NoBeats", NoBeats::lowered("nobeats"));
+    sheet("NoReads", "NoReads", NoReads::lowered("noreads"));
     sheet(
         "Station",
         "Station3<4, 16, U<2>, U<16>, U<16>>",
@@ -470,6 +473,9 @@ fn main() {
         "EthSlots<0x4100_0000>",
         EthSlots::<0x4100_0000>::lowered("ethslots"),
     );
+    sheet("FrameOut", "FrameOut", FrameOut::lowered("frame_out"));
+    sheet("FrameIn", "FrameIn", FrameIn::lowered("frame_in"));
+    sheet("FrameLen", "FrameLen", FrameLen::lowered("framelen"));
     sheet(
         "Hdmi",
         "Hdmi<640, 16, 96, 48, 480, 10, 2, 33, 2>",

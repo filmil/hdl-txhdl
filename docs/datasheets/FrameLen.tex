@@ -1,0 +1,79 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: FrameLen
+\datasheet{FrameLen}{An Ethernet frame held whole and handed on with its
+length, so that a receiver's length can be found again after a clock
+crossing.}
+
+\dsfacts{\code{lib/parts/src/ethdma.rs}}{\code{txhdl\_parts::ethdma::FrameLen}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{FrameIn} must know a frame's length before the store engine
+starts. \code{EthRx} knows it and says so, but on the board the
+receiver is in the top, on the clock the PHY recovers, and only the
+bytes cross to the core's clock.
+
+The length cannot follow the bytes on a wire of its own, because it
+would arrive on the wrong clock and out of step with the frame it
+describes. It cannot ride inside the stream either, because the remote
+peripheral reads the same stream and would read the length as a byte
+of its frame.
+
+So the length is found again after the crossing. \code{FrameLen}
+takes a frame a byte at a time, holds all of it, and then offers it
+back with its count on \code{len}, which is exactly what \code{EthRx}
+offers. It is the receiver's output side without the receiver:
+\code{FrameIn} joined to it cannot tell the difference.
+
+\subsection*{Parameters}
+
+None. It holds \code{FRAME\_MAX} bytes, 2048, the same as the
+receiver.
+
+\dstables{FrameLen}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item It takes bytes until one is marked last, then hands the frame
+on, the held bytes in order and the last one marked. It takes no byte
+while it is handing one on.
+\item \code{len} is the count held while a frame is being handed on,
+and zero otherwise, as the receiver's own length is, so that a stale
+count cannot be read as a current one.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_framelen} puts it between \code{FrameOut} and
+\code{FrameIn}, in the place \code{EthRx} has in \code{ex\_ethdma},
+and sends the same two frames, of 101 and 67 bytes. It checks every
+word stored, that the length \code{FrameIn} was told for the last frame
+is 67, and that the slots alternated.
+\item The netlist is checked against that run under nvc and
+Verilator: \code{//docs:framelen\_sim\_framelen\_tb\_test} and
+\code{//docs:framelen\_vsim\_test}.
+\item On the board, it is in the path of
+\code{a\_frame\_received\_lands\_in\_memory\_and\_the\_core\_reads\_it\_back}
+in \code{cpu/vreteno/tests/board.rs}.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Board}, as \code{flen}, between \code{EthShare}'s second user
+and \code{FrameIn}. The example \code{ex\_framelen}.
+
+\subsection*{Limits}
+
+It costs a frame of memory and a frame of latency, since the frame was
+already held whole once, before the crossing. That is the price of the
+length not crossing with it.
+
+A frame longer than 2047 bytes is handed on as its first 2047, the
+last of them marked. The bytes after those are written over the one
+slot of memory that is not handed on, rather than wrapping round onto
+the start of the frame.
+
+It runs on one clock, \code{DefaultClock}.

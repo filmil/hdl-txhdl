@@ -1,0 +1,49 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: NoReads
+\datasheet{NoReads}{The read-data channel of a host whose client only
+writes, held and never taken from.}
+
+\dsfacts{\code{lib/parts/src/dma.rs}}{\code{txhdl\_parts::dma::NoReads}}%
+{\code{//docs:datasheets}}
+
+\subsection*{Function}
+
+The other half of \code{NoBeats}. A store engine never reads, so its
+host's read answers have nobody to go to, and a board joins every
+channel it makes to a unit. \code{NoReads} holds that channel and takes
+nothing from it.
+
+\subsection*{Parameters}
+
+None. The answer is the tree's read answer, \code{R<32, 2>}.
+
+\dstables{NoReads}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item It never takes an answer. In the netlist its ready is low for
+ever.
+\item Never taking is never a stall, because nothing is ever sent on
+the channel: a client that issues no reads is answered with no read
+data.
+\item \code{idle} is its one register, and nothing sets it, as in
+\code{NoBeats}.
+\end{itemize}
+
+\subsection*{Verification}
+
+It has no example and no test of its own. It is in the board's
+netlist, and the board tests in \code{cpu/vreteno/tests/board.rs} run
+with it in place.
+
+\subsection*{Used by}
+
+\code{Board}, as \code{snoreads}, on the read-data channel of the
+store engine's host \code{shost}.
+
+\subsection*{Limits}
+
+A host whose client does read must not be given one: the first answer
+would stay in the channel, and the reads behind it would wait for
+ever.

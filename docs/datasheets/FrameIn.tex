@@ -1,0 +1,94 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: FrameIn
+\datasheet{FrameIn}{The Ethernet receiver's bytes packed into words for
+a store engine, with the frame's length and the slot it lands in.}
+
+\dsfacts{\code{lib/parts/src/ethdma.rs}}{\code{txhdl\_parts::ethdma::FrameIn}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+The mirror of \code{FrameOut}. It takes a frame's bytes on
+\code{rx} and offers them to \code{LineStore} as 32-bit words on
+\code{words}, lowest lane first. It does not touch the bus and does
+not know where the frame lands in memory.
+
+It needs the frame's length on \code{len} before the first byte,
+because the store engine is told how many bytes to write when it
+starts. \code{EthRx} offers exactly that, since it takes and checks a
+whole frame before offering any of it, and so does \code{FrameLen}.
+
+It also says three things to the register block: \code{count}, the
+length of the frame taken; \code{store}, high while a frame is being
+taken, which starts the store engine; and \code{which}, the slot the
+frame lands in, which alternates.
+
+\subsection*{Parameters}
+
+None. The length is 16 bits wide, the words 32, and there are two
+slots.
+
+\dstables{FrameIn}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A frame starts when a byte is offered, \code{len} is not zero,
+and \code{hold} is low. The length is latched there, and the slot
+moves to the other one.
+\item Bytes are packed from the top of the word down, so after four
+the first is in the low lane.
+\item The last word of a frame is usually partial, and it is sent with
+its real bytes shifted into the low lanes, where the store engine's
+strobe expects them. The engine strobes the rest away, so nothing past
+the frame is written.
+\item \textbf{\code{hold} keeps it from starting the next frame while
+the store engine is busy with the one before.} This unit finishes
+handing over words well before the engine's write is answered, and the
+register block reads \code{count} and \code{which} when the engine
+goes idle. A new frame started early would change both under the
+frame still being stored, and the driver would be told the new frame's
+length and slot for the old frame's bytes. Only a run with a real
+store engine behind this unit can see that; it was found by reading
+the board join, not by a test.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_ethdma} is \code{FrameOut}, the real \code{EthTx} and
+\code{EthRx}, and this unit in a line. Two frames of 101 and 67 bytes
+go through it, and every word that lands is checked, the partial last
+words included. The run also checks that four words past the second
+frame are untouched, that the receiver's length for the last frame
+arrived, and that the second frame took the other slot.
+\item The netlist is checked against that run under nvc and
+Verilator: \code{//docs:ethdma\_sim\_frame\_in\_frame\_in\_tb\_test}
+and \code{//docs:ethdma\_vsim\_frame\_in\_test}.
+\item \code{ex\_framelen} runs it behind \code{FrameLen} instead of
+\code{EthRx}, with the same two frames.
+\item On the board,
+\code{a\_frame\_received\_lands\_in\_memory\_and\_the\_core\_reads\_it\_back}
+in \code{cpu/vreteno/tests/board.rs} injects a frame on the wire and
+has the core read it back from its slot.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Board}, as \code{fin}, behind \code{FrameLen} and in front of the
+store engine \code{store}. \code{hold} is the store engine's
+\code{running}, and \code{count} and \code{which} go to
+\code{EthSlots} as \code{rx\_len} and \code{rx\_which}. The examples
+\code{ex\_ethdma} and \code{ex\_framelen}.
+
+\subsection*{Limits}
+
+Its ports are named apart from \code{FrameOut}'s on purpose. A
+testbench reads the trace by port name, so two lowered units in one
+run that both name a port \code{out} bind to the same recorded signal
+(issue 462).
+
+A frame whose length is zero is never started, and its bytes stay in
+the channel.
+
+It runs on one clock, \code{DefaultClock}.
