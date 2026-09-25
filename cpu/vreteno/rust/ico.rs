@@ -267,7 +267,7 @@ extern "C" fn main() -> ! {
             shade = 255;
         }
 
-        let (mut px, mut py) = (on(&sxs, ia), on(&sys, ia));
+        let (px, py) = (on(&sxs, ia), on(&sys, ia));
         let (mut qx, mut qy) = (on(&sxs, ib), on(&sys, ib));
         let (mut rx, mut ry) = (on(&sxs, ic), on(&sys, ic));
         // The winding the rasteriser wants: inside is where none of
