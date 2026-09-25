@@ -67,7 +67,11 @@ a register is \code{Copy} and has its value's operators; a wire's
 carries, a memory's \code{read} is its asynchronous port. Drives are
 deferred: \code{Reg::set} and \code{Mem::write} take effect at the end
 of the step, so a read after a drive in the same iteration still sees
-what the edge latched.
+what the edge latched. A memory refuses an address past its end, a
+read when it is made and a write when it happens, as the netlist does:
+VHDL indexes the array as written and nvc stops on an index out of
+range, and a runtime that wrapped the address agreed with Verilator on
+a word the hardware never had (issue 556).
 
 \textbf{A channel is an elastic buffer of two.} A send is an offer:
 \code{valid} and \code{data} high this step, the transaction in the
