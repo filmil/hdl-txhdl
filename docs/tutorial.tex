@@ -167,6 +167,13 @@ you want two events at one edge, you write them in
 read before a wait, at the top of the loop, is state read in the
 previous cycle; read after the wait, always.
 
+So a process may wait more than once in its loop and take a step a
+cycle: an address at one edge, the data at the next. The lowering
+makes such a loop a state machine with a state per wait, and a wait
+under \code{if} a state the process visits only when the condition
+holds. An output set in one state keeps its value until another state
+sets it, as a wire in the run does. Step Eight has the rest.
+
 \section{Step Three: Choosing}
 \label{sec:t-choosing}
 
@@ -291,7 +298,19 @@ function may, and reads the output side by field: \code{out.diff},
 over the width, and it may be declared in another crate:
 \code{\#[derive(Ports)]} on it is all the lowering asks. Every
 AXI-Lite peripheral in \code{//lib/parts} is handed its link as one
-such struct, \code{LitePort}.
+such struct, \code{LitePort}. Such a peripheral says its registers once,
+in \code{regmap!}: each register's place, whether a host reads it,
+writes it or both, and its bit fields. What \code{run} reads and
+writes goes through the map, and the same declaration writes the C
+header a driver includes and the datasheet's table, as
+\code{ex\_regmap} shows.
+
+A side may also be an array of ports, \code{ins: [Rx<U<8>>; N]},
+\code{N} a const parameter. The body goes over it with
+\code{for i in 0..N}, which the lowering unrolls for each \code{N},
+and the netlist's ports are \code{ins\_0} onward, as \code{ex\_loop}
+shows. The AXI arbiter in \code{//lib/parts} is one unit for any
+number of hosts this way.
 
 \code{interface!} declares the members of a link once and writes a
 struct per \emph{role}, each role saying which way each member goes.
@@ -327,6 +346,12 @@ ports and runs them together, with \code{join2} for two and nested
 \code{join2}s for more, and the lowering reads that as one module
 with an instance of each child. \code{Top} in
 Listing~\ref{lst:t-ports} is one already, with a single child.
+A parent can pass a child a side it took whole, \code{bus}, even when
+the struct is declared in another crate. It makes a whole link
+between two children in one line,
+\code{let (host, per) = link::<LitePort<32, 32, 4>>()}, rather than a
+channel at a time, and it holds a child's input at a constant with
+\code{tie(v)} where the input is passed.
 
 A unit's process waits on one clock, so a second clock is the other
 reason to have children. A clock is a type: a struct that implements
@@ -443,18 +468,23 @@ written through \code{at} and read by index.
 That is the subset: a loop of one wait, then reads, \code{let}s that
 are functions of what was read, and drives. A loop of several waits
 is read too, as a state machine with a state per wait, which
-\code{ex\_seq} in the examples document shows. Inside it you have
+\code{ex\_seq} in the examples document shows. A wait under \code{if}
+is a state with a way around it, as \code{ex\_frame} shows. Inside it you have
 Rust's operators on the value types, \code{+}, \code{-}, \code{*},
 \code{\%}, unary \code{-}, \code{\&}, \code{|}, \code{\^{}}, \code{!},
 \code{<{}<}, \code{>{}>}, the compares and \code{as} to an unsigned
 integer, then \code{slice}, \code{concat}, \code{sext} and
 \code{zext} for taking words apart and putting them together, and
-\code{mul::<M>} for a product wider than its operands. An \code{if}
+\code{mul::<M>} for a product wider than its operands. A value may be wider
+than 128 bits: \code{U<256, 2>} keeps its bits in two limbs of 128,
+the second parameter the number of limbs. An \code{if}
 that yields a value and a \code{match} lower as \code{mux} and
 \code{select!} do, and a range, as a pattern or in
 \code{contains}, as the two compares it stands for. What you do not
 have inside a lowered loop is what hardware does not have: a function
-call the lowering does not know, or a loop with a variable count.
+call the lowering does not know, or a loop with a variable count. A
+\code{for i in 0..N} has a fixed count, since \code{N} is a const
+parameter, and is unrolled.
 The macro says so at compile time, with a message that names the
 construct.
 
@@ -479,6 +509,16 @@ tests are \code{//docs:cheat\_sim\_counter\_tb\_test} and
 for every unit in this tutorial. When you write a unit that lowers,
 the same two tests appear for it the moment you add it to the build,
 which is Step Nine.
+
+That comparison says the netlist does what the run did, not that
+either is right. For that, a unit states what it knows about itself
+where it is written: \code{check!(c, "why")} must hold where it is
+reached, \code{assume!} is what the unit takes for granted of its
+inputs, and \code{cover!} is what it should be possible to reach. The
+run panics on a broken check or assumption and counts each cover
+point, and the netlist carries them as assertions, which nvc and
+Verilator check as they replay the run and a formal tool can prove
+for every input. \code{ex\_formal} states all three.
 
 \section{Step Nine: Adding Your Own}
 \label{sec:t-adding}
