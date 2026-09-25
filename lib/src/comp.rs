@@ -384,6 +384,21 @@ pub fn signal<T: Copy + Default, C: Clock>() -> (Out<T, C>, In<T, C>) {
     Signal::<T, C>::new().split()
 }
 
+/// A wire held at `v` for good: what a unit of units passes a child
+/// whose input it ties to a constant, as `self.child.run((a, tie(v)),
+/// ..)` (issue 498).
+///
+/// Nothing else drives it, so the reading end sees `v` on every step.
+/// In the parent's netlist it is a wire driven by the constant, joined
+/// to the child's input. `v` is evaluated when the parent is lowered as
+/// well as when it runs, so it is a constant: a literal, or a value
+/// made from literals.
+pub fn tie<T: Copy + Default, C: Clock>(v: T) -> In<T, C> {
+    let (out, inp) = signal::<T, C>();
+    out.set(v);
+    inp
+}
+
 /// Create a channel and get its two ends.
 pub fn chan<T: Transaction, C: Clock>() -> (Tx<T, C>, Rx<T, C>) {
     Chan::<T, C>::new().split()

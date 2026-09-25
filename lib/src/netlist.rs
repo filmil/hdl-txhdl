@@ -1094,6 +1094,31 @@ impl Lowered {
                 );
             }
         }
+        // A wire of the parent's own, which a tie-off is, drives what it
+        // is joined to, so it may only be joined to a child's input: an
+        // output joined to it would be driven twice, and a channel's
+        // three nets are not one wire (issue 498).
+        for i in &self.instances {
+            for (port, a) in &i.conns {
+                if !self.wires.iter().any(|(w, _)| w == a) {
+                    continue;
+                }
+                let kind = i
+                    .unit
+                    .ports
+                    .iter()
+                    .find(|(p, _, _, _)| p == port)
+                    .map(|(_, k, _, _)| *k);
+                assert!(
+                    matches!(kind, Some(Kind::In)),
+                    "`{a}` of `{}` holds a constant, and is joined to the \
+                     port `{port}` of `{}`, which is not an input: a \
+                     constant can only be passed where an input is taken",
+                    self.name,
+                    i.name
+                );
+            }
+        }
         for c in self.clocks() {
             let what = if self.instances.iter().any(|i| i.name == c) {
                 Some(("field", "holds a child, and the instance"))
@@ -3187,6 +3212,41 @@ mod tests {
         let mut net = reserved_port();
         net.fields.push(("next_rw", Some(Kind::Reg), 8, 0));
         net.verilog();
+    }
+
+    /// A parent's wire joined to a child: what `tie(v)` lowers to.
+    fn tied_to(kind: Kind) -> Lowered {
+        let mut parent = parent_with_child_named("ticker");
+        parent.instances[0].unit.ports.push((
+            "step".to_string(),
+            kind,
+            8,
+            "clk",
+        ));
+        parent.wires.push((
+            "ticker_tie0".to_string(),
+            lit(crate::types::U::<8>::from(3u8)),
+        ));
+        parent.instances[0].conns =
+            vec![("step".to_string(), "ticker_tie0".to_string())];
+        parent
+    }
+
+    /// A constant is joined to a child's input (issue 498).
+    #[test]
+    fn a_constant_is_joined_to_an_input() {
+        let v = tied_to(Kind::In).checked().verilog();
+        assert!(v.contains(".step(ticker_tie0)"), "the join: {v}");
+        assert!(v.contains("assign ticker_tie0 = 8'b00000011;"), "{v}");
+    }
+
+    /// And to nothing else: an output would be driven twice.
+    #[test]
+    #[should_panic(expected = "`ticker_tie0` of `two` holds a constant, and \
+                               is joined to the port `step` of `ticker`, \
+                               which is not an input")]
+    fn a_constant_joined_to_an_output_is_refused() {
+        tied_to(Kind::Out).checked();
     }
 
     /// The instance and the clock pin would take one name, which

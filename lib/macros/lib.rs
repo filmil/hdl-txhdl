@@ -6483,6 +6483,26 @@ fn lower_stmts(
     Ok(stmts)
 }
 
+/// The value of `tie(v)`, or of a path ending in `tie`, as text: what a
+/// unit of units passes a child's input to hold it at a constant
+/// (issue 498). `None` for anything else.
+fn tied(ts: &[TokenTree]) -> Option<String> {
+    match ts {
+        [.., TokenTree::Ident(f), TokenTree::Group(g)]
+            if f.to_string() == "tie"
+                && g.delimiter() == Delimiter::Parenthesis
+                && ts[..ts.len() - 2].iter().all(|t| match t {
+                    TokenTree::Ident(_) => true,
+                    TokenTree::Punct(p) => p.as_char() == ':',
+                    _ => false,
+                }) =>
+        {
+            Some(g.stream().to_string())
+        }
+        _ => None,
+    }
+}
+
 /// A unit of units: `run` makes the channels and wires between its
 /// children with `chan()` and `signal()`, and joins the children's
 /// `run`s. Read into the parent's nets and instances, as generated
@@ -6496,7 +6516,10 @@ fn lower_structural(
     body: &Group,
     ports: &[(String, String)],
     bound: &[(String, Vec<String>)],
-) -> Result<(Vec<String>, Vec<String>), TokenStream> {
+) -> Result<(Vec<String>, Vec<String>, Vec<String>), TokenStream> {
+    // The wires a constant is tied to, each a `(name, lit(v))`: what a
+    // child's input passed `tie(v)` is joined to (issue 498).
+    let mut ties: Vec<String> = Vec::new();
     // The ends made in `run`: the end, its net, whether a channel.
     let mut ends: Vec<(String, String, bool)> = Vec::new();
     let mut nets: Vec<String> = Vec::new();
@@ -6659,10 +6682,23 @@ fn lower_structural(
                         if g.delimiter() == Delimiter::Parenthesis =>
                     {
                         for n in split_commas(g) {
+                            if let Some(v) = tied(&n) {
+                                let net = format!("{field}_tie{}", ties.len());
+                                ties.push(format!(
+                                    "(\"{net}\".to_string(), \
+                                     ::txhdl::netlist::lit({v}))"
+                                ));
+                                names.push((
+                                    String::new(),
+                                    format!("@tie {net}"),
+                                ));
+                                continue;
+                            }
                             let [TokenTree::Ident(id)] = n.as_slice() else {
                                 return Err(err(
                                     g.span(),
-                                    "a port passed to a child is a name",
+                                    "a port passed to a child is a name, or \
+                                     `tie(v)` for an input held at a constant",
                                 ));
                             };
                             names.push((String::new(), id.to_string()));
@@ -6713,17 +6749,30 @@ fn lower_structural(
                             names.push((port.to_string(), net.to_string()));
                         }
                     }
+                    side if tied(side).is_some() => {
+                        let v = tied(side).unwrap_or_default();
+                        let net = format!("{field}_tie{}", ties.len());
+                        ties.push(format!(
+                            "(\"{net}\".to_string(), \
+                             ::txhdl::netlist::lit({v}))"
+                        ));
+                        names.push((String::new(), format!("@tie {net}")));
+                    }
                     _ => {
                         return Err(err(
                             span,
                             "a port passed to a child is a name, a tuple \
-                             of names, a struct of names, or `()`",
+                             of names, a struct of names, `tie(v)`, or `()`",
                         ))
                     }
                 }
             }
             let mut joined: Vec<String> = Vec::new();
             for (port, n) in names {
+                if let Some(net) = n.strip_prefix("@tie ") {
+                    joined.push(format!("(\"{port}\", \"{net}\")"));
+                    continue;
+                }
                 let n = aliases
                     .iter()
                     .find(|(x, _)| *x == n)
@@ -6791,7 +6840,7 @@ fn lower_structural(
              children's `run`",
         ));
     }
-    Ok((nets, instances))
+    Ok((nets, instances, ties))
 }
 
 /// Every `self.FIELD.run(ARGS)` in a token list, into any group.
@@ -7152,11 +7201,13 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // No loop: a unit of units, whose run joins its children.
     let mut nets: Vec<String> = Vec::new();
     let mut instances: Vec<String> = Vec::new();
+    let mut ties: Vec<String> = Vec::new();
     if loops.is_empty() {
         match lower_structural(fbody, &pkinds, &bound) {
-            Ok((n, i)) => {
+            Ok((n, i, t)) => {
                 nets = n;
                 instances = i;
+                ties = t;
             }
             Err(e) => return e,
         }
@@ -7330,6 +7381,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             .map(|(k, (_, e))| {
                 format!("(Self::__TXHDL_WIRE_{k}.to_string(), {e})")
             })
+            .chain(ties)
             .collect::<Vec<_>>()
             .join(",\n"),
         wire_names = named
