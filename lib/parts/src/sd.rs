@@ -41,8 +41,11 @@
 //!
 //! `cmd` is the index in bits 0 to 5, the response in bits 6 and 7
 //! (0 none, 1 short, 2 long), read in bit 8, write in bit 9, waited for
-//! busy in bit 10, skip the response's CRC in bit 11, and data only
-//! in bit 12, which sends no command and moves a block.
+//! busy in bit 10, skip the response's CRC in bit 11, data only in
+//! bit 12, which sends no command and moves a block, and clocks alone
+//! in bit 13, which runs eighty clocks with the command line held high
+//! and nothing else: a card wants at least 74 of those after power-up
+//! before its first command.
 //!
 //! `status` is busy in bit 0, done in bit 1, a response that never
 //! came in bit 2, a response whose CRC was wrong in bit 3, a block
@@ -99,6 +102,9 @@ pub const CMD_BUSY: u32 = 1 << 10;
 pub const CMD_NOCRC: u32 = 1 << 11;
 /// `cmd` bit 12: no command, only the block.
 pub const CMD_DATA_ONLY: u32 = 1 << 12;
+/// `cmd` bit 13: no command and no block, eighty clocks with the
+/// command line held high, which a card wants before `CMD0`.
+pub const CMD_CLOCKS: u32 = 1 << 13;
 
 /// `status` bit 0: a command is running.
 pub const STATUS_BUSY: u32 = 1;
@@ -129,7 +135,7 @@ pub struct Sd {
     /// A finished command raises the interrupt.
     pub ie: Reg<Bit>,
     /// The command word as written.
-    pub cmdw: Reg<U<13>>,
+    pub cmdw: Reg<U<14>>,
     /// The argument.
     pub arg: Reg<U<32>>,
     /// A command is running.
@@ -204,6 +210,7 @@ const DSEND: u8 = 6;
 const CRCSTAT: u8 = 7;
 const BUSY: u8 = 8;
 const FINISH: u8 = 9;
+const CLOCKS: u8 = 10;
 
 /// One step of a CRC-7, x^7 + x^3 + 1, on one bit.
 #[lower]
@@ -301,6 +308,16 @@ impl Unit for Sd {
             let start_rd = written.bit(8);
             let start_wr = written.bit(9);
             let start_only = written.bit(12);
+            let start_clocks = written.bit(13);
+            // Where a command starts: clocks alone, a block alone, or
+            // the command itself.
+            let start_data =
+                mux(start_rd, U::<4>::from(DWAIT), U::<4>::from(DSEND));
+            let start_phase = mux(
+                start_clocks,
+                U::<4>::from(CLOCKS),
+                mux(start_only, start_data, U::<4>::from(SEND)),
+            );
             let pop = rgo & (rsel == 8);
             let push = wgo & (wsel == 8);
             let clear = wgo & (wsel == 0) & written.bit(10);
@@ -315,6 +332,7 @@ impl Unit for Sd {
             let in_crcstat = phase == CRCSTAT;
             let in_busy = phase == BUSY;
             let in_finish = phase == FINISH;
+            let in_clocks = phase == CLOCKS;
             // Sending: forty bits from the shift register, seven of
             // CRC, and the end bit; the bit driven now is also the one
             // the CRC takes.
@@ -468,13 +486,9 @@ impl Unit for Sd {
                 // A command starts: the shift register is the two
                 // header bits, the index and the argument.
                 start ? {
-                    cmdw: written.slice::<0, 13>(),
+                    cmdw: written.slice::<0, 14>(),
                     busy: Bit::One,
-                    phase: mux(
-                        start_only,
-                        mux(start_rd, U::<4>::from(DWAIT), U::<4>::from(DSEND)),
-                        U::<4>::from(SEND),
-                    ),
+                    phase: start_phase,
                     tick: U::<8>::from(0u8),
                     half: Bit::Zero,
                     n: U::<13>::from(0u8),
@@ -503,6 +517,9 @@ impl Unit for Sd {
                 // The clock.
                 busy ? tick: mux(strobe, U::<8>::from(0u8), tick + 1),
                 strobe ? half: !half,
+                // Clocks alone: the line stays high and the count runs.
+                falling & in_clocks ? n: n + 1,
+                falling & in_clocks & (n == 79) ? phase: U::<4>::from(FINISH),
                 // Sending the command.
                 send_data ? {
                     cmd_o: cmdsr.bit(39),
@@ -765,6 +782,11 @@ pub struct SdCard {
     pub multi_gap: u32,
     /// Commands whose CRC was wrong, which the card ignored.
     pub bad_commands: u32,
+    /// Commands that came before the card had its clocks, ignored too.
+    pub early: u32,
+    /// Clocks seen with the command line high and no command on it.
+    /// A card wants 74 of them after power-up before it listens.
+    pub clocks: u32,
     /// How many times `ACMD41` has been asked; the card is ready on
     /// the second.
     pub acmd41: u32,
@@ -821,6 +843,8 @@ impl SdCard {
             busy_len: 16,
             multi_gap: 2048,
             bad_commands: 0,
+            early: 0,
+            clocks: 0,
             acmd41: 0,
             sclk: false,
             app: false,
@@ -905,6 +929,9 @@ impl SdCard {
     fn rising(&mut self, cmd_drv: bool, cmd: bool, dat_drv: bool, dat: u8) {
         let cmd = !cmd_drv || cmd;
         if self.cmd_n == 0 {
+            if cmd {
+                self.clocks += 1;
+            }
             if cmd_drv && !cmd {
                 self.cmd_bits = 0;
                 self.cmd_n = 1;
@@ -975,6 +1002,12 @@ impl SdCard {
         let crc = ((self.cmd_bits >> 1) & 0x7f) as u8;
         if crc7(&bits) != crc || self.cmd_bits & 1 == 0 {
             self.bad_commands += 1;
+            self.app = false;
+            return;
+        }
+        // Nothing is heard before the clocks a card wants (issue 562).
+        if self.clocks < 74 {
+            self.early += 1;
             self.app = false;
             return;
         }
@@ -1244,6 +1277,7 @@ mod tests {
     /// waited for, its identity and address taken, selected, and put
     /// on four lines if `wide`. Answers the CID's four words.
     async fn bring_up(h: &Host, wide: bool) -> [u32; 4] {
+        assert_eq!(faults(command(h, 0, 0, CMD_CLOCKS).await), 0, "clocks");
         assert_eq!(faults(command(h, 0, 0, 0).await), 0, "CMD0");
         let s = command(h, 8, 0x1aa, CMD_SHORT).await;
         assert_eq!(faults(s), 0, "CMD8: {s:#x}");
@@ -1470,6 +1504,7 @@ mod tests {
         };
         let card = run(card, |h| async move {
             write(&h, CTRL, DIV).await;
+            command(&h, 0, 0, CMD_CLOCKS).await;
             let s = command(&h, 8, 0x1aa, CMD_SHORT).await;
             assert_eq!(faults(s), STATUS_RCRC, "the spoiled response: {s:#x}");
             // The next is right again.
@@ -1492,6 +1527,30 @@ mod tests {
             let s = command(&h, 17, 2, CMD_SHORT | CMD_READ).await;
             assert_eq!(faults(s), 0, "and the next: {s:#x}");
         });
+    }
+
+    /// A card hears nothing before its clocks: without them `CMD0` and
+    /// `CMD8` go unanswered, and with them the same two commands are
+    /// answered (issue 562).
+    #[test]
+    fn a_card_wants_its_clocks_first() {
+        let card = run(SdCard::default(), |h| async move {
+            write(&h, CTRL, DIV).await;
+            command(&h, 0, 0, 0).await;
+            let s = command(&h, 8, 0x1aa, CMD_SHORT).await;
+            assert_eq!(faults(s), STATUS_RTIMEOUT, "unheard: {s:#x}");
+            let s = command(&h, 0, 0, CMD_CLOCKS).await;
+            assert_eq!(faults(s), 0, "the clocks: {s:#x}");
+            command(&h, 0, 0, 0).await;
+            let s = command(&h, 8, 0x1aa, CMD_SHORT).await;
+            assert_eq!(faults(s), 0, "heard now: {s:#x}");
+        });
+        assert_eq!(card.early, 2, "the two commands before the clocks");
+        assert!(
+            card.clocks >= 74,
+            "and the clocks were given: {}",
+            card.clocks
+        );
     }
 
     /// The CRCs against known values: the CRC-7 of `CMD0` with a zero

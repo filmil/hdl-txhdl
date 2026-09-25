@@ -13,7 +13,9 @@ command carries a CRC-7, and so does every response but one.
 \code{Sd} is a host for that protocol behind AXI-Lite, and it does one
 command at a time with at most one block. A program writes the
 argument and then the command word, and the command word says what
-follows: no response, a short one or a long one; a block to read
+follows, or that nothing does: eighty clocks with the line held high
+are what a card wants before its first command, and one bit sends
+those alone. Otherwise it says what follows the command: no response, a short one or a long one; a block to read
 after it or a block to write; whether to wait for the card's busy
 line afterwards; and whether to check the response's CRC, which
 \code{ACMD41}'s answer does not carry. The host sends the command

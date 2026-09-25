@@ -4,12 +4,13 @@
 //! written and read back on four.
 //!
 //! A host client on an AXI4 link reaches the host through the
-//! AXI-Lite bridge and does what a driver does. It resets the card
-//! with `CMD0`, asks its voltage with `CMD8`, waits for it to come
-//! ready with `ACMD41`, takes its identity with `CMD2` and its
-//! address with `CMD3`, selects it with `CMD7`, and puts it on four
-//! lines with `ACMD6`. Then it reads block 3 with `CMD17`, fills the
-//! buffer and writes block 5 with `CMD24`, and reads block 5 back.
+//! AXI-Lite bridge and does what a driver does. It gives the card the
+//! eighty clocks it wants first, resets it with `CMD0`, asks its
+//! voltage with `CMD8`, waits for it to come ready with `ACMD41`,
+//! takes its identity with `CMD2` and its address with `CMD3`,
+//! selects it with `CMD7`, and puts it on four lines with `ACMD6`.
+//! Then it reads block 3 with `CMD17`, fills the buffer and writes
+//! block 5 with `CMD24`, and reads block 5 back.
 //! The card is the model in `txhdl_parts::sd`, stepped on the wires
 //! every cycle, so what is on the command and data lines is the
 //! protocol and not a shortcut.
@@ -25,9 +26,10 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::sd::{
-    Sd, SdCard, ARG, CMD, CMD_BUSY, CMD_LONG, CMD_NOCRC, CMD_READ, CMD_SHORT,
-    CMD_WRITE, CTRL, CTRL_CLEAR, CTRL_WIDE, DATA, RESP0, STATUS, STATUS_DCRC,
-    STATUS_DONE, STATUS_DTIMEOUT, STATUS_RCRC, STATUS_RTIMEOUT, WORDS,
+    Sd, SdCard, ARG, CMD, CMD_BUSY, CMD_CLOCKS, CMD_LONG, CMD_NOCRC, CMD_READ,
+    CMD_SHORT, CMD_WRITE, CTRL, CTRL_CLEAR, CTRL_WIDE, DATA, RESP0, STATUS,
+    STATUS_DCRC, STATUS_DONE, STATUS_DTIMEOUT, STATUS_RCRC, STATUS_RTIMEOUT,
+    WORDS,
 };
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -128,6 +130,8 @@ fn main() {
             s
         };
         put(CTRL, DIV).await;
+        // Eighty clocks with the line high, which a card wants first.
+        command(0, 0, CMD_CLOCKS).await;
         command(0, 0, 0).await;
         command(8, 0x1aa, CMD_SHORT).await;
         println!("{:5}  CMD8 answered {:#x}", now(), get(RESP0).await);
