@@ -24,7 +24,9 @@
 //! bytes and the four bytes of the frame check sequence, a CRC-32; the
 //! receiver strips the preamble and the check sequence and drops a
 //! frame whose check fails.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{
+    join2, mux, until, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit,
+};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
@@ -138,15 +140,13 @@ pub struct EthTx {
     pub frame: Mem<U<8>, FRAME_MAX>,
     /// How many of its bytes are stored.
     pub fill: Reg<U<11>>,
-    /// Its last byte is stored, and it waits for the wire.
+    /// Its last byte is stored, and it is being sent.
     pub whole: Reg<Bit>,
-    /// Idle 0, preamble 1, frame 2, padding 3, check sequence 4, gap 5.
-    pub phase: Reg<U<3>>,
-    /// The byte of the phase being sent. Through the frame and its
-    /// padding it counts the frame's bytes.
-    pub pos: Reg<U<11>>,
     /// The CRC-32 register over the frame and its padding.
     pub crc: Reg<U<32>>,
+    /// Up for the one cycle after a frame's gap, which is when the
+    /// store lets the next frame in.
+    pub sent: Reg<Bit>,
     /// Frames sent.
     pub frames: Reg<U<16>>,
 }
@@ -155,81 +155,102 @@ pub struct EthTx {
 // begin{tx}
 #[lower]
 impl Unit for EthTx {
+    /// Two processes. The store takes a byte a cycle from `tx` while
+    /// no frame is whole, and lets go of the frame when the sender
+    /// says it is sent. The sender is the wire's protocol written as
+    /// the sequence it is: wait for a whole frame, the preamble and
+    /// the delimiter, the frame's bytes, zeros up to sixty, the check
+    /// sequence, the gap, one byte a cycle, each a turn of a loop.
     async fn run(
         &mut self,
         tx: Rx<EthByte>,
         (txd, tx_en): (Out<U<8>>, Out<Bit>),
     ) {
-        loop {
-            DefaultClock::rising().await;
-            let phase = self.phase.get();
-            let pos = self.pos.get();
-            let fill = self.fill.get();
-            let crc = self.crc.get();
-            // Storing: a byte is taken while no frame is whole.
-            let storing = (phase == 0) & !self.whole.get().to_bool();
-            let offered = tx.head();
-            let take = storing & tx.peek().is_some();
-            let _ = tx.recv_if(storing);
-            // The byte on the wire.
-            let stored = self.frame.read(pos);
-            let fcs = !crc;
-            let fcs_byte = select!(pos.raw() => {
-                0 => fcs.slice::<0, 8>(),
-                1 => fcs.slice::<8, 8>(),
-                2 => fcs.slice::<16, 8>(),
-                _ => fcs.slice::<24, 8>(),
-            });
-            let preamble =
-                mux(pos == 7, U::<8>::from(0xd5u8), U::<8>::from(0x55u8));
-            let on_wire = select!(phase.raw() => {
-                1 => preamble,
-                2 => stored,
-                4 => fcs_byte,
-                _ => U::<8>::from(0u8),
-            });
-            txd.set(on_wire);
-            tx_en.set(Bit::from((phase != 0) & (phase != 5)));
-            // Where the frame goes next.
-            let pos_next = pos + 1;
-            let counting = (phase == 2) | (phase == 3);
-            let start = (phase == 0) & self.whole.get().to_bool();
-            let preamble_end = (phase == 1) & (pos == 7);
-            let frame_end = (phase == 2) & (pos_next == fill);
-            let short = fill < 60;
-            let pad_end = (phase == 3) & (pos_next == 60);
-            let fcs_end = (phase == 4) & (pos == 3);
-            let gap_end = (phase == 5) & (pos == 11);
-            let last_slot = fill == 2047;
-            with!(self <= {
-                take & !last_slot ? fill: fill + 1,
-                take & offered.last.to_bool() ? whole: Bit::One,
-                (phase == 1) | (phase == 4) | (phase == 5) ? pos: pos_next,
-                counting ? { pos: pos_next, crc: crc_byte(crc, on_wire) },
-                start ? { phase: U::<3>::from(1u8), pos: U::<11>::from(0u8) },
-                preamble_end ? {
-                    phase: U::<3>::from(2u8),
-                    pos: U::<11>::from(0u8),
-                    crc: U::<32>::from(CRC_INIT),
-                },
-                frame_end & short ? phase: U::<3>::from(3u8),
-                (frame_end & !short) | pad_end ? {
-                    phase: U::<3>::from(4u8),
-                    pos: U::<11>::from(0u8),
-                },
-                fcs_end ? { phase: U::<3>::from(5u8), pos: U::<11>::from(0u8) },
-                gap_end ? {
-                    phase: U::<3>::from(0u8),
-                    pos: U::<11>::from(0u8),
-                    fill: U::<11>::from(0u8),
-                    whole: Bit::Zero,
-                    frames: self.frames.get() + 1,
-                },
-            });
-            if take {
-                self.frame.at(fill).set(offered.data);
-            }
-        }
+        join2(
+            async {
+                loop {
+                    DefaultClock::rising().await;
+                    let fill = self.fill.get();
+                    let storing = !self.whole.get();
+                    let offered = tx.head();
+                    let take = storing & tx.peek().is_some();
+                    let _ = tx.recv_if(storing);
+                    let last_slot = fill == 2047;
+                    with!(self <= {
+                        take & !last_slot ? fill: fill + 1,
+                        take & offered.last ? whole: Bit::One,
+                        self.sent.get() ? {
+                            fill: U::<11>::from(0u8),
+                            whole: Bit::Zero,
+                        },
+                    });
+                    if take.to_bool() {
+                        self.frame.at(fill).set(offered.data);
+                    }
+                }
+            },
+            async {
+                loop {
+                    // A whole frame.
+                    until(DefaultClock::rising, || self.whole.get().to_bool())
+                        .await;
+                    // Seven bytes of preamble and the delimiter, with
+                    // the check sequence register put at its start.
+                    for i in 0..8 {
+                        txd.set(mux(
+                            Bit::from(i == 7),
+                            U::<8>::from(0xd5u8),
+                            U::<8>::from(0x55u8),
+                        ));
+                        tx_en.set(Bit::One);
+                        self.crc.set(U::<32>::from(CRC_INIT));
+                        DefaultClock::rising().await;
+                    }
+                    // The frame, its check sequence folded a byte at a
+                    // time.
+                    for i in 0..self.fill.get().raw() as usize {
+                        let byte = self.frame.read(i);
+                        txd.set(byte);
+                        self.crc.set(crc_byte(self.crc.get(), byte));
+                        DefaultClock::rising().await;
+                    }
+                    // Zeros up to the sixty bytes a frame must have.
+                    if self.fill.get() < 60 {
+                        for _ in self.fill.get().raw() as usize..60 {
+                            txd.set(U::<8>::from(0u8));
+                            self.crc.set(crc_byte(
+                                self.crc.get(),
+                                U::<8>::from(0u8),
+                            ));
+                            DefaultClock::rising().await;
+                        }
+                    }
+                    // The check sequence, least significant byte
+                    // first.
+                    txd.set((!self.crc.get()).slice::<0, 8>());
+                    DefaultClock::rising().await;
+                    txd.set((!self.crc.get()).slice::<8, 8>());
+                    DefaultClock::rising().await;
+                    txd.set((!self.crc.get()).slice::<16, 8>());
+                    DefaultClock::rising().await;
+                    txd.set((!self.crc.get()).slice::<24, 8>());
+                    DefaultClock::rising().await;
+                    // Twelve bytes of gap, and the frame is sent.
+                    for _ in 0..12 {
+                        txd.set(U::<8>::from(0u8));
+                        tx_en.set(Bit::Zero);
+                        DefaultClock::rising().await;
+                    }
+                    with!(self <= {
+                        sent: Bit::One,
+                        frames: self.frames.get() + 1,
+                    });
+                    DefaultClock::rising().await;
+                    self.sent.set(Bit::Zero);
+                }
+            },
+        )
+        .await;
     }
 }
 // end{tx}
@@ -250,10 +271,11 @@ pub struct EthRx {
     pub frame: Mem<U<8>, FRAME_MAX>,
     /// Bytes received, check sequence included.
     pub len: Reg<U<11>>,
-    /// Hunting 0, receiving 1, offering 2.
-    pub phase: Reg<U<2>>,
-    /// The next byte to offer.
-    pub pos: Reg<U<11>>,
+    /// A frame is being received: the delimiter has passed and
+    /// `rx_dv` has not yet fallen.
+    pub receiving: Reg<Bit>,
+    /// A frame is stored and good, and is being offered.
+    pub full: Reg<Bit>,
     /// The CRC-32 register over the frame and its check sequence.
     pub crc: Reg<U<32>>,
     /// `rx_er` was high during this frame.
@@ -261,6 +283,9 @@ pub struct EthRx {
     /// `rx_dv` is high on a frame this half is not receiving, which is
     /// ignored until the line goes idle.
     pub skip: Reg<Bit>,
+    /// Up for the one cycle after the last byte is taken, which is
+    /// when the receiver lets the next frame in.
+    pub given: Reg<Bit>,
     /// Frames offered.
     pub frames: Reg<U<16>>,
     /// Frames dropped: a failed check, an error, or no room.
@@ -271,98 +296,108 @@ pub struct EthRx {
 // begin{rx}
 #[lower]
 impl Unit<(In<U<8>>, In<Bit>, In<Bit>), (Tx<EthByte>, Out<U<16>>)> for EthRx {
+    /// Two processes. The receiver watches the wire every cycle: it
+    /// hunts for the delimiter, stores a byte a cycle while `rx_dv`
+    /// is high, checks the frame at its end, and marks it full when
+    /// it passes. The offerer is the sequence: wait for a full frame,
+    /// then its bytes without the check sequence, one per turn, each
+    /// held until the consumer takes it, and then the frame is given
+    /// back.
     async fn run(
         &mut self,
         (rxd, rx_dv, rx_er): (In<U<8>>, In<Bit>, In<Bit>),
         (rx, rx_len): (Tx<EthByte>, Out<U<16>>),
     ) {
-        loop {
-            DefaultClock::rising().await;
-            let phase = self.phase.get();
-            let len = self.len.get();
-            let pos = self.pos.get();
-            let crc = self.crc.get();
-            let d = rxd.get();
-            let dv = rx_dv.get().to_bool();
-            let er = rx_er.get().to_bool();
-            // Hunting: the delimiter with `rx_dv` high starts a frame;
-            // the preamble before it is passed over, and anything else
-            // on a busy line is the middle of a frame whose start was
-            // missed.
-            let hunting = (phase == 0) & !self.skip.get().to_bool();
-            let sfd = hunting & dv & (d == 0xd5);
-            let stray = hunting & dv & (d != 0xd5) & (d != 0x55);
-            // Receiving: a byte a cycle while `rx_dv` is high.
-            let receiving = phase == 1;
-            let store = receiving & dv;
-            let dv_end = receiving & !dv;
-            let good =
-                !self.bad.get().to_bool() & (crc == CRC_RESIDUE) & (len > 4);
-            // Offering: the frame without its check sequence.
-            let payload = len - 4;
-            let pos_next = pos + 1;
-            let last = pos_next == payload;
-            let offering = phase == 2;
-            let offer_go = offering & rx.ready().to_bool();
-            // A frame on the line while this half cannot take it.
-            let busy_line = dv & (phase == 2);
-            let last_slot = len == 2047;
-            with!(self <= {
-                stray | busy_line ? skip: Bit::One,
-                !dv ? skip: Bit::Zero,
-                sfd ? {
-                    phase: U::<2>::from(1u8),
-                    len: U::<11>::from(0u8),
-                    crc: U::<32>::from(CRC_INIT),
-                    bad: Bit::Zero,
-                },
-                store & !last_slot ? len: len + 1,
-                store ? {
-                    crc: crc_byte(crc, d),
-                    bad: self.bad.get() | Bit::from(er),
-                },
-                dv_end & good ? {
-                    phase: U::<2>::from(2u8),
-                    pos: U::<11>::from(0u8),
-                },
-                dv_end & !good ? {
-                    phase: U::<2>::from(0u8),
-                    dropped: self.dropped.get() + 1,
-                },
-                offer_go ? pos: pos_next,
-                offer_go & last ? {
-                    phase: U::<2>::from(0u8),
-                    frames: self.frames.get() + 1,
-                },
-                busy_line & !self.skip.get().to_bool() ?
-                    dropped: self.dropped.get() + 1,
-            });
-            if store {
-                self.frame.at(len).set(d);
-            }
-            // The frame's length, for anything that must know it
-            // before it has consumed the frame. A store engine is
-            // told how many bytes to write when it starts, and by
-            // then the bytes are still in this unit, so counting
-            // them on the way past is too late. The value is here
-            // already: a whole frame is taken and checked before any
-            // of it is offered, so `len` is settled while `phase` is
-            // offering. It reads zero at every other time rather than
-            // holding the last frame's length, so that a reader
-            // cannot mistake a stale length for a current one.
-            rx_len.set(mux(
-                Bit::from(offering),
-                payload.resize::<16>(),
-                U::<16>::from(0u8),
-            ));
-
-            if offer_go {
-                rx.send(EthByte {
-                    data: self.frame.read(pos),
-                    last: Bit::from(last),
-                });
-            }
-        }
+        join2(
+            async {
+                loop {
+                    DefaultClock::rising().await;
+                    let len = self.len.get();
+                    let crc = self.crc.get();
+                    let d = rxd.get();
+                    let dv = rx_dv.get();
+                    let er = rx_er.get();
+                    let receiving = self.receiving.get();
+                    let full = self.full.get();
+                    // Hunting: the delimiter with `rx_dv` high starts a
+                    // frame; the preamble before it is passed over, and
+                    // anything else on a busy line is the middle of a
+                    // frame whose start was missed.
+                    let hunting = !receiving & !full & !self.skip.get();
+                    let sfd = hunting & dv & Bit::from(d == 0xd5);
+                    let stray = hunting
+                        & dv
+                        & Bit::from(d != 0xd5)
+                        & Bit::from(d != 0x55);
+                    // Receiving: a byte a cycle while `rx_dv` is high.
+                    let store = receiving & dv;
+                    let dv_end = receiving & !dv;
+                    let good = !self.bad.get()
+                        & Bit::from(crc == CRC_RESIDUE)
+                        & Bit::from(len > 4);
+                    // A frame on the line while this half cannot take it.
+                    let busy_line = dv & full;
+                    let last_slot = len == 2047;
+                    with!(self <= {
+                        stray | busy_line ? skip: Bit::One,
+                        !dv ? skip: Bit::Zero,
+                        sfd ? {
+                            receiving: Bit::One,
+                            len: U::<11>::from(0u8),
+                            crc: U::<32>::from(CRC_INIT),
+                            bad: Bit::Zero,
+                        },
+                        store & !last_slot ? len: len + 1,
+                        store ? {
+                            crc: crc_byte(crc, d),
+                            bad: self.bad.get() | er,
+                        },
+                        dv_end ? receiving: Bit::Zero,
+                        dv_end & good ? full: Bit::One,
+                        dv_end & !good ? dropped: self.dropped.get() + 1,
+                        self.given.get() ? full: Bit::Zero,
+                        busy_line & !self.skip.get() ?
+                            dropped: self.dropped.get() + 1,
+                    });
+                    if store.to_bool() {
+                        self.frame.at(len).set(d);
+                    }
+                }
+            },
+            async {
+                loop {
+                    // A full frame.
+                    until(DefaultClock::rising, || self.full.get().to_bool())
+                        .await;
+                    // The frame's length, for anything that must know
+                    // it before it has consumed the frame: it reads
+                    // the payload while the frame is offered and zero
+                    // at every other time.
+                    rx_len.set((self.len.get() - 4).resize::<16>());
+                    DefaultClock::rising().await;
+                    // The bytes without the check sequence, each held
+                    // until the consumer takes it.
+                    for i in 0..(self.len.get() - 4).raw() as usize {
+                        rx.send(EthByte {
+                            data: self.frame.read(i),
+                            last: Bit::from(
+                                i + 1 == (self.len.get() - 4).raw() as usize,
+                            ),
+                        });
+                        until(DefaultClock::rising, || rx.ready().to_bool())
+                            .await;
+                    }
+                    rx_len.set(U::<16>::from(0u8));
+                    with!(self <= {
+                        given: Bit::One,
+                        frames: self.frames.get() + 1,
+                    });
+                    DefaultClock::rising().await;
+                    self.given.set(Bit::Zero);
+                }
+            },
+        )
+        .await;
     }
 }
 // end{rx}
