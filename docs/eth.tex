@@ -124,10 +124,21 @@ A frame on the wire cannot pause, so the transmitter stores the whole
 frame before it sends any of it. While it is idle and holds no whole
 frame, it takes a byte from \code{tx} whenever one is offered and puts
 it in \code{frame}, a memory of 2048 bytes. The byte marked last makes
-the frame \code{whole}. A whole frame starts the phases: the preamble,
+the frame \code{whole}. A whole frame starts the sender: the preamble,
 the frame with the register running over it, zeros up to sixty bytes
 with the register still running, the check sequence, and the gap. At
-the end of the gap the frame is forgotten and the next is taken.
+the end of the gap the sender says the frame is \code{sent}, the store
+forgets it, and the next is taken.
+
+The two are two processes. The store takes a byte a cycle, which is
+a loop of one wait. The sender is the wire's protocol written as the
+sequence it is: a wait for a whole frame, then a loop for the
+preamble, a loop over the frame's bytes bounded by \code{fill}, a
+loop for the zeros when the frame is short, the four bytes of the
+check sequence, and a loop for the gap, each turn one byte and one
+edge. The lowering numbers those waits into a state register of its
+own and gives each loop a counter, so the \code{phase} and \code{pos}
+registers the first version of this half kept by hand are gone.
 
 The client may offer bytes as slowly as it likes, and the transmitter
 holds it off while a frame is going out. That is what lets the channel
@@ -158,6 +169,16 @@ before it is still being offered is another, since there is nowhere to
 put it. The third is a frame whose start the receiver missed: a busy
 line with neither the preamble nor the delimiter on it is ignored
 until \code{rx\_dv} falls.
+
+This half too is two processes. The receiver proper watches the wire
+every cycle, a loop of one wait: it hunts, stores, checks, and marks
+the frame \code{full}. The offerer is the sequence: a wait for a full
+frame, an edge on which the length is put on \code{rx\_len}, a loop
+over the payload bounded by \code{len} less four, each turn one byte
+offered and held until the client takes it, and then the frame is
+\code{given} back and the receiver lets the next one in. Its state
+register and its loop counter are the lowering's, as the
+transmitter's are.
 
 \ethpart{rxstate}{The receiver's state.}{lst:e-rxstate}
 
@@ -220,11 +241,9 @@ and the receiver dropped one.
 \centering
 \input{eth_timing.tex}
 \caption{The first frame: its bytes offered to the transmitter, the
-frame whole, the transmitter's phases and \code{tx\_en}, the
-receiver's \code{rx\_dv} and phases, and the bytes offered back, with
-the interrupt line. The phases are in binary: for the transmitter idle
-0, preamble 1, frame 2, padding 3, check sequence 4 and gap 5, and for
-the receiver hunting 0, receiving 1 and offering 2.}
+frame whole and then sent, \code{tx\_en}, the receiver's
+\code{rx\_dv}, the frame being received and then full, and the bytes
+offered back, with the interrupt line.}
 \label{fig:e-run}
 \end{figure*}
 
