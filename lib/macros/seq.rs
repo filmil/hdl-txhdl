@@ -33,10 +33,20 @@
 //! the variable a number in each, so its bounds are written out; a
 //! `for` that does not wait is left to the state's own lowering.
 //!
+//! A wait under `if` is a state with a way around it: the state before
+//! the `if` goes to the wait inside when the condition holds at its
+//! edge and past the `if` otherwise, so its next value is a choice.
+//! What sits in an arm before its wait happens in the state before
+//! the `if`, under the arm's condition; what follows the `if` happens
+//! in every state the `if` can end in.
+//!
 //! Every wait is on one clock and one edge, since the machine is one
 //! clocked block.
-use super::{ebin, ename, err, is_ident, lower_stmts, stmts_of, Cx};
-use proc_macro::{Delimiter, Group, Literal, Span, TokenStream, TokenTree};
+use super::{ebin, ename, err, is_ident, lower_stmts, stmts_of, tr, Cx};
+use proc_macro::{
+    Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream,
+    TokenTree,
+};
 
 /// The name of the hidden register of the `k`th process of several
 /// waits in a unit, counted from one.
@@ -128,6 +138,192 @@ fn bound_by(ts: &[TokenTree]) -> Vec<String> {
     }
 }
 
+/// A path: the conditions of the `if` arms a statement sits under,
+/// each as the tokens of a condition and whether it is the failure of
+/// that condition, which is what the arms below it and the way past
+/// an `if` with no `else` are under.
+type Path = Vec<(Vec<TokenTree>, bool)>;
+
+/// Whether a path is the way past every `if` on it: only failures, so
+/// that the state's default next covers it once the branches taken
+/// on the conditions come first.
+fn fallthrough(p: &Path) -> bool {
+    p.iter().all(|(_, failed)| *failed)
+}
+
+/// One state of the machine: the wait that opens it, the statements
+/// that happen in it, each under its path, the branches an `if` opened
+/// from here, each to the state its wait made, and the state after
+/// them all.
+struct State {
+    wait: Vec<TokenTree>,
+    items: Vec<(Path, Vec<TokenTree>)>,
+    branches: Vec<(Path, usize)>,
+    next: Option<usize>,
+}
+
+/// The conjunction of a path, `(a) && !(b)`, as tokens.
+fn conj(path: &Path) -> Vec<TokenTree> {
+    let mut out = Vec::new();
+    for (i, (c, failed)) in path.iter().enumerate() {
+        let span = c.first().map(|t| t.span()).unwrap_or_else(Span::call_site);
+        if i > 0 {
+            let mut a = Punct::new('&', Spacing::Joint);
+            a.set_span(span);
+            let mut b = Punct::new('&', Spacing::Alone);
+            b.set_span(span);
+            out.push(TokenTree::Punct(a));
+            out.push(TokenTree::Punct(b));
+        }
+        if *failed {
+            let mut bang = Punct::new('!', Spacing::Alone);
+            bang.set_span(span);
+            out.push(TokenTree::Punct(bang));
+        }
+        let mut g =
+            Group::new(Delimiter::Parenthesis, c.iter().cloned().collect());
+        g.set_span(span);
+        out.push(TokenTree::Group(g));
+    }
+    out
+}
+
+/// The arms of `if c { .. } else if d { .. } else { .. }`: each arm's
+/// condition, none for the `else`, and its body's tokens; nothing if
+/// `st` is not an `if`.
+fn if_parts(
+    st: &[TokenTree],
+) -> Option<Vec<(Option<Vec<TokenTree>>, Vec<TokenTree>)>> {
+    if st.is_empty() || !is_ident(&st[0], "if") {
+        return None;
+    }
+    let brace = |t: &TokenTree| {
+        matches!(t, TokenTree::Group(g)
+                if g.delimiter() == Delimiter::Brace)
+    };
+    let mut arms = Vec::new();
+    let mut i = 0;
+    loop {
+        let b = st[i + 1..].iter().position(brace)?;
+        if b == 0 {
+            return None;
+        }
+        let cond = st[i + 1..i + 1 + b].to_vec();
+        let TokenTree::Group(g) = &st[i + 1 + b] else {
+            return None;
+        };
+        arms.push((Some(cond), g.stream().into_iter().collect()));
+        i += 2 + b;
+        match (st.get(i), st.get(i + 1)) {
+            (Some(e), Some(f)) if is_ident(e, "else") && is_ident(f, "if") => {
+                i += 1;
+            }
+            (Some(e), Some(TokenTree::Group(g)))
+                if is_ident(e, "else") && brace(&st[i + 1]) =>
+            {
+                arms.push((None, g.stream().into_iter().collect()));
+                return Some(arms);
+            }
+            (None, _) => return Some(arms),
+            _ => return None,
+        }
+    }
+}
+
+/// The statements as text, one after another, for a body rebuilt
+/// from its statements.
+fn joined(sts: &[Vec<TokenTree>]) -> TokenStream {
+    let mut out: Vec<TokenTree> = Vec::new();
+    for st in sts {
+        out.extend(st.iter().cloned());
+        let span = st.last().map(|t| t.span()).unwrap_or_else(Span::call_site);
+        let mut semi = Punct::new(';', Spacing::Alone);
+        semi.set_span(span);
+        out.push(TokenTree::Punct(semi));
+    }
+    out.into_iter().collect()
+}
+
+/// The states of a body, walked in order. `open` are the states the
+/// walk is in, each with the path it is under there: a statement goes
+/// into every one of them, and a wait closes them all into a new
+/// state. An `if` walks each arm from the same open states with the
+/// arm's condition on the path, and what follows the `if` goes into
+/// every state an arm ended in, and into the states the `if` was
+/// entered from when it has no `else`.
+fn walk(
+    states: &mut Vec<State>,
+    sts: &[Vec<TokenTree>],
+    open: Vec<(usize, Path)>,
+) -> Result<Vec<(usize, Path)>, TokenStream> {
+    let mut open = open;
+    for st in sts {
+        if is_wait(st) {
+            let n = states.len();
+            states.push(State {
+                wait: st.clone(),
+                items: Vec::new(),
+                branches: Vec::new(),
+                next: None,
+            });
+            for (s, p) in &open {
+                if fallthrough(p) {
+                    states[*s].next = Some(n);
+                } else {
+                    states[*s].branches.push((p.clone(), n));
+                }
+            }
+            open = vec![(n, Vec::new())];
+            continue;
+        }
+        if open.is_empty() {
+            return Err(err(
+                st[0].span(),
+                "a loop must start by waiting for an edge",
+            ));
+        }
+        if let Some(arms) = if_parts(st) {
+            if waits_in(std::slice::from_ref(st)) > 0 {
+                let mut after: Vec<(usize, Path)> = Vec::new();
+                let mut nots: Path = Vec::new();
+                let mut has_else = false;
+                for (cond, body) in arms {
+                    let mut p = nots.clone();
+                    match &cond {
+                        Some(c) => {
+                            p.push((c.clone(), false));
+                            nots.push((c.clone(), true));
+                        }
+                        None => has_else = true,
+                    }
+                    let from: Vec<(usize, Path)> = open
+                        .iter()
+                        .map(|(s, q)| {
+                            let mut q = q.clone();
+                            q.extend(p.iter().cloned());
+                            (*s, q)
+                        })
+                        .collect();
+                    after.extend(walk(states, &stmts_of(&body), from)?);
+                }
+                if !has_else {
+                    for (s, q) in &open {
+                        let mut q = q.clone();
+                        q.extend(nots.iter().cloned());
+                        after.push((*s, q));
+                    }
+                }
+                open = after;
+                continue;
+            }
+        }
+        for (s, p) in &open {
+            states[*s].items.push((p.clone(), st.clone()));
+        }
+    }
+    Ok(open)
+}
+
 /// The statements of a loop body of several waits, as the Rust source
 /// of the netlist's statements, and the width of the hidden register
 /// called `reg`. `sts` are the body's statements, the first a wait;
@@ -140,23 +336,19 @@ pub(crate) fn lower(
     pnames: &[String],
     span: Span,
 ) -> Result<(Vec<String>, usize), TokenStream> {
-    // A `for` that waits is unrolled first; then the segments, each
-    // starting at a wait.
+    // A `for` that waits is unrolled first; then the states, one per
+    // wait, and what follows the last wait goes back to the first.
     let sts = unrolled(sts)?;
-    let mut segs: Vec<Vec<&Vec<TokenTree>>> = Vec::new();
-    for st in &sts {
-        if is_wait(st) {
-            segs.push(vec![st]);
-        } else if let Some(last) = segs.last_mut() {
-            last.push(st);
+    let mut states: Vec<State> = Vec::new();
+    let open = walk(&mut states, &sts, Vec::new())?;
+    for (s, p) in open {
+        if fallthrough(&p) {
+            states[s].next = Some(0);
         } else {
-            return Err(err(
-                st[0].span(),
-                "a loop must start by waiting for an edge",
-            ));
+            states[s].branches.push((p, 0));
         }
     }
-    let n = segs.len();
+    let n = states.len();
     let width =
         std::cmp::max(1, usize::BITS - (n - 1).leading_zeros()) as usize;
     let at = |k: usize| ebin("==", &ename(reg), &bits(width, k));
@@ -173,12 +365,12 @@ pub(crate) fn lower(
     // its condition, and the expression.
     let mut comb: Vec<(String, usize, String, String)> = Vec::new();
     let mut arms: Vec<String> = Vec::new();
-    // Names bound by earlier segments' `let`s, which a later one may
+    // Names bound by earlier states' `let`s, which a later one may
     // not read.
     let mut earlier: Vec<String> = Vec::new();
     let mut clock: Option<(String, bool)> = None;
     let mut guarded = false;
-    for (k, seg) in segs.iter().enumerate() {
+    for (k, state) in states.iter().enumerate() {
         let start = cx.subst.len();
         cx.guard = None;
         cx.clock.clear();
@@ -186,7 +378,7 @@ pub(crate) fn lower(
         cx.hoisted.clear();
         // The wait: its clock, its edge, and its condition, which
         // joins the state's.
-        let head = lower_stmts(cx, seg[0], None)?;
+        let head = lower_stmts(cx, &state.wait, None)?;
         let mut cond = at(k);
         let mut seq: Vec<String> = Vec::new();
         for s in head {
@@ -212,7 +404,7 @@ pub(crate) fn lower(
             None => clock = Some((cx.clock.clone(), cx.falling)),
             Some((c, f)) if *c != cx.clock || *f != cx.falling => {
                 return Err(err(
-                    seg[0][0].span(),
+                    state.wait[0].span(),
                     "a process of several waits waits on one clock, at \
                      one edge",
                 ));
@@ -222,24 +414,55 @@ pub(crate) fn lower(
         cx.guard = Some(cond.clone());
         // The statements of the state: each lowered as it would be
         // after a single wait, then sorted into the state's arm or
-        // the wires.
-        for st in &seg[1..] {
-            let fresh = bound_by(st);
-            earlier.retain(|e| !fresh.contains(e));
-            let from = if fresh.is_empty() { 0 } else { 2 };
-            if let Some((name, sp)) = first_use(&st[from..], &earlier) {
-                return Err(err(
-                    sp,
-                    &format!(
-                        "`{name}` is bound before an earlier wait, and a \
-                         `let` is a wire that does not hold: a value that \
-                         crosses a wait is kept in a register"
-                    ),
-                ));
+        // the wires. Those under a path are lowered as one `if` on
+        // it, consecutive ones together, so a `let` among them is
+        // read by the next.
+        let mut i = 0;
+        while i < state.items.len() {
+            let path = &state.items[i].0;
+            let mut j = i;
+            while j < state.items.len() && same_path(&state.items[j].0, path) {
+                j += 1;
             }
-            let mut out = lower_stmts(cx, st, None)?;
-            out.append(&mut cx.hoisted);
-            for s in out {
+            let group: Vec<Vec<TokenTree>> =
+                state.items[i..j].iter().map(|(_, st)| st.clone()).collect();
+            i = j;
+            for st in &group {
+                let fresh = bound_by(st);
+                earlier.retain(|e| !fresh.contains(e));
+                let from = if fresh.is_empty() { 0 } else { 2 };
+                if let Some((name, sp)) = first_use(&st[from..], &earlier) {
+                    return Err(err(
+                        sp,
+                        &format!(
+                            "`{name}` is bound before an earlier wait, and a \
+                             `let` is a wire that does not hold: a value that \
+                             crosses a wait is kept in a register"
+                        ),
+                    ));
+                }
+            }
+            let mut out = if path.is_empty() {
+                let mut out = Vec::new();
+                for st in &group {
+                    out.extend(lower_stmts(cx, st, None)?);
+                    out.append(&mut cx.hoisted);
+                }
+                out
+            } else {
+                let first = group[0][0].span();
+                let mut kw = Ident::new("if", first);
+                kw.set_span(first);
+                let mut st: Vec<TokenTree> = vec![TokenTree::Ident(kw)];
+                st.extend(conj(path));
+                let mut body = Group::new(Delimiter::Brace, joined(&group));
+                body.set_span(first);
+                st.push(TokenTree::Group(body));
+                let mut out = lower_stmts(cx, &st, None)?;
+                out.append(&mut cx.hoisted);
+                out
+            };
+            for s in out.drain(..) {
                 match driven(&s) {
                     Some(net) if is_port_net(net) => {
                         let e = drive_of(&s, net).unwrap_or("").to_string();
@@ -254,9 +477,22 @@ pub(crate) fn lower(
                 earlier.push(name);
             }
         }
+        // Where the state goes: the state after it, unless a branch
+        // taken from here holds; the branches in the order written,
+        // the first that holds winning.
+        let mut next = bits(width, state.next.unwrap_or(0));
+        for (path, to) in state.branches.iter().rev() {
+            let c = match tr(&conj(path), &cx.subst) {
+                Ok(c) => c,
+                Err(m) => return Err(err(state.wait[0].span(), &m)),
+            };
+            next = format!(
+                "NlE::Cond(Box::new({c}), Box::new({}), Box::new({next}))",
+                bits(width, *to)
+            );
+        }
         seq.push(format!(
-            "NlS::Drive(NlT::Name(\"{reg}\".to_string()), {})",
-            bits(width, (k + 1) % n)
+            "NlS::Drive(NlT::Name(\"{reg}\".to_string()), {next})"
         ));
         arms.push(format!(
             "NlS::If(vec![({cond}, vec![{}])], vec![])",
@@ -334,16 +570,22 @@ pub(crate) fn lower(
                     }
                 }
             }
+            // A channel sent from several states offers the state's
+            // data, and where the data is the same in every state it
+            // is one expression rather than a choice among copies.
             let mut sorted: Vec<&&(String, usize, String, String)> =
                 mine.iter().collect();
             sorted.sort_by_key(|(_, k, _, _)| *k);
             let (_, _, _, last) = sorted[sorted.len() - 1];
             let mut acc = last.clone();
-            for (_, k, _, e) in sorted.iter().rev().skip(1) {
-                acc = format!(
-                    "NlE::Cond(Box::new({}), Box::new({e}), Box::new({acc}))",
-                    at(*k)
-                );
+            if sorted.iter().any(|(_, _, _, e)| e != last) {
+                for (_, k, _, e) in sorted.iter().rev().skip(1) {
+                    acc = format!(
+                        "NlE::Cond(Box::new({}), Box::new({e}), \
+                         Box::new({acc}))",
+                        at(*k)
+                    );
+                }
             }
             acc
         };
@@ -375,15 +617,23 @@ fn for_parts(
     Some((v.to_string(), st[3..st.len() - 1].to_vec(), body))
 }
 
-/// How many waits the statements hold, those inside a `for` counted
-/// with the rest. A wait under `if` is refused where the arm is
-/// lowered, so it is not looked for.
+/// How many waits the statements hold, those inside a `for` and under
+/// `if` counted with the rest.
 pub(crate) fn waits_in(sts: &[Vec<TokenTree>]) -> usize {
     sts.iter()
-        .map(|st| match for_parts(st) {
-            _ if is_wait(st) => 1,
-            Some((_, _, body)) => waits_in(&stmts_of(&body)),
-            None => 0,
+        .map(|st| {
+            if is_wait(st) {
+                return 1;
+            }
+            if let Some((_, _, body)) = for_parts(st) {
+                return waits_in(&stmts_of(&body));
+            }
+            match if_parts(st) {
+                Some(arms) => {
+                    arms.iter().map(|(_, body)| waits_in(&stmts_of(body))).sum()
+                }
+                None => 0,
+            }
         })
         .sum()
 }
@@ -448,6 +698,28 @@ fn unrolled(
 ) -> Result<Vec<Vec<TokenTree>>, TokenStream> {
     let mut out = Vec::new();
     for st in sts {
+        // An `if` whose arms hold a `for` that waits: the arms are
+        // unrolled in place, the chain kept.
+        if if_parts(st).is_some() && waits_in(std::slice::from_ref(st)) > 0 {
+            let mut rebuilt: Vec<TokenTree> = Vec::new();
+            for t in st {
+                rebuilt.push(match t {
+                    TokenTree::Group(g)
+                        if g.delimiter() == Delimiter::Brace =>
+                    {
+                        let inner: Vec<TokenTree> =
+                            g.stream().into_iter().collect();
+                        let body = unrolled(&stmts_of(&inner))?;
+                        let mut n = Group::new(Delimiter::Brace, joined(&body));
+                        n.set_span(g.span());
+                        TokenTree::Group(n)
+                    }
+                    t => t.clone(),
+                });
+            }
+            out.push(rebuilt);
+            continue;
+        }
         let Some((var, range, body)) = for_parts(st) else {
             out.push(st.clone());
             continue;
@@ -474,6 +746,13 @@ fn unrolled(
     Ok(out)
 }
 
+/// Whether two paths are the same conditions, token for token.
+fn same_path(a: &Path, b: &Path) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|((x, f), (y, g))| f == g && text(x) == text(y))
+}
 #[cfg(test)]
 mod tests {
     use super::{bits, drive_of, driven, reg_name};
