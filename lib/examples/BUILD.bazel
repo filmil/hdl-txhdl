@@ -633,6 +633,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Ranges and `contains` (issue 496):  bazel run //lib/examples:ex_range
+rust_binary(
+    name = "ex_range",
+    srcs = ["ex_range.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A lowered function on a literal (issue 555):  bazel run //lib/examples:ex_litfn
 rust_binary(
     name = "ex_litfn",
@@ -985,6 +994,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_litfn.rs",
         "ex_arith.rs",
         "ex_valif.rs",
+        "ex_range.rs",
         "ex_names.rs",
         "ex_reserved.rs",
         "ex_rename.rs",
