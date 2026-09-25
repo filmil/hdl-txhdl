@@ -3996,6 +3996,16 @@ fn names_a_signal(
                 if after || before {
                     continue;
                 }
+                // A loop's index is a number where `lowered` runs, since
+                // the loop is unrolled there, so a constant may use it.
+                let index = subst
+                    .iter()
+                    .rev()
+                    .find(|(k, _)| *k == n)
+                    .is_some_and(|(_, v)| v.starts_with("NlE::Num("));
+                if index {
+                    continue;
+                }
                 if subst.iter().any(|(k, _)| *k == n)
                     || PNAMES.with(|p| p.borrow().contains(&n))
                 {
@@ -5933,7 +5943,12 @@ fn lower_stmts(
                 .push((var.clone(), format!("NlE::Num({var} as u128)")));
             cx.loops.push(var.clone());
             let inner: Vec<TokenTree> = body.stream().into_iter().collect();
-            let items = lower_stmts(cx, &inner, None)?;
+            let hmark = cx.hoisted.len();
+            let mut items = lower_stmts(cx, &inner, None)?;
+            // A send under an `if` in the loop names the loop's index
+            // and its `let`s, so it stays in the loop, one per turn,
+            // rather than being hoisted past the loop's end (#500).
+            items.extend(cx.hoisted.drain(hmark..));
             cx.loops.pop();
             // A `let` inside the loop is gone after it, as in Rust.
             cx.subst.truncate(mark);
@@ -5954,9 +5969,13 @@ fn lower_stmts(
             || text.contains(".recv")
             || text.ends_with(".take()")
             || text.contains(".wait()");
+        // So is a `let` that reads such a variable after its loop: a
+        // wire is defined outside the process, where the variable is
+        // not (#500).
+        let reads_var = ts.len() > 3 && reads_rust_var(&ts[3..], &cx.subst);
         if is_ident(&ts[0], "let")
             && !channel_op
-            && (is_mut || !cx.loops.is_empty())
+            && (is_mut || !cx.loops.is_empty() || reads_var)
         {
             let at = if is_mut { 2 } else { 1 };
             let (Some(TokenTree::Ident(name)), true) = (
@@ -6799,6 +6818,29 @@ fn lower_structural(
                         if g.delimiter() == Delimiter::Parenthesis =>
                     {
                         for n in split_commas(g) {
+                            // An array port's ends, `[a, b, c]`: its
+                            // ports are `x_0` to `x_2`, in that order,
+                            // so the names join them in order (#500).
+                            if let [TokenTree::Group(a)] = n.as_slice() {
+                                if a.delimiter() == Delimiter::Bracket {
+                                    for m in split_commas(a) {
+                                        let [TokenTree::Ident(id)] =
+                                            m.as_slice()
+                                        else {
+                                            return Err(err(
+                                                a.span(),
+                                                "an array passed to a child \
+                                                 is of names, `[a, b, c]`",
+                                            ));
+                                        };
+                                        names.push((
+                                            String::new(),
+                                            id.to_string(),
+                                        ));
+                                    }
+                                    continue;
+                                }
+                            }
                             // One channel of a bundle made whole: `h.aw`.
                             if let Some(net) = link_field(&n, &links) {
                                 names.push((
@@ -7288,6 +7330,22 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     let TokenTree::Ident(n) = &n[0] else {
                         return err(n[0].span(), "a port is a name");
                     };
+                    // An array of ports among the others, `[Rx<T>; N]`:
+                    // its ports come from `Ports` when `lowered` runs,
+                    // `n_0` to `n_{N-1}`, as for a side that is one
+                    // array (#500).
+                    if let [TokenTree::Group(a)] = t.as_slice() {
+                        if a.delimiter() == Delimiter::Bracket {
+                            let ty = text_of(t);
+                            let n = n.to_string();
+                            bound.push((n.clone(), vec!["*".to_string()]));
+                            BUNDLES.with(|b| {
+                                b.borrow_mut().push((n.clone(), ty.clone()))
+                            });
+                            pairs.push((n, format!("@ports {ty}"), a.span()));
+                            continue;
+                        }
+                    }
                     pairs.push((n.to_string(), text(t), n.span()));
                 }
             }
@@ -7731,4 +7789,25 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn regmap(input: TokenStream) -> TokenStream {
     regmap::regmap(input)
+}
+
+/// Whether an expression names a `let` the lowering keeps as a Rust
+/// variable, `__l_x`, rather than as a wire: one inside a loop, or a
+/// `let mut` (#500).
+fn reads_rust_var(ts: &[TokenTree], subst: &[(String, String)]) -> bool {
+    ts.iter().any(|t| match t {
+        TokenTree::Ident(id) => {
+            let n = id.to_string();
+            subst
+                .iter()
+                .rev()
+                .find(|(k, _)| *k == n)
+                .is_some_and(|(_, v)| v.starts_with("__l_"))
+        }
+        TokenTree::Group(g) => {
+            let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+            reads_rust_var(&inner, subst)
+        }
+        _ => false,
+    })
 }
