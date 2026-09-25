@@ -63,23 +63,23 @@
 //! after the data, and what is left is zero when they agree.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, with, Trace};
+use txhdl::{lower, with, Trace};
 
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
+use crate::regmap;
 
-/// The registers, as offsets from the host's base.
-pub const CTRL: u32 = 0x00;
-/// The command word.
-pub const CMD: u32 = 0x04;
-/// The argument.
-pub const ARG: u32 = 0x08;
-/// The status word.
-pub const STATUS: u32 = 0x0c;
-/// The first word of the response.
-pub const RESP0: u32 = 0x10;
-/// The buffer, a word at a time.
-pub const DATA: u32 = 0x20;
+regmap! { regs (regs_read, regs_we), 4: [
+    (0, ctrl, rw, "divider, four lines, interrupt enable; bit 10 clears"),
+    (1, cmd, rw, "index, response, transfer, checks; written, it starts"),
+    (2, arg, rw, "the argument"),
+    (3, status, w1c, "busy, done, faults, CRC status, busy line, pointers"),
+    (4, resp0, ro, "the response's first word"),
+    (5, resp1, ro, "its second"),
+    (6, resp2, ro, "its third"),
+    (7, resp3, ro, "its fourth"),
+    (8, data, rw, "read: the next word out; written: the next word in"),
+] }
 
 /// `ctrl` bit 8: four data lines.
 pub const CTRL_WIDE: u32 = 1 << 8;
@@ -304,7 +304,9 @@ impl Unit for Sd {
             let written = wh.data;
             // A write to `cmd` starts a command, and is ignored while
             // one runs: a program reads `status` first.
-            let start = wgo & (wsel == 1) & !busy;
+            // The map's write enables, a bit a register in its order.
+            let we = regs_we(wgo, wsel);
+            let start = we.bit(1) & !busy;
             let start_rd = written.bit(8);
             let start_wr = written.bit(9);
             let start_only = written.bit(12);
@@ -318,10 +320,12 @@ impl Unit for Sd {
                 U::<4>::from(CLOCKS),
                 mux(start_only, start_data, U::<4>::from(SEND)),
             );
+            // A read of `data`, the ninth word, pops; the map has no
+            // read enables, so the index is written here.
             let pop = rgo & (rsel == 8);
-            let push = wgo & (wsel == 8);
-            let clear = wgo & (wsel == 0) & written.bit(10);
-            let ack = wgo & (wsel == 3) & written.bit(1);
+            let push = we.bit(8);
+            let clear = we.bit(0) & written.bit(10);
+            let ack = we.bit(3) & written.bit(1);
             // The phases.
             let in_send = phase == SEND;
             let in_rwait = phase == RWAIT;
@@ -448,25 +452,26 @@ impl Unit for Sd {
                 .concat::<1, 32>(busy.zext::<1>());
             let resp0 =
                 mux(rlong, resp.slice::<0, 32>(), resp.slice::<8, 32>());
-            let word = select!(rsel.raw() => {
-                0 => ctrl,
-                1 => cmdw.zext::<32>(),
-                2 => arg,
-                3 => status,
-                4 => resp0,
-                5 => resp.slice::<32, 32>(),
-                6 => resp.slice::<64, 32>(),
-                7 => resp.slice::<96, 32>(),
-                8 => self.words.read(rptr),
-                _ => U::<32>::from(0u8),
-            });
+            // The word a read answers, from the map.
+            let word = regs_read(
+                rsel,
+                ctrl,
+                cmdw.zext::<32>(),
+                arg,
+                status,
+                resp0,
+                resp.slice::<32, 32>(),
+                resp.slice::<64, 32>(),
+                resp.slice::<96, 32>(),
+                self.words.read(rptr),
+            );
             with!(self <= {
-                wgo & (wsel == 0) ? {
+                we.bit(0) ? {
                     div: written.slice::<0, 8>(),
                     wide: written.bit(8),
                     ie: written.bit(9),
                 },
-                wgo & (wsel == 2) ? arg: written,
+                we.bit(2) ? arg: written,
                 clear ? {
                     wptr: U::<7>::from(0u8),
                     rptr: U::<7>::from(0u8),
@@ -1257,12 +1262,12 @@ mod tests {
     /// A command: the argument, the word, then the wait for done, and
     /// the status as the host left it, cleared afterwards.
     async fn command(h: &Host, index: u32, arg: u32, flags: u32) -> u32 {
-        write(h, ARG, arg).await;
-        write(h, CMD, index | flags).await;
+        write(h, regs::arg, arg).await;
+        write(h, regs::cmd, index | flags).await;
         loop {
-            let s = read(h, STATUS).await;
+            let s = read(h, regs::status).await;
             if s & STATUS_DONE != 0 {
-                write(h, STATUS, STATUS_DONE).await;
+                write(h, regs::status, STATUS_DONE).await;
                 return s;
             }
         }
@@ -1281,13 +1286,13 @@ mod tests {
         assert_eq!(faults(command(h, 0, 0, 0).await), 0, "CMD0");
         let s = command(h, 8, 0x1aa, CMD_SHORT).await;
         assert_eq!(faults(s), 0, "CMD8: {s:#x}");
-        assert_eq!(read(h, RESP0).await & 0xfff, 0x1aa, "CMD8 echoes");
+        assert_eq!(read(h, regs::resp0).await & 0xfff, 0x1aa, "CMD8 echoes");
         let mut ready = false;
         for _ in 0..4 {
             assert_eq!(faults(command(h, 55, 0, CMD_SHORT).await), 0, "CMD55");
             let s = command(h, 41, 0x4030_0000, CMD_SHORT | CMD_NOCRC).await;
             assert_eq!(faults(s), 0, "ACMD41: {s:#x}");
-            if read(h, RESP0).await & 0x8000_0000 != 0 {
+            if read(h, regs::resp0).await & 0x8000_0000 != 0 {
                 ready = true;
                 break;
             }
@@ -1296,14 +1301,14 @@ mod tests {
         let s = command(h, 2, 0, CMD_LONG).await;
         assert_eq!(faults(s), 0, "CMD2: {s:#x}");
         let cid = [
-            read(h, RESP0 + 12).await,
-            read(h, RESP0 + 8).await,
-            read(h, RESP0 + 4).await,
-            read(h, RESP0).await,
+            read(h, regs::resp3).await,
+            read(h, regs::resp2).await,
+            read(h, regs::resp1).await,
+            read(h, regs::resp0).await,
         ];
         let s = command(h, 3, 0, CMD_SHORT).await;
         assert_eq!(faults(s), 0, "CMD3: {s:#x}");
-        let rca = read(h, RESP0).await >> 16;
+        let rca = read(h, regs::resp0).await >> 16;
         assert_eq!(rca, 0x1234, "the address the card gave");
         let s = command(h, 7, rca << 16, CMD_SHORT | CMD_BUSY).await;
         assert_eq!(faults(s), 0, "CMD7: {s:#x}");
@@ -1311,8 +1316,8 @@ mod tests {
             assert_eq!(faults(command(h, 55, rca << 16, CMD_SHORT).await), 0);
             let s = command(h, 6, 2, CMD_SHORT).await;
             assert_eq!(faults(s), 0, "ACMD6: {s:#x}");
-            let ctrl = read(h, CTRL).await;
-            write(h, CTRL, ctrl | CTRL_WIDE).await;
+            let ctrl = read(h, regs::ctrl).await;
+            write(h, regs::ctrl, ctrl | CTRL_WIDE).await;
         }
         assert_eq!(faults(command(h, 16, 512, CMD_SHORT).await), 0, "CMD16");
         cid
@@ -1322,16 +1327,16 @@ mod tests {
     async fn take(h: &Host) -> Vec<u32> {
         let mut words = Vec::with_capacity(WORDS);
         for _ in 0..WORDS {
-            words.push(read(h, DATA).await);
+            words.push(read(h, regs::data).await);
         }
         words
     }
 
     /// The buffer filled with 128 words.
     async fn fill(h: &Host, words: &[u32]) {
-        write(h, CTRL, read(h, CTRL).await | CTRL_CLEAR).await;
+        write(h, regs::ctrl, read(h, regs::ctrl).await | CTRL_CLEAR).await;
         for w in words {
-            write(h, DATA, *w).await;
+            write(h, regs::data, *w).await;
         }
     }
 
@@ -1414,7 +1419,7 @@ mod tests {
         let card = SdCard::default();
         let cid = card.cid;
         let card = run(card, |h| async move {
-            write(&h, CTRL, DIV).await;
+            write(&h, regs::ctrl, DIV).await;
             let got = bring_up(&h, false).await;
             let want: Vec<u32> = cid
                 .chunks(4)
@@ -1430,7 +1435,7 @@ mod tests {
         let card = SdCard::default();
         let want = block_words(&card, 3);
         run(card, |h| async move {
-            write(&h, CTRL, DIV).await;
+            write(&h, regs::ctrl, DIV).await;
             bring_up(&h, false).await;
             let s = command(&h, 17, 3, CMD_SHORT | CMD_READ).await;
             assert_eq!(faults(s), 0, "CMD17: {s:#x}");
@@ -1446,7 +1451,7 @@ mod tests {
             .collect();
         let sent = words.clone();
         let card = run(card, |h| async move {
-            write(&h, CTRL, DIV).await;
+            write(&h, regs::ctrl, DIV).await;
             bring_up(&h, true).await;
             fill(&h, &words).await;
             let s = command(&h, 24, 5, CMD_SHORT | CMD_WRITE).await;
@@ -1470,7 +1475,7 @@ mod tests {
         }
         let out = sent.clone();
         let card = run(card, |h| async move {
-            write(&h, CTRL, DIV).await;
+            write(&h, regs::ctrl, DIV).await;
             bring_up(&h, true).await;
             // Two blocks read: the command with the first, a
             // data-only transfer for the second, and the stop.
@@ -1503,7 +1508,7 @@ mod tests {
             ..SdCard::default()
         };
         let card = run(card, |h| async move {
-            write(&h, CTRL, DIV).await;
+            write(&h, regs::ctrl, DIV).await;
             command(&h, 0, 0, CMD_CLOCKS).await;
             let s = command(&h, 8, 0x1aa, CMD_SHORT).await;
             assert_eq!(faults(s), STATUS_RCRC, "the spoiled response: {s:#x}");
@@ -1520,7 +1525,7 @@ mod tests {
             ..SdCard::default()
         };
         run(card, |h| async move {
-            write(&h, CTRL, DIV).await;
+            write(&h, regs::ctrl, DIV).await;
             bring_up(&h, true).await;
             let s = command(&h, 17, 2, CMD_SHORT | CMD_READ).await;
             assert_eq!(faults(s), STATUS_DCRC, "the spoiled block: {s:#x}");
@@ -1535,7 +1540,7 @@ mod tests {
     #[test]
     fn a_card_wants_its_clocks_first() {
         let card = run(SdCard::default(), |h| async move {
-            write(&h, CTRL, DIV).await;
+            write(&h, regs::ctrl, DIV).await;
             command(&h, 0, 0, 0).await;
             let s = command(&h, 8, 0x1aa, CMD_SHORT).await;
             assert_eq!(faults(s), STATUS_RTIMEOUT, "unheard: {s:#x}");

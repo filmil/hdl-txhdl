@@ -26,10 +26,9 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
 use txhdl_parts::sd::{
-    Sd, SdCard, ARG, CMD, CMD_BUSY, CMD_CLOCKS, CMD_LONG, CMD_NOCRC, CMD_READ,
-    CMD_SHORT, CMD_WRITE, CTRL, CTRL_CLEAR, CTRL_WIDE, DATA, RESP0, STATUS,
-    STATUS_DCRC, STATUS_DONE, STATUS_DTIMEOUT, STATUS_RCRC, STATUS_RTIMEOUT,
-    WORDS,
+    regs, Sd, SdCard, CMD_BUSY, CMD_CLOCKS, CMD_LONG, CMD_NOCRC, CMD_READ,
+    CMD_SHORT, CMD_WRITE, CTRL_CLEAR, CTRL_WIDE, STATUS_DCRC, STATUS_DONE,
+    STATUS_DTIMEOUT, STATUS_RCRC, STATUS_RTIMEOUT, WORDS,
 };
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -115,32 +114,32 @@ fn main() {
         // A command: the argument, the word, the wait for done, and
         // the status, which must show no fault.
         let command = |index: u32, arg: u32, flags: u32| async move {
-            put(ARG, arg).await;
-            put(CMD, index | flags).await;
+            put(regs::arg, arg).await;
+            put(regs::cmd, index | flags).await;
             let s = loop {
-                let s = get(STATUS).await;
+                let s = get(regs::status).await;
                 if s & STATUS_DONE != 0 {
                     break s;
                 }
             };
-            put(STATUS, STATUS_DONE).await;
+            put(regs::status, STATUS_DONE).await;
             let faults =
                 STATUS_RTIMEOUT | STATUS_RCRC | STATUS_DTIMEOUT | STATUS_DCRC;
             assert_eq!(s & faults, 0, "command {index}: status {s:#x}");
             s
         };
-        put(CTRL, DIV).await;
+        put(regs::ctrl, DIV).await;
         // Eighty clocks with the line high, which a card wants first.
         command(0, 0, CMD_CLOCKS).await;
         command(0, 0, 0).await;
         command(8, 0x1aa, CMD_SHORT).await;
-        println!("{:5}  CMD8 answered {:#x}", now(), get(RESP0).await);
+        println!("{:5}  CMD8 answered {:#x}", now(), get(regs::resp0).await);
         let mut tries = 0;
         loop {
             command(55, 0, CMD_SHORT).await;
             command(41, 0x4030_0000, CMD_SHORT | CMD_NOCRC).await;
             tries += 1;
-            let ocr = get(RESP0).await;
+            let ocr = get(regs::resp0).await;
             if ocr & 0x8000_0000 != 0 {
                 println!(
                     "{:5}  ready after {tries} ACMD41: OCR {ocr:#x}",
@@ -153,13 +152,13 @@ fn main() {
         println!(
             "{:5}  CID {:08x} {:08x} {:08x} {:08x}",
             now(),
-            get(RESP0 + 12).await,
-            get(RESP0 + 8).await,
-            get(RESP0 + 4).await,
-            get(RESP0).await
+            get(regs::resp3).await,
+            get(regs::resp2).await,
+            get(regs::resp1).await,
+            get(regs::resp0).await
         );
         command(3, 0, CMD_SHORT).await;
-        let rca = get(RESP0).await >> 16;
+        let rca = get(regs::resp0).await >> 16;
         println!("{:5}  RCA {rca:#x}", now());
         command(7, rca << 16, CMD_SHORT | CMD_BUSY).await;
         command(16, 512, CMD_SHORT).await;
@@ -167,7 +166,7 @@ fn main() {
         command(17, 3, CMD_SHORT | CMD_READ).await;
         let mut got = Vec::with_capacity(WORDS);
         for _ in 0..WORDS {
-            got.push(get(DATA).await);
+            got.push(get(regs::data).await);
         }
         assert_eq!(got, block3, "block 3 as the card holds it");
         println!(
@@ -180,14 +179,14 @@ fn main() {
         // Four lines from here.
         command(55, rca << 16, CMD_SHORT).await;
         command(6, 2, CMD_SHORT).await;
-        put(CTRL, DIV | CTRL_WIDE).await;
+        put(regs::ctrl, DIV | CTRL_WIDE).await;
         // Block 5 written, then read back.
         let sent: Vec<u32> = (0..WORDS as u32)
             .map(|i| i.wrapping_mul(0x9e37_79b9))
             .collect();
-        put(CTRL, DIV | CTRL_WIDE | CTRL_CLEAR).await;
+        put(regs::ctrl, DIV | CTRL_WIDE | CTRL_CLEAR).await;
         for v in &sent {
-            put(DATA, *v).await;
+            put(regs::data, *v).await;
         }
         let s = command(24, 5, CMD_SHORT | CMD_WRITE).await;
         println!(
@@ -198,7 +197,7 @@ fn main() {
         command(17, 5, CMD_SHORT | CMD_READ).await;
         let mut back = Vec::with_capacity(WORDS);
         for _ in 0..WORDS {
-            back.push(get(DATA).await);
+            back.push(get(regs::data).await);
         }
         assert_eq!(back, sent, "block 5 as written");
         println!(
