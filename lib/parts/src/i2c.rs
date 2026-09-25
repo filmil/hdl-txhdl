@@ -39,7 +39,7 @@
 //! rather than counting; a data line that reads low while the master
 //! released it is another master winning the bus, which sets
 //! arbitration lost and ends the command.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
+use txhdl::comp::{join2, mux, until, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 
@@ -74,11 +74,17 @@ pub struct I2c {
     /// Another master held the data line low while this one released
     /// it.
     pub lost: Reg<Bit>,
-    /// Where in the transaction the run is: idle 0, the start 1, the
-    /// eight bits 2 to 9, the acknowledge 10, the stop 11, the end 12.
-    pub step: Reg<U<4>>,
-    /// Which quarter of the bit the lines are in.
-    pub quarter: Reg<U<2>>,
+    /// The clock line as the engine drives it, high meaning released.
+    pub scl_r: Reg<Bit>,
+    /// The data line as the engine drives it, high meaning released.
+    pub sda_r: Reg<Bit>,
+    /// Up for the one cycle after a command ends, when what it found
+    /// is latched.
+    pub done: Reg<Bit>,
+    /// The command's byte was not acknowledged, as the engine saw it.
+    pub nack_hit: Reg<Bit>,
+    /// The engine lost the bus to another master during the command.
+    pub lost_hit: Reg<Bit>,
     /// Cycles into the quarter.
     pub tick: Reg<U<16>>,
     /// The byte going out, its next bit on top, or the byte coming in,
@@ -95,8 +101,33 @@ pub struct I2c {
 // end{state}
 
 // begin{run}
+/// Whether a write to `cmd` starts a command this cycle: the bus has a
+/// write, it is to `cmd`, and no command is running.
+#[lower]
+fn cmd_go(wgo: Bit, wsel: U<2>, busy: Bit) -> Bit {
+    wgo & Bit::from(wsel == 1) & !busy
+}
+
+/// Whether the quarter of a bit ends this cycle: a command is running,
+/// the clock is not being stretched by a device holding it low where
+/// the master released it, and the quarter's cycles are up.
+#[lower]
+fn q_go(busy: Bit, scl_r: Bit, scl_in: Bit, tick: U<16>, div: U<16>) -> Bit {
+    busy & !(scl_r & !scl_in) & Bit::from(tick == div)
+}
+
 #[lower]
 impl Unit for I2c {
+    /// Two processes. The bus process answers the registers every
+    /// cycle, counts the cycles of a quarter, and latches what a
+    /// command found once it is done. The engine is the transaction
+    /// written as the sequence it is: a wait for a command, then the
+    /// start, the eight bits, the acknowledge and the stop, each a
+    /// quarter of a bit at a time, with the lines set for each quarter
+    /// before its wait. Every wait after the first is the end of a
+    /// quarter, and the lowering numbers them into the state
+    /// register the hand-written version kept as `step` and
+    /// `quarter`.
     async fn run(
         &mut self,
         bus: LitePort<32, 32, 4>,
@@ -108,185 +139,386 @@ impl Unit for I2c {
             Out<Bit>,
         ),
     ) {
-        loop {
-            DefaultClock::rising().await;
-            let div = self.div.get();
-            let ie = self.ie.get();
-            let busy = self.busy.get();
-            let fired = self.fired.get();
-            let nack = self.nack.get();
-            let lost = self.lost.get();
-            let step = self.step.get();
-            let quarter = self.quarter.get();
-            let tick = self.tick.get();
-            let shift = self.shift.get();
-            let writing = self.req_write.get();
-            let reading = self.req_read.get();
-            // Where in the transaction the step is. The bits are a
-            // pair of comparisons rather than a range, because the
-            // lowering reads `&` and `>=` and knows no `contains`.
-            let at_start = step == 1;
-            let at_bits = (2..=9).contains(&step.raw());
-            let at_ack = step == 10;
-            let at_stop = step == 11;
-            let at_end = step == 12;
-            // The lines as the step and the quarter want them, high
-            // meaning released. A start pulls the data line low while
-            // the clock is high, and a stop releases it while the
-            // clock is high; a bit is carried through the two middle
-            // quarters, where the clock is high.
-            let clock_in_bit = (quarter == 1) | (quarter == 2);
-            let parked = !self.held.get();
-            let scl_want = mux(
-                at_start,
-                Bit::from(quarter < 2),
-                mux(
-                    at_bits | at_ack,
-                    Bit::from(clock_in_bit),
-                    mux(at_stop, Bit::from(quarter != 0), parked),
-                ),
-            );
-            let bit_out = mux(writing, shift.bit(7), Bit::One);
-            let ack_out = mux(writing, Bit::One, self.req_nack.get());
-            let sda_want = mux(
-                at_start,
-                Bit::from(quarter == 0),
-                mux(
-                    at_bits,
-                    bit_out,
-                    mux(
-                        at_ack,
-                        ack_out,
-                        mux(at_stop, Bit::from(quarter >= 2), Bit::One),
-                    ),
-                ),
-            );
-            // A device that holds the clock low while the master
-            // released it is stretching, and the run waits for it.
-            let stretch = scl_want & !scl_in.get();
-            let running = busy & !stretch;
-            let q_last = tick == div;
-            let q_go = running & Bit::from(q_last);
-            let step_go = q_go & (quarter == 3);
-            // The lines are read in the middle of the clock's high
-            // half, which is the end of the second quarter.
-            let sample = q_go & (quarter == 2);
-            let taken = sda_in.get();
-            let took_bit = sample & at_bits & reading;
-            let took_ack = sample & at_bits & writing;
-            let heard = sample & at_ack & writing;
-            // Another master won the bus: the data line is low where
-            // this one released it.
-            let stolen = took_ack & shift.bit(7) & !taken;
-            // The bus.
-            let arh = bus.ar.head();
-            let awh = bus.aw.head();
-            let wh = bus.w.head();
-            let rsel = arh.addr.slice::<2, 2>();
-            let wsel = awh.addr.slice::<2, 2>();
-            let rgo = bus.r.ready() & bus.ar.peek().is_some();
-            let _ = bus.ar.recv_if(bus.r.ready());
-            let wgo = bus.b.ready()
-                & bus.aw.peek().is_some()
-                & bus.w.peek().is_some();
-            let _ = bus.aw.recv_if(wgo);
-            let _ = bus.w.recv_if(wgo);
-            let written = wh.data;
-            // A write to `cmd` starts a command, and is ignored while
-            // one is running: a program reads `state` first.
-            let cmd_go = wgo & (wsel == 1) & !busy;
-            let wants_byte = written.bit(2) | written.bit(3);
-            // Where a command with no start begins: at the byte, or
-            // at the stop when it asked for neither.
-            let first_step =
-                mux(wants_byte, U::<4>::from(2u8), U::<4>::from(11u8));
-            // Where the step goes next: past the bits when the command
-            // wants none, past the stop when it asked for none.
-            let after_start =
-                mux(writing | reading, U::<4>::from(2u8), U::<4>::from(11u8));
-            let after_ack = mux(
-                self.req_stop.get(),
-                U::<4>::from(11u8),
-                U::<4>::from(12u8),
-            );
-            let next_step = select!(step.raw() => {
-                1 => after_start,
-                9 => U::<4>::from(10u8),
-                10 => after_ack,
-                11 => U::<4>::from(12u8),
-                _ => step + 1,
-            });
-            let ctrl = ie.zext::<1>().concat::<16, 17>(div).zext::<32>();
-            let state = lost
-                .zext::<1>()
-                .concat::<1, 2>(nack.zext::<1>())
-                .concat::<1, 3>(fired.zext::<1>())
-                .concat::<1, 4>(busy.zext::<1>())
-                .zext::<32>();
-            let word = select!(rsel.raw() => {
-                0 => ctrl,
-                2 => self.data.get().zext::<32>(),
-                3 => state,
-                _ => U::<32>::from(0u8),
-            });
-            let clearing = wgo & (wsel == 3);
-            with!(self <= {
-                wgo & (wsel == 0) ? {
-                    div: written.slice::<0, 16>(),
-                    ie: written.bit(16),
-                },
-                cmd_go & written.bit(0) ? held: Bit::One,
-                cmd_go ? {
-                    busy: Bit::One,
-                    fired: Bit::Zero,
-                    nack: Bit::Zero,
-                    lost: Bit::Zero,
-                    req_start: written.bit(0),
-                    req_stop: written.bit(1),
-                    req_write: written.bit(2),
-                    req_read: written.bit(3),
-                    req_nack: written.bit(4),
-                    shift: written.slice::<8, 8>(),
-                    step: mux(written.bit(0), U::<4>::from(1u8), first_step),
-                    quarter: U::<2>::from(0u8),
-                    tick: U::<16>::from(0u8),
-                },
-                running ? tick: mux(q_last, U::<16>::from(0u8), tick + 1),
-                q_go ? quarter: quarter + 1,
-                took_bit ? shift: (shift << 1) | taken.zext::<8>(),
-                heard ? nack: taken,
-                stolen ? lost: Bit::One,
-                step_go ? step: next_step,
-                step_go & at_bits ? shift: mux(reading, shift, shift << 1),
-                step_go & (step == 9) & reading ? data: shift,
-                step_go & at_stop ? held: Bit::Zero,
-                at_end ? {
-                    busy: Bit::Zero,
-                    fired: Bit::One,
-                    step: U::<4>::from(0u8),
-                },
-                stolen ? {
-                    busy: Bit::Zero,
-                    fired: Bit::One,
-                    step: U::<4>::from(0u8),
-                },
-                clearing & written.bit(1) ? fired: Bit::Zero,
-                clearing & written.bit(2) ? nack: Bit::Zero,
-                clearing & written.bit(3) ? lost: Bit::Zero,
-            });
-            if rgo.to_bool() {
-                bus.r.send(LiteR {
-                    data: word,
-                    resp: Resp::Okay,
-                });
-            }
-            if wgo.to_bool() {
-                bus.b.send(LiteB { resp: Resp::Okay });
-            }
-            scl_low.set(!scl_want);
-            sda_low.set(!sda_want);
-            irq.set(fired & ie);
-        }
+        join2(
+            async {
+                loop {
+                    DefaultClock::rising().await;
+                    let div = self.div.get();
+                    let ie = self.ie.get();
+                    let busy = self.busy.get();
+                    let fired = self.fired.get();
+                    let nack = self.nack.get();
+                    let lost = self.lost.get();
+                    let tick = self.tick.get();
+                    // The bus.
+                    let arh = bus.ar.head();
+                    let awh = bus.aw.head();
+                    let wh = bus.w.head();
+                    let rsel = arh.addr.slice::<2, 2>();
+                    let wsel = awh.addr.slice::<2, 2>();
+                    let rgo = bus.r.ready() & bus.ar.peek().is_some();
+                    let _ = bus.ar.recv_if(bus.r.ready());
+                    let wgo = bus.b.ready()
+                        & bus.aw.peek().is_some()
+                        & bus.w.peek().is_some();
+                    let _ = bus.aw.recv_if(wgo);
+                    let _ = bus.w.recv_if(wgo);
+                    let written = wh.data;
+                    let starting = cmd_go(wgo, wsel, busy);
+                    // A quarter of a bit is `div` cycles and one, and
+                    // the count pauses while a device stretches the
+                    // clock.
+                    let stretch = self.scl_r.get() & !scl_in.get();
+                    let running = busy & !stretch;
+                    let q_last = tick == div;
+                    let ctrl =
+                        ie.zext::<1>().concat::<16, 17>(div).zext::<32>();
+                    let state = lost
+                        .zext::<1>()
+                        .concat::<1, 2>(nack.zext::<1>())
+                        .concat::<1, 3>(fired.zext::<1>())
+                        .concat::<1, 4>(busy.zext::<1>())
+                        .zext::<32>();
+                    let word = select!(rsel.raw() => {
+                        0 => ctrl,
+                        2 => self.data.get().zext::<32>(),
+                        3 => state,
+                        _ => U::<32>::from(0u8),
+                    });
+                    let clearing = wgo & (wsel == 3);
+                    let done = self.done.get();
+                    with!(self <= {
+                        wgo & (wsel == 0) ? {
+                            div: written.slice::<0, 16>(),
+                            ie: written.bit(16),
+                        },
+                        starting ? tick: U::<16>::from(0u8),
+                        !starting & running ? tick: mux(
+                            q_last,
+                            U::<16>::from(0u8),
+                            tick + 1
+                        ),
+                        starting ? {
+                            fired: Bit::Zero,
+                            nack: Bit::Zero,
+                            lost: Bit::Zero,
+                        },
+                        done ? {
+                            fired: Bit::One,
+                            nack: self.nack_hit.get(),
+                            lost: self.lost_hit.get(),
+                        },
+                        clearing & written.bit(1) ? fired: Bit::Zero,
+                        clearing & written.bit(2) ? nack: Bit::Zero,
+                        clearing & written.bit(3) ? lost: Bit::Zero,
+                    });
+                    if rgo.to_bool() {
+                        bus.r.send(LiteR {
+                            data: word,
+                            resp: Resp::Okay,
+                        });
+                    }
+                    if wgo.to_bool() {
+                        bus.b.send(LiteB { resp: Resp::Okay });
+                    }
+                    // The lines as the engine drives them, high
+                    // meaning released.
+                    scl_low.set(!self.scl_r.get());
+                    sda_low.set(!self.sda_r.get());
+                    irq.set(fired & ie);
+                }
+            },
+            async {
+                loop {
+                    // Idle until a write to `cmd`, which is taken as it
+                    // is written: what the command asks for, and the
+                    // byte to send.
+                    until(DefaultClock::rising, || {
+                        cmd_go(
+                            bus.b.ready()
+                                & bus.aw.peek().is_some()
+                                & bus.w.peek().is_some(),
+                            bus.aw.head().addr.slice::<2, 2>(),
+                            self.busy.get(),
+                        )
+                        .to_bool()
+                    })
+                    .await;
+                    let written = bus.w.head().data;
+                    with!(self <= {
+                        busy: Bit::One,
+                        req_start: written.bit(0),
+                        req_stop: written.bit(1),
+                        req_write: written.bit(2),
+                        req_read: written.bit(3),
+                        req_nack: written.bit(4),
+                        shift: written.slice::<8, 8>(),
+                        nack_hit: Bit::Zero,
+                        lost_hit: Bit::Zero,
+                        written.bit(0) ? held: Bit::One,
+                    });
+                    // The start, or a repeated start: the data line
+                    // falls while the clock is high, then the clock
+                    // falls.
+                    if written.bit(0).to_bool() {
+                        with!(self <= { scl_r: Bit::One, sda_r: Bit::One });
+                        until(DefaultClock::rising, || {
+                            q_go(
+                                self.busy.get(),
+                                self.scl_r.get(),
+                                scl_in.get(),
+                                self.tick.get(),
+                                self.div.get(),
+                            )
+                            .to_bool()
+                        })
+                        .await;
+                        with!(self <= { sda_r: Bit::Zero });
+                        until(DefaultClock::rising, || {
+                            q_go(
+                                self.busy.get(),
+                                self.scl_r.get(),
+                                scl_in.get(),
+                                self.tick.get(),
+                                self.div.get(),
+                            )
+                            .to_bool()
+                        })
+                        .await;
+                        with!(self <= { scl_r: Bit::Zero });
+                        until(DefaultClock::rising, || {
+                            q_go(
+                                self.busy.get(),
+                                self.scl_r.get(),
+                                scl_in.get(),
+                                self.tick.get(),
+                                self.div.get(),
+                            )
+                            .to_bool()
+                        })
+                        .await;
+                        until(DefaultClock::rising, || {
+                            q_go(
+                                self.busy.get(),
+                                self.scl_r.get(),
+                                scl_in.get(),
+                                self.tick.get(),
+                                self.div.get(),
+                            )
+                            .to_bool()
+                        })
+                        .await;
+                    }
+                    // The byte, high bit first, and the acknowledge
+                    // after it. A bit is set up while the clock is
+                    // low, carried through the two quarters the clock
+                    // is high, and read at the end of the second of
+                    // them. A master writing a one that reads back a
+                    // zero has lost the bus to another master, and
+                    // skips the rest of the byte.
+                    if (self.req_write.get() | self.req_read.get()).to_bool() {
+                        for _ in 0..8 {
+                            if !self.lost_hit.get().to_bool() {
+                                with!(self <= {
+                                    scl_r: Bit::Zero,
+                                    sda_r: mux(
+                                        self.req_write.get(),
+                                        self.shift.get().bit(7),
+                                        Bit::One
+                                    ),
+                                });
+                                until(DefaultClock::rising, || {
+                                    q_go(
+                                        self.busy.get(),
+                                        self.scl_r.get(),
+                                        scl_in.get(),
+                                        self.tick.get(),
+                                        self.div.get(),
+                                    )
+                                    .to_bool()
+                                })
+                                .await;
+                                with!(self <= { scl_r: Bit::One });
+                                until(DefaultClock::rising, || {
+                                    q_go(
+                                        self.busy.get(),
+                                        self.scl_r.get(),
+                                        scl_in.get(),
+                                        self.tick.get(),
+                                        self.div.get(),
+                                    )
+                                    .to_bool()
+                                })
+                                .await;
+                                until(DefaultClock::rising, || {
+                                    q_go(
+                                        self.busy.get(),
+                                        self.scl_r.get(),
+                                        scl_in.get(),
+                                        self.tick.get(),
+                                        self.div.get(),
+                                    )
+                                    .to_bool()
+                                })
+                                .await;
+                                let taken = sda_in.get();
+                                let shift = self.shift.get();
+                                with!(self <= {
+                                    self.req_read.get() ? shift:
+                                        (shift << 1) | taken.zext::<8>(),
+                                    self.req_write.get() ? shift: shift << 1,
+                                    self.req_write.get() & shift.bit(7) & !taken
+                                        ? lost_hit: Bit::One,
+                                    scl_r: Bit::Zero,
+                                });
+                                until(DefaultClock::rising, || {
+                                    q_go(
+                                        self.busy.get(),
+                                        self.scl_r.get(),
+                                        scl_in.get(),
+                                        self.tick.get(),
+                                        self.div.get(),
+                                    )
+                                    .to_bool()
+                                })
+                                .await;
+                            }
+                        }
+                        // The acknowledge: the master releases the
+                        // line for a byte it wrote and reads the
+                        // device's answer, or answers a byte it read.
+                        if !self.lost_hit.get().to_bool() {
+                            with!(self <= {
+                                self.req_read.get() ? data: self.shift.get(),
+                                scl_r: Bit::Zero,
+                                sda_r: mux(
+                                    self.req_write.get(),
+                                    Bit::One,
+                                    self.req_nack.get()
+                                ),
+                            });
+                            until(DefaultClock::rising, || {
+                                q_go(
+                                    self.busy.get(),
+                                    self.scl_r.get(),
+                                    scl_in.get(),
+                                    self.tick.get(),
+                                    self.div.get(),
+                                )
+                                .to_bool()
+                            })
+                            .await;
+                            with!(self <= { scl_r: Bit::One });
+                            until(DefaultClock::rising, || {
+                                q_go(
+                                    self.busy.get(),
+                                    self.scl_r.get(),
+                                    scl_in.get(),
+                                    self.tick.get(),
+                                    self.div.get(),
+                                )
+                                .to_bool()
+                            })
+                            .await;
+                            until(DefaultClock::rising, || {
+                                q_go(
+                                    self.busy.get(),
+                                    self.scl_r.get(),
+                                    scl_in.get(),
+                                    self.tick.get(),
+                                    self.div.get(),
+                                )
+                                .to_bool()
+                            })
+                            .await;
+                            with!(self <= {
+                                self.req_write.get() ? nack_hit: sda_in.get(),
+                                scl_r: Bit::Zero,
+                            });
+                            until(DefaultClock::rising, || {
+                                q_go(
+                                    self.busy.get(),
+                                    self.scl_r.get(),
+                                    scl_in.get(),
+                                    self.tick.get(),
+                                    self.div.get(),
+                                )
+                                .to_bool()
+                            })
+                            .await;
+                        }
+                    }
+                    // The stop: the data line rises while the clock is
+                    // high, and the transaction is over.
+                    if (self.req_stop.get() & !self.lost_hit.get()).to_bool() {
+                        with!(self <= { scl_r: Bit::Zero, sda_r: Bit::Zero });
+                        until(DefaultClock::rising, || {
+                            q_go(
+                                self.busy.get(),
+                                self.scl_r.get(),
+                                scl_in.get(),
+                                self.tick.get(),
+                                self.div.get(),
+                            )
+                            .to_bool()
+                        })
+                        .await;
+                        with!(self <= { scl_r: Bit::One });
+                        until(DefaultClock::rising, || {
+                            q_go(
+                                self.busy.get(),
+                                self.scl_r.get(),
+                                scl_in.get(),
+                                self.tick.get(),
+                                self.div.get(),
+                            )
+                            .to_bool()
+                        })
+                        .await;
+                        with!(self <= { sda_r: Bit::One });
+                        until(DefaultClock::rising, || {
+                            q_go(
+                                self.busy.get(),
+                                self.scl_r.get(),
+                                scl_in.get(),
+                                self.tick.get(),
+                                self.div.get(),
+                            )
+                            .to_bool()
+                        })
+                        .await;
+                        until(DefaultClock::rising, || {
+                            q_go(
+                                self.busy.get(),
+                                self.scl_r.get(),
+                                scl_in.get(),
+                                self.tick.get(),
+                                self.div.get(),
+                            )
+                            .to_bool()
+                        })
+                        .await;
+                        with!(self <= { held: Bit::Zero });
+                    }
+                    // The end: the lines parked, with the clock low
+                    // while the transaction stays open, and released
+                    // when it is over or the bus was lost; `done` is
+                    // up for one cycle, which is when the bus process
+                    // latches what the command found, and `busy` falls
+                    // a cycle after it.
+                    let over = self.req_stop.get() | self.lost_hit.get();
+                    with!(self <= {
+                        self.lost_hit.get() ? held: Bit::Zero,
+                        scl_r: over | !self.held.get(),
+                        sda_r: Bit::One,
+                        done: Bit::One,
+                    });
+                    DefaultClock::rising().await;
+                    with!(self <= { done: Bit::Zero, busy: Bit::Zero });
+                }
+            },
+        )
+        .await;
     }
 }
 // end{run}

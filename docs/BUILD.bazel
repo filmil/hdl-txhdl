@@ -1274,7 +1274,7 @@ waveform(
         "//sda_low=>sda_low",
         "//scl_in=>scl_in",
         "//sda_in=>sda_in",
-        "//i2c/step=>step",
+        "//i2c/busy=>busy",
         "//i2c/shift=>shift",
         "//i2c/nack=>nack",
         "//irq=>irq",
