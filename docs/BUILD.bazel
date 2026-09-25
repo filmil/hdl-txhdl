@@ -783,6 +783,8 @@ latex_document(
         ":wire_run",
         ":wire_timing",
         ":fn_run",
+        ":arith_run",
+        ":arith_timing",
         ":litfn_run",
         ":litfn_timing",
         ":fn_timing",
@@ -1828,6 +1830,22 @@ waveform(
         "//head=>head",
         "//full=>full",
     ],
+)
+
+waveform(
+    name = "arith",
+    example = "//lib/examples:ex_arith",
+    lowered = ("arith", "arith"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//a=>a",
+        "//b=>b",
+        "//arith/prod=>prod",
+        "//arith/rest=>rest",
+        "//arith/neg=>neg",
+        "//arith/sum=>sum",
+    ],
+    until = 34,
 )
 
 waveform(

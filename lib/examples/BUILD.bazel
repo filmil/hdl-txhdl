@@ -615,6 +615,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Multiplication, remainder and negation (issue 496):  bazel run //lib/examples:ex_arith
+rust_binary(
+    name = "ex_arith",
+    srcs = ["ex_arith.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A lowered function on a literal (issue 555):  bazel run //lib/examples:ex_litfn
 rust_binary(
     name = "ex_litfn",
@@ -965,6 +974,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_wire.rs",
         "ex_fn.rs",
         "ex_litfn.rs",
+        "ex_arith.rs",
         "ex_names.rs",
         "ex_reserved.rs",
         "ex_rename.rs",
