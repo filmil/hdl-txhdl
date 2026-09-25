@@ -1986,6 +1986,22 @@ waveform(
     ],
 )
 
+# Helpers from another file of the crate, taking and giving a struct
+# (issue 504).
+waveform(
+    name = "helpers",
+    example = "//lib/examples:ex_helpers",
+    lowered = ("coder", "coder"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//a=>a",
+        "//b=>b",
+        "//code=>code",
+        "//coder/held=>held",
+        "//mixed=>mixed",
+    ],
+)
+
 # Names VHDL or SystemVerilog reserve, escaped in both netlists, and
 # the testbench still binding each port to its trace (issue 497).
 waveform(

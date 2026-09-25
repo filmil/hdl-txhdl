@@ -798,6 +798,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Helpers from another file, with structs:  bazel run //lib/examples:ex_helpers
+rust_binary(
+    name = "ex_helpers",
+    srcs = [
+        "ex_helpers.rs",
+        "helpers/codes.rs",
+    ],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Names a target reserves, escaped:  bazel run //lib/examples:ex_reserved
 rust_binary(
     name = "ex_reserved",
@@ -1149,13 +1161,18 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_serial.rs",
         "ex_frame.rs",
         "ex_hold.rs",
+        "ex_helpers.rs",
         "ex_rename.rs",
         "ex_foreign.rs",
 ]
 
 filegroup(
     name = "sources",
-    srcs = SOURCES,
+    # A module of ex_helpers, in a file of its own because that is what
+    # the example shows (issue 504). It is a source of that target and
+    # not a target, so it is here rather than in SOURCES, which names
+    # a target by each file; fmt_test checks it through ex_helpers.
+    srcs = SOURCES + ["helpers/codes.rs"],
 )
 
 # The documents set source at 80 columns and never break a line, so an
