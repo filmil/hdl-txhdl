@@ -4590,6 +4590,13 @@ fn port_struct_fields(
     ty: &[TokenTree],
     structs: &[PortStruct],
 ) -> Result<Option<StructSide>, String> {
+    // An array of ports, `[Rx<T>; N]`, is a struct of ports whose
+    // fields are its indices (issue 500).
+    if let [TokenTree::Group(g)] = ty {
+        if g.delimiter() == Delimiter::Bracket {
+            return Ok(Some(StructSide::Ports));
+        }
+    }
     let lt = ty
         .iter()
         .position(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == '<'))
@@ -4650,6 +4657,48 @@ fn port_fields(
     let mut out: Vec<TokenTree> = Vec::new();
     let mut i = 0;
     while i < ts.len() {
+        // `ins[k]` of an array of ports is the port `ins_k`, and
+        // `ins[i]` with `i` a loop's variable a name `dyn_names`
+        // formats with `i` once `lowered` runs (issue 500).
+        if let (TokenTree::Ident(b), Some(TokenTree::Group(g))) =
+            (&ts[i], ts.get(i + 1))
+        {
+            let after_dot = i > 0 && punct_at(&ts, i - 1, '.');
+            let b = b.to_string();
+            let wild = bound.iter().any(|(n, fs)| *n == b && fs == &["*"]);
+            if wild && !after_dot && g.delimiter() == Delimiter::Bracket {
+                let it: Vec<TokenTree> = g.stream().into_iter().collect();
+                let field = match it.as_slice() {
+                    [TokenTree::Literal(k)] => Some(k.to_string()),
+                    [TokenTree::Ident(v)] => Some(format!("{DYN}{v}{DYN_END}")),
+                    _ => None,
+                };
+                if let Some(field) = field {
+                    let port = if field.starts_with(DYN) {
+                        format!("{b}{field}")
+                    } else {
+                        format!("{b}_{field}")
+                    };
+                    let ty = BUNDLES.with(|s| {
+                        s.borrow()
+                            .iter()
+                            .find(|(n, _)| *n == b)
+                            .map(|(_, t)| t.clone())
+                    });
+                    BUNDLED.with(|d| {
+                        let mut d = d.borrow_mut();
+                        if let (Some(ty), false) =
+                            (ty, d.iter().any(|(p, _, _)| *p == port))
+                        {
+                            d.push((port.clone(), ty, field.clone()));
+                        }
+                    });
+                    out.push(TokenTree::Ident(Ident::new(&port, g.span())));
+                    i += 2;
+                    continue;
+                }
+            }
+        }
         if let (TokenTree::Ident(b), true, Some(TokenTree::Ident(f))) =
             (&ts[i], punct_at(&ts, i + 1, '.'), ts.get(i + 2))
         {
@@ -5644,6 +5693,98 @@ struct Cx<'a> {
     clock: String,
     falling: bool,
     hoisted: Vec<String>,
+    /// The variables of the `for` loops the statements are inside,
+    /// innermost last (issue 500).
+    loops: Vec<String>,
+}
+
+/// The marks around a loop's variable in a name built from it: `ins[i]`
+/// is the port `ins__TXIDX_i_XDIT` while the macro reads the body, and
+/// `dyn_names` turns every quoted name holding one into a `format!` of
+/// `ins_{i}` in the text it writes (issue 500).
+const DYN: &str = "__TXIDX_";
+const DYN_END: &str = "_XDIT";
+
+/// Every string literal in `text` that holds a loop's variable between
+/// `DYN` and `DYN_END`, as `(&*format!(..))` of it: a port's name,
+/// `ins_{i}_valid`, or an index alone, `{i}`. The parentheses make it a
+/// `&str` either way, so `.to_string()` after it still gives a
+/// `String` and a place that wants a `&str` has one.
+fn dyn_names(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(DYN) {
+        let Some(open) = rest[..at].rfind('"') else {
+            break;
+        };
+        let Some(close) = rest[at..].find('"').map(|c| at + c) else {
+            break;
+        };
+        let lit = &rest[open + 1..close];
+        let m = lit.find(DYN).unwrap();
+        let prefix = &lit[..m];
+        let after = &lit[m + DYN.len()..];
+        let Some(e) = after.find(DYN_END) else {
+            break;
+        };
+        let (var, suffix) = (&after[..e], &after[e + DYN_END.len()..]);
+        let sep = if prefix.is_empty() { "" } else { "_" };
+        out.push_str(&rest[..open]);
+        out.push_str(&format!(
+            "(&*format!(\"{prefix}{sep}{{}}{suffix}\", {var}))"
+        ));
+        rest = &rest[close + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A statement that is Rust code for `lowered` to run rather than a
+/// netlist statement to push: a `for` loop, a `let` whose value is
+/// an expression built as the loop goes round (issue 500).
+const RAW: &str = "\u{1}raw\u{1}";
+
+/// The Rust code of a value a loop's `let`, or an assignment to a
+/// `let mut`, holds: a wire of its own, `name_lN` with `N` counted as
+/// `lowered` runs, so a value carried round a loop is written once a
+/// turn rather than inside every turn after it. A name or a number
+/// needs no wire (issue 500).
+fn dyn_wire(name: &str, e: &str) -> String {
+    let plain = e.starts_with("NlE::Name(")
+        || e.starts_with("NlE::Num(")
+        || e.starts_with("NlE::Bits(")
+        || e.starts_with("::txhdl::netlist::lit(")
+        || e.starts_with("__l_");
+    if plain {
+        return e.to_string();
+    }
+    format!(
+        "{{ let __n = format!(\"{name}_l{{}}\", __wn); __wn += 1; \
+         __dynw.push((__n.clone(), {e})); NlE::Name(__n) }}"
+    )
+}
+
+/// Statements as the Rust code that pushes them, in order, onto `__b`,
+/// with any raw code among them as it is.
+fn items_code(items: &[String]) -> String {
+    items
+        .iter()
+        .map(|s| match s.strip_prefix(RAW) {
+            Some(code) => code.to_string(),
+            None => format!("__b.push({s});"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Statements as a block that yields them: a process's body, or an
+/// arm's, so a loop or a `let` of Rust among them has a scope as it
+/// does in the source.
+fn stmts_code(items: &[String]) -> String {
+    format!(
+        "{{ #[allow(unused_mut)] let mut __b: Vec<NlS> = Vec::new(); {} __b }}",
+        items_code(items)
+    )
 }
 
 /// The statements of a block, split on `;` at depth zero, and after
@@ -5667,6 +5808,14 @@ fn stmts_of(ts: &[TokenTree]) -> Vec<Vec<TokenTree>> {
                 if !more {
                     out.push(std::mem::take(&mut cur));
                 }
+            }
+            // A `for` loop ends at its body, with no `;` (issue 500).
+            TokenTree::Group(g)
+                if g.delimiter() == Delimiter::Brace
+                    && cur.first().is_some_and(|f| is_ident(f, "for")) =>
+            {
+                cur.push(t.clone());
+                out.push(std::mem::take(&mut cur));
             }
             t => cur.push(t.clone()),
         }
@@ -5805,6 +5954,122 @@ fn lower_stmts(
             continue;
         }
         // let v = rx.wait().await: a receive is the wait, and its guard.
+        // `for i in lo..hi { .. }`: unrolled when `lowered` runs, since
+        // the count is usually a const parameter the macro cannot see.
+        // The loop becomes a Rust `for` around the statements it
+        // pushes, and inside it `i` is a number and every name built
+        // from it is formatted with it (issue 500).
+        if is_ident(&ts[0], "for") {
+            if path.is_some() {
+                return Err(err(
+                    ts[0].span(),
+                    "a `for` in a lowered body belongs at the top of the loop, \
+                     not under an `if`: put the `if` inside the `for`",
+                ));
+            }
+            let (
+                Some(TokenTree::Ident(var)),
+                true,
+                Some(TokenTree::Group(body)),
+            ) = (
+                ts.get(1),
+                ts.get(2).is_some_and(|t| is_ident(t, "in")),
+                ts.last(),
+            )
+            else {
+                return Err(err(
+                    ts[0].span(),
+                    "a `for` in a lowered body is `for i in lo..hi { .. }`",
+                ));
+            };
+            let range = text_of(&ts[3..ts.len() - 1]);
+            if !range.contains("..") {
+                return Err(err(
+                    ts[0].span(),
+                    "a `for` in a lowered body goes over a range, `lo..hi`",
+                ));
+            }
+            let var = var.to_string();
+            let mark = cx.subst.len();
+            cx.subst
+                .push((var.clone(), format!("NlE::Num({var} as u128)")));
+            cx.loops.push(var.clone());
+            let inner: Vec<TokenTree> = body.stream().into_iter().collect();
+            let items = lower_stmts(cx, &inner, None)?;
+            cx.loops.pop();
+            // A `let` inside the loop is gone after it, as in Rust.
+            cx.subst.truncate(mark);
+            stmts.push(format!(
+                "{RAW}for {var} in {range} {{ {} }}",
+                items_code(&items)
+            ));
+            continue;
+        }
+        // Inside a loop, or for a `let mut`, a `let` is a Rust variable
+        // holding the expression, built afresh on every turn, rather
+        // than a wire: its value depends on the loop's index, or is
+        // carried from one turn to the next by `x = ..` (issue 500).
+        let is_mut = ts.get(1).is_some_and(|t| is_ident(t, "mut"));
+        // A channel's receive, take or wait, and `let _`, keep their
+        // own lowering below.
+        let channel_op = is_ident(ts.get(1).unwrap_or(&ts[0]), "_")
+            || text.contains(".recv")
+            || text.ends_with(".take()")
+            || text.contains(".wait()");
+        if is_ident(&ts[0], "let")
+            && !channel_op
+            && (is_mut || !cx.loops.is_empty())
+        {
+            let at = if is_mut { 2 } else { 1 };
+            let (Some(TokenTree::Ident(name)), true) = (
+                ts.get(at),
+                ts.get(at + 1).is_some_and(
+                    |t| matches!(t, TokenTree::Punct(p) if p.as_char() == '='),
+                ),
+            ) else {
+                return Err(err(
+                    ts[0].span(),
+                    "a `let` in a loop, or a `let mut`, binds one name: \
+                     `let x = e`",
+                ));
+            };
+            let e = match tr(&ts[at + 2..], &cx.subst) {
+                Ok(e) => e,
+                Err(m) => return Err(err(ts[0].span(), &m)),
+            };
+            let name = name.to_string();
+            let var = format!("__l_{name}");
+            let kw = if is_mut { "let mut" } else { "let" };
+            let e = dyn_wire(&name, &e);
+            stmts.push(format!("{RAW}{kw} {var}: NlE = {e};"));
+            cx.subst.push((name, format!("{var}.clone()")));
+            continue;
+        }
+        // `x = e` of a `let mut`: the next value of the Rust variable,
+        // which is how a loop carries a value from one turn to the next.
+        if let [TokenTree::Ident(name), TokenTree::Punct(eq), rest @ ..] =
+            ts.as_slice()
+        {
+            let var = format!("__l_{name}");
+            let bound = cx
+                .subst
+                .iter()
+                .rev()
+                .find(|(n, _)| *n == name.to_string())
+                .is_some_and(|(_, v)| *v == format!("{var}.clone()"));
+            if eq.as_char() == '='
+                && eq.spacing() == proc_macro::Spacing::Alone
+                && bound
+            {
+                let e = match tr(rest, &cx.subst) {
+                    Ok(e) => e,
+                    Err(m) => return Err(err(ts[0].span(), &m)),
+                };
+                let e = dyn_wire(&name.to_string(), &e);
+                stmts.push(format!("{RAW}{var} = {e};"));
+                continue;
+            }
+        }
         if text.starts_with("let") && text.ends_with(".wait().await") {
             let TokenTree::Ident(n) = &ts[1] else {
                 return Err(err(ts[1].span(), "expected a name"));
@@ -6096,7 +6361,7 @@ fn lower_stmts(
                 let gt: Vec<TokenTree> = g.stream().into_iter().collect();
                 let body = lower_stmts(cx, &gt, Some(here))?;
                 cx.subst.truncate(n);
-                arms.push(format!("({c}, vec![{}])", body.join(", ")));
+                arms.push(format!("({c}, {})", stmts_code(&body)));
                 nots.push(format!("NlE::Not(Box::new({c}))"));
                 i += 2 + b;
                 match (ts.get(i), ts.get(i + 1)) {
@@ -6115,7 +6380,7 @@ fn lower_stmts(
                             g.stream().into_iter().collect();
                         let body = lower_stmts(cx, &gt, Some(here))?;
                         cx.subst.truncate(n);
-                        els = format!("vec![{}]", body.join(", "));
+                        els = stmts_code(&body);
                         break;
                     }
                     (None, _) => break,
@@ -7023,6 +7288,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             clock: String::new(),
             falling: false,
             hoisted: Vec::new(),
+            loops: Vec::new(),
         };
         let mut stmts = match lower_stmts(&mut cx, &toks, None) {
             Ok(s) => s,
@@ -7039,8 +7305,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
         procs.push(format!(
             "::txhdl::netlist::Process {{ clock: {clock}, falling: {falling}, \
-         body: vec![{}] }}",
-            stmts.join(",\n")
+         body: {} }}",
+            stmts_code(&stmts)
         ));
     }
     // A `let` whose name a target reserves is not refused: the wire
@@ -7130,13 +7396,16 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          use ::txhdl::netlist::{{Expr as NlE, Stmt as NlS, Target as NlT}};\n\
          {uses}\
          {prelude}\
+         #[allow(unused_mut)] let mut __dynw: Vec<(String, NlE)> = Vec::new();\n\
+         #[allow(unused_mut)] let mut __wn: usize = 0;\n\
+         let __procs: Vec<::txhdl::netlist::Process> = vec![{procs}];\n\
          ::txhdl::netlist::Lowered {{\n\
          name: name.to_string(),\n\
          fields: <Self as ::txhdl::netlist::Fields>::fields(),\n\
          ports: {{ let mut p = Vec::new(); {ports} p }},\n\
-         wires: vec![{wires}],\n\
+         wires: {{ let mut __w = vec![{wires}]; __w.extend(__dynw); __w }},\n\
          wire_names: vec![{wire_names}],\n\
-         procs: vec![{procs}],\n\
+         procs: __procs,\n\
          init: Vec::new(),\n\
          init_regs: Vec::new(),\n\
          aliases: Vec::new(),\n\
@@ -7184,6 +7453,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             .join(",\n"),
         procs = procs.join(",\n"),
     );
+    // A name built from a loop's variable, formatted with it (issue 500).
+    let generated_text = dyn_names(&generated_text);
     if let Ok(dir) = std::env::var("TXHDL_MACRO_DUMP") {
         let _ = std::fs::write(
             format!("{dir}/lower_{}.rs", unit.replace(' ', "")),
