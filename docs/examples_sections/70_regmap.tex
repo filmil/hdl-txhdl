@@ -1,0 +1,46 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Map Said Once}
+\label{sec:x-regmap}
+
+Every peripheral on AXI-Lite in this document decodes its registers
+the same way: a \code{select!} over the address's word bits for the
+read, a guard of \code{wsel == k} for every register a write reaches,
+and the map stated again in the comment above, in the datasheet, in
+the driver and in the device tree. Eleven of them wrote it by hand,
+and one of them answered the wrong word for an address it did not
+name, which nobody read off the source: the comment said zero and the
+hardware said otherwise.
+
+\code{regmap!} is the map said once. A declaration names the map and
+its two functions, says how many address bits select a word, and
+lists the registers: a word index, a name, an access and a sentence.
+From that one text the macro writes a module of offsets a program
+addresses by, \code{knobs::ctrl} and the rest; the read mux,
+\code{knobs\_read}, which takes the registers in declaration order
+and answers zero for a word not named; the write enables,
+\code{knobs\_we}, a bit a register that \code{with!} guards on; and a
+table, \code{knobs::MAP}, that the tools read. The lowering reads the
+same declaration and inlines the same mux and enables into the
+netlist, so the map a program sees and the map the hardware decodes
+cannot differ. \code{//tools/regmap} writes the table as a C header
+for a driver and as a device tree node at a base, and
+\code{//tools/datasheet} writes it as the sheet's register table.
+
+The example is the smallest peripheral that has a map: an identity, a
+control word and a counter. Its \code{run} decodes nothing by hand.
+The host client reads the identity, starts the counter, reads it
+twice, stops it, and reads a word the map does not name; the run
+prints what it saw, then the header and the table rows the
+declaration stands for.
+
+\begin{figure}[htbp]
+\centering
+\input{regmap_timing.tex}
+\caption{The control word written on \code{aw}, the counter running,
+and the reads on \code{ar} answered on \code{r}.}
+\label{fig:x-regmap}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_regmap.rs}. Run with \code{bazel run //lib/examples:ex\_regmap}.},label={lst:x-regmap}]{lib/examples/ex_regmap.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_regmap} printed when the build ran it: the run, then the C header and the table rows written from the declaration.},label={lst:x-regmap-out}]{out_regmap.txt}
