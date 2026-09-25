@@ -1,17 +1,17 @@
 % SPDX-License-Identifier: Apache-2.0
-% covers: Plic1, Plic2, Plic3, Plic4, Plic5, Plic6, Plic7, Plic8
-\datasheet{Plic}{Platform-level interrupt controllers: one to eight sources and one target, at the RISC-V PLIC's offsets.}
+% covers: Plic, Plic1, Plic2, Plic3, Plic4, Plic5, Plic6, Plic7, Plic8
+\datasheet{Plic}{The platform-level interrupt controller: one to thirty-one sources and one target, at the RISC-V PLIC's offsets.}
 
-\dsfacts{\code{lib/parts/src/plic.rs}; generator \code{plic\_text} in \code{lib/macros/lib.rs}}%
-{\code{txhdl\_parts::plic::Plic1} to \code{Plic8}}%
+\dsfacts{\code{lib/parts/src/plic.rs}}%
+{\code{txhdl\_parts::plic::Plic<N, EDGE>}, and \code{Plic1} to \code{Plic8}, which name the counts}%
 {\code{//docs:vreteno}}
 
 \subsection*{Function}
 
 A controller gathers the interrupt lines of several sources into one
 line for one target, a hart's machine mode, and lets software ask which
-source to serve. Each source \textit{i} is an input line,
-\code{src}\textit{i}, numbered from 1. The output \code{irq} is the
+source to serve. Each source \textit{i}, numbered from 1, is an input line,
+\code{srcs\_}\textit{i}\code{-1}, of the array of ports \code{srcs}. The output \code{irq} is the
 target's line. Software reaches the controller as an AXI-Lite
 peripheral whose link is one port, \code{bus}, a \code{LitePort} of
 the five channels: reads come on \code{bus\_ar} and are answered on
@@ -21,10 +21,14 @@ and are answered on \code{bus\_b}. It sits behind a
 The input \code{rst} clears the requests, the line, the priorities, the
 enable bits and the threshold.
 
-\code{plic!(PlicN, N)} writes one unit per count, since the lowering
-reads a body and not a loop over ports. \code{plic.rs} writes
-\code{Plic1} to \code{Plic8}; the macro takes counts from 1 to 31, the
-most one word of pending bits holds. \code{plic.rs} also names the
+It is one unit for any count of sources, \code{N} a const parameter
+(issue 500): the sources are an array of ports and the priorities an
+array of registers, \code{prio\_0} for source 1 onward, and the
+lowering unrolls the loops over them for each \code{N}. The pending,
+enable, active, held and previous-line words are 32 bits whatever
+\code{N} is, bit \textit{i} for source \textit{i}, and the bits above
+\code{N} stay zero; a source's number is 5 bits. \code{Plic1} to
+\code{Plic8} are type aliases that name counts. \code{plic.rs} also names the
 offsets, \code{PENDING}, \code{ENABLE}, \code{THRESHOLD} and
 \code{CLAIM}, and \code{priority(i)}.
 
@@ -35,7 +39,8 @@ offsets, \code{PENDING}, \code{ENABLE}, \code{THRESHOLD} and
 \toprule
 Parameter & Meaning \\
 \midrule
-\textit{N} & The count of sources, in the type's name. \\
+\code{N} & The count of sources, from 1 to 31, the most one word of
+pending bits holds. Nothing checks it. \\
 \code{EDGE} & A bit per source: bit \textit{i} set makes source
 \textit{i} ask on a rising edge rather than while its line is high.
 Bit 0 and bits above \textit{N} are ignored. The tables use 0, as the
@@ -122,15 +127,16 @@ claims and completes, and the build simulates its netlist against that
 run under nvc and Verilator: \code{//docs:plic\_sim\_plic3\_tb\_test}
 and \code{//docs:plic\_vsim\_test}.
 \item \code{input\_comes\_by\_interrupt\_one\_byte\_each}, in
-\code{//cpu/vreteno:board\_test}, runs the board's \code{Plic2} under a
+\code{//cpu/vreteno:board\_test}, runs the board's \code{Plic3} under a
 compiled program that takes the serial port's input by interrupt.
 \end{itemize}
 
 \subsection*{Used by}
 
-\code{Plic2<0>} in the board's design, \code{Board}, as its field
+\code{Plic3<0>} in the board's design, \code{Board}, as its field
 \code{plic} behind the bridge \code{pplic}: source 1 is the serial
-port's receive interrupt, source 2 the board's \code{irq} input, and
+port's receive interrupt, source 2 the board's \code{irq} input,
+source 3 the Ethernet peripheral's, and
 \code{irq} is the core's external interrupt. \code{Plic3<0b100>} in the
 example \code{ex\_plic}.
 

@@ -40,7 +40,7 @@ use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::gpio::Gpio;
 use txhdl_parts::hdmi::{vga, Hdmi, I2cInit};
 use txhdl_parts::i2c::I2c;
-use txhdl_parts::plic::Plic2;
+use txhdl_parts::plic::Plic3;
 use txhdl_parts::pwm::Pwm;
 use txhdl_parts::redundant::{Check, Tee};
 use txhdl_parts::remote::eth::RemoteLink;
@@ -526,7 +526,7 @@ fn main() {
     sheet("Dmem", "Dmem<4>", Dmem::<4>::lowered("dmem"));
     sheet("Rom", "Rom<4>", Rom::<4>::lowered("rom"));
     sheet("Timer", "Timer<4>", Timer::<4>::lowered("timer"));
-    sheet("Plic", "Plic2<0>", Plic2::<0>::lowered("plic"));
+    sheet("Plic", "Plic3<0>", Plic3::<0>::lowered("plic"));
     sheet("Dm", "Dm", Dm::lowered("dm"));
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));
     sheet("Pwm", "Pwm", Pwm::lowered("pwm"));
