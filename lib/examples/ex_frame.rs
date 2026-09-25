@@ -3,7 +3,7 @@
 //! holds.
 //!
 //! `ex_seq` numbered a loop's waits into states and `ex_serial`
-//! unrolled a counted step. A step taken only sometimes is a wait
+//! counted a repeated one. A step taken only sometimes is a wait
 //! under `if`, and the lowering makes it a state with a way around
 //! it: the state before the `if` goes to the wait inside when the
 //! condition holds at its edge, and past it otherwise, so the

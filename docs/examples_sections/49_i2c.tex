@@ -78,11 +78,13 @@ time: the lines are set for a quarter, and a wait ends it when the
 count is up. The bits are a \code{for} of eight, the start and the
 stop are under \code{if} on what the command asked for, and a byte
 whose bit reads back low where the master released it is the bus
-lost, after which the rest of the byte is skipped. The lowering of
+lost, after which both lines are released for the rest of the byte
+and the acknowledge and the stop are skipped. The lowering of
 Sections~\ref{sec:x-seq} to~\ref{sec:x-hold} numbers the waits into a
-state register the unit does not declare, forty-six states for the
-twelve steps and four quarters the hand-written machine kept, and
-the netlist agrees with the run under nvc and Verilator as before.
+state register the unit does not declare, nineteen states and a
+counter for the bits, against the twelve steps and four quarters the
+hand-written machine kept, and the netlist agrees with the run under
+nvc and Verilator as before.
 
 \subsection{What Checks It}
 

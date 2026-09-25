@@ -3,11 +3,11 @@
 //!
 //! `ex_seq` numbered a loop's waits into states. A step repeated a
 //! fixed number of times is a `for` whose body waits, and the lowering
-//! unrolls it: a state per turn, the loop's variable a number in each,
-//! so `for i in 0..8` around one wait is eight states and `bit(i)` is
-//! `bit(0)` to `bit(7)` in them. The bounds are written out, since
-//! the macro counts the states; a `for` that does not wait keeps its
-//! own unrolling, which takes a bound the macro cannot see.
+//! counts it: the body's waits are states once, and a register the
+//! unit does not declare counts the turns, so `for i in 0..8` around
+//! one wait is one state and a three-bit counter, and `bit(i)` is a
+//! bit selected by that counter. The bound may be anything `lowered`
+//! can evaluate; a `for` that does not wait keeps its own unrolling.
 //!
 //! The serialiser takes a byte and puts its bits on a channel one a
 //! cycle, low bit first, with no state register and no bit counter

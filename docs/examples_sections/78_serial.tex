@@ -4,26 +4,37 @@
 
 Section~\ref{sec:x-seq} numbered a loop's waits into states. A step
 that repeats a fixed number of times, a bit a cycle for eight cycles,
-is a \code{for} whose body waits, and the lowering unrolls it: a
-state per turn, the loop's variable a number in each. So
-\code{for i in 0..8} around one wait is eight states, and
-\code{bit(i)} in them is \code{bit(0)} to \code{bit(7)}. A
-\code{for} inside a \code{for} unrolls the same way, inner first.
+is a \code{for} whose body waits, and the lowering counts it: the
+body's waits are states once, and a register the unit does not
+declare, \code{for0} for the first such loop, counts the turns.
+Entering the loop sets the counter to the low bound. The statements
+before the body's first wait, which set a turn up, happen in the
+state before the loop with the variable read as the low bound; the
+body's states read the variable as the counter, so \code{bit(i)} is
+a bit selected by a register; the body's last state goes back to its
+first while the counter is short of the last value, adding one, with
+the set-up happening there and the variable read as the counter plus
+one, and goes on otherwise. So \code{for i in 0..8} around one wait
+is one state and a three-bit counter, whatever the bound.
 
-The bounds are written out, \code{0..8} or \code{0..=7}, because the
-macro counts the states and cannot see a const parameter. A
-\code{for} that does not wait keeps the unrolling of
-Section~\ref{sec:x-loop}, which happens when \code{lowered} runs and
-so takes a bound the macro cannot see; the two are told apart by
-whether the body waits. A wait inside a \code{for} was dropped
-without a word before this, one clocked block doing every turn at
-once (issue 587), and is now the states it means.
+The bound may then be anything the netlist can evaluate when
+\code{lowered} runs, a const parameter included. One shape is not
+counted: a body whose waits are all under \code{if} may take no
+edge at all on a turn, which a counter that moves once an edge
+cannot follow, so such a loop is unrolled, a turn at a time, and its
+bounds are numbers written out. A \code{for} that does not wait
+keeps the unrolling of Section~\ref{sec:x-loop}, which happens when
+\code{lowered} runs; the shapes are told apart by whether the body
+waits, and where. A wait inside a \code{for} was dropped without a
+word before any of this, one clocked block doing every turn at once
+(issue 587).
 
 The serialiser below takes a byte and sends its bits, low bit first,
-one a cycle. Nine states: the wait for the byte and the eight turns.
-Its netlist shows what the unrolling did: the bit channel's data is
-the bit the state selects, and its valid is the eight turns. The
-build checks the netlist against the run under nvc and Verilator.
+one a cycle. Two states, the wait for the byte and the turn, and the
+counter. Its netlist shows what the counting did: the bit channel's
+data is the bit the counter selects, and the turn's state goes back
+to itself seven times. The build checks the netlist against the run
+under nvc and Verilator.
 
 \begin{figure}[htbp]
 \centering
@@ -36,4 +47,4 @@ out.}
 
 \lstinputlisting[caption={\code{ex\_serial.rs}. Run with \code{bazel run //lib/examples:ex\_serial}.},label={lst:x-serial}]{lib/examples/ex_serial.rs}
 
-\lstinputlisting[style=ascii,caption={What \code{ex\_serial} printed when the build ran it: the bits as they come, then the Verilog, one state per turn of the \code{for}.},label={lst:x-serial-out}]{out_serial.txt}
+\lstinputlisting[style=ascii,caption={What \code{ex\_serial} printed when the build ran it: the bits as they come, then the Verilog, one state for the turn and a counter beside it.},label={lst:x-serial-out}]{out_serial.txt}
