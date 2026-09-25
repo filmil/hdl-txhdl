@@ -1,0 +1,57 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Card in Its Own Language}
+\label{sec:x-sd}
+
+An SD card in SPI mode is a few hundred kilobytes a second on one
+data line, which is what the SPI master of Section~\ref{sec:x-spi}
+gives. The card's own protocol is faster: a command line that carries
+48-bit commands out and 48- or 136-bit responses back, and one or
+four data lines that carry blocks of 512 bytes either way, each line
+with a CRC-16 of its own, at 25 or 50~MHz once the card is up. Every
+command carries a CRC-7, and so does every response but one.
+
+\code{Sd} is a host for that protocol behind AXI-Lite, and it does one
+command at a time with at most one block. A program writes the
+argument and then the command word, and the command word says what
+follows: no response, a short one or a long one; a block to read
+after it or a block to write; whether to wait for the card's busy
+line afterwards; and whether to check the response's CRC, which
+\code{ACMD41}'s answer does not carry. The host sends the command
+with its CRC-7 computed as the bits leave, takes the response into
+four words, checks its CRC-7 by feeding the received CRC into the
+same register and looking for zero, moves the block through a buffer
+of 128 words that the program reads or fills through one register,
+and says in \code{status} how it went: a response that never came,
+one whose CRC was wrong, a block that never came or a card that never
+left busy, and a block whose CRC was wrong or that the card refused,
+each a bit. The card clock is the system's divided; a board starts at
+400~kHz and moves to 25~MHz once the card is up.
+
+The other end of the wires in the example is \code{SdCard}, a model of
+a card: it decodes the commands a host needs to bring a card up and
+move blocks, answers them with their CRCs, sends blocks with a CRC-16
+a line and checks the ones it is sent, answers with the CRC status
+token and a spell of busy, and can be told to spoil one CRC, which is
+how the host's checks are tested. It is stepped on the wires every
+cycle, so what is on the lines is the protocol. The run brings the
+card up on one line, reads a block, moves to four lines, writes a
+block and reads it back.
+
+A multi-block transfer is one command, \code{CMD18} or \code{CMD25},
+then data-only transfers a block at a time, then \code{CMD12}. A card
+streams a read back to back, and keeping up with that at 25~MHz
+through a register is what DMA is for; the host here has one buffer,
+and the engines of Section~\ref{sec:x-dma} are what would feed it.
+
+\begin{figure}[htbp]
+\centering
+\input{sd_timing.tex}
+\caption{The start of \code{CMD0}: the card clock, the command line
+driven while the host holds it, the phase, the bit count and the
+CRC-7 gathering as the bits leave.}
+\label{fig:x-sd}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_sd.rs}. Run with \code{bazel run //lib/examples:ex\_sd}.},label={lst:x-sd}]{lib/examples/ex_sd.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_sd} printed when the build ran it: the card's answers on the way up, the block read on one line, and the block written and read back on four.},label={lst:x-sd-out}]{out_sd.txt}
