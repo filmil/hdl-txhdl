@@ -83,12 +83,6 @@ fn memory(
 }
 
 fn main() {
-    // What `arbiter!` wrote for two hosts, for the document to show
-    // without a hand-typed copy.
-    if std::env::args().any(|a| a == "--source") {
-        print!("{}", txhdl_parts::bus::arbiter::arbiter2::SOURCE);
-        return;
-    }
     // A link per host: each host side carries a client and a tracker,
     // and its peripheral-facing ends go to the arbiter.
     let l0 = axi::<16, 32, 4, 2, 4>();
@@ -105,16 +99,16 @@ fn main() {
         w.clock::<DefaultClock>();
         // Every channel under the name of the arbiter's port on it,
         // so the netlist is checked at its ports with no alias.
-        w.add("aw0", &l0.per_in.0);
-        w.add("ar0", &l0.per_in.1);
-        w.add("w0", &l0.per_in.2);
-        w.add("b0", &l0.per_out.2);
-        w.add("r0", &l0.per_out.3);
-        w.add("aw1", &l1.per_in.0);
-        w.add("ar1", &l1.per_in.1);
-        w.add("w1", &l1.per_in.2);
-        w.add("b1", &l1.per_out.2);
-        w.add("r1", &l1.per_out.3);
+        w.add("aws_0", &l0.per_in.0);
+        w.add("ars_0", &l0.per_in.1);
+        w.add("ws_0", &l0.per_in.2);
+        w.add("bs_0", &l0.per_out.2);
+        w.add("rs_0", &l0.per_out.3);
+        w.add("aws_1", &l1.per_in.0);
+        w.add("ars_1", &l1.per_in.1);
+        w.add("ws_1", &l1.per_in.2);
+        w.add("bs_1", &l1.per_out.2);
+        w.add("rs_1", &l1.per_out.3);
         w.add("aw", &lp.host_out.0);
         w.add("ar", &lp.host_out.1);
         w.add("w", &lp.host_out.2);
@@ -199,12 +193,9 @@ fn main() {
                 per_unit.run(lp.per_in, lp.per_out),
                 arb.run(
                     (
-                        l0.per_in.0,
-                        l0.per_in.1,
-                        l0.per_in.2,
-                        l1.per_in.0,
-                        l1.per_in.1,
-                        l1.per_in.2,
+                        [l0.per_in.0, l1.per_in.0],
+                        [l0.per_in.1, l1.per_in.1],
+                        [l0.per_in.2, l1.per_in.2],
                         lp.host_in.2,
                         lp.host_in.3,
                     ),
@@ -212,10 +203,8 @@ fn main() {
                         lp.host_out.0,
                         lp.host_out.1,
                         lp.host_out.2,
-                        l0.per_out.2,
-                        l0.per_out.3,
-                        l1.per_out.2,
-                        l1.per_out.3,
+                        [l0.per_out.2, l1.per_out.2],
+                        [l0.per_out.3, l1.per_out.3],
                     ),
                 ),
             ),
