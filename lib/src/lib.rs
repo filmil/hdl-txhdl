@@ -16,6 +16,8 @@
 //!   defined here.
 //! - [`comp::trace`]: names for signals and a VCD writer.
 //! - [`netlist`]: a structural Verilog skeleton from the same walk.
+//! - [`formal`]: `check!`, `assume!` and `cover!`, stated in a unit's
+//!   `run`, checked by the run and written into the netlist.
 //!
 //! This is a simulation-shaped prototype: values exist while it runs.
 //! The lowering to hardware is the experiment the article states, and
@@ -29,6 +31,7 @@
 
 pub mod comp;
 pub mod foreign;
+pub mod formal;
 pub mod funcs;
 pub mod netlist;
 pub mod pipeline;

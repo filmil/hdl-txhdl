@@ -6026,7 +6026,9 @@ fn lower_stmts(
             continue;
         }
         // `name!(..)`: a macro call, `println!` and the like, which is
-        // not hardware; `if !c` is not one.
+        // not hardware; `if !c` is not one, and neither are the macros
+        // below that lower: the drives, and the statements of what
+        // must hold (issue 502).
         let is_macro = matches!(
             (&ts[0], ts.get(1)),
             (TokenTree::Ident(_), Some(TokenTree::Punct(p)))
@@ -6036,6 +6038,9 @@ fn lower_stmts(
             && !text.starts_with("when!")
             && !text.starts_with("case!")
             && !text.starts_with("with!")
+            && !text.starts_with("check!")
+            && !text.starts_with("assume!")
+            && !text.starts_with("cover!")
         {
             continue;
         }
@@ -6199,6 +6204,40 @@ fn lower_stmts(
                 cx.subst
                     .push((name, format!("NlE::Name({chosen}.to_string())")));
             }
+            continue;
+        }
+        // `check!(c, "msg")`, `assume!(c, "msg")`, `cover!(c, "msg")`: a
+        // condition stated at the edge, where the statement is, under
+        // the conditions it is under (issue 502).
+        let stated = [
+            ("check!", "Assert"),
+            ("assume!", "Assume"),
+            ("cover!", "Cover"),
+        ]
+        .into_iter()
+        .find(|(m, _)| text.starts_with(m));
+        if let Some((mac, kind)) = stated {
+            let Some(TokenTree::Group(g)) = ts.get(2) else {
+                return Err(err(ts[0].span(), &format!("expected {mac}(..)")));
+            };
+            let args = split_commas(g);
+            let (Some(cond), Some(msg)) = (args.first(), args.get(1)) else {
+                return Err(err(
+                    g.span(),
+                    &format!("{mac} takes a condition and a message"),
+                ));
+            };
+            let [TokenTree::Literal(msg)] = msg.as_slice() else {
+                return Err(err(g.span(), "the message is a string literal"));
+            };
+            let c = match tr(cond, &cx.subst) {
+                Ok(c) => c,
+                Err(m) => return Err(err(ts[0].span(), &m)),
+            };
+            stmts.push(format!(
+                "NlS::Check(::txhdl::netlist::Checked::{kind}, {c}, \
+                 {msg}.to_string())"
+            ));
             continue;
         }
         if text.starts_with("case!") {

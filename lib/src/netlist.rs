@@ -689,6 +689,22 @@ pub enum Stmt {
     /// The wait the loop makes: every register drive after it happens
     /// only at an edge at which the condition holds.
     Guard(Expr),
+    /// `check!`, `assume!` or `cover!`: a condition stated at an edge,
+    /// under the conditions the statement is under, with its message
+    /// (issue 502).
+    Check(Checked, Expr, String),
+}
+
+/// What a [`Stmt::Check`] states of its condition. See
+/// [`formal`](crate::formal).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Checked {
+    /// It holds: `check!`.
+    Assert,
+    /// The unit takes it for granted of its inputs: `assume!`.
+    Assume,
+    /// It can happen: `cover!`.
+    Cover,
 }
 
 /// One process of a unit: a loop of one wait, on the rising or the
@@ -1023,7 +1039,7 @@ impl Lowered {
                         walk_stmt(s, of);
                     }
                 }
-                Stmt::Guard(c) => walk_expr(c, of),
+                Stmt::Guard(c) | Stmt::Check(_, c, _) => walk_expr(c, of),
             }
         }
         for (_, e) in &mut self.wires {
@@ -1375,7 +1391,7 @@ impl Lowered {
                         walk(out, s)
                     }
                 }
-                Stmt::Guard(_) => {}
+                Stmt::Guard(_) | Stmt::Check(..) => {}
             }
         }
         let mut out: Vec<String> = Vec::new();
@@ -1466,7 +1482,7 @@ impl Lowered {
         fn in_stmt(st: &Stmt, name: &str) -> bool {
             match st {
                 Stmt::Drive(Target::Name(n), _) => n == name,
-                Stmt::Drive(_, _) | Stmt::Guard(_) => false,
+                Stmt::Drive(_, _) | Stmt::Guard(_) | Stmt::Check(..) => false,
                 Stmt::When(_, a, b) => drives(a, name) || drives(b, name),
                 Stmt::Case(arms) => arms.iter().any(|(_, d)| drives(d, name)),
                 Stmt::If(arms, els) => {
@@ -1645,6 +1661,9 @@ impl Lowered {
                     els.iter().map(|s| stmt(s, l, temps)).collect(),
                 ),
                 Stmt::Guard(c) => Stmt::Guard(go(c, l, temps)),
+                Stmt::Check(k, c, m) => {
+                    Stmt::Check(*k, go(c, l, temps), m.clone())
+                }
             }
         }
         // An `if` on a constant is folded: a condition that is one
@@ -2053,6 +2072,20 @@ impl Lowered {
             let inner = format!("{ind}  ");
             match st {
                 Stmt::Guard(_) => {}
+                // An immediate assertion, assumption or cover in the
+                // clocked block, where only a formal tool sees it: a
+                // synthesis tool reading plain Verilog does not know the
+                // words (issue 502).
+                Stmt::Check(k, c, m) => {
+                    let kw = match k {
+                        Checked::Assert => "assert",
+                        Checked::Assume => "assume",
+                        Checked::Cover => "cover",
+                    };
+                    seq.push("`ifdef FORMAL".to_string());
+                    seq.push(format!("{ind}{kw} ({}); // {m}", vexpr(c, l)));
+                    seq.push("`endif".to_string());
+                }
                 Stmt::Drive(t, e) => drive(seq, comb, ind, t, e),
                 Stmt::When(c, then, otherwise) => {
                     seq.push(format!("{ind}if ({}) begin", vexpr(c, l)));
@@ -2113,7 +2146,7 @@ impl Lowered {
             if guard {
                 seq.push("    end".into());
             }
-            if seq.iter().any(|l| l.contains("<=")) {
+            if seq.iter().any(|l| l.contains("<=") || l == "`endif") {
                 let edge = if p.falling { "negedge" } else { "posedge" };
                 writeln!(out, "  always @({edge} {}) begin", p.clock).unwrap();
                 // The reset, inside the clocked block: synchronous, so
@@ -2526,6 +2559,23 @@ impl Lowered {
             let inner = format!("{ind}  ");
             match st {
                 Stmt::Guard(_) => {}
+                // A check or an assumption is VHDL's own `assert`, which a
+                // simulator checks; a cover point reports its message
+                // when it is reached (issue 502).
+                Stmt::Check(k, c, m) => {
+                    let m = m.replace('"', "\"\"");
+                    match k {
+                        Checked::Assert | Checked::Assume => seq.push(format!(
+                            "{ind}assert {} report \"{m}\" severity failure;",
+                            hbool(c, l)
+                        )),
+                        Checked::Cover => seq.push(format!(
+                            "{ind}if {} then report \"cover: {m}\" \
+                             severity note; end if;",
+                            hbool(c, l)
+                        )),
+                    }
+                }
                 Stmt::Drive(t, e) => drive(seq, comb, ind, t, e),
                 Stmt::When(c, then, otherwise) => {
                     seq.push(format!("{ind}if {} then", hbool(c, l)));
@@ -2586,7 +2636,10 @@ impl Lowered {
             if guard {
                 seq.push("      end if;".into());
             }
-            if seq.iter().any(|l| l.contains("<=")) {
+            if seq
+                .iter()
+                .any(|l| l.contains("<=") || l.contains(" severity "))
+            {
                 let c = p.clock;
                 let edge = if p.falling { "falling" } else { "rising" };
                 writeln!(
@@ -3425,6 +3478,59 @@ mod tests {
         parent.instances[0].conns =
             vec![("aw".to_string(), "link_aw".to_string())];
         parent.checked();
+    }
+
+    /// A unit that states things of its register: a check under a
+    /// condition and a cover point, and a process with nothing else in
+    /// it (issue 502).
+    fn stating() -> Lowered {
+        let mut net = three_regs();
+        net.procs.push(Process {
+            clock: "clk",
+            falling: false,
+            body: vec![
+                Stmt::Check(
+                    Checked::Cover,
+                    Expr::bin("==", Expr::name("count"), Expr::Num(9)),
+                    "nine".to_string(),
+                ),
+                Stmt::If(
+                    vec![(
+                        Expr::name("flag"),
+                        vec![Stmt::Check(
+                            Checked::Assert,
+                            Expr::bin("<=", Expr::name("count"), Expr::Num(9)),
+                            "a digit".to_string(),
+                        )],
+                    )],
+                    Vec::new(),
+                ),
+            ],
+        });
+        net
+    }
+
+    /// In the Verilog, immediate assertions inside the clocked block,
+    /// under their conditions, and only for a formal tool.
+    #[test]
+    fn a_statement_is_an_immediate_assertion_for_a_formal_tool() {
+        let v = stating().verilog();
+        assert!(v.contains("always @(posedge clk)"), "the block: {v}");
+        assert!(v.contains("`ifdef FORMAL"), "only for a formal tool: {v}");
+        assert!(v.contains("cover ((count == "), "the cover: {v}");
+        let under = v.find("if (flag) begin").expect("the condition");
+        let check = v.find("assert ((count <= ").expect("the check");
+        assert!(under < check, "the check under its condition: {v}");
+        assert!(v.contains("// a digit"), "the message: {v}");
+    }
+
+    /// In the VHDL, VHDL's own `assert`, which a simulator checks, and
+    /// a cover point's report.
+    #[test]
+    fn a_statement_is_a_vhdl_assertion() {
+        let h = stating().vhdl();
+        assert!(h.contains("report \"a digit\" severity failure;"), "{h}");
+        assert!(h.contains("report \"cover: nine\" severity note;"), "{h}");
     }
 
     /// The instance and the clock pin would take one name, which
