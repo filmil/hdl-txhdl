@@ -2233,10 +2233,16 @@ genrule(
 genrule(
     name = "cheatsheet_png",
     srcs = [":cheatsheet"],
-    outs = ["cheatsheet.png"],
+    # One image per side: the sheet is printed on both sides of one page.
+    outs = [
+        "cheatsheet.png",
+        "cheatsheet_back.png",
+    ],
     cmd = "$(location @hermetic_latex_ghostscript//:gs.sh) -dBATCH -dNOPAUSE -q" +
           " -sDEVICE=png16m -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4" +
-          " -sOutputFile=$@ $(location :cheatsheet)",
+          " -sOutputFile=$(@D)/cheatsheet-%d.png $(location :cheatsheet)" +
+          " && mv $(@D)/cheatsheet-1.png $(location cheatsheet.png)" +
+          " && mv $(@D)/cheatsheet-2.png $(location cheatsheet_back.png)",
     tools = [
         "@hermetic_latex_ghostscript//:files",
         "@hermetic_latex_ghostscript//:gs.sh",
