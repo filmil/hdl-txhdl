@@ -28,6 +28,7 @@ pub mod plic;
 pub mod pwm;
 pub mod redundant;
 pub mod remote;
+pub mod sd;
 pub mod spi;
 pub mod station;
 pub mod syscon;
