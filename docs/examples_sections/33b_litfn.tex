@@ -1,0 +1,42 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Function on a Literal}
+\label{sec:x-litfn}
+
+A function under \code{\#[lower]} may be called on a literal as well
+as on a signal, and then what it reads of its argument is part of a
+constant. An SD card checks every command with a CRC-7, shifted in a
+bit at a time, and the first bit of a command goes into an empty
+register, so the natural way to write it is the step applied to a
+zero: \code{crc7\_step(U::<7>::from(0u8), b)}. The step reads the
+register's top bit, and inlined on a literal that is a bit of the
+literal.
+
+VHDL does not index a qualified expression. The lowering used to
+write \code{unsigned'("0000000")(6)}, which Verilator analysed and
+nvc refused, so the netlist was right in one language only; that is
+issue 555. A bit or a part of a literal at a known place is now
+folded into the literal bit or bits it names where the expression is
+built, so neither netlist indexes one: the first bit's step reads
+\code{1'b0}, and \code{top2} of \code{0x60} is \code{2'b11}.
+
+The run shifts in SD's \code{CMD0}, forty bits, twice, so that the
+second command's first bit goes through the step on the literal while
+the register still holds what the first command left. Each time the CRC
+is \code{0x4A}, which is what the SD specification gives for
+\code{CMD0}, and the run asserts it. The netlist is checked against
+the run under both simulators.
+
+\begin{figure}[htbp]
+\centering
+\input{litfn_timing.tex}
+\caption{The end of the first \code{CMD0} and the start of the second:
+\code{sum} reaches \code{0x4A} as the fortieth bit goes in, and
+\code{start} then marks the second command's first bit, which goes
+through the step on a literal zero while the register still holds
+what the first command left, and the register starts again from zero.}
+\label{fig:x-litfn}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_litfn.rs}. Run with \code{bazel run //lib/examples:ex\_litfn}.},label={lst:x-litfn}]{lib/examples/ex_litfn.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_litfn} printed when the build ran it: the CRC of each round, then the lowering, the literal's bits folded.},label={lst:x-litfn-out}]{out_litfn.txt}
