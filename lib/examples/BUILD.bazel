@@ -624,6 +624,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An `if` and a `match` that yield a value (issue 496):  bazel run //lib/examples:ex_valif
+rust_binary(
+    name = "ex_valif",
+    srcs = ["ex_valif.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A lowered function on a literal (issue 555):  bazel run //lib/examples:ex_litfn
 rust_binary(
     name = "ex_litfn",
@@ -975,6 +984,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_fn.rs",
         "ex_litfn.rs",
         "ex_arith.rs",
+        "ex_valif.rs",
         "ex_names.rs",
         "ex_reserved.rs",
         "ex_rename.rs",
