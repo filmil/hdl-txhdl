@@ -109,6 +109,22 @@ seen here, so \code{Lowered::checked} checks when \code{lowered}
 runs that each channel port of a unit of units is joined to exactly
 one child. Passing the whole side to a child is refused. A port name
 that two sides both give is refused.
+An array of ports, \code{[Rx<T>; N]}, is such a side: \code{Ports} is
+implemented for arrays, their fields the indices, so its ports are
+\code{ins\_0} to \code{ins\_\{N-1\}} and are found when \code{lowered}
+runs. A \code{for i in lo..hi} at the top of the loop is unrolled
+there too, since \code{N} is a const parameter the macro cannot see
+(issue 500). A process's body is written as a block that pushes its
+statements, so a loop is a Rust \code{for} among the pushes;
+\code{port\_fields} writes \code{ins[i]} as a name holding \code{i}
+between two marks, and \code{dyn\_names} turns every quoted name
+holding one into a \code{format!} of it in the text the macro writes.
+Inside a loop, and for a \code{let mut}, a \code{let} is a Rust
+variable of the expression, and each value computed is a wire of its
+own, pushed onto \code{\_\_dynw} and named \code{x\_lN} by a counter,
+so a value an assignment carries from one turn to the next is written
+once a turn. The process bodies are built before the unit, so those
+wires join the others. A \code{for} under an \code{if} is refused.
 A name VHDL or SystemVerilog reserves, \code{next}, \code{out} and
 \code{inside} among them and VHDL's without regard to case, is
 escaped rather than refused: the netlist writes it with \code{\_rw}

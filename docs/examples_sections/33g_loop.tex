@@ -1,0 +1,44 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Array of Ports and a Loop}
+\label{sec:x-loop}
+
+A unit of a count used to be text a macro wrote once per count:
+\code{router!} writes \code{Router2} to \code{Router8}, and the
+largest it writes is the largest there is. A side of \code{run} may
+now be an array of ports, \code{ins: [Rx<U<8>>; N]}, and the body may
+go over it with \code{for i in 0..N} (issue 500).
+
+\code{N} is a const parameter, which the macro, reading tokens, cannot
+see. So the loop is unrolled when \code{lowered} runs rather than when
+the macro expands: the loop becomes a Rust \code{for} around the
+statements it adds, and \code{ins[i]} is the port \code{ins\_0},
+\code{ins\_1} and so on as it goes round. The array is a struct of
+ports whose fields are its indices, so its ports are found the way a
+\code{LitePort}'s are. Inside the loop, and for a \code{let mut}, a
+\code{let} is a wire of its own on every turn, and assigning to a
+\code{let mut} makes the next one, which is how \code{found} and
+\code{pick} carry what the loop has seen from one input to the next.
+Each turn's wires are written once, so the netlist grows with \code{N}
+and not with its square.
+
+\code{Merge<N>} forwards one word a cycle from the lowest input that
+has one. The run offers words on three inputs at once and asserts that
+they come out lowest input first and none is lost, and the netlist of
+\code{Merge<3>} is checked against the run under both simulators. The
+same source lowered at five has five input ports, which the run
+prints. A \code{for} under an \code{if} is refused: put the \code{if}
+inside the \code{for}. The index is written \code{ins[i]} because that
+is what the lowering reads, so Clippy's wish for an iterator is
+allowed with the reason beside it.
+
+\begin{figure}[htbp]
+\centering
+\input{loop_timing.tex}
+\caption{Three inputs into one: while more than one input has a word,
+the lowest goes first.}
+\label{fig:x-loop}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_loop.rs}. Run with \code{bazel run //lib/examples:ex\_loop}.},label={lst:x-loop}]{lib/examples/ex_loop.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_loop} printed when the build ran it: the words in the order they came out, the lowering of \code{Merge<3>}, and the ports of \code{Merge<5>}.},label={lst:x-loop-out}]{out_loop.txt}
