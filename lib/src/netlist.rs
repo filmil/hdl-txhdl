@@ -2617,7 +2617,7 @@ impl Lowered {
                      t: &Target,
                      e: &Expr| match t {
             Target::Word(m, a) => {
-                let word = format!("{m}(to_integer({}))", hval(a, 0, self));
+                let word = format!("{m}({})", hint(a, self));
                 seq.push(format!("{ind}{}", assign(&word, self.width(m), e)));
             }
             Target::Name(t) if self.is_reg(t) => {
@@ -3172,7 +3172,7 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
         // A word of a memory, or a bit of a value.
         Expr::Index(a, i) => match &**a {
             Expr::Name(m) if l.is_mem(m) => {
-                format!("{m}(to_integer({}))", hval(i, 0, l))
+                format!("{m}({})", hint(i, l))
             }
             _ => format!("{}({})", hval(a, 0, l), hint(i, l)),
         },
