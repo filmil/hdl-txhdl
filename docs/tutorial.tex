@@ -208,7 +208,7 @@ three cycles of \code{Run}, \code{Done}, and back to \code{Idle}.}
 \lstinputlisting[style=ascii,caption={What \code{ex\_case} printed: one state per cycle, then the lowering.},label={lst:t-case-out}]{out_case.txt}
 
 The third way is \code{select!}, which chooses a \emph{value} rather
-than a drive: \code{select!(f3.raw() => \{ 0 => a + b, 1 => a << b,
+than a drive: \code{select!(f3.raw() => \{ 0 => a + b, 1 => a <{}< b,
 .. \})} is a multiplexer, and the Vreteno core's ALU is one of
 these. \code{mux(c, a, b)} is the two-way form. Rust's own forms
 work as well: an \code{if} with an \code{else} that yields a value,
@@ -444,7 +444,7 @@ That is the subset: a loop of one wait, then reads, \code{let}s that
 are functions of what was read, and drives. Inside it you have
 Rust's operators on the value types, \code{+}, \code{-}, \code{*},
 \code{\%}, unary \code{-}, \code{\&}, \code{|}, \code{\^{}}, \code{!},
-\code{<<}, \code{>>}, the compares and \code{as} to an unsigned
+\code{<{}<}, \code{>{}>}, the compares and \code{as} to an unsigned
 integer, then \code{slice}, \code{concat}, \code{sext} and
 \code{zext} for taking words apart and putting them together, and
 \code{mul::<M>} for a product wider than its operands. An \code{if}
