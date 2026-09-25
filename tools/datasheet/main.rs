@@ -32,6 +32,7 @@ use txhdl_parts::cdc::ChanCdc;
 use txhdl_parts::dma::{LineBuf, LineFetch, LineStore, NoBeats, NoReads};
 use txhdl_parts::eth::{EthLite, EthRx, EthTx};
 use txhdl_parts::ethdma::{FrameIn, FrameLen, FrameOut};
+use txhdl_parts::ethshare::EthShare;
 use txhdl_parts::ethslots::EthSlots;
 use txhdl_parts::fifo::Fifo;
 use txhdl_parts::flashwin::FlashWin;
@@ -476,6 +477,11 @@ fn main() {
     sheet("FrameOut", "FrameOut", FrameOut::lowered("frame_out"));
     sheet("FrameIn", "FrameIn", FrameIn::lowered("frame_in"));
     sheet("FrameLen", "FrameLen", FrameLen::lowered("framelen"));
+    sheet(
+        "EthShare",
+        "EthShare<0x88b5>",
+        EthShare::<0x88b5>::lowered("ethshare"),
+    );
     sheet(
         "Hdmi",
         "Hdmi<640, 16, 96, 48, 480, 10, 2, 33, 2>",

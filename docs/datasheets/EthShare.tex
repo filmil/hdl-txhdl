@@ -1,0 +1,100 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: EthShare
+\datasheet{EthShare}{One Ethernet wire and two users: frames split by
+EtherType on the way in, merged a frame at a time on the way out.}
+
+\dsfacts{\code{lib/parts/src/ethshare.rs}}{\code{txhdl\_parts::ethshare::EthShare}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+The board has one Ethernet port and two things that want it: the
+remote peripheral of issue 297, whose transport is a frame per
+transaction, and the port a Zephyr driver talks to through
+\code{EthSlots}. Neither can have the wire to itself.
+
+Nothing new has to be invented to share it, because Ethernet already
+carries several protocols on one wire and says which is which: bytes
+twelve and thirteen of every frame are its EtherType. The remote
+peripheral sends \code{0x88b5}, which IEEE leaves for local use, and
+Zephyr's stack sends only the standard types, so the two cannot be
+confused.
+
+Its three inputs are the wire and the two users' frames to send, and
+its three outputs the wire and the two users' frames received. The
+first user is the one whose frames are of type \code{TYPE}; the
+second takes every other frame.
+
+\subsection*{Parameters}
+
+\code{TYPE}, the first user's EtherType. The tree uses
+\code{0x88b5}, the remote peripheral's, which
+\code{remote::eth::ETHERTYPE} states; the tables are generated for
+that.
+
+\dstables{EthShare}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \textbf{Receiving holds a frame's first fourteen bytes before
+either user sees any of it.} A frame's user is not known until its
+fourteenth byte, and the thirteen before it belong to that user too.
+So the unit holds them, reads the type from the last two, then hands
+the held bytes on and passes the rest of the frame through to the
+same user. Every frame received waits for its fourteenth byte.
+\item Holding does not wait for either user. Handing on does: a user
+that is not ready stops the frame, and the wire behind it.
+\item \textbf{A frame that ends before its type is known goes to the
+second user}, not to nobody. The receiver checks every frame and pads
+a short one, so this should not arrive; but waiting for a fourteenth
+byte that never comes would hold the wire for ever, which is worse
+than delivering a frame nobody wants.
+\item A frame of exactly fourteen bytes learns its user and its end
+in the same cycle, and goes to the user its type names.
+\item \textbf{Sending takes turns only when both users offer.} A frame
+cannot be interleaved with another, so the two are merged a frame at
+a time. When both offer, the one that did not send last goes first,
+so neither can starve the other whichever sends more. A user with the
+wire to itself is not slowed.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_ethshare} sends five frames in on the wire: two of the
+first user's type and one of another, which is the split; one that
+ends after ten bytes, before its type is known; and one of exactly
+fourteen bytes. It checks that each user got its own frames whole and
+in order. Both users also offer two frames each in the same cycle,
+and the run checks that the four go out whole, taking turns.
+\item The short frame is adversarial on purpose. Its last byte is
+\code{0xb5}, the low half of the first user's type, and the frame
+before it left \code{0x88} as the high half, so a unit that read the
+type without checking that the frame had reached it would see
+\code{0x88b5} and send the frame to the wrong user. The first version
+of the run used bytes that did not form that type, and it passed with
+the check removed.
+\item The netlist is checked against that run under nvc and
+Verilator: \code{//docs:ethshare\_sim\_ethshare\_tb\_test} and
+\code{//docs:ethshare\_vsim\_test}.
+\item On the board, both board tests of the Ethernet port in
+\code{cpu/vreteno/tests/board.rs} go through it, one in each
+direction.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Board}, as \code{share}, an \code{EthShare<0x88b5>} between the
+wire and its two users: the remote peripheral's link first and the
+Ethernet port's \code{FrameLen} and \code{FrameOut} second. The
+example \code{ex\_ethshare}.
+
+\subsection*{Limits}
+
+It checks the type and nothing else. It does not look at addresses, so
+both users see every frame of their type, whoever it was for.
+
+It holds sixteen bytes of header memory and uses fourteen.
+
+It runs on one clock, \code{DefaultClock}.
