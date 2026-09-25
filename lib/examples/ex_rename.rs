@@ -2,10 +2,10 @@
 //! A field named for the netlist rather than by it. VHDL reserves
 //! `next` and `buffer`, Verilog reserves `signed`, and a unit whose
 //! field takes one of those names would write a netlist that does not
-//! analyse, so the lowering refuses such a name at the field (issue
-//! 77). A queue that wants to call its fields `next` and `buffer`
-//! therefore keeps those names in Rust and says what the netlist
-//! should call them, with `#[rename("...")]` (issue 222).
+//! analyse. The lowering escapes such a name, to `next_rw` (issue
+//! 497), but a queue that wants better names in its netlist keeps
+//! `next` and `buffer` in Rust and says what the netlist should call
+//! them, with `#[rename("...")]` (issue 222).
 //!
 //! The register that holds the next word out is `next` in Rust and
 //! `nxt` in the netlist; the word behind it is `buffer` and `held`.

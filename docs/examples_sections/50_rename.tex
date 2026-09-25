@@ -5,10 +5,11 @@
 A unit's field is a signal of its netlist, so its name has to be a
 name the netlist can carry. VHDL reserves \code{next} and
 \code{buffer}, Verilog reserves \code{signed} and \code{buf}, and a
-field named for one of those writes a netlist that will not analyse,
-so the derive refuses such a name where the field is declared. That
-refusal is right and it is also a cost: the name that reads best in
-Rust is sometimes exactly the one a target reserves.
+field named for one of those writes a netlist that will not analyse.
+The lowering escapes such a name, as Section~\ref{sec:x-reserved}
+shows, so a field called \code{next} is \code{next\_rw} in the
+netlist; but the netlist is read by people too, and the name that
+reads best in Rust is not always the one that reads best there.
 
 \code{\#[rename("...")]} on a field says what the netlist should call
 it. Rust keeps the name the code is written with; the netlist takes

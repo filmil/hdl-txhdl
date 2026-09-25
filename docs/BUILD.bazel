@@ -788,6 +788,8 @@ latex_document(
         ":fn_timing",
         ":names_run",
         ":names_timing",
+        ":reserved_run",
+        ":reserved_timing",
         ":rename_run",
         ":rename_timing",
         ":foreign_run",

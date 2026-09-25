@@ -70,8 +70,9 @@ while \code{count} is above this is a failure. Ignored once locked. \\
 \end{center}
 
 The field is \code{sill} and not \code{open}, because \code{open} is a
-reserved word of VHDL and the lowering refuses such a name where it is
-chosen, which is issue 77.
+reserved word of VHDL and the lowering refused such a name when the
+part was written (issue 77). It now escapes one instead, to
+\code{open\_rw} (issue 497), and the field keeps the name it has.
 
 \dstables{Wdog}
 

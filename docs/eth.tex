@@ -365,7 +365,8 @@ around here at the time, and all three since fixed. A wire named for
 a reserved word of either target
 language, such as \code{next}, \code{out}, \code{begin}, \code{body},
 \code{buf} or \code{byte}, produced a netlist that did not analyse;
-the lowering now refuses such a name where it is chosen. A
+the lowering refused such a name where it was chosen, and now escapes
+it instead, writing \code{next\_rw} in both targets (issue 497). A
 bit of a field of a channel's value, \code{wh.data.bit(8)}, was written
 in Verilog as a bit select of a part select, which Verilog does not
 allow and VHDL did not simulate as the run did; a bit of a part is now

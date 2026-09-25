@@ -96,20 +96,29 @@ seen here, so \code{Lowered::checked} checks when \code{lowered}
 runs that each channel port of a unit of units is joined to exactly
 one child. Passing the whole side to a child is refused. A port name
 that two sides both give is refused.
-A name the netlist would hold as written is checked where it is
-chosen, since a name that fails there fails as an analysis error in a
-generated file. The \code{Trace} derive refuses a field, and
-\code{\#[lower]} a port or a computed \code{let}, whose name VHDL or
-SystemVerilog reserves: \code{next}, \code{out} and \code{inside}
-among them, VHDL's without regard to case. The module's own name is
-a string given to \code{lowered} when it runs, which the macro never
-sees, so each emitter refuses one its own language reserves as it
-writes it: a unit may be lowered under a name only VHDL reserves and
-still have its Verilog, or its tables drawn (issue 485). The
-two word lists are one file, \code{lib/src/reserved.rs}, below: the
-runtime compiles it as a module of its own, and the macro crate,
-which cannot depend on the runtime since the runtime depends on it,
-includes the same file by path. A computed \code{let} or a
+A name VHDL or SystemVerilog reserves, \code{next}, \code{out} and
+\code{inside} among them and VHDL's without regard to case, is
+escaped rather than refused: the netlist writes it with \code{\_rw}
+after it, the same in both targets, whichever one reserves it (issue
+497). A field is escaped by the \code{Trace} derive, which gives the
+netlist and the trace the same name for it, through the table
+\code{\#[rename]} already fills. Everything else is escaped by
+\code{Lowered::escaped}, which the emitters and the ports file call
+before they write: the module's own name, a string given to
+\code{lowered} that the macro never sees; a port of one wire; a wire
+or a net; an instance. A port escaped is recorded in the ports file
+with its own name as its trace scope, so the testbench reads the
+run's \code{next} for the netlist's \code{next\_rw}, and
+\code{trace\_as} still takes a port's own name. A channel is left
+alone, since its nets are its name and \code{\_data}, \code{\_valid}
+or \code{\_ready}, and so is a foreign module, whose names are its
+vendor's. An escaped name another name already has is refused,
+naming both, which is the one case left. The two word lists are one
+file, \code{lib/src/reserved.rs}, below: the runtime compiles it as
+a module of its own, and the macro crate, which cannot depend on the
+runtime since the runtime depends on it, includes the same file by
+path, as does \code{//tools/fst2tb}, which escapes the entity it is
+asked for the same way. A computed \code{let} or a
 port whose netlist name is also a field's would be declared twice.
 \code{\#[lower]} does not see the struct, so for each such name it
 writes a constant, placed at the name, that tests the name against the

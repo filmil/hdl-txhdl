@@ -1,0 +1,48 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Names a Netlist Reserves}
+\label{sec:x-reserved}
+
+Rust reserves its own words and not those of VHDL or SystemVerilog, so
+a port may be called \code{next}, \code{begin} or \code{out}, and a
+register \code{signal}. Each of those is a word one netlist or the
+other cannot declare, and a netlist that declares one does not
+analyse.
+
+The lowering escapes such a name rather than refusing it. The netlist
+writes it with \code{\_rw} after it, and writes it the same way in
+both targets, whichever one reserves it: \code{next} is VHDL's word
+and \code{next\_rw} in the Verilog too. So a port has one name in
+both netlists, and one testbench binds either. A name nothing
+reserves is written as it is. A \code{let} was already handled the
+same way, with \code{\_w} (Section~\ref{sec:x-names}), and a field can
+still be given a name of its own with \code{\#[rename]}
+(Section~\ref{sec:x-rename}).
+
+The escape has to reach the testbench too, and that is where it could
+go wrong without a word. The build simulates a netlist by replaying
+the run's trace into it, and it finds each port's values in the trace
+by the port's name. A port the netlist calls \code{next\_rw} and the
+trace calls \code{next} would be bound to nothing, and a mismatch of
+that kind has passed unnoticed before. So an escaped port is recorded
+in the netlist's list of ports with its own name as the place to read
+its trace, and a register is traced under the name the netlist gives
+it. The latch below has three reserved ports and a reserved register,
+and the build checks its netlist against its run under nvc and
+Verilator, both binding all four.
+
+Two names that would be one once escaped are still refused: a port
+\code{next} beside a register \code{next\_rw} would have the netlist
+declare \code{next\_rw} twice, and the error names both.
+
+\begin{figure}[htbp]
+\centering
+\input{reserved_timing.tex}
+\caption{The latch: \code{begin} loads \code{next} into
+\code{signal}, and \code{out} is what it holds against what is
+offered. The netlist calls all four with \code{\_rw} after them.}
+\label{fig:x-reserved}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_reserved.rs}. Run with \code{bazel run //lib/examples:ex\_reserved}.},label={lst:x-reserved}]{lib/examples/ex_reserved.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_reserved} printed when the build ran it: the latch cycle by cycle, then the Verilog, every reserved name escaped.},label={lst:x-reserved-out}]{out_reserved.txt}
