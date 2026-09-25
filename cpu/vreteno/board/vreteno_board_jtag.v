@@ -15,20 +15,20 @@
 //
 // Everything that computes is `board`, the netlist `#[lower]` writes for
 // `vreteno32::board::Board`: the core, the router, the data memory, the
-// timer, the serial port and the DDR3 memory with UberDDR3's controller
+// timer, the serial port and the DDR3 memory with AMD's MIG controller
 // in it. What a board needs and a lowered unit cannot say is here: the
-// 200 MHz differential clock turned into the four clocks the design and
-// the controller run on, the resets, and the LEDs.
+// 200 MHz differential clock handed to the controller, which makes the
+// design's clock from it, the resets, and the LEDs.
 //
-// The clocks come from one PLL, as the a200t examples make them: the
-// 200 MHz input times six is 1200 MHz, which gives 100 MHz for the
-// design and the controller, 400 MHz for the memory, the same 400 MHz a
-// quarter cycle late, and 200 MHz for the controller's delay control.
+// The controller makes the clocks: it takes the board's 200 MHz, which
+// is also its delay reference, runs the memory at 400 MHz, and hands
+// back the 100 MHz the design runs on, with a reset that holds until
+// that clock is good. The board has no clock generator of its own.
 //
-// The memory's reset follows the button and the PLL's lock. The core's
-// reset follows those and the controller's calibration as well, so the
-// core starts only when the memory it may reach is ready. Both are
-// brought into the design's clock by two flip-flops.
+// The controller's reset is a pulse at power-on and nothing else. The
+// core's reset follows the button, the controller's clock being good
+// and its calibration, so the core starts only when the memory it may
+// reach is ready, brought into the design's clock by two flip-flops.
 //
 // The LEDs are lit when driven low: the core halted, the serial line
 // driven at least once, the memory calibrated, and a heartbeat.
@@ -39,8 +39,9 @@
 // with every LED on and nothing arrives on the host's serial port, and
 // nothing so far says whether a byte ever left the core.
 //
-// The fourth LED showed the PLL's lock. A blinking heartbeat says that
-// as well, since the counter behind it runs on the PLL's output, and a
+// The fourth LED showed the clock generator's lock. A blinking heartbeat
+// says that as well, since the counter behind it runs on the clock the
+// controller makes, and a
 // heartbeat in a new place is also how somebody at the board can tell
 // that a new bitstream is in the part.
 `timescale 1ps / 1ps
@@ -73,49 +74,24 @@ module vreteno_board_jtag (
   inout [3:0] ddr3_dqs_p,
   inout [3:0] ddr3_dqs_n
 );
-  // The clocks.
-  wire clk200_in, fb, fb_buf, locked;
-  wire pll100, pll400, pll200, pll400_90;
-  wire clk, clk400, clk200, clk400_90;
+  // The clocks. The memory controller makes them: it takes the board's
+  // 200 MHz and hands back `clk`, the 100 MHz the design runs on, with
+  // `ui_rst` high until that clock is good. The controller's own reset
+  // is a pulse at power-on, counted on the board's clock, and nothing
+  // else.
+  wire clk200_in, clk, ui_rst;
   IBUFDS clkin (.I(sys_clk_p), .IB(sys_clk_n), .O(clk200_in));
-  PLLE2_BASE #(
-    .BANDWIDTH("OPTIMIZED"),
-    .CLKIN1_PERIOD(5.0),
-    .CLKFBOUT_MULT(6),
-    .CLKOUT0_DIVIDE(12),
-    .CLKOUT1_DIVIDE(3),
-    .CLKOUT2_DIVIDE(6),
-    .CLKOUT3_DIVIDE(3),
-    .CLKOUT3_PHASE(90.0),
-    .DIVCLK_DIVIDE(1),
-    .STARTUP_WAIT("FALSE")
-  ) pll (
-    .CLKIN1(clk200_in),
-    .CLKFBIN(fb_buf),
-    .CLKFBOUT(fb),
-    .CLKOUT0(pll100),
-    .CLKOUT1(pll400),
-    .CLKOUT2(pll200),
-    .CLKOUT3(pll400_90),
-    .CLKOUT4(),
-    .CLKOUT5(),
-    .LOCKED(locked),
-    .PWRDWN(1'b0),
-    .RST(1'b0)
-  );
-  BUFG fbbuf (.I(fb), .O(fb_buf));
-  BUFG buf100 (.I(pll100), .O(clk));
-  BUFG buf400 (.I(pll400), .O(clk400));
-  BUFG buf200 (.I(pll200), .O(clk200));
-  BUFG buf400_90 (.I(pll400_90), .O(clk400_90));
+  reg [7:0] por = 8'd0;
+  always @(posedge clk200_in) if (por != 8'hff) por <= por + 1;
+  wire sys_rst = (por != 8'hff);
 
-  // The resets, active high for the design and active low for the
-  // controller, each through two flip-flops into the design's clock.
+  // The reset, active high for the design, through two flip-flops into
+  // the design's clock.
   // The core's reset waits on the memory's calibration as well, so the
   // core starts only when the memory it may reach is ready.
   //
-  // The button resets the core and not the memory. The memory's reset
-  // follows the PLL's lock alone, which is power-on. A reset that
+  // The button resets the core and not the memory. The controller's
+  // reset is the power-on pulse alone. A reset that
   // reached the controller while a transaction was in flight stranded
   // the bus: the bridge in front of the controller waited on an
   // acknowledgement the reset controller never gave, nothing resets
@@ -157,13 +133,10 @@ module vreteno_board_jtag (
     brk <= (low_for >= 22'd2_000_000) && (low_for < 22'd2_100_000);
   end
   wire calib;
-  reg [1:0] mem_sync = 2'b00;
   reg [1:0] core_sync = 2'b11;
   always @(posedge clk) begin
-    mem_sync <= {mem_sync[0], locked};
-    core_sync <= {core_sync[0], ~(reset_n & key1 & locked & calib) | brk};
+    core_sync <= {core_sync[0], ~(reset_n & key1 & ~ui_rst & calib) | brk};
   end
-  wire mem_rst_n = mem_sync[1];
   wire rst = core_sync[1];
 
   // The design.
@@ -187,14 +160,14 @@ module vreteno_board_jtag (
     .rst(rst),
     .irq(1'b0),
     .rx(uart_rx),
-    .ddr3_clk(clk400),
-    .ref_clk(clk200),
-    .ddr3_clk_90(clk400_90),
-    .ddr3_rst_n(mem_rst_n),
+    .sys_clk(clk200_in),
+    .sys_rst(sys_rst),
     .halt(halt),
     .tx(uart_tx),
     .pwm_pins(pwm_pins),
     .calib(calib),
+    .ui_clk(clk),
+    .ui_rst(ui_rst),
     .ck_p(ddr3_clk_p),
     .ck_n(ddr3_clk_n),
     .mem_rst_n(ddr3_reset),
