@@ -753,6 +753,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A check, an assumption and a cover point:  bazel run //lib/examples:ex_formal
+rust_binary(
+    name = "ex_formal",
+    srcs = ["ex_formal.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Names a target reserves, escaped:  bazel run //lib/examples:ex_reserved
 rust_binary(
     name = "ex_reserved",
@@ -1099,6 +1108,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_nested.rs",
         "ex_link.rs",
         "ex_seq.rs",
+        "ex_formal.rs",
         "ex_rename.rs",
         "ex_foreign.rs",
 ]

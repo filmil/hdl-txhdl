@@ -1921,6 +1921,21 @@ waveform(
     ],
 )
 
+# A check, an assumption and a cover point, which nvc checks in the
+# VHDL and Verilator in the Verilog while each replays the run (issue
+# 502).
+waveform(
+    name = "formal",
+    example = "//lib/examples:ex_formal",
+    lowered = ("digit", "digit"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//step=>step",
+        "//digit/count=>count",
+        "//wrap=>wrap",
+    ],
+)
+
 # Names VHDL or SystemVerilog reserve, escaped in both netlists, and
 # the testbench still binding each port to its trace (issue 497).
 waveform(

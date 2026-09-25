@@ -93,7 +93,12 @@ def waveform(
                 # Verilator's own headers, not the netlist (issue 536).
                 copts = ["-Wno-sign-compare"],
                 timing = True,
-                vopts = ["--main", "-Wno-fatal"],
+                # `--assert` and `FORMAL`: a unit's `check!`, `assume!`
+                # and `cover!` are immediate assertions between `ifdef
+                # FORMAL` and `endif` (issue 502), checked here as nvc
+                # checks their VHDL. A netlist without them is the same
+                # either way.
+                vopts = ["--main", "-Wno-fatal", "--assert", "+define+FORMAL"],
             )
             cc_test(
                 name = name + "_vsim" + tag + "_test",
