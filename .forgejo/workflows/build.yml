@@ -50,8 +50,13 @@ jobs:
           restore-keys: |
             bazel-
 
+      # `pipefail`, or the step's status is `tee`'s, which is 0: a build that
+      # failed would pass here and turn the run red only in the test step
+      # below, with its error inside that step's output (#538).
       - name: Build everything
-        run: bazel build //... 2>&1 | tee -a /tmp/ci-bazel.log
+        run: |
+          set -o pipefail
+          bazel build //... 2>&1 | tee -a /tmp/ci-bazel.log
 
       # Bazel exits 4 when testing is requested and no test target exists,
       # which is the state until the specification's examples become a test
