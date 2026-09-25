@@ -364,7 +364,8 @@ fn walk_for(
     if closed {
         after += 1;
     }
-    let hi: Vec<TokenTree> = range[after..].to_vec();
+    let lo = unwrapped(lo);
+    let hi = unwrapped(range[after..].to_vec());
     if lo.is_empty() || hi.is_empty() {
         return Err(err(
             span,
@@ -383,13 +384,32 @@ fn walk_for(
         .map_err(|_| err(span, "the bound of the `for` does not parse"))?;
     let n = plan.counters.len();
     let reg = format!("for{n}");
-    plan.counters.push((
-        reg.clone(),
+    // The counter's width: from the last value when the bound is one
+    // the netlist can evaluate, and from the register's own width when
+    // the bound reads a register of the unit, `self.name.get()`, which
+    // `lowered` looks up by name among the fields (issue 611). The
+    // register is compared as it stands, so it holds still while the
+    // loop runs.
+    let of_register = |name: &str| {
         format!(
+            "<Self as ::txhdl::netlist::Fields>::fields().iter()\
+             .find(|f| f.0 == \"{name}\").map(|f| f.2).unwrap_or(1)"
+        )
+    };
+    let width = match register_read(&hi) {
+        Some(name) => of_register(&name),
+        None => format!(
             "{{ let l = ({last_text}) as usize; \
              std::cmp::max(1, (usize::BITS - l.leading_zeros()) as usize) }}"
         ),
-    ));
+    };
+    // A low bound that reads a register widens the counter to it, so
+    // that the counter can start where the register says.
+    let width = match register_read(&lo) {
+        Some(name) => format!("std::cmp::max({}, {width})", of_register(&name)),
+        None => width,
+    };
+    plan.counters.push((reg.clone(), width));
     let sts = stmts_of(body);
     // The set-up: the statements before the body's first wait, which
     // must be plain, since they are repeated at the loop's end.
@@ -1078,6 +1098,50 @@ fn unrolled(
     Ok(out)
 }
 
+/// The register a bound reads, if the bound is `self.name.get()` or
+/// that with arithmetic around it: the one field read through
+/// `self`, or nothing when there is none or more than one.
+fn register_read(ts: &[TokenTree]) -> Option<String> {
+    let mut found: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i + 4 < ts.len() {
+        if is_ident(&ts[i], "self")
+            && matches!(&ts[i + 1], TokenTree::Punct(p) if p.as_char() == '.')
+            && matches!(&ts[i + 3], TokenTree::Punct(p) if p.as_char() == '.')
+            && is_ident(&ts[i + 4], "get")
+        {
+            if let TokenTree::Ident(n) = &ts[i + 2] {
+                found.push(n.to_string());
+            }
+        }
+        i += 1;
+    }
+    match found.as_slice() {
+        [one] => Some(one.clone()),
+        _ => None,
+    }
+}
+
+/// A bound with its integer clothing off. A register's value is a
+/// `U`, and Rust's range wants an integer, so a bound on a register
+/// is written `self.name.get().raw() as usize`; the netlist compares
+/// the register itself, so the cast and the `raw` come off.
+fn unwrapped(mut ts: Vec<TokenTree>) -> Vec<TokenTree> {
+    let n = ts.len();
+    if n >= 2 && is_ident(&ts[n - 2], "as") && is_ident(&ts[n - 1], "usize") {
+        ts.truncate(n - 2);
+        let n = ts.len();
+        if n >= 3
+            && matches!(&ts[n - 3], TokenTree::Punct(p) if p.as_char() == '.')
+            && is_ident(&ts[n - 2], "raw")
+            && matches!(&ts[n - 1], TokenTree::Group(g)
+                    if g.delimiter() == Delimiter::Parenthesis)
+        {
+            ts.truncate(n - 3);
+        }
+    }
+    ts
+}
 #[cfg(test)]
 mod tests {
     use super::{bits, drive_of, driven, reg_name};
