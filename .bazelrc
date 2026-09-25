@@ -25,6 +25,32 @@ build --output_groups=+clippy_checks
 # writes are as complex as the hardware they stand for.
 build --@rules_rust//:clippy_flags=-Dwarnings,-Aclippy::type_complexity
 
+# Link with GNU ld, not gold (issue 533). The C++ toolchain rules_cc
+# configures from the host adds `-fuse-ld=gold` when the host has
+# `ld.gold` and no `lld`, rules_rust links through that toolchain, and
+# rustc warned that gold is deprecated on every compile: 188 times in
+# one build, burying any other warning. A later `-fuse-ld` wins, so
+# this replaces gold without touching the toolchain; `host_linkopt`
+# covers the tools the build runs, which link in the exec
+# configuration. GNU ld is on every host binutils is, which the
+# toolchain needs anyway. The toolchain also turned on
+# `supports_start_end_lib` for gold, which passes `--start-lib`, a flag
+# only gold and lld know, so that goes too, or every C++ link fails.
+#
+# And GNU ld reads libraries in order where gold did not. A Verilator
+# example names its C++ archives both before the Rust library that
+# calls them and after, and the toolchain's default links libstdc++
+# `--as-needed` between the two: GNU ld finds nothing needing it yet,
+# drops it, and the second mention cannot resolve `operator new`. So
+# libstdc++ and libm are linked plainly, which makes every host binary
+# name libstdc++ as a dependency whether it uses it or not; the hosts
+# this builds on all have it.
+common --repo_env=BAZEL_LINKLIBS=-lstdc++:-lm
+build --linkopt=-fuse-ld=bfd
+build --host_linkopt=-fuse-ld=bfd
+build --features=-supports_start_end_lib
+build --host_features=-supports_start_end_lib
+
 # Vivado from the Bazel-installed toolchain, not Docker or the host.
 build --@rules_vivado//:vivado_mode=hermetic
 
