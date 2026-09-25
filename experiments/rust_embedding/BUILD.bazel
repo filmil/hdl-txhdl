@@ -107,3 +107,12 @@ rust_library(
     srcs = ["probe_limbs.rs"],
     edition = "2021",
 )
+
+# Expected to fail: E0277, `[Cell; N]: Default` is not satisfied for a
+# generic `N` (issue 594).
+rust_library(
+    name = "probe_array_default",
+    srcs = ["probe_array_default.rs"],
+    edition = "2021",
+    tags = ["manual"],
+)
