@@ -19,18 +19,21 @@
 //! simulates its netlist against this run under nvc and Verilator.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, Clock, DefaultClock, Reg, Running, Unit};
+use txhdl::regmap;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{
     axi_lite, LiteB, LiteBridge1, LitePort, LiteR,
 };
-use txhdl_parts::regmap;
 
 // begin{map}
 regmap! { knobs (knobs_read, knobs_we), 2: [
     (0, id, ro, "who this is: 0x4b4e4f42, `KNOB`"),
-    (1, ctrl, rw, "bit 0 runs the counter"),
+    (1, ctrl, rw, "the control word", [
+        (run, 0, 1, rw, 0, "runs the counter"),
+        (step, 4, 4, rw, 1, "what a count adds"),
+    ]),
     (2, count, ro, "cycles since the run bit rose"),
 ] }
 // end{map}
@@ -39,8 +42,10 @@ regmap! { knobs (knobs_read, knobs_we), 2: [
 /// Three registers: who it is, a control word, and a count.
 #[derive(Trace, Default)]
 pub struct Knobs {
-    /// The control word's one bit.
+    /// The control word's run bit.
     pub run: Reg<Bit>,
+    /// The control word's step: what a count adds.
+    pub step: Reg<U<4>>,
     /// Cycles since the run bit rose.
     pub count: Reg<U<32>>,
 }
@@ -51,6 +56,7 @@ impl Unit for Knobs {
         loop {
             DefaultClock::rising().await;
             let run = self.run.get();
+            let step = self.step.get();
             let count = self.count.get();
             let arh = bus.ar.head();
             let awh = bus.aw.head();
@@ -70,14 +76,18 @@ impl Unit for Knobs {
             let word = knobs_read(
                 rsel,
                 U::<32>::from(0x4b4e_4f42u32),
-                run.zext::<32>(),
+                knobs_ctrl_pack(run, step),
                 count,
             );
             let we = knobs_we(wgo, wsel);
             with!(self <= {
-                we.bit(1) ? run: written.bit(0),
-                we.bit(1) & written.bit(0) & !run ? count: U::<32>::from(0u8),
-                run ? count: count + 1,
+                we.bit(1) ? {
+                    run: knobs_ctrl_run(written),
+                    step: knobs_ctrl_step(written),
+                },
+                we.bit(1) & knobs_ctrl_run(written) & !run ? count:
+                    U::<32>::from(0u8),
+                run ? count: count + step.zext::<32>(),
             });
             if rgo.to_bool() {
                 bus.r.send(LiteR {
@@ -154,7 +164,19 @@ fn main() {
         let id = get(knobs::id).await;
         println!("{:3}  id     {id:#010x}", now());
         assert_eq!(id, 0x4b4e_4f42);
-        put(knobs::ctrl, 1).await;
+        // The run bit and a step of three, each field set on its own.
+        put(
+            knobs::ctrl,
+            knobs::ctrl_run.with(1) | knobs::ctrl_step.with(3),
+        )
+        .await;
+        let ctrl = get(knobs::ctrl).await;
+        println!(
+            "{:3}  ctrl   {ctrl:#x}: run {} step {}",
+            now(),
+            knobs::ctrl_run.get(ctrl),
+            knobs::ctrl_step.get(ctrl)
+        );
         let first = get(knobs::count).await;
         println!("{:3}  count  {first}", now());
         for _ in 0..20 {
@@ -163,6 +185,7 @@ fn main() {
         let second = get(knobs::count).await;
         println!("{:3}  count  {second}", now());
         assert!(second > first, "the counter runs");
+        assert_eq!((second - first) % 3, 0, "by threes");
         put(knobs::ctrl, 0).await;
         let stopped = get(knobs::count).await;
         for _ in 0..20 {
