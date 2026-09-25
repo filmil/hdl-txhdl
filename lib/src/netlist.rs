@@ -455,7 +455,20 @@ impl Expr {
     /// value at an offset: Verilog has no bit-select of a part-select,
     /// and the VHDL written for one did not simulate as the run did,
     /// which is issue 129.
+    ///
+    /// A bit of a literal at a known place is that bit, as a literal.
+    /// A lowered function applied to a literal reads bits of it, and
+    /// VHDL does not index a qualified expression: `crc7_step` on a
+    /// zero wrote `unsigned'("0000000")(6)`, which nvc refused and
+    /// Verilator took (issue 555). Folded here, neither emitter sees
+    /// one.
     pub fn index(a: Expr, i: Expr) -> Expr {
+        if let (Expr::Bits(w, b), Expr::Num(k)) = (&a, &i) {
+            if (*k as usize) < *w {
+                let at = *w - 1 - *k as usize;
+                return Expr::Bits(1, b[at..at + 1].to_string());
+            }
+        }
         match (a, i) {
             (Expr::Slice(inner, lo, _), Expr::Num(k)) => {
                 Expr::Index(inner, Box::new(Expr::Num(lo as u128 + k)))
@@ -469,7 +482,15 @@ impl Expr {
     }
     /// A part of a value. A part of a part is one part of the value,
     /// for the same reason a bit of a part is one bit of it.
+    /// A part of a literal is those bits, as a literal, for the reason
+    /// a bit of one is (issue 555).
     pub fn slice(a: Expr, lo: usize, len: usize) -> Expr {
+        if let Expr::Bits(w, b) = &a {
+            if len > 0 && lo + len <= *w {
+                let hi = *w - lo;
+                return Expr::Bits(len, b[hi - len..hi].to_string());
+            }
+        }
         match a {
             Expr::Slice(inner, ilo, _) => Expr::Slice(inner, ilo + lo, len),
             a => Expr::Slice(Box::new(a), lo, len),
@@ -2733,6 +2754,28 @@ mod tests {
             instances: Vec::new(),
             foreign: None,
         }
+    }
+
+    /// A bit or a part of a literal is a literal, so no netlist indexes
+    /// one (issue 555). `1010011` is bit 6 down to bit 0, so bit 0 is
+    /// the last character and bits 3 to 1 are `001`.
+    #[test]
+    fn a_bit_or_a_part_of_a_literal_is_a_literal() {
+        let lit = || Expr::Bits(7, "1010011".to_string());
+        let bits = |e: Expr| match e {
+            Expr::Bits(w, b) => (w, b),
+            other => panic!("not folded: {other:?}"),
+        };
+        assert_eq!(bits(Expr::index(lit(), Expr::Num(0))), (1, "1".into()));
+        assert_eq!(bits(Expr::index(lit(), Expr::Num(5))), (1, "0".into()));
+        assert_eq!(bits(Expr::index(lit(), Expr::Num(6))), (1, "1".into()));
+        assert_eq!(bits(Expr::slice(lit(), 1, 3)), (3, "001".into()));
+        assert_eq!(bits(Expr::slice(lit(), 5, 2)), (2, "10".into()));
+        // A bit of a signal is still an index.
+        assert!(matches!(
+            Expr::index(Expr::name("crc"), Expr::Num(6)),
+            Expr::Index(..)
+        ));
     }
 
     /// A register nobody says anything about starts at zero, which is
