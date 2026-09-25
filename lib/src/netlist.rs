@@ -496,6 +496,21 @@ pub fn bundle_args<B: Ports>(side: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// What a unit of units passes a child's field `port`, itself a struct
+/// of ports, when it gives it the whole of `side`, a struct of ports of
+/// the same type nested in its own: each port of `B`, the child's
+/// `port_name` joined to the parent's `side_name` (issue 579).
+#[doc(hidden)]
+pub fn bundle_args_named<B: Ports>(
+    port: &str,
+    side: &str,
+) -> Vec<(String, String)> {
+    B::ports()
+        .into_iter()
+        .map(|p| (format!("{port}_{}", p.name), format!("{side}_{}", p.name)))
+        .collect()
+}
+
 /// What a unit of units passes a child when it passes `side.path` of a
 /// side whose struct `B` is declared in another file: the one port
 /// named `path`, or, where `path` is a struct of ports nested in `B`,

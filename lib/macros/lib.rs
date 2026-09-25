@@ -6402,6 +6402,42 @@ fn lower_structural(
                         if g.delimiter() == Delimiter::Brace =>
                     {
                         for e in split_commas(g) {
+                            // A field that is itself a struct of ports,
+                            // given as a literal: `pins: S { a, b: x }`
+                            // joins the child's `pins_a` and `pins_b`
+                            // (issue 579).
+                            if let (
+                                Some(TokenTree::Ident(f)),
+                                true,
+                                Some(TokenTree::Group(inner)),
+                            ) = (e.first(), punct_at(&e, 1, ':'), e.last())
+                            {
+                                if inner.delimiter() == Delimiter::Brace
+                                    && e.len() > 3
+                                {
+                                    for s in split_commas(inner) {
+                                        let (sub, net) = match s.as_slice() {
+                                            [TokenTree::Ident(a)] => (a, a),
+                                            [TokenTree::Ident(a), _, TokenTree::Ident(n)]
+                                                if punct_at(&s, 1, ':') =>
+                                            {
+                                                (a, n)
+                                            }
+                                            _ => return Err(err(
+                                                inner.span(),
+                                                "a field of a nested struct \
+                                                     passed to a child is \
+                                                     `field: name` or `field`",
+                                            )),
+                                        };
+                                        names.push((
+                                            format!("{f}_{sub}"),
+                                            net.to_string(),
+                                        ));
+                                    }
+                                    continue;
+                                }
+                            }
                             let (port, net) = match e.as_slice() {
                                 [TokenTree::Ident(f)] => (f, f),
                                 [TokenTree::Ident(f), _, TokenTree::Ident(n)]
@@ -6487,6 +6523,23 @@ fn lower_structural(
                     joined.push(format!(
                         "a.extend(::txhdl::netlist::bundle_args_at::<{ty}>\
                          (\"{side}\", \"{path}\"));"
+                    ));
+                    continue;
+                }
+                // A struct of ports nested in the unit's side, given
+                // whole to a field of the child's: `pins: jtag` joins
+                // the child's `pins_*` to the side's `jtag_*` in order,
+                // which only `lowered` can list (issue 579).
+                let nested = BUNDLES.with(|b| {
+                    b.borrow()
+                        .iter()
+                        .find(|(x, _)| *x == n)
+                        .map(|(_, t)| t.clone())
+                });
+                if let (Some(ty), false) = (nested, port.is_empty()) {
+                    joined.push(format!(
+                        "a.extend(::txhdl::netlist::bundle_args_named::<{ty}>\
+                         (\"{port}\", \"{n}\"));"
                     ));
                     continue;
                 }
