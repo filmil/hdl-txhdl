@@ -6709,17 +6709,26 @@ fn lower_structural(
                     [TokenTree::Ident(id)] => {
                         let id = id.to_string();
                         match bound.iter().find(|(b, _)| *b == id) {
+                            // A struct declared in another file, whose
+                            // fields cannot be seen here: its ports are
+                            // joined in order when `lowered` runs.
                             Some((_, fs)) if fs == &["*"] => {
-                                return Err(err(
-                                    span,
-                                    &format!(
-                                        "`{id}` is a struct declared in \
-                                         another file, whose fields cannot \
-                                         be seen here: pass them one by \
-                                         one, `{id}.f`, rather than the \
-                                         whole side (issue 483)"
-                                    ),
-                                ))
+                                let ty = BUNDLES.with(|b| {
+                                    b.borrow()
+                                        .iter()
+                                        .find(|(n, _)| *n == id)
+                                        .map(|(_, t)| t.clone())
+                                });
+                                let Some(ty) = ty else {
+                                    return Err(err(
+                                        span,
+                                        &format!("`{id}`'s type is not known"),
+                                    ));
+                                };
+                                names.push((
+                                    String::new(),
+                                    format!("@bundle {ty} {id}"),
+                                ));
                             }
                             Some((_, fs)) => names.extend(
                                 fs.iter().map(|f| (String::new(), f.clone())),
@@ -6770,7 +6779,14 @@ fn lower_structural(
             let mut joined: Vec<String> = Vec::new();
             for (port, n) in names {
                 if let Some(net) = n.strip_prefix("@tie ") {
-                    joined.push(format!("(\"{port}\", \"{net}\")"));
+                    joined.push(format!("a.push((\"{port}\".to_string(), \"{net}\".to_string()));"));
+                    continue;
+                }
+                if let Some(b) = n.strip_prefix("@bundle ") {
+                    let (ty, side) = b.rsplit_once(' ').unwrap_or((b, ""));
+                    joined.push(format!(
+                        "a.extend(::txhdl::netlist::bundle_args::<{ty}>(\"{side}\"));"
+                    ));
                     continue;
                 }
                 let n = aliases
@@ -6806,13 +6822,15 @@ fn lower_structural(
                     }
                     used.push(n.clone());
                 }
-                joined.push(format!("(\"{port}\", \"{net}\")"));
+                joined.push(format!(
+                    "a.push((\"{port}\".to_string(), \"{net}\".to_string()));"
+                ));
             }
             instances.push(format!(
-                "::txhdl::netlist::instance(::txhdl::netlist::child_lowered(\
+                "::txhdl::netlist::instance_of(::txhdl::netlist::child_lowered(\
                  &me.{field}, &format!(\"{{name}}_{field}\")), \"{field}\", \
-                 &[{}])",
-                joined.join(", ")
+                 {{ let mut a: Vec<(String, String)> = Vec::new(); {} a }})",
+                joined.join(" ")
             ));
         }
     }

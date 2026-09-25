@@ -381,6 +381,32 @@ pub fn bundle_ports<B: Ports>(
         .collect()
 }
 
+/// What a unit of units passes a child when it passes the whole of its
+/// side `side`, whose struct `B` is declared in another file: the side's
+/// ports in the order `B` declares them, each joined to the child's
+/// port at that position (issue 498). `#[lower]` cannot see `B`'s
+/// fields, so the join is made here, when `lowered` runs.
+#[doc(hidden)]
+pub fn bundle_args<B: Ports>(side: &str) -> Vec<(String, String)> {
+    bundle_ports::<B>(side)
+        .into_iter()
+        .map(|(n, _, _, _)| (String::new(), n))
+        .collect()
+}
+
+/// [`instance`] with its joins made when `lowered` runs rather than
+/// written out, which a side passed whole needs.
+#[doc(hidden)]
+pub fn instance_of(
+    unit: Lowered,
+    name: &str,
+    args: Vec<(String, String)>,
+) -> Instance {
+    let args: Vec<(&str, &str)> =
+        args.iter().map(|(p, a)| (p.as_str(), a.as_str())).collect();
+    instance(unit, name, &args)
+}
+
 /// A field of the value on the port `port` of `B`, as [`field`] finds
 /// one on a port whose type the lowering could read.
 #[doc(hidden)]
