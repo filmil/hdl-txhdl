@@ -443,6 +443,8 @@ impl Expr {
                 "<<" => Some(x.checked_shl(y as u32).unwrap_or(0)),
                 ">>" => Some(x.checked_shr(y as u32).unwrap_or(0)),
                 "/" if y != 0 => Some(x / y),
+                "*" => Some(x.wrapping_mul(y)),
+                "%" if y != 0 => Some(x % y),
                 _ => None,
             };
             if let Some(v) = v {
@@ -2635,7 +2637,7 @@ fn hbool(e: &Expr, l: &Lowered) -> String {
         }
         // Bitwise operators and shifts yield bits, not truth values.
         Expr::Bin(
-            "&" | "|" | "^" | "<<" | ">>" | ">>>" | "+" | "-" | "*",
+            "&" | "|" | "^" | "<<" | ">>" | ">>>" | "+" | "-" | "*" | "%",
             ..,
         ) => {
             format!("({} = '1')", hval(e, 1, l))
@@ -2734,6 +2736,13 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
         Expr::Bin("*", a, b) => {
             let w = if w == 0 { l.ewidth(e) } else { w };
             format!("resize(({} * {}), {w})", hval(a, w, l), hval(b, w, l))
+        }
+        // A remainder is `rem`, which numeric_std answers at the right
+        // operand's width, so it is resized to the expression's (issue
+        // 496). Zero on the right stops nvc, as it stops the Rust run.
+        Expr::Bin("%", a, b) => {
+            let w = if w == 0 { l.ewidth(e) } else { w };
+            format!("resize(({} rem {}), {w})", hval(a, w, l), hval(b, w, l))
         }
         Expr::Bin(op @ ("&" | "|" | "^"), a, b) => {
             let vop = match *op {

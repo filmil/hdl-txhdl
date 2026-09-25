@@ -228,9 +228,9 @@ impl<const N: usize> U<N> {
     /// width is a standalone parameter, so this is stable; `U<{A + B}>`
     /// would not be.
     ///
-    /// It is not `std::ops::Mul`, which takes no width and answers in
-    /// the width it was given, so the name is the operation's rather
-    /// than the trait's.
+    /// `*` is `std::ops::Mul`, which answers in the width it was given,
+    /// wrapping; this is the multiply whose product is wider, so it keeps
+    /// the operation's name rather than the trait's.
     #[allow(clippy::should_implement_trait)]
     pub fn mul<const M: usize>(self, o: impl Into<Self>) -> U<M> {
         U::<M>::new(self.0.wrapping_mul(o.into().0))
@@ -283,18 +283,20 @@ impl<const N: usize> From<i32> for U<N> {
     }
 }
 
-// The operators of a datapath are Rust's operators. `+` and `-` are
-// same-width and wrapping; `&`, `|` and `^` are bitwise; `!` is the
-// complement; `<<` and `>>` are logical shifts by an amount that is an
-// integer, not a value. The right operand of an arithmetic or bitwise
-// operator is anything that converts, so a literal is written as a
-// literal: `n + 1`, `flags & 0xF`. A compare, `==`, `!=`, `<`, `<=`,
-// `>`, `>=`, is unsigned, yields a `bool`, and takes a literal on the
-// right too: `count == 8`. Every one lowers to the operator of the same
-// name. What has no operator is a method: `sra`, the arithmetic shift,
-// `lt_signed`, the signed compare, `mul::<M>`, `concat::<_, M>`,
-// `sext::<M>` and `zext::<M>`, each with a width that is the sum of two
-// others stated, because that sum needs nightly Rust to write.
+// The operators of a datapath are Rust's operators. `+`, `-` and `*` are
+// same-width and wrapping, and `%` is the remainder,
+// which refuses zero as the netlist does; `&`, `|` and `^` are
+// bitwise; `!` is the complement; `<<` and `>>` are logical shifts by
+// an amount that is an integer, not a value. The right operand of an
+// arithmetic or bitwise operator is anything that converts, so a
+// literal is written as a literal: `n + 1`, `flags & 0xF`. A compare,
+// `==`, `!=`, `<`, `<=`, `>`, `>=`, is unsigned, yields a `bool`, and
+// takes a literal on the right too: `count == 8`. Every one lowers to
+// the operator of the same name. What has no operator is a method:
+// `sra`, the arithmetic shift, `lt_signed`, the signed compare,
+// `mul::<M>`, the widening multiply, `concat::<_, M>`, `sext::<M>` and
+// `zext::<M>`, each with a width that is the sum of two others stated,
+// because that sum needs nightly Rust to write.
 macro_rules! u_ops {
     ($($tr:ident $f:ident |$a:ident, $b:ident| $e:expr),*) => { $(
         impl<const N: usize, R: Into<U<N>>> std::ops::$tr<R> for U<N> {
@@ -311,7 +313,12 @@ u_ops!(
     Sub sub |a, b| a.wrapping_sub(b),
     BitAnd bitand |a, b| a & b,
     BitOr bitor |a, b| a | b,
-    BitXor bitxor |a, b| a ^ b
+    BitXor bitxor |a, b| a ^ b,
+    Mul mul |a, b| a.wrapping_mul(b),
+    Rem rem |a, b| {
+        assert!(b != 0, "a remainder by zero, which the netlist refuses too");
+        a % b
+    }
 );
 impl<const N: usize> std::ops::Not for U<N> {
     type Output = U<N>;

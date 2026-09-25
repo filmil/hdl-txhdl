@@ -4753,7 +4753,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
         &["&"],
         &["<<", ">>"],
         &["+", "-"],
-        &["/"],
+        &["*", "/", "%"],
     ];
     let joint = |t: &TokenTree| {
         matches!(t, TokenTree::Punct(p)
@@ -4783,6 +4783,13 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 let generic =
                     (*op == "<" || *op == ">") && (prev == ":" || prev == "U");
                 if generic {
+                    continue;
+                }
+                // After another operator, `-` and `*` are unary: `a + -b`
+                // is a sum, not a difference (issue 496).
+                if (*op == "-" || *op == "*")
+                    && matches!(ts[i - 1], TokenTree::Punct(_))
+                {
                     continue;
                 }
                 let l = tr(&ts[..i], subst)?;
