@@ -155,6 +155,9 @@ vocabulary.}
 \newpage
 \banner{TxHDL, the vocabulary}{everything you'll reach for, and how it
 lowers}
+\footnotesize
+% The back holds the whole vocabulary, so its tables are a size smaller.
+\renewenvironment{vocab}{\par\scriptsize\setlength{\tabcolsep}{3pt}\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.55\linewidth}>{\raggedright\arraybackslash}p{0.42\linewidth}@{}}}{\end{tabular}\par}
 
 \begin{multicols}{3}
 
@@ -168,6 +171,7 @@ lowers}
 \code{Mem<T, N>} & a memory; \code{read(a)}, and write with \code{at(a)} in \code{with!} \\
 \code{slice}, \code{concat}, \code{sext}, \code{zext} & take words apart, put them together \\
 \code{mul::<M>()} & a product wider than its operands \\
+\code{U<256, 2>} & wider than 128 bits: the second number is how many 128-bit limbs \\
 \end{vocab}
 
 \head{Driving}
@@ -211,6 +215,8 @@ swapped by accident:
 \code{run(\&mut self, i: DiffIn, o: DiffOut)} & each side any struct of ports \\
 \code{DiffIn \{ minuend, subtrahend \}: DiffIn} & take it apart right in the signature \\
 \code{\#[derive(Ports)]} & all a struct from another crate needs \\
+a field that is itself a struct of ports & its ports under the field's name, \code{left\_aw\_valid} \\
+\code{side: [Rx<T>; N]} & an array of ports, \code{side\_0} onward \\
 \code{interface! \{ Ops \{..\} role Source \{..\} \}} & declare a link once, get a struct per role \\
 \end{vocab}
 The netlist flattens each struct into its fields, under their names.
@@ -221,6 +227,11 @@ Every AXI-Lite peripheral takes its link as one struct,
 A parent keeps its children as fields, hands each its ports in
 \code{run}, and runs them with \code{join2} (nest it for more). The
 lowering writes one module with an instance per child.
+\begin{vocab}
+\code{let (h, p) = link::<LitePort<..>>()} & a whole link's channels in one line \\
+\code{child.run((x, tie(v)), y)} & an input held at a constant \\
+\code{child.run((bus, ..), ..)} & a side passed on whole, from any crate \\
+\end{vocab}
 
 \head{Clocks}
 \begin{vocab}
@@ -248,7 +259,11 @@ and \code{vhdl\_unit()} turn a netlist back into a unit you can run
 next to the Rust it came from.
 
 \head{What the lowering reads}
-A loop of one wait, then reads, \code{let}s and drives. Inside it,
+A loop of one wait, then reads, \code{let}s and drives: one clocked
+block. Several waits, or one under \code{if}, make a state machine,
+a state per wait, and an output a state sets holds until another
+sets it. \code{for i in 0..N} over an array of ports is unrolled for
+each \code{N}. Inside,
 Rust's operators: \code{+ - * \% \& | \^{} ! <{}< >{}>}, unary \code{-},
 the compares, and \code{as} to an unsigned type. Calls to a
 \code{fn} marked \code{\#[lower]} in the same file are inlined. What
@@ -261,6 +276,14 @@ or a register named \code{signal}, is reserved in VHDL or Verilog;
 the netlist writes it as \code{next\_rw}, the same in both, and the
 testbench follows. Want a nicer name in the netlist?
 \code{\#[rename("nxt")]} on the field.
+
+\head{Register maps and checks}
+\begin{vocab}
+\code{regmap! \{ m (m\_read, m\_we), 2: [..] \}} & a peripheral's map said once: the decode, the C header, the datasheet table \\
+\code{(1, ctrl, rw, "..", [(run, 0, 1, ..)])} & a register and its bit fields \\
+\code{check!(c, "why")} & must hold where it is reached; an \code{assert} in the netlist \\
+\code{assume!(c, "why")}, \code{cover!(c, "why")} & taken for granted; can happen \\
+\end{vocab}
 
 \head{Pipelines and builds}
 \begin{vocab}
