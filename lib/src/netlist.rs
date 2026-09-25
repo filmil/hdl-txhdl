@@ -361,6 +361,53 @@ port_end!(Pad, Pad, Copy + 'static);
 port_end!(Tx, Tx, crate::types::Transaction + 'static);
 port_end!(Rx, Rx, crate::types::Transaction + 'static);
 
+thread_local! {
+    /// The wires the helpers called in the unit being lowered asked
+    /// for, a frame per unit: `lowered` opens one, and a child lowered
+    /// inside it opens its own, so the two do not mix (issue 504).
+    static INLINE: std::cell::RefCell<Vec<(Vec<(String, Expr)>, usize)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Open a frame for the wires the helpers of one unit ask for. What a
+/// generated `lowered` does first.
+#[doc(hidden)]
+pub fn inlined_begin() {
+    INLINE.with(|f| f.borrow_mut().push((Vec::new(), 0)));
+}
+
+/// Close the frame [`inlined_begin`] opened and give its wires.
+#[doc(hidden)]
+pub fn inlined_end() -> Vec<(String, Expr)> {
+    INLINE.with(|f| f.borrow_mut().pop().map(|(w, _)| w).unwrap_or_default())
+}
+
+/// A value bound in a helper that `#[lower]` reached through its
+/// `lowered`, from another file: the expression itself when it is read
+/// once or costs nothing to read again, and otherwise a wire of the unit
+/// that holds it, so that a chain of calls grows by a wire a call and
+/// not by a power of its reads, as a helper of the unit's own file does
+/// (issues 126 and 504).
+#[doc(hidden)]
+pub fn inline_bind(hint: &str, e: Expr, reads: usize) -> Expr {
+    let cheap = matches!(e, Expr::Name(_) | Expr::Num(_) | Expr::Bits(..));
+    if reads < 2 || cheap {
+        return e;
+    }
+    INLINE.with(|f| {
+        let mut f = f.borrow_mut();
+        match f.last_mut() {
+            Some((wires, n)) => {
+                *n += 1;
+                let name = format!("{hint}_i{n}");
+                wires.push((name.clone(), e));
+                Expr::Name(name)
+            }
+            None => e,
+        }
+    })
+}
+
 /// A port of a struct of ports: its field's name and what
 /// [`PortEnd`] says of the field's type.
 pub struct BundlePort {
@@ -1215,6 +1262,14 @@ impl Lowered {
             );
         }
         l
+    }
+
+    /// This unit with the wires its helpers asked for, which
+    /// [`inlined_end`] gives (issue 504).
+    #[doc(hidden)]
+    pub fn with_inlined(mut self, wires: Vec<(String, Expr)>) -> Self {
+        self.wires.extend(wires);
+        self
     }
 
     /// This unit, once nothing it declares takes a clock's name.
@@ -3555,6 +3610,47 @@ mod tests {
         let h = stating().vhdl();
         assert!(h.contains("report \"a digit\" severity failure;"), "{h}");
         assert!(h.contains("report \"cover: nine\" severity note;"), "{h}");
+    }
+
+    /// A helper reached through its own lowering binds a value it
+    /// reads twice to a wire of the unit, named for the helper and the
+    /// value and numbered, and leaves one read once, or a name, alone
+    /// (issue 504).
+    #[test]
+    fn a_value_a_helper_reads_twice_is_a_wire_of_the_unit() {
+        inlined_begin();
+        let sum = || Expr::bin("+", Expr::name("a"), Expr::name("b"));
+        assert!(matches!(inline_bind("f_x", sum(), 1), Expr::Bin(..)));
+        assert!(matches!(
+            inline_bind("f_y", Expr::name("a"), 3),
+            Expr::Name(n) if n == "a"
+        ));
+        let w = inline_bind("f_x", sum(), 2);
+        assert!(matches!(&w, Expr::Name(n) if n == "f_x_i1"), "{w:?}");
+        let wires = inlined_end();
+        assert_eq!(wires.len(), 1);
+        assert_eq!(wires[0].0, "f_x_i1");
+    }
+
+    /// A child lowered inside a parent opens a frame of its own, so the
+    /// wires its helpers ask for are its and not the parent's.
+    #[test]
+    fn a_child_keeps_its_own_helper_wires() {
+        let sum = || Expr::bin("+", Expr::name("a"), Expr::name("b"));
+        inlined_begin();
+        let _ = inline_bind("p", sum(), 2);
+        inlined_begin();
+        let _ = inline_bind("c", sum(), 2);
+        let child = inlined_end();
+        let parent = inlined_end();
+        assert_eq!(
+            child.iter().map(|w| w.0.as_str()).collect::<Vec<_>>(),
+            ["c_i1"]
+        );
+        assert_eq!(
+            parent.iter().map(|w| w.0.as_str()).collect::<Vec<_>>(),
+            ["p_i1"]
+        );
     }
 
     /// The instance and the clock pin would take one name, which

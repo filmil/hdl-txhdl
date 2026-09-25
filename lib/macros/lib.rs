@@ -3092,6 +3092,17 @@ thread_local! {
     /// The functions of the file the unit being lowered is in.
     static HELPERS: std::cell::RefCell<Vec<Helper>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Each helper's parameters with the text of their types, by the
+    /// helper's name, so a field of a struct it takes can be sliced out
+    /// (issue 504). Kept beside `HELPERS` rather than in `Helper`,
+    /// which the register maps build as well.
+    static HELPER_TYPES: std::cell::RefCell<Vec<(String, Params)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// The names in scope whose value is a struct of known type, with
+    /// the type: a helper's parameters while its body is read, so that
+    /// `p.f` is a field of `p` (issue 504).
+    static TYPED: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// The ports of the unit being lowered, each with the text of its
     /// value's type, so a field of a port's value can be sliced out.
     static PTYPES: std::cell::RefCell<Vec<(String, String)>> =
@@ -3291,7 +3302,13 @@ fn find_helpers(file: Option<std::path::PathBuf>) -> Vec<Helper> {
     let Ok(stream) = text.parse::<TokenStream>() else {
         return Vec::new();
     };
-    let ts: Vec<TokenTree> = stream.into_iter().collect();
+    HELPER_TYPES.with(|t| t.borrow_mut().clear());
+    scan_helpers(stream.into_iter().collect())
+}
+
+/// The functions under `#[lower]` among `ts`, a file's tokens or one
+/// function's with its marker put back.
+fn scan_helpers(ts: Vec<TokenTree>) -> Vec<Helper> {
     let mut out = Vec::new();
     let mut i = 0;
     while i + 1 < ts.len() {
@@ -3366,13 +3383,21 @@ fn find_helpers(file: Option<std::path::PathBuf>) -> Vec<Helper> {
             i += 1;
             continue;
         };
-        let params: Vec<String> = split_commas(params)
+        let typed: Vec<(String, String)> = split_commas(params)
             .iter()
-            .filter_map(|p| match p.first() {
-                Some(TokenTree::Ident(n)) => Some(n.to_string()),
+            .filter_map(|p| match (p.first(), punct_at(p, 1, ':')) {
+                (Some(TokenTree::Ident(n)), true) => {
+                    Some((n.to_string(), text_of(&p[2..])))
+                }
+                (Some(TokenTree::Ident(n)), false) => {
+                    Some((n.to_string(), String::new()))
+                }
                 _ => None,
             })
             .collect();
+        let params: Vec<String> =
+            typed.iter().map(|(n, _)| n.clone()).collect();
+        HELPER_TYPES.with(|t| t.borrow_mut().push((name.to_string(), typed)));
         let brace = |t: &TokenTree| {
             matches!(t, TokenTree::Group(g)
                 if g.delimiter() == Delimiter::Brace)
@@ -3907,6 +3932,41 @@ fn port_fields(
     out.into_iter().collect()
 }
 
+/// A helper's parameters, each by name with the text of its type.
+type Params = Vec<(String, String)>;
+
+/// The parameters of a helper, typed in `TYPED` while its body is read,
+/// and taken off when this is dropped (issue 504). A const parameter in
+/// a type is replaced by what the call gave for it.
+struct Typed(usize);
+
+impl Typed {
+    fn of(helper: &str, consts: &[(String, String)]) -> Typed {
+        let params = HELPER_TYPES.with(|t| {
+            t.borrow()
+                .iter()
+                .rev()
+                .find(|(n, _)| n == helper)
+                .map(|(_, p)| p.clone())
+                .unwrap_or_default()
+        });
+        TYPED.with(|t| {
+            let mut t = t.borrow_mut();
+            let n = t.len();
+            for (p, ty) in params.into_iter().filter(|(_, ty)| !ty.is_empty()) {
+                t.push((p, with_consts(&ty, consts)));
+            }
+            Typed(n)
+        })
+    }
+}
+
+impl Drop for Typed {
+    fn drop(&mut self) {
+        TYPED.with(|t| t.borrow_mut().truncate(self.0));
+    }
+}
+
 /// A call of a function under `#[lower]`, inlined: its parameters
 /// bound to the arguments, its `let`s to expressions of their own,
 /// and its value the call's.
@@ -3967,6 +4027,9 @@ fn inline_helper(
         let reads = reads_of(p, &rest(0));
         s.push((p.clone(), bind(p, a.clone(), reads)));
     }
+    // The parameters' types, for a field of one of them; taken off
+    // again when the body has been read, whatever it returns.
+    let _typed = Typed::of(&h.name, &cs);
     let toks = |text: &str| -> Result<Vec<TokenTree>, String> {
         with_consts(text, &cs)
             .parse::<TokenStream>()
@@ -4417,7 +4480,25 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             if dot.as_char() == '.' && !base.is_empty() =>
         {
             let b = tr(base, subst)?;
-            field_of(&b, &f.to_string())
+            // A field of a struct whose type is known where it is named,
+            // a helper's parameter: its bits are found from the type's
+            // layout, whatever computed the value (issue 504).
+            let typed = match base {
+                [TokenTree::Ident(n)] => TYPED.with(|t| {
+                    t.borrow()
+                        .iter()
+                        .rev()
+                        .find(|(m, _)| *m == n.to_string())
+                        .map(|(_, ty)| ty.clone())
+                }),
+                _ => None,
+            };
+            match typed {
+                Some(ty) => {
+                    Ok(format!("::txhdl::netlist::field::<{ty}>({b}, \"{f}\")"))
+                }
+                None => field_of(&b, &f.to_string()),
+            }
         }
         // A struct literal, `Name { f: e, .. }`: its fields concatenated
         // in the order written, which must be the declaration's, the
@@ -4519,7 +4600,9 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                             "NlE::Cond(Box::new({}), Box::new({}), Box::new({}))",
                             v[0], v[1], v[2]
                         ),
-                        other => return Err(format!("function `{other}` is not lowered")),
+                        // A function the file does not hold: its own
+                        // lowering, from wherever it is (issue 504).
+                        other => format!("{other}::lowered({})", v.join(", ")),
                     });
                 }
             }
@@ -4555,6 +4638,9 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     return Ok(format!("NlE::Num(({text}) as u128)"));
                 }
                 return as_lit(ts, &text, subst);
+            }
+            if let Some(r) = call_lowered(ts, subst) {
+                return r;
             }
             Err(format!("cannot lower `{text}`"))
         }
@@ -5843,6 +5929,178 @@ fn tied(ts: &[TokenTree]) -> Option<String> {
     }
 }
 
+/// What `#[lower]` adds to a function beside the function itself: a
+/// type of the same name, in the other namespace, whose `lowered` builds
+/// the function's expression when a unit is lowered (issue 504).
+///
+/// A unit inlines a helper of its own file from the file's text, which
+/// is all a proc macro can read. A helper in another module or crate is
+/// out of its sight, so the helper carries its own lowering instead,
+/// and the unit calls it by the path it calls the function by: `f(x)`
+/// lowers to `f::lowered(x)`, which Rust resolves wherever `f` resolves,
+/// through a `use` or a path, since a `use` brings both namespaces. A
+/// value read twice becomes a wire of the unit, as it does when inlined
+/// from the file, and a helper it calls is reached the same way.
+///
+/// `None` when the function's body is not one the lowering reads: the
+/// function is then plain Rust, and a unit calling it from elsewhere is
+/// refused by the compiler, which finds no `lowered`.
+fn companion(item: &TokenStream) -> Option<String> {
+    let toks: Vec<TokenTree> = item.clone().into_iter().collect();
+    let at = toks.iter().position(|t| is_ident(t, "fn"))?;
+    let TokenTree::Ident(name) = toks.get(at + 1)? else {
+        return None;
+    };
+    let name = name.to_string();
+    // The function's visibility, which its lowering shares.
+    let vis = match toks[..at].iter().position(|t| is_ident(t, "pub")) {
+        Some(p) => text_of(&toks[p..at]),
+        None => String::new(),
+    };
+    // Its const parameters, which the lowering takes as its own.
+    let mut consts: Vec<String> = Vec::new();
+    if punct_at(&toks, at + 2, '<') {
+        let (args, _) = angle_args(&toks, at + 2);
+        for a in args {
+            if let [TokenTree::Ident(k), ..] = a.as_slice() {
+                if k.to_string() == "const" {
+                    consts.push(text_of(&a));
+                }
+            }
+        }
+    }
+    let marked: TokenStream = format!("#[lower] {item}").parse().ok()?;
+    let saved = HELPER_TYPES.with(|t| t.borrow().clone());
+    let found = scan_helpers(marked.into_iter().collect());
+    let h = found.into_iter().find(|h| h.name == name)?;
+    let typed = HELPER_TYPES.with(|t| {
+        let mut t = t.borrow_mut();
+        let mine = t
+            .iter()
+            .rev()
+            .find(|(n, _)| *n == name)
+            .map(|(_, p)| p.clone())
+            .unwrap_or_default();
+        *t = saved;
+        mine
+    });
+    if !h.refused.is_empty() || h.value.is_empty() {
+        return None;
+    }
+    // Another helper this one calls is reached through its own
+    // `lowered` too, not inlined from a file this one cannot see.
+    let helpers = HELPERS.with(|x| std::mem::take(&mut *x.borrow_mut()));
+    let mark = TYPED.with(|t| {
+        let mut t = t.borrow_mut();
+        let n = t.len();
+        for (p, ty) in typed.iter().filter(|(_, ty)| !ty.is_empty()) {
+            t.push((p.clone(), ty.clone()));
+        }
+        n
+    });
+    let rest = |from: usize| -> Vec<&str> {
+        let mut v: Vec<&str> =
+            h.lets[from..].iter().map(|(_, e)| e.as_str()).collect();
+        v.push(h.value.as_str());
+        v
+    };
+    let mut body = String::new();
+    let mut subst: Vec<(String, String)> = Vec::new();
+    for (k, p) in h.params.iter().enumerate() {
+        let reads = reads_of(p, &rest(0));
+        body.push_str(&format!(
+            "let __s{k} = ::txhdl::netlist::inline_bind(\"{name}_{p}\", \
+             {p}, {reads});\n"
+        ));
+        subst.push((p.clone(), format!("__s{k}.clone()")));
+    }
+    let read = |text: &str| -> Option<Vec<TokenTree>> {
+        text.parse::<TokenStream>()
+            .ok()
+            .map(|t| t.into_iter().collect())
+    };
+    let mut result = None;
+    'body: {
+        for (k, (n, e)) in h.lets.iter().enumerate() {
+            let Some(ts) = read(e) else { break 'body };
+            let Ok(v) = tr(&ts, &subst) else { break 'body };
+            let reads = reads_of(n, &rest(k + 1));
+            body.push_str(&format!(
+                "let __l{k} = ::txhdl::netlist::inline_bind(\"{name}_{n}\", \
+                 {v}, {reads});\n"
+            ));
+            subst.push((n.clone(), format!("__l{k}.clone()")));
+        }
+        let Some(ts) = read(&h.value) else {
+            break 'body;
+        };
+        let Ok(v) = tr(&ts, &subst) else { break 'body };
+        result = Some(v);
+    }
+    TYPED.with(|t| t.borrow_mut().truncate(mark));
+    HELPERS.with(|x| *x.borrow_mut() = helpers);
+    let value = result?;
+    let generics = if consts.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", consts.join(", "))
+    };
+    let params = h
+        .params
+        .iter()
+        .map(|p| format!("{p}: ::txhdl::netlist::Expr"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "#[doc(hidden)]\n\
+         #[allow(non_camel_case_types, dead_code)]\n\
+         {vis} struct {name} {{}}\n\
+         impl {name} {{\n\
+         #[doc(hidden)]\n\
+         #[allow(clippy::all, unused_variables, unused_mut)]\n\
+         pub fn lowered{generics}({params}) -> ::txhdl::netlist::Expr {{\n\
+         use ::txhdl::netlist::Expr as NlE;\n\
+         {body}{value}\n}}\n}}\n"
+    ))
+}
+
+/// A call `path(args)` or `path::<K>(args)` of a function the unit's
+/// file does not hold, as a call of the function's own lowering:
+/// `path::lowered(args)` (issue 504).
+fn call_lowered(
+    ts: &[TokenTree],
+    subst: &[(String, String)],
+) -> Option<Result<String, String>> {
+    let (TokenTree::Ident(_), Some(TokenTree::Group(g))) = (&ts[0], ts.last())
+    else {
+        return None;
+    };
+    if g.delimiter() != Delimiter::Parenthesis {
+        return None;
+    }
+    let callee = &ts[..ts.len() - 1];
+    let turbo = (0..callee.len()).find(|&k| {
+        punct_at(callee, k, ':')
+            && punct_at(callee, k + 1, ':')
+            && punct_at(callee, k + 2, '<')
+    });
+    let (path, turbofish) = match turbo {
+        Some(k) => (text_of(&callee[..k]), text_of(&callee[k..])),
+        None => (text_of(callee), String::new()),
+    };
+    let mut args = Vec::new();
+    for a in split_commas(g) {
+        match tr(&a, subst) {
+            Ok(v) => args.push(v),
+            Err(e) => return Some(Err(e)),
+        }
+    }
+    Some(Ok(format!(
+        "{path}::lowered{turbofish}({})",
+        args.join(", ")
+    )))
+}
+
 /// A unit of units: `run` makes the channels and wires between its
 /// children with `chan()` and `signal()`, and joins the children's
 /// `run`s. Read into the parent's nets and instances, as generated
@@ -6364,7 +6622,13 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         _ => None,
     });
     if first.as_deref() == Some("fn") {
-        return item;
+        let mut out = item.clone();
+        if let Some(c) = companion(&item) {
+            if let Ok(ts) = c.parse::<TokenStream>() {
+                out.extend(ts);
+            }
+        }
+        return out;
     }
     HELPERS.with(|h| {
         *h.borrow_mut() = find_helpers(Span::call_site().local_file())
@@ -6876,6 +7140,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          use ::txhdl::netlist::{{Expr as NlE, Stmt as NlS, Target as NlT}};\n\
          {uses}\
          {prelude}\
+         // The wires the helpers of other files ask for (issue 504).\n\
+         ::txhdl::netlist::inlined_begin();\n\
          #[allow(unused_mut)] let mut __dynw: Vec<(String, NlE)> = Vec::new();\n\
          #[allow(unused_mut)] let mut __wn: usize = 0;\n\
          let __procs: Vec<::txhdl::netlist::Process> = vec![{procs}];\n\
@@ -6895,6 +7161,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          instances: vec![{instances}],\n\
          foreign: None,\n\
          }}\n\
+         .with_inlined(::txhdl::netlist::inlined_end())\n\
          // A field the struct renamed is referred to here under the\n\
          // name Rust knows, since `#[lower]` reads the `impl` and\n\
          // never sees the struct; this writes the netlist's name in.\n\
