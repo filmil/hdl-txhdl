@@ -1,0 +1,33 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Array of Registers}
+\label{sec:x-regs}
+
+A unit over a count of ports often keeps something per port: a count,
+a priority, whether a slot is full. \code{Regs<T, N>} is \code{N}
+registers of one type as one field, and \code{self.counts[i]} is the
+\code{i}-th, read with \code{get} and driven in \code{with!} as
+\code{counts[i]: v} (issue 594). It is a type of its own rather than
+an array of \code{Reg}, since a unit is \code{Default} and Rust has no
+\code{Default} for an array of a generic length.
+
+\code{Tally<N>} counts the hits on each of its input lines and puts
+out the sum of the counts, going over the lines and their registers
+in one loop. The netlist of \code{Tally<3>} has the registers
+\code{counts\_0} to \code{counts\_2}, which the run prints, and it is
+checked against the run under nvc and Verilator, the registers
+included, as Section~\ref{sec:x-checked} describes. The index is a
+number or the loop's variable: a register chosen by a signal would be
+a multiplexer over all of them, and the lowering refuses it.
+
+\begin{figure}[htbp]
+\centering
+\input{regs_timing.tex}
+\caption{Three lines hit every cycle, every other and every third,
+and the count each one keeps, a cycle behind its hit; the total is
+the sum of the counts.}
+\label{fig:x-regs}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_regs.rs}. Run with \code{bazel run //lib/examples:ex\_regs}.},label={lst:x-regs}]{lib/examples/ex_regs.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_regs} printed when the build ran it: the totals, the registers, then the lowering.},label={lst:x-regs-out}]{out_regs.txt}

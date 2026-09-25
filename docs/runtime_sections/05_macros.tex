@@ -144,6 +144,11 @@ and a unit of units passes an array port its ends as
 \code{[a, b, c]}, joined in order to \code{x\_0} to \code{x\_2}. An
 index is a number where \code{lowered} runs, so a constant may use
 it: \code{U::<3>::from(i)} is a literal on each turn.
+A register of a \code{Regs} field, \code{self.prio[i]}, is the
+register \code{prio\_i}, read or driven, and in \code{with!} and
+\code{when!} it is \code{prio[i]: v}; the index is a number or a
+loop's variable, since a register chosen by a signal is a
+multiplexer to write out, and that is refused.
 A name VHDL or SystemVerilog reserves, \code{next}, \code{out} and
 \code{inside} among them and VHDL's without regard to case, is
 escaped rather than refused: the netlist writes it with \code{\_rw}
