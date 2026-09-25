@@ -1844,6 +1844,19 @@ waveform(
     ],
 )
 
+# A child's inputs held at constants by its parent (issue 498).
+waveform(
+    name = "tie",
+    example = "//lib/examples:ex_tie",
+    lowered = ("stepped", "stepped"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//x=>x",
+        "//stepped/acc/total=>total",
+        "//y=>y",
+    ],
+)
+
 # Names VHDL or SystemVerilog reserve, escaped in both netlists, and
 # the testbench still binding each port to its trace (issue 497).
 waveform(

@@ -699,6 +699,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A child's input held at a constant:  bazel run //lib/examples:ex_tie
+rust_binary(
+    name = "ex_tie",
+    srcs = ["ex_tie.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Names a target reserves, escaped:  bazel run //lib/examples:ex_reserved
 rust_binary(
     name = "ex_reserved",
@@ -1040,6 +1049,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_loop.rs",
         "ex_names.rs",
         "ex_reserved.rs",
+        "ex_tie.rs",
         "ex_rename.rs",
         "ex_foreign.rs",
 ]
