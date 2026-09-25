@@ -388,12 +388,23 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
     let ports = field_names(body)
         .iter()
         .zip(field_types(body))
-        .map(|(n, t)| format!("::txhdl::netlist::bundle_port::<{t}>(\"{n}\")"))
+        .map(|(n, t)| {
+            format!(
+                "v.extend(<{t} as ::txhdl::netlist::PortField>::ports_of(\"{n}\"));"
+            )
+        })
         .collect::<Vec<_>>()
-        .join(", ");
+        .join(" ");
+    // A struct of ports is a port field too, so another struct of ports
+    // may hold it: its ports are flattened, each `field_sub` (issue 498).
     format!(
         "impl{b} ::txhdl::netlist::Ports for {n}{a} {{\n\
-         fn ports() -> Vec<::txhdl::netlist::BundlePort> {{ vec![{ports}] }}\n}}",
+         fn ports() -> Vec<::txhdl::netlist::BundlePort> {{ \
+         let mut v = Vec::new(); {ports} v }}\n}}\n\
+         impl{b} ::txhdl::netlist::PortField for {n}{a} {{\n\
+         fn ports_of(name: &str) -> Vec<::txhdl::netlist::BundlePort> {{ \
+         <Self as ::txhdl::netlist::Ports>::ports().into_iter().map(|mut p| \
+         {{ p.name = format!(\"{{name}}_{{}}\", p.name); p }}).collect() }}\n}}",
         b = item.bounds,
         n = item.name,
         a = item.args
@@ -4601,6 +4612,27 @@ fn port_fields(
             // unit may take two sides of one type and two units of one
             // run may take the same type without their ports meeting.
             if wild && !after_dot {
+                // A struct of ports may hold another, so `bus.pins.awid`
+                // is the port `bus_pins_awid`: every name of the chain up
+                // to a method call is part of the port's (issue 498). A
+                // port has no fields of its own to read without one.
+                let mut f = f;
+                let mut j = i + 3;
+                while punct_at(&ts, j, '.') {
+                    let (Some(TokenTree::Ident(g)), next) =
+                        (ts.get(j + 1), ts.get(j + 2))
+                    else {
+                        break;
+                    };
+                    let call = matches!(next, Some(TokenTree::Group(p))
+                        if p.delimiter() == Delimiter::Parenthesis)
+                        || punct_at(&ts, j + 2, ':');
+                    if call {
+                        break;
+                    }
+                    f = format!("{f}_{g}");
+                    j += 2;
+                }
                 let port = format!("{b}_{f}");
                 let ty = BUNDLES.with(|s| {
                     s.borrow()
@@ -4617,12 +4649,20 @@ fn port_fields(
                     }
                 });
                 out.push(TokenTree::Ident(Ident::new(&port, ts[i + 2].span())));
-                i += 3;
+                i = j;
                 continue;
             }
             if !after_dot
                 && bound.iter().any(|(n, fs)| *n == b && fs.contains(&f))
             {
+                // A field that is a struct of ports nested in the side:
+                // what follows is read from it as from a side of its own.
+                if bound.iter().any(|(n, fs)| *n == f && fs == &["*"]) {
+                    let rest: TokenStream =
+                        ts[i + 2..].iter().cloned().collect();
+                    out.extend(port_fields(rest, bound));
+                    return out.into_iter().collect();
+                }
                 out.push(ts[i + 2].clone());
                 i += 3;
                 continue;
@@ -6730,9 +6770,30 @@ fn lower_structural(
                                     format!("@bundle {ty} {id}"),
                                 ));
                             }
-                            Some((_, fs)) => names.extend(
-                                fs.iter().map(|f| (String::new(), f.clone())),
-                            ),
+                            // Its fields in order; one that is a struct of
+                            // ports nested in it is joined whole, as a side
+                            // declared elsewhere is (issue 498).
+                            Some((_, fs)) => {
+                                for f in fs {
+                                    let ty = BUNDLES.with(|b| {
+                                        b.borrow()
+                                            .iter()
+                                            .find(|(n, _)| n == f)
+                                            .map(|(_, t)| t.clone())
+                                    });
+                                    let nested = bound
+                                        .iter()
+                                        .any(|(n, x)| n == f && x == &["*"]);
+                                    match (ty, nested) {
+                                        (Some(ty), true) => names.push((
+                                            String::new(),
+                                            format!("@bundle {ty} {f}"),
+                                        )),
+                                        _ => names
+                                            .push((String::new(), f.clone())),
+                                    }
+                                }
+                            }
                             None => names.push((String::new(), id)),
                         }
                     }
@@ -6780,6 +6841,28 @@ fn lower_structural(
             for (port, n) in names {
                 if let Some(net) = n.strip_prefix("@tie ") {
                     joined.push(format!("a.push((\"{port}\".to_string(), \"{net}\".to_string()));"));
+                    continue;
+                }
+                // `side.path` of a side declared in another file: one of
+                // its ports, or a struct of ports nested in it, which only
+                // `lowered` can tell apart (issue 498).
+                let at = BUNDLED.with(|d| {
+                    d.borrow().iter().find(|(p, _, _)| *p == n).map(
+                        |(p, ty, path)| {
+                            let side =
+                                p[..p.len() - path.len() - 1].to_string();
+                            (ty.clone(), side, path.clone())
+                        },
+                    )
+                });
+                // Joined in order, that is: a struct literal naming the
+                // child's port joins one port, as below.
+                if let (Some((ty, side, path)), true, false) =
+                    (at, port.is_empty(), ends.iter().any(|(e, _, _)| *e == n))
+                {
+                    joined.push(format!(
+                        "a.extend(::txhdl::netlist::bundle_args_at::<{ty}>(\"{side}\", \"{path}\"));"
+                    ));
                     continue;
                 }
                 if let Some(b) = n.strip_prefix("@bundle ") {
@@ -7061,6 +7144,19 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
             for (n, t) in fields {
+                // A field that is itself a struct of ports: its ports are
+                // the netlist's under the field's name, `field_sub`, and
+                // `side.field.sub` in the body is that port (issue 498).
+                let end = ["In<", "Out<", "Tx<", "Rx<", "Pad<"]
+                    .iter()
+                    .any(|e| t.starts_with(e));
+                if !end {
+                    bound.push((n.clone(), vec!["*".to_string()]));
+                    BUNDLES
+                        .with(|b| b.borrow_mut().push((n.clone(), t.clone())));
+                    pairs.push((n, format!("@ports {t}"), p[0].span()));
+                    continue;
+                }
                 pairs.push((n, t, p[0].span()));
             }
             continue;

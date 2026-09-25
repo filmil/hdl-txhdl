@@ -314,8 +314,23 @@ macro_rules! port_end {
                 T::layout()
             }
         }
+        impl<T: Value + $($b)*, C: Clock> PortField for $t<T, C> {
+            fn ports_of(name: &str) -> Vec<BundlePort> {
+                vec![bundle_port::<Self>(name)]
+            }
+        }
     };
 }
+/// What a field of a struct of ports is: one port, or, when the field
+/// is itself a struct of ports, every port of it, each named for the
+/// field and its own name, `field_sub` (issue 498). `#[derive(Ports)]`
+/// lists its fields through this, so a struct of ports may hold another
+/// and the netlist sees them flattened.
+pub trait PortField {
+    /// The ports of a field of this type called `name`.
+    fn ports_of(name: &str) -> Vec<BundlePort>;
+}
+
 port_end!(In, In, Copy + 'static);
 port_end!(Out, Out, Copy + 'static);
 port_end!(Pad, Pad, Copy + 'static);
@@ -325,8 +340,9 @@ port_end!(Rx, Rx, crate::types::Transaction + 'static);
 /// A port of a struct of ports: its field's name and what
 /// [`PortEnd`] says of the field's type.
 pub struct BundlePort {
-    /// The field's name, which is the port's name in the netlist:
-    /// a struct's field, or an array's index (issue 500).
+    /// The field's name, which is the port's name in the netlist: a
+    /// struct's field, or an array's index (issue 500); a port of a
+    /// nested struct of ports is `field_sub` (issue 498).
     pub name: String,
     /// What the port is.
     pub kind: Kind,
@@ -368,6 +384,21 @@ impl<P: PortEnd, const N: usize> Ports for [P; N] {
     }
 }
 
+/// An array of ports is a port field as a struct of ports is, so a
+/// struct of ports may hold one: `ins_0` to `ins_{N-1}` (issues 498 and
+/// 500).
+impl<P: PortEnd, const N: usize> PortField for [P; N] {
+    fn ports_of(name: &str) -> Vec<BundlePort> {
+        <Self as Ports>::ports()
+            .into_iter()
+            .map(|mut p| {
+                p.name = format!("{name}_{}", p.name);
+                p
+            })
+            .collect()
+    }
+}
+
 /// The ports of `B` as a lowered unit lists its own, when the unit
 /// takes it as the side `side`: each named `side_field`, so a unit can
 /// take two sides of one type and their ports stay apart.
@@ -391,6 +422,35 @@ pub fn bundle_args<B: Ports>(side: &str) -> Vec<(String, String)> {
     bundle_ports::<B>(side)
         .into_iter()
         .map(|(n, _, _, _)| (String::new(), n))
+        .collect()
+}
+
+/// What a unit of units passes a child when it passes `side.path` of a
+/// side whose struct `B` is declared in another file: the one port
+/// named `path`, or, where `path` is a struct of ports nested in `B`,
+/// each of its ports in order (issue 498).
+#[doc(hidden)]
+pub fn bundle_args_at<B: Ports>(
+    side: &str,
+    path: &str,
+) -> Vec<(String, String)> {
+    let ports = B::ports();
+    let under = format!("{path}_");
+    let hits: Vec<String> = if ports.iter().any(|p| p.name == path) {
+        vec![path.to_string()]
+    } else {
+        ports
+            .into_iter()
+            .map(|p| p.name)
+            .filter(|n| n.starts_with(&under))
+            .collect()
+    };
+    assert!(
+        !hits.is_empty(),
+        "`{side}.{path}` is not a port of the side"
+    );
+    hits.into_iter()
+        .map(|n| (String::new(), format!("{side}_{n}")))
         .collect()
 }
 
