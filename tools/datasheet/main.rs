@@ -237,11 +237,36 @@ fn instance(ty: &str, net: &Lowered) -> String {
             })
             .collect::<String>()
     };
+    // An array of ports, `ins: [Rx<T>; N]`, is ports `ins_0` to
+    // `ins_{N-1}` in the lowering, in order, and `run` takes it as one
+    // array: so a run of two or more ports `base_0`, `base_1`, .. of one
+    // kind is written `[base_0, base_1, ..]` (issue 612).
     let names = |r: &[(String, Kind, usize)]| -> String {
-        r.iter()
-            .map(|(n, _, _)| n.clone())
-            .collect::<Vec<_>>()
-            .join(", ")
+        let mut out: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < r.len() {
+            let (n, k, _) = &r[i];
+            let base = n.strip_suffix("_0");
+            let mut j = i + 1;
+            if let Some(base) = base {
+                while j < r.len()
+                    && r[j].1 == *k
+                    && r[j].0 == format!("{base}_{}", j - i)
+                {
+                    j += 1;
+                }
+            }
+            if base.is_some() && j - i >= 2 {
+                let arr: Vec<String> =
+                    r[i..j].iter().map(|(n, _, _)| n.clone()).collect();
+                out.push(format!("[{}]", arr.join(", ")));
+                i = j;
+            } else {
+                out.push(n.clone());
+                i += 1;
+            }
+        }
+        out.join(", ")
     };
     let all: Vec<(String, Kind, usize)> = net
         .ports
