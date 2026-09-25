@@ -452,6 +452,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An SD card host, against a model card:  bazel run //lib/examples:ex_sd
+rust_binary(
+    name = "ex_sd",
+    srcs = ["ex_sd.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # An entropy source:  bazel run //lib/examples:ex_trng
 rust_binary(
     name = "ex_trng",
@@ -915,6 +927,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_bundle.rs",
         "ex_remote.rs",
         "ex_redundant.rs",
+        "ex_sd.rs",
         "ex_tracer.rs",
         "ex_trng.rs",
         "ex_spi.rs",

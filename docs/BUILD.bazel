@@ -827,6 +827,8 @@ latex_document(
         ":pwm_timing",
         ":trng_run",
         ":trng_timing",
+        ":sd_run",
+        ":sd_timing",
         ":tracer_run",
         ":tracer_timing",
         ":spi_run",
@@ -1500,6 +1502,26 @@ waveform(
         "//out/tx_data/v=>out",
         "//differs=>differs",
     ],
+)
+
+# The SD host sending a command: the card clock, the command line
+# driven bit by bit with the host holding it, the phase and the bit
+# count, over the start of CMD0.
+waveform(
+    name = "sd",
+    example = "//lib/examples:ex_sd",
+    lowered = ("sd", "sd"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//sclk=>sclk",
+        "//cmd_oe=>cmd_oe",
+        "//cmd_out=>cmd_out",
+        "//sd/phase=>phase",
+        "//sd/n=>n",
+        "//sd/crc7=>crc7",
+    ],
+    from_tick = 30,
+    until = 90,
 )
 
 # The entropy source starting: the rings' samples arriving once the
