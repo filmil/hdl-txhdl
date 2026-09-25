@@ -452,6 +452,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A register map declared once:  bazel run //lib/examples:ex_regmap
+rust_binary(
+    name = "ex_regmap",
+    srcs = ["ex_regmap.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # An SD card host, against a model card:  bazel run //lib/examples:ex_sd
 rust_binary(
     name = "ex_sd",
@@ -972,6 +984,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_bundle.rs",
         "ex_remote.rs",
         "ex_redundant.rs",
+        "ex_regmap.rs",
         "ex_sd.rs",
         "ex_tracer.rs",
         "ex_trng.rs",
