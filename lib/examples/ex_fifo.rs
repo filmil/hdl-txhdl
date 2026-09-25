@@ -84,7 +84,10 @@ impl<const N: usize, W: Clock, R: Clock> Fifo<N, W, R> {
             until(W::rising, || push.peek().is_some() && !self.full()).await;
             let w = self.wptr.get();
             let v = push.recv().unwrap_or_default();
-            self.mem.write(w.raw() as usize, v);
+            // The address is the pointer's low bits; the extra bit
+            // only tells full from empty. The memory refuses an address
+            // past its end, as the netlist would (issue 556).
+            self.mem.write(w.raw() as usize % N, v);
             self.wptr.set(w + 1);
             self.wptr_r.out.set(w + 1);
         }
@@ -95,7 +98,7 @@ impl<const N: usize, W: Clock, R: Clock> Fifo<N, W, R> {
         loop {
             until(R::rising, || !self.empty() && pop.ready().to_bool()).await;
             let r = self.rptr.get();
-            pop.send(self.mem.read(r.raw() as usize));
+            pop.send(self.mem.read(r.raw() as usize % N));
             self.rptr.set(r + 1);
             self.rptr_w.out.set(r + 1);
         }
