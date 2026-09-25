@@ -699,6 +699,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A whole link made in one line:  bazel run //lib/examples:ex_link
+rust_binary(
+    name = "ex_link",
+    srcs = ["ex_link.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A struct of ports holding structs of ports:  bazel run //lib/examples:ex_nested
 rust_binary(
     name = "ex_nested",
@@ -1076,6 +1088,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_tie.rs",
         "ex_side.rs",
         "ex_nested.rs",
+        "ex_link.rs",
         "ex_rename.rs",
         "ex_foreign.rs",
 ]

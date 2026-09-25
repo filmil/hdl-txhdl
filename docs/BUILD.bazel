@@ -1850,6 +1850,22 @@ waveform(
     ],
 )
 
+# A whole AXI-Lite link made in one line between a relay and a word
+# (issue 498).
+waveform(
+    name = "link",
+    example = "//lib/examples:ex_link",
+    lowered = ("slice", "slice"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//bus_w/rx_valid=>bus_w_valid",
+        "//bus_w/rx_data=>bus_w_data",
+        "//slice/word/word=>word",
+        "//bus_r/tx_valid=>bus_r_valid",
+        "//bus_r/tx_data=>bus_r_data",
+    ],
+)
+
 # A struct of ports that holds two structs of ports, passed whole to a
 # child that reads through it: ex_bundle's word behind a unit of units
 # (issue 498).
