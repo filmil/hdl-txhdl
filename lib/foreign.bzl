@@ -55,7 +55,10 @@ def verilog_unit(name, src, top, clock = "clk"):
         crate_name = name,
         crate_root = name + ".rs",
         edition = "2021",
-        deps = ["//lib:txhdl", ":" + name + "_shim"],
+        deps = ["//lib:txhdl"],
+        # The shim is C++; rules_rust 0.74 wants it here, for manual
+        # FFI linkage, and warns on a C++ library in `deps` (issue 532).
+        link_deps = [":" + name + "_shim"],
     )
 
 def vhdl_unit(name, src, entity, clock = "clk"):
