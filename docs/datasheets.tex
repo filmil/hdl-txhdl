@@ -44,6 +44,13 @@ Explained in & #3 \\
 % component is made and joined, and the tables. All of it is written
 % by //tools/datasheet from the component's own lowering, so a sheet
 % cannot say a port the netlist does not have (issue 173).
+% A component's register table, written by //tools/datasheet from the
+% map its peripheral declares with `regmap!` (issue 499), for a sheet
+% whose component has one.
+\newcommand{\dsregs}[1]{%
+\subsection*{Registers}
+\dsget{regs}{#1}}
+
 \newcommand{\dstables}[1]{%
 \subsection*{Interfaces}
 \dsget{figure}{#1}

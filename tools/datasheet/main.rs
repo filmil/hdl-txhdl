@@ -42,6 +42,7 @@ use txhdl_parts::i2c::I2c;
 use txhdl_parts::plic::Plic2;
 use txhdl_parts::pwm::Pwm;
 use txhdl_parts::redundant::{Check, Tee};
+use txhdl_parts::regmap::RegMap;
 use txhdl_parts::remote::eth::RemoteLink;
 use txhdl_parts::remote::Remote;
 use txhdl_parts::sd::Sd;
@@ -104,6 +105,21 @@ fn table(cols: &str, head: &str, rows: &[String], none: &str) -> String {
          \\end{{tabular}}\n\\end{{center}}\n",
         rows.join("\n")
     )
+}
+
+/// A component's register table, from the map its peripheral declares
+/// (issue 499): the offset, the name, the access and the sentence.
+fn regs(key: &str, map: &RegMap) {
+    define(
+        "regs",
+        key,
+        &table(
+            "llp{0.16\\textwidth}p{0.42\\textwidth}",
+            "Offset & Register & Access & What it is",
+            &map.tex_rows(),
+            "No registers.",
+        ),
+    );
 }
 
 /// A count and its noun, the noun plural unless the count is one.
@@ -547,6 +563,7 @@ fn main() {
     );
     sheet("Uart", "Uart<868>", Uart::<868>::lowered("uart"));
     sheet("Ddr3Per", "Ddr3Per", Ddr3Per::lowered("ddr3"));
+    regs("Sd", &txhdl_parts::sd::regs::MAP);
     sheet("Entropy", "Entropy", Entropy::lowered("entropy"));
     sheet("Trng", "Trng", Trng::lowered("trng"));
     sheet("Board", "Board<868>", Board::<868>::lowered("board"));

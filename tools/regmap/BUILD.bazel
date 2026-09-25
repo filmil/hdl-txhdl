@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+# A register map declared once in the parts, written for the software:
+# a C header, or a device tree node at a base.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "regmap",
+    srcs = ["main.rs"],
+    edition = "2021",
+    deps = ["//lib/parts:txhdl_parts"],
+)
+
+# The SD host's header, as a driver would include it.
+genrule(
+    name = "sd_regs_h",
+    outs = ["sd_regs.h"],
+    cmd = "$(location :regmap) sd c > $@",
+    tools = [":regmap"],
+)
