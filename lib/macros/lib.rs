@@ -5,6 +5,7 @@
 //! against `proc_macro` alone, without syn or quote, because the
 //! grammars are small and a crate registry would be the larger cost.
 extern crate proc_macro;
+mod regmap;
 use proc_macro::{
     Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree,
 };
@@ -4215,117 +4216,7 @@ fn find_helpers(file: Option<std::path::PathBuf>) -> Vec<Helper> {
         });
         i = j + k + 1;
     }
-    out.extend(regmap_helpers(&ts));
-    out
-}
-
-/// The helpers a `regmap!` declaration stands for, read from the file
-/// as `#[lower] fn` helpers are (issue 499). A declaration is
-/// `regmap! { name (read, we), w: [ (idx, reg, acc, "doc"), .. ] }`,
-/// and it stands for two helpers: `read(sel, reg, ..)`, the word a
-/// read at `sel` answers, which is a `select!` over the indices with
-/// zero for a word not named; and `we(wgo, sel)`, a bit a register in
-/// declaration order, set when a write is going and its word is this
-/// one. The Rust side of the macro writes the same two functions, so
-/// the run and the netlist decode one map.
-fn regmap_helpers(ts: &[TokenTree]) -> Vec<Helper> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i + 2 < ts.len() {
-        let is_decl = is_ident(&ts[i], "regmap")
-            && matches!(&ts[i + 1], TokenTree::Punct(p) if p.as_char() == '!')
-            && matches!(&ts[i + 2], TokenTree::Group(g)
-                if g.delimiter() == Delimiter::Brace);
-        if !is_decl {
-            i += 1;
-            continue;
-        }
-        let TokenTree::Group(g) = &ts[i + 2] else {
-            unreachable!()
-        };
-        i += 3;
-        let d: Vec<TokenTree> = g.stream().into_iter().collect();
-        // `name ( read , we ) , w : [ .. ]`
-        let names = match d.get(1) {
-            Some(TokenTree::Group(n))
-                if n.delimiter() == Delimiter::Parenthesis =>
-            {
-                split_commas(n)
-            }
-            _ => continue,
-        };
-        let [read, we] = names.as_slice() else {
-            continue;
-        };
-        let (Some(TokenTree::Ident(read)), Some(TokenTree::Ident(we))) =
-            (read.first(), we.first())
-        else {
-            continue;
-        };
-        let Some(TokenTree::Group(entries)) = d.iter().find(|t| {
-            matches!(t, TokenTree::Group(e)
-                if e.delimiter() == Delimiter::Bracket)
-        }) else {
-            continue;
-        };
-        // Each entry is `( idx , reg , acc , "doc" )`.
-        let mut regs: Vec<(String, String)> = Vec::new();
-        for e in split_commas(entries) {
-            let Some(TokenTree::Group(e)) = e.first() else {
-                continue;
-            };
-            let parts = split_commas(e);
-            if parts.len() < 2 {
-                continue;
-            }
-            let idx = text_of(&parts[0]).trim().to_string();
-            let reg = text_of(&parts[1]).trim().to_string();
-            regs.push((idx, reg));
-        }
-        if regs.is_empty() {
-            continue;
-        }
-        // The read: a `select!` over the word indices.
-        let arms: Vec<String> = regs
-            .iter()
-            .map(|(idx, reg)| format!("{idx} => {reg}"))
-            .collect();
-        let mut params = vec!["sel".to_string()];
-        params.extend(regs.iter().map(|(_, r)| r.clone()));
-        out.push(Helper {
-            name: read.to_string(),
-            params,
-            consts: Vec::new(),
-            lets: Vec::new(),
-            value: format!(
-                "select!(sel.raw() => {{ {}, _ => U::<32>::from(0u8) }})",
-                arms.join(", ")
-            ),
-            refused: Vec::new(),
-        });
-        // The enables: a bit a register, the last declared on top.
-        let lets: Vec<(String, String)> = regs
-            .iter()
-            .enumerate()
-            .map(|(k, (idx, _))| {
-                (format!("we_{k}"), format!("wgo & (sel == {idx})"))
-            })
-            .collect();
-        let n = regs.len();
-        let mut value = format!("we_{}.zext::<1>()", n - 1);
-        for k in (0..n - 1).rev() {
-            value =
-                format!("{value}.concat::<1, {}>(we_{k}.zext::<1>())", n - k);
-        }
-        out.push(Helper {
-            name: we.to_string(),
-            params: vec!["wgo".to_string(), "sel".to_string()],
-            consts: Vec::new(),
-            lets,
-            value,
-            refused: Vec::new(),
-        });
-    }
+    out.extend(regmap::helpers_in(&ts));
     out
 }
 
@@ -7493,4 +7384,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     out.extend(header);
     out.extend([TokenTree::Group(Group::new(Delimiter::Brace, checks))]);
     out
+}
+
+/// A register map declared once: see `regmap.rs` (issues 499 and 569).
+#[proc_macro]
+pub fn regmap(input: TokenStream) -> TokenStream {
+    regmap::regmap(input)
 }

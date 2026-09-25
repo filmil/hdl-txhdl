@@ -9,7 +9,10 @@ rust_binary(
     name = "regmap",
     srcs = ["main.rs"],
     edition = "2021",
-    deps = ["//lib/parts:txhdl_parts"],
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
 )
 
 # The SD host's header, as a driver would include it.

@@ -12,7 +12,7 @@
 //! A map is added here when its peripheral declares one, so that a
 //! header exists for every map and nobody types an offset twice.
 use std::process::exit;
-use txhdl_parts::regmap::RegMap;
+use txhdl::regmap::RegMap;
 
 /// Every map the parts declare, by the name its peripheral is known
 /// by.

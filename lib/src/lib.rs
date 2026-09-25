@@ -32,12 +32,13 @@ pub mod foreign;
 pub mod funcs;
 pub mod netlist;
 pub mod pipeline;
+pub mod regmap;
 mod reserved;
 pub mod types;
 
 pub use txhdl_macros::{
-    arbiter, case, interface, lite_bridge, lower, pipeline, plic, router,
-    station, when, with, Bus, Ports, Trace, Transaction, Value,
+    arbiter, case, interface, lite_bridge, lower, pipeline, plic, regmap,
+    router, station, when, with, Bus, Ports, Trace, Transaction, Value,
 };
 
 /// `select!(value => { pattern => expr, .., _ => expr })`: a value
