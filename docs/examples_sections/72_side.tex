@@ -1,0 +1,40 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Side From Another Crate, Passed Whole}
+\label{sec:x-side}
+
+\code{LitePort}, the five channels a peripheral holds on an AXI-Lite
+link, is a struct of ports declared in \code{txhdl\_parts}. A unit in
+any crate may take it as one side of \code{run}, and its netlist has
+the five ports, each named for the side and the field. A unit of
+units could take it as well, and pass its fields to a child one by
+one, but not the whole side: \code{\#[lower]} reads the parent's file,
+and the fields of a struct declared in another cannot be seen there,
+so it could not say which of the parent's ports joins which of the
+child's.
+
+Now it does not have to. When the parent is lowered, the side's ports
+are listed from the \code{Ports} the struct derives, in the order the
+struct declares them, and the parent's are joined to the child's in
+that order. \code{self.gpio.run(bus, ..)} is one join of five
+channels, and nothing in the parent names them. Whether each channel
+is joined to exactly one child is still checked, when the parent is
+lowered, since only then are the channels' kinds known.
+
+The run below is \code{ex\_gpio}'s with the pins inside a unit of
+units that takes the link whole and passes it on whole. The build
+simulates the parent's netlist against it under nvc and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{side_timing.tex}
+\caption{The pins inside a unit of units: the same run as
+\code{ex\_gpio}'s, the link reaching the child through the parent's
+five ports.}
+\label{fig:x-side}
+\end{figure}
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=unit-unit,caption={The unit of units in \code{ex\_side.rs}; the rest is \code{ex\_gpio}'s run. Run with \code{bazel run //lib/examples:ex\_side}.},label={lst:x-side}]{lib/examples/ex_side.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_side} printed when the build ran it: the program's view, as \code{ex\_gpio}'s, then the Verilog of the parent, the five channels joined port by port.},label={lst:x-side-out}]{out_side.txt}

@@ -107,7 +107,10 @@ may take such a side and pass its fields, \code{bus.req}, to its
 children, which join as the parent's ports; their kinds cannot be
 seen here, so \code{Lowered::checked} checks when \code{lowered}
 runs that each channel port of a unit of units is joined to exactly
-one child. Passing the whole side to a child is refused. A port name
+one child. Passing the whole side to a child joins its ports to the
+child's in the order the struct declares them, and since the macro
+cannot see them the joins are made when \code{lowered} runs, by
+\code{bundle\_args} and \code{instance\_of} (issue 498). A port name
 that two sides both give is refused.
 An array of ports, \code{[Rx<T>; N]}, is such a side: \code{Ports} is
 implemented for arrays, their fields the indices, so its ports are
