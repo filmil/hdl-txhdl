@@ -4,10 +4,21 @@
 
 Values, and the two markers. \code{Bit} is two valued, \code{Logic} is
 IEEE 1164's nine, and \code{U<N>} and \code{I<N>} are the numeric
-vectors, with the width a const parameter. Each keeps its bits in one
-128-bit Rust integer, so a width is at most \code{MAX\_WIDTH}, 128,
-and a wider one stops the build where its width is first read, rather
-than dropping the bits above. A width that is an
+vectors, with the width a const parameter. \code{I<N>} keeps its bits in
+one 128-bit Rust integer, and \code{U<N>} in as many as its second
+parameter says, its limbs. \code{U<N>} is \code{U<N, 1>}, one limb, so
+its width is at most \code{MAX\_WIDTH}, 128, and a wider one
+stops the build where its width is first read, rather than dropping
+the bits above. A wider value states its limbs,
+\code{U<256, 2>}, since the count cannot be computed from \code{N} on
+stable Rust, and the build checks that the count is the one the width
+needs. With one limb every operation is the \code{u128} one it always
+was; with more, \code{limbs} carries and borrows across them, shifts
+across them, multiplies in 64-bit digits and divides bit by bit. What
+comes out of a wide value is a word, through \code{slice}, of at most
+128 bits; widening into one (\code{concat}, \code{zext},
+\code{resize}) and a wide \code{I<N>} are not written yet. A width
+that is an
 expression of other widths, \code{U<\{A + B\}>}, needs nightly Rust,
 which is the largest constraint the embedding found, and the
 prototype declares each width by hand instead. The conversions from

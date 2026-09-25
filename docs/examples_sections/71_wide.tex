@@ -1,0 +1,29 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Value Wider Than 128 Bits}
+\label{sec:x-wide}
+
+A \code{U<N>} is at most 128 bits, one Rust integer. A wider value
+names how many 128-bit limbs it takes: \code{U<256, 2>} is 256 bits
+in two. The unit is an accumulator at that width, cleared on request,
+which adds its input each cycle and puts out the sum and two bytes
+of it, taken with \code{slice}: the byte just above the low limb,
+where a carry lands, and the top byte. The run fills the low limb, adds
+one so the sum carries into the high limb, sets the top bit, and then
+adds all ones, which is minus one and takes one away. The netlists
+declare 256-bit vectors, and both are checked under nvc and Verilator
+against the trace, as Section~\ref{sec:x-checked} describes, so the
+trace, the testbenches and the two languages are all shown to hold
+the full width.
+
+\begin{figure}[htbp]
+\centering
+\input{wide_timing.tex}
+\caption{The 256-bit accumulator, drawn as two bytes of its sum: the
+carry into the high limb, then the top bit. The full values are in
+the printout.}
+\label{fig:x-wide}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_wide.rs}. Run with \code{bazel run //lib/examples:ex\_wide}.},label={lst:x-wide}]{lib/examples/ex_wide.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_wide} printed when the build ran it: the sums as two limbs, then the lowering.},label={lst:x-wide-out}]{out_wide.txt}
