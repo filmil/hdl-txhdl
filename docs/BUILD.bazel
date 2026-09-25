@@ -1846,6 +1846,23 @@ waveform(
     ],
 )
 
+# A side declared in another crate, passed whole to a child: the
+# pins of ex_gpio inside a unit of units (issue 498).
+waveform(
+    name = "side",
+    example = "//lib/examples:ex_side",
+    lowered = ("wrapped", "wrapped"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//pins=>pins",
+        "//drive=>drive",
+        "//dirs=>dirs",
+        "//wrapped/gpio/status=>status",
+        "//irq=>irq",
+    ],
+    until = 200,
+)
+
 # A child's inputs held at constants by its parent (issue 498).
 waveform(
     name = "tie",

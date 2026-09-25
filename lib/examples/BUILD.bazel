@@ -699,6 +699,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A side from another crate passed whole:  bazel run //lib/examples:ex_side
+rust_binary(
+    name = "ex_side",
+    srcs = ["ex_side.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A child's input held at a constant:  bazel run //lib/examples:ex_tie
 rust_binary(
     name = "ex_tie",
@@ -1050,6 +1062,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_names.rs",
         "ex_reserved.rs",
         "ex_tie.rs",
+        "ex_side.rs",
         "ex_rename.rs",
         "ex_foreign.rs",
 ]
