@@ -1643,7 +1643,7 @@ waveform(
 waveform(
     name = "bundle",
     example = "//lib/examples:ex_bundle",
-    lowered = ("mailbox", "shared"),
+    lowered = ("shared", "shared"),
     signals = [
         "//clocks/clk=>clk",
         "//left_w/rx_valid=>left_w_valid",

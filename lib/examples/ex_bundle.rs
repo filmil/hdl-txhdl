@@ -182,8 +182,9 @@ fn main() {
     for s in lines.iter() {
         println!("{s}");
     }
-    // Not `shared`, which VHDL reserves (issue 485).
-    let net = Shared::lowered("mailbox");
+    // VHDL reserves `shared`: both netlists call the module
+    // `shared_rw` (issue 497).
+    let net = Shared::lowered("shared");
     txhdl::netlist::write_vhdl_from_env(&net);
     print!("\n{}", net.verilog());
 }
