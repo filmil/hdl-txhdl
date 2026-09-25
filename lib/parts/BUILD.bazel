@@ -37,6 +37,7 @@ rust_library(
         "src/i2c.rs",
         "src/plic.rs",
         "src/pwm.rs",
+        "src/regmap.rs",
         "src/redundant.rs",
         "src/remote.rs",
         "src/sd.rs",

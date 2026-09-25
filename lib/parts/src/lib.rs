@@ -27,6 +27,7 @@ pub mod i2c;
 pub mod plic;
 pub mod pwm;
 pub mod redundant;
+pub mod regmap;
 pub mod remote;
 pub mod sd;
 pub mod spi;
