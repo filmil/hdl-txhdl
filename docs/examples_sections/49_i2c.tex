@@ -62,6 +62,28 @@ model catches it: the byte after such a park arrives rotated by one
 bit, because the device took the spurious start as the beginning of a
 new address.
 
+\subsection{How It Is Written}
+
+The master was first written as a machine by hand: a \code{step}
+register walking the transaction, a \code{quarter} register walking
+the bit, and every line and every drive a function of both. It is
+now two processes, and the transaction is written as the sequence it
+is. The bus process answers the four registers every cycle, counts
+the cycles of a quarter in \code{tick}, pauses the count while a
+device stretches the clock, and latches what a command found when
+the engine says it is done. The engine waits for a write to
+\code{cmd}, takes the command, and then goes through the start, the
+eight bits, the acknowledge and the stop, a quarter of a bit at a
+time: the lines are set for a quarter, and a wait ends it when the
+count is up. The bits are a \code{for} of eight, the start and the
+stop are under \code{if} on what the command asked for, and a byte
+whose bit reads back low where the master released it is the bus
+lost, after which the rest of the byte is skipped. The lowering of
+Sections~\ref{sec:x-seq} to~\ref{sec:x-hold} numbers the waits into a
+state register the unit does not declare, forty-six states for the
+twelve steps and four quarters the hand-written machine kept, and
+the netlist agrees with the run under nvc and Verilator as before.
+
 \subsection{What Checks It}
 
 \code{I2cDev}, a model of a device with a byte per register, stepped
@@ -80,8 +102,8 @@ how long the transaction takes.
 \centering
 \input{i2c_timing.tex}
 \caption{The address going out: the clock and the data as the master
-pulls them, the lines as they read back, the step through the
-transaction, and the byte shifting out a bit per clock.}
+pulls them, the lines as they read back, the command running, and the
+byte shifting out a bit per clock.}
 \label{fig:x-i2c}
 \end{figure}
 
