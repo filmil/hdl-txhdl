@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Patches to dependencies, each carrying the upstream change it mirrors
+# and when it can be dropped.
+exports_files(glob(["*.patch"]))

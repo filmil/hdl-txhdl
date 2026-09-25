@@ -86,6 +86,18 @@ http_archive(
 # the database into drawtiming text; //tools/dt2tikz draws that text.
 bazel_dep(name = "rules_multitool", version = "1.11.1")
 
+# 1.11.1 reports every module's multitool hub as a direct dependency
+# of the root, so rules_bid's hub, reached through rules_vivado, made
+# every build warn (issue 534). Upstream fixed it in v1.12.0, which the
+# registry does not have yet; the patch is that fix alone. Drop this
+# when the registry has 1.12.0.
+single_version_override(
+    module_name = "rules_multitool",
+    patch_strip = 1,
+    patches = ["//third_party:rules_multitool_root_hubs.patch"],
+    version = "1.11.1",
+)
+
 multitool = use_extension("@rules_multitool//multitool:extension.bzl", "multitool")
 multitool.hub(lockfile = "//:multitool.lock.json")
 use_repo(multitool, "multitool")

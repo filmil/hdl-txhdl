@@ -1,0 +1,24 @@
+Only the root module's own hubs are the root's direct dependencies.
+
+Upstream cb9b69e ("fix: don't add transitive hubs to direct deps", #115),
+tagged v1.12.0 and not yet in the Bazel Central Registry. Without it,
+rules_bid's hub, `multitool_rules_bid`, reached through rules_vivado, is
+reported as a direct dependency of the root, and every build warns
+(issue 534). Drop this with the override once the registry has 1.12.0.
+
+diff --git a/multitool/extension.bzl b/multitool/extension.bzl
+--- a/multitool/extension.bzl
++++ b/multitool/extension.bzl
+@@ -26,10 +26,8 @@ def _extension(module_ctx):
+             else:
+                 lockfiles[h.hub_name] = [h.lockfile]
+ 
+-            if not module_ctx.is_dev_dependency(h):
+-                root_module_direct_deps[h.hub_name] = 1
+-            else:
+-                root_module_direct_dev_deps[h.hub_name] = 1
++            if mod.is_root:
++                (root_module_direct_dev_deps if module_ctx.is_dev_dependency(h) else root_module_direct_deps)[h.hub_name] = 1
+ 
+     # ensure _DEFAULT_HUB_NAME is present in non-dev and dev deps
+     # when non-dev and dev deps are non-empty.
