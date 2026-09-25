@@ -3367,6 +3367,12 @@ fn target_name(ts: &[TokenTree]) -> Result<String, String> {
         {
             Ok(f.to_string())
         }
+        [TokenTree::Ident(s), TokenTree::Punct(_), TokenTree::Ident(f), TokenTree::Group(g)]
+            if matches!(s.to_string().as_str(), "self" | "this")
+                && g.delimiter() == Delimiter::Bracket =>
+        {
+            indexed_reg(&f.to_string(), g, None)
+        }
         _ => Err("a drive's target must be a name or `self.field`".into()),
     }
 }
@@ -4645,7 +4651,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             TokenTree::Group(g),
         ) = (&ts[end - 3], &ts[end - 2], &ts[end - 1])
         {
-            if dot.as_char() == '.' {
+            if dot.as_char() == '.' && g.delimiter() == Delimiter::Parenthesis {
                 let args = split_commas(g);
                 let m = m.to_string();
                 let recv = &ts[..end - 3];
@@ -4736,6 +4742,14 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             if matches!(s.to_string().as_str(), "self" | "this") =>
         {
             Ok(ename(&f.to_string()))
+        }
+        // One register of an array of them, `self.prio[i]`: the register
+        // `prio_i`, the index a number or a loop's variable (issue 594).
+        [TokenTree::Ident(s), TokenTree::Punct(_), TokenTree::Ident(f), TokenTree::Group(g)]
+            if matches!(s.to_string().as_str(), "self" | "this")
+                && g.delimiter() == Delimiter::Bracket =>
+        {
+            Ok(ename(&indexed_reg(&f.to_string(), g, Some(subst))?))
         }
         // A field of a port's value, `p.tag`: a slice of the port's data.
         [base @ .., TokenTree::Punct(dot), TokenTree::Ident(f)]
@@ -7351,4 +7365,40 @@ fn reads_rust_var(ts: &[TokenTree], subst: &[(String, String)]) -> bool {
         }
         _ => false,
     })
+}
+
+/// The name of one register of an array of them, `self.f[k]`: `f_k`
+/// for a number, and for a loop's variable `f` with the variable
+/// between the marks `dyn_names` formats when `lowered` runs. Any other
+/// index is a choice among registers made in hardware, which is a
+/// multiplexer to write out, not a name (issue 594). `subst`, where it
+/// is known, says which names are a loop's variables.
+fn indexed_reg(
+    f: &str,
+    g: &Group,
+    subst: Option<&[(String, String)]>,
+) -> Result<String, String> {
+    let it: Vec<TokenTree> = g.stream().into_iter().collect();
+    match it.as_slice() {
+        [TokenTree::Literal(k)] => Ok(format!("{f}_{k}")),
+        [TokenTree::Ident(v)] => {
+            let v = v.to_string();
+            let index = subst.is_none_or(|s| {
+                s.iter()
+                    .rev()
+                    .find(|(k, _)| *k == v)
+                    .is_some_and(|(_, e)| e.starts_with("NlE::Num("))
+            });
+            if !index {
+                return Err(format!(
+                    "`self.{f}[{v}]`: a register of an array is chosen by a \
+                     number or by a loop's variable, not by a signal"
+                ));
+            }
+            Ok(format!("{f}{DYN}{v}{DYN_END}"))
+        }
+        _ => Err(format!(
+            "`self.{f}[..]`: the index is a number or a loop's variable"
+        )),
+    }
 }

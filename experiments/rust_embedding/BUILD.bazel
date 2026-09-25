@@ -84,6 +84,7 @@ rust_binary(
         "probe_infer_bad",             # E0284: a width nothing fixes
         "probe_infer_lower",           # the macro's own message
         "probe_wide",                  # E0080: over 128 bits in one limb
+        "probe_regs_signal",           # the macro's own message
         "probe_tuple_let",             # the macro's own message
         "probe_lit_signal",            # the macro's own message
     ]
