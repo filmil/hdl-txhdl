@@ -7463,7 +7463,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // is a state machine, a state per wait, its number in a
         // register the unit does not declare (issue 501).
         let sts = stmts_of(&toks);
-        let waits = sts.iter().filter(|s| seq::is_wait(s)).count();
+        let waits = seq::waits_in(&sts);
         let mut stmts = if waits > 1 {
             let reg = seq::reg_name(hidden.len() + 1);
             match seq::lower(&mut cx, &sts, &reg, &pnames, lbody.span()) {

@@ -29,10 +29,14 @@
 //!   what it was by the next, so a name bound in one segment is not
 //!   read in a later one; what crosses a wait is held in a register.
 //!
+//! A `for` whose body waits is unrolled first, a state per turn with
+//! the variable a number in each, so its bounds are written out; a
+//! `for` that does not wait is left to the state's own lowering.
+//!
 //! Every wait is on one clock and one edge, since the machine is one
 //! clocked block.
-use super::{ebin, ename, err, lower_stmts, Cx};
-use proc_macro::{Span, TokenStream, TokenTree};
+use super::{ebin, ename, err, is_ident, lower_stmts, stmts_of, Cx};
+use proc_macro::{Delimiter, Group, Literal, Span, TokenStream, TokenTree};
 
 /// The name of the hidden register of the `k`th process of several
 /// waits in a unit, counted from one.
@@ -136,9 +140,11 @@ pub(crate) fn lower(
     pnames: &[String],
     span: Span,
 ) -> Result<(Vec<String>, usize), TokenStream> {
-    // The segments: each starts at a wait.
+    // A `for` that waits is unrolled first; then the segments, each
+    // starting at a wait.
+    let sts = unrolled(sts)?;
     let mut segs: Vec<Vec<&Vec<TokenTree>>> = Vec::new();
-    for st in sts {
+    for st in &sts {
         if is_wait(st) {
             segs.push(vec![st]);
         } else if let Some(last) = segs.last_mut() {
@@ -346,6 +352,126 @@ pub(crate) fn lower(
     }
     stmts.extend(arms);
     Ok((stmts, width))
+}
+
+/// `for v in lo..hi { .. }`: the variable, the range's tokens and the
+/// body's tokens, if `st` is such a statement.
+fn for_parts(
+    st: &[TokenTree],
+) -> Option<(String, Vec<TokenTree>, Vec<TokenTree>)> {
+    if st.len() < 5 || !is_ident(&st[0], "for") || !is_ident(&st[2], "in") {
+        return None;
+    }
+    let TokenTree::Ident(v) = &st[1] else {
+        return None;
+    };
+    let Some(TokenTree::Group(g)) = st.last() else {
+        return None;
+    };
+    if g.delimiter() != Delimiter::Brace {
+        return None;
+    }
+    let body: Vec<TokenTree> = g.stream().into_iter().collect();
+    Some((v.to_string(), st[3..st.len() - 1].to_vec(), body))
+}
+
+/// How many waits the statements hold, those inside a `for` counted
+/// with the rest. A wait under `if` is refused where the arm is
+/// lowered, so it is not looked for.
+pub(crate) fn waits_in(sts: &[Vec<TokenTree>]) -> usize {
+    sts.iter()
+        .map(|st| match for_parts(st) {
+            _ if is_wait(st) => 1,
+            Some((_, _, body)) => waits_in(&stmts_of(&body)),
+            None => 0,
+        })
+        .sum()
+}
+
+/// The bounds of a range written as numbers, `lo..hi` or `lo..=hi`.
+fn bounds(range: &[TokenTree]) -> Option<(usize, usize)> {
+    let t: String = range.iter().map(|t| t.to_string()).collect();
+    let (lo, hi, closed) = match t.split_once("..=") {
+        Some((a, b)) => (a, b, true),
+        None => {
+            let (a, b) = t.split_once("..")?;
+            (a, b, false)
+        }
+    };
+    let num = |s: &str| -> Option<usize> {
+        let s = s.trim();
+        let digits = s.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+        digits.parse().ok()
+    };
+    let (lo, hi) = (num(lo)?, num(hi)?);
+    Some((lo, if closed { hi + 1 } else { hi }))
+}
+
+/// `ts` with the name `var` replaced by the number `k`, at any depth;
+/// a name after `.` is a field or a method and is left alone.
+fn substituted(ts: &[TokenTree], var: &str, k: usize) -> Vec<TokenTree> {
+    let mut out = Vec::with_capacity(ts.len());
+    let mut prev_dot = false;
+    for t in ts {
+        let is_dot = matches!(t, TokenTree::Punct(p) if p.as_char() == '.');
+        out.push(match t {
+            TokenTree::Ident(i) if !prev_dot && i.to_string() == var => {
+                let mut l = Literal::usize_unsuffixed(k);
+                l.set_span(i.span());
+                TokenTree::Literal(l)
+            }
+            TokenTree::Group(g) => {
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                let mut n = Group::new(
+                    g.delimiter(),
+                    substituted(&inner, var, k).into_iter().collect(),
+                );
+                n.set_span(g.span());
+                TokenTree::Group(n)
+            }
+            t => t.clone(),
+        });
+        prev_dot = is_dot;
+    }
+    out
+}
+
+/// The statements with every `for` that waits unrolled: the body once
+/// per value of the range, the variable a number in each, nested
+/// ones unrolled inside. A `for` that does not wait is left to the
+/// state's lowering, which unrolls it when `lowered` runs and so
+/// takes a bound the macro cannot see; a `for` that waits is a state
+/// per turn, and the macro must count them, so its bounds are written
+/// out.
+fn unrolled(
+    sts: &[Vec<TokenTree>],
+) -> Result<Vec<Vec<TokenTree>>, TokenStream> {
+    let mut out = Vec::new();
+    for st in sts {
+        let Some((var, range, body)) = for_parts(st) else {
+            out.push(st.clone());
+            continue;
+        };
+        let inner = stmts_of(&body);
+        if waits_in(&inner) == 0 {
+            out.push(st.clone());
+            continue;
+        }
+        let Some((lo, hi)) = bounds(&range) else {
+            return Err(err(
+                st[0].span(),
+                "a `for` that waits is a state per turn, counted by the \
+                 macro, so its bounds are numbers written out: `for i in \
+                 0..8`",
+            ));
+        };
+        for k in lo..hi {
+            let turn: Vec<Vec<TokenTree>> =
+                inner.iter().map(|s| substituted(s, &var, k)).collect();
+            out.extend(unrolled(&turn)?);
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
