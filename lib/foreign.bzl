@@ -33,6 +33,9 @@ def verilog_unit(name, src, top, clock = "clk"):
     verilator_cc_library(
         name = name + "_verilated",
         module = ":" + name + "_vl",
+        # Verilator's own headers compare signed with unsigned, and GCC's
+        # warning on them is most of a build's log (issue 536).
+        copts = ["-Wno-sign-compare"],
         vopts = ["-Wno-fatal"],
     )
     native.genrule(
@@ -47,6 +50,9 @@ def verilog_unit(name, src, top, clock = "clk"):
     cc_library(
         name = name + "_shim",
         srcs = [name + "_shim.cc"],
+        # The shim includes the model's header and so Verilator's; the
+        # same warning, from the same headers (issue 536).
+        copts = ["-Wno-sign-compare"],
         deps = [":" + name + "_verilated"],
     )
     rust_library(

@@ -18,6 +18,8 @@ verilog_library(
 verilator_cc_library(
     name = "hello_tb_verilated",
     module = ":hello_tb_v",
+    # Verilator's own headers, not the testbench (issue 536).
+    copts = ["-Wno-sign-compare"],
     timing = True,
     vopts = ["--main", "-Wno-fatal"],
 )

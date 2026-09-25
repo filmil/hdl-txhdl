@@ -90,6 +90,8 @@ def waveform(
             verilator_cc_library(
                 name = name + tag + "_verilated",
                 module = ":" + name + tag + "_vl",
+                # Verilator's own headers, not the netlist (issue 536).
+                copts = ["-Wno-sign-compare"],
                 timing = True,
                 vopts = ["--main", "-Wno-fatal"],
             )
