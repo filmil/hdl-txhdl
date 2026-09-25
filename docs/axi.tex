@@ -695,8 +695,10 @@ thing that wants memory needs. Until there was one, the core was the
 only unit here that could be a host, and everything else was given
 its bytes a word at a time through a register.
 
-Deciding whose turn it is, is the easy half. \code{Arbiter2} to
-\code{Arbiter8} take the turn round the hosts, moving it past
+Deciding whose turn it is, is the easy half. \code{Arbiter<N, ..>}, one
+unit for any count of hosts up to eight, whose hosts are arrays of
+ports (\code{Arbiter2} to \code{Arbiter8} name the counts), takes the
+turn round the hosts, moving it past
 whichever won, so a host that keeps asking cannot shut another out;
 with the last parameter not zero it is fixed priority instead, and
 the lowest numbered host that is offering always wins.

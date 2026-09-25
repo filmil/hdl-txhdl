@@ -26,7 +26,9 @@ has one. The run offers words on three inputs at once and asserts that
 they come out lowest input first and none is lost, and the netlist of
 \code{Merge<3>} is checked against the run under both simulators. The
 same source lowered at five has five input ports, which the run
-prints. A \code{for} under an \code{if} is refused: put the \code{if}
+prints. The AXI arbiter, \code{Arbiter<N, ..>}, is written this
+way too: its hosts are three arrays of ports in and two out, and its
+grant is a loop that carries the first host it has found. A \code{for} under an \code{if} is refused: put the \code{if}
 inside the \code{for}. The index is written \code{ins[i]} because that
 is what the lowering reads, so Clippy's wish for an iterator is
 allowed with the reason beside it.
