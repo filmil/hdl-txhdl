@@ -174,24 +174,23 @@ impl<
             let polling = phase == 0;
             let fetching = phase == 1;
             let going = phase == 2;
-            // Not `waiting`: that is the register's name, and one
-            // name declared twice is what the lowering would write.
-            let held = self.waiting.get() == 1;
+            // The register's name as well: the wire is `waiting_w`
+            // (issue 171).
+            let waiting = self.waiting.get() == 1;
             let w = self.word.get();
             let n0 = !self.e0.get().bit(31);
             let n1 = !self.e1.get().bit(31);
             let n2 = !self.e2.get().bit(31);
-            // The local may not be called `hit`: that is the wire's
-            // name, and one name declared twice is what the lowering
-            // would write.
-            let covered = (self.kind.get() != Kind::Tri) | (n0 & n1 & n2);
-            self.hit.set(covered);
+            // The wire's name as well: the `let` is `hit_w` (issue
+            // 171).
+            let hit = (self.kind.get() != Kind::Tri) | (n0 & n1 & n2);
+            self.hit.set(hit);
             // A pixel is written when there is room for the burst and
             // for its beat; the walk steps when the pixel wanted no
             // write, or when its write went out.
             let room = issue.ready() & wbeat.ready();
-            let write = going & covered & room;
-            let step = going & (!covered | room);
+            let write = going & hit & room;
+            let step = going & (!hit | room);
             let eol = px == self.xb.get();
             let eof = eol & (py == self.yb.get());
 
@@ -250,7 +249,7 @@ impl<
                 + (self.insn.get().resize::<A>() << SHIFT)
                 + (w.resize::<A>() << WORD);
             let raddr = mux(polling, U::<A>::from(CTRL as u32), at_word);
-            let reading = (polling | fetching) & !held & issue.ready();
+            let reading = (polling | fetching) & !waiting & issue.ready();
             // The last instruction's walk has ended, so there is
             // nothing left to draw.
             let ends = step & eof;
