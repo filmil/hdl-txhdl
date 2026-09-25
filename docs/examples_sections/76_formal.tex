@@ -1,0 +1,45 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{What a Unit States About Itself}
+\label{sec:x-formal}
+
+Every other example here is checked by comparison: the netlist must
+do what the run did. That catches a lowering that is wrong, and it says
+nothing about a design whose Rust is wrong in the same way as its
+netlist. A unit can also say what must hold of it, where it is
+written, and then a simulator checks the statement, and a formal tool
+can prove it for every input rather than for the one run.
+
+\code{check!(c, "message")} says that \code{c} holds on every edge
+at which the statement is reached. \code{assume!(c, "message")} says
+what the unit takes for granted of its inputs, which a formal tool
+proves the checks under. \code{cover!(c, "message")} says that
+\code{c} can happen. In the run a failed check stops it with its
+message, and so does an assumption its own inputs break; a cover
+point is counted, and \code{covered} reports how often it was reached.
+
+In the netlist each is a statement of the clocked process it is in,
+under the same conditions, after the reset. The VHDL writes a check
+and an assumption as VHDL's own \code{assert}, which nvc checks while
+it replays the run; the Verilog writes all three as SystemVerilog's
+immediate assertions between \code{`ifdef FORMAL} and \code{`endif},
+which Verilator checks here and a synthesis tool never sees. Both
+co-simulations were checked to fail when a condition in the netlist
+does not hold.
+
+The counter below counts in decimal by a step of nought, one or two.
+It checks that its count is a digit and, under the condition that it
+wraps, that the wrap lands below two; it assumes its step is never
+three, which it does not handle; and it covers the count reaching
+nine.
+
+\begin{figure}[htbp]
+\centering
+\input{formal_timing.tex}
+\caption{The digit counting by its step and wrapping past nine; every
+statement holds on every edge, and nine is reached twice.}
+\label{fig:x-formal}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_formal.rs}. Run with \code{bazel run //lib/examples:ex\_formal}.},label={lst:x-formal}]{lib/examples/ex_formal.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_formal} printed when the build ran it: the counter, the cover point's count, then the Verilog with the four statements.},label={lst:x-formal-out}]{out_formal.txt}

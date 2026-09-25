@@ -1,0 +1,35 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{\code{txhdl::formal}}
+\label{sec:r-formal}
+
+What a unit states about itself (issue 502). \code{check!(c, "m")}
+says that \code{c} holds on every edge at which the statement is
+reached, \code{assume!(c, "m")} that the unit takes \code{c} for
+granted of its inputs, and \code{cover!(c, "m")} that \code{c} can
+happen. Each is a macro that calls a function of this module, so that
+it reads as a statement in a unit's \code{run} and runs as Rust. In
+the run a failed check panics with its message and the time, and so
+does an assumption the run's own inputs break, since a proof made
+under it would not cover that run; a cover point counts the steps it
+is reached on, by its message, in a table per thread that
+\code{covered} reads.
+
+Under \code{\#[lower]} each is \code{Stmt::Check}, with its kind
+(\code{Checked}), its condition and its message, a statement of the
+process it is in and under the conditions it is under; the lowering
+does not skip it as it skips \code{println!}. The Verilog writes it
+inside the clocked block, in the branch after the registers' reset, as
+SystemVerilog's immediate \code{assert}, \code{assume} or
+\code{cover}, between \code{`ifdef FORMAL} and \code{`endif}: a formal
+tool defines \code{FORMAL}, and a synthesis tool that reads plain
+Verilog never sees the words. The VHDL writes a check and an
+assumption as VHDL-2008's own \code{assert}, with the message and
+severity failure, and a cover point as a \code{report} of its message
+when it is reached. A block that states something and drives nothing
+is still written. The co-simulations check both: nvc checks the
+VHDL's assertions natively, and the Verilator build defines
+\code{FORMAL} and passes \code{--assert}. A formal proof of the
+assertions is not yet built: it wants SymbiYosys and a solver beside
+the Yosys the ASIC flow fetches, which is issue 581.
+
+\lstinputlisting[caption={\code{lib/src/formal.rs}.},label={lst:r-formal}]{lib/src/formal.rs}
