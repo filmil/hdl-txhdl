@@ -325,8 +325,9 @@ port_end!(Rx, Rx, crate::types::Transaction + 'static);
 /// A port of a struct of ports: its field's name and what
 /// [`PortEnd`] says of the field's type.
 pub struct BundlePort {
-    /// The field's name, which is the port's name in the netlist.
-    pub name: &'static str,
+    /// The field's name, which is the port's name in the netlist:
+    /// a struct's field, or an array's index (issue 500).
+    pub name: String,
     /// What the port is.
     pub kind: Kind,
     /// Its width.
@@ -338,9 +339,9 @@ pub struct BundlePort {
 }
 
 /// The port a field of type `P` named `name` is.
-pub fn bundle_port<P: PortEnd>(name: &'static str) -> BundlePort {
+pub fn bundle_port<P: PortEnd>(name: &str) -> BundlePort {
     BundlePort {
-        name,
+        name: name.to_string(),
         kind: P::KIND,
         width: P::WIDTH,
         clock: P::CLOCK,
@@ -356,6 +357,15 @@ pub fn bundle_port<P: PortEnd>(name: &'static str) -> BundlePort {
 pub trait Ports {
     /// The ports, in declaration order.
     fn ports() -> Vec<BundlePort>;
+}
+
+/// An array of ports is a struct of ports whose fields are its indices:
+/// `ins: [Rx<T>; N]` has the ports `ins_0` to `ins_{N-1}`, and
+/// `ins[i]` in a loop the lowering unrolls is `ins_{i}` (issue 500).
+impl<P: PortEnd, const N: usize> Ports for [P; N] {
+    fn ports() -> Vec<BundlePort> {
+        (0..N).map(|i| bundle_port::<P>(&i.to_string())).collect()
+    }
 }
 
 /// The ports of `B` as a lowered unit lists its own, when the unit
