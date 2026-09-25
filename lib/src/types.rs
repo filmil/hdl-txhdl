@@ -283,8 +283,8 @@ impl<const N: usize> From<i32> for U<N> {
     }
 }
 
-// The operators of a datapath are Rust's operators. `+`, `-` and `*` are
-// same-width and wrapping, and `%` is the remainder,
+// The operators of a datapath are Rust's operators. `+`, `-`, `*` and
+// unary `-` are same-width and wrapping, and `%` is the remainder,
 // which refuses zero as the netlist does; `&`, `|` and `^` are
 // bitwise; `!` is the complement; `<<` and `>>` are logical shifts by
 // an amount that is an integer, not a value. The right operand of an
@@ -320,6 +320,14 @@ u_ops!(
         a % b
     }
 );
+/// Negation, wrapping: the two's complement at the same width, as
+/// `0 - x` is and as the netlist's `~x + 1` is (issue 496).
+impl<const N: usize> std::ops::Neg for U<N> {
+    type Output = U<N>;
+    fn neg(self) -> U<N> {
+        U::<N>::new(0u128.wrapping_sub(self.0))
+    }
+}
 impl<const N: usize> std::ops::Not for U<N> {
     type Output = U<N>;
     fn not(self) -> U<N> {

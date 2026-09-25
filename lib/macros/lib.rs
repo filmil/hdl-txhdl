@@ -4807,6 +4807,19 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
         if p.as_char() == '!' {
             return Ok(format!("NlE::Not(Box::new({}))", tr(&ts[1..], subst)?));
         }
+        // Negation is the two's complement at the operand's width,
+        // `~x + 1`, which is what `0 - x` wraps to in Rust. A number has
+        // no width to wrap at, so a negative one is refused (issue 496).
+        if p.as_char() == '-' {
+            if matches!(ts.get(1), Some(TokenTree::Literal(_))) {
+                return Err("a negative number has no width in a lowered body: \
+                     write the value it wraps to at its width, or subtract \
+                     from a value, `x - 3`"
+                    .into());
+            }
+            let x = tr(&ts[1..], subst)?;
+            return Ok(ebin("+", &format!("NlE::Not(Box::new({x}))"), "NlE::Num(1)"));
+        }
     }
     let end = ts.len();
     // A method with a turbofish: `x.slice::<LO, LEN>()`, `x.sext::<M>()`,
