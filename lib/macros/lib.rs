@@ -458,8 +458,8 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
         .zip(&names)
         .map(|(f, n)| {
             format!(
-                "::txhdl::comp::trace::Traceable::trace(\
-                 &self.{f}, &scope.child(\"{n}\"));"
+                "::txhdl::comp::trace::Traceable::trace_as(\
+                 &self.{f}, scope, \"{n}\");"
             )
         })
         .collect::<Vec<_>>()
@@ -469,11 +469,7 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
         .iter()
         .zip(&types)
         .map(|(n, t)| {
-            format!(
-                "(\"{n}\", <{t} as ::txhdl::netlist::Port>::KIND, \
-                 <{t} as ::txhdl::netlist::Port>::WIDTH, \
-                 <{t} as ::txhdl::netlist::Port>::DEPTH),"
-            )
+            format!("__v.extend(<{t} as ::txhdl::netlist::Port>::entries(\"{n}\"));")
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -487,7 +483,7 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
          &[{pairs}];\n\
          fn fields() -> Vec<(&'static str, \
          Option<::txhdl::comp::trace::Kind>, usize, usize)> {{ \
-         vec![{fields}] }}\n}}\n\
+         let mut __v = Vec::new(); {fields} __v }}\n}}\n\
          impl{b} ::txhdl::netlist::Port for {n}{a} {{}}",
         b = item.bounds,
         n = item.name,

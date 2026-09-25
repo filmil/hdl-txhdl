@@ -162,10 +162,34 @@ pub trait Port {
     const WIDTH: usize = 0;
     /// Words, for a memory; zero for everything else.
     const DEPTH: usize = 0;
+    /// The netlist's fields this one is, under the name `name`: itself
+    /// alone, or for an array of registers `name_0` onward (issue 594).
+    fn entries(
+        name: &'static str,
+    ) -> Vec<(&'static str, Option<Kind>, usize, usize)> {
+        vec![(name, Self::KIND, Self::WIDTH, Self::DEPTH)]
+    }
 }
 impl<T: Value + Copy + 'static, C: Clock> Port for Reg<T, C> {
     const KIND: Option<Kind> = Some(Kind::Reg);
     const WIDTH: usize = T::WIDTH;
+}
+impl<T: Value + Copy + 'static, const N: usize, C: Clock> Port
+    for crate::comp::Regs<T, N, C>
+{
+    fn entries(
+        name: &'static str,
+    ) -> Vec<(&'static str, Option<Kind>, usize, usize)> {
+        // A field's name is `&'static str`, and these are made when the
+        // netlist is, once per unit lowered, so they are leaked.
+        (0..N)
+            .map(|i| {
+                let n: &'static str =
+                    Box::leak(format!("{name}_{i}").into_boxed_str());
+                (n, Some(Kind::Reg), T::WIDTH, 0)
+            })
+            .collect()
+    }
 }
 impl<T: Value + Copy + 'static, C: Clock> Port for Out<T, C> {
     const KIND: Option<Kind> = Some(Kind::Out);

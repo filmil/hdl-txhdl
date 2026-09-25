@@ -636,6 +636,36 @@ impl<T: Copy + Default + 'static, C: Clock> Default for Reg<T, C> {
     }
 }
 
+/// `N` registers of one type, for a unit whose state grows with a
+/// count it takes as a const parameter: a priority per source, an
+/// occupancy per input. `self.prio[i]` is the `i`-th, a [`Reg`] like
+/// any other, and in a lowered body `i` is a number or a loop's
+/// variable. The netlist and the trace name them `prio_0` to
+/// `prio_{N-1}`. A type of its own rather than `[Reg<T>; N]`, since a
+/// unit is `Default` and the standard library has no `Default` for an
+/// array of a generic length; see the probe `probe_array_default`
+/// (issue 594).
+pub struct Regs<T: Copy + 'static, const N: usize, C: Clock = DefaultClock>(
+    pub [Reg<T, C>; N],
+);
+
+impl<T: Copy + Default + 'static, const N: usize, C: Clock> Default
+    for Regs<T, N, C>
+{
+    fn default() -> Self {
+        Regs(std::array::from_fn(|_| Reg::default()))
+    }
+}
+
+impl<T: Copy + 'static, const N: usize, C: Clock> std::ops::Index<usize>
+    for Regs<T, N, C>
+{
+    type Output = Reg<T, C>;
+    fn index(&self, i: usize) -> &Reg<T, C> {
+        &self.0[i]
+    }
+}
+
 impl<T: Copy + 'static, C: Clock> Reg<T, C> {
     /// A register holding `v` before the first edge: its reset
     /// value, since nothing else sets one.
@@ -1552,6 +1582,27 @@ pub mod trace {
         /// derive calls it on each field, one scope further in, so
         /// the hierarchy of a waveform is the nesting of units.
         fn trace(&self, scope: &Scope);
+        /// Register it as the field `name` of `scope`. One signal or a
+        /// unit is the child of that name; an array of registers is
+        /// `name_0` onward beside it (issue 594).
+        fn trace_as(&self, scope: &Scope, name: &str) {
+            self.trace(&scope.child(name));
+        }
+    }
+
+    impl<T: Value + 'static, const N: usize, C: Clock> Traceable
+        for super::Regs<T, N, C>
+    {
+        fn trace(&self, scope: &Scope) {
+            for (i, r) in self.0.iter().enumerate() {
+                r.trace(&scope.child(&i.to_string()));
+            }
+        }
+        fn trace_as(&self, scope: &Scope, name: &str) {
+            for (i, r) in self.0.iter().enumerate() {
+                r.trace(&scope.child(&format!("{name}_{i}")));
+            }
+        }
     }
 
     impl<T: Value + 'static, C: Clock> Traceable for Reg<T, C> {
