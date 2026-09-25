@@ -60,7 +60,7 @@
 #![no_main]
 
 use core::panic::PanicInfo;
-use core::ptr::{read_volatile, write_volatile};
+use core::ptr::write_volatile;
 
 /// The serial port, as `hello.rs` has it: the data word, then the
 /// status, whose bit 0 is busy sending and bit 1 a byte waiting.
