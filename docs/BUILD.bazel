@@ -1796,6 +1796,21 @@ waveform(
     ],
 )
 
+# Names VHDL or SystemVerilog reserve, escaped in both netlists, and
+# the testbench still binding each port to its trace (issue 497).
+waveform(
+    name = "reserved",
+    example = "//lib/examples:ex_reserved",
+    lowered = ("latch", "latch"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//next=>next",
+        "//begin=>begin",
+        "//latch/signal_rw=>signal",
+        "//out=>out",
+    ],
+)
+
 waveform(
     name = "rename",
     example = "//lib/examples:ex_rename",

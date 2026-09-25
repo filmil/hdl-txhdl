@@ -633,6 +633,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Names a target reserves, escaped:  bazel run //lib/examples:ex_reserved
+rust_binary(
+    name = "ex_reserved",
+    srcs = ["ex_reserved.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A field the netlist names differently:  bazel run //lib/examples:ex_rename
 rust_binary(
     name = "ex_rename",
@@ -957,6 +966,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_fn.rs",
         "ex_litfn.rs",
         "ex_names.rs",
+        "ex_reserved.rs",
         "ex_rename.rs",
         "ex_foreign.rs",
 ]
