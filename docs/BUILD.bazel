@@ -816,6 +816,8 @@ latex_document(
         ":seq_timing",
         ":formal_run",
         ":formal_timing",
+        ":serial_run",
+        ":serial_timing",
         ":rename_run",
         ":rename_timing",
         ":foreign_run",
@@ -1969,6 +1971,23 @@ waveform(
         "//stepper/held=>held",
         "//sums/tx_valid=>sum_valid",
         "//sums/tx_data=>sum",
+    ],
+)
+
+# A for of a constant count that waits, unrolled into a state per turn
+# (issue 501).
+waveform(
+    name = "serial",
+    example = "//lib/examples:ex_serial",
+    lowered = ("serial", "serial"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//bytes/rx_valid=>byte_valid",
+        "//bytes/rx_data=>byte",
+        "//bytes/rx_ready=>byte_ready",
+        "//serial/sr=>sr",
+        "//bits/tx_valid=>bit_valid",
+        "//bits/tx_data=>bit",
     ],
 )
 
