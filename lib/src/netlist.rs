@@ -530,6 +530,7 @@ pub enum Target {
 }
 
 /// One statement of a lowered `run` body, as `#[lower]` emits it.
+#[derive(Clone)]
 pub enum Stmt {
     /// `target.set(expr)` or `target <= expr`: a register takes it at
     /// the edge, a wire is assigned it, a word of a memory is written.
@@ -552,6 +553,7 @@ pub enum Stmt {
 /// One process of a unit: a loop of one wait, on the rising or the
 /// falling edge of its clock, and the statements after the wait. A
 /// clocked block in the netlist.
+#[derive(Clone)]
 pub struct Process {
     /// The clock this process waits on.
     pub clock: &'static str,
@@ -564,6 +566,7 @@ pub struct Process {
 /// A unit as `#[lower]` read it: what its `run` needs from its ports,
 /// its registers from its fields, and its processes, one per loop of
 /// `run`. The two emitters render it.
+#[derive(Clone)]
 pub struct Lowered {
     /// What the module or entity is called.
     pub name: String,
@@ -624,6 +627,7 @@ pub struct Lowered {
 /// from elsewhere, a vendor primitive, anything that comes as its own
 /// source. The name is the module's, or the entity's, and the
 /// parameters are its parameters, or its generics, by name.
+#[derive(Clone)]
 pub struct Foreign {
     /// The module's own name, which the instance names.
     pub module: String,
@@ -693,6 +697,7 @@ pub fn foreign(
 /// A child of a unit of units: the field it lives in, its own
 /// lowering, and what each of its ports is joined to in the parent,
 /// a net or a port of the parent.
+#[derive(Clone)]
 pub struct Instance {
     /// The field the child lives in, which names the instance.
     pub name: String,
@@ -790,6 +795,13 @@ impl Lowered {
                 .find(|(rust, _)| *rust == n)
                 .map(|(_, net)| (*net).to_string())
         };
+        self.rewrite_names(&of);
+        self
+    }
+
+    /// Every name the wires, the processes and the first values refer
+    /// to, rewritten through `of` where it gives one.
+    fn rewrite_names(&mut self, of: &dyn Fn(&str) -> Option<String>) {
         fn walk_expr(e: &mut Expr, of: &dyn Fn(&str) -> Option<String>) {
             match e {
                 Expr::Name(n) => {
@@ -873,11 +885,11 @@ impl Lowered {
             }
         }
         for (_, e) in &mut self.wires {
-            walk_expr(e, &of);
+            walk_expr(e, of);
         }
         for p in &mut self.procs {
             for s in &mut p.body {
-                walk_stmt(s, &of);
+                walk_stmt(s, of);
             }
         }
         // A memory's words are given under the memory's own name,
@@ -892,7 +904,128 @@ impl Lowered {
                 *n = net;
             }
         }
-        self
+    }
+
+    /// This unit as its netlists name it: every name VHDL or
+    /// SystemVerilog reserves takes [`crate::reserved::ESCAPE`] after
+    /// it, the same in both targets, rather than being refused (issue
+    /// 497). A port called `next` is `next_rw` in both netlists.
+    ///
+    /// What is escaped is what the netlist declares under a plain
+    /// name: the module, its ports that are one wire, its wires and
+    /// nets of one wire, and its instances. A field comes escaped
+    /// already, since `#[derive(Trace)]` gives the netlist and the
+    /// trace the same name for it. A channel's nets are its name and
+    /// `_data`, `_valid` or `_ready`, which nothing reserves, so a
+    /// channel is left alone, and so is a foreign module, whose names
+    /// are its vendor's.
+    ///
+    /// A port escaped is still recorded under its own name in the
+    /// run's trace, so the ports file names that as its trace scope,
+    /// and the testbench reads it from there. A port-name mismatch
+    /// between the netlist and the trace fails silently, which issue
+    /// 462 showed, so this is the one place both are decided.
+    ///
+    /// An escaped name another name already takes is refused, naming
+    /// both: that is the one case left where a reserved word cannot be
+    /// lowered as it is written.
+    pub fn escaped(&self) -> Lowered {
+        use crate::reserved::escaped as esc;
+        let mut l = self.clone();
+        if l.foreign.is_some() {
+            return l;
+        }
+        let plain = |k: &Kind| matches!(k, Kind::In | Kind::Out | Kind::Pad);
+        let mut moved: Vec<(String, String)> = Vec::new();
+        let mut aliases = std::mem::take(&mut l.aliases);
+        for (p, k, _, _) in &mut l.ports {
+            let e = esc(p);
+            if plain(k) && e != *p {
+                match aliases.iter_mut().find(|(a, _)| a == p) {
+                    Some(a) => a.0 = e.clone(),
+                    None => aliases.push((e.clone(), p.clone())),
+                }
+                moved.push((p.clone(), e.clone()));
+                *p = e;
+            }
+        }
+        l.aliases = aliases;
+        for (n, k, _, _) in &mut l.nets {
+            let e = esc(n);
+            if !matches!(k, Kind::Tx | Kind::Rx) && e != *n {
+                moved.push((n.clone(), e.clone()));
+                *n = e;
+            }
+        }
+        for (n, _) in &mut l.wires {
+            *n = esc(n);
+        }
+        for (_, n) in &mut l.wire_names {
+            *n = esc(n);
+        }
+        let of = |n: &str| -> Option<String> {
+            let e = esc(n);
+            (e != n).then_some(e)
+        };
+        l.rewrite_names(&of);
+        let channels: Vec<String> = l
+            .ports
+            .iter()
+            .map(|(n, k, _, _)| (n, k))
+            .chain(l.nets.iter().map(|(n, k, _, _)| (n, k)))
+            .filter(|(_, k)| matches!(k, Kind::Tx | Kind::Rx))
+            .map(|(n, _)| n.clone())
+            .collect();
+        for inst in &mut l.instances {
+            let e = esc(&inst.name);
+            if e != inst.name {
+                moved.push((inst.name.clone(), e.clone()));
+                inst.name = e;
+            }
+            let child = &inst.unit;
+            for (port, arg) in &mut inst.conns {
+                let child_plain = child.foreign.is_none()
+                    && child
+                        .ports
+                        .iter()
+                        .any(|(n, k, _, _)| n == port && plain(k));
+                if child_plain {
+                    *port = esc(port);
+                }
+                if !channels.contains(arg) {
+                    *arg = esc(arg);
+                }
+            }
+            inst.unit = inst.unit.escaped();
+        }
+        l.name = esc(&l.name);
+        // What the module declares under its own names, once escaped:
+        // an escaped name that is also one of these was taken twice.
+        let mut declared: Vec<String> = Vec::new();
+        for (n, k, _, _) in l.ports.iter().chain(l.nets.iter()) {
+            match k {
+                Kind::Tx | Kind::Rx => {
+                    for end in ["data", "valid", "ready"] {
+                        declared.push(format!("{n}_{end}"));
+                    }
+                }
+                _ => declared.push(n.clone()),
+            }
+        }
+        declared.extend(l.fields.iter().map(|(n, _, _, _)| n.to_string()));
+        declared.extend(l.wires.iter().map(|(n, _)| n.clone()));
+        declared.extend(l.instances.iter().map(|i| i.name.clone()));
+        for (was, e) in &moved {
+            let times = declared.iter().filter(|d| *d == e).count();
+            assert!(
+                times == 1,
+                "`{was}` is a reserved word, and the name the netlist \
+                 would give it, `{e}`, is already taken in `{}`: rename \
+                 one of the two (issue 497)",
+                self.name
+            );
+        }
+        l
     }
 
     /// This unit, once nothing it declares takes a clock's name.
@@ -1176,7 +1309,11 @@ impl Lowered {
     }
     /// Say under which trace scope a port is found, when the run named
     /// the wire or channel otherwise than the port.
+    ///
+    /// `port` is the port's own name, as `run` writes it, even where
+    /// the netlist escapes it (issue 497).
     pub fn trace_as(&mut self, port: &str, scope: &str) {
+        self.aliases.retain(|(p, _)| p != port);
         self.aliases.push((port.to_string(), scope.to_string()));
     }
     fn scope_col(&self, port: &str) -> String {
@@ -1423,6 +1560,9 @@ impl Lowered {
     /// since the trace names them by side and a channel's inputs are
     /// registered where a wire's are not.
     pub fn ports_file(&self) -> String {
+        self.escaped().ports_file_in()
+    }
+    fn ports_file_in(&self) -> String {
         let mut out = String::new();
         // A clock is marked as one rather than as an input, so that a
         // testbench drives it as a clock and a unit of several clocks
@@ -1474,43 +1614,10 @@ impl Lowered {
         out
     }
 
-    /// Refuse a module name the target being written reserves, before
-    /// writing it. Ports, fields and wires are checked by `#[lower]`
-    /// where they are declared, but the name is a string given when
-    /// `lowered` runs, and a reserved one reached the simulator:
-    /// `lowered("shared")` wrote `entity shared is`, which nvc refused
-    /// as a parse error in a generated file (issue 485). The check is
-    /// here rather than in `checked` because a unit is lowered for more
-    /// than its netlist: the datasheets lower `Buffer` as `buffer`,
-    /// which VHDL reserves, and write only its tables. A child's name
-    /// is checked with its parent's; a foreign module's is its
-    /// vendor's and is left alone.
-    fn check_module_names(&self, target: &str, words: &[&str]) {
-        if self.foreign.is_some() {
-            return;
-        }
-        let name = if target == "VHDL" {
-            self.name.to_ascii_lowercase()
-        } else {
-            self.name.clone()
-        };
-        if words.contains(&name.as_str()) {
-            panic!(
-                "the module `{}` is named with a reserved word of {target}, \
-                 so its {target} would not analyse: lower it under another \
-                 name (see issue 485)",
-                self.name
-            );
-        }
-        for i in &self.instances {
-            i.unit.check_module_names(target, words);
-        }
-    }
-
     /// The Verilog.
     pub fn verilog(&self) -> String {
-        self.check_module_names("Verilog", crate::reserved::VERILOG_RESERVED);
-        let mut out = self.verilog_in();
+        let esc = self.escaped();
+        let mut out = esc.verilog_in();
         if self.has_chan_nets() {
             out.push('\n');
             out.push_str(CHAN_VERILOG);
@@ -1849,13 +1956,13 @@ impl Lowered {
     /// The VHDL, 2008: an entity, one process on the rising edge for
     /// the registers, a concurrent assignment per wire.
     pub fn vhdl(&self) -> String {
-        self.check_module_names("VHDL", crate::reserved::VHDL_RESERVED);
+        let esc = self.escaped();
         let mut out = String::new();
         if self.has_chan_nets() {
             out.push_str(CHAN_VHDL);
             out.push('\n');
         }
-        out.push_str(&self.vhdl_in());
+        out.push_str(&esc.vhdl_in());
         out
     }
     /// This unit's entity and its children's, without the channel
@@ -2435,7 +2542,7 @@ pub fn write_netlists_from_env(units: &[&Lowered]) {
         std::fs::write(&p, vhdl.join("\n")).expect("TXHDL_VHDL file");
         let ports: Vec<String> = units
             .iter()
-            .map(|l| format!("entity {}\n{}", l.name, l.ports_file()))
+            .map(|l| format!("entity {}\n{}", l.escaped().name, l.ports_file()))
             .collect();
         std::fs::write(format!("{p}.ports"), ports.join(""))
             .expect("ports file");
@@ -2927,55 +3034,110 @@ mod tests {
     }
 
     /// The case of issue 485: a module lowered as `shared`, which VHDL
-    /// reserves. Its VHDL is refused as it is written, and not by nvc
-    /// as a parse error.
+    /// reserves. It was refused as it was written; now both netlists
+    /// call it `shared_rw` (issue 497).
     #[test]
-    #[should_panic(
-        expected = "the module `shared` is named with a reserved word of VHDL"
-    )]
-    fn a_module_named_with_a_vhdl_word_has_no_vhdl() {
+    fn a_module_named_with_a_reserved_word_is_escaped() {
         let mut net = three_regs();
         net.name = "shared".to_string();
-        net.vhdl();
+        assert!(net.vhdl().contains("entity shared_rw is"), "VHDL");
+        assert!(net.verilog().contains("module shared_rw("), "Verilog");
     }
 
-    /// Each target refuses only its own words. `shared` is not a word
-    /// of Verilog, so its Verilog is written; `always` is, so its
-    /// Verilog is refused and its VHDL written. VHDL is not case
-    /// sensitive, so `Signal` is refused as `signal` would be. A unit
-    /// may be lowered under such a name for anything but its netlist,
-    /// as the datasheets lower `Buffer` as `buffer`.
+    /// Both targets take the same name, whichever one reserves it, so
+    /// one testbench binds either netlist. `always` is a word of
+    /// Verilog alone and is escaped in the VHDL too; `Signal` is VHDL's
+    /// `signal`, since VHDL ignores case; `buffer`, which the
+    /// datasheets lower `Buffer` as, is VHDL's and escaped in Verilog.
     #[test]
-    fn each_target_refuses_its_own_words() {
+    fn both_targets_escape_a_word_either_reserves() {
         let named = |n: &str| {
             let mut net = three_regs();
             net.name = n.to_string();
             net
         };
-        let refused = |f: &dyn Fn() -> String| {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(f())))
-                .is_err()
-        };
-        let shared = named("shared");
-        assert!(!refused(&|| shared.verilog()), "shared in Verilog");
-        let always = named("always");
-        assert!(refused(&|| always.verilog()), "always in Verilog");
-        assert!(!refused(&|| always.vhdl()), "always in VHDL");
-        let signal = named("Signal");
-        assert!(refused(&|| signal.vhdl()), "Signal in VHDL");
+        assert!(named("always").vhdl().contains("entity always_rw is"));
+        assert!(named("always").verilog().contains("module always_rw("));
+        assert!(named("Signal").vhdl().contains("entity Signal_rw is"));
         assert!(named("buffer")
             .checked()
             .verilog()
-            .contains("module buffer"));
+            .contains("module buffer_rw("));
+        // A name nothing reserves is written as it is.
+        assert!(named("regs").verilog().contains("module regs("));
     }
 
-    /// A child's name is checked with its parent's.
+    /// A child's module and its instance are escaped with the parent.
     #[test]
-    #[should_panic(expected = "the module `out` is named with")]
-    fn a_child_named_with_a_reserved_word_is_refused() {
-        let mut parent = parent_with_child_named("ticker");
+    fn a_child_named_with_a_reserved_word_is_escaped() {
+        let mut parent = parent_with_child_named("next");
         parent.instances[0].unit.name = "out".to_string();
-        parent.vhdl();
+        let v = parent.verilog();
+        assert!(v.contains("module out_rw("), "the child's module: {v}");
+        assert!(v.contains("out_rw next_rw("), "the instance: {v}");
+    }
+
+    /// A unit with a port and a register a target reserves, and a wire
+    /// reading the port.
+    fn reserved_port() -> Lowered {
+        let mut net = three_regs();
+        net.ports.push(("next".to_string(), Kind::In, 8, "clk"));
+        net.ports.push(("out".to_string(), Kind::Out, 8, "clk"));
+        net.wires.push((
+            "sum".to_string(),
+            Expr::bin("+", Expr::name("next"), Expr::name("count")),
+        ));
+        net.procs.push(Process {
+            clock: "clk",
+            falling: false,
+            body: vec![Stmt::Drive(
+                Target::Name("out".to_string()),
+                Expr::name("sum"),
+            )],
+        });
+        net
+    }
+
+    /// A port is escaped wherever the netlist names it, and the ports
+    /// file gives its own name as its trace scope, so the testbench
+    /// reads the run's `next` for the netlist's `next_rw`. A mismatch
+    /// there would bind the port to nothing and say so late, or not at
+    /// all (issue 462).
+    #[test]
+    fn a_port_is_escaped_and_read_from_the_trace_by_its_own_name() {
+        let net = reserved_port();
+        let v = net.verilog();
+        assert!(v.contains("input [7:0] next_rw"), "the port: {v}");
+        assert!(v.contains("output [7:0] out_rw"), "the port: {v}");
+        assert!(v.contains("next_rw + count"), "the reference: {v}");
+        assert!(!v.contains(" next "), "no bare `next`: {v}");
+        let h = net.vhdl();
+        assert!(h.contains("next_rw : in"), "the VHDL port: {h}");
+        let p = net.ports_file();
+        assert!(p.contains("next_rw in 8 next\n"), "the scope: {p}");
+        assert!(p.contains("out_rw out 8 out\n"), "the scope: {p}");
+    }
+
+    /// `trace_as` takes the port's own name, and its scope wins over
+    /// the one the escape would give.
+    #[test]
+    fn trace_as_names_an_escaped_port_by_its_own_name() {
+        let mut net = reserved_port();
+        net.trace_as("next", "offered");
+        let p = net.ports_file();
+        assert!(p.contains("next_rw in 8 offered\n"), "{p}");
+    }
+
+    /// An escaped name another name already has is the one case still
+    /// refused, naming both.
+    #[test]
+    #[should_panic(expected = "`next` is a reserved word, and the name the \
+                               netlist would give it, `next_rw`, is \
+                               already taken in `regs`")]
+    fn an_escaped_name_already_taken_is_refused() {
+        let mut net = reserved_port();
+        net.fields.push(("next_rw", Some(Kind::Reg), 8, 0));
+        net.verilog();
     }
 
     /// The instance and the clock pin would take one name, which

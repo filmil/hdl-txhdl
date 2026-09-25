@@ -137,8 +137,8 @@ fn field_names(body: &Group) -> Vec<String> {
 /// attribute on the field asks for, or `None` where there is none.
 ///
 /// A netlist name is not a Rust name: VHDL and Verilog reserve words
-/// Rust does not, and a field whose name a target reserves is refused
-/// (issue 77). `#[rename("...")]` is how a field keeps the name that
+/// Rust does not, and a field whose name a target reserves is escaped
+/// (issue 497). `#[rename("...")]` is how a field keeps the name that
 /// reads best in Rust and takes another in the netlist (issue 222).
 fn field_renames(body: &Group) -> Vec<Option<(String, Span)>> {
     let toks: Vec<TokenTree> = body.stream().into_iter().collect();
@@ -412,33 +412,21 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
     let rust = field_names(body);
     let renames = field_renames(body);
     // The name each field takes in the netlist and in the trace: its
-    // own, or the one it was renamed to.
+    // own, or the one it was renamed to, escaped where either target
+    // reserves it (issue 497). The trace takes the netlist's name, so
+    // the testbench made from the trace finds the register by it.
     let names: Vec<String> = rust
         .iter()
         .zip(&renames)
         .map(|(n, r)| match r {
-            Some((net, _)) => net.clone(),
-            None => n.clone(),
-        })
-        .collect();
-    // A unit's field is a signal of its netlist, and of the testbench
-    // made from its trace, so a name either target reserves is refused
-    // here, at the field. It is the netlist's name that is checked,
-    // since that is the one the netlist writes.
-    let mut refused: TokenStream = field_idents(body)
-        .iter()
-        .zip(&renames)
-        .zip(&names)
-        .filter_map(|((id, r), net)| {
-            let span = match r {
-                Some((_, s)) => *s,
-                None => id.span(),
-            };
-            check_reserved(net, "field", span)
+            Some((net, _)) => escaped(net),
+            None => escaped(n),
         })
         .collect();
     // Two fields cannot take one name in the netlist, which would
-    // declare it twice.
+    // declare it twice. With escaping that includes a field whose
+    // escaped name another field has, `next` beside `next_rw`.
+    let mut refused = TokenStream::new();
     for (k, n) in names.iter().enumerate() {
         if names[..k].contains(n) {
             let span = match &renames[k] {
@@ -540,22 +528,7 @@ fn err(span: Span, msg: &str) -> TokenStream {
 
 #[path = "../src/reserved.rs"]
 mod reserved;
-use reserved::reserved_by;
-
-/// The error for a name a netlist would hold that a target reserves,
-/// at its declaration, or nothing.
-fn check_reserved(name: &str, what: &str, span: Span) -> Option<TokenStream> {
-    reserved_by(name).map(|by| {
-        err(
-            span,
-            &format!(
-                "{what} `{name}` is a reserved word of {by}: the netlist \
-                 names it as written and would not analyse, so rename it \
-                 (see issue 77)"
-            ),
-        )
-    })
-}
+use reserved::{escaped, reserved_by};
 
 /// `ts` with every token given `span`: a check the macro writes then
 /// reports at the name it checks. Every path in such a check is
@@ -580,7 +553,7 @@ fn placed_at(ts: TokenStream, span: Span) -> TokenStream {
 
 #[cfg(test)]
 mod reserved_tests {
-    use super::reserved_by;
+    use super::{escaped, reserved_by};
 
     #[test]
     fn the_names_that_broke_netlists_are_reserved() {
@@ -604,6 +577,18 @@ mod reserved_tests {
     fn ordinary_names_are_not() {
         for n in ["pend", "hit", "edged", "turn", "count", "irq", "data"] {
             assert_eq!(reserved_by(n), None, "{n}");
+        }
+    }
+    /// A reserved name takes `_rw`, any other name is left as it is,
+    /// and a name that has been escaped escapes to itself, which is
+    /// what lets `trace_as` take a port's own name (issue 497).
+    #[test]
+    fn a_reserved_name_is_escaped_once() {
+        assert_eq!(escaped("next"), "next_rw");
+        assert_eq!(escaped("Signal"), "Signal_rw");
+        assert_eq!(escaped("count"), "count");
+        for n in ["next", "out", "begin", "inside", "shared", "count"] {
+            assert_eq!(escaped(&escaped(n)), escaped(n), "{n}");
         }
     }
 }
@@ -5616,7 +5601,7 @@ fn lower_stmts(
                 // is chosen by a constant below, which the compiler
                 // evaluates for every type the unit is lowered at.
                 let taken = |w: &str, cx: &Cx| {
-                    cx.pnames.iter().any(|p| p == w)
+                    cx.pnames.iter().any(|p| p == w || escaped(p) == w)
                         || cx.wires.iter().any(|(x, _)| x == w)
                         || reserved_by(w).is_some()
                 };
@@ -6532,9 +6517,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // The ports by name and kind, for a unit of units' joins.
     let mut pkinds: Vec<(String, String)> = Vec::new();
     // The names the netlist gives the ports, each with where it is
-    // declared, and the errors for names a target reserves.
+    // declared.
     let mut port_nets: Vec<(String, String, Span)> = Vec::new();
-    let mut refused = TokenStream::new();
     for (pname, ty, span) in pairs {
         if ty == "()" {
             continue;
@@ -6581,8 +6565,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 port_nets.push((pname.clone(), format!("{pname}_{end}"), span));
             }
         } else {
-            refused.extend(check_reserved(&pname, "port", span));
-            port_nets.push((pname.clone(), pname.clone(), span));
+            // A port a target reserves is escaped where the netlist is
+            // written, so what the netlist holds is the escaped name,
+            // and that is the name no field may take (issue 497).
+            port_nets.push((pname.clone(), escaped(&pname), span));
         }
         PTYPES
             .with(|p| p.borrow_mut().push((pname.clone(), inner.to_string())));
@@ -6692,8 +6678,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
     // A `let` whose name a target reserves is not refused: the wire
     // takes another name, by the rule above, and the netlist says so
-    // (issue 171). A port and a field are refused, since those names
-    // are the unit's interface and nobody can rename them for it.
+    // (issue 171). A port and a field are not refused either: the
+    // netlist escapes them, and the trace and the testbench follow
+    // (issue 497).
     // A wire or a port that takes the name of a field is declared twice
     // in the netlist. The fields are the struct's, which this attribute
     // does not see, so the check is a constant the compiler evaluates,
@@ -6867,6 +6854,5 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let header: TokenStream = format!("impl{generics} {unit}").parse().unwrap();
     out.extend(header);
     out.extend([TokenTree::Group(Group::new(Delimiter::Brace, checks))]);
-    out.extend(refused);
     out
 }

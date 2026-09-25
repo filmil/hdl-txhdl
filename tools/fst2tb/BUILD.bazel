@@ -9,7 +9,12 @@ package(default_visibility = ["//visibility:public"])
 
 rust_binary(
     name = "fst2tb",
-    srcs = ["main.rs"],
+    # The netlist's reserved words, so that an entity's name is
+    # escaped here as the netlist escapes it (issue 497).
+    srcs = [
+        "main.rs",
+        "//lib:src/reserved.rs",
+    ],
     edition = "2021",
     deps = ["@crates//:wellen"],
 )

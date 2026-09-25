@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Names a netlist cannot hold: the words VHDL and SystemVerilog
-//! reserve. One list for both crates, so the checks cannot drift: the
-//! runtime compiles this file as the module `reserved` and checks the
-//! module names it writes, and `#[lower]` includes the same file by
-//! path and checks ports, fields and wires where they are declared
-//! (issues 77 and 485).
+//! reserve, and the name the netlist writes instead. One file for the
+//! runtime, the macros and the testbench generator, so the three cannot
+//! drift: the runtime compiles it as the module `reserved` and escapes
+//! what its emitters write, `#[lower]` includes it by path and escapes
+//! a field or a port where it is declared, and `//tools/fst2tb`
+//! includes it to escape the entity it instantiates (issues 77, 485
+//! and 497).
 
 /// The reserved words of VHDL-2008, which are not case sensitive.
 pub const VHDL_RESERVED: &[&str] = &[
@@ -378,11 +380,33 @@ pub const VERILOG_RESERVED: &[&str] = &[
     "xor",
 ];
 
-/// Which of the two targets reserve `name`, if either does. A unit
-/// lowers to both, so a name either one reserves is refused.
+/// What the netlist writes after a name either target reserves.
 ///
-/// The macros use this; the runtime checks each target against its
-/// own list, since a netlist is written one language at a time.
+/// Not `_`, which VHDL refuses at the end of an identifier, and not
+/// `_w`, which a `let` already takes when its name is someone else's
+/// (issue 171), so a reader can tell the two apart.
+pub const ESCAPE: &str = "_rw";
+
+/// The name a netlist writes for `name`: `name` itself, or `name`
+/// with [`ESCAPE`] after it when either target reserves it (issue
+/// 497).
+///
+/// Both targets take the same name, whichever one reserves it, so a
+/// port has one name in both netlists and one testbench binds it.
+/// The mapping is idempotent, since no name ending in [`ESCAPE`] is
+/// reserved, so a name that has been through it can go through it
+/// again unchanged.
+#[allow(dead_code)]
+pub fn escaped(name: &str) -> String {
+    if reserved_by(name).is_some() {
+        format!("{name}{ESCAPE}")
+    } else {
+        name.to_string()
+    }
+}
+
+/// Which of the two targets reserve `name`, if either does. A unit
+/// lowers to both, so a name either one reserves is escaped in both.
 #[allow(dead_code)]
 pub fn reserved_by(name: &str) -> Option<&'static str> {
     let vhdl = VHDL_RESERVED.contains(&name.to_ascii_lowercase().as_str());

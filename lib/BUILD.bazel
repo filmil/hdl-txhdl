@@ -76,5 +76,8 @@ exports_files([
     "src/pipeline.rs",
     "src/funcs.rs",
     "src/netlist.rs",
+    # Also read by //tools/fst2tb, which escapes an entity's name as
+    # the netlist does (issue 497).
+    "src/reserved.rs",
     "macros/lib.rs",
 ])

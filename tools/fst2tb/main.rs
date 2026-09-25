@@ -67,6 +67,11 @@
 //! `--verilog` writes the same testbench in Verilog, for Verilator.
 use std::collections::BTreeMap;
 
+// The netlist's reserved words, from the file the runtime and the
+// macros read, so that the three cannot disagree (issue 497).
+#[path = "../../lib/src/reserved.rs"]
+mod reserved;
+
 /// Whether a port starts high: the `ready` a unit reads from a
 /// channel it sends on, which is high at power-on because an empty
 /// elastic buffer has room. It matters for one cycle and one only.
@@ -144,6 +149,11 @@ fn aliases(
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let (fst, ports, entity, unit) = (&a[1], &a[2], &a[3], &a[4]);
+    // The entity as the netlist names it: escaped where VHDL or
+    // SystemVerilog reserves its name, as the netlist writer escapes
+    // it (issue 497). The testbench keeps the name it was given, with
+    // `_tb` after it, since that is what the build asks to run.
+    let module = reserved::escaped(entity);
     let verilog = a.get(5).map(|s| s == "--verilog").unwrap_or(false);
     // The ports file may hold several entities, each section opened by
     // `entity NAME`; the one asked for is taken, or everything when the
@@ -164,7 +174,7 @@ fn main() {
                 section = Some(f[1].to_string());
                 return None;
             }
-            if section.as_deref().is_some_and(|s| s != entity) {
+            if section.as_deref().is_some_and(|s| s != module) {
                 return None;
             }
             // A memory's line has a depth as its fourth field and is not
@@ -501,7 +511,7 @@ fn main() {
             .filter(|p| !inside(&p.1))
             .map(|p| format!(".{0}({0})", p.0))
             .collect();
-        o.push_str(&format!("  {entity} uut ({});\n", maps.join(", ")));
+        o.push_str(&format!("  {module} uut ({});\n", maps.join(", ")));
         let last = times.last().copied().unwrap_or(0) as usize;
         // One driver per clock, each at the period and phase its own
         // trace shows. The half tick is the same offset the single
@@ -653,7 +663,7 @@ fn main() {
     let _ = is_out;
     o.push_str(&format!(
         "  signal errors : natural := 0;\nbegin\n\
-           uut : entity work.{entity} port map ("
+           uut : entity work.{module} port map ("
     ));
     let maps: Vec<String> = ports
         .iter()
