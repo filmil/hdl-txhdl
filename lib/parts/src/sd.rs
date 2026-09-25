@@ -67,13 +67,39 @@ use txhdl::{lower, with, Trace};
 
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
-use crate::regmap;
+use txhdl::regmap;
 
 regmap! { regs (regs_read, regs_we), 4: [
-    (0, ctrl, rw, "divider, four lines, interrupt enable; bit 10 clears"),
-    (1, cmd, rw, "index, response, transfer, checks; written, it starts"),
+    (0, ctrl, rw, "the divider, the lines, the interrupt enable", [
+        (div, 0, 8, rw, 0, "cycles a half of the card clock, less one"),
+        (wide, 8, 1, rw, 0, "four data lines rather than one"),
+        (ie, 9, 1, rw, 0, "a finished command raises the interrupt"),
+        (clear, 10, 1, wo, 0, "written, the buffer's pointers go to zero"),
+    ]),
+    (1, cmd, rw, "the command word; written, it starts", [
+        (index, 0, 6, rw, 0, "the command's index"),
+        (resp, 6, 2, rw, 0, "the response: none, short, long"),
+        (read, 8, 1, rw, 0, "a block comes after the response"),
+        (write, 9, 1, rw, 0, "a block goes after the response"),
+        (busy, 10, 1, rw, 0, "wait for the card's busy line afterwards"),
+        (nocrc, 11, 1, rw, 0, "the response carries no CRC"),
+        (only, 12, 1, rw, 0, "no command, only the block"),
+        (clocks, 13, 1, rw, 0, "no command and no block: eighty clocks"),
+    ]),
     (2, arg, rw, "the argument"),
-    (3, status, w1c, "busy, done, faults, CRC status, busy line, pointers"),
+    (3, status, w1c, "how the last command went", [
+        (busy, 0, 1, ro, 0, "a command is running"),
+        (done, 1, 1, w1c, 0, "finished; written, clears the faults too"),
+        (rtimeout, 2, 1, ro, 0, "no response came"),
+        (rcrc, 3, 1, ro, 0, "the response's CRC was wrong"),
+        (dtimeout, 4, 1, ro, 0, "no block came, or the card stayed busy"),
+        (dcrc, 5, 1, ro, 0, "the block's CRC was wrong or refused"),
+        (crcstat, 6, 3, ro, 0, "the card's CRC status token"),
+        (dat0, 9, 1, ro, 0, "the first data line's level"),
+        (index, 10, 6, ro, 0, "the response's index"),
+        (wptr, 16, 8, ro, 0, "where the next word goes in"),
+        (rptr, 24, 8, ro, 0, "where the next word comes out"),
+    ]),
     (4, resp0, ro, "the response's first word"),
     (5, resp1, ro, "its second"),
     (6, resp2, ro, "its third"),
@@ -82,42 +108,42 @@ regmap! { regs (regs_read, regs_we), 4: [
 ] }
 
 /// `ctrl` bit 8: four data lines.
-pub const CTRL_WIDE: u32 = 1 << 8;
+pub const CTRL_WIDE: u32 = regs::ctrl_wide.mask();
 /// `ctrl` bit 9: a finished command raises the interrupt.
-pub const CTRL_IE: u32 = 1 << 9;
+pub const CTRL_IE: u32 = regs::ctrl_ie.mask();
 /// `ctrl` bit 10, written: the buffer's pointers go to zero.
-pub const CTRL_CLEAR: u32 = 1 << 10;
+pub const CTRL_CLEAR: u32 = regs::ctrl_clear.mask();
 
 /// `cmd` bits 6 and 7: a short response, 48 bits.
-pub const CMD_SHORT: u32 = 1 << 6;
+pub const CMD_SHORT: u32 = regs::cmd_resp.with(1);
 /// `cmd` bits 6 and 7: a long response, 136 bits.
-pub const CMD_LONG: u32 = 2 << 6;
+pub const CMD_LONG: u32 = regs::cmd_resp.with(2);
 /// `cmd` bit 8: a block comes after the response.
-pub const CMD_READ: u32 = 1 << 8;
+pub const CMD_READ: u32 = regs::cmd_read.mask();
 /// `cmd` bit 9: a block goes after the response.
-pub const CMD_WRITE: u32 = 1 << 9;
+pub const CMD_WRITE: u32 = regs::cmd_write.mask();
 /// `cmd` bit 10: waited for the card's busy line afterwards.
-pub const CMD_BUSY: u32 = 1 << 10;
+pub const CMD_BUSY: u32 = regs::cmd_busy.mask();
 /// `cmd` bit 11: the response carries no CRC.
-pub const CMD_NOCRC: u32 = 1 << 11;
+pub const CMD_NOCRC: u32 = regs::cmd_nocrc.mask();
 /// `cmd` bit 12: no command, only the block.
-pub const CMD_DATA_ONLY: u32 = 1 << 12;
+pub const CMD_DATA_ONLY: u32 = regs::cmd_only.mask();
 /// `cmd` bit 13: no command and no block, eighty clocks with the
 /// command line held high, which a card wants before `CMD0`.
-pub const CMD_CLOCKS: u32 = 1 << 13;
+pub const CMD_CLOCKS: u32 = regs::cmd_clocks.mask();
 
 /// `status` bit 0: a command is running.
-pub const STATUS_BUSY: u32 = 1;
+pub const STATUS_BUSY: u32 = regs::status_busy.mask();
 /// `status` bit 1: the last command finished.
-pub const STATUS_DONE: u32 = 1 << 1;
+pub const STATUS_DONE: u32 = regs::status_done.mask();
 /// `status` bit 2: no response came.
-pub const STATUS_RTIMEOUT: u32 = 1 << 2;
+pub const STATUS_RTIMEOUT: u32 = regs::status_rtimeout.mask();
 /// `status` bit 3: the response's CRC was wrong.
-pub const STATUS_RCRC: u32 = 1 << 3;
+pub const STATUS_RCRC: u32 = regs::status_rcrc.mask();
 /// `status` bit 4: no block came, or the card never left busy.
-pub const STATUS_DTIMEOUT: u32 = 1 << 4;
+pub const STATUS_DTIMEOUT: u32 = regs::status_dtimeout.mask();
 /// `status` bit 5: the block's CRC was wrong, or the card refused it.
-pub const STATUS_DCRC: u32 = 1 << 5;
+pub const STATUS_DCRC: u32 = regs::status_dcrc.mask();
 
 /// Words in the buffer: one block.
 pub const WORDS: usize = 128;
@@ -307,10 +333,10 @@ impl Unit for Sd {
             // The map's write enables, a bit a register in its order.
             let we = regs_we(wgo, wsel);
             let start = we.bit(1) & !busy;
-            let start_rd = written.bit(8);
-            let start_wr = written.bit(9);
-            let start_only = written.bit(12);
-            let start_clocks = written.bit(13);
+            let start_rd = regs_cmd_read(written);
+            let start_wr = regs_cmd_write(written);
+            let start_only = regs_cmd_only(written);
+            let start_clocks = regs_cmd_clocks(written);
             // Where a command starts: clocks alone, a block alone, or
             // the command itself.
             let start_data =
@@ -324,8 +350,8 @@ impl Unit for Sd {
             // read enables, so the index is written here.
             let pop = rgo & (rsel == 8);
             let push = we.bit(8);
-            let clear = we.bit(0) & written.bit(10);
-            let ack = we.bit(3) & written.bit(1);
+            let clear = we.bit(0) & regs_ctrl_clear(written);
+            let ack = we.bit(3) & regs_status_done(written);
             // The phases.
             let in_send = phase == SEND;
             let in_rwait = phase == RWAIT;
@@ -433,23 +459,22 @@ impl Unit for Sd {
                 mux(rbad, U::<4>::from(FINISH), after_resp),
             );
             // The registers a program reads.
-            let ctrl = ie
-                .zext::<1>()
-                .concat::<1, 2>(wide.zext::<1>())
-                .concat::<8, 10>(div)
-                .zext::<32>();
-            let status = rptr
-                .zext::<8>()
-                .concat::<8, 16>(wptr.zext::<8>())
-                .concat::<6, 22>(resp.slice::<40, 6>())
-                .concat::<1, 23>(dat0.zext::<1>())
-                .concat::<3, 26>(self.crcstat.get())
-                .concat::<1, 27>(self.dcrc.get().zext::<1>())
-                .concat::<1, 28>(self.dtimeout.get().zext::<1>())
-                .concat::<1, 29>(self.rcrc.get().zext::<1>())
-                .concat::<1, 30>(self.rtimeout.get().zext::<1>())
-                .concat::<1, 31>(done.zext::<1>())
-                .concat::<1, 32>(busy.zext::<1>());
+            // The registers a program reads, packed from their fields as
+            // the map declares them.
+            let ctrl = regs_ctrl_pack(div, wide, ie, Bit::Zero);
+            let status = regs_status_pack(
+                busy,
+                done,
+                self.rtimeout.get(),
+                self.rcrc.get(),
+                self.dtimeout.get(),
+                self.dcrc.get(),
+                self.crcstat.get(),
+                dat0,
+                resp.slice::<40, 6>(),
+                wptr.zext::<8>(),
+                rptr.zext::<8>(),
+            );
             let resp0 =
                 mux(rlong, resp.slice::<0, 32>(), resp.slice::<8, 32>());
             // The word a read answers, from the map.
@@ -467,9 +492,9 @@ impl Unit for Sd {
             );
             with!(self <= {
                 we.bit(0) ? {
-                    div: written.slice::<0, 8>(),
-                    wide: written.bit(8),
-                    ie: written.bit(9),
+                    div: regs_ctrl_div(written),
+                    wide: regs_ctrl_wide(written),
+                    ie: regs_ctrl_ie(written),
                 },
                 we.bit(2) ? arg: written,
                 clear ? {
