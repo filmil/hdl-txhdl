@@ -46,7 +46,7 @@ bridge in front of it decides the base.
 \toprule
 Offset & Word & Access \\
 \midrule
-\code{0x00} & \code{dout} & Read and write. Driven on a pin whose
+\code{0x00} & \code{out} & Read and write. Driven on a pin whose
 direction is out. \\
 \code{0x04} & \code{sync1} & Read only. What the pins read, after the
 two flip-flops. A write is taken and ignored. \\
@@ -64,8 +64,8 @@ have fired. \\
 \end{tabular}
 \end{center}
 
-\code{dout} is named for VHDL, which reserves \code{out}; the lowering
-neither escapes nor rejects a reserved word, which is issue 77.
+VHDL reserves \code{out}, so the netlist calls the register
+\code{out\_rw} in both targets (issue 497).
 
 \dstables{Gpio}
 

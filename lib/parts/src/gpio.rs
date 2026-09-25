@@ -19,7 +19,7 @@
 //!
 //! | Offset | Name | What it is |
 //! |---|---|---|
-//! | `0x00` | `dout` | driven on a pin whose direction is out |
+//! | `0x00` | `out` | driven on a pin whose direction is out |
 //! | `0x04` | `in` | what the pins read, after the two flip-flops |
 //! | `0x08` | `dir` | one to drive the pin, zero to read it |
 //! | `0x0c` | `ie` | one to let the pin raise the interrupt |
@@ -47,10 +47,9 @@ use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 /// an edge is measured against.
 #[derive(Trace, Default)]
 pub struct Gpio<const N: usize> {
-    /// What to drive on a pin whose direction is out. Named `dout`
-    /// and not `out` because `out` is a reserved word in VHDL and the
-    /// lowering neither escapes nor rejects one, which is #77.
-    pub dout: Reg<U<N>>,
+    /// What to drive on a pin whose direction is out. VHDL reserves
+    /// `out`, so the netlist calls it `out_rw` (issue 497).
+    pub out: Reg<U<N>>,
     /// One to drive the pin, zero to read it.
     pub dir: Reg<U<N>>,
     /// The pins as they arrived, one flip-flop in.
@@ -80,7 +79,7 @@ impl<const N: usize> Unit for Gpio<N> {
     ) {
         loop {
             DefaultClock::rising().await;
-            let dout = self.dout.get();
+            let out = self.out.get();
             let dir = self.dir.get();
             let sync1 = self.sync1.get();
             let seen = self.seen.get();
@@ -90,14 +89,13 @@ impl<const N: usize> Unit for Gpio<N> {
             let status = self.status.get();
             // What has happened at each pin. A level fires while the
             // pin equals the polarity; an edge fires on the one
-            // crossing the polarity names. `crossed` is not called
-            // `edge` because that is a reserved word in Verilog and
-            // the lowering neither escapes nor rejects one, #77.
+            // crossing the polarity names. Verilog reserves `edge`, so
+            // the wire is `edge_w` (issue 171).
             let level = !(sync1 ^ pol);
             let rose = sync1 & !seen;
             let fell = !sync1 & seen;
-            let crossed = (pol & rose) | (!pol & fell);
-            let fired = ((kind & crossed) | (!kind & level)) & ie;
+            let edge = (pol & rose) | (!pol & fell);
+            let fired = ((kind & edge) | (!kind & level)) & ie;
             // The bus. A read is answered in the cycle it is taken; a
             // write needs its beat and room for its response.
             let arh = bus.ar.head();
@@ -114,7 +112,7 @@ impl<const N: usize> Unit for Gpio<N> {
             let _ = bus.w.recv_if(wgo);
             let written = wh.data.slice::<0, N>();
             let word = select!(rsel.raw() => {
-                0 => dout.zext::<32>(),
+                0 => out.zext::<32>(),
                 1 => sync1.zext::<32>(),
                 2 => dir.zext::<32>(),
                 3 => ie.zext::<32>(),
@@ -131,7 +129,7 @@ impl<const N: usize> Unit for Gpio<N> {
                 sync1: self.sync0.get(),
                 seen: sync1,
                 status: cleared | fired,
-                wgo & (wsel == 0) ? dout: written,
+                wgo & (wsel == 0) ? out: written,
                 wgo & (wsel == 2) ? dir: written,
                 wgo & (wsel == 3) ? ie: written,
                 wgo & (wsel == 4) ? kind: written,
@@ -146,7 +144,7 @@ impl<const N: usize> Unit for Gpio<N> {
             if wgo.to_bool() {
                 bus.b.send(LiteB { resp: Resp::Okay });
             }
-            drive.set(dout);
+            drive.set(out);
             dirs.set(dir);
             irq.set(status != U::<N>::from(0u8));
         }
