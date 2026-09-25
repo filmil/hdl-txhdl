@@ -204,7 +204,7 @@ macro_rules! plain {
 }
 plain!(u8, u16, u32, u64, u128, usize, bool, &'static str);
 plain!(crate::types::Bit, crate::types::Logic);
-impl<const N: usize> Port for crate::types::U<N> {}
+impl<const N: usize, const L: usize> Port for crate::types::U<N, L> {}
 
 /// A unit's fields by name, kind, width and depth. Derived with
 /// `Trace`.

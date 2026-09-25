@@ -83,7 +83,7 @@ rust_binary(
         "probe_case_binding",          # E0425: a pattern tests, it does not bind
         "probe_infer_bad",             # E0284: a width nothing fixes
         "probe_infer_lower",           # the macro's own message
-        "probe_wide",                  # E0080: wider than 128 bits
+        "probe_wide",                  # E0080: over 128 bits in one limb
         "probe_tuple_let",             # the macro's own message
         "probe_lit_signal",            # the macro's own message
     ]

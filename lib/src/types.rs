@@ -177,82 +177,279 @@ impl Logic {
     }
 }
 
-/// The widest `U<N>` or `I<N>`: each keeps its bits in one Rust
-/// integer of this many. A wider one fails to compile, where its width
-/// is first read, rather than dropping the bits above; wider values are
-/// issue #119.
+/// The widest value one limb holds: a `U<N>` keeps its bits in one Rust
+/// integer of this many, and an `I<N>` is at most this wide. A wider
+/// unsigned value is `U<N, L>`, in `L` limbs of this many (issue 503).
 pub const MAX_WIDTH: usize = 128;
 
-/// An N-bit unsigned value, `N` at most [`MAX_WIDTH`].
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct U<const N: usize>(u128);
+/// An N-bit unsigned value, kept in `L` limbs of 128 bits, least
+/// significant first.
+///
+/// `L` has a default of one, so `U<N>` is a value of at most 128 bits
+/// and is what it always was; a wider one names its limbs, `U<256, 2>`,
+/// since stable Rust cannot size the array from `N` itself (issue 503,
+/// and `probe_limbs`). `L` must be the number of limbs `N` needs, which
+/// `WIDTH` checks where it is first read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct U<const N: usize, const L: usize = 1>([u128; L]);
 
-impl<const N: usize> Default for U<N> {
+impl<const N: usize, const L: usize> Default for U<N, L> {
     fn default() -> Self {
         Self::new(0)
     }
 }
 
-impl<const N: usize> U<N> {
+/// As it always printed for one limb, `U(5)`, and the limbs for more.
+impl<const N: usize, const L: usize> std::fmt::Debug for U<N, L> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if L == 1 {
+            f.debug_tuple("U").field(&self.0[0]).finish()
+        } else {
+            f.debug_tuple("U").field(&self.0).finish()
+        }
+    }
+}
+
+/// Numeric order, which for more than one limb is the top limb first.
+impl<const N: usize, const L: usize> Ord for U<N, L> {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        for i in (0..L).rev() {
+            match self.0[i].cmp(&o.0[i]) {
+                std::cmp::Ordering::Equal => continue,
+                other => return other,
+            }
+        }
+        std::cmp::Ordering::Equal
+    }
+}
+impl<const N: usize, const L: usize> PartialOrd for U<N, L> {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+
+impl<const N: usize, const L: usize> U<N, L> {
     /// The width in bits, which is `N`. A derive reads it to lay a
     /// compound value out, so every value type has one, and reading it
-    /// is where a width over [`MAX_WIDTH`] stops the build.
+    /// is where a width its limbs cannot hold stops the build.
     pub const WIDTH: usize = {
-        assert!(N <= MAX_WIDTH, "a U<N> is at most 128 bits wide");
+        assert!(
+            L >= 1 && N <= MAX_WIDTH * L && (L == 1 || N > MAX_WIDTH * (L - 1)),
+            "a U<N> is at most 128 bits wide: a wider value is U<N, L>, \
+             with L the number of 128-bit limbs its bits need, \
+             (N + 127) / 128"
+        );
         N
     };
-    const MASK: u128 = if Self::WIDTH == MAX_WIDTH {
-        u128::MAX
-    } else {
-        (1u128 << N) - 1
+    /// The bits the top limb keeps.
+    const TOP_MASK: u128 = {
+        let top = Self::WIDTH - MAX_WIDTH * (L - 1);
+        if top == MAX_WIDTH {
+            u128::MAX
+        } else {
+            (1u128 << top) - 1
+        }
     };
+
+    const fn masked(mut l: [u128; L]) -> Self {
+        l[L - 1] &= Self::TOP_MASK;
+        U(l)
+    }
 
     /// A value from its bits, truncated to `N` of them. Anything
     /// above the width is dropped rather than refused, which is what
     /// a register of `N` bits does with a wider number.
     pub const fn new(v: u128) -> Self {
-        U(v & Self::MASK)
+        let mut l = [0u128; L];
+        l[0] = v;
+        Self::masked(l)
+    }
+    /// A value from its limbs, least significant first, truncated to
+    /// `N` bits: how a value wider than 128 bits is built.
+    pub const fn from_limbs(l: [u128; L]) -> Self {
+        Self::masked(l)
+    }
+    /// The limbs, least significant first.
+    pub const fn limbs(self) -> [u128; L] {
+        self.0
     }
     /// The bits as a plain integer, for a testbench to print or
-    /// compare. Inside a lowered unit this reads as the value
-    /// itself, so it costs nothing in the netlist.
+    /// compare: the low 128 of them, which for `U<N>` is all of them.
+    /// Inside a lowered unit this reads as the value itself, so it
+    /// costs nothing in the netlist.
     pub const fn raw(self) -> u128 {
-        self.0
+        self.0[0]
     }
     /// One bit of it, counting from zero at the least significant.
     pub fn bit(self, i: usize) -> Bit {
-        Bit::from_bool((self.0 >> i) & 1 == 1)
+        let (l, b) = (i / MAX_WIDTH, i % MAX_WIDTH);
+        Bit::from_bool(l < L && (self.0[l] >> b) & 1 == 1)
     }
 
     /// A multiply with the result width stated: `a.mul::<64>(b)`. The
     /// width is a standalone parameter, so this is stable; `U<{A + B}>`
-    /// would not be.
+    /// would not be. The product is at most 128 bits wide.
     ///
     /// `*` is `std::ops::Mul`, which answers in the width it was given,
     /// wrapping; this is the multiply whose product is wider, so it keeps
     /// the operation's name rather than the trait's.
     #[allow(clippy::should_implement_trait)]
     pub fn mul<const M: usize>(self, o: impl Into<Self>) -> U<M> {
-        U::<M>::new(self.0.wrapping_mul(o.into().0))
+        let o = o.into();
+        if L == 1 {
+            return U::<M>::new(self.0[0].wrapping_mul(o.0[0]));
+        }
+        U::<M>::new(limbs::mul(&self.0, &o.0)[0])
     }
 
-    /// Resize to a stated width. `M` is standalone, so stable.
+    /// Resize to a stated width, of at most 128 bits. `M` is standalone,
+    /// so stable.
     pub fn resize<const M: usize>(self) -> U<M> {
-        U::<M>::new(self.0)
+        U::<M>::new(self.0[0])
     }
 
-    /// A slice. Offset and width are const parameters; an offset may
+    /// A slice, of at most 128 bits, which is how a word comes out of a
+    /// wide value. Offset and width are const parameters; an offset may
     /// also be a run-time value through [`U::slice_at`], but a width may
     /// not, because the width is the type.
     pub fn slice<const LO: usize, const LEN: usize>(self) -> U<LEN> {
-        U::<LEN>::new(self.0 >> LO)
+        self.slice_at::<LEN>(LO)
     }
 
     /// `LEN` bits starting at `lo`, where `lo` is decided at run
     /// time rather than in the type. `LEN` is still a parameter,
     /// because the width of the result is the width of a wire.
     pub fn slice_at<const LEN: usize>(self, lo: usize) -> U<LEN> {
-        U::<LEN>::new(self.0 >> lo)
+        if L == 1 {
+            return U::<LEN>::new(self.0[0] >> lo);
+        }
+        U::<LEN>::new(limbs::shr(&self.0, lo)[0])
+    }
+}
+
+/// Arithmetic across limbs, least significant first, for a value wider
+/// than one. A value of one limb never comes here: every operator has
+/// its one-`u128` path first, so a narrow value costs what it always
+/// did (issue 503).
+// Each loop walks two arrays of limbs in step, by index, which reads
+// plainer than zipped iterators with a carry threaded through.
+#[allow(clippy::needless_range_loop)]
+mod limbs {
+    use super::MAX_WIDTH;
+
+    pub fn shl<const L: usize>(a: &[u128; L], k: usize) -> [u128; L] {
+        let (w, b) = (k / MAX_WIDTH, k % MAX_WIDTH);
+        let mut r = [0u128; L];
+        for i in (w..L).rev() {
+            let s = i - w;
+            let mut v = a[s] << b;
+            if b > 0 && s > 0 {
+                v |= a[s - 1] >> (MAX_WIDTH - b);
+            }
+            r[i] = v;
+        }
+        r
+    }
+
+    pub fn shr<const L: usize>(a: &[u128; L], k: usize) -> [u128; L] {
+        let (w, b) = (k / MAX_WIDTH, k % MAX_WIDTH);
+        let mut r = [0u128; L];
+        for i in 0..L.saturating_sub(w) {
+            let s = i + w;
+            let mut v = a[s] >> b;
+            if b > 0 && s + 1 < L {
+                v |= a[s + 1] << (MAX_WIDTH - b);
+            }
+            r[i] = v;
+        }
+        r
+    }
+
+    /// The sum, and whether it carried out of the top.
+    pub fn add<const L: usize>(
+        a: &[u128; L],
+        b: &[u128; L],
+    ) -> ([u128; L], bool) {
+        let mut r = [0u128; L];
+        let mut carry = false;
+        for i in 0..L {
+            let (s, c1) = a[i].overflowing_add(b[i]);
+            let (s, c2) = s.overflowing_add(carry as u128);
+            r[i] = s;
+            carry = c1 || c2;
+        }
+        (r, carry)
+    }
+
+    pub fn sub<const L: usize>(a: &[u128; L], b: &[u128; L]) -> [u128; L] {
+        let mut r = [0u128; L];
+        let mut borrow = false;
+        for i in 0..L {
+            let (s, b1) = a[i].overflowing_sub(b[i]);
+            let (s, b2) = s.overflowing_sub(borrow as u128);
+            r[i] = s;
+            borrow = b1 || b2;
+        }
+        r
+    }
+
+    /// The product's low `L` limbs, by 64-bit digits.
+    pub fn mul<const L: usize>(a: &[u128; L], b: &[u128; L]) -> [u128; L] {
+        let digits = |x: &[u128; L]| -> Vec<u64> {
+            x.iter()
+                .flat_map(|v| [*v as u64, (*v >> 64) as u64])
+                .collect()
+        };
+        let (da, db) = (digits(a), digits(b));
+        let n = 2 * L;
+        let mut acc = vec![0u64; n];
+        for i in 0..n {
+            let mut carry = 0u128;
+            for j in 0..n - i {
+                let t =
+                    acc[i + j] as u128 + da[i] as u128 * db[j] as u128 + carry;
+                acc[i + j] = t as u64;
+                carry = t >> 64;
+            }
+        }
+        let mut r = [0u128; L];
+        for (k, v) in r.iter_mut().enumerate() {
+            *v = acc[2 * k] as u128 | (acc[2 * k + 1] as u128) << 64;
+        }
+        r
+    }
+
+    pub fn is_zero<const L: usize>(a: &[u128; L]) -> bool {
+        a.iter().all(|v| *v == 0)
+    }
+
+    pub fn ge<const L: usize>(a: &[u128; L], b: &[u128; L]) -> bool {
+        for i in (0..L).rev() {
+            if a[i] != b[i] {
+                return a[i] > b[i];
+            }
+        }
+        true
+    }
+
+    /// `a % b` for `b` not zero, bit by bit from the top of `n` bits: the
+    /// running remainder is shifted up, the bit carried out of the top
+    /// kept, and `b` taken away whenever what is there reaches it.
+    pub fn rem<const L: usize>(
+        a: &[u128; L],
+        b: &[u128; L],
+        n: usize,
+    ) -> [u128; L] {
+        let mut r = [0u128; L];
+        for i in (0..n).rev() {
+            let out = (r[L - 1] >> (MAX_WIDTH - 1)) & 1 == 1;
+            r = shl(&r, 1);
+            r[0] |= (a[i / MAX_WIDTH] >> (i % MAX_WIDTH)) & 1;
+            if out || ge(&r, b) {
+                r = sub(&r, b);
+            }
+        }
+        r
     }
 }
 
@@ -262,7 +459,7 @@ impl<const N: usize> U<N> {
 // is the common case; a negative one is a bug, and is caught in debug.
 macro_rules! from_int {
     ($($t:ty),*) => { $(
-        impl<const N: usize> From<$t> for U<N> {
+        impl<const N: usize, const L: usize> From<$t> for U<N, L> {
             fn from(v: $t) -> Self { Self::new(v as u128) }
         }
     )* };
@@ -270,13 +467,13 @@ macro_rules! from_int {
 from_int!(u8, u16, u32, u64, u128, usize);
 
 /// A value as an address: what a memory's `read` and `at` take.
-impl<const N: usize> From<U<N>> for usize {
-    fn from(v: U<N>) -> usize {
-        v.0 as usize
+impl<const N: usize, const L: usize> From<U<N, L>> for usize {
+    fn from(v: U<N, L>) -> usize {
+        v.0[0] as usize
     }
 }
 
-impl<const N: usize> From<i32> for U<N> {
+impl<const N: usize, const L: usize> From<i32> for U<N, L> {
     fn from(v: i32) -> Self {
         debug_assert!(v >= 0, "a negative literal into an unsigned U<{N}>");
         Self::new(v as u128)
@@ -292,62 +489,88 @@ impl<const N: usize> From<i32> for U<N> {
 // literal is written as a literal: `n + 1`, `flags & 0xF`. A compare,
 // `==`, `!=`, `<`, `<=`, `>`, `>=`, is unsigned, yields a `bool`, and
 // takes a literal on the right too: `count == 8`. Every one lowers to
-// the operator of the same name. What has no operator is a method:
-// `sra`, the arithmetic shift, `lt_signed`, the signed compare,
-// `mul::<M>`, the widening multiply, `concat::<_, M>`, `sext::<M>` and
-// `zext::<M>`, each with a width that is the sum of two others stated,
-// because that sum needs nightly Rust to write.
+// the operator of the same name, and every one works across limbs for
+// a value wider than 128 bits, a limb at a time. What has no operator
+// is a method: `sra`, the arithmetic shift, `lt_signed`, the signed
+// compare, `mul::<M>`, the widening multiply, `concat::<_, M>`,
+// `sext::<M>` and `zext::<M>`, each with a width that is the sum of two
+// others stated, because that sum needs nightly Rust to write.
 macro_rules! u_ops {
-    ($($tr:ident $f:ident |$a:ident, $b:ident| $e:expr),*) => { $(
-        impl<const N: usize, R: Into<U<N>>> std::ops::$tr<R> for U<N> {
-            type Output = U<N>;
-            fn $f(self, o: R) -> U<N> {
-                let ($a, $b) = (self.0, o.into().0);
-                U::<N>::new($e)
+    ($($tr:ident $f:ident |$a:ident, $b:ident| $one:expr, $wide:expr),*) => { $(
+        impl<const N: usize, const L: usize, R: Into<U<N, L>>> std::ops::$tr<R>
+            for U<N, L>
+        {
+            type Output = U<N, L>;
+            fn $f(self, o: R) -> U<N, L> {
+                let o = o.into();
+                if L == 1 {
+                    let ($a, $b) = (self.0[0], o.0[0]);
+                    return U::<N, L>::new($one);
+                }
+                let ($a, $b) = (&self.0, &o.0);
+                U::<N, L>::masked($wide)
             }
         }
     )* };
 }
 u_ops!(
-    Add add |a, b| a.wrapping_add(b),
-    Sub sub |a, b| a.wrapping_sub(b),
-    BitAnd bitand |a, b| a & b,
-    BitOr bitor |a, b| a | b,
-    BitXor bitxor |a, b| a ^ b,
-    Mul mul |a, b| a.wrapping_mul(b),
+    Add add |a, b| a.wrapping_add(b), limbs::add(a, b).0,
+    Sub sub |a, b| a.wrapping_sub(b), limbs::sub(a, b),
+    BitAnd bitand |a, b| a & b, std::array::from_fn(|i| a[i] & b[i]),
+    BitOr bitor |a, b| a | b, std::array::from_fn(|i| a[i] | b[i]),
+    BitXor bitxor |a, b| a ^ b, std::array::from_fn(|i| a[i] ^ b[i]),
+    Mul mul |a, b| a.wrapping_mul(b), limbs::mul(a, b),
     Rem rem |a, b| {
         assert!(b != 0, "a remainder by zero, which the netlist refuses too");
         a % b
+    }, {
+        assert!(
+            !limbs::is_zero(b),
+            "a remainder by zero, which the netlist refuses too"
+        );
+        limbs::rem(a, b, N)
     }
 );
 /// Negation, wrapping: the two's complement at the same width, as
 /// `0 - x` is and as the netlist's `~x + 1` is (issue 496).
-impl<const N: usize> std::ops::Neg for U<N> {
-    type Output = U<N>;
-    fn neg(self) -> U<N> {
-        U::<N>::new(0u128.wrapping_sub(self.0))
+impl<const N: usize, const L: usize> std::ops::Neg for U<N, L> {
+    type Output = U<N, L>;
+    fn neg(self) -> U<N, L> {
+        U::<N, L>::new(0) - self
     }
 }
-impl<const N: usize> std::ops::Not for U<N> {
-    type Output = U<N>;
-    fn not(self) -> U<N> {
-        U::<N>::new(!self.0)
+impl<const N: usize, const L: usize> std::ops::Not for U<N, L> {
+    type Output = U<N, L>;
+    fn not(self) -> U<N, L> {
+        U::<N, L>::masked(self.0.map(|v| !v))
     }
 }
 macro_rules! u_shifts {
     ($($t:ty),*) => { $(
-        impl<const N: usize> std::ops::Shl<$t> for U<N> {
-            type Output = U<N>;
-            fn shl(self, k: $t) -> U<N> {
+        impl<const N: usize, const L: usize> std::ops::Shl<$t> for U<N, L> {
+            type Output = U<N, L>;
+            fn shl(self, k: $t) -> U<N, L> {
                 let k = k as usize;
-                if k >= N { U::<N>::new(0) } else { U::<N>::new(self.0 << k) }
+                if k >= N {
+                    U::<N, L>::new(0)
+                } else if L == 1 {
+                    U::<N, L>::new(self.0[0] << k)
+                } else {
+                    U::<N, L>::masked(limbs::shl(&self.0, k))
+                }
             }
         }
-        impl<const N: usize> std::ops::Shr<$t> for U<N> {
-            type Output = U<N>;
-            fn shr(self, k: $t) -> U<N> {
+        impl<const N: usize, const L: usize> std::ops::Shr<$t> for U<N, L> {
+            type Output = U<N, L>;
+            fn shr(self, k: $t) -> U<N, L> {
                 let k = k as usize;
-                if k >= N { U::<N>::new(0) } else { U::<N>::new(self.0 >> k) }
+                if k >= N {
+                    U::<N, L>::new(0)
+                } else if L == 1 {
+                    U::<N, L>::new(self.0[0] >> k)
+                } else {
+                    U::<N, L>::masked(limbs::shr(&self.0, k))
+                }
             }
         }
     )* };
@@ -355,46 +578,47 @@ macro_rules! u_shifts {
 u_shifts!(usize, u8, u32, i32);
 macro_rules! u_compare {
     ($($t:ty),*) => { $(
-        impl<const N: usize> PartialEq<$t> for U<N> {
+        impl<const N: usize, const L: usize> PartialEq<$t> for U<N, L> {
             fn eq(&self, o: &$t) -> bool {
-                self.0 == U::<N>::from(*o).0
+                *self == U::<N, L>::from(*o)
             }
         }
-        impl<const N: usize> PartialOrd<$t> for U<N> {
+        impl<const N: usize, const L: usize> PartialOrd<$t> for U<N, L> {
             fn partial_cmp(&self, o: &$t) -> Option<std::cmp::Ordering> {
-                self.0.partial_cmp(&U::<N>::from(*o).0)
+                Some(self.cmp(&U::<N, L>::from(*o)))
             }
         }
     )* };
 }
 u_compare!(u8, u16, u32, u64, u128, usize, i32);
 
-impl<const N: usize> U<N> {
+impl<const N: usize, const L: usize> U<N, L> {
     /// An arithmetic shift right: the top bit fills in.
     pub fn sra(self, k: usize) -> Self {
         let k = k.min(N);
         let top = self.bit(N - 1).to_bool();
-        let shifted = self.0 >> k;
-        let fill = if top && k > 0 {
-            ((1u128 << k) - 1) << (N - k)
-        } else {
-            0
-        };
-        Self::new(shifted | fill)
+        let shifted = self >> k;
+        if !top || k == 0 {
+            return shifted;
+        }
+        // Ones in the `k` bits the shift emptied, at the top.
+        let ones = !U::<N, L>::new(0);
+        shifted | (ones << (N - k))
     }
-    /// `self` above `low`: `M` is `N + K`, stated; `K` is `low`'s own
-    /// width, and may be left to Rust as `_`.
+    /// `self` above `low`: `M` is `N + K`, stated, and at most 128;
+    /// `K` is `low`'s own width, and may be left to Rust as `_`.
     pub fn concat<const K: usize, const M: usize>(self, low: U<K>) -> U<M> {
-        U::<M>::new((self.0 << K) | low.0)
+        let high = if K >= MAX_WIDTH { 0 } else { self.0[0] << K };
+        U::<M>::new(high | low.0[0])
     }
-    /// Sign extension to `M` bits.
+    /// Sign extension to `M` bits, at most 128.
     pub fn sext<const M: usize>(self) -> U<M> {
         let top = self.bit(N - 1).to_bool();
         if top && M > N {
             let ones = ((1u128 << (M - N)) - 1) << N;
-            U::<M>::new(self.0 | ones)
+            U::<M>::new(self.0[0] | ones)
         } else {
-            U::<M>::new(self.0)
+            U::<M>::new(self.0[0])
         }
     }
     /// Zero extension or truncation; `resize` by another name.
@@ -405,10 +629,11 @@ impl<const N: usize> U<N> {
     pub fn lt_signed(self, o: Self) -> Bit {
         Bit::from_bool(self.to_i().raw() < o.to_i().raw())
     }
-    /// The same bits read as two's complement. The bits do not move;
-    /// only what they are taken to mean does.
+    /// The same bits read as two's complement, for a value of at most
+    /// 128 bits. The bits do not move; only what they are taken to mean
+    /// does.
     pub fn to_i(self) -> I<N> {
-        I::<N>::new(self.0 as i128)
+        I::<N>::new(self.0[0] as i128)
     }
     /// The same bits back again, read as unsigned.
     pub fn from_i(v: I<N>) -> Self {
@@ -599,10 +824,19 @@ impl Value for Logic {
         .into()
     }
 }
-impl<const N: usize> Value for U<N> {
-    const WIDTH: usize = U::<N>::WIDTH;
+impl<const N: usize, const L: usize> Value for U<N, L> {
+    const WIDTH: usize = U::<N, L>::WIDTH;
     fn vcd(self) -> String {
-        format!("{:0width$b}", self.0, width = N)
+        if L == 1 {
+            return format!("{:0width$b}", self.0[0], width = N);
+        }
+        // The top limb holds what is left of `N`, and the rest are whole.
+        let top = N - MAX_WIDTH * (L - 1);
+        let mut s = format!("{:0width$b}", self.0[L - 1], width = top);
+        for i in (0..L - 1).rev() {
+            s.push_str(&format!("{:0128b}", self.0[i]));
+        }
+        s
     }
 }
 impl<const N: usize> Value for I<N> {
@@ -630,7 +864,7 @@ pub trait Transaction: Copy + Default + 'static {}
 
 /// A bare word is a transaction. A struct of fields is the usual case,
 /// and derives it.
-impl<const N: usize> Transaction for U<N> {}
+impl<const N: usize, const L: usize> Transaction for U<N, L> {}
 impl<const N: usize> Transaction for I<N> {}
 impl Transaction for Bit {}
 
@@ -648,3 +882,94 @@ pub trait Tag {
 /// The tag a design gets when it names none.
 pub struct Raw;
 impl Tag for Raw {}
+
+/// Values wider than one limb (issue 503), against answers worked out
+/// by hand, and against the one-limb arithmetic where both apply.
+#[cfg(test)]
+mod wide_tests {
+    use super::{Value, U};
+
+    type W = U<256, 2>;
+    const TOP: u128 = u128::MAX;
+
+    #[test]
+    fn a_sum_carries_into_the_next_limb() {
+        let x = W::from_limbs([TOP, 0]) + 1u8;
+        assert_eq!(x.limbs(), [0, 1]);
+        let back = x - 1u8;
+        assert_eq!(back.limbs(), [TOP, 0], "and the difference borrows back");
+    }
+
+    #[test]
+    fn the_top_limb_keeps_only_the_width() {
+        // 200 bits: the top limb holds 72 of them.
+        let x = U::<200, 2>::from_limbs([TOP, TOP]);
+        assert_eq!(x.limbs(), [TOP, (1u128 << 72) - 1]);
+        assert_eq!((x + 1u8).limbs(), [0, 0], "and wraps at 200 bits");
+        assert_eq!(<U<200, 2> as Value>::WIDTH, 200);
+        assert_eq!(x.vcd().len(), 200);
+        assert!(x.vcd().chars().all(|c| c == '1'));
+    }
+
+    #[test]
+    fn a_product_lands_in_the_top_limb() {
+        // 2^128 * 2^64 = 2^192.
+        let x = W::from_limbs([0, 1]) * W::from_limbs([1u128 << 64, 0]);
+        assert_eq!(x.limbs(), [0, 1u128 << 64]);
+    }
+
+    #[test]
+    fn a_remainder_across_limbs() {
+        // 2^200 + 5, and 2^3 is 1 mod 7, so 2^200 = 2^2 = 4 mod 7.
+        let x = W::from_limbs([5, 1u128 << 72]);
+        assert_eq!((x % 7u8).limbs(), [2, 0]);
+    }
+
+    #[test]
+    fn shifts_move_bits_across_the_limbs() {
+        let x = W::from_limbs([1u128 << 127, 0]) << 1usize;
+        assert_eq!(x.limbs(), [0, 1]);
+        assert_eq!((x >> 1usize).limbs(), [1u128 << 127, 0]);
+        assert!((W::from(1u8) << 255usize).bit(255).to_bool());
+        assert_eq!((W::from(1u8) << 256usize).limbs(), [0, 0]);
+    }
+
+    #[test]
+    fn the_order_is_numeric_top_limb_first() {
+        let small = W::from_limbs([TOP, 0]);
+        let big = W::from_limbs([0, 1]);
+        assert!(small < big);
+        assert!(big > 5u8);
+        assert!(W::from(5u8) == 5u8);
+    }
+
+    #[test]
+    fn a_word_comes_out_of_a_wide_value() {
+        let x = W::from_limbs([0x1111, 0xabcd]);
+        assert_eq!(x.slice::<128, 16>().raw(), 0xabcd);
+        assert_eq!(x.slice::<120, 16>().raw(), 0xcd00);
+        assert_eq!(x.slice::<0, 16>().raw(), 0x1111);
+    }
+
+    /// Where both apply, the limbs agree with one `u128`.
+    #[test]
+    fn narrow_operands_agree_with_one_limb() {
+        let pairs: [(u128, u128); 5] = [
+            (7, 3),
+            (u64::MAX as u128, 12345),
+            (1 << 100, (1 << 99) + 17),
+            (0xdead_beef, 1),
+            (99, 250),
+        ];
+        for (a, b) in pairs {
+            let (wa, wb) = (W::from(a), W::from(b));
+            let (na, nb) = (U::<128>::from(a), U::<128>::from(b));
+            assert_eq!((wa & wb).raw(), (na & nb).raw());
+            assert_eq!((wa | wb).raw(), (na | nb).raw());
+            assert_eq!((wa ^ wb).raw(), (na ^ nb).raw());
+            assert_eq!((wa % wb).raw(), (na % nb).raw(), "{a} % {b}");
+            assert_eq!((wa + wb).raw(), (na + nb).raw());
+            assert_eq!(wa < wb, na < nb);
+        }
+    }
+}

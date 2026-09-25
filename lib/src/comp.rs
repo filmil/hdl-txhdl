@@ -491,10 +491,10 @@ impl<T: Copy + 'static + PartialOrd<R>, R, C: Clock> PartialOrd<R>
         self.get().partial_cmp(o)
     }
 }
-impl<const N: usize, C: Clock> From<Reg<crate::types::U<N>, C>>
-    for crate::types::U<N>
+impl<const N: usize, const L: usize, C: Clock>
+    From<Reg<crate::types::U<N, L>, C>> for crate::types::U<N, L>
 {
-    fn from(r: Reg<crate::types::U<N>, C>) -> crate::types::U<N> {
+    fn from(r: Reg<crate::types::U<N, L>, C>) -> crate::types::U<N, L> {
         r.get()
     }
 }
@@ -1650,7 +1650,7 @@ pub mod trace {
     }
     untraced!(u8, u16, u32, u64, u128, usize, bool, &'static str);
     untraced!(crate::types::Bit, crate::types::Logic);
-    impl<const N: usize> Traceable for crate::types::U<N> {
+    impl<const N: usize, const L: usize> Traceable for crate::types::U<N, L> {
         fn trace(&self, _: &Scope) {}
     }
     impl<T> Traceable for PhantomData<T> {
