@@ -213,21 +213,10 @@ pub struct Board<const DIV: u32> {
     /// with its four frame buffers in the memory from
     /// [`isa::ETH_BUF_BASE`](crate::isa::ETH_BUF_BASE).
     ///
-    /// It answers its registers and moves no frames. The seven ports
-    /// it has besides the bus face the engines that would carry the
-    /// bytes, `LineFetch` and `LineStore` with an adapter between the
-    /// words they move and the bytes a frame counts, and those are
-    /// issue 151 and are not written. Until they are, the busy lines
-    /// it reads are tied low and what it drives goes nowhere: a driver
-    /// binds, reads and writes every register, and no frame arrives or
-    /// leaves.
-    ///
-    /// That is worth having before the engines rather than after. The
-    /// device tree describes a peripheral that is really there, the
-    /// driver is compiled by `bazel test //...` from the first commit
-    /// that enables it rather than whenever somebody next tries a
-    /// board, and the register map has two implementations to
-    /// disagree with each other rather than one and a document.
+    /// It answers its registers and moves no frames itself. The seven
+    /// ports it has besides the bus face the engines that carry the
+    /// bytes, below with the rest of issue 151: it says which slot and
+    /// how many bytes, and they move them.
     pub eth: EthSlots<{ isa::ETH_BUF_BASE as usize }>,
     // end{ethslot}
     // begin{entropy}

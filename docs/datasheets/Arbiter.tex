@@ -117,11 +117,11 @@ Verilator: \code{//docs:axi\_arbiter\_sim\_axi\_arbiter\_tb\_test} and
 
 \subsection*{Used by}
 
-\code{Board}, as \code{arb}, an \code{Arbiter2<32, 32, 4, 2, 4, 0>} in
-front of its router: the core's tracker on port 0 and the JTAG
-master's pins on port 1 (issue 241), with a peripheral side of four
-bits, room for four hosts. Issue 151's direct memory access engine is
-the third host, on the same arbiter.
+\code{Board}, as \code{arb}, an \code{Arbiter4<32, 32, 4, 2, 4, 0>} in
+front of its router: the core's tracker on port 0, the JTAG master's
+pins on port 1 (issue 241), and the Ethernet port's fetch and store
+engines on ports 2 and 3 (issue 151). Its peripheral side has four
+bits of identifier, which four hosts fill, so a fifth widens the bus.
 
 \subsection*{Limits}
 

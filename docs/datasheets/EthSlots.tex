@@ -182,22 +182,27 @@ at that test passed against the faulty order.
 \item The build simulates the netlist against that run under nvc and
 Verilator: \code{//docs:ethslots\_sim\_ethslots\_tb\_test} and
 \code{//docs:ethslots\_vsim\_test}.
+\item On the board, with the engines behind it, the two Ethernet tests
+in \code{cpu/vreteno/tests/board.rs} run programs on the core that
+use its registers as the driver does: one waits for an arrival and
+reads the frame from the slot and length it names, and the other
+sends two frames back to back, waiting on \code{tx\_ready} between
+them.
 \end{itemize}
 
 \subsection*{Used by}
 
 The board, at \code{cpu/vreteno/src/board.rs}, on the fifth AXI-Lite
 slot at \code{0x3400}, with its arrival as the third source of
-\code{Plic3}. The example \code{ex\_ethslots}.
+\code{Plic3}. Its engine-facing ports go to the fetch engine and
+\code{FrameOut} on the way out, and to \code{FrameIn} and the store
+engine on the way in (issue 151). The example \code{ex\_ethslots}.
 
 \subsection*{Limits}
 
-\textbf{It moves no frames.} The seven engine-facing ports are tied
-off on the board: the busy lines it reads are low and what it drives
-goes nowhere. A driver binds and reads and writes every register, and
-no frame arrives or leaves. The engines, \code{LineFetch} and
-\code{LineStore} with an adapter between the words they move and the
-bytes a frame counts, are issue 151.
+It moves no frames itself: the engines behind it do. Without them,
+as in \code{ex\_ethslots}, a driver binds and reads and writes every
+register, and no frame arrives or leaves.
 
 Two slots a direction is queue depth and not throughput. A ring, if
 it is ever wanted, is an addition rather than a rewrite: a descriptor
