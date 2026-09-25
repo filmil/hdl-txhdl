@@ -72,9 +72,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 58\,735 lines of Rust: 13\,329 of runtime
-and macros, 17\,242 of parts, 11\,308 in seventy-nine examples, 13\,911 of
-Vreteno with its board, and 2\,945 of Razboj, DDR3, Ethernet, HDMI,
+Together they are 65\,365 lines of Rust: 16\,654 of runtime
+and macros, 18\,242 of parts, 13\,617 in ninety-seven examples, 13\,908 of
+Vreteno with its board, and 2\,944 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -91,12 +91,12 @@ A channel across two clocks & parts & yes \\
 Memory engines, 3; tie-offs, 2 & parts & the engines \\
 Stations of 2 to 10 inputs & parts & 2 and 3 \\
 AXI routers, 2 to 8 peripherals & parts & 3 \\
-AXI arbiters, 2 to 8 hosts & parts & 2 \\
+An AXI arbiter, one unit for 2 to 8 hosts & parts & 2 \\
 AXI host and peripheral trackers & parts & both \\
 AXI-Lite bridges, 1 to 8 peripherals & parts & 1 and 2 \\
 AXI to Wishbone bridge & parts & yes \\
 AXI host pins to the link's channels & parts & yes \\
-Interrupt controllers, 1 to 8 sources & parts & 3 \\
+An interrupt controller, one unit for 1 to 31 sources & parts & 3 \\
 Network node, switch, 2 bridges & parts & not yet \\
 Pins; SPI; I2C; SD; Ethernet's five; HDMI's two & parts & all eleven \\
 Words to frames and back; a frame's length & parts & all three \\
@@ -113,7 +113,7 @@ Vreteno; boot and data memory, timer, serial port & \code{cpu} & four of five \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
 PCIe BAR registers; the BAR as one unit & \code{pcie} & not yet \\
-The examples' own units & examples & 40, in 30 files, all 30 \\
+The examples' own units & examples & 59, in 50 files, all 50 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -388,9 +388,9 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs two hundred and sixty-two
+its ports. \code{bazel test //...} runs three hundred and sixteen
 targets, of
-which a hundred and fifty-two are netlists under both simulators; the rest are the
+which a hundred and eighty-eight are netlists under both simulators; the rest are the
 core's model and
 programs, the board's own run, Razboj, the parts, the SoC's run, and
 the tools. Seven more are tagged manual: the board and its DDR3 under
