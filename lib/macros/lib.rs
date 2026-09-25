@@ -4732,6 +4732,14 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
     if ts.is_empty() {
         return Err("empty expression".into());
     }
+    // An `if` or a `match` that yields a value (issue 496).
+    if let Some(TokenTree::Ident(kw)) = ts.first() {
+        match kw.to_string().as_str() {
+            "if" => return tr_if(ts, subst),
+            "match" => return tr_match(ts, subst),
+            _ => {}
+        }
+    }
     // `select!(v => { pat => e, .. })`: a chain of conditions.
     if let [TokenTree::Ident(m), TokenTree::Punct(bang), TokenTree::Group(g)] =
         ts
@@ -4812,13 +4820,19 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
         // no width to wrap at, so a negative one is refused (issue 496).
         if p.as_char() == '-' {
             if matches!(ts.get(1), Some(TokenTree::Literal(_))) {
-                return Err("a negative number has no width in a lowered body: \
+                return Err(
+                    "a negative number has no width in a lowered body: \
                      write the value it wraps to at its width, or subtract \
                      from a value, `x - 3`"
-                    .into());
+                        .into(),
+                );
             }
             let x = tr(&ts[1..], subst)?;
-            return Ok(ebin("+", &format!("NlE::Not(Box::new({x}))"), "NlE::Num(1)"));
+            return Ok(ebin(
+                "+",
+                &format!("NlE::Not(Box::new({x}))"),
+                "NlE::Num(1)",
+            ));
         }
     }
     let end = ts.len();
@@ -5176,6 +5190,143 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
     }
 }
 
+/// A branch of a value `if` or an arm of a `match`, `{ e }`, as the
+/// one expression in it. A block that says more, a `let` or a drive,
+/// is refused: the lowering reads a value there, and the `let`s belong
+/// before the `if` (issue 496).
+fn block_value(
+    g: &Group,
+    subst: &[(String, String)],
+    what: &str,
+) -> Result<String, String> {
+    let bt: Vec<TokenTree> = g.stream().into_iter().collect();
+    if bt
+        .iter()
+        .any(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == ';'))
+    {
+        return Err(format!(
+            "{what} in a lowered body is one expression: put its `let`s \
+             before it"
+        ));
+    }
+    tr(&bt, subst)
+}
+
+/// `if c { a } else if d { b } else { e }` as a value: a chain of
+/// conditions, as `mux` is (issue 496). An `if` with no `else` has no
+/// value when its condition is false, so it is refused.
+fn tr_if(
+    ts: &[TokenTree],
+    subst: &[(String, String)],
+) -> Result<String, String> {
+    let brace = |t: &TokenTree| matches!(t, TokenTree::Group(g) if g.delimiter() == Delimiter::Brace);
+    let Some(b) = ts.iter().position(brace) else {
+        return Err("an `if` needs a `{ .. }` after its condition".into());
+    };
+    let c = tr(&ts[1..b], subst)?;
+    let TokenTree::Group(then) = &ts[b] else {
+        unreachable!()
+    };
+    let a =
+        block_value(then, subst, "a branch of an `if` that yields a value")?;
+    let rest = &ts[b + 1..];
+    let e = match rest {
+        [TokenTree::Ident(el), TokenTree::Group(g)]
+            if el.to_string() == "else"
+                && g.delimiter() == Delimiter::Brace =>
+        {
+            block_value(g, subst, "a branch of an `if` that yields a value")?
+        }
+        [TokenTree::Ident(el), TokenTree::Ident(i), ..]
+            if el.to_string() == "else" && i.to_string() == "if" =>
+        {
+            tr_if(&rest[1..], subst)?
+        }
+        _ => {
+            return Err("an `if` that yields a value needs an `else`: without \
+                one it has no value when its condition is false"
+                .into())
+        }
+    };
+    Ok(format!(
+        "NlE::Cond(Box::new({c}), Box::new({a}), Box::new({e}))"
+    ))
+}
+
+/// `match v { pat => e, pat => { e } .. }` as a chain of conditions,
+/// as `select!` is (issue 496). An arm whose value is a block may end
+/// without a comma, as rustfmt writes it, so arms are split here and
+/// not on commas.
+fn tr_match(
+    ts: &[TokenTree],
+    subst: &[(String, String)],
+) -> Result<String, String> {
+    let Some(TokenTree::Group(arms)) = ts.last() else {
+        return Err("a `match` needs `{ pattern => value, .. }`".into());
+    };
+    let v = tr(&ts[1..ts.len() - 1], subst)?;
+    let at: Vec<TokenTree> = arms.stream().into_iter().collect();
+    let mut split: Vec<(Vec<TokenTree>, Vec<TokenTree>)> = Vec::new();
+    let mut i = 0;
+    while i < at.len() {
+        let Some((pat, k)) = up_to_arrow(&at, i) else {
+            return Err("a `match` arm is `pattern => value`".into());
+        };
+        let pat: Vec<TokenTree> = pat.into_iter().collect();
+        if let Some(TokenTree::Group(g)) = at.get(k) {
+            if g.delimiter() == Delimiter::Brace {
+                split.push((pat, vec![at[k].clone()]));
+                i = k + 1;
+                if matches!(at.get(i), Some(TokenTree::Punct(p)) if p.as_char() == ',')
+                {
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        let mut j = k;
+        while j < at.len()
+            && !matches!(&at[j], TokenTree::Punct(p) if p.as_char() == ',')
+        {
+            j += 1;
+        }
+        split.push((pat, at[k..j].to_vec()));
+        i = j + 1;
+    }
+    arm_chain(&v, split, subst, "a `match` arm")
+}
+
+/// Arms, each a pattern and a value, as a chain of conditions on `v`:
+/// the first arm whose pattern holds gives the value, and the last arm
+/// is the default, which is what a `select!` and an exhaustive `match`
+/// both mean.
+fn arm_chain(
+    v: &str,
+    arms: Vec<(Vec<TokenTree>, Vec<TokenTree>)>,
+    subst: &[(String, String)],
+    what: &str,
+) -> Result<String, String> {
+    let mut chain: Vec<(String, String)> = Vec::new();
+    for (pat, val) in arms {
+        let c = pattern_cond(&pat, v, subst)?;
+        let e = match val.as_slice() {
+            [TokenTree::Group(g)] if g.delimiter() == Delimiter::Brace => {
+                block_value(g, subst, what)?
+            }
+            _ => tr(&val, subst)?,
+        };
+        chain.push((c, e));
+    }
+    let Some((_, mut acc)) = chain.pop() else {
+        return Err(format!("{what} is missing: a `match` needs an arm"));
+    };
+    for (c, e) in chain.into_iter().rev() {
+        acc =
+            format!("NlE::Cond(Box::new({c}), Box::new({e}), Box::new({acc}))");
+    }
+    Ok(acc)
+}
+
 /// `select!(v => { pat => e, .., _ => e })` as a chain of conditions:
 /// the first arm's condition selects its value, else the next, down
 /// to the last arm, whose value is the default.
@@ -5189,24 +5340,14 @@ fn tr_select(g: &Group, subst: &[(String, String)]) -> Result<String, String> {
     let Some(TokenTree::Group(arms)) = ct.get(i) else {
         return Err("select! needs `{ pattern => value, .. }`".into());
     };
-    let mut chain: Vec<(String, String)> = Vec::new();
+    let mut split = Vec::new();
     for arm in split_commas(arms) {
         let Some((pat, k)) = up_to_arrow(&arm, 0) else {
             return Err("a select! arm is `pattern => value`".into());
         };
-        let pt: Vec<TokenTree> = pat.into_iter().collect();
-        let c = pattern_cond(&pt, &v, subst)?;
-        let e = tr(&arm[k..], subst)?;
-        chain.push((c, e));
+        split.push((pat.into_iter().collect(), arm[k..].to_vec()));
     }
-    let Some((_, mut acc)) = chain.pop() else {
-        return Err("select! needs an arm".into());
-    };
-    for (c, e) in chain.into_iter().rev() {
-        acc =
-            format!("NlE::Cond(Box::new({c}), Box::new({e}), Box::new({acc}))");
-    }
-    Ok(acc)
+    arm_chain(&v, split, subst, "a select! arm")
 }
 
 /// The first `,` at angle depth 0 of a type's text.
