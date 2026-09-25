@@ -445,47 +445,48 @@ fn store_lanes(f3: U<3>, lane: U<2>) -> U<4> {
         .concat::<_, 4>(en0.zext::<1>())
 }
 
-/// A CSR read, by its number; `mip` is the pending register as the
-/// core shows it, with the timer's line in it.
-///
-/// Each parameter is a wire of the unit, so there are as many of them
-/// as there are registers to choose between; a struct of them is not
-/// something the lowering reads.
-#[allow(clippy::too_many_arguments)]
+/// The registers a CSR read chooses between, as they stand this cycle.
+/// `mip` is the pending register as the core shows it, with the timer's
+/// line in it.
+#[derive(Value, Clone, Copy, Default, PartialEq, Debug)]
+pub struct Csrs {
+    pub mcycle: U<64>,
+    pub minstret: U<64>,
+    pub mstatus: U<32>,
+    pub mtvec: U<32>,
+    pub mscratch: U<32>,
+    pub mepc: U<32>,
+    pub mcause: U<32>,
+    pub mie: U<32>,
+    pub mip: U<32>,
+    pub mtval: U<32>,
+    pub dcsr: U<32>,
+    pub dpc: U<32>,
+    pub busquiet: Bit,
+}
+
+/// A CSR read, by its number. The registers come as one struct, which
+/// the lowering reads a field of at a time (issue 504); they were
+/// fourteen parameters before it could.
 #[lower]
-fn csr_read(
-    f12: U<12>,
-    mcycle: U<64>,
-    minstret: U<64>,
-    mstatus: U<32>,
-    mtvec: U<32>,
-    mscratch: U<32>,
-    mepc: U<32>,
-    mcause: U<32>,
-    mie: U<32>,
-    mip: U<32>,
-    mtval: U<32>,
-    dcsr: U<32>,
-    dpc: U<32>,
-    busquiet: Bit,
-) -> U<32> {
+fn csr_read(f12: U<12>, c: Csrs) -> U<32> {
     select!(f12.raw() => {
-        0x300 => mstatus,
-        0x305 => mtvec,
-        0x340 => mscratch,
-        0x341 => mepc,
-        0x342 => mcause,
-        0x7b0 => dcsr,
-        0x7b1 => dpc,
-        0x7c1 => busquiet.zext::<32>(),
-        0x304 => mie,
-        0x344 => mip,
-        0x343 => mtval,
+        0x300 => c.mstatus,
+        0x305 => c.mtvec,
+        0x340 => c.mscratch,
+        0x341 => c.mepc,
+        0x342 => c.mcause,
+        0x7b0 => c.dcsr,
+        0x7b1 => c.dpc,
+        0x7c1 => c.busquiet.zext::<32>(),
+        0x304 => c.mie,
+        0x344 => c.mip,
+        0x343 => c.mtval,
         0x301 => U::<32>::from(isa::MISA),
-        0xb00 => mcycle.slice::<0, 32>(),
-        0xb80 => mcycle.slice::<32, 32>(),
-        0xb02 => minstret.slice::<0, 32>(),
-        0xb82 => minstret.slice::<32, 32>(),
+        0xb00 => c.mcycle.slice::<0, 32>(),
+        0xb80 => c.mcycle.slice::<32, 32>(),
+        0xb02 => c.minstret.slice::<0, 32>(),
+        0xb82 => c.minstret.slice::<32, 32>(),
         // `mvendorid`, `marchid`, `mimpid` and `mhartid` all read as
         // zero, which the default below gives them, and so does the
         // halt. What makes them legal rather than illegal is
@@ -1068,19 +1069,21 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             );
             let csr_old = csr_read(
                 mux(in_debug, dbg_csr, f12),
-                self.mcycle.get(),
-                self.minstret.get(),
-                mstatus,
-                mtvec,
-                self.mscratch.get(),
-                mepc,
-                self.mcause.get(),
-                mie_r,
-                mip_now,
-                self.mtval.get(),
-                dcsr,
-                dpc,
-                self.busquiet.get(),
+                Csrs {
+                    mcycle: self.mcycle.get(),
+                    minstret: self.minstret.get(),
+                    mstatus,
+                    mtvec,
+                    mscratch: self.mscratch.get(),
+                    mepc,
+                    mcause: self.mcause.get(),
+                    mie: mie_r,
+                    mip: mip_now,
+                    mtval: self.mtval.get(),
+                    dcsr,
+                    dpc,
+                    busquiet: self.busquiet.get(),
+                },
             );
             let csr_known = csr_known(f12);
             // Whether the instruction writes at all: `csrrw` and
