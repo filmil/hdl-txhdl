@@ -1,0 +1,29 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{\code{txhdl::regmap}}
+\label{sec:r-regmap}
+
+What a register map declared with \code{regmap!} stands for at run
+time. The declaration is the macro: a peripheral says its map once, a
+word index, a name, an access and a sentence a register, and under a
+register its fields, each a name, a low bit, a width, an access, a
+reset value and a sentence. From that the macro writes a module of
+constants a program addresses by, the byte offset of each register
+and a \code{Field} for each field, the read mux and the write enables
+a unit's \code{run} calls, a function a field that takes it out of a
+written word and one a register that packs its fields into the word,
+and a table. The lowering reads the same declaration in the file and
+inlines the same functions into the netlist, so the map a program sees
+and the map the hardware decodes are one text; the examples
+document~\cite{examples} shows a peripheral written that way.
+
+This module is the data. \code{Field} is the constant a program uses:
+its shift, its width and its reset, with \code{mask}, \code{get},
+\code{set} and \code{with}, all of them \code{const}, so a field's
+mask is a constant where a program wants one. \code{RegMap} is the
+table, its \code{Reg}s and their \code{FieldInfo}s, which
+\code{//tools/regmap} writes as a C header, a define a register with
+its offset and four a field, or as a device tree node at a base, and
+\code{//tools/datasheet} writes as a sheet's register table, a row a
+register and a row a field under it.
+
+\lstinputlisting[caption={\code{lib/src/regmap.rs}.},label={lst:r-regmap}]{lib/src/regmap.rs}
