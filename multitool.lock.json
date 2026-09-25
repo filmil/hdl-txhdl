@@ -63,5 +63,36 @@
         "cpu": "arm64"
       }
     ]
+  },
+  "fastboot": {
+    "binaries": [
+      {
+        "kind": "archive",
+        "url": "https://dl.google.com/android/repository/platform-tools_r35.0.2-linux.zip",
+        "file": "platform-tools/fastboot",
+        "sha256": "acfdcccb123a8718c46c46c059b2f621140194e5ec1ac9d81715be3d6ab6cd0a",
+        "os": "linux",
+        "cpu": "x86_64",
+        "type": "zip"
+      },
+      {
+        "kind": "archive",
+        "url": "https://dl.google.com/android/repository/platform-tools_r35.0.2-darwin.zip",
+        "file": "platform-tools/fastboot",
+        "sha256": "1820078db90bf21628d257ff052528af1c61bb48f754b3555648f5652fa35d78",
+        "os": "macos",
+        "cpu": "x86_64",
+        "type": "zip"
+      },
+      {
+        "kind": "archive",
+        "url": "https://dl.google.com/android/repository/platform-tools_r35.0.2-darwin.zip",
+        "file": "platform-tools/fastboot",
+        "sha256": "1820078db90bf21628d257ff052528af1c61bb48f754b3555648f5652fa35d78",
+        "os": "macos",
+        "cpu": "arm64",
+        "type": "zip"
+      }
+    ]
   }
 }

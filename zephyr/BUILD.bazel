@@ -16,6 +16,9 @@
 # compile time and holds their addresses to the design's own
 # constants.
 
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(":defs.bzl", "zephyr_image")
 
@@ -109,4 +112,53 @@ filegroup(
         "**/Kconfig*",
         "**/*_defconfig",
     ]),
+)
+
+# Fastboot over TCP, the device's side, with no transport in it
+# (issue 143). The same C is what the Zephyr server runs on the board
+# and what the host harness below runs, so a test against the harness
+# is a test of the board's code.
+cc_library(
+    name = "fastboot_core",
+    srcs = ["fastboot/fastboot.c"],
+    hdrs = ["fastboot/fastboot.h"],
+    copts = ["-std=c11"],
+    includes = ["fastboot"],
+)
+
+# The core fed one session in pieces from one byte to all of it,
+# since a wire splits a message where loopback does not.
+cc_test(
+    name = "fastboot_core_test",
+    srcs = ["fastboot/core_test.c"],
+    copts = ["-std=c11"],
+    deps = [":fastboot_core"],
+)
+
+# The core on a host socket.
+cc_binary(
+    name = "fastboot_host",
+    srcs = ["fastboot/host_main.c"],
+    copts = [
+        "-std=c11",
+        "-D_DEFAULT_SOURCE",
+    ],
+    deps = [":fastboot_core"],
+)
+
+# Stock `fastboot` from Android's platform tools, pinned in
+# `multitool.lock.json`, boots an image through the harness: the test
+# that the choice of fastboot was made for, with no client written
+# here.
+sh_test(
+    name = "fastboot_test",
+    srcs = ["fastboot/fastboot_test.sh"],
+    args = [
+        "$(rootpath :fastboot_host)",
+        "$(rootpath @multitool//tools/fastboot)",
+    ],
+    data = [
+        ":fastboot_host",
+        "@multitool//tools/fastboot",
+    ],
 )
