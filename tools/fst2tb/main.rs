@@ -62,9 +62,11 @@
 //! of a few hundred cycles; a literal is data, but a unit of half a
 //! megabyte of them is over the limit too, so they are spread.
 //!
-//! Usage: fst2tb FILE.fst FILE.vhd.ports ENTITY UNIT [--verilog] > tb
+//! Usage: fst2tb FILE.fst FILE.vhd.ports ENTITY UNIT
+//!          [--verilog VECTORS PATH] > tb
 //! where UNIT is the name the Rust testbench gave the unit in the trace;
-//! `--verilog` writes the same testbench in Verilog, for Verilator.
+//! `--verilog` writes the same testbench in Verilog, for Verilator, with
+//! its frames in the file VECTORS, which the testbench opens as PATH.
 use std::collections::BTreeMap;
 
 // The netlist's reserved words, from the file the runtime and the
@@ -146,6 +148,53 @@ fn aliases(
     out
 }
 
+/// A string of bits as `$readmemh` reads a vector: hex digits, the
+/// first bit the highest, padded with zeros on the left. The VHDL
+/// frames pad on the right instead, since there a frame is a string
+/// read from its first character.
+fn vhex(bits: &str) -> String {
+    let pad = (4 - bits.len() % 4) % 4;
+    let bits = format!("{}{bits}", "0".repeat(pad));
+    bits.as_bytes()
+        .chunks(4)
+        .map(|c| {
+            let v = c.iter().fold(0u32, |v, &b| v << 1 | (b == b'1') as u32);
+            char::from_digit(v, 16).unwrap()
+        })
+        .collect()
+}
+
+/// Names for the testbench's own signals, each `base` lengthened by
+/// `tb_` in front while it is a name in `taken` or one already given.
+fn fresh<const N: usize>(bases: &[&str; N], taken: &[String]) -> [String; N] {
+    let mut used: std::collections::HashSet<String> =
+        taken.iter().cloned().collect();
+    used.insert("errors".to_string());
+    bases.map(|b| {
+        let mut n = b.to_string();
+        while used.contains(&n) {
+            n = format!("tb_{n}");
+        }
+        used.insert(n.clone());
+        n
+    })
+}
+
+/// An expected value into a frame, followed by whether to check it: a
+/// value the trace holds, or zeros and no check where it holds none.
+fn push_expected(f: &mut String, w: usize, v: Option<String>) {
+    match v {
+        Some(v) => {
+            f.push_str(&v);
+            f.push('1');
+        }
+        None => {
+            f.push_str(&"0".repeat(w));
+            f.push('0');
+        }
+    }
+}
+
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let (fst, ports, entity, unit) = (&a[1], &a[2], &a[3], &a[4]);
@@ -155,6 +204,16 @@ fn main() {
     // `_tb` after it, since that is what the build asks to run.
     let module = reserved::escaped(entity);
     let verilog = a.get(5).map(|s| s == "--verilog").unwrap_or(false);
+    // Where the Verilog testbench's vectors are written, and the path
+    // the testbench opens them by when it runs.
+    let (vectors_out, vectors_path) = if verilog {
+        (
+            a.get(6).expect("--verilog VECTORS PATH").clone(),
+            a.get(7).expect("--verilog VECTORS PATH").clone(),
+        )
+    } else {
+        (String::new(), String::new())
+    };
     // The ports file may hold several entities, each section opened by
     // `entity NAME`; the one asked for is taken, or everything when the
     // file has no sections.
@@ -476,6 +535,92 @@ fn main() {
         );
         std::process::exit(1);
     }
+    // The frames: one per cycle, the inputs for its edge and the
+    // values expected after it, as a string of bits. Each expected
+    // value is followed by whether to check it, since the trace may
+    // not hold one, and a sender's data is checked only under its
+    // valid. An input the trace holds nothing for keeps the value it
+    // had, starting from zero. The Verilog testbench starts an empty
+    // channel's `ready` high, as its signal starts, which is
+    // `ready_high`; the VHDL one's frames start it at zero, as they
+    // always have. Both testbenches replay these, the VHDL from
+    // packages of literals and the Verilog from a file of vectors.
+    let last = times.last().copied().unwrap_or(0) as usize;
+    let build_frames = |ready_high: bool| -> Vec<String> {
+        let mut frames: Vec<String> = Vec::new();
+        let mut last_in: Vec<String> = ports
+            .iter()
+            .filter(|(n, d, _)| is_in(d) && !clocks.contains(n))
+            .map(|(n, d, w)| {
+                if ready_high && empty_ready(n, d) {
+                    format!("{}1", "0".repeat(*w - 1))
+                } else {
+                    "0".repeat(*w)
+                }
+            })
+            .collect();
+        let mut t = 0usize;
+        while t + 2 <= last {
+            // At tick 2k+1: the inputs for the next edge, from the trace at
+            // 2k+2, or at 2k for a registered input; the registers against
+            // the trace at 2k, or 2k+1 for a falling-edge one, which takes
+            // its value at that instant; the outputs against 2k+2.
+            let mut f = String::new();
+            let mut i = 0;
+            for (n, d, _) in &ports {
+                if is_in(d) && !clocks.contains(n) {
+                    let at = if registered(d) {
+                        t
+                    } else {
+                        port_next_edge(n, t + 2)
+                    };
+                    if let Some(v) = val(&trace_name(n, d), at) {
+                        last_in[i] = v;
+                    }
+                    f.push_str(&last_in[i]);
+                    i += 1;
+                }
+            }
+            for (n, d, w) in &ports {
+                let at = match d.as_str() {
+                    "reg" => Some(t),
+                    "regf" => t.checked_sub(1),
+                    _ => continue,
+                };
+                let v = at.and_then(|at| val(&trace_name(n, d), at));
+                push_expected(&mut f, *w, v);
+            }
+            for (n, d, w) in &ports {
+                if is_out(d) {
+                    let mut v = val(&trace_name(n, d), t + port_period(n));
+                    // A handshake between its own clock's edges: the
+                    // trace holds nothing for it, so the frame says not
+                    // to check rather than checking against a value the
+                    // run never had (issue 384).
+                    if pulsed(n, d) && !port_edge(n, t + port_period(n)) {
+                        v = None;
+                    }
+                    if d == "txout" && n.ends_with("_data") {
+                        let vn = n.replace("_data", "_valid");
+                        if !port_edge(&vn, t + port_period(n)) {
+                            v = None;
+                        } else {
+                            let valid = trace_name(&vn, d);
+                            if val(&valid, t + port_period(n)).as_deref()
+                                != Some("1")
+                            {
+                                v = None;
+                            }
+                        }
+                    }
+                    push_expected(&mut f, *w, v);
+                }
+            }
+            frames.push(f);
+            t += 2;
+        }
+        frames
+    };
     // The same testbench in Verilog, for Verilator. The clock's edges
     // sit at 2k + 0.5, so the inputs applied at time zero and at 2k+1
     // come before the edge that reads them, and a tenth of a tick
@@ -512,7 +657,6 @@ fn main() {
             .map(|p| format!(".{0}({0})", p.0))
             .collect();
         o.push_str(&format!("  {module} uut ({});\n", maps.join(", ")));
-        let last = times.last().copied().unwrap_or(0) as usize;
         // One driver per clock, each at the period and phase its own
         // trace shows. The half tick is the same offset the single
         // clock always had: the edge falls between the tick the inputs
@@ -528,6 +672,37 @@ fn main() {
                 last / period + 2
             ));
         }
+        // The replay is data, not code: one vector per cycle in a file
+        // beside the testbench, read with `$readmemh`, and one loop
+        // that applies and checks a vector, a statement per port and
+        // not per port per cycle. Written out per cycle, Verilator took
+        // 11 GiB and twelve minutes over the SD host's run of two
+        // million lines, and the small CI runner stopped it (issue
+        // 601); as data, the testbench is the same size whatever the
+        // run's length. A vector is a frame with a marker bit in front,
+        // so a vector the file does not hold is caught and not replayed
+        // as zeros that check nothing.
+        let frames = build_frames(true);
+        let fw = frames.first().map_or(0, |f| f.len()) + 1;
+        let nv = frames.len();
+        let mut file = String::new();
+        for f in &frames {
+            file.push_str(&vhex(&format!("1{f}")));
+            file.push('\n');
+        }
+        std::fs::write(vectors_out, file).expect("write the vectors");
+        // The testbench's own names, none of them a port's: a unit
+        // with a port called `i` is in the tree.
+        let taken: Vec<String> = ports.iter().map(|p| p.0.clone()).collect();
+        let [vs, f, i, fd, path] =
+            fresh(&["vectors", "f", "i", "fd", "path"], &taken);
+        o.push_str(&format!(
+            "  reg [{}:0] {vs} [0:{}];\n  reg [{}:0] {f};\n  \
+             integer {i};\n  integer {fd};\n  reg [8*512-1:0] {path};\n",
+            fw - 1,
+            nv.max(1) - 1,
+            fw - 1
+        ));
         o.push_str("  initial begin\n");
         for (n, d, w) in &ports {
             if d == "in" && !clocks.contains(n) {
@@ -536,82 +711,75 @@ fn main() {
                 }
             }
         }
+        // The file's path from the runfiles, where a test runs, or from
+        // `+vectors=` for a run from anywhere else. A file that is not
+        // there stops the run, since `$readmemh` only warns.
+        o.push_str(&format!(
+            "    if (!$value$plusargs(\"vectors=%s\", {path}))\n      \
+             {path} = \"{vectors_path}\";\n    \
+             {fd} = $fopen({path}, \"r\");\n    \
+             if ({fd} == 0) $fatal(1, \"no vectors at %0s\", {path});\n    \
+             $fclose({fd});\n    $readmemh({path}, {vs});\n    \
+             for ({i} = 0; {i} < {nv}; {i} = {i} + 1) begin\n      #1;\n      \
+             {f} = {vs}[{i}];\n      if ({f}[{}] !== 1'b1)\n        \
+             $fatal(1, \"vector %0d is missing from %0s\", {i}, {path});\n",
+            fw - 1
+        ));
+        // A field's bits in the vector, from its offset in the frame,
+        // the frame's first bit being the vector's highest but one.
+        let mut off = 0usize;
+        let mut field = |w: usize| -> String {
+            let hi = fw - 2 - off;
+            off += w;
+            if w == 1 {
+                format!("{f}[{hi}]")
+            } else {
+                format!("{f}[{hi}:{}]", hi + 1 - w)
+            }
+        };
+        for (n, d, w) in &ports {
+            if is_in(d) && !clocks.contains(n) {
+                o.push_str(&format!("      {n} = {};\n", field(*w)));
+            }
+        }
+        o.push_str("      #0.1;\n");
+        // A rising-edge register took its value at 2k; a falling-edge
+        // one at the falling edge before, 2k-1 in the trace, since here
+        // the clock falls at 2k+1.5. Which, and whether at all, is the
+        // frame's flag; the tick, the signal and both values are the
+        // message.
         let check =
-            |o: &mut String, what: &str, sig: &str, w: usize, v: &str| {
+            |o: &mut String, what: &str, sig: &str, e: &str, c: &str| {
                 o.push_str(&format!(
-                    "    if ({sig} !== {}) begin $display(\"{what} differs \
-                 at %0t\", $time); errors = errors + 1; end\n",
-                    vlit(w, v)
+                    "      if ({c} && {sig} !== {e}) begin\n        \
+                 $display(\"{what} differs at tick %0d: expected %0h, \
+                 got %0h\", \
+                 $time, {e}, {sig});\n        errors = errors + 1;\n      \
+                 end\n"
                 ));
             };
-        let mut t = 0usize;
-        while t + 2 <= last {
-            o.push_str("    #1;\n");
-            for (n, d, w) in &ports {
-                if is_in(d) && !clocks.contains(n) {
-                    let at = if registered(d) {
-                        t
-                    } else {
-                        port_next_edge(n, t + 2)
-                    };
-                    if let Some(v) = val(&trace_name(n, d), at) {
-                        o.push_str(&format!("    {n} = {};\n", vlit(*w, &v)));
-                    }
-                }
+        for (n, d, w) in &ports {
+            if is_reg(d) {
+                let e = field(*w);
+                let c = field(1);
+                check(&mut o, n, &format!("uut.{n}"), &e, &c);
             }
-            o.push_str("    #0.1;\n");
-            // A rising-edge register took its value at 2k; a
-            // falling-edge one at the falling edge before, 2k-1 in the
-            // trace, since here the clock falls at 2k+1.5.
-            for (n, d, w) in &ports {
-                let at = match d.as_str() {
-                    "reg" => t,
-                    "regf" if t >= 1 => t - 1,
-                    _ => continue,
-                };
-                if let Some(v) = val(&trace_name(n, d), at) {
-                    check(&mut o, n, &format!("uut.{n}"), *w, &v);
-                }
-            }
-            for (n, d, w) in &ports {
-                if is_out(d) {
-                    // A handshake is only comparable at its own
-                    // clock's edge; between them the trace holds
-                    // nothing for it. The data's gate below reads the
-                    // valid at the same tick, so it follows this and
-                    // does not admit a cycle the valid cannot speak
-                    // for.
-                    if pulsed(n, d) && !port_edge(n, t + port_period(n)) {
-                        continue;
-                    }
-                    if d == "txout" && n.ends_with("_data") {
-                        let valid = n.replace("_data", "_valid");
-                        if !port_edge(&valid, t + port_period(n)) {
-                            continue;
-                        }
-                        let valid = trace_name(&valid, d);
-                        if val(&valid, t + port_period(n)).as_deref()
-                            != Some("1")
-                        {
-                            continue;
-                        }
-                    }
-                    if let Some(v) = val(&trace_name(n, d), t + port_period(n))
-                    {
-                        let sig = if d == "wire" {
-                            format!("uut.{n}")
-                        } else {
-                            n.clone()
-                        };
-                        check(&mut o, n, &sig, *w, &v);
-                    }
-                }
-            }
-            o.push_str("    #0.9;\n");
-            t += 2;
         }
+        for (n, d, w) in &ports {
+            if is_out(d) {
+                let e = field(*w);
+                let c = field(1);
+                let sig = if d == "wire" {
+                    format!("uut.{n}")
+                } else {
+                    n.clone()
+                };
+                check(&mut o, n, &sig, &e, &c);
+            }
+        }
+        debug_assert_eq!(off + 1, fw);
         o.push_str(
-            "    #1;\n    if (errors == 0) \
+            "      #0.9;\n    end\n    #1;\n    if (errors == 0) \
              $display(\"the lowering agrees with the trace\");\n    \
              else $fatal(1, \"the lowering differs from the trace\");\n    \
              $finish;\n  end\nendmodule\n",
@@ -671,7 +839,6 @@ fn main() {
         .map(|p| format!("{0} => {0}", p.0))
         .collect();
     o.push_str(&format!("{});\n\n", maps.join(", ")));
-    let last = times.last().copied().unwrap_or(0) as usize;
     // One process per clock, each at the period and phase its own
     // trace shows, one tick per nanosecond. The first edge is at the
     // clock's phase, where the inputs for it are applied too: a few
@@ -824,83 +991,8 @@ fn main() {
         "    procedure tb_tick(f : string) is\n    begin\n{tick}    \
          end procedure;\n"
     ));
-    let mut frames: Vec<String> = Vec::new();
-    let mut last_in: Vec<String> = ports
-        .iter()
-        .filter(|(n, d, _)| is_in(d) && !clocks.contains(n))
-        .map(|(_, _, w)| "0".repeat(*w))
-        .collect();
-    let mut t = 0usize;
-    while t + 2 <= last {
-        // At tick 2k+1: the inputs for the next edge, from the trace at
-        // 2k+2, or at 2k for a registered input; the registers against
-        // the trace at 2k, or 2k+1 for a falling-edge one, which takes
-        // its value at that instant; the outputs against 2k+2.
-        let mut f = String::new();
-        let mut i = 0;
-        for (n, d, _) in &ports {
-            if is_in(d) && !clocks.contains(n) {
-                let at = if registered(d) {
-                    t
-                } else {
-                    port_next_edge(n, t + 2)
-                };
-                if let Some(v) = val(&trace_name(n, d), at) {
-                    last_in[i] = v;
-                }
-                f.push_str(&last_in[i]);
-                i += 1;
-            }
-        }
-        let expected = |f: &mut String, w: usize, v: Option<String>| match v {
-            Some(v) => {
-                f.push_str(&v);
-                f.push('1');
-            }
-            None => {
-                f.push_str(&"0".repeat(w));
-                f.push('0');
-            }
-        };
-        for (n, d, w) in &ports {
-            let at = match d.as_str() {
-                "reg" => Some(t),
-                "regf" => t.checked_sub(1),
-                _ => continue,
-            };
-            let v = at.and_then(|at| val(&trace_name(n, d), at));
-            expected(&mut f, *w, v);
-        }
-        for (n, d, w) in &ports {
-            if is_out(d) {
-                let mut v = val(&trace_name(n, d), t + port_period(n));
-                // A handshake between its own clock's edges: the
-                // trace holds nothing for it, so the frame says not
-                // to check rather than checking against a value the
-                // run never had (issue 384).
-                if pulsed(n, d) && !port_edge(n, t + port_period(n)) {
-                    v = None;
-                }
-                if d == "txout" && n.ends_with("_data") {
-                    let vn = n.replace("_data", "_valid");
-                    if !port_edge(&vn, t + port_period(n)) {
-                        v = None;
-                    } else {
-                        let valid = trace_name(&vn, d);
-                        if val(&valid, t + port_period(n)).as_deref()
-                            != Some("1")
-                        {
-                            v = None;
-                        }
-                    }
-                }
-                expected(&mut f, *w, v);
-            }
-        }
-        debug_assert_eq!(f.len(), width);
-        frames.push(f);
-        t += 2;
-    }
+    let frames = build_frames(false);
+    debug_assert!(frames.iter().all(|f| f.len() == width));
     // The frames, as hex, in packages of a few hundred before the
     // entity: one package is one design unit under nvc's heap limit.
     let hex = |f: &str| -> String {
@@ -952,6 +1044,32 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::aliases;
+
+    use super::vhex;
+
+    use super::fresh;
+
+    /// The case of `ex_valif`, whose unit has a port called `i`: the
+    /// loop's counter takes another name, and so does any name a port
+    /// already has.
+    #[test]
+    fn a_testbench_name_is_never_a_port() {
+        let [f, i, fd] = fresh(&["f", "i", "fd"], &names(&["i", "tb_i"]));
+        assert_eq!(f, "f");
+        assert_eq!(i, "tb_tb_i");
+        assert_eq!(fd, "fd");
+    }
+
+    /// A vector is padded on the left, so that its first bit is the
+    /// highest of the word `$readmemh` reads, and a field's place in
+    /// it counts down from there.
+    #[test]
+    fn a_vector_is_padded_on_the_left() {
+        assert_eq!(vhex("1"), "1");
+        assert_eq!(vhex("10000"), "10");
+        assert_eq!(vhex("110100101"), "1a5");
+        assert_eq!(vhex("11111111"), "ff");
+    }
 
     use super::collisions;
 

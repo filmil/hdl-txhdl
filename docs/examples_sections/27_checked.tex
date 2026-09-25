@@ -18,6 +18,19 @@ under Verilator, both built from source, hermetically. Each test
 passes only if every comparison held, so both emitters are checked,
 and a defect in either shows as a disagreement in one of the two.
 
+Both testbenches hold the trace as data rather than as code. A cycle
+is a frame: the inputs for its edge, then each value expected after
+it with a bit that says whether to check it. The VHDL testbench keeps
+the frames as hex literals in packages; the Verilog one reads them
+from a file beside it with \code{\$readmemh}, one vector a cycle, and
+one loop applies and checks a vector. A testbench is then the same
+size however long the run is. Written out a statement per cycle, the
+Verilog of the SD host's run was two million lines, which took
+Verilator 11~GiB and twelve minutes to compile and was stopped on the
+smaller CI runner (issue 601); as a loop it takes 25~MiB and under a
+second. A failed comparison names the signal, the tick, the value
+expected and the value found.
+
 The testbench's timing is the model of time, made literal. One tick is
 one nanosecond and the clock rises at even ticks. An input the trace
 holds at tick $2k$ was set before that edge, so it is applied at
