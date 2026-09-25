@@ -69,29 +69,54 @@ winning the bus, which sets arbitration lost and ends the command.
 
 \subsection*{Behaviour}
 
+The master is two processes. The bus process answers the registers
+every cycle, counts the cycles of a quarter of a bit in \code{tick},
+drives \code{scl\_low} and \code{sda\_low} from \code{scl\_pull} and
+\code{sda\_pull}, and latches what a command found. The engine is the
+transaction written as the sequence it is: a wait for a command, then
+the start, the eight bits, the acknowledge and the stop, a quarter of
+a bit per wait, with the lines set for each quarter before its wait.
+The lowering numbers the waits into a state register the unit does not
+declare, \code{at\_wait}, and the eight bits are a counted loop with a
+counter of its own, \code{for0}; both are in the tables above, and
+there is no \code{step} or \code{quarter} register to read.
+
 \begin{itemize}
-\item Writing \code{cmd} clears the three status bits, records what
-was asked, and starts the run. \code{step} walks the transaction:
-idle, the start, the eight bits, the acknowledge, the stop, the end.
-\item \code{quarter} says which quarter of the bit the lines are in,
-and \code{tick} counts the cycles of that quarter against the divider.
-\item On a write, the acknowledge step reads the data line: low is the
-device acknowledging, high sets the not-acknowledged bit.
-\item On a read, the byte arrives in \code{shift} and is put in the
-\code{data} register, which the word at \code{0x08} reads. The master
-then drives the answer bit 4 asked for.
-\item Finishing a command sets the done bit, which raises the
-interrupt while the enable is set, and clears busy.
-\item \code{held} records that a start has been sent and no stop has,
-which is what parks the lines between the commands of one
-transaction.
+\item Writing \code{cmd} while no command runs records what was asked
+and the byte to send, clears \code{nack\_hit} and \code{lost\_hit},
+sets \code{busy}, and sets \code{held} on a start.
+\item A quarter ends when \code{tick} reaches the divider and the
+clock is not being stretched: a device holding the clock low where
+the master released it holds the quarter with it.
+\item On a write, the acknowledge reads the data line: low is the
+device acknowledging, high sets \code{nack\_hit}.
+\item On a read, the byte arrives in \code{shift} and is put in
+\code{data}, which the word at \code{0x08} reads. The master then
+drives the answer bit 4 asked for.
+\item A master writing a one that reads back a zero has lost the bus
+to another master. It sets \code{lost\_hit}, releases both lines for
+the rest of the byte, whose bits the loop still counts through, and
+skips the acknowledge and the stop.
+\item At the end the lines are parked, the clock low while the
+transaction stays open and both released when it is over or the bus
+was lost. \code{done} is up for one cycle, when the bus process
+latches \code{fired}, \code{nack} and \code{lost}; \code{busy} falls a
+cycle after it. \code{fired} is the done bit, which raises the
+interrupt while the enable is set.
+\item Out of reset both lines are released: \code{scl\_pull} and
+\code{sda\_pull} say whether the engine pulls a line, and reset to
+not pulling (issue 606).
 \end{itemize}
 
 \subsection*{Verification}
 
 \begin{itemize}
 \item \code{//lib/parts:parts\_test} drives the master against the
-device model in the same file.
+device model in the same file: a write reaches the device, a read
+takes a byte from it, an address nobody answers sets not acknowledged,
+a device that stretches the clock is waited for, and another master
+that wins the third bit of the address makes this one report
+arbitration lost and let go of the data line.
 \item \code{//lib/examples:ex\_i2c} addresses a device, writes to it,
 turns the bus around and reads back, and the build simulates the
 netlist against that run under nvc and Verilator.
