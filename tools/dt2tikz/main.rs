@@ -358,10 +358,23 @@ fn label_for(
 }
 
 /// A bus value: hex when it is binary and long enough to be unreadable.
+/// Four bits at a time, with no integer in between, so a value of any
+/// width keeps its bits (issue 582).
 fn pretty(v: &str) -> String {
     if v.len() > 4 && v.chars().all(|c| c == '0' || c == '1') {
-        let n = u128::from_str_radix(v, 2).unwrap_or(0);
-        format!("{n:x}")
+        let pad = "0".repeat((4 - v.len() % 4) % 4) + v;
+        let hex: String = pad
+            .as_bytes()
+            .chunks(4)
+            .map(|d| {
+                let n = d.iter().fold(0, |n, b| n * 2 + (b - b'0') as u32);
+                char::from_digit(n, 16).unwrap()
+            })
+            .collect();
+        match hex.trim_start_matches('0') {
+            "" => "0".to_string(),
+            h => h.to_string(),
+        }
     } else {
         v.to_string()
     }
