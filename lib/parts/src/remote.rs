@@ -101,9 +101,6 @@ pub struct Remote<const T: usize> {
 }
 // end{state}
 
-// A struct literal's field is `name: value` to the lowering, which
-// reads no shorthand (issue 235), so `tag: tag` stays as written.
-#[allow(clippy::redundant_field_names)]
 // begin{run}
 #[lower]
 impl<const T: usize> Unit for Remote<T> {
@@ -165,7 +162,7 @@ impl<const T: usize> Unit for Remote<T> {
             });
             if go.to_bool() {
                 out.send(Ask {
-                    tag: tag,
+                    tag,
                     write: wr,
                     addr: mux(wr, awh.addr, arh.addr),
                     data: mux(wr, wh.data, U::<32>::from(0u32)),

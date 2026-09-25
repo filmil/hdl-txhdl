@@ -134,9 +134,6 @@ fn ask_byte(
     })
 }
 
-// A struct literal's field is `name: value` to the lowering, which
-// reads no shorthand (issue 235), so `tag: tag` stays as written.
-#[allow(clippy::redundant_field_names)]
 // begin{ethrun}
 #[lower]
 impl<const DEV: usize> Unit for RemoteLink<DEV> {

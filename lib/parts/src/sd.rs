@@ -253,8 +253,6 @@ fn crc16_step(crc: U<16>, bit: Bit) -> U<16> {
 }
 
 // begin{run}
-// The lowering reads `&` and `>=`, not a range (issue 235).
-#[allow(clippy::manual_range_contains)]
 #[lower]
 impl Unit for Sd {
     async fn run(
@@ -367,7 +365,8 @@ impl Unit for Sd {
             // CRC, and the end bit; the bit driven now is also the one
             // the CRC takes.
             let send_data = falling & in_send & (n < 40);
-            let send_crc = falling & in_send & (n >= 40) & (n < 47);
+            let send_crc =
+                falling & in_send & Bit::from((40..47).contains(&n.raw()));
             let send_end = falling & in_send & (n == 47);
             let send_over = falling & in_send & (n == 48);
             // The response: its start bit ends the waited, and the CRC
@@ -423,7 +422,8 @@ impl Unit for Sd {
             let tstart = rising & in_crcstat & (n == 0) & !dat0;
             let tgiveup =
                 rising & in_crcstat & (n == 0) & (waited == 0xff_ffff);
-            let tbit = rising & in_crcstat & (n >= 1) & (n < 4);
+            let tbit =
+                rising & in_crcstat & Bit::from((1..4).contains(&n.raw()));
             let tend = rising & in_crcstat & (n == 4);
             let tbad = tend & (self.crcstat.get() != 2);
             // Busy: the card holds the first line low, and the host
