@@ -24,12 +24,16 @@
 use crate::bus::axi::{Addr, Ar, Aw, BurstKind, Resp, B, R, W};
 use txhdl::comp::{Clock, DefaultClock, In, Out, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, Trace};
+use txhdl::{lower, select, Ports, Trace};
 
 // begin{ports}
-/// What the host drives, and the answers coming back to it from the
-/// link: the unit's inputs.
-pub struct AxiPinsIn<
+/// What the host drives: its 24 pins, named as AXI4 names them. A
+/// struct of its own so that a design holding a host's pins among its
+/// ports holds them as one field, `jtag: AxiHostPins<..>`, and passes
+/// them on whole; its ports are then `jtag_awid` and the rest
+/// (issue 579).
+#[derive(Ports)]
+pub struct AxiHostPins<
     const A: usize,
     const D: usize,
     const S: usize,
@@ -83,6 +87,18 @@ pub struct AxiPinsIn<
     pub arvalid: In<Bit>,
     /// The host takes a read beat.
     pub rready: In<Bit>,
+}
+
+/// What the host drives, and the answers coming back to it from the
+/// link: the unit's inputs.
+pub struct AxiPinsIn<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+> {
+    /// The host's pins.
+    pub pins: AxiHostPins<A, D, S, I>,
     /// The write responses from the link.
     pub b: Rx<B<I>>,
     /// The read beats from the link.
@@ -155,8 +171,8 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
             let aw_room = outp.aw.ready();
             let ar_room = outp.ar.ready();
             let w_room = outp.w.ready();
-            let awburst = inp.awburst.get();
-            let arburst = inp.arburst.get();
+            let awburst = inp.pins.awburst.get();
+            let arburst = inp.pins.arburst.get();
             let awkind = select!(awburst.raw() => {
                 0 => BurstKind::Fixed,
                 1 => BurstKind::Incr,
@@ -169,39 +185,39 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
                 2 => BurstKind::Wrap,
                 _ => BurstKind::Reserved,
             });
-            if (inp.awvalid.get() & aw_room).to_bool() {
+            if (inp.pins.awvalid.get() & aw_room).to_bool() {
                 outp.aw.send(Addr {
-                    id: inp.awid.get(),
-                    addr: inp.awaddr.get(),
-                    len: inp.awlen.get(),
-                    size: inp.awsize.get(),
+                    id: inp.pins.awid.get(),
+                    addr: inp.pins.awaddr.get(),
+                    len: inp.pins.awlen.get(),
+                    size: inp.pins.awsize.get(),
                     burst: awkind,
-                    lock: inp.awlock.get(),
-                    cache: inp.awcache.get(),
-                    prot: inp.awprot.get(),
+                    lock: inp.pins.awlock.get(),
+                    cache: inp.pins.awcache.get(),
+                    prot: inp.pins.awprot.get(),
                     qos: U::<4>::from(0u8),
                     region: U::<4>::from(0u8),
                 });
             }
-            if (inp.arvalid.get() & ar_room).to_bool() {
+            if (inp.pins.arvalid.get() & ar_room).to_bool() {
                 outp.ar.send(Addr {
-                    id: inp.arid.get(),
-                    addr: inp.araddr.get(),
-                    len: inp.arlen.get(),
-                    size: inp.arsize.get(),
+                    id: inp.pins.arid.get(),
+                    addr: inp.pins.araddr.get(),
+                    len: inp.pins.arlen.get(),
+                    size: inp.pins.arsize.get(),
                     burst: arkind,
-                    lock: inp.arlock.get(),
-                    cache: inp.arcache.get(),
-                    prot: inp.arprot.get(),
+                    lock: inp.pins.arlock.get(),
+                    cache: inp.pins.arcache.get(),
+                    prot: inp.pins.arprot.get(),
                     qos: U::<4>::from(0u8),
                     region: U::<4>::from(0u8),
                 });
             }
-            if (inp.wvalid.get() & w_room).to_bool() {
+            if (inp.pins.wvalid.get() & w_room).to_bool() {
                 outp.w.send(W {
-                    data: inp.wdata.get(),
-                    strb: inp.wstrb.get(),
-                    last: inp.wlast.get(),
+                    data: inp.pins.wdata.get(),
+                    strb: inp.pins.wstrb.get(),
+                    last: inp.pins.wlast.get(),
                 });
             }
             outp.awready.set(aw_room);
@@ -231,8 +247,8 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
             outp.rdata.set(rh.data);
             outp.rresp.set(rresp);
             outp.rlast.set(rh.last);
-            let _ = inp.b.recv_if(inp.bready.get());
-            let _ = inp.r.recv_if(inp.rready.get());
+            let _ = inp.b.recv_if(inp.pins.bready.get());
+            let _ = inp.r.recv_if(inp.pins.rready.get());
         }
     }
 }
@@ -244,7 +260,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
 /// in the join, since the pins are wires the unit reads in the same
 /// step.
 pub mod sim {
-    use super::{AxiPinsIn, AxiPinsOut};
+    use super::{AxiHostPins, AxiPinsIn, AxiPinsOut};
     use crate::bus::axi::{Ar, Aw, Resp, B, R, W};
     use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Rx, Tx};
     use txhdl::types::{Bit, U};
@@ -619,30 +635,32 @@ pub mod sim {
         (
             host,
             AxiPinsIn {
-                awid: h.awid,
-                awaddr: h.awaddr,
-                awlen: h.awlen,
-                awsize: h.awsize,
-                awburst: h.awburst,
-                awlock: h.awlock,
-                awcache: h.awcache,
-                awprot: h.awprot,
-                awvalid: h.awvalid,
-                wdata: h.wdata,
-                wstrb: h.wstrb,
-                wlast: h.wlast,
-                wvalid: h.wvalid,
-                bready: h.bready,
-                arid: h.arid,
-                araddr: h.araddr,
-                arlen: h.arlen,
-                arsize: h.arsize,
-                arburst: h.arburst,
-                arlock: h.arlock,
-                arcache: h.arcache,
-                arprot: h.arprot,
-                arvalid: h.arvalid,
-                rready: h.rready,
+                pins: AxiHostPins {
+                    awid: h.awid,
+                    awaddr: h.awaddr,
+                    awlen: h.awlen,
+                    awsize: h.awsize,
+                    awburst: h.awburst,
+                    awlock: h.awlock,
+                    awcache: h.awcache,
+                    awprot: h.awprot,
+                    awvalid: h.awvalid,
+                    wdata: h.wdata,
+                    wstrb: h.wstrb,
+                    wlast: h.wlast,
+                    wvalid: h.wvalid,
+                    bready: h.bready,
+                    arid: h.arid,
+                    araddr: h.araddr,
+                    arlen: h.arlen,
+                    arsize: h.arsize,
+                    arburst: h.arburst,
+                    arlock: h.arlock,
+                    arcache: h.arcache,
+                    arprot: h.arprot,
+                    arvalid: h.arvalid,
+                    rready: h.rready,
+                },
                 b,
                 r,
             },

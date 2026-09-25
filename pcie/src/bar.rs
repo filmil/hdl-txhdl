@@ -7,7 +7,7 @@ use txhdl::{lower, select, with, Trace};
 use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiPer, PerPort, PerReq, Resp, B, R, W,
 };
-use txhdl_parts::bus::axi_pins::{AxiPins, AxiPinsIn, AxiPinsOut};
+use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
 
 /// The identifier word, at offset 0: `TxHDL` in ASCII, and a version.
 pub const IDENT: u64 = 0x5478_4844_4c00_0001;
@@ -262,30 +262,32 @@ impl Unit for PcieBar {
             join2(
                 self.pins.run(
                     AxiPinsIn {
-                        awid,
-                        awaddr,
-                        awlen,
-                        awsize,
-                        awburst,
-                        awlock,
-                        awcache,
-                        awprot,
-                        awvalid,
-                        wdata,
-                        wstrb,
-                        wlast,
-                        wvalid,
-                        bready,
-                        arid,
-                        araddr,
-                        arlen,
-                        arsize,
-                        arburst,
-                        arlock,
-                        arcache,
-                        arprot,
-                        arvalid,
-                        rready,
+                        pins: AxiHostPins {
+                            awid,
+                            awaddr,
+                            awlen,
+                            awsize,
+                            awburst,
+                            awlock,
+                            awcache,
+                            awprot,
+                            awvalid,
+                            wdata,
+                            wstrb,
+                            wlast,
+                            wvalid,
+                            bready,
+                            arid,
+                            araddr,
+                            arlen,
+                            arsize,
+                            arburst,
+                            arlock,
+                            arcache,
+                            arprot,
+                            arvalid,
+                            rready,
+                        },
                         b: b_rx,
                         r: r_rx,
                     },

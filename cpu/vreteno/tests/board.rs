@@ -14,6 +14,7 @@ use txhdl::comp::{
 };
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
 use vreteno32::board::{Board, BoardIn, BoardOut, REMOTE_DEV};
@@ -365,30 +366,32 @@ fn run_all(
             vb: chan::<LiteB, DefaultClock>().1,
             vr: chan::<LiteR<32>, DefaultClock>().1,
             net_rx: net_in_rx,
-            jtag_awid: signal::<U<2>, DefaultClock>().1,
-            jtag_awaddr: awaddr,
-            jtag_awlen: awlen,
-            jtag_awsize: awsize,
-            jtag_awburst: awburst,
-            jtag_awlock: lo(),
-            jtag_awcache: signal::<U<4>, DefaultClock>().1,
-            jtag_awprot: signal::<U<3>, DefaultClock>().1,
-            jtag_awvalid: awvalid,
-            jtag_wdata: wdata,
-            jtag_wstrb: wstrb,
-            jtag_wlast: wlast,
-            jtag_wvalid: wvalid,
-            jtag_bready: bready,
-            jtag_arid: signal::<U<2>, DefaultClock>().1,
-            jtag_araddr: araddr,
-            jtag_arlen: arlen,
-            jtag_arsize: arsize,
-            jtag_arburst: arburst,
-            jtag_arlock: lo(),
-            jtag_arcache: signal::<U<4>, DefaultClock>().1,
-            jtag_arprot: signal::<U<3>, DefaultClock>().1,
-            jtag_arvalid: arvalid,
-            jtag_rready: rready,
+            jtag: AxiHostPins {
+                awid: signal::<U<2>, DefaultClock>().1,
+                awaddr,
+                awlen,
+                awsize,
+                awburst,
+                awlock: lo(),
+                awcache: signal::<U<4>, DefaultClock>().1,
+                awprot: signal::<U<3>, DefaultClock>().1,
+                awvalid,
+                wdata,
+                wstrb,
+                wlast,
+                wvalid,
+                bready,
+                arid: signal::<U<2>, DefaultClock>().1,
+                araddr,
+                arlen,
+                arsize,
+                arburst,
+                arlock: lo(),
+                arcache: signal::<U<4>, DefaultClock>().1,
+                arprot: signal::<U<3>, DefaultClock>().1,
+                arvalid,
+                rready,
+            },
         },
         BoardOut {
             halt: halt_o,
@@ -599,7 +602,10 @@ fn two_frames_written_to_memory_leave_the_port_as_written_in_order() {
     let a = frame(0, 23);
     let b = frame(1, 18);
     let ran = run(ethtx_program::TEXT, ethtx_program::DATA, b"", 40000);
-    assert!(ran.halted_at.is_some(), "both frames went and the core halted");
+    assert!(
+        ran.halted_at.is_some(),
+        "both frames went and the core halted"
+    );
     assert_eq!(ran.sent.len(), 2, "exactly two frames left the port");
     assert_eq!(ran.sent[0], a, "the first, as the core wrote it");
     assert_eq!(ran.sent[1], b, "then the second, as the core wrote it");

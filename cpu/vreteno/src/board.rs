@@ -48,7 +48,7 @@ use txhdl_parts::bus::axi::{
 use txhdl_parts::bus::axi_lite::{
     LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge6, LitePort, LiteR, LiteW,
 };
-use txhdl_parts::bus::axi_pins::{AxiPins, AxiPinsIn, AxiPinsOut};
+use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::router::Router7;
 use txhdl_parts::dma::{LineFetch, LineStore, NoBeats, NoReads};
 use txhdl_parts::eth::EthByte;
@@ -267,7 +267,8 @@ pub struct Board<const DIV: u32> {
 // begin{ports}
 /// The board's inputs: the resets, the interrupt, the serial line, the
 /// board's clock and the controller's reset, the video slot's answers, the frames arriving, and
-/// the JTAG master's pins, named as AXI4 names them under `jtag_`.
+/// the JTAG master's pins, named as AXI4 names them under `jtag_`,
+/// as one field.
 pub struct BoardIn {
     pub rst: In<Bit>,
     pub irq: In<Bit>,
@@ -277,30 +278,9 @@ pub struct BoardIn {
     pub vb: Rx<LiteB>,
     pub vr: Rx<LiteR<32>>,
     pub net_rx: Rx<EthByte>,
-    pub jtag_awid: In<U<2>>,
-    pub jtag_awaddr: In<U<32>>,
-    pub jtag_awlen: In<U<8>>,
-    pub jtag_awsize: In<U<3>>,
-    pub jtag_awburst: In<U<2>>,
-    pub jtag_awlock: In<Bit>,
-    pub jtag_awcache: In<U<4>>,
-    pub jtag_awprot: In<U<3>>,
-    pub jtag_awvalid: In<Bit>,
-    pub jtag_wdata: In<U<32>>,
-    pub jtag_wstrb: In<U<4>>,
-    pub jtag_wlast: In<Bit>,
-    pub jtag_wvalid: In<Bit>,
-    pub jtag_bready: In<Bit>,
-    pub jtag_arid: In<U<2>>,
-    pub jtag_araddr: In<U<32>>,
-    pub jtag_arlen: In<U<8>>,
-    pub jtag_arsize: In<U<3>>,
-    pub jtag_arburst: In<U<2>>,
-    pub jtag_arlock: In<Bit>,
-    pub jtag_arcache: In<U<4>>,
-    pub jtag_arprot: In<U<3>>,
-    pub jtag_arvalid: In<Bit>,
-    pub jtag_rready: In<Bit>,
+    /// The JTAG master's pins, one field; its ports are `jtag_awid`
+    /// and the rest (issue 579).
+    pub jtag: AxiHostPins<32, 32, 4, 2>,
 }
 
 /// The board's outputs: the halt and the serial line, the modulator,
@@ -359,30 +339,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
             vb,
             vr,
             net_rx,
-            jtag_awid,
-            jtag_awaddr,
-            jtag_awlen,
-            jtag_awsize,
-            jtag_awburst,
-            jtag_awlock,
-            jtag_awcache,
-            jtag_awprot,
-            jtag_awvalid,
-            jtag_wdata,
-            jtag_wstrb,
-            jtag_wlast,
-            jtag_wvalid,
-            jtag_bready,
-            jtag_arid,
-            jtag_araddr,
-            jtag_arlen,
-            jtag_arsize,
-            jtag_arburst,
-            jtag_arlock,
-            jtag_arcache,
-            jtag_arprot,
-            jtag_arvalid,
-            jtag_rready,
+            jtag,
         }: BoardIn,
         BoardOut {
             halt,
@@ -858,30 +815,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                 ),
                                 self.jtag.run(
                                     AxiPinsIn {
-                                        awid: jtag_awid,
-                                        awaddr: jtag_awaddr,
-                                        awlen: jtag_awlen,
-                                        awsize: jtag_awsize,
-                                        awburst: jtag_awburst,
-                                        awlock: jtag_awlock,
-                                        awcache: jtag_awcache,
-                                        awprot: jtag_awprot,
-                                        awvalid: jtag_awvalid,
-                                        wdata: jtag_wdata,
-                                        wstrb: jtag_wstrb,
-                                        wlast: jtag_wlast,
-                                        wvalid: jtag_wvalid,
-                                        bready: jtag_bready,
-                                        arid: jtag_arid,
-                                        araddr: jtag_araddr,
-                                        arlen: jtag_arlen,
-                                        arsize: jtag_arsize,
-                                        arburst: jtag_arburst,
-                                        arlock: jtag_arlock,
-                                        arcache: jtag_arcache,
-                                        arprot: jtag_arprot,
-                                        arvalid: jtag_arvalid,
-                                        rready: jtag_rready,
+                                        pins: jtag,
                                         b: jb_rx,
                                         r: jr_rx,
                                     },
