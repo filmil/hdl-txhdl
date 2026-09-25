@@ -28,6 +28,30 @@ build --@rules_rust//:clippy_flags=-Dwarnings,-Aclippy::type_complexity
 # Vivado from the Bazel-installed toolchain, not Docker or the host.
 build --@rules_vivado//:vivado_mode=hermetic
 
+# What CI runs with, `bazel build --config=ci`, so that its log holds what a
+# failure needs rather than every action's replayed chatter (#537). A cached
+# run replays each action's stderr from the disk cache, and CI uploads its
+# log to the server, which timed out at 12 MB (#535). Measured from fresh
+# output bases against the shared disk cache: 16.8 MB of build log before the
+# Verilator headers were silenced (#536), nearly all of it their warnings;
+# 1.15 MB after, of which 0.86 MB is Yosys mapping the core onto cells and
+# 0.16 MB the generated models' compiles; and 100 KB with this config, plus
+# 23 KB for the tests.
+#
+# `--output_filter` keeps what our own packages print, which is where a new
+# warning worth reading comes from, and drops everything from external
+# repositories, the generated models' compiles and the cell mapping. It only
+# silences actions that succeed: a failing action's output is printed
+# whatever the filter, which was checked, and a failing test's output is
+# `--test_output=errors`, which the workflow still passes.
+#
+# No curses and no colour, since the log is a file, and progress at most once
+# a minute rather than five times a second.
+build:ci --output_filter=^//(?!docs:[^:]*_verilated$|cpu/vreteno/asic:vreteno_cells$)
+common:ci --curses=no
+common:ci --color=no
+common:ci --show_progress_rate_limit=60
+
 # Shared caches on the hdlfactory hosts, where the file exists; a no-op
 # elsewhere. The repository cache there already holds the installer.
 try-import /data/cache/ci.bazelrc

@@ -67,7 +67,7 @@ jobs:
       - name: Build everything
         run: |
           set -o pipefail
-          bazel build //... 2>&1 | tee -a /tmp/ci-bazel.log
+          bazel build --config=ci //... 2>&1 | tee -a /tmp/ci-bazel.log
 
       # Bazel exits 4 when testing is requested and no test target exists,
       # which is the state until the specification's examples become a test
@@ -76,7 +76,7 @@ jobs:
       - name: Test everything
         run: |
           set -o pipefail
-          bazel test //... --test_output=errors 2>&1 | tee -a /tmp/ci-bazel.log || {
+          bazel test --config=ci //... --test_output=errors 2>&1 | tee -a /tmp/ci-bazel.log || {
             status=$?
             [ "$status" -eq 4 ] || exit "$status"
             echo "no test targets yet; build is the only gate"
