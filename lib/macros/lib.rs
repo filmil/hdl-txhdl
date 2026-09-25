@@ -4806,6 +4806,31 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             }
         }
     }
+    // `(lo..=hi).contains(&x)`: `x` within the range (issue 496).
+    if let [TokenTree::Group(r), TokenTree::Punct(dot), TokenTree::Ident(m), TokenTree::Group(args)] =
+        ts
+    {
+        if r.delimiter() == Delimiter::Parenthesis
+            && dot.as_char() == '.'
+            && m.to_string() == "contains"
+        {
+            let rt: Vec<TokenTree> = r.stream().into_iter().collect();
+            let at: Vec<TokenTree> = args.stream().into_iter().collect();
+            let x = match at.as_slice() {
+                [TokenTree::Punct(amp), rest @ ..] if amp.as_char() == '&' => {
+                    rest
+                }
+                rest => rest,
+            };
+            let x = tr(x, subst)?;
+            if let Some(c) = range_cond(&x, &rt, subst)? {
+                return Ok(c);
+            }
+            return Err("`contains` lowers on a range of constants, \
+                 `(lo..=hi).contains(&x)`"
+                .into());
+        }
+    }
     if let Some(p) = ts.iter().position(
         |t| matches!(t, TokenTree::Ident(id) if id.to_string() == "as"),
     ) {
@@ -5364,6 +5389,52 @@ fn depth0_comma(s: &str) -> Option<usize> {
     None
 }
 
+/// A range's two ends and whether the upper one is included: `lo..hi`
+/// or `lo..=hi`, each end a number or a constant. `None` for tokens
+/// that are not a range.
+fn range_ends(ts: &[TokenTree]) -> Option<(&[TokenTree], &[TokenTree], bool)> {
+    let dot = |i: usize| matches!(ts.get(i), Some(TokenTree::Punct(p)) if p.as_char() == '.');
+    let at = (0..ts.len()).find(|&i| dot(i) && dot(i + 1))?;
+    let inclusive = matches!(ts.get(at + 2), Some(TokenTree::Punct(p)) if p.as_char() == '=');
+    let hi = &ts[at + if inclusive { 3 } else { 2 }..];
+    if at == 0 || hi.is_empty() {
+        return None;
+    }
+    Some((&ts[..at], hi, inclusive))
+}
+
+/// One end of a range as the lowering writes a constant.
+fn range_end(
+    ts: &[TokenTree],
+    subst: &[(String, String)],
+) -> Result<String, String> {
+    let text: String = ts.iter().map(|t| t.to_string()).collect();
+    if text.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        return Ok(format!("NlE::Num(({text}) as u128)"));
+    }
+    as_lit(ts, &text, subst)
+}
+
+/// `v` within a range: `lo <= v && v <= hi`, or `v < hi` for `lo..hi`
+/// (issue 496).
+fn range_cond(
+    v: &str,
+    ts: &[TokenTree],
+    subst: &[(String, String)],
+) -> Result<Option<String>, String> {
+    let Some((lo, hi, inclusive)) = range_ends(ts) else {
+        return Ok(None);
+    };
+    let lo = range_end(lo, subst)?;
+    let hi = range_end(hi, subst)?;
+    let upper = if inclusive {
+        ebin("<=", v, &hi)
+    } else {
+        ebin("<", v, &hi)
+    };
+    Ok(Some(ebin("&&", &ebin(">=", v, &lo), &upper)))
+}
+
 /// A `case!` pattern as a condition on `v`: alternatives joined by
 /// `||`, `_` as true, an `if` guard joined by `&&`, and a variant as
 /// equality with its literal.
@@ -5393,6 +5464,8 @@ fn pattern_cond(
         let digit = text.chars().next().is_some_and(|c| c.is_ascii_digit());
         let c = if text == "_" {
             "NlE::Bits(1, \"1\".to_string())".to_string()
+        } else if let Some(r) = range_cond(v, a, subst)? {
+            r
         } else if digit {
             ebin("==", v, &format!("NlE::Num(({text}) as u128)"))
         } else {
