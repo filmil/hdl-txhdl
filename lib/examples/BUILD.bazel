@@ -603,6 +603,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A lowered function on a literal (issue 555):  bazel run //lib/examples:ex_litfn
+rust_binary(
+    name = "ex_litfn",
+    srcs = ["ex_litfn.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Every way a `let` can want a taken name:  bazel run //lib/examples:ex_names
 rust_binary(
     name = "ex_names",
@@ -933,6 +942,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_buffer.rs",
         "ex_wire.rs",
         "ex_fn.rs",
+        "ex_litfn.rs",
         "ex_names.rs",
         "ex_rename.rs",
         "ex_foreign.rs",

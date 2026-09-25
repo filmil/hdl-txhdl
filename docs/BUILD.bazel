@@ -783,6 +783,8 @@ latex_document(
         ":wire_run",
         ":wire_timing",
         ":fn_run",
+        ":litfn_run",
+        ":litfn_timing",
         ":fn_timing",
         ":names_run",
         ":names_timing",
@@ -1787,6 +1789,21 @@ waveform(
         "//head=>head",
         "//full=>full",
     ],
+)
+
+waveform(
+    name = "litfn",
+    example = "//lib/examples:ex_litfn",
+    lowered = ("crc7", "crc7"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//start=>start",
+        "//din=>din",
+        "//crc7/crc=>crc",
+        "//sum=>sum",
+    ],
+    from_tick = 62,
+    until = 92,
 )
 
 waveform(
