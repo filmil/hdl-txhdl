@@ -21,7 +21,10 @@ after its wait happens in the state the wait made, under nothing,
 since being there says the condition held. What follows the
 \code{if} happens in every state the \code{if} can end in: the last
 state of each arm, and the state before the \code{if} when there is
-no \code{else}, under the failure of every arm. An \code{if} inside
+no \code{else}, under the failure of every arm. It is lowered once,
+under the union of those states' conditions, rather than once per
+state, so a tail shared by many states costs one copy of its logic
+and one wire per \code{let} in it. An \code{if} inside
 an \code{if} nests the same way, and a \code{for} that waits inside
 an arm is unrolled there first. A \code{let} still does not cross a
 wait, and an output port still holds what the last state set, as
