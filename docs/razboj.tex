@@ -184,15 +184,27 @@ pseudorandom scene with a vertex off the screen found the overflow
 within a dozen tries, which is the argument for the soak test rather
 than for the directed ones.
 
-\gpupart{raster.rs}{run}{The rasteriser, a cycle at a time.}{lst:g-run}
+\gpupart{raster.rs}{run}{The rasteriser, two processes.}{lst:g-run}
 
-The walk is one pixel per cycle: at the end of a row the column goes
-back to the first and each edge is reloaded from its row value plus
-its row step; otherwise the column advances and each edge takes its
-column step. A pixel is written only when the link has room for the
-burst and its beat, and the walk holds where it is until then, so
-backpressure from the bus stops the rasteriser rather than losing
-pixels.
+The rasteriser is two processes. The first takes the link's answers
+every cycle, says whether the pixel under the walk is in the
+primitive, and counts what is in flight. The second is the front end
+written as the sequence it is: poll the count until the list is
+ready, then for each instruction fetch its six words, one read at a
+time and each latched as it lands, and walk its box, every row and
+every column a counted loop, a pixel a turn; when the list is drawn
+it waits for ever. The lowering numbers the waits into a state
+register of its own and gives each counted loop a counter, so the
+netlist keeps what the hand-numbered machine before it kept in a
+phase and a step without the source naming either.
+
+The walk is one pixel per turn: the column advances and each edge
+takes its column step, and at the end of a row the column goes back
+to the first and each edge is reloaded from its row value plus its
+row step, with one cycle between rows for the box to read back. A
+pixel is written only when the link has room for the burst and its
+beat, and the turn holds until then, so backpressure from the bus
+stops the rasteriser rather than losing pixels.
 
 \section{Writing Over AXI}
 \label{sec:g-axi}
@@ -223,10 +235,10 @@ the read waits a cycle for it.
 \begin{figure*}[t]
 \centering
 \input{razboj_timing.tex}
-\caption{The triangle fetched and begun. \code{phase} is one while
-the front end reads the instruction's words, which land one at a
-time on \code{rdata}, and turns to two as the last word lands; in
-that cycle \code{kind} turns from \code{Rect} to \code{Tri}. From
+\caption{The triangle fetched and begun. \code{word} counts the
+instruction's words as the front end reads them, which land one at
+a time on \code{rdata}; as the last word lands \code{kind} turns
+from \code{Rect} to \code{Tri}. From
 there \code{x} and \code{y} walk the triangle's box and \code{hit} is
 whether the pixel is inside it; where \code{hit} is low no burst is
 issued, so the row is walked and nothing is written. \code{inflight}
