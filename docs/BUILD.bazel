@@ -818,6 +818,8 @@ latex_document(
         ":formal_timing",
         ":serial_run",
         ":serial_timing",
+        ":frame_run",
+        ":frame_timing",
         ":rename_run",
         ":rename_timing",
         ":foreign_run",
@@ -1988,6 +1990,23 @@ waveform(
         "//serial/sr=>sr",
         "//bits/tx_valid=>bit_valid",
         "//bits/tx_data=>bit",
+    ],
+)
+
+# A wait under if, a state the process visits when the condition holds
+# (issue 501).
+waveform(
+    name = "frame",
+    example = "//lib/examples:ex_frame",
+    lowered = ("framer", "framer"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//bytes/rx_valid=>byte_valid",
+        "//bytes/rx_data=>byte",
+        "//parity=>parity",
+        "//framer/sr=>sr",
+        "//line/tx_valid=>line_valid",
+        "//line/tx_data=>line",
     ],
 )
 

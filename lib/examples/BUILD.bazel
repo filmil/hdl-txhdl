@@ -771,6 +771,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A wait under if, a state with a way around it:  bazel run //lib/examples:ex_frame
+rust_binary(
+    name = "ex_frame",
+    srcs = ["ex_frame.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Names a target reserves, escaped:  bazel run //lib/examples:ex_reserved
 rust_binary(
     name = "ex_reserved",
@@ -1119,6 +1128,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_seq.rs",
         "ex_formal.rs",
         "ex_serial.rs",
+        "ex_frame.rs",
         "ex_rename.rs",
         "ex_foreign.rs",
 ]
