@@ -45,6 +45,62 @@ cmake -B build -S samples/hello_world -GNinja \
 | `drivers/serial/uart_vreteno.c` | the console driver, polled |
 | `dts/bindings/rng/` | the binding for the entropy source |
 | `drivers/entropy/entropy_vreteno.c` | the entropy driver, which the network stack's random numbers come from |
+| `fastboot/` | fastboot over TCP: the protocol, its host harness and tests, and the server for the board |
+
+## Fastboot
+
+A program reaches the board over the network with stock `fastboot`,
+from Android's platform tools, and nothing written for the host
+(issue 143):
+
+```sh
+fastboot -s tcp:192.168.1.50 boot program.bin
+```
+
+`//zephyr:fastboot` is the image that listens for it: a TCP server on
+port 5554, which is where AOSP's `fastboot/README.md` puts the device.
+The address is static by default, `CONFIG_NET_CONFIG_MY_IPV4_ADDR` in
+`fastboot/app/prj.conf`, since fastboot's device is the server and the
+host has to know where it is.
+A network with a DHCP server wants `NET_DHCPV4` instead.
+Load the image once with the serial loader, and from then on a program
+goes over the wire.
+
+`fastboot boot` wraps a file that is not an Android boot image in one,
+and the server takes the program back out of it.
+The download is staged in DDR3 at `0x4800_0000`, 16 MiB of it reserved
+in `fastboot/app/boards/ax7a200b.overlay`.
+`boot` copies the program to `0x4000_0000`, the address the serial
+loader uses too, and jumps.
+The copy overwrites the Zephyr that is doing it, so it runs from a few
+words of position-independent assembly moved first to the staging
+area's last page, `fastboot/app/src/jump.S`.
+A program longer than 16 MiB is refused, because the Ethernet engines
+store received frames at `0x4100_0000` and go on doing so after the
+jump.
+
+`getvar`, `download` and `boot` are answered.
+`flash` and `erase` fail, since nothing on this machine writes
+persistent storage, and so does `reboot`, since the SoC cannot reset
+itself.
+
+What checks it, off the board:
+
+* `//zephyr:fastboot_test`: stock `fastboot` 35.0.2, pinned in
+  `multitool.lock.json`, reads `max-download-size` and boots a 100 003
+  byte image through `//zephyr:fastboot_host`, which runs the board's
+  protocol code on a host socket.
+  The program it stages must be the image, byte for byte.
+* `//zephyr:fastboot_core_test`: the protocol code fed one session in
+  pieces from one byte to all of it, because a wire splits a message
+  where loopback does not, and the refusals.
+* `//cpu/vreteno:fastboot_jump_test`: the copy-and-jump, assembled from
+  `jump.S`, run on the core's model from places it was not assembled
+  for.
+* `//zephyr:fastboot`: the server builds against this port with a
+  network stack.
+
+What needs the board: a program received over the real port and run.
 
 ## Why a driver rather than a 16550
 
