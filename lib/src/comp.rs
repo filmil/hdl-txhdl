@@ -739,8 +739,7 @@ struct MemCell<T: Copy> {
 impl<T: Copy> Commit for MemCell<T> {
     fn apply(&self) {
         if let Some((a, v)) = self.next.take() {
-            let n = self.words.len();
-            self.words[a % n].set(v)
+            self.words[a].set(v)
         }
     }
 }
@@ -786,7 +785,23 @@ pub struct Slot<T: Copy>(Rc<MemCell<T>>, usize);
 
 impl<T: Copy + 'static> Slot<T> {
     /// Drive the word. Plain and deferred, like a register drive.
+    ///
+    /// An address past the end is refused here, when the write
+    /// happens, as the netlist refuses it: VHDL indexes the array as
+    /// written and nvc stops on an index out of range. The runtime
+    /// used to wrap it, so a run and Verilator agreed on a word the
+    /// hardware never had (issue 556). A predicated write whose
+    /// predicate is low never gets here, as the netlist's `if` never
+    /// indexes.
+    #[track_caller]
     pub fn set(&self, v: impl Into<T>) {
+        let n = self.0.words.len();
+        assert!(
+            self.1 < n,
+            "a write to word {} of a memory of {n} words: past the end, \
+             which the netlist refuses too (issue 556)",
+            self.1
+        );
         self.0.next.set(Some((self.1, v.into())));
         commit(self.0.clone());
     }
@@ -806,13 +821,26 @@ impl<T: Copy + 'static, const N: usize, C: Clock> Mem<T, N, C> {
     }
     /// The write port. Plain and deferred, like a register drive; one
     /// write per step, which is what one port is.
+    #[track_caller]
     pub fn write(&self, addr: impl Into<usize>, v: impl Into<T>) {
         self.at(addr).set(v)
     }
     /// The read port. Plain, like a wire, and as many reads as a cycle
     /// wants: a register file reads two.
+    ///
+    /// An address past the end is refused, as the netlist refuses it:
+    /// the read is a wire the netlist evaluates whenever its address
+    /// changes, used or not, and nvc stops on an index out of range.
+    /// The runtime used to wrap it (issue 556).
+    #[track_caller]
     pub fn read(&self, addr: impl Into<usize>) -> T {
-        self.0.words[addr.into() % N].get()
+        let a = addr.into();
+        assert!(
+            a < N,
+            "a read of word {a} of a memory of {N} words: past the end, \
+             which the netlist refuses too (issue 556)"
+        );
+        self.0.words[a].get()
     }
 }
 
@@ -2008,5 +2036,41 @@ pub mod trace {
                 Wave::Fst(f) => f.start(),
             }
         }
+    }
+}
+
+/// A memory refuses an address past its end, as the netlist does
+/// (issue 556).
+#[cfg(test)]
+mod mem_tests {
+    use super::{DefaultClock, Mem};
+    use crate::types::{Bit, U};
+
+    type M = Mem<U<8>, 4, DefaultClock>;
+
+    #[test]
+    #[should_panic(expected = "a read of word 4 of a memory of 4 words")]
+    fn a_read_past_the_end_is_refused() {
+        M::default().read(4usize);
+    }
+
+    #[test]
+    #[should_panic(expected = "a write to word 4 of a memory of 4 words")]
+    fn a_write_past_the_end_is_refused() {
+        M::default().write(4usize, U::<8>::from(1u8));
+    }
+
+    /// A predicated write whose predicate is low never indexes, in the
+    /// netlist's `if` or here, so its address may be anything.
+    #[test]
+    fn a_predicated_write_that_does_not_happen_is_not_checked() {
+        M::default().at(4usize).set_if(Bit::Zero, U::<8>::from(1u8));
+    }
+
+    #[test]
+    fn the_last_word_is_in_range() {
+        let m =
+            M::with(&[U::from(1u8), U::from(2u8), U::from(3u8), U::from(4u8)]);
+        assert_eq!(m.read(3usize).raw(), 4);
     }
 }
