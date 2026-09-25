@@ -77,8 +77,9 @@ impl Unit for SlowCount {
 ///
 /// The slow counter's field is `ticker` rather than `slow` because a
 /// field and a clock of one name write an instance and a pin of one
-/// name, which Verilator refuses and the lowering does not yet catch.
-/// That is issue 367.
+/// name, which Verilator refuses; the lowering refuses it first (issue
+/// 367). That is a collision and not a reserved word, so it stays
+/// refused where a reserved word is escaped (issue 497).
 #[derive(Trace, Default)]
 pub struct Two {
     pub fast: Fast,
