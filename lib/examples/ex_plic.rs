@@ -61,12 +61,6 @@ async fn cycles(n: usize) {
 }
 
 fn main() {
-    // What `plic!` wrote for three sources, for the document to show
-    // without a hand-typed copy.
-    if std::env::args().any(|a| a == "--source") {
-        print!("{}", txhdl_parts::plic::plic3::SOURCE);
-        return;
-    }
     let link = axi_lite::<32, 32, 4>();
     let bus: LitePort<32, 32, 4> = link.per.into();
     let host = link.host;
@@ -80,9 +74,9 @@ fn main() {
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<DefaultClock>();
         wave.add("rst", &rst);
-        wave.add("src1", &src1);
-        wave.add("src2", &src2);
-        wave.add("src3", &src3);
+        wave.add("srcs_0", &src1);
+        wave.add("srcs_1", &src2);
+        wave.add("srcs_2", &src3);
         wave.add("bus_aw", &bus.aw);
         wave.add("bus_ar", &bus.ar);
         wave.add("bus_w", &bus.w);
@@ -173,7 +167,7 @@ fn main() {
 
     // The client first: it drives the source lines, which are wires,
     // and the controller reads them in the same step.
-    let hardware = plic.run(bus, (rst, src1, src2, src3, irq_o));
+    let hardware = plic.run(bus, (rst, [src1, src2, src3], irq_o));
     let mut sim = Running::new(join2(client, hardware));
     rst_o.set(Bit::One);
     sim.cycle();

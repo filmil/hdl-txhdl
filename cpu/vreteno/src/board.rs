@@ -759,7 +759,8 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             r: pr_tx,
                                         },
                                         (
-                                            rst_plic, uirq_i, irq, eth_irq_i,
+                                            rst_plic,
+                                            [uirq_i, irq, eth_irq_i],
                                             eirq_o,
                                         ),
                                     ),

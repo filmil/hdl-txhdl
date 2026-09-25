@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The platform-level interrupt controller: `Plic1` to `Plic8`, one
-//! type per count of sources, each written out by `plic!`, since the
-//! lowering reads a body and not a loop over ports.
+//! The platform-level interrupt controller: `Plic<N, EDGE>`, one unit
+//! for every count of sources, with `Plic1` to `Plic8` naming the
+//! counts.
 //!
 //! It is the RISC-V PLIC with one target, an AXI-Lite peripheral at
 //! the standard offsets from its base:
@@ -32,16 +32,200 @@
 //! 0 when there is none. Writing that number back is the complete.
 //! The interrupt line is a register, high a cycle after a claim would
 //! answer with a source. A write ignores its strobe.
-use txhdl::plic;
+use crate::bus::axi::Resp;
+use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Regs, Unit};
+use txhdl::types::{Bit, U};
+use txhdl::{lower, with, Trace};
 
-plic!(Plic1, 1);
-plic!(Plic2, 2);
-plic!(Plic3, 3);
-plic!(Plic4, 4);
-plic!(Plic5, 5);
-plic!(Plic6, 6);
-plic!(Plic7, 7);
-plic!(Plic8, 8);
+// begin{state}
+/// A platform-level interrupt controller of `N` sources and one
+/// target, `N` from 1 to 31, the most one word of pending bits holds.
+/// `EDGE` has a bit per source, set for a source that asks on a rising
+/// edge rather than while its line is high. One unit for every count:
+/// the sources are an array of ports and the priorities an array of
+/// registers, and the lowering unrolls the loops over them for each
+/// `N` (issue 500). The words are 32 bits whatever `N` is, bit `s` for
+/// source `s`, and the bits above `N` stay zero.
+#[derive(Trace, Default)]
+pub struct Plic<const N: usize, const EDGE: usize> {
+    /// The priority of each source, `prio[s - 1]` for source `s`.
+    pub prio: Regs<U<3>, N>,
+    /// The target's threshold: only a priority above it interrupts.
+    pub threshold: Reg<U<3>>,
+    /// A request not yet claimed, a bit per source.
+    pub pending: Reg<U<32>>,
+    /// The sources the target takes, a bit per source.
+    pub enable: Reg<U<32>>,
+    /// A request forwarded and not yet completed, a bit per source.
+    pub active: Reg<U<32>>,
+    /// A rising edge that came while its source was active, kept to
+    /// ask again on the complete, a bit per edge source.
+    pub held: Reg<U<32>>,
+    /// The lines as they were a cycle ago, to see an edge.
+    pub prev: Reg<U<32>>,
+    /// The interrupt line, as a register.
+    pub asserted: Reg<Bit>,
+}
+// end{state}
+
+/// One source.
+pub type Plic1<const EDGE: usize> = Plic<1, EDGE>;
+/// Two sources.
+pub type Plic2<const EDGE: usize> = Plic<2, EDGE>;
+/// Three sources.
+pub type Plic3<const EDGE: usize> = Plic<3, EDGE>;
+/// Four sources.
+pub type Plic4<const EDGE: usize> = Plic<4, EDGE>;
+/// Five sources.
+pub type Plic5<const EDGE: usize> = Plic<5, EDGE>;
+/// Six sources.
+pub type Plic6<const EDGE: usize> = Plic<6, EDGE>;
+/// Seven sources.
+pub type Plic7<const EDGE: usize> = Plic<7, EDGE>;
+/// Eight sources.
+pub type Plic8<const EDGE: usize> = Plic<8, EDGE>;
+
+// begin{ports}
+// The lowering reads a loop over an array as `srcs[i]`, so the index is
+// what it is written with, and Clippy would rather it were an iterator.
+#[allow(clippy::needless_range_loop)]
+#[lower]
+impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
+    async fn run(
+        &mut self,
+        bus: LitePort<32, 32, 4>,
+        (rst, srcs, irq): (In<Bit>, [In<Bit>; N], Out<Bit>),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            // end{ports}
+            // begin{gateway}
+            // The lines as one word, bit `s` for source `s`, bit 0 low.
+            let rst = rst.get();
+            let none = U::<32>::from(0u8);
+            let one = U::<32>::from(1u8);
+            let mut lines = none;
+            for i in 0..N {
+                lines = lines | mux(srcs[i].get(), one << (i + 1), none);
+            }
+            let sources = U::<32>::from((((1u64 << (N + 1)) - 1) & !1) as u32);
+            let edges = U::<32>::from(EDGE as u32) & sources;
+            let prev = self.prev.get();
+            let held = self.held.get();
+            let active = self.active.get();
+            let pending = self.pending.get();
+            let enable = self.enable.get();
+            let threshold = self.threshold.get();
+            // A level source asks while its line is high; an edge
+            // source asks on a rising edge, or on one it holds. A
+            // request goes forward when its source is not active.
+            let rose = lines & !prev;
+            let request = (lines & !edges) | ((rose | held) & edges);
+            let forward = request & !active & sources;
+            // end{gateway}
+            // begin{choice}
+            // The source a claim would take: a candidate is pending,
+            // enabled and above the threshold, and one is taken over the
+            // best so far only at a higher priority, so the lowest
+            // number wins a tie.
+            let mut best = U::<5>::from(0u8);
+            let mut best_pr = U::<3>::from(0u8);
+            for i in 0..N {
+                let p = self.prio[i].get();
+                let cand = pending.bit(i + 1)
+                    & enable.bit(i + 1)
+                    & Bit::from(p > threshold);
+                let take = cand & Bit::from(p > best_pr);
+                best = mux(take, U::<5>::from(i + 1), best);
+                best_pr = mux(take, p, best_pr);
+            }
+            // end{choice}
+            // begin{bus}
+            // A read is answered in the cycle it is taken, and a write
+            // is taken when its address and its word are both there,
+            // and answered at once.
+            let arh = bus.ar.head();
+            let take_read = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let awh = bus.aw.head();
+            let wh = bus.w.head();
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
+            let roff = arh.addr.slice::<0, 22>();
+            let woff = awh.addr.slice::<0, 22>();
+            let wdata = wh.data;
+            let wprio = wdata.slice::<0, 3>();
+            let wenable = wdata & sources;
+            let wnum = wdata.slice::<0, 5>();
+            // A claim takes the best source's request; a complete of a
+            // number in range ends that source's service.
+            let claim = take_read & Bit::from(roff == 0x20_0004);
+            let complete = wgo
+                & Bit::from(woff == 0x20_0004)
+                & Bit::from(wdata <= N as u32);
+            let claimed = mux(claim, one << (best.raw() as usize), none);
+            let completed = mux(complete, one << (wnum.raw() as usize), none);
+            // What a read answers, by the offset.
+            let mut word = mux(
+                roff == 0x1000,
+                pending,
+                mux(
+                    roff == 0x2000,
+                    enable,
+                    mux(
+                        roff == 0x20_0000,
+                        threshold.zext::<32>(),
+                        mux(roff == 0x20_0004, best.zext::<32>(), none),
+                    ),
+                ),
+            );
+            for i in 0..N {
+                let at = roff == 4 * (i + 1);
+                word = mux(at, self.prio[i].get().zext::<32>(), word);
+            }
+            if take_read.to_bool() {
+                bus.r.send(LiteR {
+                    data: word,
+                    resp: Resp::Okay,
+                });
+            }
+            if wgo.to_bool() {
+                bus.b.send(LiteB { resp: Resp::Okay });
+            }
+            // end{bus}
+            // begin{drives}
+            self.prev.set(lines);
+            self.pending
+                .set(mux(rst, none, (pending & !claimed) | forward));
+            self.active
+                .set(mux(rst, none, (active & !completed) | forward));
+            self.held
+                .set(mux(rst, none, (held | rose) & edges & !forward));
+            for i in 0..N {
+                let at = wgo & (woff == 4 * (i + 1));
+                with!(self <= {
+                    at ? prio[i]: wprio,
+                    rst ? prio[i]: U::<3>::from(0u8),
+                });
+            }
+            with!(self <= {
+                wgo & (woff == 0x2000) ? enable: wenable,
+                wgo & (woff == 0x20_0000) ? threshold: wprio,
+                rst ? {
+                    enable: none,
+                    threshold: U::<3>::from(0u8),
+                },
+            });
+            self.asserted.set(mux(rst, Bit::Zero, Bit::from(best != 0)));
+            irq.set(self.asserted);
+            // end{drives}
+        }
+    }
+}
 
 /// The offset of the pending bits.
 pub const PENDING: u32 = 0x1000;
@@ -132,7 +316,7 @@ mod tests {
         let body = client(rig);
         let mut plic = Plic3::<EDGE>::default();
         let mut sim = Running::new(join2(
-            plic.run(bus, (rst, s1, s2, s3, irq_o)),
+            plic.run(bus, (rst, [s1, s2, s3], irq_o)),
             async move {
                 body.await;
                 *d.borrow_mut() = true;
@@ -320,7 +504,7 @@ mod tests {
     fn the_eight_source_controller_lowers() {
         let v = Plic8::<0>::verilog("plic");
         assert!(v.contains("module plic("), "the module");
-        assert!(v.contains("prio8"), "the eighth priority");
+        assert!(v.contains("prio_7"), "the eighth priority");
         assert!(v.contains("irq"), "the line out");
     }
 }

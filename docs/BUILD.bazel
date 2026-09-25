@@ -2221,9 +2221,9 @@ waveform(
     width = 15.5,
     signals = [
         "//clocks/clk=>clk",
-        "//src1=>src1",
-        "//src2=>src2",
-        "//src3=>src3",
+        "//srcs_0=>src1",
+        "//srcs_1=>src2",
+        "//srcs_2=>src3",
         "//plic/pending=>pending",
         "//plic/active=>active",
         "//bus_ar/rx_valid=>ar",
@@ -2330,7 +2330,7 @@ latex_document(
         ":vreteno_bus_timing",
         ":plic_run",
         ":plic_timing",
-        ":plic_source",
+        "//lib/parts:sources",
         "//cpu/vreteno:sources",
         "//cpu/vreteno/rust/hal:sources",
         "//lib/examples:sources",
@@ -2654,13 +2654,6 @@ latex_document(
 # Verilog's: both for the tutorial, neither typed by hand.
 # What `lite_bridge!` wrote for a bridge of two peripherals, as the
 # example prints it, for the AXI document.
-genrule(
-    name = "plic_source",
-    outs = ["plic3.rs"],
-    cmd = "$(location //lib/examples:ex_plic) --source > $@",
-    tools = ["//lib/examples:ex_plic"],
-)
-
 genrule(
     name = "lite_bridge_source",
     outs = ["lite_bridge2.rs"],

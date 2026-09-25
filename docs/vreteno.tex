@@ -11,12 +11,11 @@
 \InputIfFileExists{buildstamp.tex}{}{}
 \providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
 
-% A range of the interrupt controller as plic! wrote it for three
-% sources, by its begin/end markers.
+% A range of the interrupt controller, by its begin/end markers.
 \newcommand{\plicpart}[3]{%
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
-linerange=#1-#1,caption={#2},label={#3}]{plic3.rs}}
+linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/plic.rs}}
 
 \title{Vreteno: An RV32IMC Core in TxHDL}
 
