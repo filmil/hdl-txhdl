@@ -789,6 +789,8 @@ latex_document(
         ":valif_timing",
         ":range_run",
         ":range_timing",
+        ":cast_run",
+        ":cast_timing",
         ":litfn_run",
         ":litfn_timing",
         ":fn_timing",
@@ -1879,6 +1881,23 @@ waveform(
         "//classify/digit=>digit",
     ],
     until = 50,
+)
+
+waveform(
+    name = "cast",
+    example = "//lib/examples:ex_cast",
+    lowered = ("ring", "ring"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//put=>put",
+        "//take=>take",
+        "//d=>d",
+        "//ring/wp=>wp",
+        "//ring/rp=>rp",
+        "//q=>q",
+    ],
+    from_tick = 500,
+    until = 540,
 )
 
 waveform(

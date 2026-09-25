@@ -642,6 +642,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# `as` in a lowered body (issue 496):  bazel run //lib/examples:ex_cast
+rust_binary(
+    name = "ex_cast",
+    srcs = ["ex_cast.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A lowered function on a literal (issue 555):  bazel run //lib/examples:ex_litfn
 rust_binary(
     name = "ex_litfn",
@@ -995,6 +1004,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_arith.rs",
         "ex_valif.rs",
         "ex_range.rs",
+        "ex_cast.rs",
         "ex_names.rs",
         "ex_reserved.rs",
         "ex_rename.rs",
