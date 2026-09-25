@@ -253,20 +253,6 @@ fn if_parts(
     }
 }
 
-/// The statements as text, one after another, for a body rebuilt
-/// from its statements.
-fn joined(sts: &[Vec<TokenTree>]) -> TokenStream {
-    let mut out: Vec<TokenTree> = Vec::new();
-    for st in sts {
-        out.extend(st.iter().cloned());
-        let span = st.last().map(|t| t.span()).unwrap_or_else(Span::call_site);
-        let mut semi = Punct::new(';', Spacing::Alone);
-        semi.set_span(span);
-        out.push(TokenTree::Punct(semi));
-    }
-    out.into_iter().collect()
-}
-
 /// Whether two sets of open states are the same states under the
 /// same paths.
 fn same_members(a: &[(usize, Path)], b: &[(usize, Path)]) -> bool {
@@ -342,9 +328,10 @@ fn walk_for(
 ) -> Result<Vec<(usize, Path)>, TokenStream> {
     // The bounds: `lo..hi` or `lo..=hi`, as tokens the netlist
     // evaluates when `lowered` runs, so a const parameter will do.
-    let dots = range
-        .iter()
-        .position(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == '.'))
+    let is_dot =
+        |t: &TokenTree| matches!(t, TokenTree::Punct(p) if p.as_char() == '.');
+    let dots = (0..range.len().saturating_sub(1))
+        .find(|&i| is_dot(&range[i]) && is_dot(&range[i + 1]))
         .ok_or_else(|| {
             err(
                 span,
@@ -664,29 +651,40 @@ fn lower_items(
                 ));
             }
         }
-        let mut out = if path.is_empty() {
-            let mut out = Vec::new();
-            for st in &group {
-                out.extend(lower_stmts(cx, st, None)?);
-                out.append(&mut cx.hoisted);
-            }
-            out
+        // Under a path, the statements are lowered as they are, with
+        // the path's condition joined to the guard, so that a send or
+        // a receive among them carries it; the register drives are
+        // then put under an `if` on the path, and a wire, an output
+        // held in its register included, takes the path with its
+        // condition. Lowering them through an `if` of the source would
+        // refuse an output there, which a state's output is not.
+        let (guard, pc) = if path.is_empty() {
+            (cond.to_string(), None)
         } else {
-            let first = group[0][0].span();
-            let mut kw = Ident::new("if", first);
-            kw.set_span(first);
-            let mut st: Vec<TokenTree> = vec![TokenTree::Ident(kw)];
-            st.extend(conj(path));
-            let mut body = Group::new(Delimiter::Brace, joined(&group));
-            body.set_span(first);
-            st.push(TokenTree::Group(body));
-            let mut out = lower_stmts(cx, &st, None)?;
-            out.append(&mut cx.hoisted);
-            out
+            let pc = match tr(&conj(path), &cx.subst) {
+                Ok(pc) => pc,
+                Err(m) => return Err(err(group[0][0].span(), &m)),
+            };
+            (ebin("&&", cond, &pc), Some(pc))
         };
-        for s in out.drain(..) {
-            g.sort(s, piece, cond, seq);
+        cx.guard = Some(guard.clone());
+        let mut out = Vec::new();
+        for st in &group {
+            out.extend(lower_stmts(cx, st, None)?);
+            out.append(&mut cx.hoisted);
         }
+        let mut under: Vec<String> = Vec::new();
+        for s in out.drain(..) {
+            g.sort(s, piece, &guard, &mut under);
+        }
+        match pc {
+            Some(pc) if !under.is_empty() => seq.push(format!(
+                "NlS::If(vec![({pc}, vec![{}])], vec![])",
+                under.join(",\n")
+            )),
+            _ => seq.append(&mut under),
+        }
+        cx.guard = Some(cond.to_string());
     }
     Ok(())
 }
@@ -1102,20 +1100,32 @@ fn unrolled(
 /// that with arithmetic around it: the one field read through
 /// `self`, or nothing when there is none or more than one.
 fn register_read(ts: &[TokenTree]) -> Option<String> {
-    let mut found: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i + 4 < ts.len() {
-        if is_ident(&ts[i], "self")
-            && matches!(&ts[i + 1], TokenTree::Punct(p) if p.as_char() == '.')
-            && matches!(&ts[i + 3], TokenTree::Punct(p) if p.as_char() == '.')
-            && is_ident(&ts[i + 4], "get")
-        {
-            if let TokenTree::Ident(n) = &ts[i + 2] {
-                found.push(n.to_string());
+    fn gather(ts: &[TokenTree], found: &mut Vec<String>) {
+        let dot = |t: &TokenTree| {
+            matches!(t, TokenTree::Punct(p)
+                    if p.as_char() == '.')
+        };
+        let mut i = 0;
+        while i < ts.len() {
+            if let TokenTree::Group(g) = &ts[i] {
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                gather(&inner, found);
             }
+            if i + 4 < ts.len()
+                && is_ident(&ts[i], "self")
+                && dot(&ts[i + 1])
+                && dot(&ts[i + 3])
+                && is_ident(&ts[i + 4], "get")
+            {
+                if let TokenTree::Ident(n) = &ts[i + 2] {
+                    found.push(n.to_string());
+                }
+            }
+            i += 1;
         }
-        i += 1;
     }
+    let mut found: Vec<String> = Vec::new();
+    gather(ts, &mut found);
     match found.as_slice() {
         [one] => Some(one.clone()),
         _ => None,
