@@ -1,0 +1,32 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Multiplication, Remainder and Negation}
+\label{sec:x-arith}
+
+\code{*}, \code{\%} and unary \code{-} are Rust's operators on a value,
+at its width and wrapping as \code{+} and \code{-} are, and they lower
+to the netlist's: a product cut to the width, a remainder as
+\code{rem} in VHDL, and \code{-x} as \code{\~{}x + 1}, the two's
+complement Rust wraps to. Before, a product was
+\code{.mul::<M>()}, which stays for a product wider than its
+operands, and a negation was a subtraction from zero. A \code{-}
+after another operator is unary, so \code{a + -b} is a sum. A
+remainder by zero is refused in the run as nvc refuses it, and a
+negative number has no width to wrap at, so \code{-3} in a lowered
+body is refused with a message saying what to write (issue 496).
+
+The unit registers the four from two operands. The run asserts each
+against the same arithmetic on \code{u8}, for eight pairs chosen to
+wrap, and the netlist is checked against the run under both
+simulators.
+
+\begin{figure}[htbp]
+\centering
+\input{arith_timing.tex}
+\caption{Two operands and the product, remainder, negation and
+\code{a + -b} registered from them.}
+\label{fig:x-arith}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_arith.rs}. Run with \code{bazel run //lib/examples:ex\_arith}.},label={lst:x-arith}]{lib/examples/ex_arith.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_arith} printed when the build ran it: each pair and its four results, then the lowering.},label={lst:x-arith-out}]{out_arith.txt}

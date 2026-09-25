@@ -1,0 +1,36 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Cast}
+\label{sec:x-cast}
+
+\code{x as T} lowered as \code{x}: the cast was dropped. The macro was
+made to log every cast it dropped, and the tree held 132, every one
+widening a value of at most 32 bits or casting a constant, so no
+netlist was wrong. It would have been the first time one narrowed. A
+cast to an unsigned integer, \code{u8} to \code{u128} or
+\code{usize}, now keeps the low bits of the value, as Rust's does:
+the netlist has the value itself where it is no wider, which leaves
+all 132 as they were, and its low bits where it is wider. A cast to
+anything else is refused with a message naming \code{resize} and
+\code{sext} (issue 496).
+
+The unit is a ring of 256 bytes whose twelve-bit pointers count on
+past its end, each addressing a word as
+\code{p.raw() as u8 as usize}. The run asserts that 300 words come
+back in the order they went in, and the netlist is checked against
+the run under both simulators. With the cast dropped as it used to
+be, the netlist addressed word 256 where the run addressed word 0, and
+nvc stopped on an index out of range; Verilator did not, which is how
+the old behaviour could have gone unseen.
+
+\begin{figure}[htbp]
+\centering
+\input{cast_timing.tex}
+\caption{The ring as the pointers pass the end: \code{wp} and
+\code{rp} go on counting, and the words read are still the ones
+written eight earlier.}
+\label{fig:x-cast}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_cast.rs}. Run with \code{bazel run //lib/examples:ex\_cast}.},label={lst:x-cast}]{lib/examples/ex_cast.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_cast} printed when the build ran it, then the lowering.},label={lst:x-cast-out}]{out_cast.txt}

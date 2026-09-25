@@ -1,0 +1,32 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Ranges}
+\label{sec:x-range}
+
+A pattern \code{lo..=hi} lowers to \code{lo <= x \&\& x <= hi}, and
+\code{lo..hi} to \code{x < hi} above, in a \code{select!}, a
+\code{case!} and a \code{match} alike, each end a number or a
+constant. \code{(lo..=hi).contains(\&x)} lowers to the same two
+compares. Before, a range was written as its members,
+\code{0x30 | 0x31 | ..}, or as a pair of compares, and Clippy's lints
+for both were allowed in four places with the reason beside them;
+those are ranges now, and the allows are gone (issue 496).
+
+The unit classes a byte as a digit, a capital, a small letter or
+anything else, three ways: a \code{select!} of inclusive ranges, a
+\code{match} of exclusive ones, and \code{contains}. The run asserts
+each against Rust's own \code{is\_ascii\_*}, on the edges of every
+range and a byte either side of each, and the netlist is checked
+against the run under both simulators. The module is
+\code{classify}: \code{class} is a SystemVerilog keyword.
+
+\begin{figure}[htbp]
+\centering
+\input{range_timing.tex}
+\caption{A byte classed three ways: 1 a digit, 2 a capital, 3 a small
+letter, 0 anything else, and \code{digit} from \code{contains}.}
+\label{fig:x-range}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_range.rs}. Run with \code{bazel run //lib/examples:ex\_range}.},label={lst:x-range}]{lib/examples/ex_range.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_range} printed when the build ran it: each byte and its three classes, then the lowering.},label={lst:x-range-out}]{out_range.txt}

@@ -41,9 +41,22 @@ reads more than once, and that is worth more than a name, is given a
 wire of its own instead, called after the function and the name it had
 there and numbered. That keeps an expression written once whatever the
 body does with it, so calls that nest cost a wire each rather than a
-power of the reads, which is issue 126. It reads \code{case!} and \code{select!}
-as chains on the value, with an enum variant, an integer or \code{\_}
-as a pattern and a guard joined by \code{\&\&}; \code{slice},
+power of the reads, which is issue 126. It reads \code{case!} and \code{select!},
+and a \code{match} that yields a value, as chains on the value, with
+an enum variant, an integer, a range \code{lo..=hi} or \code{lo..hi}
+or \code{\_} as a pattern and a guard joined by \code{\&\&}; a
+\code{match} splits its own arms, since rustfmt ends an arm whose
+value is a block with no comma. An \code{if} that yields a value is the
+same chain on its conditions, and is refused without an \code{else};
+a branch or an arm is one expression. \code{(lo..=hi).contains(\&x)}
+is the two compares a range pattern is. \code{*} and \code{\%} lower as
+the netlist's, \code{\%} as \code{rem} in VHDL; unary \code{-} as
+\code{\~{}x + 1} at \code{x}'s width, a negative number being refused
+for having none; and \code{x as uN} as \code{Expr::cast}, which the
+emitters resolve once the width is known, to \code{x} when it is no
+wider and to its low bits when it is. It used to drop the cast, which
+every one of the 132 casts in the tree survived only by widening
+(issue 496); \code{slice},
 \code{concat}, \code{sext} and \code{zext} by their turbofish, every
 width it needs written, since it sees tokens and not types, and only
 \code{concat}'s low operand left to Rust as \code{\_}; a

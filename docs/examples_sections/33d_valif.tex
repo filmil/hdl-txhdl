@@ -1,0 +1,33 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An If and a Match That Yield a Value}
+\label{sec:x-valif}
+
+Rust chooses a value with \code{if} and \code{match}, and a lowered
+body used to say it with \code{mux} and \code{select!}. Both now lower
+to the same chain of conditions. An \code{if} takes an \code{else if}
+and must have an \code{else}, since without one it has no value when
+its condition is false. A \code{match} takes the patterns
+\code{select!} does, numbers, alternatives with \code{|}, variants,
+ranges, guards and \code{\_}, and its last arm is the default, which
+is what an exhaustive \code{match} means. rustfmt ends an arm whose
+value is a block with no comma, so a \code{match} splits its own
+arms. A branch or an arm is one expression, and one with a
+\code{let} in it is refused with a message to put the \code{let}
+before it (issue 496).
+
+The unit chooses by \code{op} both ways. The run asserts each choice
+against the same one made in Rust, for every \code{op} and three
+operand pairs, and the netlist is checked against the run under both
+simulators.
+
+\begin{figure}[htbp]
+\centering
+\input{valif_timing.tex}
+\caption{The two choices by \code{op}: \code{by\_if} from an
+\code{if}, \code{by\_match} from a \code{match}.}
+\label{fig:x-valif}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_valif.rs}. Run with \code{bazel run //lib/examples:ex\_valif}.},label={lst:x-valif}]{lib/examples/ex_valif.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_valif} printed when the build ran it: each case and both choices, then the lowering.},label={lst:x-valif-out}]{out_valif.txt}

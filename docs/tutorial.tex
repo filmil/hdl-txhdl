@@ -334,16 +334,19 @@ written through \code{at} and read by index.
 
 That is the subset: a loop of one wait, then reads, \code{let}s that
 are functions of what was read, and drives. Inside it you have
-Rust's operators on the value types, \code{+}, \code{-}, \code{\&},
-\code{|}, \code{\^{}}, \code{!}, \code{<<}, \code{>>} and the
-compares, then \code{slice}, \code{concat}, \code{sext} and
+Rust's operators on the value types, \code{+}, \code{-}, \code{*},
+\code{\%}, unary \code{-}, \code{\&}, \code{|}, \code{\^{}}, \code{!},
+\code{<<}, \code{>>}, the compares and \code{as} to an unsigned
+integer, then \code{slice}, \code{concat}, \code{sext} and
 \code{zext} for taking words apart and putting them together, and
-\code{mul::<M>} for a product at a stated width. What
-you do not have inside a lowered loop is what hardware does not
-have: an \code{if} that yields a value, a Rust \code{match}, a
-function call the lowering does not know, or a loop with a variable
-count. The macro says so at
-compile time, with a message that names the construct.
+\code{mul::<M>} for a product wider than its operands. An \code{if}
+that yields a value and a \code{match} lower as \code{mux} and
+\code{select!} do, and a range, as a pattern or in
+\code{contains}, as the two compares it stands for. What you do not
+have inside a lowered loop is what hardware does not have: a function
+call the lowering does not know, or a loop with a variable count.
+The macro says so at compile time, with a message that names the
+construct.
 
 The lowering is checked, not trusted. For every lowered example the
 build runs the Rust simulation, keeps its trace, writes the VHDL and
