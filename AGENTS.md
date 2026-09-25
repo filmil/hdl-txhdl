@@ -960,9 +960,11 @@ repository has had that happen twice.
   lint is answered where it is written rather than found later in a
   sweep (issue 228).
   A lint the lowering forces is allowed at the item it fires on, with
-  the reason beside it, and every other lint is fixed: the lowering
-  reads `name: value` and not a field shorthand (issue 235), `&` and
-  `>=` and not a range, and a `select!` arm's alternatives one by one.
+  the reason beside it, and every other lint is fixed.
+  The lowering reads what Clippy asks for: a field shorthand (issue
+  235), a range as a pattern or in `contains` (#565), and a `select!`
+  or `match` arm's alternatives joined by `|`, so none of those is a
+  reason for an `allow` any more.
   An `allow` goes above `#[lower]`, never between it and the `fn`,
   which hides the function from the scan (issue 234).
   `clippy::type_complexity` is allowed everywhere, in `.bazelrc`: a
