@@ -4831,10 +4831,32 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 .into());
         }
     }
-    if let Some(p) = ts.iter().position(
+    // The last `as`, so a chain, `x as u8 as usize`, is a cast of a cast.
+    if let Some(p) = ts.iter().rposition(
         |t| matches!(t, TokenTree::Ident(id) if id.to_string() == "as"),
     ) {
-        return tr(&ts[..p], subst);
+        // `x as uN` keeps the low `N` bits, as Rust does: the netlist
+        // renders the value when it is no wider and its low bits when
+        // it is. It used to drop the cast, which gave the right value
+        // only because nothing narrowed (issue 496).
+        let ty: String = ts[p + 1..].iter().map(|t| t.to_string()).collect();
+        let bits = match ty.as_str() {
+            "u8" => 8,
+            "u16" => 16,
+            "u32" => 32,
+            "u64" | "usize" => 64,
+            "u128" => 128,
+            _ => {
+                return Err(format!(
+                    "`as {ty}` does not lower: a cast in a lowered body is to \
+                     an unsigned integer, `u8` to `u128` or `usize`, whose \
+                     width it keeps the low bits of; for a value of another \
+                     width write `.resize::<N>()` or `.sext::<N>()`"
+                ))
+            }
+        };
+        let x = tr(&ts[..p], subst)?;
+        return Ok(format!("NlE::cast({x}, {bits})"));
     }
     if let TokenTree::Punct(p) = &ts[0] {
         if p.as_char() == '!' {

@@ -421,6 +421,10 @@ pub enum Expr {
     Sext(Box<Expr>, usize),
     /// Zero extension, or truncation, to the stated width.
     Zext(Box<Expr>, usize),
+    /// Rust's `as` to an unsigned integer of the stated width: the
+    /// value itself when it is no wider, its low bits when it is
+    /// (issue 496). Built by [`Expr::cast`].
+    Cast(Box<Expr>, usize),
 }
 
 impl Expr {
@@ -496,6 +500,16 @@ impl Expr {
         match a {
             Expr::Slice(inner, ilo, _) => Expr::Slice(inner, ilo + lo, len),
             a => Expr::Slice(Box::new(a), lo, len),
+        }
+    }
+    /// `a as uN`: a number keeps its low `n` bits, and anything else
+    /// is a cast, which the emitters render once its width is known
+    /// (issue 496).
+    pub fn cast(a: Expr, n: usize) -> Expr {
+        match a {
+            Expr::Num(k) if n < 128 => Expr::Num(k & ((1u128 << n) - 1)),
+            Expr::Num(k) => Expr::Num(k),
+            a => Expr::Cast(Box::new(a), n),
         }
     }
     /// A condition that is a constant: `true` or `false`, or none.
@@ -816,9 +830,10 @@ impl Lowered {
                     walk_expr(a, of);
                     walk_expr(b, of);
                 }
-                Expr::Not(a) | Expr::Sext(a, _) | Expr::Zext(a, _) => {
-                    walk_expr(a, of)
-                }
+                Expr::Not(a)
+                | Expr::Sext(a, _)
+                | Expr::Zext(a, _)
+                | Expr::Cast(a, _) => walk_expr(a, of),
                 Expr::Slice(a, _, _) => walk_expr(a, of),
                 Expr::Cat(a, b) | Expr::Index(a, b) => {
                     walk_expr(a, of);
@@ -1384,6 +1399,13 @@ impl Lowered {
                 Expr::Index(a, i) => Expr::Index(b(a, t), b(i, t)),
                 Expr::Cat(a, c) => Expr::Cat(b(a, t), b(c, t)),
                 Expr::Sext(a, m) => Expr::Sext(b(a, t), *m),
+                // A cast is the value when it is no wider, and its low
+                // bits, a slice and so perhaps a wire, when it is
+                // (issue 496). Both emitters read it from here.
+                Expr::Cast(a, n) => match l.ewidth(a) {
+                    w if w == 0 || w <= *n => go(a, l, t),
+                    _ => go(&Expr::Slice(a.clone(), 0, *n), l, t),
+                },
                 Expr::Zext(a, m) => Expr::Zext(b(a, t), *m),
                 e => e.clone(),
             }
@@ -1524,6 +1546,10 @@ impl Lowered {
             Expr::Slice(_, _, len) => *len,
             Expr::Cat(a, b) => self.ewidth(a) + self.ewidth(b),
             Expr::Sext(_, m) | Expr::Zext(_, m) => *m,
+            Expr::Cast(a, n) => match self.ewidth(a) {
+                0 => 0,
+                w => w.min(*n),
+            },
         }
     }
     /// The width of a register, a memory's word, a port, a wire, or a
@@ -2623,6 +2649,8 @@ fn vexpr(e: &Expr, l: &Lowered) -> String {
             n if n >= *m || n == 0 => vexpr(a, l),
             n => format!("{{{{{}{{1'b0}}}}, {}}}", m - n, vexpr(a, l)),
         },
+        // `hoisted` resolves every cast before an emitter sees it.
+        Expr::Cast(a, _) => vexpr(a, l),
     }
 }
 
@@ -2812,6 +2840,8 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
             format!("unsigned'(to_unsigned(0, {}) & {})", m - 1, hval(a, 1, l))
         }
         Expr::Zext(a, m) => format!("resize({}, {m})", hval(a, 0, l)),
+        // `hoisted` resolves every cast before an emitter sees it.
+        Expr::Cast(a, _) => hval(a, w, l),
         // A word of a memory, or a bit of a value.
         Expr::Index(a, i) => match &**a {
             Expr::Name(m) if l.is_mem(m) => {
