@@ -98,3 +98,12 @@ rust_library(
     deps = DEPS,
     tags = ["manual"],
 )
+
+# Issue 503: a defaulted const parameter for a value's storage, and
+# whether the default reaches an expression path. Standalone, so it
+# answers the Rust question alone.
+rust_library(
+    name = "probe_limbs",
+    srcs = ["probe_limbs.rs"],
+    edition = "2021",
+)
