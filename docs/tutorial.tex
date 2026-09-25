@@ -500,10 +500,11 @@ way to add yours.
   naming the example and the signals to draw; give it
   \code{lowered = (entity, unit)} if the unit lowers. That makes the
   figure, the printout, and the two netlist tests.
-\item Write a section for it in \code{docs/examples\_sections},
-  include it from \code{docs/examples.tex}, and add the run and the
-  figure to the examples document's \code{data}. Build the document
-  and look at the page.
+\item Write a section for it in \code{docs/examples\_sections}, with
+  a number in its name that sorts it where it belongs; the build
+  includes every file there in the order of the names. Add the run
+  and the figure to the examples document's \code{data}. Build the
+  document and look at the page.
 \end{enumerate}
 
 The rule behind the four steps is in the repository's
