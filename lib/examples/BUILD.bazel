@@ -699,6 +699,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A struct of ports holding structs of ports:  bazel run //lib/examples:ex_nested
+rust_binary(
+    name = "ex_nested",
+    srcs = ["ex_nested.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A side from another crate passed whole:  bazel run //lib/examples:ex_side
 rust_binary(
     name = "ex_side",
@@ -1063,6 +1075,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_reserved.rs",
         "ex_tie.rs",
         "ex_side.rs",
+        "ex_nested.rs",
         "ex_rename.rs",
         "ex_foreign.rs",
 ]

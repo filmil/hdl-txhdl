@@ -1848,6 +1848,27 @@ waveform(
     ],
 )
 
+# A struct of ports that holds two structs of ports, passed whole to a
+# child that reads through it: ex_bundle's word behind a unit of units
+# (issue 498).
+waveform(
+    name = "nested",
+    example = "//lib/examples:ex_nested",
+    lowered = ("mailbox", "mailbox"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//left_w/rx_valid=>left_w_valid",
+        "//left_w/rx_data=>left_w_data",
+        "//right_w/rx_valid=>right_w_valid",
+        "//right_w/rx_data=>right_w_data",
+        "//mailbox/shared_rw/word=>word",
+        "//left_r/tx_valid=>left_r_valid",
+        "//left_r/tx_data=>left_r_data",
+        "//right_r/tx_valid=>right_r_valid",
+        "//right_r/tx_data=>right_r_data",
+    ],
+)
+
 # A side declared in another crate, passed whole to a child: the
 # pins of ex_gpio inside a unit of units (issue 498).
 waveform(
