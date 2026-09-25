@@ -801,6 +801,8 @@ latex_document(
         ":twoproc_timing",
         ":mul_run",
         ":mul_timing",
+        ":regs_run",
+        ":regs_timing",
         ":wide_run",
         ":wide_timing",
         ":tap_run",
@@ -1805,6 +1807,22 @@ waveform(
         "//clear=>clear",
         "//mid=>mid",
         "//top=>top",
+    ],
+)
+
+waveform(
+    name = "regs",
+    example = "//lib/examples:ex_regs",
+    lowered = ("tallies", "tallies"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//hits_0=>hits_0",
+        "//hits_1=>hits_1",
+        "//hits_2=>hits_2",
+        "//tallies/counts_0=>counts_0",
+        "//tallies/counts_1=>counts_1",
+        "//tallies/counts_2=>counts_2",
+        "//total=>total",
     ],
 )
 
