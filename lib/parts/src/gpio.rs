@@ -15,17 +15,12 @@
 //! way between one and zero when two gates read it. Two flip-flops is
 //! the usual price of not caring.
 //!
-//! The seven registers, a word apart from the base:
-//!
-//! | Offset | Name | What it is |
-//! |---|---|---|
-//! | `0x00` | `out` | driven on a pin whose direction is out |
-//! | `0x04` | `in` | what the pins read, after the two flip-flops |
-//! | `0x08` | `dir` | one to drive the pin, zero to read it |
-//! | `0x0c` | `ie` | one to let the pin raise the interrupt |
-//! | `0x10` | `kind` | zero for a level, one for an edge |
-//! | `0x14` | `pol` | a level: one for high; an edge: one for rising |
-//! | `0x18` | `status` | which pins have fired; write one to clear |
+//! The seven registers, a word apart from the base, are declared once
+//! with `regmap!` below (issue 673), which gives the offsets a program
+//! uses (`regs::dir`), the read and the write decode the unit uses,
+//! and the tables the tools make. Every register is `N` bits, a bit a
+//! pin, so none has fields of its own. What the pins read is `pins`,
+//! since Rust keeps `in`.
 //!
 //! `status` is sticky and is cleared by writing a one to the bit, not
 //! a zero, so two programs clearing different pins cannot lose each
@@ -33,10 +28,22 @@
 //! cleared while the level lasts, which is what a level means.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, with, Trace};
+use txhdl::{lower, regmap, with, Trace};
 
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
+
+// begin{map}
+regmap! { regs (regs_read, regs_we), 3: [
+    (0, out, rw, "driven on a pin whose direction is out"),
+    (1, pins, ro, "what the pins read, after the two flip-flops"),
+    (2, dir, rw, "one to drive the pin, zero to read it"),
+    (3, ie, rw, "one to let the pin raise the interrupt"),
+    (4, kind, rw, "zero for a level, one for an edge"),
+    (5, pol, rw, "a level: one for high; an edge: one for rising"),
+    (6, status, w1c, "which pins have fired"),
+] }
+// end{map}
 
 // begin{state}
 /// `N` pins on an AXI-Lite link.
@@ -111,29 +118,32 @@ impl<const N: usize> Unit for Gpio<N> {
             let _ = bus.aw.recv_if(wgo);
             let _ = bus.w.recv_if(wgo);
             let written = wh.data.slice::<0, N>();
-            let word = select!(rsel.raw() => {
-                0 => out.zext::<32>(),
-                1 => sync1.zext::<32>(),
-                2 => dir.zext::<32>(),
-                3 => ie.zext::<32>(),
-                4 => kind.zext::<32>(),
-                5 => pol.zext::<32>(),
-                6 => status.zext::<32>(),
-                _ => U::<32>::from(0u8),
-            });
+            // The word a read answers, and a write enable a register,
+            // from the map.
+            let word = regs_read(
+                rsel,
+                out.zext::<32>(),
+                sync1.zext::<32>(),
+                dir.zext::<32>(),
+                ie.zext::<32>(),
+                kind.zext::<32>(),
+                pol.zext::<32>(),
+                status.zext::<32>(),
+            );
+            let we = regs_we(wgo, wsel);
             // A one written to `status` clears that bit, and a pin
             // firing in the same cycle sets it again.
-            let cleared = mux(wgo & (wsel == 6), status & !written, status);
+            let cleared = mux(we.bit(6), status & !written, status);
             with!(self <= {
                 sync0: pins.get(),
                 sync1: self.sync0.get(),
                 seen: sync1,
                 status: cleared | fired,
-                wgo & (wsel == 0) ? out: written,
-                wgo & (wsel == 2) ? dir: written,
-                wgo & (wsel == 3) ? ie: written,
-                wgo & (wsel == 4) ? kind: written,
-                wgo & (wsel == 5) ? pol: written,
+                we.bit(0) ? out: written,
+                we.bit(2) ? dir: written,
+                we.bit(3) ? ie: written,
+                we.bit(4) ? kind: written,
+                we.bit(5) ? pol: written,
             });
             if rgo.to_bool() {
                 bus.r.send(LiteR {

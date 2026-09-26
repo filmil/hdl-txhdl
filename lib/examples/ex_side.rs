@@ -27,7 +27,7 @@ use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
-use txhdl_parts::gpio::Gpio;
+use txhdl_parts::gpio::{regs, Gpio};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
@@ -64,14 +64,16 @@ impl Unit for Wrapped {
 }
 // end{unit}
 
-/// The peripheral's words, as offsets from its base.
-const OUT: u32 = 0x1000;
-const IN: u32 = 0x1004;
-const DIR: u32 = 0x1008;
-const IE: u32 = 0x100c;
-const KIND: u32 = 0x1010;
-const POL: u32 = 0x1014;
-const STATUS: u32 = 0x1018;
+/// The peripheral's words: its base, and each register's offset in
+/// the map.
+const BASE: u32 = 0x1000;
+const OUT: u32 = BASE + regs::out;
+const IN: u32 = BASE + regs::pins;
+const DIR: u32 = BASE + regs::dir;
+const IE: u32 = BASE + regs::ie;
+const KIND: u32 = BASE + regs::kind;
+const POL: u32 = BASE + regs::pol;
+const STATUS: u32 = BASE + regs::status;
 
 fn main() {
     let Link {

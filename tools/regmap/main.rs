@@ -17,7 +17,10 @@ use txhdl::regmap::RegMap;
 /// Every map the parts declare, by the name its peripheral is known
 /// by.
 fn maps() -> Vec<(&'static str, &'static RegMap)> {
-    vec![("sd", &txhdl_parts::sd::regs::MAP)]
+    vec![
+        ("gpio", &txhdl_parts::gpio::regs::MAP),
+        ("sd", &txhdl_parts::sd::regs::MAP),
+    ]
 }
 
 fn usage() -> ! {
