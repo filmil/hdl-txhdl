@@ -176,12 +176,19 @@ form among the links.
 
 One packet moves through a switch per cycle. Each input's direction
 and the room at the port it wants are worked out first, so that an
-input whose port is full does not hold up the others, and the choice
-among those that can move is by a fixed order that serves the four
-links before the exit: a node does not starve the network in order to
-feed itself. A fair arbiter would be the next thing to write; the
-order here is a fixed priority and this document would rather say so
-than not.
+input whose port is full does not hold up the others. The choice among
+those that can move is a round robin. The inputs are numbered north,
+south, west, east and the exit, and the switch keeps one register,
+\code{turn}, the input the choice starts from. The input that moves is
+the first at or after \code{turn}, going round, that can; \code{turn}
+then becomes the input after it. An input that has just moved goes
+last of the five, so no input waits on more than four others, however
+busy they are. The register is the whole of the switch's state: where
+a packet goes is a function of the packet and the node's place, and
+needs nothing kept.
+
+\nocpart{switch.rs}{pick}{The round robin: five rotations of one
+chain, one per value of \code{turn}.}{lst:n-pick}
 
 \nocpart{switch.rs}{run}{The switch, a cycle at a
 time.}{lst:n-switch}
