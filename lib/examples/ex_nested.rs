@@ -157,16 +157,16 @@ fn main() {
     let mut mailbox = Mailbox::default();
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
-        w.add("left_aw", &left.aw);
-        w.add("left_ar", &left.ar);
-        w.add("left_w", &left.w);
-        w.add("left_b", &left.b);
-        w.add("left_r", &left.r);
-        w.add("right_aw", &right.aw);
-        w.add("right_ar", &right.ar);
-        w.add("right_w", &right.w);
-        w.add("right_b", &right.b);
-        w.add("right_r", &right.r);
+        w.add("links_left_aw", &left.aw);
+        w.add("links_left_ar", &left.ar);
+        w.add("links_left_w", &left.w);
+        w.add("links_left_b", &left.b);
+        w.add("links_left_r", &left.r);
+        w.add("links_right_aw", &right.aw);
+        w.add("links_right_ar", &right.ar);
+        w.add("links_right_w", &right.w);
+        w.add("links_right_b", &right.b);
+        w.add("links_right_r", &right.r);
         w.add("mailbox", &mailbox);
         w.start();
     }

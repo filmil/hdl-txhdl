@@ -3308,9 +3308,23 @@ fn port_struct_fields(
     )))
 }
 
+/// The marker `bound` carries first among a side's fields when the
+/// side is written `name: S`, so that its ports are `name_field`
+/// (issue 580).
+const PREFIX: &str = "@prefix";
+
+/// Whether the side `b`, a struct of the file, was written `name: S`,
+/// so that its ports carry its name.
+fn side_prefixed(bound: &[(String, Vec<String>)], b: &str) -> bool {
+    bound
+        .iter()
+        .any(|(n, fs)| *n == b && fs.first().is_some_and(|m| m == PREFIX))
+}
+
 /// `run`'s body with every `side.field` of a side that is a port
-/// struct written as the port `field`, so the lowering reads it as it
-/// reads a port named in a tuple. `self.side.field` is left alone.
+/// struct written as the port `side_field`, or `field` for a side
+/// taken apart, so the lowering reads it as it reads a port named in
+/// a tuple. `self.side.field` is left alone.
 fn port_fields(
     ts: TokenStream,
     bound: &[(String, Vec<String>)],
@@ -3415,15 +3429,23 @@ fn port_fields(
             if !after_dot
                 && bound.iter().any(|(n, fs)| *n == b && fs.contains(&f))
             {
+                // A side written `name: S` names its ports `name_field`;
+                // one taken apart names them by the field (issue 580).
+                let port = if side_prefixed(bound, &b) {
+                    format!("{b}_{f}")
+                } else {
+                    f.clone()
+                };
                 // A field that is a struct of ports nested in the side:
                 // what follows is read from it as from a side of its own.
-                if bound.iter().any(|(n, fs)| *n == f && fs == &["*"]) {
-                    let rest: TokenStream =
-                        ts[i + 2..].iter().cloned().collect();
-                    out.extend(port_fields(rest, bound));
+                if bound.iter().any(|(n, fs)| *n == port && fs == &["*"]) {
+                    let mut rest: Vec<TokenTree> = ts[i + 2..].to_vec();
+                    rest[0] =
+                        TokenTree::Ident(Ident::new(&port, ts[i + 2].span()));
+                    out.extend(port_fields(rest.into_iter().collect(), bound));
                     return out.into_iter().collect();
                 }
-                out.push(ts[i + 2].clone());
+                out.push(TokenTree::Ident(Ident::new(&port, ts[i + 2].span())));
                 i += 3;
                 continue;
             }
@@ -6108,27 +6130,34 @@ fn lower_structural(
                                     format!("@bundle {ty} {id}"),
                                 ));
                             }
-                            // Its fields in order; one that is a struct of
-                            // ports nested in it is joined whole, as a side
-                            // declared elsewhere is (issue 498).
+                            // Its fields in order, under the side's name
+                            // when the side has one (issue 580); one that
+                            // is a struct of ports nested in it is joined
+                            // whole, as a side declared elsewhere is
+                            // (issue 498).
                             Some((_, fs)) => {
-                                for f in fs {
+                                let pre = side_prefixed(bound, &id);
+                                for f in fs.iter().filter(|f| *f != PREFIX) {
+                                    let port = if pre {
+                                        format!("{id}_{f}")
+                                    } else {
+                                        f.clone()
+                                    };
                                     let ty = BUNDLES.with(|b| {
                                         b.borrow()
                                             .iter()
-                                            .find(|(n, _)| n == f)
+                                            .find(|(n, _)| *n == port)
                                             .map(|(_, t)| t.clone())
                                     });
-                                    let nested = bound
-                                        .iter()
-                                        .any(|(n, x)| n == f && x == &["*"]);
+                                    let nested = bound.iter().any(|(n, x)| {
+                                        *n == port && x == &["*"]
+                                    });
                                     match (ty, nested) {
                                         (Some(ty), true) => names.push((
                                             String::new(),
-                                            format!("@bundle {ty} {f}"),
+                                            format!("@bundle {ty} {port}"),
                                         )),
-                                        _ => names
-                                            .push((String::new(), f.clone())),
+                                        _ => names.push((String::new(), port)),
                                     }
                                 }
                             }
@@ -6536,10 +6565,26 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         if let Some(StructSide::Read(fields)) = fields {
             let names: Vec<String> =
                 fields.iter().map(|(n, _)| n.clone()).collect();
+            // A side written `name: S` names its ports `name_field`,
+            // as a side declared elsewhere does, so two sides of one
+            // type stay apart and a struct moved to another file
+            // renames nothing; a side taken apart, `S { a, b }: S`,
+            // names them `a`, `b`, since it has no name of its own
+            // (issue 580). The marker in `bound` says which.
+            let mut side: Option<String> = None;
+            let prefixed = |n: &str| -> (String, Vec<String>) {
+                let mut fs = vec![PREFIX.to_string()];
+                fs.extend(names.iter().cloned());
+                (n.to_string(), fs)
+            };
             match &p[..colon] {
-                [TokenTree::Ident(n)] => bound.push((n.to_string(), names)),
+                [TokenTree::Ident(n)] => {
+                    side = Some(n.to_string());
+                    bound.push(prefixed(&n.to_string()));
+                }
                 [m, TokenTree::Ident(n)] if is_ident(m, "mut") => {
-                    bound.push((n.to_string(), names))
+                    side = Some(n.to_string());
+                    bound.push(prefixed(&n.to_string()));
                 }
                 [TokenTree::Ident(_), TokenTree::Group(g)]
                     if g.delimiter() == Delimiter::Brace =>
@@ -6566,6 +6611,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
             for (n, t) in fields {
+                let port = match &side {
+                    Some(s) => format!("{s}_{n}"),
+                    None => n.clone(),
+                };
                 // A field that is itself a struct of ports: its ports are
                 // the netlist's under the field's name, `field_sub`, and
                 // `side.field.sub` in the body is that port (issue 498).
@@ -6573,13 +6622,14 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     .iter()
                     .any(|e| t.starts_with(e));
                 if !end {
-                    bound.push((n.clone(), vec!["*".to_string()]));
-                    BUNDLES
-                        .with(|b| b.borrow_mut().push((n.clone(), t.clone())));
-                    pairs.push((n, format!("@ports {t}"), p[0].span()));
+                    bound.push((port.clone(), vec!["*".to_string()]));
+                    BUNDLES.with(|b| {
+                        b.borrow_mut().push((port.clone(), t.clone()))
+                    });
+                    pairs.push((port, format!("@ports {t}"), p[0].span()));
                     continue;
                 }
-                pairs.push((n, t, p[0].span()));
+                pairs.push((port, t, p[0].span()));
             }
             continue;
         }

@@ -104,11 +104,11 @@ fn main() {
     let count = top.diff.count;
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
-        w.add("minuend", &sink.minuend);
-        w.add("subtrahend", &sink.subtrahend);
+        w.add("inp_minuend", &sink.minuend);
+        w.add("inp_subtrahend", &sink.subtrahend);
         w.add("top", &top);
-        w.add("diff", &res_rx);
-        w.add("borrow", &borrow);
+        w.add("out_diff", &res_rx);
+        w.add("out_borrow", &borrow);
         w.start();
     }
     let out = DiffOut {
