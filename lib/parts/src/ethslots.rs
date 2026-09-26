@@ -29,14 +29,51 @@
 //! bit and a start bit, and only receive raises a line. `tx_ev_pending`
 //! and `tx_ev_enable` exist because the driver acknowledges them, and
 //! do nothing else.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
+use txhdl::comp::{Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, with, Trace};
+use txhdl::{lower, regmap, with, Trace};
 
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
 /// A slot is this many bytes, which is `FRAME_MAX`.
 pub const SLOT: usize = 2048;
+
+// begin{regs}
+// LiteEth's map, as Zephyr's driver addresses it: ten words, a word
+// not named reading zero.
+regmap! { regs (regs_read, regs_we), 4: [
+    (0, rx_slot, ro, "which slot the last frame is in", [
+        (slot, 0, 1, ro, 0, "the slot"),
+    ]),
+    (1, rx_length, ro, "its length in bytes", [
+        (length, 0, 16, ro, 0, "the length"),
+    ]),
+    (2, rx_ev_pending, w1c, "a frame arrived and is not acknowledged", [
+        (pending, 0, 1, w1c, 0, "set by an arrival; written one, cleared"),
+    ]),
+    (3, rx_ev_enable, rw, "whether an arrival raises the line", [
+        (enable, 0, 1, rw, 0, "the enable"),
+    ]),
+    (4, tx_slot, wo, "which slot the next transmit reads", [
+        (slot, 0, 1, wo, 0, "the slot"),
+    ]),
+    (5, tx_length, wo, "how many bytes of it to send", [
+        (length, 0, 16, wo, 0, "the length"),
+    ]),
+    (6, tx_start, wo, "written one, the transmit starts", [
+        (start, 0, 1, wo, 0, "the start"),
+    ]),
+    (7, tx_ready, ro, "no transmit is running or waiting", [
+        (ready, 0, 1, ro, 1, "ready"),
+    ]),
+    (8, tx_ev_pending, w1c, "acknowledged by the driver, otherwise unused", [
+        (pending, 0, 1, w1c, 0, "the event"),
+    ]),
+    (9, tx_ev_enable, rw, "kept for the driver; it raises nothing", [
+        (enable, 0, 1, rw, 0, "the enable"),
+    ]),
+] }
+// end{regs}
 
 // begin{state}
 /// The slot registers, as LiteEth lays them out.
@@ -144,8 +181,12 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             // Writing a one to a pending bit clears it, which is what
             // `RW1C` means and what every Zephyr driver does to
             // acknowledge.
-            let rx_ack = wgo & (wsel == 2) & data.bit(0).to_bool();
-            let tx_ack = wgo & (wsel == 8) & data.bit(0).to_bool();
+            // The write enables as a named wire before a bit is taken
+            // off them: VHDL will not index the concatenation itself
+            // (issue 683).
+            let we = regs_we(wgo, wsel);
+            let rx_ack = we.bit(2) & regs_rx_ev_pending_pending(data);
+            let tx_ack = we.bit(8) & regs_tx_ev_pending_pending(data);
 
             // A slot's address. The two directions are separate
             // regions, receive first and transmit 4096 bytes above
@@ -186,67 +227,34 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
                 },
                 rx_was: now_busy,
                 taken ? tx_go: Bit::Zero,
-                wgo & (wsel == 3) ? rx_enable: data.bit(0),
-                wgo & (wsel == 4) ? tx_slot: data.slice::<0, 1>(),
-                wgo & (wsel == 5) ? tx_length: data.slice::<0, 16>(),
-                wgo & (wsel == 6) ? tx_go: data.bit(0),
-                wgo & (wsel == 9) ? tx_enable: data.bit(0),
+                we.bit(3) ? rx_enable: regs_rx_ev_enable_enable(data),
+                we.bit(4) ? tx_slot: regs_tx_slot_slot(data).zext::<1>(),
+                we.bit(5) ? tx_length: regs_tx_length_length(data),
+                we.bit(6) ? tx_go: regs_tx_start_start(data),
+                we.bit(9) ? tx_enable: regs_tx_ev_enable_enable(data),
             });
 
             if rgo.to_bool() {
-                // The map, as LiteEth has it. A word not named reads
-                // as zero rather than as whatever was last on the bus.
-                let v0 = mux(
-                    rsel == 0,
-                    self.rx_slot.get().resize::<32>(),
-                    mux(
-                        rsel == 1,
-                        self.rx_length.get().resize::<32>(),
-                        mux(
-                            rsel == 2,
-                            mux(
-                                self.rx_pending.get(),
-                                U::<32>::from(1u8),
-                                U::<32>::from(0u8),
-                            ),
-                            mux(
-                                self.rx_enable.get(),
-                                U::<32>::from(1u8),
-                                U::<32>::from(0u8),
-                            ),
-                        ),
-                    ),
-                );
-                let v1 = mux(
-                    rsel == 7,
-                    mux(
-                        !tx_busy.get() & !self.tx_go.get(),
-                        U::<32>::from(1u8),
-                        U::<32>::from(0u8),
-                    ),
-                    mux(
-                        rsel == 8,
-                        mux(
-                            self.tx_pending.get(),
-                            U::<32>::from(1u8),
-                            U::<32>::from(0u8),
-                        ),
-                        // Word 9 by name, so that the write-only words
-                        // 4 to 6 and the unnamed 10 to 15 fall through
-                        // to zero rather than mirror it (issue 454).
-                        mux(
-                            rsel == 9,
-                            mux(
-                                self.tx_enable.get(),
-                                U::<32>::from(1u8),
-                                U::<32>::from(0u8),
-                            ),
-                            U::<32>::from(0u8),
-                        ),
-                    ),
+                // The map, as LiteEth has it: the write-only words 4
+                // to 6 and the unnamed 10 to 15 read as zero rather
+                // than mirror a neighbour (issue 454).
+                let ready = !tx_busy.get() & !self.tx_go.get();
+                let zero = U::<32>::from(0u8);
+                let word = regs_read(
+                    rsel,
+                    regs_rx_slot_pack(self.rx_slot.get().bit(0)),
+                    regs_rx_length_pack(self.rx_length.get()),
+                    regs_rx_ev_pending_pack(self.rx_pending.get()),
+                    regs_rx_ev_enable_pack(self.rx_enable.get()),
+                    zero,
+                    zero,
+                    zero,
+                    regs_tx_ready_pack(ready),
+                    regs_tx_ev_pending_pack(self.tx_pending.get()),
+                    regs_tx_ev_enable_pack(self.tx_enable.get()),
                 );
                 bus.r.send(LiteR {
-                    data: mux(rsel < 4, v0, v1),
+                    data: word,
                     resp: crate::bus::axi::Resp::Okay,
                 });
             }
