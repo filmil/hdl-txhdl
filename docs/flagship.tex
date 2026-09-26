@@ -121,8 +121,9 @@ The small peripherals share the page at \code{0x3000} behind an
 AXI-Lite bridge, each a sixteenth of it, for exactly that reason: a
 peripheral of six registers does not deserve a port of its own. The
 video peripheral is three registers, so it takes the third sixteenth,
-at \code{0x3200}, among the six in Table~\ref{tab:f-page}. Both tables
-are written by \code{//tools/memmap} from the maps the router and the
+at \code{0x3200}, among the six in Table~\ref{tab:f-page}, with its
+words in Table~\ref{tab:f-hdmi}. The tables are written by
+\code{//tools/memmap} from the maps the router and the
 page's bridge decode, so they are the map the bitstream has.
 
 \begin{table}[htbp]
@@ -138,6 +139,12 @@ it.}
 \label{tab:f-page}
 \mmget{page}{flagship}
 \end{table}
+
+\begin{table*}[tbp]
+\caption{The video peripheral's registers, on the third slot.}
+\label{tab:f-hdmi}
+\mmget{regs}{hdmi}
+\end{table*}
 
 What is different about the third slot is that it does not reach a
 field of \code{Board}. It leaves the unit as five channel ports:
