@@ -449,7 +449,22 @@ pub(crate) fn helpers_in(ts: &[TokenTree]) -> Vec<Helper> {
 pub(crate) fn regmap(input: TokenStream) -> TokenStream {
     let ts: Vec<TokenTree> = input.into_iter().collect();
     match parse(&ts) {
-        Ok(d) => expand(&d).parse().unwrap_or_else(|e| {
+        Ok(d) => {
+            // Each function's lowering beside it, so a helper that
+            // calls one, which is lowered on its own and cannot inline
+            // from the file, reaches it by `f::lowered` (issue 697).
+            let mut out = expand(&d);
+            for h in helpers(&d) {
+                if let Some(c) =
+                    crate::companion_of(&h, "pub", &[], &Vec::new())
+                {
+                    out.push_str(&c);
+                }
+            }
+            out
+        }
+        .parse()
+        .unwrap_or_else(|e| {
             crate::err(proc_macro::Span::call_site(), &format!("regmap!: {e}"))
         }),
         Err(m) => crate::err(proc_macro::Span::call_site(), &m),

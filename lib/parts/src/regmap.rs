@@ -6,9 +6,10 @@
 
 #[cfg(test)]
 mod tests {
-    use txhdl::regmap;
+    use txhdl::netlist::Expr;
     use txhdl::regmap::Access;
     use txhdl::types::{Bit, U};
+    use txhdl::{lower, regmap};
 
     regmap! { knobs (knobs_read, knobs_we), 2: [
         (0, id, ro, "who this is"),
@@ -67,5 +68,32 @@ mod tests {
             5,
             "three registers, two fields"
         );
+    }
+
+    /// A helper that calls the functions the declaration writes. It is
+    /// lowered on its own, apart from any unit, so it reaches them
+    /// through the lowerings `regmap!` writes beside them (issue 697).
+    #[lower]
+    fn run_go(wgo: Bit, wsel: U<2>, w: U<32>) -> Bit {
+        let we = knobs_we(wgo, wsel);
+        we.bit(1) & knobs_ctrl_run(w)
+    }
+
+    #[test]
+    fn a_helper_calls_the_functions_the_declaration_writes() {
+        let go = |g: bool, s: u32, w: u32| {
+            run_go(Bit::from_bool(g), U::<2>::from(s), U::<32>::from(w))
+        };
+        assert_eq!(go(true, 1, 1), Bit::One, "a write to ctrl with run");
+        assert_eq!(go(true, 1, 0), Bit::Zero, "without run");
+        assert_eq!(go(true, 2, 1), Bit::Zero, "a write to another word");
+        assert_eq!(go(false, 1, 1), Bit::Zero, "no write");
+        let n = |s: &str| Expr::Name(s.to_string());
+        let e = format!("{:?}", run_go::lowered(n("g"), n("s"), n("w")));
+        for name in ["\"g\"", "\"s\"", "\"w\""] {
+            assert!(e.contains(name), "{name} in {e}");
+        }
+        let p = format!("{:?}", knobs_ctrl_pack::lowered(n("r"), n("t")));
+        assert!(p.contains("\"r\"") && p.contains("\"t\""), "{p}");
     }
 }
