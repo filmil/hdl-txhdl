@@ -12,6 +12,9 @@ build stamp, which a build can fill with a commit and a date so that a
 program can say which bitstream it is running on rather than which one
 it was compiled for. The other three are a cause, a reset and a
 scratch.
+The seven are declared once, with \code{regmap!}, which writes the
+word a read answers, the word a write goes to, and the offsets the
+example addresses the block by (issue 671).
 
 \subsection{The Cause Accumulates}
 
