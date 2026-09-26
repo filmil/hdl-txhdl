@@ -26,6 +26,7 @@ use txhdl_parts::bus::axi::{Issue, R};
 use txhdl_parts::bus::axi_lite::LiteBridge;
 use txhdl_parts::bus::axi_pins::AxiPins;
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
+use txhdl_parts::bus::noc::mesh::Mesh;
 use txhdl_parts::bus::noc::node::Node;
 use txhdl_parts::bus::noc::switch::Switch;
 use txhdl_parts::bus::router::Router;
@@ -494,6 +495,11 @@ fn main() {
         "Node",
         "Node<2, 2, 32, 32, 4, 2>",
         Node::<2, 2, 32, 32, 4, 2>::lowered("node"),
+    );
+    sheet(
+        "Mesh",
+        "Mesh<3, 2, 6, 2, 1, 8, 8, 1, 2>",
+        Mesh::<3, 2, 6, 2, 1, 8, 8, 1, 2>::lowered("mesh"),
     );
     sheet(
         "HostBridge",

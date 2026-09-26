@@ -7,14 +7,16 @@
 
 \subsection*{Function}
 
-A switch sits at column \code{X} and row \code{Y} of a lattice. It has
-a two-way link on each of its four sides and a fifth port, the exit,
+A switch has a two-way link on each of its four sides and a fifth port, the exit,
 where something that is not a node attaches. Its inputs are
 \code{n\_in}, \code{s\_in}, \code{w\_in}, \code{e\_in} and
 \code{x\_in}, and its outputs are \code{n\_out}, \code{s\_out},
 \code{w\_out}, \code{e\_out} and \code{x\_out}. Each port passes one
 \code{Pkt}, a beat of one AXI channel addressed to a node. The switch
-routes in dimension order, X before Y. A \code{Node} is two switches,
+routes in dimension order, X before Y. Its place in the lattice is two more
+inputs, \code{col} and \code{row}, which whoever places it holds at
+constants with \code{tie}, so every switch of a lattice is one type
+(issue 635). A \code{Node} is two switches,
 one per virtual channel.
 
 \subsection*{Parameters}
@@ -24,11 +26,10 @@ one per virtual channel.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{X} & The column of the switch in the lattice. \\
-\code{Y} & The row of the switch in the lattice. \\
-\code{XB} & The width of a column coordinate, in bits. A lattice is at
+\code{XB} & The width of a column coordinate, and of \code{col}, in
+bits. A lattice is at
 most \code{1 << XB} columns wide. \\
-\code{YB} & The width of a row coordinate, in bits. A lattice is at
+\code{YB} & The width of a row coordinate, and of \code{row}, in bits. A lattice is at
 most \code{1 << YB} rows high. \\
 \code{A} & The address width of the AXI link. \\
 \code{D} & The data width of the AXI link. \\
@@ -38,9 +39,8 @@ most \code{1 << YB} rows high. \\
 \end{tabular}
 \end{center}
 
-The tables below are for \code{Switch<0, 0, 2, 2, 32, 32, 4, 2>}. That
-is the switch at 0,0, with two-bit coordinates, on the link that
-\code{//soc} uses.
+The tables below are for \code{Switch<2, 2, 32, 32, 4, 2>}: two-bit
+coordinates, on the link that \code{//soc} uses.
 
 \dstables{Switch}
 
@@ -50,13 +50,12 @@ is the switch at 0,0, with two-bit coordinates, on the link that
 \item The switch holds one thing, \code{turn}, three bits: which
 input the choice starts from. The port a packet leaves by holds
 nothing, being a function of the packet's \code{dx} and \code{dy} and
-of \code{X} and \code{Y}; what needed a register is which input goes
+of \code{col} and \code{row}; what needed a register is which input goes
 when several could (issue 315).
 \item The switch compares coordinates at \code{CW}, 8 bits. It sends a
-packet east when \code{dx} is above \code{X}, and west when \code{dx}
-is below \code{X}. In the right column, it sends the packet south when
-\code{dy} is above \code{Y}, and north when \code{dy} is below
-\code{Y}. At its own node it sends the packet out of the exit.
+packet east when \code{dx} is above \code{col}, and west when \code{dx}
+is below it. In the right column, it sends the packet south when
+\code{dy} is above \code{row}, and north when \code{dy} is below it. At its own node it sends the packet out of the exit.
 \item Each cycle the switch works out, for every input with a packet,
 the port that packet wants and whether that port is ready. An input
 whose port is full does not hold up the others.
@@ -72,19 +71,23 @@ was last and the links were never all quiet.
 \subsection*{Verification}
 
 \begin{itemize}
-\item The switch has no test of its own. The three tests of the
-network in \code{lib/parts/src/bus/noc.rs} run it inside four nodes:
-\code{a\_burst\_crosses\_the\_lattice\_and\_its\_answer\_comes\_back},
-\code{two\_hosts\_share\_a\_memory\_and\_each\_answer\_goes\_home} and
-\code{four\_peripherals\_share\_one\_node}, in
-\code{//lib/parts:parts\_test}.
-\item \code{a\_core\_draws\_a\_solid\_and\_a\_gpu\_fills\_it}, in
-\code{//soc:demo\_test}, runs a core, a GPU, a memory and a serial port
-on a two by two lattice of nodes.
-\item No waveform in \code{docs/BUILD.bazel} lowers the switch, so its
-netlist has no co-simulation under nvc or Verilator.
-\code{//docs:showcase} lists the network's netlists as not yet
-simulated.
+\item Two tests in \code{lib/parts/src/bus/noc.rs}, in
+\code{//lib/parts:parts\_test}, drive one switch at 0,0 alone.
+\code{a\_busy\_link}\allowbreak\code{\_and\_the\_exit\_take\_turns} has a link and the exit
+offer every cycle for the east port, and asserts that each moves more
+than fifty of two hundred and that the two differ by at most two.
+\code{two\_inputs\_of\_a\_switch}\allowbreak\code{\_contend\_for\_their\_shared\_output}
+measures two inputs leaving by one port, both offering every cycle and
+one offering every third.
+\item Eight more tests of the network in the same file run it inside
+four nodes, and \code{a\_core\_draws\_a\_solid\_and\_a\_gpu\_fills\_it},
+in \code{//soc:demo\_test}, runs a core, a GPU, a memory and a serial
+port on a two by two lattice of nodes.
+\item The switch's netlist is checked inside \code{Mesh}, two to a
+node: \code{ex\_mesh} lowers a mesh of six nodes, and
+\code{//docs:mesh\_sim\_mesh\_tb\_test} and \code{//docs:mesh\_vsim\_test}
+run it under nvc and Verilator against the Rust run, at the mesh's
+ports.
 \end{itemize}
 
 \subsection*{Used by}
@@ -94,8 +97,7 @@ for responses.
 
 \subsection*{Limits}
 
-The switch moves one packet per cycle, not one per port. Its arbiter
-is a fixed priority, and \code{//docs:noc} names a fair arbiter as the
-next thing to write. \code{//docs:noc} measures the cost on the
-system of \code{//soc}: the rasteriser draws its list in 36\,516 cycles
-on a direct link and in 78\,391 cycles across the lattice.
+The switch moves one packet per cycle, not one per port.
+\code{//docs:noc} measures the cost on the system of \code{//soc}: the
+rasteriser draws its list in 36\,516 cycles on a direct link and in
+78\,391 cycles across the lattice.

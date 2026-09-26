@@ -1,0 +1,97 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Mesh
+\datasheet{Mesh}{A lattice of network nodes as one unit, which lowers.}
+
+\dsfacts{\code{lib/parts/src/bus/noc/mesh.rs}}{\code{txhdl\_parts::bus::noc::mesh::Mesh}}%
+{\code{//docs:noc}}
+
+\subsection*{Function}
+
+\code{Mesh<W, H, N, ..>} is \code{N} nodes, \code{W} wide and \code{H}
+high, in row-major order, held as one field, \code{nodes:
+Units<Node, N>} (issue 635). Node \code{i} is at column \code{i \% W}
+and row \code{i / W}, which the mesh gives it by tying its \code{col}
+and \code{row} inputs to those constants.
+
+The mesh's ports are the nodes' exits, four arrays of \code{N}:
+\code{qx\_in} the requests into each node, \code{px\_in} the responses
+into each, and \code{qx\_out} and \code{px\_out} what leaves by each.
+Everything between the nodes is inside. The links are one array of
+channels per direction of travel and per virtual channel. Node
+\code{i}'s output to a direction is channel \code{i} of that
+direction's array, and its neighbour reads that channel on the input
+from the opposite side.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{W} & The width of the lattice, in nodes. \\
+\code{H} & The height of the lattice, in nodes. \\
+\code{N} & The number of nodes, which must be \code{W * H}. \\
+\code{XB} & The width of a column coordinate, in bits: at least enough
+for \code{W - 1}. \\
+\code{YB} & The width of a row coordinate, in bits: at least enough
+for \code{H - 1}. \\
+\code{A} & The address width of the AXI link. \\
+\code{D} & The data width of the AXI link. \\
+\code{S} & The strobe width, which is \code{D / 8}. \\
+\code{I} & The identifier width of the AXI link. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables below are for \code{Mesh<3, 2, 6, 2, 1, 8, 8, 1, 2>}, the
+mesh \code{ex\_mesh} makes: three nodes wide and two high, on a link
+of eight-bit addresses and data.
+
+\dstables{Mesh}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item The mesh has no logic of its own and no register. What it holds
+is its nodes' state, six bits each.
+\item Node \code{i} reads from the north what the node above sent
+down, from the south what the node below sent up, from the west what
+the node to its west sent east, and from the east what the node to its
+east sent west.
+\item A link at an edge wraps to the other end of its row or column,
+so that every channel has one driver and one reader. Routing is
+dimension order, so no packet for a place on the lattice ever takes
+one: nothing leaves the east edge eastward, since no column is east of
+it.
+\item \code{Default} refuses a mesh whose \code{N} is not
+\code{W * H}, with a message naming both, since Rust cannot yet
+compute \code{N} from \code{W} and \code{H}.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_mesh} runs \code{Mesh<3, 2, 6, ..>}. Every node sends a
+request to each of the other five, and a response to the node at the
+opposite corner. The run asserts that each packet leaves by the exit
+of the node it was addressed to, and that all thirty requests and six
+responses arrive.
+\item The netlist, six node instances and the channels between them,
+is checked against that run under nvc and Verilator, by
+\code{//docs:mesh\_sim\_mesh\_tb\_test} and \code{//docs:mesh\_vsim\_test},
+at every port of the mesh.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{ex\_mesh}. The tests of the network and \code{//soc} wire their
+lattices with \code{mesh::lattice}, which does not lower.
+
+\subsection*{Limits}
+
+Nothing refuses a packet addressed to a place off the lattice, a
+column of \code{W} or more say: the wrapped links carry nothing only
+while every destination is on it. The nodes' registers are checked
+at the mesh's ports only, not inside it. Each node's switches move
+one packet per cycle, not one per port.
