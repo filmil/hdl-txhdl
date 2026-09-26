@@ -8,14 +8,10 @@
 //! that the load cannot follow gives the in-between, and what the load
 //! sees is the fraction of each period the pin was high.
 //!
-//! | Offset | Name | What it is |
-//! |---|---|---|
-//! | `0x00` | `ctrl` | enable, centre, and a polarity bit per channel |
-//! | `0x04` | `period` | the period, in cycles |
-//! | `0x08` | `duty0` | channel 0: cycles high per period |
-//! | `0x0c` | `duty1` | channel 1 |
-//! | `0x10` | `duty2` | channel 2 |
-//! | `0x14` | `duty3` | channel 3 |
+//! The registers, a word apart from the base, are declared once with
+//! `regmap!` below (issue 674): the control word and its fields, the
+//! period, a duty per channel, and the counter, which a program may
+//! read to see where in the period it is.
 //!
 //! A duty written takes effect at the end of the period rather than at
 //! once. A period that changed under a counter halfway through would
@@ -36,23 +32,39 @@
 //! neither is a pulse one cycle wide.
 use txhdl::comp::{mux, Clock, DefaultClock, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, with, Trace};
+use txhdl::{lower, regmap, with, Trace};
 
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
+// begin{map}
+regmap! { regs (regs_read, regs_we), 3: [
+    (0, ctrl, rw, "enable, centre, and a polarity bit per channel", [
+        (enable, 0, 1, rw, 0, "the counter runs"),
+        (centre, 1, 1, rw, 0, "count up and down rather than up and wrap"),
+        (pol, 4, 4, rw, 0, "a bit per channel: high where it would be low"),
+    ]),
+    (1, period, rw, "the period, in cycles, from the next wrap"),
+    (2, duty0, rw, "channel 0: cycles high per period, from the next wrap"),
+    (3, duty1, rw, "channel 1"),
+    (4, duty2, rw, "channel 2"),
+    (5, duty3, rw, "channel 3"),
+    (6, count, ro, "where in the period the counter is"),
+] }
+// end{map}
+
 /// `ctrl` bit 0: the counter runs.
-pub const CTRL_ENABLE: u32 = 1;
+pub const CTRL_ENABLE: u32 = regs::ctrl_enable.mask();
 /// `ctrl` bit 1: count up and down rather than up and wrap.
-pub const CTRL_CENTRE: u32 = 2;
+pub const CTRL_CENTRE: u32 = regs::ctrl_centre.mask();
 /// `ctrl` bits 4 to 7: channel `i` is high where it would be low.
 pub const fn polarity(i: u32) -> u32 {
-    1 << (4 + i)
+    1 << (regs::ctrl_pol.shift + i)
 }
 
 /// The offset of channel `i`'s duty.
 pub const fn duty(i: u32) -> u32 {
-    8 + 4 * i
+    regs::duty0 + 4 * i
 }
 
 // begin{state}
@@ -133,28 +145,32 @@ impl Unit for Pwm {
                 .concat::<1, 2>(h2.zext::<1>())
                 .concat::<1, 3>(h1.zext::<1>())
                 .concat::<1, 4>(h0.zext::<1>());
-            let word = select!(rsel.raw() => {
-                0 => ctrl.zext::<32>(),
-                1 => self.period_next.get().zext::<32>(),
-                2 => shadow.slice::<0, 16>().zext::<32>(),
-                3 => shadow.slice::<16, 16>().zext::<32>(),
-                4 => shadow.slice::<32, 16>().zext::<32>(),
-                5 => shadow.slice::<48, 16>().zext::<32>(),
-                6 => count.zext::<32>(),
-                _ => U::<32>::from(0u8),
-            });
+            // The word a read answers, and a write enable a register,
+            // from the map. `ctrl` reads back the byte it was written,
+            // its unnamed bits too, as it always has.
+            let word = regs_read(
+                rsel,
+                ctrl.zext::<32>(),
+                self.period_next.get().zext::<32>(),
+                shadow.slice::<0, 16>().zext::<32>(),
+                shadow.slice::<16, 16>().zext::<32>(),
+                shadow.slice::<32, 16>().zext::<32>(),
+                shadow.slice::<48, 16>().zext::<32>(),
+                count.zext::<32>(),
+            );
+            let we = regs_we(wgo, wsel);
             with!(self <= {
-                wgo & (wsel == 0) ? ctrl: wh.data.slice::<0, 8>(),
-                wgo & (wsel == 1) ? period_next: written,
-                wgo & (wsel == 2) ? duty_next: shadow.slice::<16, 48>()
+                we.bit(0) ? ctrl: wh.data.slice::<0, 8>(),
+                we.bit(1) ? period_next: written,
+                we.bit(2) ? duty_next: shadow.slice::<16, 48>()
                     .concat::<16, 64>(written),
-                wgo & (wsel == 3) ? duty_next: shadow.slice::<32, 32>()
+                we.bit(3) ? duty_next: shadow.slice::<32, 32>()
                     .concat::<16, 48>(written)
                     .concat::<16, 64>(shadow.slice::<0, 16>()),
-                wgo & (wsel == 4) ? duty_next: shadow.slice::<48, 16>()
+                we.bit(4) ? duty_next: shadow.slice::<48, 16>()
                     .concat::<16, 32>(written)
                     .concat::<32, 64>(shadow.slice::<0, 32>()),
-                wgo & (wsel == 5) ? duty_next: written
+                we.bit(5) ? duty_next: written
                     .concat::<48, 64>(shadow.slice::<0, 48>()),
                 // What the counter does with the cycle.
                 stepping & up ? count: count + 1,
