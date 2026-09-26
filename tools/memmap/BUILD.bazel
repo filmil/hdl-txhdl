@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# The boards' memory maps, as LaTeX, from the maps the designs decode
+# (issue 444).
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# Every board's map and its peripheral page, and the registers of each
+# peripheral on it that declares them with `regmap!`.
+rust_binary(
+    name = "memmap",
+    srcs = ["main.rs"],
+    edition = "2021",
+    deps = [
+        "//cpu/vreteno:vreteno32",
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+)
+
+genrule(
+    name = "tables",
+    outs = ["mm_tables.tex"],
+    cmd = "$(location :memmap) > $@",
+    tools = [":memmap"],
+)
