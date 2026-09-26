@@ -12,15 +12,20 @@ A core from elsewhere that is an AXI4 host has pins: a \code{valid} and
 a \code{ready} per channel and a wire per field, named as AXI4 names
 them. \code{AxiPins} joins those pins to the link's five channels, so it
 goes where an \code{AxiHost} would, with an \code{AxiPer} or a router
-behind it. Its inputs are the struct \code{AxiPinsIn}: the host's 24
-pins as one field, \code{pins}, an \code{AxiHostPins}, and the
-\code{b} and \code{r} channels from the link. So its input ports are
-\code{pins\_awid} and the rest beside \code{b} and \code{r}.
+behind it. Its inputs are the side \code{inp: AxiPinsIn}: the host's
+24 pins as one field, \code{pins}, an \code{AxiHostPins}, and the
+\code{b} and \code{r} channels from the link. One rule names the ports
+of a struct side, \code{name\_field} for a side written
+\code{name: S} (issue 580), so its input ports are
+\code{inp\_pins\_awid} and the rest beside \code{inp\_b} and
+\code{inp\_r}.
 \code{AxiHostPins} derives \code{Ports}, so a design that has a host's
 pins among its own ports holds them as one field too and passes them
 whole (issue 579). Its outputs
-are \code{AxiPinsOut}: the \code{aw}, \code{ar} and \code{w} channels
-to the link, and the eleven pins the host reads.
+are the side \code{outp: AxiPinsOut}: the \code{aw}, \code{ar} and
+\code{w} channels to the link, and the eleven pins the host reads, so
+its output ports are \code{outp\_aw}, \code{outp\_ar}, \code{outp\_w},
+\code{outp\_awready} and the rest.
 
 \code{axi\_pins::sim} has \code{PinHost}, a host on the pins written as
 a simulation, and \code{pin\_host} and \code{pins}, which make the
