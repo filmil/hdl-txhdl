@@ -243,10 +243,19 @@ extern "C" fn main() -> ! {
         put(b'\n');
         // Wait for the last byte to leave the line before the jump, so
         // that a program which starts by saying something does not cut
-        // this message in half.
+        // this message in half. Then a fence: the stores above are
+        // posted, and the reads of the serial port in between say
+        // nothing about whether they have landed, so what ordered the
+        // jump after the last store was the millisecond the line took
+        // (issue 550). Since issue 432 a `fence` stalls until every
+        // posted store has been answered, and this core has no
+        // instruction cache, so a fence is what the jump needs and
+        // `fence.i` would add nothing.
         unsafe {
             while UART.add(UART_STATUS).read_volatile() & TX_BUSY != 0 {}
-            let entry: extern "C" fn() -> ! = core::mem::transmute(addr as usize);
+            core::arch::asm!("fence");
+            let entry: extern "C" fn() -> ! =
+                core::mem::transmute(addr as usize);
             entry()
         }
     }
