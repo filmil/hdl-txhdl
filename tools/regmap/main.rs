@@ -28,6 +28,7 @@ fn maps() -> Vec<(&'static str, &'static RegMap)> {
         ("hdmi", &txhdl_parts::hdmi::regs::MAP),
         ("pwm", &txhdl_parts::pwm::regs::MAP),
         ("sd", &txhdl_parts::sd::regs::MAP),
+        ("spi", &txhdl_parts::spi::regs::MAP),
         ("syscon", &txhdl_parts::syscon::regs::MAP),
         ("timer", &vreteno32::timer::clint::MAP),
         ("tracer", &txhdl_parts::tracer::regs::MAP),

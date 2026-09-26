@@ -9,15 +9,12 @@
 //! clocks. The third says whether a transfer is running and whether
 //! one has finished.
 //!
-//! | Offset | Name | What it is |
-//! |---|---|---|
-//! | `0x00` | `ctrl` | the divider, the mode, the select, the enable |
-//! | `0x04` | `data` | written: the byte to send; read: the byte that came |
-//! | `0x08` | `state` | bit 0 running, bit 1 finished; write one to clear |
-//!
-//! `ctrl` is the divider in bits 0 to 7, then `cpol` in bit 8, `cpha`
-//! in bit 9, the chip select in bit 10 and the interrupt enable in bit
-//! 11. A half of a bit takes `div + 1` cycles, so the clock is the
+//! The three registers and their fields are declared once with
+//! `regmap!` below (issue 675): `ctrl` is the divider in bits 0 to 7,
+//! then `cpol` in bit 8, `cpha` in bit 9, the chip select in bit 10 and
+//! the interrupt enable in bit 11; `data` is the byte; `state` is
+//! running in bit 0 and finished in bit 1, which a written one clears.
+//! A half of a bit takes `div + 1` cycles, so the clock is the
 //! system's over `2 * (div + 1)`.
 //!
 //! The chip select is a bit a program sets and clears rather than
@@ -35,10 +32,27 @@
 //! edges, so that is the one leading edge it does not shift on.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, with, Trace};
+use txhdl::{lower, regmap, with, Trace};
 
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
+
+// begin{map}
+regmap! { regs (regs_read, regs_we), 2: [
+    (0, ctrl, rw, "the divider, the mode, the select, the enable", [
+        (div, 0, 8, rw, 0, "a half of a bit is this many cycles, less one"),
+        (cpol, 8, 1, rw, 0, "the level the clock idles at"),
+        (cpha, 9, 1, rw, 0, "the trailing edge carries the bit"),
+        (sel, 10, 1, rw, 0, "the chip select, held while set"),
+        (ie, 11, 1, rw, 0, "a finished transfer raises the interrupt"),
+    ]),
+    (1, data, rw, "written: the byte to send; read: the byte that came"),
+    (2, state, w1c, "whether a transfer runs, and whether one finished", [
+        (busy, 0, 1, ro, 0, "a transfer is running"),
+        (fired, 1, 1, w1c, 0, "a transfer has finished"),
+    ]),
+] }
+// end{map}
 
 // begin{state}
 /// An SPI master: one byte each way at a time, under a chip select a
@@ -128,35 +142,25 @@ impl Unit for Spi {
             let written = wh.data;
             // A write to `data` starts a transfer, and is ignored
             // while one is running: a program reads `state` first.
-            let start = wgo & (wsel == 1) & !busy;
-            // The control word, built from the top down: the enable,
-            // the select, the two mode bits, then the divider in the
-            // low eight.
-            let ctrl = ie
-                .zext::<1>()
-                .concat::<1, 2>(sel.zext::<1>())
-                .concat::<1, 3>(cpha.zext::<1>())
-                .concat::<1, 4>(cpol.zext::<1>())
-                .concat::<8, 12>(div)
-                .zext::<32>();
-            let state = fired
-                .zext::<1>()
-                .concat::<1, 2>(busy.zext::<1>())
-                .zext::<32>();
-            let word = select!(rsel.raw() => {
-                0 => ctrl,
-                1 => rxb.zext::<32>(),
-                2 => state,
-                _ => U::<32>::from(0u8),
-            });
-            let clearing = wgo & (wsel == 2) & written.bit(1).to_bool();
+            // The map's write enables, a bit a register in its order.
+            let we = regs_we(wgo, wsel);
+            let start = we.bit(1) & !busy;
+            // The word a read answers, the fields packed as the map
+            // places them.
+            let word = regs_read(
+                rsel,
+                regs_ctrl_pack(div, cpol, cpha, sel, ie),
+                rxb.zext::<32>(),
+                regs_state_pack(busy, fired),
+            );
+            let clearing = we.bit(2) & regs_state_fired(written);
             with!(self <= {
-                wgo & (wsel == 0) ? {
-                    div: written.slice::<0, 8>(),
-                    cpol: written.bit(8),
-                    cpha: written.bit(9),
-                    sel: written.bit(10),
-                    ie: written.bit(11),
+                we.bit(0) ? {
+                    div: regs_ctrl_div(written),
+                    cpol: regs_ctrl_cpol(written),
+                    cpha: regs_ctrl_cpha(written),
+                    sel: regs_ctrl_sel(written),
+                    ie: regs_ctrl_ie(written),
                 },
                 start ? {
                     busy: Bit::One,

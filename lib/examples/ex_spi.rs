@@ -26,7 +26,7 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
-use txhdl_parts::spi::{FlashDevice, Spi};
+use txhdl_parts::spi::{regs, FlashDevice, Spi};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
@@ -43,10 +43,12 @@ impl AddrMap<1> for SpiMap {
     const RANGES: [(usize, usize); 1] = [(0x1000, 0xf000)];
 }
 
-/// The master's words.
-const CTRL: u32 = 0x1000;
-const DATA: u32 = 0x1004;
-const STATE: u32 = 0x1008;
+/// The master's words: its base, and each register's offset in the
+/// map.
+const BASE: u32 = 0x1000;
+const CTRL: u32 = BASE + regs::ctrl;
+const DATA: u32 = BASE + regs::data;
+const STATE: u32 = BASE + regs::state;
 
 /// A half of a bit is two cycles, so a byte is thirty-two.
 const DIV: u32 = 1;
@@ -54,7 +56,7 @@ const DIV: u32 = 1;
 const CPOL: bool = false;
 const CPHA: bool = false;
 /// The control word with the chip held, and with it released.
-const HELD: u32 = DIV | (1 << 10);
+const HELD: u32 = DIV | regs::ctrl_sel.mask();
 const FREE: u32 = DIV;
 
 /// The client that drives the master.
@@ -69,7 +71,7 @@ async fn swap(host: &Client, byte: u32) -> u8 {
     host.write(Wr::at(DATA), &out).await.done().await;
     loop {
         let st = host.read(Rd::at(STATE, 1)).await.done().await.data[0];
-        if st.raw() & 1 == 0 {
+        if regs::state_busy.get(st.raw() as u32) == 0 {
             break;
         }
     }
