@@ -57,9 +57,10 @@ runs \code{Board<4>}.
 
 \subsection*{Address map}
 
-\code{BoardRouter} states the map in its type, \code{Router7<32, 32, 4,
-4, ...>}. A peripheral gets an address when the address under the mask
-equals the base.
+\code{BoardRouter} is \code{Router<7, BoardMap, 32, 32, 4, 4>}, and
+\code{BoardMap} beside it in \code{board.rs} states the map. A
+peripheral gets an address when the address under the mask equals the
+base, the first range that matches deciding.
 
 \begin{center}\footnotesize
 \begin{tabular}{@{}lllp{0.35\textwidth}@{}}
