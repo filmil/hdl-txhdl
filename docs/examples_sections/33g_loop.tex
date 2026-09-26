@@ -3,10 +3,12 @@
 \label{sec:x-loop}
 
 A unit of a count used to be text a macro wrote once per count:
-\code{router!} writes \code{Router2} to \code{Router8}, and the
-largest it writes is the largest there is. A side of \code{run} may
+\code{router!} wrote \code{Router2} to \code{Router8}, and the
+largest it wrote was the largest there was. A side of \code{run} may
 now be an array of ports, \code{ins: [Rx<U<8>>; N]}, and the body may
-go over it with \code{for i in 0..N} (issue 500).
+go over it with \code{for i in 0..N} (issue 500); the router is one
+unit over such arrays now, and the station is the one family still
+written out.
 
 \code{N} is a const parameter, which the macro, reading tokens, cannot
 see. So the loop is unrolled when \code{lowered} runs rather than when

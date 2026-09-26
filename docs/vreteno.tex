@@ -556,8 +556,8 @@ per load or store on \code{issue}, sends a store's beat on
 granted back on \code{release} as the answer arrives. It writes no
 identifier and counts no beat.
 
-Three devices sit behind the link's router, \code{Router3} of
-\code{txhdl\_parts}, whose type states the address map: the data
+Three devices sit behind the link's router, the \code{Router} of
+\code{txhdl\_parts}, whose map type states the address map: the data
 memory at \code{0x1000}, the serial port at \code{0x3000}, and the
 interrupt controller the 64~KiB from \code{0x0200\_0000}, and every other address a hole
 the router answers \code{DecErr} itself. The data memory and the

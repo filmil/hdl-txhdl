@@ -243,7 +243,7 @@ It files an issue instead and says in its pull request that it did.
 * One issue may carry both when a change adds one component.
 
 A component is a unit under `#[lower]` outside `lib/examples`, or a
-family of units a macro writes, such as `router!`'s routers.
+family of units a macro writes, such as `station!`'s stations.
 What belongs in the showcase is wider: a unit others can use, a system
 the build assembles, a toolchain the build fetches, or a flow the build
 runs, such as synthesis or a layout.
