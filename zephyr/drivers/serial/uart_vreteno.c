@@ -38,14 +38,15 @@
  */
 #include <zephyr/arch/cpu.h>
 #include <zephyr/sys/sys_io.h>
+#include <vreteno/regs/uart.h>
 
-#define VRETENO_UART_DATA   0x00
-#define VRETENO_UART_STATUS 0x04
-#define VRETENO_UART_RX     0x08
+#define VRETENO_UART_DATA   UART_TX
+#define VRETENO_UART_STATUS UART_STATUS
+#define VRETENO_UART_RX     UART_RX
 
-#define VRETENO_STATUS_BUSY BIT(0)
-#define VRETENO_STATUS_RX   BIT(1)
-#define VRETENO_STATUS_FULL BIT(2)
+#define VRETENO_STATUS_BUSY UART_STATUS_BUSY_MASK
+#define VRETENO_STATUS_RX   UART_STATUS_READY_MASK
+#define VRETENO_STATUS_FULL UART_STATUS_FULL_MASK
 
 struct uart_vreteno_config {
 	uintptr_t base;

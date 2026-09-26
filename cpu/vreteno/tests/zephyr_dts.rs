@@ -10,7 +10,7 @@
 //! So the numbers are checked here, against the constants the
 //! hardware itself uses. A port that disagrees with the router's map
 //! fails this test rather than the board.
-use txhdl::regmap::Access;
+use txhdl::regmap::{Access, RegMap};
 use vreteno32::isa::{
     CLINT_BASE, ETH_BASE, ETH_BUF_BASE, MSIP_OFF, MTIMECMP_OFF, MTIME_OFF,
     TRNG_BASE, UART_BASE,
@@ -38,6 +38,32 @@ const TRNG_KCONFIG: &str =
 const BOARD_DEFCONFIG: &str = include_str!(
     "../../../zephyr/boards/hdlfactory/ax7a200b/ax7a200b_defconfig"
 );
+
+/// What a driver defines one of its own names as. A driver takes its
+/// registers from the header `//tools/regmap` writes from the map,
+/// `#define LOCAL GENERATED`, and `//zephyr:regs_test` holds that
+/// header to the map, so the name is the check (issue 709).
+fn defined_as<'a>(c: &'a str, local: &str) -> &'a str {
+    let pat = format!("#define {local} ");
+    let line = c
+        .lines()
+        .find(|l| l.starts_with(&pat))
+        .unwrap_or_else(|| panic!("the driver has no `{local}`"));
+    line[pat.len()..].trim()
+}
+
+/// Whether the header a map is written as with prefix `p` has the name
+/// `gen`: `P_REG` for a register's offset, `P_REG_FIELD_MASK` for a
+/// field's mask.
+fn in_map(map: &RegMap, p: &str, gen: &str) -> bool {
+    map.regs.iter().any(|r| {
+        let reg = format!("{p}_{}", r.name.to_uppercase());
+        reg == gen
+            || r.fields.iter().any(|f| {
+                format!("{reg}_{}_MASK", f.name.to_uppercase()) == gen
+            })
+    })
+}
 
 /// The device tree's `reg` for a node, as its first address.
 fn reg_of(dts: &str, node: &str) -> u64 {
@@ -118,21 +144,23 @@ fn the_driver_reads_the_registers_the_port_has() {
     // The port's own map, `regmap!`'s `serial` in
     // `cpu/vreteno/src/uart.rs` (issue 669): a byte written to the
     // first word goes out, the second word is the status, and a read
-    // of the third takes the oldest byte received.
-    let word = |name: &str, off: u32| {
-        let d = format!("#define VRETENO_UART_{name:<6} 0x{off:02x}");
-        assert!(c.contains(d.trim_end()), "the driver has no `{d}`");
-    };
-    word("DATA", serial::tx);
-    word("STATUS", serial::status);
-    word("RX", serial::rx);
-    let bit = |name: &str, f: txhdl::regmap::Field| {
-        let d = format!("VRETENO_STATUS_{name:<4} BIT({})", f.shift);
-        assert!(c.contains(&d), "the driver has no `{d}`");
-    };
-    bit("BUSY", serial::status_busy);
-    bit("RX", serial::status_ready);
-    bit("FULL", serial::status_full);
+    // of the third takes the oldest byte received. The driver takes
+    // each from the map's header (issue 709).
+    assert!(
+        c.contains("#include <vreteno/regs/uart.h>"),
+        "the driver includes the map's header"
+    );
+    for (local, gen) in [
+        ("VRETENO_UART_DATA", "UART_TX"),
+        ("VRETENO_UART_STATUS", "UART_STATUS"),
+        ("VRETENO_UART_RX", "UART_RX"),
+        ("VRETENO_STATUS_BUSY", "UART_STATUS_BUSY_MASK"),
+        ("VRETENO_STATUS_RX", "UART_STATUS_READY_MASK"),
+        ("VRETENO_STATUS_FULL", "UART_STATUS_FULL_MASK"),
+    ] {
+        assert_eq!(defined_as(c, local), gen, "`{local}` is the map's");
+        assert!(in_map(&serial::MAP, "UART", gen), "the map has `{gen}`");
+    }
     let dts = DTSI;
     assert!(
         dts.contains("compatible = \"hdlfactory,vreteno-uart\""),
@@ -192,19 +220,26 @@ fn the_console_is_reachable_and_not_merely_compiled() {
     );
 }
 
-/// The word a `#define VRETENO_ETH_<NAME>   0x..` in the driver names.
+/// The word the driver's `VRETENO_ETH_<NAME>` names: it is defined as
+/// the map's header name `ETHSLOTS_<NAME>` (issue 709), and the word is
+/// that register's in the map.
 fn eth_word(name: &str) -> u32 {
-    let pat = format!("#define VRETENO_ETH_{name}");
-    let at = ETH_DRIVER
-        .find(&pat)
-        .unwrap_or_else(|| panic!("no `{name}` in the driver"));
-    let tail = &ETH_DRIVER[at + pat.len()..];
-    let end = tail.find('\n').expect("a define that never ends");
-    let text = tail[..end].trim().trim_start_matches("0x");
-    let off = u32::from_str_radix(text, 16)
-        .unwrap_or_else(|_| panic!("`{name}` is not an offset"));
-    assert_eq!(off % 4, 0, "`{name}` is not on a word boundary");
-    off / 4
+    let local = format!("VRETENO_ETH_{name}");
+    assert_eq!(
+        defined_as(ETH_DRIVER, &local),
+        format!("ETHSLOTS_{name}"),
+        "`{local}` is the map's"
+    );
+    assert!(
+        ETH_DRIVER.contains("#include <vreteno/regs/ethslots.h>"),
+        "the driver includes the map's header"
+    );
+    txhdl_parts::ethslots::regs::MAP
+        .regs
+        .iter()
+        .find(|r| r.name.to_uppercase() == name)
+        .unwrap_or_else(|| panic!("the map has no `{name}`"))
+        .index
 }
 
 /// The driver's register map is the one the hardware decodes.
@@ -363,24 +398,34 @@ fn the_entropy_driver_reads_the_registers_the_source_has() {
     use txhdl_parts::trng as t;
     let c = TRNG_DRIVER;
     // The source's own map, `regs` in `lib/parts/src/trng.rs`: data,
-    // status, control, raw.
-    assert!(c.contains("#define VRETENO_TRNG_DATA   0x00"), "data");
+    // status, control, raw; bit 0 ready and bit 8 the fault in the
+    // status, bit 0 run and bit 1 clear in the control. The driver
+    // takes each from the map's header (issue 709).
+    assert!(
+        c.contains("#include <vreteno/regs/trng.h>"),
+        "the driver includes the map's header"
+    );
+    for (local, gen) in [
+        ("VRETENO_TRNG_DATA", "TRNG_DATA"),
+        ("VRETENO_TRNG_STATUS", "TRNG_STATUS"),
+        ("VRETENO_TRNG_CTRL", "TRNG_CTRL"),
+        ("VRETENO_TRNG_RAW", "TRNG_RAW"),
+        ("VRETENO_TRNG_STATUS_READY", "TRNG_STATUS_READY_MASK"),
+        ("VRETENO_TRNG_STATUS_FAULT", "TRNG_STATUS_FAULT_MASK"),
+        ("VRETENO_TRNG_STATUS_RUN", "TRNG_STATUS_RUN_MASK"),
+        ("VRETENO_TRNG_CTRL_RUN", "TRNG_CTRL_RUN_MASK"),
+        ("VRETENO_TRNG_CTRL_CLEAR", "TRNG_CTRL_CLEAR_MASK"),
+    ] {
+        assert_eq!(defined_as(c, local), gen, "`{local}` is the map's");
+        assert!(in_map(&t::regs::MAP, "TRNG", gen), "the map has `{gen}`");
+    }
     assert_eq!(t::DATA, 0x0, "data, hardware");
-    assert!(c.contains("#define VRETENO_TRNG_STATUS 0x04"), "status");
     assert_eq!(t::STATUS, 0x4, "status, hardware");
-    assert!(c.contains("#define VRETENO_TRNG_CTRL   0x08"), "ctrl");
     assert_eq!(t::CTRL, 0x8, "ctrl, hardware");
-    assert!(c.contains("#define VRETENO_TRNG_RAW    0x0c"), "raw");
     assert_eq!(t::RAW, 0xc, "raw, hardware");
-    // Bit 0 ready and bit 8 the fault in the status; bit 0 run and
-    // bit 1 clear in the control.
-    assert!(c.contains("VRETENO_TRNG_STATUS_READY BIT(0)"), "ready");
     assert_eq!(t::STATUS_READY, 1, "ready, hardware");
-    assert!(c.contains("VRETENO_TRNG_STATUS_FAULT BIT(8)"), "fault");
     assert_eq!(t::STATUS_FAULT, 1 << 8, "fault, hardware");
-    assert!(c.contains("VRETENO_TRNG_CTRL_RUN     BIT(0)"), "run");
     assert_eq!(t::CTRL_RUN, 1, "run, hardware");
-    assert!(c.contains("VRETENO_TRNG_CTRL_CLEAR   BIT(1)"), "clear");
     assert_eq!(t::CTRL_CLEAR, 2, "clear, hardware");
     let dts = DTSI;
     assert!(
