@@ -14,7 +14,11 @@ plainly and driven with a commit at the end of the step; \code{Regs},
 \code{N} registers of one type as one field, since a unit is
 \code{Default} and an array of a generic length has none, its
 registers \code{name\_0} onward in the netlist and the trace through
-\code{trace\_as} and \code{Port::entries} (issue 594); \code{mux};
+\code{trace\_as} and \code{Port::entries} (issue 594); \code{Units}, \code{N}
+child units of one type as one field, for the same reason, and
+\code{chans}, \code{signals} and \code{Ends}, which hand out \code{N}
+ends once each by index, so that a join of those children can give
+child \code{i} the ends at \code{i} or at a neighbour's (issue 635); \code{mux};
 the \code{Unit} trait, whose \code{run} takes the unit's inputs and
 outputs as type parameters; configurations and the \code{config!}
 macro; \code{join2} and \code{join\_all}, which give each child its
