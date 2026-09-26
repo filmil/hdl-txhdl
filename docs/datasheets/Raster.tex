@@ -83,23 +83,34 @@ Word & Low field & High field \\
 
 \subsection*{Behaviour}
 
+The rasteriser is two processes. The first takes the link's answers
+every cycle, and says whether the pixel under the walk is in the
+primitive and whether the rasteriser is idle. The second is the front
+end written as the sequence it is: poll the count until the list is
+ready, then for each instruction fetch its six words and walk its box a
+pixel a turn, and when the list is drawn wait for ever. The lowering
+numbers the front end's waits into a state register the unit does not
+declare, \code{at\_wait}, and keeps its loops' counts in \code{for0} to
+\code{for3}; all are in the tables above.
+
 \begin{itemize}
-\item \code{phase} is 0 while polling, 1 while fetching, 2 while
-drawing and 3 when done.
-\item While polling or fetching, the rasteriser issues one read when
-no read is out and \code{issue} has room. \code{waiting} is set until
-the read's beat arrives.
-\item A count that is not zero starts the fetch at instruction 0, word
-0, and its low eight bits go into \code{left}. A count of zero means
-poll again.
-\item During the fetch each word's fields are latched as the word
-lands. A kind field of 3 is taken as a triangle.
+\item The front end issues a read of the count at \code{CTRL} once
+\code{issue} has room, and waits for its beat. The count's low eight
+bits go into \code{left}. A count of zero means poll again.
+\item For each of \code{left} instructions it waits a cycle, for the
+instruction's index to read back, then reads the six words one at a
+time: each read is issued once \code{issue} has room, and the front end
+waits for its beat before the next. Each word's fields are latched as
+the word lands. A kind field of 3 is taken as a triangle.
 \item When word 5 lands, the walk is set up in that cycle. The third
 vertex comes straight from the bus. The six products of the edge
 functions are computed then, and nowhere else.
 \item A clear's box is the whole screen, from its own type. A
 rectangle's and a triangle's box is \code{x0}, \code{y0} to
 \code{x1}, \code{y1}. Vertices are sign-extended from twelve bits.
+\item After a cycle for the box to read back, the walk goes over every
+row of the box, a cycle at the start of each, and every column of the
+row, a pixel a turn.
 \item Each edge is kept as its value at this pixel, its value at the
 start of this row and its two steps, in 32-bit two's complement. A
 step to the right adds the column step; a new row reloads from the row
@@ -107,15 +118,16 @@ value plus the row step.
 \item \code{hit} is high when the kind is not a triangle, or when all
 three edge values have bit 31 clear.
 \item A pixel with \code{hit} high is written when both \code{issue}
-and \code{wbeat} have room. The walk steps when the pixel needs no
-write or its write went out, so backpressure holds the walk.
+and \code{wbeat} have room, which adds one to \code{issued}. The walk
+steps when the pixel needs no write or its write went out, so
+backpressure holds the walk.
 \item A pixel's write is a burst of one beat, size 2, \code{INCR},
 with the colour zero-extended to 32 bits, strobe \code{0xf} and
 \code{last} set.
-\item At the end of the box the rasteriser fetches the next instruction
-while \code{left} is above 1, and otherwise goes to phase 3.
-\item \code{inflight} counts writes issued whose response has not come
-back.
+\item When the last instruction's box is walked, \code{finished} is
+set. \code{inflight} is a wire, \code{issued} less \code{answered},
+the writes whose response has not come back, and \code{idle} is high
+when \code{finished} is set and nothing is in flight.
 \item When a write response and a read beat arrive together, the
 write's identifier goes back first and the read's waits a cycle.
 Grants are taken and dropped.
@@ -161,7 +173,7 @@ interpolation, so a triangle is one colour, and no texture. It clips
 no geometry, only boxes, and the assembler \code{Op::encode} does that
 on the host. It has one read out at a time.
 
-The code adds these. It has no reset port, and phase 3 is final, so it
-draws one list. \code{left} is eight bits. The pixel's offset from
+The code adds these. It has no reset port, and it waits for ever once the list
+is drawn, so it draws one list. \code{left} is eight bits. The pixel's offset from
 \code{BASE} is formed at sixteen bits and then widened to \code{A}
 bits. A colour is 24 bits.
