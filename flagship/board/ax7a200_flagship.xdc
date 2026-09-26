@@ -23,8 +23,12 @@
 # generator. The core's AXI-Lite reaches the video peripheral, and the
 # remote peripheral's frames reach the transmit half, only through
 # chan_cdc, whose two sides are asynchronous by construction.
+# The core runs on the clock the memory controller hands back, the net
+# `clk` its `ui_clk` drives; Vivado names that clock `clk_pll_i`. It was
+# `pll/CLKOUT0` until the tops lost their own PLL, and a pin that no
+# longer exists makes the whole command below match nothing (#750).
 set core_clk [get_clocks -include_generated_clocks \
-  -of_objects [get_pins pll/CLKOUT0]]
+  -of_objects [get_nets clk]]
 set pixel_clk [get_clocks -include_generated_clocks \
   -of_objects [get_pins vid_mmcm/CLKOUT0]]
 set eth_tx_clk [get_clocks -include_generated_clocks \
