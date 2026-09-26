@@ -30,11 +30,11 @@ use core::ptr::{read_volatile, write_volatile};
 
 /// The Ethernet port's registers, on the fifth slot of the page.
 const ETH: *mut u32 = 0x3400 as *mut u32;
-/// Its transmit words, as LiteEth lays them out.
-const TX_SLOT: usize = 4;
-const TX_LENGTH: usize = 5;
-const TX_START: usize = 6;
-const TX_READY: usize = 7;
+/// Its transmit words, as its map declares them (issue 709).
+const TX_SLOT: usize = vreteno_regs::ethslots::TX_SLOT / 4;
+const TX_LENGTH: usize = vreteno_regs::ethslots::TX_LENGTH / 4;
+const TX_START: usize = vreteno_regs::ethslots::TX_START / 4;
+const TX_READY: usize = vreteno_regs::ethslots::TX_READY / 4;
 /// The transmit slots: the slots begin at `0x4100_0000`, receive first,
 /// and transmit 4096 bytes above them, 2048 bytes apart.
 const TXBUF: u32 = 0x4100_1000;

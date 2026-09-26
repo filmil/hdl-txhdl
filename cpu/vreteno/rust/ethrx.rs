@@ -30,10 +30,10 @@ use core::ptr::{read_volatile, write_volatile};
 const UART: *mut u32 = 0x3000 as *mut u32;
 /// The Ethernet port's registers, on the fifth slot of the page.
 const ETH: *mut u32 = 0x3400 as *mut u32;
-/// Its words, as LiteEth lays them out.
-const RX_SLOT: usize = 0;
-const RX_LENGTH: usize = 1;
-const RX_PENDING: usize = 2;
+/// Its words, as its map declares them (issue 709).
+const RX_SLOT: usize = vreteno_regs::ethslots::RX_SLOT / 4;
+const RX_LENGTH: usize = vreteno_regs::ethslots::RX_LENGTH / 4;
+const RX_PENDING: usize = vreteno_regs::ethslots::RX_EV_PENDING / 4;
 /// Where the receive slots begin, and how far apart they are.
 const BUFS: u32 = 0x4100_0000;
 const SLOT: u32 = 0x800;

@@ -158,6 +158,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
 vreteno_image(
