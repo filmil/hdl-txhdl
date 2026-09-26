@@ -601,7 +601,11 @@ for an address that is not its own, writes the lanes a write covers
 into its word, counts from the reset one a cycle, and raises its
 line while the count has reached the compare; the reset puts the
 compare at all ones, since a compare of zero beside a count of zero
-is a line raised from the first cycle (issue 419). The line is a wire,
+is a line raised from the first cycle (issue 419). Its five words are
+declared once, with \code{regmap!}, which writes the read mux, the
+write enables and the offsets the model and the tests address by; a
+word the map does not name reads zero and takes no write (issues 668
+and 681). The line is a wire,
 not a channel, and a wire between units carries no promise about the
 step, so the timer drives it from a register, and the run and the
 test poll the timer before the core: then the core reads in a cycle
