@@ -32,21 +32,10 @@ so one instance can reach chips that want different clocks.
 Offsets from the peripheral's base. The part selects the word by bits
 3 and 2 of the address and looks at no other bits.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}llp{0.5\textwidth}@{}}
-\toprule
-Offset & Word & Access \\
-\midrule
-\code{0x00} & \code{ctrl} & Read and write. Bits 7 to 0 the divider,
-8 \code{cpol}, 9 \code{cpha}, 10 the chip select, 11 the interrupt
-enable. \\
-\code{0x04} & \code{data} & Written: the byte to send, which starts a
-transfer. Read: the byte that came in. \\
-\code{0x08} & \code{state} & Bit 0 a transfer is running, bit 1 one
-has finished. Write a one to bit 1 to clear it. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\dsregs{Spi}
+
+A write to \code{data} starts a transfer, and a read returns the byte
+that came in. \code{0xc}, which no register names, reads zero.
 
 A half of a bit takes \code{div + 1} cycles, so the clock is the
 system's over \code{2 * (div + 1)}.
