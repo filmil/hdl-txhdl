@@ -75,6 +75,11 @@ done
 py_binary(
     name = "sby",
     srcs = [":sby_install"],
+    # SymbiYosys finds its modules through the share/yosys/python3
+    # directory sby.py puts on sys.path, not as a package, so it needs no
+    # __init__.py; rules_python's implicit creation of them is deprecated
+    # and warned on (issue 639).
+    legacy_create_init = False,
     main = "sbyroot/bin/sby.py",
     deps = [requirement("click")],
 )
