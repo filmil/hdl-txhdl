@@ -28,19 +28,20 @@ use txhdl::{lower, select, with, Trace};
 use txhdl_parts::bus::axi::{Answer, PerPort, Resp, R};
 
 /// Which of the five words an offset names, counting from zero:
-/// `msip`, the compare's two halves, the count's two halves. An offset
-/// the controller does not use reads as `msip` does, since a window of
-/// 64 KiB holds far more words than five and none of the rest mean
-/// anything.
+/// `msip`, the compare's two halves, the count's two halves; and 5 for
+/// an offset the controller does not use, which reads zero and takes a
+/// write nobody sees, as the reference model has it. It used to be
+/// `msip`, so a stray store raised the software interrupt (issue 681).
 #[lower]
 fn word_of(addr: U<32>) -> U<3> {
     let off = addr.slice::<0, 16>();
     select!(off.raw() => {
+        0x0000 => U::<3>::from(0u8),
         0x4000 => U::<3>::from(1u8),
         0x4004 => U::<3>::from(2u8),
         0xbff8 => U::<3>::from(3u8),
         0xbffc => U::<3>::from(4u8),
-        _ => U::<3>::from(0u8),
+        _ => U::<3>::from(5u8),
     })
 }
 
@@ -90,7 +91,8 @@ impl<const I: usize> Unit for Timer<I> {
                 1 => mtimecmp.slice::<0, 32>(),
                 2 => mtimecmp.slice::<32, 32>(),
                 3 => mtime.slice::<0, 32>(),
-                _ => mtime.slice::<32, 32>(),
+                4 => mtime.slice::<32, 32>(),
+                _ => U::<32>::from(0u8),
             });
             let wsel = self.psel.get();
             let old = select!(wsel.raw() => {
@@ -98,7 +100,8 @@ impl<const I: usize> Unit for Timer<I> {
                 1 => mtimecmp.slice::<0, 32>(),
                 2 => mtimecmp.slice::<32, 32>(),
                 3 => mtime.slice::<0, 32>(),
-                _ => mtime.slice::<32, 32>(),
+                4 => mtime.slice::<32, 32>(),
+                _ => U::<32>::from(0u8),
             });
             // A write puts the lanes its strobe covers into the word.
             let wdata = wh.data;
@@ -164,5 +167,72 @@ impl<const I: usize> Unit for Timer<I> {
             // raises it and clears it, and nothing else touches it.
             sirq.set(self.msip.get());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Timer;
+    use txhdl::comp::{chan, signal, DefaultClock, Running, Unit};
+    use txhdl::types::{Bit, U};
+    use txhdl_parts::bus::axi::{PerPort, PerReq, W};
+
+    /// Write `data` at `off` in the timer's window, then read `off`:
+    /// what the read answered, and `msip` after both.
+    fn write_then_read(off: u32, data: u32) -> (u32, bool) {
+        let mut t = Timer::<2>::default();
+        let msip = t.msip;
+        let (req_tx, req) = chan::<PerReq<32, 2>, DefaultClock>();
+        let (w_tx, w) = chan();
+        let (ans, ans_rx) = chan();
+        let (r, r_rx) = chan();
+        let (_rst_out, rst) = signal::<Bit, DefaultClock>();
+        let (tirq, _tirq) = signal::<Bit, DefaultClock>();
+        let (sirq, _sirq) = signal::<Bit, DefaultClock>();
+        let port = PerPort { req, w, ans, r };
+        let mut sim = Running::new(t.run(port, (rst, tirq, sirq)));
+        let at = U::<32>::from(0x0200_0000 + off);
+        let req_at = |read| PerReq {
+            read,
+            id: U::from(1u8),
+            addr: at,
+            size: U::from(2u8),
+            ..PerReq::default()
+        };
+        req_tx.send(req_at(Bit::Zero));
+        w_tx.send(W {
+            data: U::from(data),
+            strb: U::from(0xfu8),
+            last: Bit::One,
+        });
+        for _ in 0..4 {
+            sim.cycle();
+            let _ = ans_rx.recv();
+        }
+        req_tx.send(req_at(Bit::One));
+        let mut got = None;
+        for _ in 0..4 {
+            sim.cycle();
+            if let Some(beat) = r_rx.recv() {
+                got = Some(beat.data.raw() as u32);
+            }
+        }
+        (got.expect("the read was answered"), msip.get().to_bool())
+    }
+
+    /// `msip` itself: written one, it reads one and is set. This is
+    /// what shows the bench reaches the register at all.
+    #[test]
+    fn a_write_of_one_to_msip_raises_it() {
+        assert_eq!(write_then_read(0x0000, 1), (1, true));
+    }
+
+    /// A word of the window that names nothing reads zero and takes a
+    /// write nobody sees, as the reference model has it; it used to be
+    /// taken as `msip`, so a stray store raised the software interrupt
+    /// (issue 681).
+    #[test]
+    fn a_write_to_an_unused_offset_leaves_msip_alone() {
+        assert_eq!(write_then_read(0x0008, 1), (0, false));
     }
 }
