@@ -55,7 +55,10 @@ rust_test(
         "//lib/parts:sources",
     ],
     edition = "2021",
-    deps = [":vreteno32"],
+    deps = [
+        ":vreteno32",
+        "//lib/parts:txhdl_parts",
+    ],
 )
 
 # The board programs against the map they run on. They are built

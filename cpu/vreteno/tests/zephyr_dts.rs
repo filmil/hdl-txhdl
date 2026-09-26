@@ -33,9 +33,6 @@ const TRNG_DRIVER: &str =
     include_str!("../../../zephyr/drivers/entropy/entropy_vreteno.c");
 const TRNG_KCONFIG: &str =
     include_str!("../../../zephyr/drivers/entropy/Kconfig.vreteno");
-/// The hardware the entropy driver reads, held to the driver as the
-/// Ethernet port's is.
-const TRNG: &str = include_str!("../../../lib/parts/src/trng.rs");
 /// The hardware the Ethernet driver talks to. The two register maps
 /// are held to each other rather than each to a document, which is
 /// the only arrangement in which they cannot quietly disagree.
@@ -335,39 +332,28 @@ fn the_ethernet_driver_is_reachable_and_not_merely_present() {
 /// the network image's configuration test asks for (issue 458).
 #[test]
 fn the_entropy_driver_reads_the_registers_the_source_has() {
+    use txhdl_parts::trng as t;
     let c = TRNG_DRIVER;
-    let h = TRNG;
-    // `lib/parts/src/trng.rs`: data, status, control, raw.
+    // The source's own map, `regs` in `lib/parts/src/trng.rs`: data,
+    // status, control, raw.
     assert!(c.contains("#define VRETENO_TRNG_DATA   0x00"), "data");
-    assert!(h.contains("pub const DATA: u32 = 0x0;"), "data, hardware");
+    assert_eq!(t::DATA, 0x0, "data, hardware");
     assert!(c.contains("#define VRETENO_TRNG_STATUS 0x04"), "status");
-    assert!(
-        h.contains("pub const STATUS: u32 = 0x4;"),
-        "status, hardware"
-    );
+    assert_eq!(t::STATUS, 0x4, "status, hardware");
     assert!(c.contains("#define VRETENO_TRNG_CTRL   0x08"), "ctrl");
-    assert!(h.contains("pub const CTRL: u32 = 0x8;"), "ctrl, hardware");
+    assert_eq!(t::CTRL, 0x8, "ctrl, hardware");
     assert!(c.contains("#define VRETENO_TRNG_RAW    0x0c"), "raw");
-    assert!(h.contains("pub const RAW: u32 = 0xc;"), "raw, hardware");
+    assert_eq!(t::RAW, 0xc, "raw, hardware");
     // Bit 0 ready and bit 8 the fault in the status; bit 0 run and
     // bit 1 clear in the control.
     assert!(c.contains("VRETENO_TRNG_STATUS_READY BIT(0)"), "ready");
-    assert!(
-        h.contains("pub const STATUS_READY: u32 = 1;"),
-        "ready, hardware"
-    );
+    assert_eq!(t::STATUS_READY, 1, "ready, hardware");
     assert!(c.contains("VRETENO_TRNG_STATUS_FAULT BIT(8)"), "fault");
-    assert!(
-        h.contains("pub const STATUS_FAULT: u32 = 1 << 8;"),
-        "fault, hw"
-    );
+    assert_eq!(t::STATUS_FAULT, 1 << 8, "fault, hardware");
     assert!(c.contains("VRETENO_TRNG_CTRL_RUN     BIT(0)"), "run");
-    assert!(h.contains("pub const CTRL_RUN: u32 = 1;"), "run, hardware");
+    assert_eq!(t::CTRL_RUN, 1, "run, hardware");
     assert!(c.contains("VRETENO_TRNG_CTRL_CLEAR   BIT(1)"), "clear");
-    assert!(
-        h.contains("pub const CTRL_CLEAR: u32 = 2;"),
-        "clear, hardware"
-    );
+    assert_eq!(t::CTRL_CLEAR, 2, "clear, hardware");
     let dts = DTSI;
     assert!(
         dts.contains("compatible = \"hdlfactory,vreteno-trng\""),
