@@ -27,22 +27,23 @@ use txhdl::types::{Bit, U};
 use txhdl::Trace;
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
-use txhdl_parts::ethslots::EthSlots;
+use txhdl_parts::ethslots::{regs, EthSlots};
 
 /// Where the four buffers begin: sixteen megabytes into the board's
 /// memory, clear of where a program loads.
 const BUFS: usize = 0x4100_0000;
 
-/// The map, as LiteEth lays it out.
+/// The map, as LiteEth lays it out and the peripheral's `regmap!`
+/// states it, from where the bridge puts it.
 const BASE: u32 = 0x1000;
-const RX_SLOT: u32 = BASE;
-const RX_LENGTH: u32 = BASE + 0x04;
-const RX_PENDING: u32 = BASE + 0x08;
-const RX_ENABLE: u32 = BASE + 0x0c;
-const TX_SLOT: u32 = BASE + 0x10;
-const TX_LENGTH: u32 = BASE + 0x14;
-const TX_START: u32 = BASE + 0x18;
-const TX_READY: u32 = BASE + 0x1c;
+const RX_SLOT: u32 = BASE + regs::rx_slot;
+const RX_LENGTH: u32 = BASE + regs::rx_length;
+const RX_PENDING: u32 = BASE + regs::rx_ev_pending;
+const RX_ENABLE: u32 = BASE + regs::rx_ev_enable;
+const TX_SLOT: u32 = BASE + regs::tx_slot;
+const TX_LENGTH: u32 = BASE + regs::tx_length;
+const TX_START: u32 = BASE + regs::tx_start;
+const TX_READY: u32 = BASE + regs::tx_ready;
 
 type HostUnit = AxiHost<32, 32, 4, 2, 4>;
 type Bridge = LiteBridge<1, SlotsMap, 32, 32, 4, 2>;

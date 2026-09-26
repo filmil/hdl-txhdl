@@ -10,6 +10,7 @@
 //! So the numbers are checked here, against the constants the
 //! hardware itself uses. A port that disagrees with the router's map
 //! fails this test rather than the board.
+use txhdl::regmap::Access;
 use vreteno32::isa::{
     CLINT_BASE, ETH_BASE, ETH_BUF_BASE, MSIP_OFF, MTIMECMP_OFF, MTIME_OFF,
     TRNG_BASE, UART_BASE,
@@ -34,10 +35,6 @@ const TRNG_DRIVER: &str =
     include_str!("../../../zephyr/drivers/entropy/entropy_vreteno.c");
 const TRNG_KCONFIG: &str =
     include_str!("../../../zephyr/drivers/entropy/Kconfig.vreteno");
-/// The hardware the Ethernet driver talks to. The two register maps
-/// are held to each other rather than each to a document, which is
-/// the only arrangement in which they cannot quietly disagree.
-const ETHSLOTS: &str = include_str!("../../../lib/parts/src/ethslots.rs");
 const BOARD_DEFCONFIG: &str = include_str!(
     "../../../zephyr/boards/hdlfactory/ax7a200b/ax7a200b_defconfig"
 );
@@ -238,18 +235,31 @@ fn the_ethernet_driver_reads_the_words_the_hardware_decodes() {
 
     // And the hardware decodes each of them, rather than the driver
     // naming an offset nothing answers, which is issue 415 in a
-    // peripheral instead of a program. Reads and writes are decoded
-    // separately there, so each is checked on the side it is used.
+    // peripheral instead of a program. The hardware's decode is its
+    // `regmap!` (issue 678), so each word is checked against the map:
+    // the driver's name is the map's register at that word, and the
+    // side the driver uses it on is one the access allows.
+    let map = &txhdl_parts::ethslots::regs::MAP;
     for word in [0, 1, 7, 8] {
+        let r = map.regs.iter().find(|r| r.index == word);
         assert!(
-            ETHSLOTS.contains(&format!("rsel == {word}")),
+            r.is_some_and(|r| r.access != Access::Wo),
             "the hardware does not answer a read of word {word}"
         );
     }
     for word in [2, 3, 4, 5, 6, 8, 9] {
+        let r = map.regs.iter().find(|r| r.index == word);
         assert!(
-            ETHSLOTS.contains(&format!("wsel == {word}")),
+            r.is_some_and(|r| r.access != Access::Ro),
             "the hardware does not take a write of word {word}"
+        );
+    }
+    for (name, word) in [("RX_EV_PENDING", 2), ("TX_START", 6)] {
+        let r = map.regs.iter().find(|r| r.index == word).unwrap();
+        assert_eq!(
+            r.name.to_uppercase(),
+            name,
+            "the driver and the map name word {word} alike"
         );
     }
 }
@@ -262,8 +272,17 @@ fn the_ethernet_driver_reads_the_words_the_hardware_decodes() {
 /// checks the bit survives.
 #[test]
 fn the_ethernet_driver_acknowledges_by_writing_one() {
-    assert!(
-        ETHSLOTS.contains("wsel == 2) & data.bit(0)"),
+    // The hardware's map says a written one clears the arrival: the
+    // Ethernet driver's register map is held to the hardware's own
+    // `regmap!`, not to a document that agrees with neither.
+    let pending = txhdl_parts::ethslots::regs::MAP
+        .regs
+        .iter()
+        .find(|r| r.name == "rx_ev_pending")
+        .expect("the map has the arrival");
+    assert_eq!(
+        pending.access,
+        Access::W1c,
         "the hardware clears the arrival on a written one"
     );
     assert!(
