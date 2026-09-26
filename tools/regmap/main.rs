@@ -25,6 +25,7 @@ fn maps() -> Vec<(&'static str, &'static RegMap)> {
         ("eth", &txhdl_parts::eth::regs::MAP),
         ("ethslots", &txhdl_parts::ethslots::regs::MAP),
         ("gpio", &txhdl_parts::gpio::regs::MAP),
+        ("hdmi", &txhdl_parts::hdmi::regs::MAP),
         ("sd", &txhdl_parts::sd::regs::MAP),
         ("timer", &vreteno32::timer::clint::MAP),
         ("trng", &txhdl_parts::trng::regs::MAP),
