@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+# The register maps the parts declare with `regmap!`, as Rust
+# constants for the firmware (issue 709). The firmware is built for the
+# core with no standard library and cannot depend on the parts, so
+# `//tools/regmap` writes every map into one file of constants, and
+# this crate, which depends on nothing, is that file. A program or the
+# HAL names it in `deps` and addresses a peripheral as `base +
+# vreteno_regs::uart::STATUS`, so that a register moved in the hardware
+# moves in the software with it.
+#
+# Not manual, unlike the HAL: it is constants and nothing else, so it
+# builds for the host as well, and `bazel build //...` compiles every
+# map's module whether or not a program uses it yet.
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+package(default_visibility = ["//visibility:public"])
+
+genrule(
+    name = "regs_rs",
+    outs = ["regs.rs"],
+    cmd = "$(location //tools/regmap) all rs > $@",
+    tools = ["//tools/regmap"],
+)
+
+rust_library(
+    name = "vreteno_regs",
+    srcs = [":regs_rs"],
+    crate_name = "vreteno_regs",
+    edition = "2021",
+)
