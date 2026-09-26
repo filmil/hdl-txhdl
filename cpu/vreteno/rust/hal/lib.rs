@@ -30,6 +30,7 @@
 
 use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
+use vreteno_regs::{timer, uart};
 
 pub mod trap;
 
@@ -84,11 +85,12 @@ fn wr(at: usize, v: u32) {
 pub struct Uart;
 
 impl Uart {
-    const DATA: usize = map::UART;
-    const STATUS: usize = map::UART + 4;
-    const RX: usize = map::UART + 8;
-    const TX_BUSY: u32 = 1;
-    const RX_READY: u32 = 2;
+    // The port's words and bits, as its map declares them (issue 709).
+    const DATA: usize = map::UART + uart::TX;
+    const STATUS: usize = map::UART + uart::STATUS;
+    const RX: usize = map::UART + uart::RX;
+    const TX_BUSY: u32 = uart::STATUS_BUSY_MASK;
+    const RX_READY: u32 = uart::STATUS_READY_MASK;
 
     /// Send one byte, once the port is free to take it. A byte written
     /// while the port is busy is dropped, so the wait is not optional.
@@ -169,17 +171,20 @@ impl Uart {
 pub struct Timer;
 
 impl Timer {
-    const MSIP: usize = map::CLINT;
-    const MTIMECMP: usize = map::CLINT + 0x4000;
-    const MTIME: usize = map::CLINT + 0xbff8;
+    // The controller's words, as its map declares them (issue 709).
+    const MSIP: usize = map::CLINT + timer::MSIP;
+    const MTIMECMP: usize = map::CLINT + timer::MTIMECMP_LO;
+    const MTIMECMP_HI: usize = map::CLINT + timer::MTIMECMP_HI;
+    const MTIME: usize = map::CLINT + timer::MTIME_LO;
+    const MTIME_HI: usize = map::CLINT + timer::MTIME_HI;
 
     /// The count, all 64 bits, read so that a carry between the two
     /// halves does not tear it.
     pub fn now() -> u64 {
         loop {
-            let hi = rd(Self::MTIME + 4);
+            let hi = rd(Self::MTIME_HI);
             let lo = rd(Self::MTIME);
-            if rd(Self::MTIME + 4) == hi {
+            if rd(Self::MTIME_HI) == hi {
                 return (hi as u64) << 32 | lo as u64;
             }
         }
@@ -201,9 +206,9 @@ impl Timer {
     /// high half goes first, set to the largest value, so that the
     /// compare never passes through a small value on the way.
     pub fn at(when: u64) {
-        wr(Self::MTIMECMP + 4, u32::MAX);
+        wr(Self::MTIMECMP_HI, u32::MAX);
         wr(Self::MTIMECMP, when as u32);
-        wr(Self::MTIMECMP + 4, (when >> 32) as u32);
+        wr(Self::MTIMECMP_HI, (when >> 32) as u32);
     }
 
     /// Raise or lower the software interrupt.
