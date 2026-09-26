@@ -20,7 +20,7 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
-use txhdl_parts::hdmi::{Hdmi, I2cDevice, I2cInit, SII9134_WRITES};
+use txhdl_parts::hdmi::{regs, Hdmi, I2cDevice, I2cInit, SII9134_WRITES};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
@@ -46,10 +46,12 @@ const ROWS: usize = 6;
 /// The I2C master: a quarter bit of four cycles, and a reset of ten.
 type Master = I2cInit<4, 10>;
 
-/// The peripheral's words.
-const STATUS: u32 = 0x1000;
-const CURSOR: u32 = 0x1004;
-const PIXEL: u32 = 0x1008;
+/// The peripheral's words, at the offsets its map states, from where
+/// the bridge puts it.
+const BASE: u32 = 0x1000;
+const STATUS: u32 = BASE + regs::status;
+const CURSOR: u32 = BASE + regs::cursor;
+const PIXEL: u32 = BASE + regs::pixel;
 
 /// The colour painted at a framebuffer pixel: red across, green down,
 /// blue on the diagonal.
@@ -136,7 +138,7 @@ fn main() {
         assert_eq!(wr.done().await.resp, Resp::Okay);
         println!("t={:>5} painted {} pixels", now(), pixels.len());
         // Wait until two more frames have been shown.
-        let frames = |w: u128| (w >> 16) as u32;
+        let frames = |w: u128| regs::status_frames.get(w as u32);
         let first = frames(
             host.read(Rd::at(STATUS, 1)).await.done().await.data[0].raw(),
         );
