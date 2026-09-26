@@ -666,6 +666,92 @@ impl<T: Copy + 'static, const N: usize, C: Clock> std::ops::Index<usize>
     }
 }
 
+/// `N` child units of one type as one field, for a unit of units whose
+/// children are a count it takes as a const parameter: the nodes of a
+/// lattice, the lanes of a datapath. The children run with
+/// [`join_all`] over [`Units::iter_mut`], each given its ends by its
+/// index, and the lowering unrolls that join into an instance per
+/// child, `name_0` to `name_{N-1}`. A type of its own rather than
+/// `[T; N]`, since a unit is `Default` and an array of a generic
+/// length has no `Default` (issue 635; see `probe_array_default`).
+pub struct Units<T, const N: usize>(pub [T; N]);
+
+impl<T: Default, const N: usize> Default for Units<T, N> {
+    fn default() -> Self {
+        Units(std::array::from_fn(|_| T::default()))
+    }
+}
+
+impl<T, const N: usize> Units<T, N> {
+    /// Each child, mutably and all at once, in index order, which is
+    /// what a join of their runs needs.
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
+        self.0.iter_mut()
+    }
+}
+
+impl<T, const N: usize> std::ops::Index<usize> for Units<T, N> {
+    type Output = T;
+    fn index(&self, i: usize) -> &T {
+        &self.0[i]
+    }
+}
+
+/// `N` ends of one kind, each handed out once, by its index: what
+/// [`chans`] and [`signals`] give, so that a join of `N` children can
+/// give child `i` the ends at `i`, or at a neighbour's index, inside a
+/// closure. Taking an end twice is a wiring mistake and panics
+/// (issue 635).
+pub struct Ends<E, const N: usize>([Option<E>; N]);
+
+/// An array of ends, a unit's array port say, handed out once by index
+/// like the ends [`chans`] makes.
+impl<E, const N: usize> From<[E; N]> for Ends<E, N> {
+    fn from(a: [E; N]) -> Self {
+        Ends(a.map(Some))
+    }
+}
+
+impl<E, const N: usize> Ends<E, N> {
+    /// The end at `i`, which is then gone.
+    pub fn take(&mut self, i: usize) -> E {
+        match self.0.get_mut(i).and_then(Option::take) {
+            Some(e) => e,
+            None => panic!("end {i} of {N} taken twice, or out of range"),
+        }
+    }
+}
+
+/// `N` channels, as their sending ends and their receiving ends, each
+/// handed out once by index.
+#[allow(clippy::type_complexity)]
+pub fn chans<T: Transaction, C: Clock, const N: usize>(
+) -> (Ends<Tx<T, C>, N>, Ends<Rx<T, C>, N>) {
+    let mut tx: [Option<Tx<T, C>>; N] = std::array::from_fn(|_| None);
+    let mut rx: [Option<Rx<T, C>>; N] = std::array::from_fn(|_| None);
+    for i in 0..N {
+        let (t, r) = chan::<T, C>();
+        tx[i] = Some(t);
+        rx[i] = Some(r);
+    }
+    (Ends(tx), Ends(rx))
+}
+
+/// `N` wires, as their driving ends and their reading ends, each
+/// handed out once by index.
+#[allow(clippy::type_complexity)]
+pub fn signals<T: Copy + Default, C: Clock, const N: usize>(
+) -> (Ends<Out<T, C>, N>, Ends<In<T, C>, N>) {
+    let mut o: [Option<Out<T, C>>; N] = std::array::from_fn(|_| None);
+    let mut n: [Option<In<T, C>>; N] = std::array::from_fn(|_| None);
+    for i in 0..N {
+        let (a, b) = signal::<T, C>();
+        o[i] = Some(a);
+        n[i] = Some(b);
+    }
+    (Ends(o), Ends(n))
+}
+
 impl<T: Copy + 'static, C: Clock> Reg<T, C> {
     /// A register holding `v` before the first edge: its reset
     /// value, since nothing else sets one.
@@ -1587,6 +1673,19 @@ pub mod trace {
         /// `name_0` onward beside it (issue 594).
         fn trace_as(&self, scope: &Scope, name: &str) {
             self.trace(&scope.child(name));
+        }
+    }
+
+    impl<T: Traceable, const N: usize> Traceable for super::Units<T, N> {
+        fn trace(&self, scope: &Scope) {
+            for (i, u) in self.0.iter().enumerate() {
+                u.trace(&scope.child(&i.to_string()));
+            }
+        }
+        fn trace_as(&self, scope: &Scope, name: &str) {
+            for (i, u) in self.0.iter().enumerate() {
+                u.trace(&scope.child(&format!("{name}_{i}")));
+            }
         }
     }
 

@@ -174,6 +174,9 @@ impl<T: Value + Copy + 'static, C: Clock> Port for Reg<T, C> {
     const KIND: Option<Kind> = Some(Kind::Reg);
     const WIDTH: usize = T::WIDTH;
 }
+/// An array of child units is no field of the netlist: its children are
+/// instances, which the parent's lowering makes (issue 635).
+impl<T, const N: usize> Port for crate::comp::Units<T, N> {}
 impl<T: Value + Copy + 'static, const N: usize, C: Clock> Port
     for crate::comp::Regs<T, N, C>
 {
