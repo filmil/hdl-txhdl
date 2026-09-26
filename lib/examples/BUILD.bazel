@@ -819,6 +819,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An address map as a trait constant:  bazel run //lib/examples:ex_map
+rust_binary(
+    name = "ex_map",
+    srcs = ["ex_map.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Names a target reserves, escaped:  bazel run //lib/examples:ex_reserved
 rust_binary(
     name = "ex_reserved",
@@ -1172,6 +1181,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_hold.rs",
         "ex_helpers.rs",
         "ex_repeat.rs",
+        "ex_map.rs",
         "ex_rename.rs",
         "ex_foreign.rs",
 ]

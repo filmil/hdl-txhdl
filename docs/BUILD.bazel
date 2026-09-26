@@ -2243,6 +2243,21 @@ waveform(
     ],
 )
 
+# An address map as a trait constant, read by the lowering when
+# `lowered` runs (issue 593).
+waveform(
+    name = "map",
+    example = "//lib/examples:ex_map",
+    lowered = ("decode", "decode"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//addr=>addr",
+        "//sel=>sel",
+        "//none=>none",
+        "//decode/hits=>hits",
+    ],
+)
+
 waveform(
     name = "rename",
     example = "//lib/examples:ex_rename",
