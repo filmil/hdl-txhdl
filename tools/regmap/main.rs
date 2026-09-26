@@ -15,9 +15,11 @@ use std::process::exit;
 use txhdl::regmap::RegMap;
 
 /// Every map the parts declare, by the name its peripheral is known
-/// by.
+/// by, one to a line and in alphabetical order, so that two changes
+/// adding a map each touch different lines.
 fn maps() -> Vec<(&'static str, &'static RegMap)> {
     vec![
+        ("eth", &txhdl_parts::eth::regs::MAP),
         ("gpio", &txhdl_parts::gpio::regs::MAP),
         ("sd", &txhdl_parts::sd::regs::MAP),
     ]
