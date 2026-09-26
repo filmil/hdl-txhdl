@@ -20,7 +20,7 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
-use txhdl_parts::eth::{EthByte, EthLite, EthRx, EthTx};
+use txhdl_parts::eth::{regs, EthByte, EthLite, EthRx, EthTx};
 
 /// The link: thirty-two-bit addresses and words, four lanes,
 /// two-bit identifiers, four of them.
@@ -37,10 +37,12 @@ impl AddrMap<1> for EthMap {
     const RANGES: [(usize, usize); 1] = [(0x1000, 0xf000)];
 }
 
-/// The peripheral's three words.
-const STATUS: u32 = 0x1000;
-const TRANSMIT: u32 = 0x1004;
-const RECEIVE: u32 = 0x1008;
+/// The peripheral's three words, at the offsets its map states, from
+/// where the bridge puts it.
+const BASE: u32 = 0x1000;
+const STATUS: u32 = BASE + regs::status;
+const TRANSMIT: u32 = BASE + regs::txbyte;
+const RECEIVE: u32 = BASE + regs::rxbyte;
 
 /// A frame of `n` bytes: a broadcast destination, a source, a type,
 /// and a count from `seed`.
@@ -140,8 +142,8 @@ fn main() {
                 .iter()
                 .enumerate()
                 .map(|(i, b)| {
-                    let last = if i + 1 == f.len() { 0x100 } else { 0 };
-                    U::from(*b as u32 | last)
+                    let last = (i + 1 == f.len()) as u32;
+                    U::from(regs::txbyte_last.set(*b as u32, last))
                 })
                 .collect();
             let wr = host.write(fixed_write(TRANSMIT), &beats).await;
@@ -156,9 +158,9 @@ fn main() {
                 let r = host.read(fixed_read(RECEIVE, 16)).await.done().await;
                 for word in r.data {
                     let v = word.raw() as u32;
-                    if v & 0x200 != 0 {
-                        bytes.push(v as u8);
-                        whole |= v & 0x100 != 0;
+                    if regs::rxbyte_valid.get(v) != 0 {
+                        bytes.push(regs::rxbyte_data.get(v) as u8);
+                        whole |= regs::rxbyte_last.get(v) != 0;
                     }
                 }
                 if whole {
