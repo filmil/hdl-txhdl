@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 load("@rules_latex_host//latex:defs.bzl", "combined_pdf", "latex_document")
 load(":waveform.bzl", "waveform")
+load("//tools/formal:defs.bzl", "formal_run", "formal_test", "formal_trace")
 load("//tools/pdfedge:defs.bzl", "pdf_edge_test")
 
 # Every source of every document, for the checks that read them: the
@@ -1990,6 +1991,140 @@ waveform(
         "//wrap=>wrap",
     ],
 )
+
+# begin{formal}
+# The digit's statements proved for every input, not only checked on
+# the run (issue 581): the proof as written must hold, and two broken
+# copies must fail, or the proof proves nothing. One copy has the
+# assumption removed, so a step of three is allowed and the count
+# leaves the digits; the other tightens a check to a count no higher
+# than eight, which nine breaks. The proof runs `abc pdr` inside the
+# pinned yosys-abc and needs no solver; the bounded runs, which give a
+# trace, and the cover run use the pinned z3.
+genrule(
+    name = "formal_broken",
+    srcs = [":formal.v"],
+    outs = [
+        "formal_noassume.v",
+        "formal_tight.v",
+    ],
+    cmd = " && ".join([
+        "grep -v 'assume ((step' $< > $(location formal_noassume.v)",
+        "sed \"s/assert ((count <= 4'h9))/assert ((count <= 4'h8))/\" $< " +
+        "> $(location formal_tight.v)",
+        "! cmp -s $< $(location formal_noassume.v)",
+        "! cmp -s $< $(location formal_tight.v)",
+    ]),
+)
+
+formal_test(
+    name = "formal_prove_test",
+    top = "digit",
+    verilog = ":formal.v",
+)
+
+formal_test(
+    name = "formal_noassume_prove_test",
+    expect = 2,
+    top = "digit",
+    verilog = ":formal_noassume.v",
+)
+
+formal_test(
+    name = "formal_tight_prove_test",
+    expect = 2,
+    top = "digit",
+    verilog = ":formal_tight.v",
+)
+
+formal_test(
+    name = "formal_bmc_test",
+    mode = "bmc",
+    top = "digit",
+    verilog = ":formal.v",
+)
+
+formal_test(
+    name = "formal_noassume_bmc_test",
+    expect = 2,
+    mode = "bmc",
+    top = "digit",
+    verilog = ":formal_noassume.v",
+)
+
+formal_test(
+    name = "formal_tight_bmc_test",
+    expect = 2,
+    mode = "bmc",
+    top = "digit",
+    verilog = ":formal_tight.v",
+)
+
+formal_test(
+    name = "formal_cover_test",
+    mode = "cover",
+    top = "digit",
+    verilog = ":formal.v",
+)
+
+# The same runs as build steps, for the document that includes their
+# logs and the counterexample's trace: the proof that holds, the
+# tightened check failing its proof, and the bounded search that finds
+# the cycle it fails in.
+formal_run(
+    name = "formal_proof",
+    top = "digit",
+    verilog = ":formal.v",
+)
+
+formal_run(
+    name = "formal_tight_proof",
+    expect = 2,
+    top = "digit",
+    verilog = ":formal_tight.v",
+)
+
+formal_run(
+    name = "formal_tight_search",
+    expect = 2,
+    mode = "bmc",
+    top = "digit",
+    verilog = ":formal_tight.v",
+)
+
+formal_run(
+    name = "formal_covered",
+    mode = "cover",
+    top = "digit",
+    verilog = ":formal.v",
+)
+
+# The two traces drawn: the counterexample the bounded search found
+# for the tightened check, and the path to the cover point.
+formal_trace(
+    name = "formal_cex",
+    run = ":formal_tight_search",
+    signals = [
+        "//digit/clk=>clk",
+        "//digit/step=>step",
+        "//digit/count=>count",
+        "//digit/over=>over",
+    ],
+    width = 3.3,
+)
+
+formal_trace(
+    name = "formal_reach",
+    run = ":formal_covered",
+    signals = [
+        "//digit/clk=>clk",
+        "//digit/step=>step",
+        "//digit/count=>count",
+        "//digit/over=>over",
+    ],
+    width = 3.3,
+)
+# end{formal}
 
 # Helpers from another file of the crate, taking and giving a struct
 # (issue 504).
