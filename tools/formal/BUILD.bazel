@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# The formal proof of a unit's `check!`, `assume!` and `cover!`
+# statements, hermetically: SymbiYosys from //third_party/sby on the
+# Yosys of //third_party/yosys, and z3 from //third_party/z3 for the
+# bounded runs (issue 581). defs.bzl holds the rules; formal.sh is what
+# both of them run.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["formal.sh"])
