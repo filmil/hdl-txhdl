@@ -41,28 +41,12 @@ Offsets from the peripheral's base. The part selects the word by bits
 4 to 2 of the address and looks at no other bits, so the router or the
 bridge in front of it decides the base.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}llp{0.5\textwidth}@{}}
-\toprule
-Offset & Word & Access \\
-\midrule
-\code{0x00} & \code{out} & Read and write. Driven on a pin whose
-direction is out. \\
-\code{0x04} & \code{sync1} & Read only. What the pins read, after the
-two flip-flops. A write is taken and ignored. \\
-\code{0x08} & \code{dir} & Read and write. One to drive the pin, zero
-to read it. \\
-\code{0x0c} & \code{ie} & Read and write. One to let the pin raise
-\code{irq}. \\
-\code{0x10} & \code{kind} & Read and write. Zero for a level, one for
-an edge. \\
-\code{0x14} & \code{pol} & Read and write. A level: one for high. An
-edge: one for rising. \\
-\code{0x18} & \code{status} & Read, and write one to clear. Which pins
-have fired. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\dsregs{Gpio}
+
+Every register is \code{N} bits wide, and the word read back has zeros
+above them. A write to the register \code{pins}, which is read only, is taken
+and ignored. The register reads \code{sync1}, the second of the two
+flip-flops, and not the port of the same name.
 
 VHDL reserves \code{out}, so the netlist calls the register
 \code{out\_rw} in both targets (issue 497).

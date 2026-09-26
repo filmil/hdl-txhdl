@@ -48,26 +48,13 @@ Parameter & Meaning \\
 Offsets from the block's base. The block selects the word by bits 4 to
 2 of the address and looks at no other bits.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}llp{0.5\textwidth}@{}}
-\toprule
-Offset & Word & Access \\
-\midrule
-\code{0x00} & \code{ctrl} & Read and write. Bit 0 enable, 1 window, 2
-warn, 3 lock. Writes are ignored once locked, and the lock bit itself
-only ever sets. \\
-\code{0x04} & \code{load} & Read and write, the timeout in cycles.
-Ignored once locked. \\
-\code{0x08} & \code{count} & Read only, what is left of the timeout. \\
-\code{0x0c} & \code{feed} & Write only. \code{KEY} refreshes; anything
-else is a failure. Reads as zero. \\
-\code{0x10} & \code{status} & Read, and write ones to clear. Bit 0
-warned, 1 failed. \\
-\code{0x14} & \code{sill} & Read and write. In window mode a refresh
-while \code{count} is above this is a failure. Ignored once locked. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\dsregs{Wdog}
+
+Once \code{lock} is set, writes to \code{ctrl}, \code{load} and
+\code{sill} are ignored, and the lock bit itself only ever sets. A write
+of \code{KEY} to \code{feed} refreshes the count, and a write of
+anything else is a failure; \code{feed} reads zero. In window mode, a
+refresh while \code{count} is above \code{sill} is a failure too.
 
 The field is \code{sill} and not \code{open}, because \code{open} is a
 reserved word of VHDL and the lowering refused such a name when the

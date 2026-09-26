@@ -39,22 +39,13 @@ min-entropy \code{H} of half a bit per sample, rounded to forty.
 Offsets from the peripheral's base. The port selects the word by bits
 3 and 2 of the address.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}lp{0.38\textwidth}p{0.38\textwidth}@{}}
-\toprule
-Offset & Read & Write \\
-\midrule
-\code{0x0} & \code{data}: a word of entropy, taken by the read; zero
-when none is waiting. & Ignored. \\
-\code{0x4} & \code{status}: bit 0 a word is ready, bits 3 to 1 how
-many are waiting, bit 8 the fault, bit 9 the run bit. & Ignored. \\
-\code{0x8} & \code{ctrl}: bit 0 the run bit. & Bit 0 sets the run
-bit; bit 1 clears the fault. \\
-\code{0xc} & \code{raw}: the last 32 folded samples, before the
-extractor. & Ignored. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\dsregs{Trng}
+
+A read of \code{data} takes the oldest word, and reads zero when none
+is waiting. \code{ctrl}'s \code{clear} is written only: a one clears
+the fault, and it reads back zero. Writes to \code{data},
+\code{status} and \code{raw} are ignored. \code{raw} is the samples
+before the extractor.
 
 \dstables{Trng}
 

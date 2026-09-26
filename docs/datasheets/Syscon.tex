@@ -40,24 +40,12 @@ to happen. Any other value is ignored. \\
 Offsets from the block's base. The block selects the word by bits 4 to
 2 of the address and looks at no other bits.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}llp{0.5\textwidth}@{}}
-\toprule
-Offset & Word & Access \\
-\midrule
-\code{0x00} & \code{id} & Read only, \code{ID}. \\
-\code{0x04} & \code{version} & Read only, \code{VERSION}. \\
-\code{0x08} & \code{stamp0} & Read only, \code{STAMP0}. \\
-\code{0x0c} & \code{stamp1} & Read only, \code{STAMP1}. \\
-\code{0x10} & \code{cause} & Read, and write ones to clear. Bit 0 the
-power, 1 the button, 2 the watchdog, 3 software. \\
-\code{0x14} & \code{reset} & Write only. Writing \code{KEY} asks for a
-reset; anything else does nothing. Reads as zero. \\
-\code{0x18} & \code{scratch} & Read and write. A reset does not clear
-it. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\dsregs{Syscon}
+
+The four constants are the parameters \code{ID}, \code{VERSION},
+\code{STAMP0} and \code{STAMP1}. A write of \code{KEY} to \code{reset}
+asks for a reset, a write of anything else does nothing, and
+\code{reset} reads zero.
 
 \dstables{Syscon}
 

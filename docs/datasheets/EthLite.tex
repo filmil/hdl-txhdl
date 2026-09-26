@@ -26,20 +26,13 @@ offsets \code{0x0}, \code{0x4} and \code{0x8} of its range.
 \code{ex\_eth} puts them at \code{0x1000}, \code{0x1004} and
 \code{0x1008}.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}lllp{0.55\textwidth}@{}}
-\toprule
-Word & Offset & Access & Bits \\
-\midrule
-0, status & \code{0x0} & read & 0: a received byte waits. 1: the
-transmitter has room for a byte. \\
-1, transmit & \code{0x4} & write & 7 to 0: the byte. 8: high on a
-frame's last byte. \\
-2, receive & \code{0x8} & read & 7 to 0: the oldest received byte. 8:
-high on a frame's last byte. 9: high when a byte was there. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\dsregs{EthLite}
+
+A write to \code{txbyte} is answered only when the transmitter takes
+the byte, so a program that writes a frame a byte at a time is held
+back by the wire and not by polling. A read of \code{rxbyte} takes the
+oldest byte, which is what its access says; when nothing waits it
+reads with \code{valid} low.
 
 \dstables{EthLite}
 

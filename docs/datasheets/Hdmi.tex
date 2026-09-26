@@ -49,20 +49,11 @@ offsets \code{0x0}, \code{0x4} and \code{0x8} of its range.
 \code{ex\_hdmi} puts them at \code{0x1000}, \code{0x1004} and
 \code{0x1008}.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}lllp{0.5\textwidth}@{}}
-\toprule
-Word & Offset & Access & Bits \\
-\midrule
-0, status & \code{0x0} & read & 0: high in vertical blanking. 31 to 16:
-the count of frames shown. \\
-1, cursor & \code{0x4} & read, write & 7 to 0: the column. 14 to 8: the
-row. \\
-2, pixel & \code{0x8} & write & 11 to 0: the colour, four bits each of
-red, green and blue from the top. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\dsregs{Hdmi}
+
+\code{colour} is four bits each of red, green and blue, red at the top.
+A write to \code{status} is ignored, and a read of \code{pixel} or of
+\code{0xc}, which no register names, reads zero.
 
 \dstables{Hdmi}
 

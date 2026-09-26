@@ -44,26 +44,12 @@ Offsets from the peripheral's base. The buffer selects the word by bits
 front of it decides the base, and the seven words repeat every 32
 bytes.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}llp{0.5\textwidth}@{}}
-\toprule
-Offset & Word & Access \\
-\midrule
-\code{0x00} & \code{ctrl} & Read and write. Bit 0, \code{CTRL\_RUN}, is
-whether the buffer takes what it is offered. Bit 1,
-\code{CTRL\_FREEZE}, is whether \code{halt} stops it. \\
-\code{0x04} & \code{count} & Read only. How many entries are held, up
-to \code{N}. A write is taken and does nothing. \\
-\code{0x08} & \code{cursor} & Read and write. Which held entry the four
-words below return, counting from the oldest. \\
-\code{0x0c} & & Reads as zero. \\
-\code{0x10} & \code{word0} & Read only. Bits 31 to 0 of that entry. \\
-\code{0x14} & \code{word1} & Read only. Bits 63 to 32. \\
-\code{0x18} & \code{word2} & Read only. Bits 95 to 64. \\
-\code{0x1c} & \code{word3} & Read only. Bits 127 to 96. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\dsregs{Tracer}
+
+\code{CTRL\_RUN} and \code{CTRL\_FREEZE} are the masks of
+\code{ctrl}'s two fields. \code{0x0c} is named by no register and reads
+zero. A write to \code{count} or to a data word is taken and does
+nothing.
 
 \code{tracer::word(k)} gives the offset of word \code{k}, which is
 \code{0x10 + 4k}.

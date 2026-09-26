@@ -48,21 +48,16 @@ Offsets from the controller's base, which is
 \code{isa::CLINT\_BASE}, \code{0x0200\_0000}, under the mask
 \code{isa::CLINT\_MASK}, \code{0xffff\_0000}: a window of 64\,KiB.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}llp{0.55\textwidth}@{}}
-\toprule
-Offset & Word & Access \\
-\midrule
-\code{0x0000} & \code{msip}, bit 0 & Read and write. Bit 0 raises
-the software interrupt; the other 31 bits of a write are dropped and
-read back as zero. \\
-\code{0x4000} & \code{mtimecmp}, bits 31 to 0 & Read and write. \\
-\code{0x4004} & \code{mtimecmp}, bits 63 to 32 & Read and write. \\
-\code{0xbff8} & \code{mtime}, bits 31 to 0 & Read and write. \\
-\code{0xbffc} & \code{mtime}, bits 63 to 32 & Read and write. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\dsregs{Timer}
+
+The map is declared as \code{clint}, with fourteen select bits: an
+address's bits 15 to 2 select the word. A word is addressed only at its
+first byte. An address with either low bit set selects no word, so it
+reads zero and takes no write, as the reference model has it, and a
+store of a byte or a half to a register's second lane is dropped. A
+word the map does not name reads zero, and a write to it is dropped
+(issue 681). The other 31 bits of a write to \code{msip} are dropped
+and read back as zero.
 
 The controller selects the word by the whole 16-bit offset, bits 15 to
 0, and looks at no bit above them: the router sends it only the bursts
@@ -82,8 +77,9 @@ zero.
 \item A read is taken when \code{bus\_r} has room and no write is waiting
 for its beat. It is answered on \code{bus\_r} in the cycle it is taken,
 with the word addressed, \code{OKAY} and \code{last} set.
-\item A write is taken when no write is waiting. The word it names
-goes into \code{psel} and its identifier into \code{pid}.
+\item A write is taken when no write is waiting. The map's write
+enables for the word it names, one bit a register, go into
+\code{pwe}, and its identifier into \code{pid}.
 \item The held write's beat is taken when it has arrived and
 \code{bus\_ans} has room. The lanes the strobe covers replace those bytes of
 the word, the other bytes stay, and \code{bus\_ans} sends \code{OKAY}.

@@ -32,26 +32,15 @@ of it decides the base and the map repeats every 32 bytes.
 \code{pwm::duty(i)} gives channel \code{i}'s offset, which is
 \code{8 + 4i}.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}llp{0.5\textwidth}@{}}
-\toprule
-Offset & Word & Access \\
-\midrule
-\code{0x00} & \code{ctrl} & Read and write, eight bits. Bit 0 is
-\code{CTRL\_ENABLE}, bit 1 \code{CTRL\_CENTRE}, and bits 4 to 7 the
-polarity of channels 0 to 3, which \code{pwm::polarity(i)} names. \\
-\code{0x04} & \code{period} & Read and write. A read returns the
-shadow, not the period the counter is running. \\
-\code{0x08} & \code{duty0} & Read and write, the shadow again. \\
-\code{0x0c} & \code{duty1} & Read and write. \\
-\code{0x10} & \code{duty2} & Read and write. \\
-\code{0x14} & \code{duty3} & Read and write. \\
-\code{0x18} & \code{count} & Read only, and it is the live counter
-rather than a shadow. A write is taken and does nothing. \\
-\code{0x1c} & & Reads as zero. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\dsregs{Pwm}
+
+\code{ctrl} is eight bits wide. \code{CTRL\_ENABLE} and
+\code{CTRL\_CENTRE} are its first two fields' masks, and
+\code{pwm::polarity(i)} names channel \code{i}'s bit of \code{pol}. A
+read of \code{period} or of a duty word returns the shadow, not the
+value the counter is running, while \code{count} is the live counter,
+and a write to it is taken and does nothing. \code{0x1c} is named by no
+register and reads zero.
 
 A write takes the low 16 bits of the word for a period or a duty and
 the low 8 for \code{ctrl}, and the rest are dropped.

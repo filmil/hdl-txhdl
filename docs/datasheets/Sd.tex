@@ -41,33 +41,11 @@ None.
 The word is address bits 5 to 2. A word the map does not name reads as
 zero.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}llp{0.62\textwidth}@{}}
-\toprule
-Offset & Name & What it is \\
-\midrule
-\code{0x00} & \code{ctrl} & The divider in bits 0 to 7, four lines in
-bit 8, the interrupt enable in bit 9. Writing bit 10 sets both buffer
-pointers to zero. \\
-\code{0x04} & \code{cmd} & The index in bits 0 to 5; the response in
-bits 6 and 7, 0 none, 1 short, 2 long; read a block in bit 8, write
-one in bit 9; wait for busy in bit 10; skip the response's CRC in bit
-11; data only, no command, in bit 12. Writing it starts the command. \\
-\code{0x08} & \code{arg} & The argument. \\
-\code{0x0c} & \code{status} & Busy in bit 0 and done in bit 1; no
-response in bit 2, a wrong response CRC in bit 3, no block or a card
-that never left busy in bit 4, a wrong block CRC or a refused block in
-bit 5; the card's CRC status in bits 6 to 8; the first data line's
-level in bit 9; the response's index in bits 10 to 15; the write
-pointer in bits 16 to 23 and the read pointer in bits 24 to 31.
-Writing bit 1 clears done and the faults. \\
-\code{0x10} to \code{0x1c} & \code{resp0} to \code{resp3} & The
-response. \\
-\code{0x20} & \code{data} & Read: the next word out of the buffer.
-Written: the next word into it. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\dsregs{Sd}
+
+\code{cmd}'s \code{resp} is 0 for none, 1 for short and 2 for long.
+Writing \code{cmd} starts the command. Writing a one to
+\code{status}'s \code{done} clears it and the four faults with it.
 
 A half of a card clock takes \code{div + 1} cycles, so the card's
 clock is the system's over \code{2 * (div + 1)}: at 100~MHz, 124 is

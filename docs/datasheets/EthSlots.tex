@@ -60,33 +60,11 @@ The unit decodes the word from address bits 5 to 2, so the words are
 at offsets \code{0x0} to \code{0x3c} of its range. The board puts
 them at \code{0x3400}, which \code{isa::ETH\_BASE} states.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}lllp{0.46\textwidth}@{}}
-\toprule
-Word & Offset & Access & What it is \\
-\midrule
-0, \code{rx\_slot} & \code{0x00} & read & Which slot the last received
-frame is in. \\
-1, \code{rx\_length} & \code{0x04} & read & Its length in bytes. \\
-2, \code{rx\_ev\_pending} & \code{0x08} & read, write one to clear &
-A frame has arrived and has not been acknowledged. \\
-3, \code{rx\_ev\_enable} & \code{0x0c} & read, write & Whether an
-arrival raises \code{irq}. \\
-4, \code{tx\_slot} & \code{0x10} & write & Which slot the next
-transmit reads from. \\
-5, \code{tx\_length} & \code{0x14} & write & How many bytes of it to
-send. \\
-6, \code{tx\_start} & \code{0x18} & write & Writing one asks for the
-frame to go. \\
-7, \code{tx\_ready} & \code{0x1c} & read & One when the transmit
-engine is idle and no request is waiting. \\
-8, \code{tx\_ev\_pending} & \code{0x20} & read, write one to clear &
-Never set. See below. \\
-9, \code{tx\_ev\_enable} & \code{0x24} & read, write & Kept, and does
-nothing. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\dsregs{EthSlots}
+
+Words 10 to 15 are named by no register and read zero.
+\code{tx\_ev\_pending} is never set, as the behaviour below says, and
+\code{tx\_ev\_enable} is kept so the driver can write it.
 
 \emph{An unnamed word does not read as zero.} Words 4, 5 and 6, which
 are write only, and words 10 to 15, which are nothing, all read as
