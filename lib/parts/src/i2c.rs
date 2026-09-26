@@ -66,6 +66,21 @@ regmap! { regs (regs_read, regs_we), 2: [
 ] }
 // end{map}
 
+/// The master's two open drain lines, each read and pulled, and its
+/// interrupt, named as the netlist names them (issue 344).
+pub struct I2cLines {
+    /// The clock line, as read.
+    pub scl_in: In<Bit>,
+    /// The data line, as read.
+    pub sda_in: In<Bit>,
+    /// High pulls the clock line low.
+    pub scl_low: Out<Bit>,
+    /// High pulls the data line low.
+    pub sda_low: Out<Bit>,
+    /// A finished command, when the interrupt is enabled.
+    pub irq: Out<Bit>,
+}
+
 // begin{state}
 /// An I2C master: one piece of a transaction per command, on two open
 /// drain lines.
@@ -152,13 +167,13 @@ impl Unit for I2c {
     async fn run(
         &mut self,
         bus: LitePort<32, 32, 4>,
-        (scl_in, sda_in, scl_low, sda_low, irq): (
-            In<Bit>,
-            In<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-        ),
+        I2cLines {
+            scl_in,
+            sda_in,
+            scl_low,
+            sda_low,
+            irq,
+        }: I2cLines,
     ) {
         join2(
             async {
@@ -779,6 +794,7 @@ pub mod sim {
 #[cfg(test)]
 mod tests {
     use super::sim::I2cDev;
+    use super::I2cLines;
     use super::{cmd, reg, I2c};
     use crate::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
     use std::cell::RefCell;
@@ -883,7 +899,16 @@ mod tests {
                 body.await;
                 *fin.borrow_mut() = true;
             },
-            master.run(bus, (scl_in, sda_in, scl_low_o, sda_low_o, irq_o)),
+            master.run(
+                bus,
+                I2cLines {
+                    scl_in,
+                    sda_in,
+                    scl_low: scl_low_o,
+                    sda_low: sda_low_o,
+                    irq: irq_o,
+                },
+            ),
         ));
         let dev = RefCell::new(dev);
         let mut lines: Vec<Cycle> = Vec::new();

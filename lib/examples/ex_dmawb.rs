@@ -39,6 +39,7 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::wb::sim::WbMem;
 use txhdl_parts::bus::wb::AxiWb;
+use txhdl_parts::bus::wb::WbMaster;
 use txhdl_parts::dma::{LineFetch, LineStore};
 
 const ADDR: usize = 32;
@@ -150,10 +151,17 @@ fn main() {
                 ),
                 r_bridge.run(
                     r_bus,
-                    (
-                        r_stall, r_ack, r_rdat, r_cyc_o, r_stb_o, r_we_o,
-                        r_adr_o, r_dat_o, r_sel_o,
-                    ),
+                    WbMaster {
+                        stall: r_stall,
+                        ack: r_ack,
+                        rdat: r_rdat,
+                        cyc: r_cyc_o,
+                        stb: r_stb_o,
+                        we: r_we_o,
+                        adr: r_adr_o,
+                        dat: r_dat_o,
+                        sel: r_sel_o,
+                    },
                 ),
             ),
             src_mem.run(
@@ -175,10 +183,17 @@ fn main() {
                 ),
                 w_bridge.run(
                     w_bus,
-                    (
-                        w_stall, w_ack, w_rdat, w_cyc_o, w_stb_o, w_we_o,
-                        w_adr_o, w_dat_o, w_sel_o,
-                    ),
+                    WbMaster {
+                        stall: w_stall,
+                        ack: w_ack,
+                        rdat: w_rdat,
+                        cyc: w_cyc_o,
+                        stb: w_stb_o,
+                        we: w_we_o,
+                        adr: w_adr_o,
+                        dat: w_dat_o,
+                        sel: w_sel_o,
+                    },
                 ),
             ),
             dst_mem.run(

@@ -127,6 +127,15 @@ pub fn wire_bytes(frame: &[u8]) -> Vec<u8> {
     out
 }
 
+/// The transmitter's lines to the PHY: the byte and its enable, named
+/// as the netlist names them (issue 344).
+pub struct EthTxLines {
+    /// The byte on the wire this cycle.
+    pub txd: Out<U<8>>,
+    /// A frame is being sent.
+    pub tx_en: Out<Bit>,
+}
+
 /// The transmit half of the MAC. It stores a frame's bytes from `tx`
 /// until the last, then sends the frame on `txd` with `tx_en` high:
 /// seven bytes of preamble and the delimiter, the frame, zeros up to
@@ -164,7 +173,7 @@ impl Unit for EthTx {
     async fn run(
         &mut self,
         tx: Rx<EthByte>,
-        (txd, tx_en): (Out<U<8>>, Out<Bit>),
+        EthTxLines { txd, tx_en }: EthTxLines,
     ) {
         join2(
             async {
@@ -255,6 +264,17 @@ impl Unit for EthTx {
 }
 // end{tx}
 
+/// The receiver's lines from the PHY: the byte, its valid and its
+/// error, named as the netlist names them (issue 344).
+pub struct EthRxLines {
+    /// The byte on the wire this cycle.
+    pub rxd: In<U<8>>,
+    /// The byte belongs to a frame.
+    pub rx_dv: In<Bit>,
+    /// The PHY saw an error in the frame.
+    pub rx_er: In<Bit>,
+}
+
 /// The receive half of the MAC. It waits for `rx_dv` with the start of
 /// frame delimiter on `rxd`, stores the frame's bytes while `rx_dv`
 /// stays high, and at its end checks the frame check sequence. A frame
@@ -295,7 +315,7 @@ pub struct EthRx {
 
 // begin{rx}
 #[lower]
-impl Unit<(In<U<8>>, In<Bit>, In<Bit>), (Tx<EthByte>, Out<U<16>>)> for EthRx {
+impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>)> for EthRx {
     /// Two processes. The receiver watches the wire every cycle: it
     /// hunts for the delimiter, stores a byte a cycle while `rx_dv`
     /// is high, checks the frame at its end, and marks it full when
@@ -305,7 +325,7 @@ impl Unit<(In<U<8>>, In<Bit>, In<Bit>), (Tx<EthByte>, Out<U<16>>)> for EthRx {
     /// back.
     async fn run(
         &mut self,
-        (rxd, rx_dv, rx_er): (In<U<8>>, In<Bit>, In<Bit>),
+        EthRxLines { rxd, rx_dv, rx_er }: EthRxLines,
         (rx, rx_len): (Tx<EthByte>, Out<U<16>>),
     ) {
         join2(
@@ -555,8 +575,21 @@ mod tests {
         // checks; it reads the bytes and counts them itself.
         let (rxlen_out, _rxlen) = signal::<U<16>, DefaultClock>();
         let mut sim = Running::new(join2(
-            mac_tx.run(in_rx, (txd_out, en_out)),
-            mac_rx.run((rxd, dv, er), (out_tx, rxlen_out)),
+            mac_tx.run(
+                in_rx,
+                EthTxLines {
+                    txd: txd_out,
+                    tx_en: en_out,
+                },
+            ),
+            mac_rx.run(
+                EthRxLines {
+                    rxd,
+                    rx_dv: dv,
+                    rx_er: er,
+                },
+                (out_tx, rxlen_out),
+            ),
         ));
         let mut queue: Vec<EthByte> = Vec::new();
         for f in frames {

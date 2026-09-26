@@ -26,6 +26,7 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
+use txhdl_parts::sd::SdLines;
 use txhdl_parts::sd::{
     regs, Sd, SdCard, CMD_BUSY, CMD_CLOCKS, CMD_LONG, CMD_NOCRC, CMD_READ,
     CMD_SHORT, CMD_WRITE, CTRL_CLEAR, CTRL_WIDE, STATUS_DCRC, STATUS_DONE,
@@ -226,10 +227,16 @@ fn main() {
         join2(
             sd.run(
                 bus,
-                (
-                    cmd_in, dat_in, sclk_o, cmd_out_o, cmd_oe_o, dat_out_o,
-                    dat_oe_o, irq_o,
-                ),
+                SdLines {
+                    cmd_in,
+                    dat_in,
+                    sclk: sclk_o,
+                    cmd_out: cmd_out_o,
+                    cmd_oe: cmd_oe_o,
+                    dat_out: dat_out_o,
+                    dat_oe: dat_oe_o,
+                    irq: irq_o,
+                },
             ),
             client,
         ),

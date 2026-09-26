@@ -23,6 +23,8 @@ use txhdl::comp::{
 };
 use txhdl::types::{Bit, U};
 use txhdl::{with, Trace};
+use txhdl_parts::eth::EthRxLines;
+use txhdl_parts::eth::EthTxLines;
 use txhdl_parts::eth::{EthByte, EthRx, EthTx};
 use txhdl_parts::ethdma::{FrameIn, FrameOut};
 
@@ -153,10 +155,16 @@ fn main() {
     let mut sim = Running::new(join2(
         join2(
             fout.run((src_rx, bytes, go), (out_tx, run_o, nwords_o)),
-            mac_tx.run(out_rx, (txd_o, en_o)),
+            mac_tx.run(
+                out_rx,
+                EthTxLines {
+                    txd: txd_o,
+                    tx_en: en_o,
+                },
+            ),
         ),
         join2(
-            mac_rx.run((rxd, rx_dv, rx_er), (rx_tx, rxlen_o)),
+            mac_rx.run(EthRxLines { rxd, rx_dv, rx_er }, (rx_tx, rxlen_o)),
             join2(
                 fin.run(
                     (rx_rx, rx_len, hold),

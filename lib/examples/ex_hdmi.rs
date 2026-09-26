@@ -20,6 +20,7 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
+use txhdl_parts::hdmi::VideoOut;
 use txhdl_parts::hdmi::{regs, Hdmi, I2cDevice, I2cInit, SII9134_WRITES};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -157,7 +158,15 @@ fn main() {
             bridge.run((aw, ar, w, [lb], [lr]), ([law], [lar], [lw], b, r)),
         ),
         join2(
-            video.run(bus, (rgb_out, hs_out, vs_out, de_out)),
+            video.run(
+                bus,
+                VideoOut {
+                    rgb: rgb_out,
+                    hsync: hs_out,
+                    vsync: vs_out,
+                    de: de_out,
+                },
+            ),
             master
                 .run(sda_in, (rst_out, scl_out, sdal_out, done_out, fail_out)),
         ),

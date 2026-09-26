@@ -28,6 +28,7 @@ use txhdl::{lower, Trace};
 use txhdl_parts::bus::axi::PerPort;
 use txhdl_parts::bus::wb::sim::WbMem;
 use txhdl_parts::bus::wb::AxiWb;
+use txhdl_parts::bus::wb::WbMaster;
 
 /// The Wishbone word address: fifteen row bits, ten column bits and
 /// three bank bits, the last three the lane of a word in its burst.
@@ -247,10 +248,17 @@ impl Unit for Ddr3Per {
                     ans: bus.ans,
                     r: bus.r,
                 },
-                (
-                    wb_stall_i, wb_ack_i, wb_rdat_i, wb_cyc_o, wb_stb_o,
-                    wb_we_o, wb_adr_o, wb_dat_o, wb_sel_o,
-                ),
+                WbMaster {
+                    stall: wb_stall_i,
+                    ack: wb_ack_i,
+                    rdat: wb_rdat_i,
+                    cyc: wb_cyc_o,
+                    stb: wb_stb_o,
+                    we: wb_we_o,
+                    adr: wb_adr_o,
+                    dat: wb_dat_o,
+                    sel: wb_sel_o,
+                },
             ),
         )
         .await;

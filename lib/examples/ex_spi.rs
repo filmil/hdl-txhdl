@@ -26,6 +26,7 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
+use txhdl_parts::spi::SpiLines;
 use txhdl_parts::spi::{regs, FlashDevice, Spi};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -160,7 +161,16 @@ fn main() {
             bridge.run((aw, ar, w, [lb], [lr]), ([law], [lar], [lw], b, r)),
         ),
         join2(
-            spi.run(bus, (miso, sclk_out, mosi_out, cs_out, irq_out)),
+            spi.run(
+                bus,
+                SpiLines {
+                    miso,
+                    sclk: sclk_out,
+                    mosi: mosi_out,
+                    cs_n: cs_out,
+                    irq: irq_out,
+                },
+            ),
             client,
         ),
     ));

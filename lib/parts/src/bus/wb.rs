@@ -28,6 +28,29 @@ pub mod sim;
 /// word address.
 const WORD: usize = 2;
 
+/// A Wishbone master's lines: what the slave answers, and what the
+/// master drives, named as the netlist names them (issue 344).
+pub struct WbMaster<const AW: usize> {
+    /// The slave cannot take the request this cycle.
+    pub stall: In<Bit>,
+    /// The slave has done the request.
+    pub ack: In<Bit>,
+    /// The word a read answered.
+    pub rdat: In<U<32>>,
+    /// A cycle is in progress.
+    pub cyc: Out<Bit>,
+    /// A request is offered.
+    pub stb: Out<Bit>,
+    /// The request is a write.
+    pub we: Out<Bit>,
+    /// The word address.
+    pub adr: Out<U<AW>>,
+    /// The word a write carries.
+    pub dat: Out<U<32>>,
+    /// Which bytes of it.
+    pub sel: Out<U<4>>,
+}
+
 // begin{state}
 /// The bridge. `A` and `I` are the link's address and identifier
 /// widths; `AW` is the width of the Wishbone word address.
@@ -63,17 +86,17 @@ impl<const A: usize, const I: usize, const AW: usize> Unit for AxiWb<A, I, AW> {
     async fn run(
         &mut self,
         bus: PerPort<A, 32, 4, I>,
-        (stall, ack, rdat, cyc, stb, we, adr, dat, sel): (
-            In<Bit>,
-            In<Bit>,
-            In<U<32>>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<U<AW>>,
-            Out<U<32>>,
-            Out<U<4>>,
-        ),
+        WbMaster {
+            stall,
+            ack,
+            rdat,
+            cyc,
+            stb,
+            we,
+            adr,
+            dat,
+            sel,
+        }: WbMaster<AW>,
     ) {
         loop {
             DefaultClock::rising().await;
@@ -175,6 +198,7 @@ impl<const A: usize, const I: usize, const AW: usize> Unit for AxiWb<A, I, AW> {
 mod tests {
     use super::sim::WbMem;
     use super::AxiWb;
+    use super::WbMaster;
     use crate::bus::axi::{
         axi_to_unit, AxiHost, AxiPer, Host, HostLink, PerPort, Rd, Resp, Wr,
     };
@@ -227,10 +251,17 @@ mod tests {
                     ),
                     bridge.run(
                         bus,
-                        (
-                            stall, ack, rdat, cyc_o, stb_o, we_o, adr_o, dat_o,
-                            sel_o,
-                        ),
+                        WbMaster {
+                            stall,
+                            ack,
+                            rdat,
+                            cyc: cyc_o,
+                            stb: stb_o,
+                            we: we_o,
+                            adr: adr_o,
+                            dat: dat_o,
+                            sel: sel_o,
+                        },
                     ),
                 ),
                 client(host),

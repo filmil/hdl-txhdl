@@ -17,6 +17,7 @@ use txhdl::comp::{join2, now, signal, Clock, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
 use txhdl_parts::i2c::sim::I2cDev;
+use txhdl_parts::i2c::I2cLines;
 use txhdl_parts::i2c::{cmd, reg, I2c};
 
 type Host = LiteHost<32, 32, 4>;
@@ -132,7 +133,16 @@ fn main() {
 
     let mut sim = Running::new(join2(
         client,
-        master.run(bus, (scl_in, sda_in, scl_low_o, sda_low_o, irq_o)),
+        master.run(
+            bus,
+            I2cLines {
+                scl_in,
+                sda_in,
+                scl_low: scl_low_o,
+                sda_low: sda_low_o,
+                irq: irq_o,
+            },
+        ),
     ));
     let mut dev = I2cDev::new(ADDR, &REGS);
     dev.stretch = 3;

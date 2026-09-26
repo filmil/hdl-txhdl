@@ -54,6 +54,21 @@ regmap! { regs (regs_read, regs_we), 2: [
 ] }
 // end{map}
 
+/// The master's four lines and its interrupt, named as the netlist
+/// names them (issue 344).
+pub struct SpiLines {
+    /// The data from the chip.
+    pub miso: In<Bit>,
+    /// The clock.
+    pub sclk: Out<Bit>,
+    /// The data to the chip.
+    pub mosi: Out<Bit>,
+    /// The chip select, low while the chip is held.
+    pub cs_n: Out<Bit>,
+    /// A finished transfer, when the interrupt is enabled.
+    pub irq: Out<Bit>,
+}
+
 // begin{state}
 /// An SPI master: one byte each way at a time, under a chip select a
 /// program holds.
@@ -92,13 +107,13 @@ impl Unit for Spi {
     async fn run(
         &mut self,
         bus: LitePort<32, 32, 4>,
-        (miso, sclk, mosi, cs_n, irq): (
-            In<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-        ),
+        SpiLines {
+            miso,
+            sclk,
+            mosi,
+            cs_n,
+            irq,
+        }: SpiLines,
     ) {
         loop {
             DefaultClock::rising().await;

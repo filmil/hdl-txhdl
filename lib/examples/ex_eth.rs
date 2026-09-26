@@ -20,6 +20,8 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
+use txhdl_parts::eth::EthRxLines;
+use txhdl_parts::eth::EthTxLines;
 use txhdl_parts::eth::{regs, EthByte, EthLite, EthRx, EthTx};
 
 /// The link: thirty-two-bit addresses and words, four lanes,
@@ -191,8 +193,15 @@ fn main() {
         join2(
             lite_unit.run(bus, (rx_rx, tx_tx, irq_out)),
             join2(
-                mac_tx.run(tx_rx, (txd_out, en_out)),
-                mac_rx.run((rxd, rx_dv, rx_er), (rx_tx, rxlen_out)),
+                mac_tx.run(
+                    tx_rx,
+                    EthTxLines {
+                        txd: txd_out,
+                        tx_en: en_out,
+                    },
+                ),
+                mac_rx
+                    .run(EthRxLines { rxd, rx_dv, rx_er }, (rx_tx, rxlen_out)),
             ),
         ),
     );

@@ -35,6 +35,8 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
+use txhdl_parts::eth::EthRxLines;
+use txhdl_parts::eth::EthTxLines;
 use txhdl_parts::eth::{EthByte, EthRx, EthTx};
 use txhdl_parts::remote::eth::{RemoteLink, FRAME_LEN, KIND_ANSWER};
 use txhdl_parts::remote::Remote;
@@ -200,13 +202,39 @@ fn main() {
         ),
         join2(
             join2(
-                mac_tx.run(out_rx, (atxd_out, aen_out)),
-                mac_rx.run((arxd, adv, aer), (prog_tx, alen_out)),
+                mac_tx.run(
+                    out_rx,
+                    EthTxLines {
+                        txd: atxd_out,
+                        tx_en: aen_out,
+                    },
+                ),
+                mac_rx.run(
+                    EthRxLines {
+                        rxd: arxd,
+                        rx_dv: adv,
+                        rx_er: aer,
+                    },
+                    (prog_tx, alen_out),
+                ),
             ),
             join2(
                 join2(
-                    prog_mac_tx.run(back_rx, (btxd_out, ben_out)),
-                    prog_mac_rx.run((brxd, bdv, ber), (in_tx, blen_out)),
+                    prog_mac_tx.run(
+                        back_rx,
+                        EthTxLines {
+                            txd: btxd_out,
+                            tx_en: ben_out,
+                        },
+                    ),
+                    prog_mac_rx.run(
+                        EthRxLines {
+                            rxd: brxd,
+                            rx_dv: bdv,
+                            rx_er: ber,
+                        },
+                        (in_tx, blen_out),
+                    ),
                 ),
                 client,
             ),

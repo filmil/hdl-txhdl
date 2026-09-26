@@ -16,6 +16,7 @@ use txhdl_parts::bus::axi::{
 };
 use txhdl_parts::bus::wb::sim::WbMem;
 use txhdl_parts::bus::wb::AxiWb;
+use txhdl_parts::bus::wb::WbMaster;
 
 /// The word address: twenty-eight bits.
 type Bridge = AxiWb<32, 2, 28>;
@@ -95,7 +96,17 @@ fn main() {
                 ),
                 bridge.run(
                     bus,
-                    (stall, ack, rdat, cyc_o, stb_o, we_o, adr_o, dat_o, sel_o),
+                    WbMaster {
+                        stall,
+                        ack,
+                        rdat,
+                        cyc: cyc_o,
+                        stb: stb_o,
+                        we: we_o,
+                        adr: adr_o,
+                        dat: dat_o,
+                        sel: sel_o,
+                    },
                 ),
             ),
             client,

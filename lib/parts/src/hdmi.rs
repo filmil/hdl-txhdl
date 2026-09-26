@@ -124,6 +124,19 @@ regmap! { regs (regs_read, regs_we), 2: [
 ] }
 // end{regs}
 
+/// What the video peripheral drives: the pixel and the three timing
+/// lines, a port each, named as the netlist names them (issue 344).
+pub struct VideoOut {
+    /// The pixel, red in the top byte.
+    pub rgb: Out<U<24>>,
+    /// Horizontal sync.
+    pub hsync: Out<Bit>,
+    /// Vertical sync.
+    pub vsync: Out<Bit>,
+    /// The pixel is in the visible area.
+    pub de: Out<Bit>,
+}
+
 /// The video peripheral. A framebuffer pixel is 12 bits, four each of
 /// red, green and blue from the top, and covers `1 << SHIFT` by
 /// `1 << SHIFT` pixels of the screen.
@@ -190,7 +203,12 @@ impl<
     async fn run(
         &mut self,
         bus: LitePort<32, 32, 4>,
-        (rgb, hsync, vsync, de): (Out<U<24>>, Out<Bit>, Out<Bit>, Out<Bit>),
+        VideoOut {
+            rgb,
+            hsync,
+            vsync,
+            de,
+        }: VideoOut,
     ) {
         loop {
             DefaultClock::rising().await;
@@ -644,8 +662,15 @@ mod tests {
         let (vs_out, vs) = signal::<Bit, DefaultClock>();
         let (de_out, de) = signal::<Bit, DefaultClock>();
         let mut unit = Tiny::default();
-        let mut sim =
-            Running::new(unit.run(bus, (rgb_out, hs_out, vs_out, de_out)));
+        let mut sim = Running::new(unit.run(
+            bus,
+            VideoOut {
+                rgb: rgb_out,
+                hsync: hs_out,
+                vsync: vs_out,
+                de: de_out,
+            },
+        ));
         let (width, height) = (16usize, 11usize);
         let mut seen: Vec<(bool, bool, bool)> = Vec::new();
         for _ in 0..(2 * width * height) {

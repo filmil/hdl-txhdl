@@ -150,6 +150,28 @@ pub const WORDS: usize = 128;
 /// Card clocks a response may take to start.
 pub const RESPONSE_WAIT: u32 = 64;
 
+/// The host's lines to the card, and its interrupt, named as the
+/// netlist names them (issue 344). The command and data lines are
+/// open, each a value read, a value driven and an enable.
+pub struct SdLines {
+    /// The command line, as read.
+    pub cmd_in: In<Bit>,
+    /// The four data lines, as read.
+    pub dat_in: In<U<4>>,
+    /// The card's clock.
+    pub sclk: Out<Bit>,
+    /// The command line, as driven.
+    pub cmd_out: Out<Bit>,
+    /// The command line is driven.
+    pub cmd_oe: Out<Bit>,
+    /// The four data lines, as driven.
+    pub dat_out: Out<U<4>>,
+    /// The data lines are driven.
+    pub dat_oe: Out<Bit>,
+    /// A finished command, when the interrupt is enabled.
+    pub irq: Out<Bit>,
+}
+
 // begin{state}
 /// The host: one command and one block at a time.
 #[derive(Trace, Default)]
@@ -258,16 +280,16 @@ impl Unit for Sd {
     async fn run(
         &mut self,
         bus: LitePort<32, 32, 4>,
-        (cmd_in, dat_in, sclk, cmd_out, cmd_oe, dat_out, dat_oe, irq): (
-            In<Bit>,
-            In<U<4>>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<U<4>>,
-            Out<Bit>,
-            Out<Bit>,
-        ),
+        SdLines {
+            cmd_in,
+            dat_in,
+            sclk,
+            cmd_out,
+            cmd_oe,
+            dat_out,
+            dat_oe,
+            irq,
+        }: SdLines,
     ) {
         loop {
             DefaultClock::rising().await;
@@ -1401,10 +1423,16 @@ mod tests {
             client,
             host.run(
                 bus,
-                (
-                    cmd_in, dat_in, sclk_o, cmd_out_o, cmd_oe_o, dat_out_o,
-                    dat_oe_o, irq_o,
-                ),
+                SdLines {
+                    cmd_in,
+                    dat_in,
+                    sclk: sclk_o,
+                    cmd_out: cmd_out_o,
+                    cmd_oe: cmd_oe_o,
+                    dat_out: dat_out_o,
+                    dat_oe: dat_oe_o,
+                    irq: irq_o,
+                },
             ),
         ));
         let mut card = card;
