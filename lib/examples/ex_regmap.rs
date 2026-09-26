@@ -80,13 +80,15 @@ impl Unit for Knobs {
                 knobs_ctrl_pack(run, step),
                 count,
             );
-            let we = knobs_we(wgo, wsel);
+            // The control word's enable, a bit taken straight off the
+            // call: the netlist puts the enables on a wire to index it.
+            let to_ctrl = knobs_we(wgo, wsel).bit(1);
             with!(self <= {
-                we.bit(1) ? {
+                to_ctrl ? {
                     run: knobs_ctrl_run(written),
                     step: knobs_ctrl_step(written),
                 },
-                we.bit(1) & knobs_ctrl_run(written) & !run ? count:
+                to_ctrl & knobs_ctrl_run(written) & !run ? count:
                     U::<32>::from(0u8),
                 run ? count: count + step.zext::<32>(),
             });
