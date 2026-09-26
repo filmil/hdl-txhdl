@@ -1,0 +1,44 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Address Map as a Trait Constant}
+\label{sec:x-map}
+
+A unit over \code{N} peripherals decodes an address against \code{N}
+ranges, and stable Rust has no array const parameter to carry them:
+an \code{[usize; N]} as a const parameter needs
+\code{adt\_const\_params}. Until now a router or a bridge took a
+\code{BASE} and a \code{MASK} const parameter per peripheral, which is
+why each count of them was a unit of its own, written out by a macro.
+
+So the map is a type. \code{txhdl::map::AddrMap<N>} has one
+associated constant, \code{RANGES: [(usize, usize); N]}, the base
+and the mask of each peripheral; a design writes a marker type,
+implements the trait for it with its count, and names the marker
+where it names the unit, \code{Decode<3, Three>}. The unit is generic
+over the marker, holds it in a \code{PhantomData} field the netlist
+ignores, and reads \code{M::RANGES[i]} in a loop over \code{0..N}.
+The lowering unrolls the loop when \code{lowered} runs, as
+Section~\ref{sec:x-loop} unrolls one over an array of ports, and
+writes each base and mask into the netlist as a number, the way it
+writes a const parameter: \code{M::RANGES[i].1} is Rust worked out
+at that moment, with \code{i} the unrolled loop's variable. The
+array's length is checked against \code{N} where the map is written,
+so a map of two ranges cannot be given to a decoder of three.
+
+The decoder below takes an address a cycle and says, one bit per
+range, which range holds it, the first that matches, and whether
+none does. The run walks seven addresses in and out of the ranges;
+the netlist is checked against the run under nvc and Verilator, and
+its three compares carry the constants the map states.
+
+\begin{figure}[htbp]
+\centering
+\input{map_timing.tex}
+\caption{The decoder over three ranges: an address a cycle, the
+range that holds it as a one-hot, and \code{none} where no range
+does.}
+\label{fig:x-map}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_map.rs}. Run with \code{bazel run //lib/examples:ex\_map}.},label={lst:x-map}]{lib/examples/ex_map.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_map} printed when the build ran it: the walk, then the Verilog, the map's bases and masks as numbers of the netlist.},label={lst:x-map-out}]{out_map.txt}

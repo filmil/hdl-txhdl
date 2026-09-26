@@ -1,0 +1,20 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{\code{txhdl::map}}
+\label{sec:r-map}
+
+An address map as a trait constant (issue 593). A unit over \code{N}
+peripherals cannot take its \code{N} ranges as one const parameter,
+since stable Rust has no array const parameter, so a map is a type
+that implements \code{AddrMap<N>} with its ranges as the associated
+constant \code{RANGES: [(usize, usize); N]}, each a base and the mask
+that picks the range out, the first that matches the one. A unit is
+generic over the map, \code{Decode<N, M: AddrMap<N>>}, holds it in a
+\code{PhantomData} field, and reads \code{M::RANGES[i]} in a loop
+over \code{0..N}. Under \code{\#[lower]} such a path, a constant
+written in capitals, indexed, and projected to a tuple field, is a
+number Rust works out when \code{lowered} runs, as a const parameter
+is; the loop is unrolled there and \code{i} is its variable. Nothing
+else of the module lowers, and the module holds nothing but the
+trait.
+
+\lstinputlisting[caption={\code{lib/src/map.rs}.},label={lst:r-map}]{lib/src/map.rs}
