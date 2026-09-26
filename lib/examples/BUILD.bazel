@@ -597,6 +597,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An array of child units, lowered:  bazel run //lib/examples:ex_lanes
+rust_binary(
+    name = "ex_lanes",
+    srcs = ["ex_lanes.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A multiply-accumulate, lowered:  bazel run //lib/examples:ex_mul
 rust_binary(
     name = "ex_mul",
@@ -1156,6 +1165,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_imm.rs",
         "ex_twoproc.rs",
         "ex_mul.rs",
+        "ex_lanes.rs",
         "ex_regs.rs",
         "ex_wide.rs",
         "ex_tap.rs",

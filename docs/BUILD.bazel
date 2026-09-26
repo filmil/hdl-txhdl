@@ -803,6 +803,8 @@ latex_document(
         ":twoproc_timing",
         ":mul_run",
         ":mul_timing",
+        ":lanes_run",
+        ":lanes_timing",
         ":regs_run",
         ":regs_timing",
         ":wide_run",
@@ -1832,6 +1834,24 @@ waveform(
         "//tallies/counts_1=>counts_1",
         "//tallies/counts_2=>counts_2",
         "//total=>total",
+    ],
+)
+
+waveform(
+    name = "lanes",
+    example = "//lib/examples:ex_lanes",
+    lowered = ("lanes", "lanes"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//xs_0=>xs_0",
+        "//xs_1=>xs_1",
+        "//xs_2=>xs_2",
+        "//lanes/lanes_0/got=>got_0",
+        "//lanes/lanes_1/got=>got_1",
+        "//lanes/lanes_2/got=>got_2",
+        "//ys_0=>ys_0",
+        "//ys_1=>ys_1",
+        "//ys_2=>ys_2",
     ],
 )
 
