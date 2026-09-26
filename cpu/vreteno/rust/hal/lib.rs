@@ -30,7 +30,7 @@
 
 use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
-use vreteno_regs::{timer, uart};
+use vreteno_regs::{hdmi, pwm, timer, uart};
 
 pub mod trap;
 
@@ -267,15 +267,16 @@ impl Plic {
 pub struct Pwm;
 
 impl Pwm {
-    const CTRL: usize = map::PWM;
-    const PERIOD: usize = map::PWM + 4;
-    const DUTY: usize = map::PWM + 8;
+    // The modulator's words, as its map declares them (issue 709).
+    const CTRL: usize = map::PWM + pwm::CTRL;
+    const PERIOD: usize = map::PWM + pwm::PERIOD;
+    const DUTY: usize = map::PWM + pwm::DUTY0;
 
     /// Run with `period` cycles a cycle, enabled, edge aligned, and
     /// every channel the right way up.
     pub fn run(period: u32) {
         wr(Self::PERIOD, period);
-        wr(Self::CTRL, 1);
+        wr(Self::CTRL, pwm::CTRL_ENABLE_MASK);
     }
 
     /// Channel `channel` high for `cycles` of each period.
@@ -291,9 +292,10 @@ impl Pwm {
 pub struct Video;
 
 impl Video {
-    const STATUS: usize = map::VIDEO;
-    const CURSOR: usize = map::VIDEO + 4;
-    const PIXEL: usize = map::VIDEO + 8;
+    // The peripheral's words, as its map declares them (issue 709).
+    const STATUS: usize = map::VIDEO + hdmi::STATUS;
+    const CURSOR: usize = map::VIDEO + hdmi::CURSOR;
+    const PIXEL: usize = map::VIDEO + hdmi::PIXEL;
 
     /// Columns and rows of the framebuffer.
     pub const WIDTH: u32 = 160;
@@ -301,12 +303,12 @@ impl Video {
 
     /// Whether the raster is in the vertical blanking.
     pub fn blanking() -> bool {
-        rd(Self::STATUS) & 1 != 0
+        rd(Self::STATUS) & hdmi::STATUS_BLANK_MASK != 0
     }
 
     /// Frames shown, as a sixteen-bit count.
     pub fn frames() -> u32 {
-        rd(Self::STATUS) >> 16
+        rd(Self::STATUS) >> hdmi::STATUS_FRAMES_SHIFT
     }
 
     /// Put the cursor at a column and a row.

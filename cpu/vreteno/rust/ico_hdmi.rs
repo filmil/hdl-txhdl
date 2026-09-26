@@ -73,20 +73,20 @@
 
 use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
-use vreteno_regs::uart;
+use vreteno_regs::{hdmi, uart};
 
 /// The serial port, as `hello.rs` has it.
 const UART: *mut u32 = 0x3000 as *mut u32;
 /// The video peripheral, the third slot of the same page.
 const VIDEO: *mut u32 = 0x3200 as *mut u32;
 /// Its words: the status reads, the cursor reads and writes, and the
-/// pixel writes.
-const STATUS: usize = 0;
-const CURSOR: usize = 1;
-const PIXEL: usize = 2;
-/// Bit 0 of the status is high while the raster is in the vertical
-/// blanking, which is the moment to start a frame.
-const BLANKING: u32 = 1;
+/// pixel writes, as word indices from its map (issue 709).
+const STATUS: usize = hdmi::STATUS / 4;
+const CURSOR: usize = hdmi::CURSOR / 4;
+const PIXEL: usize = hdmi::PIXEL / 4;
+/// The status bit high while the raster is in the vertical blanking,
+/// which is the moment to start a frame.
+const BLANKING: u32 = hdmi::STATUS_BLANK_MASK;
 
 /// The framebuffer, in its own pixels.
 const W: i32 = 160;
@@ -172,8 +172,7 @@ fn sqrt(v: i32) -> i32 {
 
 fn put(byte: u8) {
     unsafe {
-        while read_volatile(UART.add(uart::STATUS / 4))
-            & uart::STATUS_BUSY_MASK
+        while read_volatile(UART.add(uart::STATUS / 4)) & uart::STATUS_BUSY_MASK
             != 0
         {}
         write_volatile(UART.add(uart::TX / 4), byte as u32);

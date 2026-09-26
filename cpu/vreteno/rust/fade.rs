@@ -30,10 +30,11 @@ const MTIME: *mut u32 =
     (0x0200_0000 + vreteno_regs::timer::MTIME_LO) as *mut u32;
 /// The modulator, on the same page as the serial port.
 const PWM: *mut u32 = 0x3100 as *mut u32;
-/// Its registers, as words from that base.
-const CTRL: usize = 0;
-const PERIOD: usize = 1;
-const DUTY0: usize = 2;
+/// Its registers, as words from that base, as its map declares them
+/// (issue 709).
+const CTRL: usize = vreteno_regs::pwm::CTRL / 4;
+const PERIOD: usize = vreteno_regs::pwm::PERIOD / 4;
+const DUTY0: usize = vreteno_regs::pwm::DUTY0 / 4;
 
 /// The period, in cycles of the 100 MHz clock: 10 kHz.
 const PERIOD_CYCLES: u32 = 10_000;
@@ -77,7 +78,7 @@ extern "C" fn main() -> ! {
     unsafe {
         write_volatile(PWM.add(PERIOD), PERIOD_CYCLES);
         // Enabled, edge aligned, and every channel the right way up.
-        write_volatile(PWM.add(CTRL), 1);
+        write_volatile(PWM.add(CTRL), vreteno_regs::pwm::CTRL_ENABLE_MASK);
     }
     loop {
         let mut step = 0;
