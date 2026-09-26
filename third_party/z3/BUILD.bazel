@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+# z3, the SMT solver SymbiYosys's bounded search and cover runs use
+# (issue 581). Fetched as the Debian package it is published as, with
+# the closure of the libraries that package names; `trixie.lock.tsv` is
+# that closure, written by //tools/debclosure and pinned by checksum:
+#
+#   bazel run //tools/debclosure -- -suite=trixie \
+#       -skip=libc6,libgcc-s1 z3 > third_party/z3/trixie.lock.tsv
+#
+# The unbounded proof needs no solver at all: `abc pdr` runs inside the
+# yosys-abc of //third_party/yosys. z3 is MIT.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["trixie.lock.tsv"])
+
+alias(
+    name = "tree",
+    actual = "@z3_tree//:all",
+)

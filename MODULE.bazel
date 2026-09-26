@@ -212,6 +212,28 @@ deb_tree(
     locks = ["//third_party/poppler:trixie.lock.tsv"],
 )
 
+# The SMT solver SymbiYosys's bounded search and cover runs use
+# (issue 581). The unbounded proof runs inside yosys-abc and needs no
+# solver.
+deb_tree(
+    name = "z3_tree",
+    locks = ["//third_party/z3:trixie.lock.tsv"],
+)
+
+# SymbiYosys, the front end that drives Yosys through a formal proof
+# (issue 581). Pure Python, packaged by no Debian suite, so fetched from
+# its release tag; v0.52 matches the Yosys 0.52 of //third_party/yosys.
+# ISC. //third_party/sby installs it.
+http_archive(
+    name = "sby",
+    build_file_content = """
+exports_files(glob(["sbysrc/*.py"]))
+""",
+    sha256 = "8c14bcd6130a8db94764abc650046bf9986a4a5bbea662a03481ba546b6df5e0",
+    strip_prefix = "sby-0.52",
+    urls = ["https://github.com/YosysHQ/sby/archive/refs/tags/v0.52.tar.gz"],
+)
+
 # The solver OpenROAD's global placer uses. The package links against
 # it and does not carry it: its runpath names `/opt/or-tools`, which is
 # where the project's own build puts this archive.
@@ -284,6 +306,15 @@ pip.parse(
     requirements_lock = "//third_party/zephyr:requirements.txt",
 )
 use_repo(pip, "zephyr_py")
+
+# SymbiYosys imports `click` and nothing else beyond the standard
+# library; the lock beside its BUILD file pins it by hash (issue 581).
+pip.parse(
+    hub_name = "formal_py",
+    python_version = "3.12",
+    requirements_lock = "//third_party/sby:requirements.txt",
+)
+use_repo(pip, "formal_py")
 
 # CMake, prebuilt and by checksum, as the RISC-V compiler above is.
 # Zephyr drives its build with CMake, so what is wanted is the binary

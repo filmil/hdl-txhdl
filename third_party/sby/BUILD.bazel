@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+# SymbiYosys, the front end that drives Yosys through a formal proof
+# (issue 581). It is pure Python and no Debian suite packages it, so it
+# is fetched from its release tag by checksum, `@sby` in MODULE.bazel,
+# and installed here the way its Makefile installs it: the modules into
+# share/yosys/python3, and the two placeholders in sby.py and
+# sby_core.py filled in. sby.py finds the modules at
+# ../share/yosys/python3 from itself, which holds in a runfiles tree as
+# it does in an install. It runs on the hermetic Python 3.12 of
+# MODULE.bazel with `click`, the one package it imports beyond the
+# standard library, from the hashed lock beside this file.
+load("@formal_py//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["requirements.txt"])
+
+genrule(
+    name = "sby_install",
+    srcs = [
+        "@sby//:sbysrc/sby.py",
+        "@sby//:sbysrc/sby_autotune.py",
+        "@sby//:sbysrc/sby_cmdline.py",
+        "@sby//:sbysrc/sby_core.py",
+        "@sby//:sbysrc/sby_design.py",
+        "@sby//:sbysrc/sby_engine_abc.py",
+        "@sby//:sbysrc/sby_engine_aiger.py",
+        "@sby//:sbysrc/sby_engine_btor.py",
+        "@sby//:sbysrc/sby_engine_smtbmc.py",
+        "@sby//:sbysrc/sby_jobserver.py",
+        "@sby//:sbysrc/sby_mode_bmc.py",
+        "@sby//:sbysrc/sby_mode_cover.py",
+        "@sby//:sbysrc/sby_mode_live.py",
+        "@sby//:sbysrc/sby_mode_prove.py",
+        "@sby//:sbysrc/sby_sim.py",
+        "@sby//:sbysrc/sby_status.py",
+    ],
+    outs = [
+        "sbyroot/bin/sby.py",
+        "sbyroot/share/yosys/python3/sby_autotune.py",
+        "sbyroot/share/yosys/python3/sby_cmdline.py",
+        "sbyroot/share/yosys/python3/sby_core.py",
+        "sbyroot/share/yosys/python3/sby_design.py",
+        "sbyroot/share/yosys/python3/sby_engine_abc.py",
+        "sbyroot/share/yosys/python3/sby_engine_aiger.py",
+        "sbyroot/share/yosys/python3/sby_engine_btor.py",
+        "sbyroot/share/yosys/python3/sby_engine_smtbmc.py",
+        "sbyroot/share/yosys/python3/sby_jobserver.py",
+        "sbyroot/share/yosys/python3/sby_mode_bmc.py",
+        "sbyroot/share/yosys/python3/sby_mode_cover.py",
+        "sbyroot/share/yosys/python3/sby_mode_live.py",
+        "sbyroot/share/yosys/python3/sby_mode_prove.py",
+        "sbyroot/share/yosys/python3/sby_sim.py",
+        "sbyroot/share/yosys/python3/sby_status.py",
+    ],
+    cmd = """
+set -eu
+out=$(RULEDIR)/sbyroot
+for f in $(SRCS); do
+  case "$$(basename $$f)" in
+    sby.py)
+      sed -e 's|##yosys-sys-path##|sys.path += [os.path.dirname(__file__) + p for p in ["/share/python3", "/../share/yosys/python3"]]|' \\
+          -e "s|##yosys-release-version##|release_version = 'v0.52'|" \\
+          < $$f > $$out/bin/sby.py ;;
+    sby_core.py)
+      sed -e 's|##yosys-program-prefix##|""|' < $$f > $$out/share/yosys/python3/sby_core.py ;;
+    *)
+      cp $$f $$out/share/yosys/python3/ ;;
+  esac
+done
+""",
+)
+
+py_binary(
+    name = "sby",
+    srcs = [":sby_install"],
+    main = "sbyroot/bin/sby.py",
+    deps = [requirement("click")],
+)

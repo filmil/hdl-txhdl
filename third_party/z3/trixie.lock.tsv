@@ -1,0 +1,6 @@
+# suite	trixie
+# snapshot	20250901T000000Z
+# name	version	size	sha256	url	fallback
+gcc-14-base	14.2.0-19	49432	5b6825de4263824b78c4c51f6476414f3b4e89c2ab63e81dc8b9b5501e867cf6	https://deb.debian.org/debian/pool/main/g/gcc-14/gcc-14-base_14.2.0-19_amd64.deb	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/g/gcc-14/gcc-14-base_14.2.0-19_amd64.deb
+libstdc++6	14.2.0-19	713628	ab1fa05837aa7a92aae748fd07a18a35f7d18bb4a71c4724fe2bbf0e32089de0	https://deb.debian.org/debian/pool/main/g/gcc-14/libstdc++6_14.2.0-19_amd64.deb	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/g/gcc-14/libstdc++6_14.2.0-19_amd64.deb
+z3	4.13.3-1	8566180	4330fbffdcb23b708fa3008cde5ba00f63fe0a75bd67ac469ce16f2bd4213a1d	https://deb.debian.org/debian/pool/main/z/z3/z3_4.13.3-1_amd64.deb	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/z/z3/z3_4.13.3-1_amd64.deb
