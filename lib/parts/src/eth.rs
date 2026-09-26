@@ -156,6 +156,10 @@ pub struct EthTx {
     /// Up for the one cycle after a frame's gap, which is when the
     /// store lets the next frame in.
     pub sent: Reg<Bit>,
+    /// The byte of the frame on the wire: the store's one read
+    /// address, a register, so the store is a block RAM and not a read
+    /// mux in front of `txd` (issue 753).
+    pub ti: Reg<U<11>>,
     /// Frames sent.
     pub frames: Reg<U<16>>,
 }
@@ -213,14 +217,20 @@ impl Unit for EthTx {
                         ));
                         tx_en.set(Bit::One);
                         self.crc.set(U::<32>::from(CRC_INIT));
+                        self.ti.set(U::<11>::from(0u8));
                         DefaultClock::rising().await;
                     }
                     // The frame, its check sequence folded a byte at a
-                    // time.
-                    for i in 0..self.fill.get().raw() as usize {
-                        let byte = self.frame.read(i);
+                    // time. The store is read at `ti` alone, one read
+                    // port at a registered address, which Vivado maps
+                    // to a block RAM; a read at the loop's own counter
+                    // was two ports, the loop's first turn and the
+                    // rest, and a mux of flops (issue 753).
+                    for _ in 0..self.fill.get().raw() as usize {
+                        let byte = self.frame.read(self.ti.get());
                         txd.set(byte);
                         self.crc.set(crc_byte(self.crc.get(), byte));
+                        self.ti.set(self.ti.get() + 1);
                         DefaultClock::rising().await;
                     }
                     // Zeros up to the sixty bytes a frame must have.
@@ -306,6 +316,14 @@ pub struct EthRx {
     /// Up for the one cycle after the last byte is taken, which is
     /// when the receiver lets the next frame in.
     pub given: Reg<Bit>,
+    /// The byte of the frame being offered: the store's one read
+    /// address, a register, so the store is a block RAM and not flops
+    /// every byte of the wire fans out to (issue 753).
+    pub ri: Reg<U<11>>,
+    /// Where the offerer is: 0 waiting for a full frame, and showing
+    /// its length in the cycle one arrives; 1 its bytes offered; 2 and
+    /// 3 the frame given back.
+    pub ophase: Reg<U<2>>,
     /// Frames offered.
     pub frames: Reg<U<16>>,
     /// Frames dropped: a failed check, an error, or no room.
@@ -385,35 +403,61 @@ impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>)> for EthRx {
                 }
             },
             async {
+                // The offerer, a cycle at a time rather than as a
+                // sequence: a byte is offered at `ri` and `ri` moves on
+                // the edge it is taken, which a sequence cannot say,
+                // since what follows a wait runs a cycle after it. The
+                // store is read at `ri` alone, one read port at a
+                // registered address, which Vivado maps to a block RAM
+                // (issue 753). The phases are the sequence's, cycle for
+                // cycle: a full frame, its length shown the cycle it is
+                // seen, its bytes without the check sequence, each held
+                // until taken, and the frame given back.
                 loop {
-                    // A full frame.
-                    until(DefaultClock::rising, || self.full.get().to_bool())
-                        .await;
+                    DefaultClock::rising().await;
+                    let phase = self.ophase.get();
+                    let n = self.len.get() - 4;
+                    let ri = self.ri.get();
+                    // The cycle a full frame is first seen shows its
+                    // length, as the sequence did in the cycle after
+                    // its wait for one.
+                    let arrived = Bit::from(phase == 0) & self.full.get();
+                    let offering = Bit::from(phase == 1);
+                    let at_last = Bit::from(ri + 1 == n);
+                    let give = offering & rx.ready();
                     // The frame's length, for anything that must know
-                    // it before it has consumed the frame: it reads
-                    // the payload while the frame is offered and zero
-                    // at every other time.
-                    rx_len.set((self.len.get() - 4).resize::<16>());
-                    DefaultClock::rising().await;
-                    // The bytes without the check sequence, each held
-                    // until the consumer takes it.
-                    for i in 0..(self.len.get() - 4).raw() as usize {
-                        rx.send(EthByte {
-                            data: self.frame.read(i),
-                            last: Bit::from(
-                                i + 1 == (self.len.get() - 4).raw() as usize,
-                            ),
-                        });
-                        until(DefaultClock::rising, || rx.ready().to_bool())
-                            .await;
-                    }
-                    rx_len.set(U::<16>::from(0u8));
+                    // it before it has consumed the frame: the payload
+                    // while the frame is shown and offered, and zero at
+                    // every other time.
+                    let shown = arrived | offering;
+                    rx_len.set(mux(
+                        shown,
+                        n.resize::<16>(),
+                        U::<16>::from(0u8),
+                    ));
                     with!(self <= {
-                        given: Bit::One,
-                        frames: self.frames.get() + 1,
+                        arrived ? {
+                            ophase: U::<2>::from(1u8),
+                            ri: U::<11>::from(0u8),
+                        },
+                        give ? ri: ri + 1,
+                        give & at_last ? ophase: U::<2>::from(2u8),
+                        phase == 2 ? {
+                            ophase: U::<2>::from(3u8),
+                            given: Bit::One,
+                            frames: self.frames.get() + 1,
+                        },
+                        phase == 3 ? {
+                            ophase: U::<2>::from(0u8),
+                            given: Bit::Zero,
+                        },
                     });
-                    DefaultClock::rising().await;
-                    self.given.set(Bit::Zero);
+                    if give.to_bool() {
+                        rx.send(EthByte {
+                            data: self.frame.read(ri),
+                            last: at_last,
+                        });
+                    }
                 }
             },
         )
