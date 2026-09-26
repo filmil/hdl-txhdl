@@ -269,22 +269,19 @@ impl Unit for Trng {
             let word_done = keep & (nbits == 31);
             let full = count == WORDS as u32;
             let push = word_done & !full;
-            // The enables as named wires before a bit is taken off
-            // them: VHDL will not index the concatenation itself
-            // (issue 683).
-            let re = regs_re(rgo, rsel);
-            let we = regs_we(wgo, wsel);
             let ready = Bit::from(count != 0);
             // A read of the data word takes the oldest word, if one
             // waits.
-            let pop = re.bit(0) & ready;
+            let pop = regs_re(rgo, rsel).bit(0) & ready;
+            // A write to the control word.
+            let to_ctrl = regs_we(wgo, wsel).bit(2);
             let status = regs_status_pack(ready, count, fault, running);
             let data = mux(ready, self.words.read(head), U::<32>::from(0u8));
             let ctrl = regs_ctrl_pack(running, Bit::Zero);
             let answer = regs_read(rsel, data, status, ctrl, rawv);
             with!(self <= {
-                we.bit(2) ? run: regs_ctrl_run(written),
-                we.bit(2) & regs_ctrl_clear(written) ? fault: Bit::Zero,
+                to_ctrl ? run: regs_ctrl_run(written),
+                to_ctrl & regs_ctrl_clear(written) ? fault: Bit::Zero,
                 // A trip in the cycle of a clear stays tripped.
                 tripped ? fault: Bit::One,
                 running ? {
