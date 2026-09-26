@@ -72,9 +72,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 65\,365 lines of Rust: 16\,654 of runtime
-and macros, 18\,242 of parts, 13\,617 in ninety-seven examples, 13\,908 of
-Vreteno with its board, and 2\,944 of Razboj, DDR3, Ethernet, HDMI,
+Together they are 66\,315 lines of Rust: 17\,163 of runtime
+and macros, 18\,388 of parts, 13\,858 in ninety-nine examples, 13\,851 of
+Vreteno with its board, and 3\,055 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -113,7 +113,7 @@ Vreteno; boot and data memory, timer, serial port & \code{cpu} & four of five \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
 PCIe BAR registers; the BAR as one unit & \code{pcie} & not yet \\
-The examples' own units & examples & 59, in 50 files, all 50 \\
+The examples' own units & examples & 61, in 52 files, all 52 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -388,9 +388,9 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs three hundred and sixteen
+its ports. \code{bazel test //...} runs three hundred and twenty-two
 targets, of
-which a hundred and eighty-eight are netlists under both simulators; the rest are the
+which a hundred and ninety-two are netlists under both simulators; the rest are the
 core's model and
 programs, the board's own run, Razboj, the parts, the SoC's run, and
 the tools. Seven more are tagged manual: the board and its DDR3 under
