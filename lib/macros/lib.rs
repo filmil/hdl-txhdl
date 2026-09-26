@@ -5071,6 +5071,22 @@ fn companion(item: &TokenStream) -> Option<String> {
     if !h.refused.is_empty() || h.value.is_empty() {
         return None;
     }
+    companion_of(&h, &vis, &consts, &typed)
+}
+
+/// The lowering of a helper already read, as the hidden struct of the
+/// helper's name with its `lowered` function: what [`companion`] writes
+/// for a `#[lower] fn`, and what `regmap!` writes for each function it
+/// generates, so that a helper calling one reaches it the same way
+/// (issue 697). `vis` is the function's visibility, `consts` its const
+/// parameters, and `typed` its parameters with the text of their types.
+fn companion_of(
+    h: &Helper,
+    vis: &str,
+    consts: &[String],
+    typed: &Params,
+) -> Option<String> {
+    let name = &h.name;
     // Another helper this one calls is reached through its own
     // `lowered` too, not inlined from a file this one cannot see.
     let helpers = HELPERS.with(|x| std::mem::take(&mut *x.borrow_mut()));
