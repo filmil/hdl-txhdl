@@ -49,13 +49,10 @@ rust_test(
     srcs = ["tests/zephyr_dts.rs"],
     compile_data = [
         "//zephyr:port_sources",
-        # The entropy source's own source, which the driver's map is
-        # held to until it declares a regmap! too.
-        "//lib/parts:sources",
     ],
     edition = "2021",
-    # The Ethernet peripheral's map, which the driver's is held to
-    # (issue 678).
+    # The peripherals' maps, which the drivers' are held to (issues 678
+    # and 680).
     deps = [
         ":vreteno32",
         "//lib:txhdl",
