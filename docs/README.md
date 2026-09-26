@@ -24,6 +24,7 @@ Those reasons live here.
 | `on-chip-debug.md` | What the board shows today, the options for debugging the SoC on it, what each costs, and the order to do them in |
 | `vivado-setup.md` | Vivado for this repository from nothing: why the ordinary build needs none, the hermetic installation and the host one, and what goes in your own `user.bazelrc` |
 | `noc-bursts.md` | Why a multi-beat write does not cross the network on chip, which of the stated reasons survive measurement, what each candidate design costs in bits, and which one to implement |
+| `board-checks.md` | Every board check the issues owe, as commands in session order: the bitstreams to build first, what each run should print, what to keep, and which issue it closes |
 
 Seventeen documents are typeset here, and `cover.tex` names them all:
 `article.tex` with `sections/` is the merge, `//docs:article`;
