@@ -24,6 +24,13 @@ at that moment, with \code{i} the unrolled loop's variable. The
 array's length is checked against \code{N} where the map is written,
 so a map of two ranges cannot be given to a decoder of three.
 
+The trait has a second constant, \code{NAMES}, a few words for each
+range, which a map that names nothing leaves empty. The decoder does
+not read it; a table of the map does, and the run below prints each
+address's range by it. The Vreteno board's maps name their ranges,
+and \code{//tools/memmap} writes the address tables of the Vreteno and
+flagship documents from them.
+
 The decoder below takes an address a cycle and says, one bit per
 range, which range holds it, the first that matches, and whether
 none does. The run walks seven addresses in and out of the ranges;
