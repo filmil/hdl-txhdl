@@ -34,6 +34,20 @@ def _zephyr_image_impl(ctx):
         transitive = [depset(ctx.files._zephyr), depset(ctx.files._gcc)],
     )
 
+    # The devicetree tooling's packages: the `site-packages` directory
+    # of each, taken from the files the pip rules hand over rather than
+    # searched for, so that the path is the same in a sandbox and out
+    # of one (issue 721).
+    site = []
+    for f in ctx.files._py_deps:
+        at = f.path.find("/site-packages/")
+        if at >= 0:
+            d = f.path[:at + len("/site-packages")]
+            if d not in site:
+                site.append(d)
+    if not site:
+        fail("no site-packages among the Python dependencies")
+
     # The build runs where Bazel put it, so every path handed to CMake
     # is made absolute from the execution root rather than assumed.
     ctx.actions.run_shell(
@@ -46,6 +60,7 @@ def _zephyr_image_impl(ctx):
             "NINJA": ctx.files._ninja[0].path,
             "DTC": ctx.files._dtc[0].path,
             "PYTHON": ctx.files._python[0].path,
+            "PY_SITE": ":".join(site),
             "GCC_BIN": ctx.files._gcc_bin[0].dirname,
             "MODULE_DIR": module,
             "BOARD": ctx.attr.board,
@@ -96,9 +111,14 @@ ln -sf "$root/$PYTHON" "$bin/python3"
 ln -sf "$root/$PYTHON" "$bin/python"
 export PATH="$bin:$root/$GCC_BIN:/usr/bin:/bin"
 
-# The devicetree tooling, wherever the pip rules put it.
-export PYTHONPATH=$(find "$root" -maxdepth 4 -type d -name site-packages \
-  | tr '\n' ':')
+# The devicetree tooling, where the pip rules put it: each package's
+# directory, as the rule found it among its inputs.
+PYTHONPATH=""
+IFS=: read -r -a dirs <<< "$PY_SITE"
+for d in "${dirs[@]}"; do
+  PYTHONPATH="$PYTHONPATH${PYTHONPATH:+:}$root/$d"
+done
+export PYTHONPATH
 
 export ZEPHYR_BASE="$zbase"
 export ZEPHYR_TOOLCHAIN_VARIANT=cross-compile
