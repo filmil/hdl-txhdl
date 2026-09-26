@@ -1,5 +1,5 @@
 % SPDX-License-Identifier: Apache-2.0
-% covers: AxiPins
+% covers: AxiPins, AxiHostPins
 \datasheet{AxiPins}{A host's AXI4 pins joined to the AXI link's channels.}
 
 \dsfacts{\code{lib/parts/src/bus/axi\_pins.rs}}%
@@ -13,7 +13,12 @@ a \code{ready} per channel and a wire per field, named as AXI4 names
 them. \code{AxiPins} joins those pins to the link's five channels, so it
 goes where an \code{AxiHost} would, with an \code{AxiPer} or a router
 behind it. Its inputs are the struct \code{AxiPinsIn}: the host's 24
-pins and the \code{b} and \code{r} channels from the link. Its outputs
+pins as one field, \code{pins}, an \code{AxiHostPins}, and the
+\code{b} and \code{r} channels from the link. So its input ports are
+\code{pins\_awid} and the rest beside \code{b} and \code{r}.
+\code{AxiHostPins} derives \code{Ports}, so a design that has a host's
+pins among its own ports holds them as one field too and passes them
+whole (issue 579). Its outputs
 are \code{AxiPinsOut}: the \code{aw}, \code{ar} and \code{w} channels
 to the link, and the eleven pins the host reads.
 
