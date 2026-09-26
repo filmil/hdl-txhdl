@@ -189,21 +189,13 @@ transmitter's are.
 
 \code{EthLite} is an AXI-Lite peripheral of three words, and it moves
 one byte per transaction.
-
-\begin{table}[htbp]
-\caption{The peripheral's words.}
-\label{tab:e-words}
-\centering\footnotesize
-\begin{tabular}{@{}lll@{}}
-\toprule
-Word & Access & Bits \\
-\midrule
-0, status & read & 0 a byte waits, 1 room to send \\
-1, transmit & write & 7 to 0 the byte, 8 last \\
-2, receive & read & 7 to 0 the byte, 8 last, 9 valid \\
-\bottomrule
-\end{tabular}
-\end{table}
+Its words are stated once, by the \code{regmap!} at the head of
+Listing~\ref{lst:e-lite}: \code{status}, read only, with a bit for a
+byte waiting and a bit for room to send; \code{txbyte}, write only,
+the byte and a bit for the frame's last; and \code{rxbyte}, whose read
+takes the byte, with the byte, the last bit and a valid bit.
+The same declaration gives the unit its read mux and its enables, and
+a program its offsets and fields.
 
 A write to the transmit word is answered only when the transmitter has
 taken the byte, so a client that writes faster than the transmitter
