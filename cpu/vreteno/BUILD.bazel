@@ -57,6 +57,7 @@ rust_test(
     edition = "2021",
     deps = [
         ":vreteno32",
+        "//lib:txhdl",
         "//lib/parts:txhdl_parts",
     ],
 )

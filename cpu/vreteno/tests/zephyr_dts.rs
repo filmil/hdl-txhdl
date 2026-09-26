@@ -14,6 +14,7 @@ use vreteno32::isa::{
     CLINT_BASE, ETH_BASE, ETH_BUF_BASE, MSIP_OFF, MTIMECMP_OFF, MTIME_OFF,
     TRNG_BASE, UART_BASE,
 };
+use vreteno32::uart::serial;
 
 // The port, read at compile time, so the test needs no runfiles and
 // the build knows these files are inputs: editing one reruns this.
@@ -117,16 +118,24 @@ fn the_timer_is_a_clint_at_the_offsets_a_driver_expects() {
 #[test]
 fn the_driver_reads_the_registers_the_port_has() {
     let c = DRIVER;
-    // `cpu/vreteno/src/uart.rs`: a byte written to the first word
-    // goes out, the second word is the status, and a read of the
-    // third takes the oldest byte received.
-    assert!(c.contains("#define VRETENO_UART_DATA   0x00"), "data");
-    assert!(c.contains("#define VRETENO_UART_STATUS 0x04"), "status");
-    assert!(c.contains("#define VRETENO_UART_RX     0x08"), "receive");
-    // Bit 0 busy, bit 1 a byte received, bit 2 the buffer full.
-    assert!(c.contains("VRETENO_STATUS_BUSY BIT(0)"), "busy");
-    assert!(c.contains("VRETENO_STATUS_RX   BIT(1)"), "received");
-    assert!(c.contains("VRETENO_STATUS_FULL BIT(2)"), "full");
+    // The port's own map, `regmap!`'s `serial` in
+    // `cpu/vreteno/src/uart.rs` (issue 669): a byte written to the
+    // first word goes out, the second word is the status, and a read
+    // of the third takes the oldest byte received.
+    let word = |name: &str, off: u32| {
+        let d = format!("#define VRETENO_UART_{name:<6} 0x{off:02x}");
+        assert!(c.contains(d.trim_end()), "the driver has no `{d}`");
+    };
+    word("DATA", serial::tx);
+    word("STATUS", serial::status);
+    word("RX", serial::rx);
+    let bit = |name: &str, f: txhdl::regmap::Field| {
+        let d = format!("VRETENO_STATUS_{name:<4} BIT({})", f.shift);
+        assert!(c.contains(&d), "the driver has no `{d}`");
+    };
+    bit("BUSY", serial::status_busy);
+    bit("RX", serial::status_ready);
+    bit("FULL", serial::status_full);
     let dts = DTSI;
     assert!(
         dts.contains("compatible = \"hdlfactory,vreteno-uart\""),
