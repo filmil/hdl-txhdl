@@ -26,6 +26,7 @@ fn maps() -> Vec<(&'static str, &'static RegMap)> {
         ("ethslots", &txhdl_parts::ethslots::regs::MAP),
         ("gpio", &txhdl_parts::gpio::regs::MAP),
         ("hdmi", &txhdl_parts::hdmi::regs::MAP),
+        ("i2c", &txhdl_parts::i2c::regs::MAP),
         ("pwm", &txhdl_parts::pwm::regs::MAP),
         ("sd", &txhdl_parts::sd::regs::MAP),
         ("spi", &txhdl_parts::spi::regs::MAP),

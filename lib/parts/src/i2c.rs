@@ -8,12 +8,8 @@
 //! can address a device, write to it, turn the bus around and read
 //! from it.
 //!
-//! | Offset | Name | What it is |
-//! |---|---|---|
-//! | `0x00` | `ctrl` | the divider in 0 to 15, the interrupt enable |
-//! | `0x04` | `cmd` | one piece of a transaction; writing it starts it |
-//! | `0x08` | `data` | read: the byte that came in |
-//! | `0x0c` | `state` | busy, done, not acknowledged, arbitration lost |
+//! The four registers and their fields are declared once with
+//! `regmap!` below (issue 676): `ctrl`, `cmd`, `data` and `state`.
 //!
 //! A quarter of a bit takes `div + 1` cycles, so the bus runs at the
 //! system clock over `4 * (div + 1)`: 249 is 100 kbit/s from 100 MHz,
@@ -41,10 +37,34 @@
 //! arbitration lost and ends the command.
 use txhdl::comp::{join2, mux, until, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, with, Trace};
+use txhdl::{lower, regmap, with, Trace};
 
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
+
+// begin{map}
+regmap! { regs (regs_read, regs_we), 2: [
+    (0, ctrl, rw, "the divider and the interrupt enable", [
+        (div, 0, 16, rw, 0, "a quarter of a bit is this many cycles, less one"),
+        (ie, 16, 1, rw, 0, "a finished command raises the interrupt"),
+    ]),
+    (1, cmd, wo, "one piece of a transaction; written, it starts", [
+        (start, 0, 1, wo, 0, "send a start, or a repeated start"),
+        (stop, 1, 1, wo, 0, "send a stop when the byte is done"),
+        (write, 2, 1, wo, 0, "write the byte"),
+        (read, 3, 1, wo, 0, "read a byte"),
+        (nack, 4, 1, wo, 0, "answer a read with a NACK rather than an ACK"),
+        (byte, 8, 8, wo, 0, "the byte to write"),
+    ]),
+    (2, data, ro, "the byte a read took"),
+    (3, state, w1c, "busy, done, not acknowledged, arbitration lost", [
+        (busy, 0, 1, ro, 0, "a command is running"),
+        (fired, 1, 1, w1c, 0, "a command has finished"),
+        (nack, 2, 1, w1c, 0, "the device did not acknowledge the byte"),
+        (lost, 3, 1, w1c, 0, "another master won the bus"),
+    ]),
+] }
+// end{map}
 
 // begin{state}
 /// An I2C master: one piece of a transaction per command, on two open
@@ -105,7 +125,8 @@ pub struct I2c {
 /// write, it is to `cmd`, and no command is running.
 #[lower]
 fn cmd_go(wgo: Bit, wsel: U<2>, busy: Bit) -> Bit {
-    wgo & Bit::from(wsel == 1) & !busy
+    // `cmd`'s write enable, bit 1 of the map's.
+    regs_we(wgo, wsel).bit(1) & !busy
 }
 
 /// Whether the quarter of a bit ends this cycle: a command is running,
@@ -171,26 +192,23 @@ impl Unit for I2c {
                     let stretch = !(self.scl_pull.get() | scl_in.get());
                     let running = busy & !stretch;
                     let q_last = tick == div;
-                    let ctrl =
-                        ie.zext::<1>().concat::<16, 17>(div).zext::<32>();
-                    let state = lost
-                        .zext::<1>()
-                        .concat::<1, 2>(nack.zext::<1>())
-                        .concat::<1, 3>(fired.zext::<1>())
-                        .concat::<1, 4>(busy.zext::<1>())
-                        .zext::<32>();
-                    let word = select!(rsel.raw() => {
-                        0 => ctrl,
-                        2 => self.data.get().zext::<32>(),
-                        3 => state,
-                        _ => U::<32>::from(0u8),
-                    });
-                    let clearing = wgo & (wsel == 3);
+                    // The word a read answers, the fields packed as the
+                    // map places them; `cmd` is written only, and reads
+                    // zero.
+                    let word = regs_read(
+                        rsel,
+                        regs_ctrl_pack(div, ie),
+                        U::<32>::from(0u8),
+                        self.data.get().zext::<32>(),
+                        regs_state_pack(busy, fired, nack, lost),
+                    );
+                    let we = regs_we(wgo, wsel);
+                    let clearing = we.bit(3);
                     let done = self.done.get();
                     with!(self <= {
-                        wgo & (wsel == 0) ? {
-                            div: written.slice::<0, 16>(),
-                            ie: written.bit(16),
+                        we.bit(0) ? {
+                            div: regs_ctrl_div(written),
+                            ie: regs_ctrl_ie(written),
                         },
                         starting ? tick: U::<16>::from(0u8),
                         !starting & running ? tick: mux(
@@ -208,9 +226,9 @@ impl Unit for I2c {
                             nack: self.nack_hit.get(),
                             lost: self.lost_hit.get(),
                         },
-                        clearing & written.bit(1) ? fired: Bit::Zero,
-                        clearing & written.bit(2) ? nack: Bit::Zero,
-                        clearing & written.bit(3) ? lost: Bit::Zero,
+                        clearing & regs_state_fired(written) ? fired: Bit::Zero,
+                        clearing & regs_state_nack(written) ? nack: Bit::Zero,
+                        clearing & regs_state_lost(written) ? lost: Bit::Zero,
                     });
                     if rgo.to_bool() {
                         bus.r.send(LiteR {
@@ -247,15 +265,15 @@ impl Unit for I2c {
                     let written = bus.w.head().data;
                     with!(self <= {
                         busy: Bit::One,
-                        req_start: written.bit(0),
-                        req_stop: written.bit(1),
-                        req_write: written.bit(2),
-                        req_read: written.bit(3),
-                        req_nack: written.bit(4),
-                        shift: written.slice::<8, 8>(),
+                        req_start: regs_cmd_start(written),
+                        req_stop: regs_cmd_stop(written),
+                        req_write: regs_cmd_write(written),
+                        req_read: regs_cmd_read(written),
+                        req_nack: regs_cmd_nack(written),
+                        shift: regs_cmd_byte(written),
                         nack_hit: Bit::Zero,
                         lost_hit: Bit::Zero,
-                        written.bit(0) ? held: Bit::One,
+                        regs_cmd_start(written) ? held: Bit::One,
                     });
                     // The start, or a repeated start: the data line
                     // falls while the clock is high, then the clock
@@ -533,33 +551,35 @@ impl Unit for I2c {
 }
 // end{run}
 
-/// The offsets of the master's four words.
+/// The offsets of the master's four words, from the map.
 pub mod reg {
+    use super::regs;
     /// The divider and the interrupt enable.
-    pub const CTRL: u32 = 0x0;
+    pub const CTRL: u32 = regs::ctrl;
     /// One piece of a transaction; writing it starts the command.
-    pub const CMD: u32 = 0x4;
+    pub const CMD: u32 = regs::cmd;
     /// The byte a read took.
-    pub const DATA: u32 = 0x8;
+    pub const DATA: u32 = regs::data;
     /// Busy, done, not acknowledged, arbitration lost.
-    pub const STATE: u32 = 0xc;
+    pub const STATE: u32 = regs::state;
 }
 
-/// The bits of a command word.
+/// The bits of a command word, from the map.
 pub mod cmd {
+    use super::regs;
     /// Send a start, or a repeated start.
-    pub const START: u32 = 1 << 0;
+    pub const START: u32 = regs::cmd_start.mask();
     /// Send a stop when the byte is done.
-    pub const STOP: u32 = 1 << 1;
+    pub const STOP: u32 = regs::cmd_stop.mask();
     /// Write the byte in bits 8 to 15.
-    pub const WRITE: u32 = 1 << 2;
+    pub const WRITE: u32 = regs::cmd_write.mask();
     /// Read a byte.
-    pub const READ: u32 = 1 << 3;
+    pub const READ: u32 = regs::cmd_read.mask();
     /// Answer a read with a NACK rather than an ACK.
-    pub const NACK: u32 = 1 << 4;
+    pub const NACK: u32 = regs::cmd_nack.mask();
     /// The byte to write, shifted into place.
     pub fn byte(v: u8) -> u32 {
-        (v as u32) << 8
+        regs::cmd_byte.with(v as u32)
     }
 }
 
