@@ -130,15 +130,37 @@ jobs:
         run: |
           set -eu
           mkdir -p dist/release dist/waveforms
+          # Each PDF goes into the archive of its topic (issue 642). A
+          # document not named here lands in docs-other with a warning, so
+          # a new one is never dropped: add it to its topic when it is added
+          # to //docs:cover.
+          topic() {
+            case "$1" in
+              cover|showcase|paper|article|embedding|txhdl|stats|dynamics) echo overview ;;
+              tutorial|zero|station|axi|prove|cheatsheet) echo tutorials ;;
+              runtime|examples|datasheets) echo reference ;;
+              vreteno|vreteno_figures|tapeout|razboj|noc|eth|hdmi|flagship|pcie) echo designs ;;
+              *) echo "warning: no topic for $1.pdf, it goes into docs-other" >&2; echo other ;;
+            esac
+          }
           find -L bazel-bin/docs -name '*.runfiles' -prune -o -type f \
               \( -name '*.pdf' -o -name '*.html' -o -name '*.png' -o -name '*.fst' \) -print0 |
             while IFS= read -r -d '' f; do
               rel="${f#bazel-bin/}"
               case "$f" in
                 *.fst) cp "$f" "dist/waveforms/$(basename "$f")" ;;
+                *.pdf)
+                  t="$(topic "$(basename "$f" .pdf)")"
+                  mkdir -p "dist/pdf/$t"
+                  cp "$f" "dist/pdf/$t/$(basename "$f")" ;;
                 *) cp "$f" "dist/release/$(printf '%s' "$rel" | tr '/' '-')" ;;
               esac
             done
+          for d in dist/pdf/*/; do
+            [ -d "$d" ] || continue
+            t="$(basename "$d")"
+            tar -C "$d" -czf "dist/release/docs-$t.tar.gz" .
+          done
           if [ -n "$(ls -A dist/waveforms)" ]; then
             tar -C dist/waveforms -czf dist/release/docs-waveforms.tar.gz .
           fi
