@@ -25,26 +25,33 @@ clock, so on a board it can run on the transmit clock.
 
 \subsection*{Behaviour}
 
+The unit is two processes. The store takes the frame in; the sender is
+the wire's protocol written as the sequence it is: wait for a whole
+frame, the preamble and the delimiter, the frame's bytes, zeros up to
+sixty, the check sequence and the gap, a byte a cycle, each a turn of
+a loop. The lowering numbers the sender's waits into a state register
+the unit does not declare, \code{at\_wait}, keeps its loops' counts in
+\code{for0} to \code{for3}, and holds the two outputs between states in
+\code{txd\_held} and \code{tx\_en\_held}; all are in the tables above.
+
 \begin{itemize}
-\item \code{phase} is idle 0, preamble 1, frame 2, padding 3, check
-sequence 4 and gap 5.
-\item While idle and holding no whole frame, the unit takes a byte from
-\code{tx} whenever one is offered, and stores it in \code{frame} at
-\code{fill}. The byte marked last sets \code{whole}.
-\item A whole frame starts the preamble: seven bytes of \code{0x55},
-then \code{0xd5}. The frame follows, with the CRC register running
-over it from \code{CRC\_INIT}, every bit set.
+\item While no frame is whole, the store takes a byte from \code{tx}
+whenever one is offered, and stores it in \code{frame} at \code{fill}.
+The byte marked last sets \code{whole}.
+\item A whole frame starts the sender: seven bytes of \code{0x55}, then
+\code{0xd5}, with the CRC register set to \code{CRC\_INIT}, every bit
+set. The frame follows, the register running over it.
 \item A frame of fewer than sixty bytes is followed by zeros up to
 sixty, with the register still running.
 \item The check sequence is the register complemented, least
 significant byte first.
 \item \code{tx\_en} is high from the preamble to the end of the check
-sequence. Twelve bytes of gap follow with \code{tx\_en} low. At the end
-of the gap the unit forgets the frame, adds one to \code{frames}, and
-takes the next.
-\item The unit takes no byte from \code{tx} while a frame is going out,
-so it holds the client off. The client may offer bytes as slowly as it
-likes.
+sequence. Twelve bytes of gap follow with \code{tx\_en} low. Then
+\code{sent} is up for one cycle, which adds one to \code{frames} and
+lets the store forget the frame and take the next.
+\item The store takes no byte from \code{tx} while a frame is whole,
+from its last byte stored to the end of its gap, so it holds the client
+off. The client may offer bytes as slowly as it likes.
 \item \code{crc\_byte} steps the register by a whole byte: the byte
 added to it, then eight shifts with the polynomial \code{0xedb88320}
 going in whenever the bit that leaves is set.
