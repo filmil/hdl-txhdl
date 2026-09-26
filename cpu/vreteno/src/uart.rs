@@ -141,14 +141,12 @@ impl<const DIV: u32> Unit for Uart<DIV> {
             let _ = bus.w.recv_if(wgo);
             let sel = arh.addr.slice::<2, 2>();
             let wsel = awh.addr.slice::<2, 2>();
-            // The map's enables: which word a write goes to, and whether
-            // this read is the one that takes a received byte.
-            let we = serial_we(wgo, wsel);
-            let re = serial_re(take_read, sel);
-            let read_rx = re.bit(2).to_bool();
+            // Whether this read is the one that takes a received byte:
+            // the map's read enable for its third word.
+            let read_rx = serial_re(take_read, sel).bit(2).to_bool();
             // A byte written while idle starts a frame, ten bits of DIV
             // cycles each; a reset wins over everything.
-            let start = we.bit(0).to_bool() & !busy;
+            let start = serial_we(wgo, wsel).bit(0).to_bool() & !busy;
             let octet = serial_tx_data(wh.data);
             if rst {
                 self.bits.set(0);
