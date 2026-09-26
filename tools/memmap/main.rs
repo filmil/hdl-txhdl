@@ -102,25 +102,30 @@ fn board(key: &str, slots: &[(usize, &str)]) {
 /// rows its map writes for a datasheet, offsets from that base, and
 /// its fields under each word.
 fn regs(key: &str, base: usize, map: &RegMap) {
-    let at = format!("\\noindent From {}.\\par\n", addr(base));
     define(
         "regs",
         key,
-        &(at + &table(
-            "llp{0.16\\textwidth}p{0.36\\textwidth}",
-            "Offset & Register & Access & What it is",
+        &table(
+            "ll>{\\raggedright\\arraybackslash}p{0.18\\linewidth}\
+             >{\\raggedright\\arraybackslash}p{0.4\\linewidth}",
+            &format!("From {} & Register & Access & What it is", addr(base)),
             &map.tex_rows(),
-        )),
+        ),
     );
 }
 
-/// The peripherals on the page that declare their registers with
-/// `regmap!`, by the slot they sit in: one to a line, and one more as
-/// each peripheral's declaration lands.
-/// The key is the one a document asks for, since every peripheral's
-/// map is called `regs`.
-fn page_maps() -> Vec<(usize, &'static str, &'static RegMap)> {
-    vec![]
+/// The board's peripherals that declare their registers with
+/// `regmap!`, each with the key a document asks for, since most maps
+/// are called `regs`, and its base: a router port's or a slot of the
+/// page's. One to a line, and one more as each declaration lands.
+fn reg_maps() -> Vec<(&'static str, usize, &'static RegMap)> {
+    let port = |i: usize| <BoardMap as AddrMap<7>>::RANGES[i].0;
+    let slot = |i: usize| <SlotMap as AddrMap<6>>::RANGES[i].0;
+    vec![
+        ("timer", port(1), &vreteno32::timer::clint::MAP),
+        ("uart", slot(0), &vreteno32::uart::serial::MAP),
+        ("trng", slot(5), &txhdl_parts::trng::regs::MAP),
+    ]
 }
 
 fn main() {
@@ -130,8 +135,7 @@ fn main() {
         "flagship",
         &[(2, "the video peripheral, on the pixel clock")],
     );
-    for (slot, key, map) in page_maps() {
-        let base = <SlotMap as AddrMap<6>>::RANGES[slot].0;
+    for (key, base, map) in reg_maps() {
         regs(key, base, map);
     }
 }
