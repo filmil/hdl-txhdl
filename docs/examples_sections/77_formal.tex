@@ -18,7 +18,10 @@ message, and so does an assumption its own inputs break; a cover
 point is counted, and \code{covered} reports how often it was reached.
 
 In the netlist each is a statement of the clocked process it is in,
-under the same conditions, after the reset. The VHDL writes a check
+under the same conditions, and stated only while \code{rst} is low,
+whether the netlist added the reset or the unit declared it: under
+reset a register may not hold yet what it will, and an output may be
+held on purpose (issue 633). The VHDL writes a check
 and an assumption as VHDL's own \code{assert}, which nvc checks while
 it replays the run; the Verilog writes all three as SystemVerilog's
 immediate assertions between \code{`ifdef FORMAL} and \code{`endif},

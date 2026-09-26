@@ -3,6 +3,10 @@ load("@rules_latex_host//latex:defs.bzl", "combined_pdf", "latex_document")
 load(":waveform.bzl", "waveform")
 load("//tools/formal:defs.bzl", "formal_run", "formal_test", "formal_trace")
 load("//tools/pdfedge:defs.bzl", "pdf_edge_test")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_nvc//nvc:rules.bzl", "vhdl_test")
+load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
+load("@rules_verilog//verilog:defs.bzl", "verilog_library")
 
 # Every source of every document, for the checks that read them: the
 # width test each waveform gets in waveform.bzl reads these to find
@@ -592,6 +596,90 @@ waveform(
         "//ticker/count=>count",
         "//total=>total",
     ],
+)
+
+# A unit that takes its own reset and checks its count only out of it
+# (issue 633).
+waveform(
+    name = "rstcheck",
+    example = "//lib/examples:ex_rstcheck",
+    lowered = ("decade", "decade"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//rst=>rst",
+        "//tick=>tick",
+        "//decade/count=>count",
+        "//shown=>shown",
+    ],
+)
+
+# The same netlist held in its own reset and released, in each language:
+# under reset the counter shows a blank, which its check rejects, so the
+# check must not be stated there (issue 633). Each fails before the fix
+# and passes after it.
+verilog_library(
+    name = "rstcheck_reset_vl",
+    srcs = [
+        "rstcheck.v",
+        "rstcheck_reset_tb.v",
+    ],
+    top_module = "rstcheck_reset_tb",
+)
+
+verilator_cc_library(
+    name = "rstcheck_reset_verilated",
+    module = ":rstcheck_reset_vl",
+    copts = ["-Wno-sign-compare"],
+    timing = True,
+    vopts = ["--main", "-Wno-fatal", "--assert", "+define+FORMAL"],
+)
+
+cc_test(
+    name = "rstcheck_reset_vsim_test",
+    srcs = ["//tools/vlcheck:main.cc"],
+    deps = [":rstcheck_reset_verilated"],
+)
+
+vhdl_test(
+    name = "rstcheck_reset_sim",
+    srcs = [
+        "rstcheck.vhd",
+        "rstcheck_reset_tb.vhd",
+    ],
+    deps = [],
+    entities = ["rstcheck_reset_tb"],
+)
+
+# The same check proved for every input and every reset, by the rules
+# of #581: the netlist as written, and a copy without the gate, which
+# is what the netlist wrote before issue 633 and whose proof fails at
+# the first edge under reset.
+genrule(
+    name = "rstcheck_ungated",
+    srcs = [":rstcheck.v"],
+    outs = ["rstcheck_ungated.v"],
+    cmd = "sed 's/if (!rst) //' $< > $@ && ! cmp -s $< $@",
+)
+
+formal_test(
+    name = "rstcheck_prove_test",
+    top = "decade",
+    verilog = ":rstcheck.v",
+)
+
+formal_test(
+    name = "rstcheck_ungated_prove_test",
+    expect = 2,
+    top = "decade",
+    verilog = ":rstcheck_ungated.v",
+)
+
+formal_test(
+    name = "rstcheck_ungated_bmc_test",
+    expect = 2,
+    mode = "bmc",
+    top = "decade",
+    verilog = ":rstcheck_ungated.v",
 )
 
 # The engines through the real Wishbone bridge. Issues 151, 471.

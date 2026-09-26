@@ -17,15 +17,24 @@ is reached on, by its message, in a table per thread that
 Under \code{\#[lower]} each is \code{Stmt::Check}, with its kind
 (\code{Checked}), its condition and its message, a statement of the
 process it is in and under the conditions it is under; the lowering
-does not skip it as it skips \code{println!}. The Verilog writes it
-inside the clocked block, in the branch after the registers' reset, as
-SystemVerilog's immediate \code{assert}, \code{assume} or
+does not skip it as it skips \code{println!}. Each is stated only
+while \code{rst} is low, whichever side declared the port: a unit with
+its own reset, as the core has, would otherwise have its checks
+stated in the reset cycles, where an output it holds or a register it
+has not yet put back fails them for no fault of the design (issue
+633). \code{//docs:rstcheck\_reset\_vsim\_test} and its VHDL twin
+hold the reset and pass, \code{rstcheck\_prove\_test} proves the check
+for every input and every reset, and the same netlist without the gate
+fails its proof at the first step. The Verilog writes it inside the clocked
+block, as \code{if (!rst)} before SystemVerilog's immediate
+\code{assert}, \code{assume} or
 \code{cover}, between \code{`ifdef FORMAL} and \code{`endif}: a formal
 tool defines \code{FORMAL}, and a synthesis tool that reads plain
 Verilog never sees the words. The VHDL writes a check and an
-assumption as VHDL-2008's own \code{assert}, with the message and
-severity failure, and a cover point as a \code{report} of its message
-when it is reached. A block that states something and drives nothing
+assumption as VHDL-2008's own \code{assert}, of \code{rst = '1' or}
+the condition, with the message and severity failure, and a cover
+point as a \code{report} of its message when it is reached out of
+reset. A block that states something and drives nothing
 is still written. The co-simulations check both: nvc checks the
 VHDL's assertions natively, and the Verilator build defines
 \code{FORMAL} and passes \code{--assert}. A formal proof of the

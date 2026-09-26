@@ -2165,6 +2165,7 @@ impl Lowered {
             st: &Stmt,
             drive: Drive,
             l: &Lowered,
+            rst: Option<&str>,
         ) {
             let inner = format!("{ind}  ");
             match st {
@@ -2179,8 +2180,18 @@ impl Lowered {
                         Checked::Assume => "assume",
                         Checked::Cover => "cover",
                     };
+                    // Out of reset only: a check of what the reset
+                    // puts back, or of an output it holds, would
+                    // otherwise fail in the reset cycles for no fault
+                    // of the design, whichever side declared the port
+                    // (issue 633).
+                    let gate =
+                        rst.map_or(String::new(), |r| format!("if (!{r}) "));
                     seq.push("`ifdef FORMAL".to_string());
-                    seq.push(format!("{ind}{kw} ({}); // {m}", vexpr(c, l)));
+                    seq.push(format!(
+                        "{ind}{gate}{kw} ({}); // {m}",
+                        vexpr(c, l)
+                    ));
                     seq.push("`endif".to_string());
                 }
                 Stmt::Drive(t, e) => drive(seq, comb, ind, t, e),
@@ -2214,19 +2225,22 @@ impl Lowered {
                         let kw = if i == 0 { "if" } else { "end else if" };
                         seq.push(format!("{ind}{kw} ({}) begin", vexpr(c, l)));
                         for s in body {
-                            stmt(seq, comb, &inner, s, drive, l);
+                            stmt(seq, comb, &inner, s, drive, l, rst);
                         }
                     }
                     if !els.is_empty() {
                         seq.push(format!("{ind}end else begin"));
                         for s in els {
-                            stmt(seq, comb, &inner, s, drive, l);
+                            stmt(seq, comb, &inner, s, drive, l, rst);
                         }
                     }
                     seq.push(format!("{ind}end"));
                 }
             }
         }
+        // The reset a statement is gated on, where the module has one,
+        // whichever side declared it (issue 633).
+        let rst = self.has_reset().then_some(crate::comp::RESET_NAME);
         // A clocked block per process, on its clock and its edge.
         for p in &procs {
             let mut seq: Vec<String> = Vec::new();
@@ -2238,7 +2252,7 @@ impl Lowered {
                     continue;
                 }
                 let ind = if guard { "      " } else { "    " };
-                stmt(&mut seq, &mut comb, ind, st, &drive, l);
+                stmt(&mut seq, &mut comb, ind, st, &drive, l, rst);
             }
             if guard {
                 seq.push("    end".into());
@@ -2652,6 +2666,7 @@ impl Lowered {
             st: &Stmt,
             drive: Drive,
             l: &Lowered,
+            rst: Option<&str>,
         ) {
             let inner = format!("{ind}  ");
             match st {
@@ -2661,13 +2676,22 @@ impl Lowered {
                 // when it is reached (issue 502).
                 Stmt::Check(k, c, m) => {
                     let m = m.replace('"', "\"\"");
+                    // Out of reset only, as in the Verilog (issue 633).
+                    let (held, out) = match rst {
+                        Some(r) => (
+                            format!("{r} = '1' or "),
+                            format!("{r} = '0' and "),
+                        ),
+                        None => (String::new(), String::new()),
+                    };
                     match k {
                         Checked::Assert | Checked::Assume => seq.push(format!(
-                            "{ind}assert {} report \"{m}\" severity failure;",
+                            "{ind}assert {held}({}) report \"{m}\" \
+                             severity failure;",
                             hbool(c, l)
                         )),
                         Checked::Cover => seq.push(format!(
-                            "{ind}if {} then report \"cover: {m}\" \
+                            "{ind}if {out}({}) then report \"cover: {m}\" \
                              severity note; end if;",
                             hbool(c, l)
                         )),
@@ -2704,19 +2728,22 @@ impl Lowered {
                         let kw = if i == 0 { "if" } else { "elsif" };
                         seq.push(format!("{ind}{kw} {} then", hbool(c, l)));
                         for s in body {
-                            stmt(seq, comb, &inner, s, drive, l);
+                            stmt(seq, comb, &inner, s, drive, l, rst);
                         }
                     }
                     if !els.is_empty() {
                         seq.push(format!("{ind}else"));
                         for s in els {
-                            stmt(seq, comb, &inner, s, drive, l);
+                            stmt(seq, comb, &inner, s, drive, l, rst);
                         }
                     }
                     seq.push(format!("{ind}end if;"));
                 }
             }
         }
+        // The reset a statement is gated on, where the module has one,
+        // whichever side declared it (issue 633).
+        let rst = self.has_reset().then_some(crate::comp::RESET_NAME);
         // A process per process, on its clock and its edge.
         for p in &procs {
             let mut seq: Vec<String> = Vec::new();
@@ -2728,7 +2755,7 @@ impl Lowered {
                     continue;
                 }
                 let ind = if guard { "        " } else { "      " };
-                stmt(&mut seq, &mut comb, ind, st, &drive, self);
+                stmt(&mut seq, &mut comb, ind, st, &drive, self, rst);
             }
             if guard {
                 seq.push("      end if;".into());
@@ -3628,6 +3655,26 @@ mod tests {
         let h = stating().vhdl();
         assert!(h.contains("report \"a digit\" severity failure;"), "{h}");
         assert!(h.contains("report \"cover: nine\" severity note;"), "{h}");
+    }
+
+    /// A statement is stated only out of reset, in both languages,
+    /// whether the netlist added the reset or the unit declared it
+    /// (issue 633). Before, a unit with its own `rst` had its checks
+    /// stated in the reset cycles too.
+    #[test]
+    fn a_statement_is_stated_only_out_of_reset() {
+        let added = stating();
+        let mut declared = stating();
+        declared.ports.push(("rst".to_string(), Kind::In, 1, "clk"));
+        assert!(added.adds_reset_port() && !declared.adds_reset_port());
+        for net in [added, declared] {
+            let v = net.verilog();
+            assert!(v.contains("if (!rst) assert ((count <= "), "{v}");
+            assert!(v.contains("if (!rst) cover ((count == "), "{v}");
+            let h = net.vhdl();
+            assert!(h.contains("assert rst = '1' or ("), "{h}");
+            assert!(h.contains("if rst = '0' and ("), "{h}");
+        }
     }
 
     /// A helper reached through its own lowering binds a value it

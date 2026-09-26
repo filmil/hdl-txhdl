@@ -235,6 +235,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A unit's own reset, and its check only out of it:  bazel run //lib/examples:ex_rstcheck
+rust_binary(
+    name = "ex_rstcheck",
+    srcs = ["ex_rstcheck.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A unit between two channels, lowered:  bazel run //lib/examples:ex_stage
 rust_binary(
     name = "ex_stage",
@@ -1117,6 +1126,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_ethslots.rs",
         "ex_scanout.rs",
         "ex_reset.rs",
+        "ex_rstcheck.rs",
         "ex_stage.rs",
         "ex_packet.rs",
         "ex_cheat.rs",

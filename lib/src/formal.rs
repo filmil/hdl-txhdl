@@ -26,8 +26,11 @@
 //!   trace that reaches it.
 //!
 //! Under `#[lower]` each is a statement of the process it is in, under
-//! the conditions it is under, and is written after the registers'
-//! reset, so that nothing is checked while the unit is held in reset.
+//! the conditions it is under, and is stated only while `rst` is low,
+//! so that nothing is checked while the unit is held in reset, whether
+//! the netlist added the reset or the unit declared it (issue 633). The
+//! run has no reset to gate on and checks every edge the statement is
+//! reached.
 //! In the Verilog it is SystemVerilog's immediate `assert`, `assume` or
 //! `cover` inside the clocked block, between `` `ifdef FORMAL `` and
 //! `` `endif ``: a formal tool such as SymbiYosys defines `FORMAL`, and
