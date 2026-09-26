@@ -19,8 +19,9 @@
 //! the runs that are checked, so that a byte takes forty cycles rather
 //! than nine thousand.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
+use txhdl::regmap;
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, with, Trace};
+use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::Resp;
 use txhdl_parts::bus::axi_lite::{LiteB, LitePort, LiteR};
 
@@ -63,28 +64,23 @@ fn taken_in(shift: U<8>, line: Bit) -> U<8> {
     line.zext::<1>().concat::<_, 8>(shift.slice::<1, 7>())
 }
 
-/// What a load reads, by the word: the last byte sent, the status,
-/// the oldest byte received.
-#[lower]
-fn word(
-    sel: U<2>,
-    busy: bool,
-    ready: bool,
-    full: bool,
-    last: U<8>,
-    data: U<8>,
-) -> U<32> {
-    let status = U::<29>::from(0u32)
-        .concat::<_, 30>(Bit::from(full).zext::<1>())
-        .concat::<_, 31>(Bit::from(ready).zext::<1>())
-        .concat::<_, 32>(Bit::from(busy).zext::<1>());
-    select!(sel.raw() => {
-        0 => last.zext::<32>(),
-        1 => status,
-        2 => data.zext::<32>(),
-        _ => U::<32>::from(0u32),
-    })
-}
+// begin{map}
+// The map: three words, two address bits above the byte bits selecting
+// one, and the fourth reads zero (issues 499 and 669).
+regmap! { serial (serial_read, serial_we, serial_re), 2: [
+    (0, tx, rw, "written, a byte to send; read, the last byte sent", [
+        (data, 0, 8, rw, 0, "the byte"),
+    ]),
+    (1, status, ro, "what the port is doing", [
+        (busy, 0, 1, ro, 0, "a byte is going out"),
+        (ready, 1, 1, ro, 0, "a byte received and not yet read"),
+        (full, 2, 1, ro, 0, "the buffer of eight is full"),
+    ]),
+    (2, rx, rc, "the oldest byte received; the read takes it", [
+        (data, 0, 8, rc, 0, "the byte"),
+    ]),
+] }
+// end{map}
 
 #[derive(Trace, Default)]
 pub struct Uart<const DIV: u32> {
@@ -145,11 +141,15 @@ impl<const DIV: u32> Unit for Uart<DIV> {
             let _ = bus.w.recv_if(wgo);
             let sel = arh.addr.slice::<2, 2>();
             let wsel = awh.addr.slice::<2, 2>();
-            let read_rx = take_read.to_bool() & (sel == 2);
+            // The map's enables: which word a write goes to, and whether
+            // this read is the one that takes a received byte.
+            let we = serial_we(wgo, wsel);
+            let re = serial_re(take_read, sel);
+            let read_rx = re.bit(2).to_bool();
             // A byte written while idle starts a frame, ten bits of DIV
             // cycles each; a reset wins over everything.
-            let start = wgo.to_bool() & (wsel == 0) & !busy;
-            let octet = wh.data.slice::<0, 8>();
+            let start = we.bit(0).to_bool() & !busy;
+            let octet = serial_tx_data(wh.data);
             if rst {
                 self.bits.set(0);
                 self.tick.set(0);
@@ -170,13 +170,15 @@ impl<const DIV: u32> Unit for Uart<DIV> {
             }
             if take_read.to_bool() {
                 bus.r.send(LiteR {
-                    data: word(
+                    data: serial_read(
                         sel,
-                        busy,
-                        rx_ready,
-                        full,
-                        self.last.get(),
-                        rx_data,
+                        serial_tx_pack(self.last.get()),
+                        serial_status_pack(
+                            Bit::from(busy),
+                            Bit::from(rx_ready),
+                            Bit::from(full),
+                        ),
+                        serial_rx_pack(rx_data),
                     ),
                     resp: Resp::Okay,
                 });
