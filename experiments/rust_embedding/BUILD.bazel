@@ -47,6 +47,8 @@ MACROS = ["//lib:txhdl_macros"]
         # Refused until issue 497, escaped since: `next_rw`, `out_rw`.
         "probe_reserved_field",
         "probe_reserved_let",
+        # An address map as a trait constant, read by index (issue 593).
+        "probe_assoc_const",
     ]
 ]
 

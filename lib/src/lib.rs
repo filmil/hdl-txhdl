@@ -33,6 +33,7 @@ pub mod comp;
 pub mod foreign;
 pub mod formal;
 pub mod funcs;
+pub mod map;
 pub mod netlist;
 pub mod pipeline;
 pub mod regmap;
