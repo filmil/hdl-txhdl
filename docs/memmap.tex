@@ -1,0 +1,13 @@
+% SPDX-License-Identifier: Apache-2.0
+% The boards' memory maps, written by //tools/memmap from the maps the
+% designs decode (issue 444). A document asks for a table with
+% \mmget{<what>}{<board>}, and a table the generator does not write
+% stops the document rather than leaving a gap.
+\input{tools/memmap/mm_tables}
+\makeatletter
+\newcommand{\mmget}[2]{%
+  \@ifundefined{mm@#1@#2}%
+    {\PackageError{memmap}{//tools/memmap writes no #1 for #2}%
+      {Add it to tools/memmap/main.rs.}}%
+    {\csname mm@#1@#2\endcsname}}
+\makeatother

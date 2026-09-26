@@ -2642,6 +2642,7 @@ latex_document(
     name = "vreteno",
     main = "vreteno.tex",
     data = [
+        "//tools/memmap:tables",
         "jtag_probe.txt",
         "ila_capture.vcd",
         ":buildstamp",
@@ -2658,7 +2659,10 @@ latex_document(
         "//cpu/vreteno/rust/hal:sources",
         "//lib/examples:sources",
     ],
-    deps = ["housestyle.tex"],
+    deps = [
+        "housestyle.tex",
+        "memmap.tex",
+    ],
 )
 
 # The cheat sheet: one page, landscape, with its own example's listing,
@@ -3126,6 +3130,7 @@ latex_document(
     name = "flagship",
     main = "flagship.tex",
     data = [
+        "//tools/memmap:tables",
         "remote_run.txt",
         ":buildstamp",
         ":vendored_tex",
@@ -3137,7 +3142,10 @@ latex_document(
         "//lib/logo:sources",
         "//tools/logo2rs:sources",
     ],
-    deps = ["housestyle.tex"],
+    deps = [
+        "housestyle.tex",
+        "memmap.tex",
+    ],
 )
 
 # PCIe in TxHDL: the endpoint the build generates, the part that joins
