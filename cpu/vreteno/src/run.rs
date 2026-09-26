@@ -15,10 +15,11 @@ use crate::timer::Timer;
 use crate::uart::Uart;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
-use txhdl_parts::bus::router::Router4;
+use txhdl_parts::bus::router::Router;
 
 /// The link, as the demonstration has it: thirty-two bit addresses
 /// and words, four lanes, two-bit identifiers.
@@ -26,20 +27,21 @@ const IW: usize = 2;
 const NIDS: usize = 4;
 
 /// The address map, stated in the router's type.
-type Rtr = Router4<
-    32,
-    32,
-    4,
-    IW,
-    0x1000,
-    0xf000,
-    0x0200_0000,
-    0xffff_0000,
-    0x3000,
-    0xf000,
-    0x0000,
-    0xf000,
->;
+/// The address map: the data memory at its page, the timer at
+/// `0x0200_0000`, the serial port at `0x3000`, and the boot memory's
+/// page for the loader.
+struct RunMap;
+
+impl AddrMap<4> for RunMap {
+    const RANGES: [(usize, usize); 4] = [
+        (0x1000, 0xf000),
+        (0x0200_0000, 0xffff_0000),
+        (0x3000, 0xf000),
+        (0x0000, 0xf000),
+    ];
+}
+
+type Rtr = Router<4, RunMap, 32, 32, 4, IW>;
 
 /// The bridge the serial port sits behind: one AXI-Lite peripheral,
 /// at the range the router gives the port.
@@ -163,28 +165,38 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
                         cl.per_in.0,
                         cl.per_in.1,
                         cl.per_in.2,
-                        dl.host_in.2,
-                        dl.host_in.3,
-                        tl.host_in.2,
-                        tl.host_in.3,
-                        ul.host_in.2,
-                        ul.host_in.3,
-                        rl.host_in.2,
-                        rl.host_in.3,
+                        [
+                            dl.host_in.2,
+                            tl.host_in.2,
+                            ul.host_in.2,
+                            rl.host_in.2,
+                        ],
+                        [
+                            dl.host_in.3,
+                            tl.host_in.3,
+                            ul.host_in.3,
+                            rl.host_in.3,
+                        ],
                     ),
                     (
-                        dl.host_out.0,
-                        dl.host_out.1,
-                        dl.host_out.2,
-                        tl.host_out.0,
-                        tl.host_out.1,
-                        tl.host_out.2,
-                        ul.host_out.0,
-                        ul.host_out.1,
-                        ul.host_out.2,
-                        rl.host_out.0,
-                        rl.host_out.1,
-                        rl.host_out.2,
+                        [
+                            dl.host_out.0,
+                            tl.host_out.0,
+                            ul.host_out.0,
+                            rl.host_out.0,
+                        ],
+                        [
+                            dl.host_out.1,
+                            tl.host_out.1,
+                            ul.host_out.1,
+                            rl.host_out.1,
+                        ],
+                        [
+                            dl.host_out.2,
+                            tl.host_out.2,
+                            ul.host_out.2,
+                            rl.host_out.2,
+                        ],
                         cl.per_out.2,
                         cl.per_out.3,
                     ),

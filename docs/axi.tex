@@ -573,20 +573,27 @@ It takes the host's \code{aw}, \code{ar} and \code{w} and gives a set
 of the three per peripheral; it takes a \code{b} and an \code{r} per
 peripheral and gives the host one of each.
 
-A peripheral's range is a base and a mask, stated where the type is
-named, so the address map of a design is in its type and the netlist
-has the decode baked in:
+A peripheral's range is a base and a mask, stated as a map type where
+the router is named, so the address map of a design is in its type
+and the netlist has the decode baked in:
 
 \begin{lstlisting}
-type Rtr =
-    Router3<16, 32, 4, 3, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>;
+struct ThreeMap;
+
+impl AddrMap<3> for ThreeMap {
+    const RANGES: [(usize, usize); 3] =
+        [(0x1000, 0xf000), (0x2000, 0xf000), (0x3000, 0xf000)];
+}
+
+type Rtr = Router<3, ThreeMap, 16, 32, 4, 3>;
 \end{lstlisting}
 
-One count of peripherals is one unit, written out by
-\code{router!(Router3, 3)} for two to eight of them. The lowering
-reads a body and not a loop over ports, so the count cannot be a
-parameter; it is the same reason the reservation station is written
-out per arity~\cite{station}.
+One unit serves every count of peripherals: its peripheral sides are
+arrays of ports, the lowering unrolls the loops over them when
+\code{lowered} runs, and the map's ranges are read the same way, as
+the examples document says of \code{AddrMap}~\cite{examples}. Until
+there were arrays of ports, a router per count was text written out
+by a macro, as the reservation station still is~\cite{station}.
 
 \subsection*{What it has to keep}
 
@@ -618,26 +625,25 @@ gathering for ever.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
-linerange=state-state,caption={The router's state, as
-\code{router!} wrote it for three peripherals.},%
-label={lst:a-rstate}]{router3.rs}
+linerange=state-state,caption={The router's state, from
+\code{lib/parts/src/bus/router.rs}.},%
+label={lst:a-rstate}]{lib/parts/src/bus/router.rs}
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=decode-decode,caption={The decode: where each address
 phase goes, and whether that peripheral has room for
-it.},label={lst:a-rdecode}]{router3.rs}
+it.},label={lst:a-rdecode}]{lib/parts/src/bus/router.rs}
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=merge-merge,caption={The merge: the beat that goes up, from
 the chosen peripheral or from the router's own decode
-error.},label={lst:a-rmerge}]{router3.rs}
+error.},label={lst:a-rmerge}]{lib/parts/src/bus/router.rs}
 
-Every step is a wire with a name, and the chains are written as a
-wire each rather than one nested expression, so no line grows with
-the count of peripherals and the netlist says which peripheral was
-waiting for which.
+Every step is a wire with a name, and the loops over the peripherals
+are unrolled a wire at a time, so the netlist says which peripheral
+was waiting for which.
 
 \subsection*{The run}
 

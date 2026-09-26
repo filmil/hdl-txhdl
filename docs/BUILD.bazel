@@ -1199,9 +1199,9 @@ waveform(
         "//ar/tx_data/addr=>ar_addr",
         "//aw/tx_valid=>aw",
         "//aw/tx_data/addr=>aw_addr",
-        "//ar0/tx_valid=>ar0",
-        "//ar1/tx_valid=>ar1",
-        "//aw2/tx_valid=>aw2",
+        "//ars_0/tx_valid=>ar0",
+        "//ars_1/tx_valid=>ar1",
+        "//aws_2/tx_valid=>aw2",
         "//router/rerr=>rerr",
         "//router/berr=>berr",
         "//r/tx_valid=>r",
@@ -2491,12 +2491,12 @@ waveform(
     signals = [
         "//clocks/clk=>clk",
         "//issue/tx_valid=>issue",
-        "//ar2/tx_valid=>ar2",
+        "//ars_2/tx_valid=>ar2",
         "//uar/rx_valid=>uar",
         "//ur/tx_valid=>ur",
-        "//r2/rx_valid=>r2",
+        "//rs_2/rx_valid=>r2",
         "//rdata/rx_valid=>rdata",
-        "//aw2/tx_valid=>aw2",
+        "//aws_2/tx_valid=>aw2",
         "//uaw/rx_valid=>uaw",
         "//ub/tx_valid=>ub",
         "//cpu/dev_wait=>dev_wait",
@@ -2851,13 +2851,6 @@ genrule(
 )
 
 genrule(
-    name = "router_source",
-    outs = ["router3.rs"],
-    cmd = "$(location //lib/examples:ex_axi_router) --source > $@",
-    tools = ["//lib/examples:ex_axi_router"],
-)
-
-genrule(
     name = "station_source",
     outs = [
         "station2.rs",
@@ -3059,7 +3052,6 @@ latex_document(
         ":axi_wb_timing",
         ":axi_reg_run",
         ":axi_reg_timing",
-        ":router_source",
         ":axi_lite_run",
         ":axi_lite_timing",
         ":lite_bridge_source",

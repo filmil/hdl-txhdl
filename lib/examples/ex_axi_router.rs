@@ -18,12 +18,13 @@
 use std::future::Future;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, DefaultClock, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::pipeline::cycles;
 use txhdl::types::U;
 use txhdl_parts::bus::axi::{
     axi, serve, AxiHost, AxiPer, Link, Per, Rd, Resp, Wr, Xact,
 };
-use txhdl_parts::bus::router::Router3;
+use txhdl_parts::bus::router::Router;
 
 /// The link of this example: sixteen-bit addresses, thirty-two-bit
 /// words, four lanes, three-bit identifiers, eight of them. Five
@@ -34,10 +35,16 @@ type PerUnit = AxiPer<16, 32, 4, 3>;
 type Job = Xact<16, 32, 4, 3>;
 type End = Per<16, 32, 4, 3>;
 
-/// The address map, as the router's type states it: three peripherals
+/// The address map, a type the router is named with: three peripherals
 /// of a nibble each, and every other address a hole.
-type Rtr =
-    Router3<16, 32, 4, 3, 0x1000, 0xf000, 0x2000, 0xf000, 0x3000, 0xf000>;
+struct ThreeMap;
+
+impl AddrMap<3> for ThreeMap {
+    const RANGES: [(usize, usize); 3] =
+        [(0x1000, 0xf000), (0x2000, 0xf000), (0x3000, 0xf000)];
+}
+
+type Rtr = Router<3, ThreeMap, 16, 32, 4, 3>;
 
 /// How long peripheral `k` takes over a transaction. The three differ,
 /// which is what puts the answers out of the order they were issued.
@@ -69,12 +76,6 @@ fn peripheral(k: usize, per: End) -> impl Future<Output = ()> {
 }
 
 fn main() {
-    // What `router!` wrote for three peripherals, for the document to
-    // show without a hand-typed copy.
-    if std::env::args().any(|a| a == "--source") {
-        print!("{}", txhdl_parts::bus::router::router3::SOURCE);
-        return;
-    }
     // The host's link: its host side carries the client and the
     // tracker, and its peripheral-facing ends go to the router.
     let Link {
@@ -128,21 +129,21 @@ fn main() {
         w.add("w", &haw.2);
         w.add("b", &hbr.2);
         w.add("r", &hbr.3);
-        w.add("aw0", &hout0.0);
-        w.add("ar0", &hout0.1);
-        w.add("w0", &hout0.2);
-        w.add("b0", &hin0.2);
-        w.add("r0", &hin0.3);
-        w.add("aw1", &hout1.0);
-        w.add("ar1", &hout1.1);
-        w.add("w1", &hout1.2);
-        w.add("b1", &hin1.2);
-        w.add("r1", &hin1.3);
-        w.add("aw2", &hout2.0);
-        w.add("ar2", &hout2.1);
-        w.add("w2", &hout2.2);
-        w.add("b2", &hin2.2);
-        w.add("r2", &hin2.3);
+        w.add("aws_0", &hout0.0);
+        w.add("ars_0", &hout0.1);
+        w.add("ws_0", &hout0.2);
+        w.add("bs_0", &hin0.2);
+        w.add("rs_0", &hin0.3);
+        w.add("aws_1", &hout1.0);
+        w.add("ars_1", &hout1.1);
+        w.add("ws_1", &hout1.2);
+        w.add("bs_1", &hin1.2);
+        w.add("rs_1", &hin1.3);
+        w.add("aws_2", &hout2.0);
+        w.add("ars_2", &hout2.1);
+        w.add("ws_2", &hout2.2);
+        w.add("bs_2", &hin2.2);
+        w.add("rs_2", &hin2.3);
         w.add("router", &router);
         w.start();
     }
@@ -197,12 +198,18 @@ fn main() {
             host_unit.run(host_in, host_out),
             router.run(
                 (
-                    haw.0, haw.1, haw.2, hin0.2, hin0.3, hin1.2, hin1.3,
-                    hin2.2, hin2.3,
+                    haw.0,
+                    haw.1,
+                    haw.2,
+                    [hin0.2, hin1.2, hin2.2],
+                    [hin0.3, hin1.3, hin2.3],
                 ),
                 (
-                    hout0.0, hout0.1, hout0.2, hout1.0, hout1.1, hout1.2,
-                    hout2.0, hout2.1, hout2.2, hbr.2, hbr.3,
+                    [hout0.0, hout1.0, hout2.0],
+                    [hout0.1, hout1.1, hout2.1],
+                    [hout0.2, hout1.2, hout2.2],
+                    hbr.2,
+                    hbr.3,
                 ),
             ),
         ),

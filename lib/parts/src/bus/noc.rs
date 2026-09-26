@@ -37,10 +37,11 @@ mod tests {
     use crate::bus::axi::{
         axi, Ar, Aw, AxiHost, AxiPer, BurstKind, Link, Rd, Resp, Wr, B, R, W,
     };
-    use crate::bus::router::Router4;
+    use crate::bus::router::Router;
     use std::cell::RefCell;
     use std::rc::Rc;
     use txhdl::comp::{chan, join2, join_all, DefaultClock, Running, Unit};
+    use txhdl::map::AddrMap;
     use txhdl::types::U;
 
     const XB: usize = 2;
@@ -639,20 +640,18 @@ mod tests {
         >;
         // A quarter of 0x1000..0x2000 each. 0x2000 reaches the node
         // by the hosts' map and is none of the router's.
-        type Rtr = Router4<
-            A,
-            D,
-            S,
-            I,
-            0x1000,
-            0xfc00,
-            0x1400,
-            0xfc00,
-            0x1800,
-            0xfc00,
-            0x1c00,
-            0xfc00,
-        >;
+        struct NocMap;
+
+        impl AddrMap<4> for NocMap {
+            const RANGES: [(usize, usize); 4] = [
+                (0x1000, 0xfc00),
+                (0x1400, 0xfc00),
+                (0x1800, 0xfc00),
+                (0x1c00, 0xfc00),
+            ];
+        }
+
+        type Rtr = Router<4, NocMap, A, D, S, I>;
         const BASES: [u32; 4] = [0x1000, 0x1400, 0x1800, 0x1c00];
         const HOLE: u32 = 0x2010;
         type Boxed<'a> =
@@ -733,12 +732,18 @@ mod tests {
                 )) as Boxed<'_>,
                 Box::pin(rtr.run(
                     (
-                        aw_rx, ar_rx, w_rx, h0.2, h0.3, h1.2, h1.3, h2.2, h2.3,
-                        h3.2, h3.3,
+                        aw_rx,
+                        ar_rx,
+                        w_rx,
+                        [h0.2, h1.2, h2.2, h3.2],
+                        [h0.3, h1.3, h2.3, h3.3],
                     ),
                     (
-                        g0.0, g0.1, g0.2, g1.0, g1.1, g1.2, g2.0, g2.1, g2.2,
-                        g3.0, g3.1, g3.2, b_tx, r_tx,
+                        [g0.0, g1.0, g2.0, g3.0],
+                        [g0.1, g1.1, g2.1, g3.1],
+                        [g0.2, g1.2, g2.2, g3.2],
+                        b_tx,
+                        r_tx,
                     ),
                 )),
                 Box::pin(t0.run(i0, o0)),

@@ -8,10 +8,11 @@
 //! port. What leaves the pair is the first core's, so the rest of the
 //! design is wired as it would be around one core.
 use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
-use txhdl_parts::bus::router::Router3;
+use txhdl_parts::bus::router::Router;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
 use vreteno32::pair::Pair;
@@ -21,18 +22,19 @@ use vreteno32::uart::Uart;
 
 const IW: usize = 2;
 const NIDS: usize = 4;
-type Rtr = Router3<
-    32,
-    32,
-    4,
-    IW,
-    0x1000,
-    0xf000,
-    0x0200_0000,
-    0xffff_0000,
-    0x3000,
-    0xf000,
->;
+/// The address map: the data memory at its page, the timer at
+/// `0x0200_0000`, and the serial port at `0x3000`.
+struct RunMap;
+
+impl AddrMap<3> for RunMap {
+    const RANGES: [(usize, usize); 3] = [
+        (0x1000, 0xf000),
+        (0x0200_0000, 0xffff_0000),
+        (0x3000, 0xf000),
+    ];
+}
+
+type Rtr = Router<3, RunMap, 32, 32, 4, IW>;
 type Serial = LiteBridge1<32, 32, 4, IW, 0x3000, 0xf000>;
 
 /// Runs `program` on a pair for `cycles` cycles, holding the second
@@ -106,23 +108,13 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
                         cl.per_in.0,
                         cl.per_in.1,
                         cl.per_in.2,
-                        dl.host_in.2,
-                        dl.host_in.3,
-                        tl.host_in.2,
-                        tl.host_in.3,
-                        ul.host_in.2,
-                        ul.host_in.3,
+                        [dl.host_in.2, tl.host_in.2, ul.host_in.2],
+                        [dl.host_in.3, tl.host_in.3, ul.host_in.3],
                     ),
                     (
-                        dl.host_out.0,
-                        dl.host_out.1,
-                        dl.host_out.2,
-                        tl.host_out.0,
-                        tl.host_out.1,
-                        tl.host_out.2,
-                        ul.host_out.0,
-                        ul.host_out.1,
-                        ul.host_out.2,
+                        [dl.host_out.0, tl.host_out.0, ul.host_out.0],
+                        [dl.host_out.1, tl.host_out.1, ul.host_out.1],
+                        [dl.host_out.2, tl.host_out.2, ul.host_out.2],
                         cl.per_out.2,
                         cl.per_out.3,
                     ),

@@ -38,6 +38,7 @@ use ddr3::Ddr3Per;
 use txhdl::comp::{
     chan, join2, signal, DefaultClock, In, Out, Pad, Rx, Tx, Unit,
 };
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
 use txhdl_parts::bus::arbiter::Arbiter4;
@@ -49,7 +50,7 @@ use txhdl_parts::bus::axi_lite::{
     LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge6, LitePort, LiteR, LiteW,
 };
 use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
-use txhdl_parts::bus::router::Router7;
+use txhdl_parts::bus::router::Router;
 use txhdl_parts::dma::{LineFetch, LineStore, NoBeats, NoReads};
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::ethdma::{FrameIn, FrameLen, FrameOut};
@@ -88,26 +89,21 @@ pub const REMOTE_WAIT: usize = 100_000_000;
 /// the quarter of the address space from `0x4000_0000`, and the
 /// interrupt controller the 64 MiB from `0x0c00_0000`; the debug
 /// module has the 64 KiB from `0x1000_0000` (issue 154).
-pub type BoardRouter = Router7<
-    32,
-    32,
-    4,
-    4,
-    0x1000,
-    0xffff_f000,
-    0x0200_0000,
-    0xffff_0000,
-    0x3000,
-    0xffff_f000,
-    0x4000_0000,
-    0xc000_0000,
-    0x0c00_0000,
-    0xfc00_0000,
-    0x0000_0000,
-    0xffff_f000,
-    0x1000_0000,
-    0xffff_0000,
->;
+pub struct BoardMap;
+
+impl AddrMap<7> for BoardMap {
+    const RANGES: [(usize, usize); 7] = [
+        (0x1000, 0xffff_f000),
+        (0x0200_0000, 0xffff_0000),
+        (0x3000, 0xffff_f000),
+        (0x4000_0000, 0xc000_0000),
+        (0x0c00_0000, 0xfc00_0000),
+        (0x0000_0000, 0xffff_f000),
+        (0x1000_0000, 0xffff_0000),
+    ];
+}
+
+pub type BoardRouter = Router<7, BoardMap, 32, 32, 4, 4>;
 // end{map}
 
 // begin{board}
@@ -839,16 +835,33 @@ impl<const DIV: u32> Unit for Board<DIV> {
                             ),
                             self.router.run(
                                 (
-                                    xaw_rx, xar_rx, xw_rx, b0_rx, r0_rx, b1_rx,
-                                    r1_rx, b2_rx, r2_rx, b3_rx, r3_rx, b4_rx,
-                                    r4_rx, b5_rx, r5_rx, b6_rx, r6_rx,
+                                    xaw_rx,
+                                    xar_rx,
+                                    xw_rx,
+                                    [
+                                        b0_rx, b1_rx, b2_rx, b3_rx, b4_rx,
+                                        b5_rx, b6_rx,
+                                    ],
+                                    [
+                                        r0_rx, r1_rx, r2_rx, r3_rx, r4_rx,
+                                        r5_rx, r6_rx,
+                                    ],
                                 ),
                                 (
-                                    aw0_tx, ar0_tx, w0_tx, aw1_tx, ar1_tx,
-                                    w1_tx, aw2_tx, ar2_tx, w2_tx, aw3_tx,
-                                    ar3_tx, w3_tx, aw4_tx, ar4_tx, w4_tx,
-                                    aw5_tx, ar5_tx, w5_tx, aw6_tx, ar6_tx,
-                                    w6_tx, xb_tx, xr_tx,
+                                    [
+                                        aw0_tx, aw1_tx, aw2_tx, aw3_tx, aw4_tx,
+                                        aw5_tx, aw6_tx,
+                                    ],
+                                    [
+                                        ar0_tx, ar1_tx, ar2_tx, ar3_tx, ar4_tx,
+                                        ar5_tx, ar6_tx,
+                                    ],
+                                    [
+                                        w0_tx, w1_tx, w2_tx, w3_tx, w4_tx,
+                                        w5_tx, w6_tx,
+                                    ],
+                                    xb_tx,
+                                    xr_tx,
                                 ),
                             ),
                         ),

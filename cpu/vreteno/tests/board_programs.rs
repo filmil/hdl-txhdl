@@ -183,24 +183,28 @@ fn the_ethernet_port_is_somewhere_the_board_answers() {
 /// The map above has a port for every port the router has.
 ///
 /// It cannot compare itself with `BoardRouter` directly, since that is
-/// a type and its bases are const parameters. What it can do is read
-/// the source and count, which is enough to catch the failure that
+/// a type and its ranges are a constant of its map type. What it can
+/// do is read the source and count the router's first parameter, its
+/// count of peripherals, which is enough to catch the failure that
 /// actually happened: a port added to the router and not added here.
 #[test]
 fn the_map_has_every_port_the_router_has() {
     const BOARD: &str = include_str!("../src/board.rs");
 
     let at = BOARD
-        .find("pub type BoardRouter = Router")
+        .find("pub type BoardRouter = Router<")
         .expect("no `BoardRouter` in the board");
-    let tail = &BOARD[at + "pub type BoardRouter = Router".len()..];
-    let end = tail.find('<').expect("a router that never opens");
-    let ports: usize = tail[..end].parse().expect("a router of no count");
+    let tail = &BOARD[at + "pub type BoardRouter = Router<".len()..];
+    let end = tail.find(',').expect("a router of one parameter");
+    let ports: usize = tail[..end]
+        .trim()
+        .parse()
+        .expect("a router whose first parameter is not its count");
 
     assert_eq!(
         MAP.len(),
         ports,
-        "`BoardRouter` is a Router{ports} and the map here has \
+        "`BoardRouter` is a Router<{ports}, ..> and the map here has \
          {} ports; a port added to the router is added here in the \
          same change",
         MAP.len()
