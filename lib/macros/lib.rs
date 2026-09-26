@@ -3237,6 +3237,39 @@ fn names_a_signal(
     None
 }
 
+/// Whether `ts` is `T::CONST[k]` or `T::CONST[k].f`: a path of at
+/// least two segments whose last is written in capitals, an index in
+/// brackets, and at most a tuple field after it. Such a constant is a
+/// trait's associated array, an address map say (issue 593), and its
+/// item is a number when `lowered` runs.
+fn assoc_const_item(ts: &[TokenTree]) -> bool {
+    let mut n = ts.len();
+    if n >= 2 {
+        if let (Some(TokenTree::Punct(d)), Some(TokenTree::Literal(_))) =
+            (ts.get(n - 2), ts.get(n - 1))
+        {
+            if d.as_char() == '.' {
+                n -= 2;
+            }
+        }
+    }
+    let Some(TokenTree::Group(g)) = ts.get(n.wrapping_sub(1)) else {
+        return false;
+    };
+    if g.delimiter() != Delimiter::Bracket || n < 4 {
+        return false;
+    }
+    let Some(TokenTree::Ident(leaf)) = ts.get(n - 2) else {
+        return false;
+    };
+    let leaf = leaf.to_string();
+    let upper = leaf.chars().any(|c| c.is_ascii_uppercase())
+        && leaf
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit());
+    upper && punct_at(ts, n - 3, ':') && punct_at(ts, n - 4, ':')
+}
+
 /// `lit(text)`, unless the text names a signal, in which case the
 /// expression is refused here rather than by `rustc` at the attribute.
 fn as_lit(
@@ -4628,6 +4661,14 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 if text.starts_with("U::from") {
                     return Ok(format!("NlE::Num(({}) as u128)", g.stream()));
                 }
+            }
+            // An associated constant of a type parameter, indexed and
+            // projected, `M::RANGES[i].0`: a number Rust works out when
+            // `lowered` runs, as a const parameter is. `i` is a literal
+            // or an unrolled loop's variable, which is a Rust value
+            // there (issue 593).
+            if assoc_const_item(ts) {
+                return Ok(format!("NlE::Num(({text}) as u128)"));
             }
             if text.contains("::") && !last_group {
                 let leaf = text.rsplit("::").next().unwrap_or("");
