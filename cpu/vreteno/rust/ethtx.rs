@@ -12,11 +12,13 @@
 //!
 //! One step here is the driver's obligation rather than the port's,
 //! and it is in the program because a driver that left it out would be
-//! wrong. Stores on this machine are posted and `fence` orders nothing
-//! (issue 432), so before asking the port to go, the program reads the
-//! frame's last word back. The link answers a load behind an unanswered
-//! store to the same address with the stored value, so once that read
-//! returns, the frame is in memory for the engine to fetch.
+//! wrong. Stores on this machine are posted, so before asking the port
+//! to go, the program reads the frame's last word back. The link
+//! answers a load behind an unanswered store to the same address with
+//! the stored value, so once that read returns, the frame is in memory
+//! for the engine to fetch. A `fence` would do the same since issue
+//! 432 was fixed; the read-back is what was proven on the board and
+//! stays.
 //!
 //! As in `hello.rs`, nothing here indexes a slice and nothing divides,
 //! so nothing asks for `core`'s panic path.
@@ -68,7 +70,10 @@ fn byte(f: u32, i: u32) -> u32 {
 /// Word `k` of frame `f`, lowest lane first.
 fn word(f: u32, k: u32) -> u32 {
     let b = k * 4;
-    byte(f, b) | byte(f, b + 1) << 8 | byte(f, b + 2) << 16 | byte(f, b + 3) << 24
+    byte(f, b)
+        | byte(f, b + 1) << 8
+        | byte(f, b + 2) << 16
+        | byte(f, b + 3) << 24
 }
 
 /// Frame `f` written into slot `f`, and its last word read back so the
