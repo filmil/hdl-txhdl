@@ -62,28 +62,38 @@ are a tenth of a second.
 
 \subsection*{Behaviour}
 
+The unit is two processes. The quarter clock counts \code{tick} from 0
+to \code{DIV} less one and round again, every cycle, and drives
+\code{done} from \code{written} and \code{failed} from \code{nak}. The
+other is the whole job written as the sequence it is: the reset held,
+the reset released, then a transaction per entry, a quarter of a bit
+per wait. The lowering numbers its waits into a state register the unit
+does not declare, \code{at\_wait}, keeps its loops' counts in
+\code{for0} to \code{for5}, and holds the three lines it drives
+between states in \code{nreset\_held}, \code{scl\_low\_held} and
+\code{sda\_low\_held}; all are in the tables above. \code{byte} is
+\code{byte\_rw} in the netlist, since SystemVerilog reserves the word.
+
 \begin{itemize}
-\item \code{phase} is reset held 0, settling 1, writing 2 and done 3.
-\code{nreset} is low only in phase 0.
-\item Phase 0 lasts \code{HOLD} cycles, and phase 1 lasts \code{HOLD}
-cycles more. Then the unit writes entry 0.
-\item A transaction is 29 steps, and each step is four quarters of
-\code{DIV} cycles. Step 0 is the start, and step 28 the stop. Steps 1
-to 8 are the address's bits and 9 its acknowledge. Steps 10 to 17 and
-18 are the register's, and 19 to 26 and 27 the value's.
-\item In a data bit the clock is low in the first and last quarters,
-and the data changes only while the clock is low. Bytes go out most
-significant bit first.
-\item At the start the data line falls while the clock is high. At the
-stop it rises while the clock is high. In an acknowledge the unit
-releases the data line.
-\item \code{scl\_low} or \code{sda\_low} high pulls its line low. The
-unit pulls neither line outside phase 2.
-\item The unit reads \code{sda\_in} at the end of the third quarter of
-each acknowledge. A high line sets \code{nak}, and \code{failed}
-follows \code{nak}. Nothing clears \code{nak}.
-\item After the stop of the last entry, the unit goes to phase 3 and
-\code{done} is high.
+\item \code{nreset} is low for \code{HOLD} cycles, then high, and the
+unit waits \code{HOLD} cycles more before the first transaction.
+\item A transaction is the start, the address, the register and the
+value, each a byte followed by its acknowledge, and the stop, every
+step a whole number of quarters of \code{DIV} cycles.
+\item At the start the data line falls while the clock is high, then
+the clock falls. At the stop the clock rises while the data line is
+low, then the data line rises.
+\item In a data bit the data line is set while the clock is low, and
+the clock is high through the two middle quarters, so the data changes
+only while the clock is low. Bytes go out most significant bit first,
+from \code{shift}.
+\item In an acknowledge the unit releases the data line, and reads
+\code{sda\_in} at the end of the clock's high half, as it pulls the
+clock low again. A high line sets \code{nak}, which \code{failed}
+follows. Nothing clears \code{nak}.
+\item \code{scl\_low} or \code{sda\_low} high pulls its line low.
+\item After the stop of the last entry, \code{written} is set,
+\code{done} rises a cycle later, and the sequence waits for ever.
 \end{itemize}
 
 \subsection*{Verification}
@@ -116,5 +126,6 @@ not yet run on the board.
 
 There is one table, and its values are unconfirmed. The unit keeps
 writing after a byte is not acknowledged, and it writes the table once.
-It has no input for the clock line. \code{timer} is 24 bits wide and
-\code{tick} 16 bits wide, and these count \code{HOLD} and \code{DIV}.
+It has no input for the clock line. \code{tick} is 16 bits wide, so
+\code{DIV} is at most 65\,536; the counters of the two holds are as
+wide as \code{HOLD} needs, 22 bits in the tables.
