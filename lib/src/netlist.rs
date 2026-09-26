@@ -365,6 +365,11 @@ port_end!(Tx, Tx, crate::types::Transaction + 'static);
 port_end!(Rx, Rx, crate::types::Transaction + 'static);
 
 thread_local! {
+    /// The wires the last hoisting pass made, `slN`, with their widths:
+    /// a name the lowered unit does not hold, read while that pass and
+    /// its emitter run (issue 683).
+    static HOISTED: std::cell::RefCell<Vec<(String, usize)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// The wires the helpers called in the unit being lowered asked
     /// for, a frame per unit: `lowered` opens one, and a child lowered
     /// inside it opens its own, so the two do not mix (issue 504).
@@ -1646,6 +1651,10 @@ impl Lowered {
     /// Verilog cannot part-select an expression, so every slice of
     /// one is hoisted into a wire of its own, `slN`, declared before
     /// the body that uses it.
+    /// A bit of one is hoisted the same way, since VHDL cannot index one
+    /// (issue 683), and each wire's width is kept in `HOISTED` while
+    /// the pass and the emitter after it run, so a bit of it is read as
+    /// a bit of that many.
     #[allow(clippy::type_complexity)]
     fn hoisted(
         &self,
@@ -1654,6 +1663,7 @@ impl Lowered {
         Vec<(String, Expr)>,
         Vec<(String, usize, Expr)>,
     ) {
+        HOISTED.with(|h| h.borrow_mut().clear());
         let mut temps: Vec<(String, usize, Expr)> = Vec::new();
         fn go(
             e: &Expr,
@@ -1680,7 +1690,10 @@ impl Lowered {
                         Some((n, _, _)) => n.clone(),
                         None => {
                             let n = format!("sl{}", t.len());
-                            t.push((n.clone(), l.ewidth(&a), a));
+                            let w = l.ewidth(&a);
+                            HOISTED
+                                .with(|h| h.borrow_mut().push((n.clone(), w)));
+                            t.push((n.clone(), w, a));
                             n
                         }
                     };
@@ -1689,7 +1702,38 @@ impl Lowered {
                 Expr::Bin(op, a, c) => Expr::Bin(op, b(a, t), b(c, t)),
                 Expr::Not(a) => Expr::Not(b(a, t)),
                 Expr::Cond(c, a, d) => Expr::Cond(b(c, t), b(a, t), b(d, t)),
-                Expr::Index(a, i) => Expr::Index(b(a, t), b(i, t)),
+                // A bit of a computed value is a bit of a wire, as a
+                // slice of one is: VHDL indexes only a name or a call,
+                // and nvc refuses `unsigned'(..)(1)` (issue 683). A
+                // memory's word and a one-bit value, which the
+                // emitters index as they are, stay as they are.
+                Expr::Index(a, i) => {
+                    let a = go(a, l, t);
+                    let i = b(i, t);
+                    let plain = matches!(&a, Expr::Name(_))
+                        || matches!(&a, Expr::Index(m, _)
+                            if matches!(&**m, Expr::Name(n) if l.is_mem(n)))
+                        || l.ewidth(&a) == 1
+                        || l.ewidth(&a) == 0;
+                    if plain {
+                        return Expr::Index(Box::new(a), i);
+                    }
+                    let same = format!("{a:?}");
+                    let found =
+                        t.iter().find(|(_, _, e)| format!("{e:?}") == same);
+                    let name = match found {
+                        Some((n, _, _)) => n.clone(),
+                        None => {
+                            let n = format!("sl{}", t.len());
+                            let w = l.ewidth(&a);
+                            HOISTED
+                                .with(|h| h.borrow_mut().push((n.clone(), w)));
+                            t.push((n.clone(), w, a));
+                            n
+                        }
+                    };
+                    Expr::Index(Box::new(Expr::Name(name)), i)
+                }
                 Expr::Cat(a, c) => Expr::Cat(b(a, t), b(c, t)),
                 Expr::Sext(a, m) => Expr::Sext(b(a, t), *m),
                 // A cast is the value when it is no wider, and its low
@@ -1875,6 +1919,11 @@ impl Lowered {
                     }
                 }
             }
+        }
+        if let Some(w) = HOISTED
+            .with(|h| h.borrow().iter().find(|(t, _)| t == n).map(|(_, w)| *w))
+        {
+            return w;
         }
         1
     }
