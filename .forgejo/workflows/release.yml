@@ -115,20 +115,33 @@ jobs:
 
       # bazel-bin is a symlink, so find needs -L to walk it. Only //docs is
       # gathered: external repositories under bazel-bin/external hold PNGs
-      # of their own. The waveforms (.fst) ship too, for a viewer. The output path
-      # becomes the file name, so two packages that each produce `spec-pdf.pdf`
-      # do not overwrite one another in the release directory.
+      # of their own. A test's .runfiles tree is pruned, since -L follows
+      # it into whatever the test depends on: since #636 that includes a
+      # whole Python interpreter, Tk's demo images among it, and the
+      # release of 2026-09-26 carried 93 such files and was cut short
+      # before most of the documents (issue 640). The output path becomes
+      # the file name, so two packages that each produce `spec-pdf.pdf` do
+      # not overwrite one another in the release directory. The waveforms
+      # (.fst), one per example, ship as one archive for a viewer rather
+      # than a hundred assets, so the documents are never the ones crowded
+      # out.
       - name: Gather the documents
         if: steps.decide.outputs.proceed == 'true'
         run: |
           set -eu
-          mkdir -p dist/release
-          find -L bazel-bin/docs -type f \
+          mkdir -p dist/release dist/waveforms
+          find -L bazel-bin/docs -name '*.runfiles' -prune -o -type f \
               \( -name '*.pdf' -o -name '*.html' -o -name '*.png' -o -name '*.fst' \) -print0 |
             while IFS= read -r -d '' f; do
               rel="${f#bazel-bin/}"
-              cp "$f" "dist/release/$(printf '%s' "$rel" | tr '/' '-')"
+              case "$f" in
+                *.fst) cp "$f" "dist/waveforms/$(basename "$f")" ;;
+                *) cp "$f" "dist/release/$(printf '%s' "$rel" | tr '/' '-')" ;;
+              esac
             done
+          if [ -n "$(ls -A dist/waveforms)" ]; then
+            tar -C dist/waveforms -czf dist/release/docs-waveforms.tar.gz .
+          fi
           ls -la dist/release
           [ -n "$(ls -A dist/release)" ] || { echo "nothing to release" >&2; exit 1; }
 
