@@ -115,20 +115,14 @@ in the top seven bits and the column in the low eight. At 640 by 480
 with \code{SHIFT} of 2 the picture is 160 by 120, and the rest of the
 memory is unused.
 
-\begin{table}[htbp]
-\caption{The video peripheral's words.}
-\label{tab:h-words}
-\centering\footnotesize
-\begin{tabular}{@{}lll@{}}
-\toprule
-Word & Access & Bits \\
-\midrule
-0, status & read & 0 vertical blank, 31 to 16 frames \\
-1, cursor & read, write & 7 to 0 column, 14 to 8 row \\
-2, pixel & write & 11 to 0 the colour \\
-\bottomrule
-\end{tabular}
-\end{table}
+The peripheral's three words are declared once, with their fields, in
+Listing~\ref{lst:h-regs}: \code{status}, read only, the vertical blank
+and the count of frames; \code{cursor}, read and written, the column
+and the row; and \code{pixel}, written only, the colour.
+The same declaration gives the unit its read mux, its write enables
+and its field accessors, and a program its offsets and fields.
+
+\hdmipart{regs}{The video peripheral's words.}{lst:h-regs}
 
 A write to the pixel word puts the colour into the framebuffer at the
 cursor and moves the cursor to the next pixel. At the end of a row the
