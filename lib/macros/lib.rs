@@ -5889,6 +5889,7 @@ fn lower_structural(
                 ));
             }
             let mut joined: Vec<String> = Vec::new();
+            let mut nties = 0usize;
             for side in &sides {
                 let items: Vec<Vec<TokenTree>> = match side.as_slice() {
                     [TokenTree::Group(g)]
@@ -5932,6 +5933,20 @@ fn lower_structural(
                         ));
                         continue;
                     }
+                    // `tie(v)`: an input held at a constant, which may
+                    // name the index, so each child has a wire of its
+                    // own, `F_i_tieK` (issue 635).
+                    if let Some(v) = tied(&it) {
+                        let k = nties;
+                        nties += 1;
+                        joined.push(format!(
+                            "{{ let __t = format!(\"{field}_{{}}_tie{k}\", \
+                             {idx}); __dynw.push((__t.clone(), \
+                             ::txhdl::netlist::lit({v}))); \
+                             a.push((String::new(), __t)); }}"
+                        ));
+                        continue;
+                    }
                     // A name: a wire read by every child, or `()`.
                     match it.as_slice() {
                         [TokenTree::Group(g)] if g.stream().is_empty() => {}
@@ -5971,7 +5986,7 @@ fn lower_structural(
                             return Err(err(
                                 *span,
                                 "a port passed to a child of an array is \
-                                 `x.take(e)`, a wire's name, or `()`",
+                                 `x.take(e)`, a wire's name, `tie(v)` or `()`",
                             ))
                         }
                     }
@@ -6920,6 +6935,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          #[allow(unused_mut)] let mut __dynw: Vec<(String, NlE)> = Vec::new();\n\
          #[allow(unused_mut)] let mut __wn: usize = 0;\n\
          let __procs: Vec<::txhdl::netlist::Process> = vec![{procs}];\n\
+         // The children, before the literal, since a child of an array\n\
+         // held at a constant adds a wire of its own (issue 635).\n\
+         #[allow(unused_mut)] let mut __ins: Vec<::txhdl::netlist::Instance> = Vec::new();\n\
+         {instances}\n\
          ::txhdl::netlist::Lowered {{\n\
          name: name.to_string(),\n\
          fields: {{ let mut f = <Self as ::txhdl::netlist::Fields>::fields();\n\
@@ -6933,8 +6952,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          aliases: Vec::new(),\n\
          nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, \
          usize, &'static str)> = Vec::new(); {nets} n }},\n\
-         instances: {{ #[allow(unused_mut)] let mut __ins: Vec<::txhdl::netlist::Instance> = Vec::new();\n\
-         {instances} __ins }},\n\
+         instances: __ins,\n\
          foreign: None,\n\
          }}\n\
          .with_inlined(::txhdl::netlist::inlined_end())\n\
