@@ -123,7 +123,10 @@ each \code{field\_sub}, so the netlist sees them flattened, and
 \code{bus\_pins\_awid}, every name of the chain up to a method call
 being the port's. A struct of the unit's own file may hold one the
 same way, and a side passed whole joins each nested struct whole
-(issue 498). \code{instance} joins a parent's struct literal to such a
+(issue 498). One rule names the ports of either kind of side: written
+\code{name: S} its ports are \code{name\_field}, and taken apart,
+\code{S \{ a, b \}: S}, which only a struct of the file allows, they
+are \code{a} and \code{b} (issue 580). \code{instance} joins a parent's struct literal to such a
 child by the one port that ends in the field's name. A unit of units
 may take such a side and pass its fields, \code{bus.req}, to its
 children, which join as the parent's ports; their kinds cannot be

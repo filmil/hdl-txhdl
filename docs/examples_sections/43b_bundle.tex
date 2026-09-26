@@ -14,8 +14,9 @@ width, clock and the layout of its value, when \code{lowered} runs.
 beside the AXI-Lite beats: the five channels a peripheral holds on a
 link. \code{Shared} is one word behind two links, \code{left} and
 \code{right}, as a mailbox between two processors would be. Both
-sides have the same type, so a port is named for its side as well as
-its field. \code{left.aw} is the port \code{left\_aw} and
+sides have the same type, and a side written \code{name: S} names its
+ports for the side as well as the field, wherever \code{S} is
+declared (issue 580), so the two stay apart. \code{left.aw} is the port \code{left\_aw} and
 \code{right.r} is \code{right\_r}, each with the usual
 \code{\_data}, \code{\_valid} and \code{\_ready}. A write from both
 sides in one cycle keeps the left one's word.

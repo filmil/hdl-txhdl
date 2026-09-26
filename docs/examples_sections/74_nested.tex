@@ -11,10 +11,11 @@ them on.
 
 A field may now be a struct of ports itself. Its ports are the
 netlist's under the field's name: the \code{left} link of the
-\code{Links} below is \code{left\_aw}, \code{left\_ar} and the rest,
+\code{Links} below, taken as the side \code{links}, is
+\code{links\_left\_aw}, \code{links\_left\_ar} and the rest,
 and \code{right}'s likewise. In a body, every name of a chain up to a
 method call is part of the port's, so \code{links.left.aw.peek()}
-reads the port \code{left\_aw}; a port has no fields of its own to
+reads the port \code{links\_left\_aw}; a port has no fields of its own to
 read without one. Passed whole to a child, a side joins each nested
 struct whole, in the order the struct declares it.
 

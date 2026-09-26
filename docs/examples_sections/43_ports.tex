@@ -15,10 +15,14 @@ type, \code{Rx<U<W>>}, declared as the fields \code{minuend} and
 when the subtraction borrowed. \code{run} takes the input side apart
 by field, \code{DiffIn \{ minuend, subtrahend \}}, and names the
 output side \code{out}, so it sends on \code{out.diff}. Both forms
-work for \code{\#[lower]}. It reads the struct where it is declared,
-and makes each field a port under the field's name, in the
-order the struct declares them. A generic struct is read with the
-side's arguments, so \code{DiffIn<W>} has ports of \code{W} bits.
+work for \code{\#[lower]}. It reads the struct where it is declared
+and makes each field a port, in the order the struct declares them,
+and the form says what the port is called (issue 580): a side written
+\code{name: S} names its ports \code{name\_field}, so \code{out.diff}
+is the port \code{out\_diff}; a side taken apart names them by the
+field, so \code{minuend} is the port \code{minuend}, since there is
+no side name to carry. A generic struct is read with the side's
+arguments, so \code{DiffIn<W>} has ports of \code{W} bits.
 
 \code{Top} holds a \code{Diff}. Its input side is \code{Sink}, a
 role of the \code{interface!} \code{Operands}. A role is a struct as
@@ -35,8 +39,10 @@ A struct declared in the same file is read from the file.
 \code{\#[lower]} sees one item at a time and reads the file for
 anything else, as it does for the functions it inlines. A struct
 declared anywhere else derives \code{Ports} instead, and the next
-section shows one taken from another crate. A port name that two
-sides both use is refused.
+section shows one taken from another crate; it can only be written
+\code{name: S}, since the macro cannot take apart what it cannot
+see, and its ports are \code{name\_field} by the same rule. A port
+name that two sides both use is refused.
 
 The run offers a minuend every cycle and a subtrahend every other
 cycle, and the sink takes nothing for three cycles. Every difference

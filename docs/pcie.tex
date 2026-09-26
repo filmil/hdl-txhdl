@@ -120,8 +120,9 @@ stands between the two, and holds nothing.
 
 The host's 24 pins are a struct of their own, \code{AxiHostPins},
 which derives \code{Ports}, and the inputs hold them as one field,
-\code{pins}, beside the two channels from the link; the unit's ports
-are \code{pins\_awid} and the rest. A design that has a host's pins
+\code{pins}, beside the two channels from the link, as the side
+\code{inp}; the unit's ports are \code{inp\_pins\_awid} and the rest,
+and its outputs \code{outp\_aw} and the rest. A design that has a host's pins
 among its own ports keeps them as one field too and passes it whole:
 Vreteno's board holds its JTAG master's as \code{jtag}, whose ports
 are \code{jtag\_awid} and the rest, and this design builds the field
