@@ -448,12 +448,8 @@ impl Unit for EthLite {
             let wsel = awh.addr.slice::<2, 2>();
             let waiting = Bit::from(rx.peek().is_some());
             let rxh = rx.head();
-            // The enables as named wires before a bit is taken off
-            // them: VHDL will not index the concatenation itself
-            // (issue 683).
-            let hits = regs_we(Bit::One, wsel);
             // A write to the transmit word waits for the transmitter.
-            let to_tx = hits.bit(1);
+            let to_tx = regs_we(Bit::One, wsel).bit(1);
             let wroom = !to_tx | tx.ready();
             let wgo = bus.b.ready()
                 & Bit::from(bus.aw.peek().is_some())
@@ -464,13 +460,11 @@ impl Unit for EthLite {
             let rgo = bus.r.ready() & Bit::from(bus.ar.peek().is_some());
             let _ = bus.ar.recv_if(bus.r.ready());
             // A read of the receive word takes the byte, if one waits.
-            let re = regs_re(rgo, rsel);
-            let _ = rx.recv_if(re.bit(2));
+            let _ = rx.recv_if(regs_re(rgo, rsel).bit(2));
             let status = regs_status_pack(waiting, tx.ready());
             let received = regs_rxbyte_pack(rxh.data, rxh.last, waiting);
             let word = regs_read(rsel, status, U::<32>::from(0u32), received);
-            let we = regs_we(wgo, wsel);
-            if we.bit(1).to_bool() {
+            if regs_we(wgo, wsel).bit(1).to_bool() {
                 tx.send(EthByte {
                     data: regs_txbyte_data(wh.data),
                     last: regs_txbyte_last(wh.data),
