@@ -12,6 +12,10 @@ the board those wires go nowhere. \code{Tracer<N>} takes a word a
 cycle and keeps the last \code{N} of them in a ring, so that what is
 held is always the most recent window; a host reads the window out
 over AXI-Lite, oldest first.
+Its words, a control word, the count, the cursor and the four words of
+the entry the cursor names, are declared once, with \code{regmap!},
+which writes the word a read answers, the word a write goes to, and
+the offsets the example addresses the buffer by (issue 672).
 
 Freezing is the point of the \code{halt} input. A window that keeps
 filling after the machine stops is a window of whatever happened next,
