@@ -6,12 +6,14 @@
 //! and what attaches to each exit, rather than naming eighty channel
 //! ends by hand. A design that is to be synthesised writes the same
 //! wiring as a unit of units and lets the lowering make the netlist.
-use txhdl::comp::{chan, DefaultClock, Rx, Tx};
+use txhdl::comp::{chan, tie, DefaultClock, In, Rx, Tx};
+use txhdl::types::U;
 
 use super::pkt::Pkt;
 
-/// What a node reads: north, south, west, east and the exit, for the
-/// request channel and then the response channel.
+/// What a node reads: its column and row, held at constants,
+/// then north, south, west, east and the exit, for the request channel
+/// and then the response channel (issue 635).
 pub type Ins<
     const XB: usize,
     const YB: usize,
@@ -20,6 +22,8 @@ pub type Ins<
     const S: usize,
     const I: usize,
 > = (
+    In<U<XB>>,
+    In<U<YB>>,
     Rx<Pkt<XB, YB, A, D, S, I>>,
     Rx<Pkt<XB, YB, A, D, S, I>>,
     Rx<Pkt<XB, YB, A, D, S, I>>,
@@ -155,6 +159,8 @@ pub fn lattice<
         .map(|k| {
             let mut take = |v, p| irx[idx(k, v, p)].take().unwrap();
             (
+                tie(U::<XB>::from(k % w)),
+                tie(U::<YB>::from(k / w)),
                 take(0, 0),
                 take(0, 1),
                 take(0, 2),

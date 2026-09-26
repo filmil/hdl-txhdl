@@ -21,7 +21,7 @@
 //! starved: an input that offered every cycle kept its output, and
 //! the exit, last in the order, moved nothing at all while a link
 //! through the node was busy. That was issue 315.
-use txhdl::comp::{mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, Trace};
 
@@ -107,13 +107,15 @@ fn room(
 }
 
 // begin{state}
-/// A five-port switch at column `X` and row `Y` of a lattice: a
-/// two-way link on each of the four sides it is named for, and a
-/// fifth port, the exit.
+/// A five-port switch of a lattice: a two-way link on each of the four
+/// sides it is named for, and a fifth port, the exit. Its column and
+/// row are two inputs, `col` and `row`, which whoever places it holds
+/// at constants with `tie`, so that every switch of a lattice is one
+/// type (issue 635); synthesis folds the constants in.
 ///
 /// It holds one thing, `turn`: which input the choice starts from.
-/// Where a packet goes is a function of the packet and of `X` and
-/// `Y`, and needs nothing kept; which packet goes, when more than one
+/// Where a packet goes is a function of the packet and of `col` and
+/// `row`, and needs nothing kept; which packet goes, when more than one
 /// could, is the round robin that `turn` carries, and that is the
 /// whole of the switch's state (issue 315).
 ///
@@ -124,8 +126,6 @@ fn room(
 /// by `1 << YB` nodes at most.
 #[derive(Trace, Default)]
 pub struct Switch<
-    const X: usize,
-    const Y: usize,
     const XB: usize,
     const YB: usize,
     const A: usize,
@@ -143,19 +143,19 @@ pub struct Switch<
 // begin{run}
 #[lower]
 impl<
-        const X: usize,
-        const Y: usize,
         const XB: usize,
         const YB: usize,
         const A: usize,
         const D: usize,
         const S: usize,
         const I: usize,
-    > Unit for Switch<X, Y, XB, YB, A, D, S, I>
+    > Unit for Switch<XB, YB, A, D, S, I>
 {
     async fn run(
         &mut self,
-        (n_in, s_in, w_in, e_in, x_in): (
+        (col, row, n_in, s_in, w_in, e_in, x_in): (
+            In<U<XB>>,
+            In<U<YB>>,
             Rx<Pkt<XB, YB, A, D, S, I>>,
             Rx<Pkt<XB, YB, A, D, S, I>>,
             Rx<Pkt<XB, YB, A, D, S, I>>,
@@ -172,8 +172,8 @@ impl<
     ) {
         loop {
             DefaultClock::rising().await;
-            let cx = U::<CW>::from(X as u32);
-            let cy = U::<CW>::from(Y as u32);
+            let cx = col.get().resize::<CW>();
+            let cy = row.get().resize::<CW>();
             let (re, rw, rs, rn, rx) = (
                 e_out.ready(),
                 w_out.ready(),

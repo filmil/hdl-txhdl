@@ -11,15 +11,17 @@
 //! else: a named type for a side, or a tuple of tuples, is refused.
 //! The naming is `q` for the request channel and `p` for the
 //! response, then the port, then `i` or `o`.
-use txhdl::comp::{join2, Rx, Tx, Unit};
+use txhdl::comp::{join2, In, Rx, Tx, Unit};
+use txhdl::types::U;
 use txhdl::{lower, Trace};
 
 use super::pkt::Pkt;
 use super::switch::Switch;
 
 // begin{state}
-/// A node of the lattice at `X`, `Y`: the request switch and the
-/// response switch, each with its four links and its exit.
+/// A node of the lattice: the request switch and the response switch,
+/// each with its four links and its exit, both at the column and row
+/// its inputs `col` and `row` say (issue 635).
 ///
 /// The widths are the AXI link's, and they are the same everywhere in
 /// the network: `A` is the address width, `D` the data width, `S` the
@@ -28,8 +30,6 @@ use super::switch::Switch;
 /// by `1 << YB` nodes at most.
 #[derive(Trace, Default)]
 pub struct Node<
-    const X: usize,
-    const Y: usize,
     const XB: usize,
     const YB: usize,
     const A: usize,
@@ -38,29 +38,29 @@ pub struct Node<
     const I: usize,
 > {
     /// What a host sends and a peripheral receives.
-    pub req: Switch<X, Y, XB, YB, A, D, S, I>,
+    pub req: Switch<XB, YB, A, D, S, I>,
     /// What a peripheral sends and a host receives.
-    pub rsp: Switch<X, Y, XB, YB, A, D, S, I>,
+    pub rsp: Switch<XB, YB, A, D, S, I>,
 }
 // end{state}
 
 // begin{run}
 #[lower]
 impl<
-        const X: usize,
-        const Y: usize,
         const XB: usize,
         const YB: usize,
         const A: usize,
         const D: usize,
         const S: usize,
         const I: usize,
-    > Unit for Node<X, Y, XB, YB, A, D, S, I>
+    > Unit for Node<XB, YB, A, D, S, I>
 {
     #[allow(clippy::type_complexity)]
     async fn run(
         &mut self,
-        (qni, qsi, qwi, qei, qxi, pni, psi, pwi, pei, pxi): (
+        (col, row, qni, qsi, qwi, qei, qxi, pni, psi, pwi, pei, pxi): (
+            In<U<XB>>,
+            In<U<YB>>,
             Rx<Pkt<XB, YB, A, D, S, I>>,
             Rx<Pkt<XB, YB, A, D, S, I>>,
             Rx<Pkt<XB, YB, A, D, S, I>>,
@@ -85,11 +85,18 @@ impl<
             Tx<Pkt<XB, YB, A, D, S, I>>,
         ),
     ) {
+        // Both switches are at the node's place.
+        let col2 = col.clone();
+        let row2 = row.clone();
         join2(
-            self.req
-                .run((qni, qsi, qwi, qei, qxi), (qno, qso, qwo, qeo, qxo)),
-            self.rsp
-                .run((pni, psi, pwi, pei, pxi), (pno, pso, pwo, peo, pxo)),
+            self.req.run(
+                (col, row, qni, qsi, qwi, qei, qxi),
+                (qno, qso, qwo, qeo, qxo),
+            ),
+            self.rsp.run(
+                (col2, row2, pni, psi, pwi, pei, pxi),
+                (pno, pso, pwo, peo, pxo),
+            ),
         )
         .await;
     }

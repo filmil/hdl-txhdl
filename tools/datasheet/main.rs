@@ -479,13 +479,13 @@ fn main() {
     );
     sheet(
         "Switch",
-        "Switch<0, 0, 2, 2, 32, 32, 4, 2>",
-        Switch::<0, 0, 2, 2, 32, 32, 4, 2>::lowered("switch"),
+        "Switch<2, 2, 32, 32, 4, 2>",
+        Switch::<2, 2, 32, 32, 4, 2>::lowered("switch"),
     );
     sheet(
         "Node",
-        "Node<0, 0, 2, 2, 32, 32, 4, 2>",
-        Node::<0, 0, 2, 2, 32, 32, 4, 2>::lowered("node"),
+        "Node<2, 2, 32, 32, 4, 2>",
+        Node::<2, 2, 32, 32, 4, 2>::lowered("node"),
     );
     sheet(
         "HostBridge",

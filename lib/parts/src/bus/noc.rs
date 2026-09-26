@@ -83,10 +83,10 @@ mod tests {
     fn a_burst_crosses_the_lattice_and_its_answer_comes_back() {
         let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
         // The four nodes, row major: (0,0), (1,0), (0,1), (1,1).
-        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
-        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
-        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
-        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+        let mut n00 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<XB, YB, A, D, S, I>::default();
 
         // The host's corner: its link, its tracker and the bridge.
         let Link {
@@ -184,10 +184,10 @@ mod tests {
     #[test]
     fn a_read_of_four_beats_crosses_the_lattice() {
         let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
-        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
-        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
-        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
-        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+        let mut n00 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<XB, YB, A, D, S, I>::default();
 
         let Link {
             host,
@@ -285,10 +285,10 @@ mod tests {
     #[test]
     fn a_write_of_two_beats_crosses_the_lattice_as_two_writes() {
         let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
-        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
-        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
-        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
-        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+        let mut n00 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<XB, YB, A, D, S, I>::default();
 
         let Link {
             host,
@@ -379,10 +379,10 @@ mod tests {
     #[test]
     fn a_wrapping_write_is_refused_and_the_one_after_it_is_served() {
         let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
-        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
-        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
-        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
-        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+        let mut n00 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<XB, YB, A, D, S, I>::default();
 
         let Link {
             host,
@@ -479,10 +479,10 @@ mod tests {
     #[test]
     fn two_hosts_share_a_memory_and_each_answer_goes_home() {
         let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
-        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
-        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
-        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
-        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+        let mut n00 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<XB, YB, A, D, S, I>::default();
         let nodes = join_all(vec![
             Box::pin(n00.run(net.ins.remove(0), net.outs.remove(0)))
                 as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
@@ -658,10 +658,10 @@ mod tests {
             std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>>;
 
         let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
-        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
-        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
-        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
-        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+        let mut n00 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<XB, YB, A, D, S, I>::default();
         let nodes = join_all(vec![
             Box::pin(n00.run(net.ins.remove(0), net.outs.remove(0)))
                 as Boxed<'_>,
@@ -858,7 +858,7 @@ mod tests {
         use super::pkt::{Chan, Pkt};
         use super::switch::Switch;
         use txhdl::types::Bit;
-        let mut sw = Switch::<0, 0, XB, YB, A, D, S, I>::default();
+        let mut sw = Switch::<XB, YB, A, D, S, I>::default();
         // Five inputs and five outputs, as the switch takes them.
         let (n_tx, n_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
         let (s_tx, s_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
@@ -885,7 +885,15 @@ mod tests {
         };
         let _ = (s_tx, w_tx, e_tx);
         let mut sim = Running::new(sw.run(
-            (n_rx, s_rx, w_rx, e_rx, x_rx),
+            (
+                txhdl::comp::tie(U::<XB>::from(0u8)),
+                txhdl::comp::tie(U::<YB>::from(0u8)),
+                n_rx,
+                s_rx,
+                w_rx,
+                e_rx,
+                x_rx,
+            ),
             (no_tx, so_tx, wo_tx, eo_tx, xo_tx),
         ));
         let mut seen: Vec<u32> = Vec::new();
@@ -942,7 +950,7 @@ mod tests {
         use super::pkt::{Chan, Pkt};
         use super::switch::Switch;
         use txhdl::types::Bit;
-        let mut sw = Switch::<0, 0, XB, YB, A, D, S, I>::default();
+        let mut sw = Switch::<XB, YB, A, D, S, I>::default();
         let (n_tx, n_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
         let (s_tx, s_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
         let (w_tx, w_rx) = chan::<Pkt<XB, YB, A, D, S, I>, DefaultClock>();
@@ -965,7 +973,15 @@ mod tests {
         };
         let _ = (w_tx, e_tx, x_tx);
         let mut sim = Running::new(sw.run(
-            (n_rx, s_rx, w_rx, e_rx, x_rx),
+            (
+                txhdl::comp::tie(U::<XB>::from(0u8)),
+                txhdl::comp::tie(U::<YB>::from(0u8)),
+                n_rx,
+                s_rx,
+                w_rx,
+                e_rx,
+                x_rx,
+            ),
             (no_tx, so_tx, wo_tx, eo_tx, xo_tx),
         ));
         // Forty cycles with both offering always, then forty with the
@@ -1021,10 +1037,10 @@ mod tests {
     #[test]
     fn a_fixed_write_lands_every_beat_on_one_word() {
         let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
-        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
-        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
-        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
-        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+        let mut n00 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<XB, YB, A, D, S, I>::default();
 
         let Link {
             host,
@@ -1115,10 +1131,10 @@ mod tests {
     #[test]
     fn two_hosts_write_sixteen_beats_at_once_and_every_word_lands() {
         let mut net = lattice::<XB, YB, A, D, S, I>(2, 2);
-        let mut n00 = Node::<0, 0, XB, YB, A, D, S, I>::default();
-        let mut n10 = Node::<1, 0, XB, YB, A, D, S, I>::default();
-        let mut n01 = Node::<0, 1, XB, YB, A, D, S, I>::default();
-        let mut n11 = Node::<1, 1, XB, YB, A, D, S, I>::default();
+        let mut n00 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n10 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n01 = Node::<XB, YB, A, D, S, I>::default();
+        let mut n11 = Node::<XB, YB, A, D, S, I>::default();
         let nodes = join_all(vec![
             Box::pin(n00.run(net.ins.remove(0), net.outs.remove(0)))
                 as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
