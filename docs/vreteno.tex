@@ -1468,7 +1468,8 @@ it.}
 The peripherals that declare their registers with \code{regmap!} are
 listed by the same tool, each from the base the maps above give it:
 the timer in Table~\ref{tab:v-timer}, the serial port in
-Table~\ref{tab:v-uart}, and the entropy source in
+Table~\ref{tab:v-uart}, the Ethernet port's registers in
+Table~\ref{tab:v-ethslots}, and the entropy source in
 Table~\ref{tab:v-trng}. The page's other peripherals do not declare
 theirs yet, and a table joins these when one does.
 
@@ -1482,6 +1483,12 @@ theirs yet, and a table joins these when one does.
 \caption{The serial port's registers.}
 \label{tab:v-uart}
 \mmget{regs}{uart}
+\end{table}
+
+\begin{table}[htbp]
+\caption{The Ethernet port's registers.}
+\label{tab:v-ethslots}
+\mmget{regs}{ethslots}
 \end{table}
 
 \begin{table}[htbp]
