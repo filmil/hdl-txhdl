@@ -181,9 +181,8 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             // Writing a one to a pending bit clears it, which is what
             // `RW1C` means and what every Zephyr driver does to
             // acknowledge.
-            // The write enables as a named wire before a bit is taken
-            // off them: VHDL will not index the concatenation itself
-            // (issue 683).
+            // The write enables, a bit a register, which seven of the
+            // updates below take a bit off.
             let we = regs_we(wgo, wsel);
             let rx_ack = we.bit(2) & regs_rx_ev_pending_pending(data);
             let tx_ack = we.bit(8) & regs_tx_ev_pending_pending(data);
