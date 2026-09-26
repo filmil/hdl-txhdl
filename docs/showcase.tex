@@ -72,9 +72,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 67\,357 lines of Rust: 17\,189 of runtime
-and macros, 18\,892 of parts, 14\,343 in a hundred and three examples, 13\,878 of
-Vreteno with its board, and 3\,055 of Razboj, DDR3, Ethernet, HDMI,
+Together they are 67\,937 lines of Rust: 16\,979 of runtime
+and macros, 19\,361 of parts, 14\,500 in a hundred and three examples, 14\,033 of
+Vreteno with its board, and 3\,064 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -390,7 +390,7 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs three hundred and forty-eight
+its ports. \code{bazel test //...} runs three hundred and forty-nine
 targets, of which two hundred and two are netlists under both
 simulators; the rest are the core's model and programs, the board's
 own run, Razboj, the parts, the SoC's run, ten proofs, the width of
