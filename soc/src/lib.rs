@@ -132,10 +132,10 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
 
     // The lattice, and the four nodes on it, row major.
     let mut net = lattice::<XB, YB, 32, 32, 4, IW>(2, 2);
-    let mut n00 = Node::<0, 0, XB, YB, 32, 32, 4, IW>::default();
-    let mut n10 = Node::<1, 0, XB, YB, 32, 32, 4, IW>::default();
-    let mut n01 = Node::<0, 1, XB, YB, 32, 32, 4, IW>::default();
-    let mut n11 = Node::<1, 1, XB, YB, 32, 32, 4, IW>::default();
+    let mut n00 = Node::<XB, YB, 32, 32, 4, IW>::default();
+    let mut n10 = Node::<XB, YB, 32, 32, 4, IW>::default();
+    let mut n01 = Node::<XB, YB, 32, 32, 4, IW>::default();
+    let mut n11 = Node::<XB, YB, 32, 32, 4, IW>::default();
     let e00 = net.exits.remove(0);
     let e10 = net.exits.remove(0);
     let e01 = net.exits.remove(0);
