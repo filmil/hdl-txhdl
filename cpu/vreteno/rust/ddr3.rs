@@ -37,7 +37,8 @@ const UART: *mut u32 = 0x3000 as *mut u32;
 /// which is the boot memory, and restarted the loader. The dots that
 /// exist to show the core is alive were what stopped it.
 #[cfg(board_run)]
-const MTIME: *mut u32 = 0x0200_bff8 as *mut u32;
+const MTIME: *mut u32 =
+    (0x0200_0000 + vreteno_regs::timer::MTIME_LO) as *mut u32;
 /// Ten seconds of the board's 100 MHz clock.
 #[cfg(board_run)]
 const TEN_SECONDS: u32 = 1_000_000_000;
@@ -52,8 +53,11 @@ const STRIDE: usize = 1 << 24;
 
 fn put(byte: u8) {
     unsafe {
-        while UART.add(1).read_volatile() & 1 != 0 {}
-        write_volatile(UART, byte as u32);
+        while UART.add(vreteno_regs::uart::STATUS / 4).read_volatile()
+            & vreteno_regs::uart::STATUS_BUSY_MASK
+            != 0
+        {}
+        write_volatile(UART.add(vreteno_regs::uart::TX / 4), byte as u32);
     }
 }
 

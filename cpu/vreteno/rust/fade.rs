@@ -26,7 +26,8 @@ use core::ptr::{read_volatile, write_volatile};
 /// The serial port, as `hello.rs` has it.
 const UART: *mut u32 = 0x3000 as *mut u32;
 /// The timer's count, low half, one a cycle from the reset.
-const MTIME: *mut u32 = 0x0200_bff8 as *mut u32;
+const MTIME: *mut u32 =
+    (0x0200_0000 + vreteno_regs::timer::MTIME_LO) as *mut u32;
 /// The modulator, on the same page as the serial port.
 const PWM: *mut u32 = 0x3100 as *mut u32;
 /// Its registers, as words from that base.
@@ -43,8 +44,11 @@ const STEP_CYCLES: u32 = 400_000;
 
 fn put(byte: u8) {
     unsafe {
-        while UART.add(1).read_volatile() & 1 != 0 {}
-        write_volatile(UART, byte as u32);
+        while UART.add(vreteno_regs::uart::STATUS / 4).read_volatile()
+            & vreteno_regs::uart::STATUS_BUSY_MASK
+            != 0
+        {}
+        write_volatile(UART.add(vreteno_regs::uart::TX / 4), byte as u32);
     }
 }
 

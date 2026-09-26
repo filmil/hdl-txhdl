@@ -18,18 +18,20 @@
 
 use core::ptr::{read_volatile, write_volatile};
 use vreteno_hal::{entry, halt, map, Uart};
+use vreteno_regs::trng;
 
-/// The source's four words.
+/// The source's four words, as word indices from its base, and its
+/// bits, all as its map declares them (issue 709).
 const TRNG: *mut u32 = map::TRNG as *mut u32;
-const DATA: usize = 0;
-const STATUS: usize = 1;
-const CTRL: usize = 2;
+const DATA: usize = trng::DATA / 4;
+const STATUS: usize = trng::STATUS / 4;
+const CTRL: usize = trng::CTRL / 4;
 #[cfg(board_run)]
-const RAW: usize = 3;
+const RAW: usize = trng::RAW / 4;
 
-const STATUS_READY: u32 = 1;
-const STATUS_FAULT: u32 = 1 << 8;
-const CTRL_RUN: u32 = 1;
+const STATUS_READY: u32 = trng::STATUS_READY_MASK;
+const STATUS_FAULT: u32 = trng::STATUS_FAULT_MASK;
+const CTRL_RUN: u32 = trng::CTRL_RUN_MASK;
 
 entry!(main);
 

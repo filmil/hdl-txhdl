@@ -65,10 +65,10 @@ use core::ptr::write_volatile;
 /// The serial port, as `hello.rs` has it: the data word, then the
 /// status, whose bit 0 is busy sending and bit 1 a byte waiting.
 const UART: *mut u32 = 0x3000 as *mut u32;
-const UART_STATUS: usize = 1;
-const UART_RX: usize = 2;
-const TX_BUSY: u32 = 1;
-const RX_READY: u32 = 2;
+const UART_STATUS: usize = vreteno_regs::uart::STATUS / 4;
+const UART_RX: usize = vreteno_regs::uart::RX / 4;
+const TX_BUSY: u32 = vreteno_regs::uart::STATUS_BUSY_MASK;
+const RX_READY: u32 = vreteno_regs::uart::STATUS_READY_MASK;
 
 /// `TXLD`, least significant byte first.
 const MAGIC: u32 = 0x444c_5854;
@@ -94,7 +94,7 @@ const ACK: u8 = b'K';
 fn put(byte: u8) {
     unsafe {
         while UART.add(UART_STATUS).read_volatile() & TX_BUSY != 0 {}
-        write_volatile(UART, byte as u32);
+        write_volatile(UART.add(vreteno_regs::uart::TX / 4), byte as u32);
     }
 }
 

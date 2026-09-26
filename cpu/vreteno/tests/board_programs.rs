@@ -27,16 +27,47 @@ const DDR3: &str = include_str!("../rust/ddr3.rs");
 const FADE: &str = include_str!("../rust/fade.rs");
 const ICO_HDMI: &str = include_str!("../rust/ico_hdmi.rs");
 
-/// The value of a `const NAME: *mut u32 = 0x...` in a program.
+/// A register's byte offset, as `vreteno_regs::<map>::<REG>` names it
+/// in a program: the map the peripheral declares with `regmap!`, which
+/// is where the generated crate takes it from (issue 709).
+fn reg_offset(map: &str, reg: &str) -> u32 {
+    let m = match map {
+        "timer" => &vreteno32::timer::clint::MAP,
+        "uart" => &vreteno32::uart::serial::MAP,
+        _ => panic!("no map `{map}` here"),
+    };
+    m.regs
+        .iter()
+        .find(|r| r.name.to_uppercase() == reg)
+        .unwrap_or_else(|| panic!("the map `{map}` has no `{reg}`"))
+        .offset()
+}
+
+/// The value of a `const NAME: *mut u32 = ...` in a program: a hex
+/// address, or a sum of them and registers of the maps, as
+/// `(0x0200_0000 + vreteno_regs::timer::MTIME_LO) as *mut u32`.
 fn addr_of(src: &str, name: &str) -> u32 {
-    let pat = format!("const {name}: *mut u32 = ");
+    let pat = format!("const {name}: *mut u32 =");
     let at = src
         .find(&pat)
         .unwrap_or_else(|| panic!("no `{name}` in the program"));
     let tail = &src[at + pat.len()..];
-    let end = tail.find(' ').expect("a constant that never ends");
-    let text = tail[..end].trim_start_matches("0x").replace('_', "");
-    u32::from_str_radix(&text, 16).expect("an address that is not a number")
+    let end = tail.find(';').expect("a constant that never ends");
+    let expr = tail[..end].replace(" as *mut u32", "");
+    expr.split('+')
+        .map(|t| t.trim().trim_matches(|c| c == '(' || c == ')').trim())
+        .map(|t| match t.strip_prefix("vreteno_regs::") {
+            Some(path) => {
+                let (map, reg) = path.split_once("::").expect("map::REG");
+                reg_offset(map, reg)
+            }
+            None => {
+                let hex = t.trim_start_matches("0x").replace('_', "");
+                u32::from_str_radix(&hex, 16)
+                    .unwrap_or_else(|_| panic!("`{t}` is not an address"))
+            }
+        })
+        .sum()
 }
 
 /// Which port of the board decodes an address, if any, by its name.

@@ -107,8 +107,11 @@ static FC: [u8; NF] = [
 /// Send one byte, once the port is free to take it.
 fn put(byte: u8) {
     unsafe {
-        while UART.add(1).read_volatile() & 1 != 0 {}
-        write_volatile(UART, byte as u32);
+        while UART.add(vreteno_regs::uart::STATUS / 4).read_volatile()
+            & vreteno_regs::uart::STATUS_BUSY_MASK
+            != 0
+        {}
+        write_volatile(UART.add(vreteno_regs::uart::TX / 4), byte as u32);
     }
 }
 

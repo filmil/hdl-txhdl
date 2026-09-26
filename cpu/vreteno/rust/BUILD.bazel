@@ -81,6 +81,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
 vreteno_image(
@@ -106,6 +107,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
 vreteno_image(
@@ -131,6 +133,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
 vreteno_image(
@@ -179,7 +182,10 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
-    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+    ],
 )
 
 vreteno_image(
@@ -206,6 +212,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS + ["--cfg=board_run"],
     tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
 vreteno_image(
@@ -231,6 +238,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
 vreteno_image(
@@ -278,7 +286,10 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + ["--cfg=board_run"],
     tags = ["manual"],
-    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+    ],
 )
 
 vreteno_flat(
@@ -299,7 +310,10 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
-    deps = ["//lib/logo:txhdl_logo"],
+    deps = [
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+        "//lib/logo:txhdl_logo",
+    ],
 )
 
 vreteno_flat(
@@ -336,6 +350,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
 vreteno_image(

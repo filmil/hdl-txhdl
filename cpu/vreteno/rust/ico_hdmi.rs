@@ -73,6 +73,7 @@
 
 use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
+use vreteno_regs::uart;
 
 /// The serial port, as `hello.rs` has it.
 const UART: *mut u32 = 0x3000 as *mut u32;
@@ -171,8 +172,11 @@ fn sqrt(v: i32) -> i32 {
 
 fn put(byte: u8) {
     unsafe {
-        while read_volatile(UART.add(1)) & 1 != 0 {}
-        write_volatile(UART, byte as u32);
+        while read_volatile(UART.add(uart::STATUS / 4))
+            & uart::STATUS_BUSY_MASK
+            != 0
+        {}
+        write_volatile(UART.add(uart::TX / 4), byte as u32);
     }
 }
 
