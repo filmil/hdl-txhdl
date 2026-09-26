@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 zephyr_library()
+
+# The register maps the parts declare, as the headers
+# //tools/regmap writes from them: a driver includes
+# <vreteno/regs/<map>.h> rather than typing the offsets (issue 709).
+zephyr_include_directories(include)
 add_subdirectory(drivers)
 
 # A network build takes its random numbers from the entropy source or

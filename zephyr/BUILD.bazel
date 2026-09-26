@@ -16,6 +16,7 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(":defs.bzl", "zephyr_image")
 
@@ -174,3 +175,29 @@ sh_test(
 
 # The copy-and-jump `boot` ends in, for the core's model to run.
 exports_files(["fastboot/app/src/jump.S"])
+
+# The register headers the drivers include, one per map the parts
+# declare with `regmap!` (issue 709). They are committed, since a
+# reader's `west build` of this module runs no Bazel; the test holds
+# them to the declarations, and the binary writes them again.
+sh_test(
+    name = "regs_test",
+    srcs = ["regs_test.sh"],
+    args = [
+        "$(rootpath //tools/regmap)",
+        "zephyr/include/vreteno/regs",
+    ],
+    data = [
+        "//tools/regmap",
+    ] + glob(
+        ["include/vreteno/regs/*.h"],
+        allow_empty = True,
+    ),
+)
+
+sh_binary(
+    name = "regs_update",
+    srcs = ["regs_update.sh"],
+    args = ["$(rootpath //tools/regmap)"],
+    data = ["//tools/regmap"],
+)
