@@ -662,10 +662,14 @@ byte takes forty cycles rather than nine thousand. The two are the
 same unit lowered twice. The line in goes through one register
 before the logic, as a pin's should. The port's pieces, whether an
 address is its own, the frame a byte goes out as, the frame after a
-bit, a bit's last cycle and middle, a bit taken in and the word a
-load reads, are functions under \code{\#[lower]}, inlined where the
-step calls them, so the step is the two sides' drives; the examples
-document~\cite{examples} states the form. The run and the lockstep
+bit, a bit's last cycle and middle and a bit taken in, are functions
+under \code{\#[lower]}, inlined where the step calls them, so the step
+is the two sides' drives; the examples document~\cite{examples}
+states the form. Its three words are declared once, with
+\code{regmap!}, the third as a register the read takes, and the
+macro writes the word a load reads, which word a write goes to,
+when a read takes a byte, and the offsets the Zephyr driver is held
+to (issue 669). The run and the lockstep
 test put a terminal on the two lines, \code{term.rs}: it decodes
 what the core sends, and once the core has said a line it types
 three bytes back, a pause between them for the program to take
