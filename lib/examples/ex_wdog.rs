@@ -29,7 +29,7 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Reply, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::wdog::{
-    Wdog, CTRL_ENABLE, CTRL_LOCK, CTRL_WARN, CTRL_WINDOW, STATUS_FAILED,
+    regs, Wdog, CTRL_ENABLE, CTRL_LOCK, CTRL_WARN, CTRL_WINDOW, STATUS_FAILED,
     STATUS_WARNED,
 };
 
@@ -53,13 +53,14 @@ const KEY: usize = 0x5744_4f47;
 
 type Block = Wdog<KEY>;
 
-/// The watchdog's words.
-const R_CTRL: u32 = 0x1000;
-const R_LOAD: u32 = 0x1004;
-const R_COUNT: u32 = 0x1008;
-const R_FEED: u32 = 0x100c;
-const R_STATUS: u32 = 0x1010;
-const R_SILL: u32 = 0x1014;
+/// The watchdog's words: its base, and the offsets its map states.
+const BASE: u32 = 0x1000;
+const R_CTRL: u32 = BASE + regs::ctrl;
+const R_LOAD: u32 = BASE + regs::load;
+const R_COUNT: u32 = BASE + regs::count;
+const R_FEED: u32 = BASE + regs::feed;
+const R_STATUS: u32 = BASE + regs::status;
+const R_SILL: u32 = BASE + regs::sill;
 
 /// The client that drives the watchdog.
 type Client = Host<32, 32, 4, 2, 4>;
