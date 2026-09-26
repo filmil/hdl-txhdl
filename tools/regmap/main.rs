@@ -23,6 +23,7 @@ use txhdl::regmap::RegMap;
 fn maps() -> Vec<(&'static str, &'static RegMap)> {
     vec![
         ("eth", &txhdl_parts::eth::regs::MAP),
+        ("ethslots", &txhdl_parts::ethslots::regs::MAP),
         ("gpio", &txhdl_parts::gpio::regs::MAP),
         ("sd", &txhdl_parts::sd::regs::MAP),
         ("timer", &vreteno32::timer::clint::MAP),
