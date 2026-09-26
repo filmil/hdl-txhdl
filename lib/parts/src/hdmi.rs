@@ -22,7 +22,7 @@ use txhdl::comp::{
     join2, mux, until, Clock, DefaultClock, In, Mem, Out, Reg, Unit,
 };
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, with, Trace};
+use txhdl::{lower, regmap, select, with, Trace};
 
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
@@ -107,21 +107,32 @@ fn wide(c: U<4>) -> U<8> {
 }
 // end{fns}
 
+// begin{regs}
+// The video peripheral's AXI-Lite words.
+regmap! { regs (regs_read, regs_we), 2: [
+    (0, status, ro, "the raster and the frames shown", [
+        (blank, 0, 1, ro, 0, "high in vertical blanking"),
+        (frames, 16, 16, ro, 0, "frames shown, wrapping"),
+    ]),
+    (1, cursor, rw, "where the next pixel written goes", [
+        (col, 0, 8, rw, 0, "the column"),
+        (row, 8, 7, rw, 0, "the row"),
+    ]),
+    (2, pixel, wo, "a pixel at the cursor, which then moves on", [
+        (colour, 0, 12, wo, 0, "four bits each of red, green and blue"),
+    ]),
+] }
+// end{regs}
+
 /// The video peripheral. A framebuffer pixel is 12 bits, four each of
 /// red, green and blue from the top, and covers `1 << SHIFT` by
 /// `1 << SHIFT` pixels of the screen.
 ///
-/// Its AXI-Lite words:
-///
-/// * Word 0, status, read: bit 0 high in vertical blanking, bits 31 to
-///   16 the count of frames shown.
-/// * Word 1, cursor, read and write: the column in bits 7 to 0 and the
-///   row in bits 14 to 8.
-/// * Word 2, pixel, write: the colour in bits 11 to 0 goes into the
-///   framebuffer at the cursor, and the cursor moves to the next
-///   column, and from the last column to the first of the next row, and
-///   from the last row to the first. A fixed burst to this word paints
-///   a run of pixels.
+/// Its AXI-Lite words are `regs`. A write to `pixel` puts the colour
+/// into the framebuffer at the cursor, and the cursor moves to the
+/// next column, and from the last column to the first of the next row,
+/// and from the last row to the first; a fixed burst to it paints a run
+/// of pixels.
 ///
 /// The chip's inputs are registers: the pixel read at the edge from the
 /// framebuffer, and the syncs and the enable delayed to meet it.
@@ -218,22 +229,18 @@ impl<
             let cx = self.cx.get();
             let cy = self.cy.get();
             let cursor = cy.concat::<_, 15>(cx);
-            let put = wgo & (wsel == 2);
-            let place = wgo & (wsel == 1);
+            // The write enables as a named wire before a bit is taken
+            // off them: VHDL will not index the concatenation itself
+            // (issue 683).
+            let we = regs_we(wgo, wsel);
+            let put = we.bit(2);
+            let place = we.bit(1);
             let row_done = last_col::<HV, SHIFT>(cx);
             let rows_done = last_row::<VV, SHIFT>(cy);
             let blank = Bit::from(!visible::<VV>(vc));
-            let status = self
-                .frames
-                .get()
-                .concat::<_, 31>(U::<15>::from(0u8))
-                .concat::<_, 32>(blank.zext::<1>());
-            let where_at = U::<17>::from(0u8).concat::<_, 32>(cursor);
-            let word = select!(rsel.raw() => {
-                0 => status,
-                1 => where_at,
-                _ => U::<32>::from(0u8),
-            });
+            let status = regs_status_pack(blank, self.frames.get());
+            let where_at = regs_cursor_pack(cx, cy);
+            let word = regs_read(rsel, status, where_at, U::<32>::from(0u8));
             with!(self <= {
                 hc: mux(h_last, U::<12>::from(0u8), hc + 1),
                 h_last ? vc: mux(v_last, U::<12>::from(0u8), vc + 1),
@@ -242,7 +249,7 @@ impl<
                 hs_q: Bit::from(!hs_on),
                 vs_q: Bit::from(!vs_on),
                 de_q: Bit::from(shown),
-                put ? fb.at(cursor): written.slice::<0, 12>(),
+                put ? fb.at(cursor): regs_pixel_colour(written),
                 put ? {
                     cx: mux(row_done, U::<8>::from(0u8), cx + 1),
                     cy: mux(
@@ -252,8 +259,8 @@ impl<
                     ),
                 },
                 place ? {
-                    cx: written.slice::<0, 8>(),
-                    cy: written.slice::<8, 7>(),
+                    cx: regs_cursor_col(written),
+                    cy: regs_cursor_row(written),
                 },
             });
             if rgo.to_bool() {
