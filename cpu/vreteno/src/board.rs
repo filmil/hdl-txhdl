@@ -101,6 +101,15 @@ impl AddrMap<7> for BoardMap {
         (0x0000_0000, 0xffff_f000),
         (0x1000_0000, 0xffff_0000),
     ];
+    const NAMES: [&'static str; 7] = [
+        "the data memory",
+        "the timer and the software interrupt",
+        "the peripheral page, behind an AXI-Lite bridge",
+        "the DDR3 memory",
+        "the platform-level interrupt controller",
+        "the boot memory, read only",
+        "the debug module",
+    ];
 }
 
 pub type BoardRouter = Router<7, BoardMap, 32, 32, 4, 4>;
@@ -119,6 +128,14 @@ impl AddrMap<6> for SlotMap {
         (0x3300, 0xffff_ff00),
         (0x3400, 0xffff_ff00),
         (0x3500, 0xffff_ff00),
+    ];
+    const NAMES: [&'static str; 6] = [
+        "the serial port",
+        "the pulse width modulator",
+        "the third slot, brought out of the unit",
+        "the remote peripheral",
+        "the Ethernet port's registers",
+        "the entropy source",
     ];
 }
 
