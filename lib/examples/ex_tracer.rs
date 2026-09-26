@@ -25,7 +25,7 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
-use txhdl_parts::tracer::{word, Tracer, CTRL_FREEZE, CTRL_RUN};
+use txhdl_parts::tracer::{regs, word, Tracer, CTRL_FREEZE, CTRL_RUN};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
@@ -47,9 +47,9 @@ type Ring = Tracer<8>;
 
 /// The peripheral's words, as the host addresses them.
 const BASE: u32 = 0x1000;
-const CTRL: u32 = BASE;
-const COUNT: u32 = BASE + 4;
-const CURSOR: u32 = BASE + 8;
+const CTRL: u32 = BASE + regs::ctrl;
+const COUNT: u32 = BASE + regs::count;
+const CURSOR: u32 = BASE + regs::cursor;
 
 fn main() {
     let Link {
