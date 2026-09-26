@@ -22,6 +22,7 @@ fn maps() -> Vec<(&'static str, &'static RegMap)> {
         ("eth", &txhdl_parts::eth::regs::MAP),
         ("gpio", &txhdl_parts::gpio::regs::MAP),
         ("sd", &txhdl_parts::sd::regs::MAP),
+        ("trng", &txhdl_parts::trng::regs::MAP),
     ]
 }
 
