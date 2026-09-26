@@ -236,12 +236,22 @@ assumption that is too strong proves a check nobody wanted; the
 assumption-removed copy is in the tests for the opposite reason, to
 show that the assumption is doing work.
 
-The netlist puts a unit's statements under the reset's \code{else}
-only when it added the reset port itself. A unit that declares its
-own \code{rst}, as the Vreteno core does, has its checks evaluated
-during reset as well, and its first proof would fail there for no
-real reason; that is issue~633, to be fixed before the core states
-anything.
+The netlist states a unit's statements only while \code{rst} is
+low, whether it added the reset port or the unit declared its own, as
+the Vreteno core does (issue~633). \code{ex\_rstcheck} shows why: a
+counter with its own reset shows a blank while it is held and checks
+that what it shows is a digit. Its netlist proves
+(\code{//docs:rstcheck\_prove\_test}), and a copy with the gate taken
+out, which is what the netlist wrote before, fails its proof and its
+bounded search at the first step, in reset
+(\code{rstcheck\_ungated\_prove\_test} and
+\code{rstcheck\_ungated\_bmc\_test}).
+
+What is still not here is the same rule in the run. The run has no
+reset to gate on, so it checks a statement on every edge it is
+reached, held in reset or not, and a unit that states something of a
+value its reset holds must keep its run's reset low, as
+\code{ex\_rstcheck}'s run does.
 
 The next units to state things are the AXI-Lite peripherals, against
 a protocol checker, and the core itself, against the RISC-V formal
