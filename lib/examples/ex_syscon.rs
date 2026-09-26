@@ -30,7 +30,9 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Reply, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
-use txhdl_parts::syscon::{Syscon, CAUSE_BUTTON, CAUSE_POWER, CAUSE_SOFTWARE};
+use txhdl_parts::syscon::{
+    regs, Syscon, CAUSE_BUTTON, CAUSE_POWER, CAUSE_SOFTWARE,
+};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
@@ -58,14 +60,15 @@ const KEY: usize = 0x5253_5421;
 
 type Block = Syscon<ID, VERSION, STAMP0, STAMP1, KEY>;
 
-/// The block's words.
-const R_ID: u32 = 0x1000;
-const R_VERSION: u32 = 0x1004;
-const R_STAMP0: u32 = 0x1008;
-const R_STAMP1: u32 = 0x100c;
-const R_CAUSE: u32 = 0x1010;
-const R_RESET: u32 = 0x1014;
-const R_SCRATCH: u32 = 0x1018;
+/// The block's words: its base, and the offsets its map states.
+const BASE: u32 = 0x1000;
+const R_ID: u32 = BASE + regs::id;
+const R_VERSION: u32 = BASE + regs::version;
+const R_STAMP0: u32 = BASE + regs::stamp0;
+const R_STAMP1: u32 = BASE + regs::stamp1;
+const R_CAUSE: u32 = BASE + regs::cause;
+const R_RESET: u32 = BASE + regs::reset;
+const R_SCRATCH: u32 = BASE + regs::scratch;
 
 /// The client that drives the block.
 type Client = Host<32, 32, 4, 2, 4>;
