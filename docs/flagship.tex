@@ -6,6 +6,7 @@
 
 \newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
 \input{housestyle}
+\input{memmap}
 
 % The colours of the placement map, one per subsystem, chosen to be
 % told apart in print as well as on a screen. //tools/fpgamap names
@@ -114,14 +115,29 @@ core reaches the peripheral, so a program can paint the screen.
 \section{The third slot}
 \label{sec:f-slot}
 
-The core's router has six ports, one of them the boot memory, read-only
-at address zero, and none to spare. The serial
-port and the pulse width modulator already share the page at
-\code{0x3000} behind an AXI-Lite bridge, each a sixteenth of it, for
-exactly that reason: a peripheral of six registers does not deserve a
-port of its own. The video peripheral is three registers, so it takes a
-third sixteenth, at \code{0x3200}, and the remote peripheral a fourth
-at \code{0x3300}, so the bridge is a \code{LiteBridge<4, ..>}.
+The core's router has seven ports, in Table~\ref{tab:f-map}, one of
+them the boot memory, read-only at address zero, and none to spare.
+The small peripherals share the page at \code{0x3000} behind an
+AXI-Lite bridge, each a sixteenth of it, for exactly that reason: a
+peripheral of six registers does not deserve a port of its own. The
+video peripheral is three registers, so it takes the third sixteenth,
+at \code{0x3200}, among the six in Table~\ref{tab:f-page}. Both tables
+are written by \code{//tools/memmap} from the maps the router and the
+page's bridge decode, so they are the map the bitstream has.
+
+\begin{table}[htbp]
+\caption{The flagship's address map, lowest first, as the core's
+router decodes it.}
+\label{tab:f-map}
+\mmget{board}{flagship}
+\end{table}
+
+\begin{table}[htbp]
+\caption{The peripheral page at \code{0x3000}, as its bridge decodes
+it.}
+\label{tab:f-page}
+\mmget{page}{flagship}
+\end{table}
 
 What is different about the third slot is that it does not reach a
 field of \code{Board}. It leaves the unit as five channel ports:
