@@ -38,6 +38,7 @@ Seventeen documents are typeset here, and `cover.tex` names them all:
 `cheatsheet.tex` is the two-sided cheat sheet, `//docs:cheatsheet` and `//docs:cheatsheet_png` (a PNG per side);
 `tutorial.tex` is the tutorial, `//docs:tutorial`;
 `zero.tex` is the tutorial from an empty directory, `//docs:zero`, on `tutorial/blinky/`;
+`prove.tex` is the tutorial on formal verification, `//docs:prove`, the digit proved, broken and covered;
 `station.tex` is the tutorial on the reservation station, `//docs:station`;
 `axi.tex` is the tutorial on the AXI link, `//docs:axi`, and holds its examples;
 `razboj.tex` is Razboj, the minimal GPU on that link, `//docs:razboj`, with the picture it drew;

@@ -15,7 +15,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and twenty-three documents describe it,
+The language is a library, `//lib`, and twenty-four documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -64,6 +64,15 @@ all under `//docs`:
 * `//docs:zero` is the tutorial for an empty directory: four files
   that build a blinky with Bazel against the GitHub mirror, kept under
   `tutorial/blinky/`, which the tree builds as a check.
+* `//docs:prove` is the tutorial on formal verification: `ex_formal`'s
+  digit proved for every input with SymbiYosys on the pinned Yosys,
+  `abc pdr` inside yosys-abc and no other solver; two broken copies of
+  its netlist that must fail; the bounded search with z3 that finds the
+  cycle a broken check fails in, drawn; and the cover point reached.
+  The rules are `formal_test`, `formal_run` and `formal_trace` in
+  `tools/formal/defs.bzl`; the tools are `//third_party/sby` and
+  `//third_party/z3`. The proofs take a second each, so they run in
+  `bazel test //...` and the document is released with the rest.
 * `//docs:station` is the tutorial on the reservation station part:
   its rule read cycle by cycle on the example's run, the stations of
   two to ten inputs, the FIFO behind them, and the netlist.

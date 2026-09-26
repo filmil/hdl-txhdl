@@ -1,0 +1,272 @@
+% SPDX-License-Identifier: Apache-2.0
+%
+% Formal verification in TxHDL: the tutorial on proving what a unit
+% states about itself. Built by //docs:prove. Every listing is included
+% from the tree and every printout, log and figure is what the build
+% made by running the example and the proofs.
+\documentclass[journal,9pt]{IEEEtran}
+
+\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+\input{housestyle}
+
+\InputIfFileExists{buildstamp.tex}{}{}
+\providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
+
+\title{Formal Verification in TxHDL}
+
+\author{Filip Filmar and Dragiša Janković%
+\thanks{Both authors are independent. Filip Filmar is the
+corresponding author, at f@hdlfactory.com; Dragiša Janković is
+reached at linkedin.com/in/dragisa-jankovic.}%
+\thanks{This is the tutorial on proving what a unit states about
+itself, for a reader who has met TxHDL through the step-by-step
+tutorial~\cite{tutorial} and wants a check to hold for every input
+rather than for one run. Every listing is included from the project
+repository \code{HDL/txhdl} at build time, and every printout, log
+and figure is what the build produced by running the example and the
+proofs. The example is in the examples document~\cite{examples}, and
+the cover~\cite{cover} lists every document.}%
+\thanks{The authors used a large language model, Claude, as an
+assistant in exploring the concepts and in writing and constructing
+the documents and the programs; every commit of the repository says
+so and carries the prompts that led to it, verbatim.}%
+\thanks{\buildstamp}}
+
+\markboth{Formal Verification in TxHDL}{Filmar and Janković: Formal Verification in TxHDL}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A TxHDL unit can state what must hold of it, what it takes for
+granted of its inputs, and what it should be able to reach, with
+\code{check!}, \code{assume!} and \code{cover!}, where it is written.
+The run checks those statements on the one run it makes, and the two
+co-simulations check the netlist against that run. This document
+takes the same statements to a proof: SymbiYosys, on the Yosys the
+build already pins, proves the checks of a decimal digit for every
+input and every reachable state, with no solver beyond the one inside
+yosys-abc; a bounded search with z3 finds the cycle in which a
+broken check fails and draws it; a cover run finds the path to the
+cover point. The proof is a test, \code{bazel test //...} runs it in
+about a second, and a broken copy of the unit fails it, which is what
+makes the passing one worth anything.
+\end{abstract}
+
+\section{Three Ways of Being Right}
+\label{sec:p-three}
+
+Every example in the tree is checked by comparison. The build runs the
+example, records every signal of the run in a trace, lowers the unit
+to VHDL and to Verilog, and replays the trace against both under nvc
+and under Verilator: the netlist must do what the run did, at every
+tick. That catches a lowering that is wrong. It says nothing about a
+design whose Rust is wrong in the same way as its netlist, and it says
+nothing about an input the run did not give.
+
+The second way is to state what must hold where it is written.
+\code{check!(c, "why")} says that \code{c} holds on every edge at
+which the statement is reached; \code{assume!(c, "why")} says what
+the unit takes for granted of its inputs; \code{cover!(c, "why")}
+says that \code{c} can happen. The run stops on a broken check, or on
+an assumption its own inputs break, and counts each cover point. The
+netlist carries the same statements as assertions of the clocked
+process they are in, so both co-simulations check them too. The
+tutorial~\cite{tutorial} and the examples document~\cite{examples}
+say this much.
+
+The third way is the subject of this document. A statement in the
+netlist is a statement about a finite machine, and a formal tool can
+decide it for every input and every state the machine can reach, not
+for the inputs one run happened to give. What follows is one unit,
+its statements, its run, and then its proof, a failure, and a cover,
+each with what the tool wrote.
+
+\section{The Unit}
+\label{sec:p-unit}
+
+\code{ex\_formal} is a decimal digit that counts by the step it is
+given: nought, one or two, wrapping past nine. It states four things.
+The count is always a digit. Under the condition that it wraps, it
+lands on nought or one. Its step is never three, which it does not
+handle: an assumption, since the step is an input. And the count
+reaches nine: a cover point.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={From \code{lib/examples/ex\_formal.rs}: the digit and its four statements.},label={lst:p-unit}]{lib/examples/ex_formal.rs}
+
+The run drives the step through nought, one and two, sixteen times,
+and prints the count after each edge, then how often nine was
+reached, then the Verilog the lowering wrote. Every statement held on
+every edge, and the netlist holds the statements as SystemVerilog
+immediate assertions between \code{`ifdef FORMAL} and \code{`endif},
+inside the reset's \code{else}, under the same conditions the source
+put them under.
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_formal} printed when the build ran it: the run, the cover count, and the netlist the proof reads.},label={lst:p-out}]{out_formal.txt}
+
+\begin{figure*}[t]
+\centering
+\input{formal_timing.tex}
+\caption{The run: the digit counting by its step and wrapping past
+nine. One run, sixteen edges, and the statements held on each of
+them.}
+\label{fig:p-run}
+\end{figure*}
+
+\section{The Proof}
+\label{sec:p-proof}
+
+The proof reads the Verilog of Listing~\ref{lst:p-out} with
+\code{FORMAL} defined, so the assertions are in. SymbiYosys drives
+Yosys through the preparation: \code{read -formal} reads the file with
+the assertions as formal cells, \code{prep} elaborates the module, and
+SymbiYosys's own passes turn the clocked immediate assertions into
+properties of the state machine, which is the step Yosys's plain
+\code{sat} command gets wrong on its own. Then an engine runs.
+
+For the unbounded proof the engine is \code{abc pdr}: property
+directed reachability, inside yosys-abc, which the build already
+pins for the ASIC flow~\cite{cover}. It needs no SMT solver. It finds
+an inductive invariant, a set of states that contains the initial
+state, is closed under every step the assumptions allow, and lies
+inside every check; when it finds one, the checks hold for ever. The
+digit's invariant is three frames deep.
+
+\lstinputlisting[style=ascii,caption={The proof's log, as the build wrote it: both checks proved in frame three, and no trace, since nothing failed.},label={lst:p-proof}]{formal_proof.log}
+
+The two outputs the engine names are the two checks; the assumption
+is the constraint the warning in the full log speaks of, and the
+cover point is not part of a proof.
+
+\section{A Broken Unit}
+\label{sec:p-broken}
+
+A proof that has never failed proves nothing about the tool. So the
+build makes two broken copies of the netlist and proves those too,
+expecting each to fail. One removes the assumption, so a step of
+three is allowed and the count leaves the digits. The other tightens
+the first check from \code{count <= 4'h9} to \code{count <= 4'h8},
+which nine breaks. Here is the tightened one under the same engine.
+
+\lstinputlisting[style=ascii,caption={The tightened check under \code{abc pdr}: a failure, with no trace, since the engine is asked for a verdict and not a path.},label={lst:p-tight}]{formal_tight_proof.log}
+
+A verdict is what a test wants; a reader wants to see the cycle. For
+that the bounded search runs: \code{smtbmc} with z3, twenty steps
+deep, which asks at each step whether some input takes the machine
+from its initial state to a state that breaks a check, and stops at
+the first step where the answer is yes, with the inputs that do it.
+
+\lstinputlisting[style=ascii,caption={The bounded search on the tightened check: assumptions and assertions checked step by step, the failure in step six, and the trace written.},label={lst:p-search}]{formal_tight_search.log}
+
+The trace is a VCD, and the build draws it with the same tools that
+draw a run. Figure~\ref{fig:p-cex} is the counterexample: steps of
+two, two, one, two and two take the count from nought to nine in
+five edges, and at the sixth the tightened check reads nine and
+fails. No run of the example gave those steps; the solver did.
+
+\begin{figure}[htbp]
+\centering
+\input{formal_cex_timing.tex}
+\caption{The counterexample the bounded search found: the steps that
+take the count to nine, where a check of \code{count <= 8} fails.}
+\label{fig:p-cex}
+\end{figure}
+
+\section{The Cover Point}
+\label{sec:p-cover}
+
+A cover run asks the opposite question: not whether a state can be
+reached that breaks a check, but whether one can be reached that
+satisfies the cover point. The same bounded engine answers it, and
+the answer is a path.
+
+\lstinputlisting[style=ascii,caption={The cover run: the count reaching nine in step six, and the trace to it.},label={lst:p-cover}]{formal_covered.log}
+
+\begin{figure}[htbp]
+\centering
+\input{formal_reach_timing.tex}
+\caption{The path to the cover point: four steps of two, one of one,
+and the count is nine.}
+\label{fig:p-reach}
+\end{figure}
+
+\section{The Rule and the Tests}
+\label{sec:p-rule}
+
+All of this is one script and two Bazel macros in
+\code{tools/formal}. \code{formal\_test} runs SymbiYosys on the
+Verilog a \code{waveform()} wrote, in one of three modes, and passes
+only when SymbiYosys exits the way the test expects: nought for a
+pass, two for a failure. Nothing else passes, and in particular an
+UNKNOWN, exit code four, never does; induction at a small depth
+answers UNKNOWN for a real bug, and a rule that took only a failure
+as a failure would pass broken code. \code{formal\_run} is the same
+run as a build step, whose log and trace this document includes, and
+\code{formal\_trace} draws the trace.
+
+\lstinputlisting[rangebeginprefix=\#\ begin\{,rangebeginsuffix=\},rangeendprefix=\#\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=formal-formal,caption={From \code{docs/BUILD.bazel}: the two broken copies, the seven tests, the four runs and the two drawings.},label={lst:p-build}]{BUILD.bazel}
+
+The script is the whole of the mechanism, and it is short enough to
+read. It finds the two Debian trees the build unpacked, Yosys and z3,
+by a file each holds; it wraps Yosys's two Python helpers so that they
+run on the hermetic Python with the tree's modules on their path,
+since the scripts Debian ships name \code{/usr/bin/python3} and
+\code{/usr/share/yosys}, neither of which is where the tree is; it
+writes the \code{.sby} file for the mode asked for; and it compares
+the exit code with the one expected.
+
+\lstinputlisting[style=ascii,caption={\code{tools/formal/formal.sh}, which every proof in the tree runs through.},label={lst:p-script}]{tools/formal/formal.sh}
+
+Nothing is installed. SymbiYosys is fetched from its release tag by
+checksum and installed the way its own Makefile installs it, into
+\code{//third\_party/sby}; \code{click}, the one package it imports
+beyond the standard library, comes from a hashed lock on the
+Python~3.12 toolchain the build already has; z3 is a Debian closure
+under \code{//third\_party/z3}, pinned the way Yosys is; and the
+proof itself needs none of z3, since PDR runs inside yosys-abc. The
+seven tests take about a second each, so they are ordinary tests of
+\code{bazel test //...} rather than manual ones, and this document is
+built and released with the rest.
+
+\section{What Is Not Here}
+\label{sec:p-not}
+
+A proof is of the netlist, under the assumptions the unit states. An
+assumption that is too strong proves a check nobody wanted; the
+assumption-removed copy is in the tests for the opposite reason, to
+show that the assumption is doing work.
+
+The netlist puts a unit's statements under the reset's \code{else}
+only when it added the reset port itself. A unit that declares its
+own \code{rst}, as the Vreteno core does, has its checks evaluated
+during reset as well, and its first proof would fail there for no
+real reason; that is issue~633, to be fixed before the core states
+anything.
+
+The next units to state things are the AXI-Lite peripherals, against
+a protocol checker, and the core itself, against the RISC-V formal
+interface; both are proofs of the same shape as this one, on a
+netlist a few thousand times larger, and neither is in the tree yet.
+
+\begin{thebibliography}{9}
+
+\bibitem{tutorial}
+F.~Filmar and D.~Janković, ``TxHDL, step by step,'' project
+repository \code{HDL/txhdl}, \code{//docs:tutorial}, 2026.
+
+\bibitem{examples}
+F.~Filmar and D.~Janković, ``TxHDL by example,'' project repository
+\code{HDL/txhdl}, \code{//docs:examples}, 2026.
+
+\bibitem{cover}
+F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
+\code{HDL/txhdl}, \code{//docs:cover}, 2026.
+
+\bibitem{sby}
+YosysHQ, ``SymbiYosys (sby), front-end for Yosys-based formal
+verification flows,'' \code{github.com/YosysHQ/sby}, release
+\code{v0.52}, 2025.
+
+\end{thebibliography}
+
+\end{document}

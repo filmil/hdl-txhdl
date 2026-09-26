@@ -3054,6 +3054,31 @@ latex_document(
 # A reservation station in TxHDL: the tutorial on the part, its
 # example's run and waveform included, and the same station in
 # Verilog beside it.
+# The tutorial on formal verification: the digit of ex_formal proved
+# for every input, a broken copy failing with its counterexample, and
+# the cover point reached, every log and trace the build's (issue
+# 581).
+latex_document(
+    name = "prove",
+    main = "prove.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        ":formal_run",
+        ":formal_timing",
+        ":formal_proof",
+        ":formal_tight_proof",
+        ":formal_tight_search",
+        ":formal_covered",
+        ":formal_cex_timing",
+        ":formal_reach_timing",
+        "BUILD.bazel",
+        "//lib/examples:sources",
+        "//tools/formal:formal.sh",
+    ],
+    deps = ["housestyle.tex"],
+)
+
 latex_document(
     name = "station",
     main = "station.tex",
@@ -3078,6 +3103,7 @@ DOCUMENTS = [
     ":cheatsheet",
     ":tutorial",
     ":zero",
+    ":prove",
     ":station",
     ":axi",
     ":razboj",
@@ -3117,6 +3143,7 @@ combined_pdf(
         "TxHDL cheat sheet",
         "TxHDL, Step by Step",
         "TxHDL from Zero: A Blinky in Bazel",
+        "Formal Verification in TxHDL",
         "A Reservation Station in TxHDL",
         "AXI in TxHDL",
         "Razboj: A Minimal GPU in TxHDL",
