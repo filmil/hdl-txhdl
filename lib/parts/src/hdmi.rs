@@ -229,12 +229,8 @@ impl<
             let cx = self.cx.get();
             let cy = self.cy.get();
             let cursor = cy.concat::<_, 15>(cx);
-            // The write enables as a named wire before a bit is taken
-            // off them: VHDL will not index the concatenation itself
-            // (issue 683).
-            let we = regs_we(wgo, wsel);
-            let put = we.bit(2);
-            let place = we.bit(1);
+            let put = regs_we(wgo, wsel).bit(2);
+            let place = regs_we(wgo, wsel).bit(1);
             let row_done = last_col::<HV, SHIFT>(cx);
             let rows_done = last_row::<VV, SHIFT>(cy);
             let blank = Bit::from(!visible::<VV>(vc));
