@@ -607,7 +607,9 @@ fn main() {
     regs("EthSlots", &txhdl_parts::ethslots::regs::MAP);
     regs("Gpio", &txhdl_parts::gpio::regs::MAP);
     regs("Hdmi", &txhdl_parts::hdmi::regs::MAP);
+    regs("I2c", &txhdl_parts::i2c::regs::MAP);
     regs("Pwm", &txhdl_parts::pwm::regs::MAP);
+    regs("Spi", &txhdl_parts::spi::regs::MAP);
     regs("Syscon", &txhdl_parts::syscon::regs::MAP);
     regs("Timer", &vreteno32::timer::clint::MAP);
     regs("Tracer", &txhdl_parts::tracer::regs::MAP);
