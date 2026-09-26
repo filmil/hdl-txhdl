@@ -8,8 +8,10 @@ counts, and software has to keep saying that it is still there.
 
 \code{Wdog} is that counter in six words. A timeout, the count left of
 it, a control word, a status, the window's sill, and the register a
-refresh is written to. When the count reaches zero it asks the system
-control block of Section~\ref{sec:x-syscon} for a reset, which records
+refresh is written to. The six are declared once, with \code{regmap!},
+which writes the word a read answers, the word a write goes to, and
+the offsets the example addresses the watchdog by (issue 670).
+When the count reaches zero it asks the system control block of Section~\ref{sec:x-syscon} for a reset, which records
 the watchdog as the cause, so a program that restarts can read why it
 did.
 
