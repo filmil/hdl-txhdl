@@ -1944,6 +1944,30 @@ waveform(
 )
 
 waveform(
+    name = "mesh",
+    example = "//lib/examples:ex_mesh",
+    lowered = ("mesh", "mesh"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//qx_in_0/rx_valid=>qin_0",
+        "//qx_in_1/rx_valid=>qin_1",
+        "//qx_in_2/rx_valid=>qin_2",
+        "//qx_in_3/rx_valid=>qin_3",
+        "//qx_in_4/rx_valid=>qin_4",
+        "//qx_in_5/rx_valid=>qin_5",
+        "//qx_out_0/rx_valid=>qout_0",
+        "//qx_out_1/rx_valid=>qout_1",
+        "//qx_out_2/rx_valid=>qout_2",
+        "//qx_out_3/rx_valid=>qout_3",
+        "//qx_out_4/rx_valid=>qout_4",
+        "//qx_out_5/rx_valid=>qout_5",
+        "//px_out_0/rx_valid=>pout_0",
+        "//px_out_5/rx_valid=>pout_5",
+    ],
+    until = 22,
+)
+
+waveform(
     name = "tap",
     example = "//lib/examples:ex_tap",
     lowered = ("tap", "tap"),
