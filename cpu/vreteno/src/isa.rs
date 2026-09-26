@@ -183,11 +183,11 @@ pub const CLINT_BASE: u32 = 0x0200_0000;
 pub const CLINT_MASK: u32 = 0xffff_0000;
 /// A write of one to `msip` raises the software interrupt; a write of
 /// zero clears it.
-pub const MSIP_OFF: u32 = 0x0000;
+pub const MSIP_OFF: u32 = crate::timer::clint::msip;
 /// The compare, low half then high.
-pub const MTIMECMP_OFF: u32 = 0x4000;
+pub const MTIMECMP_OFF: u32 = crate::timer::clint::mtimecmp_lo;
 /// The count, low half then high.
-pub const MTIME_OFF: u32 = 0xbff8;
+pub const MTIME_OFF: u32 = crate::timer::clint::mtime_lo;
 /// The serial port's two words: a byte to send, and the status, whose
 /// bit 0 is busy.
 pub const UART_BASE: u32 = 0x3000;

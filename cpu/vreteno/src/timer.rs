@@ -11,38 +11,48 @@
 //! what the timer decided the cycle before. The count runs from the
 //! reset, one a cycle.
 //!
-//! | Offset | Name | What it is |
-//! |---|---|---|
-//! | `0x0000` | `msip` | bit 0 raises the software interrupt |
-//! | `0x4000` | `mtimecmp` | the compare, low half |
-//! | `0x4004` | | its high half |
-//! | `0xbff8` | `mtime` | the count, low half |
-//! | `0xbffc` | | its high half |
+//! The map is `regmap!`'s `clint`, below: `msip` at `0x0000`, the
+//! compare at `0x4000` and the count at `0xbff8`, each in two halves,
+//! low first. It writes the read mux and the write enables, and the
+//! offsets `isa` and the tests address by (issue 668).
 //!
 //! The window is 64 KiB, which those offsets need, and the router
 //! sends it only the bursts in it, so the decode is on the offset and
 //! not on the whole address.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
+use txhdl::regmap;
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, with, Trace};
+use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{Answer, PerPort, Resp, R};
 
-/// Which of the five words an offset names, counting from zero:
-/// `msip`, the compare's two halves, the count's two halves; and 5 for
-/// an offset the controller does not use, which reads zero and takes a
-/// write nobody sees, as the reference model has it. It used to be
-/// `msip`, so a stray store raised the software interrupt (issue 681).
+// begin{map}
+// The map: the five words at the offsets every RISC-V platform puts
+// them at, as word indices, fourteen address bits above the byte bits
+// selecting one of the window's 16384 words (issues 499 and 668).
+regmap! { clint (clint_read, clint_we), 14: [
+    (0x0000, msip, rw, "the software interrupt", [
+        (msip, 0, 1, rw, 0, "one raises the software interrupt"),
+    ]),
+    (0x1000, mtimecmp_lo, rw, "the compare, low half"),
+    (0x1001, mtimecmp_hi, rw, "the compare, high half"),
+    (0x2ffe, mtime_lo, rw, "the count, low half"),
+    (0x2fff, mtime_hi, rw, "the count, high half"),
+] }
+// end{map}
+
+/// The word an address selects in the map. A word is addressed only
+/// at its first byte: an address with either low bit set selects
+/// word 1, which the map does not name, so it reads zero and takes no
+/// write, as the reference model has it. A store of a byte or a half
+/// to the second lane of a register is dropped, and a stock driver
+/// only ever reads and writes whole words.
 #[lower]
-fn word_of(addr: U<32>) -> U<3> {
-    let off = addr.slice::<0, 16>();
-    select!(off.raw() => {
-        0x0000 => U::<3>::from(0u8),
-        0x4000 => U::<3>::from(1u8),
-        0x4004 => U::<3>::from(2u8),
-        0xbff8 => U::<3>::from(3u8),
-        0xbffc => U::<3>::from(4u8),
-        _ => U::<3>::from(5u8),
-    })
+fn sel_of(addr: U<32>) -> U<14> {
+    mux(
+        addr.slice::<0, 2>() == 0,
+        addr.slice::<2, 14>(),
+        U::<14>::from(1u8),
+    )
 }
 
 #[derive(Trace, Default)]
@@ -52,10 +62,12 @@ pub struct Timer<const I: usize> {
     /// The software interrupt: bit 0 of the word at `msip`.
     pub msip: Reg<Bit>,
     pub pending: Reg<Bit>,
-    /// A write taken and waiting for its beat: which of the four
-    /// words it names, and which identifier answers it.
+    /// A write taken and waiting for its beat: the write enables its
+    /// word sets, decoded by the map when the request was taken, and
+    /// which identifier answers it. Five bits rather than the
+    /// fourteen of the word's select, which the beat does not need.
     pub pend: Reg<U<1>>,
-    pub psel: Reg<U<3>>,
+    pub pwe: Reg<U<5>>,
     pub pid: Reg<U<I>>,
 }
 
@@ -80,29 +92,39 @@ impl<const I: usize> Unit for Timer<I> {
             let wh = bus.w.head();
             let wgo = held & bus.w.peek().is_some() & bus.ans.ready();
             let _ = bus.w.recv_if(wgo);
-            // Which of the five words an address names, as a number
-            // from zero: the offsets are far apart, so the decode is
-            // on the whole offset rather than on two bits of it, and
-            // anything else in the window reads as zero and takes a
-            // write nobody sees.
-            let sel = word_of(q.addr);
-            let word = select!(sel.raw() => {
-                0 => self.msip.get().zext::<32>(),
-                1 => mtimecmp.slice::<0, 32>(),
-                2 => mtimecmp.slice::<32, 32>(),
-                3 => mtime.slice::<0, 32>(),
-                4 => mtime.slice::<32, 32>(),
-                _ => U::<32>::from(0u8),
-            });
-            let wsel = self.psel.get();
-            let old = select!(wsel.raw() => {
-                0 => self.msip.get().zext::<32>(),
-                1 => mtimecmp.slice::<0, 32>(),
-                2 => mtimecmp.slice::<32, 32>(),
-                3 => mtime.slice::<0, 32>(),
-                4 => mtime.slice::<32, 32>(),
-                _ => U::<32>::from(0u8),
-            });
+            // The word a request selects in the map; the map answers zero
+            // for a word it does not name, and no write enable is set for
+            // one (issue 681).
+            let sel = sel_of(q.addr);
+            let msip = clint_msip_pack(self.msip.get());
+            let (cmp_lo, cmp_hi) =
+                (mtimecmp.slice::<0, 32>(), mtimecmp.slice::<32, 32>());
+            let (time_lo, time_hi) =
+                (mtime.slice::<0, 32>(), mtime.slice::<32, 32>());
+            let word = clint_read(sel, msip, cmp_lo, cmp_hi, time_lo, time_hi);
+            // The word a write's beat merges into, chosen by the enables
+            // held since its request: at most one is set, and none for a
+            // word the map does not name, which merges into zero and is
+            // written nowhere.
+            let pwe = self.pwe.get();
+            let old = mux(
+                pwe.bit(0),
+                msip,
+                mux(
+                    pwe.bit(1),
+                    cmp_lo,
+                    mux(
+                        pwe.bit(2),
+                        cmp_hi,
+                        mux(
+                            pwe.bit(3),
+                            time_lo,
+                            mux(pwe.bit(4), time_hi, U::<32>::from(0u8)),
+                        ),
+                    ),
+                ),
+            );
+            let we = mux(wgo, pwe, U::<5>::from(0u8));
             // A write puts the lanes its strobe covers into the word.
             let wdata = wh.data;
             let strb = wh.strb;
@@ -127,19 +149,19 @@ impl<const I: usize> Unit for Timer<I> {
             with!(self <= {
                 take_write ? {
                     pend: U::<1>::from(1u8),
-                    psel: sel,
+                    pwe: clint_we(Bit::One, sel),
                     pid: q.id,
                 },
                 wgo ? pend: U::<1>::from(0u8),
-                wgo & (wsel == 0) ? msip: Bit::from(merged.bit(0)),
-                wgo & (wsel == 1) ? mtimecmp: mtimecmp
+                we.bit(0) ? msip: clint_msip_msip(merged),
+                we.bit(1) ? mtimecmp: mtimecmp
                     .slice::<32, 32>()
                     .concat::<_, 64>(merged),
-                wgo & (wsel == 2) ? mtimecmp: merged
+                we.bit(2) ? mtimecmp: merged
                     .concat::<_, 64>(mtimecmp.slice::<0, 32>()),
-                wgo & (wsel == 3) ?
+                we.bit(3) ?
                     mtime: mtime.slice::<32, 32>().concat::<_, 64>(merged),
-                wgo & (wsel == 4) ?
+                we.bit(4) ?
                     mtime: merged.concat::<_, 64>(mtime.slice::<0, 32>()),
                 // The compare goes to all ones with the count to zero:
                 // a compare left by the previous program would fire from
