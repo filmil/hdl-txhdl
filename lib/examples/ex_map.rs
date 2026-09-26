@@ -29,12 +29,14 @@ use txhdl::{lower, with, Trace};
 // begin{map}
 /// A design's map: a timer at 0x1000, a serial port at 0x2000, and a
 /// finer range for a flag register at 0x3000, each a base and the mask
-/// that picks the range out.
+/// that picks the range out, and a name for each that a table of the
+/// map prints.
 pub struct Three;
 
 impl AddrMap<3> for Three {
     const RANGES: [(usize, usize); 3] =
         [(0x1000, 0xf000), (0x2000, 0xf000), (0x3000, 0xff00)];
+    const NAMES: [&'static str; 3] = ["timer", "serial", "flag"];
 }
 // end{map}
 
@@ -118,8 +120,12 @@ fn main() {
     for &(a, want) in &walk {
         addr_out.set(U::<32>::from(a));
         sim.cycle();
+        // The range by the name the map gives it.
+        let name = (0..3)
+            .find(|i| want >> i & 1 == 1)
+            .map_or("-", |i| <Three as AddrMap<3>>::NAMES[i]);
         println!(
-            "t={:>2} addr {:#07x} sel {:03b} none {}",
+            "t={:>2} addr {:#07x} sel {:03b} none {} {name}",
             now(),
             a,
             sel.get().raw(),
