@@ -26,10 +26,12 @@ use txhdl_parts::bus::router::Router;
 const IW: usize = 2;
 const NIDS: usize = 4;
 
-/// The address map, stated in the router's type.
-/// The address map: the data memory at its page, the timer at
-/// `0x0200_0000`, the serial port at `0x3000`, and the boot memory's
-/// page for the loader.
+/// The address map, a range per router port in the order of the
+/// ports, the first that matches winning: the data memory where the
+/// address's bits 15 to 12 are `0x1`, the timer where its top half is
+/// `0x0200`, the serial port where bits 15 to 12 are `0x3`, and the
+/// boot memory, for the loader, where they are `0x0`. Every other
+/// address is a hole the router answers itself.
 struct RunMap;
 
 impl AddrMap<4> for RunMap {

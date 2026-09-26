@@ -25,11 +25,11 @@ use vreteno32::uart::Uart;
 const IW: usize = 2;
 const NIDS: usize = 4;
 
-/// The address map, as the router's type states it: the data memory,
-/// the timer and the serial port, a nibble each, and every other
-/// address a hole the router answers itself.
-/// The address map: the data memory at its page, the timer at
-/// `0x0200_0000`, and the serial port at `0x3000`.
+/// The address map, a range per router port in the order of the
+/// ports, the first that matches winning: the data memory where the
+/// address's bits 15 to 12 are `0x1`, the timer where its top half is
+/// `0x0200`, and the serial port where bits 15 to 12 are `0x3`. Every
+/// other address is a hole the router answers itself.
 struct RunMap;
 
 impl AddrMap<3> for RunMap {
