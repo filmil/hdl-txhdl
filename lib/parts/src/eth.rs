@@ -28,7 +28,7 @@ use txhdl::comp::{
     join2, mux, until, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit,
 };
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, with, Trace};
+use txhdl::{lower, regmap, with, Trace};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
 use crate::bus::axi::Resp;
@@ -402,23 +402,33 @@ impl Unit<(In<U<8>>, In<Bit>, In<Bit>), (Tx<EthByte>, Out<U<16>>)> for EthRx {
 }
 // end{rx}
 
-/// The Ethernet peripheral, on AXI-Lite: three words, a byte a
-/// transaction.
-///
-/// * Word 0, status, read: bit 0 a received byte is waiting, bit 1 the
-///   transmitter has room for a byte.
-/// * Word 1, transmit, write: the byte in bits 7 to 0, and bit 8 high
-///   on a frame's last byte. The write is answered when the
-///   transmitter has taken the byte, so a client that writes a frame
-///   byte by byte is held off rather than losing bytes.
-/// * Word 2, receive, read: the oldest received byte in bits 7 to 0,
-///   bit 8 high on a frame's last byte and bit 9 high when a byte was
-///   there at all; a read with bit 9 high takes the byte.
-///
-/// The interrupt line is high while a received byte is waiting. The
-/// bridge in front sends the peripheral only its own range, so it
-/// checks no more of the address than the word.
+// The Ethernet peripheral's registers.
 // begin{lite}
+regmap! { regs (regs_read, regs_we, regs_re), 2: [
+    (0, status, ro, "what the two halves can do", [
+        (rx, 0, 1, ro, 0, "a received byte is waiting"),
+        (tx, 1, 1, ro, 0, "the transmitter has room for a byte"),
+    ]),
+    (1, txbyte, wo, "a byte to send; answered when it is taken", [
+        (data, 0, 8, wo, 0, "the byte"),
+        (last, 8, 1, wo, 0, "the frame's last byte"),
+    ]),
+    (2, rxbyte, rc, "the oldest received byte; a read takes it", [
+        (data, 0, 8, ro, 0, "the byte"),
+        (last, 8, 1, ro, 0, "the frame's last byte"),
+        (valid, 9, 1, ro, 0, "a byte was there"),
+    ]),
+] }
+
+/// The Ethernet peripheral, on AXI-Lite: three words, a byte a
+/// transaction, as `regs` states them.
+///
+/// A write to `txbyte` is answered when the transmitter has taken the
+/// byte, so a client that writes a frame byte by byte is held off
+/// rather than losing bytes. A read of `rxbyte` with `valid` high takes
+/// the byte. The interrupt line is high while a received byte is
+/// waiting. The bridge in front sends the peripheral only its own
+/// range, so it checks no more of the address than the word.
 #[derive(Trace, Default)]
 pub struct EthLite {}
 
@@ -436,39 +446,37 @@ impl Unit for EthLite {
             let wh = bus.w.head();
             let rsel = arh.addr.slice::<2, 2>();
             let wsel = awh.addr.slice::<2, 2>();
-            let waiting = rx.peek().is_some();
+            let waiting = Bit::from(rx.peek().is_some());
             let rxh = rx.head();
+            // The enables as named wires before a bit is taken off
+            // them: VHDL will not index the concatenation itself
+            // (issue 683).
+            let hits = regs_we(Bit::One, wsel);
             // A write to the transmit word waits for the transmitter.
-            let wroom = (wsel != 1) | tx.ready().to_bool();
-            let wgo = bus.b.ready().to_bool()
-                & bus.aw.peek().is_some()
-                & bus.w.peek().is_some()
+            let to_tx = hits.bit(1);
+            let wroom = !to_tx | tx.ready();
+            let wgo = bus.b.ready()
+                & Bit::from(bus.aw.peek().is_some())
+                & Bit::from(bus.w.peek().is_some())
                 & wroom;
             let _ = bus.aw.recv_if(wgo);
             let _ = bus.w.recv_if(wgo);
-            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let rgo = bus.r.ready() & Bit::from(bus.ar.peek().is_some());
             let _ = bus.ar.recv_if(bus.r.ready());
             // A read of the receive word takes the byte, if one waits.
-            let _ = rx.recv_if(rgo & (rsel == 2));
-            let status = U::<30>::from(0u32)
-                .concat::<_, 31>(tx.ready().zext::<1>())
-                .concat::<_, 32>(Bit::from(waiting).zext::<1>());
-            let received = U::<22>::from(0u32)
-                .concat::<_, 23>(Bit::from(waiting).zext::<1>())
-                .concat::<_, 24>(rxh.last.zext::<1>())
-                .concat::<_, 32>(rxh.data);
-            let word = select!(rsel.raw() => {
-                0 => status,
-                2 => received,
-                _ => U::<32>::from(0u32),
-            });
-            if wgo & (wsel == 1) {
+            let re = regs_re(rgo, rsel);
+            let _ = rx.recv_if(re.bit(2));
+            let status = regs_status_pack(waiting, tx.ready());
+            let received = regs_rxbyte_pack(rxh.data, rxh.last, waiting);
+            let word = regs_read(rsel, status, U::<32>::from(0u32), received);
+            let we = regs_we(wgo, wsel);
+            if we.bit(1).to_bool() {
                 tx.send(EthByte {
-                    data: wh.data.slice::<0, 8>(),
-                    last: wh.data.bit(8),
+                    data: regs_txbyte_data(wh.data),
+                    last: regs_txbyte_last(wh.data),
                 });
             }
-            if wgo {
+            if wgo.to_bool() {
                 bus.b.send(LiteB { resp: Resp::Okay });
             }
             if rgo.to_bool() {
@@ -477,7 +485,7 @@ impl Unit for EthLite {
                     resp: Resp::Okay,
                 });
             }
-            irq.set(Bit::from(waiting));
+            irq.set(waiting);
         }
     }
 }
