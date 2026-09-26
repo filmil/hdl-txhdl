@@ -29,6 +29,7 @@ fn maps() -> Vec<(&'static str, &'static RegMap)> {
         ("sd", &txhdl_parts::sd::regs::MAP),
         ("syscon", &txhdl_parts::syscon::regs::MAP),
         ("timer", &vreteno32::timer::clint::MAP),
+        ("tracer", &txhdl_parts::tracer::regs::MAP),
         ("trng", &txhdl_parts::trng::regs::MAP),
         ("uart", &vreteno32::uart::serial::MAP),
         ("wdog", &txhdl_parts::wdog::regs::MAP),
