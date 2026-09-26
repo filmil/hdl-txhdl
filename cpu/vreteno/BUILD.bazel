@@ -69,13 +69,12 @@ rust_test(
     srcs = ["tests/board_programs.rs"],
     compile_data = [
         "//cpu/vreteno/rust:addressed_sources",
-        # The board's own source, so the map here can be counted
-        # against the router's port count rather than trusted
-        # (issue 445).
-        "src/board.rs",
     ],
     edition = "2021",
-    deps = [":vreteno32"],
+    deps = [
+        ":vreteno32",
+        "//lib:txhdl",
+    ],
 )
 
 rust_test(
