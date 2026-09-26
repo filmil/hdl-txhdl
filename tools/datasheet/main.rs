@@ -603,6 +603,17 @@ fn main() {
     sheet("Uart", "Uart<868>", Uart::<868>::lowered("uart"));
     sheet("Ddr3Per", "Ddr3Per", Ddr3Per::lowered("ddr3"));
     regs("Sd", &txhdl_parts::sd::regs::MAP);
+    regs("EthLite", &txhdl_parts::eth::regs::MAP);
+    regs("EthSlots", &txhdl_parts::ethslots::regs::MAP);
+    regs("Gpio", &txhdl_parts::gpio::regs::MAP);
+    regs("Hdmi", &txhdl_parts::hdmi::regs::MAP);
+    regs("Pwm", &txhdl_parts::pwm::regs::MAP);
+    regs("Syscon", &txhdl_parts::syscon::regs::MAP);
+    regs("Timer", &vreteno32::timer::clint::MAP);
+    regs("Tracer", &txhdl_parts::tracer::regs::MAP);
+    regs("Trng", &txhdl_parts::trng::regs::MAP);
+    regs("Uart", &vreteno32::uart::serial::MAP);
+    regs("Wdog", &txhdl_parts::wdog::regs::MAP);
     sheet("Entropy", "Entropy", Entropy::lowered("entropy"));
     sheet("Trng", "Trng", Trng::lowered("trng"));
     sheet("Board", "Board<868>", Board::<868>::lowered("board"));

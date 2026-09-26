@@ -46,10 +46,10 @@ Explained in & #3 \\
 % cannot say a port the netlist does not have (issue 173).
 % A component's register table, written by //tools/datasheet from the
 % map its peripheral declares with `regmap!` (issue 499), for a sheet
-% whose component has one.
-\newcommand{\dsregs}[1]{%
-\subsection*{Registers}
-\dsget{regs}{#1}}
+% whose component has one. The sheet gives the heading and says how the
+% word is selected; this is the table, a row a register and a row a
+% field under it.
+\newcommand{\dsregs}[1]{\dsget{regs}{#1}}
 
 \newcommand{\dstables}[1]{%
 \subsection*{Interfaces}
