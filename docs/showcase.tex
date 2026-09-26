@@ -376,6 +376,7 @@ GNU C and C++, for the core & 14.2.0 \\
 \code{nvc} and Verilator, to simulate & from source \\
 Vivado, Artix-7, to synthesise & 2025.2 \\
 Yosys and OpenROAD, to lay out & pinned packages \\
+SymbiYosys and z3, to prove & 0.52; 4.13.3 \\
 TinyTeX, for the documents & pinned \\
 Go, for the serial watcher & 1.25.1 \\
 Two waveform converters, for figures & pinned \\
@@ -399,7 +400,20 @@ Vivado's simulator, the DDR3 controller alone and AMD's own test of
 it under the same, the PCIe endpoint on its own and against a root
 port under the same, the AXI link's fuzzing over many seeds, which
 the nightly run does, and the check that every component has a
-datasheet, which a sweep of the documents runs. Every claim about what
+datasheet, which a sweep of the documents runs.
+
+A run checks the inputs it was given; a proof checks all of them. A
+unit states what must hold with \code{check!}, what it assumes of its
+inputs with \code{assume!} and what it should reach with
+\code{cover!}, and \code{formal\_test} hands the netlist's assertions
+to SymbiYosys on the pinned Yosys: \code{abc pdr} proves a digit's
+checks for every input and reachable state, two broken copies must
+fail, z3 finds the cycle a broken check fails in, and a cover run
+finds the path to the cover point. A unit with its own reset is
+proved to check only out of it (issue 633). Those are the ten proofs,
+a second each, and \code{//docs:prove} is their document.
+
+Every claim about what
 Rust accepts was compiled first, as a probe kept in the tree,
 including the ones whose answer was no.
 
