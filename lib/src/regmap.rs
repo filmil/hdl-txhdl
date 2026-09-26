@@ -23,6 +23,9 @@ pub enum Access {
     Wo,
     /// Read, and a written one clears the bit.
     W1c,
+    /// Read, and the read itself takes the value: the next read gives
+    /// the next one, as a receive FIFO's head does.
+    Rc,
 }
 
 impl Access {
@@ -33,6 +36,7 @@ impl Access {
             Access::Ro => "read only",
             Access::Wo => "write only",
             Access::W1c => "read, write one to clear",
+            Access::Rc => "read; the read takes it",
         }
     }
 }

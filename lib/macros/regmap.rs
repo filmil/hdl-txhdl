@@ -14,7 +14,8 @@
 //! ```
 //!
 //! The first name is the map's, and the two in brackets name the read
-//! mux and the write enables; the number is how many address bits
+//! mux and the write enables, with a third, the read enables, when a
+//! register's access is `rc`; the number is how many address bits
 //! select a word, above the two byte bits. A register is its word
 //! index, its name, its access and a sentence, and may carry its
 //! fields, each a name, its low bit, its width, its access, its reset
@@ -30,6 +31,8 @@
 //!   named;
 //! * `knobs_we(wgo, sel)`: a bit a register, set when a write is going
 //!   and its word is this one, in declaration order from bit 0;
+//! * with a third name, `knobs_re(rgo, sel)`: the same for a read, so a
+//!   register a read takes, `rc`, knows when to take it;
 //! * a function a field, `knobs_ctrl_run(w)`, the field's value out of
 //!   a written word, a `Bit` for one bit and a `U<width>` otherwise;
 //! * a function a register with fields, `knobs_ctrl_pack(run, rate)`,
@@ -67,6 +70,9 @@ pub(crate) struct Decl {
     pub name: String,
     pub read: String,
     pub we: String,
+    /// The read enables' name, if the map has a register a read acts
+    /// on (`rc`).
+    pub re: Option<String>,
     pub sel_bits: u32,
     pub regs: Vec<RegDecl>,
 }
@@ -101,12 +107,13 @@ fn text(t: Option<&Vec<TokenTree>>, what: &str) -> Result<String, String> {
 }
 
 fn access(t: Option<&Vec<TokenTree>>) -> Result<String, String> {
-    let a = ident(t, "an access, `rw`, `ro`, `wo` or `w1c`")?;
+    let a = ident(t, "an access, `rw`, `ro`, `wo`, `w1c` or `rc`")?;
     match a.as_str() {
         "rw" => Ok("Rw".into()),
         "ro" => Ok("Ro".into()),
         "wo" => Ok("Wo".into()),
         "w1c" => Ok("W1c".into()),
+        "rc" => Ok("Rc".into()),
         _ => Err(format!("regmap!: `{a}` is not an access")),
     }
 }
@@ -128,6 +135,10 @@ pub(crate) fn parse(ts: &[TokenTree]) -> Result<Decl, String> {
     };
     let read = ident(names.first(), "the read function's name")?;
     let we = ident(names.get(1), "the write enables' name")?;
+    let re = match names.get(2) {
+        Some(_) => Some(ident(names.get(2), "the read enables' name")?),
+        None => None,
+    };
     let sel_bits = number(
         Some(&vec![ts
             .get(3)
@@ -198,6 +209,7 @@ pub(crate) fn parse(ts: &[TokenTree]) -> Result<Decl, String> {
         name,
         read,
         we,
+        re,
         sel_bits,
         regs,
     })
@@ -299,6 +311,23 @@ pub(crate) fn expand(d: &Decl) -> String {
         ));
     }
     s.push_str("    ::txhdl::types::U::from(bits)\n}\n\n");
+    // The read enables, the same shape, when the map names them: a
+    // register a read acts on, `rc`, needs to know the read is going.
+    if let Some(re) = &d.re {
+        s.push_str(&format!(
+            "/// A bit a register, set when a read is going and its word is this\n\
+             /// one, in declaration order from bit 0.\n\
+             pub fn {re}(rgo: ::txhdl::types::Bit, sel: ::txhdl::types::U<{w}>) -> ::txhdl::types::U<{n}> {{\n\
+             \x20   let mut bits = 0u128;\n"
+        ));
+        for (k, r) in d.regs.iter().enumerate() {
+            s.push_str(&format!(
+                "    if (rgo & (sel == {})).to_bool() {{\n        bits |= 1u128 << {k};\n    }}\n",
+                r.idx
+            ));
+        }
+        s.push_str("    ::txhdl::types::U::from(bits)\n}\n\n");
+    }
     // A function a field, and one a register with fields.
     for r in &d.regs {
         for f in &r.fields {
@@ -381,9 +410,28 @@ pub(crate) fn helpers(d: &Decl) -> Vec<Helper> {
         params: vec!["wgo".to_string(), "sel".to_string()],
         consts: Vec::new(),
         lets,
-        value,
+        value: value.clone(),
         refused: Vec::new(),
     });
+    // The read enables are the write enables' shape over `rgo`.
+    if let Some(re) = &d.re {
+        let lets: Vec<(String, String)> = d
+            .regs
+            .iter()
+            .enumerate()
+            .map(|(k, r)| {
+                (format!("we_{k}"), format!("rgo & (sel == {})", r.idx))
+            })
+            .collect();
+        out.push(Helper {
+            name: re.clone(),
+            params: vec!["rgo".to_string(), "sel".to_string()],
+            consts: Vec::new(),
+            lets,
+            value,
+            refused: Vec::new(),
+        });
+    }
     for r in &d.regs {
         for f in &r.fields {
             let value = if f.width == 1 {

@@ -96,4 +96,22 @@ mod tests {
         let p = format!("{:?}", knobs_ctrl_pack::lowered(n("r"), n("t")));
         assert!(p.contains("\"r\"") && p.contains("\"t\""), "{p}");
     }
+
+    regmap! { fifo (fifo_read, fifo_we, fifo_re), 1: [
+        (0, status, ro, "whether a word waits"),
+        (1, head, rc, "the oldest word; a read takes it"),
+    ] }
+
+    #[test]
+    fn a_read_the_register_acts_on_is_enabled_and_the_access_says_so() {
+        assert_eq!(fifo::MAP.regs[1].access, Access::Rc);
+        assert_eq!(Access::Rc.as_str(), "read; the read takes it");
+        let re = |go: bool, s: u32| {
+            fifo_re(Bit::from_bool(go), U::<1>::from(s)).raw()
+        };
+        assert_eq!(re(true, 1), 0b10);
+        assert_eq!(re(true, 0), 0b01);
+        assert_eq!(re(false, 1), 0);
+        let _ = (fifo_read, fifo_we);
+    }
 }
