@@ -893,6 +893,8 @@ latex_document(
         ":mul_timing",
         ":lanes_run",
         ":lanes_timing",
+        ":mesh_run",
+        ":mesh_timing",
         ":regs_run",
         ":regs_timing",
         ":wide_run",

@@ -232,6 +232,10 @@ declared by a loop too, and \code{Ends::from} over an array port names
 its elements; the ends are bound under names of their own, since a
 side's name followed by a field is read as one of its ports (issue
 635).
+A child of the array may be passed \code{tie(v)} as well, where \code{v}
+may be an expression of \code{i}, and each child then has wires of
+its own, \code{f\_i\_tieK}; \code{Mesh} ties each node's column and row
+that way (issue 635).
 An input passed \code{tie(v)} is held at the constant \code{v}: in
 the run it is a wire \code{comp::tie} sets once, and in the netlist
 a wire of the parent, \code{FIELD\_tieK}, driven by \code{lit(v)},

@@ -198,6 +198,32 @@ twenty ports are written out one by one because a lowered unit's
 ports are a positional tuple and a named type for a side is
 refused.}{lst:n-node}
 
+\subsection{A lattice as one unit}
+\label{sec:n-mesh}
+
+A node's column and row are two inputs, \code{col} and \code{row},
+and not two type parameters, so every node of a lattice is one type
+(issue 635). Whoever places a node holds them at constants with
+\code{tie}. A tied input is a constant to synthesis, which folds it
+into the comparisons that route a packet, so a node pays nothing for
+being told its place rather than being built with it.
+
+One type is what lets a lattice be one unit that lowers.
+\code{Mesh<W, H, N, ..>} holds its \code{N} nodes as one field of
+\code{Units} and joins them by index, node \code{i} at column
+\code{i \% W} and row \code{i / W}. The links are one set of channels
+per direction of travel and per virtual channel, and the exits are
+the mesh's ports, four arrays of \code{N}. A link at an edge wraps to
+the other end of its row or column, so that every channel has one
+driver and one reader; dimension-order routing never sends a packet
+for a place on the lattice along one. Rust cannot yet compute
+\code{N} from \code{W} and \code{H}, so the count is a parameter of
+its own and a mesh whose count is not \code{W * H} refuses to be
+made. The example \code{ex\_mesh} runs six nodes, three by two, and
+checks the netlist against the run~\cite{examples}.
+
+\nocpart{mesh.rs}{mesh}{A lattice as a unit of units.}{lst:n-mesh}
+
 \section{The Exit}
 \label{sec:n-bridge}
 
@@ -480,10 +506,10 @@ fixed order it replaced could leave a node unable to speak at all.
 \section{What Is Not Here}
 \label{sec:n-not}
 
-The lattice is wired by a helper that makes the channels and hands out
-the ends, which does not lower; a design that is to be synthesised
-writes the same wiring as a unit of units and lets the lowering make
-the netlist. Writes of more than one beat cross the network as that
+The tests and \code{//soc} wire their lattice with \code{lattice}, a
+helper that makes the channels and hands out the ends and does not
+lower; \code{Mesh} is the same wiring as a unit that does.
+Writes of more than one beat cross the network as that
 many writes of one, split at the host bridge and answered once, so a
 peripheral that means something by a burst sees the beats and not the
 burst; \code{docs/noc-bursts.md} says what carrying it whole would
@@ -507,6 +533,10 @@ F.~Filmar and D.~Janković, ``AXI in TxHDL,'' project repository
 \bibitem{gpu}
 F.~Filmar and D.~Janković, ``Razboj: A minimal GPU in TxHDL,'' project
 repository \code{HDL/txhdl}, \code{//docs:razboj}, 2026.
+
+\bibitem{examples}
+F.~Filmar and D.~Janković, ``TxHDL by example,'' project repository
+\code{HDL/txhdl}, \code{//docs:examples}, 2026.
 
 \bibitem{cover}
 F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository

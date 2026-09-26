@@ -1,0 +1,40 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Lattice of Nodes}
+\label{sec:x-mesh}
+
+\code{Mesh<W, H, N, ..>} from the network on chip~\cite{noc} is the
+largest array of children in the tree: \code{N} nodes, \code{W} wide
+and \code{H} high, in one field of \code{Units} (issue 635). Every node
+is one type, because a node's column and row are two inputs rather
+than two type parameters, and the mesh holds them at constants with
+\code{tie}. The index may appear in the constant, so node \code{i} is
+given \code{tie(U::<XB>::from(i \% W))} and
+\code{tie(U::<YB>::from(i / W))}, and the lowering gives each node
+wires of its own driven by those values.
+
+The links are one set of channels per direction of travel and per
+virtual channel, made with \code{chans}. Node \code{i} sends up on
+channel \code{i} of the upward set, and the node above reads that
+channel on its south input. A link at an edge wraps to the other end
+of its row or column, so that every channel has one driver and one
+reader. Routing is dimension order, so a packet for a place on the
+lattice never takes one of those links.
+
+The bench makes a mesh three wide and two high. Every node sends a
+request to each of the other five, and a response to the node at the
+opposite corner. The run asserts that each packet leaves by the exit
+of the node it was addressed to, and that all thirty requests and six
+responses arrive. The netlist, six node instances and the channels
+between them, is checked against the run under nvc and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{mesh_timing.tex}
+\caption{Six nodes: the requests offered at each exit, and where they
+leave.}
+\label{fig:x-mesh}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_mesh.rs}. Run with \code{bazel run //lib/examples:ex\_mesh}.},label={lst:x-mesh}]{lib/examples/ex_mesh.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_mesh} printed when the build ran it: each packet as it left, then the instances.},label={lst:x-mesh-out}]{out_mesh.txt}
