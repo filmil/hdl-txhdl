@@ -72,8 +72,8 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 66\,315 lines of Rust: 17\,163 of runtime
-and macros, 18\,388 of parts, 13\,858 in ninety-nine examples, 13\,851 of
+Together they are 67\,357 lines of Rust: 17\,189 of runtime
+and macros, 18\,892 of parts, 14\,343 in a hundred and three examples, 13\,878 of
 Vreteno with its board, and 3\,055 of Razboj, DDR3, Ethernet, HDMI,
 PCIe and the SoC.
 
@@ -97,7 +97,7 @@ AXI-Lite bridges, 1 to 8 peripherals & parts & 1 and 2 \\
 AXI to Wishbone bridge & parts & yes \\
 AXI host pins to the link's channels & parts & yes \\
 An interrupt controller, one unit for 1 to 31 sources & parts & 3 \\
-Network node, switch, 2 bridges & parts & not yet \\
+Network node, switch, 2 bridges; a mesh of nodes & parts & the mesh \\
 Pins; SPI; I2C; SD; Ethernet's five; HDMI's two & parts & all eleven \\
 Words to frames and back; a frame's length & parts & all three \\
 System control: identity, cause, reset & parts & yes \\
@@ -113,7 +113,7 @@ Vreteno; boot and data memory, timer, serial port & \code{cpu} & four of five \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
 PCIe BAR registers; the BAR as one unit & \code{pcie} & not yet \\
-The examples' own units & examples & 61, in 52 files, all 52 \\
+The examples' own units & examples & 58, in 48 files, all 48 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -132,7 +132,8 @@ Razboj, a GPU & rasteriser, link, memory & model, 2 netlists \\
 The AXI link & host and peripheral & 2 netlists \\
 The AXI router & 1 host, 3 peripherals & its netlist \\
 The AXI-Lite bridge & 1 host, 2 banks & 3 netlists \\
-A lattice & 4 nodes, both bridges, RAM & 2 tests \\
+A lattice & 4 nodes, both bridges, RAM & 8 tests \\
+A mesh & 6 nodes in one unit & its netlist \\
 The SoC & core, GPU, RAM, serial & its run \\
 Composition & station, stream ALU & its netlist \\
 The board & core, 7 devices, DDR3, a JTAG host & 3 runs, Vivado, the cable \\
@@ -388,12 +389,12 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs three hundred and twenty-two
-targets, of
-which a hundred and ninety-two are netlists under both simulators; the rest are the
-core's model and
-programs, the board's own run, Razboj, the parts, the SoC's run, and
-the tools. Seven more are tagged manual: the board and its DDR3 under
+its ports. \code{bazel test //...} runs three hundred and forty-eight
+targets, of which two hundred and two are netlists under both
+simulators; the rest are the core's model and programs, the board's
+own run, Razboj, the parts, the SoC's run, ten proofs, the width of
+every waveform, and the tools. Seven more are tagged manual: the
+board and its DDR3 under
 Vivado's simulator, the DDR3 controller alone and AMD's own test of
 it under the same, the PCIe endpoint on its own and against a root
 port under the same, the AXI link's fuzzing over many seeds, which
