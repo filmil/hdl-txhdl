@@ -14,15 +14,10 @@
 //! always the most recent window. A host reads the window out over
 //! AXI-Lite, oldest first.
 //!
-//! | Offset | Name | What it is |
-//! |---|---|---|
-//! | `0x00` | `ctrl` | run, and freeze when `halt` rises |
-//! | `0x04` | `count` | entries held, read only |
-//! | `0x08` | `cursor` | which held entry a read returns |
-//! | `0x10` | `word0` | bits 31 to 0 of that entry |
-//! | `0x14` | `word1` | bits 63 to 32 |
-//! | `0x18` | `word2` | bits 95 to 64 |
-//! | `0x1c` | `word3` | bits 127 to 96 |
+//! Its words are `regmap!`'s `regs`, below: `ctrl` (run, and freeze
+//! when `halt` rises), `count` (entries held, read only), `cursor`
+//! (which held entry a read returns), and `word0` to `word3` at `0x10`
+//! to `0x1c`, the entry the cursor names, low word first.
 //!
 //! Freezing is the point of the `halt` input. A program that stops on
 //! a breakpoint, or a core that halts on `ebreak`, leaves a window
@@ -36,20 +31,42 @@
 //! hundred and one bits, and a width that is a whole number of bus
 //! words is one the readout can walk without shifting.
 use txhdl::comp::{Clock, DefaultClock, In, Mem, Reg, Unit};
+use txhdl::regmap;
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, with, Trace};
+use txhdl::{lower, with, Trace};
 
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 
+// begin{map}
+// The map: seven words, three address bits above the byte bits
+// selecting one, and the fourth reads zero (issues 499 and 672).
+regmap! { regs (regs_read, regs_we), 3: [
+    (0, ctrl, rw, "run, and freeze when halt rises", [
+        (run, 0, 1, rw, 0, "the buffer takes what it is offered"),
+        (freeze, 1, 1, rw, 0, "the first cycle of halt clears run"),
+    ]),
+    (1, count, ro, "entries held", [
+        (entries, 0, 16, ro, 0, "how many, up to N"),
+    ]),
+    (2, cursor, rw, "which held entry a read returns", [
+        (entry, 0, 16, rw, 0, "counting from the oldest"),
+    ]),
+    (4, word0, ro, "bits 31 to 0 of the entry the cursor names"),
+    (5, word1, ro, "bits 63 to 32"),
+    (6, word2, ro, "bits 95 to 64"),
+    (7, word3, ro, "bits 127 to 96"),
+] }
+// end{map}
+
 /// `ctrl` bit 0: the buffer takes what it is offered.
-pub const CTRL_RUN: u32 = 1;
+pub const CTRL_RUN: u32 = regs::ctrl_run.mask();
 /// `ctrl` bit 1: the first cycle of `halt` clears `run`.
-pub const CTRL_FREEZE: u32 = 2;
+pub const CTRL_FREEZE: u32 = regs::ctrl_freeze.mask();
 
 /// The offset of word `k` of the entry the cursor names.
 pub const fn word(k: u32) -> u32 {
-    0x10 + 4 * k
+    regs::word0 + 4 * k
 }
 
 // begin{state}
@@ -99,6 +116,9 @@ impl<const N: usize> Unit for Tracer<N> {
             let _ = bus.aw.recv_if(wgo);
             let _ = bus.w.recv_if(wgo);
             let written = wh.data;
+            // Which word a write goes to, one bit a word in the map's
+            // order: ctrl, count, cursor, then the entry's four.
+            let we = regs_we(wgo, wsel);
             let running = ctrl.bit(0);
             let freezing = ctrl.bit(1) & halt.get();
             let mask = U::<16>::from((N - 1) as u32);
@@ -109,27 +129,27 @@ impl<const N: usize> Unit for Tracer<N> {
             let held = self.ring.read(slot);
             let storing = running & take.get() & !freezing;
             let full = count == U::<16>::from(N as u32);
-            let answer = select!(rsel.raw() => {
-                0 => ctrl.zext::<32>(),
-                1 => count.zext::<32>(),
-                2 => cursor.zext::<32>(),
-                4 => held.slice::<0, 32>(),
-                5 => held.slice::<32, 32>(),
-                6 => held.slice::<64, 32>(),
-                7 => held.slice::<96, 32>(),
-                _ => U::<32>::from(0u8),
-            });
+            let answer = regs_read(
+                rsel,
+                regs_ctrl_pack(ctrl.bit(0), ctrl.bit(1)),
+                regs_count_pack(count),
+                regs_cursor_pack(cursor),
+                held.slice::<0, 32>(),
+                held.slice::<32, 32>(),
+                held.slice::<64, 32>(),
+                held.slice::<96, 32>(),
+            );
             if storing.to_bool() {
                 self.ring.at(head).set(entry.get());
             }
             with!(self <= {
-                wgo & (wsel == 0) ? ctrl: written.slice::<0, 2>(),
+                we.bit(0) ? ctrl: written.slice::<0, 2>(),
                 // A host that starts the buffer starts a new window.
-                wgo & (wsel == 0) & written.bit(0) & !running ? count:
+                we.bit(0) & written.bit(0) & !running ? count:
                     U::<16>::from(0u8),
-                wgo & (wsel == 0) & written.bit(0) & !running ? head:
+                we.bit(0) & written.bit(0) & !running ? head:
                     U::<16>::from(0u8),
-                wgo & (wsel == 2) ? cursor: written.slice::<0, 16>(),
+                we.bit(2) ? cursor: regs_cursor_entry(written),
                 // The freeze is a level that clears the run bit, so a
                 // host reads why the buffer stopped in `ctrl`.
                 freezing ? ctrl: ctrl & U::<2>::from(2u8),
@@ -214,7 +234,7 @@ mod tests {
         }
         /// Read the low word of the entry the cursor names.
         async fn at(&self, i: u32) -> u32 {
-            write(&self.host, 8, i).await;
+            write(&self.host, regs::cursor, i).await;
             read(&self.host, word(0)).await
         }
     }
@@ -256,11 +276,15 @@ mod tests {
     #[test]
     fn what_is_held_is_the_last_n_entries() {
         run(|rig| async move {
-            write(&rig.host, 0, CTRL_RUN).await;
+            write(&rig.host, regs::ctrl, CTRL_RUN).await;
             for v in 1..=12u32 {
                 rig.offer(v).await;
             }
-            assert_eq!(read(&rig.host, 4).await, 8, "the ring is full");
+            assert_eq!(
+                read(&rig.host, regs::count).await,
+                8,
+                "the ring is full"
+            );
             // Twelve offered, eight held: the oldest of them is the
             // fifth, and the newest is the twelfth.
             assert_eq!(rig.at(0).await, 5);
@@ -271,11 +295,11 @@ mod tests {
     #[test]
     fn fewer_than_a_ring_are_held_oldest_first() {
         run(|rig| async move {
-            write(&rig.host, 0, CTRL_RUN).await;
+            write(&rig.host, regs::ctrl, CTRL_RUN).await;
             for v in 1..=3u32 {
                 rig.offer(v).await;
             }
-            assert_eq!(read(&rig.host, 4).await, 3);
+            assert_eq!(read(&rig.host, regs::count).await, 3);
             assert_eq!(rig.at(0).await, 1);
             assert_eq!(rig.at(1).await, 2);
             assert_eq!(rig.at(2).await, 3);
@@ -285,7 +309,7 @@ mod tests {
     #[test]
     fn a_halt_freezes_the_window() {
         run(|rig| async move {
-            write(&rig.host, 0, CTRL_RUN | CTRL_FREEZE).await;
+            write(&rig.host, regs::ctrl, CTRL_RUN | CTRL_FREEZE).await;
             for v in 1..=3u32 {
                 rig.offer(v).await;
             }
@@ -294,8 +318,12 @@ mod tests {
             for v in 4..=9u32 {
                 rig.offer(v).await;
             }
-            assert_eq!(read(&rig.host, 4).await, 3, "nothing after the halt");
-            let ctrl = read(&rig.host, 0).await;
+            assert_eq!(
+                read(&rig.host, regs::count).await,
+                3,
+                "nothing after the halt"
+            );
+            let ctrl = read(&rig.host, regs::ctrl).await;
             assert_eq!(ctrl & CTRL_RUN, 0, "and the ctrl word says so");
             assert_eq!(rig.at(0).await, 1);
             assert_eq!(rig.at(2).await, 3);
@@ -305,16 +333,20 @@ mod tests {
     #[test]
     fn a_start_opens_a_new_window() {
         run(|rig| async move {
-            write(&rig.host, 0, CTRL_RUN).await;
+            write(&rig.host, regs::ctrl, CTRL_RUN).await;
             for v in 1..=5u32 {
                 rig.offer(v).await;
             }
-            write(&rig.host, 0, 0).await;
-            write(&rig.host, 0, CTRL_RUN).await;
+            write(&rig.host, regs::ctrl, 0).await;
+            write(&rig.host, regs::ctrl, CTRL_RUN).await;
             for v in 100..=102u32 {
                 rig.offer(v).await;
             }
-            assert_eq!(read(&rig.host, 4).await, 3, "only the new window");
+            assert_eq!(
+                read(&rig.host, regs::count).await,
+                3,
+                "only the new window"
+            );
             assert_eq!(rig.at(0).await, 100);
         });
     }
@@ -325,7 +357,11 @@ mod tests {
             for v in 1..=4u32 {
                 rig.offer(v).await;
             }
-            assert_eq!(read(&rig.host, 4).await, 0, "nothing was taken");
+            assert_eq!(
+                read(&rig.host, regs::count).await,
+                0,
+                "nothing was taken"
+            );
         });
     }
 }
