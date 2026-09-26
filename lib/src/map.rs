@@ -26,4 +26,9 @@ pub trait AddrMap<const N: usize> {
     /// The base and the mask of each peripheral, in the order the
     /// unit's ports are in.
     const RANGES: [(usize, usize); N];
+    /// What each range is, in the same order: a few words a table of
+    /// the map prints beside its base, so that a document lists the map
+    /// the design decodes rather than a copy of it (issue 444). A map
+    /// that names nothing leaves each one empty.
+    const NAMES: [&'static str; N] = [""; N];
 }
