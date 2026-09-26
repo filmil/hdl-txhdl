@@ -79,6 +79,27 @@ sh_test(
     data = [":hello_world_config"],
 )
 
+filegroup(
+    name = "hello_world_elf",
+    srcs = [":hello_world"],
+    output_group = "elf",
+)
+
+# The image names no path of the machine that built it, so that two
+# builds of one tree agree byte for byte (issue 711).
+sh_test(
+    name = "paths_test",
+    srcs = ["paths_test.sh"],
+    args = [
+        "$(location :hello_world_elf)",
+        "$(location :hello_world_config)",
+    ],
+    data = [
+        ":hello_world_config",
+        ":hello_world_elf",
+    ],
+)
+
 # The files the port test reads, so that editing any of them reruns
 # the check rather than leaving it stale.
 filegroup(

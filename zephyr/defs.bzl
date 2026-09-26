@@ -122,8 +122,31 @@ if [ -n "$APP" ]; then
   src="$root/$MODULE_DIR/$APP"
 fi
 
+# The build runs in a sandbox whose path changes on every run, and the
+# compiler writes the paths it was given into the debug information and
+# into `__FILE__`. Mapped to `.`, every one of them is relative to the
+# execution root, the build directory's among them, so two builds of
+# one tree give one `.elf` (issue 711). The compiler's own headers are
+# found through the real path of its executable, in Bazel's
+# repository cache, which is this machine's and not the tree's; that is
+# mapped to a name too.
+gcc_root=$(dirname "$(dirname "$(readlink -f "$root/$GCC_BIN/riscv-none-elf-gcc")")")
+remap="-ffile-prefix-map=$root=. -ffile-prefix-map=$gcc_root=riscv-none-elf-gcc"
+# CMake reaches some of Zephyr's sources, and of the module's, through
+# their real paths, where Bazel keeps them: Zephyr in the repository
+# cache, the module in the workspace. Each is found from a file's real
+# path, since in a sandbox only the files are links, and mapped to the
+# name it has under the execution root.
+zreal=$(dirname "$(readlink -f "$zbase/VERSION")")
+mreal=$(dirname "$(dirname "$(readlink -f "$root/$MODULE_DIR/zephyr/module.yml")")")
+remap="$remap -ffile-prefix-map=$zreal=./$ZEPHYR_ROOT"
+remap="$remap -ffile-prefix-map=$mreal=./$MODULE_DIR"
+
 "$root/$CMAKE" -B "$build" -S "$src" -G Ninja \
   -DBOARD="$BOARD" $conf_arg \
+  -DEXTRA_CFLAGS="$remap" \
+  -DEXTRA_CXXFLAGS="$remap" \
+  -DEXTRA_AFLAGS="$remap" \
   -DBOARD_ROOT="$root/$MODULE_DIR" \
   -DSOC_ROOT="$root/$MODULE_DIR" \
   -DDTS_ROOT="$root/$MODULE_DIR" \
@@ -136,7 +159,10 @@ fi
 
 cp "$build/zephyr/zephyr.elf" "$root/$OUT_ELF"
 cp "$build/zephyr/zephyr.bin" "$root/$OUT_BIN"
-cp "$build/zephyr/.config" "$root/$OUT_CONFIG"
+# Kconfig names the module by its absolute path, on the comment lines
+# that open and close its section; the path is the sandbox's, and is
+# taken off so that the file says the module's place in the tree.
+sed "s|$root/||g" "$build/zephyr/.config" > "$root/$OUT_CONFIG"
 """
 
 zephyr_image = rule(
