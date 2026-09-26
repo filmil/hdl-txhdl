@@ -55,7 +55,7 @@ use txhdl::comp::{
 };
 use txhdl::netlist::{foreign, Lower, Lowered};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, with, Trace};
+use txhdl::{lower, regmap, with, Trace};
 
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
@@ -82,25 +82,43 @@ pub const SEEDS: [u32; RINGS] = [
     0xc2b2_ae35,
 ];
 
+// begin{regs}
+// The peripheral's four words.
+regmap! { regs (regs_read, regs_we, regs_re), 2: [
+    (0, data, rc, "the oldest word of entropy"),
+    (1, status, ro, "the buffer and the health test", [
+        (ready, 0, 1, ro, 0, "a word is ready"),
+        (count, 1, 3, ro, 0, "how many words wait"),
+        (fault, 8, 1, ro, 0, "the repetition count test tripped"),
+        (run, 9, 1, ro, 0, "the run bit, read back"),
+    ]),
+    (2, ctrl, rw, "the run bit, and the fault's clear", [
+        (run, 0, 1, rw, 0, "the rings run and the buffer fills"),
+        (clear, 1, 1, wo, 0, "written one, the fault is cleared"),
+    ]),
+    (3, raw, ro, "the last 32 folded samples"),
+] }
+// end{regs}
+
 /// The word of entropy, as an offset from the peripheral's base.
-pub const DATA: u32 = 0x0;
+pub const DATA: u32 = regs::data;
 /// The status word.
-pub const STATUS: u32 = 0x4;
+pub const STATUS: u32 = regs::status;
 /// The control word.
-pub const CTRL: u32 = 0x8;
+pub const CTRL: u32 = regs::ctrl;
 /// The last 32 folded samples.
-pub const RAW: u32 = 0xc;
+pub const RAW: u32 = regs::raw;
 
 /// `ctrl` bit 0: the rings run and the buffer fills.
-pub const CTRL_RUN: u32 = 1;
+pub const CTRL_RUN: u32 = regs::ctrl_run.mask();
 /// `ctrl` bit 1, on a write: the fault is cleared.
-pub const CTRL_CLEAR: u32 = 2;
+pub const CTRL_CLEAR: u32 = regs::ctrl_clear.mask();
 /// `status` bit 0: a word is ready.
-pub const STATUS_READY: u32 = 1;
+pub const STATUS_READY: u32 = regs::status_ready.mask();
 /// `status` bit 8: the repetition count test tripped.
-pub const STATUS_FAULT: u32 = 1 << 8;
+pub const STATUS_FAULT: u32 = regs::status_fault.mask();
 /// `status` bit 9: the run bit, read back.
-pub const STATUS_RUN: u32 = 1 << 9;
+pub const STATUS_RUN: u32 = regs::status_run.mask();
 
 // begin{ring}
 /// The rings: `RINGS` ring oscillators, sampled on the clock, as the
@@ -251,21 +269,22 @@ impl Unit for Trng {
             let word_done = keep & (nbits == 31);
             let full = count == WORDS as u32;
             let push = word_done & !full;
-            let pop = rgo & (rsel == 0) & (count != 0);
+            // The enables as named wires before a bit is taken off
+            // them: VHDL will not index the concatenation itself
+            // (issue 683).
+            let re = regs_re(rgo, rsel);
+            let we = regs_we(wgo, wsel);
             let ready = Bit::from(count != 0);
-            let status = ready.zext::<32>()
-                | (count.zext::<32>() << 1u32)
-                | (fault.zext::<32>() << 8u32)
-                | (running.zext::<32>() << 9u32);
-            let answer = select!(rsel.raw() => {
-                0 => mux(ready, self.words.read(head), U::<32>::from(0u8)),
-                1 => status,
-                2 => running.zext::<32>(),
-                _ => rawv,
-            });
+            // A read of the data word takes the oldest word, if one
+            // waits.
+            let pop = re.bit(0) & ready;
+            let status = regs_status_pack(ready, count, fault, running);
+            let data = mux(ready, self.words.read(head), U::<32>::from(0u8));
+            let ctrl = regs_ctrl_pack(running, Bit::Zero);
+            let answer = regs_read(rsel, data, status, ctrl, rawv);
             with!(self <= {
-                wgo & (wsel == 2) ? run: written.bit(0),
-                wgo & (wsel == 2) & written.bit(1) ? fault: Bit::Zero,
+                we.bit(2) ? run: regs_ctrl_run(written),
+                we.bit(2) & regs_ctrl_clear(written) ? fault: Bit::Zero,
                 // A trip in the cycle of a clear stays tripped.
                 tripped ? fault: Bit::One,
                 running ? {
