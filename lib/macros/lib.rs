@@ -5648,10 +5648,42 @@ fn lower_structural(
     // Another name for a wire's reading end or an input port, made by
     // `let b = a.clone();`: the name and what it stands for.
     let mut aliases: Vec<(String, String)> = Vec::new();
+    // The ends handed out by index, `Ends`: the name bound and the net,
+    // or the array port, whose element `e` is `net_e` (issue 635).
+    let mut arr_ends: Vec<(String, String)> = Vec::new();
     let is_chan = |k: &str| k == "Tx" || k == "Rx";
     for st in statements(body) {
         let ts: Vec<TokenTree> = st.into_iter().collect();
         if ts.is_empty() {
+            continue;
+        }
+        // `let mut x = Ends::from(ins);`: an array port handed out by
+        // index, its element `e` the port `ins_e` (issue 635).
+        if let (
+            true,
+            true,
+            Some(TokenTree::Ident(x)),
+            true,
+            true,
+            true,
+            Some(TokenTree::Group(g)),
+        ) = (
+            is_ident(&ts[0], "let"),
+            ts.get(1).is_some_and(|t| is_ident(t, "mut")),
+            ts.get(2),
+            ts.get(4).is_some_and(|t| is_ident(t, "Ends")),
+            punct_at(&ts, 5, ':') && punct_at(&ts, 6, ':'),
+            ts.get(7).is_some_and(|t| is_ident(t, "from")),
+            ts.get(8),
+        ) {
+            let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+            let [TokenTree::Ident(p)] = inner.as_slice() else {
+                return Err(err(
+                    g.span(),
+                    "`Ends::from` takes an array port by its name",
+                ));
+            };
+            arr_ends.push((x.to_string(), p.to_string()));
             continue;
         }
         // `let b = a.clone();`: a wire read in two places, which is
@@ -5712,7 +5744,15 @@ fn lower_structural(
             let Some(TokenTree::Group(names)) = ts.get(1) else {
                 return Err(bad(&ts[0]));
             };
-            let ns = split_commas(names);
+            // A name may be `mut`, as the ends `chans` hands out are, since
+            // taking one changes them (issue 635).
+            let ns: Vec<Vec<TokenTree>> = split_commas(names)
+                .into_iter()
+                .map(|n| match n.as_slice() {
+                    [m, rest @ ..] if is_ident(m, "mut") => rest.to_vec(),
+                    _ => n,
+                })
+                .collect();
             if ns.len() != 2 || ns.iter().any(|n| n.len() != 1) {
                 return Err(bad(&ts[1]));
             }
@@ -5722,6 +5762,56 @@ fn lower_structural(
             };
             let chan = is_ident(f, "chan");
             let whole = is_ident(f, "link");
+            // `chans::<T, C, N>()` or `signals::<T, C, N>()`: N nets,
+            // `net_0` onward, their ends handed out by index (issue 635).
+            let many = is_ident(f, "chans") || is_ident(f, "signals");
+            if many {
+                let lt = ts.iter().position(
+                    |t| matches!(t, TokenTree::Punct(p) if p.as_char() == '<'),
+                );
+                let gt = ts.iter().rposition(
+                    |t| matches!(t, TokenTree::Punct(p) if p.as_char() == '>'),
+                );
+                let (Some(lt), Some(gt)) = (lt, gt) else {
+                    return Err(err(
+                        f.span(),
+                        "name the payload, clock and count: \
+                         `chans::<T, C, N>()`",
+                    ));
+                };
+                let parts: Vec<String> =
+                    split_type_commas_slice(&ts[lt + 1..gt])
+                        .iter()
+                        .map(|p| text_of(p))
+                        .collect();
+                let [ty, clock, count] = parts.as_slice() else {
+                    return Err(err(
+                        f.span(),
+                        "name the payload, clock and count: \
+                         `chans::<T, C, N>()`",
+                    ));
+                };
+                let common: String = a
+                    .chars()
+                    .zip(b.chars())
+                    .take_while(|(x, y)| x == y)
+                    .map(|(x, _)| x)
+                    .collect();
+                let net = match common.trim_end_matches('_') {
+                    "" => a.clone(),
+                    c => c.to_string(),
+                };
+                let kind = if is_ident(f, "chans") { "Tx" } else { "Out" };
+                nets.push(format!(
+                    "@raw for __k in 0..({count}) {{ n.push((format!(\"{net}_{{}}\", __k), \
+                     ::txhdl::comp::trace::Kind::{kind}, \
+                     <{ty} as ::txhdl::types::Value>::WIDTH, \
+                     <{clock} as ::txhdl::comp::Clock>::NAME)); }}"
+                ));
+                arr_ends.push((a, net.clone()));
+                arr_ends.push((b, net));
+                continue;
+            }
             if !chan && !whole && !is_ident(f, "signal") {
                 return Err(bad(f));
             }
@@ -5786,6 +5876,120 @@ fn lower_structural(
         // A join of the children: every `self.FIELD.run(ins, outs)`.
         let mut calls: Vec<(String, Group, Span)> = Vec::new();
         find_runs(&ts, &mut calls);
+        let mut arrays: Vec<(String, String, Group, Span)> = Vec::new();
+        find_array_runs(&ts, &mut arrays);
+        // An array of children: an instance per child, `F_i`, made when
+        // `lowered` runs, each joined by what its index names (issue 635).
+        for (field, idx, args, span) in &arrays {
+            let sides = split_commas(args);
+            if sides.len() != 2 {
+                return Err(err(
+                    *span,
+                    "a child's `run` takes its inputs and its outputs",
+                ));
+            }
+            let mut joined: Vec<String> = Vec::new();
+            for side in &sides {
+                let items: Vec<Vec<TokenTree>> = match side.as_slice() {
+                    [TokenTree::Group(g)]
+                        if g.delimiter() == Delimiter::Parenthesis =>
+                    {
+                        split_commas(g)
+                    }
+                    other => vec![other.to_vec()],
+                };
+                for it in items {
+                    if it.is_empty() {
+                        continue;
+                    }
+                    // `x.take(e)`: element `e` of an array of ends.
+                    if let (
+                        Some(TokenTree::Ident(x)),
+                        true,
+                        true,
+                        Some(TokenTree::Group(e)),
+                    ) = (
+                        it.first(),
+                        punct_at(&it, 1, '.'),
+                        it.get(2).is_some_and(|t| is_ident(t, "take")),
+                        it.get(3),
+                    ) {
+                        let Some((_, net)) =
+                            arr_ends.iter().find(|(n, _)| *n == x.to_string())
+                        else {
+                            return Err(err(
+                                x.span(),
+                                &format!(
+                                    "`{x}` is not an array of ends made in \
+                                     `run` by `chans`, `signals` or \
+                                     `Ends::from`"
+                                ),
+                            ));
+                        };
+                        joined.push(format!(
+                            "a.push((String::new(), format!(\"{net}_{{}}\", {})));",
+                            text_of(&e.stream().into_iter().collect::<Vec<_>>())
+                        ));
+                        continue;
+                    }
+                    // A name: a wire read by every child, or `()`.
+                    match it.as_slice() {
+                        [TokenTree::Group(g)] if g.stream().is_empty() => {}
+                        [TokenTree::Ident(n)] => {
+                            let n = n.to_string();
+                            let n = aliases
+                                .iter()
+                                .find(|(x, _)| *x == n)
+                                .map(|(_, t)| t.clone())
+                                .unwrap_or(n);
+                            let net = if let Some((_, net, ch)) =
+                                ends.iter().find(|(e, _, _)| *e == n)
+                            {
+                                (!*ch).then(|| net.clone())
+                            } else {
+                                ports
+                                    .iter()
+                                    .find(|(p, k)| *p == n && k == "In")
+                                    .map(|(p, _)| p.clone())
+                            };
+                            let Some(net) = net else {
+                                return Err(err(
+                                    *span,
+                                    &format!(
+                                        "`{n}` goes to every child of the \
+                                         array; only a wire or an input \
+                                         port can, and a channel is handed \
+                                         out by index with `take`"
+                                    ),
+                                ));
+                            };
+                            joined.push(format!(
+                                "a.push((String::new(), \"{net}\".to_string()));"
+                            ));
+                        }
+                        _ => {
+                            return Err(err(
+                                *span,
+                                "a port passed to a child of an array is \
+                                 `x.take(e)`, a wire's name, or `()`",
+                            ))
+                        }
+                    }
+                }
+            }
+            instances.push(format!(
+                "@stmt for {idx} in 0..me.{field}.0.len() {{ \
+                 __ins.push(::txhdl::netlist::instance_of(\
+                 ::txhdl::netlist::child_lowered(&me.{field}.0[{idx}], \
+                 &format!(\"{{}}_{field}_{{}}\", name, {idx})), \
+                 &format!(\"{field}_{{}}\", {idx}), \
+                 {{ let mut a: Vec<(String, String)> = Vec::new(); {} a }})); }}",
+                joined.join(" ")
+            ));
+        }
+        if calls.is_empty() && !arrays.is_empty() {
+            continue;
+        }
         if calls.is_empty() {
             return Err(err(
                 ts[0].span(),
@@ -6729,7 +6933,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          aliases: Vec::new(),\n\
          nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, \
          usize, &'static str)> = Vec::new(); {nets} n }},\n\
-         instances: vec![{instances}],\n\
+         instances: {{ #[allow(unused_mut)] let mut __ins: Vec<::txhdl::netlist::Instance> = Vec::new();\n\
+         {instances} __ins }},\n\
          foreign: None,\n\
          }}\n\
          .with_inlined(::txhdl::netlist::inlined_end())\n\
@@ -6754,6 +6959,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         nets = nets
             .iter()
             .map(|n| match n.strip_prefix("@link ") {
+                None if n.starts_with("@raw ") => n[5..].to_string(),
                 Some(l) => {
                     let (ty, net) = l.rsplit_once('|').unwrap_or((l, ""));
                     format!(
@@ -6765,7 +6971,14 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             })
             .collect::<Vec<_>>()
             .join("\n"),
-        instances = instances.join(",\n"),
+        instances = instances
+            .iter()
+            .map(|s| match s.strip_prefix("@stmt ") {
+                Some(t) => t.to_string(),
+                None => format!("__ins.push({s});"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         wires = wires
             .iter()
             .enumerate()
@@ -6900,4 +7113,99 @@ fn indexed_reg(
             "`self.{f}[..]`: the index is a number or a loop's variable"
         )),
     }
+}
+
+/// Every join of an array of children in a token list, into any group:
+/// `join_all(self.F.iter_mut().enumerate().map(|(i, c)| c.run(ARGS)))`,
+/// as the field, the index's name and the arguments (issue 635).
+fn find_array_runs(
+    ts: &[TokenTree],
+    out: &mut Vec<(String, String, Group, Span)>,
+) {
+    let mut k = 0;
+    while k < ts.len() {
+        if let (TokenTree::Ident(j), Some(TokenTree::Group(g))) =
+            (&ts[k], ts.get(k + 1))
+        {
+            if j.to_string() == "join_all"
+                && g.delimiter() == Delimiter::Parenthesis
+            {
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                if let Some(found) = array_run(&inner) {
+                    out.push(found);
+                    k += 2;
+                    continue;
+                }
+            }
+        }
+        if let TokenTree::Group(g) = &ts[k] {
+            let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+            find_array_runs(&inner, out);
+        }
+        k += 1;
+    }
+}
+
+/// `self.F.iter_mut().enumerate().map(|(i, c)| c.run(ARGS))`, read.
+fn array_run(ts: &[TokenTree]) -> Option<(String, String, Group, Span)> {
+    let dot = |k: usize| punct_at(ts, k, '.');
+    let empty = |k: usize| {
+        matches!(ts.get(k), Some(TokenTree::Group(g))
+            if g.delimiter() == Delimiter::Parenthesis && g.stream().is_empty())
+    };
+    let (Some(s), Some(TokenTree::Ident(f))) = (ts.first(), ts.get(2)) else {
+        return None;
+    };
+    if !(is_ident(s, "self")
+        && dot(1)
+        && dot(3)
+        && ts.get(4).is_some_and(|t| is_ident(t, "iter_mut"))
+        && empty(5)
+        && dot(6)
+        && ts.get(7).is_some_and(|t| is_ident(t, "enumerate"))
+        && empty(8)
+        && dot(9)
+        && ts.get(10).is_some_and(|t| is_ident(t, "map"))
+        && ts.len() == 12)
+    {
+        return None;
+    }
+    let Some(TokenTree::Group(m)) = ts.get(11) else {
+        return None;
+    };
+    let mut c: Vec<TokenTree> = m.stream().into_iter().collect();
+    // `| (i, v) | v . run (ARGS)`, or the call in braces, as rustfmt
+    // writes a closure whose call runs over a line.
+    if let [a, b, d, TokenTree::Group(body)] = c.as_slice() {
+        if body.delimiter() == Delimiter::Brace {
+            let mut flat = vec![a.clone(), b.clone(), d.clone()];
+            flat.extend(body.stream());
+            c = flat;
+        }
+    }
+    let (
+        Some(TokenTree::Group(pair)),
+        Some(TokenTree::Ident(v2)),
+        Some(TokenTree::Group(args)),
+    ) = (c.get(1), c.get(3), c.get(6))
+    else {
+        return None;
+    };
+    let pv = split_commas(pair);
+    let (Some([TokenTree::Ident(i)]), Some([TokenTree::Ident(v)])) = (
+        pv.first().map(|x| x.as_slice()),
+        pv.get(1).map(|x| x.as_slice()),
+    ) else {
+        return None;
+    };
+    if !(punct_at(&c, 0, '|')
+        && punct_at(&c, 2, '|')
+        && v.to_string() == v2.to_string()
+        && punct_at(&c, 4, '.')
+        && c.get(5).is_some_and(|t| is_ident(t, "run"))
+        && c.len() == 7)
+    {
+        return None;
+    }
+    Some((f.to_string(), i.to_string(), args.clone(), f.span()))
 }
