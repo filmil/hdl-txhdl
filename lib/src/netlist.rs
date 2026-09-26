@@ -2991,6 +2991,20 @@ fn vexpr(e: &Expr, l: &Lowered) -> String {
             };
             format!("({} ? {} : {})", vexpr(c, l), side(a), side(b))
         }
+        // A bit of a one-bit value, which is declared without a range
+        // and cannot be selected from: bit nought is the value itself
+        // (issue 647). A memory's word is indexed as ever.
+        Expr::Index(a, i)
+            if l.ewidth(a) == 1
+                && matches!(**i, Expr::Num(_))
+                && !matches!(&**a, Expr::Name(m) if l.is_mem(m)) =>
+        {
+            if matches!(**i, Expr::Num(0)) {
+                vexpr(a, l)
+            } else {
+                "1'b0".into()
+            }
+        }
         Expr::Index(a, i) => format!("{}[{}]", vexpr(a, l), vexpr(i, l)),
         Expr::Slice(a, lo, len) => {
             format!("{}[{}:{}]", vexpr(a, l), lo + len - 1, lo)
@@ -3152,6 +3166,19 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
             };
             format!("({} {vop} {})", side(a), side(b))
         }
+        // A one-bit value is a `std_logic`, which numeric_std does not
+        // shift: moved by nought it is itself, and by more it is gone.
+        // A unit over an array of one meets it, `1 << i` for `i` of
+        // nought (issue 647).
+        Expr::Bin("<<" | ">>", a, b)
+            if w == 1 && l.ewidth(a) <= 1 && matches!(**b, Expr::Num(_)) =>
+        {
+            if matches!(**b, Expr::Num(0)) {
+                hval(a, 1, l)
+            } else {
+                "'0'".into()
+            }
+        }
         Expr::Bin("<<", a, b) => {
             format!("shift_left({}, {})", hval(a, w, l), hint(b, l))
         }
@@ -3204,6 +3231,14 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
             Expr::Name(m) if l.is_mem(m) => {
                 format!("{m}({})", hint(i, l))
             }
+            // A bit of a one-bit value, which VHDL holds as a
+            // `std_logic` and does not index: bit nought is the value
+            // itself (issue 647).
+            _ if l.ewidth(a) == 1 => match &**i {
+                Expr::Num(0) => hval(a, 1, l),
+                Expr::Num(_) => "'0'".into(),
+                _ => format!("{}({})", hval(a, 0, l), hint(i, l)),
+            },
             _ => format!("{}({})", hval(a, 0, l), hint(i, l)),
         },
         // A truth value as a bit, or as a word of that width.
@@ -3257,6 +3292,30 @@ mod tests {
             instances: Vec::new(),
             foreign: None,
         }
+    }
+
+    /// A one-bit value is a `std_logic` in the VHDL and a scalar in
+    /// the Verilog, neither of which can be indexed or, in the VHDL,
+    /// shifted: bit nought of it is the value, and a move by nought
+    /// leaves it. A unit over an array of one meets both, `sel.bit(i)`
+    /// and `1 << i` for `i` of nought (issue 647). A wider value is
+    /// indexed as ever.
+    #[test]
+    fn a_bit_of_a_one_bit_value_is_the_value() {
+        let net = three_regs();
+        let bit = |n: &str, k| {
+            Expr::Index(Box::new(Expr::name(n)), Box::new(Expr::Num(k)))
+        };
+        assert_eq!(vexpr(&bit("flag", 0), &net), "flag");
+        assert_eq!(vexpr(&bit("flag", 1), &net), "1'b0");
+        assert_eq!(vexpr(&bit("count", 0), &net), "count[0]");
+        assert_eq!(hval(&bit("flag", 0), 1, &net), "flag");
+        assert_eq!(hval(&bit("flag", 1), 1, &net), "'0'");
+        assert_eq!(hval(&bit("count", 3), 1, &net), "count(3)");
+        let one = || Expr::Bits(1, "1".to_string());
+        let shl = |k| Expr::bin("<<", one(), Expr::Num(k));
+        assert_eq!(hval(&shl(0), 1, &net), "'1'");
+        assert_eq!(hval(&shl(1), 1, &net), "'0'");
     }
 
     /// A bit or a part of a literal is a literal, so no netlist indexes
