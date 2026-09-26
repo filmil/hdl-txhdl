@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The entropy source's capture read into numbers (issue 458): what
+# `trng_ram_bin` prints on the board, the raw words and the
+# extractor's, each as bias, serial correlation and a most common value
+# estimate of min-entropy after NIST SP 800-90B. Run by hand on the
+# capture the board check writes; see docs/board-checks.md.
+#
+#   bazel run //tools/trngstat -- $PWD/trng.log
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+package(default_visibility = ["//visibility:public"])
+
+go_library(
+    name = "trngstat_lib",
+    srcs = [
+        "main.go",
+        "stat.go",
+    ],
+    importpath = "github.com/filmil/txhdl/tools/trngstat",
+)
+
+go_binary(
+    name = "trngstat",
+    embed = [":trngstat_lib"],
+    pure = "on",
+)
+
+go_test(
+    name = "trngstat_test",
+    srcs = ["stat_test.go"],
+    embed = [":trngstat_lib"],
+)
