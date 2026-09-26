@@ -10,6 +10,7 @@ rust_binary(
     srcs = ["main.rs"],
     edition = "2021",
     deps = [
+        "//cpu/vreteno:vreteno32",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
     ],
