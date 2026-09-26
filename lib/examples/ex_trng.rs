@@ -19,9 +19,10 @@
 //! under nvc and Verilator with the samples as the run recorded them.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, Clock, DefaultClock, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::trng::{
     RingOsc, Trng, CTRL, CTRL_RUN, DATA, RAW, RINGS, STATUS, STATUS_READY,
 };
@@ -31,7 +32,15 @@ use txhdl_parts::trng::{
 type HostUnit = AxiHost<32, 32, 4, 2, 4>;
 
 /// The bridge, with the peripheral at `0x1000`.
-type Bridge = LiteBridge1<32, 32, 4, 2, 0x1000, 0xf000>;
+type Bridge = LiteBridge<1, TrngMap, 32, 32, 4, 2>;
+
+/// Where the bridge's one peripheral is: a nibble of the address
+/// space at 0x1000.
+pub struct TrngMap;
+
+impl AddrMap<1> for TrngMap {
+    const RANGES: [(usize, usize); 1] = [(0x1000, 0xf000)];
+}
 
 /// The peripheral's words, as the host addresses them.
 const BASE: u32 = 0x1000;
@@ -127,7 +136,7 @@ fn main() {
     let mut sim = Running::new(join2(
         join2(
             host_unit.run(host_in, host_out),
-            bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
+            bridge.run((aw, ar, w, [lb], [lr]), ([law], [lar], [lw], b, r)),
         ),
         join2(
             join2(ring.run(en, raw_o), trng.run(bus, (raw, en_o))),

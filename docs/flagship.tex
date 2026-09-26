@@ -121,7 +121,7 @@ port and the pulse width modulator already share the page at
 exactly that reason: a peripheral of six registers does not deserve a
 port of its own. The video peripheral is three registers, so it takes a
 third sixteenth, at \code{0x3200}, and the remote peripheral a fourth
-at \code{0x3300}, so the bridge is a \code{LiteBridge4}.
+at \code{0x3300}, so the bridge is a \code{LiteBridge<4, ..>}.
 
 What is different about the third slot is that it does not reach a
 field of \code{Board}. It leaves the unit as five channel ports:

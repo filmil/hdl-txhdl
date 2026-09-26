@@ -3,7 +3,7 @@
 #
 # Every component has a datasheet. A component is a unit under
 # `#[lower]` in the crates this test is given, or a type a family macro
-# writes (`station!`, `router!`, `lite_bridge!`). A datasheet
+# writes (`station!`, `router!`). A datasheet
 # says what it covers on a line `% covers: A, B, C` in
 # `docs/datasheets/`. The test lists each component nobody covers, and
 # each datasheet the document does not include, and fails if there is
@@ -43,7 +43,7 @@ components=$(
         }
         if ($0 ~ /^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]/) { take = 0 }
       }
-      /^[[:space:]]*(station|router|lite_bridge)!\(/ {
+      /^[[:space:]]*(station|router)!\(/ {
         s = $0
         sub(/^[^(]*\(/, "", s)
         sub(/,.*/, "", s)

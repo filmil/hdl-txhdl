@@ -2975,15 +2975,6 @@ latex_document(
 # What `station!` wrote for the two-input station, as the example
 # prints it, and the size of that text beside the hand-written
 # Verilog's: both for the tutorial, neither typed by hand.
-# What `lite_bridge!` wrote for a bridge of two peripherals, as the
-# example prints it, for the AXI document.
-genrule(
-    name = "lite_bridge_source",
-    outs = ["lite_bridge2.rs"],
-    cmd = "$(location //lib/examples:ex_axi_lite) --source > $@",
-    tools = ["//lib/examples:ex_axi_lite"],
-)
-
 genrule(
     name = "station_source",
     outs = [
@@ -3188,7 +3179,6 @@ latex_document(
         ":axi_reg_timing",
         ":axi_lite_run",
         ":axi_lite_timing",
-        ":lite_bridge_source",
         "//lib/examples:sources",
         "//lib/parts:sources",
     ],

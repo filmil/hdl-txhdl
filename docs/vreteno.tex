@@ -563,7 +563,7 @@ interrupt controller the 64~KiB from \code{0x0200\_0000}, and every other addres
 the router answers \code{DecErr} itself. The data memory and the
 timer are each behind an \code{AxiPer}, so what each sees is a whole
 request and, for a write, its beat. The serial port is an AXI-Lite
-peripheral behind \code{LiteBridge1}, a bridge of one peripheral,
+peripheral behind \code{LiteBridge<1, ..>}, a bridge of one peripheral,
 which sends the router's bursts to it one beat at a time, as
 AXI-Lite transactions with no identifier~\cite{axi}. None of the
 three decodes an address any more, because the router and the

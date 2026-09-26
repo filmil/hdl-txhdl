@@ -70,7 +70,7 @@ low and takes nothing.
 
 \begin{itemize}
 \item \code{EthLite} has no \code{\#[test]} of its own.
-\item \code{ex\_eth} puts it behind \code{LiteBridge1} and an
+\item \code{ex\_eth} puts it behind \code{LiteBridge<1, ..>} and an
 \code{AxiHost}, in front of \code{EthTx} and \code{EthRx} on a looped
 wire. The host sends three frames, each as one fixed burst to the
 transmit word, and reads them back in fixed bursts of sixteen from the

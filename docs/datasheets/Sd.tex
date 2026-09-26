@@ -108,7 +108,7 @@ stays high until the program clears done.
 
 \begin{itemize}
 \item \code{ex\_sd} does what a driver does, through an AXI4 host and
-\code{LiteBridge1}, against \code{SdCard}, the model of a card in \code{sd.rs},
+\code{LiteBridge<1, ..>}, against \code{SdCard}, the model of a card in \code{sd.rs},
 stepped on the wires every cycle. It brings the card up with
 \code{CMD0}, \code{CMD8}, \code{ACMD41}, \code{CMD2}, \code{CMD3},
 \code{CMD7} and \code{ACMD6}, reads block 3 on one line, then writes

@@ -10,20 +10,20 @@
 //! are always the ports its netlist has.
 use txhdl::comp::trace::Kind;
 use txhdl::comp::{Clock, DefaultClock};
+use txhdl::map::AddrMap;
 use txhdl::netlist::Lowered;
 
 use ddr3::Ddr3Per;
 use pcie::bar::{BarRegs, PcieBar};
 use razboj::fb::Fb;
 use razboj::raster::Raster;
-use txhdl::map::AddrMap;
 use txhdl::regmap::RegMap;
 use txhdl::types::U;
 use txhdl_parts::buffer::Buffer;
 use txhdl_parts::bus::arbiter::Arbiter2;
 use txhdl_parts::bus::axi::{AxiHost, AxiPer};
 use txhdl_parts::bus::axi::{Issue, R};
-use txhdl_parts::bus::axi_lite::LiteBridge1;
+use txhdl_parts::bus::axi_lite::LiteBridge;
 use txhdl_parts::bus::axi_pins::AxiPins;
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
 use txhdl_parts::bus::noc::node::Node;
@@ -61,6 +61,14 @@ use vreteno32::pair::{Inject, Pair, Watch};
 use vreteno32::rom::Rom;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
+
+/// The map of the bridge the sheet is written for: Vreteno's serial
+/// port, a nibble of the address space at 0x3000.
+struct SerialMap;
+
+impl AddrMap<1> for SerialMap {
+    const RANGES: [(usize, usize); 1] = [(0x3000, 0xf000)];
+}
 
 /// Text for LaTeX: the characters a name or a type may hold that
 /// LaTeX would read otherwise.
@@ -464,8 +472,8 @@ fn main() {
     );
     sheet(
         "LiteBridge",
-        "LiteBridge1<32, 32, 4, 2, 0x3000, 0xf000>",
-        LiteBridge1::<32, 32, 4, 2, 0x3000, 0xf000>::lowered("lite_bridge"),
+        "LiteBridge<1, SerialMap, 32, 32, 4, 2>",
+        LiteBridge::<1, SerialMap, 32, 32, 4, 2>::lowered("lite_bridge"),
     );
     sheet(
         "AxiWb",

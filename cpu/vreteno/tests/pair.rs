@@ -11,7 +11,7 @@ use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
@@ -35,7 +35,14 @@ impl AddrMap<3> for RunMap {
 }
 
 type Rtr = Router<3, RunMap, 32, 32, 4, IW>;
-type Serial = LiteBridge1<32, 32, 4, IW, 0x3000, 0xf000>;
+type Serial = LiteBridge<1, SerialMap, 32, 32, 4, IW>;
+
+/// Where the serial port is: a nibble of the address space at 0x3000.
+pub struct SerialMap;
+
+impl AddrMap<1> for SerialMap {
+    const RANGES: [(usize, usize); 1] = [(0x3000, 0xf000)];
+}
 
 /// Runs `program` on a pair for `cycles` cycles, holding the second
 /// core in reset during the cycles `fault` names. Answers whether the
@@ -126,8 +133,8 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
                     tper.run(tl.per_in, tl.per_out),
                 ),
                 ubridge.run(
-                    (ul.per_in.0, ul.per_in.1, ul.per_in.2, bb, br),
-                    (baw, bar, bw, ul.per_out.2, ul.per_out.3),
+                    (ul.per_in.0, ul.per_in.1, ul.per_in.2, [bb], [br]),
+                    ([baw], [bar], [bw], ul.per_out.2, ul.per_out.3),
                 ),
             ),
         ),

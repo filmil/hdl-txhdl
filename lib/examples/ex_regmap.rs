@@ -19,12 +19,13 @@
 //! simulates its netlist against this run under nvc and Verilator.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, Clock, DefaultClock, Reg, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::regmap;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{
-    axi_lite, LiteB, LiteBridge1, LitePort, LiteR,
+    axi_lite, LiteB, LiteBridge, LitePort, LiteR,
 };
 
 // begin{map}
@@ -108,7 +109,15 @@ impl Unit for Knobs {
 type HostUnit = AxiHost<32, 32, 4, 2, 4>;
 
 /// The bridge, with the peripheral at `0x1000`.
-type Bridge = LiteBridge1<32, 32, 4, 2, 0x1000, 0xf000>;
+type Bridge = LiteBridge<1, KnobsMap, 32, 32, 4, 2>;
+
+/// Where the bridge's one peripheral is: a nibble of the address
+/// space at 0x1000.
+pub struct KnobsMap;
+
+impl AddrMap<1> for KnobsMap {
+    const RANGES: [(usize, usize); 1] = [(0x1000, 0xf000)];
+}
 
 const BASE: u32 = 0x1000;
 
@@ -201,7 +210,7 @@ fn main() {
     let mut sim = Running::new(join2(
         join2(
             host_unit.run(host_in, host_out),
-            bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
+            bridge.run((aw, ar, w, [lb], [lr]), ([law], [lar], [lw], b, r)),
         ),
         join2(knobs_unit.run(bus, ()), client),
     ));

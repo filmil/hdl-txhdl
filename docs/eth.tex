@@ -223,7 +223,7 @@ word and reads sixteen bytes as one burst from the receive word.
 \section{The Run}
 \label{sec:e-run}
 
-\code{ex\_eth} puts the three units behind \code{LiteBridge1}, behind
+\code{ex\_eth} puts the three units behind \code{LiteBridge<1, ..>}, behind
 a host's tracker, with the transmitter's GMII looped into the
 receiver's a cycle late. The host client sends three frames, each as
 one fixed burst, and after each reads bursts of sixteen from the

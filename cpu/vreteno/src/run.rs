@@ -18,7 +18,7 @@ use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
 
 /// The link, as the demonstration has it: thirty-two bit addresses
@@ -45,7 +45,14 @@ type Rtr = Router<4, RunMap, 32, 32, 4, IW>;
 
 /// The bridge the serial port sits behind: one AXI-Lite peripheral,
 /// at the range the router gives the port.
-type Serial = LiteBridge1<32, 32, 4, IW, 0x3000, 0xf000>;
+type Serial = LiteBridge<1, SerialMap, 32, 32, 4, IW>;
+
+/// Where the serial port is: a nibble of the address space at 0x3000.
+pub struct SerialMap;
+
+impl AddrMap<1> for SerialMap {
+    const RANGES: [(usize, usize); 1] = [(0x3000, 0xf000)];
+}
 
 /// What a run came to: what a terminal on the serial line heard, and
 /// the cycle the core halted itself on, if it did.
@@ -211,8 +218,8 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
                     rper.run(rl.per_in, rl.per_out),
                 ),
                 ubridge.run(
-                    (ul.per_in.0, ul.per_in.1, ul.per_in.2, bb, br),
-                    (baw, bar, bw, ul.per_out.2, ul.per_out.3),
+                    (ul.per_in.0, ul.per_in.1, ul.per_in.2, [bb], [br]),
+                    ([baw], [bar], [bw], ul.per_out.2, ul.per_out.3),
                 ),
             ),
         ),

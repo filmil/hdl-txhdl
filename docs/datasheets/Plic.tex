@@ -17,7 +17,7 @@ peripheral whose link is one port, \code{bus}, a \code{LitePort} of
 the five channels: reads come on \code{bus\_ar} and are answered on
 \code{bus\_r}, and writes come on \code{bus\_aw} and \code{bus\_w}
 and are answered on \code{bus\_b}. It sits behind a
-\code{LiteBridge1}, which sends it only its own range.
+\code{LiteBridge<1, ..>}, which sends it only its own range.
 The input \code{rst} clears the requests, the line, the priorities, the
 enable bits and the threshold.
 

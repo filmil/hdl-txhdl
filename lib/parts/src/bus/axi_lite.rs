@@ -11,21 +11,25 @@
 //!
 //! [`axi_lite`] makes the five channels of a link, as
 //! [`axi_units`](super::axi::axi_units) does for AXI4, and hands back
-//! the ends each side holds. `LiteBridge1` to `LiteBridge8` sit
-//! between an AXI4 link and that many AXI-Lite peripherals: they take
-//! the AXI4 side one burst at a time, decode the burst's address to a
-//! peripheral, send each beat to it as one AXI-Lite transaction, and
-//! answer the burst with its identifier. One count of peripherals is
-//! one unit, written out by `lite_bridge!`, since the lowering reads a
-//! body and not a loop over ports.
+//! the ends each side holds. [`LiteBridge`] sits between an AXI4 link
+//! and `N` AXI-Lite peripherals: it takes the AXI4 side one burst at a
+//! time, decodes the burst's address to a peripheral by the ranges its
+//! address map states, sends each beat to it as one AXI-Lite
+//! transaction, and answers the burst with its identifier. One unit
+//! serves every count: its peripheral side is arrays of ports, and the
+//! lowering unrolls the loops over them when `lowered` runs (issue
+//! 500), where `lite_bridge!` used to write one unit per count from one
+//! to eight.
 //!
 //! The widths are stated, as everywhere in this library: `A` the
 //! address width, `D` the data width and `S` the strobe width, which
 //! is `D / 8`.
-use crate::bus::axi::Resp;
-use txhdl::comp::{chan, DefaultClock, Link, Rx, Tx};
-use txhdl::lite_bridge;
-use txhdl::types::U;
+use crate::bus::axi::{Ar, Aw, BurstKind, Resp, B, R, W};
+use std::marker::PhantomData;
+use txhdl::comp::{chan, mux, Clock, DefaultClock, Link, Reg, Rx, Tx, Unit};
+use txhdl::map::AddrMap;
+use txhdl::types::{Bit, U};
+use txhdl::{lower, with, Trace};
 use txhdl::{
     Ports as PortsDerive, Transaction as TransactionDerive,
     Value as ValueDerive,
@@ -181,14 +185,280 @@ pub fn axi_lite<const A: usize, const D: usize, const S: usize>(
 }
 
 // begin{part}
-lite_bridge!(LiteBridge1, 1);
-lite_bridge!(LiteBridge2, 2);
-lite_bridge!(LiteBridge3, 3);
-lite_bridge!(LiteBridge4, 4);
-lite_bridge!(LiteBridge5, 5);
-lite_bridge!(LiteBridge6, 6);
-lite_bridge!(LiteBridge7, 7);
-lite_bridge!(LiteBridge8, 8);
+/// An AXI4 to AXI-Lite bridge of `N` peripherals, whose address ranges
+/// the map `M` states (issue 593). The five AXI4 channels of one link
+/// come in; five AXI-Lite channels go out per peripheral, as arrays
+/// of `N`, and a peripheral's range is its entry of `M::RANGES`,
+/// matched on a burst's address, the first that matches winning. The
+/// bridge takes one burst at a time, since AXI-Lite has no identifier
+/// to tell two apart. Each beat of a burst is one AXI-Lite
+/// transaction, at the burst's address moved on by a beat's width per
+/// beat, or not moved for a fixed burst: a read's answers go up as the
+/// burst's beats, the last marked last, and a write's answers are
+/// folded into one response, the first error or `Okay`. A burst to no
+/// peripheral's range is answered `DecErr` by the bridge itself, beat
+/// by beat, so a read still gets every beat it asked for. Written in
+/// the lowered subset, so it is a netlist too.
+// begin{state}
+#[derive(Trace)]
+pub struct LiteBridge<
+    const N: usize,
+    M: AddrMap<N>,
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+> {
+    /// The map, which holds no signal: a marker the netlist ignores.
+    pub map: PhantomData<M>,
+    /// A burst is in progress, and the next waits for it.
+    pub busy: Reg<Bit>,
+    /// The burst is a read.
+    pub rd: Reg<Bit>,
+    /// The read address channel goes first when both offer.
+    pub rfirst: Reg<Bit>,
+    /// The burst's identifier, which every answer to it names.
+    pub xid: Reg<U<I>>,
+    /// The address of the current beat.
+    pub addr: Reg<U<A>>,
+    /// How far the address moves per beat: none for a fixed burst.
+    pub stride: Reg<U<A>>,
+    /// Beats left after this one.
+    pub left: Reg<U<8>>,
+    /// The burst's protection bits, given with every beat.
+    pub prot: Reg<U<3>>,
+    /// Which peripheral the burst decoded to, one bit each; none set
+    /// is a hole, answered here.
+    pub sel: Reg<U<N>>,
+    /// The beat's AXI-Lite request is out, and its answer awaited.
+    pub sent: Reg<Bit>,
+    /// A write burst's response so far: its first error, or `Okay`.
+    pub wresp: Reg<Resp>,
+}
+// end{state}
+
+impl<
+        const N: usize,
+        M: AddrMap<N>,
+        const A: usize,
+        const D: usize,
+        const S: usize,
+        const I: usize,
+    > Default for LiteBridge<N, M, A, D, S, I>
+{
+    fn default() -> Self {
+        LiteBridge {
+            map: PhantomData,
+            busy: Reg::default(),
+            rd: Reg::default(),
+            rfirst: Reg::default(),
+            xid: Reg::default(),
+            addr: Reg::default(),
+            stride: Reg::default(),
+            left: Reg::default(),
+            prot: Reg::default(),
+            sel: Reg::default(),
+            sent: Reg::default(),
+            wresp: Reg::default(),
+        }
+    }
+}
+
+// The lowering reads a loop over an array of ports as `bs[i]` and a
+// map's range as `M::RANGES[i]`, so the index is what it is written
+// with, and Clippy would rather it were an iterator.
+#[allow(clippy::needless_range_loop)]
+// begin{ports}
+#[lower]
+impl<
+        const N: usize,
+        M: AddrMap<N>,
+        const A: usize,
+        const D: usize,
+        const S: usize,
+        const I: usize,
+    > Unit for LiteBridge<N, M, A, D, S, I>
+{
+    async fn run(
+        &mut self,
+        (aw, ar, w, bs, rs): (
+            Rx<Aw<A, I>>,
+            Rx<Ar<A, I>>,
+            Rx<W<D, S>>,
+            [Rx<LiteB>; N],
+            [Rx<LiteR<D>>; N],
+        ),
+        (aws, ars, ws, b, r): (
+            [Tx<LiteAw<A>>; N],
+            [Tx<LiteAr<A>>; N],
+            [Tx<LiteW<D, S>>; N],
+            Tx<B<I>>,
+            Tx<R<D, I>>,
+        ),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            // end{ports}
+            // begin{accept}
+            // A burst is taken when none is in progress, the two
+            // address channels taking turns when both offer.
+            let idle = !self.busy;
+            let aw_off = aw.peek().is_some();
+            let ar_off = ar.peek().is_some();
+            let awh = aw.head();
+            let arh = ar.head();
+            let pick_ar = idle & (self.rfirst | !aw_off);
+            let take_ar = pick_ar & ar_off;
+            let take_aw = idle & aw_off & !take_ar;
+            let _ = ar.recv_if(pick_ar);
+            let _ = aw.recv_if(idle & !take_ar);
+            // Where it goes: a bit per peripheral, the first range
+            // that matches winning, and none for a hole.
+            let mut ar_sel = U::<N>::from(0u8);
+            let mut ar_any = Bit::Zero;
+            let mut aw_sel = U::<N>::from(0u8);
+            let mut aw_any = Bit::Zero;
+            for i in 0..N {
+                let one = U::<N>::from(1u8) << i;
+                let ar_hit = Bit::from(
+                    (arh.addr.raw() as usize & M::RANGES[i].1)
+                        == M::RANGES[i].0,
+                ) & !ar_any;
+                ar_sel = mux(ar_hit, one, ar_sel);
+                ar_any = ar_any | ar_hit;
+                let aw_hit = Bit::from(
+                    (awh.addr.raw() as usize & M::RANGES[i].1)
+                        == M::RANGES[i].0,
+                ) & !aw_any;
+                aw_sel = mux(aw_hit, one, aw_sel);
+                aw_any = aw_any | aw_hit;
+            }
+            let new_sel = mux(take_ar, ar_sel, aw_sel);
+            // How far the address moves per beat: a beat's width, or
+            // nothing for a fixed burst.
+            let size = mux(take_ar, arh.size, awh.size);
+            let kind = mux(take_ar, arh.burst, awh.burst);
+            let fixed = kind == BurstKind::Fixed;
+            let width = U::<A>::from(1u8) << (size.raw() as usize);
+            let new_stride = mux(fixed, U::<A>::from(0u8), width);
+            // end{accept}
+            // begin{requests}
+            // A beat's request, to the peripheral the burst decoded
+            // to. A write needs the burst's next beat and room on both
+            // of that peripheral's channels; a read needs room on its
+            // one. A hole needs no room, and a write's beat to a hole
+            // is taken and dropped.
+            let cur = self.sel.get();
+            let wbeat = self.busy & !self.rd & !self.sent;
+            let rbeat = self.busy & self.rd & !self.sent;
+            let w_off = w.peek().is_some();
+            let wh = w.head();
+            let mut w_room = Bit::One;
+            let mut ar_room = Bit::One;
+            for i in 0..N {
+                let me = cur.bit(i);
+                w_room = mux(me, aws[i].ready() & ws[i].ready(), w_room);
+                ar_room = mux(me, ars[i].ready(), ar_room);
+            }
+            let w_go = wbeat & w_off & w_room;
+            let _ = w.recv_if(wbeat & w_room);
+            let ar_go = rbeat & ar_room;
+            for i in 0..N {
+                if (w_go & cur.bit(i)).to_bool() {
+                    aws[i].send(LiteAw {
+                        addr: self.addr.get(),
+                        prot: self.prot.get(),
+                    });
+                    ws[i].send(LiteW {
+                        data: wh.data,
+                        strb: wh.strb,
+                    });
+                }
+                if (ar_go & cur.bit(i)).to_bool() {
+                    ars[i].send(LiteAr {
+                        addr: self.addr.get(),
+                        prot: self.prot.get(),
+                    });
+                }
+            }
+            // end{requests}
+            // begin{answers}
+            // The answer to the beat, from that peripheral, or the
+            // bridge's own `DecErr` for a hole, there at once.
+            let mut b_off = Bit::One;
+            let mut b_resp = Resp::DecErr;
+            let mut r_off = Bit::One;
+            let mut r_data = U::<D>::from(0u8);
+            let mut r_resp = Resp::DecErr;
+            for i in 0..N {
+                let me = cur.bit(i);
+                b_off = mux(me, Bit::from(bs[i].peek().is_some()), b_off);
+                b_resp = mux(me, bs[i].head().resp, b_resp);
+                r_off = mux(me, Bit::from(rs[i].peek().is_some()), r_off);
+                r_data = mux(me, rs[i].head().data, r_data);
+                r_resp = mux(me, rs[i].head().resp, r_resp);
+            }
+            let last = self.left == 0;
+            // A write's answer is taken when the burst's own response
+            // has room, or when more beats are to come.
+            let wwait = self.busy & !self.rd & self.sent;
+            let b_can = wwait & (b.ready() | !last);
+            let b_done = b_can & b_off;
+            // A read's answer goes straight up as the burst's beat.
+            let rwait = self.busy & self.rd & self.sent;
+            let r_can = rwait & r.ready();
+            let r_done = r_can & r_off;
+            for i in 0..N {
+                let _ = bs[i].recv_if(b_can & cur.bit(i));
+                let _ = rs[i].recv_if(r_can & cur.bit(i));
+            }
+            // The burst's response keeps its first error.
+            let clean = self.wresp.get() == Resp::Okay;
+            let merged = mux(clean, b_resp, self.wresp.get());
+            if (b_done & last).to_bool() {
+                b.send(B {
+                    id: self.xid.get(),
+                    resp: merged,
+                });
+            }
+            if r_done.to_bool() {
+                r.send(R {
+                    id: self.xid.get(),
+                    data: r_data,
+                    resp: r_resp,
+                    last: Bit::from(last),
+                });
+            }
+            // end{answers}
+            // begin{drives}
+            let done = b_done | r_done;
+            with!(self <= {
+                (take_ar | take_aw) ? {
+                    busy: Bit::One,
+                    rd: take_ar,
+                    rfirst: !take_ar,
+                    xid: mux(take_ar, arh.id, awh.id),
+                    addr: mux(take_ar, arh.addr, awh.addr),
+                    stride: new_stride,
+                    left: mux(take_ar, arh.len, awh.len),
+                    prot: mux(take_ar, arh.prot, awh.prot),
+                    sel: new_sel,
+                    sent: Bit::Zero,
+                    wresp: Resp::Okay,
+                },
+                (w_go | ar_go) ? { sent: Bit::One },
+                done ? {
+                    sent: Bit::Zero,
+                    addr: self.addr.get() + self.stride.get(),
+                    left: self.left.get() - 1,
+                    wresp: merged,
+                },
+                (done & last) ? { busy: Bit::Zero },
+            });
+            // end{drives}
+        }
+    }
+}
 // end{part}
 
 /// The bridge against a model: bursts of one to four beats, reads and
@@ -207,7 +477,12 @@ mod tests {
 
     type Host = AxiHost<16, 32, 4, 2, 4>;
     /// Two peripherals, a nibble each; everything else is a hole.
-    type Bridge = LiteBridge2<16, 32, 4, 2, 0x1000, 0xf000, 0x2000, 0xf000>;
+    struct TwoMap;
+    impl AddrMap<2> for TwoMap {
+        const RANGES: [(usize, usize); 2] =
+            [(0x1000, 0xf000), (0x2000, 0xf000)];
+    }
+    type Bridge = LiteBridge<2, TwoMap, 16, 32, 4, 2>;
 
     /// A memory behind an AXI-Lite link, written as a simulation: it
     /// counts the transactions it serves, so the test can see that a
@@ -310,8 +585,8 @@ mod tests {
             join2(
                 h.run(host_in, host_out),
                 bridge.run(
-                    (per_in.0, per_in.1, per_in.2, b0, r0, b1, r1),
-                    (aw0, ar0, w0, aw1, ar1, w1, per_out.2, per_out.3),
+                    (per_in.0, per_in.1, per_in.2, [b0, b1], [r0, r1]),
+                    ([aw0, aw1], [ar0, ar1], [w0, w1], per_out.2, per_out.3),
                 ),
             ),
             join2(

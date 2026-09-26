@@ -27,16 +27,25 @@ use razboj::op::Insn;
 use razboj::raster::Raster;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, join_all, signal, DefaultClock, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::sim::Ram;
 use txhdl_parts::bus::axi::{axi, axi_units, AxiHost, AxiPer, Link};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
 use txhdl_parts::bus::noc::mesh::lattice;
 use txhdl_parts::bus::noc::node::Node;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::term::Terminal;
 use vreteno32::uart::Uart;
+
+/// Where the serial port is, behind its bridge: a nibble of the
+/// address space at 0x3000.
+pub struct SerialMap;
+
+impl AddrMap<1> for SerialMap {
+    const RANGES: [(usize, usize); 1] = [(0x3000, 0xf000)];
+}
 
 /// The link every corner speaks: thirty-two bit addresses and words,
 /// four lanes, two-bit identifiers, four of them.
@@ -227,7 +236,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let sl = axi_lite::<32, 32, 4>();
     let ubus: LitePort<32, 32, 4> = sl.per.into();
     let (baw, bar, bw, bb, br) = sl.host;
-    let mut ubridge = LiteBridge1::<32, 32, 4, IW, 0x3000, 0xf000>::default();
+    let mut ubridge = LiteBridge::<1, SerialMap, 32, 32, 4, IW>::default();
     let mut ubr = PerBridge::<1, 1, XB, YB, 32, 32, 4, IW, NIDS>::default();
     let mut uart = Uart::<4>::default();
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
@@ -274,8 +283,8 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
             ),
             join2(
                 ubridge.run(
-                    (ul.per_in.0, ul.per_in.1, ul.per_in.2, bb, br),
-                    (baw, bar, bw, ul.per_out.2, ul.per_out.3),
+                    (ul.per_in.0, ul.per_in.1, ul.per_in.2, [bb], [br]),
+                    ([baw], [bar], [bw], ul.per_out.2, ul.per_out.3),
                 ),
                 ubr.run(
                     (e11.q_out, ul.host_in.2, ul.host_in.3),

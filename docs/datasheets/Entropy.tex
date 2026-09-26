@@ -78,7 +78,7 @@ with the module's simulation branch inside; manual.
 \subsection*{Used by}
 
 \code{Board}, as \code{entropy} on the sixth slot of the peripheral
-page at \code{0x3500}, behind \code{LiteBridge6}, and Zephyr's entropy
+page at \code{0x3500}, behind \code{LiteBridge<6, ..>}, and Zephyr's entropy
 driver \code{zephyr/drivers/entropy/entropy\_vreteno.c} through it.
 \code{ex\_trng} holds the two children apart, so that the samples are
 a traced port of the lowered \code{Trng}.

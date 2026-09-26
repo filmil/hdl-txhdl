@@ -13,7 +13,7 @@ bit, each \code{DIV} cycles long. The lines rest high. A received byte
 lands in a buffer of eight, and \code{irq} is high while the buffer
 holds any.
 
-It is an AXI-Lite peripheral. It sits behind a \code{LiteBridge1},
+It is an AXI-Lite peripheral. It sits behind a \code{LiteBridge<1, ..>},
 which hands it one transaction at a time with no identifier and no
 burst. Its link is one port, \code{bus}, a \code{LitePort} of the
 five channels: reads come on \code{bus\_ar} and are answered on

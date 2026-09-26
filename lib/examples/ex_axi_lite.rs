@@ -14,11 +14,12 @@
 //! this run under nvc and under Verilator.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, Clock, DefaultClock, Mem, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::types::U;
 use txhdl::{lower, Trace};
 use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{
-    axi_lite, LiteB, LiteBridge2, LitePort, LiteR,
+    axi_lite, LiteB, LiteBridge, LitePort, LiteR,
 };
 
 /// The link: sixteen-bit addresses, thirty-two-bit words, four lanes,
@@ -27,7 +28,15 @@ type HostUnit = AxiHost<16, 32, 4, 2, 4>;
 
 /// The address map, as the bridge's type states it: two banks of a
 /// nibble each, and every other address a hole.
-type Bridge = LiteBridge2<16, 32, 4, 2, 0x1000, 0xf000, 0x2000, 0xf000>;
+type Bridge = LiteBridge<2, TwoMap, 16, 32, 4, 2>;
+
+/// Where the two register files are: a nibble each, at 0x1000 and
+/// 0x2000; everything else is a hole.
+pub struct TwoMap;
+
+impl AddrMap<2> for TwoMap {
+    const RANGES: [(usize, usize); 2] = [(0x1000, 0xf000), (0x2000, 0xf000)];
+}
 
 // begin{regs}
 /// Four words behind an AXI-Lite link, at the word offsets 0, 4, 8
@@ -98,12 +107,6 @@ fn hex(ws: &[U<32>]) -> String {
 }
 
 fn main() {
-    // What `lite_bridge!` wrote for two peripherals, for the document
-    // to show without a hand-typed copy.
-    if std::env::args().any(|a| a == "--source") {
-        print!("{}", txhdl_parts::bus::axi_lite::lite_bridge2::SOURCE);
-        return;
-    }
     // The AXI4 link: the host client and its tracker on one side, and
     // on the other the channels the bridge takes in place of a
     // peripheral's tracker.
@@ -195,8 +198,8 @@ fn main() {
         join2(
             host_unit.run(host_in, host_out),
             bridge.run(
-                (aw, ar, w, b0, r0, b1, r1),
-                (aw0, ar0, w0, aw1, ar1, w1, b, r),
+                (aw, ar, w, [b0, b1], [r0, r1]),
+                ([aw0, aw1], [ar0, ar1], [w0, w1], b, r),
             ),
         ),
         join2(regs0.run(l0.per.into(), ()), regs1.run(l1.per.into(), ())),
@@ -206,7 +209,14 @@ fn main() {
         sim.cycle();
     }
     stop();
-    let net = Bridge::lowered("axi_lite_bridge");
+    // The bridge's peripheral side is arrays, so its ports are
+    // `aws_0` and the like; the run traced them as `aw0`.
+    let mut net = Bridge::lowered("axi_lite_bridge");
+    for k in ["aw", "ar", "w", "b", "r"] {
+        for i in 0..2 {
+            net.trace_as(&format!("{k}s_{i}"), &format!("{k}{i}"));
+        }
+    }
     let mut bank0 = Regs::lowered("lite_regs0");
     let mut bank1 = Regs::lowered("lite_regs1");
     for (port, k) in [

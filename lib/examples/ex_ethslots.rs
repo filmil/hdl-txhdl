@@ -22,10 +22,11 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{
     join2, now, signal, Clock, DefaultClock, Out, Reg, Running, Unit,
 };
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl::Trace;
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::ethslots::EthSlots;
 
 /// Where the four buffers begin: sixteen megabytes into the board's
@@ -44,7 +45,15 @@ const TX_START: u32 = BASE + 0x18;
 const TX_READY: u32 = BASE + 0x1c;
 
 type HostUnit = AxiHost<32, 32, 4, 2, 4>;
-type Bridge = LiteBridge1<32, 32, 4, 2, 0x1000, 0xf000>;
+type Bridge = LiteBridge<1, SlotsMap, 32, 32, 4, 2>;
+
+/// Where the bridge's one peripheral is: a nibble of the address
+/// space at 0x1000.
+pub struct SlotsMap;
+
+impl AddrMap<1> for SlotsMap {
+    const RANGES: [(usize, usize); 1] = [(0x1000, 0xf000)];
+}
 
 /// The two engines, as a script rather than as the real thing.
 ///
@@ -275,8 +284,8 @@ fn main() {
         join2(
             host_unit.run(host_in, host_out),
             bridge.run(
-                (per_in.0, per_in.1, per_in.2, lb, lr),
-                (law, lar, lw, per_out.2, per_out.3),
+                (per_in.0, per_in.1, per_in.2, [lb], [lr]),
+                ([law], [lar], [lw], per_out.2, per_out.3),
             ),
         ),
         join2(

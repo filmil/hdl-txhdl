@@ -24,9 +24,10 @@
 //! this run under nvc and Verilator.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Reply, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::wdog::{
     Wdog, CTRL_ENABLE, CTRL_LOCK, CTRL_WARN, CTRL_WINDOW, STATUS_FAILED,
     STATUS_WARNED,
@@ -37,7 +38,15 @@ use txhdl_parts::wdog::{
 type HostUnit = AxiHost<32, 32, 4, 2, 4>;
 
 /// The bridge, with the watchdog at `0x1000`.
-type Bridge = LiteBridge1<32, 32, 4, 2, 0x1000, 0xf000>;
+type Bridge = LiteBridge<1, WdogMap, 32, 32, 4, 2>;
+
+/// Where the bridge's one peripheral is: a nibble of the address
+/// space at 0x1000.
+pub struct WdogMap;
+
+impl AddrMap<1> for WdogMap {
+    const RANGES: [(usize, usize); 1] = [(0x1000, 0xf000)];
+}
 
 /// The word a refresh carries.
 const KEY: usize = 0x5744_4f47;
@@ -224,7 +233,7 @@ fn main() {
     let mut sim = Running::new(join2(
         join2(
             host_unit.run(host_in, host_out),
-            bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
+            bridge.run((aw, ar, w, [lb], [lr]), ([law], [lar], [lw], b, r)),
         ),
         join2(block.run(bus, (rst_req_out, irq_out)), client),
     ));

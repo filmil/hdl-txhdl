@@ -104,7 +104,7 @@ answers zero, and a write to word 0 or word 3 does nothing else.
 behind the counters fits \code{de}, \code{hsync} and \code{vsync}
 together.
 \item \code{ex\_hdmi} runs \code{Hdmi<16, 2, 3, 3, 12, 1, 2, 2, 1>}
-behind \code{LiteBridge1} and an \code{AxiHost}. The host sets the
+behind \code{LiteBridge<1, ..>} and an \code{AxiHost}. The host sets the
 cursor to the corner and paints all 48 pixels of the 8 by 6
 framebuffer in one fixed burst. The run rebuilds the last whole frame
 from the pixels \code{de} marks, and asserts every one of its 192

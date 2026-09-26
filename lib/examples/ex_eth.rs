@@ -16,9 +16,10 @@
 //! nvc and under Verilator.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, join2, now, signal, DefaultClock, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::eth::{EthByte, EthLite, EthRx, EthTx};
 
 /// The link: thirty-two-bit addresses and words, four lanes,
@@ -26,7 +27,15 @@ use txhdl_parts::eth::{EthByte, EthLite, EthRx, EthTx};
 type HostUnit = AxiHost<32, 32, 4, 2, 4>;
 
 /// The bridge, with the peripheral at `0x1000`.
-type Bridge = LiteBridge1<32, 32, 4, 2, 0x1000, 0xf000>;
+type Bridge = LiteBridge<1, EthMap, 32, 32, 4, 2>;
+
+/// Where the bridge's one peripheral is: a nibble of the address
+/// space at 0x1000.
+pub struct EthMap;
+
+impl AddrMap<1> for EthMap {
+    const RANGES: [(usize, usize); 1] = [(0x1000, 0xf000)];
+}
 
 /// The peripheral's three words.
 const STATUS: u32 = 0x1000;
@@ -175,7 +184,7 @@ fn main() {
     let hardware = join2(
         join2(
             host_unit.run(host_in, host_out),
-            bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
+            bridge.run((aw, ar, w, [lb], [lr]), ([law], [lar], [lw], b, r)),
         ),
         join2(
             lite_unit.run(bus, (rx_rx, tx_tx, irq_out)),

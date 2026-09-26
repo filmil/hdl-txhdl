@@ -108,7 +108,7 @@ centred, as one run of eight in sixteen.
 \code{a\_stopped\_counter\_sits\_at\_the\_polarity} finds the pins at
 their polarity bits with the enable clear.
 \item \code{//lib/examples:ex\_pwm} drives it through a
-\code{LiteBridge1} on an AXI4 link and prints what the program
+\code{LiteBridge<1, ..>} on an AXI4 link and prints what the program
 measured: the duties as cycles high, the pulses around a change of
 width, a channel turned over, and the centred pulses.
 \item The build simulates the netlist against that run under nvc and

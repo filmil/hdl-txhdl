@@ -31,9 +31,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, join2, now, signal, DefaultClock, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::eth::{EthByte, EthRx, EthTx};
 use txhdl_parts::remote::eth::{RemoteLink, FRAME_LEN, KIND_ANSWER};
 use txhdl_parts::remote::Remote;
@@ -43,7 +44,15 @@ use txhdl_parts::remote::Remote;
 type HostUnit = AxiHost<32, 32, 4, 2, 4>;
 
 /// The bridge, with the peripheral at `0x1000`.
-type Bridge = LiteBridge1<32, 32, 4, 2, 0x1000, 0xf000>;
+type Bridge = LiteBridge<1, RemoteMap, 32, 32, 4, 2>;
+
+/// Where the bridge's one peripheral is: a nibble of the address
+/// space at 0x1000.
+pub struct RemoteMap;
+
+impl AddrMap<1> for RemoteMap {
+    const RANGES: [(usize, usize); 1] = [(0x1000, 0xf000)];
+}
 
 /// Where the peripheral is, as the host addresses it.
 const BASE: u32 = 0x1000;
@@ -182,7 +191,7 @@ fn main() {
         join2(
             join2(
                 host_unit.run(host_in, host_out),
-                bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
+                bridge.run((aw, ar, w, [lb], [lr]), ([law], [lar], [lw], b, r)),
             ),
             join2(
                 remote.run(bus, (ans_rx, ask_tx)),

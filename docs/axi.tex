@@ -17,12 +17,11 @@
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/bus/axi/sim.rs}}
 
-% A range of the AXI-Lite bridge as lite_bridge! wrote it for two
-% peripherals, or of the AXI-Lite beats, by its begin/end markers.
+% A range of the AXI-Lite bridge, by its begin/end markers.
 \newcommand{\litepart}[3]{%
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
-linerange=#1-#1,caption={#2},label={#3}]{lite_bridge2.rs}}
+linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/bus/axi_lite.rs}}
 
 
 % A range of the simulation-only Wishbone parts.
@@ -803,15 +802,22 @@ the ends each side holds, as \code{axi\_units()} does for AXI4.
 \subsection*{The bridge}
 
 A design with small peripherals still has an AXI4 host, so something
-has to stand between the two. \code{LiteBridge1} to
-\code{LiteBridge8} are that: a bridge of one to eight AXI-Lite
-peripherals, each written out by \code{lite\_bridge!} for the same
-reason the router is. Like the router, the bridge states each
-peripheral's range as a base and a mask in its type:
+has to stand between the two. \code{LiteBridge} is that: a bridge of
+\code{N} AXI-Lite peripherals, one unit for every count, whose
+peripheral side is arrays of ports that the lowering unrolls when it
+runs (issue 500). Each peripheral's range is a base and a mask, and
+the ranges are an address map, a type whose constant states them
+(issue 593):
 
 \begin{lstlisting}
-type Bridge =
-    LiteBridge2<16, 32, 4, 2, 0x1000, 0xf000, 0x2000, 0xf000>;
+pub struct TwoMap;
+
+impl AddrMap<2> for TwoMap {
+    const RANGES: [(usize, usize); 2] =
+        [(0x1000, 0xf000), (0x2000, 0xf000)];
+}
+
+type Bridge = LiteBridge<2, TwoMap, 16, 32, 4, 2>;
 \end{lstlisting}
 
 On its AXI4 side it takes the \code{aw}, \code{ar} and \code{w} a
@@ -843,14 +849,14 @@ as the router answers one. Each of its beats is answered
 \code{DecErr} as soon as it is taken, so a write's beats are taken
 and dropped, and a read gets every beat it asked for.
 
-\litepart{state}{The bridge's state, as \code{lite\_bridge!} wrote it
-for two peripherals.}{lst:a-lite-state}
+\litepart{state}{The bridge's state, for any count of
+peripherals.}{lst:a-lite-state}
 
 \litepart{accept}{Taking a burst: the turn between the address
 channels, the decode, and the address step.}{lst:a-lite-accept}
 
-\litepart{beats}{A beat's request, to the peripheral the burst decoded
-to.}{lst:a-lite-beats-out}
+\litepart{requests}{A beat's request, to the peripheral the burst
+decoded to.}{lst:a-lite-beats-out}
 
 \litepart{answers}{The answer to a beat, from the peripheral or from
 the bridge itself, going up.}{lst:a-lite-answers}
@@ -860,7 +866,7 @@ answered.}{lst:a-lite-drives}
 
 \subsection*{The run}
 
-\code{ex\_axi\_lite} puts \code{LiteBridge2} behind a host's tracker,
+\code{ex\_axi\_lite} puts a bridge of two behind a host's tracker,
 with two banks of four registers, \code{Regs}, behind it and a hole
 beyond them. A bank is an AXI-Lite peripheral written as hardware in
 twenty lines, with no state for the bus. The host client writes three
@@ -896,7 +902,7 @@ label={lst:a-lite-out}]{out_axi_lite.txt}
 
 The core of the Vreteno document~\cite{vreteno} is the bridge's first
 user that is not a test. Its serial port is an AXI-Lite peripheral
-behind \code{LiteBridge1}, on the router's third port, and the port
+behind \code{LiteBridge<1, ..>}, on the router's third port, and the port
 lost the three registers it used to hold a write while it waited for
 the write's beat.
 

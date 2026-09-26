@@ -22,9 +22,10 @@
 //! this run under nvc and Verilator.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::spi::{FlashDevice, Spi};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -32,7 +33,15 @@ use txhdl_parts::spi::{FlashDevice, Spi};
 type HostUnit = AxiHost<32, 32, 4, 2, 4>;
 
 /// The bridge, with the master at `0x1000`.
-type Bridge = LiteBridge1<32, 32, 4, 2, 0x1000, 0xf000>;
+type Bridge = LiteBridge<1, SpiMap, 32, 32, 4, 2>;
+
+/// Where the bridge's one peripheral is: a nibble of the address
+/// space at 0x1000.
+pub struct SpiMap;
+
+impl AddrMap<1> for SpiMap {
+    const RANGES: [(usize, usize); 1] = [(0x1000, 0xf000)];
+}
 
 /// The master's words.
 const CTRL: u32 = 0x1000;
@@ -146,7 +155,7 @@ fn main() {
     let mut sim = Running::new(join2(
         join2(
             host_unit.run(host_in, host_out),
-            bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
+            bridge.run((aw, ar, w, [lb], [lr]), ([law], [lar], [lw], b, r)),
         ),
         join2(
             spi.run(bus, (miso, sclk_out, mosi_out, cs_out, irq_out)),

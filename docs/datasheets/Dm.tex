@@ -132,7 +132,7 @@ is reached again.
 \subsection*{Used by}
 
 \code{Dm} in the board's design, \code{Board}, as its field
-\code{dmod} behind the bridge \code{pdm}, a \code{LiteBridge1} on the
+\code{dmod} behind the bridge \code{pdm}, a \code{LiteBridge<1, ..>} on the
 router's seventh port at \code{0x1000\_0000}; its lines go to the
 core's \code{haltreq}, \code{resumereq}, \code{dbg\_regno},
 \code{dbg\_wdata} and \code{dbg\_we}, and take the core's \code{dbg}

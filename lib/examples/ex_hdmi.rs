@@ -16,9 +16,10 @@
 //! simulates both netlists against this run under nvc and Verilator.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::hdmi::{Hdmi, I2cDevice, I2cInit, SII9134_WRITES};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -26,7 +27,15 @@ use txhdl_parts::hdmi::{Hdmi, I2cDevice, I2cInit, SII9134_WRITES};
 type HostUnit = AxiHost<32, 32, 4, 2, 4>;
 
 /// The bridge, with the peripheral at `0x1000`.
-type Bridge = LiteBridge1<32, 32, 4, 2, 0x1000, 0xf000>;
+type Bridge = LiteBridge<1, VideoMap, 32, 32, 4, 2>;
+
+/// Where the bridge's one peripheral is: a nibble of the address
+/// space at 0x1000.
+pub struct VideoMap;
+
+impl AddrMap<1> for VideoMap {
+    const RANGES: [(usize, usize); 1] = [(0x1000, 0xf000)];
+}
 
 /// The mode: 16 visible columns, 2 of front porch, 3 of sync and 3 of
 /// back porch; 12 visible rows, 1, 2 and 2; a framebuffer pixel 2 by 2.
@@ -143,7 +152,7 @@ fn main() {
     let hardware = join2(
         join2(
             host_unit.run(host_in, host_out),
-            bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
+            bridge.run((aw, ar, w, [lb], [lr]), ([law], [lar], [lw], b, r)),
         ),
         join2(
             video.run(bus, (rgb_out, hs_out, vs_out, de_out)),

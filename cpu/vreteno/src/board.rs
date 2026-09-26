@@ -47,7 +47,7 @@ use txhdl_parts::bus::axi::{
     W,
 };
 use txhdl_parts::bus::axi_lite::{
-    LiteAr, LiteAw, LiteB, LiteBridge1, LiteBridge6, LitePort, LiteR, LiteW,
+    LiteAr, LiteAw, LiteB, LiteBridge, LitePort, LiteR, LiteW,
 };
 use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::router::Router;
@@ -106,6 +106,37 @@ impl AddrMap<7> for BoardMap {
 pub type BoardRouter = Router<7, BoardMap, 32, 32, 4, 4>;
 // end{map}
 
+// begin{litemaps}
+/// Where the slots behind the peripheral bridge are: 256 bytes each
+/// from 0x3000, in the order of the bridge's ports.
+pub struct SlotMap;
+
+impl AddrMap<6> for SlotMap {
+    const RANGES: [(usize, usize); 6] = [
+        (0x3000, 0xffff_ff00),
+        (0x3100, 0xffff_ff00),
+        (0x3200, 0xffff_ff00),
+        (0x3300, 0xffff_ff00),
+        (0x3400, 0xffff_ff00),
+        (0x3500, 0xffff_ff00),
+    ];
+}
+
+/// Where the interrupt controller is, behind a bridge of its own.
+pub struct PlicMap;
+
+impl AddrMap<1> for PlicMap {
+    const RANGES: [(usize, usize); 1] = [(0x0c00_0000, 0xfc00_0000)];
+}
+
+/// Where the debug module is, behind a bridge of its own.
+pub struct DmMap;
+
+impl AddrMap<1> for DmMap {
+    const RANGES: [(usize, usize); 1] = [(0x1000_0000, 0xffff_0000)];
+}
+// end{litemaps}
+
 // begin{board}
 /// The board's design.
 #[derive(Trace, Default)]
@@ -158,31 +189,14 @@ pub struct Board<const DIV: u32> {
     ///
     /// The fifth is a field, because `EthSlots` runs on the bus clock
     /// like every other peripheral here and wants no crossing.
-    pub puart: LiteBridge6<
-        32,
-        32,
-        4,
-        4,
-        0x3000,
-        0xffff_ff00,
-        0x3100,
-        0xffff_ff00,
-        0x3200,
-        0xffff_ff00,
-        0x3300,
-        0xffff_ff00,
-        0x3400,
-        0xffff_ff00,
-        0x3500,
-        0xffff_ff00,
-    >,
+    pub puart: LiteBridge<6, SlotMap, 32, 32, 4, 4>,
     // end{vslot}
     pub pddr3: AxiPer<32, 32, 4, 4>,
-    pub pplic: LiteBridge1<32, 32, 4, 4, 0x0c00_0000, 0xfc00_0000>,
+    pub pplic: LiteBridge<1, PlicMap, 32, 32, 4, 4>,
     /// The debug module, on a router port of its own behind a bridge
     /// of its own, so the JTAG host reaches it while the core is
     /// halted (issue 154).
-    pub pdm: LiteBridge1<32, 32, 4, 4, 0x1000_0000, 0xffff_0000>,
+    pub pdm: LiteBridge<1, DmMap, 32, 32, 4, 4>,
     pub dmod: Dm,
     /// The boot memory on the bus, at address zero, readable and not
     /// writable: the same words the core fetches from inside itself,
@@ -653,8 +667,20 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                         ),
                                     ),
                                     self.pdm.run(
-                                        (aw6_rx, ar6_rx, w6_rx, db_rx, dr_rx),
-                                        (daw_tx, dar_tx, dw_tx, b6_tx, r6_tx),
+                                        (
+                                            aw6_rx,
+                                            ar6_rx,
+                                            w6_rx,
+                                            [db_rx],
+                                            [dr_rx],
+                                        ),
+                                        (
+                                            [daw_tx],
+                                            [dar_tx],
+                                            [dw_tx],
+                                            b6_tx,
+                                            r6_tx,
+                                        ),
                                     ),
                                 ),
                                 self.timer.run(
@@ -886,31 +912,42 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                 join2(
                                     self.puart.run(
                                         (
-                                            aw2_rx, ar2_rx, w2_rx, lb_rx,
-                                            lr_rx, pb_pwm_rx, pr_pwm_rx, vb,
-                                            vr, pb_rem_rx, pr_rem_rx,
-                                            pb_eth_rx, pr_eth_rx, pb_trng_rx,
-                                            pr_trng_rx,
+                                            aw2_rx,
+                                            ar2_rx,
+                                            w2_rx,
+                                            [
+                                                lb_rx, pb_pwm_rx, vb,
+                                                pb_rem_rx, pb_eth_rx,
+                                                pb_trng_rx,
+                                            ],
+                                            [
+                                                lr_rx, pr_pwm_rx, vr,
+                                                pr_rem_rx, pr_eth_rx,
+                                                pr_trng_rx,
+                                            ],
                                         ),
                                         (
-                                            law_tx,
-                                            lar_tx,
-                                            lw_tx,
-                                            paw_pwm_tx,
-                                            par_pwm_tx,
-                                            pw_pwm_tx,
-                                            vaw,
-                                            var,
-                                            vw,
-                                            paw_rem_tx,
-                                            par_rem_tx,
-                                            pw_rem_tx,
-                                            paw_eth_tx,
-                                            par_eth_tx,
-                                            pw_eth_tx,
-                                            paw_trng_tx,
-                                            par_trng_tx,
-                                            pw_trng_tx,
+                                            [
+                                                law_tx,
+                                                paw_pwm_tx,
+                                                vaw,
+                                                paw_rem_tx,
+                                                paw_eth_tx,
+                                                paw_trng_tx,
+                                            ],
+                                            [
+                                                lar_tx,
+                                                par_pwm_tx,
+                                                var,
+                                                par_rem_tx,
+                                                par_eth_tx,
+                                                par_trng_tx,
+                                            ],
+                                            [
+                                                lw_tx, pw_pwm_tx, vw,
+                                                pw_rem_tx, pw_eth_tx,
+                                                pw_trng_tx,
+                                            ],
                                             b2_tx,
                                             r2_tx,
                                         ),
@@ -927,12 +964,18 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             join2(
                                                 self.pplic.run(
                                                     (
-                                                        aw4_rx, ar4_rx, w4_rx,
-                                                        pb_rx, pr_rx,
+                                                        aw4_rx,
+                                                        ar4_rx,
+                                                        w4_rx,
+                                                        [pb_rx],
+                                                        [pr_rx],
                                                     ),
                                                     (
-                                                        paw_tx, par_tx, pw_tx,
-                                                        b4_tx, r4_tx,
+                                                        [paw_tx],
+                                                        [par_tx],
+                                                        [pw_tx],
+                                                        b4_tx,
+                                                        r4_tx,
                                                     ),
                                                 ),
                                                 join2(

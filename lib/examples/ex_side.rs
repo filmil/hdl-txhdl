@@ -22,10 +22,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, In, Out, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::gpio::Gpio;
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -33,7 +34,15 @@ use txhdl_parts::gpio::Gpio;
 type HostUnit = AxiHost<32, 32, 4, 2, 4>;
 
 /// The bridge, with the peripheral at `0x1000`.
-type Bridge = LiteBridge1<32, 32, 4, 2, 0x1000, 0xf000>;
+type Bridge = LiteBridge<1, SideMap, 32, 32, 4, 2>;
+
+/// Where the bridge's one peripheral is: a nibble of the address
+/// space at 0x1000.
+pub struct SideMap;
+
+impl AddrMap<1> for SideMap {
+    const RANGES: [(usize, usize); 1] = [(0x1000, 0xf000)];
+}
 
 // begin{unit}
 /// Eight pins, inside a unit of units that takes the link whole and
@@ -189,7 +198,7 @@ fn main() {
     let mut sim = Running::new(join2(
         join2(
             host_unit.run(host_in, host_out),
-            bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
+            bridge.run((aw, ar, w, [lb], [lr]), ([law], [lar], [lw], b, r)),
         ),
         join2(
             wrapped.run(bus, (pins, drive_out, dirs_out, irq_out)),

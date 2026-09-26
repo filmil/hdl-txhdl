@@ -26,9 +26,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Reply, Resp, Wr};
-use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge1, LitePort};
+use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::syscon::{Syscon, CAUSE_BUTTON, CAUSE_POWER, CAUSE_SOFTWARE};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -36,7 +37,15 @@ use txhdl_parts::syscon::{Syscon, CAUSE_BUTTON, CAUSE_POWER, CAUSE_SOFTWARE};
 type HostUnit = AxiHost<32, 32, 4, 2, 4>;
 
 /// The bridge, with the block at `0x1000`.
-type Bridge = LiteBridge1<32, 32, 4, 2, 0x1000, 0xf000>;
+type Bridge = LiteBridge<1, SysconMap, 32, 32, 4, 2>;
+
+/// Where the bridge's one peripheral is: a nibble of the address
+/// space at 0x1000.
+pub struct SysconMap;
+
+impl AddrMap<1> for SysconMap {
+    const RANGES: [(usize, usize); 1] = [(0x1000, 0xf000)];
+}
 
 /// What this design says it is, and the two words a build would fill
 /// in with a commit and a date.
@@ -183,7 +192,7 @@ fn main() {
     let mut sim = Running::new(join2(
         join2(
             host_unit.run(host_in, host_out),
-            bridge.run((aw, ar, w, lb, lr), (law, lar, lw, b, r)),
+            bridge.run((aw, ar, w, [lb], [lr]), ([law], [lar], [lw], b, r)),
         ),
         join2(block.run(bus, (por, button, wdog, srst_out)), client),
     ));
