@@ -284,6 +284,30 @@ impl<T: Transaction, C: Clock> Tx<T, C> {
     pub fn ready(&self) -> Bit {
         Bit::from_bool(self.0.tail.get().is_none())
     }
+    /// Offer a transaction until it is taken: the next edge of the
+    /// channel's clock at which the channel has room, and the send in
+    /// the step after it, which puts it in at the end of that step. An
+    /// event, like `C::rising()` and `until`, and the sender's side of
+    /// [`Rx::wait`]: what follows it happens in that step, so a
+    /// register set after it takes its value at the edge the
+    /// transaction is taken (issue 755).
+    ///
+    /// The transaction is a closure, read at that edge as `until`
+    /// reads its condition, and not an argument read where `put` is
+    /// called: a walker that sets its address after one `put` calls
+    /// the next in the same step, before the address has moved.
+    ///
+    /// It is `until(C::rising, || tx.ready().to_bool()).await` and then
+    /// `tx.send(v())`, in that order.
+    pub async fn put<V: Into<T>>(&self, v: impl FnOnce() -> V) {
+        loop {
+            rising::<C>().await;
+            if self.ready().to_bool() {
+                self.send(v());
+                return;
+            }
+        }
+    }
 }
 impl<T: Transaction, C: Clock> Rx<T, C> {
     /// The transaction at the channel's head, if any, left in place:

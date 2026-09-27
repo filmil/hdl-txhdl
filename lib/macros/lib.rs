@@ -4214,6 +4214,34 @@ fn with_lowered(cx: &mut Cx, es: &[Entry]) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// `tx.put(|| v).await`: the channel and the tokens of `v`, the
+/// closure's body, when the statement is one (issue 755).
+fn put_parts(ts: &[TokenTree]) -> Option<(Ident, Vec<TokenTree>)> {
+    let [tx, d1, put, args, d2, aw] = ts else {
+        return None;
+    };
+    let (TokenTree::Ident(tx), TokenTree::Group(args)) = (tx, args) else {
+        return None;
+    };
+    let word = |t: &TokenTree, w: &str| t.to_string() == w;
+    if !word(d1, ".") || !word(put, "put") || !word(d2, ".") {
+        return None;
+    }
+    if !word(aw, "await") {
+        return None;
+    }
+    let inner: Vec<TokenTree> = args.stream().into_iter().collect();
+    // A closure of no arguments: `||` then its body.
+    let bars = inner
+        .iter()
+        .take(2)
+        .all(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == '|'));
+    if inner.len() < 3 || !bars {
+        return None;
+    }
+    Some((tx.clone(), inner[2..].to_vec()))
+}
+
 /// The statements of a loop body, or of an arm of an `if` in it, as
 /// the Rust source of the netlist's statements. `path` is the
 /// condition under which an arm's statements happen, none at the top.
@@ -4285,6 +4313,37 @@ fn lower_stmts(
             };
             cx.guard = Some(cond.clone());
             stmts.push(format!("NlS::Guard({cond})"));
+            continue;
+        }
+        // tx.put(|| v).await: the sender's wait, for room on the
+        // channel, and the send at its edge; `until(C::rising, ||
+        // tx.ready().to_bool()).await` and then `tx.send(v)`, so `valid`
+        // is the wait's condition and what follows lands on the take
+        // (issue 755).
+        if let Some((tx, value)) = put_parts(&ts) {
+            let ready: Vec<TokenTree> = format!("{tx}.ready().to_bool()")
+                .parse::<TokenStream>()
+                .unwrap()
+                .into_iter()
+                .collect();
+            let cond = match tr(&ready, &cx.subst) {
+                Ok(c) => c,
+                Err(m) => return Err(err(ts[0].span(), &m)),
+            };
+            cx.guard = Some(cond.clone());
+            stmts.push(format!("NlS::Guard({cond})"));
+            let span = ts[0].span();
+            let send: Vec<TokenTree> = vec![
+                TokenTree::Ident(tx),
+                TokenTree::Punct(Punct::new('.', Spacing::Alone)),
+                TokenTree::Ident(Ident::new("send", span)),
+                TokenTree::Group(Group::new(
+                    Delimiter::Parenthesis,
+                    value.into_iter().collect(),
+                )),
+                TokenTree::Punct(Punct::new(';', Spacing::Alone)),
+            ];
+            stmts.extend(lower_stmts(cx, &send, path.clone())?);
             continue;
         }
         // let v = rx.wait().await: a receive is the wait, and its guard.
