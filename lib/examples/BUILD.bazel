@@ -792,6 +792,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An offer that completes on the edge it is taken:  bazel run //lib/examples:ex_put
+rust_binary(
+    name = "ex_put",
+    srcs = ["ex_put.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A check, an assumption and a cover point:  bazel run //lib/examples:ex_formal
 rust_binary(
     name = "ex_formal",
@@ -1208,6 +1217,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_nested.rs",
         "ex_link.rs",
         "ex_seq.rs",
+        "ex_put.rs",
         "ex_formal.rs",
         "ex_serial.rs",
         "ex_frame.rs",
