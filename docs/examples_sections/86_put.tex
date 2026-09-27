@@ -1,0 +1,41 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Offer Taken on Its Edge}
+\label{sec:x-put}
+
+A sequence that walks a store and offers its words has to move its
+address exactly on the edge a word is taken. A step later, and the
+next offer reads the word it has just given; a step early, and while
+the consumer stalls the offer changes under it.
+\code{tx.put(|| v).await} says it (issue 755): it waits for an edge at
+which the channel has room, sends in the step after it, and what
+follows it happens in that step, so a register set after it takes its
+value on the take. It is the sender's side of \code{rx.wait()}, and
+it is \code{until(C::rising, || tx.ready().to\_bool())} and then
+\code{tx.send(v)}, in that order. The word is a closure, read at the
+edge as \code{until} reads its condition, since a word read where
+\code{put} is called is read before the address has moved. In the
+netlist the offer's \code{valid} is the state's condition, and the
+state is left on \code{ready}.
+
+The walker takes eight words into a store, one a cycle as they come,
+and then puts them out in order, its read address \code{at} moving on
+each take. The address is one register and the store's only read
+port, which is what lets a larger store be a RAM, as the Ethernet
+receiver's is. Its consumer here takes when a small shift register
+says so, so an offer is held a cycle or several before it goes; the
+run asserts that all sixteen words come back once and in order, and
+the netlist is checked against the run, stalls and all, under nvc and
+Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{put_timing.tex}
+\caption{Words loaded, then put out: \code{out\_ready} low while the
+consumer stalls and the channel is full, \code{out\_valid} on each
+edge a word is taken, and \code{at} moving on that edge.}
+\label{fig:x-put}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_put.rs}. Run with \code{bazel run //lib/examples:ex\_put}.},label={lst:x-put}]{lib/examples/ex_put.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_put} printed when the build ran it: the words in, the address, and each word as it was taken, then the netlist.},label={lst:x-put-out}]{out_put.txt}

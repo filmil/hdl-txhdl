@@ -199,6 +199,7 @@ The names are there so the code reads the way the circuit works.
 \code{signal()} $\to$ \code{(Out, In)} & a wire's two ends; \code{Out} can't be cloned, so one driver \\
 \code{chan()} $\to$ \code{(Tx, Rx)} & a channel with a buffer of two \\
 \code{tx.send(v)}, \code{tx.ready()} & offer a word; is there room \\
+\code{tx.put(|| v).await} & wait for room, then send; what follows lands on the take \\
 \code{rx.peek()}, \code{rx.recv()} & look at the head; take it \\
 \code{rx.recv\_if(c)}, \code{rx.take()} & take under a condition; take whatever is there \\
 \code{pad()} & a pin driven from both sides \\

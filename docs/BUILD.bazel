@@ -895,6 +895,8 @@ latex_document(
         ":lanes_timing",
         ":mesh_run",
         ":mesh_timing",
+        ":put_run",
+        ":put_timing",
         ":regs_run",
         ":regs_timing",
         ":wide_run",
@@ -2292,6 +2294,25 @@ waveform(
         "//latch/signal_rw=>signal",
         "//out=>out",
     ],
+)
+
+# A sequence that walks a store and puts each word until it is taken,
+# its address moving on the take, against a consumer that stalls at
+# random (issue 755).
+waveform(
+    name = "put",
+    example = "//lib/examples:ex_put",
+    lowered = ("walker", "walker"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//words/tx_valid=>word_valid",
+        "//words/rx_data=>word",
+        "//walker/at=>at",
+        "//out/tx_valid=>out_valid",
+        "//out/tx_ready=>out_ready",
+        "//out/tx_data=>out",
+    ],
+    until = 60,
 )
 
 # A process of several waits, lowered to a state machine whose

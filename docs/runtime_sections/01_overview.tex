@@ -58,7 +58,11 @@ mentions neither number, and its testbench steps by
 \textbf{A process waits, then reads.} The waits are events:
 \code{C::rising()} and \code{C::falling()}, the next edge of a clock;
 \code{rx.wait()}, the next rising edge of the channel's clock at which
-the channel holds a transaction, taken; and \code{until(C::rising, || cond)},
+the channel holds a transaction, taken; \code{tx.put(|| v)}, its
+sender's side, the next such edge at which the channel has room, and
+\code{v} sent in the step after it, so a register set after it takes
+its value on the edge the transaction is taken (issue 755); and
+\code{until(C::rising, || cond)},
 or the same with \code{falling}, the next such edge at which a
 condition on state holds. Reads are plain: a register in an
 expression, or \code{Reg::get}, is what the last edge latched, since
