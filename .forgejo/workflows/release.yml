@@ -133,7 +133,9 @@ jobs:
           # Each PDF goes into the archive of its topic (issue 642). A
           # document not named here lands in docs-other with a warning, so
           # a new one is never dropped: add it to its topic when it is added
-          # to //docs:cover.
+          # to //docs:cover. Each PDF also ships on its own, under its own
+          # name, for a reader who wants one document; two with the same
+          # name stop the release rather than one overwriting the other.
           topic() {
             case "$1" in
               cover|showcase|paper|article|embedding|txhdl|stats|dynamics) echo overview ;;
@@ -152,7 +154,12 @@ jobs:
                 *.pdf)
                   t="$(topic "$(basename "$f" .pdf)")"
                   mkdir -p "dist/pdf/$t"
-                  cp "$f" "dist/pdf/$t/$(basename "$f")" ;;
+                  cp "$f" "dist/pdf/$t/$(basename "$f")"
+                  if [ -e "dist/release/$(basename "$f")" ]; then
+                    echo "two documents are named $(basename "$f")" >&2
+                    exit 1
+                  fi
+                  cp "$f" "dist/release/$(basename "$f")" ;;
                 *) cp "$f" "dist/release/$(printf '%s' "$rel" | tr '/' '-')" ;;
               esac
             done
