@@ -320,10 +320,6 @@ pub struct EthRx {
     /// address, a register, so the store is a block RAM and not flops
     /// every byte of the wire fans out to (issue 753).
     pub ri: Reg<U<11>>,
-    /// Where the offerer is: 0 waiting for a full frame, and showing
-    /// its length in the cycle one arrives; 1 its bytes offered; 2 and
-    /// 3 the frame given back.
-    pub ophase: Reg<U<2>>,
     /// Frames offered.
     pub frames: Reg<U<16>>,
     /// Frames dropped: a failed check, an error, or no room.
@@ -403,61 +399,39 @@ impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>)> for EthRx {
                 }
             },
             async {
-                // The offerer, a cycle at a time rather than as a
-                // sequence: a byte is offered at `ri` and `ri` moves on
-                // the edge it is taken, which a sequence cannot say,
-                // since what follows a wait runs a cycle after it. The
-                // store is read at `ri` alone, one read port at a
-                // registered address, which Vivado maps to a block RAM
-                // (issue 753). The phases are the sequence's, cycle for
-                // cycle: a full frame, its length shown the cycle it is
-                // seen, its bytes without the check sequence, each held
-                // until taken, and the frame given back.
                 loop {
-                    DefaultClock::rising().await;
-                    let phase = self.ophase.get();
-                    let n = self.len.get() - 4;
-                    let ri = self.ri.get();
-                    // The cycle a full frame is first seen shows its
-                    // length, as the sequence did in the cycle after
-                    // its wait for one.
-                    let arrived = Bit::from(phase == 0) & self.full.get();
-                    let offering = Bit::from(phase == 1);
-                    let at_last = Bit::from(ri + 1 == n);
-                    let give = offering & rx.ready();
+                    // A full frame.
+                    until(DefaultClock::rising, || self.full.get().to_bool())
+                        .await;
                     // The frame's length, for anything that must know
-                    // it before it has consumed the frame: the payload
-                    // while the frame is shown and offered, and zero at
-                    // every other time.
-                    let shown = arrived | offering;
-                    rx_len.set(mux(
-                        shown,
-                        n.resize::<16>(),
-                        U::<16>::from(0u8),
-                    ));
-                    with!(self <= {
-                        arrived ? {
-                            ophase: U::<2>::from(1u8),
-                            ri: U::<11>::from(0u8),
-                        },
-                        give ? ri: ri + 1,
-                        give & at_last ? ophase: U::<2>::from(2u8),
-                        phase == 2 ? {
-                            ophase: U::<2>::from(3u8),
-                            given: Bit::One,
-                            frames: self.frames.get() + 1,
-                        },
-                        phase == 3 ? {
-                            ophase: U::<2>::from(0u8),
-                            given: Bit::Zero,
-                        },
-                    });
-                    if give.to_bool() {
-                        rx.send(EthByte {
-                            data: self.frame.read(ri),
-                            last: at_last,
-                        });
+                    // it before it has consumed the frame: it reads
+                    // the payload while the frame is offered and zero
+                    // at every other time.
+                    rx_len.set((self.len.get() - 4).resize::<16>());
+                    self.ri.set(U::<11>::from(0u8));
+                    // The bytes without the check sequence, each put
+                    // until it is taken, and `ri` moved on at the edge
+                    // it is (issue 755). The store is read at `ri`
+                    // alone, one read port at a registered address,
+                    // which Vivado maps to RAM (issue 753).
+                    for _ in 0..(self.len.get() - 4).raw() as usize {
+                        rx.put(|| EthByte {
+                            data: self.frame.read(self.ri.get()),
+                            last: Bit::from(
+                                self.ri.get() + 1 == self.len.get() - 4,
+                            ),
+                        })
+                        .await;
+                        self.ri.set(self.ri.get() + 1);
                     }
+                    DefaultClock::rising().await;
+                    rx_len.set(U::<16>::from(0u8));
+                    with!(self <= {
+                        given: Bit::One,
+                        frames: self.frames.get() + 1,
+                    });
+                    DefaultClock::rising().await;
+                    self.given.set(Bit::Zero);
                 }
             },
         )
