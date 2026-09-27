@@ -9,10 +9,9 @@
 #       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
 load(
     "@rules_vivado//build/vivado:rules.bzl",
-    "vivado_place_and_route2",
     "vivado_program_device",
 )
-load("//tools/vivado:defs.bzl", "vivado_synthesis2")
+load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
 
 package(default_visibility = ["//visibility:public"])
 

@@ -10,12 +10,11 @@
 # flagship is whatever was last sent down the serial port.
 load(
     "@rules_vivado//build/vivado:rules.bzl",
-    "vivado_place_and_route2",
     "vivado_program_device",
     "vivado_program_flash",
     "vivado_repl",
 )
-load("//tools/vivado:defs.bzl", "vivado_synthesis2")
+load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
 
 package(default_visibility = ["//visibility:public"])
 

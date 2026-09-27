@@ -14,10 +14,18 @@ written.
 Load this in place of `@rules_vivado//build/vivado:rules.bzl` for
 synthesis. The other Vivado rules are unaffected and still come from
 there; only the rule that elaborates RTL needs this.
+
+`vivado_place_and_route2` here is the same idea after `route_design`:
+a routed design whose worst setup or hold slack is negative fails the
+build (issue 759). A bitstream that misses timing is a bitstream that
+works on some boards and some days; the flagship missed by 1.9 ns
+after #501 and nothing said so, since every place and route target
+writes its timing summary and its bitstream whatever the slack is.
 """
 
 load(
     "@rules_vivado//build/vivado:rules.bzl",
+    _vivado_place_and_route2 = "vivado_place_and_route2",
     _vivado_synthesis2 = "vivado_synthesis2",
 )
 
@@ -74,5 +82,46 @@ def vivado_synthesis2(name, post_synth_design = None, **kwargs):
     _vivado_synthesis2(
         name = name,
         post_synth_design = (post_synth_design or []) + _fatal_message_checks(),
+        **kwargs
+    )
+
+def _timing_checks():
+    """Tcl that fails the run if the routed design misses timing.
+
+    It runs after `route_design` and before the rule writes its
+    reports, since that is where the rule's hook is, so on a failure it
+    writes the timing summary and the worst paths into the log itself:
+    the report file a passing run leaves is not written by a failing
+    one, and the log is what a failed action prints.
+
+    Each slack is read into a variable on a line of its own, for the
+    reason `_fatal_message_checks` gives. A design with no constrained
+    path of a kind answers with nothing, which is not a failure.
+    """
+    return [
+        "set txhdl_wns [get_property SLACK [get_timing_paths -delay_type max]]",
+        "set txhdl_whs [get_property SLACK [get_timing_paths -delay_type min]]",
+        'set txhdl_miss [expr {($txhdl_wns ne "" && $txhdl_wns < 0) || ' +
+        '($txhdl_whs ne "" && $txhdl_whs < 0)}]',
+        "if {$txhdl_miss} { report_timing_summary -max_paths 5 }",
+        'if {$txhdl_miss} { error "timing is not met: the worst setup ' +
+        "slack is $txhdl_wns ns and the worst hold slack $txhdl_whs ns, " +
+        "and a bitstream that misses timing is not one to program. The " +
+        'timing summary and the worst paths are in the log above." }',
+    ]
+
+def vivado_place_and_route2(name, post_route_design = None, **kwargs):
+    """`rules_vivado`'s place and route, failing when timing is not met.
+
+    Args:
+      name: the target name.
+      post_route_design: Tcl to run after `route_design`, as upstream.
+        The check is appended after it, so a target's own Tcl runs on
+        the routed design first.
+      **kwargs: passed to `rules_vivado`'s rule unchanged.
+    """
+    _vivado_place_and_route2(
+        name = name,
+        post_route_design = (post_route_design or []) + _timing_checks(),
         **kwargs
     )

@@ -356,7 +356,6 @@ filegroup(
 #   bazel build //cpu/vreteno:vreteno_synth
 load(
     "@rules_vivado//build/vivado:rules.bzl",
-    "vivado_place_and_route2",
     "vivado_ila",
     "vivado_ip",
     "vivado_program_device",
@@ -366,7 +365,7 @@ load(
     "vivado_repl",
     "vivado_synthesis",
 )
-load("//tools/vivado:defs.bzl", "vivado_synthesis2")
+load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
 
 vivado_project(
     name = "vreteno_project",
