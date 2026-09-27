@@ -14,13 +14,8 @@ Nothing here writes the flash or touches the board until the user says the board
 
 First of all, each bitstream must meet timing.
 Every place and route target checks it after routing and fails the build when the worst setup or hold slack is negative (#759), so a build below that ends in an error has found a timing miss, and nothing it would have built is programmed.
-The error gives both slacks, and the log above it holds the timing summary and the worst paths; a passing build leaves the same summary in `bazel-bin/<package>/<target>.timing_summary.pnr.rpt`.
-Vivado's log is larger than Bazel prints for a failed action, so a timing miss shows only as the action failing; add `--experimental_ui_max_stdouterr_bytes=-1` to see it, and `| grep -B2 -A2 'timing is not met'` to find the line:
-
-```sh
-bazel build //flagship:flagship_pnr --experimental_ui_max_stdouterr_bytes=-1 2>&1 \
-  | grep -B2 -A2 'timing is not met'
-```
+The console shows the error, `timing is not met`, with both slacks, under Vivado's errors and the end of its log (#761).
+A passing build leaves the timing summary and the worst paths in `bazel-bin/<package>/<target>.timing_summary.pnr.rpt`.
 
 A small positive hold slack is normal, since the router pads hold paths to just above zero; a negative one is the router having failed, and is a bug to file, not a board to try.
 
