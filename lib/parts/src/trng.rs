@@ -18,7 +18,7 @@
 //!
 //! The other half, [`Trng`], is ordinary hardware and is lowered. Each
 //! cycle it folds the rings' samples to one bit by exclusive or, which
-//! makes a bit less biased than any one ring's. It then does three
+//! makes a bit less biased than any one ring's. It then does four
 //! things with the stream:
 //!
 //! * **Watches it.** A ring that has stopped, or been made to stop,
@@ -29,11 +29,18 @@
 //!   why in `status`. The cutoff is `1 + 20 / H` for a false alarm rate
 //!   of one in a million at a min-entropy `H` of half a bit per
 //!   sample, rounded to forty.
+//! * **Folds it.** Two samples in a row, by exclusive or, make one
+//!   sample for the extractor, one every other cycle. Rings sampled
+//!   every cycle are correlated with the sample two cycles on, which
+//!   the board showed and von Neumann passes straight through; in the
+//!   board's own samples the fold of a pair was not, at the lags three
+//!   captures can measure (issue 780).
 //! * **Debiases it.** Von Neumann's extractor takes the stream in
 //!   pairs: `01` gives a zero, `10` a one, and `00` and `11` give
 //!   nothing. A bias in the source cancels, since the two orders of a
 //!   pair are equally likely whatever the bias is, at the cost of
-//!   three bits in four on average.
+//!   three bits in four on average, so a word takes some 256 cycles
+//!   of samples with the fold.
 //! * **Buffers it.** The bits that survive are shifted into a word,
 //!   and whole words go into a buffer of four, which a host reads a
 //!   word at a time. A word that finds the buffer full is dropped; the
@@ -190,6 +197,10 @@ pub struct Trng {
     pub runlen: Reg<U<6>>,
     /// The last 32 folded samples.
     pub rawv: Reg<U<32>>,
+    /// Whether the first sample of a folding pair is held.
+    pub fhave: Reg<Bit>,
+    /// The first sample of the folding pair.
+    pub fbit: Reg<Bit>,
     /// Whether the first bit of a pair is held.
     pub have: Reg<Bit>,
     /// The first bit of the pair.
@@ -224,6 +235,8 @@ impl Unit for Trng {
             let prev = self.prev.get();
             let runlen = self.runlen.get();
             let rawv = self.rawv.get();
+            let fhave = self.fhave.get();
+            let fbit = self.fbit.get();
             let have = self.have.get();
             let first = self.first.get();
             let shift = self.shift.get();
@@ -260,11 +273,18 @@ impl Unit for Trng {
             let same = Bit::from(bit == prev);
             let run1 = mux(same, runlen + 1, U::<6>::from(1u8));
             let tripped = running & same & (runlen >= RCT_CUTOFF - 1);
+            // The fold: two samples in a row, by exclusive or, one
+            // sample for the extractor every other cycle. The rings
+            // sampled every cycle are correlated with the sample two
+            // cycles on, which von Neumann passes through; the fold of
+            // a pair is not (issue 780).
+            let taking = running & !fault;
+            let folded = fbit ^ bit;
+            let fvalid = taking & fhave;
             // Von Neumann: the second bit of a pair, and whether the
             // pair says anything.
-            let taking = running & !fault;
-            let pair = taking & have;
-            let keep = pair & Bit::from(first != bit);
+            let pair = fvalid & have;
+            let keep = pair & Bit::from(first != folded);
             let next = (shift >> 1u32) | (first.zext::<32>() << 31u32);
             let word_done = keep & (nbits == 31);
             let full = count == WORDS as u32;
@@ -289,8 +309,10 @@ impl Unit for Trng {
                     runlen: run1,
                     rawv: (rawv << 1u32) | bit.zext::<32>(),
                 },
-                taking ? have: !have,
-                taking & !have ? first: bit,
+                taking ? fhave: !fhave,
+                taking & !fhave ? fbit: bit,
+                fvalid ? have: !have,
+                fvalid & !have ? first: folded,
                 keep & !word_done ? {
                     shift: next,
                     nbits: nbits + 1,
@@ -527,20 +549,34 @@ mod tests {
         });
     }
 
-    /// The extractor: a source that alternates gives all zeros, since
-    /// every pair is `01`, and a stuck source gives nothing at all.
+    /// The extractor: a source whose folds alternate gives a word of one
+    /// bit, since every pair of folds is `01` or every one is `10`, and
+    /// the same source a sample later gives the other bit.
+    ///
+    /// The samples `0, 0, 0, 1` over and over fold, two at a time and
+    /// whichever way the pairs fall, to `0, 1` over and over; shifted
+    /// by two samples, the pairs falling the same way, they fold to
+    /// `1, 0`.
     #[test]
     fn von_neumann_takes_the_order_of_a_pair() {
-        run(Some(Rc::new(|t| (t & 1) as u32)), |h| async move {
-            write(&h, CTRL, CTRL_RUN).await;
-            let w = word(&h).await;
-            assert_eq!(w, 0, "every pair is 01, so every bit is 0: {w:#x}");
-        });
-        run(Some(Rc::new(|t| ((t + 1) & 1) as u32)), |h| async move {
-            write(&h, CTRL, CTRL_RUN).await;
-            let w = word(&h).await;
-            assert_eq!(w, 0xffff_ffff, "every pair is 10: {w:#x}");
-        });
+        let mut got = Vec::new();
+        for shift in [0u64, 2] {
+            let w = Rc::new(RefCell::new(0u32));
+            let g = w.clone();
+            run(
+                Some(Rc::new(move |t| u32::from((t + shift) % 4 == 3))),
+                |h| async move {
+                    write(&h, CTRL, CTRL_RUN).await;
+                    *g.borrow_mut() = word(&h).await;
+                },
+            );
+            let w = *w.borrow();
+            got.push(w);
+        }
+        assert!(
+            got == [0, 0xffff_ffff] || got == [0xffff_ffff, 0],
+            "one word of zeros and one of ones: {got:x?}"
+        );
     }
 
     /// A stuck source trips the repetition count test after the
@@ -590,7 +626,7 @@ mod tests {
     fn words(feed: Rc<dyn Fn(u64) -> u32>, n: usize) -> Vec<u32> {
         let got = Rc::new(RefCell::new(Vec::new()));
         let g = got.clone();
-        run_for(Some(feed), 400 * n as u64, |h| async move {
+        run_for(Some(feed), 800 * n as u64, |h| async move {
             write(&h, CTRL, CTRL_RUN).await;
             for _ in 0..n {
                 let w = word(&h).await;
@@ -648,35 +684,67 @@ mod tests {
         assert!(z.abs() < 4.0, "balanced: z {z:+.1}");
     }
 
-    /// And what von Neumann cannot do: a source whose samples are fair
-    /// and uncorrelated with their neighbour, but correlated with the
-    /// sample two cycles on, gives correlated words. A pair is two
-    /// neighbours, so the extractor sees the second-neighbour
-    /// correlation between one pair and the next. The board's raw
-    /// samples have that shape (issue 780): no correlation at lag one,
-    /// and a positive one at lag two.
+    /// The fold is what removes a correlation two samples apart (issue
+    /// 780), which von Neumann alone passes through.
+    ///
+    /// The source has the board's shape: its even samples follow a
+    /// slow chain, each the one before with probability 0.9, so samples
+    /// two apart are correlated; each odd sample is its even partner
+    /// XOR a fresh fair draw, so a sample and its neighbour are not.
+    /// Von Neumann on the samples as they come outputs the even ones,
+    /// and so the chain: the reference below, in software, is
+    /// correlated. Folded by pairs first, each pair gives its fresh
+    /// draw, whichever way the pairs fall, and the hardware's words are
+    /// not.
     #[test]
-    fn a_source_correlated_two_apart_gives_correlated_words() {
-        // Each sample copies the one two cycles back with probability a
-        // quarter, and is a fresh fair draw otherwise.
+    fn the_fold_removes_a_correlation_two_samples_apart() {
         let src = Rc::new(RefCell::new(Vec::<u32>::new()));
-        let feed = Rc::new(move |t: u64| {
-            let mut s = src.borrow_mut();
-            let t = t as usize;
-            while s.len() <= t {
-                let i = s.len() as u64;
-                let b = if i >= 2 && draw(2 * i) < 0.25 {
-                    s[i as usize - 2]
-                } else {
-                    u32::from(draw(2 * i + 1) < 0.5)
-                };
-                s.push(b);
+        let fill = {
+            let src = src.clone();
+            move |upto: usize| {
+                let mut s = src.borrow_mut();
+                while s.len() <= upto {
+                    let i = s.len();
+                    let b = if i % 2 == 1 {
+                        s[i - 1] ^ u32::from(draw(3 * i as u64) < 0.5)
+                    } else if i >= 2 && draw(3 * i as u64 + 1) < 0.9 {
+                        s[i - 2]
+                    } else {
+                        u32::from(draw(3 * i as u64 + 2) < 0.5)
+                    };
+                    s.push(b);
+                }
             }
-            s[t]
-        });
+        };
+        // Von Neumann on the samples themselves, in software.
+        fill(1 << 18);
+        let reference: Vec<u32> = {
+            let s = src.borrow();
+            let bits: Vec<u32> = s
+                .chunks(2)
+                .filter(|p| p.len() == 2 && p[0] != p[1])
+                .map(|p| p[0])
+                .collect();
+            bits.chunks(32)
+                .filter(|c| c.len() == 32)
+                .map(|c| c.iter().fold(0u32, |w, b| w << 1 | b))
+                .collect()
+        };
+        let (r, z) = lag_corr(&reference, 1);
+        assert!(z > 4.0, "unfolded, it is correlated: r {r:+.4}, z {z:+.1}");
+        // The hardware.
+        let feed = {
+            let src = src.clone();
+            Rc::new(move |t: u64| {
+                fill(t as usize);
+                src.borrow()[t as usize]
+            })
+        };
         let ws = words(feed, 1024);
-        let (r, z) = lag_corr(&ws, 1);
-        assert!(z > 4.0, "lag 1 carries it through: r {r:+.4}, z {z:+.1}");
+        for lag in 1..=8 {
+            let (r, z) = lag_corr(&ws, lag);
+            assert!(z.abs() < 4.0, "lag {lag}: r {r:+.4}, z {z:+.1}");
+        }
     }
 
     /// The netlist instantiates the rings and does not write them.
