@@ -263,6 +263,12 @@ fn lockstep(
     // device load's wait for cycles in which the registers move on.
     let mut taken: Option<u32> = None;
     let mut taken_before: Option<u32> = None;
+    // The demonstration's line is a device's: raised at cycle 40 and
+    // held until the core takes the external interrupt, as the
+    // interrupt controller holds its line until it is claimed. Since
+    // the pending bit is the line and not a latch (#788), a pulse that
+    // drops before it is served is no interrupt at all.
+    let mut demo_line = false;
     // What the bus answered a load from a device is in the core's own
     // register for it when the load retires, and is handed to the model
     // with the instruction, since the model has no bus; the timer's line
@@ -286,7 +292,12 @@ fn lockstep(
     for cycle in 0..32768 {
         let at = model.pc;
         let pulse = match seed {
-            None => cycle == 40,
+            None => {
+                if cycle == 40 {
+                    demo_line = true;
+                }
+                demo_line
+            }
             Some(_) => {
                 noise ^= noise << 13;
                 noise ^= noise >> 7;
@@ -366,6 +377,10 @@ fn lockstep(
             line = line_now;
             soft = soft_now;
             taken = taken_now;
+            // Served: the device lets its line go.
+            if taken_now == Some(CAUSE_MEXT) {
+                demo_line = false;
+            }
         }
         if wb.get().done.to_bool() {
             model.dev_word = answer;
@@ -399,10 +414,8 @@ fn lockstep(
             rst_out.set(Bit::Zero);
             model.reset();
         }
-        // The line sets the pending bit at this edge in both.
-        if raised {
-            model.raise();
-        }
+        // The pending bit is the line, taken at this edge in both.
+        model.line(raised);
         let here =
             format!("{what}, cycle {cycle}, pc {at:#x}: {}", disasm(executed));
         assert_eq!(arch_pc().raw() as u32, model.pc, "pc after {here}");

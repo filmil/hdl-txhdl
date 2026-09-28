@@ -1334,9 +1334,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
 
             // The CSRs: written by a CSR instruction, by a trap, by mret.
             // The three never coincide in one instruction.
-            // The pending bit is set by the line and cleared by
-            // software, and the write wins when both fall in one cycle;
-            // a trap's writes come after the CSR writes, and win.
+            // The external interrupt's pending bit is the line, taken
+            // at each edge, and a write to `mip` does nothing: MEIP is
+            // read only and the controller sets and clears it, as the
+            // privileged specification has it (#788). It once latched
+            // until software cleared it, which stock software never
+            // does. A trap's writes come after the CSR writes, and win.
             with!(self <= {
                 csr_write & (f12 == isa::CSR_MSTATUS) ?
                     mstatus: csr_new & 0x88,
@@ -1351,8 +1354,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                         isa::MEXT | isa::MSOFT | isa::MTIMER,
                     ),
                 csr_write & (f12 == isa::CSR_MTVAL) ? mtval: csr_new,
-                irq ? mip: mip | isa::MEXT,
-                csr_write & (f12 == isa::CSR_MIP) ? mip: csr_new & isa::MEXT,
+                mip: mux(irq, U::<32>::from(isa::MEXT), U::<32>::from(0u32)),
                 trap ? {
                     mepc: pc,
                     mcause: cause,

@@ -296,10 +296,11 @@ impl Model {
         })
     }
 
-    /// The external interrupt line, seen high: pending until software
-    /// clears it in `mip`.
-    pub fn raise(&mut self) {
-        self.csr.mip |= MEXT;
+    /// The external interrupt line at an edge: the pending bit is the
+    /// line, set and cleared by the controller and not by software, as
+    /// the privileged specification has MEIP (#788).
+    pub fn line(&mut self, high: bool) {
+        self.csr.mip = if high { MEXT } else { 0 };
     }
 
     fn csr_write(&mut self, addr: u32, v: u32) {
@@ -310,7 +311,9 @@ impl Model {
             CSR_MEPC => self.csr.mepc = v & !1,
             CSR_MCAUSE => self.csr.mcause = v,
             CSR_MIE => self.csr.mie = v & (MEXT | MSOFT | MTIMER),
-            CSR_MIP => self.csr.mip = v & MEXT,
+            // MEIP is read only, and the timer's and the software
+            // interrupt's bits are their lines: a write changes nothing.
+            CSR_MIP => {}
             CSR_MTVAL => self.csr.mtval = v,
             CSR_MBUSQUIET => self.csr.busquiet = v & 1 != 0,
             // `ebreakm` and `step` are the program's; the rest is the
