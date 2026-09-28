@@ -14,6 +14,7 @@
 pub mod buffer;
 pub mod bus;
 pub mod cdc;
+pub mod cfgflash;
 pub mod dma;
 pub mod eth;
 pub mod ethdma;

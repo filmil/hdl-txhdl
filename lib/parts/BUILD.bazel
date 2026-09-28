@@ -31,6 +31,7 @@ rust_library(
         "src/cdc.rs",
         "src/dma.rs",
         "src/fifo.rs",
+        "src/cfgflash.rs",
         "src/flashwin.rs",
         "src/gpio.rs",
         "src/hdmi.rs",
@@ -88,6 +89,14 @@ filegroup(
     srcs = ["hdl/ring_osc.v"],
     visibility = ["//visibility:public"],
 )
+
+# The configuration flash's startup block (issue 312): the primitive
+# when synthesised, a model when simulated, and the model again as an
+# entity for the VHDL netlists.
+exports_files([
+    "hdl/startup.v",
+    "hdl/startup.vhd",
+])
 
 filegroup(
     name = "hdl_xdc",
