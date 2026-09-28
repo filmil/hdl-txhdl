@@ -23,7 +23,7 @@
 #![no_main]
 
 use core::ptr::{read_volatile, write_volatile};
-use vreteno_hal::{entry, halt, map, Uart};
+use vreteno_hal::{csr, entry, halt, map, Uart};
 use vreteno_regs::trng;
 
 /// The source's four words, as word indices from its base, and its
@@ -91,64 +91,141 @@ fn main() -> ! {
     // The run of samples in a row: the whole capture first, then the
     // sending, since a byte on the line is thousands of cycles.
     let mut win = [0u32; RUN];
-    capture(&mut win);
-    send_run(&win);
+    let mut at = [0u32; RUN];
+    capture(&mut win, &mut at);
+    send_run(&win, &mut at);
     measure();
     halt()
 }
 
-/// Windows of `raw` read as fast as a loop goes (issue 805). `raw` is
-/// the last 32 samples, one a cycle, the newest in bit 0, so a window
-/// read `s` cycles after the one before holds `s` new samples in its
-/// low bits and, above them, the older `32 - s` where the one before
-/// had them.
-fn capture(win: &mut [u32]) {
-    for w in win.iter_mut() {
+/// Windows of `raw` read as fast as a loop goes, each with the cycle
+/// it was asked for (issue 805). `raw` is the last 32 samples, one a
+/// cycle, the newest in bit 0, so a window read `s` cycles after the
+/// one before holds `s` new samples in its low bits and, above them,
+/// the older `32 - s` where the one before had them.
+fn capture(win: &mut [u32], at: &mut [u32]) {
+    for (w, t) in win.iter_mut().zip(at.iter_mut()) {
+        *t = csr::cycles();
         *w = unsafe { read_volatile(TRNG.add(RAW)) };
     }
 }
 
-/// The fewest samples of overlap two windows are matched on: a shift
-/// wider than 24 leaves fewer than 8, which could agree by chance.
-const MAX_SHIFT: u32 = 24;
+/// The counts the cycle counter loses between two reads of it: one, on
+/// the read itself (issue 807). When that is fixed, this is zero, and
+/// the simulated check says so by finding every pair moved by one.
+const CSR_LOSS: u32 = 1;
 
-/// The samples between one window and the next, found from the
-/// windows themselves: the smallest shift at which every window's
-/// older bits are the one before's newer ones. The loop is the same
-/// every time round, so the shift is one number for all of them.
-/// `None` if no shift up to `MAX_SHIFT` fits every pair, which would
-/// say the loop is too slow and samples were skipped, or if the
-/// windows are all alike, which fits every shift and places nothing.
-/// The cycle counter would answer this too, but it loses a count on
-/// every read of it (issue 807), so the samples are the clock.
-fn shift(win: &[u32]) -> Option<u32> {
-    if win.iter().all(|w| *w == win[0]) {
-        return None;
+/// How far from the cycle count a pair's shift is looked for when the
+/// count does not fit: the load behind the count can take a cycle or
+/// two more or less than the one before, on the board's memory.
+const SLACK: u32 = 3;
+
+/// Whether window `b`, read `s` samples after `a`, holds `a`'s newer
+/// samples as its older ones.
+fn fits(a: u32, b: u32, s: u32) -> bool {
+    match s {
+        1..=31 => (b >> s) & (u32::MAX >> s) == a & (u32::MAX >> s),
+        32 => true,
+        _ => false,
     }
-    (1..=MAX_SHIFT).find(|&s| {
-        let keep = u32::MAX >> s;
-        win.windows(2).all(|p| (p[1] >> s) & keep == p[0] & keep)
-    })
 }
 
-/// Sends the windows as one run of samples in a row, 32 to a line, the
-/// oldest in bit 31, under `rawrun`: the first window whole, then the
-/// `s` new samples of each after it. What is left short of a line at
-/// the end is dropped. A line before it says the shift, or
-/// `rawrun bad` says no shift fitted and nothing follows.
-fn send_run(win: &[u32]) {
-    let Some(s) = shift(win) else {
-        Uart::say(b"rawrun bad\n");
+/// The samples between window `i - 1` and window `i`, or zero where the
+/// run breaks. The cycle count says it first; the overlap confirms it,
+/// or else picks the one shift within `SLACK` of it that fits, and if
+/// none or more than one fits, which a source with a period can do,
+/// the pair is not placed. A count over 32 skipped samples.
+fn place(a: u32, b: u32, d: u32) -> u32 {
+    if d > 32 {
+        return 0;
+    }
+    if fits(a, b, d) {
+        return d;
+    }
+    let lo = d.saturating_sub(SLACK).max(1);
+    let hi = (d + SLACK).min(32);
+    let mut found = 0;
+    for s in lo..=hi {
+        if fits(a, b, s) {
+            if found != 0 {
+                return 0;
+            }
+            found = s;
+        }
+    }
+    found
+}
+
+/// Places every pair, then sends what was found and the longest run of
+/// placed pairs. First a line of counts: `rawrun pairs P fit F moved
+/// M gap G bad B`, where a pair fits at its cycle count, is moved to
+/// a nearby shift by its overlap, has a gap of more than 32 cycles, or
+/// is bad, fitting no shift or more than one near its count. Then, for
+/// the first 16 that did not fit, `pair I d D s S`, the count and the
+/// shift, zero if none. Then the run under `rawrun`, 32 samples to a
+/// line, the oldest in bit 31: its first window whole, then the new
+/// samples of each after it, what is left short of a line dropped.
+/// `at` holds the cycle counts and is overwritten with the shifts.
+fn send_run(win: &[u32], at: &mut [u32]) {
+    let (mut fit, mut moved, mut gap, mut bad) = (0u32, 0u32, 0u32, 0u32);
+    let mut odd = 0;
+    for i in (1..win.len()).rev() {
+        at[i] = at[i].wrapping_sub(at[i - 1]).wrapping_add(CSR_LOSS);
+    }
+    for i in 1..win.len() {
+        let d = at[i];
+        let s = place(win[i - 1], win[i], d);
+        match (s == d, s, d > 32) {
+            (true, _, _) => fit += 1,
+            (false, 0, true) => gap += 1,
+            (false, 0, false) => bad += 1,
+            _ => moved += 1,
+        }
+        if s != d && odd < 16 {
+            odd += 1;
+            Uart::say(b"pair ");
+            Uart::put_decimal(i as u32);
+            Uart::say(b" d ");
+            Uart::put_decimal(d);
+            Uart::say(b" s ");
+            Uart::put_decimal(s);
+            Uart::put(b'\n');
+        }
+        at[i] = s;
+    }
+    Uart::say(b"rawrun pairs ");
+    Uart::put_decimal(win.len() as u32 - 1);
+    for (name, n) in [
+        (&b" fit "[..], fit),
+        (b" moved ", moved),
+        (b" gap ", gap),
+        (b" bad ", bad),
+    ] {
+        Uart::say(name);
+        Uart::put_decimal(n);
+    }
+    Uart::put(b'\n');
+    // The longest stretch of windows joined by placed pairs.
+    let (mut best, mut best_len, mut start) = (0, 1, 0);
+    for i in 1..=win.len() {
+        if i == win.len() || at[i] == 0 {
+            if i - start > best_len {
+                best = start;
+                best_len = i - start;
+            }
+            start = i;
+        }
+    }
+    if best_len < 2 {
         return;
-    };
-    Uart::say(b"shift ");
-    Uart::put_decimal(s);
-    Uart::say(b"\nrawrun\n");
-    Uart::put_hex(win[0]);
+    }
+    Uart::say(b"rawrun\n");
+    Uart::put_hex(win[best]);
     Uart::put(b'\n');
     let (mut acc, mut n) = (0u64, 0u32);
-    for w in &win[1..] {
-        acc = (acc << s) | u64::from(w & (u32::MAX >> (32 - s)));
+    for i in best + 1..best + best_len {
+        let s = at[i];
+        acc = (acc << s) | u64::from(win[i] & (u32::MAX >> (32 - s)));
         n += s;
         if n >= 32 {
             n -= 32;

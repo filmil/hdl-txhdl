@@ -622,23 +622,25 @@ fn two_frames_written_to_memory_leave_the_port_as_written_in_order() {
 /// sample nor skips one.
 #[test]
 fn the_entropy_source_answers_on_the_board() {
-    const CYCLES: u64 = 40000;
+    const CYCLES: u64 = 120000;
     let ran = run(trng_program::TEXT, trng_program::DATA, b"", CYCLES);
-    assert!(ran.halted_at.is_some(), "and halted");
+    assert!(ran.halted_at.is_some(), "and halted: {}", ran.said);
     let mut lines = ran.said.lines();
     assert_eq!(lines.next(), Some("trng ok"), "{}", ran.said);
-    let shift: u32 = lines
-        .next()
-        .and_then(|l| l.strip_prefix("shift "))
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| panic!("a shift: {}", ran.said));
-    assert!((1..=24).contains(&shift), "shift {shift}");
+    // In simulation the loop is steady, so every pair fits at its
+    // cycle count, less the count lost on each read (issue 807).
+    assert_eq!(
+        lines.next(),
+        Some("rawrun pairs 63 fit 63 moved 0 gap 0 bad 0"),
+        "{}",
+        ran.said
+    );
     assert_eq!(lines.next(), Some("rawrun"), "{}", ran.said);
     let words: Vec<u32> = lines
         .map(|l| u32::from_str_radix(l, 16).expect(l))
         .collect();
-    // 64 windows: the first whole, then `shift` new samples each.
-    assert_eq!(words.len(), (32 + 63 * shift as usize) / 32);
+    // 64 windows, the first whole and each after it adding samples.
+    assert!(words.len() > 2, "{}", ran.said);
     let run: Vec<u8> = words
         .iter()
         .flat_map(|w| (0..32).rev().map(move |i| (w >> i & 1) as u8))
@@ -646,8 +648,7 @@ fn the_entropy_source_answers_on_the_board() {
     let stream = model_samples(CYCLES as usize);
     assert!(
         stream.windows(run.len()).any(|w| w == run.as_slice()),
-        "the run of {} samples, at shift {shift}, is not a stretch of \
-         the model's samples",
+        "the run of {} samples is not a stretch of the model's samples",
         run.len()
     );
 }
