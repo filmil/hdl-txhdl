@@ -191,17 +191,22 @@ cc_binary(
 # Stock `fastboot` from Android's platform tools, pinned in
 # `multitool.lock.json`, boots an image through the harness: the test
 # that the choice of fastboot was made for, with no client written
-# here.
+# here. It also refuses `hello_ram_bin`, shorter than a boot image
+# header, and boots it padded (issue 799).
 sh_test(
     name = "fastboot_test",
     srcs = ["fastboot/fastboot_test.sh"],
     args = [
         "$(rootpath :fastboot_host)",
         "$(rootpath @multitool//tools/fastboot)",
+        "$(rootpath //cpu/vreteno/rust:hello_ram_bin)",
+        "$(rootpath //cpu/vreteno/rust:hello_fastboot)",
     ],
     data = [
         ":fastboot_host",
         "@multitool//tools/fastboot",
+        "//cpu/vreteno/rust:hello_fastboot",
+        "//cpu/vreteno/rust:hello_ram_bin",
     ],
 )
 
