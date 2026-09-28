@@ -82,8 +82,10 @@ jobs:
           echo "override=$override" >> "$GITHUB_OUTPUT"
           echo "releasing as $tag (override=$override)"
 
-      # Nothing else is installed. Every other tool this build needs comes
-      # from MODULE.bazel, including pandoc, TeX and the C compiler.
+      # Nothing else is installed here. Every other tool this build needs
+      # comes from MODULE.bazel, TeX among them, except the C and C++
+      # compiler, which is the runner image's own and which rules_cc
+      # configures.
       - name: Install Bazelisk (pinned)
         if: steps.decide.outputs.proceed == 'true'
         run: |
