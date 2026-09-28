@@ -58,8 +58,8 @@ so and carries the prompts that led to it, verbatim.}%
 \begin{abstract}
 A design that has been simulated, lowered, checked against its trace
 and synthesised onto an FPGA has still never been a shape. This takes
-the Vreteno core's Verilog, the same file the board's bitstream is
-built from, maps it onto an open 45\,nm standard cell library with
+the Vreteno core's Verilog, the same file the core's own FPGA build
+reads, maps it onto an open 45\,nm standard cell library with
 Yosys, and floorplans, places, routes and times it with OpenROAD. The
 result is a die \asicdie\,$\mu$m square holding \asiccells{} cells
 that meets a \asicperiod\,ns clock with \asicslack\,ns to spare and
