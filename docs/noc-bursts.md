@@ -12,7 +12,12 @@ candidate designs cost, and which one issue 125 should implement.
 Every number here was measured in this tree or counted from its own
 generated tables, and each says where.
 
-## 1. What the network does today
+## 1. What the network did on September 19, 2026
+
+This section is the network as the analysis found it.
+Section 7 says what was built since: a write of several beats now crosses
+as single writes, which `a_write_of_two_beats_crosses_the_lattice_as_two_writes`
+covers, and the test named below was replaced by it.
 
 A packet is one beat of one AXI channel, 113 bits wide for the
 configuration `//soc` uses, and it carries where it is going and where
@@ -96,9 +101,11 @@ would have turned a burst into a way of starving a node.
 
 ### What this tree's hosts actually send
 
-Both hardware hosts issue single-beat bursts: `len: 0` at
-`cpu/vreteno/src/core.rs:1077` and at `gpu/razboj/src/raster.rs:342`.
-Nothing here needs a multi-beat write today.
+On September 19 both hardware hosts issued single-beat bursts, `len: 0`
+in the core and in Razboj's rasteriser, and nothing here needed a
+multi-beat write.
+The engines of issue 151 have issued bursts of several beats since
+(`lib/parts/src/dma.rs`).
 The need is prospective, and it is named: direct memory access for
 Ethernet and HDMI (issue 151), which moves frames rather than words.
 
@@ -247,8 +254,10 @@ it is, it is refused as a long write is refused now.
    `a_fixed_write_lands_every_beat_on_one_word` and
    `a_wrapping_write_is_refused_and_the_one_after_it_is_served`, all
    in `lib/parts/src/bus/noc.rs`. No waveform lowers the bridges, so
-   there is still no co-simulation of them; the showcase lists the
-   network's netlists as not yet simulated, and that is unchanged.
+   there is still no co-simulation of them. The showcase listed the
+   network's netlists as not yet simulated when this was written; since
+   9cb39d5 its row names the mesh of nodes, which `//docs:mesh`
+   co-simulates, and the bridges are still not.
 6. `docs/noc.tex` loses its line about multi-beat writes not crossing,
    and says what happens instead. **Done**, with the `HostBridge`
    sheet.
