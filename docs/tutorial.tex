@@ -62,9 +62,10 @@ VHDL.
 \section{Before You Start}
 \label{sec:t-start}
 
-You need one thing installed: \code{bazelisk}, which fetches the
-right Bazel. Everything else, the Rust toolchain, the simulators, the
-\LaTeX{} that made this page, comes through the build. Clone the
+You need two things installed: \code{bazelisk}, which fetches the
+right Bazel, and Git, to clone. Everything else, the Rust and C
+toolchains, the simulators, the \LaTeX{} that made this page, comes
+through the build. Clone the
 repository and build it:
 
 \begin{lstlisting}[style=ascii]
@@ -78,9 +79,10 @@ seconds. If both finish, you have everything this tutorial uses.
 Three sentences on what you are about to read. A \emph{unit} is a
 struct of registers with an \code{async fn run} that is its process.
 A process \emph{waits} for an edge of a clock, \emph{reads} its
-registers and inputs, and \emph{drives} its registers and outputs; the
-drives land at the end of the step, so the whole cycle reads as
-plain Rust with one rule about time. And a unit written in a subset
+registers and inputs, and \emph{drives} its registers and outputs; a
+register's drive lands at the end of the step and an output's is seen
+at once, so the whole cycle reads as plain Rust with one rule about
+time. And a unit written in a subset
 the lowering reads is also a netlist, from the same file.
 
 \section{Step One: A Counter}
@@ -102,8 +104,10 @@ The \code{impl} names the unit's ports in its type: one input, a
 \code{Bit} called \code{enable}, and one output, a \code{Bit} called
 \code{tick}. \code{In} and \code{Out} are the two ends of a wire; the
 testbench holds the other ends. \code{\#[lower]} on the \code{impl}
-is what makes the file a netlist as well; leave it off and the unit
-still simulates.
+is what makes the file a netlist as well. Leave it off and the unit
+still simulates, but the header must then name its sides,
+\code{impl Unit<In, Out> for Counter}: the attribute is what writes
+them into the bare header from \code{run}'s signature.
 
 The body is one \code{loop}, and the first line of the loop is the
 wait: \code{DefaultClock::rising().await}. Everything after it is one
@@ -163,7 +167,8 @@ The one rule: \textbf{every \code{.await} is a cycle boundary.} A
 process that has crossed an edge at this step cannot cross it again,
 so a second wait written after the first waits for the next edge. If
 you want two events at one edge, you write them in
-\code{parallel!}, and the examples document has one that does. State
+\code{parallel!}, and the examples document has one that does; it is
+for the simulation only, and the lowering does not read it. State
 read before a wait, at the top of the loop, is state read in the
 previous cycle; read after the wait, always.
 
@@ -268,7 +273,7 @@ before the receive, which takes whatever is offered, and sends under
 Listing~\ref{lst:t-tap} is that form: a tap that takes every word and
 passes on the odd ones.
 
-\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={A tap: a receive with no wait, and a send under \code{when!}. From \code{ex\_tap.rs}.},label={lst:t-tap}]{lib/examples/ex_tap.rs}
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={A tap: a receive with no wait, and a send under a plain \code{if}. From \code{ex\_tap.rs}.},label={lst:t-tap}]{lib/examples/ex_tap.rs}
 
 One thing to know before you wire two units with plain wires rather
 than a channel: a wire between units carries no promise about which
@@ -482,14 +487,16 @@ that yields a value and a \code{match} lower as \code{mux} and
 \code{select!} do, and a range, as a pattern or in
 \code{contains}, as the two compares it stands for. What you do not
 have inside a lowered loop is what hardware does not have: a function
-call the lowering does not know, or a loop with a variable count. A
-\code{for i in 0..N} has a fixed count, since \code{N} is a const
-parameter, and is unrolled.
+call the lowering does not know. A \code{for} whose body does not wait
+is unrolled, so its count is fixed, \code{N} a const parameter; one
+whose body waits is a counted loop with a register for its counter,
+and its bound may be a register's value, as \code{ex\_repeat} shows.
 The macro says so at compile time, with a message that names the
 construct.
 
 A function the lowering does know is one that carries
-\code{\#[lower]} itself, in the same file: it stays plain Rust for
+\code{\#[lower]} itself, in the same file or \code{pub} in any module
+of the crate or of a dependency, as \code{ex\_helpers} shows: it stays plain Rust for
 the simulation and is inlined at every call, so a step can keep its
 arithmetic in named pieces, as \code{ex\_fn} does. Names are yours to
 choose. A port called \code{next}, \code{begin} or \code{out}, or a

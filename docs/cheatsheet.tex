@@ -53,18 +53,18 @@ cycle count in combinational code can't happen, because there is no
 \head{The one rule about time}
 A process \textbf{waits for an edge, then reads, then drives}.
 Every \code{.await} is a cycle boundary. After the wait, a register
-reads as the edge left it, and anything you drive lands at the end
-of the step, all at once. That is why you can read and drive the
+reads as the edge left it, a register you drive takes the value at
+the end of the step, and an output you drive is seen at once. That is why you can read and drive the
 same register in one step and still mean hardware.
 
 The waits you'll use: \code{C::rising()}, \code{C::falling()}, and
 \code{until(C::rising, || cond)} for ``the first edge where
 \code{cond} holds''. Two events on one edge are
-\code{parallel!(a, b).await}. Time counts in ticks, two per cycle of
+\code{parallel!(a, b).await}, for the simulation only. Time counts in ticks, two per cycle of
 the default clock, so a falling edge has a tick of its own.
 
 \head{Build it, run it, look at it}
-All you install is \code{bazelisk}. The toolchains, the simulators
+All you install is \code{bazelisk}, and Git to clone. The toolchains, the simulators
 and the \LaTeX{} for this page come through the build.
 \begin{lstlisting}[style=ascii,frame=none,backgroundcolor=\color{tint},xleftmargin=2pt]
 bazel build //...                 # everything
@@ -96,8 +96,8 @@ This counts while \code{enable} is high and raises \code{tick} on
 seven. Read it top to bottom: the struct is the state, the
 \code{impl} is the behaviour, and the ports are in the signature.
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,frame=none,backgroundcolor=\color{tint},xleftmargin=2pt]{lib/examples/ex_cheat.rs}
-\code{\#[lower]} is what makes the same code a netlist too. Leave it
-off and the unit still simulates.
+\code{\#[lower]} is what makes the same code a netlist too. Without it
+the unit still simulates if its header names the sides, \code{Unit<In, Out>}.
 
 \head{What it turns into}
 Here is what \code{Counter::verilog("counter")} printed when the
@@ -216,11 +216,11 @@ swapped by accident:
 \code{run(\&mut self, i: DiffIn, o: DiffOut)} & each side any struct of ports \\
 \code{DiffIn \{ minuend, subtrahend \}: DiffIn} & take it apart right in the signature \\
 \code{\#[derive(Ports)]} & all a struct from another crate needs \\
-a field that is itself a struct of ports & its ports under the field's name, \code{left\_aw\_valid} \\
+a side \code{links: Links} & its ports \code{links\_left\_aw\_valid}, field by field \\
 \code{side: [Rx<T>; N]} & an array of ports, \code{side\_0} onward \\
 \code{interface! \{ Ops \{..\} role Source \{..\} \}} & declare a link once, get a struct per role \\
 \end{vocab}
-The netlist flattens each struct into its fields, under their names.
+The netlist flattens each struct into its fields; a side taken apart keeps the bare names.
 Every AXI-Lite peripheral takes its link as one struct,
 \code{LitePort}.
 
@@ -267,9 +267,9 @@ sets it. \code{for i in 0..N} over an array of ports is unrolled for
 each \code{N}. Inside,
 Rust's operators: \code{+ - * \% \& | \^{} ! <{}< >{}>}, unary \code{-},
 the compares, and \code{as} to an unsigned type. Calls to a
-\code{fn} marked \code{\#[lower]} in the same file are inlined. What
-you can't have is what hardware can't: a call the lowering doesn't
-know, or a loop whose count varies.
+\code{fn} marked \code{\#[lower]}, here or \code{pub} anywhere, are inlined. A
+\code{for} that waits is a counted loop, its bound even a register.
+What you can't have is a call the lowering doesn't know.
 
 \head{Names}
 Call things what they are. A port named \code{next} or \code{begin},
