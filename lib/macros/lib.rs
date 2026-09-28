@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The macros of the runtime: four derives, `interface!`, `when!`,
-//! `case!` and `#[lower]`, on a unit's impl and on a function it
-//! inlines. Written
+//! The macros of the runtime: five derives, `Transaction`, `Bus`,
+//! `Value`, `Ports` and `Trace`; `interface!`, `with!`, `when!`,
+//! `case!`, `station!` and `regmap!`; `#[pipeline]`; and `#[lower]`,
+//! on a unit's impl and on a function it inlines. Written
 //! against `proc_macro` alone, without syn or quote, because the
 //! grammars are small and a crate registry would be the larger cost.
 extern crate proc_macro;
@@ -1470,8 +1471,9 @@ pub fn station(input: TokenStream) -> TokenStream {
 /// of every arm above it.
 ///
 /// The scrutinee is a value, so a register is read first and the value
-/// is what is matched. Arm bodies take the same `lhs <= rhs` statements
-/// as `when!`, and nothing else.
+/// is what is matched. Arm bodies take `lhs <= rhs` statements, and
+/// nothing else; `when!` takes `with!`'s `field: value` entries
+/// instead.
 #[proc_macro]
 pub fn case(input: TokenStream) -> TokenStream {
     let toks: Vec<TokenTree> = input.into_iter().collect();
@@ -4001,14 +4003,6 @@ fn pattern_cond(
     Ok(cond)
 }
 
-/// `#[lower]` on `impl Unit<In, Out> for Unit`: the impl stays, and
-/// `Unit::verilog(name)` is written beside it. `run` must be one
-/// `loop` whose first statement waits for a rising edge; the rest may
-/// read registers into `let` names, drive registers and output ports
-/// with `set`, predicate drives with `when!`, and call macros such as
-/// `println!`, which are skipped. Constants of the configuration are
-/// evaluated when `verilog` runs, so a generic unit lowers once per
-/// build.
 /// What the lowering of one loop body carries: the ports' names, the
 /// wires of the unit, the names bound so far, the guard of the wait,
 /// the clock and its edge, and the drives hoisted out of `if` arms.
@@ -6046,6 +6040,24 @@ fn find_runs(ts: &[TokenTree], out: &mut Vec<(String, Group, Span)>) {
     }
 }
 
+/// `#[lower]` on `impl Unit for X`: the impl stays, `<In, Out>` is
+/// written into a bare header from `run`'s signature, and
+/// `X::lowered(name)` and `X::verilog(name)` are written beside it.
+///
+/// `run` is a `loop` whose first statement waits for an edge, rising
+/// or falling, which lowers to one clocked block; or a loop of several
+/// waits, or of a wait under `if`, which lowers to a state machine with
+/// a state per wait; or a `join2` of such loops, or of the children's
+/// `run`, for a unit of units. A `for` over a fixed range is unrolled,
+/// and one whose body waits is a counted loop. Inside, `let` names a
+/// wire, `with!`, `when!`, `case!` and Rust's `if` and `match` choose
+/// among drives and values, `set` drives an output, channels are sent
+/// on and taken from, and macros such as `println!` are skipped;
+/// anything else is refused with a message that names it.
+///
+/// On a function, `#[lower]` makes it one the lowering inlines at every
+/// call. Constants of the configuration are evaluated when `lowered`
+/// runs, so a generic unit lowers once per build.
 #[proc_macro_attribute]
 pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let toks: Vec<TokenTree> = item.clone().into_iter().collect();
