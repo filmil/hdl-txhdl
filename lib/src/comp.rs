@@ -629,11 +629,31 @@ struct RegCell<T: Copy> {
     /// puts back. Kept rather than assumed zero so that the value
     /// `Reg::new` was given is the one a reset restores.
     init: T,
+    /// The clock and edge the register latches on: those of the
+    /// process that last drove it, and its own clock's rising edge
+    /// before anything has. The reset puts it back at that edge.
+    edge: Cell<(clock::Clk, Edge)>,
 }
 
 /// A drive scheduled for the end of the step.
 trait Commit {
     fn apply(&self);
+}
+
+/// A register as the reset sees it: every one, driven or not.
+trait Reset {
+    /// Go back to the first value if the register latches at step `t`.
+    fn reset_at(&self, t: u64);
+}
+
+impl<T: Copy> Reset for RegCell<T> {
+    fn reset_at(&self, t: u64) {
+        let (clk, edge) = self.edge.get();
+        if clk.edge_at(t, edge) {
+            self.next.take();
+            self.cur.set(self.init);
+        }
+    }
 }
 
 impl<T: Copy> Commit for RegCell<T> {
@@ -791,14 +811,14 @@ impl<T: Copy + 'static, C: Clock> Reg<T, C> {
     /// disagrees with the run from the first cycle (issue 359).
     pub fn new(v: impl Into<T>) -> Self {
         let v = v.into();
-        Reg(
-            Box::leak(Box::new(RegCell {
-                cur: Cell::new(v),
-                next: Cell::new(None),
-                init: v,
-            })),
-            PhantomData,
-        )
+        let cell: &'static RegCell<T> = Box::leak(Box::new(RegCell {
+            cur: Cell::new(v),
+            next: Cell::new(None),
+            init: v,
+            edge: Cell::new((clk_of::<C>(), Edge::Rising)),
+        }));
+        clock::REGS.with(|r| r.borrow_mut().push(cell));
+        Reg(cell, PhantomData)
     }
 
     /// Read the register: the value latched at the last edge. Plain,
@@ -813,6 +833,9 @@ impl<T: Copy + 'static, C: Clock> Reg<T, C> {
     /// iteration still sees the value the edge latched, as in hardware.
     pub fn set(&self, v: impl Into<T>) {
         self.0.next.set(Some(v.into()));
+        if let Some(e) = clock::EDGE.with(|e| e.get()) {
+            self.0.edge.set(e);
+        }
         commit_static(self.0);
     }
 
@@ -1265,6 +1288,14 @@ mod clock {
             RefCell::new(Vec::new());
         pub static COMMITS_STATIC: RefCell<Vec<&'static dyn super::Commit>> =
             RefCell::new(Vec::new());
+        /// Every register made, for the reset, which reaches a register
+        /// whether or not anything drives it at the edge (issue 727).
+        pub static REGS: RefCell<Vec<&'static dyn super::Reset>> =
+            RefCell::new(Vec::new());
+        /// The clock and edge the process running now last crossed:
+        /// what a register it drives latches on.
+        pub static EDGE: Cell<Option<(Clk, super::Edge)>> =
+            const { Cell::new(None) };
         /// The trace sink, told the step number when a step ends.
         pub static TRACER: RefCell<Option<Box<dyn FnMut(u64)>>> =
             RefCell::new(None);
@@ -1375,6 +1406,7 @@ impl Future for Tick {
                 clock::GROUP_EDGE.with(|g| g.set(Some(now)));
             }
             clock::DONE.with(|d| d.borrow_mut().insert((p, key), now));
+            clock::EDGE.with(|e| e.set(Some((clk, self.edge))));
             return Poll::Ready(());
         }
         // Inside a group whose edge was crossed at this step, the other
@@ -1385,6 +1417,7 @@ impl Future for Tick {
             clock::DONE.with(|d| d.borrow().get(&(p, key)) != Some(&now));
         if group_here && crossed && fresh {
             clock::DONE.with(|d| d.borrow_mut().insert((p, key), now));
+            clock::EDGE.with(|e| e.set(Some((clk, self.edge))));
             return Poll::Ready(());
         }
         Poll::Pending
@@ -1429,7 +1462,14 @@ fn advance() {
     for d in drives {
         d.apply()
     }
+    // While the reset is asserted, every register whose edge this is
+    // goes back, whether or not its process drove it: the netlist's
+    // `if (rst)` is in every clocked block, around every enable
+    // (issue 727).
     let t = now();
+    if reset() {
+        clock::REGS.with(|r| r.borrow().iter().for_each(|c| c.reset_at(t)));
+    }
     clock::TRACER.with(|tr| {
         if let Some(f) = tr.borrow_mut().as_mut() {
             f(t)
