@@ -13,12 +13,13 @@
 //! Built with `--cfg=board_run`, for the board, the program then
 //! measures the source: it reads the raw samples, the folded bits
 //! before the extractor, 4096 words of them, and sends each up the
-//! serial line as eight hex digits, followed by 4096 words of the
-//! extractor's output the same way. That is what a host estimates the
-//! source's bias and entropy from, and the only evidence there is that
-//! the rings are random rather than merely running (issue 458). A
-//! simulation runs the model rings and says nothing here, since what
-//! it would measure is the model.
+//! serial line as eight hex digits, then 8192 samples in a row that
+//! the peripheral captured, as 256 words under `rawrun`, then 4096
+//! words of the extractor's output the same way. That is what a host
+//! estimates the source's bias and entropy from, and the only evidence
+//! there is that the rings are random rather than merely running (issue
+//! 458). A simulation runs the model rings and says nothing here, since
+//! what it would measure is the model.
 #![no_std]
 #![no_main]
 
@@ -33,6 +34,12 @@ const DATA: usize = trng::DATA / 4;
 const STATUS: usize = trng::STATUS / 4;
 const CTRL: usize = trng::CTRL / 4;
 const RAW: usize = trng::RAW / 4;
+#[cfg(board_run)]
+const CAP: usize = trng::CAP / 4;
+#[cfg(board_run)]
+const CAPIDX: usize = trng::CAPIDX / 4;
+#[cfg(board_run)]
+const CAPWORD: usize = trng::CAPWORD / 4;
 
 const STATUS_READY: u32 = trng::STATUS_READY_MASK;
 const STATUS_FAULT: u32 = trng::STATUS_FAULT_MASK;
@@ -246,6 +253,17 @@ fn measure() {
         // word takes to fill: every word read is a fresh one.
         let raw = unsafe { read_volatile(TRNG.add(RAW)) };
         Uart::put_hex(raw);
+        Uart::put(b'\n');
+    }
+    // The capture (#817): the peripheral stores samples in a row as
+    // they come, which no loop of reads can keep up with, and they are
+    // read out afterwards at the serial line's pace.
+    unsafe { write_volatile(TRNG.add(CAP), trng::CAP_START_MASK) };
+    while unsafe { read_volatile(TRNG.add(CAP)) } & trng::CAP_DONE_MASK == 0 {}
+    Uart::say(b"rawrun\n");
+    for i in 0..=trng::CAPIDX_INDEX_MASK {
+        unsafe { write_volatile(TRNG.add(CAPIDX), i) };
+        Uart::put_hex(unsafe { read_volatile(TRNG.add(CAPWORD)) });
         Uart::put(b'\n');
     }
     Uart::say(b"words\n");
