@@ -1436,18 +1436,27 @@ core synthesised here.
 The board is the Alinx AX7A200B, the Artix-7 the part was chosen for.
 Everything that computes is one lowered module, \code{board}, the
 netlist \code{\#[lower]} writes for \code{vreteno32::board::Board}: a
-unit of units holding the core and its tracker, a router of seven, and
+unit of units holding the core and its tracker, a router of eight, and
 the peripherals of Table~\ref{tab:v-map}, each behind a tracker of its
 own or, for the page, the interrupt controller and the debug module,
-behind an AXI-Lite bridge. The page at \code{0x3000} is six
+behind an AXI-Lite bridge. The page at \code{0x3000} is seven
 peripherals of a sixteenth each, in Table~\ref{tab:v-page}: the
 serial port, the pulse width modulator, a slot for a peripheral on a
 clock of its own, the remote peripheral whose transactions leave the
-board as Ethernet frames, the Ethernet port's registers, and the
-entropy source. Both tables are written by \code{//tools/memmap} from
+board as Ethernet frames, the Ethernet port's registers, the entropy
+source, and the configuration flash's SPI master. Both tables are written by \code{//tools/memmap} from
 the maps the router and the page's bridge decode, \code{BoardMap} and
 \code{SlotMap}, so they are the map the netlist has and not a copy of
 it. The interrupt controller's line is the core's external interrupt.
+The configuration flash, the chip that holds the bitstream, is reached
+twice (issue 312): through that master, for commands such as the
+chip's identity, and through a window of 16~MiB at
+\code{0x2000\_0000} on the router's eighth port, where an ordinary
+read is answered with what the flash holds. Between both and the chip
+stand the \code{STARTUPE2} primitive, the only way to the flash's
+clock pin once the part is configured, and the pins, which wait for
+the end of configuration and refuse write enable, so nothing the core
+runs can change the bitstream.
 The DDR3 memory is a gigabyte behind the bridge from AXI to Wishbone
 and AMD's MIG controller, which the build generates. The controller
 is a module from elsewhere, so the netlist names its wrapper and does
@@ -1475,8 +1484,9 @@ listed by the same tool, each from the base the maps above give it:
 the timer in Table~\ref{tab:v-timer}, the serial port in
 Table~\ref{tab:v-uart}, the pulse width modulator in
 Table~\ref{tab:v-pwm}, the Ethernet port's registers in
-Table~\ref{tab:v-ethslots}, and the entropy source in
-Table~\ref{tab:v-trng}. That is every peripheral on the page with
+Table~\ref{tab:v-ethslots}, the entropy source in
+Table~\ref{tab:v-trng}, and the configuration flash's master in
+Table~\ref{tab:v-spi}. That is every peripheral on the page with
 registers of its own: the remote peripheral's behaviour is a program on
 another machine, and the third slot is brought out of the unit, where
 the flagship puts its video peripheral, whose table is in the flagship
@@ -1510,6 +1520,12 @@ document.
 \caption{The entropy source's registers.}
 \label{tab:v-trng}
 \mmget{regs}{trng}
+\end{table}
+
+\begin{table}[htbp]
+\caption{The configuration flash's SPI master's registers.}
+\label{tab:v-spi}
+\mmget{regs}{spi}
 \end{table}
 
 Listing~\ref{lst:v-board} is the one file written by hand, and it
