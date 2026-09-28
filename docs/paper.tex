@@ -63,7 +63,7 @@ memory, a timer and a serial port on it: written in the subset the
 lowering reads, checked
 in lockstep against a reference model, checked as a netlist against
 its own trace, synthesized, placed and routed on an Artix-7 at
-100~MHz in 2041 LUTs, its data memory a device in block RAM, and run
+100~MHz in 2151 LUTs, its data memory a device in block RAM, and run
 on the board, where it said on its serial port what the simulation
 had said. The language is proven on hardware. This paper presents
 the system and its results.
@@ -422,7 +422,7 @@ simulated. Both were found by the core and fixed in the emitter.
 \label{sec:p-vreteno}
 
 Vreteno is a 32-bit RISC-V core, the RV32I base integer set with the
-M extension, and the largest design in the language. Fig.~\ref{fig:p-core} is its
+M and C extensions, and the largest design in the language. Fig.~\ref{fig:p-core} is its
 structure. It is one unit and one process. The fetch stage reads the
 instruction memory at the program counter into an instruction
 register, with its program counter and a valid bit. The execute stage
@@ -608,16 +608,15 @@ itself.
 What is interesting is not that it works but what the machine will
 not allow, because the core meets each restriction by going quietly
 wrong rather than by refusing, so each had to become a check that
-speaks. A load below the data base never leaves the core, so a
-constant placed beside the code is one the program cannot read and
-the load retires with a stale word; \code{.rodata} is therefore
-linked into the data memory and the image carries its bytes, and
-there is no startup copy that could do it instead, since the copy
-could not read the source either. And the instruction memory is
-4~KiB, which the loader truncates to without a word and the fetch
-wraps within. Each is refused by the image tool, by name, where it
-can be said out loud. The compressed instructions were a third such
-restriction until the core ran them; now the compilers' own targets
+speaks. The instruction memory is 4~KiB, which the loader truncates
+to without a word and the fetch wraps within, and a program linked
+anywhere but zero is never reached; each is refused by the image
+tool, by name, where it can be said out loud. A load from the boot
+memory was one such restriction too, a constant beside the code that
+the program could not read, until every load went to the bus with the
+boot memory on it, read-only at zero; \code{.rodata} now sits beside
+the code. The compressed instructions were another, until the core
+ran them; now the compilers' own targets
 are the core's, and the programs are a quarter smaller for it.
 
 That size is the real constraint on what a standard library can mean
@@ -630,21 +629,24 @@ hello and prints a number its compiler worked out, in 63 words.
 \section{Results}
 \label{sec:p-results}
 
-What the system does, in numbers from the build that produced this
-paper. The runtime is five Rust modules, one macro crate and one
+What the system does, in numbers counted from the tree on September
+28, 2026. The runtime is nine Rust modules, one macro crate and one
 crate of parts, with one
-external crate, an FST writer. Thirty examples compile, each one
-concept, and every one that runs writes a waveform the examples
-document draws. Eighteen lowered units, Table~\ref{tab:p-checked}, are
+external crate, an FST writer. A hundred and four examples compile,
+each one concept, and every one that runs writes a waveform the
+examples document draws. A hundred and two netlists, the units of
+Table~\ref{tab:p-checked} among them, are
 simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
-forty-one tests run under \code{bazel test //...}, and every one of them
+three hundred and fifty-four tests run under \code{bazel test //...},
+and every one of them
 is hermetic, the simulators built from source or fetched as a binary
 and the synthesis tool
-installed by the build. Vreteno is 1270 lines of core, 141 of data
-memory, 168 of interrupt controller and 253 of serial port, with the
-router a family the macro writes in the parts library rather than a
-file of its own, checked in lockstep against a 572-line model on a
+installed by the build. Vreteno is 1664 lines of core, 137 of data
+memory, 260 of timer and 249 of serial port, with the interrupt
+controller, 510 lines, and the router, one unit for any number of
+ports, in the parts library, checked in lockstep against a 752-line
+model on a
 demonstration program and sixty-four random ones, with interrupts raised at random, checked as a netlist on 647
 ticks with every register compared at each, synthesized in two
 minutes to the figures of Table~\ref{tab:p-synth}, placed and
@@ -652,8 +654,8 @@ routed at 100~MHz, and programmed into the board, where it said OK on
 its serial port and echoed the three bytes typed back, the six bytes
 its simulation had produced, and lit its LEDs as the board top says,
 which an author saw and photographed: the language is proven on
-hardware, end to end, from a Rust source to a board that answers. Sixteen documents
-describe the system, this one
+hardware, end to end, from a Rust source to a board that answers.
+Twenty-four documents describe the system, this one
 included, and each is built by the same command that builds the
 designs, with every listing included from the tree and every figure
 drawn from a trace, so none can drift from the code.
@@ -730,7 +732,7 @@ R.~Nigam et al., ``A compiler infrastructure for accelerator
 generators,'' in \emph{Proc. ASPLOS}, 2021.
 
 \bibitem{rhdl}
-S.~Roantree, ``RHDL: A hardware description language embedded in Rust,''
+S.~Basu, ``RHDL: A hardware description language embedded in Rust,''
 \code{github.com/samitbasu/rhdl}.
 
 \end{thebibliography}
