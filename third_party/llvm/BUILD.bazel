@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: Apache-2.0
+# The C and C++ toolchain's module extension (issue 782); see
+# extension.bzl.

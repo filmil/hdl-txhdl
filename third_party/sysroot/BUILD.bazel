@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# The sysroot the C and C++ toolchain compiles and links against (issue
+# 782): Debian bullseye's C library, its kernel headers and GCC's start
+# files and runtime, unpacked from the packages `bullseye.lock.tsv`
+# pins by checksum. Written by //tools/debclosure:
+#
+#   bazel run //tools/debclosure -- -suite=bullseye \
+#       libc6-dev libgcc-10-dev > third_party/sysroot/bullseye.lock.tsv
+#
+# Bullseye's glibc, 2.31, is what a built binary may ask of the machine
+# it runs on, so it runs on anything from bullseye and Ubuntu 20.04 on.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["bullseye.lock.tsv"])

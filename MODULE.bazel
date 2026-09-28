@@ -134,6 +134,31 @@ bazel_dep(name = "rules_verilator", version = "1.1.2")
 bazel_dep(name = "rules_verilog", version = "1.4.3")
 bazel_dep(name = "rules_cc", version = "0.2.22")
 
+# The C and C++ toolchain, fetched rather than taken from the host (issue
+# 782): a pinned LLVM release, and a pinned Debian bullseye sysroot for
+# the headers and libraries a program links against, so that neither the
+# compiler nor libc nor the C++ library is whatever the machine has.
+# Everything that compiles or links C or C++ goes through it: every Rust
+# binary, since rules_rust links through the C++ toolchain, the Verilator
+# examples, nvc and the tools rules_foreign_cc builds. It is registered
+# here, in the module, so that it also reaches a workspace that depends
+# on this one, as the blinky of `//docs:zero` does. The sysroot is
+# Debian bullseye's, unpacked from packages pinned by checksum.
+# `third_party/llvm/extension.bzl` makes both, and says why there.
+bazel_dep(name = "toolchains_llvm", version = "1.10.0")
+
+# The toolchain's generated build files load from it, and a repository
+# this module's extension makes sees only this module's dependencies.
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+
+cc_toolchain = use_extension("//third_party/llvm:extension.bzl", "cc_toolchain")
+use_repo(cc_toolchain, "llvm_toolchain", "sysroot_bullseye")
+
+# Only the Linux one. The repository also declares toolchains for bare
+# metal RISC-V, and those would be picked for the core's own platform,
+# whose programs rustc links with its own lld and none of clang's flags.
+register_toolchains("@llvm_toolchain//:cc-toolchain-x86_64-linux")
+
 # Verilator comes down as a binary rather than being compiled here.
 # Building it from source is about six minutes on a machine that has
 # not done it before, and it is the same binary everywhere, so it is
