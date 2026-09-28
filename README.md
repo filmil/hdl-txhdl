@@ -13,9 +13,14 @@ The authors used a large language model, Claude, as an assistant in
 exploring the concepts and in writing and constructing the documents and
 the programs; every commit says so and carries its prompts verbatim.
 
-The specification is `spec/language.md`.
-`docs/` holds the analysis and the decisions behind it, and
-`docs/README.md` says what is in there.
+The language is the library, `//lib`, and the documents under `//docs`
+describe it; `//docs:cover` names every one and says which to read for
+what.
+`spec/language.md` is the specification the project started from, of
+2026-05-04, kept as history: its standalone syntax is not what the
+library implements, and nothing builds it.
+`docs/` also holds the analysis and the decisions behind the language,
+and `docs/README.md` says what is in there.
 
 ## Mirror
 
@@ -33,17 +38,21 @@ workspace's pin is checked by building it outside the tree.
 
 ## Building
 
-Everything is built by Bazel, and Bazel provisions every tool it uses.
-Nothing has to be installed first beyond `bazelisk`.
+Everything is built by Bazel, and Bazel fetches the tools it uses at
+the versions `MODULE.bazel` pins: the Rust toolchain, TeX, the two
+simulators, the RISC-V compiler and Zephyr's tools; Vivado it installs
+from AMD's installer, only when a target asks for it.
+What it takes from the machine is `bazelisk`, Git to clone, and the
+host's C and C++ toolchain, which `rules_cc` configures and the Rust
+links go through (`.bazelrc` says why the linker is GNU ld).
 
 ```sh
 bazel build //...                 # every document
 bazel test  //...
 ```
 
-The first build fetches a Debian rootfs, a Zig toolchain, graphviz built
-from source and a TeX installation, which is roughly 950 actions.
-Later builds reuse them.
+The first build fetches those tools and builds nvc from source; later
+builds reuse them.
 
 A test that reports `(cached)` has the result its exact inputs gave
 before, which may have been in another worktree or in CI: on this
@@ -61,8 +70,10 @@ including what belongs in your own `user.bazelrc`.
 
 ## Silicon
 
-The same netlist the board's bitstream is built from also goes through
-an open ASIC flow, onto the Nangate45 standard cell library.
+The Vreteno core's netlist, the same file the core's own FPGA build
+reads, also goes through an open ASIC flow, onto the Nangate45
+standard cell library. The board's bitstream is built from the whole
+board, of which the core is one part.
 Yosys and OpenROAD are fetched by checksum as Debian packages and
 unpacked by the build, so nothing is installed for this either.
 
@@ -84,16 +95,22 @@ Vivado's `hw_server` and the cable's libraries come out of the hermetic
 Vivado into a bundle; the first command uploads it, starts it there and
 tunnels its port back as `localhost:3122`; the second has Vivado connect
 to the tunnel and write the FPGA; the third watches the serial port
-there for a while and types a reply once the board has said a line.
-Start the watcher before programming, since the board speaks at once.
+there for a while.
+Open the watcher after programming, not before: reconfiguring the part
+reads as a break on the serial bridge, and a watcher already open
+receives nothing for the rest of its session (issue 195; the Vreteno
+document has the measurement).
 
 ```sh
 bazel run //cpu/vreteno/board/remote:hw_server
-bazel run //cpu/vreteno/board/remote:serial -- --seconds=60 --reply=yes &
 bazel run //cpu/vreteno:vreteno_board_prog -- --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+bazel run //cpu/vreteno/board/remote:serial -- --seconds=180
 ```
 
-The board answers `OK`, then echoes `yes`.
+The bitstream holds the DDR3 test: it says `vreteno ddr3 test`, a dot
+every ten seconds for half a minute, `ddr3 ok` once every word came
+back, and dots for two minutes after, so a watcher opened a few
+seconds late still reads the verdict.
 `//cpu/vreteno:vreteno_board_flash` writes the QSPI flash the same way,
 so the design survives a power cycle.
 
