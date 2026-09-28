@@ -82,11 +82,15 @@ rust_test(
 exports_files(glob(["src/*.rs", "src/bus/*.rs", "src/bus/axi/*.rs", "src/bus/noc/*.rs", "src/bus/wb/*.rs"]))
 
 # The hand-written Verilog the netlists instantiate and do not
-# write: the ring oscillators of the entropy source, and the
-# constraints that keep the timer off their loops.
+# write: the ring oscillators of the entropy source, the
+# configuration flash's startup block (issue 312), and the constraints
+# that keep the timer off the rings' loops.
 filegroup(
     name = "hdl",
-    srcs = ["hdl/ring_osc.v"],
+    srcs = [
+        "hdl/ring_osc.v",
+        "hdl/startup.v",
+    ],
     visibility = ["//visibility:public"],
 )
 

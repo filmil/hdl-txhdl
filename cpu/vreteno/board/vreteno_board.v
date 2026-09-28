@@ -62,7 +62,16 @@ module vreteno_board (
   output [3:0] ddr3_dm,
   inout [31:0] ddr3_dq_p,
   inout [3:0] ddr3_dqs_p,
-  inout [3:0] ddr3_dqs_n
+  inout [3:0] ddr3_dqs_n,
+  // The configuration flash (issue 312): its select and data on
+  // the configuration pins FCS_B, D00 and D01, its clock reached
+  // through STARTUPE2 inside the design, and D02 and D03, the
+  // chip's write protect and hold, held high.
+  output flash_cs_n,
+  output flash_d0,
+  input flash_d1,
+  output flash_d2,
+  output flash_d3
 );
   // The clocks. The memory controller makes them: it takes the board's
   // 200 MHz and hands back `clk`, the 100 MHz the design runs on, with
@@ -195,8 +204,12 @@ module vreteno_board (
     .jtag_rready(1'b0),
     .jtag_awready(), .jtag_wready(), .jtag_bid(), .jtag_bresp(),
     .jtag_bvalid(), .jtag_arready(), .jtag_rid(), .jtag_rdata(),
-    .jtag_rresp(), .jtag_rlast(), .jtag_rvalid()
+    .jtag_rresp(), .jtag_rlast(), .jtag_rvalid(),
+    .fl_miso(flash_d1), .fl_cs_n(flash_cs_n), .fl_mosi(flash_d0),
+    .fl_cclk(), .fl_refused()
   );
+  assign flash_d2 = 1'b1;
+  assign flash_d3 = 1'b1;
 
   // The serial line idles high, so any byte begins by pulling it low.
   // This latch holds from the first start bit until the next reset,
