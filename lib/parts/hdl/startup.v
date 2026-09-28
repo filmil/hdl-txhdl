@@ -32,7 +32,7 @@ module startup #(
   STARTUPE2 #(
       .PROG_USR("FALSE"),
       .SIM_CCLK_FREQ(0.0)
-  ) primitive (
+  ) startupe2 (
       .CFGCLK(),
       .CFGMCLK(),
       .EOS(eos_raw),
