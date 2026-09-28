@@ -117,11 +117,6 @@ fn capture(win: &mut [u32], at: &mut [u32]) {
     }
 }
 
-/// The counts the cycle counter loses between two reads of it: one, on
-/// the read itself (issue 807). When that is fixed, this is zero, and
-/// the simulated check says so by finding every pair moved by one.
-const CSR_LOSS: u32 = 1;
-
 /// How far from the cycle count a pair's shift is looked for when the
 /// count does not fit: the load behind the count can take a cycle or
 /// two more or less than the one before, on the board's memory.
@@ -177,7 +172,9 @@ fn send_run(win: &[u32], at: &mut [u32]) {
     let (mut fit, mut moved, mut gap, mut bad) = (0u32, 0u32, 0u32, 0u32);
     let mut odd = 0;
     for i in (1..win.len()).rev() {
-        at[i] = at[i].wrapping_sub(at[i - 1]).wrapping_add(CSR_LOSS);
+        // The cycles between two reads, exact since a read of the
+        // counter stopped writing it back (issue 807).
+        at[i] = at[i].wrapping_sub(at[i - 1]);
     }
     for i in 1..win.len() {
         let d = at[i];

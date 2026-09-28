@@ -680,7 +680,7 @@ fn the_entropy_source_answers_on_the_board() {
     let mut lines = ran.said.lines();
     assert_eq!(lines.next(), Some("trng ok"), "{}", ran.said);
     // In simulation the loop is steady, so every pair fits at its
-    // cycle count, less the count lost on each read (issue 807).
+    // cycle count, which is exact since issue 807.
     assert_eq!(
         lines.next(),
         Some("rawrun pairs 63 fit 63 moved 0 gap 0 bad 0"),
