@@ -927,7 +927,8 @@ linerange=state-state,caption={The bridge's state, from
 \code{lib/parts/src/bus/wb.rs}.},%
 label={lst:a-wbstate}]{lib/parts/src/bus/wb.rs}
 
-It takes one single-beat burst at a time. A read goes on the lines at
+It takes one burst at a time, of any length, and puts each of its
+words on the lines as a request of its own. A read goes on the lines at
 once and a write once its beat has come, since AXI4 puts no
 identifier on a write's beat and the beat comes when it comes. The
 request is offered with \code{cyc} and \code{stb}; a cycle with no
