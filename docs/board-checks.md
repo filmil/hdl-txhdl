@@ -92,7 +92,7 @@ bazel run //cpu/vreteno/board/remote:load -- \
     2>&1 | tee board-550-hello.log
 ```
 
-Pass: the loader answers `ok` and the eight hex digits of the image's checksum, and then the program prints `hello from rust`.
+Pass: the loader answers `ok` and the address it loaded to, `40000000`, and then the program prints `hello from rust`; `ok` comes only when the loader's sum matches, which is otherwise `bad sum`.
 Run it three times with `--reset`; the fence is about an order that a single run can get right by luck.
 Capture: `board-550-hello.log`, and the bitstream's sha256 from section 10, since the fence is in the boot memory and so in the bitstream.
 
@@ -137,7 +137,7 @@ Then, with the flagship in the part:
 ```sh
 bazel run //flagship:flagship_prog -- "${PROG[@]}"
 bazel run //cpu/vreteno/board/remote:load -- \
-    --image=$PWD/bazel-bin/zephyr/fastboot.bin --seconds=20 \
+    --image=$PWD/bazel-bin/zephyr/fastboot.bin --seconds=480 \
     2>&1 | tee board-143-listen.log
 ssh $TXHDL_BOARD_SERVER txhdl_fastboot/fastboot -s tcp:192.168.1.50 \
     getvar max-download-size 2>&1 | tee board-143-getvar.log
@@ -153,7 +153,8 @@ The three checks #143 lists, in its comment on PR #528:
 2. `getvar max-download-size` answers `0x00fff000`.
 3. `fastboot boot` of `hello_ram_bin` ends with `hello from rust` on the serial line, which proves the copy, the jump and the posted stores read back on real DDR3.
 
-The serial watcher and the loader both hold the serial port, so the watcher in step 3 starts after the loader's `--seconds` have run out.
+The fastboot server is 28959 words, and at one acknowledgement a word it takes about 90 seconds to send; `load` bounds the transfer and the watching together by `--seconds` plus 20, so a smaller `--seconds` cuts the transfer off with nothing printed (#784), and 480 leaves room for both.
+The serial watcher and the loader both hold the serial port, so the watcher in step 3 starts after the loader's `--seconds` have run out, or the loader's own output, which runs that long, is read for `hello from rust` instead.
 If the ping to `192.168.1.50` from the board server fails, the link is the first thing to look at: `ip link show fpga-a200t-eth0` should say `LOWER_UP`.
 Capture: the three logs.
 It closes #143 when all three pass.
@@ -163,10 +164,12 @@ It closes #143 when all three pass.
 `vreteno_board_pnr` boots the DDR3 test from its boot memory, so it starts as soon as the part is configured; start the watcher first.
 
 ```sh
-bazel run //cpu/vreteno/board/remote:serial -- --seconds=60 \
+bazel run //cpu/vreteno/board/remote:serial -- --seconds=240 \
     2>&1 | tee board-188-jtag.log &
 bazel run //cpu/vreteno:vreteno_board_prog -- "${PROG[@]}"
 ```
+
+The watcher runs for 240 seconds because programming alone takes about 40 and the test prints after it; a 90-second watcher closed before the first line on September 28.
 
 Pass: `vreteno ddr3 test`, a row of dots, `ddr3 ok`, and dots after it; the third LED, the controller's calibration, lit.
 `ddr3 bad` means the memory answered with words it was not given; no `ddr3` at all after the dots means the controller did not calibrate.
