@@ -448,3 +448,60 @@ filegroup(
         "vreteno_ram.ld",
     ],
 )
+
+# The two Ethernet programs above, linked for the memory the loader puts
+# a program into and flattened, so that each is sent down the wire to a
+# board rather than built into a bitstream: the receive path and the
+# transmit path of the flagship's port, each checked on its own (#786).
+rust_binary(
+    name = "ethrx_ram",
+    srcs = ["ethrx.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
+)
+
+vreteno_flat(
+    name = "ethrx_ram_bin",
+    platform = ":vreteno",
+    program = ":ethrx_ram",
+)
+
+rust_binary(
+    name = "ethtx_ram",
+    srcs = ["ethtx.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS + ["--cfg=board_run"],
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
+)
+
+vreteno_flat(
+    name = "ethtx_ram_bin",
+    platform = ":vreteno",
+    program = ":ethtx_ram",
+)
+
+# The Ethernet port's receive interrupt taken by the core, for the
+# loader (#786).
+rust_binary(
+    name = "ethirq_ram",
+    srcs = ["ethirq.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+    ],
+)
+
+vreteno_flat(
+    name = "ethirq_ram_bin",
+    platform = ":vreteno",
+    program = ":ethirq_ram",
+)

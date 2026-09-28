@@ -52,6 +52,12 @@ fn byte(f: u32, i: u32) -> u32 {
     let len = if f == 0 { LEN_A } else { LEN_B };
     if i >= len {
         0
+    } else if cfg!(board_run) && i < 6 {
+        // On the board, to every station, so that the machine on the
+        // other end of the cable counts the frame rather than its
+        // interface dropping a frame for an address that is not its
+        // own (#786).
+        0xff
     } else if i == 12 {
         0x08
     } else if i == 13 {
