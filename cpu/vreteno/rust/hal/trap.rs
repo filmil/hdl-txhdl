@@ -17,10 +17,10 @@
 //! since a program that traps where it did not expect to has nothing
 //! sensible to resume.
 //!
-//! The core's pending bit for the external interrupt is set by its
-//! line and cleared only by software, so the dispatcher clears it after
-//! the handler, when the controller's line has already fallen with the
-//! claim; a request still waiting raises it again.
+//! The core's pending bit for the external interrupt is the
+//! controller's line, as the privileged specification has it, so the
+//! dispatcher clears nothing: the handler's claim lowers the line, and
+//! a request still waiting keeps it up (#788).
 use core::ptr::{addr_of, addr_of_mut};
 
 /// What the entry saves: the registers a call may change, in the
@@ -125,11 +125,11 @@ extern "C" fn vreteno_hal_dispatch(frame: &mut Frame) {
     unsafe { core::arch::asm!("csrr {0}, mcause", out(reg) cause) }
     if cause & INTERRUPT != 0 {
         let line = cause & !INTERRUPT;
+        // Nothing is cleared after the handler: the external
+        // interrupt's pending bit is the controller's line, which the
+        // handler's claim lowers, and not a latch (#788).
         if let Some(h) = registered(addr_of!(INTERRUPTS), line) {
             h(frame, cause);
-        }
-        if line == EXTERNAL {
-            crate::csr::clear_pending(crate::csr::EXTERNAL);
         }
     } else {
         match registered(addr_of!(EXCEPTIONS), cause) {

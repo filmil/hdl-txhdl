@@ -16,9 +16,10 @@
 //! bytes have come in, the program says what they were and how many
 //! interrupts brought them, and stops.
 //!
-//! The trap vector, the saving and restoring of registers, and the
-//! clearing of the core's pending bit for the external interrupt, which
-//! this file once did by hand, are the crate's now (issue 142).
+//! The trap vector and the saving and restoring of registers, which
+//! this file once did by hand, are the crate's now (issue 142). The
+//! core's pending bit for the external interrupt is the controller's
+//! line, so nothing clears it (#788).
 #![no_std]
 #![no_main]
 

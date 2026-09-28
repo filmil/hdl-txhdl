@@ -357,13 +357,6 @@ pub mod csr {
         unsafe { core::arch::asm!("csrc mie, {0}", in(reg) bits) }
     }
 
-    /// Clear the pending bits in `bits`. The external interrupt's is
-    /// set by its line and cleared only this way, which [`super::trap`]
-    /// does after its handler.
-    pub fn clear_pending(bits: u32) {
-        unsafe { core::arch::asm!("csrc mip, {0}", in(reg) bits) }
-    }
-
     /// The cycle counter's low half.
     pub fn cycles() -> u32 {
         let v: u32;

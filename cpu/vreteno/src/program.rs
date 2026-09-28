@@ -257,7 +257,8 @@ pub fn demo() -> Vec<u32> {
     a.place(handler);
     a.emit(csrrs(23, CSR_MCAUSE, 0)); // x23 = mcause
     a.to(sync, |o| bge(23, 0, o)); // an exception: cause positive
-    a.emit(csrrc(0, CSR_MIP, 9)); // an interrupt: clear the line's bit,
+                                   // An interrupt: nothing to clear, since the external bit is the
+                                   // line (#788) and the timer's is its compare.
     a.emit(andi(22, 23, 0xff)); // x22 = which interrupt
     a.emit(addi(3, 0, 7)); // x3 = the timer's
     a.to(count, |o| bne(22, 3, o)); // the line's: nothing more
@@ -649,15 +650,13 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
         a.emit(w);
     }
     a.emit(halt());
-    // The handler: an interrupt is cleared and returned from; an
-    // exception returns past the instruction that trapped.
+    // The handler: an interrupt is returned from, its line having
+    // dropped, since the external bit is the line and not a latch
+    // (#788); an exception returns past the instruction that trapped.
     a.align();
     a.place(handler);
     a.emit(csrrs(31, CSR_MCAUSE, 0));
     a.to(sync, |o| bge(31, 0, o));
-    a.emit(lui(31, 1));
-    a.emit(srli(31, 31, 1)); // 0x800, the external interrupt's bit
-    a.emit(csrrc(0, CSR_MIP, 31));
     // And the timer's next: the count plus 64. The count sits far
     // from the compare in the controller's window, too far for one
     // base register, so it is reached through x31 and the compare's
