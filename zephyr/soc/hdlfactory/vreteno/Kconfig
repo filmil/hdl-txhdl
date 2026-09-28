@@ -3,6 +3,11 @@
 config SOC_VRETENO
 	select RISCV
 	select RISCV_PRIVILEGED
+	# The platform-level interrupt controller: without this the
+	# architecture's irq_enable and priority setting never reach it,
+	# so a device on the controller never interrupts, and the first
+	# that needed to, the Ethernet port, answered nothing (#786).
+	select RISCV_HAS_PLIC
 	select RISCV_ISA_RV32I
 	select RISCV_ISA_EXT_M
 	select RISCV_ISA_EXT_C
