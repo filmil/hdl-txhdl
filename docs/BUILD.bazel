@@ -981,6 +981,8 @@ latex_document(
         ":gpio_timing",
         ":redundant_run",
         ":redundant_timing",
+        ":cfgflash_run",
+        ":cfgflash_timing",
         ":flashwin_run",
         ":flashwin_timing",
         ":remote_run",

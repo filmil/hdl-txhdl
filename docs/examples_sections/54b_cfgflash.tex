@@ -1,0 +1,64 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Configuration Flash After the Bitstream}
+\label{sec:x-cfgflash}
+
+The master of Section~\ref{sec:x-spi} and the window of
+Section~\ref{sec:x-flashwin} each reach a flash on four wires of their
+own. The flash worth reaching on the board is the one that holds the
+bitstream, and its clock is not a wire of anyone's. On a 7-series part
+it is the dedicated CCLK pin, which the configuration logic drives
+while the bitstream loads and which user logic reaches afterwards only
+through the \code{STARTUPE2} primitive's \code{USRCCLKO} input.
+
+The primitive brings two rules with it. Its \code{EOS} output says
+when configuration is over, and until then the flash is not the user's.
+The first three clocks on \code{USRCCLKO} after \code{EOS} never reach
+the pin, since the part spends them moving the pin over, so a command
+whose clocks start there reaches the chip three bits short.
+
+\code{CfgFlash} is the answer, in two pieces. \code{Startup} is the
+primitive as a foreign module: synthesised, it is \code{STARTUPE2};
+simulated, in Rust, in Verilog and in VHDL alike, it is a model that
+raises \code{eos} after a few cycles and swallows the three clocks, and
+it brings out the pin as \code{cclk} so that a model of the chip can
+be clocked by it. \code{FlashPins} stands between the chip and the two
+parts. It waits for \code{eos}, spends four clocks with the chip not
+selected, and holds the window in reset until then. After that it
+gives the wires to whichever part selects the chip first, the window
+before the master when both ask at once, until that part lets go.
+
+\code{FlashPins} also refuses write enable, \code{0x06}, from the
+master. Every command that programs or erases a flash, or writes its
+registers, is ignored by the chip unless write enable came first, so
+that one command is the door to all of them. With \code{GUARD} set,
+the pins let the chip go on the seventh bit of a write enable, and the
+chip discards a command shorter than eight bits. Nothing the core runs
+can then change the flash that holds the bitstream.
+
+Every output of the pins is a register, and the clock passes the
+primitive as well, so the chip's answer comes back two cycles after
+the edge that asked for it. The run clocks both parts with a half bit
+of four cycles for that reason.
+
+The run asks the window for a word in its first cycle, before
+configuration is over. The read waits and is answered once the chip is
+ready. The master then asks the chip who it is, which is the first
+command after the swallowed clocks and arrives whole. It sends write
+enable, which the pins refuse, and the window reads a second word to
+show the chip still answers. At the end the chip model lists the
+commands it took whole: the two reads and the identity, and never
+write enable.
+
+\begin{figure}[htbp]
+\centering
+\input{cfgflash_timing.tex}
+\caption{The start: \code{phase} leaves its wait at the end of startup,
+the pins turn \code{usrcclko} four times with the chip not selected,
+and only the fourth turn reaches \code{cclk}. Then the window is let
+out of reset and its read selects the chip.}
+\label{fig:x-cfgflash}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_cfgflash.rs}. Run with \code{bazel run //lib/examples:ex\_cfgflash}.},label={lst:x-cfgflash}]{lib/examples/ex_cfgflash.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_cfgflash} printed when the build ran it: the two words, the identity, the refused command, and what the chip took whole.},label={lst:x-cfgflash-out}]{out_cfgflash.txt}
