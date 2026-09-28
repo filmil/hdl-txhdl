@@ -63,6 +63,14 @@ from Android's platform tools, and nothing written for the host
 fastboot -s tcp:192.168.1.50 boot program.bin
 ```
 
+A program shorter than 1580 bytes is refused by the tool as
+`too short` before anything is sent: it reads a boot image header's
+worth of a file to decide whether the file is already one (issue 799).
+Pad a small program with zeros; the padding lies past its end and is
+never read. `vreteno_fastboot` in `//cpu/vreteno/rust:defs.bzl` pads a
+flat program to 4096 bytes, as `hello_fastboot` does for
+`hello_ram_bin`, and by hand it is `truncate -s '>4096' program.bin`.
+
 `//zephyr:fastboot` is the image that listens for it: a TCP server on
 port 5554, which is where AOSP's `fastboot/README.md` puts the device.
 The address is static by default, `CONFIG_NET_CONFIG_MY_IPV4_ADDR` in

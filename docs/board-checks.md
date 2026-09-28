@@ -27,7 +27,8 @@ bazel build //cpu/vreteno:vreteno_board_jtag_pnr   # the debug module, #154
 bazel build //cpu/vreteno:vreteno_board_boot_pnr   # the loader, #550 and #458
 bazel build //cpu/vreteno:vreteno_board_pnr        # the DDR3 test, #188
 bazel build //flagship:flagship_pnr                # Ethernet and the loader, #143
-bazel build //cpu/vreteno/rust:hello_ram_bin //cpu/vreteno/rust:trng_ram_bin
+bazel build //cpu/vreteno/rust:hello_ram_bin //cpu/vreteno/rust:hello_fastboot \
+    //cpu/vreteno/rust:trng_ram_bin
 bazel build //zephyr:fastboot @multitool//tools/fastboot
 bazel build //tools/trngstat
 ```
@@ -131,7 +132,7 @@ ssh $TXHDL_BOARD_SERVER sudo ip addr add 192.168.1.1/24 dev fpga-a200t-eth0
 ssh $TXHDL_BOARD_SERVER sudo ip link set fpga-a200t-eth0 up
 ssh $TXHDL_BOARD_SERVER mkdir -p txhdl_fastboot
 scp "$(bazel cquery --output=files @multitool//tools/fastboot 2>/dev/null)" \
-    bazel-bin/cpu/vreteno/rust/hello_ram_bin.bin $TXHDL_BOARD_SERVER:txhdl_fastboot/
+    bazel-bin/cpu/vreteno/rust/hello_fastboot.bin $TXHDL_BOARD_SERVER:txhdl_fastboot/
 ```
 
 Then, with the flagship in the part:
@@ -146,14 +147,17 @@ ssh $TXHDL_BOARD_SERVER txhdl_fastboot/fastboot -s tcp:192.168.1.50 \
 bazel run //cpu/vreteno/board/remote:serial -- --seconds=30 \
     2>&1 | tee board-143-boot.log &
 ssh $TXHDL_BOARD_SERVER txhdl_fastboot/fastboot -s tcp:192.168.1.50 \
-    boot txhdl_fastboot/hello_ram_bin.bin
+    boot txhdl_fastboot/hello_fastboot.bin
 ```
 
 The three checks #143 lists, in its comment on PR #528:
 
 1. The console says `fastboot: listening on port 5554`.
 2. `getvar max-download-size` answers `0x00fff000`.
-3. `fastboot boot` of `hello_ram_bin` ends with `hello from rust` on the serial line, which proves the copy, the jump and the posted stores read back on real DDR3.
+3. `fastboot boot` of `hello_fastboot` ends with `hello from rust` on the serial line, which proves the copy, the jump and the posted stores read back on real DDR3.
+
+`hello_fastboot` is `hello_ram_bin` padded with zeros to 4096 bytes.
+Stock `fastboot` refuses the 148 bytes of `hello_ram_bin` as `too short`, before it sends anything, because it reads a boot image header's worth of a file first (#799); `//zephyr:fastboot_test` checks both off the board.
 
 The fastboot server is 28959 words, and at one acknowledgement a word it takes about 90 seconds to send.
 `load` counts `--seconds` from the end of the transfer and does not cut a transfer that is still moving, so the 60 are for watching alone; fastboot said `listening` about 15 seconds after its transfer ended (#784).
