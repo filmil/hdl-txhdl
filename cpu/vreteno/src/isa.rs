@@ -211,6 +211,13 @@ pub const SPI_BASE: u32 = 0x3600;
 /// 312).
 pub const FLASH_BASE: u32 = 0x2000_0000;
 
+/// Where programs begin in the configuration flash, past the bitstream,
+/// whose uncompressed configuration data for this part is 9 730 652
+/// bytes: the first mebibyte boundary after it, on an erase sector
+/// (issue 312). `docs/flagship.tex` states the layout, and
+/// `//tools/bitfit` checks a routed bitstream against it.
+pub const FLASH_PROGRAMS: u32 = 0x00A0_0000;
+
 /// Where the Ethernet port's four frame buffers live, which is in the
 /// DDR3 rather than inside the peripheral: two for receiving and two
 /// for sending, 2 KiB each, so 8 KiB from here.

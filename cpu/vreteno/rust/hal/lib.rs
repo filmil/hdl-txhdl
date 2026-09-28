@@ -62,6 +62,9 @@ pub mod map {
     /// The configuration flash, read as memory: 16 MiB, the bitstream
     /// first.
     pub const FLASH: usize = 0x2000_0000;
+    /// Where programs begin in the flash, read through the window:
+    /// past the bitstream, at the flash's offset `0x00A0_0000`.
+    pub const FLASH_PROGRAMS: usize = FLASH + 0x00A0_0000;
     /// The platform-level interrupt controller.
     pub const PLIC: usize = 0x0c00_0000;
     /// The DDR3 memory, where a loaded program lives.
