@@ -1,0 +1,34 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Reset Empties a Channel}
+\label{sec:x-flush}
+
+A channel between two units holds up to two words, and the reset
+empties it. In the netlist a channel is two words and two valid bits;
+the reset clears the bits, and a channel with neither bit set is
+empty. The run does the same at each edge of the channel's clock while
+the reset is high, whether or not anything sends or takes at that
+edge, and a send or a take at that edge is dropped with the rest
+(issue 729).
+
+\code{Pair} holds a \code{Counter}, which offers its next count
+whenever the channel has room, and a \code{Taker}, which takes a word
+only while \code{take} is high and shows the last word it took. The
+run leaves \code{take} low until the channel is full with the first
+two counts, holds the reset for two cycles, and then takes a word a
+cycle. What comes out starts at the counter's first count again. A
+channel that kept its words through the reset would hand the taker a
+one and then a zero, and the run asserts that it does not.
+
+\begin{figure}[htbp]
+\centering
+\input{flush_timing.tex}
+\caption{The channel between two units through a reset: \code{n}
+stops at two with the channel full, \code{rst} puts it back to zero,
+and \code{last} climbs from zero after it, with no word from before
+the reset.}
+\label{fig:x-flush}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_flush.rs}. Run with \code{bazel run //lib/examples:ex\_flush}.},label={lst:x-flush}]{lib/examples/ex_flush.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_flush} printed when the build ran it: the channel full, the reset, then the words shown as they are taken, and the netlist, with the channel between the two units.},label={lst:x-flush-out}]{out_flush.txt}

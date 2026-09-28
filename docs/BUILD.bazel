@@ -1038,6 +1038,8 @@ latex_document(
         ":scanout_timing",
         ":reset_run",
         ":reset_timing",
+        ":flush_run",
+        ":flush_timing",
         ":wdog_run",
         ":wdog_timing",
         "//lib/examples:sources",
