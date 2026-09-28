@@ -75,7 +75,7 @@ everything a real tapeout would still want.
 
 ## The board
 
-The Vreteno core's board, an Alinx AX7A200, sits on another machine
+The Vreteno core's board, an Alinx AX7A200B, sits on another machine
 with its programming cable and its serial bridge, and is programmed
 from here over ssh; `.bazelrc` names the machine in `TXHDL_BOARD_SERVER`,
 and `--server=HOST` on either command below overrides it.
