@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Whether a bitstream leaves the configuration flash's program area
+# alone (issue 312): it reads a `.bit` file's header, the length of its
+# configuration data among it, and fails if that runs past the offset
+# programs are kept at. The routed bitstreams need Vivado, so the tests
+# that read them are manual, beside each bitstream; the parser is
+# checked here on files made by the test.
+#
+#   bazel run //tools/bitfit -- -offset=0xa00000 $PWD/design.bit
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+package(default_visibility = ["//visibility:public"])
+
+go_library(
+    name = "bitfit_lib",
+    srcs = [
+        "bit.go",
+        "main.go",
+    ],
+    importpath = "github.com/filmil/txhdl/tools/bitfit",
+)
+
+go_binary(
+    name = "bitfit",
+    embed = [":bitfit_lib"],
+    pure = "on",
+)
+
+go_test(
+    name = "bitfit_test",
+    srcs = ["bit_test.go"],
+    embed = [":bitfit_lib"],
+)
+
+exports_files(["fits_test.sh"])
