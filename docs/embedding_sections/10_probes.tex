@@ -4,8 +4,9 @@
 
 Every claim in this paper about what Rust does is a probe that was built.
 The probes are one file per question in \code{experiments/rust\_embedding},
-and thirteen of them are expected to fail, so they are tagged \code{manual}
-and stay out of the default build. A failing probe is kept rather than deleted,
+and those expected to fail are tagged \code{manual} and stay out of the
+default build; the \code{BUILD.bazel} beside them lists which, each with
+the error it gives. A failing probe is kept rather than deleted,
 because the failure is the answer.
 
 \begin{table*}[t]

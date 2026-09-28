@@ -6,7 +6,7 @@ A companion paper merged two hardware description languages and gave the
 result a syntax shaped after Rust. This paper removed every construct Rust
 already provides and asked what was left.
 
-Seventeen of twenty constructs go. What remains is five Rust modules
+Seventeen of twenty constructs go. What remains is four Rust modules
 of traits and types and a crate of macros, not a grammar.
 
 Two deletions are worth more than the count suggests. The rule that a
@@ -38,8 +38,8 @@ and would not justify a new toolchain on their own.
 The other half is the bet. An \code{async fn} that is a sequence, a
 pipeline or a process according to how it is driven, with operator
 latency the mapping's decision, is not something Chisel can express, and
-it is what both source languages existed to provide. Nineteen probes
-show that Rust accepts it, and the experiment of
+it is what both source languages existed to provide. The probes show
+that Rust accepts it, and the experiment of
 Section~\ref{sec:e-next} shows that it lowers: an \code{async fn} to
 a pipeline whose depth follows its operators' latencies, a unit to a
 module, and a RISC-V core~\cite{vreteno} to a netlist that simulates

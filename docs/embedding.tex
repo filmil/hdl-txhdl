@@ -48,7 +48,7 @@ spelled \code{.await} and a plain \code{fn} has none. And a pipeline, a
 sequence and a set of parallel processes are one construct, an \code{async
 fn}, differing only in how they are driven; the live-range analysis that a
 \code{pipe} declaration existed to feed is what an async state machine does
-already. Every claim here was compiled rather than argued, across sixteen probes,
+already. Every claim here was compiled rather than argued, one probe a question,
 and four of those compilations changed the design. Arbitrary-width
 arithmetic needs nightly Rust. A unit's parallel processes cannot take
 \code{\&mut self}. A \code{macro\_rules!} conditional cannot reach inside
@@ -56,14 +56,17 @@ a block, which is the strongest argument for elaborating through a
 procedural macro. And one driver per wire turns out to be free: a signal
 yields its two ends separately, the driving end is not \code{Clone}, so
 the oldest error message in hardware design arrives as a move error. One
-wall remains, and it is the reason the merged language was designed with
-its own parser: \code{if} on a signal cannot work, because a signal has no
-value while the program runs. Half of the result is Chisel's architecture
-in Rust, and is presented as such. The other half, sequencing through
-\code{async}, is the contribution, its nearest ancestors are Calyx and
-Filament rather than Chisel, and it is the half that has not yet been
-lowered to hardware. The paper closes by stating the one experiment that
-would settle whether it can be.
+wall stands for an elaborator, and it is the reason the merged language
+was designed with its own parser: \code{if} on a signal cannot work when a
+signal has no value while the program runs. It does not stand here,
+because this runtime runs the design, so a condition has a value, and
+the lowering reads Rust's \code{if} and \code{match} as written. Half
+of the result is Chisel's architecture in Rust, and is presented as
+such. The other half, sequencing through \code{async}, is the
+contribution, its nearest ancestors are Calyx and Filament rather than
+Chisel, and it lowers: a process of several waits to a state machine,
+a \code{for} that waits to a counted loop, and an \code{async fn} to a
+pipeline. The paper closes with the experiment that showed it.
 \end{abstract}
 
 \begin{IEEEkeywords}

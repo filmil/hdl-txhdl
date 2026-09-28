@@ -42,7 +42,7 @@ An expression needs no macro at all. \code{mux} is the operation, and a
 function says so.
 
 \begin{lstlisting}[caption={The expression form is a function. There is nothing to predicate.},label={lst:mux}]
-let chosen = mux(reset, Sig(0), self.count);
+let chosen = mux(reset, U::new(0), count);
 \end{lstlisting}
 
 A statement form has to predicate whatever is written inside it, and that
@@ -100,10 +100,11 @@ makes, and an arm may hold a \code{let}, a \code{with!}, a
 \code{case!} or another \code{if}. What the macro keeps is the
 struct named once, and the guarantee that a block is a list of
 drives; what \code{if} adds is \code{else if}, and a \code{send}
-under a condition, which is a statement and not a drive. Two things stay out,
-for the reason above: an \code{if} that yields a value, which is
-\code{mux} or \code{select!}, and an output driven under a
-condition, which is a wire and takes a \code{mux} outside the chain.
+under a condition, which is a statement and not a drive. An \code{if}
+that yields a value, and a \code{match}, lower too since issue 496, to
+the chain \code{mux} and \code{select!} make. One thing stays out, for
+the reason above: an output driven under a condition, which is a wire
+and takes a \code{mux} outside the chain.
 The examples document has one~\cite{examples}.
 
 \subsubsection{Many arms}

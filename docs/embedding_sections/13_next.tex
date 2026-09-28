@@ -29,8 +29,8 @@ driving the groups; this paper's lowering, Section~\ref{sec:e-next},
 reads a loop of one wait and lowers it to a module, and a loop of
 several waits to a state machine with a state per wait, which is
 Calyx's control program in its plainest form, a \code{seq} of groups,
-with a wait under \code{if} the branch in it and a \code{for} of a
-constant count unrolled.
+with a wait under \code{if} the branch in it and a \code{for} that
+waits a counted loop, its turns kept in a register.
 
 \textbf{Filament}~\cite{filament} types each signal with the interval of
 cycles over which it is valid, so that composing two components with
@@ -93,7 +93,7 @@ because somebody may already have found where it breaks.
 \section{What Comes Next}
 \label{sec:e-next}
 
-Nineteen probes prove that the design type-checks. Chisel is a working
+The probes prove that the design type-checks. Chisel is a working
 compiler with a decade of use. The gap between those two facts is the
 whole of what remains, and it should be closed in one place rather than
 widened with more probes.
