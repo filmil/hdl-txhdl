@@ -1177,7 +1177,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 mux(mie_bit, U::<32>::from(0x80u32), U::<32>::from(0u32));
             let mret_status =
                 mux(mpie, U::<32>::from(0x88u32), U::<32>::from(0x80u32));
-            let csr_write = run & csr_op & csr_known;
+            // Only an instruction that writes writes: a set or a clear
+            // from `x0` or a zero immediate is a read, and wrote the
+            // value it read back after the count, so `mcycle` and
+            // `minstret` lost one on every read of them (#807).
+            let csr_write = run & csr_op & csr_known & csr_writes;
             // Stopped: on a write of an odd value to `mhalt`, and then
             // for good; the halt itself follows a cycle later, when
             // the halting instruction retires. `ebreak` used to do

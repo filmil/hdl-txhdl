@@ -23,7 +23,11 @@ fn a_program_measures_itself_with_the_counters() {
     // instruction and takes about thirty-three cycles, so the two
     // counters cannot agree.
     assert_eq!(quotient, 1000 / 7, "the division, so the work happened");
-    assert_eq!(retired, 5, "instructions between the reads");
+    // Six: the first read of `minstret` itself, the five instructions
+    // after it, and none of the second read, which counts what came
+    // before it. This said five while a read wrote the count it had
+    // read back over its own retirement (#807).
+    assert_eq!(retired, 6, "instructions between the reads");
     assert!(
         cycles > retired + 20,
         "cycles {cycles} against instructions {retired}: a division \

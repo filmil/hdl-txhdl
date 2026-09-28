@@ -641,7 +641,10 @@ impl Model {
                     Csrrs | Csrrsi => old | src,
                     _ => old & !src,
                 };
-                self.csr_write(imm, v);
+                // A read writes nothing, as the core does not (#807).
+                if writes {
+                    self.csr_write(imm, v);
+                }
                 rd = Some(old);
                 // A write of an odd value to `mhalt` is how a program
                 // says it is finished. The register holds nothing and
