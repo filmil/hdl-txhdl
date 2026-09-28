@@ -12,6 +12,10 @@
 //! simulations of the Verilog and the VHDL drive it at the same
 //! cycles and must agree with the Rust.
 //!
+//! The count is driven only on a tick, and the first cycle of the
+//! reset has none: the reset reaches a register whether or not the
+//! process drives it at that edge, as the netlist's does (issue 727).
+//!
 //! A unit that wants to do something under reset, rather than merely
 //! forget, takes `rst: In<Bit>` and reads it, and the netlist joins
 //! that port to the same net instead of adding a second. The core
@@ -19,8 +23,7 @@
 //! from the reset vector.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{
-    mux, now, set_reset, signal, Clock, DefaultClock, In, Out, Reg, Running,
-    Unit,
+    now, set_reset, signal, Clock, DefaultClock, In, Out, Reg, Running, Unit,
 };
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
@@ -36,8 +39,9 @@ impl Unit<In<Bit>, Out<U<8>>> for Ticker {
     async fn run(&mut self, tick: In<Bit>, total: Out<U<8>>) {
         loop {
             DefaultClock::rising().await;
-            self.count
-                .set(mux(tick.get(), self.count + 1, self.count.get()));
+            if tick.get().to_bool() {
+                self.count.set(self.count + 1);
+            }
             total.set(self.count);
         }
     }
@@ -72,9 +76,11 @@ fn main() {
 
     // The reset, asserted for two cycles. The count goes back to what
     // it was before the first edge, and stays there while the reset
-    // is held, although the tick is still high.
+    // is held: at the first edge with no tick, so nothing drives it,
+    // and at the second with the tick high again.
     set_reset(true);
-    for _ in 0..2 {
+    for high in [Bit::Zero, Bit::One] {
+        tick_out.set(high);
         sim.cycle();
         println!("t={:>2} count {} (in reset)", now(), total.get().raw());
     }
