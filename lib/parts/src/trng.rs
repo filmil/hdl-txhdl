@@ -52,10 +52,23 @@
 //! | `0x4` | `status` | bit 0 a word is ready, bits 3 to 1 how many, bit 8 the fault, bit 9 running |
 //! | `0x8` | `ctrl` | bit 0 run; a write with bit 1 clears the fault |
 //! | `0xc` | `raw` | the last 32 folded samples, before the extractor |
+//! | `0x10` | `cap` | a write of bit 0 starts a capture; bit 1 busy, bit 2 done |
+//! | `0x14` | `capidx` | which captured word `capword` reads, 0 to 255 |
+//! | `0x18` | `capword` | that captured word, 32 samples, the newest in bit 0 |
 //!
 //! `raw` is for the measurement and nothing else: a program that
 //! reads it in a loop and sends the bits up the serial line is how the
 //! source's bias and its entropy are estimated on the board.
+//!
+//! A read of `raw` sees 32 samples, and a loop on the board cannot
+//! read it again within 32 cycles, so the samples of two reads never
+//! meet and nothing longer than a window can be measured that way.
+//! The capture is the long measurement: a write of `cap` fills a
+//! buffer of `CAP_WORDS` words from the samples as they come, one word
+//! every 32 cycles while the source runs, so the words are 8192
+//! samples in a row with none missing, and a program reads them out
+//! afterwards at any pace (#817). It is a measurement aid; the
+//! extractor and the health test run on regardless.
 use txhdl::comp::trace::Kind;
 use txhdl::comp::{
     join2, mux, signal, Clock, DefaultClock, In, Mem, Out, Reg, Unit,
@@ -75,6 +88,8 @@ pub const RING_LENGTH: i128 = 7;
 pub const RCT_CUTOFF: u32 = 40;
 /// How many words the buffer holds.
 pub const WORDS: usize = 4;
+/// How many words a capture holds: 8192 samples in a row.
+pub const CAP_WORDS: usize = 256;
 /// The model rings' seeds, one a ring, apart from each other so that
 /// the eight streams do not start alike; the same eight are in the
 /// module's simulation branch.
@@ -90,8 +105,8 @@ pub const SEEDS: [u32; RINGS] = [
 ];
 
 // begin{regs}
-// The peripheral's four words.
-regmap! { regs (regs_read, regs_we, regs_re), 2: [
+// The peripheral's seven words.
+regmap! { regs (regs_read, regs_we, regs_re), 3: [
     (0, data, rc, "the oldest word of entropy"),
     (1, status, ro, "the buffer and the health test", [
         (ready, 0, 1, ro, 0, "a word is ready"),
@@ -104,6 +119,15 @@ regmap! { regs (regs_read, regs_we, regs_re), 2: [
         (clear, 1, 1, wo, 0, "written one, the fault is cleared"),
     ]),
     (3, raw, ro, "the last 32 folded samples"),
+    (4, cap, rw, "a capture of consecutive samples", [
+        (start, 0, 1, wo, 0, "written one, a capture begins"),
+        (busy, 1, 1, ro, 0, "the capture is filling"),
+        (done, 2, 1, ro, 0, "the capture is whole"),
+    ]),
+    (5, capidx, rw, "which captured word capword reads", [
+        (index, 0, 8, rw, 0, "the word, 0 to 255"),
+    ]),
+    (6, capword, ro, "the captured word capidx names, newest in bit 0"),
 ] }
 // end{regs}
 
@@ -115,6 +139,18 @@ pub const STATUS: u32 = regs::status;
 pub const CTRL: u32 = regs::ctrl;
 /// The last 32 folded samples.
 pub const RAW: u32 = regs::raw;
+/// The capture's control and status.
+pub const CAP: u32 = regs::cap;
+/// Which captured word `CAPWORD` reads.
+pub const CAPIDX: u32 = regs::capidx;
+/// The captured word `CAPIDX` names.
+pub const CAPWORD: u32 = regs::capword;
+/// `cap` bit 0, on a write: a capture begins.
+pub const CAP_START: u32 = regs::cap_start.mask();
+/// `cap` bit 1: the capture is filling.
+pub const CAP_BUSY: u32 = regs::cap_busy.mask();
+/// `cap` bit 2: the capture is whole.
+pub const CAP_DONE: u32 = regs::cap_done.mask();
 
 /// `ctrl` bit 0: the rings run and the buffer fills.
 pub const CTRL_RUN: u32 = regs::ctrl_run.mask();
@@ -217,6 +253,18 @@ pub struct Trng {
     pub tail: Reg<U<2>>,
     /// How many words are waiting, up to `WORDS`.
     pub count: Reg<U<3>>,
+    /// The capture: `CAP_WORDS` words of samples in a row (#817).
+    pub cap: Mem<U<32>, CAP_WORDS>,
+    /// A capture is filling.
+    pub cbusy: Reg<Bit>,
+    /// A capture is whole.
+    pub cdone: Reg<Bit>,
+    /// The capture's word being filled.
+    pub cword: Reg<U<8>>,
+    /// Samples into that word, less one: at 31 the word is written.
+    pub cbits: Reg<U<5>>,
+    /// Which captured word `capword` reads.
+    pub cidx: Reg<U<8>>,
 }
 // end{state}
 
@@ -244,12 +292,17 @@ impl Unit for Trng {
             let head = self.head.get();
             let tail = self.tail.get();
             let count = self.count.get();
+            let cbusy = self.cbusy.get();
+            let cdone = self.cdone.get();
+            let cword = self.cword.get();
+            let cbits = self.cbits.get();
+            let cidx = self.cidx.get();
             // The bus.
             let arh = bus.ar.head();
             let awh = bus.aw.head();
             let wh = bus.w.head();
-            let rsel = arh.addr.slice::<2, 2>();
-            let wsel = awh.addr.slice::<2, 2>();
+            let rsel = arh.addr.slice::<2, 3>();
+            let wsel = awh.addr.slice::<2, 3>();
             let rgo = bus.r.ready() & bus.ar.peek().is_some();
             let _ = bus.ar.recv_if(bus.r.ready());
             let wgo = bus.b.ready()
@@ -295,10 +348,33 @@ impl Unit for Trng {
             let pop = regs_re(rgo, rsel).bit(0) & ready;
             // A write to the control word.
             let to_ctrl = regs_we(wgo, wsel).bit(2);
+            // The capture (#817): a write of `cap` with bit 0 starts
+            // it, and while the source runs every sample goes into the
+            // word being filled, which is written whole when it holds
+            // 32, the same 32 `raw` would then read, so the words are
+            // samples in a row with none missing and none twice.
+            let start = regs_we(wgo, wsel).bit(4) & regs_cap_start(written);
+            let to_idx = regs_we(wgo, wsel).bit(5);
+            let sampled = (rawv << 1u32) | bit.zext::<32>();
+            let cstep = cbusy & running;
+            let cword_done = cstep & (cbits == 31);
+            let clast = cword_done & (cword == CAP_WORDS as u32 - 1);
+            let cap_status = regs_cap_pack(Bit::Zero, cbusy, cdone);
+            let capidx_word = regs_capidx_pack(cidx);
+            let capword = self.cap.read(cidx);
             let status = regs_status_pack(ready, count, fault, running);
             let data = mux(ready, self.words.read(head), U::<32>::from(0u8));
             let ctrl = regs_ctrl_pack(running, Bit::Zero);
-            let answer = regs_read(rsel, data, status, ctrl, rawv);
+            let answer = regs_read(
+                rsel,
+                data,
+                status,
+                ctrl,
+                rawv,
+                cap_status,
+                capidx_word,
+                capword,
+            );
             with!(self <= {
                 to_ctrl ? run: regs_ctrl_run(written),
                 to_ctrl & regs_ctrl_clear(written) ? fault: Bit::Zero,
@@ -307,7 +383,7 @@ impl Unit for Trng {
                 running ? {
                     prev: bit,
                     runlen: run1,
-                    rawv: (rawv << 1u32) | bit.zext::<32>(),
+                    rawv: sampled,
                 },
                 taking ? fhave: !fhave,
                 taking & !fhave ? fbit: bit,
@@ -328,6 +404,22 @@ impl Unit for Trng {
                 pop ? head: head + 1,
                 push & !pop ? count: count + 1,
                 pop & !push ? count: count - 1,
+                cstep ? cbits: cbits + 1,
+                cword_done ? {
+                    cap.at(cword): sampled,
+                    cword: cword + 1,
+                },
+                clast ? {
+                    cbusy: Bit::Zero,
+                    cdone: Bit::One,
+                },
+                start ? {
+                    cbusy: Bit::One,
+                    cdone: Bit::Zero,
+                    cword: U::<8>::from(0u8),
+                    cbits: U::<5>::from(0u8),
+                },
+                to_idx ? cidx: regs_capidx_index(written),
             });
             en.set(running);
             if rgo.to_bool() {
