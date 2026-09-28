@@ -11,6 +11,6 @@ bazel_dep(name = "rules_rust", version = "0.74.0")
 bazel_dep(name = "txhdl", version = "0.0.0")
 git_override(
     module_name = "txhdl",
-    commit = "206089c24fb2242ef18ba28d4cca38f165f88c6f",
+    commit = "16e26719b54c213b0c6c4bb80f01d9cfd7dfe5b9",
     remote = "https://github.com/filmil/hdl-txhdl.git",
 )
