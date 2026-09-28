@@ -268,8 +268,10 @@ set or cleared by a register or by a five-bit immediate; a name the
 model does not have is an illegal word, and traps. \code{mtval}
 takes the illegal word itself, the address an unaligned access asked
 for, the breakpoint's own address, and zero for any other trap. The
-external interrupt is a bit in \code{mip}, which \code{raise}
-sets when the line is seen high and software clears; when it is set,
+external interrupt is a bit in \code{mip}, which \code{line} sets
+to the line at each edge, as the privileged specification has it: the
+interrupt controller sets and clears it, and a write to \code{mip}
+changes nothing; when it is set,
 enabled in \code{mie} and interrupts are enabled in
 \code{mstatus}, the next \code{step} traps instead of executing,
 with the interrupt's cause, and returns to the same address. The
@@ -444,9 +446,13 @@ one, at no cost in hardware, which is how an internal signal is
 looked at.
 
 The interrupt is the second input of the core, and it is taken in
-execute as a trap is. The line sets the pending bit of \code{mip}
-at the edge, and a write to \code{mip} clears it, the write winning
-when both fall in one cycle. An instruction in execute that is not
+execute as a trap is. The pending bit of \code{mip} is the line,
+taken at each edge, and a write to \code{mip} changes nothing, since
+the specification makes the bit read only and leaves it to the
+interrupt controller. It once latched until software cleared it, which
+software written to the specification never does: Zephyr took one
+interrupt, returned to the bit still set, found nothing to claim, and
+halted (issue 788). An instruction in execute that is not
 stalled is live; when the pending bit, its enable in \code{mie} and
 the enable in \code{mstatus} are all set, the interrupt takes the
 live instruction's place: it runs nothing, its address goes to
