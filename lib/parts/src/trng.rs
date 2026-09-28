@@ -416,6 +416,17 @@ mod tests {
     ) where
         F: std::future::Future<Output = ()>,
     {
+        run_for(feed, 200_000, client);
+    }
+
+    /// The same, for up to `cycles` cycles.
+    fn run_for<F>(
+        feed: Option<Rc<dyn Fn(u64) -> u32>>,
+        cycles: u64,
+        client: impl FnOnce(Host) -> F,
+    ) where
+        F: std::future::Future<Output = ()>,
+    {
         let link = axi_lite::<32, 32, 4>();
         let bus: LitePort<32, 32, 4> = link.per.into();
         let done = Rc::new(RefCell::new(false));
@@ -446,7 +457,7 @@ mod tests {
             join2(client, source),
             trng.run(bus, (raw_i, en_o)),
         ));
-        for _ in 0..200_000 {
+        for _ in 0..cycles {
             sim.cycle();
             if *done.borrow() {
                 return;
@@ -562,6 +573,110 @@ mod tests {
                 assert_eq!(s & STATUS_FAULT, 0, "under the cutoff: {s:#x}");
             },
         );
+    }
+
+    /// A sample of a source with a stated law: splitmix64 of the cycle,
+    /// so each cycle's draw is independent of every other's and the run
+    /// is the same every time.
+    fn draw(t: u64) -> f64 {
+        let mut z = t.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^= z >> 31;
+        (z >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// `n` words of the extractor's output from the source `feed`.
+    fn words(feed: Rc<dyn Fn(u64) -> u32>, n: usize) -> Vec<u32> {
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let g = got.clone();
+        run_for(Some(feed), 400 * n as u64, |h| async move {
+            write(&h, CTRL, CTRL_RUN).await;
+            for _ in 0..n {
+                let w = word(&h).await;
+                g.borrow_mut().push(w);
+            }
+            let s = read(&h, STATUS).await;
+            assert_eq!(s & STATUS_FAULT, 0, "the source did not trip: {s:#x}");
+        });
+        let w = got.borrow().clone();
+        w
+    }
+
+    /// The correlation of a word's bits with the bits `lag` further on
+    /// in the same word, over all the words. Pairs stay inside a word,
+    /// since two words read one after the other were not made one
+    /// after the other.
+    fn lag_corr(words: &[u32], lag: usize) -> (f64, f64) {
+        let (mut sx, mut sy, mut sxx, mut syy, mut sxy, mut n) =
+            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        for w in words {
+            for i in 0..32 - lag {
+                let x = (w >> i & 1) as f64;
+                let y = (w >> (i + lag) & 1) as f64;
+                sx += x;
+                sy += y;
+                sxx += x * x;
+                syy += y * y;
+                sxy += x * y;
+                n += 1.0;
+            }
+        }
+        let r = (n * sxy - sx * sy)
+            / ((n * sxx - sx * sx) * (n * syy - sy * sy)).sqrt();
+        (r, r * n.sqrt())
+    }
+
+    /// The extractor adds no correlation of its own (issue 780): fed a
+    /// source whose samples are independent and biased, one in six-
+    /// tenths, its words carry no correlation at any lag from one to
+    /// eight beyond four standard deviations, and are balanced.
+    ///
+    /// On the board the words were correlated. This is what says the
+    /// cause is not the pairing or the packing but the samples, which
+    /// the next test shows the extractor passes through.
+    #[test]
+    fn an_independent_biased_source_gives_uncorrelated_words() {
+        let ws = words(Rc::new(|t| u32::from(draw(t) < 0.6)), 1024);
+        for lag in 1..=8 {
+            let (r, z) = lag_corr(&ws, lag);
+            assert!(z.abs() < 4.0, "lag {lag}: r {r:+.4}, z {z:+.1}");
+        }
+        let ones: u32 = ws.iter().map(|w| w.count_ones()).sum();
+        let bits = 32.0 * ws.len() as f64;
+        let z = (ones as f64 - bits / 2.0) / (bits.sqrt() / 2.0);
+        assert!(z.abs() < 4.0, "balanced: z {z:+.1}");
+    }
+
+    /// And what von Neumann cannot do: a source whose samples are fair
+    /// and uncorrelated with their neighbour, but correlated with the
+    /// sample two cycles on, gives correlated words. A pair is two
+    /// neighbours, so the extractor sees the second-neighbour
+    /// correlation between one pair and the next. The board's raw
+    /// samples have that shape (issue 780): no correlation at lag one,
+    /// and a positive one at lag two.
+    #[test]
+    fn a_source_correlated_two_apart_gives_correlated_words() {
+        // Each sample copies the one two cycles back with probability a
+        // quarter, and is a fresh fair draw otherwise.
+        let src = Rc::new(RefCell::new(Vec::<u32>::new()));
+        let feed = Rc::new(move |t: u64| {
+            let mut s = src.borrow_mut();
+            let t = t as usize;
+            while s.len() <= t {
+                let i = s.len() as u64;
+                let b = if i >= 2 && draw(2 * i) < 0.25 {
+                    s[i as usize - 2]
+                } else {
+                    u32::from(draw(2 * i + 1) < 0.5)
+                };
+                s.push(b);
+            }
+            s[t]
+        });
+        let ws = words(feed, 1024);
+        let (r, z) = lag_corr(&ws, 1);
+        assert!(z > 4.0, "lag 1 carries it through: r {r:+.4}, z {z:+.1}");
     }
 
     /// The netlist instantiates the rings and does not write them.
