@@ -20,8 +20,10 @@ reached at linkedin.com/in/dragisa-jankovic.}%
 \thanks{This document is about how TxHDL was built rather than what
 it is. What it is, is in the paper~\cite{paper}; the
 cover~\cite{cover} lists every document. The chart and every number
-here are measured from the repository's own history at build time, by
-\code{//tools/timeline} and \code{//tools/gantt}, and not typed in.}%
+here are measured from the repository's own history, not typed in:
+\code{//tools/timeline} measured it on September 16, 2026, run by hand
+since a Bazel action has no repository to read, and
+\code{//tools/gantt} draws it at build time.}%
 \thanks{The authors used a large language model, Claude, as an
 assistant in exploring the concepts and in writing and constructing
 the documents and the programs; every commit of the repository says
@@ -37,11 +39,11 @@ so and carries the prompts that led to it, verbatim.}%
 A hardware description language, its runtime, its lowering to two
 netlist languages, a RISC-V core that runs on an FPGA, an AXI bus
 with a router, a small GPU, two compiler toolchains for the core, and
-sixteen documents, were written in \ganttdays{} days of work spread
-over four months. This is the shape of those \ganttdays{} days. It is
+sixteen documents, the tree as it stood on September 16, 2026, were
+written in \ganttdays{} days of work spread over four months. This is the shape of those \ganttdays{} days. It is
 not a narrative of intentions: every bar in the chart is commits that
 touched particular files on particular days, measured from the
-repository at build time. Three things are visible in it that a plan
+repository's history. Three things are visible in it that a plan
 would not have predicted. The specification came four months before
 the first line of the runtime, and nothing in between. The
 implementation was not staged but simultaneous, because a standing
