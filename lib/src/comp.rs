@@ -1040,6 +1040,18 @@ impl<T: Copy + 'static> Slot<T> {
              which the netlist refuses too (issue 556)",
             self.1
         );
+        // One write a step, since the netlist gives a memory one write
+        // port, which is what lets it be a RAM. A second used to
+        // replace the first with nothing said, so a unit that wrote two
+        // words in a cycle ran as if it wrote one (issue 808).
+        if let Some((first, _)) = self.0.next.get() {
+            panic!(
+                "a second write to a memory of {n} words in one step, to \
+                 word {} after word {first}: a memory has one write port \
+                 (issue 808)",
+                self.1
+            );
+        }
         self.0.next.set(Some((self.1, v.into())));
         commit(self.0.clone());
     }
@@ -1058,7 +1070,8 @@ impl<T: Copy + 'static, const N: usize, C: Clock> Mem<T, N, C> {
         Slot(self.0.clone(), addr.into())
     }
     /// The write port. Plain and deferred, like a register drive; one
-    /// write per step, which is what one port is.
+    /// write per step, which is what one port is, and a second in the
+    /// same step panics rather than replacing the first (issue 808).
     #[track_caller]
     pub fn write(&self, addr: impl Into<usize>, v: impl Into<T>) {
         self.at(addr).set(v)
@@ -2380,5 +2393,29 @@ mod mem_tests {
         let m =
             M::with(&[U::from(1u8), U::from(2u8), U::from(3u8), U::from(4u8)]);
         assert_eq!(m.read(3usize).raw(), 4);
+    }
+
+    /// A second write in one step is refused, since a memory has one
+    /// write port; it used to replace the first (issue 808).
+    #[test]
+    #[should_panic(expected = "a second write to a memory of 4 words in \
+                               one step, to word 2 after word 1")]
+    fn a_second_write_in_a_step_is_refused() {
+        let m = M::default();
+        m.write(1usize, U::<8>::from(1u8));
+        m.write(2usize, U::<8>::from(2u8));
+    }
+
+    /// One write a step, step after step, is what the port does.
+    #[test]
+    fn a_write_a_step_lands_each_step() {
+        let m = M::default();
+        for a in 0..4usize {
+            m.write(a, U::<8>::from(a as u8 + 10));
+            super::settle();
+        }
+        for a in 0..4usize {
+            assert_eq!(m.read(a).raw() as usize, a + 10);
+        }
     }
 }
