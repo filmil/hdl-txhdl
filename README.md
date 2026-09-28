@@ -32,8 +32,8 @@ The instance's own push mirror does the same from the server; either is enough.
 
 `//docs:zero` is the tutorial for an empty directory: five files,
 under `tutorial/blinky/`, that build, run and lower a blinky with
-Bazel against the GitHub mirror, with Bazelisk, Git and a C compiler
-installed and nothing else.
+Bazel against the GitHub mirror, with Bazelisk and Git installed and
+nothing else.
 The tree builds the blinky against its own library as a check; the
 workspace's pin is checked by building it outside the tree.
 
@@ -43,9 +43,10 @@ Everything is built by Bazel, and Bazel fetches the tools it uses at
 the versions `MODULE.bazel` pins: the Rust toolchain, TeX, the two
 simulators, the RISC-V compiler and Zephyr's tools; Vivado it installs
 from AMD's installer, only when a target asks for it.
-What it takes from the machine is `bazelisk`, Git to clone, and the
-host's C and C++ toolchain, which `rules_cc` configures and the Rust
-links go through (`.bazelrc` says why the linker is GNU ld).
+The C and C++ toolchain is one of them: LLVM, over a Debian sysroot
+unpacked from packages pinned by checksum, so neither the compiler nor
+the C library comes from the machine (issue 782).
+What the machine needs is `bazelisk`, and Git to clone.
 
 ```sh
 bazel build //...                 # every document

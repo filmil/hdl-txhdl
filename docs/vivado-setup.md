@@ -19,8 +19,8 @@ for it by name: every one of them carries Bazel's `manual` tag, which
 `bazel query 'kind("vivado_.*", //...) except attr(tags, manual, //...)'`
 confirms by printing nothing.
 
-So this works with Bazelisk, Git and the host's C compiler installed,
-and does not want Vivado:
+So this works with Bazelisk and Git installed, and does not want
+Vivado:
 
 ```sh
 bazel build //...

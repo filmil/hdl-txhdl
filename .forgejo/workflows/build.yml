@@ -18,9 +18,8 @@ jobs:
         uses: https://code.forgejo.org/actions/checkout@v4
 
       # Nothing else is installed here. Every other tool this build needs
-      # comes from MODULE.bazel, TeX among them, except the C and C++
-      # compiler, which is the runner image's own and which rules_cc
-      # configures.
+      # comes from MODULE.bazel, TeX and the C and C++ toolchain among
+      # them (issue 782).
       #
       # Do not replace this with a setup-bazel action. Those resolve the
       # `bazelbuild` organization through the API of the instance they run

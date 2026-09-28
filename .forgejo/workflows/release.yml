@@ -83,9 +83,8 @@ jobs:
           echo "releasing as $tag (override=$override)"
 
       # Nothing else is installed here. Every other tool this build needs
-      # comes from MODULE.bazel, TeX among them, except the C and C++
-      # compiler, which is the runner image's own and which rules_cc
-      # configures.
+      # comes from MODULE.bazel, TeX and the C and C++ toolchain among
+      # them (issue 782).
       - name: Install Bazelisk (pinned)
         if: steps.decide.outputs.proceed == 'true'
         run: |
