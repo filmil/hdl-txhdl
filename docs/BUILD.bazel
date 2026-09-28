@@ -599,6 +599,21 @@ waveform(
     ],
 )
 
+# A reset empties the channel between two units (issue 729).
+waveform(
+    name = "flush",
+    example = "//lib/examples:ex_flush",
+    lowered = ("pair", "pair"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//rst=>rst",
+        "//take=>take",
+        "//pair/counter/n=>n",
+        "//pair/taker/last=>last",
+        "//shown=>shown",
+    ],
+)
+
 # A unit that takes its own reset and checks its count only out of it
 # (issue 633).
 waveform(
