@@ -2,6 +2,11 @@
 # Unifying LHDL and TxHDL
 
 Status: analysis, September 8, 2026.
+Line numbers in the tables are of `spec/language.md` at 4cd4932, as it
+stood when this was written.
+Since then 92216d0 removed the stray `:qODq` of line 1, and bb9a566 put a
+licence header above it, so every other line is one lower here than in
+today's file.
 Author: automated coding assistant, with human supervision.
 
 This document answers one question.

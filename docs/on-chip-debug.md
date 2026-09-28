@@ -89,7 +89,8 @@ neither of the others.
 
 ### 3.1 An ILA, which the build already has rules for
 
-`rules_vivado` 3.10.2, the version in `MODULE.bazel:155`, ships
+`rules_vivado` 3.10.2, the version `MODULE.bazel` pinned when this was
+written, ships
 `vivado_ila` and `vivado_read_ila`.
 `vivado_ila` takes the probe widths, a capture depth from 1024 to
 131072 samples, storage qualification and trigger settings, and builds
@@ -97,7 +98,8 @@ the core through `vivado_ip`, which this tree already uses for the PCIe
 endpoint (`pcie/BUILD.bazel:7`).
 `vivado_read_ila` reads a capture back using the bitstream's `.ltx`
 probe file.
-Nothing in this repository uses either.
+Nothing in this repository used either then; step 1 of section 4 is
+what does now.
 
 What it gives: need 1, exactly.
 Any net in the design, at the design's own clock, with a trigger, read
@@ -107,9 +109,12 @@ What it costs: block RAM for the capture buffer, an implementation run
 per set of probes, and a bitstream that is not the shipping one.
 The probes are chosen before synthesis, so a question nobody thought of
 costs another run.
-The part has room: the board design uses 8100 LUT, 6959 FF and four
-block RAM tiles (`docs/vreteno.tex:1189-1200`), on a part where the
-DDR3 controller and the core together leave most of the fabric unused.
+The part has room: when this was written the board design, with the
+UberDDR3 controller, used 8100 LUT, 6959 FF and four block RAM tiles, and
+with AMD's controller since issue 188 it uses 10 964 LUTs and 9 850
+flip-flops (the board's section in `docs/vreteno.tex`), on a part where
+the DDR3 controller and the core together still leave most of the
+fabric unused.
 
 This is the smallest step, because the tool and the rules exist and the
 design does not change.

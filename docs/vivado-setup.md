@@ -15,7 +15,9 @@ the last section points at.
 Vivado is needed for synthesis, for place and route, and for the two
 simulations that use Vivado's own simulator.
 Every one of those is a target the build will not run unless you ask
-for it by name: all twenty-eight of them carry Bazel's `manual` tag.
+for it by name: every one of them carries Bazel's `manual` tag, which
+`bazel query 'kind("vivado_.*", //...) except attr(tags, manual, //...)'`
+confirms by printing nothing.
 
 So this works with nothing installed but Bazelisk, and does not want
 Vivado:
