@@ -3105,13 +3105,17 @@ latex_document(
     name = "noc",
     main = "noc.tex",
     data = [
+        "//tools/memmap:tables",
         ":buildstamp",
         ":vendored_tex",
         ":soc_scene",
         "//lib/parts:sources",
         "//soc:sources",
     ],
-    deps = ["housestyle.tex"],
+    deps = [
+        "housestyle.tex",
+        "memmap.tex",
+    ],
 )
 
 # Ethernet in TxHDL: the MAC's two halves and the AXI-Lite peripheral,
@@ -3208,6 +3212,7 @@ latex_document(
     name = "pcie",
     main = "pcie.tex",
     data = [
+        "//tools/memmap:tables",
         ":buildstamp",
         ":vendored_tex",
         ":axi_pins_run",
@@ -3216,7 +3221,10 @@ latex_document(
         "//lib/parts:sources",
         "//pcie:sources",
     ],
-    deps = ["housestyle.tex"],
+    deps = [
+        "housestyle.tex",
+        "memmap.tex",
+    ],
 )
 
 # AXI in TxHDL: the tutorial on the bus, its two examples' runs and

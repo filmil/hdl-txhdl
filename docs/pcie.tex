@@ -7,6 +7,7 @@
 
 \newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
 \input{housestyle}
+\input{memmap}
 
 \InputIfFileExists{buildstamp.tex}{}{}
 \providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
@@ -174,20 +175,12 @@ and \code{//docs:axi\_pins\_vsim\_test}.
 \code{BarRegs} is four words, at the offsets a host reads and writes in
 BAR1.
 
-\begin{center}\footnotesize
-\begin{tabular}{@{}llp{0.55\columnwidth}@{}}
-\toprule
-Offset & Word & Access \\
-\midrule
-\code{0x00} & Identifier & Read only: \code{TxHDL} in ASCII and a
-version, \code{0x5478\_4844\_4c00\_0001}. \\
-\code{0x08} & Scratch & Read and write. \\
-\code{0x10} & LEDs & Read and write; the low two bits light LED3 and
-LED4. \\
-\code{0x18} & Writes & Read only: writes served, of any word. \\
-\bottomrule
-\end{tabular}
-\end{center}
+\mmget{regs}{bar}
+
+The identifier reads \mmget{ident}{bar}, which is \code{TxHDL} in
+ASCII and a version. The table is written by the build from
+\code{WORDS} in \code{bar.rs}, and the test reaches each word at the
+offset the table gives it.
 
 It takes one request at a time, as Vreteno's timer does: a read is
 answered in the cycle it is taken, and a write when its beat comes. It
