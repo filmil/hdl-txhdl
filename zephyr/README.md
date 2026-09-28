@@ -50,6 +50,7 @@ cmake -B build -S samples/hello_world -GNinja \
 | `drivers/ethernet/eth_vreteno.c` | the Ethernet driver, a port of LiteEth's, over the port's frame engines |
 | `dts/bindings/rng/` | the binding for the entropy source |
 | `drivers/entropy/entropy_vreteno.c` | the entropy driver, which the network stack's random numbers come from |
+| `include/vreteno/regs/` | the register headers the drivers include, written from the parts' `regmap!` maps (issue 709) |
 | `fastboot/` | fastboot over TCP: the protocol, its host harness and tests, and the server for the board |
 
 ## Fastboot
@@ -145,22 +146,60 @@ visible symbol, and the driver reaching the architecture's
 Moving the serial port by one page in the device tree fails that test,
 which was tried rather than assumed.
 
-## What is not done
+The drivers name their registers through headers written from the
+hardware's own declarations: every peripheral in the parts declares its
+registers with `regmap!`, `//tools/regmap` writes a C header from each
+map, and the drivers include `<vreteno/regs/<map>.h>` rather than
+naming an offset (issue 709).
+The headers are committed, since a reader's `west build` of this module
+runs no Bazel.
+`//zephyr:regs_test` holds each committed header to its map and fails
+on the first that differs, and `bazel run //zephyr:regs_update` writes
+them all again after a map changes.
 
-The image has not run.
-`west build` producing an ELF needs no board; the image printing on
-the serial port, and `samples/synchronization` exercising the
-scheduler, the timer interrupt and context switching, both do.
-Those are issue 277's second and third acceptance bullets and they
-wait for hardware.
+## What has run
 
-What an ELF does prove, as of this change, is that the module is
-reached: `CONFIG_UART_VRETENO` and `CONFIG_UART_CONSOLE` are set in
+Zephyr has run on the board, on 2026-09-22 (issue 277).
+The images were built by hand from the branch of PR #410, not by
+Bazel, and were sent by the serial loader into `vreteno_board_boot_pnr`.
+`samples/hello_world` printed its banner and
+`Hello World! ax7a200b/vreteno` on its first execution, which proves
+the console driver, the load and the reset vector on hardware.
+`samples/synchronization` then ran for two minutes: 207
+`Hello World from` lines, `thread_a` and `thread_b` strictly
+alternating, against 208.3 predicted from the sample's 600 ms period.
+So the machine timer, its interrupt, the scheduler and context
+switching work, and `mtime` crossed its 32-bit boundary with the
+cadence unchanged.
+
+The transcripts are in `runs/2026-09-22/`, as the serial line gave
+them, with only Bazel's own lines taken out.
+
+| File | What ran |
+|---|---|
+| `first-run-serial.log` | `hello_world`, its first execution |
+| `sync-run-serial.log` | `synchronization`, after a serial reset, 42 lines watched |
+| `sync-run-2min-serial.log` | `synchronization` from a freshly programmed part, 125 s |
+| `sync-over-sync-reset-125s.log` | `synchronization` reset-loaded over a running copy of itself |
+| `hello-over-sync-reset-125s.log` | `hello_world` reset-loaded over a running `synchronization` |
+
+One reset-load of `synchronization` over a running copy, on the same
+day, printed nothing after `boot`; it did not reproduce, and issue
+419, a reset that left the control registers as Zephyr set them, was
+found and fixed behind it.
+
+The images themselves are not in the tree.
+The one that printed was 14612 bytes; `//zephyr:hello_world` is a
+later build, 14644 bytes today, with the drivers changed since, the
+register headers of issue 709 among them, and it has not itself been
+run on the board.
+
+What an ELF proves without the board is that the module is reached: `CONFIG_UART_VRETENO` and `CONFIG_UART_CONSOLE` are set in
 the generated configuration, `uart_vreteno_poll_out` is in the image,
 and it compiles to a spin on bit 0 of the status register followed by
 a store of the byte, which is what the hardware asks for.
-An image of 14612 bytes links at `0x4000_0000`, RV32 with compressed
-instructions and the soft-float ABI.
+An image links at `0x4000_0000`, RV32 with compressed instructions and
+the soft-float ABI.
 
 ## Building it hermetically
 
@@ -181,6 +220,9 @@ separate times: each built an ELF that would not have printed.
 `config_test` wants the serial driver, the console, the SoC, the board
 and the machine timer; `eth_config_test` wants the Ethernet driver,
 Ethernet L2 and the entropy driver.
+`//zephyr:paths_test` holds the image to naming no path of the machine
+that built it, neither the sandbox nor the execution root, so that two
+builds of one tree give one `.elf` and one `.config` (issue 711).
 All of them are in `bazel build //...` and `bazel test //...`.
 
 The versions it is built with are in `MODULE.bazel`; these are the
