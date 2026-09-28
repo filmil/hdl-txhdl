@@ -1,20 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The whole of the design that goes on the board, as one lowered unit.
 //!
-//! The core, its tracker, a router, and six peripherals, each behind a
-//! tracker of its own or, for the serial port and the interrupt
-//! controller, an AXI-Lite bridge: the data memory at `0x1000`, the
-//! interrupt controller, the timer and the software interrupt, the 64
-//! KiB from `0x0200_0000`; the serial port at `0x3000`, the board's DDR3
-//! memory from `0x4000_0000` to the end of the first two gigabytes,
-//! the remote peripheral at `0x3300`, whose behaviour is a program on
-//! another machine reached as frames on the Ethernet port,
-//! the Ethernet port's registers at `0x3400`, the entropy source at
-//! `0x3500`,
-//! and the platform-level interrupt controller at `0x0c00_0000`, where
-//! RISC-V machines put it. The controller's source 1 is the serial
-//! port's receive interrupt, its source 2 the board's `irq` input and
-//! its source 3 a frame arriving on the Ethernet port,
+//! The core, its tracker, a router, and eight ranges behind the router,
+//! from the boot memory at `0x0000` to the configuration flash, read
+//! as memory, at `0x2000_0000`, which `BoardMap` names in the order of
+//! the router's ports. The third of them is the peripheral page: seven
+//! slots of 256 bytes from `0x3000` behind an AXI-Lite bridge, which
+//! `SlotMap` names. `//tools/memmap` writes both maps into the
+//! documents from these types, so they are not listed again here
+//! (#444). The platform-level interrupt controller's source 1 is the
+//! serial port's receive interrupt, its source 2 the board's `irq`
+//! input and its source 3 a frame arriving on the Ethernet port,
 //! and its line is the core's external interrupt. `run.rs` wires
 //! the same parts for a simulation, with a Rust `join` of their runs;
 //! this is that wiring written as a unit of units, so `#[lower]` makes
@@ -92,13 +88,14 @@ pub const REMOTE_WAIT: usize = 100_000_000;
 pub const FLASH_DIV: usize = 3;
 
 // begin{map}
-/// The address map: each peripheral's base and the bits of an address
-/// that must equal it. The first three are a page each; the memory is
-/// the quarter of the address space from `0x4000_0000`, and the
-/// interrupt controller the 64 MiB from `0x0c00_0000`; the debug
-/// module has the 64 KiB from `0x1000_0000` (issue 154), and the
-/// configuration flash, read as memory, the 16 MiB from `0x2000_0000`
-/// (issue 312).
+/// The address map: each range's base and the bits of an address that
+/// must equal it, in the order of the router's ports. The data memory,
+/// the peripheral page and the boot memory are 4 KiB each; the timer
+/// and the software interrupt, and the debug module (issue 154), 64 KiB
+/// each; the memory is the quarter of the address space from
+/// `0x4000_0000`, the interrupt controller the 64 MiB from
+/// `0x0c00_0000`, and the configuration flash, read as memory, the
+/// 16 MiB from `0x2000_0000` (issue 312).
 pub struct BoardMap;
 
 impl AddrMap<8> for BoardMap {
