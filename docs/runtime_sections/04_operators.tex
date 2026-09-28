@@ -20,7 +20,11 @@ invocation, it polls every invocation in flight as a process of its
 own, each started as having crossed the edge it began at so its first
 wait is the next edge, and it sends each result as its invocation
 completes, oldest first. Several invocations are in flight at once,
-each at a different await.
+each at a different await. Its stages share one enable: at an edge
+where the oldest result is finished and the output has no room, it
+polls nothing and takes no input, so every invocation holds where it
+is, the stall reaches the sender through the input channel, and
+\code{drive} never holds more than the pipeline's depth (issue 730).
 
 \lstinputlisting[caption={\code{lib/src/pipeline.rs}.},label={lst:r-pipeline}]{lib/src/pipeline.rs}
 \lstinputlisting[caption={\code{lib/src/funcs.rs}.},label={lst:r-funcs}]{lib/src/funcs.rs}

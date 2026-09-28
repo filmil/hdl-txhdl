@@ -289,7 +289,7 @@ testbench follows. Want a nicer name in the netlist?
 \head{Pipelines and builds}
 \begin{vocab}
 \code{\#[pipeline(..)] async fn} & a pipeline; stages fall where you \code{.await} \\
-\code{pipeline::drive(f, rx, tx)} & one call of \code{f} per cycle \\
+\code{pipeline::drive(f, rx, tx)} & one call of \code{f} per cycle; all stall while \code{tx} is full \\
 \code{config! \{ Fpga: C for Top<Fpga> \{..\} \}} & a build as one item \\
 \end{vocab}
 
