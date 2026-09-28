@@ -774,6 +774,34 @@ mod tests {
         assert!(z > 4.0, "lag 1 carries it through: r {r:+.4}, z {z:+.1}");
     }
 
+    /// Every ring of the model steps from its own seed, as the
+    /// simulation branch of `ring_osc.v` steps all eight: the samples
+    /// are eight streams and not ring 7's alone (issue 809).
+    #[test]
+    fn the_model_steps_all_eight_rings() {
+        let mut ring = RingOsc::default();
+        let (raw_o, raw_i) = signal::<U<RINGS>, DefaultClock>();
+        let (en_o, en_i) = signal::<Bit, DefaultClock>();
+        en_o.set(Bit::One);
+        let mut sim = Running::new(ring.run(en_i, raw_o));
+        // The first edge seeds the rings.
+        sim.cycle();
+        let mut lfsr = SEEDS;
+        for k in 0..64 {
+            sim.cycle();
+            let want = (0..RINGS).fold(0u32, |w, i| w | ((lfsr[i] >> 31) << i));
+            assert_eq!(
+                raw_i.get().raw() as u32,
+                want,
+                "the samples, cycle {k}"
+            );
+            for s in lfsr.iter_mut() {
+                let fb = (*s >> 31) ^ (*s >> 21) ^ (*s >> 1) ^ *s;
+                *s = (*s << 1) | (fb & 1);
+            }
+        }
+    }
+
     /// The netlist instantiates the rings and does not write them.
     #[test]
     fn the_netlist_holds_the_rings_as_a_module() {
