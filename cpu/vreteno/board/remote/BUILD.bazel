@@ -7,7 +7,7 @@
 # and uploads, and an ssh tunnel brings its port here, where the
 # programming target's Vivado connects to it. The serial port is
 # watched the same way, by a script run there over ssh.
-load("@rules_go//go:def.bzl", "go_binary")
+load("@rules_go//go:def.bzl", "go_binary", "go_test")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_vivado//build/vivado:rules.bzl", "vivado_extract")
 
@@ -76,6 +76,19 @@ go_binary(
     srcs = ["load.go"],
     pure = "on",
     tags = ["manual"],
+)
+
+# The sender against a loader the test plays on a pseudo-terminal:
+# a large image goes through whole and says how far it has got, and a
+# loader that stops is named at its word (HDL/txhdl#784).
+go_test(
+    name = "load_test",
+    size = "small",
+    srcs = [
+        "load.go",
+        "load_test.go",
+    ],
+    pure = "on",
 )
 
 # Uploads the sender and an image and runs it there:
