@@ -208,12 +208,14 @@ static void eth_vreteno_receive(const struct device *dev)
 	uint8_t slot;
 
 	if (!net_if_flag_is_set(data->iface, NET_IF_UP)) {
+		LOG_DBG("a frame while the interface is down, dropped");
 		return;
 	}
 
 	len = eth_vreteno_read(dev, VRETENO_ETH_RX_LENGTH);
 	slot = eth_vreteno_read(dev, VRETENO_ETH_RX_SLOT) %
 	       VRETENO_ETH_SLOTS;
+	LOG_DBG("a frame of %u bytes in slot %u", len, slot);
 
 	if (len == 0 || len > VRETENO_ETH_SLOT_SIZE) {
 		LOG_ERR("a frame of %u bytes, which cannot be one", len);
@@ -243,6 +245,7 @@ static void eth_vreteno_isr(const struct device *dev)
 {
 	uint32_t pending = eth_vreteno_read(dev, VRETENO_ETH_RX_EV_PENDING);
 
+	LOG_DBG("interrupt, pending %x", pending);
 	if ((pending & VRETENO_ETH_EVENT) != 0) {
 		eth_vreteno_receive(dev);
 		/* Written back is how it clears. */
@@ -257,6 +260,7 @@ static int eth_vreteno_start(const struct device *dev)
 	eth_vreteno_write(dev, VRETENO_ETH_RX_EV_PENDING, VRETENO_ETH_EVENT);
 	eth_vreteno_write(dev, VRETENO_ETH_TX_EV_PENDING, VRETENO_ETH_EVENT);
 	eth_vreteno_write(dev, VRETENO_ETH_RX_EV_ENABLE, VRETENO_ETH_EVENT);
+	LOG_DBG("started: an arrival raises the interrupt");
 
 	return 0;
 }
