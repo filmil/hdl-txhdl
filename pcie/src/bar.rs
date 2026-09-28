@@ -12,6 +12,46 @@ use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
 /// The identifier word, at offset 0: `TxHDL` in ASCII, and a version.
 pub const IDENT: u64 = 0x5478_4844_4c00_0001;
 
+/// The identifier's offset in BAR1.
+pub const IDENT_AT: usize = 0x00;
+/// The scratch word's offset.
+pub const SCRATCH_AT: usize = 0x08;
+/// The LEDs' word's offset.
+pub const LIGHTS_AT: usize = 0x10;
+/// The count of writes' offset.
+pub const WRITES_AT: usize = 0x18;
+
+/// The four words as a document lists them: the offset, the name, the
+/// access and what the word is. `BarRegs` picks a word by bits 4 and 3
+/// of the offset, so the word at `n * 8` is its `n`th, and the tests
+/// reach each one by these offsets (#444).
+pub const WORDS: [(usize, &str, &str, &str); 4] = [
+    (
+        IDENT_AT,
+        "Identifier",
+        "read only",
+        "TxHDL in ASCII and a version",
+    ),
+    (
+        SCRATCH_AT,
+        "Scratch",
+        "read and write",
+        "a word a host reads back",
+    ),
+    (
+        LIGHTS_AT,
+        "LEDs",
+        "read and write",
+        "the low two bits light LED3 and LED4",
+    ),
+    (
+        WRITES_AT,
+        "Writes",
+        "read only",
+        "writes served, of any word",
+    ),
+];
+
 // begin{regs}
 /// Four 64-bit words behind a peripheral tracker, at offsets `0x0`,
 /// `0x8`, `0x10` and `0x18` of BAR1: the identifier, read only; a
