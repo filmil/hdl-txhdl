@@ -352,7 +352,8 @@ reads the trace and the unit's ports and writes a testbench, in VHDL
 and again in Verilog, that replays the trace's inputs into the entity
 and asserts, tick by tick, that its registers and outputs are what
 the trace holds; nvc simulates the VHDL and Verilator the Verilog,
-both built from source by the build; and each test passes only if
+nvc built from source by the build and Verilator fetched by it as a
+prebuilt binary; and each test passes only if
 every comparison held. The testbench's timing is the model of time
 made literal: an input the trace holds at tick $2k$ is applied at
 $2k-1$, a register is checked at $2k+1$, a wire at $2k-1$, and a
@@ -638,7 +639,8 @@ document draws. Eighteen lowered units, Table~\ref{tab:p-checked}, are
 simulated as VHDL under nvc and as Verilog under Verilator against
 the traces their Rust simulations wrote, and agree at every tick;
 forty-one tests run under \code{bazel test //...}, and every one of them
-is hermetic, the simulators built from source and the synthesis tool
+is hermetic, the simulators built from source or fetched as a binary
+and the synthesis tool
 installed by the build. Vreteno is 1270 lines of core, 141 of data
 memory, 168 of interrupt controller and 253 of serial port, with the
 router a family the macro writes in the parts library rather than a

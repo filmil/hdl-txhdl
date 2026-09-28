@@ -14,7 +14,8 @@ inputs into the entity and asserts, tick by tick, that the entity's
 registers and outputs are what the trace holds; \code{vhdl\_test}
 from \code{rules\_nvc} simulates the VHDL under \code{nvc}, and a
 \code{cc\_test} over \code{rules\_verilator} simulates the Verilog
-under Verilator, both built from source, hermetically. Each test
+under Verilator, nvc built from source and Verilator fetched as a
+prebuilt binary, both hermetically. Each test
 passes only if every comparison held, so both emitters are checked,
 and a defect in either shows as a disagreement in one of the two.
 

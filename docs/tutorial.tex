@@ -503,7 +503,8 @@ build runs the Rust simulation, keeps its trace, writes the VHDL and
 the Verilog, and generates a testbench from the trace that replays
 the inputs into the netlist and asserts every register and every
 output at every tick; then it simulates the VHDL under nvc and the
-Verilog under Verilator, both built from source by the build. The
+Verilog under Verilator, nvc built from source by the build and
+Verilator fetched by it as a prebuilt binary. The
 tests are \code{//docs:cheat\_sim\_counter\_tb\_test} and
 \code{//docs:cheat\_vsim\_test} for the counter, and there is a pair
 for every unit in this tutorial. When you write a unit that lowers,
