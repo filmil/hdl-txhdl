@@ -146,10 +146,12 @@ struct ChanCell<T: Copy> {
     offered: Cell<T>,
     offer_at: Cell<u64>,
     take_at: Cell<u64>,
+    /// The channel's clock, at whose rising edges a reset empties it.
+    clk: clock::Clk,
 }
 
 impl<T: Copy + Default> ChanCell<T> {
-    fn new() -> Self {
+    fn new(clk: clock::Clk) -> Self {
         ChanCell {
             head: Cell::new(None),
             tail: Cell::new(None),
@@ -158,7 +160,17 @@ impl<T: Copy + Default> ChanCell<T> {
             offered: Cell::new(T::default()),
             offer_at: Cell::new(u64::MAX),
             take_at: Cell::new(u64::MAX),
+            clk,
         }
+    }
+    /// Empty: what a reset leaves, and what the netlist's channel is
+    /// with both its valid bits clear. A send or a take in the step is
+    /// dropped with it, as the netlist's `if (rst)` drops them.
+    fn empty(&self) {
+        self.head.set(None);
+        self.tail.set(None);
+        self.push.set(None);
+        self.pop.set(false);
     }
     /// Whether the sender offered at this step: the `valid` wire.
     fn offering(&self) -> bool {
@@ -170,8 +182,14 @@ impl<T: Copy + Default> ChanCell<T> {
     }
 }
 
-impl<T: Copy> Commit for ChanCell<T> {
+impl<T: Copy + Default> Commit for ChanCell<T> {
     fn apply(&self) {
+        // A reset wins over the send and the take, as a register's
+        // wins over its drive (issue 729).
+        if reset() {
+            self.empty();
+            return;
+        }
         if self.pop.take() {
             self.head.set(self.tail.take());
         }
@@ -397,7 +415,17 @@ impl<T: Transaction, C: Clock> Member for Chan<T, C> {
     type Driver = Tx<T, C>;
     type Reader = Rx<T, C>;
     fn new() -> Self {
-        Chan(Rc::new(ChanCell::new()), PhantomData)
+        let cell = Rc::new(ChanCell::new(clk_of::<C>()));
+        let weak: std::rc::Weak<dyn Reset> =
+            Rc::downgrade(&cell) as std::rc::Weak<dyn Reset>;
+        // The channels a run let go of are forgotten here, so the list
+        // holds only the ones still held.
+        clock::CHANS.with(|c| {
+            let mut c = c.borrow_mut();
+            c.retain(|w| w.strong_count() > 0);
+            c.push(weak)
+        });
+        Chan(cell, PhantomData)
     }
     fn split(self) -> (Tx<T, C>, Rx<T, C>) {
         (Tx(self.0.clone(), PhantomData), Rx(self.0, PhantomData))
@@ -653,6 +681,14 @@ impl<T: Copy> Reset for RegCell<T> {
         if clk.edge_at(t, edge) {
             self.next.take();
             self.cur.set(self.init);
+        }
+    }
+}
+
+impl<T: Copy + Default> Reset for ChanCell<T> {
+    fn reset_at(&self, t: u64) {
+        if self.clk.edge_at(t, Edge::Rising) {
+            self.empty();
         }
     }
 }
@@ -1293,6 +1329,11 @@ mod clock {
         /// whether or not anything drives it at the edge (issue 727).
         pub static REGS: RefCell<Vec<&'static dyn super::Reset>> =
             RefCell::new(Vec::new());
+        /// Every channel still held, for the same reason: a reset
+        /// empties it whether or not anything sends or takes in the
+        /// step (issue 729).
+        pub static CHANS: RefCell<Vec<std::rc::Weak<dyn super::Reset>>> =
+            RefCell::new(Vec::new());
         /// The clock and edge the process running now last crossed:
         /// what a register it drives latches on.
         pub static EDGE: Cell<Option<(Clk, super::Edge)>> =
@@ -1470,6 +1511,17 @@ fn advance() {
     let t = now();
     if reset() {
         clock::REGS.with(|r| r.borrow().iter().for_each(|c| c.reset_at(t)));
+        // And every channel empties at its edge, a channel no longer
+        // held being forgotten (issue 729).
+        clock::CHANS.with(|c| {
+            c.borrow_mut().retain(|w| match w.upgrade() {
+                Some(c) => {
+                    c.reset_at(t);
+                    true
+                }
+                None => false,
+            })
+        });
     }
     clock::TRACER.with(|tr| {
         if let Some(f) = tr.borrow_mut().as_mut() {
