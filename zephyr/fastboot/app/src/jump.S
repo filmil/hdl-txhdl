@@ -33,14 +33,17 @@ fb_jump:
 	addi	a2, a2, -4
 	bgtz	a2, 1b
 	/*
-	 * Stores are posted on this machine and `fence` does nothing
-	 * (issue 432), so the last four words are read back: a load is
-	 * not answered until the store to the same address is, which is
-	 * measured by `a_load_behind_an_unanswered_store_to_one_address`
-	 * and is what the Ethernet driver rests on too. Four, because the
-	 * host holds at most four transactions open, one per identifier:
-	 * a store further back than that had its identifier reused, so it
-	 * was answered, and the last four may still be open in any order.
+	 * Stores are posted on this machine, so the last four words are
+	 * read back before the jump: a load is not answered until the
+	 * store to the same address is, which is measured by
+	 * `a_load_behind_an_unanswered_store_to_one_address` and is what
+	 * the Ethernet driver rests on too. A `fence` has waited for every
+	 * posted store since issue 432 was fixed and would do the same;
+	 * the read-back stays until the fence is proven on the board.
+	 * Four, because the host holds at most four transactions open, one
+	 * per identifier: a store further back than that had its
+	 * identifier reused, so it was answered, and the last four may
+	 * still be open in any order.
 	 * A program shorter than four words has fewer to read, and the
 	 * loop stops at its first word rather than reading below it,
 	 * where nothing answers and a load would trap.

@@ -136,23 +136,22 @@ static int eth_vreteno_send(const struct device *dev, struct net_pkt *pkt)
 	}
 
 	/*
-	 * The frame has to be in memory before the hardware fetches it,
-	 * and on this machine saying so takes a read.
+	 * The frame has to be in memory before the hardware fetches it.
 	 *
 	 * Stores are posted: the core does not wait for one to land, and
 	 * issue 420 was a handler that wrote a register and returned
-	 * before the write arrived. `fence` does not help, because this
-	 * core decodes it as a known instruction and then does nothing
-	 * with it (`Fence => {}` in `cpu/vreteno/src/model.rs`). The
+	 * before the write arrived. Since issue 432 was fixed a `fence`
+	 * waits until every store the core has posted is answered, which
+	 * would say this; the driver reads back instead, because that is
+	 * what was proven on the board, as `ethtx.rs` does. The
 	 * buffers are in DDR3 rather than inside the peripheral, so the
 	 * frame's bytes and the `tx_start` that starts the fetch travel
 	 * to two different places on the bus and nothing orders them.
 	 *
 	 * Reading the last byte back stalls the core until memory
-	 * answers, which is the only barrier software has here. Without
-	 * it a frame goes out carrying whatever was in the slot before,
-	 * intermittently and only under load, which is the worst shape a
-	 * fault can have.
+	 * answers. Without it a frame goes out carrying whatever was in
+	 * the slot before, intermittently and only under load, which is
+	 * the worst shape a fault can have.
 	 *
 	 * Be clear about what this rests on, because it is not the
 	 * architecture. AXI does not order a read against a write: they
@@ -172,9 +171,9 @@ static int eth_vreteno_send(const struct device *dev, struct net_pkt *pkt)
 	 * the store ever starts completing first.
 	 *
 	 * So this is correct for our link, and it would stop being
-	 * correct if the interconnect changed. Issue 432 is the gap
-	 * underneath it: with `fence` inert and stores posted, there is
-	 * no architectural way to say this, only a measured one.
+	 * correct if the interconnect changed. A `fence` would not rest on
+	 * the interconnect, which is the reason to move to it once it has
+	 * been proven on the board.
 	 */
 	{
 		volatile const uint8_t *last =

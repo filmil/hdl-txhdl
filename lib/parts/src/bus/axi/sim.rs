@@ -277,9 +277,11 @@ mod tests {
 
     /// Does a load see a store that has not been answered yet?
     ///
-    /// This machine's stores are posted and `fence` orders nothing
-    /// (issue 432), so software handing a buffer to a bus host reads
-    /// the last word back to force the write to land. That
+    /// This machine's stores are posted, and software handing a buffer
+    /// to a bus host reads the last word back to force the write to
+    /// land; a `fence` has done the same since issue 432 was fixed, but
+    /// the drivers written before it read back, and so does the board
+    /// proof. That
     /// workaround is only correct if the link serialises a read
     /// behind an outstanding write to the same address, and AXI does
     /// not promise it: reads and writes are separate channels and a
