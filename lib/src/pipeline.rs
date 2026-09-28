@@ -70,6 +70,12 @@ pub async fn cycles(n: usize) {
 /// first. Several invocations are in flight at once, each at a
 /// different await, which is what a pipeline is; the awaits inside `f`
 /// are its stage boundaries and nobody places them.
+///
+/// Every stage has one enable. At an edge where the oldest result is
+/// finished and the output has no room, nothing moves: no invocation
+/// advances and no input is taken, so the stall reaches the sender
+/// through the input channel's `ready`, and what `drive` holds is never
+/// more than the pipeline's depth (issue 730).
 pub async fn drive<I, O, C, F, Fut>(f: F, input: Rx<I, C>, output: Tx<O, C>)
 where
     I: Transaction,
@@ -82,6 +88,10 @@ where
         VecDeque::new();
     loop {
         C::rising().await;
+        let finished = matches!(flying.front(), Some((_, _, Some(_))));
+        if finished && !output.ready().to_bool() {
+            continue;
+        }
         if let Some(x) = input.recv() {
             flying.push_back((Box::pin(f(x)), process_in::<C>(), None));
         }
@@ -99,5 +109,52 @@ where
                 output.send(v.unwrap());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::comp::{chan, join2, DefaultClock, Running};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    async fn inc(x: U<32>) -> U<32> {
+        add(x, U::<32>::from(1u32)).await
+    }
+
+    /// A receiver that takes nothing for a thousand edges stalls the
+    /// pipeline, and the stall reaches the sender: a handful of words
+    /// go in, not a thousand. When the receiver takes again, every
+    /// result comes out once and in order. Before issue 730 all
+    /// thousand went in and `drive` kept them.
+    #[test]
+    fn a_stalled_output_stops_the_input() {
+        let (in_tx, in_rx) = chan::<U<32>, DefaultClock>();
+        let (out_tx, out_rx) = chan::<U<32>, DefaultClock>();
+        let sent = Rc::new(Cell::new(0u32));
+        let n = sent.clone();
+        let source = async move {
+            loop {
+                DefaultClock::rising().await;
+                if in_tx.ready().to_bool() && n.get() < 1000 {
+                    in_tx.send(U::<32>::from(n.get()));
+                    n.set(n.get() + 1);
+                }
+            }
+        };
+        let mut sim = Running::new(join2(source, drive(inc, in_rx, out_tx)));
+        for _ in 0..1000 {
+            sim.cycle();
+        }
+        assert!(sent.get() < 8, "{} went in, stalled", sent.get());
+        let mut got = Vec::new();
+        for _ in 0..3000 {
+            if let Some(v) = out_rx.recv() {
+                got.push(v.raw() as u32);
+            }
+            sim.cycle();
+        }
+        assert_eq!(got, (1..=1000).collect::<Vec<u32>>(), "each once");
     }
 }
