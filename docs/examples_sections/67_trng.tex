@@ -30,7 +30,11 @@ raise a sticky fault and stop the buffer filling, since a ring that
 has stopped is worse than none. It debiases it: von Neumann's
 extractor takes the bits in pairs, \code{01} a zero, \code{10} a one,
 and the two equal pairs nothing, so whatever a ring's bias is, it
-cancels, at the cost of three bits in four. And it buffers it: the
+cancels, at the cost of three bits in four. Before the extractor it
+folds two samples in a row into one by exclusive or: the rings sampled
+every cycle are correlated with the sample two cycles on, which von
+Neumann does not remove and the fold does, as the board showed (issue
+780). And it buffers it: the
 bits that survive fill a word, and whole words wait in a buffer of
 four, which a host takes one at a time from \code{data} after
 \code{status} says one is ready. A fourth word, \code{raw}, is the

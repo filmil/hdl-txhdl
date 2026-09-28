@@ -20,8 +20,9 @@
  * than hand out a constant: a source whose rings have stopped trips
  * the test, the buffer stops filling, and a request here returns an
  * error rather than waiting for words that will not come. Nothing is
- * mixed in on this side: the hardware debiases with von Neumann's
- * extractor, and what is read is what it kept.
+ * mixed in on this side: the hardware folds two samples in a row into
+ * one and debiases with von Neumann's extractor, and what is read is
+ * what it kept.
  */
 
 #define DT_DRV_COMPAT hdlfactory_vreteno_trng
