@@ -1747,6 +1747,28 @@ waveform(
     until = 60,
 )
 
+# The configuration flash after the bitstream: the end of startup, the
+# four clocks the pins spend with the chip not selected, the window let
+# out of reset, and its first read. The startup block is a foreign
+# module, simulated from its own model in both languages.
+waveform(
+    name = "cfgflash",
+    example = "//lib/examples:ex_cfgflash",
+    foreign_verilog = ["//lib/parts:hdl/startup.v"],
+    foreign_vhdl = ["//lib/parts:hdl/startup.vhd"],
+    lowered = ("cfgflash", "cfgflash"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//flash/pins/phase=>phase",
+        "//cclk=>cclk",
+        "//flash/pins/pclk=>usrcclko",
+        "//cs_n=>cs_n",
+        "//w_rst=>w_rst",
+        "//w_cs_n=>w_cs_n",
+    ],
+    until = 60,
+)
+
 # A flash read as memory: the fast read command going out on the wires
 # under one select, and the word coming back on the bus.
 waveform(
