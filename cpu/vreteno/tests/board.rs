@@ -615,11 +615,67 @@ fn two_frames_written_to_memory_leave_the_port_as_written_in_order() {
 /// words, and says they came and differed. The rings are the model in
 /// this run, so this is the slot, the bridge and the peripheral proven
 /// and nothing about randomness (issue 458).
+///
+/// Then the run of raw samples the program joins from overlapping
+/// windows (issue 805): the model's samples are known, so the run must
+/// be found in them whole, which says the joining neither repeats a
+/// sample nor skips one.
 #[test]
 fn the_entropy_source_answers_on_the_board() {
-    let ran = run(trng_program::TEXT, trng_program::DATA, b"", 20000);
-    assert_eq!(ran.said, "trng ok\n");
+    const CYCLES: u64 = 40000;
+    let ran = run(trng_program::TEXT, trng_program::DATA, b"", CYCLES);
     assert!(ran.halted_at.is_some(), "and halted");
+    let mut lines = ran.said.lines();
+    assert_eq!(lines.next(), Some("trng ok"), "{}", ran.said);
+    let shift: u32 = lines
+        .next()
+        .and_then(|l| l.strip_prefix("shift "))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| panic!("a shift: {}", ran.said));
+    assert!((1..=24).contains(&shift), "shift {shift}");
+    assert_eq!(lines.next(), Some("rawrun"), "{}", ran.said);
+    let words: Vec<u32> = lines
+        .map(|l| u32::from_str_radix(l, 16).expect(l))
+        .collect();
+    // 64 windows: the first whole, then `shift` new samples each.
+    assert_eq!(words.len(), (32 + 63 * shift as usize) / 32);
+    let run: Vec<u8> = words
+        .iter()
+        .flat_map(|w| (0..32).rev().map(move |i| (w >> i & 1) as u8))
+        .collect();
+    let stream = model_samples(CYCLES as usize);
+    assert!(
+        stream.windows(run.len()).any(|w| w == run.as_slice()),
+        "the run of {} samples, at shift {shift}, is not a stretch of \
+         the model's samples",
+        run.len()
+    );
+}
+
+/// The samples the model rings give, folded as the peripheral folds
+/// them, from the seeds on: each ring a shift register stepped once a
+/// cycle, its top bit the sample, and the eight XORed.
+///
+/// As the model runs today, only ring 7 is seeded and steps, and the
+/// other seven stay at zero: the model writes its eight registers in
+/// one cycle into a memory that keeps one write a step (issues 808 and
+/// 809). This rebuilds that, so the check is of the joining; when the
+/// model steps all eight, every ring starts at its seed here.
+fn model_samples(n: usize) -> Vec<u8> {
+    use txhdl_parts::trng::{RINGS, SEEDS};
+    let mut lfsr = [0u32; RINGS];
+    lfsr[RINGS - 1] = SEEDS[RINGS - 1];
+    (0..n)
+        .map(|_| {
+            let mut bit = 0u8;
+            for s in lfsr.iter_mut() {
+                bit ^= (*s >> 31) as u8;
+                let fb = (*s >> 31) ^ (*s >> 21) ^ (*s >> 1) ^ *s;
+                *s = (*s << 1) | (fb & 1);
+            }
+            bit
+        })
+        .collect()
 }
 
 /// The terminal types four bytes, and the program takes each through
