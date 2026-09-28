@@ -231,16 +231,20 @@ channels, and a slave may answer them in either order; the
 architectural way a master orders a write against a later access is
 to wait for the write's response.
 
-That is a problem on this machine, because its stores are posted and
-its \code{fence} decodes, retires and orders nothing (issue 432). So
-software that hands a buffer to a host on the bus, which is what the
-video scanout and the Ethernet engines are, has no architectural way
-to make sure the buffer has landed before it rings the doorbell. The
-frame is written to memory through one port of the router and the
-start bit through another, and nothing between them is ordered.
+That matters on this machine, because its stores are posted. Software
+that hands a buffer to a host on the bus, which is what the video
+scanout and the Ethernet engines are, has to make sure the buffer has
+landed before it rings the doorbell. The frame is written to memory
+through one port of the router and the start bit through another, and
+nothing between them is ordered by the link. Since issue 432 was
+fixed, a \code{fence} is the architectural way to say it: the core
+counts the stores it has posted and not yet had answered, and a fence
+waits in execute until the count is zero. Until then the fence
+decoded, retired and ordered nothing.
 
-What every such driver does instead is read the last word back before
-the doorbell. The load stalls the core until memory answers, and the
+What the drivers written before that fix do, and still do, is read
+the last word back before the doorbell, since that is what was proven
+on the board. The load stalls the core until memory answers, and the
 question is whether memory can answer it with the old value while the
 store is still in flight.
 

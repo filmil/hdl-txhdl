@@ -136,9 +136,11 @@ is chosen so that it fails on the fault it names.
 
 \subsection{What the driver must still do}
 
-Stores on this machine are posted and \code{fence} orders nothing
-(issue 432), so a driver must read the last word of a frame back
-before writing \code{tx\_start}. Otherwise the engine may fetch
+Stores on this machine are posted, so a driver must make sure a frame
+has landed before writing \code{tx\_start}: with a \code{fence}, which
+has waited for every posted store since issue 432 was fixed, or by
+reading the last word of the frame back, which is what the drivers do
+and what was proven on the board. Otherwise the engine may fetch
 before the frame has landed and send what was in the slot before.
 
 That obligation is on the component's datasheet rather than only in
