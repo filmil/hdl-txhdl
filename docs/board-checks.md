@@ -139,7 +139,7 @@ Then, with the flagship in the part:
 ```sh
 bazel run //flagship:flagship_prog -- "${PROG[@]}"
 bazel run //cpu/vreteno/board/remote:load -- \
-    --image=$PWD/bazel-bin/zephyr/fastboot.bin --seconds=480 \
+    --image=$PWD/bazel-bin/zephyr/fastboot.bin --seconds=60 \
     2>&1 | tee board-143-listen.log
 ssh $TXHDL_BOARD_SERVER txhdl_fastboot/fastboot -s tcp:192.168.1.50 \
     getvar max-download-size 2>&1 | tee board-143-getvar.log
@@ -155,7 +155,9 @@ The three checks #143 lists, in its comment on PR #528:
 2. `getvar max-download-size` answers `0x00fff000`.
 3. `fastboot boot` of `hello_ram_bin` ends with `hello from rust` on the serial line, which proves the copy, the jump and the posted stores read back on real DDR3.
 
-The fastboot server is 28959 words, and at one acknowledgement a word it takes about 90 seconds to send; `load` bounds the transfer and the watching together by `--seconds` plus 20, so a smaller `--seconds` cuts the transfer off with nothing printed (#784), and 480 leaves room for both.
+The fastboot server is 28959 words, and at one acknowledgement a word it takes about 90 seconds to send.
+`load` counts `--seconds` from the end of the transfer and does not cut a transfer that is still moving, so the 60 are for watching alone; fastboot said `listening` about 15 seconds after its transfer ended (#784).
+`load` says how far it has got every 4096 words, and a transfer that stops says at which word and fails.
 The serial watcher and the loader both hold the serial port, so the watcher in step 3 starts after the loader's `--seconds` have run out, or the loader's own output, which runs that long, is read for `hello from rust` instead.
 If the ping to `192.168.1.50` from the board server fails, the link is the first thing to look at: `ip link show fpga-a200t-eth0` should say `LOWER_UP`.
 Capture: the three logs.
