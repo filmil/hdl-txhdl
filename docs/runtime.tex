@@ -40,9 +40,10 @@ every construct Rust provides has been deleted from it, what is left is
 a library. This document is that library. It states the model of time
 the executor keeps, which is the one part of the runtime a reader
 cannot recover from the signatures alone, and then includes each source
-file of the crate in full. Nothing here has been lowered to hardware;
-the prototype simulates, and it is what the lowering experiment would
-be written against.
+file of the crate in full. A unit simulates on this runtime, and
+\code{\#[lower]} writes the same unit as Verilog and VHDL, which the
+build checks against the run under nvc and Verilator; the lowering's
+own side of that is in the netlist module below.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -75,6 +76,10 @@ F.~Filmar and D.~Janković, ``TxHDL documents,'' project repository
 F.~Filmar and D.~Janković, ``TxHDL: Unifying a dataflow and a transaction
 hardware description language,'' project repository \code{HDL/txhdl},
 \code{//docs:article}, 2026.
+
+\bibitem{prove}
+F.~Filmar and D.~Janković, ``Formal verification in TxHDL,'' project
+repository \code{HDL/txhdl}, \code{//docs:prove}, 2026.
 
 \end{thebibliography}
 

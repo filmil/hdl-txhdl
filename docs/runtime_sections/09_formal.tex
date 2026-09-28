@@ -37,8 +37,9 @@ point as a \code{report} of its message when it is reached out of
 reset. A block that states something and drives nothing
 is still written. The co-simulations check both: nvc checks the
 VHDL's assertions natively, and the Verilator build defines
-\code{FORMAL} and passes \code{--assert}. A formal proof of the
-assertions is not yet built: it wants SymbiYosys and a solver beside
-the Yosys the ASIC flow fetches, which is issue 581.
+\code{FORMAL} and passes \code{--assert}. The assertions are also
+proved: \code{formal\_test} in \code{tools/formal/defs.bzl} runs
+SymbiYosys on the pinned Yosys over a netlist, and the formal
+tutorial~\cite{prove} shows a digit proved for every input.
 
 \lstinputlisting[caption={\code{lib/src/formal.rs}.},label={lst:r-formal}]{lib/src/formal.rs}
