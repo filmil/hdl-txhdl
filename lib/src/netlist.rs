@@ -1611,7 +1611,8 @@ impl Lowered {
     /// the runtime, so this is needed only where a unit is built with
     /// `Reg::new` and a value that is not zero. Without it the netlist
     /// and the run disagree from the first cycle, and nothing says so
-    /// (issue 359).
+    /// (issue 359). The value is also what a reset puts back, in both
+    /// emitters as in the runtime (issue 728).
     pub fn init_reg(&mut self, reg: &str, value: u128) {
         self.init_regs.push((reg.to_string(), value));
     }
@@ -1620,6 +1621,25 @@ impl Lowered {
         match self.init_regs.iter().find(|(n, _)| n == reg) {
             Some((_, v)) => *v,
             None => 0,
+        }
+    }
+    /// A register's width, or one for a name that is not a field.
+    fn reg_width(&self, reg: &str) -> usize {
+        self.fields
+            .iter()
+            .find(|(f, _, _, _)| *f == reg)
+            .map(|(_, _, w, _)| *w)
+            .unwrap_or(1)
+    }
+    /// What a register starts at as the VHDL writes it, in its
+    /// declaration and in its clocked block's reset, which puts back
+    /// the same value (issue 728).
+    fn reg_init_vhdl(&self, reg: &str) -> String {
+        match (self.reg_init(reg), self.reg_width(reg)) {
+            (0, 1) => "'0'".to_string(),
+            (0, _) => "(others => '0')".to_string(),
+            (v, 1) => format!("'{v}'"),
+            (v, w) => format!("\"{v:0w$b}\""),
         }
     }
     /// Say under which trace scope a port is found, when the run named
@@ -2327,8 +2347,14 @@ impl Lowered {
                 if !regs.is_empty() {
                     writeln!(out, "    if ({}) begin", crate::comp::RESET_NAME)
                         .unwrap();
+                    // Back to the value it started at, which is what the
+                    // runtime's reset puts back (issue 728).
                     for r in &regs {
-                        writeln!(out, "      {r} <= 0;").unwrap();
+                        let v = match self.reg_init(r) {
+                            0 => "0".to_string(),
+                            v => format!("{}'h{v:x}", self.reg_width(r)),
+                        };
+                        writeln!(out, "      {r} <= {v};").unwrap();
                     }
                     writeln!(out, "    end else begin").unwrap();
                 }
@@ -2455,12 +2481,7 @@ impl Lowered {
                 // Zero unless whoever lowered the unit said what
                 // `Reg::new` gave it, as for a memory's words.
                 Some(Kind::Reg) => {
-                    let v = self.reg_init(n);
-                    let start = match (v, *w) {
-                        (0, _) => init.clone(),
-                        (v, 1) => format!("'{v}'"),
-                        (v, w) => format!("\"{v:0w$b}\""),
-                    };
+                    let start = self.reg_init_vhdl(n);
                     writeln!(out, "  signal {n} : {} := {start};", ty(*w))
                         .unwrap()
                 }
@@ -2835,17 +2856,7 @@ impl Lowered {
                     )
                     .unwrap();
                     for r in &regs {
-                        let w = self
-                            .fields
-                            .iter()
-                            .find(|(f, _, _, _)| f == r)
-                            .map(|(_, _, w, _)| *w)
-                            .unwrap_or(1);
-                        let z = if w == 1 {
-                            "'0'".to_string()
-                        } else {
-                            "(others => '0')".to_string()
-                        };
+                        let z = self.reg_init_vhdl(r);
                         writeln!(out, "        {r} <= {z};").unwrap();
                     }
                     writeln!(out, "      else").unwrap();
@@ -3463,6 +3474,34 @@ mod tests {
             h.contains(":= \"11000000111111111110111000010001\";"),
             "the word"
         );
+    }
+
+    /// And a reset puts it back there, as the runtime's does, rather
+    /// than at zero; one left unsaid still goes back to zero, in the
+    /// same words as before (issue 728).
+    #[test]
+    fn a_reset_puts_a_register_back_at_its_first_value() {
+        let mut net = three_regs();
+        for r in ["flag", "count", "wide"] {
+            net.procs.push(Process {
+                clock: "clk",
+                falling: false,
+                body: vec![Stmt::Drive(
+                    Target::Name(r.to_string()),
+                    Expr::Name(r.to_string()),
+                )],
+            });
+        }
+        net.init_reg("flag", 1);
+        net.init_reg("count", 0x2a);
+        let v = net.verilog();
+        assert!(v.contains("flag <= 1'h1;"), "the flag: {v}");
+        assert!(v.contains("count <= 8'h2a;"), "the counter: {v}");
+        assert!(v.contains("wide <= 0;"), "the word, unsaid: {v}");
+        let h = net.vhdl();
+        assert!(h.contains("flag <= '1';"), "the flag: {h}");
+        assert!(h.contains("count <= \"00101010\";"), "the counter: {h}");
+        assert!(h.contains("wide <= (others => '0');"), "the word: {h}");
     }
 
     /// A field the struct renamed is said under the name the netlist
