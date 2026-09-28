@@ -234,6 +234,12 @@ pub struct FlashDevice {
     pub bytes: Vec<u8>,
     /// The maker and the type, answered to `0x9f`.
     pub id: [u8; 3],
+    /// The first byte of every command the chip took whole, in order:
+    /// what a real chip would have acted on.
+    pub commands: Vec<u8>,
+    /// Commands let go of before their first byte was whole, which a
+    /// real chip discards.
+    pub partial: u32,
     selected: bool,
     sclk: bool,
     bits: u32,
@@ -268,6 +274,13 @@ impl FlashDevice {
     pub fn step(&mut self, cs_n: bool, sclk: bool, mosi: bool) {
         let selected = !cs_n;
         if selected != self.selected {
+            if !selected {
+                match self.taken.first() {
+                    Some(&c) => self.commands.push(c),
+                    None if self.bits > 0 => self.partial += 1,
+                    None => {}
+                }
+            }
             self.selected = selected;
             self.bits = 0;
             self.in_byte = 0;
