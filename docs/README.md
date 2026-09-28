@@ -4,12 +4,12 @@
 This directory holds the material that outlives the integration of the two
 language specifications into one.
 
-The repository currently states the language twice, under two names, in two
-places.
-`spec/language.md` states TxHDL.
-`filmil/workspace/` states LHDL, across four files that disagree with each
-other.
-Consolidating them means choosing, and a choice is worth nothing if the
+The language is now the library, `//lib`, and the documents typeset here
+describe it.
+It began stated twice, under two names, in two places, and those are its
+history: `spec/language.md` stated TxHDL, and `filmil/workspace/` stated
+LHDL, across four files that disagree with each other.
+Consolidating them meant choosing, and a choice is worth nothing if the
 reasons for it are lost.
 Those reasons live here.
 
@@ -23,10 +23,10 @@ Those reasons live here.
 | `rust-embedding.md` | Working notes on embedding the language in Rust, with every probe result in full |
 | `on-chip-debug.md` | What the board shows today, the options for debugging the SoC on it, what each costs, and the order to do them in |
 | `vivado-setup.md` | Vivado for this repository from nothing: why the ordinary build needs none, the hermetic installation and the host one, and what goes in your own `user.bazelrc` |
-| `noc-bursts.md` | Why a multi-beat write does not cross the network on chip, which of the stated reasons survive measurement, what each candidate design costs in bits, and which one to implement |
+| `noc-bursts.md` | Why a multi-beat write did not cross the network on chip, which of the stated reasons survived measurement, what each candidate design cost in bits, which one was chosen, and how it was built (section 7) |
 | `board-checks.md` | Every board check the issues owe, as commands in session order: the bitstreams to build first, what each run should print, what to keep, and which issue it closes |
 
-Seventeen documents are typeset here, and `cover.tex` names them all:
+The documents typeset here are the ones `cover.tex` names:
 `article.tex` with `sections/` is the merge, `//docs:article`;
 `embedding.tex` with `embedding_sections/` is the language, `//docs:embedding`;
 `runtime.tex` with `runtime_sections/` is the runtime library verbatim, `//docs:runtime`;
@@ -44,9 +44,15 @@ Seventeen documents are typeset here, and `cover.tex` names them all:
 `axi.tex` is the tutorial on the AXI link, `//docs:axi`, and holds its examples;
 `razboj.tex` is Razboj, the minimal GPU on that link, `//docs:razboj`, with the picture it drew;
 `noc.tex` is the network on chip, `//docs:noc`, nodes on a lattice with AXI at their exits;
+`eth.tex` is the Ethernet part and the echo design on the board, `//docs:eth`;
+`hdmi.tex` is the HDMI part and its demonstration on the board, `//docs:hdmi`;
+`flagship.tex` is the one bitstream that holds every part proven on the board, `//docs:flagship`;
+`pcie.tex` is PCIe on the board, `//docs:pcie`;
+`datasheets.tex` with `datasheets/` is a datasheet per component, `//docs:datasheets`;
 `stats.tex` is the repository in numbers, a snapshot, `//docs:stats`;
 `dynamics.tex` is how the project was built, with its timeline chart, `//docs:dynamics`;
-`//docs:all` concatenates them all, in that order, into `txhdl.pdf`.
+`//docs:all` concatenates them all into `txhdl.pdf`, a bookmark each, in
+the order of `DOCUMENTS` in `BUILD.bazel`.
 `housestyle.tex` is the preamble they all share, so they cannot drift apart
 in font, listing style or figure style.
 The examples document shows the runtime only through its public interface,

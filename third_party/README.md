@@ -16,9 +16,8 @@ upstream.
 All three are LaTeX packages that the pinned TeX distribution does not
 include, and that cannot be fetched reproducibly.
 
-`uberddr3/` is the exception: it holds no upstream files, only the build
-file of a repository `MODULE.bazel` fetches, and its `README.md` says why.
-`docs/document-build-plan.md` section 3 states the measurements behind that.
+`docs/document-build-plan.md` section 3 states the measurements behind
+vendoring them.
 
 A LaTeX document cannot read these in place.
 `rules_latex_host` copies a `data` file into the build directory under its
@@ -29,8 +28,8 @@ found.
 
 ## Pins rather than files
 
-Four more directories hold no vendored bytes at all.
-They hold lock files: a row per file or per package, with a checksum and
+The other directories hold no vendored bytes at all.
+Most hold lock files: a row per file or per package, with a checksum and
 where to fetch it from, which the build reads and fetches.
 That is the better arrangement whenever what is needed is large, is
 published somewhere stable, and is not modified here.
@@ -41,8 +40,16 @@ published somewhere stable, and is not modified here.
 | `yosys/` | Yosys and the ten libraries it needs, from Debian trixie |
 | `openroad/` | OpenROAD, and the closure of a hundred and thirty one packages it links against, from Debian bullseye |
 | `nangate45/` | The six files of the open 45 nm standard cell library the ASIC flow reads |
+| `poppler/` | Poppler's utilities and their libraries, from Debian trixie, for the documents' edge check |
+| `z3/` | z3 and its libraries, from Debian trixie, for the formal flow's bounded search |
+| `sby/` | SymbiYosys, fetched from its release tag by checksum, and `requirements.txt`, its Python pins |
+| `zephyr/` | The build file Zephyr's fetched archive is given, and `requirements.txt`, the Python its build imports |
+| `riscv_gcc/` | The build file the fetched RISC-V toolchain is given |
 
-`//tools/debclosure` writes the two Debian lock files; run it again to
+`rules_multitool_root_hubs.patch` beside them is a patch to a fetched
+module, upstream's own fix, applied until it reaches the registry.
+
+`//tools/debclosure` writes the Debian lock files; run it again to
 move a pin.
 Every one of those rows carries two URLs, the live archive and
 `snapshot.debian.org`, so a pin that the archive has forgotten still
