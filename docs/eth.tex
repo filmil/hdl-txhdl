@@ -55,7 +55,8 @@ corrupted, and simulates the three netlists against that run under
 hand-written echo design: the PHY's RGMII, the clocks, and a crossing
 between the receive clock and the transmit clock, around the two
 halves of the MAC. It goes through Vivado's synthesis, place and route
-to a bitstream; it has not yet run on the board.
+to a bitstream, and it has run on the board, sending back the frames a
+host sent it.
 \end{abstract}
 
 \section{What Is Here}
@@ -274,20 +275,21 @@ peripheral page at \mmget{at}{ethslots}; \code{EthLite}, the peripheral
 above, is the one \code{ex\_eth} uses. The flagship document's address
 map lists the page.
 
-\code{eth\_rgmii.v} is the RGMII wrapper. The PHY expects its transmit
-clock a quarter cycle after the data changes. The wrapper does that
-by clocking the data on 125~MHz and the transmit clock on the same
-125~MHz a quarter cycle late, both from an MMCM; it does not rely on
-the PHY's internal delay. The receive clock comes from the PHY
-through a global buffer, and the receiving half of the MAC runs on
-it.
+\code{eth\_rgmii.v} is the RGMII wrapper. The transmit clock leaves
+the FPGA through the same kind of register as the data, so its edges
+are aligned with the data's, and the PHY on this board delays it into
+the middle of the bits. The receive clock comes from the PHY through
+an MMCM that shifts it a quarter of its cycle, 2~ns, so that the
+sampling edge falls in the middle of the data, and the receiving half
+of the MAC runs on it. Both were found on the board, issue~231, as
+the section on the run below says.
 
 \lstinputlisting[caption={\code{eth/board/eth\_rgmii.v}: RGMII to
 GMII.},label={lst:e-rgmii}]{eth/board/eth_rgmii.v}
 
 The receiver and the transmitter are on two clocks, the PHY's and the
 FPGA's, so the channel between them crosses from one to the other.
-\code{eth\_cdc.v} is that channel: an asynchronous FIFO of sixteen
+\code{chan\_cdc.v}, in \code{//lib/board}, is that channel: an asynchronous FIFO of sixteen
 words with the valid and ready of a lowered unit's channel port on each
 side, its pointers in Gray code, each crossing to the other clock
 through two flip-flops. The halves of the MAC store whole frames, so
@@ -373,9 +375,10 @@ yet read drops the next one, and a client that wants to keep frames
 arriving back to back reads each promptly. The peripheral moves a
 byte per transaction.
 
-The peripheral is not yet on Vreteno's board, which would put it
-behind the core's AXI-Lite bridge and its channels through two crossings
-like the echo's.
+Vreteno's board does not use this peripheral. It reaches the two
+halves of the MAC through \code{EthSlots}, on the fifth slot of its
+peripheral page, with an engine that fetches a frame to send from the
+DDR3 and one that stores a frame received into it (issue~151).
 
 Writing the part found three things in the lowering, each worked
 around here at the time, and all three since fixed. A wire named for

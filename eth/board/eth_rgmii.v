@@ -21,26 +21,18 @@
 // for this board sends the clock edge-aligned, and pings through it
 // without loss. See issue #231.
 //
-// Receive: the PHY's receive clock comes in through a global buffer and
-// clocks the IDDRs, and `rx_clk` is that clock, for the receiving half of
-// the MAC. RGMII asks one side to put the clock in the middle of the
-// data, and the JL2121 on this board does not: with no delay here, the
-// board linked at gigabit and the MAC accepted no frame at all, which is
-// issue #231.
+// Receive: `rx_clk`, the PHY's receive clock shifted as below, clocks
+// the IDDRs and the receiving half of the MAC. RGMII asks one side to
+// put the clock in the middle of the data, and the JL2121 on this
+// board does not: with no delay here, the board linked at gigabit and
+// the MAC accepted no frame at all, which is issue #231.
 //
-// So the receive clock goes through an `IDELAYE2` before its buffer,
-// tapped to about two nanoseconds, which is a quarter of the 8 ns bit
-// period, and the sampling edge then falls inside the data rather than
-// where it changes. The delay is on the clock and not on the five data
-// lines on purpose: one delay element moves the sampling point and
-// leaves the lines' alignment to each other alone, where five of them
-// would add each element's own error between the bits and narrow the
-// eye. Delaying the data was tried first and let a third of the frames
-// through.
-//
-// The taps are calibrated by an `IDELAYCTRL` on the board's 200 MHz
-// clock, which the design already makes, and `RX_DELAY_TAPS` is a
-// parameter so that the value can be moved without reading this file.
+// So the receive clock goes through an MMCM that shifts it a quarter of
+// its cycle, 2 ns of the 8 ns bit period, before the global buffer, and
+// the sampling edge then falls inside the data rather than where it
+// changes. The shift is on the clock and not on the five data lines on
+// purpose, and why is at the MMCM below. `RX_CLOCK_PHASE` is a parameter
+// so that the shift can be moved without reading this file.
 //
 // Only gigabit works. At 100 or 10 Mbit a PHY sends one nibble per
 // clock cycle and the MAC would have to take bytes over two cycles,
