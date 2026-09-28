@@ -803,7 +803,7 @@ fn payload() -> Vec<u32> {
 }
 
 /// Where the sender pauses for the loader's acknowledgement: the
-/// header, then every two words, then the checksum on its own. Two is
+/// header, then every word, then the checksum on its own. One is
 /// `BLOCK_WORDS` in the loader, and the two have to agree.
 fn blocks(words: usize) -> Vec<usize> {
     let mut out = vec![12];

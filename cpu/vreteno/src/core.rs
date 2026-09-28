@@ -565,10 +565,8 @@ fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
     })
 }
 
-/// The data memory is four memories of a byte, one per lane of the
-/// word, each with a write port of its own, so a store of a byte or a
-/// half writes its lanes and reads nothing, and the one read of the
-/// four lanes feeds a register: what a block RAM is.
+/// The data memory is not here: it is a device on the bus, `dmem.rs`,
+/// as every address is (issue 268).
 ///
 /// The state. The fetch stage's program counter. The instruction
 /// register, its program counter and whether it holds an instruction,
@@ -576,8 +574,8 @@ fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
 /// the boundary between execute and writeback: whether one is there,
 /// its destination, its value if not a load, the raw word read for a
 /// load with the lane and the width to take from it, and whether it
-/// halts. The halt itself, which the writeback stage sets. And the
-/// three memories.
+/// halts. The halt itself, which the writeback stage sets. And the two
+/// memories, the registers and the boot memory.
 #[derive(Trace, Default)]
 pub struct Vreteno<const IW: usize> {
     pub pc: Reg<U<32>>,
@@ -920,8 +918,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let stall_fence = self.valid
                 & Bit::from(is_fence)
                 & Bit::from(self.stores_out.get() != 0);
-            // A load or store to the bus, which is everything above the
-            // data memory. A store goes out when the bus has room; a
+            // A load or store to the bus, which is every address, the
+            // boot memory included. A store goes out when the bus has room; a
             // load goes out and moves on to writeback, which holds it
             // until the answer has landed in its register there.
             let ra = self.regs.read(mux(in_debug, dbg_gpr, rs1));
@@ -1055,10 +1053,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 _ => Bit::Zero,
             });
             // The system instructions. A CSR instruction reads one of
-            // the five registers and writes it, set or cleared or
-            // replaced, from a register or a five-bit immediate; ecall
-            // and an instruction the core does not know trap; mret
-            // returns; ebreak halts.
+            // the registers `Csrs` holds and writes it, set or cleared
+            // or replaced, from a register or a five-bit immediate;
+            // ecall, ebreak and an instruction the core does not know
+            // trap, ebreak entering debug mode instead when
+            // `dcsr.ebreakm` says so; mret returns.
             let f12 = ir.slice::<20, 12>();
             let is_sys = opcode == 0x73;
             let csr_op = is_sys & (f3 != 0);

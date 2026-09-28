@@ -15,8 +15,9 @@ use crate::isa::{
 };
 
 /// Where data memory begins and how much there is, in bytes. The
-/// program lives at zero, in its own memory; the two do not overlap
-/// and a load from the program is a trap.
+/// program lives at zero, in the boot memory; the two do not overlap,
+/// and a load from the boot memory reads it, since it is on the bus
+/// (issue 268).
 pub const DATA_BASE: u32 = 0x1000;
 pub const DATA_BYTES: u32 = 4096;
 
@@ -29,8 +30,9 @@ pub enum Halt {
     Fault(u32),
 }
 
-/// The control and status registers: the five the core has. mstatus
-/// holds two bits, MIE and MPIE; mtvec is a direct-mode base.
+/// The machine-mode control and status registers the core keeps, and
+/// `mbusquiet`. mstatus holds two bits, MIE and MPIE; mtvec is a
+/// direct-mode base.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct Csr {
     pub mstatus: u32,

@@ -36,8 +36,9 @@ void Say(std::string_view s) {
 
 // Something computed by the compiler rather than by the core, to say
 // that this is C++ and not C with a different suffix. The digits of a
-// number, worked out at compile time into an array that lands in the
-// data memory as constants.
+// number, worked out at compile time into constants that land in the
+// boot memory with the code, where vreteno.ld puts .rodata and a load
+// reaches them over the bus.
 constexpr int kAnswer = []() {
   std::array<int, 8> a{1, 2, 3, 4, 5, 6, 7, 8};
   int total = 0;

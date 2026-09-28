@@ -188,8 +188,8 @@ pub const MSIP_OFF: u32 = crate::timer::clint::msip;
 pub const MTIMECMP_OFF: u32 = crate::timer::clint::mtimecmp_lo;
 /// The count, low half then high.
 pub const MTIME_OFF: u32 = crate::timer::clint::mtime_lo;
-/// The serial port's two words: a byte to send, and the status, whose
-/// bit 0 is busy.
+/// The serial port's three words: a byte to send, the status, whose
+/// bit 0 is busy, and the byte received (issue 669).
 pub const UART_BASE: u32 = 0x3000;
 
 /// The Ethernet port's registers, the fifth of the sixteen slots the

@@ -5,10 +5,11 @@
  *
  * The core fetches from the bus above the boot memory, so a program
  * sent down the serial port lives in the board's DDR3 and runs there.
- * One region is enough: unlike the boot memory, which is inside the
- * core and which a load cannot read, this is memory on the bus, so the
- * text, the constants and the data sit together and a program can read
- * its own constants.
+ * One region is enough: this is memory on the bus, read and written,
+ * so the text, the constants and the data sit together and a program
+ * can read its own constants. The boot memory is on the bus too since
+ * issue 268, but read-only, which is why vreteno.ld splits a program
+ * built into it.
  *
  * The region starts where the router puts the memory and is as much of
  * it as a loaded program is allowed: a megabyte, which is far more

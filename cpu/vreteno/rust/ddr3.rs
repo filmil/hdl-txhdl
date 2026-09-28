@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A test of the board's DDR3 memory, run by the core: words written
-//! across the first two gigabytes of the memory's region and read back,
+//! across the gigabyte of the memory's region and read back,
 //! and a line on the serial port that says whether every one came back.
 //! The core halts when every word came back and spins when one did not,
 //! so the board's first LED, which shows the halt, is the same verdict

@@ -284,15 +284,6 @@ pub fn demo() -> Vec<u32> {
     a.words()
 }
 
-/// A random straight-line program: register operations, the M
-/// extension among them, aligned stores and loads within the first
-/// data words, a forward branch or jump now and then, CSR operations
-/// on mscratch, an ecall or an illegal instruction now and then, which
-/// a handler after the end returns from, and the halt at the end.
-/// About half the instructions that have a compressed spelling are
-/// written in it, and some branches and jumps are compressed ones, so
-/// the two lengths are mixed and a thirty-two bit instruction often
-/// starts in the upper half of a word. `seed` is the whole of it.
 /// A program that interrupts itself: it raises the software interrupt
 /// by writing `msip` in the interrupt controller, takes the trap,
 /// clears it in the handler and counts it, three times, and halts.
@@ -488,6 +479,15 @@ pub fn in_memory() -> (Vec<u32>, Vec<u32>) {
     (boot.words(), a.words())
 }
 
+/// A random straight-line program: register operations, the M
+/// extension among them, aligned stores and loads within the first
+/// data words, a forward branch or jump now and then, CSR operations
+/// on mscratch, an ecall or an illegal instruction now and then, which
+/// a handler after the end returns from, and the halt at the end.
+/// About half the instructions that have a compressed spelling are
+/// written in it, and some branches and jumps are compressed ones, so
+/// the two lengths are mixed and a thirty-two bit instruction often
+/// starts in the upper half of a word. `seed` is the whole of it.
 pub fn random(seed: u64, len: usize) -> Vec<u32> {
     let mut s = seed.wrapping_mul(0x9e3779b97f4a7c15) | 1;
     let mut next = move || {

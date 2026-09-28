@@ -54,8 +54,6 @@ impl AddrMap<1> for SerialMap {
     const RANGES: [(usize, usize); 1] = [(0x3000, 0xf000)];
 }
 
-/// Runs `program` on both until the core halts, checking after every
-/// cycle; returns the model at the halt.
 /// What a debugger does to the core during a run (issue 154): a halt
 /// request at a cycle, held until the core has entered debug mode; a
 /// hold of some cycles; a resume, for two cycles, since the core acts
@@ -69,6 +67,8 @@ pub struct DebugPlan {
     pub entries: RefCell<Vec<u32>>,
 }
 
+/// Runs `program` on both until the core halts, checking after every
+/// cycle; returns the model at the halt.
 fn lockstep(
     program: &[u32],
     data: &[u32],
