@@ -26,12 +26,16 @@ acknowledgement that the reset had already cancelled, and the next
 access to that memory waited behind it for ever (issue 346).
 
 \code{Ticker} counts the ticks it is given, and says nothing about
-any of this. The run counts four, holds the reset for two cycles with
-the tick still high, and lets go.
+any of this. It drives its count only on a tick. The run counts four,
+holds the reset for two cycles, and lets go. The first cycle of the
+reset has no tick, so nothing drives the count at that edge, and the
+reset puts it back all the same: it reaches every register at every
+edge while it is high, driven or not, as the netlist's \code{if (rst)}
+does around every enable (issue 727).
 
 \lstinputlisting[caption={\code{ex\_reset.rs}. Run with \code{bazel run //lib/examples:ex\_reset}.},label={lst:x-reset}]{lib/examples/ex_reset.rs}
 
-\lstinputlisting[style=ascii,caption={What \code{ex\_reset} printed when the build ran it: the count, then zero while the reset is held although the tick is still high, then counting again from there.},label={lst:x-reset-out}]{out_reset.txt}
+\lstinputlisting[style=ascii,caption={What \code{ex\_reset} printed when the build ran it: the count, then the reset: the first line in it shows the count its first edge found, and the second the zero that first edge left, although no tick drove it; then counting again from there.},label={lst:x-reset-out}]{out_reset.txt}
 
 A unit that wants to \emph{do} something under reset, rather than
 merely forget, takes \code{rst} as an \code{In<Bit>} and reads it.
@@ -54,7 +58,7 @@ Rust through the reset and out the other side.
 \centering
 \input{reset_timing.tex}
 \caption{\code{count} through a reset: four ticks counted,
-\code{rst} high for two cycles with \code{tick} still high, and the
-count away from zero again after it.}
+\code{rst} high for two cycles, the first with \code{tick} low, and
+the count away from zero again after it.}
 \label{fig:x-reset}
 \end{figure}
