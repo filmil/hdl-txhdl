@@ -139,6 +139,9 @@ fn main() {
         &[(2, "the video peripheral, on the pixel clock")],
     );
     for (key, base, map) in reg_maps() {
+        // Where the board puts it, for a document about the peripheral
+        // rather than the board to say so without typing it (#444).
+        define("at", key, &addr(base));
         regs(key, base, map);
     }
 }
