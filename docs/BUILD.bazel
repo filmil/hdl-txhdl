@@ -3097,6 +3097,7 @@ latex_document(
     name = "eth",
     main = "eth.tex",
     data = [
+        "//tools/memmap:tables",
         ":buildstamp",
         ":vendored_tex",
         ":eth_run",
@@ -3106,7 +3107,10 @@ latex_document(
         "//lib/examples:sources",
         "//lib/parts:sources",
     ],
-    deps = ["housestyle.tex"],
+    deps = [
+        "housestyle.tex",
+        "memmap.tex",
+    ],
 )
 
 # HDMI in TxHDL: the video peripheral and the I2C master, the example's
@@ -3115,6 +3119,7 @@ latex_document(
     name = "hdmi",
     main = "hdmi.tex",
     data = [
+        "//tools/memmap:tables",
         ":buildstamp",
         ":vendored_tex",
         ":hdmi_run",
@@ -3123,7 +3128,10 @@ latex_document(
         "//lib/examples:sources",
         "//lib/parts:sources",
     ],
-    deps = ["housestyle.tex"],
+    deps = [
+        "housestyle.tex",
+        "memmap.tex",
+    ],
 )
 
 # Where the flagship's subsystems landed on the part, drawn and

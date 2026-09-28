@@ -7,6 +7,7 @@
 
 \newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
 \input{housestyle}
+\input{memmap}
 
 \InputIfFileExists{buildstamp.tex}{}{}
 \providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
@@ -267,6 +268,11 @@ the FPGA's own primitives, \code{ODDR} out and \code{IDDR} in, which a
 lowered unit does not name, so the board's part is written by hand in
 \code{//eth/board}. The echo design in it sends every good frame it
 receives straight back out.
+On the flagship the core drives the port through \code{EthSlots}, the
+slot registers Zephyr's driver expects, on the fifth slot of its
+peripheral page at \mmget{at}{ethslots}; \code{EthLite}, the peripheral
+above, is the one \code{ex\_eth} uses. The flagship document's address
+map lists the page.
 
 \code{eth\_rgmii.v} is the RGMII wrapper. The PHY expects its transmit
 clock a quarter cycle after the data changes. The wrapper does that

@@ -7,6 +7,7 @@
 
 \newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
 \input{housestyle}
+\input{memmap}
 
 \InputIfFileExists{buildstamp.tex}{}{}
 \providecommand{\buildstamp}{Draft build (outside the Bazel flow).}
@@ -241,6 +242,9 @@ demonstration with no host: the netlist the build writes for it has a
 test picture in the framebuffer's initial values, eight colour bars
 over a grey ramp inside a white border, and the peripheral's AXI-Lite
 inputs are held idle.
+On the flagship the peripheral has a host, the core, which reaches it
+on the third slot of its peripheral page, at \mmget{at}{hdmi}; the
+flagship document's address map lists the page.
 
 \lstinputlisting[caption={\code{hdmi/src/netlist.rs}: the netlist, with
 the test picture.},label={lst:h-netlist}]{hdmi/src/netlist.rs}
