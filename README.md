@@ -32,7 +32,8 @@ The instance's own push mirror does the same from the server; either is enough.
 
 `//docs:zero` is the tutorial for an empty directory: five files,
 under `tutorial/blinky/`, that build, run and lower a blinky with
-Bazel against the GitHub mirror, with nothing installed but Bazelisk.
+Bazel against the GitHub mirror, with Bazelisk, Git and a C compiler
+installed and nothing else.
 The tree builds the blinky against its own library as a check; the
 workspace's pin is checked by building it outside the tree.
 
