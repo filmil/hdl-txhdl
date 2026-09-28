@@ -8,7 +8,7 @@
 # nothing is installed on the machine. The linker is `rust-lld`, which
 # comes with the toolchain, so there is no cross binutils either.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
-load(":defs.bzl", "vreteno_flat", "vreteno_image")
+load(":defs.bzl", "vreteno_fastboot", "vreteno_flat", "vreteno_image")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -273,6 +273,13 @@ vreteno_flat(
     name = "hello_ram_bin",
     platform = ":vreteno",
     program = ":hello_ram",
+)
+
+# The same, padded for stock `fastboot boot`, which refuses a file
+# shorter than a boot image header (issue 799).
+vreteno_fastboot(
+    name = "hello_fastboot",
+    flat = ":hello_ram_bin",
 )
 
 # The entropy source measured, for the loader: the test above, then

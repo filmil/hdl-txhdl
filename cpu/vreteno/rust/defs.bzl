@@ -104,3 +104,47 @@ vreteno_flat = rule(
         ),
     },
 )
+
+# Stock `fastboot` reads a boot image header's worth of a file before
+# it decides whether the file is one, and refuses a shorter file as
+# "too short": 1580 bytes, the size of `boot_img_hdr_v3`, for the
+# 35.0.2 the tree pins (issue 799). A page is past every header
+# version and is what the flagship was shown to boot.
+_FASTBOOT_MIN = 4096
+
+def _vreteno_fastboot_impl(ctx):
+    """A flat program padded with zeros for stock `fastboot boot`.
+
+    The padding lies past the program's end, so the program never reads
+    it; the server copies it to memory with the rest and jumps to the
+    start, as it would with the program alone.
+    """
+    flat = ctx.file.flat
+    out = ctx.actions.declare_file(ctx.label.name + ".bin")
+    ctx.actions.run_shell(
+        inputs = [flat],
+        outputs = [out],
+        command = "cp '{}' '{}' && chmod u+w '{}' && truncate -s '>{}' '{}'".format(
+            flat.path,
+            out.path,
+            out.path,
+            _FASTBOOT_MIN,
+            out.path,
+        ),
+        mnemonic = "VretenoFastboot",
+        progress_message = "Padding %s for fastboot" % flat.short_path,
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+vreteno_fastboot = rule(
+    implementation = _vreteno_fastboot_impl,
+    doc = "A flat program padded to at least 4096 bytes, which stock " +
+          "`fastboot boot` takes where it refuses the program alone.",
+    attrs = {
+        "flat": attr.label(
+            doc = "The flat image, a `vreteno_flat`.",
+            allow_single_file = [".bin"],
+            mandatory = True,
+        ),
+    },
+)
