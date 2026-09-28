@@ -17,6 +17,7 @@ use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
+use txhdl_parts::spi::FlashDevice;
 use vreteno32::board::{Board, BoardIn, BoardOut, REMOTE_DEV};
 use vreteno32::core::Vreteno;
 use vreteno32::dmem::Dmem;
@@ -44,6 +45,10 @@ struct Ran {
     /// many steps of its plan it got through.
     got: Vec<u32>,
     steps: usize,
+    /// The commands the configuration flash took whole, and those let
+    /// go of short.
+    flash: Vec<u8>,
+    flash_short: u32,
 }
 
 /// Run `text` with `data` in the data memory, on the board's design,
@@ -356,6 +361,18 @@ fn run_all(
     arlen_o.set(U::from(0u8));
     arsize_o.set(U::from(2u8));
     arburst_o.set(U::from(1u8));
+    // The configuration flash, as the board has it: the chip's identity,
+    // and the start of a bitstream, whose sync word is 32 bytes in.
+    let (fl_miso_o, fl_miso) = signal::<Bit, DefaultClock>();
+    let (fl_cs_n_o, fl_cs_n) = signal::<Bit, DefaultClock>();
+    let (fl_mosi_o, fl_mosi) = signal::<Bit, DefaultClock>();
+    let (fl_cclk_o, fl_cclk) = signal::<Bit, DefaultClock>();
+    let mut head = vec![0xffu8; 16];
+    head.extend([0x00, 0x00, 0x00, 0xbb, 0x11, 0x22, 0x00, 0x44]);
+    head.extend([0xff; 8]);
+    head.extend([0xaa, 0x99, 0x55, 0x66]);
+    head.resize(256, 0xff);
+    let mut chip = FlashDevice::new(head, [0x20, 0xba, 0x18], false, false);
     let mut sim = Running::new(board.run(
         BoardIn {
             rst,
@@ -366,7 +383,7 @@ fn run_all(
             vb: chan::<LiteB, DefaultClock>().1,
             vr: chan::<LiteR<32>, DefaultClock>().1,
             net_rx: net_in_rx,
-            fl_miso: quiet(),
+            fl_miso,
             jtag: AxiHostPins {
                 awid: signal::<U<2>, DefaultClock>().1,
                 awaddr,
@@ -431,9 +448,9 @@ fn run_all(
             jtag_rresp: signal::<U<2>, DefaultClock>().0,
             jtag_rlast: bit(),
             jtag_rvalid: rvalid_o,
-            fl_cs_n: bit(),
-            fl_mosi: bit(),
-            fl_cclk: bit(),
+            fl_cs_n: fl_cs_n_o,
+            fl_mosi: fl_mosi_o,
+            fl_cclk: fl_cclk_o,
             fl_refused: bit(),
         },
     ));
@@ -482,6 +499,12 @@ fn run_all(
         );
         sim.cycle();
         master.observe(plan, &jtag);
+        chip.step(
+            fl_cs_n.get().to_bool(),
+            fl_cclk.get().to_bool(),
+            fl_mosi.get().to_bool(),
+        );
+        fl_miso_o.set(Bit::from_bool(chip.miso()));
         term.see(tx.get().to_bool());
         rx_o.set(Bit::from_bool(term.level()));
         ran_for = cycle;
@@ -508,7 +531,31 @@ fn run_all(
         sent,
         got: master.got,
         steps: master.at,
+        flash: chip.commands.clone(),
+        flash_short: chip.partial,
     }
+}
+
+/// The configuration flash on the board (issue 312): the core reads the
+/// chip's identity over the master, sends write enable, which the pins
+/// refuse, so the chip's latch reads clear, and finds the bitstream's
+/// sync word through the window. The chip is the model; the same
+/// program on the board reads the real one.
+#[test]
+fn the_configuration_flash_answers_on_the_board() {
+    let ran = run(flashid_program::TEXT, flashid_program::DATA, b"", 40000);
+    assert_eq!(
+        ran.said,
+        "flash id 0020ba18\nflash wel 0\nflash sync at 32\n"
+    );
+    // The chip took the identity, the status read and nine window
+    // reads, up to the word the sync is in; write enable was let go of
+    // on its seventh bit, and never reached it.
+    let mut want = vec![0x9f, 0x05];
+    want.extend([0x0b; 9]);
+    assert_eq!(ran.flash, want);
+    assert_eq!(ran.flash_short, 1, "write enable, cut short");
+    assert!(ran.halted_at.is_some(), "and halted");
 }
 
 #[test]
