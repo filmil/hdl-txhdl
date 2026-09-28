@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# The Ethernet echo on the Alinx AX7A200 (xc7a200tfbg484-2).
+# The Ethernet echo on the Alinx AX7A200B (xc7a200tfbg484-2).
 #
 # The clock and the LEDs are the ones cpu/vreteno/board/ax7a200.xdc
 # names. The Ethernet pins are the JL2121-N040I PHY's, from the table

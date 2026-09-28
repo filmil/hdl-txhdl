@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// The Vreteno board as it goes on the Alinx AX7A200, simulated whole:
+// The Vreteno board as it goes on the Alinx AX7A200B, simulated whole:
 // the top with its resets, the lowered design with the DDR3 test in
 // its memories, AMD's MIG controller, and two Micron models of
 // the board's x16 chips on the memory's pins.

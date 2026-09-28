@@ -410,7 +410,7 @@ vivado_place_and_route2(
     tags = ["manual"],
 )
 
-# The board on the Alinx AX7A200: the lowered design with the DDR3 test
+# The board on the Alinx AX7A200B: the lowered design with the DDR3 test
 # in its memories, UberDDR3's controller, and the hand-written top with
 # the PLL, the resets and the pins. The constraints name the board's
 # pins, the memory's among them, so this bitstream is real. Manual, as

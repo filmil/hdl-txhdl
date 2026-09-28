@@ -2,7 +2,7 @@
 //
 // The controller as the board will run it, against the memory it will
 // run with: `ddr3_wb32`, AMD's MIG controller behind it, and two
-// Micron models of the x16 chips the Alinx AX7A200 carries, on the
+// Micron models of the x16 chips the Alinx AX7A200B carries, on the
 // board's 200 MHz clock. The controller makes the design's clock, and
 // the Wishbone side of this bench runs on what it hands out.
 //

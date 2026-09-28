@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# The DDR3 memory's pins on the Alinx AX7A200: their package pins, their
+# The DDR3 memory's pins on the Alinx AX7A200B: their package pins, their
 # I/O standards, fast slew on the outputs and split termination on the
 # inputs. Copied unchanged below this header from ip/a200t/a200t_ddr3.xdc
 # of the a200t_examples repository (Apache-2.0), where UberDDR3 runs on

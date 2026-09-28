@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# The Alinx AX7A200 (xc7a200tfbg484-2), as the a200t examples state it:
+# The Alinx AX7A200B (xc7a200tfbg484-2), as the a200t examples state it:
 # a 200 MHz differential clock, an active-low reset button, four LEDs
 # lit when driven low, 3.3 V configuration.
 create_clock -add -name sys_clk_p -period 5.0 -waveform {0 2.5} [get_ports {sys_clk_p}]

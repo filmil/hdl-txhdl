@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Ethernet on the Alinx AX7A200: the two halves of the MAC from
+# Ethernet on the Alinx AX7A200B: the two halves of the MAC from
 # //lib/parts, lowered, inside a hand-written echo design with the PHY's
 # RGMII, the clocks and the crossing between them.
 load("@rules_rust//rust:defs.bzl", "rust_binary")

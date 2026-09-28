@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// The Vreteno board on the Alinx AX7A200: the pin and clock wrapper
+// The Vreteno board on the Alinx AX7A200B: the pin and clock wrapper
 // around the lowered design, and nothing else.
 //
 // Everything that computes is `board`, the netlist `#[lower]` writes for

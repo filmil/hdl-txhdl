@@ -5,7 +5,7 @@
 //!
 //! `sim` writes the design a simulation runs, with the serial port fast
 //! and the controller's power-on waits shortened for the Micron model;
-//! `board` writes the one that goes on the Alinx AX7A200, at 115200 baud
+//! `board` writes the one that goes on the Alinx AX7A200B, at 115200 baud
 //! from the 100 MHz clock and with the controller's waits in full. The
 //! instruction memory and the data memory are initialised in the
 //! netlist, since nothing on the machine loads them at run time.
