@@ -1,0 +1,7 @@
+[load] holding /dev/ttyUSB0 low to reset the core
+[load] 3653 words to 0x40000000
+load
+ok 40000000
+*** Booting Zephyr OS build 4.1.0 ***
+Hello World! ax7a200b/vreteno
+
