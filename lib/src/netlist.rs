@@ -2601,6 +2601,24 @@ impl Lowered {
                 .unwrap();
             }
         }
+        // An instance's label, which VHDL keeps in one region with the
+        // components and reads without case, so a field named as a
+        // component's module is suffixed until it is neither that nor
+        // another child's label; the Verilog keeps the field's name,
+        // since it keeps modules and instances apart (#816).
+        let label = |inst: &Instance| -> String {
+            let taken = |l: &str| {
+                declared.iter().any(|m| m.eq_ignore_ascii_case(l))
+                    || self.instances.iter().any(|i| {
+                        !std::ptr::eq(i, inst) && i.name.eq_ignore_ascii_case(l)
+                    })
+            };
+            let mut l = inst.name.clone();
+            while taken(&l) {
+                l.push_str("_i");
+            }
+            l
+        };
         // A unit of units: each child an instance of its entity,
         // joined port by port to the nets and the parent's ports.
         for inst in &self.instances {
@@ -2656,7 +2674,7 @@ impl Lowered {
                 writeln!(
                     out,
                     "  {} : {}{generic} port map (\n    {}\n  );",
-                    inst.name,
+                    label(inst),
                     f.module,
                     conns.join(",\n    ")
                 )
@@ -2669,7 +2687,7 @@ impl Lowered {
             writeln!(
                 out,
                 "  {} : entity work.{} port map (\n    {}\n  );",
-                inst.name,
+                label(inst),
                 inst.unit.name,
                 conns.join(",\n    ")
             )
