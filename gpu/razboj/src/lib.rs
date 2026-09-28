@@ -7,7 +7,7 @@
 //! - [`fb`]: the framebuffer, a unit and an AXI peripheral.
 //! - [`model`]: the same rasteriser written with loops, which the
 //!   hardware is checked against.
-//! - [`image`]: the framebuffer as a PPM file and as colour on a
+//! - [`image`]: the framebuffer as a PNG file and as colour on a
 //!   terminal.
 pub mod dl;
 pub mod fb;

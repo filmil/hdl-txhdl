@@ -44,9 +44,9 @@ so and carries the prompts that led to it, verbatim.}%
 
 \begin{abstract}
 A rasteriser reads a display list and writes pixels into memory.
-Razboj, the minimal GPU of this document, is one: a unit of about a
-hundred lines that walks a box one pixel a
-cycle, keeps three edge functions as it goes, and writes the pixels
+Razboj, the minimal GPU of this document, is one: a unit whose process
+is some two hundred and seventy lines of code, written as a sequence,
+that walks a box one pixel a cycle, keeps three edge functions as it goes, and writes the pixels
 that are inside the primitive as single-beat AXI bursts; the
 framebuffer is a second unit, a memory behind the other end of the
 link. The display list is in that memory too, and the rasteriser
