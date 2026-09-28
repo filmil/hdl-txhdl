@@ -53,6 +53,9 @@ MACROS = ["//lib:txhdl_macros"]
 ]
 
 # A design is a program:  bazel run //experiments/rust_embedding:probe_main -- asic
+# The document includes this probe as its listing of an interface.
+exports_files(["probe_interface_proc.rs"])
+
 rust_binary(
     name = "probe_main",
     srcs = ["probe_main.rs"],

@@ -392,6 +392,7 @@ latex_document(
     data = [
         ":buildstamp",
         ":vendored_tex",
+        "//experiments/rust_embedding:probe_interface_proc.rs",
     ],
     deps = ["housestyle.tex"] + glob(["embedding_sections/*.tex"]),
 )

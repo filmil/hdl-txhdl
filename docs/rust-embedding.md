@@ -29,18 +29,25 @@ has two meanings.
 
 ## 2. The vocabulary
 
-Two modules hold everything the language still needs.
+Four of the library's modules hold everything the language still needs;
+the others (the netlist, foreign modules, formal checks, address and
+register maps) are what the library does with a design.
 
 ```rust
 crate::types::Transaction   // data that moves between units
 crate::types::Tag           // a synchronisation domain and its policy
 
-crate::comp::Module         // a unit
+crate::comp::Unit           // a unit (`Module` until 924ba2f)
 crate::comp::Bus            // a bundle of channels
-crate::comp::Signal         // one wire
-crate::comp::Port           // a unit's attachment to a bus, in a role
-crate::comp::Chan           // one channel of a bus
-crate::comp::Role           // the type-level tag for a modport
+crate::comp::Chan           // one channel, its ends Tx and Rx
+crate::comp::Signal         // one wire, its ends Out and In
+crate::comp::Clock          // a clock domain, as a type
+
+crate::pipeline::*          // operators that may take a cycle
+crate::funcs::*             // operators that cannot
+
+interface!                  // a link's members, a struct per role
+config!                     // a build, as one item
 ```
 
 Everything below is a plain Rust struct, trait or function.
@@ -48,12 +55,12 @@ Everything below is a plain Rust struct, trait or function.
 | Was | Is now |
 |---|---|
 | `transaction T { .. }` | `struct T { .. }` plus `#[derive(Transaction)]` |
-| `module M { .. }` | `struct M { .. }`, a unit, plus `impl Module for M` |
+| `module M { .. }` | `struct M { .. }`, a unit, plus `impl Unit for M` |
 | `bus B { .. }` | `struct B { .. }` plus `#[derive(Bus)]` |
-| `interface I { .. }` | `struct I { .. }` of `Signal` fields |
-| `modport R { .. }` | `trait R`, implemented for the interface |
+| `interface I { .. }` | `interface!`, its members declared once |
+| `modport R { .. }` | `struct R`, which `interface!` writes |
 | `channel c: T` | a field of type `Chan<T>` |
-| `port p` | a field of type `Port<B, R>` |
+| `port p` | an end the unit's `run` takes |
 | `flow f(..)` | `fn f(..)` |
 | `seq s { .. }` | `async fn` |
 | `pipeline`, `stage`, `pipe` | `async fn` and `.await` (section 4) |

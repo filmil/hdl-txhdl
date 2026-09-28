@@ -93,11 +93,12 @@ end already the right type, and a constructor yielding one port for each.
 \code{macro\_rules!} one is the next subsection.
 
 \begin{lstlisting}[caption={Using it. Driving the wrong end is a missing method, not a convention.},label={lst:iface-use}]
-let (m, t) = Wishbone::new();
+let (m, t, mon) = Wishbone::new();
 
-m.adr.set(0x1000);   // Initiator drives adr
-t.ack.set(true);     // Target drives ack
-let a = t.adr.get(); // and reads it at the other end
+m.adr.set(U::new(0x1000)); // Initiator drives adr
+t.ack.set(Bit::One);       // Target drives ack
+let a = t.adr.get();       // and reads it at the other end
+let w = mon.adr.get();     // as does the monitor
 \end{lstlisting}
 
 The macro never learns what kind a member is. Every member implements one
@@ -146,7 +147,7 @@ second type parameter.
 \begin{lstlisting}[caption={A signal knows its clock. \code{Clock} is a trait with a name and, from Section~\ref{sec:e-phase}, a period and a phase; the default is a named clock rather than an absence of one.},label={lst:clock}]
 pub trait Clock: 'static {
     const NAME: &'static str;
-    const PERIOD: u64 = 1;   // time steps between edges
+    const PERIOD: u64 = 2;   // time steps between edges
     const PHASE: u64 = 0;    // time step of the first edge
 }
 
