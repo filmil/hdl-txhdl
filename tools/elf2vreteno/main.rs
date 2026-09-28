@@ -6,16 +6,17 @@
 //! does silently and wrongly rather than refusing: a program past
 //! 4096 bytes is truncated by the loader and the fetch wraps into it;
 //! an entry point other than zero is never reached, since the core
-//! starts at zero; a constant left in instruction memory is
-//! unreadable, because a load from below the data base never leaves
-//! the core. Each of those is caught here, where it can be said out
+//! starts at zero; a section outside both memories has nowhere to be
+//! loaded. Each of those is caught here, where it can be said out
 //! loud, rather than in a simulation that quietly does the wrong
 //! thing.
 //!
 //! Usage: `elf2vreteno IMAGE.elf > image.rs`
 use std::fmt::Write as _;
 
-/// Instruction memory: 1024 words at zero, read by the fetch alone.
+/// Instruction memory: 1024 words at zero, which the fetch reads and
+/// which sits on the bus read-only as well, so a load reaches a
+/// constant beside the code (issue 268).
 const IMEM_BASE: u32 = 0x0000;
 const IMEM_BYTES: u32 = 4096;
 /// Data memory: 1024 words at `0x1000`, a device on the bus.

@@ -2,7 +2,7 @@
 // Reduces the TxHDL logo to the framebuffer's colour and size, and
 // writes it as Rust: a width, a height, and one 12-bit word per pixel.
 //
-//	logo2rs -in txhdl-icon.png -w 34 -h 34 > lib/logo/logo.rs
+//	logo2rs -in txhdl-icon.png -w 36 -h 36 > lib/logo/logo.rs
 //
 // The video peripheral's framebuffer is 160 by 120 pixels of twelve
 // bits, four each of red, green and blue. A logo in a corner of that
@@ -34,8 +34,8 @@ import (
 
 func main() {
 	in := flag.String("in", "", "the logo, a PNG")
-	w := flag.Int("w", 34, "width in framebuffer pixels")
-	h := flag.Int("h", 34, "height in framebuffer pixels")
+	w := flag.Int("w", 36, "width in framebuffer pixels")
+	h := flag.Int("h", 36, "height in framebuffer pixels")
 	dark := flag.Int("dark", 60, "a box this dark or darker is transparent")
 	flag.Parse()
 	if *in == "" {

@@ -5,7 +5,7 @@
 # reach the drive the logo is kept on:
 #
 #   bazel run //tools/logo2rs -- \
-#       -in $HOME/.../TxHDL/txhdl-icon.png -w 34 -h 34 \
+#       -in $HOME/.../TxHDL/txhdl-icon.png -w 36 -h 36 \
 #       > lib/logo/logo.rs
 load("@rules_go//go:def.bzl", "go_binary")
 
