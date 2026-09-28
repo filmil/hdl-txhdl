@@ -91,11 +91,10 @@
 		// so that a transmit slot can never be computed at the
 		// address of a receive one.
 		//
-		// It answers its registers and moves no frames until the
-		// engines that carry the bytes exist, which is issue 151.
-		// The driver binds either way, which is the point: it is
-		// compiled and checked from the first commit rather than
-		// when somebody next has a board.
+		// The engines that carry frames between the port and these
+		// buffers are on the board (issue 151). The driver was
+		// bound and checked from the first commit, before they
+		// existed, rather than when somebody next had a board.
 		eth0: ethernet@3400 {
 			compatible = "hdlfactory,vreteno-eth";
 			reg = <0x00003400 0x100>,

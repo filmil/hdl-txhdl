@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# This repository as a Zephyr module. Zephyr is not vendored here and
-# is not a dependency of the Bazel build: what lives in this tree is
-# the port, and a Zephyr of the reader's choosing is pointed at it.
+# This repository as a Zephyr module. Zephyr is not vendored here: the
+# Bazel build fetches Zephyr 4.1.0 and builds images with this module
+# (zephyr/BUILD.bazel, issue 390), and a reader's own west build points
+# a Zephyr of their choosing at it.
 #
 #   west build -b ax7a200b samples/hello_world \
 #     -- -DZEPHYR_EXTRA_MODULES=<txhdl>/zephyr
