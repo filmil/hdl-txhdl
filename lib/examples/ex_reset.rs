@@ -5,12 +5,14 @@
 //! back to what it held before the first edge, and the channels
 //! between units empty.
 //!
-//! The ticker below counts the ticks it is given. Nothing in it
-//! mentions a reset, and the netlist still gives it one. The run
-//! asserts the reset for two cycles in the middle, and the count
-//! starts again from zero; the trace records the reset, so the
-//! simulations of the Verilog and the VHDL drive it at the same
-//! cycles and must agree with the Rust.
+//! The ticker below counts the ticks it is given, from five. Nothing
+//! in it mentions a reset, and the netlist still gives it one. The
+//! run asserts the reset for two cycles in the middle, and the count
+//! starts again from five, where it started; the trace records the
+//! reset, so the simulations of the Verilog and the VHDL drive it at
+//! the same cycles and must agree with the Rust. The netlist is told
+//! the five with `init_reg`, and its reset puts back that value and
+//! not zero (issue 728).
 //!
 //! The count is driven only on a tick, and the first cycle of the
 //! reset has none: the reset reaches a register whether or not the
@@ -29,9 +31,17 @@ use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
 
 // begin{unit}
-#[derive(Trace, Default)]
+#[derive(Trace)]
 pub struct Ticker {
     pub count: Reg<U<8>>,
+}
+
+impl Default for Ticker {
+    fn default() -> Self {
+        Ticker {
+            count: Reg::new(5u8),
+        }
+    }
 }
 
 #[lower]
@@ -61,7 +71,7 @@ fn main() {
     }
     let mut sim = Running::new(ticker.run(tick, total_out));
 
-    // One cycle with no tick, so that the count starting at zero is
+    // One cycle with no tick, so that the count starting at five is
     // the register's own value rather than something not yet counted,
     // and so that the waveform has an edge to draw the tick from.
     tick_out.set(Bit::Zero);
@@ -92,7 +102,11 @@ fn main() {
     }
     println!("t={:>2} count {}", now(), total.get().raw());
 
-    print!("\n{}", Ticker::verilog("ticker"));
+    // The netlist is written from the type, which does not hold the
+    // five; `init_reg` says it again.
+    let mut net = Ticker::lowered("ticker");
+    net.init_reg("count", 5);
+    print!("\n{}", net.verilog());
     stop();
-    txhdl::netlist::write_vhdl_from_env(&Ticker::lowered("ticker"));
+    txhdl::netlist::write_vhdl_from_env(&net);
 }
