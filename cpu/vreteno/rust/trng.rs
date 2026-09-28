@@ -4,6 +4,12 @@
 //! whether they came and differed. The core halts either way, after
 //! the line.
 //!
+//! Then it reads the raw samples in a tight loop, windows of 32 that
+//! overlap, and sends them joined as one run of samples in a row, under
+//! `rawrun`, so a host can measure lags longer than a word (issue
+//! 805). In simulation that run is the model's, which the board test
+//! checks sample for sample.
+//!
 //! Built with `--cfg=board_run`, for the board, the program then
 //! measures the source: it reads the raw samples, the folded bits
 //! before the extractor, 4096 words of them, and sends each up the
@@ -26,12 +32,19 @@ const TRNG: *mut u32 = map::TRNG as *mut u32;
 const DATA: usize = trng::DATA / 4;
 const STATUS: usize = trng::STATUS / 4;
 const CTRL: usize = trng::CTRL / 4;
-#[cfg(board_run)]
 const RAW: usize = trng::RAW / 4;
 
 const STATUS_READY: u32 = trng::STATUS_READY_MASK;
 const STATUS_FAULT: u32 = trng::STATUS_FAULT_MASK;
 const CTRL_RUN: u32 = trng::CTRL_RUN_MASK;
+
+/// The windows the run is read from: on the board, enough for a few
+/// thousand words of samples in a row; in simulation, what the boot
+/// memory's stack holds with room.
+#[cfg(board_run)]
+const RUN: usize = 4096;
+#[cfg(not(board_run))]
+const RUN: usize = 64;
 
 entry!(main);
 
@@ -75,8 +88,74 @@ fn main() -> ! {
         }
     }
     Uart::say(if same { b"bad\n" } else { b"ok\n" });
+    // The run of samples in a row: the whole capture first, then the
+    // sending, since a byte on the line is thousands of cycles.
+    let mut win = [0u32; RUN];
+    capture(&mut win);
+    send_run(&win);
     measure();
     halt()
+}
+
+/// Windows of `raw` read as fast as a loop goes (issue 805). `raw` is
+/// the last 32 samples, one a cycle, the newest in bit 0, so a window
+/// read `s` cycles after the one before holds `s` new samples in its
+/// low bits and, above them, the older `32 - s` where the one before
+/// had them.
+fn capture(win: &mut [u32]) {
+    for w in win.iter_mut() {
+        *w = unsafe { read_volatile(TRNG.add(RAW)) };
+    }
+}
+
+/// The fewest samples of overlap two windows are matched on: a shift
+/// wider than 24 leaves fewer than 8, which could agree by chance.
+const MAX_SHIFT: u32 = 24;
+
+/// The samples between one window and the next, found from the
+/// windows themselves: the smallest shift at which every window's
+/// older bits are the one before's newer ones. The loop is the same
+/// every time round, so the shift is one number for all of them.
+/// `None` if no shift up to `MAX_SHIFT` fits every pair, which would
+/// say the loop is too slow and samples were skipped, or if the
+/// windows are all alike, which fits every shift and places nothing.
+/// The cycle counter would answer this too, but it loses a count on
+/// every read of it (issue 807), so the samples are the clock.
+fn shift(win: &[u32]) -> Option<u32> {
+    if win.iter().all(|w| *w == win[0]) {
+        return None;
+    }
+    (1..=MAX_SHIFT).find(|&s| {
+        let keep = u32::MAX >> s;
+        win.windows(2).all(|p| (p[1] >> s) & keep == p[0] & keep)
+    })
+}
+
+/// Sends the windows as one run of samples in a row, 32 to a line, the
+/// oldest in bit 31, under `rawrun`: the first window whole, then the
+/// `s` new samples of each after it. What is left short of a line at
+/// the end is dropped. A line before it says the shift, or
+/// `rawrun bad` says no shift fitted and nothing follows.
+fn send_run(win: &[u32]) {
+    let Some(s) = shift(win) else {
+        Uart::say(b"rawrun bad\n");
+        return;
+    };
+    Uart::say(b"shift ");
+    Uart::put_decimal(s);
+    Uart::say(b"\nrawrun\n");
+    Uart::put_hex(win[0]);
+    Uart::put(b'\n');
+    let (mut acc, mut n) = (0u64, 0u32);
+    for w in &win[1..] {
+        acc = (acc << s) | u64::from(w & (u32::MAX >> (32 - s)));
+        n += s;
+        if n >= 32 {
+            n -= 32;
+            Uart::put_hex((acc >> n) as u32);
+            Uart::put(b'\n');
+        }
+    }
 }
 
 /// The measurement, for the board: the raw samples and the words.
