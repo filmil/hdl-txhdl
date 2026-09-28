@@ -400,6 +400,32 @@ pub fn measure() -> Vec<u32> {
     a.words()
 }
 
+/// Each counter read four times in a row, and the three differences
+/// stored: `mcycle`'s at words 0 to 2 and `minstret`'s at words 3 to 5.
+/// A read is a `csrrs` from `x0`, which the specification says does
+/// not write, so a read must not cost the counter the count of its own
+/// cycle or its own retirement (#807).
+pub fn back_to_back() -> Vec<u32> {
+    let mut a = Asm::default();
+    a.emit(lui(2, DATA_BASE >> 12)); // x2 = the data base
+    for r in 10..14 {
+        a.emit(csrrs(r, CSR_MCYCLE, 0)); // x10 to x13 = mcycle
+    }
+    for r in 20..24 {
+        a.emit(csrrs(r, CSR_MINSTRET, 0)); // x20 to x23 = minstret
+    }
+    for (k, (hi, lo)) in
+        [(11, 10), (12, 11), (13, 12), (21, 20), (22, 21), (23, 22)]
+            .into_iter()
+            .enumerate()
+    {
+        a.emit(sub(5, hi, lo));
+        a.emit(sw(5, 2, 4 * k as i32));
+    }
+    a.emit(halt());
+    a.words()
+}
+
 /// A program that idles: it arms the timer, waits for it with `wfi`,
 /// and counts the interrupts that woke it.
 ///

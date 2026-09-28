@@ -10,7 +10,7 @@
 //! which is the thing the model exists not to know. So the counters
 //! are checked here, against the core alone, on the properties a
 //! program can rely on.
-use vreteno32::program::measure;
+use vreteno32::program::{back_to_back, measure};
 use vreteno32::run::run;
 
 #[test]
@@ -49,5 +49,27 @@ fn the_counters_read_rather_than_trapping() {
     assert!(
         ran.halted_at.is_some(),
         "a read of a counter trapped instead of answering"
+    );
+}
+
+#[test]
+fn a_read_of_a_counter_costs_it_nothing() {
+    // Four reads of each counter in a row. A read is a set from `x0`,
+    // which does not write; when it did, it wrote back the value it
+    // had read after the count, so each read cost `mcycle` its cycle
+    // and `minstret` its retirement (#807).
+    let ran = run(&back_to_back(), &[], 4000);
+    assert!(ran.halted_at.is_some(), "the program did not halt");
+    let cycles = &ran.mem[0..3];
+    let retired = &ran.mem[3..6];
+    assert_eq!(
+        retired,
+        &[1, 1, 1],
+        "minstret between reads in a row: each read retires one"
+    );
+    assert!(
+        cycles.iter().all(|&c| c >= 1 && c == cycles[0]),
+        "mcycle between reads in a row, one instruction each and no \
+         stall, so the same number every time and never zero: {cycles:?}"
     );
 }
