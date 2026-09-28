@@ -25,10 +25,11 @@ The instance's own push mirror does the same from the server; either is enough.
 
 ## Starting from nothing
 
-`//docs:zero` is the tutorial for an empty directory: four files,
+`//docs:zero` is the tutorial for an empty directory: five files,
 under `tutorial/blinky/`, that build, run and lower a blinky with
 Bazel against the GitHub mirror, with nothing installed but Bazelisk.
-The tree builds that workspace as a check.
+The tree builds the blinky against its own library as a check; the
+workspace's pin is checked by building it outside the tree.
 
 ## Building
 

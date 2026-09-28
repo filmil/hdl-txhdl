@@ -3,8 +3,10 @@
 % TxHDL from zero: a blinky in Bazel, from an empty directory to a
 % netlist, for somebody who has neither the tree nor Bazel. Built by
 % //docs:zero. Every file shown is included from tutorial/blinky/,
-% which the tree builds as a check, and every printout is what the
-% build produced by running it.
+% whose design the tree builds against its own library as a check,
+% and every printout is what that build produced by running it. The
+% pin in its MODULE.bazel is checked by building the workspace outside
+% the tree, which no action here does (issue 733).
 \documentclass[journal,9pt]{IEEEtran}
 
 \newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
@@ -23,8 +25,11 @@ reached at linkedin.com/in/dragisa-jankovic.}%
 installed, no copy of the TxHDL tree, and a blinky built, run and
 lowered to Verilog with Bazel at the end. Every file it shows is
 included from the project repository \code{HDL/txhdl}, under
-\code{tutorial/blinky/}, which the project's own build builds as a
-check, and every printout is what the build produced by running it.
+\code{tutorial/blinky/}, whose design the project's own build
+compiles and runs against the project's library as a check, and every
+printout is what that run produced. Built outside the tree at the
+commit the workspace pins, on September 28, 2026, the blinky printed
+the same lines and wrote the same netlist, byte for byte.
 The language is learnt from the step-by-step tutorial~\cite{tutorial}
 and the cheat sheet~\cite{cheatsheet}; the cover~\cite{cover} lists
 every document.}%
@@ -44,7 +49,8 @@ TxHDL is a hardware description language that is a Rust library, and
 a design in it is built by Bazel. This document starts from an empty
 directory and ends with a blinky that runs, prints its LED as a line
 of characters, and writes its Verilog as a file of the build. It
-takes four files and one binary on the machine.
+takes five files, the design among them, and one binary on the
+machine.
 \end{abstract}
 
 \section{What You Need}
@@ -60,10 +66,12 @@ registries. Nothing is installed on the machine, and no Verilog tool
 is needed to get a netlist, since the netlist is what the Rust
 program prints. Git is needed once, for the fetch of the mirror.
 
-\section{Four Files}
+\section{The Workspace}
 \label{sec:z-files}
 
-A workspace is a directory with these files in it. The first names
+A workspace is a directory of five files. Four of them set it up,
+and this section shows them; the fifth is the design, which the next
+one does. The first names
 the Bazel version, so that Bazelisk fetches the one this document was
 built with:
 
@@ -78,9 +86,10 @@ named first:
 
 The third is the module: a name for the workspace, the Rust rules,
 and TxHDL, which no registry holds yet, so it is named by its
-repository and a commit. The commit here is the one this document
-was built from; a newer one is any commit of the mirror's
-\code{main}, and the version, \code{0.0.0}, is what TxHDL calls
+repository and a commit. The commit here was the mirror's
+\code{main} on September 28, 2026, and the workspace was built at it,
+outside the project's tree, on that day; a newer one is any commit of
+the mirror's \code{main}, and the version, \code{0.0.0}, is what TxHDL calls
 itself.
 
 \lstinputlisting[style=ascii,caption={\code{MODULE.bazel}: two dependencies, one of them by commit.},label={lst:z-module}]{tutorial/blinky/MODULE.bazel}
