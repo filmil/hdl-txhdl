@@ -109,13 +109,15 @@ bazel run //tools/trngstat -- $PWD/board-458-trng.log | tee board-458-stat.txt
 
 The program prints `trng ok`, then `raw` and 4096 words, then `words` and 4096 words, then `end`, which is about seven seconds of serial line at 115200 baud.
 Pass, first: `trng ok`, not `trng bad` nor `fault`, and the capture reaches `end`.
-Pass, second: `trngstat` exits 0, which says the extractor's words are within the bounds it states: the bias within four standard deviations of a fair source, the serial correlation of bits within four of its own, and at least 0.97 bits per bit of min-entropy by SP 800-90B's most common value estimate.
-The raw words are measured and not judged, since folded samples before the extractor are not expected to be fair; their numbers are what the issue asks for.
-Capture: both files, and run the load twice more to see that the numbers hold between runs.
+Pass, second: `trngstat` exits 0, which says the extractor's words are within the bounds it states: the bias within four standard deviations of a fair source, the correlation of bits inside a word within four of its own at every lag from one to eight, and at least 0.97 bits per bit of min-entropy by SP 800-90B's most common value estimate.
+The raw words are measured and not judged, since the samples before the extractor are not expected to be fair; their correlations by lag, one to 31 inside a word, are what the issue asks for.
+Capture: both files, and run the load twice more; then give all three captures to `trngstat` at once, which reports each and the three pooled, with one standard deviation beside every lag.
+A bitstream that folds samples before the extractor is read with `-fold=2`, so that a lag of the words is also said in samples of the source (#794).
 It closes #458 once the numbers are on it; the datasheet in #521 is written after them.
 
 `trngstat` is a first estimate and not an SP 800-90B assessment: 4096 words is below the million samples the standard's full battery wants.
 If the numbers are to be quoted as an assessment, the next step is a longer capture, which the program would need to be changed to print.
+A `rawrun` section, samples in a row rather than windows of 32, is read by `trngstat` out to `-maxlag`, which is what measures a period longer than a word; no program prints one yet.
 
 ## 7. Fastboot, #143
 
