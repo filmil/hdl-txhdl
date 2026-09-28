@@ -242,11 +242,11 @@ port.},label={lst:f-remote}]{cpu/vreteno/src/board.rs}
 Two numbers are fixed in the design rather than left to a board. The
 device number is 1: every frame carries it, a program answers each
 device by the number it was asked under, and a second board on the
-same wire is a second number. The patience is 20\,ms, two million
-cycles at 100\,MHz, after which a transaction nobody answered is
+same wire is a second number. The patience is a second, a hundred
+million cycles at 100\,MHz, after which a transaction nobody answered is
 \code{SlvErr} on the bus. A device that has gone away must not stop
 the bus, and a device on another machine must be given long enough to
-be slow.
+be slow; it was 20\,ms until the run below showed that too short.
 
 The other end of the wire in this repository is \code{//tools/remote},
 a program in Go that reads frames, serves a device, and writes the
@@ -483,8 +483,8 @@ its pins and the core, which is where the wires it carries want it. The
 same logic, the same pins, a different neighbour, and the placer moved
 it eighty columns.
 
-\emph{The memory controller is the largest thing in the design},
-larger than the core, its bus and all of its peripherals together, and
+\emph{The memory controller is nearly as large as the core, its bus and
+all of its peripherals together}, 9\,493 cells to their 10\,719, and
 it is pinned hard against the memory's bank. That is worth knowing
 before adding anything that wants to be near those pins.
 
@@ -555,11 +555,13 @@ crate.},label={lst:f-logo2rs},tabsize=2]{tools/logo2rs/main.go}
 \section{What is not done}
 \label{sec:f-todo}
 
-\emph{The core does not reach the MAC's own registers.} The AXI-Lite
-peripheral for the MAC exists~\cite{eth} and nothing in this bitstream
-puts the core on it, so a program cannot send a frame of its own
-choosing: the frames on the port are the remote peripheral's. A fifth
-slot would do it, and the crossing is the one the frames already use.
+\emph{The core's own frames do not reach the network yet.} The core
+reaches the MAC through \code{EthSlots} on the fifth slot of its page,
+so a program can send a frame of its own choosing, and the fastboot
+server of issue~\#143 listens on the board. But no host has heard the
+board's frames: a host on the same cable sees nothing from it, while
+the echo design on the same board and the same MAC halves returns its
+frames (issue~\#786).
 
 \emph{One program paints the screen, and it is the whole of what is
 known about painting it.} Section~\ref{sec:f-first} says what it
