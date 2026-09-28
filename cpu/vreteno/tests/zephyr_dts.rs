@@ -244,11 +244,13 @@ fn eth_word(name: &str) -> u32 {
 
 /// The driver's register map is the one the hardware decodes.
 ///
-/// Both files are read here, so neither can be edited into
-/// disagreement on its own. That is the whole point: the serial
-/// port's map lived in two places and agreed only because nobody had
-/// touched either, and this one is the same shape with four more
-/// registers.
+/// Since issue 709 the driver names each register as the header
+/// written from the hardware's `regmap!` names it, and
+/// `//zephyr:regs_test` holds that header to the map, so the offsets
+/// have one source. What is left for this test is the driver's side:
+/// that each name it uses is defined as the map's, that it includes
+/// the header, and that it reads and writes each word on a side the
+/// map's access allows.
 #[test]
 fn the_ethernet_driver_reads_the_words_the_hardware_decodes() {
     // The hardware selects a word and the driver names a byte
