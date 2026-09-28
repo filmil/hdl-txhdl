@@ -106,9 +106,11 @@ impl<const DIV: usize, const I: usize> Unit for FlashWin<DIV, I> {
             let last = strobe & (count == U::<5>::from(15u8));
             // The bus. A read is taken when nothing is on the wires
             // and no answer is waiting; a write is taken when no other
-            // write is waiting for its beat.
+            // write is waiting for its beat. Nothing is taken in reset,
+            // so a request waits on the channel for the reset to end
+            // rather than being taken and dropped (issue 813).
             let q = bus.req.head();
-            let q_off = bus.req.peek().is_some();
+            let q_off = bus.req.peek().is_some() & !rst.get();
             let take_read = q_off & q.read & !busy & !waiting & !held;
             let take_write = q_off & !q.read & !held;
             let _ = bus.req.recv_if(take_read | take_write);
@@ -208,3 +210,65 @@ impl<const DIV: usize, const I: usize> Unit for FlashWin<DIV, I> {
     }
 }
 // end{run}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bus::axi::{axi_units, host_end, AxiHost, AxiPer, Rd};
+    use crate::spi::FlashDevice;
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use txhdl::comp::{join2, signal, Running};
+
+    /// A read asked for while the window is held in reset is answered
+    /// once the reset is let go, rather than taken and dropped: the
+    /// reset holds the window off the bus, it does not lose what the
+    /// bus asked (issue 813).
+    #[test]
+    fn a_read_asked_in_reset_is_answered_after_it() {
+        let u = axi_units::<32, 32, 4, 2>();
+        let host = host_end::<32, 32, 4, 2, 4>(u.host_client);
+        let bus: PerPort<32, 32, 4, 2> = u.per_client.into();
+        let (miso_drive, miso) = signal::<Bit, DefaultClock>();
+        let (sclk_out, sclk) = signal::<Bit, DefaultClock>();
+        let (mosi_out, mosi) = signal::<Bit, DefaultClock>();
+        let (cs_out, cs_n) = signal::<Bit, DefaultClock>();
+        let (rst_out, rst) = signal::<Bit, DefaultClock>();
+        let mut host_unit = AxiHost::<32, 32, 4, 2, 4>::default();
+        let mut per_unit = AxiPer::<32, 32, 4, 2>::default();
+        let mut win = FlashWin::<1, 2>::default();
+        let got = Rc::new(Cell::new(None));
+        let seen = got.clone();
+        let client = async move {
+            let r = host.read(Rd::at(0, 1)).await.done().await;
+            seen.set(Some(r.data[0].raw() as u32));
+        };
+        let mut sim = Running::new(join2(
+            join2(
+                host_unit.run(u.host_in, u.host_out),
+                per_unit.run(u.per_in, u.per_out),
+            ),
+            join2(
+                win.run(bus, (rst, miso, sclk_out, mosi_out, cs_out)),
+                client,
+            ),
+        ));
+        let word = 0x0bad_f00du32;
+        let mut chip =
+            FlashDevice::new(word.to_le_bytes().to_vec(), [0; 3], false, false);
+        rst_out.set(Bit::One);
+        for n in 0..4000 {
+            if n == 40 {
+                rst_out.set(Bit::Zero);
+            }
+            sim.cycle();
+            chip.step(
+                cs_n.get().to_bool(),
+                sclk.get().to_bool(),
+                mosi.get().to_bool(),
+            );
+            miso_drive.set(Bit::from_bool(chip.miso()));
+        }
+        assert_eq!(got.get(), Some(word), "the read was answered");
+    }
+}
