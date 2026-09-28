@@ -1,27 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
-//! TxHDL, embedded in Rust. A prototypical runtime.
+//! TxHDL, embedded in Rust: the runtime and the lowering's support.
 //!
 //! Every construct the language still needs, once everything Rust
-//! already provides has been deleted. Four modules and two macros:
+//! already provides has been deleted. Nine modules and the macros:
 //!
 //! - [`types`]: `Bit`, `Logic`, `U<N>`, `I<N>`, `logic::Vec<N>`,
-//!   the `Transaction` marker and the `Tag` policy.
+//!   the `Transaction` marker and the `Tag` trait.
 //! - [`comp`]: units, wires and their ends, interfaces, clocks,
 //!   configurations, `join2` and `parallel!`, `mux`, and the executor.
+//! - [`comp::trace`]: names for signals, and a waveform writer, FST or
+//!   VCD.
 //! - [`pipeline`]: operators that may take a cycle. All `async`.
 //! - [`funcs`]: operators that cannot. All plain `fn`.
-//! - `#[derive(Transaction)]`, `#[derive(Bus)]`, `#[derive(Value)]`,
-//!   `#[derive(Trace)]`, `interface!`, `when!` and `case!`, re-exported
-//!   from `txhdl_macros`; and `select!`, a value chosen by pattern,
-//!   defined here.
-//! - [`comp::trace`]: names for signals and a VCD writer.
-//! - [`netlist`]: a structural Verilog skeleton from the same walk.
+//! - [`netlist`]: what a unit lowers to, its ports, registers and
+//!   processes, and the Verilog and VHDL written from it; and the
+//!   structural skeleton the same walk gives.
+//! - [`foreign`]: a Verilog or VHDL module as a unit, run beside the
+//!   Rust ones.
+//! - [`map`]: an address map as a trait constant.
+//! - [`regmap`]: what a map declared with `regmap!` stands for at run
+//!   time, the table the tools read and the field constants.
 //! - [`formal`]: `check!`, `assume!` and `cover!`, stated in a unit's
 //!   `run`, checked by the run and written into the netlist.
+//! - `#[lower]`, `with!`, `when!`, `case!`, `#[pipeline]`, `station!`,
+//!   `regmap!`, `interface!` and the derives `Transaction`, `Bus`,
+//!   `Value`, `Trace` and `Ports`, re-exported from `txhdl_macros`;
+//!   and `select!`, a value chosen by pattern, defined here.
 //!
-//! This is a simulation-shaped prototype: values exist while it runs.
-//! The lowering to hardware is the experiment the article states, and
-//! this crate is what that experiment would be written against.
+//! A unit simulates as Rust, and `#[lower]` writes the same unit as
+//! Verilog and VHDL, which the build checks against the run under nvc
+//! and Verilator; the Vreteno core, written this way, runs on a board.
 
 // Every public item carries its own documentation, and the build
 // refuses one that does not. A type parameter is not covered by this

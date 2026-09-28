@@ -868,14 +868,21 @@ impl<const N: usize, const L: usize> Transaction for U<N, L> {}
 impl<const N: usize> Transaction for I<N> {}
 impl Transaction for Bit {}
 
-/// A synchronisation domain and its policy, as a type. How data moves:
-/// whether the domain is elastic, and how many transactions it tracks
-/// in flight. Which clock edge moves it is a [`crate::comp::Clock`],
-/// and one clock may carry several tags.
+/// A synchronisation domain and its policy, as a type: whether the
+/// domain is elastic, and how many transactions it tracks in flight.
+/// Which clock edge moves it is a [`crate::comp::Clock`], and one clock
+/// may carry several tags.
+///
+/// The policy is declared and not implemented: nothing in the runtime
+/// or the lowering reads either constant, and [`Raw`] is the only tag
+/// in the tree. What moves data between units is the channel, which
+/// always handshakes, and a crossing between clocks is a unit of its
+/// own.
 pub trait Tag {
-    /// Inject ready and valid across the domain.
+    /// Inject ready and valid across the domain. Not read.
     const HANDSHAKE: bool = false;
-    /// Track this many transactions in flight; 0 for unlimited.
+    /// Track this many transactions in flight; 0 for unlimited. Not
+    /// read.
     const CAPACITY: usize = 0;
 }
 

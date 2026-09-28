@@ -27,7 +27,8 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 /// clocks are what a design depends on, and they are here.
 ///
 /// A clock with period 3 and phase 1 has edges at 1, 4, 7, ...; the
-/// default is period 1 and phase 0, so a single-clock design never
+/// default is period 2 and phase 0, two ticks a cycle so that the
+/// falling edge has a tick of its own, and a single-clock design never
 /// mentions either. This is what SDC's `create_clock -period -waveform`
 /// states, in the same terms.
 pub trait Clock: 'static {
@@ -1483,7 +1484,8 @@ fn advance() {
 
 /// Run a future for a number of time steps: one poll per step. Returns
 /// whether it completed, which a unit never does, because a unit loops.
-/// In a design with one clock of period 1, a step is a cycle.
+/// A step is a tick, so with the default clock, of period 2, a cycle
+/// is two steps.
 pub fn run_for<F: Future<Output = ()>>(f: F, steps: usize) -> bool {
     let mut f = Box::pin(f);
     let w = process();
@@ -1554,16 +1556,17 @@ impl<F: Future<Output = ()>> Running<F> {
 }
 
 /// Elaborate the design a configuration names and run it for a number
-/// of time steps. A real one emits a netlist; this one simulates, which is
-/// enough for a `main` to reach the design through nothing but the
-/// configuration and observe it with `Reg::peek`.
+/// of time steps, which is enough for a `main` to reach the design
+/// through nothing but the configuration and read its registers with
+/// `get` afterwards. The netlist is `#[lower]`'s, written by the
+/// unit's `lowered`.
 pub fn simulate<C: Config>(steps: usize) -> C::Top {
     let mut top = C::top();
     run_for(top.run((), ()), steps);
     top
 }
 
-/// Elaborate and run one cycle.
+/// Elaborate and run one step: half a cycle of the default clock.
 pub fn elaborate<C: Config>() -> C::Top {
     simulate::<C>(1)
 }
@@ -1576,8 +1579,9 @@ pub fn elaborate<C: Config>() -> C::Top {
 /// adds it. `#[derive(Trace)]` on a unit registers every field; the
 /// ends of wires and channels, registers and crossings know how to
 /// register themselves, and plain values register nothing. The sink is
-/// VCD, which Surfer and GTKWave open; FST would be the same probes
-/// with another writer.
+/// FST, which the build's waveforms use, or VCD, which is text; Surfer
+/// and GTKWave open both, and `Wave::from_env` takes whichever the
+/// environment names, `TXHDL_FST` first.
 pub mod trace {
     use super::{clock, now, Clock, Crossing, In, Mem, Out, Reg, Rx, Tx};
     use crate::types::Value;

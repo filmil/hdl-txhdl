@@ -89,9 +89,8 @@ config! { Asic: TopConfig for Top<Asic> {
     const CLK_HZ: u64 = 400_000_000;
 } }
 
-/// Simulate one pass over the taps, then observe. `peek` is the
-/// testbench's read: it waits for nothing and is not synthesised. The
-/// first cycle is spent reaching the first edge, hence the `+ 1`.
+/// Simulate one pass over the taps, then observe: `get` on a register
+/// after the run is the testbench's read, and waits for nothing.
 fn report<C: TopConfig<Top = Top<C>>>() {
     let taps = <FilterOf<C> as FilterConfig>::TAPS;
     // One cycle, two ticks, is enough: every tap is computed at the

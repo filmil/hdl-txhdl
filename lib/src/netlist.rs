@@ -7,7 +7,11 @@
 //! unit that takes its ports as parameters of `run` yields only its
 //! registers: that is the gap between a structural netlist and the
 //! lowering, which the proc-macro route closes by reading the
-//! `Unit` impl. Behaviour is not here at all; the bodies are empty.
+//! `Unit` impl. The structural walk carries no behaviour, and its
+//! bodies are empty; the behaviour is the rest of this module:
+//! [`Lowered`], which `#[lower]` fills from the `Unit` impl with the
+//! unit's ports, registers and processes, and the Verilog and VHDL
+//! written from it.
 use crate::comp::trace::{collect, Kind, Probe, Traceable};
 use crate::comp::{Clock, DefaultClock, In, Mem, Out, Pad, Reg, Rx, Tx, Wire};
 use crate::types::Value;
@@ -2380,8 +2384,9 @@ impl Lowered {
         out
     }
 
-    /// The VHDL, 2008: an entity, one process on the rising edge for
-    /// the registers, a concurrent assignment per wire.
+    /// The VHDL, 2008: an entity, a clocked process for each of the
+    /// unit's processes, on its clock's rising edge or its falling one
+    /// as the process waits, and a concurrent assignment per wire.
     pub fn vhdl(&self) -> String {
         let esc = self.escaped();
         let mut out = String::new();
