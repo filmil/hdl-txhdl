@@ -132,7 +132,13 @@
 			interrupt-controller;
 			#address-cells = <0>;
 			#interrupt-cells = <2>;
-			riscv,ndev = <3>;
+			// Three sources, 1 to 3, but Zephyr's PLIC driver
+			// counts the unused source 0 as well: it takes a claim
+			// of `riscv,ndev` or more as spurious, so a count of 3
+			// made the Ethernet port's source 3 halt the system on
+			// its first frame (#786). Four is the SoC's
+			// `MAX_IRQ_PER_AGGREGATOR`, which counts the same way.
+			riscv,ndev = <4>;
 			// Seven levels, as `lib/parts/src/plic.rs` states: a
 			// source priority runs 0 to 7 and 0 never interrupts.
 			riscv,max-priority = <7>;
