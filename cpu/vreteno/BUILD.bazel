@@ -4,6 +4,7 @@
 # demonstration and writes its waveform; the test runs the core
 # against the model in lockstep.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -554,6 +555,26 @@ vivado_program_flash(
     flash_part = "mt25ql128-spi-x1_x2_x4",
     interface = "SPIx4",
     deps = [":vreteno_board_pnr"],
+    tags = ["manual"],
+)
+
+# The bitstream leaves the flash's program area alone: its configuration
+# data ends before 0x00A0_0000, where programs begin (issue 312; the
+# layout is in docs/flagship.tex). Manual, since the bitstream needs
+# Vivado; `vivado_program_flash` writes only the bitstream today, so
+# this is the check that a program placed there would survive.
+sh_test(
+    name = "vreteno_board_fits_test",
+    srcs = ["//tools/bitfit:fits_test.sh"],
+    args = [
+        "$(rootpath //tools/bitfit)",
+        "0xa00000",
+        "$(rootpaths :vreteno_board_pnr)",
+    ],
+    data = [
+        ":vreteno_board_pnr",
+        "//tools/bitfit",
+    ],
     tags = ["manual"],
 )
 

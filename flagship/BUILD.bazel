@@ -14,6 +14,7 @@ load(
     "vivado_program_flash",
     "vivado_repl",
 )
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
 
 package(default_visibility = ["//visibility:public"])
@@ -90,6 +91,26 @@ vivado_program_flash(
     flash_part = "mt25ql128-spi-x1_x2_x4",
     interface = "SPIx4",
     deps = [":flagship_pnr"],
+    tags = ["manual"],
+)
+
+# The bitstream leaves the flash's program area alone: its configuration
+# data ends before 0x00A0_0000, where programs begin (issue 312; the
+# layout is in docs/flagship.tex). Manual, since the bitstream needs
+# Vivado; `vivado_program_flash` writes only the bitstream today, so
+# this is the check that a program placed there would survive.
+sh_test(
+    name = "flagship_fits_test",
+    srcs = ["//tools/bitfit:fits_test.sh"],
+    args = [
+        "$(rootpath //tools/bitfit)",
+        "0xa00000",
+        "$(rootpaths :flagship_pnr)",
+    ],
+    data = [
+        ":flagship_pnr",
+        "//tools/bitfit",
+    ],
     tags = ["manual"],
 )
 
