@@ -221,8 +221,9 @@ the hold of the source, and the drain in order.
 
 Listing~\ref{lst:s-v} is the station of the example written by hand
 in Verilog, for a reader who knows what that looks like: two inputs,
-a byte and a half word by a two-bit tag, four lines, the same ports
-the lowering gives the TxHDL one. It is not a translation of the
+a byte and a half word by a two-bit tag, four lines, the ports the
+lowering gives the TxHDL one but its reset: every lowered module has an
+\code{rst} input, and this one has none. It is not a translation of the
 netlist; it is what an engineer writes from the rule of
 Section~\ref{sec:s-rule}, and it runs beside the TxHDL station in the
 example, as a foreign unit fed the same offers, with the build
