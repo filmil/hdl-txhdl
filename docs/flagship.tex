@@ -406,6 +406,23 @@ this board answers with, read off the chip over JTAG rather than out of
 a manual, because board revisions differ here and the manual for this
 one names a larger part that Vivado then refuses.
 
+The flash holds the bitstream from its start, and programs from
+\code{0x00A0\_0000} on (issue 312). An uncompressed bitstream for this
+part is 77\,845\,216 bits of configuration data, 9\,730\,652 bytes,
+whatever the design, and the headers of both routed bitstreams say
+exactly that. It ends at \code{0x0094\_7A5C}. Programs begin at the
+first mebibyte past that, which is on one of the chip's 64~KiB erase
+sectors, and have the 6~MiB to the end. The core reads them through
+the window on the router's eighth port, from \code{0x20A0\_0000}.
+\code{//flagship:flagship\_fits\_test} and
+\code{//cpu/vreteno:vreteno\_board\_fits\_test} read a routed
+bitstream's header with \code{//tools/bitfit}, and fail if its
+configuration data runs past the offset, which compression or another
+part could do. They are manual, since they need the routed bitstream.
+Nothing writes a program there yet: \code{vivado\_program\_flash}
+writes the bitstream alone, and the image with a program beside it
+waits on a change to that rule.
+
 Once the flagship is in the part, a program goes to it over the serial
 port and no Vivado is involved at all: \code{bazel build
 //cpu/vreteno/rust:hello\_ram\_bin} for the image, and \code{bazel run
