@@ -124,6 +124,7 @@ fn reg_maps() -> Vec<(&'static str, usize, &'static RegMap)> {
     vec![
         ("timer", port(1), &vreteno32::timer::clint::MAP),
         ("uart", slot(0), &vreteno32::uart::serial::MAP),
+        ("pwm", slot(1), &txhdl_parts::pwm::regs::MAP),
         ("hdmi", slot(2), &txhdl_parts::hdmi::regs::MAP),
         ("ethslots", slot(4), &txhdl_parts::ethslots::regs::MAP),
         ("trng", slot(5), &txhdl_parts::trng::regs::MAP),
