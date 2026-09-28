@@ -3377,6 +3377,64 @@ mod tests {
         }
     }
 
+    /// A unit of units whose foreign children sit in fields named as
+    /// their modules, one in the same case and one not.
+    fn named_as_their_modules() -> Lowered {
+        let child = |module: &str| {
+            foreign(module, module, &[("EOS", Kind::Out, 1)], &[], &[])
+        };
+        let mut net = three_regs();
+        net.ports = vec![
+            ("eos".to_string(), Kind::Out, 1, "clk"),
+            ("done".to_string(), Kind::Out, 1, "clk"),
+        ];
+        net.instances = vec![
+            Instance {
+                name: "startup".to_string(),
+                unit: child("startup"),
+                conns: vec![("EOS".to_string(), "eos".to_string())],
+            },
+            Instance {
+                name: "flash".to_string(),
+                unit: child("FLASH"),
+                conns: vec![("EOS".to_string(), "done".to_string())],
+            },
+        ];
+        net
+    }
+
+    /// VHDL puts a component and an instance label in one region and
+    /// reads both without case, so a foreign child in a field named as
+    /// its module was declared twice, which nvc refuses (#816). Every
+    /// label differs from every component, ignoring case; the Verilog
+    /// keeps the field's name, since it keeps the two apart.
+    #[test]
+    fn a_label_is_never_a_components_name() {
+        let net = named_as_their_modules();
+        let vhdl = net.vhdl();
+        let components: Vec<String> = vhdl
+            .lines()
+            .filter_map(|l| l.strip_prefix("  component "))
+            .map(|m| m.trim().to_lowercase())
+            .collect();
+        assert_eq!(components, ["startup", "flash"], "{vhdl}");
+        let labels: Vec<String> = vhdl
+            .split("\nbegin\n")
+            .nth(1)
+            .expect("an architecture body")
+            .lines()
+            .filter_map(|l| l.strip_prefix("  ")?.split_once(" : "))
+            .map(|(label, _)| label.to_lowercase())
+            .collect();
+        assert_eq!(labels.len(), 2, "{vhdl}");
+        for l in &labels {
+            assert!(!components.contains(l), "label `{l}`:\n{vhdl}");
+        }
+        let verilog = net.verilog();
+        assert!(verilog.contains("startup startup"), "{verilog}");
+        assert!(verilog.contains("FLASH flash"), "{verilog}");
+    }
+
     /// A one-bit value is a `std_logic` in the VHDL and a scalar in
     /// the Verilog, neither of which can be indexed or, in the VHDL,
     /// shifted: bit nought of it is the value, and a move by nought
