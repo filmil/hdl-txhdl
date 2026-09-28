@@ -6,7 +6,7 @@
 //! is; the lowering reads it as the chain `case!` makes, `if` and
 //! `else if` in the clocked block. A `send` in an arm goes out with
 //! the arm's condition as `valid`. An output is a wire, so it is
-//! driven once, outside, with `mux`.
+//! driven once, outside the chain, from a register the arms set.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{
     chan, signal, Clock, DefaultClock, In, Out, Reg, Running, Tx, Unit,

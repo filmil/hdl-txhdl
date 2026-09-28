@@ -12,7 +12,8 @@
 //!
 //! The framer sends a byte as a serial frame: a start bit, eight data
 //! bits, a parity bit when `parity` asks for one, and a stop bit.
-//! Twelve states, and the parity state is the one under `if`. The run
+//! Five states, the data bits one of them with the counter `for0`, and
+//! the parity state is the one under `if`. The run
 //! is checked against the netlist under nvc and Verilator, and the
 //! netlist is printed, with the choice in it.
 use txhdl::comp::trace::{stop, Wave};

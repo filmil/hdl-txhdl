@@ -12,8 +12,8 @@
 //! The serialiser takes a byte and puts its bits on a channel one a
 //! cycle, low bit first, with no state register and no bit counter
 //! written by hand. The run is checked against the netlist under nvc
-//! and Verilator, and the netlist is printed: nine states, eight of
-//! them the turns.
+//! and Verilator, and the netlist is printed: two states, waiting for a
+//! byte and sending its bits, and the counter `for0` for the turns.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, now, Clock, DefaultClock, Reg, Running, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};

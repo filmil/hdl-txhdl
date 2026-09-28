@@ -3,7 +3,7 @@
 \label{sec:x-frame}
 
 Section~\ref{sec:x-seq} numbered a loop's waits into states and
-Section~\ref{sec:x-serial} unrolled a counted step. The step left is
+Section~\ref{sec:x-serial} counted a repeated one. The step left is
 the one taken only sometimes: a wait under \code{if}. Its state is
 made like any other, and the state before the \code{if} gets a way
 around it. When the condition holds at that state's edge the
@@ -32,10 +32,12 @@ Section~\ref{sec:x-seq} says.
 
 The framer below sends a byte as a serial frame: a start bit, eight
 data bits low bit first, a parity bit when \code{parity} asks for
-one at the last data bit, and a stop bit. Twelve states, and the
-parity state is the one under \code{if}; the netlist shows the
-choice, \code{parity ? 10 : 11}, where the state of the last data
-bit picks its successor. The build checks the netlist against the
+one at the last data bit, and a stop bit. Five states: waiting for a
+byte, the start bit, the data bits, one state with the counter
+\code{for0} for the eight turns, the parity bit and the stop bit; the
+parity state is the one under \code{if}. The netlist shows the
+choice, \code{parity ? 3'b011 : 3'b100}, where the data state's last
+turn picks its successor. The build checks the netlist against the
 run under nvc and Verilator, with one frame of each length.
 
 \begin{figure}[htbp]

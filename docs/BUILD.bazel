@@ -829,7 +829,7 @@ waveform(
     lowered = ("stage", "stage"),
     signals = [
         "//clocks/clk=>clk",
-        "//inp/rx_ready=>inp_ready",
+        "//inp/rx_valid=>inp_valid",
         "//inp/rx_data=>inp",
         "//inp/rx_ready=>inp_ready",
         "//out/tx_valid=>out_valid",

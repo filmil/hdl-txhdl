@@ -33,7 +33,7 @@ use txhdl_parts::bus::axi_lite::{
 // begin{unit}
 /// One word, written and read from either of two links, which it
 /// takes as one side and reads through: `links.left.aw` is the port
-/// `left_aw`.
+/// `links_left_aw`.
 #[derive(Trace, Default)]
 pub struct Shared {
     pub word: Reg<U<32>>,

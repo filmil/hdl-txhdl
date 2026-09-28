@@ -7,8 +7,9 @@
 //! found so far from one input to the next in two `let mut`s. `N` is a
 //! const parameter the macro cannot see, so the loop is unrolled when
 //! `lowered` runs: the netlist of `Merge<3>` has the ports `ins_0` to
-//! `ins_2`, and one of `Merge<5>` five. Until now a unit of a count was
-//! text a macro wrote once per count, as `router!` and `station!` are.
+//! `ins_2`, and one of `Merge<5>` five. Until then a unit of a count was
+//! text a macro wrote once per count, as `station!` still does and
+//! `router!` did until the router became one unit.
 //!
 //! The run offers words on three inputs at once, in bursts, and asserts
 //! that they come out lowest input first and none is lost; the netlist

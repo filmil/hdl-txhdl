@@ -27,8 +27,8 @@ the child's side, so each field joins the one port of the child
 whose name ends in \code{\_aw}. Two such ports on one child are
 refused with both names. A unit of units may take such a struct
 as a side of its own and pass its fields to its children one by one,
-as the DDR3 peripheral passes its link to its bridge; passing the
-whole side on is refused, since its fields cannot be seen.
+as the DDR3 peripheral passes its link to its bridge, or pass the
+whole side on to a child, as Section~\ref{sec:x-side} shows.
 
 The run writes on each side and reads on the other, then writes on
 both at once and reads the word back from both. Every read is
