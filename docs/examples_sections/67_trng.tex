@@ -39,7 +39,14 @@ bits that survive fill a word, and whole words wait in a buffer of
 four, which a host takes one at a time from \code{data} after
 \code{status} says one is ready. A fourth word, \code{raw}, is the
 last thirty-two samples before the extractor, and is what a program
-on the board reads in a loop to measure the source.
+on the board reads to measure the source.
+A loop of reads leaves gaps between the windows, though, so a
+correlation longer than a window cannot be measured that way (issue
+817). The capture can: a write of \code{cap} fills a buffer of 256
+words with 8192 samples in a row, none missing, and a program reads
+them back at its own pace through \code{capidx} and
+\code{capword}. The example takes one and checks that it is a
+stretch of the samples the model gave.
 
 \code{Entropy} is the two joined, the samples one way and the run bit
 the other, so that a design holds one unit and its netlist holds the
@@ -58,4 +65,4 @@ test watches.}
 
 \lstinputlisting[caption={\code{ex\_trng.rs}. Run with \code{bazel run //lib/examples:ex\_trng}.},label={lst:x-trng}]{lib/examples/ex_trng.rs}
 
-\lstinputlisting[style=ascii,caption={What \code{ex\_trng} printed when the build ran it: the eight words, the raw samples, and the buffer drained after the stop.},label={lst:x-trng-out}]{out_trng.txt}
+\lstinputlisting[style=ascii,caption={What \code{ex\_trng} printed when the build ran it: the eight words, the raw samples, the buffer drained after the stop, and the capture.},label={lst:x-trng-out}]{out_trng.txt}
