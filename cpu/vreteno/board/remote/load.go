@@ -32,8 +32,11 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -55,6 +58,11 @@ const ack = 'K'
 // watching it run afterwards, which once bounded the transfer too and
 // stopped a 2496-word image at word 710 (HDL/txhdl#402).
 const ackPatience = 2 * time.Second
+
+// How often the transfer says how far it has got, in words, so that a
+// transfer stopped from outside is seen to have been moving and where
+// (HDL/txhdl#784).
+const progressEvery = 4096
 
 var speeds = map[int]uint32{
 	300:    syscall.B300,
@@ -125,19 +133,7 @@ func main() {
 
 	// What comes back, printed as it arrives, so a refusal and a
 	// program that crashed after loading do not look alike.
-	said := make(chan byte, 4096)
-	go func() {
-		buf := make([]byte, 256)
-		for {
-			n, err := syscall.Read(fd, buf)
-			if err != nil {
-				return
-			}
-			for _, b := range buf[:n] {
-				said <- b
-			}
-		}
-	}()
+	said := listen(fd)
 
 	// The loader says `boot` when it starts and then waits, so on a
 	// board that was configured a while ago that word has long gone
@@ -167,31 +163,28 @@ func main() {
 		}
 	}
 
+	// A transfer stopped from outside, by the timeout the script on
+	// the other end of ssh puts round this, says how far it got and
+	// fails, rather than ending with nothing printed (HDL/txhdl#784).
 	words := len(blob) / 4
-	fmt.Fprintf(os.Stderr, "[load] %d words to %#08x\n", words, addr)
-	header := make([]byte, 0, 12)
-	header = binary.LittleEndian.AppendUint32(header, 0x444c5854)
-	header = binary.LittleEndian.AppendUint32(header, addr)
-	header = binary.LittleEndian.AppendUint32(header, uint32(len(blob)))
-	write(fd, header)
-
-	var sum uint32
-	for i := 0; i < words; i++ {
-		// One word per acknowledgement: the loader writes each into
-		// memory, which takes longer than a word takes to arrive.
-		if !waitByte(said, ack, time.Now().Add(ackPatience)) {
-			fmt.Fprintf(os.Stderr, "[load] no acknowledgement within %v at word %d\n", ackPatience, i)
-			os.Exit(1)
+	var sent atomic.Int64
+	var done atomic.Bool
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	go func() {
+		s := <-stop
+		if done.Load() {
+			fmt.Fprintf(os.Stderr, "\n[load] %v after the transfer\n", s)
+		} else {
+			fmt.Fprintf(os.Stderr, "\n[load] %v: cut off at word %d of %d\n", s, sent.Load(), words)
 		}
-		word := binary.LittleEndian.Uint32(blob[i*4 : i*4+4])
-		sum += word
-		write(fd, blob[i*4:i*4+4])
-	}
-	if !waitByte(said, ack, time.Now().Add(ackPatience)) {
-		fmt.Fprintf(os.Stderr, "[load] no acknowledgement within %v for the last word\n", ackPatience)
+		os.Exit(1)
+	}()
+	if err := transfer(fd, said, blob, addr, &sent, os.Stderr); err != nil {
+		fmt.Fprintf(os.Stderr, "[load] %v\n", err)
 		os.Exit(1)
 	}
-	write(fd, binary.LittleEndian.AppendUint32(nil, sum))
+	done.Store(true)
 
 	// Whatever the loader and then the program have to say: the seconds
 	// given are for this, counted from the end of the transfer, so that
@@ -205,6 +198,63 @@ func main() {
 		}
 	}
 	fmt.Fprintln(os.Stderr)
+}
+
+// listen hands on every byte the port says, as it arrives.
+func listen(fd int) chan byte {
+	said := make(chan byte, 4096)
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			n, err := syscall.Read(fd, buf)
+			if err != nil {
+				return
+			}
+			for _, b := range buf[:n] {
+				said <- b
+			}
+		}
+	}()
+	return said
+}
+
+// transfer sends the header, the words and their sum, one word per
+// acknowledgement, and counts in sent the words the loader has taken.
+// A loader that stops answering is an error naming the word, and the
+// silence it waits through is bounded by ackPatience per word rather
+// than by any total, so a long image is never cut short while it moves.
+func transfer(fd int, said chan byte, blob []byte, addr uint32, sent *atomic.Int64, log io.Writer) error {
+	words := len(blob) / 4
+	fmt.Fprintf(log, "[load] %d words to %#08x\n", words, addr)
+	header := make([]byte, 0, 12)
+	header = binary.LittleEndian.AppendUint32(header, 0x444c5854)
+	header = binary.LittleEndian.AppendUint32(header, addr)
+	header = binary.LittleEndian.AppendUint32(header, uint32(len(blob)))
+	write(fd, header)
+
+	start := time.Now()
+	var sum uint32
+	for i := 0; i < words; i++ {
+		// One word per acknowledgement: the loader writes each into
+		// memory, which takes longer than a word takes to arrive.
+		if !waitByte(said, ack, time.Now().Add(ackPatience)) {
+			return fmt.Errorf("no acknowledgement within %v at word %d of %d", ackPatience, i, words)
+		}
+		sent.Store(int64(i))
+		if i > 0 && i%progressEvery == 0 {
+			fmt.Fprintf(log, "[load] %d of %d words, %.0f s\n", i, words, time.Since(start).Seconds())
+		}
+		word := binary.LittleEndian.Uint32(blob[i*4 : i*4+4])
+		sum += word
+		write(fd, blob[i*4:i*4+4])
+	}
+	if !waitByte(said, ack, time.Now().Add(ackPatience)) {
+		return fmt.Errorf("no acknowledgement within %v for the last word of %d", ackPatience, words)
+	}
+	sent.Store(int64(words))
+	write(fd, binary.LittleEndian.AppendUint32(nil, sum))
+	fmt.Fprintf(log, "[load] %d words sent in %.0f s\n", words, time.Since(start).Seconds())
+	return nil
 }
 
 // waitFor waits for a word to appear in what the board says.

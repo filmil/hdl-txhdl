@@ -4,6 +4,13 @@
 # machine .bazelrc names in TXHDL_BOARD_SERVER: uploads the sender and
 # the image and runs the sender there over ssh, under a timeout.
 #
+# --seconds is how long to watch the program after it is loaded. The
+# transfer is not counted in it: the sender waits at most two seconds
+# for each word's acknowledgement, so it bounds the silence itself, and
+# the timeout here allows that for every word, so a transfer that keeps
+# moving is never cut short however large the image (HDL/txhdl#784). A
+# transfer that does stop says at which word, and this fails with it.
+#
 #   load [--server=HOST] [--port=/dev/ttyUSB0] [--baud=115200]
 #        [--address=0x40000000] [--seconds=30] [--reset] --image=PATH
 #
@@ -54,5 +61,15 @@ dir='~/txhdl_load'
 ssh -o BatchMode=yes "$server" "mkdir -p $dir && rm -f $dir/load $dir/image.bin"
 scp -q -o BatchMode=yes "$sender" "$server:$dir/load"
 scp -q -o BatchMode=yes "$image" "$server:$dir/image.bin"
+# The sender's own bounds: two seconds per word at the most, then the
+# seconds given. The twenty are for the reset and the greeting.
+words=$(( ($(stat -c %s "$image") + 3) / 4 ))
+limit=$((seconds + 20 + 2 * words))
+status=0
 ssh -o BatchMode=yes "$server" \
-  "timeout --signal=TERM --kill-after=5 $((seconds + 20)) $dir/load '$port' '$baud' '$address' $dir/image.bin '$seconds' $reset"
+  "timeout --signal=TERM --kill-after=5 $limit $dir/load '$port' '$baud' '$address' $dir/image.bin '$seconds' $reset" \
+  || status=$?
+if (( status != 0 )); then
+  echo "load: the sender stopped with status $status" >&2
+  exit "$status"
+fi
