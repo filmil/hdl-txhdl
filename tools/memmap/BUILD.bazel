@@ -15,6 +15,8 @@ rust_binary(
         "//cpu/vreteno:vreteno32",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
+        "//pcie",
+        "//soc",
     ],
 )
 
