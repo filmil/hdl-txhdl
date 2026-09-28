@@ -2578,7 +2578,7 @@ waveform(
     ],
 )
 
-# Vreteno: the RV32I core, its run and the opening cycles of its
+# Vreteno: the RV32IMC core, its run and the opening cycles of its
 # waveform, in its own document.
 waveform(
     name = "vreteno",

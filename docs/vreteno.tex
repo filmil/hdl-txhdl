@@ -595,8 +595,8 @@ router and the core's channel, so a load retires six cycles after
 its execute where the memory in the core had it retire in one. The
 random programs pay it in the wait in writeback and nothing else,
 and the board's own memory could take the same place. The
-timer, Listing~\ref{lst:v-timer}, is the second device, in sixty
-lines of the same subset. It takes every request offered,
+timer, Listing~\ref{lst:v-timer}, is the second device, in the
+same subset. It takes every request offered,
 answers a read in the cycle after with the word addressed, or zero
 for an address that is not its own, writes the lanes a write covers
 into its word, counts from the reset one a cycle, and raises its
@@ -615,16 +615,12 @@ does too. The board's other device that raises an interrupt, the
 interrupt controller, has a section of its own,
 Section~\ref{sec:v-plic}. The timer's own netlist is checked as the core's is, from
 the same trace; the two entities share one run. Between two lowered
-units there is no testbench to play the channel, and no channel: a
-unit's port is one side of the handshake, and the sides wired
-together make a combinational loop, which the placer refused when
-the first board top did that. The channel itself is
-\code{Buffer} of \code{txhdl\_parts}, the runtime's elastic
-buffer of two written in the lowerable subset and checked against
-the runtime's channel in the examples document~\cite{examples};
-the run writes one at each width, \code{chan69} and \code{chan32},
-beside the core and the timer, and the board puts them between the
-two.
+units a unit's port is one side of the handshake, and the sides wired
+together would make a combinational loop, which the placer refused
+when the first board top did that. So the board, one lowered unit of
+units, joins its children through a channel of the lowering's own:
+its netlist puts an instance of \code{txhdl\_chan}, a buffer of two
+as the runtime's channel is, between each sender and its receiver.
 
 \lstinputlisting[caption={\code{dmem.rs}: the data memory, an AXI
 peripheral.},label={lst:v-dmem}]{cpu/vreteno/src/dmem.rs}
@@ -733,7 +729,8 @@ The stages meet at the end of the cycle, in the deferred drives of
 the fetch's state and the writeback's. When the execute stage's next
 program counter is the one after its own, the word the fetch stage
 read this cycle is the right one and moves into the instruction
-register, valid, with the fetch counter advanced by four. When it is
+register, valid, with the fetch counter advanced by two or four, as
+the instruction is compressed or not. When it is
 not, on a taken branch, a jump, a trap or a return, that word is the
 wrong one: the instruction register is marked empty, the fetch
 counter takes the target, and the next cycle executes nothing, which
@@ -758,7 +755,7 @@ writeback value, the target, the old and the new CSR value and
 whether the core knows the opcode; \code{with!} and \code{case!}
 choose among drives, the register file's write under its enable,
 the control registers under a CSR write, a
-trap, the line or a return, the timer's words under a store, the writeback registers under execute's run, and
+trap, the line or a return, the writeback registers under execute's run, and
 the instruction register by reset, halt or fetch, in that priority.
 Register zero reads as zero rather than being protected from writes, since a mask
 on a read is a multiplexer and a guard on every arm is not. The
@@ -979,7 +976,8 @@ agree too, and the count of
 retired instructions must not exceed the count of cycles, which is
 what one instruction per cycle at most means. The demonstration program passes with the values the
 comments promise, and sixty-four random programs of two hundred
-instructions each pass, which covers every instruction the generator
+words each pass, more than two hundred instructions where some are
+compressed, which covers every instruction the generator
 emits many times over with operands it did not choose. The test also
 walks each random program from its start and counts its instructions
 by length: across the sixty-four there must be more than three
@@ -1002,8 +1000,8 @@ a compressed call linking four bytes on, it fails at cycle 59 on
 word taking its upper half from its own word rather than the next, it
 fails at cycle 9 on the first such instruction.
 
-A test that cannot fail proves nothing, so two negative controls
-were run. With the arithmetic shift in the ALU replaced by the
+A test that cannot fail proves nothing, so negative controls were
+run, six of them. With the arithmetic shift in the ALU replaced by the
 logical one, the demonstration fails at its \code{srai}, naming the
 register, the cycle and the instruction, and the random programs
 fail within a few cycles of their first \code{sra}. With the redirect
@@ -1280,8 +1278,9 @@ the trace the Rust core wrote, the VHDL under nvc and the Verilog
 under Verilator, the testbench replaying the reset and checking every
 register and every output at every tick; the netlist agrees. The
 tests are \code{//docs:vreteno\_sim\_vreteno\_vreteno\_tb\_test}
-and \code{//docs:vreteno\_vsim\_vreteno\_test}: the run lowers six
-units, so each name carries the entity as well as the run's.
+and \code{//docs:vreteno\_vsim\_vreteno\_test}: the run writes the
+netlists of nine units, and six of them are checked against the run
+this way, so each name carries the entity as well as the run's.
 
 The lowering grew in five ways for this, each stated and checked in
 the examples document~\cite{examples} before the core used it. A
@@ -1567,8 +1566,9 @@ itself.
 
 The run on the board below was made with the design before the DDR3
 memory was on the bus, when the top wired the units to each other by
-hand around an MMCM; the design with the memory has not been run on
-the board yet.
+hand around an MMCM. The design with the memory has run since, first
+with UberDDR3 and then with AMD's controller; Section~\ref{sec:v-next}
+says when and what it said.
 
 The board sits on another machine, with its programming cable and
 its serial bridge, and is programmed from here. Vivado's
@@ -1635,8 +1635,8 @@ generated by \code{vivado\_ila} with thirteen probes and 4096 samples,
 sampled on the core's clock. It is built beside the shipping
 bitstream and is not it, since the analyser costs block RAM and a
 run of its own: routed, the design takes 11\,010 look-up tables,
-11\,334 registers and 19 block RAM tiles, against the board's 8\,100,
-6\,959 and four, and meets its timing with 0.6~ns to spare.
+11\,334 registers and 19 block RAM tiles, against the 8\,100, 6\,959
+and four of the board it was measured beside, the one with UberDDR3, and meets its timing with 0.6~ns to spare.
 
 The probes are the nets a reader of the board asks about first, and
 the top says why each is there: the core's reset, its halt and the
@@ -1702,13 +1702,14 @@ The board changed in two places for it. Its ports are two structs
 now, \code{BoardIn} and \code{BoardOut}, the old ports under their old
 names and the master's pins under \code{jtag\_}, one field of type
 \code{AxiHostPins}, passed whole to an \code{AxiPins} that joins them
-to the link's channels. And the router has an arbiter in
-front of it, \code{Arbiter2}, with the core's tracker on one port and
-the pins on the other. An arbiter puts the port number above a host's
-own identifier, so the peripheral side of the bus carries four bits
-where it carried two: two for a host's own and two for the port, which
-is room for four hosts before anything widens again, and a direct
-memory access engine is the next (issue~\#151). Every peripheral's
+to the link's channels. And the router got an arbiter in
+front of it, \code{Arbiter2} then, with the core's tracker on one port
+and the pins on the other. An arbiter puts the port number above a
+host's own identifier, so the peripheral side of the bus carries four
+bits where it carried two: two for a host's own and two for the port,
+which is room for four hosts. The board has four now,
+\code{Arbiter4} over the core, the pins and the Ethernet port's two
+engines (issue~\#151), so a fifth host widens it. Every peripheral's
 tracker, the memories, the timer and the bridges were widened with
 it; none of them names the width except at its instantiation.
 
@@ -1732,7 +1733,8 @@ two different numbers a moment apart. The core was running the
 board's own program from the boot memory the whole time; the master
 and the core share the bus through the arbiter, and neither knows
 the other is there. Routed, the design takes 10\,795 look-up tables and 11\,244
-registers, against the board's 8\,100 and 6\,959, and meets its
+registers, against the 8\,100 and 6\,959 of the board it was measured
+beside, the one with UberDDR3, and meets its
 timing with 0.17~ns to spare, closer than the board alone, since the
 master and the arbiter add a stage on the bus's paths.
 
@@ -1999,10 +2001,6 @@ than to the pair.
 \section{What Comes Next}
 \label{sec:v-next}
 
-The board, programmed. Its bitstream is built and the flash target
-writes it; what its LEDs should show is stated above, and the first
-thing to do with the board in hand is to see that they do.
-
 More clock. What sets the timing now is stated in
 Section~\ref{sec:v-synth}: the branch on a register, three quarters
 routing, which a fourth stage, or a register file read a cycle
@@ -2021,7 +2019,11 @@ whole path is proven on hardware: the core, the AXI link, \code{AxiWb},
 the controller and the board's memory chips. That run was made with
 UberDDR3 as the controller; the board carries AMD's MIG since issue
 188, GPL-3.0 having no place in a design this tree claims as
-Apache-2.0, and the run with MIG is owed the same way.
+Apache-2.0. The design with MIG ran on September 28, 2026, written into
+the part over JTAG, and said \code{ddr3 ok} the same way: the
+controller calibrates, the memory returns what it was given, and the
+core runs on after. The run from the flash after a power cycle is still
+owed (issue~\#188).
 
 \begin{thebibliography}{10}
 
