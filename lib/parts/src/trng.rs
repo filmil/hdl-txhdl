@@ -64,7 +64,7 @@
 //! extractor and the health test run on regardless.
 use txhdl::comp::trace::Kind;
 use txhdl::comp::{
-    join2, mux, signal, Clock, DefaultClock, In, Mem, Out, Reg, Unit,
+    join2, mux, signal, Clock, DefaultClock, In, Mem, Out, Reg, Regs, Unit,
 };
 use txhdl::netlist::{foreign, Lower, Lowered};
 use txhdl::types::{Bit, U};
@@ -166,8 +166,11 @@ pub const STATUS_RUN: u32 = regs::status_run.mask();
 /// samples at zero, as the module does.
 #[derive(Trace, Default)]
 pub struct RingOsc {
-    /// The model's registers, one per ring.
-    pub lfsr: Mem<U<32>, RINGS>,
+    /// The model's registers, one per ring. Registers and not a
+    /// memory: all eight are seeded in one cycle and all eight step in
+    /// every cycle after, and a memory takes one write a cycle, so as a
+    /// memory the model was ring 7 alone (issue 809).
+    pub lfsr: Regs<U<32>, RINGS>,
     /// Whether the model has been seeded.
     pub seeded: Reg<Bit>,
 }
@@ -190,7 +193,7 @@ impl Unit<In<Bit>, Out<U<RINGS>>> for RingOsc {
             DefaultClock::rising().await;
             if !self.seeded.get().to_bool() {
                 for (i, seed) in SEEDS.iter().enumerate() {
-                    self.lfsr.write(i, U::<32>::from(*seed));
+                    self.lfsr[i].set(U::<32>::from(*seed));
                 }
                 self.seeded.set(Bit::One);
                 raw.set(U::<RINGS>::from(0u8));
@@ -198,11 +201,11 @@ impl Unit<In<Bit>, Out<U<RINGS>>> for RingOsc {
             }
             let mut out = 0u32;
             for i in 0..RINGS {
-                let s = self.lfsr.read(i).raw() as u32;
+                let s = self.lfsr[i].get().raw() as u32;
                 let fb = (s >> 31) ^ (s >> 21) ^ (s >> 1) ^ s;
                 let next = (s << 1) | (fb & 1);
                 if en.get().to_bool() {
-                    self.lfsr.write(i, U::<32>::from(next));
+                    self.lfsr[i].set(U::<32>::from(next));
                     out |= (s >> 31) << i;
                 }
             }

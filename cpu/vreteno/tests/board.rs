@@ -707,17 +707,13 @@ fn the_entropy_source_answers_on_the_board() {
 
 /// The samples the model rings give, folded as the peripheral folds
 /// them, from the seeds on: each ring a shift register stepped once a
-/// cycle, its top bit the sample, and the eight XORed.
-///
-/// As the model runs today, only ring 7 is seeded and steps, and the
-/// other seven stay at zero: the model writes its eight registers in
-/// one cycle into a memory that keeps one write a step (issues 808 and
-/// 809). This rebuilds that, so the check is of the joining; when the
-/// model steps all eight, every ring starts at its seed here.
+/// cycle, its top bit the sample, and the eight XORed. Every ring
+/// starts at its seed and steps, as the model now does; it used to be
+/// ring 7 alone, when the model kept its rings in a memory that takes
+/// one write a step (issues 808 and 809).
 fn model_samples(n: usize) -> Vec<u8> {
-    use txhdl_parts::trng::{RINGS, SEEDS};
-    let mut lfsr = [0u32; RINGS];
-    lfsr[RINGS - 1] = SEEDS[RINGS - 1];
+    use txhdl_parts::trng::SEEDS;
+    let mut lfsr = SEEDS;
     (0..n)
         .map(|_| {
             let mut bit = 0u8;
