@@ -78,7 +78,7 @@ fn addr_of(src: &str, name: &str) -> u32 {
 /// noticed (#444).
 fn decoded_by(addr: u32) -> Option<&'static str> {
     let a = addr as usize;
-    (0..7)
+    (0..BoardMap::RANGES.len())
         .find(|&i| a & BoardMap::RANGES[i].1 == BoardMap::RANGES[i].0)
         .map(|i| BoardMap::NAMES[i])
 }

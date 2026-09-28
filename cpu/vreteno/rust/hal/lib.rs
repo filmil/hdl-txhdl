@@ -57,6 +57,11 @@ pub mod map {
     /// The entropy source: a word of entropy, its status, its control
     /// and the raw samples.
     pub const TRNG: usize = 0x0000_3500;
+    /// The configuration flash's SPI master: control, data, state.
+    pub const SPI: usize = 0x0000_3600;
+    /// The configuration flash, read as memory: 16 MiB, the bitstream
+    /// first.
+    pub const FLASH: usize = 0x2000_0000;
     /// The platform-level interrupt controller.
     pub const PLIC: usize = 0x0c00_0000;
     /// The DDR3 memory, where a loaded program lives.

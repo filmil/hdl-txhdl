@@ -203,6 +203,14 @@ pub const ETH_BASE: u32 = 0x3400;
 /// words from `data` to `raw` (issue 458).
 pub const TRNG_BASE: u32 = 0x3500;
 
+/// The configuration flash's SPI master: the seventh slot of the same
+/// page, three words (issue 312).
+pub const SPI_BASE: u32 = 0x3600;
+
+/// The configuration flash read as memory, 16 MiB from here (issue
+/// 312).
+pub const FLASH_BASE: u32 = 0x2000_0000;
+
 /// Where the Ethernet port's four frame buffers live, which is in the
 /// DDR3 rather than inside the peripheral: two for receiving and two
 /// for sending, 2 KiB each, so 8 KiB from here.

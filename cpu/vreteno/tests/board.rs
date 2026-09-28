@@ -366,6 +366,7 @@ fn run_all(
             vb: chan::<LiteB, DefaultClock>().1,
             vr: chan::<LiteR<32>, DefaultClock>().1,
             net_rx: net_in_rx,
+            fl_miso: quiet(),
             jtag: AxiHostPins {
                 awid: signal::<U<2>, DefaultClock>().1,
                 awaddr,
@@ -430,6 +431,10 @@ fn run_all(
             jtag_rresp: signal::<U<2>, DefaultClock>().0,
             jtag_rlast: bit(),
             jtag_rvalid: rvalid_o,
+            fl_cs_n: bit(),
+            fl_mosi: bit(),
+            fl_cclk: bit(),
+            fl_refused: bit(),
         },
     ));
     rst_o.set(Bit::One);

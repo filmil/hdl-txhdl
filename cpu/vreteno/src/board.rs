@@ -51,15 +51,18 @@ use txhdl_parts::bus::axi_lite::{
 };
 use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::router::Router;
+use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::dma::{LineFetch, LineStore, NoBeats, NoReads};
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::ethdma::{FrameIn, FrameLen, FrameOut};
 use txhdl_parts::ethshare::EthShare;
 use txhdl_parts::ethslots::EthSlots;
+use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::plic::Plic3;
 use txhdl_parts::pwm::Pwm;
 use txhdl_parts::remote::eth::{RemoteLink, ETHERTYPE};
 use txhdl_parts::remote::{Answer as RemoteAnswer, Ask, Remote};
+use txhdl_parts::spi::{Spi, SpiLines};
 use txhdl_parts::trng::Entropy;
 
 /// Which device this board answers to on the wire. Every frame the
@@ -83,16 +86,23 @@ pub const REMOTE_DEV: usize = 1;
 /// another clock states its own.
 pub const REMOTE_WAIT: usize = 100_000_000;
 
+/// The window's clock divider: a half of a bit is four cycles, the
+/// least `CfgFlash` allows, so the flash is clocked at an eighth of
+/// the board's 100 MHz.
+pub const FLASH_DIV: usize = 3;
+
 // begin{map}
 /// The address map: each peripheral's base and the bits of an address
 /// that must equal it. The first three are a page each; the memory is
 /// the quarter of the address space from `0x4000_0000`, and the
 /// interrupt controller the 64 MiB from `0x0c00_0000`; the debug
-/// module has the 64 KiB from `0x1000_0000` (issue 154).
+/// module has the 64 KiB from `0x1000_0000` (issue 154), and the
+/// configuration flash, read as memory, the 16 MiB from `0x2000_0000`
+/// (issue 312).
 pub struct BoardMap;
 
-impl AddrMap<7> for BoardMap {
-    const RANGES: [(usize, usize); 7] = [
+impl AddrMap<8> for BoardMap {
+    const RANGES: [(usize, usize); 8] = [
         (0x1000, 0xffff_f000),
         (0x0200_0000, 0xffff_0000),
         (0x3000, 0xffff_f000),
@@ -100,8 +110,9 @@ impl AddrMap<7> for BoardMap {
         (0x0c00_0000, 0xfc00_0000),
         (0x0000_0000, 0xffff_f000),
         (0x1000_0000, 0xffff_0000),
+        (0x2000_0000, 0xff00_0000),
     ];
-    const NAMES: [&'static str; 7] = [
+    const NAMES: [&'static str; 8] = [
         "the data memory",
         "the timer and the software interrupt",
         "the peripheral page, behind an AXI-Lite bridge",
@@ -109,10 +120,11 @@ impl AddrMap<7> for BoardMap {
         "the platform-level interrupt controller",
         "the boot memory, read only",
         "the debug module",
+        "the configuration flash, read as memory",
     ];
 }
 
-pub type BoardRouter = Router<7, BoardMap, 32, 32, 4, 4>;
+pub type BoardRouter = Router<8, BoardMap, 32, 32, 4, 4>;
 // end{map}
 
 // begin{litemaps}
@@ -120,22 +132,24 @@ pub type BoardRouter = Router<7, BoardMap, 32, 32, 4, 4>;
 /// from 0x3000, in the order of the bridge's ports.
 pub struct SlotMap;
 
-impl AddrMap<6> for SlotMap {
-    const RANGES: [(usize, usize); 6] = [
+impl AddrMap<7> for SlotMap {
+    const RANGES: [(usize, usize); 7] = [
         (0x3000, 0xffff_ff00),
         (0x3100, 0xffff_ff00),
         (0x3200, 0xffff_ff00),
         (0x3300, 0xffff_ff00),
         (0x3400, 0xffff_ff00),
         (0x3500, 0xffff_ff00),
+        (0x3600, 0xffff_ff00),
     ];
-    const NAMES: [&'static str; 6] = [
+    const NAMES: [&'static str; 7] = [
         "the serial port",
         "the pulse width modulator",
         "the third slot, brought out of the unit",
         "the remote peripheral",
         "the Ethernet port's registers",
         "the entropy source",
+        "the configuration flash's SPI master",
     ];
 }
 
@@ -182,17 +196,18 @@ pub struct Board<const DIV: u32> {
     pub pdmem: AxiPer<32, 32, 4, 4>,
     pub ptimer: AxiPer<32, 32, 4, 4>,
     // begin{vslot}
-    /// Six small peripherals share the page at `0x3000`: the serial
+    /// Seven small peripherals share the page at `0x3000`: the serial
     /// port at `0x3000`, the pulse width modulator at `0x3100`,
     /// whatever the board hangs on the third slot at `0x3200`, the
     /// remote peripheral at `0x3300`, the Ethernet port's registers
-    /// on the fifth slot at `0x3400`, and the entropy source on the
-    /// sixth at `0x3500`, each a sixteenth of the page. The router's ports go to memories and to the bus's
-    /// own peripherals, and a
-    /// peripheral of six registers does not want one of its own.
+    /// on the fifth slot at `0x3400`, the entropy source on the
+    /// sixth at `0x3500`, and the configuration flash's SPI master
+    /// on the seventh at `0x3600`, each a sixteenth of the page. The
+    /// router's ports go to memories and to the bus's own peripherals,
+    /// and a peripheral of six registers does not want one of its own.
     ///
     /// The page was never the constraint and is not now. It is 4 KiB
-    /// and a slot is 256 bytes, so it holds sixteen and ten are
+    /// and a slot is 256 bytes, so it holds sixteen and nine are
     /// still free; what was full was the bridge in front of it, which
     /// had four ports. So no address moves to make room for the fifth,
     /// and nothing that names one of the first four changes.
@@ -206,7 +221,7 @@ pub struct Board<const DIV: u32> {
     ///
     /// The fifth is a field, because `EthSlots` runs on the bus clock
     /// like every other peripheral here and wants no crossing.
-    pub puart: LiteBridge<6, SlotMap, 32, 32, 4, 4>,
+    pub puart: LiteBridge<7, SlotMap, 32, 32, 4, 4>,
     // end{vslot}
     pub pddr3: AxiPer<32, 32, 4, 4>,
     pub pplic: LiteBridge<1, PlicMap, 32, 32, 4, 4>,
@@ -254,6 +269,23 @@ pub struct Board<const DIV: u32> {
     /// come from there rather than from a counter.
     pub entropy: Entropy,
     // end{entropy}
+    // begin{cfgflash}
+    /// The configuration flash, the chip that holds the bitstream
+    /// (issue 312): the SPI master on the seventh slot at `0x3600`, for
+    /// commands such as the chip's identity; the window at
+    /// `0x2000_0000`, where an ordinary read is answered with what the
+    /// flash holds; and between them and the chip, the startup block
+    /// and the pins, which wait for the end of configuration and refuse
+    /// write enable, so nothing the core runs can change the
+    /// bitstream.
+    pub spi: Spi,
+    /// The window's tracker, on the router's eighth port.
+    pub pflash: AxiPer<32, 32, 4, 4>,
+    /// The window.
+    pub flashwin: FlashWin<FLASH_DIV, 4>,
+    /// The startup block and the pins, write enable refused.
+    pub cfgflash: CfgFlash<1>,
+    // end{cfgflash}
     // begin{ethdma}
     /// The engines behind the Ethernet port's registers, and what
     /// stands between them and the wire (issue 151).
@@ -308,6 +340,8 @@ pub struct BoardIn {
     /// The JTAG master's pins, one field; its ports are `jtag_awid`
     /// and the rest (issue 579).
     pub jtag: AxiHostPins<32, 32, 4, 2>,
+    /// The configuration flash's data out, pin D01.
+    pub fl_miso: In<Bit>,
 }
 
 /// The board's outputs: the halt and the serial line, the modulator,
@@ -350,6 +384,17 @@ pub struct BoardOut {
     pub jtag_rresp: Out<U<2>>,
     pub jtag_rlast: Out<Bit>,
     pub jtag_rvalid: Out<Bit>,
+    /// The configuration flash's select and data in, pins FCS_B and
+    /// D00; its clock pin as the startup block's model shows it, which
+    /// a board leaves open, since the primitive drives the real one;
+    /// and whether the pins refused write enable.
+    pub fl_cs_n: Out<Bit>,
+    /// The flash's data in.
+    pub fl_mosi: Out<Bit>,
+    /// The flash's clock, in simulation only.
+    pub fl_cclk: Out<Bit>,
+    /// Write enable was refused.
+    pub fl_refused: Out<Bit>,
 }
 // end{ports}
 
@@ -367,6 +412,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
             vr,
             net_rx,
             jtag,
+            fl_miso,
         }: BoardIn,
         BoardOut {
             halt,
@@ -405,6 +451,10 @@ impl<const DIV: u32> Unit for Board<DIV> {
             jtag_rresp,
             jtag_rlast,
             jtag_rvalid,
+            fl_cs_n,
+            fl_mosi,
+            fl_cclk,
+            fl_refused,
         }: BoardOut,
     ) {
         // The reset, read by the core, the timer and the serial port.
@@ -516,6 +566,34 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (pw_trng_tx, pw_trng_rx) = chan::<LiteW<32, 4>, DefaultClock>();
         let (pb_trng_tx, pb_trng_rx) = chan::<LiteB, DefaultClock>();
         let (pr_trng_tx, pr_trng_rx) = chan::<LiteR<32>, DefaultClock>();
+        // The flash's master on the seventh slot, and its wires to the
+        // pins; its interrupt is not used, since a program waits on it.
+        let (paw_spi_tx, paw_spi_rx) = chan::<LiteAw<32>, DefaultClock>();
+        let (par_spi_tx, par_spi_rx) = chan::<LiteAr<32>, DefaultClock>();
+        let (pw_spi_tx, pw_spi_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (pb_spi_tx, pb_spi_rx) = chan::<LiteB, DefaultClock>();
+        let (pr_spi_tx, pr_spi_rx) = chan::<LiteR<32>, DefaultClock>();
+        let (m_sclk_o, m_sclk_i) = signal::<Bit, DefaultClock>();
+        let (m_mosi_o, m_mosi_i) = signal::<Bit, DefaultClock>();
+        let (m_cs_n_o, m_cs_n_i) = signal::<Bit, DefaultClock>();
+        let (spi_irq_o, _spi_irq_i) = signal::<Bit, DefaultClock>();
+        // The window on the router's eighth port, its wires to the pins,
+        // and the reset the pins hold it in until the flash is ready.
+        let (aw7_tx, aw7_rx) = chan::<Aw<32, 4>, DefaultClock>();
+        let (ar7_tx, ar7_rx) = chan::<Ar<32, 4>, DefaultClock>();
+        let (w7_tx, w7_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (b7_tx, b7_rx) = chan::<B<4>, DefaultClock>();
+        let (r7_tx, r7_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (req7_tx, req7_rx) = chan::<PerReq<32, 4>, DefaultClock>();
+        let (wd7_tx, wd7_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (ans7_tx, ans7_rx) = chan::<Answer<4>, DefaultClock>();
+        let (rb7_tx, rb7_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (w_sclk_o, w_sclk_i) = signal::<Bit, DefaultClock>();
+        let (w_mosi_o, w_mosi_i) = signal::<Bit, DefaultClock>();
+        let (w_cs_n_o, w_cs_n_i) = signal::<Bit, DefaultClock>();
+        let (w_rst_o, w_rst_i) = signal::<Bit, DefaultClock>();
+        // The flash's data out goes to both.
+        let fl_miso_win = fl_miso.clone();
         // The remote peripheral's side of the same bridge, and the two
         // channels between it and the link that makes the frames.
         let (paw_rem_tx, paw_rem_rx) = chan::<LiteAw<32>, DefaultClock>();
@@ -883,25 +961,25 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                     xw_rx,
                                     [
                                         b0_rx, b1_rx, b2_rx, b3_rx, b4_rx,
-                                        b5_rx, b6_rx,
+                                        b5_rx, b6_rx, b7_rx,
                                     ],
                                     [
                                         r0_rx, r1_rx, r2_rx, r3_rx, r4_rx,
-                                        r5_rx, r6_rx,
+                                        r5_rx, r6_rx, r7_rx,
                                     ],
                                 ),
                                 (
                                     [
                                         aw0_tx, aw1_tx, aw2_tx, aw3_tx, aw4_tx,
-                                        aw5_tx, aw6_tx,
+                                        aw5_tx, aw6_tx, aw7_tx,
                                     ],
                                     [
                                         ar0_tx, ar1_tx, ar2_tx, ar3_tx, ar4_tx,
-                                        ar5_tx, ar6_tx,
+                                        ar5_tx, ar6_tx, ar7_tx,
                                     ],
                                     [
                                         w0_tx, w1_tx, w2_tx, w3_tx, w4_tx,
-                                        w5_tx, w6_tx,
+                                        w5_tx, w6_tx, w7_tx,
                                     ],
                                     xb_tx,
                                     xr_tx,
@@ -935,12 +1013,12 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             [
                                                 lb_rx, pb_pwm_rx, vb,
                                                 pb_rem_rx, pb_eth_rx,
-                                                pb_trng_rx,
+                                                pb_trng_rx, pb_spi_rx,
                                             ],
                                             [
                                                 lr_rx, pr_pwm_rx, vr,
                                                 pr_rem_rx, pr_eth_rx,
-                                                pr_trng_rx,
+                                                pr_trng_rx, pr_spi_rx,
                                             ],
                                         ),
                                         (
@@ -951,6 +1029,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                 paw_rem_tx,
                                                 paw_eth_tx,
                                                 paw_trng_tx,
+                                                paw_spi_tx,
                                             ],
                                             [
                                                 lar_tx,
@@ -959,11 +1038,12 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                 par_rem_tx,
                                                 par_eth_tx,
                                                 par_trng_tx,
+                                                par_spi_tx,
                                             ],
                                             [
                                                 lw_tx, pw_pwm_tx, vw,
                                                 pw_rem_tx, pw_eth_tx,
-                                                pw_trng_tx,
+                                                pw_trng_tx, pw_spi_tx,
                                             ],
                                             b2_tx,
                                             r2_tx,
@@ -995,6 +1075,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                         r4_tx,
                                                     ),
                                                 ),
+join2(
                                                 join2(
                                                     self.prom.run(
                                                         (
@@ -1017,6 +1098,49 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                         (),
                                                     ),
                                                 ),
+                                                // The flash: the master and the window
+                                                // before the pins, which read the lines
+                                                // both drive this step (issue 312).
+                                                join2(
+                                                    join2(
+                                                        self.spi.run(
+                                                            LitePort {
+                                                                aw: paw_spi_rx,
+                                                                ar: par_spi_rx,
+                                                                w: pw_spi_rx,
+                                                                b: pb_spi_tx,
+                                                                r: pr_spi_tx,
+                                                            },
+                                                            SpiLines {
+                                                                miso: fl_miso,
+                                                                sclk: m_sclk_o,
+                                                                mosi: m_mosi_o,
+                                                                cs_n: m_cs_n_o,
+                                                                irq: spi_irq_o,
+                                                            },
+                                                        ),
+                                                        join2(
+                                                            self.pflash.run(
+                                                                (aw7_rx, ar7_rx, w7_rx, ans7_rx, rb7_rx),
+                                                                (req7_tx, wd7_tx, b7_tx, r7_tx),
+                                                            ),
+                                                            self.flashwin.run(
+                                                                PerPort {
+                                                                    req: req7_rx,
+                                                                    w: wd7_rx,
+                                                                    ans: ans7_tx,
+                                                                    r: rb7_tx,
+                                                                },
+                                                                (w_rst_i, fl_miso_win, w_sclk_o, w_mosi_o, w_cs_n_o),
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    self.cfgflash.run(
+                                                        (m_sclk_i, m_mosi_i, m_cs_n_i, w_sclk_i, w_mosi_i, w_cs_n_i),
+                                                        (fl_cclk, fl_mosi, fl_cs_n, w_rst_o, fl_refused),
+                                                    ),
+                                                ),
+),
                                             ),
                                             // The peripheral before the link, so
                                             // a transaction and the first byte of

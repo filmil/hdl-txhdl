@@ -89,12 +89,12 @@ fn board(key: &str, slots: &[(usize, &str)]) {
     define(
         "board",
         key,
-        &table(cols, head, &ranges::<7, BoardMap>(&[])),
+        &table(cols, head, &ranges::<8, BoardMap>(&[])),
     );
     define(
         "page",
         key,
-        &table(cols, head, &ranges::<6, SlotMap>(slots)),
+        &table(cols, head, &ranges::<7, SlotMap>(slots)),
     );
 }
 
@@ -119,8 +119,8 @@ fn regs(key: &str, base: usize, map: &RegMap) {
 /// are called `regs`, and its base: a router port's or a slot of the
 /// page's. One to a line, and one more as each declaration lands.
 fn reg_maps() -> Vec<(&'static str, usize, &'static RegMap)> {
-    let port = |i: usize| <BoardMap as AddrMap<7>>::RANGES[i].0;
-    let slot = |i: usize| <SlotMap as AddrMap<6>>::RANGES[i].0;
+    let port = |i: usize| <BoardMap as AddrMap<8>>::RANGES[i].0;
+    let slot = |i: usize| <SlotMap as AddrMap<7>>::RANGES[i].0;
     vec![
         ("timer", port(1), &vreteno32::timer::clint::MAP),
         ("uart", slot(0), &vreteno32::uart::serial::MAP),
@@ -128,6 +128,7 @@ fn reg_maps() -> Vec<(&'static str, usize, &'static RegMap)> {
         ("hdmi", slot(2), &txhdl_parts::hdmi::regs::MAP),
         ("ethslots", slot(4), &txhdl_parts::ethslots::regs::MAP),
         ("trng", slot(5), &txhdl_parts::trng::regs::MAP),
+        ("spi", slot(6), &txhdl_parts::spi::regs::MAP),
     ]
 }
 
