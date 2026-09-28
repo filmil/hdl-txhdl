@@ -3,7 +3,9 @@
 \label{sec:x-mem}
 
 A \code{Mem<T, N>} is state with an address: one write port, deferred
-like a register drive, and as many plain reads as a cycle wants.
+like a register drive, and as many plain reads as a cycle wants. A
+second write in the same cycle stops the run, since one port takes one
+word a cycle and the netlist has only the one (issue 808).
 \code{self.m.at(addr)} names a word as a drive's target, so
 \code{with!} and \code{case!} write a memory as they write a
 register; \code{self.m.read(addr)} is the read, and the output here is
