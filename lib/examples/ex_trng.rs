@@ -20,7 +20,7 @@
 //! evidence of randomness, only of the machinery. The peripheral is
 //! lowered, and the build simulates its netlist against this run
 //! under nvc and Verilator with the samples as the run recorded them.
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, Clock, DefaultClock, Running, Unit};
@@ -91,6 +91,9 @@ fn main() {
     let captured = Rc::new(RefCell::new(Vec::new()));
     let into = captured.clone();
     let (run_reg, rawv_reg) = (trng.run, trng.rawv);
+    // Whether the client has finished, which ends the run (#829).
+    let done = Rc::new(Cell::new(false));
+    let fin = done.clone();
 
     let client = async move {
         let word = |v: u32| [U::<32>::from(v)];
@@ -166,6 +169,7 @@ fn main() {
             got.len() * 32,
             &got[..4]
         );
+        fin.set(true);
     };
 
     let mut sim = Running::new(join2(
@@ -179,16 +183,23 @@ fn main() {
         ),
     ));
     println!("    t  what the program saw");
+    // The run lasts until the client is done, under a ceiling, so its
+    // length follows the design rather than a count typed here: a
+    // slower extractor made a fixed count too short once (#829).
     // Every sample the model took, oldest first: a cycle that began
     // with the source on shifted one into `raw`.
     let mut samples = Vec::new();
-    for _ in 0..16000 {
+    for _ in 0..100_000 {
         let was = run_reg.get();
         sim.cycle();
         if was == Bit::One {
             samples.push((rawv_reg.get().raw() & 1) as u8);
         }
+        if done.get() {
+            break;
+        }
     }
+    assert!(done.get(), "the client finished within the ceiling");
     stop();
     let bits: Vec<u8> = captured
         .borrow()
