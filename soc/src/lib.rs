@@ -44,7 +44,7 @@ use vreteno32::uart::Uart;
 pub struct SerialMap;
 
 impl AddrMap<1> for SerialMap {
-    const RANGES: [(usize, usize); 1] = [(0x3000, 0xf000)];
+    const RANGES: [(usize, usize); 1] = [(SERIAL_BASE, 0xf000)];
 }
 
 /// The link every corner speaks: thirty-two bit addresses and words,
@@ -75,6 +75,36 @@ pub const DL_CTRL: usize = 0x4000;
 pub const FB_BASE: usize = 0x8000;
 /// Words of memory: as far as the last word of the framebuffer.
 pub const RAM_WORDS: usize = FB_BASE / 4 + (1 << LOGW) * H;
+/// Where the serial port's four kilobytes begin.
+pub const SERIAL_BASE: usize = 0x3000;
+/// What a host bridge compares an address under: all of it but the
+/// low twelve bits, so each range is four kilobytes.
+pub const PAGE_MASK: usize = 0xffff_f000;
+/// The corner the serial port sits at.
+pub const SERIAL_NODE: (usize, usize) = (1, 1);
+/// The corner the memory sits at, which answers the program's data and
+/// every address the map names nowhere else.
+pub const MEMORY_NODE: (usize, usize) = (0, 1);
+
+/// What the program and the rasteriser keep where: the base, the size
+/// in bytes and what it is. The host bridges send the serial port's
+/// range to its corner and all the rest to the memory's, so this is
+/// the map a document lists (#444).
+pub const REGIONS: [(usize, usize, &str); 5] = [
+    (
+        DATA_BASE,
+        DL_BASE - DATA_BASE,
+        "the program's constants and stack",
+    ),
+    (DL_BASE, SERIAL_BASE - DL_BASE, "the display list"),
+    (
+        SERIAL_BASE,
+        (!PAGE_MASK & 0xffff_ffff) + 1,
+        "the serial port",
+    ),
+    (DL_CTRL, 4, "the display list's count"),
+    (FB_BASE, RAM_WORDS * 4 - FB_BASE, "the framebuffer"),
+];
 
 // begin{map}
 /// A host bridge at `X`, `Y` with the map every host here uses: the
@@ -94,18 +124,18 @@ pub type Bridge<const X: usize, const Y: usize> = HostBridge<
     32,
     4,
     IW,
-    0x3000,
-    0xffff_f000,
-    1,
-    1,
-    0x1000,
-    0xffff_f000,
+    SERIAL_BASE,
+    PAGE_MASK,
+    { SERIAL_NODE.0 },
+    { SERIAL_NODE.1 },
+    DATA_BASE,
+    PAGE_MASK,
+    { MEMORY_NODE.0 },
+    { MEMORY_NODE.1 },
     0,
-    1,
     0,
-    0,
-    0,
-    1,
+    { MEMORY_NODE.0 },
+    { MEMORY_NODE.1 },
 >;
 
 // end{map}
