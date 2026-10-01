@@ -118,7 +118,9 @@ It closes #458 once the numbers are on it; the datasheet in #521 is written afte
 
 `trngstat` is a first estimate and not an SP 800-90B assessment: 4096 words is below the million samples the standard's full battery wants.
 If the numbers are to be quoted as an assessment, the next step is a longer capture, which the program would need to be changed to print.
-A `rawrun` section, samples in a row rather than windows of 32, is read by `trngstat` out to `-maxlag`, which is what measures a period longer than a word; no program prints one yet.
+`trng_ram_bin` also prints samples in a row rather than windows of 32, which is what measures a period longer than a word, in two sections: `rawrun`, the run joined from overlapping windows a loop read (#805), and `rawcap`, the peripheral's own capture of 8192 samples (#817).
+`trngstat` reads each out to `-maxlag` on its own, and never joins them, nor runs from different captures; the capture is the one to quote, since the joined run breaks wherever a read came late (#835).
+A file with a heading twice is refused, so a log that holds two runs of the program must be split before it is read.
 
 ## 7. Fastboot, #143
 
