@@ -6,7 +6,9 @@
 // `trng_ram_bin` prints `trng ok`, then `raw` and 4096 words of the
 // samples before the extractor, then `words` and 4096 words of the
 // extractor's output, then `end`, each word as eight hex digits on a
-// line; a program may also print `rawrun`, words of samples in a row.
+// line; a program may also print `rawrun`, words of samples in a row
+// joined from overlapping windows, and `rawcap`, the peripheral's own
+// capture of samples in a row, each once (issue 835).
 // This reads one or more captures, as the serial watcher saved them,
 // and prints for each, and for all of them pooled when there are
 // several:
@@ -18,7 +20,8 @@
 //     for a fair, independent source beside each; the extractor's lags
 //     also as the source's samples they sit about apart, four a bit
 //     times the fold;
-//   - for a `rawrun`, the correlation of samples by lag out to -maxlag.
+//   - for a `rawrun` and for a `rawcap`, each on its own, the
+//     correlation of samples by lag out to -maxlag.
 //
 // It exits 1 when any capture's extractor words, or the pool's, fail
 // the bounds `Judge` states, or a capture is short or stopped on a
@@ -67,7 +70,7 @@ func lags(ls []Lag, fold int) {
 
 func main() {
 	fold := flag.Int("fold", 1, "samples folded into one before the extractor")
-	maxlag := flag.Int("maxlag", 128, "the longest lag measured over a rawrun")
+	maxlag := flag.Int("maxlag", 128, "the longest lag measured over a run of samples in a row")
 	flag.Parse()
 	if flag.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "usage: trngstat [-fold=N] [-maxlag=N] <capture>...")
@@ -96,7 +99,9 @@ func main() {
 	}
 	if flag.NArg() > 1 {
 		// Pooled: pairs stay inside a word, so words from different
-		// captures never pair, and pooling only adds pairs.
+		// captures never pair, and pooling only adds pairs. The runs are
+		// not pooled: two captures' runs joined end to end would pair
+		// samples across the join (issue 835).
 		fmt.Printf("== pooled, %d captures\n", flag.NArg())
 		pool.Ended = true
 		if !one(pool, *fold, *maxlag) {
@@ -124,6 +129,10 @@ func one(c Capture, fold, maxlag int) bool {
 	if len(c.RawRun) >= 2 {
 		fmt.Printf("rawrun: %d samples in a row\n", 32*len(c.RawRun))
 		lags(RunLags(c.RawRun, maxlag), 0)
+	}
+	if len(c.RawCap) >= 2 {
+		fmt.Printf("rawcap: %d samples in a row\n", 32*len(c.RawCap))
+		lags(RunLags(c.RawCap, maxlag), 0)
 	}
 	if len(c.Words) < 2 {
 		fmt.Println("no extractor words to judge")

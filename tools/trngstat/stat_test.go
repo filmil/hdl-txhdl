@@ -25,6 +25,38 @@ func TestParseSkipsTheGreetingAndReadsEverySection(t *testing.T) {
 	}
 }
 
+// The joined run and the capture are two runs, each read into a field
+// of its own, as main.go measures each on its own (issue 835).
+func TestParseKeepsTheJoinedRunAndTheCaptureApart(t *testing.T) {
+	in := "trng ok\nrawrun pairs 1 fit 1 moved 0 gap 0 bad 0\n" +
+		"rawrun\n00000001\nraw\n00000000\nrawcap\n80000000\nffffffff\n" +
+		"words\n12345678\nend\n"
+	c, err := Parse(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.RawRun) != 1 || c.RawRun[0] != 1 {
+		t.Errorf("rawrun %x", c.RawRun)
+	}
+	if len(c.RawCap) != 2 || c.RawCap[0] != 0x80000000 || c.RawCap[1] != 0xffffffff {
+		t.Errorf("rawcap %x", c.RawCap)
+	}
+}
+
+// The issue's reproduction: two sections under one heading used to be
+// appended into one run of 64 samples. They are refused now, naming
+// both lines.
+func TestParseRefusesAHeadingSeenTwice(t *testing.T) {
+	in := "rawrun\n00000001\nrawrun\n80000000\nend\n"
+	c, err := Parse(strings.NewReader(in))
+	if err == nil {
+		t.Fatalf("parsed as one run: %x", c.RawRun)
+	}
+	if !strings.Contains(err.Error(), "line 3") || !strings.Contains(err.Error(), "after line 1") {
+		t.Errorf("error %q does not name both headings", err)
+	}
+}
+
 func TestParseRefusesAGarbledWord(t *testing.T) {
 	_, err := Parse(strings.NewReader("raw\n1234567\n"))
 	if err == nil {

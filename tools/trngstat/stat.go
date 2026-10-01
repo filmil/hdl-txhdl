@@ -12,41 +12,53 @@ import (
 )
 
 // Capture is what the program printed: the raw words, the extractor's
-// words, a run of raw words if the program printed one, and whether it
-// reached `end` or stopped on `fault`.
+// words, the runs of samples in a row if the program printed them, and
+// whether it reached `end` or stopped on `fault`.
 //
 // A raw word is a window of 32 samples in a row, the oldest in bit 31,
 // and two raw words are far apart in time: the program reads one while
 // the serial line is busy with the last. A `rawrun` is the other kind:
 // words whose samples follow on from each other, the oldest in bit 31
-// of the first, so a lag longer than a word can be measured.
+// of the first, so a lag longer than a word can be measured. Two kinds
+// of run are printed: `rawrun`, joined from overlapping windows a loop
+// read, and `rawcap`, the peripheral's own capture. They are two runs
+// and not one, since the second does not follow on from the first, so
+// each has a field of its own and is measured on its own (issue 835).
 type Capture struct {
-	Raw, RawRun, Words []uint32
-	Ended              bool
-	Fault              bool
+	Raw, RawRun, RawCap, Words []uint32
+	Ended                      bool
+	Fault                      bool
 }
 
 // Parse reads a capture. Lines before the first section are the
 // loader's and the program's greeting and are skipped; a line that is
 // not eight hex digits inside a section is an error, since a dropped
 // or garbled character on the serial line is exactly what must not be
-// averaged away.
+// averaged away. A heading seen twice is an error too: appending the
+// second section to the first would read two runs as one, and every
+// lag across the join would be a lag the source never had (issue 835).
 func Parse(r io.Reader) (Capture, error) {
 	var c Capture
 	var into *[]uint32
+	sections := map[string]*[]uint32{
+		"raw":    &c.Raw,
+		"rawrun": &c.RawRun,
+		"rawcap": &c.RawCap,
+		"words":  &c.Words,
+	}
+	seen := map[string]int{}
 	s := bufio.NewScanner(r)
 	for n := 1; s.Scan(); n++ {
 		line := strings.TrimSpace(s.Text())
+		if dst, ok := sections[line]; ok {
+			if at, again := seen[line]; again {
+				return c, fmt.Errorf("line %d: a second %q section, after line %d: two sections would read as one", n, line, at)
+			}
+			seen[line] = n
+			into = dst
+			continue
+		}
 		switch line {
-		case "raw":
-			into = &c.Raw
-			continue
-		case "rawrun":
-			into = &c.RawRun
-			continue
-		case "words":
-			into = &c.Words
-			continue
 		case "end":
 			c.Ended = true
 			return c, nil
