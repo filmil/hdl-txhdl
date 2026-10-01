@@ -14,12 +14,13 @@
 //! measures the source: it reads the raw samples, the folded bits
 //! before the extractor, 4096 words of them, and sends each up the
 //! serial line as eight hex digits, then 8192 samples in a row that
-//! the peripheral captured, as 256 words under `rawrun`, then 4096
-//! words of the extractor's output the same way. That is what a host
-//! estimates the source's bias and entropy from, and the only evidence
-//! there is that the rings are random rather than merely running (issue
-//! 458). A simulation runs the model rings and says nothing here, since
-//! what it would measure is the model.
+//! the peripheral captured, as 256 words under `rawcap`, a heading of
+//! its own so that it is never read as part of the joined run (issue
+//! 835), then 4096 words of the extractor's output the same way.
+//! That is what a host estimates the source's bias and entropy from,
+//! and the only evidence there is that the rings are random rather
+//! than merely running (issue 458). A simulation runs the model rings
+//! and says nothing here, since what it would measure is the model.
 #![no_std]
 #![no_main]
 
@@ -257,7 +258,7 @@ fn measure() {
     // read out afterwards at the serial line's pace.
     unsafe { write_volatile(TRNG.add(CAP), trng::CAP_START_MASK) };
     while unsafe { read_volatile(TRNG.add(CAP)) } & trng::CAP_DONE_MASK == 0 {}
-    Uart::say(b"rawrun\n");
+    Uart::say(b"rawcap\n");
     for i in 0..=trng::CAPIDX_INDEX_MASK {
         unsafe { write_volatile(TRNG.add(CAPIDX), i) };
         Uart::put_hex(unsafe { read_volatile(TRNG.add(CAPWORD)) });
