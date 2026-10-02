@@ -328,7 +328,11 @@ module flagship (
   wire rx_rst = rx_rst_sync[1];
   wire tx_rst = tx_rst_sync[1];
 
-  eth_rgmii rgmii (
+  // The receive clock is shifted 78.75 degrees, 1.75 ns, rather than
+  // the wrapper's 90: that centres the sampling edge in the window
+  // board/flagship_io.xdc times, where 90 misses hold by 40 ps. Both are
+  // inside the 45 to 112.5 degrees that received on the board (#231).
+  eth_rgmii #(.RX_CLOCK_PHASE(78.75)) rgmii (
     .clk125(clk125), .txd(txd), .tx_en(tx_en),
     .rx_clk(rx_clk), .rxd(rxd), .rx_dv(rx_dv), .rx_er(rx_er),
     .eth_txck(eth_txck), .eth_txctl(eth_txctl), .eth_txd(eth_txd),
