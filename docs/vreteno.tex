@@ -1458,7 +1458,11 @@ read is answered with what the flash holds. Between both and the chip
 stand the \code{STARTUPE2} primitive, the only way to the flash's
 clock pin once the part is configured, and the pins, which wait for
 the end of configuration and refuse write enable, so nothing the core
-runs can change the bitstream.
+runs can change the bitstream. On the board, \code{flashid} read the
+chip's identity, \code{0020ba18}, the MT25QL128's; found its write
+enable latch clear after a write enable the pins refused; and found
+the bitstream's sync word through the window at byte 48. Nothing was
+written to the flash.
 The DDR3 memory is a gigabyte behind the bridge from AXI to Wishbone
 and AMD's MIG controller, which the build generates. The controller
 is a module from elsewhere, so the netlist names its wrapper and does
