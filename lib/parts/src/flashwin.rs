@@ -271,4 +271,64 @@ mod tests {
         }
         assert_eq!(got.get(), Some(word), "the read was answered");
     }
+
+    /// A read takes the cycles its account says: nine bytes on the
+    /// wires, sixteen half bits a byte, `DIV + 1` cycles a half bit,
+    /// which is 288 at `DIV = 1`, and a few more for the bus on either
+    /// side. Counted in cycles of the clock and not in the executor's
+    /// time steps, of which a cycle is two: a count of steps reads as
+    /// twice the account (issue 814).
+    #[test]
+    fn a_read_takes_the_cycles_its_account_says() {
+        let u = axi_units::<32, 32, 4, 2>();
+        let host = host_end::<32, 32, 4, 2, 4>(u.host_client);
+        let bus: PerPort<32, 32, 4, 2> = u.per_client.into();
+        let (miso_drive, miso) = signal::<Bit, DefaultClock>();
+        let (sclk_out, sclk) = signal::<Bit, DefaultClock>();
+        let (mosi_out, mosi) = signal::<Bit, DefaultClock>();
+        let (cs_out, cs_n) = signal::<Bit, DefaultClock>();
+        let (_rst_out, rst) = signal::<Bit, DefaultClock>();
+        let mut host_unit = AxiHost::<32, 32, 4, 2, 4>::default();
+        let mut per_unit = AxiPer::<32, 32, 4, 2>::default();
+        let mut win = FlashWin::<1, 2>::default();
+        let got = Rc::new(Cell::new(None));
+        let seen = got.clone();
+        let client = async move {
+            let r = host.read(Rd::at(0, 1)).await.done().await;
+            seen.set(Some(r.data[0].raw() as u32));
+        };
+        let mut sim = Running::new(join2(
+            join2(
+                host_unit.run(u.host_in, u.host_out),
+                per_unit.run(u.per_in, u.per_out),
+            ),
+            join2(
+                win.run(bus, (rst, miso, sclk_out, mosi_out, cs_out)),
+                client,
+            ),
+        ));
+        let word = 0x1234_5678u32;
+        let mut chip =
+            FlashDevice::new(word.to_le_bytes().to_vec(), [0; 3], false, false);
+        // Cycles until the answer, and the clock's rising edges while
+        // the select is low.
+        let (mut cycles, mut rises, mut was) = (0u32, 0u32, false);
+        while got.get().is_none() && cycles < 2000 {
+            sim.cycle();
+            cycles += 1;
+            let high = sclk.get().to_bool();
+            if high && !was && !cs_n.get().to_bool() {
+                rises += 1;
+            }
+            was = high;
+            chip.step(cs_n.get().to_bool(), high, mosi.get().to_bool());
+            miso_drive.set(Bit::from_bool(chip.miso()));
+        }
+        assert_eq!(got.get(), Some(word), "the read was answered");
+        assert_eq!(rises, 9 * 8, "a clock a bit, nine bytes");
+        assert!(
+            (288..288 + 16).contains(&cycles),
+            "{cycles} cycles, against 288 on the wires"
+        );
+    }
 }
