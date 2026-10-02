@@ -21,6 +21,15 @@ the bits that survive fill a word from the top, and whole words wait
 in a buffer of \code{WORDS}, four, which a host takes one at a time.
 A word that finds the buffer full is dropped.
 
+Beside the words it keeps a capture for measuring the source (issue
+817). A write of \code{cap} fills a buffer of \code{CAP\_WORDS}, 256
+words, from the folded samples as they come, one word every 32 cycles
+while the source runs, so the capture is 8192 samples in a row with
+none missing. A host reads it out afterwards at any pace, a word at a
+time through \code{capidx} and \code{capword}. \code{raw} alone cannot
+do this: it holds the last 32 samples, and a program on the board
+cannot read it again within 32 cycles.
+
 It is an AXI-Lite peripheral whose link is one port, \code{bus}, a
 \code{LitePort} of the five channels: \code{bus\_aw}, \code{bus\_ar}
 and \code{bus\_w} in, \code{bus\_b} and \code{bus\_r} out. Its other
@@ -37,15 +46,16 @@ min-entropy \code{H} of half a bit per sample, rounded to forty.
 \subsection*{Register map}
 
 Offsets from the peripheral's base. The port selects the word by bits
-3 and 2 of the address.
+4 to 2 of the address.
 
 \dsregs{Trng}
 
 A read of \code{data} takes the oldest word, and reads zero when none
 is waiting. \code{ctrl}'s \code{clear} is written only: a one clears
 the fault, and it reads back zero. Writes to \code{data},
-\code{status} and \code{raw} are ignored. \code{raw} is the samples
-before the extractor.
+\code{status}, \code{raw} and \code{capword} are ignored. \code{raw}
+is the samples before the extractor. \code{cap}'s \code{start} is
+written only, and its \code{busy} and \code{done} are read only.
 
 \dstables{Trng}
 
@@ -68,6 +78,12 @@ data beat and room on \code{bus\_b} in the same cycle, and is answered
 \item \code{raw} shifts in one folded sample a cycle while the run
 bit is set, newest lowest, and is what a program on the board reads
 in a loop to measure the source.
+\item A capture fills only while the run bit is set: each sample goes
+into the word being filled, and the word is written whole when it
+holds 32, the same 32 \code{raw} reads then, so the words are samples
+in a row with none missing and none twice. \code{busy} is set while it
+fills and \code{done} when all 256 words are whole. The extractor and
+the health test run on regardless.
 \end{itemize}
 
 \subsection*{Verification}
@@ -82,10 +98,13 @@ clear takes while a stream just under the cutoff does not.
 \item \code{//docs:trng\_sim\_trng\_tb\_test} and
 \code{//docs:trng\_vsim\_test} simulate the netlist against the run of
 \code{ex\_trng} under nvc and Verilator, with the model rings' samples
-as the run recorded them.
+as the run recorded them. The run takes a capture as well, reads it
+out and finds it whole among the model's samples, in a row.
 \item \code{//cpu/vreteno:board\_test} runs
 \code{the\_entropy\_source\_answers\_on\_the\_board}: a program on the
-core turns the source on, takes four words and says they differed.
+core turns the source on, takes four words and says they differed,
+then joins overlapping windows of \code{raw} into a run that must be
+found whole among the model's samples (issue 805).
 \end{itemize}
 
 \subsection*{Used by}
@@ -98,6 +117,6 @@ core turns the source on, takes four words and says they differed.
 Nothing here is evidence of randomness: every run is against a model
 of the rings, and what the tests prove is the folding, the test, the
 extractor and the buffer. The source's bias and entropy are measured
-on the board, from \code{raw} and \code{data}, and issue 458 records
-how far that has gone. The test is the repetition count alone; the
+on the board, from \code{raw}, the capture and \code{data}, and
+issues 458 and 780 record how far that has gone. The test is the repetition count alone; the
 adaptive proportion test of the same standard is not implemented.
