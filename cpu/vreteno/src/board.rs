@@ -54,6 +54,7 @@ use txhdl_parts::ethdma::{FrameIn, FrameLen, FrameOut};
 use txhdl_parts::ethshare::EthShare;
 use txhdl_parts::ethslots::EthSlots;
 use txhdl_parts::flashwin::FlashWin;
+use txhdl_parts::mdio::{Mdio, MdioLines};
 use txhdl_parts::plic::Plic3;
 use txhdl_parts::pwm::Pwm;
 use txhdl_parts::remote::eth::{RemoteLink, ETHERTYPE};
@@ -129,8 +130,8 @@ pub type BoardRouter = Router<8, BoardMap, 32, 32, 4, 4>;
 /// from 0x3000, in the order of the bridge's ports.
 pub struct SlotMap;
 
-impl AddrMap<7> for SlotMap {
-    const RANGES: [(usize, usize); 7] = [
+impl AddrMap<8> for SlotMap {
+    const RANGES: [(usize, usize); 8] = [
         (0x3000, 0xffff_ff00),
         (0x3100, 0xffff_ff00),
         (0x3200, 0xffff_ff00),
@@ -138,8 +139,9 @@ impl AddrMap<7> for SlotMap {
         (0x3400, 0xffff_ff00),
         (0x3500, 0xffff_ff00),
         (0x3600, 0xffff_ff00),
+        (0x3700, 0xffff_ff00),
     ];
-    const NAMES: [&'static str; 7] = [
+    const NAMES: [&'static str; 8] = [
         "the serial port",
         "the pulse width modulator",
         "the third slot, brought out of the unit",
@@ -147,6 +149,7 @@ impl AddrMap<7> for SlotMap {
         "the Ethernet port's registers",
         "the entropy source",
         "the configuration flash's SPI master",
+        "the Ethernet PHY's management interface",
     ];
 }
 
@@ -193,18 +196,19 @@ pub struct Board<const DIV: u32> {
     pub pdmem: AxiPer<32, 32, 4, 4>,
     pub ptimer: AxiPer<32, 32, 4, 4>,
     // begin{vslot}
-    /// Seven small peripherals share the page at `0x3000`: the serial
+    /// Eight small peripherals share the page at `0x3000`: the serial
     /// port at `0x3000`, the pulse width modulator at `0x3100`,
     /// whatever the board hangs on the third slot at `0x3200`, the
     /// remote peripheral at `0x3300`, the Ethernet port's registers
     /// on the fifth slot at `0x3400`, the entropy source on the
-    /// sixth at `0x3500`, and the configuration flash's SPI master
-    /// on the seventh at `0x3600`, each a sixteenth of the page. The
+    /// sixth at `0x3500`, the configuration flash's SPI master on the
+    /// seventh at `0x3600`, and the Ethernet PHY's MDIO master on the
+    /// eighth at `0x3700`, each a sixteenth of the page. The
     /// router's ports go to memories and to the bus's own peripherals,
     /// and a peripheral of six registers does not want one of its own.
     ///
     /// The page was never the constraint and is not now. It is 4 KiB
-    /// and a slot is 256 bytes, so it holds sixteen and nine are
+    /// and a slot is 256 bytes, so it holds sixteen and eight are
     /// still free; what was full was the bridge in front of it, which
     /// had four ports. So no address moves to make room for the fifth,
     /// and nothing that names one of the first four changes.
@@ -218,7 +222,7 @@ pub struct Board<const DIV: u32> {
     ///
     /// The fifth is a field, because `EthSlots` runs on the bus clock
     /// like every other peripheral here and wants no crossing.
-    pub puart: LiteBridge<7, SlotMap, 32, 32, 4, 4>,
+    pub puart: LiteBridge<8, SlotMap, 32, 32, 4, 4>,
     // end{vslot}
     pub pddr3: AxiPer<32, 32, 4, 4>,
     pub pplic: LiteBridge<1, PlicMap, 32, 32, 4, 4>,
@@ -276,6 +280,11 @@ pub struct Board<const DIV: u32> {
     /// write enable, so nothing the core runs can change the
     /// bitstream.
     pub spi: Spi,
+    /// The Ethernet PHY's management interface (issue 864): an MDIO
+    /// master on the eighth slot at `0x3700`, so a program can read the
+    /// PHY's registers. Its interrupt is not wired, since a program waits
+    /// on it.
+    pub mdio: Mdio,
     /// The window's tracker, on the router's eighth port.
     pub pflash: AxiPer<32, 32, 4, 4>,
     /// The window.
@@ -339,6 +348,8 @@ pub struct BoardIn {
     pub jtag: AxiHostPins<32, 32, 4, 2>,
     /// The configuration flash's data out, pin D01.
     pub fl_miso: In<Bit>,
+    /// The Ethernet PHY's management data line, as read at the pad.
+    pub phy_mdio_in: In<Bit>,
 }
 
 /// The board's outputs: the halt and the serial line, the modulator,
@@ -392,6 +403,13 @@ pub struct BoardOut {
     pub fl_cclk: Out<Bit>,
     /// Write enable was refused.
     pub fl_refused: Out<Bit>,
+    /// The Ethernet PHY's management clock.
+    pub phy_mdc: Out<Bit>,
+    /// The level driven on the management data line.
+    pub phy_mdio_out: Out<Bit>,
+    /// High while the board drives the management data line; the top
+    /// makes the pad three-state from the two.
+    pub phy_mdio_oe: Out<Bit>,
 }
 // end{ports}
 
@@ -410,6 +428,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
             net_rx,
             jtag,
             fl_miso,
+            phy_mdio_in,
         }: BoardIn,
         BoardOut {
             halt,
@@ -452,6 +471,9 @@ impl<const DIV: u32> Unit for Board<DIV> {
             fl_mosi,
             fl_cclk,
             fl_refused,
+            phy_mdc,
+            phy_mdio_out,
+            phy_mdio_oe,
         }: BoardOut,
     ) {
         // The reset, read by the core, the timer and the serial port.
@@ -574,6 +596,12 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (m_mosi_o, m_mosi_i) = signal::<Bit, DefaultClock>();
         let (m_cs_n_o, m_cs_n_i) = signal::<Bit, DefaultClock>();
         let (spi_irq_o, _spi_irq_i) = signal::<Bit, DefaultClock>();
+        // The PHY's management master on the eighth slot.
+        let (paw_mdio_tx, paw_mdio_rx) = chan::<LiteAw<32>, DefaultClock>();
+        let (par_mdio_tx, par_mdio_rx) = chan::<LiteAr<32>, DefaultClock>();
+        let (pw_mdio_tx, pw_mdio_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (pb_mdio_tx, pb_mdio_rx) = chan::<LiteB, DefaultClock>();
+        let (pr_mdio_tx, pr_mdio_rx) = chan::<LiteR<32>, DefaultClock>();
         // The window on the router's eighth port, its wires to the pins,
         // and the reset the pins hold it in until the flash is ready.
         let (aw7_tx, aw7_rx) = chan::<Aw<32, 4>, DefaultClock>();
@@ -1010,12 +1038,12 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             [
                                                 lb_rx, pb_pwm_rx, vb,
                                                 pb_rem_rx, pb_eth_rx,
-                                                pb_trng_rx, pb_spi_rx,
+                                                pb_trng_rx, pb_spi_rx, pb_mdio_rx,
                                             ],
                                             [
                                                 lr_rx, pr_pwm_rx, vr,
                                                 pr_rem_rx, pr_eth_rx,
-                                                pr_trng_rx, pr_spi_rx,
+                                                pr_trng_rx, pr_spi_rx, pr_mdio_rx,
                                             ],
                                         ),
                                         (
@@ -1027,6 +1055,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                 paw_eth_tx,
                                                 paw_trng_tx,
                                                 paw_spi_tx,
+                                                paw_mdio_tx,
                                             ],
                                             [
                                                 lar_tx,
@@ -1036,11 +1065,12 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                 par_eth_tx,
                                                 par_trng_tx,
                                                 par_spi_tx,
+                                                par_mdio_tx,
                                             ],
                                             [
                                                 lw_tx, pw_pwm_tx, vw,
                                                 pw_rem_tx, pw_eth_tx,
-                                                pw_trng_tx, pw_spi_tx,
+                                                pw_trng_tx, pw_spi_tx, pw_mdio_tx,
                                             ],
                                             b2_tx,
                                             r2_tx,
@@ -1100,6 +1130,7 @@ join2(
                                                 // both drive this step (issue 312).
                                                 join2(
                                                     join2(
+                                                        join2(
                                                         self.spi.run(
                                                             LitePort {
                                                                 aw: paw_spi_rx,
@@ -1115,6 +1146,22 @@ join2(
                                                                 cs_n: m_cs_n_o,
                                                                 irq: spi_irq_o,
                                                             },
+                                                        ),
+                                                        self.mdio.run(
+                                                            LitePort {
+                                                                aw: paw_mdio_rx,
+                                                                ar: par_mdio_rx,
+                                                                w: pw_mdio_rx,
+                                                                b: pb_mdio_tx,
+                                                                r: pr_mdio_tx,
+                                                            },
+                                                            MdioLines {
+                                                                mdio_in: phy_mdio_in,
+                                                                mdc: phy_mdc,
+                                                                mdio_out: phy_mdio_out,
+                                                                mdio_oe: phy_mdio_oe,
+                                                            },
+                                                        ),
                                                         ),
                                                         join2(
                                                             self.pflash.run(

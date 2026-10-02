@@ -96,3 +96,13 @@ set_output_delay -clock hdmi_idck -clock_fall -min -0.8 -add_delay $vid_out
 # with many cycles to every change; nothing times them against a clock.
 set_false_path -to [get_ports {hdmi_scl hdmi_sda hdmi_nreset hdmi_nreset_alt}]
 set_false_path -from [get_ports {hdmi_sda}]
+
+# The PHY's management interface, MDIO (#864): a clock of 1.25 MHz from
+# the 100 MHz bus, and the data line, which the master sets while MDC is
+# low and reads a whole MDC cycle after the PHY changed it. Many bus
+# cycles lie between every change and every use, so nothing times them
+# against a clock. The FPGA's pull-up holds the line at one while nobody
+# drives it, as 802.3 asks.
+set_property PULLUP true [get_ports eth_mdio]
+set_false_path -to [get_ports {eth_mdc eth_mdio}]
+set_false_path -from [get_ports eth_mdio]

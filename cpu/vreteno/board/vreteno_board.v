@@ -209,7 +209,10 @@ module vreteno_board (
     .jtag_bvalid(), .jtag_arready(), .jtag_rid(), .jtag_rdata(),
     .jtag_rresp(), .jtag_rlast(), .jtag_rvalid(),
     .fl_miso(flash_d1), .fl_cs_n(flash_cs_n), .fl_mosi(flash_d0),
-    .fl_cclk(), .fl_refused()
+    .fl_cclk(), .fl_refused(),
+    // No Ethernet PHY on this top: its management line reads idle,
+    // as its pull-up would hold it.
+    .phy_mdio_in(1'b1), .phy_mdc(), .phy_mdio_out(), .phy_mdio_oe()
   );
   assign flash_d2 = 1'b1;
   assign flash_d3 = 1'b1;

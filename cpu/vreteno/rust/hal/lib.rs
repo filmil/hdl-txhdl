@@ -59,6 +59,9 @@ pub mod map {
     pub const TRNG: usize = 0x0000_3500;
     /// The configuration flash's SPI master: control, data, state.
     pub const SPI: usize = 0x0000_3600;
+    /// The Ethernet PHY's management interface: divider, command,
+    /// data, state.
+    pub const MDIO: usize = 0x0000_3700;
     /// The configuration flash, read as memory: 16 MiB, the bitstream
     /// first.
     pub const FLASH: usize = 0x2000_0000;

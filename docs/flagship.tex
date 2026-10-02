@@ -121,7 +121,7 @@ The small peripherals share the page at \code{0x3000} behind an
 AXI-Lite bridge, each a sixteenth of it, for exactly that reason: a
 peripheral of six registers does not deserve a port of its own. The
 video peripheral is three registers, so it takes the third sixteenth,
-at \code{0x3200}, among the six in Table~\ref{tab:f-page}, with its
+at \code{0x3200}, among the eight in Table~\ref{tab:f-page}, with its
 words in Table~\ref{tab:f-hdmi}. The tables are written by
 \code{//tools/memmap} from the maps the router and the
 page's bridge decode, so they are the map the bitstream has.

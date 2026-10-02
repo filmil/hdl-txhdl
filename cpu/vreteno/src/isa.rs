@@ -207,6 +207,10 @@ pub const TRNG_BASE: u32 = 0x3500;
 /// page, three words (issue 312).
 pub const SPI_BASE: u32 = 0x3600;
 
+/// The Ethernet PHY's management interface, an MDIO master: the
+/// eighth slot of the same page, four words (issue 864).
+pub const MDIO_BASE: u32 = 0x3700;
+
 /// The configuration flash read as memory, 16 MiB from here (issue
 /// 312).
 pub const FLASH_BASE: u32 = 0x2000_0000;

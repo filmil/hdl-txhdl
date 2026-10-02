@@ -218,6 +218,8 @@ module flagship (
 
   wire halt;
   wire [3:0] pwm_pins;
+  // The PHY's management data line as the MDIO master drives it.
+  wire mdio_out, mdio_oe;
   board lowered (
     .clk(clk),
     .rst(rst),
@@ -277,7 +279,9 @@ module flagship (
     .jtag_bvalid(), .jtag_arready(), .jtag_rid(), .jtag_rdata(),
     .jtag_rresp(), .jtag_rlast(), .jtag_rvalid(),
     .fl_miso(flash_d1), .fl_cs_n(flash_cs_n), .fl_mosi(flash_d0),
-    .fl_cclk(), .fl_refused()
+    .fl_cclk(), .fl_refused(),
+    .phy_mdio_in(eth_mdio), .phy_mdc(eth_mdc), .phy_mdio_out(mdio_out),
+    .phy_mdio_oe(mdio_oe)
   );
   assign flash_d2 = 1'b1;
   assign flash_d3 = 1'b1;
@@ -338,12 +342,14 @@ module flagship (
     .eth_txck(eth_txck), .eth_txctl(eth_txctl), .eth_txd(eth_txd),
     .eth_rxck(eth_rxck), .eth_rxctl(eth_rxctl), .eth_rxd(eth_rxd)
   );
-  // The PHY comes out of reset once its clock is steady, and the
-  // management interface stays idle, so the JL2121 runs on its
-  // power-on configuration.
+  // The PHY comes out of reset once its clock is steady. Its
+  // management interface is the board's MDIO master, on the eighth
+  // slot at 0x3700 (#864): the master drives MDC, and the data line
+  // while `mdio_oe` is high, and reads it back otherwise. The pad has
+  // the FPGA's pull-up, set in board/flagship_io.xdc, so a line nobody
+  // drives reads one whatever the carrier has.
   assign eth_reset_n = eth_locked;
-  assign eth_mdc = 1'b1;
-  assign eth_mdio = 1'bz;
+  assign eth_mdio = mdio_oe ? mdio_out : 1'bz;
 
   wire [8:0] rx_data;
   wire rx_valid, rx_ready;
