@@ -32,6 +32,7 @@ use std::fmt::Write;
 const XS_MIN: f64 = 0.30; // cm per tick, at least
 const X_MAX: f64 = 16.0; // cm, the widest a diagram may be
 const CHAR: f64 = 0.17; // cm per character of a bus label
+const TEXT: f64 = 0.13; // cm a character of a bus label takes, as set
 const PAD: f64 = 0.45; // cm around a bus label, crossovers included
 const H: f64 = 0.55; // signal height
 const PITCH: f64 = 0.95; // row pitch
@@ -290,15 +291,23 @@ fn main() {
                     )
                     .unwrap();
                 }
+                // The value is written only where it fits: between its
+                // two crossovers, and into them, but not past them onto
+                // the next value or the signal's name. A diagram pressed
+                // to its width can leave an interval narrower than its
+                // text, a sliver at a window's start especially, and its
+                // text would lie on whatever is beside it (issue 865).
                 let label = label_for(name, v, &enum_names);
-                writeln!(
-                    o,
-                    "\\node at ({:.2},{:.2}) {{{}}};",
-                    (a + b) / 2.0,
-                    y0 + H / 2.0,
-                    tex(&label)
-                )
-                .unwrap();
+                if fits(&label, b - a + 2.0 * d) {
+                    writeln!(
+                        o,
+                        "\\node at ({:.2},{:.2}) {{{}}};",
+                        (a + b) / 2.0,
+                        y0 + H / 2.0,
+                        tex(&label)
+                    )
+                    .unwrap();
+                }
             }
         }
     }
@@ -338,6 +347,14 @@ fn main() {
     .unwrap();
     writeln!(o, "\\end{{tikzpicture}}").unwrap();
     print!("{o}");
+}
+
+/// Whether `label` fits in `room` centimetres as the picture sets it:
+/// `\scriptsize\ttfamily`, every character 0.525 em wide, and 7 pt at
+/// most, which it is in the 10 pt documents; the 9 pt ones set it smaller.
+/// That is narrower than `CHAR`, which spreads the ticks with a margin.
+fn fits(label: &str, room: f64) -> bool {
+    label.chars().count() as f64 * TEXT <= room
 }
 
 /// A bus value's label: its variant's name when it has one, else its
