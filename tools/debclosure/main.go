@@ -55,7 +55,7 @@ const (
 func main() {
 	suite := flag.String("suite", "trixie", "the Debian suite to read")
 	stamp := flag.String("snapshot", "20250901T000000Z",
-		"the snapshot.debian.org timestamp of the fallback URL")
+		"the snapshot.debian.org timestamp the index is read at, and of the fallback URL")
 	skip := flag.String("skip", "",
 		"packages to leave out of the closure, comma separated")
 	flag.Parse()
@@ -64,7 +64,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	index, err := fetchIndex(*suite)
+	index, err := fetchIndex(*suite, *stamp)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "reading the index:", err)
 		os.Exit(1)
@@ -131,9 +131,15 @@ func main() {
 	}
 }
 
-// The suite's binary package index for amd64, decompressed.
-func fetchIndex(suite string) (io.Reader, error) {
-	url := live + "dists/" + suite + "/main/binary-amd64/Packages.gz"
+// The suite's binary package index for amd64, decompressed, as the
+// snapshot at `stamp` has it. Not the live archive's: a version the live
+// index names may be newer than the snapshot, and then the fallback URL
+// written for it, which is meant never to forget, would be a 404 from
+// the day the lock is written (issue 854). Read from the snapshot,
+// every version is there for good, and the live URL is still the fast
+// first try while the version is current.
+func fetchIndex(suite, stamp string) (io.Reader, error) {
+	url := snapshot + stamp + "/dists/" + suite + "/main/binary-amd64/Packages.gz"
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err
