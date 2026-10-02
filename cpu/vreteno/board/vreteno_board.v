@@ -148,7 +148,10 @@ module vreteno_board (
     .clk(clk),
     .rst(rst),
     .irq(1'b0),
-    .rx(uart_rx),
+    // The serial line through the same two flip-flops as the break
+    // detector: the receiver registers it once and decodes from that
+    // one flop, which on its own is no synchroniser (issue 847).
+    .rx(rx_sync[1]),
     .sys_clk(clk200_in),
     .sys_rst(sys_rst),
     .halt(halt),
