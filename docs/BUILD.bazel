@@ -839,6 +839,26 @@ waveform(
     ],
 )
 
+# The RISC-V debug transport on the cable's clock, one tunneled scan of
+# the instruction register as OpenOCD frames it. Issue 154.
+waveform(
+    name = "dtm",
+    example = "//lib/examples:ex_dtm",
+    lowered = ("dtm", "dtm"),
+    from_tick = 480,
+    until = 680,
+    signals = [
+        "//clocks/tck=>tck",
+        "//capture=>capture",
+        "//shift=>shift",
+        "//update=>update",
+        "//tdi=>tdi",
+        "//dtm/phase=>phase",
+        "//dtm/cnt=>cnt",
+        "//dtm/ir=>ir",
+    ],
+)
+
 waveform(
     name = "stage",
     example = "//lib/examples:ex_stage",

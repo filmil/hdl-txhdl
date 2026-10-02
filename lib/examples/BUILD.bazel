@@ -151,6 +151,18 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The RISC-V debug transport, driven as OpenOCD's BSCAN tunnel drives
+# it (issue 154):  bazel run //lib/examples:ex_dtm
+rust_binary(
+    name = "ex_dtm",
+    srcs = ["ex_dtm.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+)
+
 # The clock-crossing channel, lowered:  bazel run //lib/examples:ex_cdc
 rust_binary(
     name = "ex_cdc",
@@ -1160,6 +1172,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_edges.rs",
         "ex_lower.rs",
         "ex_cdc.rs",
+        "ex_dtm.rs",
         "ex_dma.rs",
         "ex_dmaw.rs",
         "ex_dmawb.rs",
