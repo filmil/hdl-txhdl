@@ -425,6 +425,7 @@ filegroup(
     srcs = [
         "board/ax7a200.xdc",
         "board/ax7a200_ddr3.xdc",
+        "board/ax7a200_io.xdc",
         "//lib/parts:hdl_xdc",
     ],
 )
