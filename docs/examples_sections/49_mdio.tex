@@ -1,0 +1,97 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An MDIO Master}
+\label{sec:x-mdio}
+
+An Ethernet PHY keeps its configuration in 32 registers of 16 bits,
+and MDIO is how a MAC reaches them. It is the management interface of
+IEEE 802.3, clause 22: a clock, MDC, which the master always drives,
+and one data line, MDIO, which the master drives except while the PHY
+answers a read. The line has a pull-up, so a line nobody drives reads
+one.
+
+A frame is 64 bits. The first 32 are ones, the preamble. Then come the
+start, \code{01}; the operation, \code{10} for a read and \code{01}
+for a write; the PHY's address and the register's, five bits each;
+two bits of turnaround; and the sixteen bits of the word. On a write
+the master drives all of it. On a read it lets go of the line at the
+turnaround, and the PHY drives a zero and then the word.
+
+\code{Mdio} has four registers, and one frame per command.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.52\columnwidth}@{}}
+\toprule
+Offset & Name & What it is \\
+\midrule
+\code{0x00} & \code{ctrl} & the divider \\
+\code{0x04} & \code{cmd} & one frame; writing it starts the frame \\
+\code{0x08} & \code{data} & the word the last read took \\
+\code{0x0c} & \code{state} & busy, and done \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Half of an MDC cycle is \code{div} cycles and one. The divider resets
+to zero, which is far faster than any PHY takes, so a driver writes
+\code{ctrl} first.
+
+\subsection{When the Line Is Read}
+
+A bit goes onto the line while MDC is low, and the PHY takes it as MDC
+rises. A bit the PHY drives changes just after MDC rises, and 802.3
+gives the PHY up to 300\,ns to do it. The master therefore takes each
+bit at the end of the low half, just before MDC rises again, a whole
+MDC cycle after the PHY changed it. At 1\,MHz that leaves a thousand
+nanoseconds for the PHY's three hundred.
+
+\subsection{How It Is Written}
+
+The master is written the way the I2C master of
+Section~\ref{sec:x-i2c} is: two processes. The bus process answers the
+four registers every cycle and counts the cycles of a half in
+\code{tick}. The engine waits for a write to \code{cmd} and loads two
+registers of 32 bits from it. \code{frame} holds the bits after the
+preamble. \code{drive} holds a one for each bit the master drives: all
+of a write, and the first fourteen bits of a read. Then come two
+counted loops of 32 bits, the preamble and the frame, each bit a low
+half and a high half. The two registers shift together, so the line's
+level and whether it is driven both come from the top bit. Every bit of the frame
+as the line carries it shifts into \code{rx}, and after a read the last
+sixteen are the word.
+
+\subsection{What Checks It}
+
+\code{MdioPhy} is a model of a PHY at one address with 32 registers,
+stepped between cycles from the loop. It takes a bit as MDC rises,
+waits for 32 ones and a start, and answers a read to its address.
+Six tests in \code{//lib/parts:parts\_test} drive the master against
+it:
+\begin{itemize}
+\item a read of both identifier words;
+\item a read of all 32 registers;
+\item an address nobody answers, which reads all ones;
+\item a write, read back;
+\item a check that the master and the PHY never drive the line in the
+same cycle, and that every half of MDC lasts at least \code{div} and
+one cycles;
+\item the lowering.
+\end{itemize}
+
+The example scans for its PHY the way a driver does. It reads the
+first identifier register at each address until one answers with
+something other than all ones, then reads the second identifier and
+the status register. The model's register values are the model's, not
+any real chip's.
+
+\begin{figure}[htbp]
+\centering
+\input{mdio_timing.tex}
+\caption{The end of a read frame: the master drives the address bits,
+lets go of the line at the turnaround, and the PHY's word shifts into
+\code{rx} a bit per MDC cycle.}
+\label{fig:x-mdio}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_mdio.rs}. Run with \code{bazel run //lib/examples:ex\_mdio}.},label={lst:x-mdio}]{lib/examples/ex_mdio.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_mdio} printed when the build ran it: an address with no PHY, then the PHY found and read.},label={lst:x-mdio-out}]{out_mdio.txt}
