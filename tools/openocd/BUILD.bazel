@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# OpenOCD's remote_bitbang adapter served from a test, and the pinned
+# OpenOCD run against it (issue 853): the harness the RISC-V debug
+# transport of #154 is proven with. `remote_bitbang` is the crate a test
+# uses: a `Pins` trait its design implements, a blocking `serve` on the
+# test's own thread, and `Openocd`, which runs //third_party/openocd on
+# a script with a time limit and hands back its exit status and log.
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "remote_bitbang",
+    srcs = ["lib.rs"],
+    crate_name = "remote_bitbang",
+    edition = "2021",
+)
+
+# OpenOCD against a model TAP: the version, the connection, the scan
+# that finds the TAP's identity, and a wrong identity reported.
+rust_test(
+    name = "harness_test",
+    srcs = ["harness_test.rs"],
+    data = ["//third_party/openocd"],
+    edition = "2021",
+    env = {"OPENOCD": "$(rootpath //third_party/openocd)"},
+    deps = [":remote_bitbang"],
+)
