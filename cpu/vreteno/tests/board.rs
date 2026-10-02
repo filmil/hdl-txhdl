@@ -1088,3 +1088,35 @@ fn the_debug_module_halts_reads_writes_and_resumes_the_core() {
         "the write to x5 ended the loop: {halted_at}"
     );
 }
+
+/// The cycle counter read twice back to back, from the data memory, and
+/// the difference said eight times (issue 848). The routine runs from
+/// block RAM, whose fetch takes the same time every time, so every
+/// difference is the same: the cycles from one read to the next, which
+/// a read that lost a count, as every read did before issue 807's fix,
+/// would make one fewer.
+#[test]
+fn mcycle_steps_steadily_between_two_reads() {
+    let ran = run(steps_program::TEXT, steps_program::DATA, b"", 40000);
+    assert!(ran.halted_at.is_some(), "and halted: {}", ran.said);
+    let steps: Vec<u32> = ran
+        .said
+        .lines()
+        .map(|l| {
+            l.strip_prefix("mcycle step ")
+                .unwrap_or_else(|| panic!("not a step: {l:?}"))
+                .parse()
+                .expect("a number")
+        })
+        .collect();
+    assert_eq!(steps.len(), 8, "eight differences: {}", ran.said);
+    assert!(
+        steps.iter().all(|&s| s == steps[0]),
+        "every difference the same: {steps:?}"
+    );
+    // Thirteen cycles from one read to the next on this board. With
+    // the core of before issue 807's fix it was a steady twelve,
+    // measured by reverting that fix on this test: each read cost the
+    // counter the one count it wrote back over.
+    assert_eq!(steps[0], 13, "cycles between the two reads");
+}
