@@ -150,6 +150,10 @@ fn label(n: &str, k: Kind, w: usize) -> String {
     }
 }
 
+/// The tallest interface box, in millimetres: what fits under a
+/// sheet's heading on a page (issue 841).
+const MAX_HEIGHT: f64 = 200.0;
+
 /// The diagram of a component's interfaces: a box with the inputs
 /// down its left side and the outputs down its right, each arrow
 /// labelled with the port and its width. A channel is marked, since
@@ -169,8 +173,12 @@ fn figure(key: &str, net: &Lowered) -> String {
     let outs = side(&[Kind::Out, Kind::Tx]);
     let pads = side(&[Kind::Pad]);
     let rows = ins.len().max(outs.len()).max(1);
-    // A row is 7mm, and the box is as tall as the longer side.
-    let height = 7 * rows + 6;
+    // A row is 7mm, and the box is as tall as the longer side, but no
+    // taller than fits under a sheet's heading: a component with many
+    // ports gets closer rows rather than a box that runs off the page
+    // (issue 841). Board's 39 outputs made it 279mm, a whole page.
+    let pitch = 7.0f64.min((MAX_HEIGHT - 6.0) / rows as f64);
+    let height = pitch * rows as f64 + 6.0;
     let mut out = String::new();
     out.push_str(
         "\\begin{center}\\footnotesize\n\\begin{tikzpicture}[\n\
@@ -187,7 +195,7 @@ fn figure(key: &str, net: &Lowered) -> String {
         let n = list.len();
         for (i, (name, k, w)) in list.iter().enumerate() {
             // Down the side, spread over the box's height.
-            let y = (height as f64) / 2.0 - 3.0 - (7.0 * i as f64);
+            let y = height / 2.0 - 3.0 - (pitch * i as f64);
             let (x0, x1, anchor) = if left {
                 (-17.0 - 12.0, -17.0, "east")
             } else {
@@ -211,7 +219,7 @@ fn figure(key: &str, net: &Lowered) -> String {
         out.push_str(&format!(
             "\\node[anchor=north, text width=60mm, align=center] at \
              (0mm,{}mm) {{pads, both ways: {}}};\n",
-            -(height as f64) / 2.0 - 1.0,
+            -height / 2.0 - 1.0,
             names.join(", ")
         ));
     }
