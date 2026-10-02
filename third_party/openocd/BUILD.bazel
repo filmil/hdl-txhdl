@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# OpenOCD, which speaks to a debug target over JTAG: 0.12.0, the version
+# on the board server and the one the RISC-V debug transport of #154 is
+# written against (issue 853). It is fetched as the Debian package it is
+# published as, with the closure of the libraries that package names;
+# `trixie.lock.tsv` is that closure, written by //tools/debclosure and
+# pinned by checksum:
+#
+#   bazel run //tools/debclosure -- -suite=trixie \
+#       -snapshot=20261001T000000Z openocd > third_party/openocd/trixie.lock.tsv
+#
+#   bazel run //third_party/openocd -- --version
+load(":defs.bzl", "openocd_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["trixie.lock.tsv"])
+
+openocd_binary(
+    name = "openocd",
+    tree = "@openocd_tree//:all",
+)

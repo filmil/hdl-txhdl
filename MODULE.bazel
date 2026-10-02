@@ -229,6 +229,15 @@ deb_tree(
     ],
 )
 
+# OpenOCD 0.12.0, which speaks JTAG to a debug target, for the RISC-V
+# debug transport of #154 (issue 853). Its closure carries the C
+# library, since the package is built against a newer one than the
+# machine's, and //third_party/openocd runs it through the tree's loader.
+deb_tree(
+    name = "openocd_tree",
+    locks = ["//third_party/openocd:trixie.lock.tsv"],
+)
+
 # Poppler's `pdftotext`, which reads a rendered page back with the
 # position of every word, for the check that no document runs off its
 # page (issue 457).

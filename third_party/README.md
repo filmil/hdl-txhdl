@@ -41,6 +41,7 @@ published somewhere stable, and is not modified here.
 | `openroad/` | OpenROAD, and the closure of a hundred and thirty one packages it links against, from Debian bullseye |
 | `nangate45/` | The six files of the open 45 nm standard cell library the ASIC flow reads |
 | `poppler/` | Poppler's utilities and their libraries, from Debian trixie, for the documents' edge check |
+| `openocd/` | OpenOCD 0.12.0 and its fifteen packages, the C library among them, from Debian trixie, run through the tree's own loader, for the debug transport's harness |
 | `z3/` | z3 and its libraries, from Debian trixie, for the formal flow's bounded search |
 | `sby/` | SymbiYosys, fetched from its release tag by checksum, and `requirements.txt`, its Python pins |
 | `zephyr/` | The build file Zephyr's fetched archive is given, and `requirements.txt`, the Python its build imports |
