@@ -72,10 +72,10 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 67\,937 lines of Rust: 16\,979 of runtime
-and macros, 19\,361 of parts, 14\,500 in a hundred and three examples, 14\,033 of
-Vreteno with its board, and 3\,064 of Razboj, DDR3, Ethernet, HDMI,
-PCIe and the SoC.
+Together they are 70\,798 lines of Rust: 17\,399 of runtime
+and macros, 20\,204 of parts, 15\,230 in a hundred and six examples,
+14\,816 of Vreteno with its board, and 3\,149 of Razboj, DDR3,
+Ethernet, HDMI, PCIe and the SoC.
 
 \begin{table}[htbp]
 \caption{The lowered units, and which netlists are simulated.}
@@ -93,7 +93,7 @@ Stations of 2 to 10 inputs & parts & 2 and 3 \\
 An AXI router, one unit for N peripherals & parts & 3 \\
 An AXI arbiter, one unit for 2 to 8 hosts & parts & 2 \\
 AXI host and peripheral trackers & parts & both \\
-AXI-Lite bridges, 1 to 8 peripherals & parts & 1 and 2 \\
+An AXI-Lite bridge, one unit for N peripherals & parts & 1 and 2 \\
 AXI to Wishbone bridge & parts & yes \\
 AXI host pins to the link's channels & parts & yes \\
 An interrupt controller, one unit for 1 to 31 sources & parts & 3 \\
@@ -104,9 +104,10 @@ System control: identity, cause, reset & parts & yes \\
 Watchdog: a countdown, a key, a window & parts & yes \\
 Four modulated outputs, shadowed duties & parts & yes \\
 A trace buffer, the last N entries & parts & yes \\
-An entropy source: eight rings folded, checked, debiased & parts & yes \\
+An entropy source: eight rings folded, checked, debiased, captured & parts & yes \\
 A tee and a check, for running one thing twice & parts & both \\
 A flash read as memory, mode 0 only & parts & both \\
+The configuration flash through \code{STARTUPE2}, write enable refused & parts & yes \\
 A peripheral written as software, behind a channel & parts & both \\
 Its wire: each transaction one Ethernet frame & parts & both \\
 Vreteno; boot and data memory, timer, serial port & \code{cpu} & four of five \\
@@ -157,7 +158,7 @@ registers must agree after each retirement, on a demonstration
 program and on sixty-four random ones.
 
 It runs on hardware. The netlist goes through a hermetic Vivado onto
-an Alinx AX7A200, and the board says on its serial port what the
+an Alinx AX7A200B, and the board says on its serial port what the
 simulation says it will: \code{OK}, and then whatever is typed at it,
 echoed. The same netlist also goes onto an open 45~nm standard cell
 library, through Yosys and OpenROAD, both fetched by checksum: a die
@@ -188,7 +189,8 @@ Fig.~\ref{fig:s-board} is the whole of it.
   \node[boxf] (mig) at (9.4,-0.35) {MIG\\foreign};
   \node[box] (tim) at (7.2,-1.35) {timer};
   \node[box] (plic) at (7.2,-2.2) {interrupt\\controller};
-  \node[box] (dm) at (7.2,3.2) {debug\\module};
+  \node[box] (dm) at (7.2,4.1) {debug\\module};
+  \node[box] (fw) at (7.2,3.2) {flash\\window};
   \draw[fl] (cpu) -- node[lbl, below=3pt] {AXI4} (host);
   \draw[fl] (host) -- (arb);
   \draw[fl] (jtag) -- (arb);
@@ -199,12 +201,14 @@ Fig.~\ref{fig:s-board} is the whole of it.
   \draw[fl] (rt) -- (ddr);
   \draw[fl] (rt) -- (tim);
   \draw[fl] (rt) -- (plic);
-  \draw[fl] (rt) -- (dm);
-  \draw[fl] (dm.west) -| (cpu.north)
+  \draw[fl] (rt.north) |- (dm.west);
+  \draw[fl] (rt) -- (fw);
+  \draw[fl] (dm.north) -- ++(0,0.3) -| (cpu.north)
     node[lbl, above, pos=0.3] {halt, resume, the registers};
   \draw[fl] (ddr) -- (mig);
   \draw[fl] (mig.east) -- ++(0.75,0) node[lbl, right] {pads};
   \draw[fl] (uart.east) -- ++(0.75,0) node[lbl, right] {tx, rx};
+  \draw[fl] (fw.east) -- ++(0.75,0) node[lbl, right] {flash};
   % The two lines the core waits on run in lanes of their own, below
   % every box, so neither crosses one.
   \draw[fl] (tim.west) -- ++(-0.5,0) |- (0,-2.9)
@@ -214,10 +218,11 @@ Fig.~\ref{fig:s-board} is the whole of it.
 \end{tikzpicture}}
 \caption{The board: the core, its tracker, the JTAG master that shares
 the bus with it through the arbiter, the router that decides by
-address, and the seven peripherals behind it. The DDR3 controller is a
+address, and the eight peripherals behind it. The DDR3 controller is a
 foreign module, wired rather than written; the serial port reaches two
-pins, the interrupt controller and the timer reach the core's two
-lines, and the debug module reaches its halt, resume and registers.}
+pins, the flash window reaches the configuration flash, the interrupt
+controller and the timer reach the core's two lines, and the debug
+module reaches its halt, resume and registers.}
 \label{fig:s-board}
 \end{figure}
 
@@ -355,11 +360,12 @@ a bitstream; what has run on the board is in Table~II.}
 
 \section{From an Empty Directory}
 
-A reader with nothing installed but Bazelisk writes four files, and
-the fourth is a blinky that builds, runs, and lowers to Verilog and
-VHDL. That workspace is kept in the tree and built as a check, so the
-tutorial cannot rot: it depends on the project the way anyone else
-would, through the public mirror. The build fetches every toolchain in
+A reader with nothing installed but Bazelisk and Git writes five
+files, and the blinky among them builds, runs, and prints its netlist
+as Verilog. It depends on the project the way anyone else would,
+through the public mirror at a named commit. The tree builds the same
+blinky as a check, against its own library rather than the mirror, so
+the tutorial's source cannot rot. The build fetches every toolchain in
 Table~\ref{tab:w-tools} itself, by checksum or from source. Nothing is
 installed by hand, on a workstation or in CI.
 
@@ -373,7 +379,9 @@ Toolchain, and what the build uses it for & Version \\
 \midrule
 Rust, for the host and for the core & 1.90.0, nightly \\
 GNU C and C++, for the core & 14.2.0 \\
-\code{nvc} and Verilator, to simulate & from source \\
+LLVM C and C++, for the host & 20.1.8 \\
+\code{nvc}, to simulate VHDL & from source \\
+Verilator, to simulate Verilog & 5.046, prebuilt \\
 Vivado, Artix-7, to synthesise & 2025.2 \\
 Yosys and OpenROAD, to lay out & pinned packages \\
 SymbiYosys and z3, to prove & 0.52; 4.13.3 \\
@@ -390,17 +398,18 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs three hundred and forty-nine
-targets, of which two hundred and two are netlists under both
+its ports. \code{bazel test //...} runs three hundred and sixty-two
+targets, of which two hundred and eight are netlists under both
 simulators; the rest are the core's model and programs, the board's
 own run, Razboj, the parts, the SoC's run, ten proofs, the width of
-every waveform, and the tools. Seven more are tagged manual: the
+every waveform, and the tools. Nine more are tagged manual: the
 board and its DDR3 under
 Vivado's simulator, the DDR3 controller alone and AMD's own test of
 it under the same, the PCIe endpoint on its own and against a root
 port under the same, the AXI link's fuzzing over many seeds, which
-the nightly run does, and the check that every component has a
-datasheet, which a sweep of the documents runs.
+the nightly run does, the check that every component has a
+datasheet, which a sweep of the documents runs, and two that a routed
+bitstream leaves the configuration flash's program area alone.
 
 A run checks the inputs it was given; a proof checks all of them. A
 unit states what must hold with \code{check!}, what it assumes of its
