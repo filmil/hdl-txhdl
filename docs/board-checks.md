@@ -28,7 +28,7 @@ bazel build //cpu/vreteno:vreteno_board_boot_pnr   # the loader, #550 and #458
 bazel build //cpu/vreteno:vreteno_board_pnr        # the DDR3 test, #188
 bazel build //flagship:flagship_pnr                # Ethernet and the loader, #143
 bazel build //cpu/vreteno/rust:hello_ram_bin //cpu/vreteno/rust:hello_fastboot \
-    //cpu/vreteno/rust:trng_ram_bin
+    //cpu/vreteno/rust:trng_ram_bin //cpu/vreteno/rust:steps_ram_bin
 bazel build //zephyr:fastboot @multitool//tools/fastboot
 bazel build //tools/trngstat
 ```
@@ -121,6 +121,22 @@ If the numbers are to be quoted as an assessment, the next step is a longer capt
 `trng_ram_bin` also prints samples in a row rather than windows of 32, which is what measures a period longer than a word, in two sections: `rawrun`, the run joined from overlapping windows a loop read (#805), and `rawcap`, the peripheral's own capture of 8192 samples (#817).
 `trngstat` reads each out to `-maxlag` on its own, and never joins them, nor runs from different captures; the capture is the one to quote, since the joined run breaks wherever a read came late (#835).
 A file with a heading twice is refused, so a log that holds two runs of the program must be split before it is read.
+
+### The cycle counter, #807 and #848
+
+Same bitstream again.
+`steps_ram_bin` writes two back-to-back reads of `mcycle` into the data memory, which is block RAM and so has the same fetch every time, calls them eight times, and prints each difference.
+
+```sh
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/steps_ram_bin.bin --seconds=10 \
+    2>&1 | tee board-848-steps.log
+```
+
+Pass: eight lines of `mcycle step 13`.
+That is what `board_test`'s `mcycle_steps_steadily_between_two_reads` pins in simulation; the core from before #807's fix printed a steady 12 there, a count lost to each read.
+A steady number other than 13 is the board's fetch differing from the simulation's and is a finding to note on #848; a number that moves from line to line means the routine did not run from the data memory.
+It closes #848 once the result is on it.
 
 ## 7. Fastboot, #143
 
