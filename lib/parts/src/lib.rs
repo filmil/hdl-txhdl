@@ -16,6 +16,7 @@ pub mod bus;
 pub mod cdc;
 pub mod cfgflash;
 pub mod dma;
+pub mod dtm;
 pub mod eth;
 pub mod ethdma;
 pub mod ethshare;

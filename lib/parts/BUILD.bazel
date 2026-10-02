@@ -30,6 +30,7 @@ rust_library(
         "src/bus/wb/sim.rs",
         "src/cdc.rs",
         "src/dma.rs",
+        "src/dtm.rs",
         "src/fifo.rs",
         "src/cfgflash.rs",
         "src/flashwin.rs",
