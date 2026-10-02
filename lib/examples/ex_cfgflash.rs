@@ -19,7 +19,7 @@
 //! The chip is `FlashDevice`, stepped between cycles from the loop, and
 //! it keeps a list of the commands it took whole.
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
+use txhdl::comp::{join2, now, signal, Clock, DefaultClock, Running, Unit};
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{
@@ -149,10 +149,13 @@ fn main() {
         wave.start();
     }
 
+    // The time in cycles of the clock: `now` counts the executor's time
+    // steps, two to a cycle (issue 814).
+    let cycle = || now() / DefaultClock::PERIOD;
     let client = async move {
         // Asked before configuration is over, answered after.
         let first = whost.read(Rd::at(AT, 1)).await.done().await;
-        println!("{:4}  window read  {:08x}", now(), first.data[0].raw());
+        println!("{:4}  window read  {:08x}", cycle(), first.data[0].raw());
         assert_eq!(first.data[0].raw() as u32, WORDS[0], "the first word");
 
         ctrl(&host, HELD).await;
@@ -162,16 +165,16 @@ fn main() {
             *slot = swap(&host, 0x00).await;
         }
         ctrl(&host, FREE).await;
-        println!("{:4}  master id    {:02x?}", now(), id);
+        println!("{:4}  master id    {:02x?}", cycle(), id);
         assert_eq!(id, ID, "the chip said who it is");
 
         ctrl(&host, HELD).await;
         swap(&host, 0x06).await;
         ctrl(&host, FREE).await;
-        println!("{:4}  master sent write enable", now());
+        println!("{:4}  master sent write enable", cycle());
 
         let second = whost.read(Rd::at(AT + 4, 1)).await.done().await;
-        println!("{:4}  window read  {:08x}", now(), second.data[0].raw());
+        println!("{:4}  window read  {:08x}", cycle(), second.data[0].raw());
         assert_eq!(second.data[0].raw() as u32, WORDS[1], "the second word");
     };
 
@@ -220,7 +223,7 @@ fn main() {
     }
     let mut chip = FlashDevice::new(image, ID, false, false);
 
-    println!("   t  what the programs saw");
+    println!("cycle what the programs saw");
     let mut ready_at = None;
     let mut refusals = 0;
     let mut was = Bit::Zero;
