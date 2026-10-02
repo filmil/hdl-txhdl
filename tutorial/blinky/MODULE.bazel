@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # A workspace with one dependency: TxHDL, from its GitHub mirror, at
-# a named commit. Rust and the C toolchain it links with come with
-# TxHDL's build; the machine needs Bazelisk and Git, and nothing else.
+# a named commit. The build fetches Rust, at the version named below,
+# and TxHDL brings the C toolchain it links with; the machine needs
+# Bazelisk and Git, and nothing else.
 module(
     name = "blinky",
     version = "0.0.0",
@@ -14,3 +15,16 @@ git_override(
     commit = "eed5b7fdb0e44480019554a9be06fe06fc6c5b08",
     remote = "https://github.com/filmil/hdl-txhdl.git",
 )
+
+# The Rust compiler, at the version TxHDL compiles with. A dependency's
+# toolchain is not the root's: the Rust rules read the version only
+# from the root module, this one, so without these lines the workspace
+# would get the rules' own default rather than TxHDL's.
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    versions = ["1.90.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
