@@ -213,15 +213,15 @@ which the \code{hello} and \code{hello\_cc} runs call. The system in
 
 \subsection*{Limits}
 
-A program is at most 1024 words, 4096 bytes. The fetch uses bits 11
-to 2 of the program counter, and the word after wraps too, so a
-program that runs off the end wraps into itself.
-Nothing loads the instruction memory at run time; a netlist gets its
-contents through \code{init}.
+The boot memory is 1024 words, 4096 bytes, and nothing loads it at
+run time: a netlist gets its contents through \code{init}. A program
+counter at or above \code{IMEM\_BYTES}, the boot memory's end, is
+fetched from the bus instead (issue 134), so a program larger than the
+boot memory runs from wherever it was loaded, the DDR3 memory on the
+board.
 
-A load from an address below \code{0x1000} sends no request. The
-instruction retires with the word the previous device load left in
-\code{wb\_dev}. A store below \code{0x1000} writes nothing.
+Every load and store goes to the bus, the boot memory included, which
+answers reads and refuses writes (issue 268).
 
 A trap handler must start at a whole word: \code{mtvec} keeps no
 bits 1 and 0. The core has machine mode only and the fourteen control

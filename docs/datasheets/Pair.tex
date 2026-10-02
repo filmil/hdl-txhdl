@@ -70,8 +70,9 @@ programs and finds the line never up.
 \code{fault} for one cycle and finds it up.
 \code{the\_line\_stays\_up\_after\_a\_disagreement} reads it again at the
 end of six hundred cycles and finds it still up.
-\item The pair is never lowered, so it has no netlist, no
-co-simulation and no synthesis. Its two parts from \code{//lib/parts}
+\item The pair is lowered, and \code{//tools/datasheet} lowers
+\code{Pair<2>} for this sheet's tables, but no waveform target
+co-simulates its netlist and no target synthesises it. Its two parts from \code{//lib/parts}
 are simulated on their own through \code{ex\_redundant}.
 \end{itemize}
 

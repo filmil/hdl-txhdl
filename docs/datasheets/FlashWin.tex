@@ -72,7 +72,10 @@ safe to fetch from: nothing on the bus can change what the instruction
 stream is reading, so the question of what a fetch sees when a write
 lands in the same cycle does not arise. That question is issue 268.
 \item \code{rst} stops whatever is on the wires and clears the answer
-and the held write.
+and the held write, and while it is high nothing is taken off the bus:
+a request waits on its channel and is served once the reset ends
+(issue 813). \code{CfgFlash} holds the window in reset until the
+flash is ready after configuration.
 \end{itemize}
 
 \subsection*{Verification}
@@ -88,13 +91,18 @@ drift apart.
 \item The build simulates the netlist against that run under nvc and
 Verilator: \code{//docs:flashwin\_sim\_flashwin\_tb\_test} and
 \code{//docs:flashwin\_vsim\_test}.
+\item \code{//lib/parts:parts\_test} runs
+\code{a\_read\_asked\_in\_reset\_is\_answered\_after\_it}: a read asked
+while \code{rst} is high is answered with the word once it falls.
 \end{itemize}
 
 \subsection*{Used by}
 
-Nothing in the tree yet. It is meant for the board's configuration
-flash, which issue 312 puts on the board through \code{STARTUPE2}, and
-for the bootloader of issue 135.
+\code{Board}, as \code{flashwin} behind its own \code{AxiPer} on the
+router's eighth port, a 16~MiB window at \code{0x2000\_0000} onto the
+configuration flash through \code{CfgFlash} (issue 312), and
+\code{ex\_cfgflash} beside the SPI master. The bootloader of issue 135
+is meant to read programs out of it.
 
 \subsection*{Limits}
 

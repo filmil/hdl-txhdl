@@ -84,9 +84,11 @@ nvc and Verilator: \code{//docs:spi\_sim\_spi\_tb\_test} and
 
 \subsection*{Used by}
 
-Nothing in the tree yet. It is meant for the board's configuration
-flash, for an SD card in SPI mode, and for sensors on the header;
-issue 146 says so.
+\code{Board}, as \code{spi} on the seventh slot of the peripheral page at
+\code{0x3600}, where it reaches the configuration flash through
+\code{CfgFlash} (issue 312); \code{ex\_cfgflash}, beside \code{FlashWin};
+and \code{ex\_spi}. Issue 146 means it for an SD card in SPI mode and
+for sensors on the header as well.
 
 \subsection*{Limits}
 

@@ -54,7 +54,7 @@ it: the first range that matches decides. The router decodes the
 address of each address phase. Every address in no range is a hole.
 The tables below are generated for the board's router,
 \code{BoardRouter} in \code{cpu/vreteno/src/board.rs}, which is
-\code{Router<7, BoardMap, 32, 32, 4, 4>} with \code{BoardMap} beside
+\code{Router<8, BoardMap, 32, 32, 4, 4>} with \code{BoardMap} beside
 it:
 
 \begin{center}\footnotesize
@@ -70,6 +70,8 @@ serial port and its neighbours \\
 4 & \code{0x0c00\_0000} & \code{0xfc00\_0000} & The interrupt controller \\
 5 & \code{0x0000\_0000} & \code{0xffff\_f000} & The boot memory \\
 6 & \code{0x1000\_0000} & \code{0xffff\_0000} & The debug module \\
+7 & \code{0x2000\_0000} & \code{0xff00\_0000} & The configuration flash,
+read through a window \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -150,7 +152,7 @@ read a hole.
 
 \code{Router<3, RunMap, ..>} in Vreteno's run and its lockstep and
 pair tests; \code{Router<4, RunMap, ..>}, with the boot memory, in
-\code{cpu/vreteno/src/run.rs}; \code{Router<7, BoardMap, ..>} on the
+\code{cpu/vreteno/src/run.rs}; \code{Router<8, BoardMap, ..>} on the
 board; \code{Router<4, NocMap, ..>} in the network's test;
 \code{Router<3, ThreeMap, ..>} in \code{ex\_axi\_router}; and
 \code{Router<2, TwoMap, ..>} in the router's own tests.

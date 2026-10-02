@@ -125,10 +125,12 @@ together.
 \subsection*{What a driver must do}
 
 \textbf{Read the last word of a frame back before writing
-\code{tx\_start}.} Stores on this machine are posted and \code{fence}
-orders nothing, which is issue 432, so without that read the fetch
-engine may read the slot before the frame has landed and send what
-was there before.
+\code{tx\_start}.} Stores on this machine are posted, so without
+an order the fetch engine may read the slot before the frame has
+landed and send what was there before. A \code{fence} now waits
+until every posted store has been answered (issue 432), and either
+the fence or the read orders them; the read is what was proven on
+the board, and \code{ethtx.rs} keeps it.
 
 What makes the obligation dischargeable is measured rather than
 assumed: this link answers a load behind an unanswered store to the
