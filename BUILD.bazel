@@ -4,6 +4,10 @@ load("@rules_rust//rust:defs.bzl", "rustfmt_test")
 exports_files(["rustfmt.toml"])
 exports_files(["Cargo.lock", "cargo-bazel-lock.json"])
 
+# The module, for the check that the blinky workspace names the same
+# Rust (//docs:zero_rust_test).
+exports_files(["MODULE.bazel"])
+
 # The formatter is a check rather than a step somebody remembers.
 # `AGENTS.md` prescribes a run of `@rules_rust//:rustfmt` before a
 # listing is included, and a run that rewrites a file nobody meant to

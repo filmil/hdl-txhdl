@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_latex_host//latex:defs.bzl", "combined_pdf", "latex_document")
 load(":waveform.bzl", "waveform")
 load("//tools/formal:defs.bzl", "formal_run", "formal_test", "formal_trace")
@@ -3024,6 +3025,22 @@ genrule(
     outs = ["out_zero.txt"],
     cmd = "$(location //tutorial/blinky:blinky) > $@",
     tools = ["//tutorial/blinky:blinky"],
+)
+
+# The blinky workspace names the Rust the tree compiles with, since
+# the Rust rules read the version only from the root module; this
+# fails when the two copies part (issue 840).
+sh_test(
+    name = "zero_rust_test",
+    srcs = ["zero_rust_test.sh"],
+    args = [
+        "$(rootpath //:MODULE.bazel)",
+        "$(rootpath //tutorial/blinky:MODULE.bazel)",
+    ],
+    data = [
+        "//:MODULE.bazel",
+        "//tutorial/blinky:MODULE.bazel",
+    ],
 )
 
 latex_document(
