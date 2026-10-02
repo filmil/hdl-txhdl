@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+# The specifications, as texts another module may quote at a pinned
+# commit: `@txhdl//spec:language.md` one at a time, or
+# `@txhdl//spec:sources` all of them (issue 838). Without a package
+# here they belonged to the root, which exports none of them.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["**/*.md"]))
+
+filegroup(
+    name = "sources",
+    srcs = glob(["**/*.md"]),
+)
