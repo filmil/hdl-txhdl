@@ -1582,15 +1582,21 @@ the memory through the controller, by \code{//ddr3/sim:example\_test}.
 \code{bazel build //cpu/vreteno:vreteno\_board\_pnr} synthesises it,
 places and routes it with the board's pins and the memory's, and
 writes the bitstream. Every timing constraint is
-met: the worst setup slack is 0.547~ns, the worst hold slack
-0.039~ns, over 28\,309 endpoints on the clocks the controller's
+met: the worst setup slack is 0.307~ns, the worst hold slack
+0.033~ns, over 32\,815 endpoints on the clocks the controller's
 generators derive from the one constraint on the board's 200~MHz
 input. No register is without a clock, and no internal endpoint is
-unconstrained. The design takes 10\,964 LUTs, 9\,850 flip-flops, four
-block RAM tiles, four DSP blocks, 81 pins, the controller's PLL and
-MMCM, and its 64 output and 32 input serialisers with 32 delays. The memory's pins carry no input or output delay, as in
-the a200t examples, since the controller calibrates their timing
-itself.
+unconstrained. The design takes 12\,296 LUTs, 11\,209 flip-flops, five
+block RAM tiles, four DSP blocks, 86 pins, the controller's PLL and
+MMCM, its 64 output and 32 input serialisers with 32 delays, and the
+\code{STARTUPE2} that clocks the configuration flash. These are the
+numbers of \code{main} with the configuration flash and the entropy
+source's capture buffer on it (issue 842). The memory's pins carry no
+input or output delay, as in the a200t examples, since the controller
+calibrates their timing itself, and neither do four other inputs and
+eight other outputs, which the report counts as such. The report's
+eight combinational loops are the entropy source's eight rings, which
+are loops by design and cut by a false path.
 
 The run on the board below was made with the design before the DDR3
 memory was on the bus, when the top wired the units to each other by
