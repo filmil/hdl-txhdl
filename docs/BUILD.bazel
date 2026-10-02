@@ -1039,6 +1039,8 @@ latex_document(
         ":spi_timing",
         ":i2c_run",
         ":i2c_timing",
+        ":mdio_run",
+        ":mdio_timing",
         ":syscon_run",
         ":syscon_timing",
         ":cdc_run",
@@ -1451,6 +1453,29 @@ waveform(
     ],
     from_tick = 60,
     until = 220,
+    width = 17.0,
+)
+
+# An MDIO master: the end of a read frame, the master letting go of
+# the line at the turnaround and the PHY driving the word.
+# The window starts a tick after an rx change rather than on one, since
+# a window that starts on a change draws the value before it as a
+# sliver with its text over the label (#865).
+waveform(
+    name = "mdio",
+    example = "//lib/examples:ex_mdio",
+    lowered = ("mdio", "mdio"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//mdc=>mdc",
+        "//mdio_oe=>mdio_oe",
+        "//mdio_out=>mdio_out",
+        "//mdio_in=>mdio_in",
+        "//mdio/busy=>busy",
+        "//mdio/rx=>rx",
+    ],
+    from_tick = 871,
+    until = 1041,
     width = 17.0,
 )
 
