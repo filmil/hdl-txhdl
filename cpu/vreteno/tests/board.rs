@@ -16,6 +16,7 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::eth::EthByte;
+use txhdl_parts::mdio::sim::MdioPhy;
 use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
 use txhdl_parts::spi::FlashDevice;
 use vreteno32::board::{Board, BoardIn, BoardOut, REMOTE_DEV};
@@ -49,6 +50,9 @@ struct Ran {
     /// go of short.
     flash: Vec<u8>,
     flash_short: u32,
+    /// The management frames the PHY took: its address, the
+    /// register's, and the word for a write.
+    phy_frames: Vec<(u8, u8, Option<u16>)>,
 }
 
 /// Run `text` with `data` in the data memory, on the board's design,
@@ -373,6 +377,16 @@ fn run_all(
     head.extend([0xaa, 0x99, 0x55, 0x66]);
     head.resize(256, 0xff);
     let mut chip = FlashDevice::new(head, [0x20, 0xba, 0x18], false, false);
+    // The Ethernet PHY's management interface: a model PHY at address
+    // 1, with the clause 22 registers a link at gigabit shows and an
+    // identifier and vendor registers of the model's own, not the
+    // JL2121's, whose data sheet could not be found (#864).
+    let (phy_mdio_in_o, phy_mdio_in) = signal::<Bit, DefaultClock>();
+    let (phy_mdc_o, phy_mdc) = signal::<Bit, DefaultClock>();
+    let (phy_out_o, phy_out) = signal::<Bit, DefaultClock>();
+    let (phy_oe_o, phy_oe) = signal::<Bit, DefaultClock>();
+    let mut phy = MdioPhy::new(1, phy_regs());
+    phy_mdio_in_o.set(Bit::One);
     let mut sim = Running::new(board.run(
         BoardIn {
             rst,
@@ -384,6 +398,7 @@ fn run_all(
             vr: chan::<LiteR<32>, DefaultClock>().1,
             net_rx: net_in_rx,
             fl_miso,
+            phy_mdio_in,
             jtag: AxiHostPins {
                 awid: signal::<U<2>, DefaultClock>().1,
                 awaddr,
@@ -452,6 +467,9 @@ fn run_all(
             fl_mosi: fl_mosi_o,
             fl_cclk: fl_cclk_o,
             fl_refused: bit(),
+            phy_mdc: phy_mdc_o,
+            phy_mdio_out: phy_out_o,
+            phy_mdio_oe: phy_oe_o,
         },
     ));
     rst_o.set(Bit::One);
@@ -505,6 +523,14 @@ fn run_all(
             fl_mosi.get().to_bool(),
         );
         fl_miso_o.set(Bit::from_bool(chip.miso()));
+        // The management line reads what the board drives, else what
+        // the PHY drives, else one through the pull-up.
+        let (oe, out) = (phy_oe.get().to_bool(), phy_out.get().to_bool());
+        let line =
+            |p: &MdioPhy| if oe { out } else { p.drives().unwrap_or(true) };
+        let seen = line(&phy);
+        phy.step(phy_mdc.get().to_bool(), seen);
+        phy_mdio_in_o.set(Bit::from_bool(line(&phy)));
         term.see(tx.get().to_bool());
         rx_o.set(Bit::from_bool(term.level()));
         ran_for = cycle;
@@ -533,6 +559,7 @@ fn run_all(
         steps: master.at,
         flash: chip.commands.clone(),
         flash_short: chip.partial,
+        phy_frames: phy.frames.clone(),
     }
 }
 
@@ -555,6 +582,49 @@ fn the_configuration_flash_answers_on_the_board() {
     want.extend([0x0b; 9]);
     assert_eq!(ran.flash, want);
     assert_eq!(ran.flash_short, 1, "write enable, cut short");
+    assert!(ran.halted_at.is_some(), "and halted");
+}
+
+/// The registers of the model PHY on the board's management line: the
+/// clause 22 control and status words of a link at gigabit, an
+/// identifier of the model's own, and the vendor registers numbered,
+/// so a word printed in the wrong place shows. None of them is the
+/// JL2121's (#864).
+fn phy_regs() -> [u16; 32] {
+    let mut r = [0u16; 32];
+    for (i, w) in r.iter_mut().enumerate() {
+        *w = 0x0101 * i as u16;
+    }
+    r[0] = 0x1140;
+    r[1] = 0x796d;
+    r[2] = 0x937c;
+    r[3] = 0x4023;
+    r
+}
+
+/// The Ethernet PHY's management registers on the board (issue 864):
+/// the core finds the PHY at the first address whose register 2 is
+/// not all ones and prints its 32 registers, four to a line. The PHY
+/// is the model; the same program on the board reads the JL2121. The
+/// program only reads: every frame the PHY took is a read.
+#[test]
+fn the_phy_registers_read_on_the_board() {
+    let ran = run(phyregs_program::TEXT, phyregs_program::DATA, b"", 200_000);
+    let regs = phy_regs();
+    let mut want = String::from("phy at 1\n");
+    for row in 0..8 {
+        want += &format!("r{:02}", row * 4);
+        for w in &regs[row * 4..row * 4 + 4] {
+            want += &format!(" {w:04x}");
+        }
+        want.push('\n');
+    }
+    assert_eq!(ran.said, want);
+    // Address 0 first, which nobody answers, then address 1's
+    // identifier, then the 32 registers in order; no write.
+    let mut frames = vec![(0, 2, None), (1, 2, None)];
+    frames.extend((0..32).map(|r| (1, r, None)));
+    assert_eq!(ran.phy_frames, frames);
     assert!(ran.halted_at.is_some(), "and halted");
 }
 
