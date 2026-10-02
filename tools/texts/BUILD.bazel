@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# The texts a module that depends on TxHDL quotes, reached the way it
+# reaches them: through `@txhdl//`, the module's own name, as the
+# blinky under //tutorial/blinky reaches the library (issue 838).
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+#   bazel test //tools/texts:quote_test
+sh_test(
+    name = "quote_test",
+    srcs = ["quote_test.sh"],
+    args = [
+        "$(rootpaths @txhdl//spec:sources)",
+        "$(rootpaths @txhdl//filmil:sources)",
+        "$(rootpath @txhdl//spec:language.md)",
+        "$(rootpath @txhdl//filmil:theses.md)",
+        "$(rootpath @txhdl//filmil:workspace/spec.md)",
+    ],
+    data = [
+        "@txhdl//filmil:sources",
+        "@txhdl//filmil:theses.md",
+        "@txhdl//filmil:workspace/spec.md",
+        "@txhdl//spec:language.md",
+        "@txhdl//spec:sources",
+    ],
+)
