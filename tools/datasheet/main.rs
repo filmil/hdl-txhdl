@@ -31,6 +31,7 @@ use txhdl_parts::bus::noc::node::Node;
 use txhdl_parts::bus::noc::switch::Switch;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::cdc::ChanCdc;
+use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::dma::{LineBuf, LineFetch, LineStore, NoBeats, NoReads};
 use txhdl_parts::eth::{EthLite, EthRx, EthTx};
 use txhdl_parts::ethdma::{FrameIn, FrameLen, FrameOut};
@@ -582,6 +583,11 @@ fn main() {
         "Check",
         "Check<Issue<32>>",
         Check::<Issue<32>>::lowered("check"),
+    );
+    sheet(
+        "CfgFlash",
+        "CfgFlash<1>",
+        CfgFlash::<1>::lowered("cfgflash"),
     );
     sheet(
         "FlashWin",

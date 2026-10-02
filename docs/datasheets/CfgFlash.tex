@@ -1,0 +1,114 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: CfgFlash, FlashPins, Startup
+\datasheet{CfgFlash}{The configuration flash reached from user logic after the bitstream has loaded, through \code{STARTUPE2}.}
+
+\dsfacts{\code{lib/parts/src/cfgflash.rs}}{\code{txhdl\_parts::cfgflash::CfgFlash}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+On a 7-series part the configuration flash's clock is the dedicated
+CCLK pin, which user logic reaches only through the \code{STARTUPE2}
+primitive's \code{USRCCLKO} (issue 312). The primitive brings two
+rules, from UG470: its \code{EOS} says when configuration is over, and
+until then the flash is not the user's; and the first three clocks on
+\code{USRCCLKO} after \code{EOS} never reach the pin, so a command whose
+clocks start there reaches the chip three bits short.
+
+\code{CfgFlash} answers both, in two children joined as a unit of
+units. \code{prim} is \code{Startup}, the primitive as the foreign
+module \code{startup} in \code{lib/parts/hdl/startup.v}: synthesised,
+it instantiates \code{STARTUPE2} and registers \code{EOS} twice;
+simulated, in Rust, Verilog and VHDL alike, it is a model that raises
+\code{eos} after \code{EOS\_AFTER} cycles, swallows the three clocks, and
+brings out the pin as \code{cclk} for a model of the chip. \code{pins}
+is \code{FlashPins<GUARD>}, between the chip and the two parts that
+reach it, the SPI master \code{Spi} and the window \code{FlashWin}.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{GUARD} & One refuses write enable, \code{0x06}, from the master;
+zero passes it. The tables use 1, as the board and the example do. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{EOS\_AFTER}, eight, and \code{SWALLOWED}, three, are constants of
+\code{cfgflash.rs} and belong to the model.
+
+\subsection*{Register map}
+
+None. The master and the window have their own; this part has wires.
+
+\dstables{CfgFlash}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item Until \code{eos} the pins hold the chip unselected and the clock
+low, and \code{w\_rst} high, so the window takes nothing off its bus.
+\item After \code{eos} they turn the clock eight times, four clocks, with
+the chip not selected, so the three the part swallows are spent on
+nothing. Then \code{w\_rst} falls.
+\item From then on the wires go to whichever part selects the chip
+first, the window before the master when both ask in one cycle, and
+stay with it until it lets go of its select. The other part's select
+is not passed on.
+\item With \code{GUARD} set, the pins count the master's command a bit
+a rise of its clock. On the seventh rise of a command whose seven bits
+begin write enable they raise the select, so the chip has a command
+shorter than eight bits, which it discards. \code{refused} is high
+until the master lets go. Every command that programs or erases a
+flash, or writes its registers, is ignored by the chip without write
+enable, so that one refusal is the door to all of them.
+\item Every output of the pins is a register, and the clock passes the
+primitive as well, so the chip sees the master's lines a cycle late
+and its clock two. A master must run at a half bit of at least four
+cycles, \code{DIV} of three, for the chip's answer to be on \code{miso}
+when it takes it. The chip's \code{miso} goes to both parts directly.
+\item Only mode 0 is carried: the clock idles low.
+\item The unit runs the pins before the primitive, and the primitive
+drives \code{eos} a step ahead, since the two drive each other through
+wires and a wire promises nothing about which process ran first.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/examples:ex\_cfgflash} puts the master behind its
+bridge and the window on its own link, both on one \code{FlashDevice}
+through \code{CfgFlash<1>}. A window read asked before \code{eos} waits
+and is answered; the master reads the identity \code{20 ba 18} whole,
+the first command after the swallowed clocks; its write enable is cut
+short and \code{refused} rises once; a second window read is answered.
+The chip took the identity and the two reads whole and one command
+short.
+\item \code{//docs:cfgflash\_sim\_cfgflash\_tb\_test} and
+\code{//docs:cfgflash\_vsim\_test} simulate the netlist against that
+run under nvc and Verilator, with the startup model in both languages.
+\item \code{//cpu/vreteno:board\_test} runs
+\code{the\_configuration\_flash\_answers\_on\_the\_board} through
+\code{Board}, and \code{//docs:vreteno} reports the same program on the
+board: the identity, the latch clear and the bitstream's sync word.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Board}, as \code{cfgflash}, with \code{spi} and \code{flashwin}
+on its other side and the configuration pins on the top.
+\code{ex\_cfgflash}.
+
+\subsection*{Limits}
+
+The guard refuses write enable only from the master; the window only
+reads. A command that a chip takes without write enable is not
+refused. The window and the master share the chip by select, so a
+master command while the window holds the chip is not passed on and
+reads back what the line holds, and a program that uses the master
+must not do so while the window is being read. Synthesised,
+\code{cclk} is held low and means nothing; it exists for simulation.
