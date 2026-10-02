@@ -14,7 +14,7 @@
 //! window refuses: it is read only, and that is what makes it safe to
 //! fetch from.
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::{now, signal, DefaultClock, Running, Unit};
+use txhdl::comp::{now, signal, Clock, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{
     axi_units, host_end, AxiHost, AxiPer, PerPort, Rd, Resp, Wr,
@@ -64,13 +64,17 @@ fn main() {
         wave.start();
     }
 
+    // The time in cycles of the clock: `now` counts the executor's time
+    // steps, two to a cycle, and printed bare it reads as twice what a
+    // read takes (issue 814).
+    let cycle = || now() / DefaultClock::PERIOD;
     let client = async move {
         let first = host.read(Rd::at(AT, 1)).await.done().await;
-        println!("{:3}  read  {:08x}", now(), first.data[0].raw());
+        println!("{:5}  read  {:08x}", cycle(), first.data[0].raw());
         assert_eq!(first.resp, Resp::Okay, "the first read was answered");
         assert_eq!(first.data[0].raw() as u32, WORDS[0], "the first word");
         let second = host.read(Rd::at(AT + 4, 1)).await.done().await;
-        println!("{:3}  read  {:08x}", now(), second.data[0].raw());
+        println!("{:5}  read  {:08x}", cycle(), second.data[0].raw());
         assert_eq!(second.data[0].raw() as u32, WORDS[1], "the second word");
         // The window is read only, and says so rather than pretending.
         let wrote = host
@@ -78,7 +82,7 @@ fn main() {
             .await
             .done()
             .await;
-        println!("{:3}  write {:?}", now(), wrote.resp);
+        println!("{:5}  write {:?}", cycle(), wrote.resp);
         assert_eq!(wrote.resp, Resp::SlvErr, "a write is refused");
     };
 
@@ -102,7 +106,7 @@ fn main() {
     }
     let mut chip = FlashDevice::new(image, [0x20, 0xba, 0x18], CPOL, CPHA);
 
-    println!("  t  what the program saw");
+    println!("cycle  what the program saw");
     rst_out.set(Bit::One);
     sim.cycle();
     rst_out.set(Bit::Zero);
