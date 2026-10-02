@@ -31,6 +31,7 @@ bazel build //cpu/vreteno/rust:hello_ram_bin //cpu/vreteno/rust:hello_fastboot \
     //cpu/vreteno/rust:trng_ram_bin //cpu/vreteno/rust:steps_ram_bin
 bazel build //zephyr:fastboot @multitool//tools/fastboot
 bazel build //tools/trngstat
+bazel build //cpu/vreteno/rust:phyregs_ram_bin       # the PHY's registers, #864
 ```
 
 A Vivado build that the memory watchdog can reach is killed partway, so run each one detached, with `nohup` and `disown`, and poll its log.
@@ -184,6 +185,24 @@ The serial watcher and the loader both hold the serial port, so the watcher in s
 If the ping to `192.168.1.50` from the board server fails, the link is the first thing to look at: `ip link show fpga-a200t-eth0` should say `LOWER_UP`.
 Capture: the three logs.
 It closes #143 when all three pass.
+
+### The PHY's registers, #864
+
+Same bitstream as the fastboot check, the flagship built from PR 863 or after it, which shifts the receive clock 78.75 degrees and brings the JL2121's MDIO out to the core.
+The program reads the PHY's 32 management registers over MDIO and prints them; it writes nothing to the PHY, not even a page select.
+
+```sh
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/phyregs_ram_bin.bin --seconds=10 \
+    2>&1 | tee board-864-phyregs.log
+```
+
+Pass: `phy at` and an address, then eight lines from `r00` to `r28`, four registers of four hexadecimal digits each.
+Registers 2 and 3, the last two words of the `r00` line, are the PHY's identifier; they should not both be `0000` or `ffff`.
+`no phy` means nothing answered at any of the 32 addresses: the pins, the pull-up or the PHY's reset are the first things to look at.
+`//cpu/vreteno:board_test`'s `the_phy_registers_read_on_the_board` pins the format in simulation, against a model PHY whose registers are its own and not the JL2121's.
+The numbers are the result, not a pass or a fail: which of registers 16 to 31 says whether the PHY delays its receive clock is in the JL2121's data sheet, which could not be found, so the log is put on #864 whole, for the reading.
+Run it after the fastboot check, whose Ethernet traffic is what shows the 78.75 degree shift receives; the two together are the evidence #864 waits on.
 
 ## 8. The DDR3 through MIG, #188
 
