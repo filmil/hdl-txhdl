@@ -55,4 +55,4 @@ goes out on \code{mosi} a bit at a time as \code{sclk} turns, with
 
 \lstinputlisting[caption={\code{ex\_flashwin.rs}. Run with \code{bazel run //lib/examples:ex\_flashwin}.},label={lst:x-flashwin}]{lib/examples/ex_flashwin.rs}
 
-\lstinputlisting[style=ascii,caption={What \code{ex\_flashwin} printed when the build ran it: the two words read out of the chip, and the write it refused.},label={lst:x-flashwin-out}]{out_flashwin.txt}
+\lstinputlisting[style=ascii,caption={What \code{ex\_flashwin} printed when the build ran it: the cycle each answer came back on, the two words read out of the chip, and the write it refused. A read is about three hundred cycles, nine bytes of sixteen half bits at two cycles each and a few for the bus.},label={lst:x-flashwin-out}]{out_flashwin.txt}
