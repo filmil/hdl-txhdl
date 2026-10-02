@@ -63,7 +63,7 @@ version a workspace names and fetches that Bazel. And Git, once, for
 the fetch of the mirror. Everything else comes with the build: the
 C and C++ compiler and the libraries a program links against, which
 TxHDL fetches for the Rust link; the Rust compiler, fetched by the Rust rules at
-the version TxHDL pins; TxHDL itself, fetched from its GitHub mirror
+the version the workspace names, the one TxHDL compiles with; TxHDL itself, fetched from its GitHub mirror
 at a named commit; and TxHDL's own dependencies, resolved through two
 registries. Nothing else is installed on the machine, and no Verilog
 tool is needed to get a netlist, since the netlist is what the Rust
@@ -93,9 +93,14 @@ repository and a commit. The commit here was the mirror's
 \code{main} on October 2, 2026, and the workspace was built at it,
 outside the project's tree, on that day; a newer one is any commit of
 the mirror's \code{main}, and the version, \code{0.0.0}, is what TxHDL calls
-itself.
+itself. Last, the Rust compiler, by version. TxHDL names the version
+it compiles with in its own module, but the Rust rules read a version
+only from the root module, which here is the workspace, so without
+these lines the workspace would compile with the rules' default
+instead. The version is TxHDL's, 1.90.0, and the project's build
+checks that the two stay the same.
 
-\lstinputlisting[style=ascii,caption={\code{MODULE.bazel}: two dependencies, one of them by commit.},label={lst:z-module}]{tutorial/blinky/MODULE.bazel}
+\lstinputlisting[style=ascii,caption={\code{MODULE.bazel}: two dependencies, one of them by commit, and the Rust compiler.},label={lst:z-module}]{tutorial/blinky/MODULE.bazel}
 
 The fourth is the build file. The blinky is a Rust binary that
 depends on TxHDL's library and its macros; the second rule runs it
