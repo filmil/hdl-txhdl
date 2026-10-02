@@ -252,6 +252,50 @@ vreteno_flat(
     program = ":flashid_ram",
 )
 
+# The cycle counter read twice back to back, from the data memory, and
+# the difference printed eight times (issue 848): #807 shown on the
+# board. Built for the simulation's boot memory, for `board_test`,
+# which pins the difference, and below for the loader.
+rust_binary(
+    name = "steps",
+    srcs = ["steps.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_image(
+    name = "steps_image",
+    platform = ":vreteno",
+    program = ":steps",
+)
+
+rust_library(
+    name = "steps_program",
+    srcs = [":steps_image"],
+    crate_name = "steps_program",
+    edition = "2021",
+)
+
+rust_binary(
+    name = "steps_ram",
+    srcs = ["steps.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_flat(
+    name = "steps_ram_bin",
+    platform = ":vreteno",
+    program = ":steps_ram",
+)
+
+
 # The same test, built for the board: `--cfg=board_run` adds the header
 # line and a dot every ten seconds around the test, which a simulation
 # would pay for in simulated time and which the tests that read the
