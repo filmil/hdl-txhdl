@@ -1,0 +1,50 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Debugger From the Cable}
+\label{sec:x-dtm}
+
+The RISC-V debug specification puts a debugger's access to a hart
+behind a small space of registers, the debug module interface, which
+a transport reaches from a cable. On an FPGA the JTAG port belongs to
+the device, so a design reaches it through \code{BSCANE2}, one of the
+user scan chains of the device's own TAP. \code{Dtm} is the
+specification's transport on that chain (issue 154). It is what lets
+a stock OpenOCD, and gdb through it, reach the debug module the board
+already has, with nothing written for either of them.
+
+OpenOCD speaks to it through its BSCAN tunnel. It sets the device's
+instruction register to \code{USER4} and carries every scan the
+transport's own TAP would have had inside one data scan of that
+chain: a bit that says instruction or data, seven bits of width, the
+payload, and three clocks after it. The payload is one bit longer than
+the register, because what comes back is late by a clock. The
+transport has the specification's registers: its \code{IDCODE},
+\code{dtmcs}, and \code{dmi}, the 41 bits of an access, which go out on
+\code{req} and come back on \code{ans}. An access still in flight when
+the next scan comes says busy, which sticks until \code{dtmcs} is
+written to clear it, as the specification has it. All of it runs on
+\code{Tck}, the cable's clock, which is a clock of its own in this
+language like any other.
+
+The example plays the scans OpenOCD makes, field for field from its
+source, against a model of the debug module that answers each access
+two edges after it comes: the \code{IDCODE}, \code{dtmcs}, then a
+write of a register and a read of it back. The driver changes the
+pins on the falling edge, as a JTAG host does, so that no edge sees
+them change under it. The netlist is checked against the run under nvc
+and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{dtm_timing.tex}
+\caption{One tunneled scan of the instruction register, which selects
+\code{dtmcs}: a capture, \code{phase} \code{01} for the seven bits of
+width, counted in \code{cnt}, \code{10} for the five bits of the
+register, \code{11} for the clocks after it, and on the update
+\code{ir} goes from \code{1}, \code{IDCODE}, to \code{10},
+\code{dtmcs}. The update at the left is the scan before it.}
+\label{fig:x-dtm}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_dtm.rs}. Run with \code{bazel run //lib/examples:ex\_dtm}.},label={lst:x-dtm}]{lib/examples/ex_dtm.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_dtm} printed when the build ran it: the transport's \code{IDCODE}, \code{dtmcs}, and the word read back through \code{dmi}, then the netlist.},label={lst:x-dtm-out}]{out_dtm.txt}
