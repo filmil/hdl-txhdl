@@ -369,6 +369,11 @@ pub mod sim {
         /// Every frame it took: the PHY's address, the register's,
         /// and the word written, or `None` for a read.
         pub frames: Vec<(u8, u8, Option<u16>)>,
+        /// Registers 16 to 30 of the pages other than 0, by page and
+        /// register, for a PHY that pages its vendor registers by the
+        /// word in register 31, as JLSemi's do. A PHY with none here
+        /// is not paged, and register 31 is a register like the rest.
+        pub pages: std::collections::BTreeMap<(u16, u8), u16>,
         mdc: bool,
         ones: u32,
         pos: Option<u32>,
@@ -384,12 +389,39 @@ pub mod sim {
                 addr,
                 regs,
                 frames: Vec::new(),
+                pages: std::collections::BTreeMap::new(),
                 mdc: false,
                 ones: 0,
                 pos: None,
                 bits: 0,
                 answer: None,
                 drive: None,
+            }
+        }
+
+        /// Where register `reg` is, on the page register 31 selects:
+        /// page 0, or any register outside 16 to 30, is `regs`, and the
+        /// rest is `pages`, when the PHY has pages at all.
+        fn paged(&self, reg: u8) -> Option<(u16, u8)> {
+            let page = self.regs[31];
+            let vendor = (16..=30).contains(&reg);
+            (!self.pages.is_empty() && page != 0 && vendor)
+                .then_some((page, reg))
+        }
+
+        fn read(&self, reg: u8) -> u16 {
+            match self.paged(reg) {
+                Some(at) => self.pages.get(&at).copied().unwrap_or(0),
+                None => self.regs[reg as usize],
+            }
+        }
+
+        fn write(&mut self, reg: u8, word: u16) {
+            match self.paged(reg) {
+                Some(at) => {
+                    self.pages.insert(at, word);
+                }
+                None => self.regs[reg as usize] = word,
             }
         }
 
@@ -433,7 +465,7 @@ pub mod sim {
                 if op == 2 {
                     self.frames.push((phy, reg, None));
                     if phy == self.addr {
-                        self.answer = Some(self.regs[reg as usize]);
+                        self.answer = Some(self.read(reg));
                     }
                 }
             }
@@ -453,7 +485,7 @@ pub mod sim {
                     let word = self.bits as u16;
                     self.frames.push((phy, reg, Some(word)));
                     if phy == self.addr {
-                        self.regs[reg as usize] = word;
+                        self.write(reg, word);
                     }
                 }
                 self.pos = None;
@@ -668,6 +700,40 @@ mod tests {
         assert!(ended, "the client finished");
         assert_eq!(phy.regs[31], 0xa5c3, "the register written");
         assert_eq!(*got.borrow(), 0xa5c3, "and read back");
+    }
+
+    /// A PHY that pages its vendor registers by register 31: register
+    /// 17 on page 3336 reads through the page select, page 0's register
+    /// 17 is a different word, and writing the old page back restores it.
+    #[test]
+    fn a_paged_register_reads_through_the_page_select() {
+        let mut want = regs();
+        // Page 0 selected, as the JL2121 on the board was found.
+        want[31] = 0;
+        let mut phy = MdioPhy::new(0, want);
+        phy.pages.insert((3336, 17), 0x0200);
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let put = got.clone();
+        let (phy, ended, _) = on_the_bus(phy, |h| async move {
+            poke(&h, reg::CTRL, DIV).await;
+            frame(&h, cmd::read(0, 31)).await;
+            let was = peek(&h, reg::DATA).await as u16;
+            frame(&h, cmd::write(0, 31, 3336)).await;
+            frame(&h, cmd::read(0, 17)).await;
+            let paged = peek(&h, reg::DATA).await as u16;
+            frame(&h, cmd::write(0, 31, was)).await;
+            frame(&h, cmd::read(0, 17)).await;
+            let page0 = peek(&h, reg::DATA).await as u16;
+            put.borrow_mut().extend([was, paged, page0]);
+        });
+        assert!(ended, "the client finished");
+        assert_eq!(
+            *got.borrow(),
+            vec![0, 0x0200, want[17]],
+            "the page select, the paged word, page 0's word"
+        );
+        assert_eq!(phy.regs[31], want[31], "the page select restored");
+        assert_eq!(phy.regs[17], want[17], "page 0 untouched");
     }
 
     /// The master and the PHY never drive the line in the same cycle,
