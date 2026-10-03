@@ -23,3 +23,12 @@ sh_test(
     args = ["$(rootpath :dt2tikz)"],
     data = [":dt2tikz"],
 )
+
+# A value is drawn at the tick its timestamp names, not a tick later
+# (issue 880).
+sh_test(
+    name = "timestamp_test",
+    srcs = ["timestamp_test.sh"],
+    args = ["$(rootpath :dt2tikz)"],
+    data = [":dt2tikz"],
+)
