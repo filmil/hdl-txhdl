@@ -17,6 +17,7 @@ go_library(
     srcs = [
         "bit.go",
         "main.go",
+        "mcs.go",
     ],
     importpath = "github.com/filmil/txhdl/tools/bitfit",
 )
@@ -29,8 +30,14 @@ go_binary(
 
 go_test(
     name = "bitfit_test",
-    srcs = ["bit_test.go"],
+    srcs = [
+        "bit_test.go",
+        "mcs_test.go",
+    ],
     embed = [":bitfit_lib"],
 )
 
-exports_files(["fits_test.sh"])
+exports_files([
+    "fits_test.sh",
+    "image_test.sh",
+])
