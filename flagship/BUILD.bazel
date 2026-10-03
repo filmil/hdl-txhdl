@@ -47,6 +47,7 @@ vivado_synthesis2(
         "//eth:mac_v",
         "//hdmi:demo_v",
         "//lib/board:chan_cdc",
+        "//lib/board:bscan_user4",
         "//eth:eth_rgmii",
         "board/flagship.v",
         "//ddr3:hdl",

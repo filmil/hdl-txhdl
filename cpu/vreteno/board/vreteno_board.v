@@ -144,8 +144,22 @@ module vreteno_board (
   // first LED, so a program can fade it; the other three go nowhere on
   // this board and are left for a design that wants them.
   wire [3:0] pwm_pins;
+  // The RISC-V debug transport's scan chain, USER4, where OpenOCD's
+  // BSCAN tunnel reaches the debug module (issue 154).
+  wire dbg_tck, dbg_sel, dbg_shift, dbg_capture, dbg_update, dbg_tdi;
+  wire dbg_reset, dbg_tdo;
+  bscan_user4 dbg_bscan (
+    .tck(dbg_tck), .sel(dbg_sel), .shift(dbg_shift),
+    .capture(dbg_capture), .update(dbg_update), .tdi(dbg_tdi),
+    .reset(dbg_reset), .tdo(dbg_tdo)
+  );
+
   board lowered (
     .clk(clk),
+    .tck(dbg_tck),
+    .bscan_sel(dbg_sel), .bscan_shift(dbg_shift),
+    .bscan_capture(dbg_capture), .bscan_update(dbg_update),
+    .bscan_tdi(dbg_tdi), .bscan_reset(dbg_reset), .bscan_tdo(dbg_tdo),
     .rst(rst),
     .irq(1'b0),
     // The serial line through the same two flip-flops as the break
@@ -196,12 +210,12 @@ module vreteno_board (
     // The JTAG master's pins (issue 241). This top has no master on
     // them: every valid low, every ready low, and the answers unread.
     // //cpu/vreteno:vreteno_board_jtag_pnr is the top that has one.
-    .jtag_awid(2'd0), .jtag_awaddr(32'd0), .jtag_awlen(8'd0),
+    .jtag_awid(1'd0), .jtag_awaddr(32'd0), .jtag_awlen(8'd0),
     .jtag_awsize(3'd0), .jtag_awburst(2'd0), .jtag_awlock(1'b0),
     .jtag_awcache(4'd0), .jtag_awprot(3'd0), .jtag_awvalid(1'b0),
     .jtag_wdata(32'd0), .jtag_wstrb(4'd0), .jtag_wlast(1'b0),
     .jtag_wvalid(1'b0), .jtag_bready(1'b0),
-    .jtag_arid(2'd0), .jtag_araddr(32'd0), .jtag_arlen(8'd0),
+    .jtag_arid(1'd0), .jtag_araddr(32'd0), .jtag_arlen(8'd0),
     .jtag_arsize(3'd0), .jtag_arburst(2'd0), .jtag_arlock(1'b0),
     .jtag_arcache(4'd0), .jtag_arprot(3'd0), .jtag_arvalid(1'b0),
     .jtag_rready(1'b0),

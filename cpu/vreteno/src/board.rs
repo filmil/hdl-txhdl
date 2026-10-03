@@ -37,7 +37,7 @@ use txhdl::comp::{
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
-use txhdl_parts::bus::arbiter::Arbiter4;
+use txhdl_parts::bus::arbiter::{Arbiter2, Arbiter4};
 use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerPort, PerReq, B, R,
     W,
@@ -47,8 +47,10 @@ use txhdl_parts::bus::axi_lite::{
 };
 use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::router::Router;
+use txhdl_parts::cdc::ChanCdc;
 use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::dma::{LineFetch, LineStore, NoBeats, NoReads};
+use txhdl_parts::dtm::{Dtm, DtmBridge, Tck};
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::ethdma::{FrameIn, FrameLen, FrameOut};
 use txhdl_parts::ethshare::EthShare;
@@ -168,6 +170,10 @@ impl AddrMap<1> for DmMap {
 }
 // end{litemaps}
 
+/// Where the transport's bridge finds the debug module's registers:
+/// `DmMap`'s base, as a number a type can carry.
+pub const DM_AT: usize = <DmMap as AddrMap<1>>::RANGES[0].0;
+
 // begin{board}
 /// The board's design.
 #[derive(Trace, Default)]
@@ -180,7 +186,27 @@ pub struct Board<const DIV: u32> {
     /// the core is doing (issue 241). Its pins arrive as the board's
     /// own, and this joins them to the link's channels; a top with no
     /// master ties them off.
-    pub jtag: AxiPins<32, 32, 4, 2>,
+    pub jtag: AxiPins<32, 32, 4, 1>,
+    /// The RISC-V debug transport (issue 154), behind the top's
+    /// `BSCANE2` on `USER4` and on the cable's clock, so that a stock
+    /// OpenOCD, and gdb through it, reaches the debug module from the
+    /// cable that programs the part.
+    pub dtm: Dtm,
+    /// The transport's accesses across to the board's clock, and the
+    /// answers back across to the cable's.
+    pub dreq: ChanCdc<U<41>, 2, 4, 3, Tck, DefaultClock>,
+    pub dans: ChanCdc<U<34>, 2, 4, 3, DefaultClock, Tck>,
+    /// The transport's half on the board's clock: each access a read or
+    /// a write on the link, the debug module's registers at `DM_AT`
+    /// and its system bus access served here, through a host of its
+    /// own. One access at a time, so one bit of identifier.
+    pub dbridge: DtmBridge<DM_AT, 1>,
+    pub dhost: AxiHost<32, 32, 4, 1, 2>,
+    /// The JTAG master and the transport's bridge share the arbiter's
+    /// second host, each with one bit of identifier, so that nothing
+    /// past the arbiter widens: the JTAG master's IP only ever used one
+    /// of the two bits it had. Taking turns, as the arbiter does.
+    pub jarb: Arbiter2<32, 32, 4, 1, 2, 0>,
     /// The four hosts onto one link: the core, the JTAG master, and
     /// the Ethernet port's two engines, the one that fetches a frame to
     /// send and the one that stores a frame received (issue 151). The
@@ -345,11 +371,20 @@ pub struct BoardIn {
     pub net_rx: Rx<EthByte>,
     /// The JTAG master's pins, one field; its ports are `jtag_awid`
     /// and the rest (issue 579).
-    pub jtag: AxiHostPins<32, 32, 4, 2>,
+    pub jtag: AxiHostPins<32, 32, 4, 1>,
     /// The configuration flash's data out, pin D01.
     pub fl_miso: In<Bit>,
     /// The Ethernet PHY's management data line, as read at the pad.
     pub phy_mdio_in: In<Bit>,
+    /// The top's `BSCANE2` on `USER4`, on the cable's clock: selected,
+    /// the TAP's shift, capture and update, the data in, and the TAP's
+    /// reset (issue 154).
+    pub bscan_sel: In<Bit, Tck>,
+    pub bscan_shift: In<Bit, Tck>,
+    pub bscan_capture: In<Bit, Tck>,
+    pub bscan_update: In<Bit, Tck>,
+    pub bscan_tdi: In<Bit, Tck>,
+    pub bscan_reset: In<Bit, Tck>,
 }
 
 /// The board's outputs: the halt and the serial line, the modulator,
@@ -383,11 +418,11 @@ pub struct BoardOut {
     pub net_tx: Tx<EthByte>,
     pub jtag_awready: Out<Bit>,
     pub jtag_wready: Out<Bit>,
-    pub jtag_bid: Out<U<2>>,
+    pub jtag_bid: Out<U<1>>,
     pub jtag_bresp: Out<U<2>>,
     pub jtag_bvalid: Out<Bit>,
     pub jtag_arready: Out<Bit>,
-    pub jtag_rid: Out<U<2>>,
+    pub jtag_rid: Out<U<1>>,
     pub jtag_rdata: Out<U<32>>,
     pub jtag_rresp: Out<U<2>>,
     pub jtag_rlast: Out<Bit>,
@@ -410,6 +445,8 @@ pub struct BoardOut {
     /// High while the board drives the management data line; the top
     /// makes the pad three-state from the two.
     pub phy_mdio_oe: Out<Bit>,
+    /// The transport's data out, to `BSCANE2`'s TDO.
+    pub bscan_tdo: Out<Bit, Tck>,
 }
 // end{ports}
 
@@ -429,6 +466,12 @@ impl<const DIV: u32> Unit for Board<DIV> {
             jtag,
             fl_miso,
             phy_mdio_in,
+            bscan_sel,
+            bscan_shift,
+            bscan_capture,
+            bscan_update,
+            bscan_tdi,
+            bscan_reset,
         }: BoardIn,
         BoardOut {
             halt,
@@ -474,6 +517,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
             phy_mdc,
             phy_mdio_out,
             phy_mdio_oe,
+            bscan_tdo,
         }: BoardOut,
     ) {
         // The reset, read by the core, the timer and the serial port.
@@ -517,6 +561,30 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (jw_tx, jw_rx) = chan::<W<32, 4>, DefaultClock>();
         let (jb_tx, jb_rx) = chan::<B<2>, DefaultClock>();
         let (jr_tx, jr_rx) = chan::<R<32, 2>, DefaultClock>();
+        // The two that share the arbiter's second host, one bit of
+        // identifier each: the JTAG master's pins and the transport's
+        // bridge (issue 154).
+        let (kaw_tx, kaw_rx) = chan::<Aw<32, 1>, DefaultClock>();
+        let (kar_tx, kar_rx) = chan::<Ar<32, 1>, DefaultClock>();
+        let (kw_tx, kw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (kb_tx, kb_rx) = chan::<B<1>, DefaultClock>();
+        let (kr_tx, kr_rx) = chan::<R<32, 1>, DefaultClock>();
+        let (taw_tx, taw_rx) = chan::<Aw<32, 1>, DefaultClock>();
+        let (tar_tx, tar_rx) = chan::<Ar<32, 1>, DefaultClock>();
+        let (tw_tx, tw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (tb_tx, tb_rx) = chan::<B<1>, DefaultClock>();
+        let (tr_tx, tr_rx) = chan::<R<32, 1>, DefaultClock>();
+        let (tissue_tx, tissue_rx) = chan::<Issue<32>, DefaultClock>();
+        let (twbeat_tx, twbeat_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (trelease_tx, trelease_rx) = chan::<Grant<1>, DefaultClock>();
+        let (tgrant_tx, tgrant_rx) = chan::<Grant<1>, DefaultClock>();
+        let (tdone_tx, tdone_rx) = chan::<Done<1>, DefaultClock>();
+        let (trdata_tx, trdata_rx) = chan::<R<32, 1>, DefaultClock>();
+        // The transport's accesses and answers, on each clock.
+        let (dreq_tx, dreq_rx) = chan::<U<41>, Tck>();
+        let (dreqx_tx, dreqx_rx) = chan::<U<41>, DefaultClock>();
+        let (dans_tx, dans_rx) = chan::<U<34>, DefaultClock>();
+        let (dansx_tx, dansx_rx) = chan::<U<34>, Tck>();
         let (xaw_tx, xaw_rx) = chan::<Aw<32, 4>, DefaultClock>();
         let (xar_tx, xar_rx) = chan::<Ar<32, 4>, DefaultClock>();
         let (xw_tx, xw_rx) = chan::<W<32, 4>, DefaultClock>();
@@ -955,16 +1023,77 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                         ),
                                     ),
                                 ),
+                                join2(
+                                join2(
+                                    join2(
+                                        self.jarb.run(
+                                            (
+                                                [kaw_rx, taw_rx],
+                                                [kar_rx, tar_rx],
+                                                [kw_rx, tw_rx],
+                                                jb_rx,
+                                                jr_rx,
+                                            ),
+                                            (
+                                                jaw_tx,
+                                                jar_tx,
+                                                jw_tx,
+                                                [kb_tx, tb_tx],
+                                                [kr_tx, tr_tx],
+                                            ),
+                                        ),
+                                        self.dhost.run(
+                                            (
+                                                tissue_rx, twbeat_rx, tb_rx,
+                                                tr_rx, trelease_rx,
+                                            ),
+                                            (
+                                                taw_tx, tar_tx, tw_tx,
+                                                tgrant_tx, tdone_tx, trdata_tx,
+                                            ),
+                                        ),
+                                    ),
+                                    join2(
+                                        join2(
+                                            self.dtm.run(
+                                                (
+                                                    bscan_sel,
+                                                    bscan_shift,
+                                                    bscan_capture,
+                                                    bscan_update,
+                                                    bscan_tdi,
+                                                    bscan_reset,
+                                                    dansx_rx,
+                                                ),
+                                                (bscan_tdo, dreq_tx),
+                                            ),
+                                            self.dbridge.run(
+                                                (
+                                                    dreqx_rx, tgrant_rx,
+                                                    tdone_rx, trdata_rx,
+                                                ),
+                                                (
+                                                    dans_tx, tissue_tx,
+                                                    twbeat_tx, trelease_tx,
+                                                ),
+                                            ),
+                                        ),
+                                        join2(
+                                            self.dreq.run(dreq_rx, dreqx_tx),
+                                            self.dans.run(dans_rx, dansx_tx),
+                                        ),
+                                    ),
+                                ),
                                 self.jtag.run(
                                     AxiPinsIn {
                                         pins: jtag,
-                                        b: jb_rx,
-                                        r: jr_rx,
+                                        b: kb_rx,
+                                        r: kr_rx,
                                     },
                                     AxiPinsOut {
-                                        aw: jaw_tx,
-                                        ar: jar_tx,
-                                        w: jw_tx,
+                                        aw: kaw_tx,
+                                        ar: kar_tx,
+                                        w: kw_tx,
                                         awready: jtag_awready,
                                         wready: jtag_wready,
                                         bid: jtag_bid,
@@ -977,6 +1106,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                         rlast: jtag_rlast,
                                         rvalid: jtag_rvalid,
                                     },
+                                ),
                                 ),
                             ),
                             self.router.run(

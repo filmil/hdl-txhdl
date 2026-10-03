@@ -18,6 +18,7 @@ use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::mdio::sim::MdioPhy;
 use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
+use txhdl_parts::dtm::Tck;
 use txhdl_parts::spi::FlashDevice;
 use vreteno32::board::{Board, BoardIn, BoardOut, REMOTE_DEV};
 use vreteno32::core::Vreteno;
@@ -402,8 +403,14 @@ fn run_all(
             net_rx: net_in_rx,
             fl_miso,
             phy_mdio_in,
+            bscan_sel: signal::<Bit, Tck>().1,
+            bscan_shift: signal::<Bit, Tck>().1,
+            bscan_capture: signal::<Bit, Tck>().1,
+            bscan_update: signal::<Bit, Tck>().1,
+            bscan_tdi: signal::<Bit, Tck>().1,
+            bscan_reset: signal::<Bit, Tck>().1,
             jtag: AxiHostPins {
-                awid: signal::<U<2>, DefaultClock>().1,
+                awid: signal::<U<1>, DefaultClock>().1,
                 awaddr,
                 awlen,
                 awsize,
@@ -417,7 +424,7 @@ fn run_all(
                 wlast,
                 wvalid,
                 bready,
-                arid: signal::<U<2>, DefaultClock>().1,
+                arid: signal::<U<1>, DefaultClock>().1,
                 araddr,
                 arlen,
                 arsize,
@@ -457,11 +464,11 @@ fn run_all(
             net_tx: net_out_tx,
             jtag_awready: awready_o,
             jtag_wready: wready_o,
-            jtag_bid: signal::<U<2>, DefaultClock>().0,
+            jtag_bid: signal::<U<1>, DefaultClock>().0,
             jtag_bresp: signal::<U<2>, DefaultClock>().0,
             jtag_bvalid: bvalid_o,
             jtag_arready: arready_o,
-            jtag_rid: signal::<U<2>, DefaultClock>().0,
+            jtag_rid: signal::<U<1>, DefaultClock>().0,
             jtag_rdata: rdata_o,
             jtag_rresp: signal::<U<2>, DefaultClock>().0,
             jtag_rlast: bit(),
@@ -473,6 +480,7 @@ fn run_all(
             phy_mdc: phy_mdc_o,
             phy_mdio_out: phy_out_o,
             phy_mdio_oe: phy_oe_o,
+            bscan_tdo: signal::<Bit, Tck>().0,
         },
     ));
     rst_o.set(Bit::One);

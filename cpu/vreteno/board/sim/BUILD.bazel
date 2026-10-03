@@ -21,6 +21,7 @@ vivado_library(
         "board_tb.v",
         "//ddr3:hdl",
         "//lib/parts:hdl",
+        "//lib/board:bscan_user4",
     ],
     tags = ["manual"],
     deps = [

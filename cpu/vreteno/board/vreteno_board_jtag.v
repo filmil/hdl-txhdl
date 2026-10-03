@@ -156,16 +156,31 @@ module vreteno_board_jtag (
   wire [3:0] pwm_pins;
   // The JTAG master's pins, between it and the lowered board. Its
   // reset is active low and the board's is active high.
-  wire j_awid, j_arid, j_awvalid, j_awready, j_wvalid, j_wready;
+  wire j_awid, j_arid, j_bid, j_rid, j_awvalid, j_awready, j_wvalid;
+  wire j_wready;
   wire j_bvalid, j_bready, j_arvalid, j_arready, j_rvalid, j_rready;
   wire j_awlock, j_arlock, j_wlast, j_rlast;
   wire [31:0] j_awaddr, j_araddr, j_wdata, j_rdata;
   wire [7:0] j_awlen, j_arlen;
   wire [2:0] j_awsize, j_arsize, j_awprot, j_arprot;
-  wire [1:0] j_awburst, j_arburst, j_bresp, j_rresp, j_bid, j_rid;
+  wire [1:0] j_awburst, j_arburst, j_bresp, j_rresp;
   wire [3:0] j_awcache, j_arcache, j_wstrb;
+  // The RISC-V debug transport's scan chain, USER4, where OpenOCD's
+  // BSCAN tunnel reaches the debug module (issue 154).
+  wire dbg_tck, dbg_sel, dbg_shift, dbg_capture, dbg_update, dbg_tdi;
+  wire dbg_reset, dbg_tdo;
+  bscan_user4 dbg_bscan (
+    .tck(dbg_tck), .sel(dbg_sel), .shift(dbg_shift),
+    .capture(dbg_capture), .update(dbg_update), .tdi(dbg_tdi),
+    .reset(dbg_reset), .tdo(dbg_tdo)
+  );
+
   board lowered (
     .clk(clk),
+    .tck(dbg_tck),
+    .bscan_sel(dbg_sel), .bscan_shift(dbg_shift),
+    .bscan_capture(dbg_capture), .bscan_update(dbg_update),
+    .bscan_tdi(dbg_tdi), .bscan_reset(dbg_reset), .bscan_tdo(dbg_tdo),
     .rst(rst),
     .irq(1'b0),
     // The serial line through the same two flip-flops as the break
@@ -216,7 +231,7 @@ module vreteno_board_jtag (
     // The JTAG master's pins (issue 241), driven by the master below.
     // The master's identifier is one bit; the board's host ports carry
     // two, so it is widened with a zero and narrowed back.
-    .jtag_awid({1'b0, j_awid}), .jtag_awaddr(j_awaddr),
+    .jtag_awid(j_awid), .jtag_awaddr(j_awaddr),
     .jtag_awlen(j_awlen), .jtag_awsize(j_awsize),
     .jtag_awburst(j_awburst), .jtag_awlock(j_awlock),
     .jtag_awcache(j_awcache), .jtag_awprot(j_awprot),
@@ -225,7 +240,7 @@ module vreteno_board_jtag (
     .jtag_wvalid(j_wvalid), .jtag_wready(j_wready),
     .jtag_bid(j_bid), .jtag_bresp(j_bresp), .jtag_bvalid(j_bvalid),
     .jtag_bready(j_bready),
-    .jtag_arid({1'b0, j_arid}), .jtag_araddr(j_araddr),
+    .jtag_arid(j_arid), .jtag_araddr(j_araddr),
     .jtag_arlen(j_arlen), .jtag_arsize(j_arsize),
     .jtag_arburst(j_arburst), .jtag_arlock(j_arlock),
     .jtag_arcache(j_arcache), .jtag_arprot(j_arprot),
