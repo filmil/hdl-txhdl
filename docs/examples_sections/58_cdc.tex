@@ -64,6 +64,17 @@ simulation in either language says anything about it. A green test
 beside a synchroniser invites the opposite conclusion, which is why
 this paragraph is here.
 
+What the design can do is say which flops those are, so that the
+tool that places them knows. The four synchroniser fields carry
+\code{\#[async\_reg]}, and the netlist marks each of them
+\code{ASYNC\_REG}: in Verilog as \code{(* ASYNC\_REG = "TRUE" *)} on
+the register, in VHDL as an attribute of the signal. That is what
+\code{lib/board/chan\_cdc.v} writes by hand on its own four. Vivado
+then keeps the two stages of each pair close together and reports
+them as a synchroniser, and nothing else in the netlist is marked.
+\code{\#[async\_reg]} on a field that is not a register is refused
+when the unit is lowered.
+
 Writing this example found a fault in the checking rather than in the
 design: a channel's \code{ready} and \code{valid} were compared
 against the trace at ticks which were not edges of the port's own
