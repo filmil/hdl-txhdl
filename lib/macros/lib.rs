@@ -4008,6 +4008,15 @@ fn pattern_cond(
 /// the clock and its edge, and the drives hoisted out of `if` arms.
 struct Cx<'a> {
     pnames: &'a [String],
+    /// Each port's clock, as the type of its port names it, so a loop
+    /// whose only wait is a channel's waits on that channel's clock
+    /// (issue 881).
+    pclocks: &'a [(String, String)],
+    /// The clock of the first channel the loop waits on, the loop's
+    /// when no wait names one (issue 881). A wait on a channel names
+    /// no clock of its own and takes the process's, so this is only a
+    /// fallback, read once the loop is lowered.
+    chan_clock: String,
     wires: &'a mut Vec<(String, String)>,
     /// The name each wire takes when a field has the one it wanted:
     /// chosen here, where the ports and the other wires are known,
@@ -4024,6 +4033,23 @@ struct Cx<'a> {
     /// The variables of the `for` loops the statements are inside,
     /// innermost last (issue 500).
     loops: Vec<String>,
+}
+
+impl Cx<'_> {
+    /// A wait on the channel `chan`, `rx.wait()` or `tx.put()`, is a
+    /// wait for an edge of that channel's clock, as the run waits on
+    /// it. It names no clock for the process, which takes the one its
+    /// other waits name; the first channel's is kept for a loop whose
+    /// waits name none (issue 881). A channel that is not a port of the
+    /// unit has no clock here, and such a loop is refused as before.
+    fn waits_on(&mut self, chan: &str) {
+        if !self.chan_clock.is_empty() {
+            return;
+        }
+        if let Some((_, c)) = self.pclocks.iter().find(|(p, _)| p == chan) {
+            self.chan_clock = format!("<{c} as ::txhdl::comp::Clock>::NAME");
+        }
+    }
 }
 
 /// The marks around a loop's variable in a name built from it: `ins[i]`
@@ -4315,6 +4341,7 @@ fn lower_stmts(
         // is the wait's condition and what follows lands on the take
         // (issue 755).
         if let Some((tx, value)) = put_parts(&ts) {
+            cx.waits_on(&tx.to_string());
             let ready: Vec<TokenTree> = format!("{tx}.ready().to_bool()")
                 .parse::<TokenStream>()
                 .unwrap()
@@ -4473,6 +4500,7 @@ fn lower_stmts(
             let TokenTree::Ident(rx) = &ts[3] else {
                 return Err(err(ts[3].span(), "expected a channel"));
             };
+            cx.waits_on(&rx.to_string());
             let cond = ename(&format!("{rx}_valid"));
             cx.guard = Some(cond.clone());
             stmts.push(format!("NlS::Guard({cond})"));
@@ -6341,6 +6369,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut ports: Vec<String> = Vec::new();
     // The ports by name and kind, for a unit of units' joins.
     let mut pkinds: Vec<(String, String)> = Vec::new();
+    // The ports by name and clock, for a loop that waits on a channel.
+    let mut pclocks: Vec<(String, String)> = Vec::new();
     // The names the netlist gives the ports, each with where it is
     // declared.
     let mut port_nets: Vec<(String, String, Span)> = Vec::new();
@@ -6387,6 +6417,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
              <{clock} as ::txhdl::comp::Clock>::NAME));"
         ));
         pkinds.push((pname.clone(), kind.to_string()));
+        pclocks.push((pname.clone(), clock.clone()));
         if kind == "Tx" || kind == "Rx" {
             for end in ["data", "valid", "ready"] {
                 port_nets.push((pname.clone(), format!("{pname}_{end}"), span));
@@ -6480,6 +6511,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         let toks: Vec<TokenTree> = lbody.stream().into_iter().collect();
         let mut cx = Cx {
             pnames: &pnames,
+            pclocks: &pclocks,
+            chan_clock: String::new(),
             wires: &mut wires,
             wire_alts: &mut wire_alts,
             named: &mut named,
@@ -6518,7 +6551,13 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         };
         stmts.append(&mut cx.hoisted);
-        let (clock, falling) = (cx.clock.clone(), cx.falling);
+        // A loop whose waits name no clock, only channels', is clocked
+        // by the first channel it waits on (issue 881).
+        let (clock, falling) = if cx.clock.is_empty() {
+            (cx.chan_clock.clone(), false)
+        } else {
+            (cx.clock.clone(), cx.falling)
+        };
         drop(cx);
         if clock.is_empty() {
             return err(
