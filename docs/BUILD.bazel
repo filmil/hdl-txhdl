@@ -600,6 +600,21 @@ waveform(
     ],
 )
 
+# A register starts where the unit's Default puts it, inside a unit of
+# units, with no init_reg (issue 890).
+waveform(
+    name = "start",
+    example = "//lib/examples:ex_start",
+    lowered = ("shell", "shell"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//rst=>rst",
+        "//tick=>tick",
+        "//shell/ticker/count=>count",
+        "//total=>total",
+    ],
+)
+
 # A reset empties the channel between two units (issue 729).
 waveform(
     name = "flush",
@@ -1065,6 +1080,8 @@ latex_document(
         ":reset_timing",
         ":flush_run",
         ":flush_timing",
+        ":start_run",
+        ":start_timing",
         ":wdog_run",
         ":wdog_timing",
         "//lib/examples:sources",
