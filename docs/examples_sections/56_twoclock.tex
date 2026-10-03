@@ -5,7 +5,7 @@
 A unit's process waits on one clock, so a design of two clocks is a
 unit of units. \code{Two} holds a counter on the default clock and a
 counter on \code{Slow}, which takes six ticks a cycle where the
-default takes two, and names no clock itself. Each child names its
+default takes two, and has no wait or register of its own. Each child names its
 own, in its register and at both its ports, and the clock a port is
 on is the second argument of its type: \code{Out<U<8>, Slow>}.
 

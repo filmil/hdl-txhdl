@@ -49,9 +49,10 @@ makes the decision the language exists to defer.
 
 The objection to this is verbosity, and it rests on a misreading.
 \code{.await} is not a claim that a cycle is spent. It is a refusal to
-decide here. An adder the mapping gives zero latency is awaited and
-completes at once, and the design that awaited it did not pay for the
-question.
+decide here. An adder the mapping gives zero latency is still awaited:
+the netlist makes it a wire, and the design that awaited it did not
+pay for the question. The run does not follow the mapping, and its
+\code{add} spends one cycle.
 
 The pipeline's depth then follows from the operators the design used. Two
 multiplies in sequence give two boundaries, and rebinding \code{mul} to a

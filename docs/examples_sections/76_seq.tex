@@ -46,7 +46,8 @@ wait, and each kind of statement lowers as it did, under the state:
 
 Every wait is on one clock and one edge, since the machine is one
 clocked block; a wait on a channel names no clock and takes the
-process's. A wait under \code{if} is refused as before.
+process's. A wait under \code{if} is lowered as well, as a state with
+a way around it; Section~\ref{sec:x-frame} shows one.
 
 The stepper below waits three times, once of each kind. It takes a
 word as it comes, adds one at the next edge, and holds the sum until

@@ -366,10 +366,11 @@ reason to have children. A clock is a type: a struct that implements
 \code{Clock}, with a name and a period in ticks. \code{DefaultClock}
 has a period of two. Listing~\ref{lst:t-twoclock} declares a clock
 three times slower, and two counters. One runs on the default clock,
-which it never names. The other runs on \code{Slow}, and names it in
+which it names only in its wait. The other runs on \code{Slow}, and names it in
 its wait, its register and both its ports: \code{Reg<U<8>, Slow>},
 \code{In<Bit, Slow>}, \code{Out<U<8>, Slow>}. The parent, \code{Two},
-names no clock at all. The module the lowering writes has an input
+has no wait and no register; its ports name \code{Slow} where the slow
+counter's do. The module the lowering writes has an input
 for each clock, and the build checks each port against the edges of
 its own clock. Fig.~\ref{fig:t-twoclock} shows the two counts, one
 step of the slow count to three of the fast.

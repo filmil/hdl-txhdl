@@ -240,11 +240,11 @@ lowering writes one module with an instance per child.
 \code{struct Slow; impl Clock for Slow} & a clock: a name and a period in ticks \\
 \code{Reg<T, Slow>}, \code{In<T, Slow>} & state and ports on that clock \\
 \code{Slow::rising().await} & a process waits on one clock \\
-\code{Crossing<T, A, B>} & the only way a signal changes clock \\
+\code{Crossing<T, A, B>} & the only way a wire changes clock \\
 \code{ChanCdc} & a channel between clocks, in \code{//lib/parts} \\
 \end{vocab}
 A design with two clocks is a parent with a child on each; the parent
-names neither. \code{DefaultClock} you never have to name at all.
+has no wait. \code{DefaultClock} you name only in a wait.
 
 \head{Reset}
 You don't write one. Every module gets \code{rst}, and while it's
@@ -290,7 +290,7 @@ testbench follows. Want a nicer name in the netlist?
 \head{Pipelines and builds}
 \begin{vocab}
 \code{\#[pipeline(..)] async fn} & a pipeline; stages fall where you \code{.await} \\
-\code{pipeline::drive(f, rx, tx)} & one call of \code{f} per cycle; all stall while \code{tx} is full \\
+\code{pipeline::drive(f, rx, tx)} & one call of \code{f} per cycle; all stall while the oldest is done and \code{tx} is full \\
 \code{config! \{ Fpga: C for Top<Fpga> \{..\} \}} & a build as one item \\
 \end{vocab}
 

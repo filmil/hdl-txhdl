@@ -166,22 +166,25 @@ already recoverable at run time, and the behaviour is not.
 The experiment below has since been run, in its first form. A
 \code{\#[pipeline(mul = 1, add = 1)]} attribute keeps an \code{async
 fn} as written and emits its Verilog beside it, each awaited operator
-a stage of the stated latency and each early value delayed to meet the
-operator that uses it. The same \code{mac} with \code{mul = 1} is two
-stages with \code{c} delayed once; with \code{mul = 3} it is four
-stages with \code{c} delayed three times; the source of the two is
-identical, and the function still runs in simulation. That is the
-answer the experiment was to give, for a grammar of awaited operator
-calls. A unit with state lowers as well: \code{\#[lower]} reads a
-\code{run} loop of one edge wait, register reads, \code{with!} and
-drives, and the blinky comes out as a module per build, its periods
-baked in from the configuration; \code{case!} lowers to a chain of
-comparisons with each variant's literal, and a channel to a
-valid/ready handshake whose wait guards the drives. And the lowering
-is checked: the same statements render to VHDL, a testbench generated
-from the Rust trace replays it into the entity under \code{nvc}, and
-the counter, the blinky, the sequencer, an ALU, a scratchpad, an
-immediate decoder and a stage between two channels agree with their
+a stage of the stated latency and each early value delayed to meet
+the operator that uses it. The same \code{mac} with \code{mul = 1}
+is two stages with \code{c} delayed once; with \code{mul = 3} it is
+four stages with \code{c} delayed three times; the source of the two is
+identical, and the function still runs in simulation. That answers the
+experiment's main question, for a grammar of awaited operator calls,
+and not all of it: neither netlist has a valid signal, and the faster
+one has four registers fewer than the slower, three against seven,
+where the experiment asked for one fewer. A unit with state lowers
+as well: \code{\#[lower]} reads a \code{run} loop of one edge wait,
+register reads, \code{with!} and drives, and the blinky comes out
+as a module per build, its periods baked in from the configuration;
+\code{case!} lowers to a chain of comparisons with each variant's
+literal, and a channel to a valid/ready handshake whose wait guards
+the drives. And the lowering is checked: the same statements render to
+VHDL, a testbench generated from the Rust trace replays it into the
+entity under \code{nvc}, and the counter, the blinky, the sequencer,
+an ALU, a scratchpad, an immediate decoder and a stage between two
+channels agree with their
 traces at every tick, while a deliberately broken one fails. Memories
 lower, and the runtime's channel is an elastic buffer with the
 handshake registered on both sides, which is the backpressure of the
