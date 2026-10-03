@@ -100,6 +100,24 @@ rust_test(
     ],
 )
 
+# A stock OpenOCD on the simulated board, through the RISC-V debug
+# transport behind BSCANE2 and OpenOCD's own BSCAN tunnel (issue 154):
+# examine, halt, pc, memory by system bus access, resume.
+rust_test(
+    name = "openocd_test",
+    size = "large",
+    srcs = ["tests/openocd.rs"],
+    data = ["//third_party/openocd"],
+    edition = "2021",
+    env = {"OPENOCD": "$(rootpath //third_party/openocd)"},
+    deps = [
+        ":vreteno32",
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+        "//tools/openocd:remote_bitbang",
+    ],
+)
+
 # The board's netlist with the DDR3 test in its memories, for a
 # simulation (`sim`) or for the board (`board`):
 #   bazel run //cpu/vreteno:board_netlist -- sim
