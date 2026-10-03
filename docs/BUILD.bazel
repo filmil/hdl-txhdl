@@ -615,6 +615,19 @@ waveform(
     ],
 )
 
+# A loop whose only wait is a channel's, a sender and a receiver
+# joined (issue 881).
+waveform(
+    name = "chanwait",
+    example = "//lib/examples:ex_chanwait",
+    lowered = ("chanpair", "pair"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//pair/count/n=>n",
+        "//shown=>shown",
+    ],
+)
+
 # A reset empties the channel between two units (issue 729).
 waveform(
     name = "flush",
@@ -963,6 +976,8 @@ latex_document(
         ":mesh_timing",
         ":put_run",
         ":put_timing",
+        ":chanwait_run",
+        ":chanwait_timing",
         ":dtm_run",
         ":dtm_timing",
         ":regs_run",

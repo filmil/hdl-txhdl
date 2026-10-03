@@ -257,6 +257,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A loop whose only wait is a channel's:  bazel run //lib/examples:ex_chanwait
+rust_binary(
+    name = "ex_chanwait",
+    srcs = ["ex_chanwait.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A reset empties the channel between two units:  bazel run //lib/examples:ex_flush
 rust_binary(
     name = "ex_flush",
@@ -1217,6 +1226,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_ownrst.rs",
         "ex_flush.rs",
         "ex_start.rs",
+        "ex_chanwait.rs",
         "ex_rstcheck.rs",
         "ex_stage.rs",
         "ex_packet.rs",
