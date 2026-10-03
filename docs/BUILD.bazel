@@ -630,6 +630,20 @@ waveform(
     ],
 )
 
+# A unit that answers the reset itself, and the run's reset that leaves
+# its registers to it (issue 878).
+waveform(
+    name = "ownrst",
+    example = "//lib/examples:ex_ownrst",
+    lowered = ("fetch", "fetch"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//rst=>rst",
+        "//fetch/pc=>pc",
+        "//pc_out=>pc_out",
+    ],
+)
+
 # A unit that takes its own reset and checks its count only out of it
 # (issue 633).
 waveform(
