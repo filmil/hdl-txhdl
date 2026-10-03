@@ -1705,6 +1705,23 @@ waveform(
     until = 53,
 )
 
+# The same two counters with the slow one first, so the ports file lists
+# `slow` before `clk`; `go` and `a`, on `clk`, are replayed and checked
+# on `clk` (issue 888). On the old reading both tests fail.
+waveform(
+    name = "slowfirst",
+    example = "//lib/examples:ex_slowfirst",
+    lowered = ("slowfirst", "slowfirst"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//clocks/slow=>slow",
+        "//go=>go",
+        "//go_slow=>go_slow",
+        "//a=>a",
+        "//b=>b",
+    ],
+)
+
 # An SPI master reading a flash chip: the select held, the clock, the
 # byte going out and the byte coming back.
 waveform(
