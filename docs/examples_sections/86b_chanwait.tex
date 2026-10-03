@@ -1,0 +1,32 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Loop Whose Only Wait Is a Channel's}
+\label{sec:x-chanwait}
+
+\code{tx.put(|| v).await} waits for an edge of the channel's clock at
+which the channel has room, and \code{rx.wait().await} for one at which
+it holds a word. Each is a wait for an edge, the channel's own, so a
+loop with nothing else in it needs no \code{C::rising()} before it.
+The lowering takes the loop's clock from the type of the channel's
+port, as the run takes the edge from the channel's type; until issue
+881 it refused such a loop, saying it did not start by waiting for an
+edge.
+
+\code{Count} offers its count and counts on once it is taken, and its
+only wait is the \code{put} of Section~\ref{sec:x-put}. \code{Last}
+shows the last word it took, and its only wait is the \code{wait}.
+\code{Pair} joins the two by a channel. The run checks that every
+count arrives, in order and from zero, and the build simulates the
+netlist against it under nvc and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{chanwait_timing.tex}
+\caption{A sender and a receiver whose only waits are the channel's:
+\code{n} moves on at each edge the word is taken, and \code{shown}
+follows a cycle behind.}
+\label{fig:x-chanwait}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_chanwait.rs}. Run with \code{bazel run //lib/examples:ex\_chanwait}.},label={lst:x-chanwait}]{lib/examples/ex_chanwait.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_chanwait} printed when the build ran it: the words shown, and the netlist, both loops clocked on the channel's clock.},label={lst:x-chanwait-out}]{out_chanwait.txt}
