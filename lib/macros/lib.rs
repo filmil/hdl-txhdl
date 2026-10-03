@@ -6324,6 +6324,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // The names the netlist gives the ports, each with where it is
     // declared.
     let mut port_nets: Vec<(String, String, Span)> = Vec::new();
+    // Whether the unit declares `rst`, for the re-emission below.
+    let own_rst = pairs.iter().any(|(n, _, _)| n == "rst");
     for (pname, ty, span) in pairs {
         if ty == "()" {
             continue;
@@ -6720,6 +6722,16 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         );
     }
     let generated: TokenStream = generated_text.parse().unwrap();
+    // A unit that declares `rst` answers the reset in its own body, and
+    // its netlist adds no clearing branch; its `run` starts by saying
+    // so to the runtime, whose reset then leaves the unit's registers
+    // to the body (issue 878).
+    let item: TokenStream = if own_rst {
+        answering_reset(&toks).into_iter().collect()
+    } else {
+        item
+    };
+    let toks: Vec<TokenTree> = item.clone().into_iter().collect();
     // `impl Unit for X`, the ports named once, in `run`: the header
     // takes them from there.
     let bare = toks[at..f].iter().enumerate().find_map(|(k, t)| {
@@ -6750,6 +6762,40 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let header: TokenStream = format!("impl{generics} {unit}").parse().unwrap();
     out.extend(header);
     out.extend([TokenTree::Group(Group::new(Delimiter::Brace, checks))]);
+    out
+}
+
+/// The impl's tokens with `run`'s body opened by
+/// `::txhdl::comp::answers_reset(&*self);` (issue 878).
+fn answering_reset(toks: &[TokenTree]) -> Vec<TokenTree> {
+    let mut out = toks.to_vec();
+    let Some(TokenTree::Group(body)) = out.last().cloned() else {
+        return out;
+    };
+    let mut bt: Vec<TokenTree> = body.stream().into_iter().collect();
+    let Some(r) = bt.iter().position(|t| is_ident(t, "run")) else {
+        return out;
+    };
+    let brace = |t: &TokenTree| match t {
+        TokenTree::Group(g) => g.delimiter() == Delimiter::Brace,
+        _ => false,
+    };
+    let Some(b) = (r + 2..bt.len()).find(|&k| brace(&bt[k])) else {
+        return out;
+    };
+    let TokenTree::Group(f) = &bt[b] else {
+        return out;
+    };
+    let mut fs: TokenStream =
+        "::txhdl::comp::answers_reset(&*self);".parse().unwrap();
+    fs.extend(f.stream());
+    let mut g = Group::new(Delimiter::Brace, fs);
+    g.set_span(f.span());
+    bt[b] = TokenTree::Group(g);
+    let mut ng = Group::new(body.delimiter(), bt.into_iter().collect());
+    ng.set_span(body.span());
+    let n = out.len() - 1;
+    out[n] = TokenTree::Group(ng);
     out
 }
 
