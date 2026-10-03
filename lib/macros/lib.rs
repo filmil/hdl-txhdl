@@ -4970,15 +4970,32 @@ fn lower_stmts(
             ) = (&ts[end], &ts[end + 1], &ts[end + 2])
             {
                 if dot.as_char() == '.' && m.to_string() == "send" {
-                    let Some(gd) = cx.guard.clone() else {
-                        return Err(err(
-                            ts[0].span(),
-                            "send needs a wait before it",
-                        ));
-                    };
                     let tx = match target_name(&ts[..end]) {
                         Ok(t) => t,
                         Err(m) => return Err(err(ts[0].span(), &m)),
+                    };
+                    // A send drives `valid` with the condition it is
+                    // under: an `if`'s, or the guard of a wait that has
+                    // one. A plain `C::rising()` gives none, and a send
+                    // with no condition would offer whether or not the
+                    // channel has room, which the run refuses too
+                    // (issue 882).
+                    let Some(gd) = cx.guard.clone() else {
+                        let ch: String = ts[..end]
+                            .iter()
+                            .map(|t| t.to_string())
+                            .collect::<Vec<_>>()
+                            .join("");
+                        return Err(err(
+                            ts[0].span(),
+                            &format!(
+                                "a send needs a condition for its `valid`: put \
+                                 it under `if {ch}.ready().to_bool()`, wait \
+                                 with `until(C::rising, || \
+                                 {ch}.ready().to_bool())`, or use \
+                                 `{ch}.put(|| v).await`"
+                            ),
+                        ));
                     };
                     let at: Vec<TokenTree> = g.stream().into_iter().collect();
                     let e = match tr(&at, &cx.subst) {

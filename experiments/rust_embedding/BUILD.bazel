@@ -92,6 +92,7 @@ rust_binary(
         "probe_regs_signal",           # the macro's own message
         "probe_tuple_let",             # the macro's own message
         "probe_lit_signal",            # the macro's own message
+        "probe_send_bare",             # the macro's own message (issue 882)
     ]
 ]
 
