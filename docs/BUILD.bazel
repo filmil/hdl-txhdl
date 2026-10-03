@@ -863,6 +863,29 @@ waveform(
     ],
 )
 
+# A scanout a line ahead of the beam, and a line that starves when the
+# memory stalls longer than a line (issue 151). The window is the
+# fourth frame's rows 1 to 3, where the long stall is.
+waveform(
+    name = "scanpair",
+    example = "//lib/examples:ex_scanpair",
+    lowered = [
+        ("linepair", "linepair"),
+        ("scanfetch", "scanfetch"),
+    ],
+    signals = [
+        "//row=>row",
+        "//line=>line",
+        "//req/tx_valid=>req",
+        "//start=>start",
+        "//inp/rx_valid=>word",
+        "//linepair/rgot=>rgot",
+        "//starved=>starved",
+    ],
+    from_tick = 7200,
+    until = 8300,
+)
+
 # Reading memory in bursts, and what it buys. Issue 151.
 waveform(
     name = "dma",

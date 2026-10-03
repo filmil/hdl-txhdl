@@ -139,6 +139,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A scanout a line ahead of the beam, and a line that starves:
+#   bazel run //lib/examples:ex_scanpair
+rust_binary(
+    name = "ex_scanpair",
+    srcs = ["ex_scanpair.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Reading memory in bursts:  bazel run //lib/examples:ex_dma
 rust_binary(
     name = "ex_dma",
@@ -1242,6 +1255,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_framelen.rs",
         "ex_ethslots.rs",
         "ex_scanout.rs",
+        "ex_scanpair.rs",
         "ex_reset.rs",
         "ex_ownrst.rs",
         "ex_rstmem.rs",
