@@ -1904,6 +1904,22 @@ waveform(
     until = 73,
 )
 
+# The adaptive proportion test tripped by a biased source, checked in
+# the netlist through the trip (issue 918).
+waveform(
+    name = "trng_apt",
+    example = "//lib/examples:ex_trng_apt",
+    lowered = ("trng_apt", "trng"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//raw=>raw",
+        "//trng/aptn=>aptn",
+        "//trng/aptb=>aptb",
+        "//trng/aptfault=>aptfault",
+        "//trng/fault=>fault",
+    ],
+)
+
 # The trace buffer filling and freezing: the ring walking, the count
 # stopping at the ring's size, and the halt taking the run bit.
 waveform(

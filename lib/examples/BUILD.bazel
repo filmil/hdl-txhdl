@@ -579,6 +579,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The entropy source's adaptive proportion test, tripped by a biased
+# source (issue 918):  bazel run //lib/examples:ex_trng_apt
+rust_binary(
+    name = "ex_trng_apt",
+    srcs = ["ex_trng_apt.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A trace buffer read out after a halt:  bazel run //lib/examples:ex_tracer
 rust_binary(
     name = "ex_tracer",
@@ -1292,6 +1305,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_sd.rs",
         "ex_tracer.rs",
         "ex_trng.rs",
+        "ex_trng_apt.rs",
         "ex_spi.rs",
         "ex_syscon.rs",
         "ex_wdog.rs",
