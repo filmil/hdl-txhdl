@@ -30,7 +30,11 @@ never reads to modify; a function a register with fields,
 answers; and a table, \code{knobs::MAP}, that the tools read. The lowering reads the
 same declaration and inlines the same mux and enables into the
 netlist, so the map a program sees and the map the hardware decodes
-cannot differ. \code{//tools/regmap} writes the table as a C header
+cannot differ. A field's reset is another matter: the header states
+it, and only the unit can hold it, so \code{Knobs} builds \code{step}
+at one in its \code{Default}, which the netlist follows, and the run
+reads every register before its first write and checks each field
+against the map with \code{reset\_mismatches} (issue 887). \code{//tools/regmap} writes the table as a C header
 for a driver and as a device tree node at a base, and
 \code{//tools/datasheet} writes it as the sheet's register table.
 

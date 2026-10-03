@@ -22,6 +22,10 @@ The lowering reads the same declaration in the file and inlines the
 same functions into the netlist, so the map a program sees
 and the map the hardware decodes are one text; the examples
 document~\cite{examples} shows a peripheral written that way.
+That holds for the decode and not for a field's reset, which the
+header states and only the unit can hold: the unit builds the
+register with it, and \code{Reg::reset\_mismatches} names every field
+of a word read after reset that differs from it (issue 887).
 
 This module is the data. \code{Field} is the constant a program uses:
 its shift, its width and its reset, with \code{mask}, \code{get},
