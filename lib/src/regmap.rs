@@ -49,7 +49,11 @@ pub struct Field {
     pub shift: u32,
     /// Its width in bits.
     pub width: u32,
-    /// Its value after reset.
+    /// Its value after reset, as the map declares it. The header and
+    /// the tools state it; the register holds it only if the unit
+    /// builds the register with it, in its `Default` with `Reg::new`,
+    /// which the netlist follows (issue 890). `Reg::reset_mismatches`
+    /// checks the two against a word read after reset (issue 887).
     pub reset: u32,
 }
 
@@ -113,6 +117,30 @@ impl Reg {
     /// The byte offset from the peripheral's base.
     pub fn offset(&self) -> u32 {
         self.index * 4
+    }
+
+    /// The word the register's fields reset to, as the map declares
+    /// them: each field's reset in its place. A register with no
+    /// fields declares no reset, and this is zero for it.
+    pub fn reset(&self) -> u32 {
+        self.fields
+            .iter()
+            .fold(0, |w, f| f.field.set(w, f.field.reset))
+    }
+
+    /// The fields of `word`, read from the register after reset, that
+    /// differ from the reset the map declares, as the field's name,
+    /// the declared value and the value read; empty when they all
+    /// agree. The declared reset is only what the header states: the
+    /// register holds it only if the unit builds it with that value
+    /// (issue 887), so a peripheral's test reads its registers after
+    /// reset and checks them with this.
+    pub fn reset_mismatches(&self, word: u32) -> Vec<(&'static str, u32, u32)> {
+        self.fields
+            .iter()
+            .filter(|f| f.field.get(word) != f.field.reset)
+            .map(|f| (f.name, f.field.reset, f.field.get(word)))
+            .collect()
     }
 }
 
@@ -242,6 +270,65 @@ mod tests {
         width: 1,
         reset: 0,
     };
+
+    /// The word a register's declared resets make, and the fields of a
+    /// word read after reset that differ from them (issue 887).
+    #[test]
+    fn a_register_says_its_reset_and_what_differs_from_it() {
+        static RESET: [FieldInfo; 2] = [
+            FieldInfo {
+                name: "run",
+                field: Field {
+                    shift: 0,
+                    width: 1,
+                    reset: 0,
+                },
+                access: Access::Rw,
+                doc: "runs",
+            },
+            FieldInfo {
+                name: "step",
+                field: Field {
+                    shift: 4,
+                    width: 4,
+                    reset: 1,
+                },
+                access: Access::Rw,
+                doc: "what a count adds",
+            },
+        ];
+        let ctrl = Reg {
+            name: "ctrl",
+            index: 1,
+            access: Access::Rw,
+            doc: "the control word",
+            fields: &RESET,
+        };
+        assert_eq!(ctrl.reset(), 0x10, "step 1 in its place");
+        assert!(ctrl.reset_mismatches(0x10).is_empty(), "as declared");
+        assert_eq!(
+            ctrl.reset_mismatches(0x00),
+            vec![("step", 1, 0)],
+            "a register built at zero, as #887 found"
+        );
+        assert_eq!(
+            ctrl.reset_mismatches(0x11),
+            vec![("run", 0, 1)],
+            "a field the other way"
+        );
+        let whole = Reg {
+            name: "count",
+            index: 2,
+            access: Access::Ro,
+            doc: "a count",
+            fields: &[],
+        };
+        assert_eq!(whole.reset(), 0, "no fields, no declared reset");
+        assert!(
+            whole.reset_mismatches(0x1234).is_empty(),
+            "nothing to check"
+        );
+    }
 
     #[test]
     fn a_field_gets_sets_and_masks() {

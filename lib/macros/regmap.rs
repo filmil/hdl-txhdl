@@ -19,7 +19,11 @@
 //! select a word, above the two byte bits. A register is its word
 //! index, its name, its access and a sentence, and may carry its
 //! fields, each a name, its low bit, its width, its access, its reset
-//! value and a sentence. The macro writes:
+//! value and a sentence. A field's reset is what the header states, and
+//! nothing makes the register hold it: the unit builds the register
+//! with it, in its `Default` with `Reg::new`, which the netlist then
+//! follows (issue 890), and a test reads the registers after reset and
+//! checks them with `Reg::reset_mismatches` (issue 887). The macro writes:
 //!
 //! * a module named after the map: a constant a register, the byte
 //!   offset a program addresses by (`knobs::ctrl`); a constant a
