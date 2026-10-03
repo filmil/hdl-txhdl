@@ -419,6 +419,55 @@ fn walk_for(
         .unwrap()
         .into_iter()
         .collect();
+    // Whether the range holds a value at all. A range that may be
+    // empty, a bound read from a register or a const parameter, is
+    // entered only when it holds one, and passed by otherwise, as a run
+    // of `for _ in 0..0` runs the body no times; before issue 886 the
+    // netlist always ran it once, and sixteen times for a four-bit
+    // bound of zero, whose last value wrapped. A range of two literals
+    // that holds a value needs no test.
+    let literal = |ts: &[TokenTree]| match ts {
+        [TokenTree::Literal(l)] => l
+            .to_string()
+            .trim_end_matches(|c: char| c.is_ascii_alphabetic())
+            .replace('_', "")
+            .parse::<u128>()
+            .ok(),
+        _ => None,
+    };
+    let holds = match (literal(&lo), literal(&hi)) {
+        (Some(l), Some(h)) => Some(if closed { l <= h } else { l < h }),
+        _ => None,
+    };
+    let nonempty: Vec<TokenTree> = format!(
+        "({}) {} ({})",
+        text(&lo),
+        if closed { "<=" } else { "<" },
+        text(&hi)
+    )
+    .parse::<TokenStream>()
+    .unwrap()
+    .into_iter()
+    .collect();
+    let (open, passed): (Vec<(usize, Path)>, Vec<(usize, Path)>) = match holds {
+        Some(true) => (open, Vec::new()),
+        _ => (
+            open.iter()
+                .map(|(s, q)| {
+                    let mut q = q.clone();
+                    q.push((nonempty.clone(), false));
+                    (*s, q)
+                })
+                .collect(),
+            open.iter()
+                .map(|(s, q)| {
+                    let mut q = q.clone();
+                    q.push((nonempty.clone(), true));
+                    (*s, q)
+                })
+                .collect(),
+        ),
+    };
     // Entering: the counter to the low bound, and the set-up with the
     // variable as the low bound.
     push_item(plan, &open, set_stmt(&reg, &lo, span));
@@ -461,6 +510,7 @@ fn walk_for(
             q.push((more.clone(), true));
             (s, q)
         })
+        .chain(passed)
         .collect())
 }
 
