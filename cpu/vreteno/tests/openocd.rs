@@ -649,3 +649,101 @@ fn the_jtag_master_and_the_transport_take_turns_on_one_host() {
         got.len()
     );
 }
+
+fn gdb() -> std::path::PathBuf {
+    std::env::var_os("GDB").expect("GDB names the binary").into()
+}
+
+/// gdb-multiarch (`//third_party/gdb`) through OpenOCD's gdb server, on
+/// the same simulated board (issue 872). gdb loads `gdbprobe`'s ELF
+/// into the DDR3 by system bus access, puts a breakpoint on `reached`,
+/// and continues; the core runs the program, meets the `ebreak` gdb put
+/// there, and stops in debug mode. At the breakpoint the sum of 0 to 9
+/// is in `a0`, the argument, and in `SUM`, in memory.
+///
+/// OpenOCD and gdb are two processes and the board is this thread, so
+/// gdb is started from a second thread once OpenOCD's log says its gdb
+/// port is open, and ends the session with `monitor shutdown`.
+#[test]
+fn gdb_loads_a_program_and_stops_at_a_breakpoint() {
+    let mut rig = rig(false);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let gport = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let script = format!(
+        "adapter driver remote_bitbang\n\
+         remote_bitbang host 127.0.0.1\n\
+         remote_bitbang port {port}\n\
+         transport select jtag\n\
+         jtag newtap xc7 tap -irlen {IR_LEN} -expected-id {IDCODE:#010x}\n\
+         target create xc7.cpu riscv -chain-position xc7.tap\n\
+         riscv use_bscan_tunnel 5\n\
+         riscv set_mem_access sysbus\n\
+         riscv set_command_timeout_sec 120\n\
+         bindto 127.0.0.1\n\
+         gdb_port {gport}\n\
+         tcl_port disabled\n\
+         telnet_port disabled\n\
+         init\n"
+    );
+    let dir = tmp("gdb");
+    let elf = std::env::var("GDBPROBE").expect("GDBPROBE names the ELF");
+    let commands = format!(
+        "set confirm off\n\
+         set pagination off\n\
+         set architecture riscv:rv32\n\
+         set remotetimeout 300\n\
+         file {elf}\n\
+         target extended-remote 127.0.0.1:{gport}\n\
+         load\n\
+         break reached\n\
+         continue\n\
+         printf \"stopped at %#x\\n\", $pc\n\
+         printf \"a0 %d\\n\", $a0\n\
+         printf \"SUM %d\\n\", *(unsigned int *)&SUM\n\
+         monitor shutdown\n"
+    );
+    let cmds = dir.join("gdb.cmds");
+    std::fs::write(&cmds, commands).unwrap();
+    let run = Openocd::start(&openocd(), &script, &dir).unwrap();
+    let log_path = dir.join("openocd.log");
+    let listening = format!("Listening on port {gport} for gdb connections");
+    let session = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(300);
+        while !std::fs::read_to_string(&log_path)
+            .unwrap_or_default()
+            .contains(&listening)
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "OpenOCD's gdb port never opened"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let out = std::process::Command::new(gdb())
+            .args(["-nx", "-batch", "-x"])
+            .arg(&cmds)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+            + &String::from_utf8_lossy(&out.stderr)
+    });
+    let served = serve(listener, &mut rig, Duration::from_secs(300)).unwrap();
+    let said = session.join().unwrap();
+    let done = run.finish(Duration::from_secs(60)).unwrap();
+    let log = &done.log;
+    // Both sides of the session, kept in the test's log either way.
+    eprintln!("--- gdb\n{said}\n--- OpenOCD\n{log}");
+    assert!(served.rises > 0, "OpenOCD clocked the TAP: {served:?}");
+    assert!(said.contains("Loading section .text"), "loaded:\n{said}");
+    assert!(
+        said.contains("Breakpoint 1, ") && said.contains("in reached"),
+        "stopped at the breakpoint:\n{said}"
+    );
+    assert!(said.contains("a0 45\n"), "the argument:\n{said}");
+    assert!(said.contains("SUM 45\n"), "the word in memory:\n{said}");
+}

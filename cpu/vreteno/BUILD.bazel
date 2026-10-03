@@ -107,9 +107,17 @@ rust_test(
     name = "openocd_test",
     size = "large",
     srcs = ["tests/openocd.rs"],
-    data = ["//third_party/openocd"],
+    data = [
+        "//cpu/vreteno/rust:gdbprobe_elf",
+        "//third_party/gdb",
+        "//third_party/openocd",
+    ],
     edition = "2021",
-    env = {"OPENOCD": "$(rootpath //third_party/openocd)"},
+    env = {
+        "GDB": "$(rootpath //third_party/gdb)",
+        "GDBPROBE": "$(rootpath //cpu/vreteno/rust:gdbprobe_elf)",
+        "OPENOCD": "$(rootpath //third_party/openocd)",
+    },
     deps = [
         ":vreteno32",
         "//lib:txhdl",
