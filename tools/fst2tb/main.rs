@@ -352,6 +352,23 @@ fn main() {
     } else {
         clocks
     };
+    // The clock of a port the ports file marks with none: the default
+    // clock, `clk`, whenever the netlist names it, and the first clock
+    // only when it does not. The first is wherever the lowering met a
+    // clock first, which for a unit whose first child is on another
+    // clock is that clock, and every port on `clk` was then replayed
+    // and checked at the other's edges (issue 888).
+    let unmarked = if clocks.iter().any(|c| c == "clk") {
+        "clk".to_string()
+    } else {
+        clocks[0].clone()
+    };
+    let clock_of = |port: &str| -> String {
+        port_clocks
+            .iter()
+            .find(|(p, _)| p == port)
+            .map_or_else(|| unmarked.clone(), |(_, c)| c.clone())
+    };
 
     // Directions: in, out, reg, and a channel's rxin, rxout, txin,
     // txout. A channel's wire is traced under the channel by its side.
@@ -436,11 +453,7 @@ fn main() {
     // against a value its own edge had not produced yet, and the two
     // disagreed for part of every period.
     let port_period = |port: &str| -> usize {
-        let named = port_clocks.iter().find(|(p, _)| p == port);
-        let c = match named {
-            Some((_, c)) => c.clone(),
-            None => clocks[0].clone(),
-        };
+        let c = clock_of(port);
         clock_shape(&trace_name(&c, "clock")).1
     };
     // Whether a tick is a rising edge of a port's own clock.
@@ -459,11 +472,7 @@ fn main() {
     // and this is always true, which is why the fault was invisible
     // until a unit had a port on a slower clock (issue 384).
     let port_edge = |port: &str, tick: usize| -> bool {
-        let named = port_clocks.iter().find(|(p, _)| p == port);
-        let c = match named {
-            Some((_, c)) => c.clone(),
-            None => clocks[0].clone(),
-        };
+        let c = clock_of(port);
         let (first, period) = clock_shape(&trace_name(&c, "clock"));
         tick >= first && (tick - first).is_multiple_of(period)
     };
@@ -479,11 +488,7 @@ fn main() {
     // of the port's edges was then seen one edge early (issue 405).
     // For the default clock the next edge is 2k+2, as before.
     let port_next_edge = |port: &str, tick: usize| -> usize {
-        let named = port_clocks.iter().find(|(p, _)| p == port);
-        let c = match named {
-            Some((_, c)) => c.clone(),
-            None => clocks[0].clone(),
-        };
+        let c = clock_of(port);
         let (first, period) = clock_shape(&trace_name(&c, "clock"));
         if tick <= first {
             first
