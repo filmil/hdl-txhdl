@@ -1608,21 +1608,54 @@ impl Lowered {
         self.init.push((mem.to_string(), words.to_vec()));
     }
     /// Give a register its value before the first edge, as `Reg::new`
-    /// gave it at run time; the netlist cannot see that, so whoever
-    /// lowers the unit says it again here.
+    /// gave it at run time, where the run's instance is not the one
+    /// `Default` builds.
     ///
-    /// A register left unsaid starts at zero, in both emitters and in
-    /// the runtime, so this is needed only where a unit is built with
-    /// `Reg::new` and a value that is not zero. Without it the netlist
-    /// and the run disagree from the first cycle, and nothing says so
-    /// (issue 359). The value is also what a reset puts back, in both
-    /// emitters as in the runtime (issue 728).
+    /// The generated `lowered` already gives every register of the
+    /// unit the start its `Default` gives it, at any depth (issue 890),
+    /// so this is needed only for a top the run built some other way,
+    /// with `Reg::new` and a value `Default` does not use; it names
+    /// the unit's own registers, not a child's, and wins over the start
+    /// `Default` gave. Without it the netlist and the run disagree from
+    /// the first cycle (issue 359). The value is also what a reset puts
+    /// back, in both emitters as in the runtime (issue 728).
     pub fn init_reg(&mut self, reg: &str, value: u128) {
         self.init_regs.push((reg.to_string(), value));
     }
-    /// What a register starts at: what `init_reg` was told, or zero.
+}
+
+/// The registers of a unit that start at something other than zero,
+/// and what they start at, as the run has them: the unit is built with
+/// `Default` and each of its own registers read before any edge, which
+/// is the value `Reg::new` was given and the one a reset puts back.
+/// The generated `lowered` fills `init_regs` from this, so a unit at
+/// any depth starts as the run starts it, with no `init_reg` (issue
+/// 890). A child's registers are the child's own `lowered`'s business,
+/// so only the unit's own fields are read: a path one step below the
+/// unit. A register wider than 128 bits is left at zero, as `init_reg`
+/// cannot hold it either.
+#[doc(hidden)]
+pub fn starts<T: Default + Traceable>() -> Vec<(String, u128)> {
+    collect("unit", &T::default())
+        .into_iter()
+        .filter(|p| p.kind == Kind::Reg)
+        .filter_map(|p| {
+            let name = p.path.strip_prefix("unit.")?;
+            if name.contains('.') {
+                return None;
+            }
+            let v = u128::from_str_radix(&(p.sample)(), 2).ok()?;
+            (v != 0).then(|| (name.to_string(), v))
+        })
+        .collect()
+}
+
+impl Lowered {
+    /// What a register starts at: what `init_reg` was told last, or
+    /// zero. The generated `lowered` puts the unit's own starts first
+    /// (issue 890), so an `init_reg` a caller writes after it wins.
     fn reg_init(&self, reg: &str) -> u128 {
-        match self.init_regs.iter().find(|(n, _)| n == reg) {
+        match self.init_regs.iter().rev().find(|(n, _)| n == reg) {
             Some((_, v)) => *v,
             None => 0,
         }

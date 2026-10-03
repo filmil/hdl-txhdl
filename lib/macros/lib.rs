@@ -6629,7 +6629,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          wire_names: vec![{wire_names}],\n\
          procs: __procs,\n\
          init: Vec::new(),\n\
-         init_regs: Vec::new(),\n\
+         // Each register starts as the run starts it, at any depth\n\
+         // (issue 890).\n\
+         init_regs: ::txhdl::netlist::starts::<Self>(),\n\
          aliases: Vec::new(),\n\
          nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, \
          usize, &'static str)> = Vec::new(); {nets} n }},\n\
