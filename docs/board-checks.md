@@ -73,7 +73,7 @@ Steps 3 and 5 wait on #750 and #753, as section 10 says.
 
 ## 4. The debug module, #154
 
-Towards #154: this is step 2's board proof; the gdb and OpenOCD transcript is step 3's, and section 9 says why it cannot run yet.
+Towards #154: this is step 2's board proof; step 3's, OpenOCD through the transport, follows it.
 
 ```sh
 bazel run //cpu/vreteno:vreteno_board_jtag_prog -- "${PROG[@]}"
@@ -83,6 +83,30 @@ bazel run //cpu/vreteno:vreteno_board_dm_probe 2>&1 | tee board-154-dm.log
 Pass: every line that begins `dm:` ends in `ok` or gives a value, none says `BAD`, and the last is `dm: halt, registers, resume: every step ok`.
 Capture: `board-154-dm.log`, with `grep '^dm:'` of it pasted into the issue.
 It closes nothing; #154 stays open for step 3.
+
+### Step 3: a stock OpenOCD through the transport
+
+Every top has the debug transport behind `BSCANE2` on `USER4` now, so this runs on the boot bitstream of section 5, before its loads.
+OpenOCD takes the cable itself, so the JTAG tunnel's `hw_server` is stopped first, and started again after for the sections that program.
+The server has OpenOCD 0.12.0 and the Digilent configurations for the cable's FT232H (`0403:6014`); no `sudo` and no udev rule is needed.
+
+```sh
+bazel run //cpu/vreteno:vreteno_board_boot_prog -- "${PROG[@]}"
+ssh $TXHDL_BOARD_SERVER pkill -x hw_server
+ssh $TXHDL_BOARD_SERVER openocd -f interface/ftdi/digilent-hs2.cfg -c "'\
+  transport select jtag; adapter speed 1000; \
+  jtag newtap xc7 tap -irlen 6 -expected-id 0x13636093; \
+  target create xc7.cpu riscv -chain-position xc7.tap; \
+  riscv use_bscan_tunnel 5; riscv set_mem_access sysbus; init; halt; \
+  echo \"state [xc7.cpu curstate]\"; echo [capture {reg pc}]; \
+  echo [capture {mdw 0x1000 4}]; step; echo \"stepped [capture {reg pc}]\"; \
+  resume; echo \"state [xc7.cpu curstate]\"; shutdown'" 2>&1 | tee board-154-openocd.log
+```
+
+Pass: `tap/device found: 0x13636093`, `Examined RISC-V core; found 1 harts` with `XLEN=32` and `misa=0x40001104`, `state halted`, a `pc`, the four words, a `stepped pc` one instruction on, and `state running`, which is the session `//cpu/vreteno:openocd_test` runs against the simulated board.
+If the cable is not found with `digilent-hs2.cfg`, try `digilent_jtag_hs3.cfg`, which names the same device.
+Capture: `board-154-openocd.log`, posted on #154.
+The gdb half of #154's done-when, a program loaded and a breakpoint hit, waits for a RISC-V gdb on the server, which it does not have; #154 stays open for it.
 
 ## 5. The loader's fence, #550 and PR 637
 
@@ -272,11 +296,6 @@ None of the three things that needs exists yet.
 
 Nothing board-side exists: `STARTUPE2` is not instantiated in any top, no program reads the flash's JEDEC identity, and the layout of programs beside the bitstream is not written down.
 #312 lists the four pieces; each is work before any board time.
-
-### #154, the gdb and OpenOCD transcript
-
-Step 3 of #154, the Debug Transport Module on `BSCANE2` that OpenOCD reaches, is not in the tree.
-Until it is, OpenOCD has nothing to talk to, and the probe in section 4 is the whole of what the board can show.
 
 ## 10. What was built
 
