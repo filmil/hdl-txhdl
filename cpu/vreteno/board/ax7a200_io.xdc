@@ -90,3 +90,13 @@ set_multicycle_path 3 -setup -end \
     -from flash_cclk -to [get_clocks -of_objects $flash_reg_c]
 set_multicycle_path 2 -hold -end \
     -from flash_cclk -to [get_clocks -of_objects $flash_reg_c]
+
+# The SD card slot (issue 153). The host makes the card's clock from a
+# register and changes its lines on the cycle the clock falls, and it
+# samples the card's lines div + 1 cycles later, on the cycle the clock
+# rises; div is a register a program writes, so the pins have no fixed
+# relation to the design's clock that one constraint could state. Not
+# timed until #914 states it; sdprobe reads at 12.5 MHz, a 40 ns
+# window, against about 21 ns of clock out, card and data back.
+set_false_path -to [get_ports {sd_clk sd_cmd sd_dat[*]}]
+set_false_path -from [get_ports {sd_cmd sd_dat[*]}]

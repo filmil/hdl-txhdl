@@ -112,6 +112,11 @@ module flagship (
   inout [31:0] ddr3_dq_p,
   inout [3:0] ddr3_dqs_p,
   inout [3:0] ddr3_dqs_n,
+  // The SD card slot (issue 153): its clock, its command line and
+  // its four data lines, each line three-state.
+  output sd_clk,
+  inout sd_cmd,
+  inout [3:0] sd_dat,
   // The configuration flash (issue 312): its select and data on
   // the configuration pins FCS_B, D00 and D01, its clock reached
   // through STARTUPE2 inside the design, and D02 and D03, the
@@ -230,6 +235,14 @@ module flagship (
     .reset(dbg_reset), .tdo(dbg_tdo)
   );
 
+  // The SD card host drives a line while its enable is high and reads
+  // it back otherwise; the slot's 10K pull-ups hold a line nobody
+  // drives high (AX7A200B carrier schematic, R104 to R113).
+  wire sd_cmd_o, sd_cmd_oe, sd_dat_oe;
+  wire [3:0] sd_dat_o;
+  assign sd_cmd = sd_cmd_oe ? sd_cmd_o : 1'bz;
+  assign sd_dat = sd_dat_oe ? sd_dat_o : 4'bz;
+
   board lowered (
     .clk(clk),
     .tck(dbg_tck),
@@ -295,7 +308,10 @@ module flagship (
     .fl_miso(flash_d1), .fl_cs_n(flash_cs_n), .fl_mosi(flash_d0),
     .fl_cclk(), .fl_refused(),
     .phy_mdio_in(eth_mdio), .phy_mdc(eth_mdc), .phy_mdio_out(mdio_out),
-    .phy_mdio_oe(mdio_oe)
+    .phy_mdio_oe(mdio_oe),
+    .sd_cmd_in(sd_cmd), .sd_dat_in(sd_dat), .sd_clk(sd_clk),
+    .sd_cmd_out(sd_cmd_o), .sd_cmd_oe(sd_cmd_oe), .sd_dat_out(sd_dat_o),
+    .sd_dat_oe(sd_dat_oe)
   );
   assign flash_d2 = 1'b1;
   assign flash_d3 = 1'b1;
