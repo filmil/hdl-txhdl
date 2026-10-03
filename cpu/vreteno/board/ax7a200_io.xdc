@@ -91,12 +91,55 @@ set_multicycle_path 3 -setup -end \
 set_multicycle_path 2 -hold -end \
     -from flash_cclk -to [get_clocks -of_objects $flash_reg_c]
 
-# The SD card slot (issue 153). The host makes the card's clock from a
-# register and changes its lines on the cycle the clock falls, and it
-# samples the card's lines div + 1 cycles later, on the cycle the clock
-# rises; div is a register a program writes, so the pins have no fixed
-# relation to the design's clock that one constraint could state. Not
-# timed until #914 states it; sdprobe reads at 12.5 MHz, a 40 ns
-# window, against about 21 ns of clock out, card and data back.
-set_false_path -to [get_ports {sd_clk sd_cmd sd_dat[*]}]
-set_false_path -from [get_ports {sd_cmd sd_dat[*]}]
+# The SD card slot's timing (issue 914), for the fastest divider a
+# program uses, div = 3: 12.5 MHz. The host (lib/parts/src/sd.rs) makes
+# the card's clock itself, from the register `half`, which toggles every
+# div + 1 = 4 cycles of the design's clock, so sd_clk is the design's
+# clock divided by eight, forwarded through its pad.
+create_generated_clock -name sd_clk -divide_by 8 \
+    -source [get_pins -hierarchical -filter {NAME =~ */sd/half_reg/C}] \
+    [get_ports sd_clk]
+
+# The SD Physical Layer Simplified Specification's default-speed
+# interface timing: the card takes the host's lines with a setup of
+# 5 ns and a hold of 5 ns to the rising clock (tISU, tIH), and drives
+# its own within 0 to 14 ns of the falling clock (tODLY). The traces
+# from the slot to bank 16 are a few centimetres, matched to within
+# half a nanosecond, which each bound is widened by.
+set sd_trace 0.5
+set_output_delay -clock sd_clk -max [expr {5.0 + $sd_trace}] \
+    [get_ports {sd_cmd sd_dat[*]}]
+set_output_delay -clock sd_clk -min [expr {-5.0 - $sd_trace}] \
+    [get_ports {sd_cmd sd_dat[*]}]
+set_input_delay -clock sd_clk -clock_fall -max [expr {14.0 + $sd_trace}] \
+    [get_ports {sd_cmd sd_dat[*]}]
+set_input_delay -clock sd_clk -clock_fall -min 0.0 \
+    [get_ports {sd_cmd sd_dat[*]}]
+
+# Which edges are real. The host changes its lines only on the cycle
+# `half` falls, sd_clk's falling edge, so each value stands for a whole
+# card clock, eight of the design's cycles, and the card takes it on the
+# rise in the middle, four cycles after the change. Left alone, the tool
+# would launch on every cycle of the design's clock and allow one. So
+# the setup launches four cycles early (-start 4), and the hold is seven
+# (-start 7): the next change comes at the following fall, forty
+# nanoseconds after the rise the old value was taken on, which is a hold
+# requirement of -40 ns. A hold of three, the usual setup less one,
+# would check a change on the rise itself, which this host never makes,
+# and the router answered it with ten nanoseconds of detour on the data
+# lines (as #889 found on the flash's pins).
+set sd_out_regs [get_cells -hierarchical -filter \
+    {NAME =~ */sd/cmd_o_reg* || NAME =~ */sd/dat_o_reg* || \
+     NAME =~ */sd/cmd_drv_reg* || NAME =~ */sd/dat_drv_reg*}]
+set_multicycle_path 4 -setup -start -from $sd_out_regs \
+    -to [get_ports {sd_cmd sd_dat[*]}]
+set_multicycle_path 7 -hold -start -from $sd_out_regs \
+    -to [get_ports {sd_cmd sd_dat[*]}]
+# The card's lines, driven after a fall, are sampled on the cycle
+# `half` rises, four of the design's cycles after that fall: the
+# capture is four cycles of the capturing clock late (-end 4). The card
+# changes them again only at the next fall, forty nanoseconds after
+# that sample, so the hold is seven (-end 7), -40 ns, for the same
+# reason as the outputs'.
+set_multicycle_path 4 -setup -end -from [get_ports {sd_cmd sd_dat[*]}]
+set_multicycle_path 7 -hold -end -from [get_ports {sd_cmd sd_dat[*]}]
