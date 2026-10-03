@@ -4,7 +4,7 @@
 //! The core, its tracker, a router, and eight ranges behind the router,
 //! from the boot memory at `0x0000` to the configuration flash, read
 //! as memory, at `0x2000_0000`, which `BoardMap` names in the order of
-//! the router's ports. The third of them is the peripheral page: seven
+//! the router's ports. The third of them is the peripheral page: nine
 //! slots of 256 bytes from `0x3000` behind an AXI-Lite bridge, which
 //! `SlotMap` names. `//tools/memmap` writes both maps into the
 //! documents from these types, so they are not listed again here
@@ -61,6 +61,7 @@ use txhdl_parts::plic::Plic3;
 use txhdl_parts::pwm::Pwm;
 use txhdl_parts::remote::eth::{RemoteLink, ETHERTYPE};
 use txhdl_parts::remote::{Answer as RemoteAnswer, Ask, Remote};
+use txhdl_parts::sd::{Sd, SdLines};
 use txhdl_parts::spi::{Spi, SpiLines};
 use txhdl_parts::trng::Entropy;
 
@@ -132,8 +133,8 @@ pub type BoardRouter = Router<8, BoardMap, 32, 32, 4, 4>;
 /// from 0x3000, in the order of the bridge's ports.
 pub struct SlotMap;
 
-impl AddrMap<8> for SlotMap {
-    const RANGES: [(usize, usize); 8] = [
+impl AddrMap<9> for SlotMap {
+    const RANGES: [(usize, usize); 9] = [
         (0x3000, 0xffff_ff00),
         (0x3100, 0xffff_ff00),
         (0x3200, 0xffff_ff00),
@@ -142,8 +143,9 @@ impl AddrMap<8> for SlotMap {
         (0x3500, 0xffff_ff00),
         (0x3600, 0xffff_ff00),
         (0x3700, 0xffff_ff00),
+        (0x3800, 0xffff_ff00),
     ];
-    const NAMES: [&'static str; 8] = [
+    const NAMES: [&'static str; 9] = [
         "the serial port",
         "the pulse width modulator",
         "the third slot, brought out of the unit",
@@ -152,6 +154,7 @@ impl AddrMap<8> for SlotMap {
         "the entropy source",
         "the configuration flash's SPI master",
         "the Ethernet PHY's management interface",
+        "the SD card host",
     ];
 }
 
@@ -222,19 +225,20 @@ pub struct Board<const DIV: u32> {
     pub pdmem: AxiPer<32, 32, 4, 4>,
     pub ptimer: AxiPer<32, 32, 4, 4>,
     // begin{vslot}
-    /// Eight small peripherals share the page at `0x3000`: the serial
+    /// Nine small peripherals share the page at `0x3000`: the serial
     /// port at `0x3000`, the pulse width modulator at `0x3100`,
     /// whatever the board hangs on the third slot at `0x3200`, the
     /// remote peripheral at `0x3300`, the Ethernet port's registers
     /// on the fifth slot at `0x3400`, the entropy source on the
     /// sixth at `0x3500`, the configuration flash's SPI master on the
-    /// seventh at `0x3600`, and the Ethernet PHY's MDIO master on the
-    /// eighth at `0x3700`, each a sixteenth of the page. The
+    /// seventh at `0x3600`, the Ethernet PHY's MDIO master on the
+    /// eighth at `0x3700`, and the SD card host on the ninth at
+    /// `0x3800`, each a sixteenth of the page. The
     /// router's ports go to memories and to the bus's own peripherals,
     /// and a peripheral of six registers does not want one of its own.
     ///
     /// The page was never the constraint and is not now. It is 4 KiB
-    /// and a slot is 256 bytes, so it holds sixteen and eight are
+    /// and a slot is 256 bytes, so it holds sixteen and seven are
     /// still free; what was full was the bridge in front of it, which
     /// had four ports. So no address moves to make room for the fifth,
     /// and nothing that names one of the first four changes.
@@ -248,7 +252,7 @@ pub struct Board<const DIV: u32> {
     ///
     /// The fifth is a field, because `EthSlots` runs on the bus clock
     /// like every other peripheral here and wants no crossing.
-    pub puart: LiteBridge<8, SlotMap, 32, 32, 4, 4>,
+    pub puart: LiteBridge<9, SlotMap, 32, 32, 4, 4>,
     // end{vslot}
     pub pddr3: AxiPer<32, 32, 4, 4>,
     pub pplic: LiteBridge<1, PlicMap, 32, 32, 4, 4>,
@@ -311,6 +315,11 @@ pub struct Board<const DIV: u32> {
     /// PHY's registers. Its interrupt is not wired, since a program waits
     /// on it.
     pub mdio: Mdio,
+    /// The SD card host on the ninth slot at `0x3800` (issue 153). Its
+    /// interrupt is not wired, as the SPI master's is not: the
+    /// interrupt controller's three sources are taken, and a program
+    /// waits on the status register.
+    pub sd: Sd,
     /// The window's tracker, on the router's eighth port.
     pub pflash: AxiPer<32, 32, 4, 4>,
     /// The window.
@@ -376,6 +385,10 @@ pub struct BoardIn {
     pub fl_miso: In<Bit>,
     /// The Ethernet PHY's management data line, as read at the pad.
     pub phy_mdio_in: In<Bit>,
+    /// The SD card's command line and four data lines, as read at
+    /// the pads.
+    pub sd_cmd_in: In<Bit>,
+    pub sd_dat_in: In<U<4>>,
     /// The top's `BSCANE2` on `USER4`, on the cable's clock: selected,
     /// the TAP's shift, capture and update, the data in, and the TAP's
     /// reset (issue 154).
@@ -445,6 +458,14 @@ pub struct BoardOut {
     /// High while the board drives the management data line; the top
     /// makes the pad three-state from the two.
     pub phy_mdio_oe: Out<Bit>,
+    /// The SD card's clock, its command line and four data lines as
+    /// driven, and each one's drive enable; the top makes the pads
+    /// three-state from the pairs.
+    pub sd_clk: Out<Bit>,
+    pub sd_cmd_out: Out<Bit>,
+    pub sd_cmd_oe: Out<Bit>,
+    pub sd_dat_out: Out<U<4>>,
+    pub sd_dat_oe: Out<Bit>,
     /// The transport's data out, to `BSCANE2`'s TDO.
     pub bscan_tdo: Out<Bit, Tck>,
 }
@@ -466,6 +487,8 @@ impl<const DIV: u32> Unit for Board<DIV> {
             jtag,
             fl_miso,
             phy_mdio_in,
+            sd_cmd_in,
+            sd_dat_in,
             bscan_sel,
             bscan_shift,
             bscan_capture,
@@ -517,6 +540,11 @@ impl<const DIV: u32> Unit for Board<DIV> {
             phy_mdc,
             phy_mdio_out,
             phy_mdio_oe,
+            sd_clk,
+            sd_cmd_out,
+            sd_cmd_oe,
+            sd_dat_out,
+            sd_dat_oe,
             bscan_tdo,
         }: BoardOut,
     ) {
@@ -670,6 +698,13 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (pw_mdio_tx, pw_mdio_rx) = chan::<LiteW<32, 4>, DefaultClock>();
         let (pb_mdio_tx, pb_mdio_rx) = chan::<LiteB, DefaultClock>();
         let (pr_mdio_tx, pr_mdio_rx) = chan::<LiteR<32>, DefaultClock>();
+        // The SD card host on the ninth.
+        let (paw_sd_tx, paw_sd_rx) = chan::<LiteAw<32>, DefaultClock>();
+        let (par_sd_tx, par_sd_rx) = chan::<LiteAr<32>, DefaultClock>();
+        let (pw_sd_tx, pw_sd_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (pb_sd_tx, pb_sd_rx) = chan::<LiteB, DefaultClock>();
+        let (pr_sd_tx, pr_sd_rx) = chan::<LiteR<32>, DefaultClock>();
+        let (sd_irq_o, _sd_irq_i) = signal::<Bit, DefaultClock>();
         // The window on the router's eighth port, its wires to the pins,
         // and the reset the pins hold it in until the flash is ready.
         let (aw7_tx, aw7_rx) = chan::<Aw<32, 4>, DefaultClock>();
@@ -1169,11 +1204,13 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                 lb_rx, pb_pwm_rx, vb,
                                                 pb_rem_rx, pb_eth_rx,
                                                 pb_trng_rx, pb_spi_rx, pb_mdio_rx,
+                                                pb_sd_rx,
                                             ],
                                             [
                                                 lr_rx, pr_pwm_rx, vr,
                                                 pr_rem_rx, pr_eth_rx,
                                                 pr_trng_rx, pr_spi_rx, pr_mdio_rx,
+                                                pr_sd_rx,
                                             ],
                                         ),
                                         (
@@ -1186,6 +1223,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                 paw_trng_tx,
                                                 paw_spi_tx,
                                                 paw_mdio_tx,
+                                                paw_sd_tx,
                                             ],
                                             [
                                                 lar_tx,
@@ -1196,11 +1234,13 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                 par_trng_tx,
                                                 par_spi_tx,
                                                 par_mdio_tx,
+                                                par_sd_tx,
                                             ],
                                             [
                                                 lw_tx, pw_pwm_tx, vw,
                                                 pw_rem_tx, pw_eth_tx,
                                                 pw_trng_tx, pw_spi_tx, pw_mdio_tx,
+                                                pw_sd_tx,
                                             ],
                                             b2_tx,
                                             r2_tx,
@@ -1277,6 +1317,7 @@ join2(
                                                                 irq: spi_irq_o,
                                                             },
                                                         ),
+                                                        join2(
                                                         self.mdio.run(
                                                             LitePort {
                                                                 aw: paw_mdio_rx,
@@ -1291,6 +1332,26 @@ join2(
                                                                 mdio_out: phy_mdio_out,
                                                                 mdio_oe: phy_mdio_oe,
                                                             },
+                                                        ),
+                                                        self.sd.run(
+                                                            LitePort {
+                                                                aw: paw_sd_rx,
+                                                                ar: par_sd_rx,
+                                                                w: pw_sd_rx,
+                                                                b: pb_sd_tx,
+                                                                r: pr_sd_tx,
+                                                            },
+                                                            SdLines {
+                                                                cmd_in: sd_cmd_in,
+                                                                dat_in: sd_dat_in,
+                                                                sclk: sd_clk,
+                                                                cmd_out: sd_cmd_out,
+                                                                cmd_oe: sd_cmd_oe,
+                                                                dat_out: sd_dat_out,
+                                                                dat_oe: sd_dat_oe,
+                                                                irq: sd_irq_o,
+                                                            },
+                                                        ),
                                                         ),
                                                         ),
                                                         join2(

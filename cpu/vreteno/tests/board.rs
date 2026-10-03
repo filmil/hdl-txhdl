@@ -15,10 +15,11 @@ use txhdl::comp::{
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
+use txhdl_parts::dtm::Tck;
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::mdio::sim::MdioPhy;
 use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
-use txhdl_parts::dtm::Tck;
+use txhdl_parts::sd::SdCard;
 use txhdl_parts::spi::FlashDevice;
 use vreteno32::board::{Board, BoardIn, BoardOut, REMOTE_DEV};
 use vreteno32::core::Vreteno;
@@ -286,6 +287,8 @@ struct Net<'a> {
     /// The PHY's management side, on the board's MDIO line:
     /// `board_phy()` when none is given.
     phy: Option<MdioPhy>,
+    /// The card in the SD slot: `SdCard::default()` when none is given.
+    card: Option<SdCard>,
 }
 
 fn run_all(
@@ -297,7 +300,12 @@ fn run_all(
     net: Net,
     plan: &[Op],
 ) -> Ran {
-    let Net { serve, inject, phy } = net;
+    let Net {
+        serve,
+        inject,
+        phy,
+        card,
+    } = net;
     let mut board = TestBoard {
         cpu: Vreteno::with(text),
         rom: Rom::with(text),
@@ -391,6 +399,18 @@ fn run_all(
     let (phy_oe_o, phy_oe) = signal::<Bit, DefaultClock>();
     let mut phy = phy.unwrap_or_else(board_phy);
     phy_mdio_in_o.set(Bit::One);
+    // The card in the SD slot, on the host's lines; a line nobody
+    // drives reads high through its pull-up.
+    let (sd_cmd_in_o, sd_cmd_in) = signal::<Bit, DefaultClock>();
+    let (sd_dat_in_o, sd_dat_in) = signal::<U<4>, DefaultClock>();
+    let (sd_clk_o, sd_clk) = signal::<Bit, DefaultClock>();
+    let (sd_cmd_out_o, sd_cmd_out) = signal::<Bit, DefaultClock>();
+    let (sd_cmd_oe_o, sd_cmd_oe) = signal::<Bit, DefaultClock>();
+    let (sd_dat_out_o, sd_dat_out) = signal::<U<4>, DefaultClock>();
+    let (sd_dat_oe_o, sd_dat_oe) = signal::<Bit, DefaultClock>();
+    let mut card = card.unwrap_or_default();
+    sd_cmd_in_o.set(Bit::One);
+    sd_dat_in_o.set(U::<4>::from(0xfu8));
     let mut sim = Running::new(board.run(
         BoardIn {
             rst,
@@ -403,6 +423,8 @@ fn run_all(
             net_rx: net_in_rx,
             fl_miso,
             phy_mdio_in,
+            sd_cmd_in,
+            sd_dat_in,
             bscan_sel: signal::<Bit, Tck>().1,
             bscan_shift: signal::<Bit, Tck>().1,
             bscan_capture: signal::<Bit, Tck>().1,
@@ -480,6 +502,11 @@ fn run_all(
             phy_mdc: phy_mdc_o,
             phy_mdio_out: phy_out_o,
             phy_mdio_oe: phy_oe_o,
+            sd_clk: sd_clk_o,
+            sd_cmd_out: sd_cmd_out_o,
+            sd_cmd_oe: sd_cmd_oe_o,
+            sd_dat_out: sd_dat_out_o,
+            sd_dat_oe: sd_dat_oe_o,
             bscan_tdo: signal::<Bit, Tck>().0,
         },
     ));
@@ -542,6 +569,22 @@ fn run_all(
         let seen = line(&phy);
         phy.step(phy_mdc.get().to_bool(), seen);
         phy_mdio_in_o.set(Bit::from_bool(line(&phy)));
+        // The SD lines: whoever drives each, else high.
+        let (host_cmd, host_dat) =
+            (sd_cmd_oe.get().to_bool(), sd_dat_oe.get().to_bool());
+        let (cmd, dat) =
+            (sd_cmd_out.get().to_bool(), sd_dat_out.get().raw() as u8);
+        card.step(sd_clk.get().to_bool(), host_cmd, cmd, host_dat, dat);
+        sd_cmd_in_o.set(Bit::from_bool(if host_cmd {
+            cmd
+        } else {
+            card.cmd_out()
+        }));
+        sd_dat_in_o.set(U::<4>::from(if host_dat {
+            dat
+        } else {
+            card.dat_out()
+        }));
         term.see(tx.get().to_bool());
         rx_o.set(Bit::from_bool(term.level()));
         ran_for = cycle;

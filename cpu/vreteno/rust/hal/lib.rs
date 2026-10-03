@@ -62,6 +62,9 @@ pub mod map {
     /// The Ethernet PHY's management interface: divider, command,
     /// data, state.
     pub const MDIO: usize = 0x0000_3700;
+    /// The SD card host: control, command, argument, status, the
+    /// response's four words and the block buffer.
+    pub const SD: usize = 0x0000_3800;
     /// The configuration flash, read as memory: 16 MiB, the bitstream
     /// first.
     pub const FLASH: usize = 0x2000_0000;

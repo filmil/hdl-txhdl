@@ -308,6 +308,8 @@ fn rig(busy: bool) -> Rig {
             net_rx: chan::<EthByte, DefaultClock>().1,
             fl_miso: lo(),
             phy_mdio_in: lo(),
+            sd_cmd_in: lo(),
+            sd_dat_in: signal::<U<4>, DefaultClock>().1,
             bscan_sel: sel,
             bscan_shift: shift,
             bscan_capture: capture,
@@ -385,6 +387,11 @@ fn rig(busy: bool) -> Rig {
             phy_mdc: out(),
             phy_mdio_out: out(),
             phy_mdio_oe: out(),
+            sd_clk: out(),
+            sd_cmd_out: out(),
+            sd_cmd_oe: out(),
+            sd_dat_out: signal::<U<4>, DefaultClock>().0,
+            sd_dat_oe: out(),
             bscan_tdo: tdo_o,
         },
     ));
@@ -651,7 +658,9 @@ fn the_jtag_master_and_the_transport_take_turns_on_one_host() {
 }
 
 fn gdb() -> std::path::PathBuf {
-    std::env::var_os("GDB").expect("GDB names the binary").into()
+    std::env::var_os("GDB")
+        .expect("GDB names the binary")
+        .into()
 }
 
 /// gdb-multiarch (`//third_party/gdb`) through OpenOCD's gdb server, on
