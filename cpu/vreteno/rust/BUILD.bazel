@@ -202,6 +202,56 @@ rust_library(
     edition = "2021",
 )
 
+# The JL2121's RGMII delay bits, read from page 3336 the way JLSemi's
+# driver does (issue 869): the page select written, the register read,
+# the page written back. The only writes to the PHY in the tree.
+# Built for the simulation's boot memory, for `board_test`, and for
+# the loader.
+rust_binary(
+    name = "phydelay",
+    srcs = ["phydelay.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+    ],
+)
+
+vreteno_image(
+    name = "phydelay_image",
+    platform = ":vreteno",
+    program = ":phydelay",
+)
+
+rust_library(
+    name = "phydelay_program",
+    srcs = [":phydelay_image"],
+    crate_name = "phydelay_program",
+    edition = "2021",
+)
+
+rust_binary(
+    name = "phydelay_ram",
+    srcs = ["phydelay.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+    ],
+)
+
+vreteno_flat(
+    name = "phydelay_ram_bin",
+    platform = ":vreteno",
+    program = ":phydelay_ram",
+)
+
 # The Ethernet PHY's management registers read by the core over MDIO
 # (issue 864): the first address that answers, and its 32 registers.
 # Nothing is written to the PHY. Built for the simulation's boot

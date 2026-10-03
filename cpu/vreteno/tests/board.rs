@@ -53,6 +53,8 @@ struct Ran {
     /// The management frames the PHY took: its address, the
     /// register's, and the word for a write.
     phy_frames: Vec<(u8, u8, Option<u16>)>,
+    /// The PHY's page select, register 31, when the run ended.
+    phy_page: u16,
 }
 
 /// Run `text` with `data` in the data memory, on the board's design,
@@ -280,6 +282,9 @@ struct Net<'a> {
     serve: bool,
     /// Frames put on the wire from the start, unasked.
     inject: &'a [Vec<u8>],
+    /// The PHY's management side, on the board's MDIO line:
+    /// `board_phy()` when none is given.
+    phy: Option<MdioPhy>,
 }
 
 fn run_all(
@@ -291,7 +296,7 @@ fn run_all(
     net: Net,
     plan: &[Op],
 ) -> Ran {
-    let Net { serve, inject } = net;
+    let Net { serve, inject, phy } = net;
     let mut board = TestBoard {
         cpu: Vreteno::with(text),
         rom: Rom::with(text),
@@ -377,14 +382,13 @@ fn run_all(
     head.extend([0xaa, 0x99, 0x55, 0x66]);
     head.resize(256, 0xff);
     let mut chip = FlashDevice::new(head, [0x20, 0xba, 0x18], false, false);
-    // The Ethernet PHY's management interface: a model PHY at address
-    // 0, holding the 32 registers the JL2121 on the board answered with
-    // on October 3, 2026 (#864).
+    // The Ethernet PHY's management interface, with the model PHY the
+    // caller gives in `net`: `board_phy()` unless a test wants another.
     let (phy_mdio_in_o, phy_mdio_in) = signal::<Bit, DefaultClock>();
     let (phy_mdc_o, phy_mdc) = signal::<Bit, DefaultClock>();
     let (phy_out_o, phy_out) = signal::<Bit, DefaultClock>();
     let (phy_oe_o, phy_oe) = signal::<Bit, DefaultClock>();
-    let mut phy = MdioPhy::new(0, phy_regs());
+    let mut phy = phy.unwrap_or_else(board_phy);
     phy_mdio_in_o.set(Bit::One);
     let mut sim = Running::new(board.run(
         BoardIn {
@@ -559,6 +563,7 @@ fn run_all(
         flash: chip.commands.clone(),
         flash_short: chip.partial,
         phy_frames: phy.frames.clone(),
+        phy_page: phy.regs[31],
     }
 }
 
@@ -591,11 +596,33 @@ fn the_configuration_flash_answers_on_the_board() {
 /// and page received in register 6.
 fn phy_regs() -> [u16; 32] {
     [
-        0x1140, 0x796d, 0x937c, 0x4032, 0x01e1, 0xcde1, 0x000d, 0x2001,
-        0x0000, 0x0200, 0x3800, 0x0000, 0x0000, 0x0000, 0x0000, 0x2000,
-        0x0040, 0x0000, 0x0000, 0x0000, 0x4080, 0x7c12, 0x489b, 0x2800,
-        0x8000, 0x0000, 0x0000, 0x002f, 0x0000, 0x1208, 0x8000, 0x0000,
+        0x1140, 0x796d, 0x937c, 0x4032, 0x01e1, 0xcde1, 0x000d, 0x2001, 0x0000,
+        0x0200, 0x3800, 0x0000, 0x0000, 0x0000, 0x0000, 0x2000, 0x0040, 0x0000,
+        0x0000, 0x0000, 0x4080, 0x7c12, 0x489b, 0x2800, 0x8000, 0x0000, 0x0000,
+        0x002f, 0x0000, 0x1208, 0x8000, 0x0000,
     ]
+}
+
+/// The model PHY on the board's management line: page 0 is what the
+/// JL2121 answered with on the board (`phy_regs`), and it pages its
+/// vendor registers by register 31 as JLSemi's do. Register 17 of page
+/// 3336, where JLSemi's driver keeps the RGMII delay bits, holds
+/// `0200`: the receive delay set and the transmit delay clear. That word
+/// is the model's own, chosen so the two bits read differently; the
+/// JL2121's is what the board run of `phydelay` will say (#869).
+fn board_phy() -> MdioPhy {
+    let mut phy = MdioPhy::new(0, phy_regs());
+    phy.pages.insert((3336, 17), 0x0200);
+    phy
+}
+
+/// A run with `phy` on the management line in place of `board_phy()`.
+fn run_phy(text: &[u32], data: &[u8], limit: u64, phy: MdioPhy) -> Ran {
+    let net = Net {
+        phy: Some(phy),
+        ..Net::default()
+    };
+    run_all(text, data, b"", &[], limit, net, &[])
 }
 
 /// The Ethernet PHY's management registers on the board (issue 864):
@@ -622,6 +649,53 @@ fn the_phy_registers_read_on_the_board() {
     let mut frames = vec![(0, 2, None)];
     frames.extend((0..32).map(|r| (0, r, None)));
     assert_eq!(ran.phy_frames, frames);
+    assert!(ran.halted_at.is_some(), "and halted");
+}
+
+/// The RGMII delay bits on the board (issue 869): the core finds the
+/// PHY, reads the page select, selects page 3336, reads register 17,
+/// writes the page it found back, and reads the page select again. The
+/// frames are exactly those, read, write, read, write, read, after the
+/// scan, and the page select is left as it was found.
+#[test]
+fn the_phy_delay_bits_read_through_the_page() {
+    let ran = run_phy(
+        phydelay_program::TEXT,
+        phydelay_program::DATA,
+        60_000,
+        board_phy(),
+    );
+    assert_eq!(
+        ran.said,
+        "phy at 0\npage was 0000\np3336 r17 0200\ntx delay 0\nrx delay 1\n\
+         page now 0000\n"
+    );
+    assert_eq!(
+        ran.phy_frames,
+        vec![
+            (0, 2, None),
+            (0, 31, None),
+            (0, 31, Some(3336)),
+            (0, 17, None),
+            (0, 31, Some(0)),
+            (0, 31, None),
+        ]
+    );
+    assert_eq!(ran.phy_page, 0, "the page select restored");
+    assert!(ran.halted_at.is_some(), "and halted");
+}
+
+/// A page select that reads all ones, which is a line nobody drove: the
+/// program says so and writes nothing.
+#[test]
+fn a_failed_page_read_writes_nothing() {
+    let mut phy = board_phy();
+    phy.regs[31] = 0xffff;
+    let ran =
+        run_phy(phydelay_program::TEXT, phydelay_program::DATA, 60_000, phy);
+    assert_eq!(ran.said, "phy at 0\npage read failed, nothing written\n");
+    assert_eq!(ran.phy_frames, vec![(0, 2, None), (0, 31, None)]);
+    assert!(ran.phy_frames.iter().all(|f| f.2.is_none()), "no write");
     assert!(ran.halted_at.is_some(), "and halted");
 }
 
