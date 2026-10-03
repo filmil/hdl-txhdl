@@ -109,6 +109,26 @@ pub fn reset() -> bool {
     clock::RESET.with(|r| r.get())
 }
 
+/// Say that a unit answers the reset in its own body: it declares
+/// `rst: In<Bit>` and reads it. `#[lower]` calls this at the top of
+/// such a unit's `run`, so nobody writes it by hand.
+///
+/// The netlist gives such a unit no clearing branch, since what it
+/// does under reset is in its body (issue 633), and so the run's reset
+/// leaves its registers to the body too, rather than putting them back
+/// on top of what the body drives (issue 878). Only the unit's own
+/// registers: a child that declares no `rst` keeps the reset, as its
+/// module does in the netlist.
+pub fn answers_reset(unit: &impl trace::Traceable) {
+    let own: Vec<usize> = trace::collect("u", unit)
+        .into_iter()
+        .filter(|p| p.kind == trace::Kind::Reg)
+        .filter(|p| p.path.matches('.').count() == 1)
+        .map(|p| p.cell)
+        .collect();
+    clock::OWN_RESET.with(|o| o.borrow_mut().extend(own));
+}
+
 /// Assert or release the reset, for a testbench.
 ///
 /// It takes effect at the next edge, as the netlist's `if (rst)`
@@ -678,7 +698,7 @@ trait Reset {
 impl<T: Copy> Reset for RegCell<T> {
     fn reset_at(&self, t: u64) {
         let (clk, edge) = self.edge.get();
-        if clk.edge_at(t, edge) {
+        if clk.edge_at(t, edge) && !self.answers_own_reset() {
             self.next.take();
             self.cur.set(self.init);
         }
@@ -693,6 +713,15 @@ impl<T: Copy + Default> Reset for ChanCell<T> {
     }
 }
 
+impl<T: Copy> RegCell<T> {
+    /// Whether the register's unit answers the reset in its own body,
+    /// so that the run's reset leaves it alone (issue 878).
+    fn answers_own_reset(&self) -> bool {
+        let at = self as *const RegCell<T> as usize;
+        clock::OWN_RESET.with(|o| o.borrow().contains(&at))
+    }
+}
+
 impl<T: Copy> Commit for RegCell<T> {
     fn apply(&self) {
         // A reset wins over the drive, and takes effect at the edge
@@ -700,7 +729,7 @@ impl<T: Copy> Commit for RegCell<T> {
         // netlist's `if (rst)` inside the clocked block does. The
         // drive is still taken off the cell, so a register does not
         // latch a stale value on the edge after the reset.
-        if reset() {
+        if reset() && !self.answers_own_reset() {
             self.next.take();
             self.cur.set(self.init);
             return;
@@ -1341,6 +1370,11 @@ mod clock {
         /// whether or not anything drives it at the edge (issue 727).
         pub static REGS: RefCell<Vec<&'static dyn super::Reset>> =
             RefCell::new(Vec::new());
+        /// The registers whose unit answers the reset itself, by
+        /// their cells: the reset leaves them to the unit's body
+        /// (issue 878).
+        pub static OWN_RESET: RefCell<std::collections::HashSet<usize>> =
+            RefCell::new(std::collections::HashSet::new());
         /// Every channel still held, for the same reason: a reset
         /// empties it whether or not anything sends or takes in the
         /// step (issue 729).
