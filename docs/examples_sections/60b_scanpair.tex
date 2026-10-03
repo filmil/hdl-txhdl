@@ -1,0 +1,75 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Line Ahead of the Beam}
+\label{sec:x-scanpair}
+
+\S\ref{sec:x-scanout} fills one line from memory and reads it back.
+A scanout has to do that for every line of every frame while the beam
+moves, so each line must be in place before the beam reaches it, and
+when one is not, somebody has to know. Two parts in
+\code{scanout} in \code{//lib/parts} do this (issue 151):
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}l@{}}
+\code{Rom -- AxiPer -- AxiHost -- LineFetch ]--- ChanCdc ---[ LinePair} \\
+\code{\phantom{Rom -- AxiPer -- AxiHost -- }ScanFetch ]<-- ChanCdc <--[ LinePair} \\
+\hspace{1.1cm}\textit{bus clock}
+\hspace{3.6cm}\textit{pixel clock} \\
+\end{tabular}
+\end{center}
+
+The words go down the first row and the requests come back up the
+second.
+
+\code{LinePair}, on the pixel clock, holds two lines. The beam reads
+one while the other fills, and they change places at the start of
+each line. At that start it asks for the line after the one about to
+be shown, so a line has the whole of the line before it to arrive in.
+The address is a running sum, a stride a line, so nothing multiplies.
+The frame's base is a register taken at the vertical sync, so a host
+that draws in one buffer and shows another flips them with one write.
+A column the beam reads before its word arrived sets \code{under}, a
+sticky bit a host reads and clears, which is how a run on the board
+shows that no line ever starved. \code{ScanFetch}, on the bus clock,
+takes each request across and starts \code{LineFetch} on it.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=pair_run-pair_run,caption={\code{lib/parts/src/scanout.rs}:
+the pixel side.},label={lst:x-scanpair-pair}]{lib/parts/src/scanout.rs}
+
+\subsection{What a line must survive}
+
+On the board the memory is AMD's MIG in \code{//ddr3}, for an
+MT41K256M16 at 2.5\,ns a clock. Its refresh takes $t_{RFC}$ =
+260\,ns once every $t_{REFI}$ = 7.8\,$\mu$s, and a bank
+miss costs $t_{RP} + t_{RCD}$ = 27.5\,ns before a CAS latency of
+six clocks. The video mode is 640 by 480, 31.8\,$\mu$s a line,
+and a visible line is 640 words, forty bursts of sixteen. Since a
+line is fetched during the one before it, what it must survive is
+forty bursts and the four refreshes that land in a line, against the
+line's time, not one burst's latency against one pixel.
+
+\subsection{What the run checks}
+
+The raster is the testbench's, eight visible columns of sixty-four
+and four visible rows of six, on a pixel clock unrelated to the bus
+clock. The memory takes a \code{hold} that stalls its beats, standing
+in for a refresh. Two frames, with a short stall in every line, show
+every pixel as the word at its place in the frame, and the underflow
+bit stays clear. A later frame stalls the memory for the whole of one
+line, so the next line cannot arrive in time: the bit sets and stays
+set until a write clears it. Both units are checked against the run
+under nvc and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{scanpair_timing.tex}
+\caption{The long stall: \code{start} does not come back while the
+memory holds the row after, \code{rgot} is short at the next line's
+start, and \code{starved} sets and stays set.}
+\label{fig:x-scanpair}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_scanpair.rs}. Run with \code{bazel run //lib/examples:ex\_scanpair}.},label={lst:x-scanpair}]{lib/examples/ex_scanpair.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_scanpair} printed when the build ran it: the pixels checked, the underflow bit at each frame's end, and the netlist of \code{LinePair}.},label={lst:x-scanpair-out}]{out_scanpair.txt}

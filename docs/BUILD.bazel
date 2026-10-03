@@ -1145,6 +1145,8 @@ latex_document(
         ":ethslots_timing",
         ":scanout_run",
         ":scanout_timing",
+        ":scanpair_run",
+        ":scanpair_timing",
         ":reset_run",
         ":reset_timing",
         ":ownrst_run",
