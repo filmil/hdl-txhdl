@@ -99,6 +99,17 @@ fn main() {
     let mut t: u64 = 0;
     for line in text.lines() {
         let l = line.trim();
+        // `sqlite2drawtiming` writes a dot before every timestamp, the
+        // first one included, and the timestamp itself as a comment.
+        // Counting the dots alone put the values of timestamp N at tick
+        // N + 1; the comment, where there is one, says the tick (issue
+        // 880). A text with no comments is counted by its dots.
+        if let Some(n) = l.strip_prefix("# timestamp:") {
+            if let Ok(n) = n.trim().parse::<u64>() {
+                t = n;
+            }
+            continue;
+        }
         if l.is_empty() || l.starts_with('#') {
             continue;
         }
