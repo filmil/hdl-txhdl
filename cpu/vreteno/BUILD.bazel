@@ -92,6 +92,7 @@ rust_test(
         "//cpu/vreteno/rust:flashid_program",
         "//cpu/vreteno/rust:phydelay_program",
         "//cpu/vreteno/rust:phyregs_program",
+        "//cpu/vreteno/rust:sdprobe_program",
         "//cpu/vreteno/rust:hello_program",
         "//cpu/vreteno/rust:irq_program",
         "//cpu/vreteno/rust:steps_program",

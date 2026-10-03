@@ -57,6 +57,8 @@ struct Ran {
     phy_frames: Vec<(u8, u8, Option<u16>)>,
     /// The PHY's page select, register 31, when the run ended.
     phy_page: u16,
+    /// The card in the SD slot as the run left it.
+    card: SdCard,
 }
 
 /// Run `text` with `data` in the data memory, on the board's design,
@@ -615,6 +617,7 @@ fn run_all(
         flash_short: chip.partial,
         phy_frames: phy.frames.clone(),
         phy_page: phy.regs[31],
+        card,
     }
 }
 
@@ -747,6 +750,55 @@ fn a_failed_page_read_writes_nothing() {
     assert_eq!(ran.said, "phy at 0\npage read failed, nothing written\n");
     assert_eq!(ran.phy_frames, vec![(0, 2, None), (0, 31, None)]);
     assert!(ran.phy_frames.iter().all(|f| f.2.is_none()), "no write");
+    assert!(ran.halted_at.is_some(), "and halted");
+}
+
+/// The card in the SD slot on the board (issue 153): the core brings
+/// it up at 400 kHz, asking with HCS set, prints its identity and
+/// address, and reads block 0 on one line and again on four. The card
+/// is the model, high capacity, its block 0 ending in the boot
+/// signature, and after the run it holds what it held before: the
+/// program writes nothing.
+#[test]
+fn the_sd_card_is_read_on_the_board() {
+    let mut card = SdCard::default();
+    card.blocks[510] = 0x55;
+    card.blocks[511] = 0xaa;
+    let before = card.blocks.clone();
+    let word = |c: &[u8]| u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
+    let cid: Vec<String> = card
+        .cid
+        .chunks(4)
+        .map(|c| format!("{:08x}", word(c)))
+        .collect();
+    let mut want = format!(
+        "cmd8 000001aa\nocr c0ff8000 sdhc\ncid {}\nrca {:08x}\nblk0\n",
+        cid.join(" "),
+        card.rca
+    );
+    for line in before[..512].chunks(16) {
+        for b in line {
+            want += &format!("{b:02x}");
+        }
+        want.push('\n');
+    }
+    want += "wide same\nboot 55aa\n";
+    let net = Net {
+        card: Some(card),
+        ..Net::default()
+    };
+    let ran = run_all(
+        sdprobe_program::TEXT,
+        sdprobe_program::DATA,
+        b"",
+        &[],
+        1_000_000,
+        net,
+        &[],
+    );
+    assert_eq!(ran.said, want);
+    assert_eq!(ran.card.blocks, before, "the card holds what it held");
+    assert_eq!(ran.card.bad_commands, 0, "every command's CRC was right");
     assert!(ran.halted_at.is_some(), "and halted");
 }
 
