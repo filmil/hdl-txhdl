@@ -28,7 +28,12 @@
 //!   raise a sticky fault, the buffer stops filling, and a host reads
 //!   why in `status`. The cutoff is `1 + 20 / H` for a false alarm rate
 //!   of one in a million at a min-entropy `H` of half a bit per
-//!   sample, rounded to forty.
+//!   sample, rounded to forty. The adaptive proportion test of the
+//!   same standard, section 4.4.2, catches a source gone biased
+//!   without going stuck: in each window of [`APT_WINDOW`] samples it
+//!   counts how many equal the window's first, and [`APT_CUTOFF`] of
+//!   them raise a sticky fault of its own (issue 918). Both watch the
+//!   binary samples, the rings XORed to one bit, before the extractor.
 //! * **Debiases it.** Von Neumann's extractor takes the stream in
 //!   pairs: `01` gives a zero, `10` a one, and `00` and `11` give
 //!   nothing. A bias in the source cancels, since the two orders of a
@@ -42,8 +47,8 @@
 //! | Offset | Name | What it is |
 //! |---|---|---|
 //! | `0x0` | `data` | a word of entropy, taken by the read; zero if none |
-//! | `0x4` | `status` | bit 0 a word is ready, bits 3 to 1 how many, bit 8 the fault, bit 9 running |
-//! | `0x8` | `ctrl` | bit 0 run; a write with bit 1 clears the fault |
+//! | `0x4` | `status` | bit 0 a word is ready, bits 3 to 1 how many, bit 8 the repetition count fault, bit 9 running, bit 10 the adaptive proportion fault |
+//! | `0x8` | `ctrl` | bit 0 run; a write with bit 1 clears both faults |
 //! | `0xc` | `raw` | the last 32 folded samples, before the extractor |
 //! | `0x10` | `cap` | a write of bit 0 starts a capture; bit 1 busy, bit 2 done |
 //! | `0x14` | `capidx` | which captured word `capword` reads, 0 to 255 |
@@ -79,6 +84,17 @@ pub const RINGS: usize = 8;
 pub const RING_LENGTH: i128 = 7;
 /// Identical folded samples in a row that raise the fault.
 pub const RCT_CUTOFF: u32 = 40;
+/// The adaptive proportion test's window: SP 800-90B, section 4.4.2,
+/// sets 1024 for a binary noise source, which these samples are.
+pub const APT_WINDOW: u32 = 1024;
+/// Samples of a window equal to its first that raise the adaptive
+/// proportion test's fault: `1 + CRITBINOM(W, 2^-H, 1 - alpha)` of
+/// section 4.4.2, for `W` = 1024, the min-entropy `H` the repetition
+/// count test is set for, half a bit a sample, and a false alarm rate
+/// `alpha` of 2^-20 a window. The binomial's mean is 724 and its standard
+/// deviation 14.6, and 793 is the smallest count reached with
+/// probability at most 2^-20 (issue 918).
+pub const APT_CUTOFF: u32 = 793;
 /// How many words the buffer holds.
 pub const WORDS: usize = 4;
 /// How many words a capture holds: 8192 samples in a row.
@@ -106,10 +122,11 @@ regmap! { regs (regs_read, regs_we, regs_re), 3: [
         (count, 1, 3, ro, 0, "how many words wait"),
         (fault, 8, 1, ro, 0, "the repetition count test tripped"),
         (run, 9, 1, ro, 0, "the run bit, read back"),
+        (aptfault, 10, 1, ro, 0, "the adaptive proportion test tripped"),
     ]),
     (2, ctrl, rw, "the run bit, and the fault's clear", [
         (run, 0, 1, rw, 0, "the rings run and the buffer fills"),
-        (clear, 1, 1, wo, 0, "written one, the fault is cleared"),
+        (clear, 1, 1, wo, 0, "written one, the faults are cleared"),
     ]),
     (3, raw, ro, "the last 32 folded samples"),
     (4, cap, rw, "a capture of consecutive samples", [
@@ -147,7 +164,7 @@ pub const CAP_DONE: u32 = regs::cap_done.mask();
 
 /// `ctrl` bit 0: the rings run and the buffer fills.
 pub const CTRL_RUN: u32 = regs::ctrl_run.mask();
-/// `ctrl` bit 1, on a write: the fault is cleared.
+/// `ctrl` bit 1, on a write: both faults are cleared.
 pub const CTRL_CLEAR: u32 = regs::ctrl_clear.mask();
 /// `status` bit 0: a word is ready.
 pub const STATUS_READY: u32 = regs::status_ready.mask();
@@ -155,6 +172,8 @@ pub const STATUS_READY: u32 = regs::status_ready.mask();
 pub const STATUS_FAULT: u32 = regs::status_fault.mask();
 /// `status` bit 9: the run bit, read back.
 pub const STATUS_RUN: u32 = regs::status_run.mask();
+/// `status` bit 10: the adaptive proportion test tripped.
+pub const STATUS_APTFAULT: u32 = regs::status_aptfault.mask();
 
 // begin{ring}
 /// The rings: `RINGS` ring oscillators, sampled on the clock, as the
@@ -227,6 +246,14 @@ pub struct Trng {
     pub prev: Reg<Bit>,
     /// How many identical samples in a row, counting the last.
     pub runlen: Reg<U<6>>,
+    /// The adaptive proportion test tripped. Sticky until cleared.
+    pub aptfault: Reg<Bit>,
+    /// The first sample of the window, which the window counts.
+    pub apta: Reg<Bit>,
+    /// How many of the window's samples so far equal its first.
+    pub aptb: Reg<U<11>>,
+    /// Where in the window the next sample falls; zero starts one.
+    pub aptn: Reg<U<10>>,
     /// The last 32 folded samples.
     pub rawv: Reg<U<32>>,
     /// Whether the first bit of a pair is held.
@@ -274,6 +301,10 @@ impl Unit for Trng {
             let fault = self.fault.get();
             let prev = self.prev.get();
             let runlen = self.runlen.get();
+            let aptfault = self.aptfault.get();
+            let apta = self.apta.get();
+            let aptb = self.aptb.get();
+            let aptn = self.aptn.get();
             let rawv = self.rawv.get();
             let have = self.have.get();
             let first = self.first.get();
@@ -316,9 +347,18 @@ impl Unit for Trng {
             let same = Bit::from(bit == prev);
             let run1 = mux(same, runlen + 1, U::<6>::from(1u8));
             let tripped = running & same & (runlen >= RCT_CUTOFF - 1);
+            // The adaptive proportion test: a window starts at the
+            // sample after the last one's end, and its first sample is
+            // what the rest are counted against; the count reaching the
+            // cutoff trips it.
+            let wstart = aptn == 0;
+            let hit = Bit::from(bit == apta);
+            let b1 = mux(hit, aptb + 1, aptb);
+            let apt_tripped =
+                running & !wstart & hit & (aptb >= APT_CUTOFF - 1);
             // Von Neumann: the second bit of a pair, and whether the
             // pair says anything.
-            let taking = running & !fault;
+            let taking = running & !fault & !aptfault;
             let pair = taking & have;
             let keep = pair & Bit::from(first != bit);
             let next = (shift >> 1u32) | (first.zext::<32>() << 31u32);
@@ -345,7 +385,8 @@ impl Unit for Trng {
             let cap_status = regs_cap_pack(Bit::Zero, cbusy, cdone);
             let capidx_word = regs_capidx_pack(cidx);
             let capword = self.cap.read(cidx);
-            let status = regs_status_pack(ready, count, fault, running);
+            let status =
+                regs_status_pack(ready, count, fault, running, aptfault);
             let data = mux(ready, self.words.read(head), U::<32>::from(0u8));
             let ctrl = regs_ctrl_pack(running, Bit::Zero);
             let answer = regs_read(
@@ -361,13 +402,28 @@ impl Unit for Trng {
             with!(self <= {
                 to_ctrl ? run: regs_ctrl_run(written),
                 to_ctrl & regs_ctrl_clear(written) ? fault: Bit::Zero,
+                to_ctrl & regs_ctrl_clear(written) ? aptfault: Bit::Zero,
                 // A trip in the cycle of a clear stays tripped.
                 tripped ? fault: Bit::One,
+                // Unlike the repetition count, a clear starts the
+                // proportion test's window again, so a trip counted in
+                // the old window in the clear's own cycle is dropped.
+                apt_tripped & !(to_ctrl & regs_ctrl_clear(written))
+                    ? aptfault: Bit::One,
                 running ? {
                     prev: bit,
                     runlen: run1,
                     rawv: sampled,
+                    aptn: aptn + 1,
                 },
+                running & wstart ? {
+                    apta: bit,
+                    aptb: U::<11>::from(1u16),
+                },
+                running & !wstart ? aptb: b1,
+                // A clear starts a new window, so a count the faulty
+                // stretch built up does not trip the test again.
+                to_ctrl & regs_ctrl_clear(written) ? aptn: U::<10>::from(0u16),
                 taking ? have: !have,
                 taking & !have ? first: bit,
                 keep & !word_done ? {
@@ -668,6 +724,92 @@ mod tests {
                 assert_eq!(s & STATUS_FAULT, 0, "under the cutoff: {s:#x}");
             },
         );
+    }
+
+    /// A source whose sample is one for `ones` cycles in every `of`, and
+    /// zero for the rest: the rings' bits XOR to one when one ring is
+    /// set. The runs are at most `ones` long, under the repetition count
+    /// test's cutoff, so only the adaptive proportion test can see it.
+    fn pattern(ones: u64, of: u64) -> Option<Rc<dyn Fn(u64) -> u32>> {
+        Some(Rc::new(move |t| u32::from(t % of < ones)))
+    }
+
+    /// Enough cycles for the source to run three windows.
+    const THREE_WINDOWS: usize = 3 * APT_WINDOW as usize + 16;
+
+    /// A stuck source trips the adaptive proportion test as well as the
+    /// repetition count test, and a clear clears both (issue 918).
+    #[test]
+    fn a_stuck_source_trips_both_tests() {
+        run(Some(Rc::new(|_| 0xffu32)), |h| async move {
+            write(&h, CTRL, CTRL_RUN).await;
+            for _ in 0..APT_WINDOW as usize + 8 {
+                DefaultClock::rising().await;
+            }
+            let s = read(&h, STATUS).await;
+            assert_ne!(s & STATUS_FAULT, 0, "the repetition count: {s:#x}");
+            assert_ne!(s & STATUS_APTFAULT, 0, "the proportion: {s:#x}");
+            write(&h, CTRL, CTRL_CLEAR).await;
+            let s = read(&h, STATUS).await;
+            assert_eq!(
+                s & (STATUS_FAULT | STATUS_APTFAULT),
+                0,
+                "cleared: {s:#x}"
+            );
+        });
+    }
+
+    /// A source four parts in five one, with no run past four, trips the
+    /// adaptive proportion test and not the repetition count test: the
+    /// fault that test exists for. A window that starts on a one counts
+    /// about 819 of 1024, over the cutoff of 793 (issue 918).
+    #[test]
+    fn a_biased_source_trips_the_proportion_test_alone() {
+        run_for(pattern(4, 5), 20_000, |h| async move {
+            write(&h, CTRL, CTRL_RUN).await;
+            for _ in 0..THREE_WINDOWS {
+                DefaultClock::rising().await;
+            }
+            let s = read(&h, STATUS).await;
+            assert_ne!(s & STATUS_APTFAULT, 0, "tripped: {s:#x}");
+            assert_eq!(s & STATUS_FAULT, 0, "no long run: {s:#x}");
+            // A fault stops the buffer filling, as the other one does.
+            while read(&h, STATUS).await & STATUS_READY != 0 {
+                let _ = read(&h, DATA).await;
+            }
+            for _ in 0..400 {
+                DefaultClock::rising().await;
+            }
+            let s = read(&h, STATUS).await;
+            assert_eq!(s & STATUS_READY, 0, "nothing more comes: {s:#x}");
+        });
+    }
+
+    /// Three parts in four is about 768 of 1024, under the cutoff: the
+    /// test is a bound on bias and not a bias detector.
+    #[test]
+    fn a_source_under_the_cutoff_does_not_trip() {
+        run_for(pattern(3, 4), 20_000, |h| async move {
+            write(&h, CTRL, CTRL_RUN).await;
+            for _ in 0..THREE_WINDOWS {
+                DefaultClock::rising().await;
+            }
+            let s = read(&h, STATUS).await;
+            assert_eq!(s & (STATUS_FAULT | STATUS_APTFAULT), 0, "{s:#x}");
+        });
+    }
+
+    /// The model rings run several windows without tripping either test.
+    #[test]
+    fn the_model_trips_nothing() {
+        run_for(None, 20_000, |h| async move {
+            write(&h, CTRL, CTRL_RUN).await;
+            for _ in 0..THREE_WINDOWS {
+                DefaultClock::rising().await;
+            }
+            let s = read(&h, STATUS).await;
+            assert_eq!(s & (STATUS_FAULT | STATUS_APTFAULT), 0, "{s:#x}");
+        });
     }
 
     /// A sample of a source with a stated law: splitmix64 of the cycle,
