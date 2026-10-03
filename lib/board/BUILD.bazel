@@ -15,3 +15,12 @@ filegroup(
     name = "sources",
     srcs = glob(["*.v"]),
 )
+
+# The USER4 scan chain for the RISC-V debug transport (issue 154), and
+# the constraint that makes its clock one of its own.
+filegroup(
+    name = "bscan_user4",
+    srcs = ["bscan_user4.v"],
+)
+
+exports_files(["bscan_user4.xdc"])
