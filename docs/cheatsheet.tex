@@ -122,7 +122,8 @@ counts while it's high, and \code{tick} marks each seven.
 \item Then reads: inputs with \code{get}, registers just by name.
 \item Then \code{let}s, each a named wire in the netlist.
 \item Then drives, each written once: \code{with!} for registers,
-  \code{set} for outputs, \code{send} for channels.
+  \code{set} for outputs, \code{send} for channels, under a
+  condition on \code{ready}.
 \end{itemize}
 Nothing is assigned twice and nothing branches around a drive. If
 you keep to that shape, the lowering can read your unit.
