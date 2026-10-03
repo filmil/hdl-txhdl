@@ -177,6 +177,50 @@ cc_test(
     deps = [":fastboot_core"],
 )
 
+# The entropy driver's conditioner (issue 780), built for the host
+# against Mbed TLS's SHA-256 alone, so that it can be tested here.
+cc_library(
+    name = "vreteno_condition",
+    srcs = ["drivers/entropy/vreteno_condition.c"],
+    hdrs = ["drivers/entropy/vreteno_condition.h"],
+    copts = ["-std=c11"],
+    includes = ["drivers/entropy"],
+    deps = ["@zephyr_mbedtls//:sha256"],
+)
+
+# The hash is SHA-256 over the words low byte first, against digests
+# taken with `sha256sum`, and a health test tripped part way through a
+# gathering refuses all of it.
+cc_test(
+    name = "condition_test",
+    srcs = ["tests/condition_test.c"],
+    copts = ["-std=c11"],
+    deps = [":vreteno_condition"],
+)
+
+# A source shaped like the board's, its dependence at lags 5, 19 and
+# 22: trngstat fails its extractor words as they come and passes them
+# through the conditioner.
+cc_binary(
+    name = "condition_model",
+    srcs = ["tests/condition_model.c"],
+    copts = ["-std=c11"],
+    deps = [":vreteno_condition"],
+)
+
+sh_test(
+    name = "condition_model_test",
+    srcs = ["tests/condition_model_test.sh"],
+    args = [
+        "$(rootpath :condition_model)",
+        "$(rootpath //tools/trngstat)",
+    ],
+    data = [
+        ":condition_model",
+        "//tools/trngstat",
+    ],
+)
+
 # The core on a host socket.
 cc_binary(
     name = "fastboot_host",

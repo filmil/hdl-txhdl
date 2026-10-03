@@ -6,6 +6,8 @@
 # ZEPHYR_MBEDTLS_MODULE_DIR. The entropy driver conditions with its
 # SHA-256 (issue 780).
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
 package(default_visibility = ["//visibility:public"])
 
 # Everything, for Zephyr's CMake, as `@zephyr//:all` is.
@@ -17,21 +19,27 @@ filegroup(
     ),
 )
 
-# The SHA-256 alone, for a host test of the code that calls it: the
-# sources a configuration with only MBEDTLS_SHA256_C compiles, and the
-# headers they reach.
-filegroup(
-    name = "sha256_srcs",
+# A configuration with the SHA-256 alone, for the host library below.
+genrule(
+    name = "sha256_config",
+    outs = ["sha256_config/mbedtls_sha256_config.h"],
+    cmd = "printf '#define MBEDTLS_SHA256_C\\n' > $@",
+)
+
+# The SHA-256 alone, built for the host, for a test of the code that
+# calls it in the entropy driver (issue 780). Zephyr's image builds its
+# own, from the whole tree, with Zephyr's configuration.
+cc_library(
+    name = "sha256",
     srcs = [
         "library/platform_util.c",
         "library/sha256.c",
+    ] + glob(["library/*.h"]),
+    hdrs = glob(["include/**/*.h"]) + [":sha256_config"],
+    defines = ["MBEDTLS_CONFIG_FILE=\\\"mbedtls_sha256_config.h\\\""],
+    includes = [
+        "include",
+        "library",
+        "sha256_config",
     ],
-)
-
-filegroup(
-    name = "hdrs",
-    srcs = glob([
-        "include/**/*.h",
-        "library/*.h",
-    ]),
 )
