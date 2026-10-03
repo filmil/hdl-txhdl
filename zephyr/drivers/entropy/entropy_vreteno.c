@@ -19,9 +19,16 @@
  * The hardware's health test is what makes this driver refuse rather
  * than hand out a constant: a source whose rings have stopped trips
  * the test, the buffer stops filling, and a request here returns an
- * error rather than waiting for words that will not come. Nothing is
- * mixed in on this side: the hardware debiases with von Neumann's
- * extractor, and what is read is what it kept.
+ * error rather than waiting for words that will not come. The test is
+ * the repetition count test of SP 800-90B alone; the adaptive
+ * proportion test is issue 918.
+ *
+ * The hardware debiases with von Neumann's extractor, which removes
+ * bias but not dependence, and the board's words are serially
+ * correlated at lags that move between builds (issue 780). So nothing
+ * read here is handed out as it is: every 32 bytes are SHA-256 over 32
+ * of the extractor's words, in `vreteno_condition.c`, and a health test
+ * that trips part way through refuses the whole block.
  */
 
 #define DT_DRV_COMPAT hdlfactory_vreteno_trng
@@ -37,6 +44,13 @@
 #include <zephyr/arch/cpu.h>
 #include <zephyr/sys/sys_io.h>
 #include <vreteno/regs/trng.h>
+
+#include <stdbool.h>
+#include <string.h>
+
+#include <mbedtls/platform_util.h>
+
+#include "vreteno_condition.h"
 
 LOG_MODULE_REGISTER(entropy_vreteno, CONFIG_ENTROPY_LOG_LEVEL);
 
@@ -95,36 +109,74 @@ static int trng_word(const struct device *dev, uint32_t *word)
 	return 1;
 }
 
-static void trng_put(uint8_t **buffer, uint16_t *length, uint32_t word)
+/*
+ * The blocking source of words for the conditioner: a word, or
+ * -ETIMEDOUT when the source has given none in the timeout, or -EIO
+ * when the health test has tripped.
+ */
+static int trng_next_blocking(void *ctx, uint32_t *word)
 {
-	size_t n = MIN(*length, sizeof(word));
+	const struct device *dev = ctx;
+	int64_t deadline = k_uptime_ticks() + k_us_to_ticks_ceil64(
+		VRETENO_TRNG_WORD_TIMEOUT_US);
+	int got;
 
-	memcpy(*buffer, &word, n);
-	*buffer += n;
-	*length -= n;
+	while ((got = trng_word(dev, word)) == 0) {
+		if (k_uptime_ticks() > deadline) {
+			return -ETIMEDOUT;
+		}
+		k_yield();
+	}
+	return got;
+}
+
+/* The ISR's source: what is ready now, or -EAGAIN. */
+struct trng_isr_ctx {
+	const struct device *dev;
+	bool busywait;
+};
+
+static int trng_next_isr(void *ctx, uint32_t *word)
+{
+	struct trng_isr_ctx *c = ctx;
+	int got;
+
+	while ((got = trng_word(c->dev, word)) == 0) {
+		if (!c->busywait) {
+			return -EAGAIN;
+		}
+	}
+	return got;
+}
+
+static void trng_why(int err)
+{
+	if (err == -EIO) {
+		/* The one health test the hardware runs (issue 918 adds
+		 * the adaptive proportion test).
+		 */
+		LOG_ERR("the repetition count test tripped");
+	} else if (err == -ETIMEDOUT) {
+		LOG_ERR("no word in %d us", VRETENO_TRNG_WORD_TIMEOUT_US);
+	}
 }
 
 static int entropy_vreteno_get_entropy(const struct device *dev, uint8_t *buffer,
 				       uint16_t length)
 {
 	while (length > 0) {
-		uint32_t word;
-		int64_t deadline = k_uptime_ticks() + k_us_to_ticks_ceil64(
-			VRETENO_TRNG_WORD_TIMEOUT_US);
-		int got;
+		uint8_t block[VRETENO_CONDITION_BYTES];
+		int err = vreteno_gather(trng_next_blocking, (void *)dev, block);
+		size_t n = MIN(length, sizeof(block));
 
-		while ((got = trng_word(dev, &word)) == 0) {
-			if (k_uptime_ticks() > deadline) {
-				LOG_ERR("no word in %d us", VRETENO_TRNG_WORD_TIMEOUT_US);
-				return -ETIMEDOUT;
-			}
-			k_yield();
+		if (err != 0) {
+			trng_why(err);
+			return err;
 		}
-		if (got < 0) {
-			LOG_ERR("the health test tripped");
-			return got;
-		}
-		trng_put(&buffer, &length, word);
+		memcpy(buffer, block, n);
+		mbedtls_platform_zeroize(block, sizeof(block));
+		buffer += n;
+		length -= n;
 	}
 	return 0;
 }
@@ -132,22 +184,30 @@ static int entropy_vreteno_get_entropy(const struct device *dev, uint8_t *buffer
 static int entropy_vreteno_get_entropy_isr(const struct device *dev, uint8_t *buffer,
 					   uint16_t length, uint32_t flags)
 {
+	struct trng_isr_ctx ctx = {
+		.dev = dev,
+		.busywait = (flags & ENTROPY_BUSYWAIT) != 0,
+	};
 	uint16_t wanted = length;
 
 	while (length > 0) {
-		uint32_t word;
-		int got = trng_word(dev, &word);
+		uint8_t block[VRETENO_CONDITION_BYTES];
+		int err = vreteno_gather(trng_next_isr, &ctx, block);
+		size_t n = MIN(length, sizeof(block));
 
-		if (got < 0) {
-			return got;
+		if (err == -EAGAIN) {
+			/* Not enough words ready for a whole block, and no
+			 * waiting allowed: what was gathered is dropped.
+			 */
+			break;
 		}
-		if (got == 0) {
-			if ((flags & ENTROPY_BUSYWAIT) == 0) {
-				break;
-			}
-			continue;
+		if (err != 0) {
+			return err;
 		}
-		trng_put(&buffer, &length, word);
+		memcpy(buffer, block, n);
+		mbedtls_platform_zeroize(block, sizeof(block));
+		buffer += n;
+		length -= n;
 	}
 	return wanted - length;
 }

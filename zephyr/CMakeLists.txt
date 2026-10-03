@@ -21,3 +21,15 @@ if(CONFIG_NETWORKING AND NOT CONFIG_ENTROPY_HAS_DRIVER)
     "(CONFIG_ENTROPY_GENERATOR=y, which enables ENTROPY_VRETENO from "
     "the device tree) rather than CONFIG_TEST_RANDOM_GENERATOR.")
 endif()
+
+# The entropy driver conditions its words with Mbed TLS's SHA-256
+# (issue 780). It cannot select Mbed TLS, since Mbed TLS can select
+# ENTROPY_GENERATOR, which the driver depends on, and Kconfig calls that
+# a loop; so an image that has the driver says CONFIG_MBEDTLS=y, and one
+# that forgets is an error with a reason here.
+if(CONFIG_ENTROPY_VRETENO AND NOT CONFIG_MBEDTLS_SHA256)
+  message(FATAL_ERROR
+    "CONFIG_ENTROPY_VRETENO without CONFIG_MBEDTLS_SHA256: the driver "
+    "conditions the source's words with SHA-256. Add CONFIG_MBEDTLS=y "
+    "beside CONFIG_ENTROPY_GENERATOR=y.")
+endif()

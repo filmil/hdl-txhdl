@@ -43,6 +43,8 @@ want "CONFIG_NET_L2_ETHERNET=y"
 want "CONFIG_ENTROPY_VRETENO=y"
 want "CONFIG_ENTROPY_HAS_DRIVER=y"
 want "CONFIG_ENTROPY_DEVICE_RANDOM_GENERATOR=y"
+# And the driver conditions what it reads with SHA-256 (issue 780).
+want "CONFIG_MBEDTLS_SHA256=y"
 if grep -qx "CONFIG_TEST_RANDOM_GENERATOR=y" "$config"; then
 	echo "PRESENT CONFIG_TEST_RANDOM_GENERATOR=y, a counter is not random"
 	fail=1
