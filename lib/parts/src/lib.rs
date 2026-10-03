@@ -33,6 +33,7 @@ pub mod redundant;
 #[cfg(test)]
 mod regmap;
 pub mod remote;
+pub mod scanout;
 pub mod sd;
 pub mod spi;
 pub mod station;

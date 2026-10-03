@@ -43,6 +43,7 @@ rust_library(
         "src/regmap.rs",
         "src/redundant.rs",
         "src/remote.rs",
+        "src/scanout.rs",
         "src/sd.rs",
         "src/remote/eth.rs",
         "src/spi.rs",
