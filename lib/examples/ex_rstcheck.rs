@@ -16,13 +16,16 @@
 //! stated in reset too, and a proof or a simulation through a reset
 //! failed on them.
 //!
-//! The run here never asserts the reset, since the run checks
-//! `check!` as it goes and has no reset to gate it on. The reset is
-//! exercised by two testbenches in //docs, one per language, which
-//! hold it for three cycles and then count past a wrap.
+//! The run gates the check on the reset as the netlist does (issue
+//! 879). It counts, holds the reset for three cycles, during which
+//! the output is a blank and the check is not stated, and counts past
+//! a wrap; the port and the reset the netlist gives every module are
+//! one net, so it drives both. Two more testbenches in //docs, one
+//! per language, hold the reset on their own and count on.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{
-    mux, now, signal, Clock, DefaultClock, In, Out, Reg, Running, Unit,
+    mux, now, set_reset, signal, Clock, DefaultClock, In, Out, Reg, Running,
+    Unit,
 };
 use txhdl::types::{Bit, U};
 use txhdl::{check, lower, Trace};
@@ -67,9 +70,23 @@ fn main() {
     }
     let mut sim = Running::new(decade.run((rst, tick), shown_out));
 
-    // Counting past a wrap, out of reset.
+    // Counting, out of reset.
     rst_out.set(Bit::Zero);
     tick_out.set(Bit::One);
+    for _ in 0..4 {
+        sim.cycle();
+    }
+    println!("t={:>2} shown {}", now(), shown.get().raw());
+    // The reset, three cycles: a blank shown, and no check stated.
+    set_reset(true);
+    rst_out.set(Bit::One);
+    for _ in 0..3 {
+        sim.cycle();
+    }
+    println!("t={:>2} shown {:#x} (in reset)", now(), shown.get().raw());
+    // Out of it, and counting past a wrap.
+    set_reset(false);
+    rst_out.set(Bit::Zero);
     for _ in 0..14 {
         sim.cycle();
     }
