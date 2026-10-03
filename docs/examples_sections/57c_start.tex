@@ -1,0 +1,36 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Register Starts Where the Run Starts It, at Any Depth}
+\label{sec:x-start}
+
+A register built with \code{Reg::new(v)} starts at \code{v} in the run,
+and a reset puts it back there. The netlist does the same: the
+generated \code{lowered} builds the unit with its \code{Default} and
+reads each of its registers before any edge, so the declaration and
+the reset branch both hold \code{v}. That holds at every depth, for a
+unit held by another as for a top, and nobody writes
+\code{init\_reg}, which names only a top's own registers and could not
+reach a child's (issue 890). A run whose instance is built some other
+way than \code{Default} still says its value with \code{init\_reg} on
+the top, and that wins.
+
+\code{Ticker} counts its ticks from five, as the ticker of
+Section~\ref{sec:x-reset} does. Here it is a child: \code{Shell} holds
+it and joins its ports to its own, and the netlist is \code{Shell}'s,
+with the ticker a module inside it. The run counts, holds the reset
+for a cycle, and counts again from five. The build simulates the
+netlist against the run under nvc and Verilator, the reset included;
+before issue 890 the child module started its count at zero and both
+simulations failed on the first edge.
+
+\begin{figure}[htbp]
+\centering
+\input{start_timing.tex}
+\caption{A register inside a child unit, through a reset: \code{count}
+starts at five, climbs with the ticks, goes back to five under
+\code{rst} and climbs again.}
+\label{fig:x-start}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_start.rs}. Run with \code{bazel run //lib/examples:ex\_start}.},label={lst:x-start}]{lib/examples/ex_start.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_start} printed when the build ran it: the counts, and the netlist, whose child module declares the count at five and resets it there.},label={lst:x-start-out}]{out_start.txt}
