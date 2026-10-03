@@ -8,7 +8,7 @@
 # nothing is installed on the machine. The linker is `rust-lld`, which
 # comes with the toolchain, so there is no cross binutils either.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
-load(":defs.bzl", "vreteno_fastboot", "vreteno_flat", "vreteno_image")
+load(":defs.bzl", "vreteno_elf", "vreteno_fastboot", "vreteno_flat", "vreteno_image")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -446,6 +446,31 @@ rust_library(
     srcs = [":fade_image"],
     crate_name = "fade_program",
     edition = "2021",
+)
+
+# For gdb to load through OpenOCD and stop at a breakpoint (issue 872):
+# the sum of 0 to 9, kept in `SUM` and passed to `reached`. Linked for
+# the DDR3, and given as an ELF, since gdb's `load` reads one.
+rust_binary(
+    name = "gdbprobe",
+    srcs = ["gdbprobe.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_elf(
+    name = "gdbprobe_elf",
+    platform = ":vreteno",
+    program = ":gdbprobe",
+)
+
+vreteno_flat(
+    name = "gdbprobe_ram_bin",
+    platform = ":vreteno",
+    program = ":gdbprobe",
 )
 
 # The greeting again, linked for the memory the loader puts a program

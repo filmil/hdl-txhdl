@@ -148,3 +148,34 @@ vreteno_fastboot = rule(
         ),
     },
 )
+
+def _vreteno_elf_impl(ctx):
+    """The linked ELF of a program built for the core.
+
+    gdb's `load` reads an ELF, its symbols with it, so a program a
+    debugger loads wants the ELF itself rather than the flat image. The
+    transition is the one `vreteno_flat` uses; the ELF is copied out
+    under this target's name, so a test can name one file.
+    """
+    elf = ctx.executable.program
+    out = ctx.actions.declare_file(ctx.label.name + ".elf")
+    ctx.actions.symlink(output = out, target_file = elf)
+    return [DefaultInfo(files = depset([out]))]
+
+vreteno_elf = rule(
+    implementation = _vreteno_elf_impl,
+    doc = "The linked ELF of a program built for the core, for a " +
+          "debugger to load.",
+    attrs = {
+        "program": attr.label(
+            doc = "The `rust_binary` to build for the core.",
+            executable = True,
+            cfg = _vreteno_transition,
+            mandatory = True,
+        ),
+        "platform": attr.label(
+            doc = "The platform the core is.",
+            mandatory = True,
+        ),
+    },
+)
