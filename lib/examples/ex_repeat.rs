@@ -11,7 +11,9 @@
 //! fields when `lowered` runs.
 //!
 //! The repeater takes a word and a count on one channel and sends the
-//! word that many times, one a cycle. The run is checked against the
+//! word that many times, one a cycle. A count of zero sends nothing:
+//! the loop is entered only when its range holds a value, in the
+//! netlist as in the run (issue 886). The run is checked against the
 //! netlist under nvc and Verilator.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, now, Clock, DefaultClock, Reg, Running, Rx, Tx, Unit};
@@ -71,12 +73,12 @@ fn main() {
         w.start();
     }
     let mut sim = Running::new(repeater.run(jobs, out));
-    // Three jobs: three copies, one copy, four copies.
-    let plan = [(0x11u8, 3u8), (0x22, 1), (0x33, 4)];
+    // Four jobs: three copies, none, one copy, four copies.
+    let plan = [(0x11u8, 3u8), (0x22, 0), (0x33, 1), (0x44, 4)];
     let mut next = 0usize;
     let mut got: Vec<u8> = Vec::new();
     println!(" t job    times out");
-    for _ in 0..16u32 {
+    for _ in 0..20u32 {
         let job = if next < plan.len() && job_tx.ready().to_bool() {
             let (word, times) = plan[next];
             job_tx.send(Job {
