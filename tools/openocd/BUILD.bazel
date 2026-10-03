@@ -6,6 +6,7 @@
 # test's own thread, and `Openocd`, which runs //third_party/openocd on
 # a script with a time limit and hands back its exit status and log.
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -25,4 +26,22 @@ rust_test(
     edition = "2021",
     env = {"OPENOCD": "$(rootpath //third_party/openocd)"},
     deps = [":remote_bitbang"],
+)
+
+# The board's OpenOCD configuration, which docs/board-checks.md section 4
+# copies to the board server: read by the pinned OpenOCD up to opening
+# the cable (#895).
+exports_files(["ax7a200.cfg"])
+
+sh_test(
+    name = "ax7a200_cfg_test",
+    srcs = ["cfg_test.sh"],
+    data = [
+        "ax7a200.cfg",
+        "//third_party/openocd",
+    ],
+    env = {
+        "CFG": "$(rootpath ax7a200.cfg)",
+        "OPENOCD": "$(rootpath //third_party/openocd)",
+    },
 )
