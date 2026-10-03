@@ -1535,6 +1535,31 @@ impl Lowered {
         out
     }
 
+    /// Whether a process writes a memory. Its clocked block then has a
+    /// reset branch even when it drives no register, so that a write
+    /// under reset is dropped whether or not a register shares the
+    /// process, as the runtime drops it (issue 877).
+    fn writes_mem(&self, p: &Process) -> bool {
+        fn word(t: &Target) -> bool {
+            matches!(t, Target::Word(..))
+        }
+        fn walk(st: &Stmt) -> bool {
+            match st {
+                Stmt::Drive(t, _) => word(t),
+                Stmt::When(_, a, b) => a.iter().chain(b).any(|(t, _)| word(t)),
+                Stmt::Case(arms) => {
+                    arms.iter().any(|(_, ds)| ds.iter().any(|(t, _)| word(t)))
+                }
+                Stmt::If(arms, els) => {
+                    arms.iter().any(|(_, ss)| ss.iter().any(walk))
+                        || els.iter().any(walk)
+                }
+                Stmt::Guard(_) | Stmt::Check(..) => false,
+            }
+        }
+        p.body.iter().any(walk)
+    }
+
     /// The clocks the processes wait for, and the children's, each
     /// once, in order.
     fn clocks(&self) -> Vec<&'static str> {
@@ -2421,7 +2446,11 @@ impl Lowered {
                 } else {
                     Vec::new()
                 };
-                if !regs.is_empty() {
+                // A memory's write sits in the branch out of reset too,
+                // with nothing to put back in the other (issue 877).
+                let gated = !regs.is_empty()
+                    || (self.adds_reset_port() && self.writes_mem(p));
+                if gated {
                     writeln!(out, "    if ({}) begin", crate::comp::RESET_NAME)
                         .unwrap();
                     // Back to the value it started at, which is what the
@@ -2436,10 +2465,10 @@ impl Lowered {
                     writeln!(out, "    end else begin").unwrap();
                 }
                 for l in &seq {
-                    let pad = if regs.is_empty() { "" } else { "  " };
+                    let pad = if gated { "  " } else { "" };
                     writeln!(out, "{pad}{l}").unwrap();
                 }
-                if !regs.is_empty() {
+                if gated {
                     writeln!(out, "    end").unwrap();
                 }
                 writeln!(out, "  end").unwrap();
@@ -2963,7 +2992,9 @@ impl Lowered {
                 } else {
                     Vec::new()
                 };
-                if !regs.is_empty() {
+                let gated = !regs.is_empty()
+                    || (self.adds_reset_port() && self.writes_mem(p));
+                if gated {
                     writeln!(
                         out,
                         "      if {} = '1' then",
@@ -2974,13 +3005,16 @@ impl Lowered {
                         let z = self.reg_init_vhdl(r);
                         writeln!(out, "        {r} <= {z};").unwrap();
                     }
+                    if regs.is_empty() {
+                        writeln!(out, "        null;").unwrap();
+                    }
                     writeln!(out, "      else").unwrap();
                 }
                 for l in &seq {
-                    let pad = if regs.is_empty() { "" } else { "  " };
+                    let pad = if gated { "  " } else { "" };
                     writeln!(out, "{pad}{l}").unwrap();
                 }
-                if !regs.is_empty() {
+                if gated {
                     writeln!(out, "      end if;").unwrap();
                 }
                 writeln!(out, "    end if;\n  end process;").unwrap();
