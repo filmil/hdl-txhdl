@@ -63,13 +63,14 @@ pub async fn cycles(n: usize) {
     }
 }
 
-/// Drive a pipeline. At every edge of `C` at which an input is offered,
-/// an invocation of `f` starts; every invocation in flight is polled
-/// each step as a process of its own, so each advances one await per
-/// cycle; and each result is sent as its invocation completes, oldest
-/// first. Several invocations are in flight at once, each at a
-/// different await, which is what a pipeline is; the awaits inside `f`
-/// are its stage boundaries and nobody places them.
+/// Drive a pipeline. At every edge of `C` at which an input is
+/// offered and the pipeline is not stalled (below), an invocation of
+/// `f` starts; every invocation in flight is polled each step as a
+/// process of its own, so each advances one await per cycle; and each
+/// result is sent as its invocation completes, oldest first. Several
+/// invocations are in flight at once, each at a different await,
+/// which is what a pipeline is; the awaits inside `f` are its stage
+/// boundaries and nobody places them.
 ///
 /// Every stage has one enable. At an edge where the oldest result is
 /// finished and the output has no room, nothing moves: no invocation

@@ -6,7 +6,8 @@
 //! field had to be one port, so a board that took a host's pins wrote
 //! them out one by one and packed them back by hand. Now a field may be
 //! a struct of ports itself, and its ports are the netlist's under the
-//! field's name, `left_aw_valid`, `right_r_data` (issue 498).
+//! side's and the field's names, `links_left_aw_valid`,
+//! `links_right_r_data` (issue 498).
 //!
 //! `Mailbox` is a unit of units that takes both links as one side and
 //! passes each on whole to `Shared`, the word behind two links of

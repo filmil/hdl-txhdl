@@ -500,7 +500,8 @@ pub fn chan<T: Transaction, C: Clock>() -> (Tx<T, C>, Rx<T, C>) {
     Chan::<T, C>::new().split()
 }
 
-/// The only way from one clock domain to another. A real one is a
+/// The only way a wire goes from one clock domain to another; a
+/// channel goes by `ChanCdc` in `txhdl_parts`. A real one is a
 /// synchroniser or an asynchronous FIFO. Its type is the guarantee: a
 /// signal in domain `B` can be produced from one in `A` by nothing else.
 pub struct Crossing<T: Copy + Default, A: Clock, B: Clock> {

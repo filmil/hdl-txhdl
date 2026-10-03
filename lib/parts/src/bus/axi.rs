@@ -1595,10 +1595,11 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
 }
 
 /// Serve a peripheral end with `slots` processes, each accepting a
-/// transaction when it is free and answering it when `f` has
-/// finished with it. Several are in flight at once and each is
-/// answered as it finishes, so the answers leave in the order the
-/// work finished and not the order it arrived.
+/// transaction when it is free and handing it to `f`, whose body
+/// answers it; the process accepts the next once `f` has finished.
+/// Several are in flight at once and each is answered as it finishes,
+/// so the answers leave in the order the work finished and not the
+/// order it arrived.
 ///
 /// This is [`txhdl::pipeline::drive`] for a bus: the client writes
 /// the body and nothing of the protocol.

@@ -3,12 +3,13 @@
 //! lowered design, the core's instruction memory and the data memory
 //! holding the DDR3 test's image, on standard output.
 //!
-//! `sim` writes the design a simulation runs, with the serial port fast
-//! and the controller's power-on waits shortened for the Micron model;
+//! `sim` writes the design a simulation runs, with the serial port fast;
 //! `board` writes the one that goes on the Alinx AX7A200B, at 115200 baud
-//! from the 100 MHz clock and with the controller's waits in full. The
-//! instruction memory and the data memory are initialised in the
-//! netlist, since nothing on the machine loads them at run time.
+//! from the 100 MHz clock; `fade` and `boot` are that board with another
+//! program, an LED that fades and the loader. The modes differ only in
+//! the serial port's divider and the program. The instruction memory
+//! and the data memory are initialised in the netlist, since nothing on
+//! the machine loads them at run time.
 use txhdl::netlist::Lowered;
 use vreteno32::board::Board;
 
@@ -41,7 +42,7 @@ fn main() {
     // around the test; a simulation's does not, since the tests state
     // the whole of what a run said and every byte is simulated time.
     let (mut net, text, data) = match mode.as_str() {
-        // Sixteen cycles a bit, and the controller's simulation waits.
+        // Sixteen cycles a bit.
         "sim" => (
             Board::<16>::lowered("board"),
             ddr3_program::TEXT,

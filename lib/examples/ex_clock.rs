@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The clock is in the type. A single-clock design never names one; a
 //! two-clock design names exactly the second. A `Crossing` is the only
-//! way between them, so it cannot be forgotten.
+//! way a wire goes between them, and `ChanCdc` a channel's, so neither
+//! can be forgotten.
 use txhdl::comp::{signal, Clock, Crossing, DefaultClock, In, Out, Reg};
 use txhdl::types::U;
 

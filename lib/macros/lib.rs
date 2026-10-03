@@ -5660,8 +5660,10 @@ fn lower_structural(
         if calls.is_empty() {
             return Err(err(
                 ts[0].span(),
-                "a unit of units' `run` is lets of `chan()` or `signal()` \
-                 and a join of the children's `run`, each `self.child.run(..)`",
+                "a unit of units' `run` is lets of `chan()`, `signal()`, \
+                 `chans()`, `signals()` or `link::<B>()` and a join of \
+                 the children's `run`, each `self.child.run(..)`, an \
+                 input of which may be `tie(v)`",
             ));
         }
         for (field, args, span) in calls {

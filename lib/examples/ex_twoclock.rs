@@ -3,7 +3,9 @@
 //!
 //! A unit's process waits on one clock, so a design of two clocks is a
 //! unit of units: one counter on the default clock, one on a clock
-//! three times slower, and a parent that holds both and names neither.
+//! three times slower, and a parent that holds both and has no wait and
+//! no register of its own; its ports name the slow clock where the slow
+//! counter's do.
 //! Nothing crosses between them here. That is deliberate: what this
 //! example is for is the checking rather than the crossing, and a
 //! crossing would put the interesting part inside a `Crossing` rather
@@ -35,7 +37,7 @@ impl Clock for Slow {
 // end{clock}
 
 // begin{units}
-/// A counter on the default clock, which it never names.
+/// A counter on the default clock, which it names only in its wait.
 #[derive(Trace, Default)]
 pub struct Fast {
     pub n: Reg<U<8>>,
@@ -72,8 +74,8 @@ impl Unit for SlowCount {
     }
 }
 
-/// The two of them, and nothing else. The parent names no clock: it
-/// holds units that each name their own.
+/// The two of them, and nothing else. The parent has no wait and no
+/// register: it holds units that each wait on their own clock.
 ///
 /// The slow counter's field is `ticker` rather than `slow` because a
 /// field and a clock of one name write an instance and a pin of one
@@ -117,20 +119,20 @@ fn main() {
     }
 
     let mut sim = Running::new(two.run((go, go_slow), (a_o, b_o)));
-    println!("   t  the fast count  the slow count");
-    for tick in 0..60 {
-        // The fast one is told to count from the third tick and stops
+    println!("cycle  the fast count  the slow count");
+    for cycle in 0..60 {
+        // The fast one is told to count from the third cycle and stops
         // halfway, so neither port is a function of the other's clock
         // and a testbench that mixed them up would be caught. The slow
-        // one is told on and off by turns, one tick after each of its
-        // own edges, which come every third tick: what it counts is
+        // one is told on and off by turns, one cycle after each of its
+        // own edges, which come every third cycle: what it counts is
         // what was in force at the edge, and a testbench that offered
         // it the value from after the edge is caught (issue 405).
-        go_o.set(Bit::from_bool((3..30).contains(&tick)));
-        slow_o.set(Bit::from_bool(tick >= 1 && ((tick - 1) / 3) % 2 == 0));
+        go_o.set(Bit::from_bool((3..30).contains(&cycle)));
+        slow_o.set(Bit::from_bool(cycle >= 1 && ((cycle - 1) / 3) % 2 == 0));
         sim.cycle();
-        if tick % 6 == 0 {
-            println!("{tick:4}  {:14}  {:14}", a.get().raw(), b.get().raw());
+        if cycle % 6 == 0 {
+            println!("{cycle:5}  {:14}  {:14}", a.get().raw(), b.get().raw());
         }
     }
     stop();

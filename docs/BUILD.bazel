@@ -2453,8 +2453,8 @@ waveform(
     ],
 )
 
-# A for of a constant count that waits, unrolled into a state per turn
-# (issue 501).
+# A for of a constant count that waits, a counted loop: its states once
+# and a register counting the turns (issue 501).
 waveform(
     name = "serial",
     example = "//lib/examples:ex_serial",

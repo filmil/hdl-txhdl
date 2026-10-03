@@ -12,10 +12,12 @@
 // late, which only delays a word; neither loses one. `AW` is the
 // address width, so the FIFO holds `1 << AW` words.
 //
-// Every board design that has two clocks and a channel between them
-// reads this file: //eth's echo crosses the PHY's receive clock to the
-// transmit clock with it, and //flagship crosses the core's AXI-Lite,
-// a channel each way per AXI channel, to the pixel clock.
+// The hand-written board designs that have two clocks and a channel
+// between them read this file: //eth's echo crosses the PHY's receive
+// clock to the transmit clock with it, and //flagship crosses the
+// core's AXI-Lite, a channel each way per AXI channel, to the pixel
+// clock. A lowered design crosses with ChanCdc in //lib/parts instead,
+// as the Vreteno board does between the cable's clock and its own.
 `timescale 1ps / 1ps
 module chan_cdc #(
   parameter W = 9,

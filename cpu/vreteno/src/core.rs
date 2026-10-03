@@ -13,7 +13,9 @@
 //! writeback has not yet written is given that value directly, the
 //! forwarding path, unless that value is a load's, which lands too
 //! late to forward: then the instruction waits one cycle, the one
-//! stall there is. A trap or an `mret` is a redirect like a jump's.
+//! stall the pipeline makes by itself. The others wait on something
+//! outside it: the multiply and divide sequencer, a fence, the bus, the
+//! fetch, a device, and `wfi`. A trap or an `mret` is a redirect like a jump's.
 //!
 //! Written in the subset `#[lower]` reads: every value is a function
 //! of the state and the inputs, `select!` and `mux` choose among
@@ -884,8 +886,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // writeback, too long a path to forward through the ALU into
             // the fetch, so an instruction that reads what the load in
             // writeback will write waits one cycle and reads the register
-            // file, which has it by then. The stall is the one cycle the
-            // core ever waits.
+            // file, which has it by then. The stall is the one wait the
+            // pipeline makes by itself; the others, ORed into `stall`
+            // below, wait on something outside it.
             let fwd_a = wb_write & (wb_rd == rs1);
             let fwd_b = wb_write & (wb_rd == rs2);
             let stall_ld = self.valid & self.wb_load & (fwd_a | fwd_b);
