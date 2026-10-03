@@ -1,0 +1,41 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Two Clocks, the Slow One First}
+\label{sec:x-slowfirst}
+
+The ports file lists a netlist's clocks in the order the lowering meets
+them. \code{SlowFirst} holds the two counters of
+Section~\ref{sec:x-twoclock} with the slow one first, so its ports file
+names \code{slow} before \code{clk}. A port on another clock is marked
+with it, \code{@slow}, and a port on the default clock carries no mark.
+
+The testbench generator read an unmarked port as on the first clock the
+file lists. Here that put \code{go} and \code{a}, which are on
+\code{clk}, on \code{slow}'s edges: \code{go} was taken from the trace
+at the next slow edge, so the netlist was told it for three cycles
+where the run had it for one, and \code{a} was checked a slow period
+later. Both simulators then reported \code{a} wrong from tick 17 on,
+and the netlist was not at fault. An unmarked port is on \code{clk}
+now whenever the netlist names \code{clk}, and on the first clock only
+when it does not (issue 888).
+
+\code{go} is high for one cycle, at tick 18, between two edges of
+\code{slow}, which is where reading it at the wrong clock shows. With
+the fix both simulators agree with the run.
+
+\begin{figure}[htbp]
+\centering
+\input{slowfirst_timing.tex}
+\caption{\code{go} high for one cycle of \code{clk} at tick 18, and
+\code{a} counting one; \code{b} counts on the slow clock.}
+\label{fig:x-slowfirst}
+\end{figure}
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=units-units,caption={\code{lib/examples/ex\_slowfirst.rs}:
+the two counters and the parent that holds the slow one
+first.},label={lst:x-slowfirst}]{lib/examples/ex_slowfirst.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_slowfirst} printed
+when the build ran it: the two counts, then the ports file, with
+\code{slow} first and no mark on \code{go} or \code{a}.},label={lst:x-slowfirst-out}]{out_slowfirst.txt}
