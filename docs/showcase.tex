@@ -72,9 +72,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 70\,798 lines of Rust: 17\,399 of runtime
-and macros, 20\,204 of parts, 15\,230 in a hundred and six examples,
-14\,816 of Vreteno with its board, and 3\,149 of Razboj, DDR3,
+Together they are 74\,615 lines of Rust: 17\,399 of runtime
+and macros, 22\,216 of parts, 15\,564 in a hundred and eight examples,
+16\,287 of Vreteno with its board, and 3\,149 of Razboj, DDR3,
 Ethernet, HDMI, PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -98,7 +98,8 @@ AXI to Wishbone bridge & parts & yes \\
 AXI host pins to the link's channels & parts & yes \\
 An interrupt controller, one unit for 1 to 31 sources & parts & 3 \\
 Network node, switch, 2 bridges; a mesh of nodes & parts & the mesh \\
-Pins; SPI; I2C; SD; Ethernet's five; HDMI's two & parts & all eleven \\
+Pins; SPI; I2C; MDIO; SD; Ethernet's five; HDMI's two & parts & all twelve \\
+The RISC-V debug transport, behind \code{BSCANE2}, and its bridge & parts & the transport \\
 Words to frames and back; a frame's length & parts & all three \\
 System control: identity, cause, reset & parts & yes \\
 Watchdog: a countdown, a key, a window & parts & yes \\
@@ -137,7 +138,7 @@ A lattice & 4 nodes, both bridges, RAM & 8 tests \\
 A mesh & 6 nodes in one unit & its netlist \\
 The SoC & core, GPU, RAM, serial & its run \\
 Composition & station, stream ALU & its netlist \\
-The board & core, 7 devices, DDR3, a JTAG host & 3 runs, Vivado, the cable \\
+The board & core, 8 devices, DDR3, a JTAG host, the debug transport & 3 runs, OpenOCD and gdb, Vivado, the cable \\
 Ethernet & the MAC, the board's PHY & on the board \\
 Video & HDMI, its I2C, the board & on the board \\
 PCIe & XDMA endpoint, pins, registers & a run, Vivado \\
@@ -181,6 +182,7 @@ Fig.~\ref{fig:s-board} is the whole of it.
   \node[box] (host) at (2.0,0) {host\\tracker};
   \node[box] (arb) at (3.5,0) {arbiter};
   \node[box] (jtag) at (2.0,1.4) {JTAG\\master};
+  \node[box] (dtm) at (2.0,2.7) {debug\\transport};
   \node[box] (rt) at (5.0,0) {router};
   \node[box] (rom) at (7.2,2.3) {boot\\memory};
   \node[box] (dmem) at (7.2,1.4) {data\\memory};
@@ -194,6 +196,7 @@ Fig.~\ref{fig:s-board} is the whole of it.
   \draw[fl] (cpu) -- node[lbl, below=3pt] {AXI4} (host);
   \draw[fl] (host) -- (arb);
   \draw[fl] (jtag) -- (arb);
+  \draw[fl] (dtm.east) -| (arb.north);
   \draw[fl] (arb) -- (rt);
   \draw[fl] (rt) -- (rom);
   \draw[fl] (rt) -- (dmem);
@@ -216,8 +219,8 @@ Fig.~\ref{fig:s-board} is the whole of it.
   \draw[fl] (plic.west) -- ++(-0.9,0) |- (0,-3.5)
     node[lbl, below, pos=0.72] {the interrupt controller's} -| (cpu.south);
 \end{tikzpicture}}
-\caption{The board: the core, its tracker, the JTAG master that shares
-the bus with it through the arbiter, the router that decides by
+\caption{The board: the core, its tracker, the JTAG master and the
+debug transport, which share the bus with it through the arbiter, the router that decides by
 address, and the eight peripherals behind it. The DDR3 controller is a
 foreign module, wired rather than written; the serial port reaches two
 pins, the flash window reaches the configuration flash, the interrupt
@@ -387,6 +390,8 @@ Yosys and OpenROAD, to lay out & pinned packages \\
 SymbiYosys and z3, to prove & 0.52; 4.13.3 \\
 TinyTeX, for the documents & pinned \\
 Go, for the serial watcher & 1.25.1 \\
+OpenOCD, to debug over JTAG & 0.12.0 \\
+gdb, to load a program and break in it & 16.3 \\
 Two waveform converters, for figures & pinned \\
 \end{tabular}
 \end{table}
@@ -398,10 +403,10 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs three hundred and sixty-two
-targets, of which two hundred and eight are netlists under both
+its ports. \code{bazel test //...} runs three hundred and seventy-three
+targets, of which two hundred and twelve are netlists under both
 simulators; the rest are the core's model and programs, the board's
-own run, Razboj, the parts, the SoC's run, ten proofs, the width of
+own run, OpenOCD and gdb on it through the debug transport, Razboj, the parts, the SoC's run, ten proofs, the width of
 every waveform, and the tools. Nine more are tagged manual: the
 board and its DDR3 under
 Vivado's simulator, the DDR3 controller alone and AMD's own test of
