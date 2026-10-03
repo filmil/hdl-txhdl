@@ -2274,6 +2274,12 @@ impl Lowered {
             rst: Option<&str>,
         ) {
             let inner = format!("{ind}  ");
+            let open = |i: usize, c: &str| {
+                let kw = if i == 0 { "if" } else { "end else if" };
+                format!("{ind}{kw} ({c}) begin")
+            };
+            let else_line = format!("{ind}end else begin");
+            let end = format!("{ind}end");
             match st {
                 Stmt::Guard(_) => {}
                 // An immediate assertion, assumption or cover in the
@@ -2302,45 +2308,46 @@ impl Lowered {
                 }
                 Stmt::Drive(t, e) => drive(seq, comb, ind, t, e),
                 Stmt::When(c, then, otherwise) => {
-                    seq.push(format!("{ind}if ({}) begin", vexpr(c, l)));
+                    let mut a = Vec::new();
                     for (t, e) in then {
-                        drive(seq, comb, &inner, t, e);
+                        drive(&mut a, comb, &inner, t, e);
                     }
-                    if !otherwise.is_empty() {
-                        seq.push(format!("{ind}end else begin"));
-                        for (t, e) in otherwise {
-                            drive(seq, comb, &inner, t, e);
-                        }
+                    let mut b = Vec::new();
+                    for (t, e) in otherwise {
+                        drive(&mut b, comb, &inner, t, e);
                     }
-                    seq.push(format!("{ind}end"));
+                    let arms = vec![(vexpr(c, l), a)];
+                    chain(seq, arms, b, &open, &else_line, &end);
                 }
                 Stmt::Case(arms) => {
-                    for (i, (c, drives)) in arms.iter().enumerate() {
-                        let kw = if i == 0 { "if" } else { "end else if" };
-                        seq.push(format!("{ind}{kw} ({}) begin", vexpr(c, l)));
-                        for (t, e) in drives {
-                            drive(seq, comb, &inner, t, e);
-                        }
-                    }
-                    if !arms.is_empty() {
-                        seq.push(format!("{ind}end"));
-                    }
+                    let arms = arms
+                        .iter()
+                        .map(|(c, drives)| {
+                            let mut b = Vec::new();
+                            for (t, e) in drives {
+                                drive(&mut b, comb, &inner, t, e);
+                            }
+                            (vexpr(c, l), b)
+                        })
+                        .collect();
+                    chain(seq, arms, Vec::new(), &open, &else_line, &end);
                 }
                 Stmt::If(arms, els) => {
-                    for (i, (c, body)) in arms.iter().enumerate() {
-                        let kw = if i == 0 { "if" } else { "end else if" };
-                        seq.push(format!("{ind}{kw} ({}) begin", vexpr(c, l)));
-                        for s in body {
-                            stmt(seq, comb, &inner, s, drive, l, rst);
-                        }
+                    let arms = arms
+                        .iter()
+                        .map(|(c, body)| {
+                            let mut b = Vec::new();
+                            for s in body {
+                                stmt(&mut b, comb, &inner, s, drive, l, rst);
+                            }
+                            (vexpr(c, l), b)
+                        })
+                        .collect();
+                    let mut b = Vec::new();
+                    for s in els {
+                        stmt(&mut b, comb, &inner, s, drive, l, rst);
                     }
-                    if !els.is_empty() {
-                        seq.push(format!("{ind}end else begin"));
-                        for s in els {
-                            stmt(seq, comb, &inner, s, drive, l, rst);
-                        }
-                    }
-                    seq.push(format!("{ind}end"));
+                    chain(seq, arms, b, &open, &else_line, &end);
                 }
             }
         }
@@ -2795,6 +2802,12 @@ impl Lowered {
             rst: Option<&str>,
         ) {
             let inner = format!("{ind}  ");
+            let open = |i: usize, c: &str| {
+                let kw = if i == 0 { "if" } else { "elsif" };
+                format!("{ind}{kw} {c} then")
+            };
+            let else_line = format!("{ind}else");
+            let end = format!("{ind}end if;");
             match st {
                 Stmt::Guard(_) => {}
                 // A check or an assumption is VHDL's own `assert`, which a
@@ -2825,45 +2838,46 @@ impl Lowered {
                 }
                 Stmt::Drive(t, e) => drive(seq, comb, ind, t, e),
                 Stmt::When(c, then, otherwise) => {
-                    seq.push(format!("{ind}if {} then", hbool(c, l)));
+                    let mut a = Vec::new();
                     for (t, e) in then {
-                        drive(seq, comb, &inner, t, e);
+                        drive(&mut a, comb, &inner, t, e);
                     }
-                    if !otherwise.is_empty() {
-                        seq.push(format!("{ind}else"));
-                        for (t, e) in otherwise {
-                            drive(seq, comb, &inner, t, e);
-                        }
+                    let mut b = Vec::new();
+                    for (t, e) in otherwise {
+                        drive(&mut b, comb, &inner, t, e);
                     }
-                    seq.push(format!("{ind}end if;"));
+                    let arms = vec![(hbool(c, l), a)];
+                    chain(seq, arms, b, &open, &else_line, &end);
                 }
                 Stmt::Case(arms) => {
-                    for (i, (c, drives)) in arms.iter().enumerate() {
-                        let kw = if i == 0 { "if" } else { "elsif" };
-                        seq.push(format!("{ind}{kw} {} then", hbool(c, l)));
-                        for (t, e) in drives {
-                            drive(seq, comb, &inner, t, e);
-                        }
-                    }
-                    if !arms.is_empty() {
-                        seq.push(format!("{ind}end if;"));
-                    }
+                    let arms = arms
+                        .iter()
+                        .map(|(c, drives)| {
+                            let mut b = Vec::new();
+                            for (t, e) in drives {
+                                drive(&mut b, comb, &inner, t, e);
+                            }
+                            (hbool(c, l), b)
+                        })
+                        .collect();
+                    chain(seq, arms, Vec::new(), &open, &else_line, &end);
                 }
                 Stmt::If(arms, els) => {
-                    for (i, (c, body)) in arms.iter().enumerate() {
-                        let kw = if i == 0 { "if" } else { "elsif" };
-                        seq.push(format!("{ind}{kw} {} then", hbool(c, l)));
-                        for s in body {
-                            stmt(seq, comb, &inner, s, drive, l, rst);
-                        }
+                    let arms = arms
+                        .iter()
+                        .map(|(c, body)| {
+                            let mut b = Vec::new();
+                            for s in body {
+                                stmt(&mut b, comb, &inner, s, drive, l, rst);
+                            }
+                            (hbool(c, l), b)
+                        })
+                        .collect();
+                    let mut b = Vec::new();
+                    for s in els {
+                        stmt(&mut b, comb, &inner, s, drive, l, rst);
                     }
-                    if !els.is_empty() {
-                        seq.push(format!("{ind}else"));
-                        for s in els {
-                            stmt(seq, comb, &inner, s, drive, l, rst);
-                        }
-                    }
-                    seq.push(format!("{ind}end if;"));
+                    chain(seq, arms, b, &open, &else_line, &end);
                 }
             }
         }
@@ -3071,6 +3085,43 @@ fn vtop(e: &Expr, l: &Lowered) -> String {
 }
 
 /// An expression in Verilog.
+/// A chain of conditions in a clocked block, its bodies already
+/// written: `open` writes the line before arm `i` with its condition,
+/// `els` the line before the statements under no condition, `end` the
+/// line that closes the chain. A body with nothing in the block, such
+/// as a send under an `if`, whose drives are all wires, is no reason
+/// to write its test: an empty `else` is left out, then the empty arms
+/// at the end, and a chain with nothing left is not written at all
+/// (issue 903). An empty arm before one that is kept stays, since it
+/// is what keeps the later arm from taking its case.
+fn chain(
+    seq: &mut Vec<String>,
+    mut arms: Vec<(String, Vec<String>)>,
+    els: Vec<String>,
+    open: &dyn Fn(usize, &str) -> String,
+    else_line: &str,
+    end: &str,
+) {
+    if els.is_empty() {
+        while arms.last().is_some_and(|(_, b)| b.is_empty()) {
+            arms.pop();
+        }
+    }
+    if arms.is_empty() {
+        seq.extend(els);
+        return;
+    }
+    for (i, (c, body)) in arms.into_iter().enumerate() {
+        seq.push(open(i, &c));
+        seq.extend(body);
+    }
+    if !els.is_empty() {
+        seq.push(else_line.to_string());
+        seq.extend(els);
+    }
+    seq.push(end.to_string());
+}
+
 fn vexpr(e: &Expr, l: &Lowered) -> String {
     match e {
         Expr::Name(n) => n.clone(),
@@ -4013,5 +4064,51 @@ mod tests {
             body: Vec::new(),
         });
         net.checked();
+    }
+
+    fn chained(arms: &[(&str, &[&str])], els: &[&str]) -> Vec<String> {
+        let mut seq = Vec::new();
+        let arms = arms
+            .iter()
+            .map(|(c, b)| {
+                (c.to_string(), b.iter().map(|s| s.to_string()).collect())
+            })
+            .collect();
+        let els = els.iter().map(|s| s.to_string()).collect();
+        let open = |i: usize, c: &str| {
+            if i == 0 {
+                format!("if ({c}) begin")
+            } else {
+                format!("end else if ({c}) begin")
+            }
+        };
+        chain(&mut seq, arms, els, &open, "end else begin", "end");
+        seq
+    }
+
+    #[test]
+    fn a_chain_with_nothing_in_it_is_not_written() {
+        assert!(chained(&[("a", &[])], &[]).is_empty());
+        assert!(chained(&[("a", &[]), ("b", &[])], &[]).is_empty());
+    }
+
+    #[test]
+    fn the_empty_arms_at_the_end_go() {
+        assert_eq!(
+            chained(&[("a", &["x <= 1;"]), ("b", &[])], &[]),
+            ["if (a) begin", "x <= 1;", "end"]
+        );
+    }
+
+    #[test]
+    fn an_empty_arm_before_a_kept_one_stays() {
+        assert_eq!(
+            chained(&[("a", &[]), ("b", &["x <= 1;"])], &[]),
+            ["if (a) begin", "end else if (b) begin", "x <= 1;", "end"]
+        );
+        assert_eq!(
+            chained(&[("a", &[])], &["x <= 1;"]),
+            ["if (a) begin", "end else begin", "x <= 1;", "end"]
+        );
     }
 }
