@@ -67,8 +67,8 @@ mentions neither number, and its testbench steps by
 \code{rx.wait()}, the next rising edge of the channel's clock at which
 the channel holds a transaction, taken; \code{tx.put(|| v)}, its
 sender's side, the next such edge at which the channel has room, and
-\code{v} sent in the step after it, so a register set after it takes
-its value on the edge the transaction is taken (issue 755); and
+\code{v} sent in the step that edge begins, so a register set after it
+takes its value on the edge the transaction is taken (issue 755); and
 \code{until(C::rising, || cond)},
 or the same with \code{falling}, the next such edge at which a
 condition on state holds. Reads are plain: a register in an
@@ -104,8 +104,10 @@ and \code{tx\_ready} on the sender's.
 
 \textbf{A wire kept as a field is a \code{let} with a name in the
 trace.} \code{Wire<T>} is driven with \code{set} in the step, may be
-read back with \code{get} in the same step, and holds nothing across
-the edge; a unit's trace shows it under the unit's name as it shows a
+read back with \code{get} in the same step, and is set before it is
+read: it keeps the last value set, so a \code{get} before the step's
+\code{set} gives the previous step's value, which the netlist's wire
+would not; a unit's trace shows it under the unit's name as it shows a
 register, and the lowering declares it from the field and drives it
 as the wire the \code{let} would have been, so an internal signal is
 seen in a waveform, and checked in the netlist, with no port for it.

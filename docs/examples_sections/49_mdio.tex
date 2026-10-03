@@ -64,13 +64,15 @@ sixteen are the word.
 \code{MdioPhy} is a model of a PHY at one address with 32 registers,
 stepped between cycles from the loop. It takes a bit as MDC rises,
 waits for 32 ones and a start, and answers a read to its address.
-Six tests in \code{//lib/parts:parts\_test} drive the master against
-it:
+Seven tests in \code{//lib/parts:parts\_test} drive the master
+against it:
 \begin{itemize}
 \item a read of both identifier words;
 \item a read of all 32 registers;
 \item an address nobody answers, which reads all ones;
 \item a write, read back;
+\item a register on a vendor page, read through the page select in
+register 31, and the old page written back;
 \item a check that the master and the PHY never drive the line in the
 same cycle, and that every half of MDC lasts at least \code{div} and
 one cycles;

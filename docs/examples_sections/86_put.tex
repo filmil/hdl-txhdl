@@ -7,8 +7,8 @@ address exactly on the edge a word is taken. A step later, and the
 next offer reads the word it has just given; a step early, and while
 the consumer stalls the offer changes under it.
 \code{tx.put(|| v).await} says it (issue 755): it waits for an edge at
-which the channel has room, sends in the step after it, and what
-follows it happens in that step, so a register set after it takes its
+which the channel has room, sends in the step that edge begins, and
+what follows it happens in that step, so a register set after it takes its
 value on the take. It is the sender's side of \code{rx.wait()}, and
 it is \code{until(C::rising, || tx.ready().to\_bool())} and then
 \code{tx.send(v)}, in that order. The word is a closure, read at the

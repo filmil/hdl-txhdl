@@ -128,14 +128,17 @@ the counter's Verilog, which is Step Eight. The \code{rst} among its
 ports is the reset, which every module gets without asking; Step Six
 says what it does. Fig.~\ref{fig:t-counter}
 is its waveform, drawn by the build from the run: \code{n} counts
-while \code{enable} is high, \code{tick} marks the sevens, and both
-stop when the enable drops.
+while \code{enable} is high, \code{tick} is high in the cycle \code{n}
+is seven, and both stop when the enable drops.
+A wire is drawn at the edge that ends its cycle, so the pulse of
+\code{tick} sits one cycle right of the seven.
 
 \begin{figure}[htbp]
 \centering
 \input{paper_cheat_timing.tex}
 \caption{The counter, from its trace: \code{enable} drops at cycle
-10, \code{n} counts while it is high, \code{tick} marks the sevens.}
+10, \code{n} counts while it is high, \code{tick} pulses on the
+edge after each seven.}
 \label{fig:t-counter}
 \end{figure}
 

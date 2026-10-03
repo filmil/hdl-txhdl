@@ -70,7 +70,7 @@ and the \LaTeX{} for this page come through the build.
 bazel build //...                 # everything
 bazel test  //...                 # and check it
 bazel run //lib/examples:ex_cheat # the netlist
-TXHDL_FST=c.fst bazel run \
+TXHDL_FST=$PWD/c.fst bazel run \
   //lib/examples:ex_cheat         # and a waveform
 bazel build //docs/...            # every document
 \end{lstlisting}
@@ -111,7 +111,7 @@ run on the right, tick by tick.
 \head{And what it did}
 The build drew this from the waveform the run wrote, so it can't
 disagree with the code. \code{enable} drops at cycle 10, \code{n}
-counts while it's high, and \code{tick} marks each seven.
+counts while it's high, and \code{tick} pulses on the edge after each seven.
 \begin{center}
 \input{cheat_timing_color.tex}
 \end{center}

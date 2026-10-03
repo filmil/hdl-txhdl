@@ -158,7 +158,8 @@ hardware is, a chain of multiplexers in priority order, which is what
 the lowering makes of it. \code{mux} is its two-arm case. Both
 \code{case!} and \code{select!} take an integer literal as a
 pattern, so an opcode is matched as the manual writes it; the RISC-V
-core~\cite{vreteno} is written with them and nothing else.
+core~\cite{vreteno} chooses among values with them and \code{mux},
+and among drives with \code{case!}, \code{with!} and \code{when!}.
 
 \subsection{Bit slicing}
 
