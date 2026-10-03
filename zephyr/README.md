@@ -50,8 +50,11 @@ cmake -B build -S samples/hello_world -GNinja \
 | `drivers/ethernet/eth_vreteno.c` | the Ethernet driver, a port of LiteEth's, over the port's frame engines |
 | `dts/bindings/rng/` | the binding for the entropy source |
 | `drivers/entropy/entropy_vreteno.c` | the entropy driver, which the network stack's random numbers come from |
+| `drivers/entropy/vreteno_condition.c` | the driver's conditioner: SHA-256 from Mbed TLS over 32 of the source's words for each 32 bytes (issue 780) |
+| `tests/` | the conditioner's host tests: known answers, and a source shaped like the board's through it, judged by `//tools/trngstat` |
 | `include/vreteno/regs/` | the register headers the drivers include, written from the parts' `regmap!` maps (issue 709) |
 | `fastboot/` | fastboot over TCP: the protocol, its host harness and tests, and the server for the board |
+| `entropy/app/` | the entropy driver's conditioned output on the serial port, in the format `//tools/trngstat` reads: the board's check of the conditioner |
 
 ## Fastboot
 

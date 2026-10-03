@@ -145,6 +145,16 @@ zephyr_image(
     module = ":module",
 )
 
+# The entropy driver's conditioned output on the serial port, in the
+# format //tools/trngstat reads (issue 780): sent with the serial loader
+# as fastboot is, its capture is the board's check of the conditioner.
+zephyr_image(
+    name = "entropy",
+    app = "entropy/app",
+    board = "ax7a200b",
+    module = ":module",
+)
+
 # The same with the network stack logging at debug, for the board when
 # a frame goes missing (#786).
 zephyr_image(
