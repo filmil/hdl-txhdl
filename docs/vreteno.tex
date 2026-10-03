@@ -1743,7 +1743,11 @@ host's own identifier, so the peripheral side of the bus carries four
 bits where it carried two: two for a host's own and two for the port,
 which is room for four hosts. The board has four now,
 \code{Arbiter4} over the core, the pins and the Ethernet port's two
-engines (issue~\#151), so a fifth host widens it. Every peripheral's
+engines (issue~\#151), so a fifth host would widen it. The debug
+transport of Section~\ref{sec:v-dtm} does not: it shares the pins'
+port, through an \code{Arbiter2} of its own in front of it, the pins
+and the transport one bit of identifier each, which is what the
+JTAG-to-AXI master's IP ever used. Every peripheral's
 tracker, the memories, the timer and the bridges were widened with
 it; none of them names the width except at its instantiation.
 
@@ -1798,8 +1802,11 @@ it reads through its CSR read and writes only for \code{dpc} and
 \code{dcsr}. A command while the core runs is \code{cmderr}~4, an
 unsupported one 2, one while another is in flight 1, and a command
 under a standing error is ignored, as the specification says. There
-is no program buffer and no system bus access: memory is reached
-through the bus the module sits on.
+is no program buffer. The specification's system bus access,
+\code{sbcs}, \code{sbaddress0} and \code{sbdata0}, is served beside
+the module by the transport's bridge, where the bus master is
+(Section~\ref{sec:v-dtm}); a debugger on the board's own bus, as the
+JTAG host is, needs none of it.
 
 The module's own test plays the core, sets halted and the word read,
 and reads the lines back; the board test puts a debugger on the JTAG
@@ -1809,6 +1816,47 @@ the count and \code{dpc}, writes the count to its end, resumes, and the
 program finishes at once, which is the write having landed. On the
 board, \code{vreteno\_board\_dm\_probe} does the same from the hardware
 manager against whatever program runs.
+
+\subsection{The debug transport}
+\label{sec:v-dtm}
+
+The third step of issue 154 is the transport, so that a stock
+OpenOCD, and gdb through it, reaches the module from the cable that
+programs the part, with nothing written for either of them.
+\code{Dtm}, in \code{txhdl\_parts::dtm}, is the specification's
+transport, version 0.13. It sits behind \code{BSCANE2} on the
+device's fourth user scan chain, which every top instantiates as
+\code{bscan\_user4}, and it runs on the cable's clock. OpenOCD
+reaches it through its BSCAN tunnel, \code{riscv use\_bscan\_tunnel
+5}, which carries each of the transport's own scans inside one data
+scan of that chain. The examples document has the transport alone
+and the tunnel's framing.
+
+Each access the transport takes crosses to the board's clock through
+a \code{ChanCdc}. There \code{DtmBridge} makes it a read or a write on
+the link, through a host tracker of its own: one of the module's
+registers at \code{0x1000\_0000} plus four times its number, or the
+system bus access, which the bridge serves itself. The bridge's host
+and the JTAG master's pins share the arbiter's second port through
+an \code{Arbiter2}, taking turns, so nothing past the arbiter changed.
+
+Two tests check it on the whole board in simulation, with a model of
+the Artix-7's TAP in front of \code{BSCANE2}, its instruction
+register six bits and \code{USER4} at \code{0x23}. In the first,
+OpenOCD~0.12.0 itself, pinned and unmodified, drives the board over
+its \code{remote\_bitbang} adapter. It finds the device, examines the
+hart (one hart, 32 bits, \code{misa} \code{0x40001104}), halts it,
+reads \code{pc}, reads four words of the data memory by system bus
+access, steps one instruction, writes a word and reads it back, and
+resumes it. The run takes under half a minute, so it is
+in the suite. Stepping is what found the module refusing a write of
+\code{tselect}: OpenOCD counts the triggers that way, and refused, it
+stops writing any CSR by the abstract command, \code{dcsr} and its
+step among them. With no trigger module the module now takes that
+write and changes nothing. In the second test, the JTAG master reads the data memory
+without a pause while the transport reads it too, and both get their
+words: the master read 122 words, 79 of them while the transport's
+access was in flight, so neither port waits for the other to stop.
 
 \section{Programs in Rust and C++}
 \label{sec:v-rust}
