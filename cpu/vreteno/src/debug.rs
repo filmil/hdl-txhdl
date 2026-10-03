@@ -20,6 +20,9 @@
 //! | `0x12` | `hartinfo`   | zero: no scratch registers, no data window     |
 //! | `0x16` | `abstractcs` | `busy` 12, `cmderr` 10 to 8, `datacount` 1    |
 //! | `0x17` | `command`    | access register, 32 bits, `regno` 15 to 0      |
+//! | `0x38` | `sbcs`       | system bus access: version 1, 32-bit, errors   |
+//! | `0x39` | `sbaddress0` | the address of the next system bus access      |
+//! | `0x3c` | `sbdata0`    | the word a system bus access reads or writes   |
 //! | `0x40` | `haltsum0`   | bit 0, the one hart, halted                    |
 //!
 //! One hart, so `hartsel` is not decoded. The abstract command is the
@@ -30,8 +33,17 @@
 //! one is in flight with 1, and a command while `cmderr` stands is
 //! ignored, all as the specification says. A command takes two
 //! cycles: one for the number to reach the core, one for the word to
-//! come back or go in. No program buffer and no system bus access:
-//! memory is reached through the bus the module sits on.
+//! come back or go in. No program buffer.
+//!
+//! The three system bus registers are the module's by the specification
+//! and are listed with it here, but they are served beside it by
+//! `DtmBridge` in `txhdl_parts::dtm`, the transport's half on the
+//! system's clock, since that is where the bus master is: a write of
+//! `sbaddress0` or `sbdata0`, or a read of `sbdata0`, becomes an access
+//! on the link, with `sbreadonaddr`, `sbreadondata`, `sbautoincrement`
+//! and `sberror` as the specification has them, at the one width of 32
+//! bits. A debugger reaching the module from the board's bus, as the
+//! JTAG-to-AXI host does, has the bus itself and does not need them.
 //!
 //! The core's side is a halt request and a resume request in, and
 //! debug mode out, which is what `dmstatus` reports; the resume
