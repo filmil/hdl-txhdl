@@ -89,8 +89,9 @@ fn wr(at: usize, v: u32) {
     unsafe { write_volatile(at as *mut u32, v) }
 }
 
-/// The serial port: four words. The first is the byte to send, the
-/// second the status, whose bit 0 is high while a frame is still going
+/// The serial port: three words, and a fourth that reads zero, as its
+/// map declares them. The first is the byte to send, the second the
+/// status, whose bit 0 is high while a frame is still going
 /// out and whose bit 1 is high while a received byte waits, and the
 /// third the oldest received byte, which reading takes.
 pub struct Uart;
