@@ -1458,9 +1458,6 @@ waveform(
 
 # An MDIO master: the end of a read frame, the master letting go of
 # the line at the turnaround and the PHY driving the word.
-# The window starts a tick after an rx change rather than on one, since
-# a window that starts on a change draws the value before it as a
-# sliver with its text over the label (#865).
 waveform(
     name = "mdio",
     example = "//lib/examples:ex_mdio",
@@ -1474,8 +1471,8 @@ waveform(
         "//mdio/busy=>busy",
         "//mdio/rx=>rx",
     ],
-    from_tick = 871,
-    until = 1041,
+    from_tick = 870,
+    until = 1048,
     width = 17.0,
 )
 
