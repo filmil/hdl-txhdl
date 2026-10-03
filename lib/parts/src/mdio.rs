@@ -587,7 +587,7 @@ mod tests {
             *w = (0x1000 * (i as u16 % 16)).wrapping_add(0x0101 * i as u16);
         }
         r[2] = 0x937c;
-        r[3] = 0x4023;
+        r[3] = 0x4032;
         r
     }
 
@@ -608,7 +608,7 @@ mod tests {
             }
         });
         assert!(ended, "the client finished");
-        assert_eq!(*got.borrow(), vec![0x937c, 0x4023], "the identifier");
+        assert_eq!(*got.borrow(), vec![0x937c, 0x4032], "the identifier");
         assert_eq!(
             phy.frames,
             vec![(1, 2, None), (1, 3, None)],

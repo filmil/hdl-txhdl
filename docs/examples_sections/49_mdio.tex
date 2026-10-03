@@ -80,8 +80,9 @@ one cycles;
 The example scans for its PHY the way a driver does. It reads the
 first identifier register at each address until one answers with
 something other than all ones, then reads the second identifier and
-the status register. The model's register values are the model's, not
-any real chip's.
+the status register. The model holds the identifier and the status
+word the JL2121 on the AX7A200B answered with, \code{937c 4032} and
+\code{796d}.
 
 \begin{figure}[htbp]
 \centering

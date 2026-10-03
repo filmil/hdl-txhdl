@@ -6,8 +6,8 @@
 //! something other than all ones, which is what a line nobody drives
 //! reads through its pull-up. Then it reads both identifier words and
 //! the basic status register. The PHY is a model, `MdioPhy`, stepped
-//! between cycles from the loop; its register values are the model's,
-//! not any real chip's.
+//! between cycles from the loop; its identifier and status words are
+//! the ones the JL2121 on the AX7A200B answered with (issue 864).
 //!
 //! The master is lowered, and the build simulates its netlist against
 //! this run under nvc and under Verilator.
@@ -129,7 +129,7 @@ fn main() {
     let mut regs = [0u16; 32];
     regs[1] = 0x796d;
     regs[2] = 0x937c;
-    regs[3] = 0x4023;
+    regs[3] = 0x4032;
     let mut phy = MdioPhy::new(ADDR, regs);
     in_o.set(Bit::One);
     for _ in 0..1600 {

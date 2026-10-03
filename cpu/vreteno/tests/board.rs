@@ -378,14 +378,13 @@ fn run_all(
     head.resize(256, 0xff);
     let mut chip = FlashDevice::new(head, [0x20, 0xba, 0x18], false, false);
     // The Ethernet PHY's management interface: a model PHY at address
-    // 1, with the clause 22 registers a link at gigabit shows and an
-    // identifier and vendor registers of the model's own, not the
-    // JL2121's, whose data sheet could not be found (#864).
+    // 0, holding the 32 registers the JL2121 on the board answered with
+    // on October 3, 2026 (#864).
     let (phy_mdio_in_o, phy_mdio_in) = signal::<Bit, DefaultClock>();
     let (phy_mdc_o, phy_mdc) = signal::<Bit, DefaultClock>();
     let (phy_out_o, phy_out) = signal::<Bit, DefaultClock>();
     let (phy_oe_o, phy_oe) = signal::<Bit, DefaultClock>();
-    let mut phy = MdioPhy::new(1, phy_regs());
+    let mut phy = MdioPhy::new(0, phy_regs());
     phy_mdio_in_o.set(Bit::One);
     let mut sim = Running::new(board.run(
         BoardIn {
@@ -586,32 +585,30 @@ fn the_configuration_flash_answers_on_the_board() {
 }
 
 /// The registers of the model PHY on the board's management line: the
-/// clause 22 control and status words of a link at gigabit, an
-/// identifier of the model's own, and the vendor registers numbered,
-/// so a word printed in the wrong place shows. None of them is the
-/// JL2121's (#864).
+/// JL2121's, page 0, as `phyregs` read them from the board on October
+/// 3, 2026, the second of two runs (#864). The first differed only in
+/// two bits that clause 22 clears on a read: link status in register 1
+/// and page received in register 6.
 fn phy_regs() -> [u16; 32] {
-    let mut r = [0u16; 32];
-    for (i, w) in r.iter_mut().enumerate() {
-        *w = 0x0101 * i as u16;
-    }
-    r[0] = 0x1140;
-    r[1] = 0x796d;
-    r[2] = 0x937c;
-    r[3] = 0x4023;
-    r
+    [
+        0x1140, 0x796d, 0x937c, 0x4032, 0x01e1, 0xcde1, 0x000d, 0x2001,
+        0x0000, 0x0200, 0x3800, 0x0000, 0x0000, 0x0000, 0x0000, 0x2000,
+        0x0040, 0x0000, 0x0000, 0x0000, 0x4080, 0x7c12, 0x489b, 0x2800,
+        0x8000, 0x0000, 0x0000, 0x002f, 0x0000, 0x1208, 0x8000, 0x0000,
+    ]
 }
 
 /// The Ethernet PHY's management registers on the board (issue 864):
 /// the core finds the PHY at the first address whose register 2 is
 /// not all ones and prints its 32 registers, four to a line. The PHY
-/// is the model; the same program on the board reads the JL2121. The
-/// program only reads: every frame the PHY took is a read.
+/// is the model, holding what the JL2121 answered on the board, so the
+/// run prints what the board printed. The program only reads: every
+/// frame the PHY took is a read.
 #[test]
 fn the_phy_registers_read_on_the_board() {
     let ran = run(phyregs_program::TEXT, phyregs_program::DATA, b"", 200_000);
     let regs = phy_regs();
-    let mut want = String::from("phy at 1\n");
+    let mut want = String::from("phy at 0\n");
     for row in 0..8 {
         want += &format!("r{:02}", row * 4);
         for w in &regs[row * 4..row * 4 + 4] {
@@ -620,10 +617,10 @@ fn the_phy_registers_read_on_the_board() {
         want.push('\n');
     }
     assert_eq!(ran.said, want);
-    // Address 0 first, which nobody answers, then address 1's
-    // identifier, then the 32 registers in order; no write.
-    let mut frames = vec![(0, 2, None), (1, 2, None)];
-    frames.extend((0..32).map(|r| (1, r, None)));
+    // Address 0's identifier, which answers, then the 32 registers in
+    // order; no write.
+    let mut frames = vec![(0, 2, None)];
+    frames.extend((0..32).map(|r| (0, r, None)));
     assert_eq!(ran.phy_frames, frames);
     assert!(ran.halted_at.is_some(), "and halted");
 }
