@@ -1836,7 +1836,11 @@ Each access the transport takes crosses to the board's clock through
 a \code{ChanCdc}. There \code{DtmBridge} makes it a read or a write on
 the link, through a host tracker of its own: one of the module's
 registers at \code{0x1000\_0000} plus four times its number, or the
-system bus access, which the bridge serves itself. The bridge's host
+system bus access, which the bridge serves itself. It serves the access
+8, 16 or 32 bits wide, a narrow one as a word on the link with only
+its lanes' strobes set, since gdb reads and writes a compressed
+instruction, and the \code{c.ebreak} it puts over one, a halfword at a
+time (issue~873). The bridge's host
 and the JTAG master's pins share the arbiter's second port through
 an \code{Arbiter2}, taking turns, so nothing past the arbiter changed.
 
