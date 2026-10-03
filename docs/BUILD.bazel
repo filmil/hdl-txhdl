@@ -1230,7 +1230,7 @@ waveform(
     lowered = ("queue4", "queue"),
     signals = [
         "//clocks/clk=>clk",
-        "//inp/rx_ready=>inp_ready",
+        "//inp/rx_valid=>inp_valid",
         "//inp/rx_data=>inp",
         "//inp/rx_ready=>inp_ready",
         "//out/rx_valid=>out_valid",
@@ -1272,7 +1272,7 @@ waveform(
     lowered = ("stream_alu", "stream_alu"),
     signals = [
         "//clocks/clk=>clk",
-        "//inp/rx_ready=>inp_ready",
+        "//inp/rx_valid=>inp_valid",
         "//inp/rx_data/tag=>inp_tag",
         "//inp/rx_data/op=>inp_op",
         "//inp/rx_data/a=>inp_a",
@@ -2097,7 +2097,7 @@ waveform(
     lowered = ("tap", "tap"),
     signals = [
         "//clocks/clk=>clk",
-        "//inp/rx_ready=>inp_ready",
+        "//inp/rx_valid=>inp_valid",
         "//inp/rx_data=>inp",
         "//inp/rx_ready=>inp_ready",
         "//out/rx_valid=>out_valid",
