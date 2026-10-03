@@ -65,9 +65,11 @@ pub struct ChanCdc<
     /// The reading side's Gray pointer, caught once on the writing
     /// clock. Possibly mid-change, which is what the second flop is
     /// for.
+    #[async_reg]
     pub rgray_w1: Reg<U<PW>, W>,
     /// The same, a cycle later and settled: the one the writing side
     /// reads.
+    #[async_reg]
     pub rgray_w2: Reg<U<PW>, W>,
     /// Where the oldest word is, in binary, on the reading clock.
     pub rbin: Reg<U<PW>, R>,
@@ -75,8 +77,10 @@ pub struct ChanCdc<
     pub rgray: Reg<U<PW>, R>,
     /// The writing side's Gray pointer, caught once on the reading
     /// clock.
+    #[async_reg]
     pub wgray_r1: Reg<U<PW>, R>,
     /// The same, settled: the one the reading side reads.
+    #[async_reg]
     pub wgray_r2: Reg<U<PW>, R>,
 }
 // end{state}
@@ -170,5 +174,55 @@ impl<
             },
         )
         .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ClkW;
+    impl Clock for ClkW {
+        const NAME: &'static str = "clk_w";
+        const PERIOD: u64 = 4;
+    }
+    struct ClkR;
+    impl Clock for ClkR {
+        const NAME: &'static str = "clk_r";
+        const PERIOD: u64 = 6;
+    }
+    type Cdc = ChanCdc<U<8>, 4, 16, 5, ClkW, ClkR>;
+
+    const STAGES: [&str; 4] = ["rgray_w1", "rgray_w2", "wgray_r1", "wgray_r2"];
+
+    /// The four synchroniser stages are marked `ASYNC_REG` in both
+    /// netlists, as `chan_cdc.v` marks its own, and nothing else is
+    /// (#884).
+    #[test]
+    fn the_synchroniser_stages_are_async_reg_in_both_netlists() {
+        let v = Cdc::verilog("cdc");
+        let marked: Vec<&str> =
+            v.lines().filter(|l| l.contains("ASYNC_REG")).collect();
+        assert_eq!(marked.len(), 4, "four marked registers: {marked:?}");
+        for s in STAGES {
+            assert!(
+                marked
+                    .iter()
+                    .any(|l| l.contains("(* ASYNC_REG = \"TRUE\" *) reg")
+                        && l.contains(&format!(" {s} ="))),
+                "`{s}` is not marked in the Verilog: {marked:?}"
+            );
+        }
+        let h = Cdc::vhdl("cdc");
+        assert!(h.contains("  attribute ASYNC_REG : string;\n"), "{h}");
+        for s in STAGES {
+            assert!(
+                h.contains(&format!(
+                    "  attribute ASYNC_REG of {s} : signal is \"TRUE\";"
+                )),
+                "`{s}` is not marked in the VHDL"
+            );
+        }
+        assert_eq!(h.matches("attribute ASYNC_REG of").count(), 4);
     }
 }
