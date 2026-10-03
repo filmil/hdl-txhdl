@@ -25,14 +25,18 @@ The repeater takes a word and a count on one channel and sends the
 word that many times, one a cycle. Three states, the wait for the
 job, the edge that lets the count settle, and the turn, with a
 four-bit counter beside them, and the turn goes round while the
-counter is short of \code{times - 1}. The build checks the netlist
-against the run under nvc and Verilator.
+counter is short of \code{times - 1}. The loop is entered only when
+its range holds a value, \code{0 < times}, so a job of zero sends
+nothing, as the run's loop over an empty range runs no times; before
+issue 886 the netlist went in regardless, and with \code{times - 1}
+wrapping to fifteen it sent the word sixteen times. The build checks
+the netlist against the run under nvc and Verilator.
 
 \begin{figure}[htbp]
 \centering
 \input{repeat_timing.tex}
-\caption{The repeater: three jobs, and each word sent as many times
-as its job asks, one a cycle.}
+\caption{The repeater: four jobs, one of them for no copies, and each
+word sent as many times as its job asks, one a cycle.}
 \label{fig:x-repeat}
 \end{figure}
 
