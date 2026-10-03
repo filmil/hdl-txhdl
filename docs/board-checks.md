@@ -32,6 +32,7 @@ bazel build //cpu/vreteno/rust:hello_ram_bin //cpu/vreteno/rust:hello_fastboot \
 bazel build //zephyr:fastboot @multitool//tools/fastboot
 bazel build //tools/trngstat
 bazel build //cpu/vreteno/rust:phyregs_ram_bin       # the PHY's registers, #864
+bazel build //cpu/vreteno/rust:phydelay_ram_bin      # the PHY's delay bits, #869
 ```
 
 A Vivado build that the memory watchdog can reach is killed partway, so run each one detached, with `nohup` and `disown`, and poll its log.
@@ -204,6 +205,27 @@ Registers 2 and 3, the last two words of the `r00` line, are the PHY's identifie
 
 Done on October 3, 2026, by txhdl-hil: the JL2121 answered at address 0 with the identifier `937c 4032`, and two runs agreed except for two bits clause 22 clears on a read. Both dumps are on #864.
 The register that holds the receive delay, by JLSemi's Linux driver, is on page 3336, and this program reads only page 0, so the dump cannot show it; reading that page means writing the page register, which waits on the user.
+
+### The PHY's delay bits, #869
+
+Same bitstream.
+**This program writes the PHY**: register 31, the page select, twice, to select page 3336 and then to put back the page it found.
+It writes nothing else, and nothing at all if the first read of register 31 comes back `ffff`.
+The Overseer relayed the user's approval of these two writes on October 3, 2026; confirm it with the user before the run.
+
+```sh
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/phydelay_ram_bin.bin --seconds=10 \
+    2>&1 | tee board-869-phydelay.log
+```
+
+Pass: `phy at 0`, `page was 0000`, `p3336 r17` and a word, `tx delay` and `rx delay` each 0 or 1, and `page now` with the same word as `page was`.
+`page not restored` is a fail; the next step is then a power cycle of the board, which puts the PHY back as it powers up.
+`page read failed, nothing written` means register 31 did not answer, and the PHY was left alone.
+`rx delay 1` says the JL2121 delays its receive clock 2 ns itself, which is what #864's measurements predict; `rx delay 0` says the centring comes from somewhere else, and #864's documents are wrong in that part.
+`tx delay 1` is the prediction for transmit, since the transmit clock leaves the FPGA edge-aligned and the link is clean (#231); a 0 there would mean the transmit centring, too, comes from somewhere other than this bit.
+`//cpu/vreteno:board_test`'s `the_phy_delay_bits_read_through_the_page` runs the program against the model, whose word is its own (`0200`), and checks that the frames are exactly read, write, read, write, read, and that the page select is left as found; `a_failed_page_read_writes_nothing` checks the abort.
+Put the log on #869.
 
 ## 8. The DDR3 through MIG, #188
 
