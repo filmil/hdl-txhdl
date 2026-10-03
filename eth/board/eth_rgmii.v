@@ -22,15 +22,36 @@
 // without loss. See issue #231.
 //
 // Receive: `rx_clk`, the PHY's receive clock shifted as below, clocks
-// the IDDRs and the receiving half of the MAC. RGMII asks one side to
-// put the clock in the middle of the data, and the JL2121 on this
-// board does not: with no delay here, the board linked at gigabit and
-// the MAC accepted no frame at all, which is issue #231.
+// the IDDRs and the receiving half of the MAC. The receive clock goes
+// through an MMCM, which removes the delay of the global buffer behind
+// it, and is shifted by `RX_CLOCK_PHASE`; the shift that centres the
+// sampling edge depends on the PHY and the routing, and is 78.75 degrees
+// on the flagship, where flagship/board/flagship_io.xdc times it.
 //
-// So the receive clock goes through an MMCM that shifts it a quarter of
-// its cycle, 2 ns of the 8 ns bit period, before the global buffer, and
-// the sampling edge then falls inside the data rather than where it
-// changes. The shift is on the clock and not on the five data lines on
+// What the PHY does with its receive clock is known in part (#864).
+//
+// * Measured. Clocked through a plain global buffer, about 3.4 ns late,
+//   the MAC accepted no frame (#231). Through the MMCM, shifts of 45 to
+//   112.5 degrees received and 180 did not, and on October 3, 2026 the
+//   flagship received at 78.75. Timed at the pins, those points fit a
+//   PHY that sends its receive clock centred in the data, delayed about
+//   2 ns, and not one that sends it on the data's edge; the run that
+//   received nothing does not tell the two apart, since a buffer 3.4 ns
+//   late samples where a centred source changes as well.
+// * The chip. It answers MDIO at address 0 with the identifier
+//   `937c 4032`, which JLSemi's Linux driver names `JL2XXX_PHY_ID`, its
+//   gigabit family; its OUI field holds the low 22 bits of JLSemi's
+//   OUI, 64-DF-10, as a plain number rather than in 802.3's bit order.
+// * Its register. That driver puts the receive delay at bit 9, 2 ns, of
+//   register 17 on page 3336, and leaves it as the chip powers up.
+//   Nothing here reads it, since reading a page means writing the page
+//   register, which is left for the user to allow.
+// * Not known without the JL2121's data sheet: that bit's value at power
+//   on, on this board, and so whether the centring is the PHY's own
+//   delay or something on the board. A 2 ns difference in the traces
+//   would be some thirty centimetres, so the PHY is the likely one.
+//
+// The shift is on the clock and not on the five data lines on
 // purpose, and why is at the MMCM below. `RX_CLOCK_PHASE` is a parameter
 // so that the shift can be moved without reading this file.
 //
@@ -40,7 +61,8 @@
 `timescale 1ps / 1ps
 module eth_rgmii #(
   // How far the receive clock is shifted, in degrees of its own cycle.
-  // A quarter of 8 ns is 2 ns, which is the middle of a data bit.
+  // 90, 2 ns, is the point the sweep under #231 settled on, and the
+  // echo keeps it; the flagship sets 78.75, which its timing centres.
   parameter real RX_CLOCK_PHASE = 90.0
 ) (
   // The transmit side, GMII, on clk125.
@@ -82,10 +104,10 @@ module eth_rgmii #(
     .D1(1'b1), .D2(1'b0), .R(1'b0), .S(1'b0)
   );
 
-  // Receive: the PHY's clock through an MMCM that shifts it a quarter
-  // of a cycle, which is 2 ns at 125 MHz, and then onto the global clock
-  // network. The shift puts the sampling edge in the middle of the data
-  // rather than where it changes.
+  // Receive: the PHY's clock through an MMCM that shifts it by
+  // `RX_CLOCK_PHASE`, and then onto the global clock network. The shift
+  // puts the sampling edge in the middle of the data rather than where
+  // it changes.
   //
   // The shift is made once, on the clock, rather than by delaying the
   // five data lines with an `IDELAYE2` each. Both were measured on the

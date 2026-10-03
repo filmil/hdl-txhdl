@@ -9,10 +9,10 @@
 //! * Eight lines, `r00` to `r28`, each the register named and the three
 //!   after it, as four hexadecimal digits each. Registers 0 to 15 are
 //!   the ones IEEE 802.3 clause 22 defines: 2 and 3 are the PHY's
-//!   identifier. Registers 16 to 31 are the vendor's; which of them
-//!   holds the JL2121's receive delay is in its data sheet, which could
-//!   not be found, so this program prints them all rather than
-//!   picking one.
+//!   identifier. Registers 16 to 31 are the vendor's, as page 0 has
+//!   them; register 31 selects the page, and this program leaves it
+//!   alone. JLSemi's Linux driver puts the receive delay on page 3336,
+//!   which a dump of page 0 cannot show (#864).
 //!
 //! The program only reads. It never writes a register, not even a
 //! page select, so it leaves the PHY as it found it. A read of

@@ -341,9 +341,10 @@ for byte, the short ones padded to sixty, with the host's adapter
 counting no frame with a bad check sequence.
 
 It took two changes, both to the timing at the pins, which is issue~231.
-The receive side had no delay, and the PHY adds none of its own, so the
-MAC accepted nothing at all; the receive clock now goes through an MMCM
-that shifts it a quarter cycle, which is 2~ns of its 8~ns period. The
+The receive side clocked its inputs through a plain global buffer, and
+the MAC accepted nothing at all; the receive clock now goes through an
+MMCM that shifts it, 90 degrees in the echo, which is 2~ns of its 8~ns
+period, and 78.75 in the flagship. The
 transmit side had the opposite fault: the design sent its clock a
 quarter cycle late, the PHY delays that clock again on its side, and
 the two together put the PHY's sampling edge where the data changes.
@@ -354,6 +355,16 @@ counter stayed at zero. The transmit clock now leaves the FPGA aligned
 with the data, which is what the vendor's own design for this board
 does; its routed checkpoint, opened in Vivado, says so, and it pings
 without loss over the same cable.
+
+Why the receive side needed the shift is known in part (issue~864). The
+sweep of the shift and the flagship's run fit a PHY that sends its
+receive clock centred in the data, its edges about 2~ns after the
+data's, rather than on them. The PHY answers MDIO at address~0 with the identifier
+\code{937c 4032}, which JLSemi's Linux driver names its gigabit family,
+and that driver puts the receive delay at bit~9 of register~17 on
+page~3336. That page has not been read, since reading it means writing
+the page register, and without the JL2121's data sheet the bit's value
+at power on is not known.
 
 The I/O standard of the Ethernet pins is LVCMOS33 on both sides: the
 core board's banks are at 3.3~V, and the carrier sets the PHY's RGMII

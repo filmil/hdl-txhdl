@@ -186,8 +186,12 @@ together changes nothing about any of them.
   100\,MHz for the design and the serial port.
 \item An MMCM, times five to 1000\,MHz over eight, giving 125\,MHz for
   the Ethernet transmit half. A second MMCM inside \code{eth\_rgmii}
-  shifts the clock the PHY recovers from the line by a quarter cycle,
-  because that PHY adds no receive delay of its own.
+  shifts the clock the PHY recovers from the line by 78.75 degrees,
+  1.75\,ns, which centres the sampling edge in the data as the PHY
+  presents it. The measurements fit a PHY that delays its own receive
+  clock by about 2\,ns; the register that would say so is on a page
+  nothing here reads, and the JL2121's data sheet could not be found,
+  so that is not confirmed (issue~864).
 \item An MMCM, times 63 over ten and then over 50, giving 25.2\,MHz for
   the pixel clock, within half a per cent of the mode's 25.175\,MHz.
 \end{itemize}

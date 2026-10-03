@@ -200,9 +200,10 @@ bazel run //cpu/vreteno/board/remote:load -- --reset \
 Pass: `phy at` and an address, then eight lines from `r00` to `r28`, four registers of four hexadecimal digits each.
 Registers 2 and 3, the last two words of the `r00` line, are the PHY's identifier; they should not both be `0000` or `ffff`.
 `no phy` means nothing answered at any of the 32 addresses: the pins, the pull-up or the PHY's reset are the first things to look at.
-`//cpu/vreteno:board_test`'s `the_phy_registers_read_on_the_board` pins the format in simulation, against a model PHY whose registers are its own and not the JL2121's.
-The numbers are the result, not a pass or a fail: which of registers 16 to 31 says whether the PHY delays its receive clock is in the JL2121's data sheet, which could not be found, so the log is put on #864 whole, for the reading.
-Run it after the fastboot check, whose Ethernet traffic is what shows the 78.75 degree shift receives; the two together are the evidence #864 waits on.
+`//cpu/vreteno:board_test`'s `the_phy_registers_read_on_the_board` runs the program against a model PHY holding the registers the board answered with, so a later run that differs from it beyond the two bits clause 22 clears on a read, link status in register 1 and page received in register 6, is a change on the board or in the program.
+
+Done on October 3, 2026, by txhdl-hil: the JL2121 answered at address 0 with the identifier `937c 4032`, and two runs agreed except for two bits clause 22 clears on a read. Both dumps are on #864.
+The register that holds the receive delay, by JLSemi's Linux driver, is on page 3336, and this program reads only page 0, so the dump cannot show it; reading that page means writing the page register, which waits on the user.
 
 ## 8. The DDR3 through MIG, #188
 
