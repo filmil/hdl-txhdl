@@ -25,7 +25,10 @@ has not yet put back fails them for no fault of the design (issue
 633). \code{//docs:rstcheck\_reset\_vsim\_test} and its VHDL twin
 hold the reset and pass, \code{rstcheck\_prove\_test} proves the check
 for every input and every reset, and the same netlist without the gate
-fails its proof at the first step. The Verilog writes it inside the clocked
+fails its proof at the first step. The run gates them the same way,
+on \code{reset()}: while a testbench holds the reset, \code{check}
+and \code{assume} return at once and \code{cover} counts nothing
+(issue 879). The Verilog writes it inside the clocked
 block, as \code{if (!rst)} before SystemVerilog's immediate
 \code{assert}, \code{assume} or
 \code{cover}, between \code{`ifdef FORMAL} and \code{`endif}: a formal

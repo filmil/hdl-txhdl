@@ -247,11 +247,11 @@ bounded search at the first step, in reset
 (\code{rstcheck\_ungated\_prove\_test} and
 \code{rstcheck\_ungated\_bmc\_test}).
 
-What is still not here is the same rule in the run. The run has no
-reset to gate on, so it checks a statement on every edge it is
-reached, held in reset or not, and a unit that states something of a
-value its reset holds must keep its run's reset low, as
-\code{ex\_rstcheck}'s run does.
+The run follows the same rule. While a testbench holds the reset with
+\code{set\_reset}, a check and an assumption are not checked and a
+cover point is not counted, so \code{ex\_rstcheck}'s run holds the
+reset for three cycles, its output a blank, and its check is not
+stated there (issue 879).
 
 The next units to state things are the AXI-Lite peripherals, against
 a protocol checker, and the core itself, against the RISC-V formal
