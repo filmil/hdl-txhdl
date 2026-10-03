@@ -70,6 +70,7 @@ rust_test(
     srcs = ["tests/board_programs.rs"],
     compile_data = [
         "//cpu/vreteno/rust:addressed_sources",
+        "//cpu/vreteno/rust/hal:lib.rs",
     ],
     edition = "2021",
     deps = [

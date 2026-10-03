@@ -17,7 +17,7 @@
 //!
 //! This test is what stands in the way of the next one.
 use txhdl::map::AddrMap;
-use vreteno32::board::BoardMap;
+use vreteno32::board::{BoardMap, SlotMap};
 use vreteno32::isa::{
     CLINT_BASE, ETH_BASE, ETH_BUF_BASE, MTIME_OFF, UART_BASE,
 };
@@ -26,6 +26,7 @@ const BOOT: &str = include_str!("../rust/boot.rs");
 const DDR3: &str = include_str!("../rust/ddr3.rs");
 const FADE: &str = include_str!("../rust/fade.rs");
 const ICO_HDMI: &str = include_str!("../rust/ico_hdmi.rs");
+const HAL: &str = include_str!("../rust/hal/lib.rs");
 
 /// A register's byte offset, as `vreteno_regs::<map>::<REG>` names it
 /// in a program: the map the peripheral declares with `regmap!`, which
@@ -199,4 +200,100 @@ fn the_ethernet_port_is_somewhere_the_board_answers() {
         16,
         "megabytes above the address a program loads at"
     );
+}
+
+/// The HAL's `map` module: every `pub const NAME: usize = ...;` in it,
+/// with its value. A value is a hex literal, or another name of the
+/// module plus one, as `FLASH + 0x00A0_0000`.
+fn hal_map() -> Vec<(String, usize)> {
+    let start = HAL.find("pub mod map {").expect("the HAL's map");
+    let body = &HAL[start..];
+    let body = &body[..body.find("\n}\n").expect("the map's end")];
+    let mut out: Vec<(String, usize)> = Vec::new();
+    for line in body.lines() {
+        let Some(rest) = line.trim().strip_prefix("pub const ") else {
+            continue;
+        };
+        let (name, value) = rest.split_once(": usize = ").expect("a base");
+        let value = value.trim_end_matches(';');
+        let v = value
+            .split('+')
+            .map(str::trim)
+            .map(|t| match t.strip_prefix("0x") {
+                Some(h) => usize::from_str_radix(&h.replace('_', ""), 16)
+                    .expect("a hex base"),
+                None => {
+                    out.iter()
+                        .find(|(n, _)| n == t)
+                        .unwrap_or_else(|| {
+                            panic!("`{t}` is not in the map yet")
+                        })
+                        .1
+                }
+            })
+            .sum();
+        out.push((name.to_string(), v));
+    }
+    out
+}
+
+/// Every base the HAL types by hand is where the router puts it: a
+/// memory or controller at its port's base in `BoardMap`, a small
+/// peripheral at its slot's base in `SlotMap` (issue 709).
+///
+/// The registers inside each peripheral come from the maps through
+/// `vreteno_regs`, but the bases are typed in the HAL, and a router
+/// that moved one would leave every program that uses the HAL reading
+/// zero without a word, as issue 417 says. So a base the HAL adds must
+/// be added here too, or this fails.
+#[test]
+fn every_base_in_the_hal_is_where_the_router_puts_it() {
+    let board = |i: usize| (BoardMap::RANGES[i].0, BoardMap::NAMES[i]);
+    let slot = |i: usize| (SlotMap::RANGES[i].0, SlotMap::NAMES[i]);
+    let want: [(&str, (usize, &str)); 13] = [
+        ("ROM", board(5)),
+        ("DMEM", board(0)),
+        ("CLINT", board(1)),
+        ("UART", slot(0)),
+        ("PWM", slot(1)),
+        ("VIDEO", slot(2)),
+        ("REMOTE", slot(3)),
+        ("TRNG", slot(5)),
+        ("SPI", slot(6)),
+        ("MDIO", slot(7)),
+        ("FLASH", board(7)),
+        ("PLIC", board(4)),
+        ("DDR3", board(3)),
+    ];
+    let hal = hal_map();
+    for (name, value) in &hal {
+        if name == "FLASH_PROGRAMS" {
+            let flash = BoardMap::RANGES[7].0;
+            assert_eq!(
+                *value,
+                flash + vreteno32::isa::FLASH_PROGRAMS as usize,
+                "the HAL's FLASH_PROGRAMS is not the layout's offset"
+            );
+            continue;
+        }
+        let (_, (at, what)) = want
+            .iter()
+            .find(|(n, _)| n == name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the HAL's map has `{name}`, which this test does \
+                     not hold to a port"
+                )
+            });
+        assert_eq!(
+            *value, *at,
+            "the HAL's `{name}` is {value:#x}, and {what} is at {at:#x}"
+        );
+    }
+    for (name, _) in &want {
+        assert!(
+            hal.iter().any(|(n, _)| n == name),
+            "the HAL's map has no `{name}`"
+        );
+    }
 }

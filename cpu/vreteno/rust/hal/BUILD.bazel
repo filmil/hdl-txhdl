@@ -37,3 +37,8 @@ filegroup(
         "trap.rs",
     ],
 )
+
+# The HAL's source as text, for `//cpu/vreteno:board_programs_test`,
+# which holds the bases its `map` types by hand to the board's router
+# (issue 709).
+exports_files(["lib.rs"])
