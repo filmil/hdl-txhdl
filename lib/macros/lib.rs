@@ -134,6 +134,52 @@ fn field_names(body: &Group) -> Vec<String> {
     field_idents(body).iter().map(|id| id.to_string()).collect()
 }
 
+/// Whether each field of a braced struct body carries the bare
+/// attribute `#[key]`, in the order `field_idents` gives them.
+/// `#[async_reg]` is the one read so far: a register that samples
+/// another clock's value, which the netlist marks `ASYNC_REG` (#884).
+fn field_flags(body: &Group, key: &str) -> Vec<bool> {
+    let toks: Vec<TokenTree> = body.stream().into_iter().collect();
+    let mut out = Vec::new();
+    let mut pending = false;
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < toks.len() {
+        if let (TokenTree::Punct(h), Some(TokenTree::Group(g))) =
+            (&toks[i], toks.get(i + 1))
+        {
+            if h.as_char() == '#' && g.delimiter() == Delimiter::Bracket {
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                if let [TokenTree::Ident(k)] = inner.as_slice() {
+                    if k.to_string() == key {
+                        pending = true;
+                    }
+                }
+                i += 2;
+                continue;
+            }
+        }
+        match &toks[i] {
+            TokenTree::Punct(p) if p.as_char() == '<' => depth += 1,
+            TokenTree::Punct(p) if p.as_char() == '>' => depth -= 1,
+            TokenTree::Ident(_) if depth == 0 => {
+                if let Some(TokenTree::Punct(p)) = toks.get(i + 1) {
+                    let path = matches!(
+                        toks.get(i + 2),
+                        Some(TokenTree::Punct(q)) if q.as_char() == ':'
+                    );
+                    if p.as_char() == ':' && !path {
+                        out.push(std::mem::take(&mut pending));
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
 /// The netlist name of each field of a braced struct body, in the
 /// order `field_idents` gives them: the name a `#[rename("...")]`
 /// attribute on the field asks for, or `None` where there is none.
@@ -418,7 +464,7 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
 
 /// `#[derive(Trace)]`: every field is registered under its own name,
 /// or under the name `#[rename("...")]` gives it in the netlist.
-#[proc_macro_derive(Trace, attributes(rename))]
+#[proc_macro_derive(Trace, attributes(rename, async_reg))]
 pub fn derive_trace(input: TokenStream) -> TokenStream {
     let item = parse_item(input);
     let Some(body) = &item.body else {
@@ -426,6 +472,7 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
     };
     let rust = field_names(body);
     let renames = field_renames(body);
+    let asyncs = field_flags(body, "async_reg");
     // The name each field takes in the netlist and in the trace: its
     // own, or the one it was renamed to, escaped where either target
     // reserves it (issue 497). The trace takes the netlist's name, so
@@ -482,6 +529,7 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
          const NAMES: &'static [&'static str] = &[{quoted}];\n\
          const RENAMES: &'static [(&'static str, &'static str)] = \
          &[{pairs}];\n\
+         const ASYNC_REGS: &'static [&'static str] = &[{asyncs}];\n\
          fn fields() -> Vec<(&'static str, \
          Option<::txhdl::comp::trace::Kind>, usize, usize)> {{ \
          let mut __v = Vec::new(); {fields} __v }}\n}}\n\
@@ -492,6 +540,13 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
         quoted = names
             .iter()
             .map(|n| format!("\"{n}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+        asyncs = names
+            .iter()
+            .zip(&asyncs)
+            .filter(|(_, a)| **a)
+            .map(|(n, _)| format!("\"{n}\""))
             .collect::<Vec<_>>()
             .join(", "),
         pairs = rust
@@ -6693,6 +6748,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          // Each register starts as the run starts it, at any depth\n\
          // (issue 890).\n\
          init_regs: ::txhdl::netlist::starts::<Self>(),\n\
+         async_regs: <Self as ::txhdl::netlist::Fields>::ASYNC_REGS.to_vec(),\n\
          aliases: Vec::new(),\n\
          nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, \
          usize, &'static str)> = Vec::new(); {nets} n }},\n\

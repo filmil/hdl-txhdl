@@ -250,6 +250,13 @@ pub trait Fields {
     /// puts it here, and the lowering rewrites its references through
     /// this table (issue 222). Empty when nothing is renamed.
     const RENAMES: &'static [(&'static str, &'static str)] = &[];
+    /// The registers that sample a value made on another clock: the
+    /// first two stages of a synchroniser. `#[async_reg]` on a field
+    /// puts it here, under its netlist name, and the netlist marks
+    /// it `ASYNC_REG`, so that Vivado places the stages together and
+    /// reports them as a synchroniser (#884). Empty when there are
+    /// none.
+    const ASYNC_REGS: &'static [&'static str] = &[];
     /// Every field of the unit, as its name, what it is, how wide it
     /// is, and how many words it holds if it is a memory.
     fn fields() -> Vec<(&'static str, Option<Kind>, usize, usize)>;
@@ -857,6 +864,9 @@ pub struct Lowered {
     /// lowers a unit whose register starts at anything else says it
     /// again here, as they already do for a memory (issue 359).
     pub init_regs: Vec<(String, u128)>,
+    /// The registers the netlist marks `ASYNC_REG`, as
+    /// [`Fields::ASYNC_REGS`] names them: a synchroniser's stages.
+    pub async_regs: Vec<&'static str>,
     /// A port's trace scope when it is not the port's own name: a
     /// channel two units share under one name in the run has a port
     /// name of its own on each side.
@@ -938,6 +948,7 @@ pub fn foreign(
         procs: Vec::new(),
         init: Vec::new(),
         init_regs: Vec::new(),
+        async_regs: Vec::new(),
         aliases: Vec::new(),
         nets: Vec::new(),
         instances: Vec::new(),
@@ -1313,6 +1324,18 @@ impl Lowered {
     /// clock shares it. A child's clock counts, since the parent takes
     /// it as a port to pass on. This is issue 367.
     pub fn checked(self) -> Self {
+        // `ASYNC_REG` belongs on a register; on a wire or a memory it
+        // would say nothing true (#884).
+        for a in &self.async_regs {
+            assert!(
+                self.fields
+                    .iter()
+                    .any(|(n, k, _, _)| n == a && *k == Some(Kind::Reg)),
+                "field `{a}` of `{}` carries #[async_reg] and is not a \
+                 register; only a register can be a synchroniser's stage",
+                self.name
+            );
+        }
         // A unit of units joins each channel port of its own to one
         // child, once. `#[lower]` checks that for a port it can see; a
         // port that is a field of a struct of ports declared elsewhere
@@ -2113,9 +2136,16 @@ impl Lowered {
                 // What the runtime's register starts at: zero, unless
                 // the unit was built with `Reg::new` and whoever
                 // lowered it said so.
+                // A synchroniser's stage says so, as `chan_cdc.v` does by
+                // hand (#884).
                 Some(Kind::Reg) => writeln!(
                     out,
-                    "  reg {}{n} = {w}'h{:x};",
+                    "  {}reg {}{n} = {w}'h{:x};",
+                    if self.async_regs.contains(n) {
+                        "(* ASYNC_REG = \"TRUE\" *) "
+                    } else {
+                        ""
+                    },
                     range(*w),
                     self.reg_init(n)
                 )
@@ -2519,6 +2549,11 @@ impl Lowered {
              begin if c then return '1'; else return '0'; end if; \
              end function;\n",
         );
+        // A synchroniser's stages say so (#884); the attribute is
+        // declared once for the architecture and given per signal.
+        if !self.async_regs.is_empty() {
+            out.push_str("  attribute ASYNC_REG : string;\n");
+        }
         for (n, k, w, d) in &self.fields {
             let init = if *w == 1 {
                 "'0'".to_string()
@@ -2531,7 +2566,14 @@ impl Lowered {
                 Some(Kind::Reg) => {
                     let start = self.reg_init_vhdl(n);
                     writeln!(out, "  signal {n} : {} := {start};", ty(*w))
+                        .unwrap();
+                    if self.async_regs.contains(n) {
+                        writeln!(
+                            out,
+                            "  attribute ASYNC_REG of {n} : signal is \"TRUE\";"
+                        )
                         .unwrap()
+                    }
                 }
                 Some(Kind::Wire) => {
                     writeln!(out, "  signal {n} : {};", ty(*w)).unwrap()
@@ -3457,6 +3499,7 @@ mod tests {
             procs: Vec::new(),
             init: Vec::new(),
             init_regs: Vec::new(),
+            async_regs: Vec::new(),
             aliases: Vec::new(),
             nets: Vec::new(),
             instances: Vec::new(),
@@ -3742,6 +3785,46 @@ mod tests {
     #[test]
     fn a_channel_port_joined_once_is_accepted() {
         parent_joining_a_channel(1).checked();
+    }
+
+    /// A register named in `async_regs` is marked `ASYNC_REG` in both
+    /// netlists, and the others are not (#884).
+    #[test]
+    fn an_async_reg_is_marked_in_both_netlists() {
+        let mut net = three_regs();
+        net.async_regs = vec!["count"];
+        let net = net.checked();
+        let v = net.verilog();
+        assert!(
+            v.contains("  (* ASYNC_REG = \"TRUE\" *) reg [7:0] count = 8'h0;"),
+            "{v}"
+        );
+        assert_eq!(v.matches("ASYNC_REG").count(), 1, "{v}");
+        let h = net.vhdl();
+        assert!(h.contains("  attribute ASYNC_REG : string;\n"), "{h}");
+        assert!(
+            h.contains("  attribute ASYNC_REG of count : signal is \"TRUE\";"),
+            "{h}"
+        );
+        assert_eq!(h.matches("attribute ASYNC_REG of").count(), 1, "{h}");
+    }
+
+    /// Without one, neither netlist declares the attribute at all.
+    #[test]
+    fn no_async_reg_declares_nothing() {
+        let net = three_regs();
+        assert!(!net.verilog().contains("ASYNC_REG"));
+        assert!(!net.vhdl().contains("ASYNC_REG"));
+    }
+
+    #[test]
+    #[should_panic(expected = "field `count` of `regs` carries #[async_reg] \
+                               and is not a register")]
+    fn an_async_reg_on_a_wire_is_refused() {
+        let mut net = three_regs();
+        net.fields[1].1 = Some(Kind::Wire);
+        net.async_regs = vec!["count"];
+        net.checked();
     }
 
     /// The case of issue 485: a module lowered as `shared`, which VHDL
