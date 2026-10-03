@@ -27,7 +27,11 @@ biased than any one of them, and does three things with the stream.
 It watches it: forty identical bits in a row, the repetition count
 test of NIST SP 800-90B at a false alarm rate of one in a million,
 raise a sticky fault and stop the buffer filling, since a ring that
-has stopped is worse than none. It debiases it: von Neumann's
+has stopped is worse than none; and the adaptive proportion test of
+the same standard counts, in each window of 1024 samples, how many
+equal the window's first, and raises a fault of its own at 793, which
+catches a source gone biased without going stuck
+(Section~\ref{sec:x-trngapt}). It debiases it: von Neumann's
 extractor takes the bits in pairs, \code{01} a zero, \code{10} a one,
 and the two equal pairs nothing, so whatever a ring's bias is, it
 cancels, at the cost of three bits in four. And it buffers it: the
@@ -67,10 +71,10 @@ assessment.
 
 So much is claimed, and no more. Nothing here is certified to SP
 800-90B or to FIPS 140, and the entropy credited is an estimate from
-captures of a few builds on one board. The hardware runs one of the
-standard's two continuous health tests, the repetition count test;
-the adaptive proportion test, which catches a source gone biased
-without going stuck, is not built yet (issue 918). The driver's host
+captures of a few builds on one board. The hardware runs the standard's
+two continuous health tests, the repetition count test and the
+adaptive proportion test (issue 918), at its cutoffs for half a bit a
+sample; a fault of either stops the source, and the driver refuses. The driver's host
 tests check the hash's wiring against digests taken with
 \code{sha256sum}, and pass a source shaped like the board's through
 it: \code{//tools/trngstat} fails that source's words as they come, as

@@ -1,0 +1,42 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Source Gone Biased}
+\label{sec:x-trngapt}
+
+A ring that stops gives the same sample for ever, and the repetition
+count test catches it within forty. A source can fail more quietly: a
+ring locked to the clock, or one pulled by its neighbour, can give
+ones far more often than zeros without ever giving forty in a row.
+The adaptive proportion test of SP 800-90B, section 4.4.2, is the
+check for that, and \code{Trng} runs it beside the other (issue 918).
+In each window of 1024 samples, the size the standard sets for a
+binary source, it counts how many equal the window's first. At 793 it
+raises a sticky fault of its own, \code{status} bit 10, and the buffer
+stops filling as it does for the other. The cutoff is the standard's
+formula, one more than the smallest count a fair window of half a bit
+a sample reaches with probability at most $2^{-20}$: the count's mean
+there is 724 and its standard deviation 14.6. A write of
+\code{ctrl}'s clear bit clears both faults and starts a new window.
+
+\code{ex\_trng\_apt} feeds the peripheral a source that is one four
+cycles in five and never one for more than four in a row, so the
+repetition count test never sees it. A window that starts on a one
+counts about 819, and the test trips; the run prints \code{status}
+with bit 10 set and bit 8 clear, then clears it. The peripheral is
+lowered, and its netlist is simulated against this run under nvc and
+Verilator, so the test is checked in the netlist through the trip,
+the count and the fault register by register.
+Figure~\ref{fig:x-trngapt} is the trip: \code{aptb} reaching the
+cutoff and \code{aptfault} rising.
+
+\begin{figure}[htbp]
+\centering
+\input{trng_apt_timing.tex}
+\caption{The adaptive proportion test tripping: \code{aptb} counts the
+samples equal to the window's first, \code{aptfault} rises when it
+reaches 793, and the repetition count test's \code{fault} stays low.}
+\label{fig:x-trngapt}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_trng\_apt.rs}. Run with \code{bazel run //lib/examples:ex\_trng\_apt}.},label={lst:x-trngapt}]{lib/examples/ex_trng_apt.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_trng\_apt} printed when the build ran it.},label={lst:x-trngapt-out}]{out_trng_apt.txt}

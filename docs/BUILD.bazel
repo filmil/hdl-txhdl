@@ -1113,6 +1113,8 @@ latex_document(
         ":pwm_timing",
         ":trng_run",
         ":trng_timing",
+        ":trng_apt_run",
+        ":trng_apt_timing",
         ":sd_run",
         ":sd_timing",
         ":regmap_run",
@@ -1918,6 +1920,8 @@ waveform(
         "//trng/aptfault=>aptfault",
         "//trng/fault=>fault",
     ],
+    from_tick = 1960,
+    until = 2000,
 )
 
 # The trace buffer filling and freezing: the ring walking, the count
