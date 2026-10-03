@@ -1092,6 +1092,8 @@ latex_document(
         ":scanout_timing",
         ":reset_run",
         ":reset_timing",
+        ":ownrst_run",
+        ":ownrst_timing",
         ":flush_run",
         ":flush_timing",
         ":start_run",

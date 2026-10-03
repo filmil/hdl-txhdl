@@ -1,0 +1,33 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Unit That Answers the Reset}
+\label{sec:x-ownrst}
+
+A unit that only holds registers needs to know nothing about the
+reset: while it is high, its registers go back to where they started.
+A unit that wants to do something under reset, rather than merely
+forget, takes \code{rst} as an \code{In<Bit>} and reads it, and then
+what it does under reset is what its body says and nothing else. The
+netlist gives it no clearing branch of its own, and the run does not
+put its registers back on top of what the body drives. The lowering
+tells the run which units these are: a unit whose \code{run} names a
+port \code{rst} says so as it starts, and the run's reset then leaves
+that unit's own registers to its body. A child that declares no
+\code{rst} keeps the reset, as its module does (issue 878).
+
+\code{Fetch} is the shape of a core's program counter. It counts up,
+and under reset it loads its reset vector, \code{0x80}, rather than
+going to zero. The run counts three, holds the reset for an edge, and
+counts on from the vector. The port and the reset the netlist gives
+every module are one net, so the run drives both at once.
+
+\begin{figure}[htbp]
+\centering
+\input{ownrst_timing.tex}
+\caption{The counter through a reset: \code{pc} counts, loads
+\code{0x80} at the edge \code{rst} is high, and counts on from there.}
+\label{fig:x-ownrst}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_ownrst.rs}. Run with \code{bazel run //lib/examples:ex\_ownrst}.},label={lst:x-ownrst}]{lib/examples/ex_ownrst.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_ownrst} printed when the build ran it: the counter before, in and after the reset, then the netlist, with no reset branch of its own.},label={lst:x-ownrst-out}]{out_ownrst.txt}
