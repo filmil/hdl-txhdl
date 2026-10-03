@@ -1007,6 +1007,14 @@ struct MemCell<T: Copy> {
 
 impl<T: Copy> Commit for MemCell<T> {
     fn apply(&self) {
+        // A write under reset is dropped, as a register's drive is: a
+        // unit held in reset changes nothing, and the netlist puts the
+        // write in the branch out of reset (issue 877). The words are
+        // kept, since a reset is not a reload.
+        if reset() {
+            self.next.take();
+            return;
+        }
         if let Some((a, v)) = self.next.take() {
             self.words[a].set(v)
         }
