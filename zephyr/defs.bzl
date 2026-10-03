@@ -31,7 +31,11 @@ def _zephyr_image_impl(ctx):
     inputs = depset(
         ctx.files.module + ctx.files._cmake + ctx.files._ninja +
         ctx.files._dtc + ctx.files._python + ctx.files._py_deps,
-        transitive = [depset(ctx.files._zephyr), depset(ctx.files._gcc)],
+        transitive = [
+            depset(ctx.files._zephyr),
+            depset(ctx.files._mbedtls),
+            depset(ctx.files._gcc),
+        ],
     )
 
     # The devicetree tooling's packages: the `site-packages` directory
@@ -56,6 +60,7 @@ def _zephyr_image_impl(ctx):
         command = _SCRIPT,
         env = {
             "ZEPHYR_ROOT": ctx.files._zephyr[0].owner.workspace_root,
+            "MBEDTLS_ROOT": ctx.files._mbedtls[0].owner.workspace_root,
             "CMAKE": ctx.files._cmake[0].path,
             "NINJA": ctx.files._ninja[0].path,
             "DTC": ctx.files._dtc[0].path,
@@ -127,6 +132,14 @@ export CROSS_COMPILE="$root/$GCC_BIN/riscv-none-elf-"
 build=$root/.zbuild
 rm -rf "$build"
 
+# Zephyr names a module whose module.yml names none after its directory,
+# and its own glue for Mbed TLS, under modules/mbedtls, answers only to
+# `mbedtls`. The fetched tree's directory is Bazel's name for the
+# repository, so the module is handed over through a link of that name.
+mods=$root/.zmods
+rm -rf "$mods" && mkdir -p "$mods"
+ln -sf "$root/$MBEDTLS_ROOT" "$mods/mbedtls"
+
 # `ZEPHYR_MODULES` and not `ZEPHYR_EXTRA_MODULES`: see this file's
 # module docstring. The roots are given as well, since the board and
 # the SoC live here rather than in Zephyr's tree.
@@ -161,6 +174,8 @@ zreal=$(dirname "$(readlink -f "$zbase/VERSION")")
 mreal=$(dirname "$(dirname "$(readlink -f "$root/$MODULE_DIR/zephyr/module.yml")")")
 remap="$remap -ffile-prefix-map=$zreal=./$ZEPHYR_ROOT"
 remap="$remap -ffile-prefix-map=$mreal=./$MODULE_DIR"
+breal=$(dirname "$(dirname "$(readlink -f "$root/$MBEDTLS_ROOT/zephyr/module.yml")")")
+remap="$remap -ffile-prefix-map=$breal=./$MBEDTLS_ROOT"
 
 "$root/$CMAKE" -B "$build" -S "$src" -G Ninja \
   -DBOARD="$BOARD" $conf_arg \
@@ -170,7 +185,7 @@ remap="$remap -ffile-prefix-map=$mreal=./$MODULE_DIR"
   -DBOARD_ROOT="$root/$MODULE_DIR" \
   -DSOC_ROOT="$root/$MODULE_DIR" \
   -DDTS_ROOT="$root/$MODULE_DIR" \
-  -DZEPHYR_MODULES="$root/$MODULE_DIR" \
+  -DZEPHYR_MODULES="$root/$MODULE_DIR;$mods/mbedtls" \
   > "$build.log" 2>&1 || { cat "$build.log"; exit 1; }
 
 "$root/$CMAKE" --build "$build" >> "$build.log" 2>&1 || {
@@ -244,5 +259,9 @@ zephyr_image = rule(
             allow_files = True,
         ),
         "_zephyr": attr.label(default = "@zephyr//:all"),
+        # Zephyr's Mbed TLS, a module of every image: Zephyr builds it
+        # only when CONFIG_MBEDTLS asks, which the entropy driver does
+        # for its SHA-256 (issue 780).
+        "_mbedtls": attr.label(default = "@zephyr_mbedtls//:all"),
     },
 )

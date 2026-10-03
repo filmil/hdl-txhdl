@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Zephyr's fork of Mbed TLS, at the revision Zephyr 4.1.0's west.yml
+# pins, as a module of Zephyr's build: its CMake and Kconfig are in
+# Zephyr's tree, under modules/mbedtls, and read this tree through
+# ZEPHYR_MBEDTLS_MODULE_DIR. The entropy driver conditions with its
+# SHA-256 (issue 780).
+
+package(default_visibility = ["//visibility:public"])
+
+# Everything, for Zephyr's CMake, as `@zephyr//:all` is.
+filegroup(
+    name = "all",
+    srcs = glob(
+        ["**"],
+        exclude = ["**/* *"],
+    ),
+)
+
+# The SHA-256 alone, for a host test of the code that calls it: the
+# sources a configuration with only MBEDTLS_SHA256_C compiles, and the
+# headers they reach.
+filegroup(
+    name = "sha256_srcs",
+    srcs = [
+        "library/platform_util.c",
+        "library/sha256.c",
+    ],
+)
+
+filegroup(
+    name = "hdrs",
+    srcs = glob([
+        "include/**/*.h",
+        "library/*.h",
+    ]),
+)

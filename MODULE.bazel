@@ -390,3 +390,16 @@ http_archive(
         "https://github.com/zephyrproject-rtos/zephyr/archive/refs/tags/v4.1.0.tar.gz",
     ],
 )
+
+# Zephyr's Mbed TLS module, at the revision v4.1.0's west.yml pins, for
+# the SHA-256 the entropy driver conditions with (issue 780). Zephyr's
+# own tree holds the module's CMake and Kconfig; this is the library.
+http_archive(
+    name = "zephyr_mbedtls",
+    build_file = "//third_party/zephyr:mbedtls.BUILD.bazel",
+    sha256 = "f7ddd3e8e1367cd4ab55b7879211e84fee72e882e531c341cd9db3890fb3d1d3",
+    strip_prefix = "mbedtls-4952e1328529ee549d412b498ea71c54f30aa3b1",
+    urls = [
+        "https://github.com/zephyrproject-rtos/mbedtls/archive/4952e1328529ee549d412b498ea71c54f30aa3b1.tar.gz",
+    ],
+)

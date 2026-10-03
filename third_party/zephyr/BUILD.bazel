@@ -8,6 +8,7 @@
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "mbedtls.BUILD.bazel",
     "requirements.txt",
     "zephyr.BUILD.bazel",
 ])
