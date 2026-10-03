@@ -84,6 +84,9 @@ vivado_program_device(
 # over a 4-bit bus, which is where a flagship belongs: the board then
 # comes up as itself with nothing attached. The part is the one this
 # board answers with, read off the chip over JTAG; see issue #210.
+# Beside the bitstream, at the flash's program offset 0x00A0_0000
+# (issue 312, the layout in docs/flagship.tex), the image carries a
+# program: `flashid`, which reads the flash back through the window.
 #
 #   bazel run //flagship:flagship_flash -- \
 #       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
@@ -92,6 +95,9 @@ vivado_program_flash(
     size = 16,
     flash_part = "mt25ql128-spi-x1_x2_x4",
     interface = "SPIx4",
+    loaddata = {
+        "//cpu/vreteno/rust:flashid_ram_bin": "0x00A00000",
+    },
     deps = [":flagship_pnr"],
     tags = ["manual"],
 )
@@ -99,8 +105,7 @@ vivado_program_flash(
 # The bitstream leaves the flash's program area alone: its configuration
 # data ends before 0x00A0_0000, where programs begin (issue 312; the
 # layout is in docs/flagship.tex). Manual, since the bitstream needs
-# Vivado; `vivado_program_flash` writes only the bitstream today, so
-# this is the check that a program placed there would survive.
+# Vivado.
 sh_test(
     name = "flagship_fits_test",
     srcs = ["//tools/bitfit:fits_test.sh"],
@@ -111,6 +116,34 @@ sh_test(
     ],
     data = [
         ":flagship_pnr",
+        "//tools/bitfit",
+    ],
+    tags = ["manual"],
+)
+
+# The flash image holds the program byte for byte at 0x00A0_0000, beside
+# the bitstream, and the bitstream ends before it (issue 312). Manual,
+# since the image needs Vivado's write_cfgmem. The filegroup is there
+# because a location of an executable target names its script alone,
+# and the image is among the target's other files.
+filegroup(
+    name = "flagship_flash_files",
+    srcs = [":flagship_flash"],
+    tags = ["manual"],
+)
+
+sh_test(
+    name = "flagship_image_test",
+    srcs = ["//tools/bitfit:image_test.sh"],
+    args = [
+        "$(rootpath //tools/bitfit)",
+        "0xa00000",
+        "$(rootpath //cpu/vreteno/rust:flashid_ram_bin)",
+        "$(rootpaths :flagship_flash_files)",
+    ],
+    data = [
+        ":flagship_flash_files",
+        "//cpu/vreteno/rust:flashid_ram_bin",
         "//tools/bitfit",
     ],
     tags = ["manual"],

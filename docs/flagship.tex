@@ -423,9 +423,13 @@ the window on the router's eighth port, from \code{0x20A0\_0000}.
 bitstream's header with \code{//tools/bitfit}, and fail if its
 configuration data runs past the offset, which compression or another
 part could do. They are manual, since they need the routed bitstream.
-Nothing writes a program there yet: \code{vivado\_program\_flash}
-writes the bitstream alone, and the image with a program beside it
-waits on a change to that rule.
+\code{//flagship:flagship\_flash}'s image carries a program there,
+\code{flashid}, placed by \code{write\_cfgmem}'s \code{-loaddata}, and
+\code{//flagship:flagship\_image\_test}, manual as well, reads the
+image with \code{//tools/bitfit} and fails unless it holds the
+program byte for byte at \code{0x00A0\_0000}. Nothing boots from
+there yet; the program is there so that a written flash can be read
+back through the window.
 
 Once the flagship is in the part, a program goes to it over the serial
 port and no Vivado is involved at all: \code{bazel build
