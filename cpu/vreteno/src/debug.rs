@@ -75,6 +75,14 @@ pub const ABSTRACTCS: u32 = 0x16;
 pub const COMMAND: u32 = 0x17;
 pub const HALTSUM0: u32 = 0x40;
 
+/// `tselect`, the trigger module's select. There is no trigger module,
+/// so the register reads zero and a write is taken and changes
+/// nothing, as the specification allows a register of that kind. A
+/// debugger writes it to count the triggers, and OpenOCD, refused, stops
+/// writing any CSR by the abstract command, `dcsr` and its single step
+/// among them (issue 154).
+pub const TSELECT: u32 = 0x7a0;
+
 /// A register's address on the bus: four bytes per number.
 pub const fn at(number: u32) -> u32 {
     DM_BASE + number * 4
@@ -203,7 +211,9 @@ impl Unit for Dm {
             let rn = wd.slice::<0, 16>();
             let is_gpr = Bit::from(rn.slice::<5, 11>() == 0x80);
             let is_csr = Bit::from(rn.slice::<12, 4>() == 0);
-            let csr_writable = Bit::from(rn == 0x7b0) | Bit::from(rn == 0x7b1);
+            let csr_writable = Bit::from(rn == 0x7b0)
+                | Bit::from(rn == 0x7b1)
+                | Bit::from(rn == TSELECT);
             let supported = Bit::from(cmdtype == 0)
                 & (aarsize == 2)
                 & (is_gpr | (is_csr & (!wr | csr_writable)));
@@ -517,6 +527,25 @@ mod tests {
             write(h, at(ABSTRACTCS), 7 << 8).await;
             write(h, at(COMMAND), 1 << 24).await;
             assert_eq!(read(h, at(ABSTRACTCS)).await >> 8 & 7, 2);
+        });
+    }
+
+    /// A write of `tselect` is taken with no error: there is no trigger
+    /// module, so it changes nothing, and a debugger that counts the
+    /// triggers by writing it reads zero back. Refused, OpenOCD stops
+    /// writing CSRs by the abstract command at all, `dcsr` included, and
+    /// its single step goes with it (issue 154).
+    #[test]
+    fn a_write_of_tselect_is_taken_and_changes_nothing() {
+        run(|rig| async move {
+            let h = &rig.host;
+            write(h, at(DMCONTROL), DMACTIVE).await;
+            rig.halted.set(Bit::One);
+            cycles(2).await;
+            write(h, at(DATA0), 3).await;
+            write(h, at(COMMAND), access(TSELECT, true)).await;
+            cycles(4).await;
+            assert_eq!(read(h, at(ABSTRACTCS)).await >> 8 & 7, 0, "taken");
         });
     }
 
