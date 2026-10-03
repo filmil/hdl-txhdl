@@ -154,7 +154,7 @@ const WINDOW: u32 = 2;
 /// Between the chip and the two parts that reach it. `GUARD` of one
 /// refuses write enable from the master, zero passes it; see the
 /// module's comment for why that one command.
-#[derive(Trace, Default)]
+#[derive(Trace)]
 pub struct FlashPins<const GUARD: usize> {
     /// Where it is: waiting for `EOS`, spending the clocks, or ready.
     pub phase: Reg<U<2>>,
@@ -175,8 +175,33 @@ pub struct FlashPins<const GUARD: usize> {
     pub pclk: Reg<Bit>,
     /// The data to the chip.
     pub pmosi: Reg<Bit>,
-    /// The chip held: the select pin is this, inverted.
+    /// The chip held.
     pub sel: Reg<Bit>,
+    /// The select pin, from a register of its own: written whenever
+    /// `sel` is, with `sel`'s new value inverted, so it is `!sel` at
+    /// every cycle. The pin's net is then register to pad with no
+    /// other load, and `sel`'s own feedback stays off it, which the
+    /// router's hold detour for the pin had stretched to 22 ns (issue
+    /// 893). It starts and resets at 1, the chip let go.
+    pub pcs_n: Reg<Bit>,
+}
+
+impl<const GUARD: usize> Default for FlashPins<GUARD> {
+    fn default() -> Self {
+        FlashPins {
+            phase: Reg::default(),
+            turns: Reg::default(),
+            owner: Reg::default(),
+            mprev: Reg::default(),
+            cmd: Reg::default(),
+            bits: Reg::default(),
+            cut: Reg::default(),
+            pclk: Reg::default(),
+            pmosi: Reg::default(),
+            sel: Reg::default(),
+            pcs_n: Reg::new(Bit::One),
+        }
+    }
 }
 
 #[lower]
@@ -207,7 +232,7 @@ impl<const GUARD: usize> Unit for FlashPins<GUARD> {
             // first, and `Startup` reads the clock as this drives it.
             usrcclko.set(self.pclk.get());
             mosi.set(self.pmosi.get());
-            cs_n.set(!self.sel.get());
+            cs_n.set(self.pcs_n.get());
             w_rst.set(self.phase.get() != U::<2>::from(2u8));
             refused.set(self.cut.get());
             let phase = self.phase.get();
@@ -268,6 +293,7 @@ impl<const GUARD: usize> Unit for FlashPins<GUARD> {
                     pclk: (master & m_sclk.get()) | (window & w_sclk.get()),
                     pmosi: (master & m_mosi.get()) | (window & w_mosi.get()),
                     sel: (master & m_on & !stop) | (window & w_on),
+                    pcs_n: !((master & m_on & !stop) | (window & w_on)),
                 },
             });
         }
