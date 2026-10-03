@@ -89,23 +89,25 @@ It closes nothing; #154 stays open for step 3.
 
 Every top has the debug transport behind `BSCANE2` on `USER4` now, so this runs on the boot bitstream of section 5, before its loads.
 OpenOCD takes the cable itself, so the JTAG tunnel's `hw_server` is stopped first, and started again after for the sections that program.
+The server starts it under the dynamic loader, as `ld.so ... bin/hw_server -stcp ...`, so its process name is `ld.so` and `pkill -x hw_server` finds nothing; the command line is matched instead (#895).
+The bracket in the pattern keeps it from matching the remote shell that carries it, which `pkill -f` would otherwise kill, and its output with it.
 The server has OpenOCD 0.12.0 and the Digilent configurations for the cable's FT232H (`0403:6014`); no `sudo` and no udev rule is needed.
+The cable and the core are set up by `tools/openocd/ax7a200.cfg`, copied to the server first, which `//tools/openocd:ax7a200_cfg_test` reads with the pinned OpenOCD.
+It names the cable `Digilent USB Device`, as this board's FT232H enumerates; the HS2 file alone looks for `Digilent Adept USB Device` and finds no device.
 
 ```sh
 bazel run //cpu/vreteno:vreteno_board_boot_prog -- "${PROG[@]}"
-ssh $TXHDL_BOARD_SERVER pkill -x hw_server
-ssh $TXHDL_BOARD_SERVER openocd -f interface/ftdi/digilent-hs2.cfg -c "'\
-  transport select jtag; adapter speed 1000; \
-  jtag newtap xc7 tap -irlen 6 -expected-id 0x13636093; \
-  target create xc7.cpu riscv -chain-position xc7.tap; \
-  riscv use_bscan_tunnel 5; riscv set_mem_access sysbus; init; halt; \
+ssh $TXHDL_BOARD_SERVER "pkill -f 'bin/[h]w_server -stcp'"
+scp tools/openocd/ax7a200.cfg $TXHDL_BOARD_SERVER:/tmp/txhdl-ax7a200.cfg
+ssh $TXHDL_BOARD_SERVER openocd -f /tmp/txhdl-ax7a200.cfg -c "'\
+  init; halt; \
   echo \"state [xc7.cpu curstate]\"; echo [capture {reg pc}]; \
   echo [capture {mdw 0x1000 4}]; step; echo \"stepped [capture {reg pc}]\"; \
   resume; echo \"state [xc7.cpu curstate]\"; shutdown'" 2>&1 | tee board-154-openocd.log
 ```
 
 Pass: `tap/device found: 0x13636093`, `Examined RISC-V core; found 1 harts` with `XLEN=32` and `misa=0x40001104`, `state halted`, a `pc`, the four words, a `stepped pc` one instruction on, and `state running`, which is the session `//cpu/vreteno:openocd_test` runs against the simulated board.
-If the cable is not found with `digilent-hs2.cfg`, try `digilent_jtag_hs3.cfg`, which names the same device.
+If OpenOCD says `no device found`, read the cable's product name on the server, `cat /sys/bus/usb/devices/*/product`, and set `ftdi device_desc` in the configuration to it.
 Capture: `board-154-openocd.log`, posted on #154.
 
 ### Step 3, the gdb half: a program loaded and a breakpoint hit, #872
@@ -117,11 +119,7 @@ OpenOCD binds its gdb port to the server's own loopback, so only the forward rea
 In one terminal, OpenOCD on the server with the forward, left running:
 
 ```sh
-ssh -L 3333:localhost:3333 $TXHDL_BOARD_SERVER openocd -f interface/ftdi/digilent-hs2.cfg -c "'\
-  transport select jtag; adapter speed 1000; \
-  jtag newtap xc7 tap -irlen 6 -expected-id 0x13636093; \
-  target create xc7.cpu riscv -chain-position xc7.tap; \
-  riscv use_bscan_tunnel 5; riscv set_mem_access sysbus; \
+ssh -L 3333:localhost:3333 $TXHDL_BOARD_SERVER openocd -f /tmp/txhdl-ax7a200.cfg -c "'\
   bindto 127.0.0.1; gdb_port 3333; init'" 2>&1 | tee board-872-openocd.log
 ```
 
