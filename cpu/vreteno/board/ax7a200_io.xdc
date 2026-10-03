@@ -64,7 +64,17 @@ set_output_delay -clock flash_cclk \
     [get_ports {flash_cs_n flash_d0}]
 set_multicycle_path 4 -setup -start \
     -from [get_clocks -of_objects $flash_reg_c] -to flash_cclk
-set_multicycle_path 3 -hold -start \
+# The hold: the select and the data change no sooner than the clock's
+# next fall, four cycles after the rise the chip took them on, so the
+# hold is checked against a launch four cycles after that rise. Three
+# of the seven bring the hold back to the rise, as the usual pairing
+# with a setup of four does; that was all this said at first, which
+# told the tools the pins might change on the rise itself and asked
+# for 12 ns of route after it, which the router found by a 22 ns
+# detour on the select's register and missed timing by (issue 889).
+# The one time the select changes near a rise is the guard's cut of
+# write enable, which is meant to break the chip's timing.
+set_multicycle_path 7 -hold -start \
     -from [get_clocks -of_objects $flash_reg_c] -to flash_cclk
 
 # From the chip: it moves its bit on the falling clock at the pin, and
