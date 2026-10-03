@@ -30,6 +30,7 @@ bazel build //flagship:flagship_pnr                # Ethernet and the loader, #1
 bazel build //cpu/vreteno/rust:hello_ram_bin //cpu/vreteno/rust:hello_fastboot \
     //cpu/vreteno/rust:trng_ram_bin //cpu/vreteno/rust:steps_ram_bin
 bazel build //zephyr:fastboot @multitool//tools/fastboot
+bazel build //third_party/gdb //cpu/vreteno/rust:gdbprobe_elf   # gdb, #872
 bazel build //tools/trngstat
 bazel build //cpu/vreteno/rust:phyregs_ram_bin       # the PHY's registers, #864
 bazel build //cpu/vreteno/rust:phydelay_ram_bin      # the PHY's delay bits, #869
@@ -106,7 +107,41 @@ ssh $TXHDL_BOARD_SERVER openocd -f interface/ftdi/digilent-hs2.cfg -c "'\
 Pass: `tap/device found: 0x13636093`, `Examined RISC-V core; found 1 harts` with `XLEN=32` and `misa=0x40001104`, `state halted`, a `pc`, the four words, a `stepped pc` one instruction on, and `state running`, which is the session `//cpu/vreteno:openocd_test` runs against the simulated board.
 If the cable is not found with `digilent-hs2.cfg`, try `digilent_jtag_hs3.cfg`, which names the same device.
 Capture: `board-154-openocd.log`, posted on #154.
-The gdb half of #154's done-when, a program loaded and a breakpoint hit, waits for a RISC-V gdb on the server, which it does not have; #154 stays open for it.
+
+### Step 3, the gdb half: a program loaded and a breakpoint hit, #872
+
+Same bitstream, after the OpenOCD session above has ended.
+gdb runs here, from `//third_party/gdb`, and reaches the server's OpenOCD gdb port, 3333, over an SSH forward, as `hw_server`'s 3122 is forwarded; nothing is installed on the server.
+OpenOCD binds its gdb port to the server's own loopback, so only the forward reaches it.
+
+In one terminal, OpenOCD on the server with the forward, left running:
+
+```sh
+ssh -L 3333:localhost:3333 $TXHDL_BOARD_SERVER openocd -f interface/ftdi/digilent-hs2.cfg -c "'\
+  transport select jtag; adapter speed 1000; \
+  jtag newtap xc7 tap -irlen 6 -expected-id 0x13636093; \
+  target create xc7.cpu riscv -chain-position xc7.tap; \
+  riscv use_bscan_tunnel 5; riscv set_mem_access sysbus; \
+  bindto 127.0.0.1; gdb_port 3333; init'" 2>&1 | tee board-872-openocd.log
+```
+
+In another, gdb here, once OpenOCD has said `Listening on port 3333 for gdb connections`:
+
+```sh
+bazel run //third_party/gdb -- -nx -batch \
+  -ex "set architecture riscv:rv32" -ex "set remotetimeout 60" \
+  -ex "file $PWD/bazel-bin/cpu/vreteno/rust/gdbprobe_elf.elf" \
+  -ex "target extended-remote localhost:3333" -ex load \
+  -ex "break reached" -ex continue \
+  -ex 'printf "a0 %d\n", $a0' -ex 'printf "SUM %d\n", *(unsigned int *)&SUM' \
+  -ex "monitor shutdown" 2>&1 | tee board-872-gdb.log
+```
+
+Pass: `Loading section .text` at `0x40000000`, `Breakpoint 1, ... in reached ()`, `a0 45` and `SUM 45`, which is what `//cpu/vreteno:openocd_test`'s `gdb_loads_a_program_and_stops_at_a_breakpoint` prints against the simulated board.
+gdb's last lines, a protocol error and `Remote connection closed`, are OpenOCD shutting down under it, and are expected.
+`Failed to read memory` with `sysbus=skipped (unsupported size)` means the bitstream predates #873's bridge, which serves the 16-bit accesses gdb makes.
+The program runs from the DDR3, so the controller must have calibrated, which the boot bitstream's third LED shows.
+Capture: both logs, posted on #154, whose other done-when this is.
 
 ## 5. The loader's fence, #550 and PR 637
 
