@@ -29,8 +29,9 @@
 //! the conditions it is under, and is stated only while `rst` is low,
 //! so that nothing is checked while the unit is held in reset, whether
 //! the netlist added the reset or the unit declared it (issue 633). The
-//! run has no reset to gate on and checks every edge the statement is
-//! reached.
+//! run gates them the same way, on the reset a testbench asserts with
+//! `set_reset`: while it is high a check and an assumption are not
+//! checked and a cover point is not counted (issue 879).
 //! In the Verilog it is SystemVerilog's immediate `assert`, `assume` or
 //! `cover` inside the clocked block, between `` `ifdef FORMAL `` and
 //! `` `endif ``: a formal tool such as SymbiYosys defines `FORMAL`, and
@@ -42,7 +43,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::comp::now;
+use crate::comp::{now, reset};
 use crate::types::Bit;
 
 thread_local! {
@@ -55,6 +56,9 @@ thread_local! {
 /// message and the time, when `cond` does not hold.
 #[doc(hidden)]
 pub fn check(cond: impl Into<Bit>, msg: &str) {
+    if reset() {
+        return;
+    }
     if !cond.into().to_bool() {
         panic!("check failed at t={}: {msg}", now());
     }
@@ -64,6 +68,9 @@ pub fn check(cond: impl Into<Bit>, msg: &str) {
 /// own inputs break what the unit takes for granted of them.
 #[doc(hidden)]
 pub fn assume(cond: impl Into<Bit>, msg: &str) {
+    if reset() {
+        return;
+    }
     if !cond.into().to_bool() {
         panic!("assumption broken at t={}: {msg}", now());
     }
@@ -72,7 +79,7 @@ pub fn assume(cond: impl Into<Bit>, msg: &str) {
 /// What [`cover!`](crate::cover) does in the run: count a hit.
 #[doc(hidden)]
 pub fn cover(cond: impl Into<Bit>, msg: &'static str) {
-    if cond.into().to_bool() {
+    if !reset() && cond.into().to_bool() {
         COVERED.with(|c| *c.borrow_mut().entry(msg).or_insert(0) += 1);
     }
 }
@@ -143,5 +150,20 @@ mod tests {
         }
         assert_eq!(covered("even"), 3);
         assert_eq!(covered("never"), 0);
+    }
+
+    /// Under reset nothing is stated: a check and an assumption that
+    /// do not hold pass, and a cover point is not counted, as the
+    /// netlist states them only while `rst` is low (issue 879).
+    #[test]
+    fn nothing_is_stated_under_reset() {
+        crate::comp::set_reset(true);
+        check(Bit::Zero, "fails, but in reset");
+        assume(Bit::Zero, "broken, but in reset");
+        cover(Bit::One, "reached in reset");
+        crate::comp::set_reset(false);
+        assert_eq!(covered("reached in reset"), 0);
+        cover(Bit::One, "reached in reset");
+        assert_eq!(covered("reached in reset"), 1);
     }
 }
