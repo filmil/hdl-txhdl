@@ -247,15 +247,19 @@ pub const SBADDRESS0: u32 = 0x39;
 /// `sbdata0`: the word a system bus access reads or writes.
 pub const SBDATA0: u32 = 0x3c;
 
-/// `sbcs` as it always reads: version 1, a 32-bit address, and 32-bit
-/// accesses the only width there is.
-pub const SBCS_FIXED: u32 = (1 << 29) | (32 << 5) | (1 << 2);
+/// `sbcs` as it always reads: version 1, a 32-bit address, and accesses
+/// of 8, 16 and 32 bits (issue 873).
+pub const SBCS_FIXED: u32 = (1 << 29) | (32 << 5) | (1 << 2) | (1 << 1) | 1;
 
 /// The error `sbcs` reports for an access the bus refused: "other",
 /// since the bus does not say which kind of refusal it was.
 pub const SBERROR_BUS: u32 = 7;
-/// The error for an access of a width other than 32 bits.
+/// The error for an access of a width the bridge does not serve, wider
+/// than 32 bits.
 pub const SBERROR_SIZE: u32 = 4;
+/// The error for an access not aligned to its width: a halfword at an
+/// odd address, or a word at one that is not a multiple of four.
+pub const SBERROR_ALIGN: u32 = 3;
 
 // begin{bridge}
 /// The transport's other half, on the system's clock: each access the
@@ -299,8 +303,11 @@ pub struct DtmBridge<const DM: usize, const I: usize> {
     pub rdondata: Reg<Bit>,
     /// `sbautoincrement`: the address moves on after each access.
     pub autoinc: Reg<Bit>,
-    /// `sbaccess`: the width, 2 for 32 bits, the only one served.
+    /// `sbaccess`: the width, 0 for 8 bits, 1 for 16 and 2 for 32.
     pub sbaccess: Reg<U<3>>,
+    /// The width of the access on the link, as `sbaccess` was when it
+    /// started.
+    pub width: Reg<U<3>>,
     /// `sberror`, cleared by writing ones to it.
     pub sberror: Reg<U<3>>,
     /// `sbbusyerror`: an access was asked for while one ran.
@@ -365,16 +372,23 @@ impl<const DM: usize, const I: usize> Unit for DtmBridge<DM, I> {
             // A system bus access asked for: a write of `sbaddress0`
             // under `sbreadonaddr`, a write of `sbdata0`, or a read of
             // it under `sbreadondata`. It goes only with no error
-            // standing and at the one width there is.
+            // standing, at a width served, 8, 16 or 32 bits, and at an
+            // address aligned to it (issue 873).
             let clear = (sberror == 0) & !busyerr;
-            let wide = self.sbaccess.get() == 2;
+            let acc = self.sbaccess.get();
             let sb_rd_addr = take & is_ad & wr & self.rdonaddr.get();
             let sb_wr = take & is_da & wr;
             let sb_rd_data = take & is_da & !wr & self.rdondata.get();
             let sb_ask = sb_rd_addr | sb_wr | sb_rd_data;
-            let sb_go = sb_ask & clear & wide;
-            let sb_bad = sb_ask & clear & !wide;
             let sb_at = mux(sb_rd_addr, d, sbaddr);
+            let lane_at = sb_at.slice::<0, 2>();
+            let served =
+                Bit::from(acc == 0) | Bit::from(acc == 1) | Bit::from(acc == 2);
+            let misaligned = (Bit::from(acc == 1) & lane_at.bit(0))
+                | (Bit::from(acc == 2) & Bit::from(lane_at != 0));
+            let sb_go = sb_ask & clear & served & !misaligned;
+            let sb_bad = sb_ask & clear & !served;
+            let sb_mis = sb_ask & clear & served & misaligned;
             // A debug module register: the access goes on the link and
             // is answered when it comes back.
             let dm_go = take & !is_sb;
@@ -395,6 +409,51 @@ impl<const DM: usize, const I: usize> Unit for DtmBridge<DM, I> {
                 Bit::from(done.head().resp == Resp::Okay),
             );
             let word = rdata.head().data;
+            // A narrow access is a word on the link at the aligned address:
+            // a write's data moved into its lanes with only their strobes
+            // set, and a read's lane moved down and the rest cleared.
+            let width = self.width.get();
+            let lane = self.addr.get().slice::<0, 2>();
+            let shifted = select!(lane.raw() => {
+                0 => word,
+                1 => word >> 8u32,
+                2 => word >> 16u32,
+                _ => word >> 24u32,
+            });
+            let narrow = mux(
+                Bit::from(width == 0),
+                shifted & U::<32>::from(0xffu32),
+                mux(
+                    Bit::from(width == 1),
+                    shifted & U::<32>::from(0xffffu32),
+                    shifted,
+                ),
+            );
+            let wd = self.wdata.get();
+            let placed = select!(lane.raw() => {
+                0 => wd,
+                1 => wd << 8u32,
+                2 => wd << 16u32,
+                _ => wd << 24u32,
+            });
+            let strb8 = select!(lane.raw() => {
+                0 => U::<4>::from(1u8),
+                1 => U::<4>::from(2u8),
+                2 => U::<4>::from(4u8),
+                _ => U::<4>::from(8u8),
+            });
+            let strb16 =
+                mux(lane.bit(1), U::<4>::from(0xcu8), U::<4>::from(3u8));
+            let strb = mux(
+                Bit::from(width == 0),
+                strb8,
+                mux(Bit::from(width == 1), strb16, U::<4>::from(0xfu8)),
+            );
+            let step = select!(width.raw() => {
+                0 => U::<32>::from(1u8),
+                1 => U::<32>::from(2u8),
+                _ => U::<32>::from(4u8),
+            });
             let fin = busy
                 & held
                 & mux(isrd, rdone, wdone)
@@ -425,6 +484,7 @@ impl<const DM: usize, const I: usize> Unit for DtmBridge<DM, I> {
                 take & is_ad & wr ? sbaddr: d,
                 take & is_da & wr ? sbdata: d,
                 sb_bad ? sberror: U::<3>::from(SBERROR_SIZE),
+                sb_mis ? sberror: U::<3>::from(SBERROR_ALIGN),
                 sb_go ? {
                     busy: Bit::One,
                     issued: Bit::Zero,
@@ -433,6 +493,7 @@ impl<const DM: usize, const I: usize> Unit for DtmBridge<DM, I> {
                     fordmi: Bit::Zero,
                     addr: sb_at,
                     wdata: d,
+                    width: acc,
                 },
                 dm_go ? {
                     busy: Bit::One,
@@ -442,19 +503,20 @@ impl<const DM: usize, const I: usize> Unit for DtmBridge<DM, I> {
                     fordmi: Bit::One,
                     addr: dm_at,
                     wdata: d,
+                    width: U::<3>::from(2u8),
                 },
                 go_issue ? issued: Bit::One,
                 take_id ? { id: gid, held: Bit::One },
                 fin ? { busy: Bit::Zero, issued: Bit::Zero, held: Bit::Zero },
-                sb_fin & isrd ? sbdata: word,
-                sb_fin & self.autoinc.get() ? sbaddr: self.addr.get() + 4,
+                sb_fin & isrd ? sbdata: narrow,
+                sb_fin & self.autoinc.get() ? sbaddr: self.addr.get() + step,
                 sb_fin & !back_ok & (sberror == 0) ?
                     sberror: U::<3>::from(SBERROR_BUS),
             });
             if go_issue.to_bool() {
                 issue.send(Issue {
                     read: isrd,
-                    addr: self.addr.get(),
+                    addr: self.addr.get() & U::<32>::from(0xffff_fffcu32),
                     len: U::<8>::from(0u8),
                     size: U::<3>::from(2u8),
                     burst: BurstKind::Incr,
@@ -467,8 +529,8 @@ impl<const DM: usize, const I: usize> Unit for DtmBridge<DM, I> {
             }
             if (go_issue & !isrd).to_bool() {
                 wbeat.send(W {
-                    data: self.wdata.get(),
-                    strb: U::<4>::from(0xfu8),
+                    data: placed,
+                    strb,
                     last: Bit::One,
                 });
             }
@@ -806,6 +868,7 @@ mod bridge_tests {
                 DefaultClock::rising().await;
                 if let Some(q) = req.recv() {
                     let at = q.addr.raw() as u32;
+                    assert_eq!(at & 3, 0, "the link carries word addresses");
                     let ok = at < REFUSED;
                     let resp = if ok { Resp::Okay } else { Resp::SlvErr };
                     if q.read == Bit::One {
@@ -825,7 +888,15 @@ mod bridge_tests {
                             DefaultClock::rising().await;
                         };
                         if ok {
-                            mem.borrow_mut().insert(at, beat.data.raw() as u32);
+                            // Only the bytes the strobes name change.
+                            let strb = beat.strb.raw() as u32;
+                            let mask = (0..4)
+                                .filter(|i| strb >> i & 1 == 1)
+                                .fold(0u32, |m, i| m | 0xff << (8 * i));
+                            let old = *mem.borrow().get(&at).unwrap_or(&0);
+                            let new =
+                                old & !mask | beat.data.raw() as u32 & mask;
+                            mem.borrow_mut().insert(at, new);
                         }
                         DefaultClock::rising().await;
                         answer.send(Answer { id: q.id, resp });
@@ -873,12 +944,150 @@ mod bridge_tests {
     }
 
     #[test]
-    fn sbcs_reads_version_one_and_32_bit_access() {
+    fn sbcs_reads_version_one_and_its_three_widths() {
         let got = with_bridge(mem(&[]), vec![(SBCS, 0, OP_READ)]);
         let cs = got[0].0;
         assert_eq!(cs >> 29, 1, "sbversion 1");
         assert_eq!((cs >> 5) & 0x7f, 32, "sbasize 32");
-        assert_eq!(cs & 0x1f, 1 << 2, "32-bit accesses only");
+        assert_eq!(cs & 0x1f, 0b111, "8, 16 and 32-bit accesses");
+    }
+
+    /// `sbcs` for reads on a write of the address, at width `access`:
+    /// 0 for 8 bits, 1 for 16, 2 for 32.
+    fn rd_cs(access: u32) -> u32 {
+        (1 << 20) | (access << 17)
+    }
+
+    /// Each byte and each halfword of a word, read alone: the lane
+    /// comes back at the bottom of `sbdata0`, and nothing above it.
+    #[test]
+    fn narrow_reads_take_every_lane() {
+        let m = mem(&[(0x400, 0x4433_2211)]);
+        let mut acc = vec![(SBCS, rd_cs(0), OP_WRITE)];
+        for a in 0x400..0x404 {
+            acc.extend([(SBADDRESS0, a, OP_WRITE), (SBDATA0, 0, OP_READ)]);
+        }
+        acc.push((SBCS, rd_cs(1), OP_WRITE));
+        for a in [0x400, 0x402] {
+            acc.extend([(SBADDRESS0, a, OP_WRITE), (SBDATA0, 0, OP_READ)]);
+        }
+        acc.push((SBCS, 0, OP_READ));
+        let got = with_bridge(m, acc);
+        let bytes: Vec<u32> = (0..4).map(|i| got[2 + 2 * i].0).collect();
+        assert_eq!(bytes, vec![0x11, 0x22, 0x33, 0x44], "the four bytes");
+        let halves: Vec<u32> = (0..2).map(|i| got[11 + 2 * i].0).collect();
+        assert_eq!(halves, vec![0x2211, 0x4433], "the two halfwords");
+        assert_eq!((got[14].0 >> 12) & 7, 0, "no error");
+    }
+
+    /// Each byte and each halfword written alone: only its lanes of the
+    /// word change.
+    #[test]
+    fn narrow_writes_change_only_their_lanes() {
+        let m = mem(&[(0x500, 0xaaaa_aaaa), (0x504, 0xaaaa_aaaa)]);
+        let mut acc = vec![(SBCS, 0, OP_WRITE)];
+        for (i, a) in (0x500..0x504).enumerate() {
+            acc.extend([
+                (SBADDRESS0, a, OP_WRITE),
+                (SBDATA0, 0x11 * (i as u32 + 1), OP_WRITE),
+            ]);
+        }
+        acc.push((SBCS, 1 << 17, OP_WRITE));
+        acc.extend([
+            (SBADDRESS0, 0x506, OP_WRITE),
+            (SBDATA0, 0xbeef, OP_WRITE),
+            (SBCS, 0, OP_READ),
+        ]);
+        let got = with_bridge(m.clone(), acc);
+        assert_eq!(m.borrow()[&0x500], 0x4433_2211, "byte by byte");
+        assert_eq!(m.borrow()[&0x504], 0xbeef_aaaa, "the upper halfword");
+        assert_eq!((got.last().unwrap().0 >> 12) & 7, 0, "no error");
+    }
+
+    /// `sbautoincrement` steps by the width: four byte reads in a row,
+    /// each started by the read of the one before, under
+    /// `sbreadondata`, walk the word a byte at a time.
+    #[test]
+    fn autoincrement_steps_by_the_width() {
+        let m = mem(&[(0x400, 0x4433_2211)]);
+        let cs = rd_cs(0) | (1 << 16) | (1 << 15);
+        let got = with_bridge(
+            m,
+            vec![
+                (SBCS, cs, OP_WRITE),
+                (SBADDRESS0, 0x400, OP_WRITE),
+                (SBDATA0, 0, OP_READ),
+                (SBDATA0, 0, OP_READ),
+                (SBDATA0, 0, OP_READ),
+                (SBDATA0, 0, OP_READ),
+                (SBADDRESS0, 0, OP_READ),
+            ],
+        );
+        let bytes: Vec<u32> = got[2..6].iter().map(|g| g.0).collect();
+        assert_eq!(bytes, vec![0x11, 0x22, 0x33, 0x44], "byte after byte");
+        // Five reads: the one the address started and one per read of
+        // the data, the last too, each a byte on.
+        assert_eq!(got[6].0, 0x405, "the address moved on a byte each");
+    }
+
+    /// An access not aligned to its width is refused with `sberror` 3,
+    /// as the specification has it, and reaches no memory: a halfword
+    /// at an odd address, a word at an address not a multiple of four.
+    /// A width over 32 bits is refused with 4.
+    #[test]
+    fn misaligned_and_oversized_accesses_are_refused() {
+        let m = mem(&[(0x400, 0x4433_2211)]);
+        let clear = 7 << 12;
+        let got = with_bridge(
+            m.clone(),
+            vec![
+                (SBCS, 1 << 17, OP_WRITE),
+                (SBADDRESS0, 0x401, OP_WRITE),
+                (SBDATA0, 0xffff, OP_WRITE),
+                (SBCS, 0, OP_READ),
+                (SBCS, (2 << 17) | clear, OP_WRITE),
+                (SBADDRESS0, 0x402, OP_WRITE),
+                (SBDATA0, 0xffff_ffff, OP_WRITE),
+                (SBCS, 0, OP_READ),
+                (SBCS, (3 << 17) | clear, OP_WRITE),
+                (SBADDRESS0, 0x400, OP_WRITE),
+                (SBDATA0, 0xffff_ffff, OP_WRITE),
+                (SBCS, 0, OP_READ),
+            ],
+        );
+        assert_eq!((got[3].0 >> 12) & 7, 3, "a halfword at an odd address");
+        assert_eq!((got[7].0 >> 12) & 7, 3, "a word at a halfword address");
+        assert_eq!((got[11].0 >> 12) & 7, 4, "64 bits");
+        assert_eq!(m.borrow()[&0x400], 0x4433_2211, "nothing written");
+    }
+
+    /// What OpenOCD does to put a breakpoint over a compressed
+    /// instruction and take it out again: read the halfword, write
+    /// `c.ebreak` over it, read it back, write the instruction back and
+    /// read that back. The halfword beside it never changes.
+    #[test]
+    fn a_compressed_breakpoint_goes_in_and_comes_out() {
+        let m = mem(&[(0x700, 0x1234_5678)]);
+        let got = with_bridge(
+            m.clone(),
+            vec![
+                (SBCS, rd_cs(1), OP_WRITE),
+                (SBADDRESS0, 0x702, OP_WRITE),
+                (SBDATA0, 0, OP_READ),
+                (SBDATA0, 0x9002, OP_WRITE),
+                (SBADDRESS0, 0x702, OP_WRITE),
+                (SBDATA0, 0, OP_READ),
+                (SBDATA0, 0x1234, OP_WRITE),
+                (SBADDRESS0, 0x702, OP_WRITE),
+                (SBDATA0, 0, OP_READ),
+                (SBCS, 0, OP_READ),
+            ],
+        );
+        assert_eq!(got[2].0, 0x1234, "the instruction");
+        assert_eq!(got[5].0, 0x9002, "c.ebreak in its place");
+        assert_eq!(got[8].0, 0x1234, "the instruction again");
+        assert_eq!(m.borrow()[&0x700], 0x1234_5678, "the word as it was");
+        assert_eq!((got[9].0 >> 12) & 7, 0, "no error");
     }
 
     #[test]
@@ -941,12 +1150,14 @@ mod bridge_tests {
         assert_eq!(got[7].0, 7, "and goes again once it is cleared");
     }
 
+    /// A read of 64 bits, started by the address under `sbreadonaddr`,
+    /// is refused with the size error.
     #[test]
-    fn a_width_other_than_32_bits_is_refused() {
+    fn a_width_over_32_bits_is_refused() {
         let got = with_bridge(
             mem(&[]),
             vec![
-                (SBCS, (1 << 20) | (1 << 17), OP_WRITE),
+                (SBCS, rd_cs(3), OP_WRITE),
                 (SBADDRESS0, 0x100, OP_WRITE),
                 (SBCS, 0, OP_READ),
             ],
