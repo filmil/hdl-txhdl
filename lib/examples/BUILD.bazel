@@ -266,6 +266,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A reset drops a memory's write and keeps its words:  bazel run //lib/examples:ex_rstmem
+rust_binary(
+    name = "ex_rstmem",
+    srcs = ["ex_rstmem.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A reset empties the channel between two units:  bazel run //lib/examples:ex_flush
 rust_binary(
     name = "ex_flush",
@@ -1235,6 +1244,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_scanout.rs",
         "ex_reset.rs",
         "ex_ownrst.rs",
+        "ex_rstmem.rs",
         "ex_flush.rs",
         "ex_start.rs",
         "ex_chanwait.rs",

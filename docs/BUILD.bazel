@@ -657,6 +657,23 @@ waveform(
     ],
 )
 
+# A reset drops a memory's write and keeps its words (issue 877).
+waveform(
+    name = "rstmem",
+    example = "//lib/examples:ex_rstmem",
+    lowered = ("log", "log"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//rst=>rst",
+        "//we=>we",
+        "//d=>d",
+        "//a=>a",
+        "//log/wp=>wp",
+        "//q=>q",
+        "//r=>r",
+    ],
+)
+
 # A unit that takes its own reset and checks its count only out of it
 # (issue 633).
 waveform(
