@@ -1,0 +1,101 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: DtmBridge
+\datasheet{DtmBridge}{The debug transport's other half, on the system's clock: each access the transport sends becomes a read or a write on the board's link, and the specification's system bus access is served here.}
+
+\dsfacts{\code{lib/parts/src/dtm.rs}}{\code{txhdl\_parts::dtm::DtmBridge}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+\code{Dtm} turns OpenOCD's scans into \code{dmi} accesses: a 7-bit
+address, a word, and an op. The bridge takes each one, after it has
+crossed to the system's clock, and does one of two things with it.
+
+\begin{itemize}
+\item An access to \code{sbcs} (\code{0x38}), \code{sbaddress0}
+(\code{0x39}) or \code{sbdata0} (\code{0x3c}) is the debug module's
+system bus access (0.13, section 3.12), served here, where the bus
+master is. It is answered at once, and the access it starts runs on
+the link behind it, as the specification has it.
+\item Any other address is one of the debug module's registers. The
+module sits on the link at \code{DM}, each register a word at four
+times its number; the access goes on the link and is answered when
+its word comes back.
+\end{itemize}
+
+One access is on the link at a time, which is all a transport asks
+for, so the bridge's host needs identifiers of one bit.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.62\columnwidth}@{}}
+\toprule
+Parameter & What it is \\
+\midrule
+\code{DM} & the debug module's base on the link; the board gives
+\code{0x1000\_0000} \\
+\code{I} & the width of the host's identifiers; the board gives 1 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{System bus registers}
+
+\code{sbcs} reads version 1, a 32-bit address, and accesses of 8, 16
+and 32 bits. Its settings are \code{sbreadonaddr} (bit 20),
+\code{sbaccess} (bits 17 to 19), \code{sbautoincrement} (bit 16) and
+\code{sbreadondata} (bit 15); \code{sberror} (bits 12 to 14) and
+\code{sbbusyerror} (bit 22) are cleared by writing ones to them.
+
+\dstables{DtmBridge}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A system bus access goes on a write of \code{sbaddress0} under
+\code{sbreadonaddr}, a write of \code{sbdata0}, or a read of
+\code{sbdata0} under \code{sbreadondata}, and only with no error
+standing.
+\item A narrow access goes on the link as a word at the aligned
+address. A write carries the data moved into its lanes with only
+their strobes set; a read moves its lane down into \code{sbdata0} and
+clears the rest. \code{sbautoincrement} steps by the width.
+\item An access not aligned to its width sets \code{sberror} to 3,
+one wider than 32 bits to 4, and one the bus refuses to 7, other,
+since the bus does not say which kind of refusal it was. The first two
+never reach the bus.
+\item The width is kept with the access, so a write of \code{sbcs}
+while it runs does not change it.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/parts:parts\_test} runs the bridge against a model
+memory that honours the strobes and checks that the link carries word
+addresses: a module register as a word at four times its number;
+\code{sbcs}; reads following the address and the data; a write
+landing; a byte and a halfword read and written on every lane;
+autoincrement by the width; the misaligned and oversized refusals;
+OpenOCD's \code{c.ebreak} round trip, which leaves the word as it was;
+and a refusal by the bus sticking in \code{sberror} until cleared.
+\item \code{//cpu/vreteno:openocd\_test} puts stock OpenOCD 0.12.0 and
+gdb 16.3 on the whole simulated board through the transport and this
+bridge: OpenOCD reads and writes memory by system bus access, and
+gdb loads a program into the DDR3 and stops it at a breakpoint. A
+third test has the JTAG-to-AXI master read the data memory while the
+bridge reads by system bus access, and both get their words.
+\end{itemize}
+
+\subsection*{Used by}
+
+The Vreteno board, as \code{DtmBridge<0x1000\_0000, 1>}. Its host and
+the JTAG-to-AXI master's pins share the arbiter's second port through
+an \code{Arbiter2}, taking turns (issue 154).
+
+\subsection*{Limits}
+
+The debug module has no program buffer, so a debugger reaches memory
+by the system bus access served here, which is the setting OpenOCD is
+given, \code{riscv set\_mem\_access sysbus}. One access at a time.

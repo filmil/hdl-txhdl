@@ -1,0 +1,107 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Mdio
+\datasheet{Mdio}{An MDIO master on AXI-Lite: one clause 22 frame per command, to read or write an Ethernet PHY's management registers.}
+
+\dsfacts{\code{lib/parts/src/mdio.rs}}{\code{txhdl\_parts::mdio::Mdio}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+An Ethernet PHY keeps its configuration in 32 registers of 16 bits,
+and MDIO is how a MAC reaches them: IEEE 802.3, clause 22. MDC is a
+clock the master always drives. MDIO is one data line, which the
+master drives except while the PHY answers a read.
+
+A frame is 32 ones of preamble, then 32 bits, high bit first: the
+start \code{01}, the operation (\code{10} a read, \code{01} a write),
+the PHY's address and the register's, five bits each, two bits of
+turnaround, and the sixteen bits of the word. On a read the master
+lets go of the line at the turnaround.
+
+\subsection*{Register map}
+
+Offsets from the block's base.
+
+\dsregs{Mdio}
+
+A write to \code{cmd} starts the frame it describes, and \code{cmd}
+reads zero. \code{data} is the word the last read took, once
+\code{busy} has fallen. A write of one to \code{fired} clears it, and
+a command clears it itself.
+
+Half of an MDC cycle is \code{div + 1} cycles, so MDC is the system
+clock over \code{2 * (div + 1)}. 802.3 allows MDC up to 2.5\,MHz.
+\code{div} resets to zero, far too fast for any PHY, so a driver
+writes \code{ctrl} before its first frame; \code{phyregs} uses 39,
+1.25\,MHz from 100\,MHz.
+
+\dstables{Mdio}
+
+\subsection*{The line}
+
+\code{mdio\_out} is the level and \code{mdio\_oe} high drives it, so
+a board wrapper makes the pad three-state from the two and reads the
+pad back into \code{mdio\_in}. 802.3 asks for a pull-up on the line,
+so a line nobody drives reads one, and a read of an address with no
+PHY reads \code{ffff}.
+
+\subsection*{Behaviour}
+
+The master is two processes, as the I2C master is. The bus process
+answers the registers every cycle, counts the cycles of a half in
+\code{tick}, and marks a frame done. The engine waits for a write to
+\code{cmd} and loads two registers of 32 bits from it: \code{frame},
+the bits after the preamble, and \code{drive}, a one for each bit the
+master drives, all of a write and the first fourteen of a read. Then
+come two counted loops of 32 bits, the preamble and the frame, each
+bit a low half and a high half.
+
+\begin{itemize}
+\item A bit goes onto the line while MDC is low; the PHY takes it as
+MDC rises.
+\item The master takes each bit at the end of the low half, just
+before MDC rises again, a whole MDC cycle after the PHY changed it.
+802.3 gives the PHY up to 300\,ns for that, and at 1\,MHz there are
+1000.
+\item Every bit of the frame shifts into \code{rx}; after a read the
+last sixteen are the word.
+\item At the end the clock is parked low and the line let go.
+\code{done} is up for one cycle, when the bus process sets
+\code{fired}; \code{busy} falls a cycle after it.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/parts:parts\_test} drives the master against
+\code{sim::MdioPhy}, a PHY at one address with 32 registers that
+takes a bit as MDC rises and pages its vendor registers by register
+31 when it has pages: the identifier read, all 32 registers read
+back, an absent PHY reading all ones, a write read back, a paged
+register read through the page select with page 0 left alone, the
+master and the PHY never driving the line in the same cycle with
+every half of MDC at least \code{div + 1} cycles, and the lowering.
+\item \code{//lib/examples:ex\_mdio} scans for its PHY and reads it,
+and the build simulates the netlist against that run under nvc and
+Verilator (\code{//docs:mdio\_sim\_mdio\_tb\_test},
+\code{//docs:mdio\_vsim\_test}).
+\item \code{//cpu/vreteno:board\_test} runs \code{phyregs} and
+\code{phydelay} on the board's design against the model, holding the
+registers the JL2121 on the AX7A200B answered with.
+\end{itemize}
+
+\subsection*{Used by}
+
+The Vreteno board, on the peripheral page's eighth slot at
+\code{0x3700}, with its lines out to the flagship's JL2121 PHY.
+\code{cpu/vreteno/rust/phyregs.rs} reads the PHY's 32 registers, and
+\code{phydelay.rs} its RGMII delay bits on page 3336 (issues 864 and
+869).
+
+\subsection*{Limits}
+
+Clause 22 only: there is no clause 45 frame, so a PHY's extended
+register space is reached only through whatever paging the PHY
+offers. One frame per command, and no interrupt; a program polls
+\code{busy}. The master drives MDIO push-pull while it drives it,
+which is what 802.3 describes, and leaves the pull-up to the board.

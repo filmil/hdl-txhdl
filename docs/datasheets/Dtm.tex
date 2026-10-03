@@ -1,0 +1,110 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Dtm
+\datasheet{Dtm}{The RISC-V debug transport over JTAG, behind the FPGA's BSCANE2, so that a stock OpenOCD, and gdb through it, reaches the core's debug module from the board's own cable.}
+
+\dsfacts{\code{lib/parts/src/dtm.rs}}{\code{txhdl\_parts::dtm::Dtm}}%
+{\code{//docs:examples}, \code{//docs:vreteno}}
+
+\subsection*{Function}
+
+The FPGA's JTAG port belongs to the device, so a design reaches it
+through \code{BSCANE2}, one of the user scan chains of the device's
+TAP. OpenOCD speaks to a transport there with its BSCAN tunnel,
+\code{riscv use\_bscan\_tunnel 5}: it sets the device's instruction
+register to \code{USER4}, and carries every scan the transport's own
+TAP would have had inside one data scan of that chain, framed as
+OpenOCD 0.12.0's \code{riscv.c} frames it:
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.62\columnwidth}@{}}
+\toprule
+Scan & First bit shifted to last \\
+\midrule
+instruction & \code{0}, the width 5 in 7 bits, the register in 5,
+\code{000} \\
+data & \code{1}, the width $W$ in 7 bits, the data in $W + 1$,
+\code{000} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The payload is one bit longer than the register because what comes
+back is a clock late: the device's TAP presents the bit that left on
+the edge after. The unit shifts the first $W$ bits into the register
+and lets the last go by.
+
+The unit runs on \code{Tck}, the cable's clock, which \code{BSCANE2}
+hands the fabric. Its request and answer cross to the system's clock
+beside it, so it has one clock.
+
+\subsection*{Registers}
+
+The specification's, at its numbers.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lllp{0.4\columnwidth}@{}}
+\toprule
+IR & Register & Width & What it is \\
+\midrule
+\code{0x01} & \code{idcode} & 32 & \code{0x00154001}, the transport's
+own; selected after reset \\
+\code{0x10} & \code{dtmcs} & 32 & version 1, \code{abits} 7, an idle
+hint of one, \code{dmistat}; \code{dmireset} at bit 16 and
+\code{dmihardreset} at bit 17 \\
+\code{0x11} & \code{dmi} & 41 & address 7, data 32, op 2 \\
+other & bypass & 1 & zero \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{Dtm}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A \code{dmi} scan that asks for a read (op 1) or a write (op 2)
+sends its 41 bits on \code{req}, if nothing is in flight and no error
+stands. The answer comes back on \code{ans}: the word above a two-bit
+status, 0 for done and 2 for failed.
+\item A scan that asks while an access is in flight, or that captures
+\code{dmi} meanwhile, sets \code{dmistat} to 3, busy. OpenOCD answers
+busy by idling longer before its next scan.
+\item An answer of failed sets \code{dmistat} to 2.
+\item Either error sticks, and no access goes while it stands, until
+a write of \code{dtmcs} sets \code{dmireset}, which clears it, or
+\code{dmihardreset}, which clears it and drops the access in flight.
+\item The \code{reset} pin, the device's test-logic reset, selects
+\code{idcode} again.
+\item A \code{dmi} capture shows the address and the word of the last
+access, with busy as its op while an access is in flight and
+\code{dmistat} otherwise.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/parts:parts\_test} drives the device's side of
+\code{BSCANE2} bit by bit: the \code{idcode} after reset,
+\code{dtmcs}, bypass for an unknown instruction, a \code{dmi} write
+then read, busy while an access is in flight until \code{dmireset},
+and a failed access sticking.
+\item \code{//lib/examples:ex\_dtm}, and the build simulates the
+netlist against its run under nvc and Verilator
+(\code{//docs:dtm\_sim\_dtm\_tb\_test}, \code{//docs:dtm\_vsim\_test}).
+\item \code{//cpu/vreteno:openocd\_test} puts stock OpenOCD 0.12.0 on
+the whole simulated board behind a model of the Artix-7's TAP: it
+examines the hart, halts it, reads \code{pc} and memory, steps,
+writes and resumes; the same \code{dtmcs} scans bit by bit as
+OpenOCD's driver makes them; and gdb loading a program and stopping
+at a breakpoint.
+\end{itemize}
+
+\subsection*{Used by}
+
+The Vreteno board, on \code{USER4}, in every top. Its requests reach
+the debug module through \code{DtmBridge}.
+
+\subsection*{Limits}
+
+One access in flight at a time, which is all the specification's
+\code{dmi} has. Only the nested-TAP framing OpenOCD 0.12.0 uses by default is understood.

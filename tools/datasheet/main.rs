@@ -33,6 +33,7 @@ use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::cdc::ChanCdc;
 use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::dma::{LineBuf, LineFetch, LineStore, NoBeats, NoReads};
+use txhdl_parts::dtm::{Dtm, DtmBridge};
 use txhdl_parts::eth::{EthLite, EthRx, EthTx};
 use txhdl_parts::ethdma::{FrameIn, FrameLen, FrameOut};
 use txhdl_parts::ethshare::EthShare;
@@ -42,6 +43,7 @@ use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::gpio::Gpio;
 use txhdl_parts::hdmi::{vga, Hdmi, I2cInit};
 use txhdl_parts::i2c::I2c;
+use txhdl_parts::mdio::Mdio;
 use txhdl_parts::plic::Plic3;
 use txhdl_parts::pwm::Pwm;
 use txhdl_parts::redundant::{Check, Tee};
@@ -576,6 +578,12 @@ fn main() {
     sheet("Timer", "Timer<4>", Timer::<4>::lowered("timer"));
     sheet("Plic", "Plic3<0>", Plic3::<0>::lowered("plic"));
     sheet("Dm", "Dm", Dm::lowered("dm"));
+    sheet("Dtm", "Dtm", Dtm::lowered("dtm"));
+    sheet(
+        "DtmBridge",
+        "DtmBridge<0x10000000, 1>",
+        DtmBridge::<0x1000_0000, 1>::lowered("dtm_bridge"),
+    );
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));
     sheet("Pwm", "Pwm", Pwm::lowered("pwm"));
     sheet("Tee", "Tee<R<32, 2>>", Tee::<R<32, 2>>::lowered("tee"));
@@ -603,6 +611,7 @@ fn main() {
     sheet("Spi", "Spi", Spi::lowered("spi"));
     sheet("Tracer", "Tracer<8>", Tracer::<8>::lowered("tracer"));
     sheet("I2c", "I2c", I2c::lowered("i2c"));
+    sheet("Mdio", "Mdio", Mdio::lowered("mdio"));
     sheet("Sd", "Sd", Sd::lowered("sd"));
     sheet(
         "Wdog",
@@ -622,6 +631,7 @@ fn main() {
     regs("Gpio", &txhdl_parts::gpio::regs::MAP);
     regs("Hdmi", &txhdl_parts::hdmi::regs::MAP);
     regs("I2c", &txhdl_parts::i2c::regs::MAP);
+    regs("Mdio", &txhdl_parts::mdio::regs::MAP);
     regs("Pwm", &txhdl_parts::pwm::regs::MAP);
     regs("Spi", &txhdl_parts::spi::regs::MAP);
     regs("Syscon", &txhdl_parts::syscon::regs::MAP);
