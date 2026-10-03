@@ -1,0 +1,35 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Reset Leaves a Memory Alone}
+\label{sec:x-rstmem}
+
+A reset puts every register back and empties every channel. A memory
+is neither: it keeps what it holds, since a reset is not a reload. What
+a reset does to a memory is drop a write made while the reset is held,
+as it drops a register's drive, so that a unit held in reset changes
+nothing. In the netlist the write sits in the clocked block's branch
+out of reset. It does so whether or not a register shares the process,
+so a process that writes only a memory has that branch as well, with
+nothing to put back in the other (issue 877).
+
+\code{Log} has two stores and a process for each. The first writes
+its store where a register, the write pointer, says, as the write
+side of a FIFO does. The second writes its store alone, at an address
+it is given. The run writes a word into each, holds the reset over a
+second write, and reads both stores back. The first word is there in
+each, and the second in neither. A memory is not traced, so the
+simulations of the netlist see the stores through \code{q} and
+\code{r}, the two read ports, and are checked against the run there.
+
+\begin{figure}[htbp]
+\centering
+\input{rstmem_timing.tex}
+\caption{A write at word 0, a second at word 1 with \code{rst} high,
+and the four words read back: \code{0x11} at word 0 on both ports, and
+nothing at word 1. The pointer \code{wp} went back to zero with the
+reset.}
+\label{fig:x-rstmem}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_rstmem.rs}. Run with \code{bazel run //lib/examples:ex\_rstmem}.},label={lst:x-rstmem}]{lib/examples/ex_rstmem.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_rstmem} printed when the build ran it: each store read back a word at a time, then the netlist, whose memory writes are in the branch out of reset.},label={lst:x-rstmem-out}]{out_rstmem.txt}
