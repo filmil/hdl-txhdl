@@ -41,7 +41,7 @@ regmap! { knobs (knobs_read, knobs_we), 2: [
 
 // begin{unit}
 /// Three registers: who it is, a control word, and a count.
-#[derive(Trace, Default)]
+#[derive(Trace)]
 pub struct Knobs {
     /// The control word's run bit.
     pub run: Reg<Bit>,
@@ -49,6 +49,19 @@ pub struct Knobs {
     pub step: Reg<U<4>>,
     /// Cycles since the run bit rose.
     pub count: Reg<U<32>>,
+}
+
+/// Each field starts where the map says it resets: `step` at one. The
+/// map's reset is only what the header states, so the unit builds the
+/// register with it, and the netlist follows `Default` (issue 887).
+impl Default for Knobs {
+    fn default() -> Self {
+        Knobs {
+            run: Reg::default(),
+            step: Reg::new(U::<4>::from(1u8)),
+            count: Reg::default(),
+        }
+    }
 }
 
 #[lower]
@@ -172,6 +185,18 @@ fn main() {
                 assert_eq!(ok.resp, Resp::Okay, "the write was answered");
             }
         };
+        // After reset and before any write, every field reads what the
+        // map declares it resets to (issue 887).
+        for r in knobs::MAP.regs {
+            let word = get(r.offset()).await;
+            assert_eq!(r.reset_mismatches(word), [], "{} after reset", r.name);
+        }
+        let ctrl = get(knobs::ctrl).await;
+        println!(
+            "{:3}  ctrl   {ctrl:#x} after reset: step {}, as the map says",
+            now(),
+            knobs::ctrl_step.get(ctrl)
+        );
         let id = get(knobs::id).await;
         println!("{:3}  id     {id:#010x}", now());
         assert_eq!(id, 0x4b4e_4f42);
