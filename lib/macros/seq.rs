@@ -869,8 +869,10 @@ pub(crate) fn lower(
             for (_, _, cond, e) in &mine {
                 // A handshake lowered after a wait carries the guard,
                 // which is the state's condition here; one asserted
-                // outright takes the condition.
-                let term = if e == one {
+                // outright takes the condition, and so does one whose
+                // terms the condition already holds, a put's send under
+                // its own wait's ready (issue 904).
+                let term = if e == one || implied(cond, e) {
                     cond.clone()
                 } else if e.contains(cond.as_str()) {
                     e.clone()
@@ -1156,9 +1158,55 @@ fn unwrapped(mut ts: Vec<TokenTree>) -> Vec<TokenTree> {
     }
     ts
 }
+/// The terms of `e` taken apart at its top-level `&&`s: the Rust
+/// source of a netlist expression, `NlE::bin("&&", a, b)`, is `a` and
+/// `b`, each taken apart in turn; anything else is one term.
+fn conjuncts(e: &str) -> Vec<&str> {
+    let Some(inner) = e
+        .strip_prefix("NlE::bin(\"&&\", ")
+        .and_then(|s| s.strip_suffix(')'))
+    else {
+        return vec![e];
+    };
+    // The comma between the two operands is the one at depth zero,
+    // outside every bracket and every string.
+    let (mut depth, mut quoted, mut escaped) = (0i32, false, false);
+    for (i, c) in inner.char_indices() {
+        if quoted {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => quoted = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => quoted = true,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                let (a, b) = (&inner[..i], inner[i + 1..].trim_start());
+                let mut v = conjuncts(a);
+                v.extend(conjuncts(b));
+                return v;
+            }
+            _ => {}
+        }
+    }
+    vec![e]
+}
+
+/// Whether `cond` implies `e` by holding every term of it, so that
+/// `cond && e` is `cond`.
+fn implied(cond: &str, e: &str) -> bool {
+    let have = conjuncts(cond);
+    conjuncts(e).iter().all(|t| have.contains(t))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{bits, drive_of, driven, reg_name};
+    use super::{bits, conjuncts, drive_of, driven, implied, reg_name};
 
     #[test]
     fn the_register_is_numbered_from_the_second_process() {
@@ -1183,5 +1231,19 @@ mod tests {
         assert_eq!(drive_of(s, "held"), None);
         assert_eq!(driven("NlS::Guard(x)"), None);
         assert_eq!(driven("NlS::Drive(NlT::Word(m, a), e)"), None);
+    }
+
+    #[test]
+    fn a_term_the_condition_holds_is_not_anded_in_again() {
+        let at = "NlE::bin(\"==\", NlE::Name(\"at_wait\".to_string()), x)";
+        let r = "NlE::Name(\"out_ready\".to_string())";
+        let both = format!("NlE::bin(\"&&\", {at}, {r})");
+        assert_eq!(conjuncts(&both), vec![at, r]);
+        assert!(implied(&both, r));
+        assert!(implied(&both, &both));
+        // Under an or, a term is not implied.
+        let either = format!("NlE::bin(\"||\", {at}, {r})");
+        assert!(!implied(&either, r));
+        assert!(!implied(r, &both));
     }
 }
