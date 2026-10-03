@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# gdb-multiarch, Debian's gdb for every architecture it builds, RISC-V
+# among them: 16.3, which loads a program through OpenOCD's gdb server
+# and stops it at a breakpoint (issue 872). It is fetched as the Debian
+# package it is published as, with the closure of the libraries that
+# package names; `trixie.lock.tsv` is that closure, written by
+# //tools/debclosure and pinned by checksum, with the first two lines
+# added by hand:
+#
+#   bazel run //tools/debclosure -- -suite=trixie \
+#       -snapshot=20261001T000000Z gdb-multiarch
+#
+#   bazel run //third_party/gdb -- --version
+load(":defs.bzl", "gdb_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["trixie.lock.tsv"])
+
+gdb_binary(
+    name = "gdb",
+    tree = "@gdb_tree//:all",
+)
