@@ -6,8 +6,10 @@
 //! edge left it, `valid` on the receiving side the head being full.
 //! Both are registers, so two units on a channel have no
 //! combinational path between them, which is what the runtime
-//! promises and what a board needs. One of these sits between two
-//! lowered units wherever the run had a channel.
+//! promises and what a board needs. The netlist does not use it:
+//! between two lowered units where the run had a channel it puts the
+//! hand-written `txhdl_chan`. This one is used by `ex_buffer` and the
+//! datasheets.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};

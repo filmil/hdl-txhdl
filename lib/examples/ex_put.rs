@@ -5,8 +5,8 @@
 //! address to move exactly on the edge the word is taken, and not an
 //! edge later, or the next offer reads the word it has just given.
 //! `put` is that: it waits for an edge at which the channel has room,
-//! sends in the step after it, and what follows it happens in that
-//! step, so a register set after it takes its value on the take
+//! sends in the step that edge begins, and what follows it happens in
+//! that step, so a register set after it takes its value on the take
 //! (issue 755). The word is a closure, read at that edge as `until`
 //! reads its condition, since a word read where `put` is called is
 //! read before the address has moved.

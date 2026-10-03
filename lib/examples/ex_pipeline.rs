@@ -7,9 +7,10 @@ use txhdl::funcs::{high_half, low_half};
 use txhdl::pipeline::{add, mul};
 use txhdl::types::{Bit, U};
 
-/// Two stages, and neither boundary was placed by hand. `p` is live
-/// across the await inside `mul`, so the async state machine holds it;
-/// that is the work a `pipe` declaration used to ask for.
+/// Two stages, and neither boundary was placed by hand. `prev` is live
+/// across the await inside `mul` and `p` across the one inside `add`,
+/// so the async state machine holds them; that is the work a `pipe`
+/// declaration used to ask for.
 pub async fn mac(a: U<32>, b: U<32>, prev: U<64>) -> U<64> {
     let p = mul(a, b).await;
     add(prev, p).await

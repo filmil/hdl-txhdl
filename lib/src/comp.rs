@@ -325,9 +325,9 @@ impl<T: Transaction, C: Clock> Tx<T, C> {
     }
     /// Offer a transaction until it is taken: the next edge of the
     /// channel's clock at which the channel has room, and the send in
-    /// the step after it, which puts it in at the end of that step. An
-    /// event, like `C::rising()` and `until`, and the sender's side of
-    /// [`Rx::wait`]: what follows it happens in that step, so a
+    /// the step that edge begins, which puts it in at the end of that
+    /// step. An event, like `C::rising()` and `until`, and the sender's
+    /// side of [`Rx::wait`]: what follows it happens in that step, so a
     /// register set after it takes its value at the edge the
     /// transaction is taken (issue 755).
     ///
@@ -641,7 +641,9 @@ bool_reg_ops!(BitAnd bitand, BitOr bitor, BitXor bitxor);
 /// A wire a unit keeps as a field, for looking at: a `let` of the
 /// loop that has a name in the trace as well as in the netlist. The
 /// process drives it with `set` in the step and may read it back with
-/// `get` in the same step; it holds nothing across the edge. In the
+/// `get` in the same step. It is meant to be set before it is read: it
+/// keeps the last value set, so a `get` before the step's `set` gives
+/// the previous step's value, which the netlist's wire would not. In the
 /// netlist it is the wire the `let` would have been; in a waveform
 /// it shows under the unit's name like a register, which is what an
 /// internal signal needs to be seen without a port for it.

@@ -6059,7 +6059,8 @@ fn find_runs(ts: &[TokenTree], out: &mut Vec<(String, Group, Span)>) {
 
 /// `#[lower]` on `impl Unit for X`: the impl stays, `<In, Out>` is
 /// written into a bare header from `run`'s signature, and
-/// `X::lowered(name)` and `X::verilog(name)` are written beside it.
+/// `X::lowered(name)`, `X::verilog(name)` and `X::vhdl(name)` are
+/// written beside it.
 ///
 /// `run` is a `loop` whose first statement waits for an edge, rising
 /// or falling, which lowers to one clocked block; or a loop of several

@@ -16,8 +16,9 @@
 //! stall there is. A trap or an `mret` is a redirect like a jump's.
 //!
 //! Written in the subset `#[lower]` reads: every value is a function
-//! of the state and the inputs, `select!` chooses among values and
-//! `with!` and `case!` among drives, and nothing branches. The pieces
+//! of the state and the inputs, `select!` and `mux` choose among
+//! values, `with!`, `case!` and `when!` among drives, and the only
+//! `if`s are the three that guard a send on the bus. The pieces
 //! that are functions of their operands alone, the immediates, the
 //! ALU, the branch condition, the load's extension, the store's lanes,
 //! the CSR access and the sequencer's result, are functions under

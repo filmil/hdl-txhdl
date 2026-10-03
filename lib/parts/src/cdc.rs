@@ -31,7 +31,7 @@
 //! thing the test cannot see.
 //!
 //! `lib/board/chan_cdc.v` is the hand-written Verilog this is shaped
-//! after, five instances of which are in the flagship. Replacing it
+//! after, seven instances of which are in the flagship. Replacing it
 //! is a separate decision (issue 370): that file is proven on
 //! hardware and this one is not.
 use txhdl::comp::{join2, Clock, Mem, Reg, Rx, Tx, Unit};
