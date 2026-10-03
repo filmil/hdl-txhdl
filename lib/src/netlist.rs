@@ -2138,7 +2138,10 @@ impl Lowered {
                     )
                     .unwrap();
                     for (m, words) in &self.init {
-                        if m != n {
+                        // Words of zero are what the loop above wrote,
+                        // so a memory given only those has no block
+                        // (issue 903).
+                        if m != n || words.iter().all(|v| *v == 0) {
                             continue;
                         }
                         writeln!(out, "  initial begin").unwrap();
