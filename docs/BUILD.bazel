@@ -874,8 +874,8 @@ waveform(
     name = "dtm",
     example = "//lib/examples:ex_dtm",
     lowered = ("dtm", "dtm"),
-    from_tick = 480,
-    until = 680,
+    from_tick = 479,
+    until = 679,
     signals = [
         "//clocks/tck=>tck",
         "//capture=>capture",
@@ -1314,8 +1314,8 @@ waveform(
         "//b/tx_valid=>b",
         "//raster/inflight=>inflight",
     ],
-    from_tick = 1660,
-    until = 1730,
+    from_tick = 1659,
+    until = 1729,
     width = 8.2,
 )
 
@@ -1356,7 +1356,7 @@ waveform(
         "//b/tx_data/id=>b_id",
         "//host/busy=>busy",
     ],
-    until = 110,
+    until = 109,
 )
 
 # An AXI4 router: one host, three peripherals at three ranges, and a
@@ -1384,7 +1384,7 @@ waveform(
         "//b/tx_data/id=>b_id",
         "//b/tx_data/resp=>b_resp",
     ],
-    until = 110,
+    until = 109,
 )
 
 # An AXI4 arbiter: two hosts writing four beats each at the same
@@ -1410,8 +1410,8 @@ waveform(
         "//bs_0/tx_valid=>b0",
         "//bs_1/tx_valid=>b1",
     ],
-    from_tick = 16,
-    until = 76,
+    from_tick = 15,
+    until = 75,
 )
 
 # An AXI4 to AXI-Lite bridge of two peripherals: bursts split into
@@ -1441,7 +1441,7 @@ waveform(
         "//b/tx_valid=>b",
         "//b/tx_data/resp=>b_resp",
     ],
-    until = 170,
+    until = 169,
 )
 
 # A host on AXI4 pins: the write's address phase and beats handed to the
@@ -1463,7 +1463,7 @@ waveform(
         "//inp_pins_bready=>bready",
         "//outp_bid=>bid",
     ],
-    until = 20,
+    until = 19,
     width = 7.4,
 )
 
@@ -1484,8 +1484,8 @@ waveform(
         "//i2c/nack=>nack",
         "//irq=>irq",
     ],
-    from_tick = 60,
-    until = 220,
+    from_tick = 59,
+    until = 219,
     width = 17.0,
 )
 
@@ -1504,8 +1504,8 @@ waveform(
         "//mdio/busy=>busy",
         "//mdio/rx=>rx",
     ],
-    from_tick = 870,
-    until = 1048,
+    from_tick = 869,
+    until = 1047,
     width = 17.0,
 )
 
@@ -1523,7 +1523,7 @@ waveform(
         "//bus_r/tx_valid=>rb",
         "//reg/word=>word",
     ],
-    until = 34,
+    until = 33,
     width = 7.4,
 )
 
@@ -1544,7 +1544,7 @@ waveform(
         "//ack=>ack",
         "//bus_ans/tx_valid=>ans",
     ],
-    until = 36,
+    until = 35,
     width = 8.2,
 )
 
@@ -1570,8 +1570,8 @@ waveform(
         "//rx/rx_valid=>rx_valid",
         "//irq=>irq",
     ],
-    from_tick = 120,
-    until = 330,
+    from_tick = 119,
+    until = 329,
 )
 
 # Video for an HDMI encoder chip behind AXI-Lite, and the I2C master
@@ -1618,8 +1618,8 @@ waveform(
         "//release/tx_data/id=>release_id",
         "//host/busy=>busy",
     ],
-    from_tick = 40,
-    until = 104,
+    from_tick = 39,
+    until = 103,
 )
 
 # A foreign module inside a netlist: the netlist is simulated with the
@@ -1638,7 +1638,7 @@ waveform(
         "//top/blink/tick=>tick",
         "//count=>count",
     ],
-    until = 60,
+    until = 59,
 )
 
 waveform(
@@ -1668,7 +1668,7 @@ waveform(
         "//out/rx_data/value=>out_value",
         "//out/rx_ready=>out_ready",
     ],
-    until = 54,
+    until = 53,
 )
 
 # Two clocks in one netlist, each port checked against its own edge.
@@ -1687,7 +1687,7 @@ waveform(
         "//a=>a",
         "//b=>b",
     ],
-    until = 54,
+    until = 53,
 )
 
 # An SPI master reading a flash chip: the select held, the clock, the
@@ -1706,8 +1706,8 @@ waveform(
         "//spi/rxb=>rxb",
         "//spi/busy=>busy",
     ],
-    from_tick = 180,
-    until = 320,
+    from_tick = 179,
+    until = 319,
 )
 
 # The system control block: the reset a program asked for, held for
@@ -1725,8 +1725,8 @@ waveform(
         "//block/hold=>hold",
         "//block/scratch=>scratch",
     ],
-    from_tick = 146,
-    until = 200,
+    from_tick = 145,
+    until = 199,
 )
 
 # The watchdog, at the end of its second timeout: the count reaching
@@ -1744,8 +1744,8 @@ waveform(
         "//block/status=>status",
         "//block/hold=>hold",
     ],
-    from_tick = 566,
-    until = 616,
+    from_tick = 565,
+    until = 615,
 )
 
 # One thing run twice and compared: a tee hands each word to both
@@ -1781,8 +1781,8 @@ waveform(
         "//knobs/step=>step",
         "//knobs/count=>count",
     ],
-    from_tick = 10,
-    until = 70,
+    from_tick = 9,
+    until = 69,
 )
 
 # The SD host sending a command: the card clock, the command line
@@ -1801,8 +1801,8 @@ waveform(
         "//sd/n=>n",
         "//sd/crc7=>crc7",
     ],
-    from_tick = 30,
-    until = 90,
+    from_tick = 29,
+    until = 89,
 )
 
 # The entropy source starting: the rings' samples arriving once the
@@ -1822,8 +1822,8 @@ waveform(
         "//trng/runlen=>runlen",
         "//trng/count=>count",
     ],
-    from_tick = 14,
-    until = 74,
+    from_tick = 13,
+    until = 73,
 )
 
 # The trace buffer filling and freezing: the ring walking, the count
@@ -1841,7 +1841,7 @@ waveform(
         "//tracer/count=>count",
         "//tracer/cursor=>cursor",
     ],
-    until = 60,
+    until = 59,
 )
 
 # The configuration flash after the bitstream: the end of startup, the
@@ -1863,7 +1863,7 @@ waveform(
         "//w_rst=>w_rst",
         "//w_cs_n=>w_cs_n",
     ],
-    until = 60,
+    until = 59,
 )
 
 # A flash read as memory: the fast read command going out on the wires
@@ -1880,8 +1880,8 @@ waveform(
         "//miso=>miso",
         "//win/phase=>phase",
     ],
-    from_tick = 40,
-    until = 120,
+    from_tick = 39,
+    until = 119,
 )
 
 # A peripheral answered by a program: the transaction leaving on
@@ -1902,8 +1902,8 @@ waveform(
         "//remote/busy=>busy",
         "//remote/tag=>tag",
     ],
-    from_tick = 8,
-    until = 98,
+    from_tick = 7,
+    until = 97,
 )
 
 waveform(
@@ -1917,8 +1917,8 @@ waveform(
         "//pwm/count=>count",
         "//pins=>pins",
     ],
-    from_tick = 100,
-    until = 180,
+    from_tick = 99,
+    until = 179,
 )
 
 # Pins behind AXI-Lite: the direction set, a pin read through its
@@ -1936,7 +1936,7 @@ waveform(
         "//gpio/status=>status",
         "//irq=>irq",
     ],
-    until = 200,
+    until = 199,
 )
 
 # One word behind two AXI-Lite links, each link one port of the unit:
@@ -2088,7 +2088,7 @@ waveform(
         "//px_out_0/rx_valid=>pout_0",
         "//px_out_5/rx_valid=>pout_5",
     ],
-    until = 22,
+    until = 21,
 )
 
 waveform(
@@ -2220,7 +2220,7 @@ waveform(
         "//wrapped/gpio/status=>status",
         "//irq=>irq",
     ],
-    until = 200,
+    until = 199,
 )
 
 # A child's inputs held at constants by its parent (issue 498).
@@ -2432,7 +2432,7 @@ waveform(
         "//out/tx_ready=>out_ready",
         "//out/tx_data=>out",
     ],
-    until = 60,
+    until = 59,
 )
 
 # A process of several waits, lowered to a state machine whose
@@ -2566,7 +2566,7 @@ waveform(
         "//arith/neg=>neg",
         "//arith/sum=>sum",
     ],
-    until = 34,
+    until = 33,
 )
 
 waveform(
@@ -2581,7 +2581,7 @@ waveform(
         "//choose/by_if=>by_if",
         "//choose/by_match=>by_match",
     ],
-    until = 34,
+    until = 33,
 )
 
 waveform(
@@ -2595,7 +2595,7 @@ waveform(
         "//classify/by_match=>by_match",
         "//classify/digit=>digit",
     ],
-    until = 50,
+    until = 49,
 )
 
 waveform(
@@ -2611,8 +2611,8 @@ waveform(
         "//ring/rp=>rp",
         "//q=>q",
     ],
-    from_tick = 500,
-    until = 540,
+    from_tick = 499,
+    until = 539,
 )
 
 waveform(
@@ -2628,7 +2628,7 @@ waveform(
         "//out/rx_data=>out_data",
         "//merge/count=>count",
     ],
-    until = 50,
+    until = 49,
 )
 
 waveform(
@@ -2642,8 +2642,8 @@ waveform(
         "//crc7/crc=>crc",
         "//sum=>sum",
     ],
-    from_tick = 62,
-    until = 92,
+    from_tick = 61,
+    until = 91,
 )
 
 waveform(
@@ -2680,8 +2680,8 @@ waveform(
     name = "plic",
     example = "//lib/examples:ex_plic",
     lowered = ("plic3", "plic"),
-    from_tick = 12,
-    until = 60,
+    from_tick = 11,
+    until = 59,
     width = 15.5,
     signals = [
         "//clocks/clk=>clk",
@@ -2710,7 +2710,7 @@ waveform(
         ("uart4", "uart"),
         ("ubridge", "ubridge"),
     ],
-    until = 30,
+    until = 29,
     signals = [
         "//clocks/clk=>clk",
         "//rst=>rst",
@@ -2728,8 +2728,8 @@ waveform(
 waveform(
     name = "vreteno_out",
     example = "//cpu/vreteno:vreteno",
-    from_tick = 474,
-    until = 566,
+    from_tick = 473,
+    until = 565,
     width = 15.5,
     signals = [
         "//clocks/clk=>clk",
@@ -2743,8 +2743,8 @@ waveform(
 waveform(
     name = "vreteno_in",
     example = "//cpu/vreteno:vreteno",
-    from_tick = 834,
-    until = 930,
+    from_tick = 833,
+    until = 929,
     width = 15.5,
     signals = [
         "//clocks/clk=>clk",
@@ -2760,8 +2760,8 @@ waveform(
 waveform(
     name = "vreteno_bus",
     example = "//cpu/vreteno:vreteno",
-    from_tick = 440,
-    until = 490,
+    from_tick = 439,
+    until = 489,
     width = 15.5,
     signals = [
         "//clocks/clk=>clk",
