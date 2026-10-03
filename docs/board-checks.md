@@ -34,6 +34,7 @@ bazel build //third_party/gdb //cpu/vreteno/rust:gdbprobe_elf   # gdb, #872
 bazel build //tools/trngstat
 bazel build //cpu/vreteno/rust:phyregs_ram_bin       # the PHY's registers, #864
 bazel build //cpu/vreteno/rust:phydelay_ram_bin      # the PHY's delay bits, #869
+bazel build //cpu/vreteno/rust:sdprobe_ram_bin       # the SD card, #153
 ```
 
 A Vivado build that the memory watchdog can reach is killed partway, so run each one detached, with `nohup` and `disown`, and poll its log.
@@ -283,6 +284,37 @@ Pass: `phy at 0`, `page was 0000`, `p3336 r17` and a word, `tx delay` and `rx de
 `tx delay 1` is the prediction for transmit, since the transmit clock leaves the FPGA edge-aligned and the link is clean (#231); a 0 there would mean the transmit centring, too, comes from somewhere other than this bit.
 `//cpu/vreteno:board_test`'s `the_phy_delay_bits_read_through_the_page` runs the program against the model, whose word is its own (`0200`), and checks that the frames are exactly read, write, read, write, read, and that the page select is left as found; `a_failed_page_read_writes_nothing` checks the abort.
 Put the log on #869.
+
+### The SD card, #153
+
+The boot bitstream, programmed over JTAG, built from the change that brings the slot's pins out (bank 16, E13 for the clock, E14 for the command line, D15, D14, F14 and F13 for the data lines), with a card in the slot, J7.
+Nothing is written to flash, and the program writes nothing to the card: it sends no write command.
+
+```sh
+bazel run //cpu/vreteno:vreteno_board_boot_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/sdprobe_ram_bin.bin --seconds=10 \
+    2>&1 | tee board-153-sdprobe.log
+```
+
+Pass, in this order:
+* `cmd8 000001aa`.
+* `ocr` and a word with its top bit set, then `sdhc` for a card above 2 GB.
+* `cid` and four words, the manufacturer's identifier first, then `rca` and the card's address.
+* `blk0` and 32 lines of 16 bytes.
+* `wide same`, which says that the block read on four lines is the one read on one.
+* `boot 55aa` for a card with a partition table, `boot none` otherwise.
+
+`no card` means nothing answered `CMD8`: either there is no card, or the clock or the command line is not reaching it.
+`never ready` means the card answered but did not finish powering up within about a second.
+`cmd` and a number with `failed` names the command whose response timed out or failed its CRC.
+`wide differs` with a sound `blk0` points at `sd_dat[1]` to `sd_dat[3]`, which only the four-line read uses.
+`//cpu/vreteno:board_test`'s `the_sd_card_is_read_on_the_board` runs the program against the model card and checks the printout and that the card's blocks are unchanged.
+Put the log on #153; it closes #153 when it passes.
+
+Done on October 3, 2026, by txhdl-hil, twice, the two runs agreeing line for line: a 32 GB card answered `cmd8 000001aa` and `ocr c0ff8000 sdhc`, with the CID `19445941 53544300 0000003a 9c00ec7b`.
+Its block 0 is a partition table with one FAT32 partition from sector 8192, 0x03b84000 sectors long, and the run ended `wide same` and `boot 55aa`.
+Both logs are on #153.
 
 ## 8. The DDR3 through MIG, #188
 
