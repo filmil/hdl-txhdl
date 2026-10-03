@@ -22,12 +22,16 @@
 #define TRNG_STATUS_RUN_MASK 0x200
 #define TRNG_STATUS_RUN_WIDTH 1
 #define TRNG_STATUS_RUN_RESET 0x0
+#define TRNG_STATUS_APTFAULT_SHIFT 10 /* read only: the adaptive proportion test tripped */
+#define TRNG_STATUS_APTFAULT_MASK 0x400
+#define TRNG_STATUS_APTFAULT_WIDTH 1
+#define TRNG_STATUS_APTFAULT_RESET 0x0
 #define TRNG_CTRL 0x08 /* read, write: the run bit, and the fault's clear */
 #define TRNG_CTRL_RUN_SHIFT 0 /* read, write: the rings run and the buffer fills */
 #define TRNG_CTRL_RUN_MASK 0x1
 #define TRNG_CTRL_RUN_WIDTH 1
 #define TRNG_CTRL_RUN_RESET 0x0
-#define TRNG_CTRL_CLEAR_SHIFT 1 /* write only: written one, the fault is cleared */
+#define TRNG_CTRL_CLEAR_SHIFT 1 /* write only: written one, the faults are cleared */
 #define TRNG_CTRL_CLEAR_MASK 0x2
 #define TRNG_CTRL_CLEAR_WIDTH 1
 #define TRNG_CTRL_CLEAR_RESET 0x0

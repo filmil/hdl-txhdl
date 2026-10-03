@@ -8,20 +8,22 @@
  *
  *   0x00  read:  a word of entropy, taken by the read; zero if none.
  *   0x04  read:  bit 0 a word is ready, bits 3 to 1 how many are
- *                waiting, bit 8 the health test tripped, bit 9 running.
- *   0x08  r/w:   bit 0 run; a write with bit 1 clears the fault.
+ *                waiting, bit 8 the repetition count test tripped,
+ *                bit 9 running, bit 10 the adaptive proportion test
+ *                tripped.
+ *   0x08  r/w:   bit 0 run; a write with bit 1 clears the faults.
  *   0x0c  read:  the last 32 raw samples, before the extractor.
  *
  * `lib/parts/src/trng.rs` is the hardware and states the same map;
  * `cpu/vreteno/tests/zephyr_dts.rs` checks that this file and that
  * one still agree.
  *
- * The hardware's health test is what makes this driver refuse rather
- * than hand out a constant: a source whose rings have stopped trips
- * the test, the buffer stops filling, and a request here returns an
- * error rather than waiting for words that will not come. The test is
- * the repetition count test of SP 800-90B alone; the adaptive
- * proportion test is issue 918.
+ * The hardware's health tests are what make this driver refuse rather
+ * than hand out a constant or a bias: a source whose rings have
+ * stopped trips the repetition count test of SP 800-90B, one gone
+ * biased trips its adaptive proportion test (issue 918), the buffer
+ * stops filling, and a request here returns an error, naming the test,
+ * rather than waiting for words that will not come.
  *
  * The hardware debiases with von Neumann's extractor, which removes
  * bias but not dependence, and the board's words are serially
@@ -61,6 +63,7 @@ LOG_MODULE_REGISTER(entropy_vreteno, CONFIG_ENTROPY_LOG_LEVEL);
 
 #define VRETENO_TRNG_STATUS_READY TRNG_STATUS_READY_MASK
 #define VRETENO_TRNG_STATUS_FAULT TRNG_STATUS_FAULT_MASK
+#define VRETENO_TRNG_STATUS_APTFAULT TRNG_STATUS_APTFAULT_MASK
 #define VRETENO_TRNG_STATUS_RUN   TRNG_STATUS_RUN_MASK
 #define VRETENO_TRNG_CTRL_RUN     TRNG_CTRL_RUN_MASK
 #define VRETENO_TRNG_CTRL_CLEAR   TRNG_CTRL_CLEAR_MASK
@@ -92,14 +95,20 @@ static inline void trng_write(const struct device *dev, uint32_t off, uint32_t v
 
 /*
  * One word, if the hardware has one. Returns 1 with the word, 0 with
- * none ready, and -EIO if the health test has tripped, since a source
- * in that state must not be read as if it were fine.
+ * none ready, and -EIO if a health test has tripped, since a source
+ * in that state must not be read as if it were fine; the log says
+ * which of the two (issue 918).
  */
 static int trng_word(const struct device *dev, uint32_t *word)
 {
 	uint32_t status = trng_read(dev, VRETENO_TRNG_STATUS);
 
 	if ((status & VRETENO_TRNG_STATUS_FAULT) != 0) {
+		LOG_ERR("the repetition count test tripped");
+		return -EIO;
+	}
+	if ((status & VRETENO_TRNG_STATUS_APTFAULT) != 0) {
+		LOG_ERR("the adaptive proportion test tripped");
 		return -EIO;
 	}
 	if ((status & VRETENO_TRNG_STATUS_READY) == 0) {
@@ -151,12 +160,8 @@ static int trng_next_isr(void *ctx, uint32_t *word)
 
 static void trng_why(int err)
 {
-	if (err == -EIO) {
-		/* The one health test the hardware runs (issue 918 adds
-		 * the adaptive proportion test).
-		 */
-		LOG_ERR("the repetition count test tripped");
-	} else if (err == -ETIMEDOUT) {
+	/* A tripped health test is logged where it is read, in trng_word. */
+	if (err == -ETIMEDOUT) {
 		LOG_ERR("no word in %d us", VRETENO_TRNG_WORD_TIMEOUT_US);
 	}
 }
