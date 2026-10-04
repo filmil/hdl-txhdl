@@ -3353,6 +3353,7 @@ latex_document(
     data = [
         ":buildstamp",
         ":vendored_tex",
+        ":razboj_lists_timing",
         ":razboj_run",
         ":razboj_timing",
         ":razboj_scene",

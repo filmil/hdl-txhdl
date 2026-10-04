@@ -72,7 +72,7 @@ rectangles and four triangles.
 \centering
 \includegraphics[width=0.62\columnwidth]{scene.png}
 \caption{The demonstration, as Razboj drew it. Eight entries, four
-thousand and ninety-six pixels, 16\,584 cycles.}
+thousand and ninety-six pixels, 16\,592 cycles.}
 \label{fig:g-scene}
 \end{figure}
 
@@ -148,18 +148,51 @@ with a shift and a mask and the rasteriser reads it with a slice at a
 constant offset. Beside the list is one more word, the count. The
 rasteriser reads the count until it is not zero, and then the list;
 a program therefore writes the list first and the count last, and
-writing the count is how it says the list is ready. Nothing else
-passes between the two.
+writing the count is how it says the list is ready. The rasteriser
+answers in the same word: when the list is drawn it writes the count
+back to zero. Nothing else passes between the two.
 
 So the rasteriser has a front end. It polls the count, fetches the
 six words of an instruction one read at a time, latching each field
 as its word lands, draws the instruction, and fetches the next; when
-the count is used up it is done and says so on \code{idle}. The
+the count is used up the list is done, and Section~\ref{sec:g-lists}
+says what follows. The
 third vertex is not latched: its word is the last, so the setup reads
 it straight off the bus in the cycle the walk starts. One read is out
 at a time, because the front end has nothing to do until the answer
 lands. The fetch costs the demonstration six reads an entry,
-which is a few hundred cycles out of 16\,584.
+which is a few hundred cycles out of 16\,592.
+
+\section{List After List}
+\label{sec:g-lists}
+
+A picture that moves is a list a frame, so the rasteriser draws list
+after list. When a list is drawn it waits until every write it made
+has been answered, writes the count back to zero, and waits for that
+write's answer too; then it polls the count again. A program waits
+for the zero, writes the next list, and writes its count last, as it
+did the first. \code{idle} says the same on a line: it rises once the
+zero has been answered and falls when a count that is not zero is
+read. Figure~\ref{fig:g-lists} is that hand-over.
+
+Both waits are there for a memory that is not this one. Until every
+pixel's write is answered, a program that saw the zero could read a
+framebuffer the last pixels have not reached. And until the zero is
+answered, a memory that let a read pass a write could answer the next
+poll with the old count, and the list would be drawn twice.
+
+\begin{figure*}[t]
+\centering
+\input{razboj_lists_timing.tex}
+\caption{One list ending and the next beginning. As the last
+pixel's write is answered the zero goes out on \code{issue} and
+\code{finished} rises; \code{idle} rises when the zero is answered.
+The polls that follow, on \code{issue} and \code{rdata}, read a count of
+zero while the run writes the next list in, as a program would. The
+next poll reads a count of two, \code{finished} and \code{idle} fall,
+and the first word of the next list is fetched.}
+\label{fig:g-lists}
+\end{figure*}
 
 \section{The Rasteriser}
 \label{sec:g-raster}
@@ -193,7 +226,7 @@ written as the sequence it is: poll the count until the list is
 ready, then for each instruction fetch its six words, one read at a
 time and each latched as it lands, and walk its box, every row and
 every column a counted loop, a pixel a turn; when the list is drawn
-it waits for ever. The lowering numbers the waits into a state
+it writes the count back to zero and polls again. The lowering numbers the waits into a state
 register of its own and gives each counted loop a counter, so the
 netlist keeps what the hand-numbered machine before it kept in a
 phase and a step without the source naming either.
