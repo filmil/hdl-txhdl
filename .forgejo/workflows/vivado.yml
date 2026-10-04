@@ -1,0 +1,162 @@
+# SPDX-License-Identifier: Apache-2.0
+# Build the Vivado targets the tree tags `vivado_ci`, on the runner that has
+# Vivado, and record their timing (#1030).
+#
+# Every Vivado target is `manual`, so `bazel build //...` in build.yml never
+# reaches one. This job names them instead: a target joins it by carrying the
+# tag `vivado_ci` beside `manual`, and query, unlike a wildcard, includes
+# manual targets.
+#
+# Failing on timing is the build's work, not this file's:
+# `vivado_place_and_route2` in //tools/vivado:defs.bzl fails the action on a
+# negative worst setup or hold slack (#759), so a missed constraint is a red
+# build and so a red job.
+#
+# Nightly before the 03:00 release, and by hand. Not on every pull request:
+# the runner takes one job at a time, and one run holds it for up to half an
+# hour. A branch that changes hardware is checked by dispatching this
+# workflow on it.
+name: vivado
+
+on:
+  schedule:
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+
+jobs:
+  vivado:
+    runs-on: vivado
+    steps:
+      # A runner offering `vivado` meets one written contract
+      # (filmil/serving#58): the installer archive and the install cache at
+      # the paths MODULE.bazel names, and the lock below. A host that does
+      # not is stopped here with the reason, rather than deep in a build.
+      - name: Check the host against the Vivado contract
+        run: |
+          set -o errexit -o nounset -o pipefail
+          archive=/data/tools/archives/FPGAs_AdaptiveSoCs_Unified_SDI_2025.2_1114_2157_1.tar
+          fail=0
+          for p in "$archive" "$archive.sha256"; do
+            [ -r "$p" ] || { echo "missing: $p"; fail=1; }
+          done
+          for d in /data/cache/vivado-install /data/cache/bazel; do
+            [ -d "$d" ] && [ -w "$d" ] || { echo "not a writable directory: $d"; fail=1; }
+          done
+          free=$(df -BG --output=avail /data/cache | tail -1 | tr -dc 0-9)
+          echo "free under /data/cache: ${free} GB"
+          [ "$free" -ge 100 ] || { echo "less than 100 GB free under /data/cache"; fail=1; }
+          if [ "$fail" -ne 0 ]; then
+            echo "this host does not meet filmil/serving#58; see that issue"
+            exit 1
+          fi
+
+      # Pinned and checksummed, into $HOME/.local/bin: a host job has no
+      # root. As HDL/bazel_rules_vivado_ci does it.
+      - name: Install bazelisk
+        run: |
+          set -o errexit -o nounset -o pipefail
+          readonly _sha256="5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992"
+          readonly _dest="${HOME}/.local/bin/bazel"
+          mkdir -p "${HOME}/.local/bin"
+          if [ -x "${_dest}" ] \
+             && printf '%s  %s\n' "${_sha256}" "${_dest}" | sha256sum -c --status; then
+            exit 0
+          fi
+          trap 'rm -f "${_dest}.tmp"' EXIT
+          curl -fsSL -o "${_dest}.tmp" \
+            https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
+          printf '%s  %s\n' "${_sha256}" "${_dest}.tmp" | sha256sum -c
+          chmod +x "${_dest}.tmp"
+          mv "${_dest}.tmp" "${_dest}"
+
+      # Not actions/checkout: that is a Node action, and the host has no
+      # Node, so it fails before anything else runs (runs 1650 and 1651).
+      # The workspace persists between runs, so the clone is reused.
+      - name: Checkout
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o errexit -o nounset -o pipefail
+          url="https://ci:${GITHUB_TOKEN}@git.hdlfactory.com/${GITHUB_REPOSITORY}.git"
+          [ -d .git ] || git init -q .
+          git fetch -q --depth 1 "$url" "$GITHUB_SHA"
+          git checkout -q --force FETCH_HEAD
+          git clean -qfdx -e .ci
+          mkdir -p .ci
+          git --no-pager log --oneline -1
+
+      # The sessions on this host run Vivado by hand as well, and two runs
+      # at once exhaust its memory. Both take /data/cache/vivado.lock, so
+      # neither starts while the other runs; the job waits up to 90 minutes
+      # for it. RUNNER_BAZEL_STARTUP_FLAGS and RUNNER_BAZEL_FLAGS come from
+      # the runner and carry its cache locations; they expand to nothing on
+      # a runner that sets neither.
+      - name: Build the tagged Vivado targets
+        run: |
+          set -o errexit -o nounset -o pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          b() { bazel ${RUNNER_BAZEL_STARTUP_FLAGS:-} "$@"; }
+          targets=$(b query 'attr(tags, vivado_ci, //...)')
+          echo "$targets" > .ci/targets
+          if [ -z "$targets" ]; then
+            echo "no target carries vivado_ci"
+            exit 0
+          fi
+          echo "$targets"
+          flock -w 5400 /data/cache/vivado.lock \
+            bazel ${RUNNER_BAZEL_STARTUP_FLAGS:-} build ${RUNNER_BAZEL_FLAGS:-} \
+              $targets 2>&1 | tee .ci/bazel.log
+
+      # One record a run on `ci-stats`, as build.yml leaves (#940), with
+      # each place-and-route target's slack and size read from the reports
+      # it wrote:
+      #
+      #   git fetch origin ci-stats && git show origin/ci-stats:<file>
+      - name: Record the run
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          mkdir -p .ci
+          {
+            echo "vivado run ${GITHUB_RUN_NUMBER} on ${GITHUB_SHA} (${GITHUB_EVENT_NAME}, ${GITHUB_REF_NAME}): ${{ job.status }}"
+            echo "host: $(hostname)"
+            echo "=== target, WNS, WHS, LUTs, flip-flops ==="
+            bin=$(bazel ${RUNNER_BAZEL_STARTUP_FLAGS:-} info bazel-bin 2>/dev/null || true)
+            while read -r t; do
+              [ -n "$t" ] || continue
+              pkg=${t#//}; pkg=${pkg%%:*}; name=${t##*:}
+              ts="$bin/$pkg/$name.timing_summary.pnr.rpt"
+              ut="$bin/$pkg/$name.utilization.pnr.rpt"
+              [ -r "$ts" ] || { echo "$t (no place-and-route report)"; continue; }
+              # The design summary's first data row: WNS is its first
+              # column and WHS its fifth.
+              slack=$(awk '/WNS\(ns\)/ { getline; getline; print $1, $5; exit }' "$ts")
+              luts=$(awk -F'|' '/Slice LUTs/ { gsub(/ /, "", $3); print $3; exit }' "$ut")
+              ffs=$(awk -F'|' '/Slice Registers|Register as Flip Flop/ { gsub(/ /, "", $3); print $3; exit }' "$ut")
+              echo "$t $slack ${luts:-?} ${ffs:-?}"
+            done < .ci/targets 2>/dev/null || echo "(no targets: the job stopped before the build)"
+            echo "=== bazel ==="
+            # Bazel's own errors and the timing check's message, not
+            # Vivado's: a target without pins writes its bitstream as a
+            # placeholder (issue 967), and the DRC errors that leaves in
+            # the log are expected.
+            grep -E 'INFO: [0-9,]+ processes|INFO: Elapsed time|^ERROR: /|Build did NOT|timing is not met' \
+              .ci/bazel.log 2>/dev/null | tail -20 || echo "(no bazel log)"
+          } > .ci/record.txt 2>&1 || echo "(record incomplete)" >> .ci/record.txt
+          cat .ci/record.txt
+          d=$(mktemp -d)
+          url="https://ci:${GITHUB_TOKEN}@git.hdlfactory.com/${GITHUB_REPOSITORY}.git"
+          if git -C "$d" clone -q --depth 1 --branch ci-stats "$url" . 2>/dev/null; then
+            :
+          else
+            git -C "$d" init -q -b ci-stats
+            git -C "$d" remote add origin "$url"
+          fi
+          cp .ci/record.txt \
+            "$d/vivado-${GITHUB_RUN_NUMBER}-$(date -u +%Y%m%dT%H%M%S)-${GITHUB_SHA:0:8}.txt"
+          git -C "$d" add -A
+          git -C "$d" -c user.name=ci -c user.email=ci@invalid \
+            commit -qm "vivado record for run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
+          git -C "$d" push -q origin ci-stats
