@@ -8,9 +8,7 @@ phase, and the edge wait a process makes; a wire and a channel, each
 split into a driving end that is not \code{Clone} and a reading end
 that is, the channel's reading end with a \code{wait}; the
 \code{Member} trait that lets \code{interface!} split a member without
-knowing which it is; \code{Crossing}, the only way a wire goes between
-two clocks (a channel goes by \code{ChanCdc} in \code{//lib/parts}) and
-a process of the unit that owns it; registers and memories, read
+knowing which it is; registers and memories, read
 plainly and driven with a commit at the end of the step; \code{Regs},
 \code{N} registers of one type as one field, since a unit is
 \code{Default} and an array of a generic length has none, its

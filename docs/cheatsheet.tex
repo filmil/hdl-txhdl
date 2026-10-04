@@ -240,8 +240,7 @@ lowering writes one module with an instance per child.
 \code{struct Slow; impl Clock for Slow} & a clock: a name and a period in ticks \\
 \code{Reg<T, Slow>}, \code{In<T, Slow>} & state and ports on that clock \\
 \code{Slow::rising().await} & a process waits on one clock \\
-\code{Crossing<T, A, B>} & the only way a wire changes clock \\
-\code{ChanCdc} & a channel between clocks, in \code{//lib/parts} \\
+\code{ChanCdc} & the one way across clocks: a channel, in \code{//lib/parts} \\
 \end{vocab}
 A design with two clocks is a parent with a child on each; the parent
 has no wait. \code{DefaultClock} you name only in a wait.

@@ -175,14 +175,15 @@ expected `In<u32, Clk400>`, found `In<u32, Clk100>`
 expected `In<u32, Clk400>`, found `In<u32>`
 \end{lstlisting}
 
-The only path a wire takes between clocks is a
-\code{Crossing<T, A, B>}, which takes an \code{In<T, A>} and yields an
-\code{In<T, B>}; a channel crosses by \code{ChanCdc} instead. A real
-crossing is a synchroniser or an asynchronous FIFO. The point is not
-what it contains but that it is the only thing that can produce a
-signal in the other domain, so a crossing cannot be forgotten. That is
-the failure the merged specification handled by having the compiler
-notice two tags differ; here the type system notices.
+A value goes between clocks on a channel, through \code{ChanCdc} in
+\code{//lib/parts}, which takes the channel in on one clock and gives
+it out on the other (issue 1017): an asynchronous FIFO, its memory
+written on one clock and read on the other, and each side's pointer
+Gray coded and carried across by two flip-flops of the other clock. A
+wire has no way across at all, since nothing but a unit of the other
+domain produces a signal there, so a crossing cannot be forgotten.
+That is the failure the merged specification handled by having the
+compiler notice two tags differ; here the type system notices.
 
 A unit that does not care which clock it is in says so by being generic
 over \code{C: Clock}, which is the Rust way of saying it and costs the
@@ -228,17 +229,15 @@ latency has in a process.
 
 One thing the executor does not do is check that a process stays in
 its domain. A process in one clock that reads a register of another
-without a \code{Crossing} is a hazard, and the prototype runs it rather
-than refusing it, because the register's type says which clock it is in
-and the process's type says nothing. A \code{Crossing} is itself a
-process, run by the unit that owns it: it samples at every edge of the
-destination clock, which is what a synchroniser does. That is also the hazard an
-asynchronous FIFO commits on purpose: its memory is written by one
+other than through \code{ChanCdc} is a hazard, and the prototype runs
+it rather than refusing it, because the register's type says which
+clock it is in and the process's type says nothing. That is also the
+hazard \code{ChanCdc} commits on purpose: its memory is written by one
 clock and read by the other, and the pointer discipline is what makes
 that safe. It is why the runtime has a \code{Mem<T, N, C>} as a type
 rather than an array of registers: a memory's read port is a wire, and
-the discipline is the designer's. The FIFO is \code{ex\_fifo.rs} in the
-examples document~\cite{examples}, with a producer clock of period 4
+the discipline is the designer's. \code{ex\_fifo.rs} in the examples
+document~\cite{examples} runs it between a producer clock of period 4
 and a consumer clock of period 6 and phase 2; its trace shows the
 producer with nothing to push at the edge the FIFO is full, which is
 the backpressure crossing the domains the other way.

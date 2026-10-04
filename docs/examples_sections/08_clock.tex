@@ -5,9 +5,9 @@
 A wire and a register name the clock they are in as a type parameter,
 and the default is the one clock a single-clock design has, so such a
 design never mentions one. A two-clock design names exactly the second.
-A \code{Crossing} is the only way a wire goes from one to the other,
-and \code{ChanCdc} in \code{//lib/parts} a channel's, which is what
-makes forgetting one a type error. A unit that does not care which
+A value goes from one to the other on a channel, through
+\code{ChanCdc} in \code{//lib/parts}, and a wire has no way across,
+which is what makes forgetting the crossing a type error (issue 1017). A unit that does not care which
 clock it is in is generic over \code{C: Clock}.
 
 \lstinputlisting[caption={\code{ex\_clock.rs}.},label={lst:x-clock}]{lib/examples/ex_clock.rs}

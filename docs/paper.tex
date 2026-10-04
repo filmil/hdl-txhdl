@@ -249,10 +249,9 @@ registered at the buffer, so neither side sees the other's logic.}
 \label{fig:p-chan}
 \end{figure}
 
-A clock-domain crossing is a type, \code{Crossing<T, A, B>}, and the
-only way a wire's value in clock \code{A} becomes one in clock
-\code{B}, as \code{ChanCdc} is a channel's; a
-wire whose ends are in different clocks does not type-check. An
+A value crosses between clocks only as a channel, through
+\code{ChanCdc}, and a wire whose ends are in different clocks does not
+type-check. An
 interface is declared once with its members and its roles, and
 \code{interface!} emits a struct per role with the directions the
 role has, so a bus master, a target and a monitor are three views of

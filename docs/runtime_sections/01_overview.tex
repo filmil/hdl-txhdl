@@ -137,11 +137,11 @@ a process. A process that has crossed no edge yet is in the default
 clock.
 
 \textbf{What the executor does not check.} A process that reads a
-register of another clock without a \code{Crossing} is a hazard, and
-the prototype runs it. The register's type says its clock; the
-process has no type that says one. The asynchronous FIFO example
-commits this hazard on purpose, on its memory, under the pointer
-discipline that makes it safe.
+register of another clock other than through \code{ChanCdc} is a
+hazard, and the prototype runs it. The register's type says its clock;
+the process has no type that says one. \code{ChanCdc}, which the
+asynchronous FIFO example runs, commits this hazard on purpose, on its
+memory, under the pointer discipline that makes it safe.
 
 \subsection{What is prototype only}
 

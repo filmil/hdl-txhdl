@@ -6,16 +6,14 @@ The producer port is in one clock and the consumer port in another,
 and the two stand in a stated relation: the write clock has period 4,
 the read clock period 6 and phase 2, in ticks, the unit the design
 shares.
-Each side waits for its own event: the write side, with \code{until},
-for an offer it has room for; the read side for a word to give and a
-consumer able to take it. The pointers are read after the wait, at
-that edge. Each pointer lives in its own domain and reaches the other
-side through a \code{Crossing}, which runs as a process of the FIFO
-and samples at every edge of the destination clock, which is what a
-synchroniser does. The memory is written by the producer clock and
-read by the consumer clock without a wait, as a dual-port RAM's read
-port is; the pointer discipline is what makes that safe. The channel's
-own handshake is the backpressure: the producer waits until the
+The FIFO between them is \code{ChanCdc} from \code{//lib/parts}, the
+one way a value crosses from one clock to another (issue 1017): a
+memory of four words written on the producer's clock and read on the
+consumer's, as a dual-port RAM is, and each side's pointer Gray coded
+and carried to the other through two flip-flops of the other's clock,
+which is what a synchroniser does; the pointer discipline is what makes
+the memory's two clocks safe. The channel's own handshake is the
+backpressure: the producer waits until the
 channel is ready, the consumer waits for a word, and the trace shows
 the producer with nothing to do at the step the FIFO is full.
 

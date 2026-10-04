@@ -387,9 +387,8 @@ step of the slow count to three of the fast.
 
 Nothing passes between the two counters, and that is deliberate. The
 clock is part of a port's type, so a signal on one clock cannot be
-handed to a unit that wants another; \code{Crossing<T, A, B>} is the
-one thing that turns one into the other. A channel crosses through
-\code{ChanCdc} from \code{//lib/parts}: two processes, one on each
+handed to a unit that wants another, and a value crosses as a channel,
+through \code{ChanCdc} from \code{//lib/parts}: two processes, one on each
 clock, a memory between them, and each side keeping the other's Gray
 pointer through two flops of its own clock. The example
 \code{ex\_cdc} runs one, and the build checks its netlist as it checks

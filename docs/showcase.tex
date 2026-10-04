@@ -48,8 +48,8 @@ which a reset port would have asked of about 127 \code{.run} call
 sites; under it a register goes back to what it held before the
 first edge and a channel empties. \code{rustc} is the
 parser, and its type checker is the design rule checker: two drivers
-on a wire are a move error, a clock domain crossed without a
-\code{Crossing} is a type error, and a cycle counted in combinational
+on a wire are a move error, a clock domain crossed other than
+through \code{ChanCdc} is a type error, and a cycle counted in combinational
 logic is impossible because a plain \code{fn} has no \code{.await} to
 write in.
 

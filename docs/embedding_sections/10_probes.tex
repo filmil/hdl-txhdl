@@ -122,7 +122,7 @@ Probe & Question & Answer \\
   & Can the clock domain be a type parameter with a named default?
   & \textbf{Yes.} A single-clock design never mentions one; a two-clock design names the second \\
 \code{probe\_domain\_cross}
-  & A crossing without a \code{Crossing}?
+  & A wire across clocks with nothing between?
   & \textbf{Refused:} \code{expected In<u32, Clk400>, found In<u32, Clk100>}, and the default is not a wildcard \\
 \code{probe\_infer}
   & May a const width be left to inference, as \code{\_}?
