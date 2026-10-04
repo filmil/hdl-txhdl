@@ -28,6 +28,9 @@ pub struct Run {
     pub cycles: u64,
     /// Read bursts the memory took and read beats it sent, until then.
     pub reads: (u64, u64),
+    /// Write beats the memory took, until then: one a pixel written,
+    /// and one for each count written back.
+    pub writes: u64,
 }
 
 /// Render `ops` on the hardware. The screen is `1 << LOGW` by `H`
@@ -134,7 +137,7 @@ pub fn run_lists<
     // finished, so a second handle on it is kept here, and on the
     // counts of what was read.
     let pixels = fb.px.clone();
-    let (rbursts, rbeats) = (fb.rbursts, fb.rbeats);
+    let (rbursts, rbeats, wbeats) = (fb.rbursts, fb.rbeats, fb.wbeats);
 
     if wave {
         if let Some(mut t) = Wave::from_env() {
@@ -184,6 +187,7 @@ pub fn run_lists<
                 fb: (0..w * H).map(|i| pixels.read(i).raw() as u32).collect(),
                 cycles,
                 reads: (rbursts.get().raw() as u64, rbeats.get().raw() as u64),
+                writes: wbeats.get().raw() as u64,
             });
             if next == lists.len() {
                 break;
@@ -352,6 +356,61 @@ mod tests {
         let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
         let (bursts, beats) = got.reads;
         assert_eq!(beats - bursts, 5 * n, "{bursts} bursts, {beats} beats");
+    }
+
+    /// A mesh of triangles sharing edges, over the whole screen: four
+    /// by four cells of four pixels, each cut in two along a diagonal
+    /// that runs through pixel centres, the inner vertices moved by
+    /// sixteenths of a pixel. Every pixel is covered by exactly one
+    /// triangle, in the model, and the hardware writes each exactly
+    /// once and draws what the model draws (issue 988).
+    #[test]
+    fn a_mesh_draws_every_pixel_once() {
+        let jitter = |i: i32, j: i32| -> (i32, i32) {
+            if i == 0 || j == 0 || i == 4 || j == 4 {
+                (0, 0)
+            } else {
+                ((i * 7 + j * 3) % 11 - 5, (i * 5 + j * 7) % 13 - 6)
+            }
+        };
+        let v = |i: i32, j: i32| {
+            let (dx, dy) = jitter(i, j);
+            (64 * i + dx, 64 * j + dy)
+        };
+        let mut ops = vec![bg(0)];
+        let mut colour = 0x10_0000;
+        for j in 0..4 {
+            for i in 0..4 {
+                let (a, b, c, d) =
+                    (v(i, j), v(i + 1, j), v(i + 1, j + 1), v(i, j + 1));
+                for (p, q, r) in [(a, b, c), (a, c, d)] {
+                    colour += 0x01_0203;
+                    ops.push(Op::TriQ4 {
+                        colour,
+                        a: p,
+                        b: q,
+                        c: r,
+                    });
+                }
+            }
+        }
+        let list = assemble(&ops, W, H);
+        assert_eq!(list.len(), 33, "a clear and 32 triangles");
+        let cover = model::coverage(&list[1..], W, H);
+        assert!(
+            cover.iter().all(|&n| n == 1),
+            "every pixel covered once: {cover:?}"
+        );
+        // Thirty-three entries reach past the usual count's place, so
+        // the memory is the larger one the long list uses.
+        const N: usize = 4096;
+        const DL: usize = 0x1000;
+        const CTRL: usize = 0x3800;
+        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
+        assert_eq!(got.fb, model::render(&list, W, H), "the picture");
+        // The clear writes every pixel, the mesh every pixel once more,
+        // and the count is written back to zero at the end.
+        assert_eq!(got.writes, (2 * W * H + 1) as u64, "pixels written");
     }
 
     #[test]

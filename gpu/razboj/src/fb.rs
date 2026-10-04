@@ -40,6 +40,8 @@ pub struct Fb<const A: usize, const I: usize, const N: usize> {
     /// the rasteriser asked of the memory.
     pub rbursts: Reg<U<32>>,
     pub rbeats: Reg<U<32>>,
+    /// Write beats taken, for a run to count the pixels written.
+    pub wbeats: Reg<U<32>>,
 }
 // end{state}
 
@@ -79,6 +81,7 @@ impl<const A: usize, const I: usize, const N: usize> Unit for Fb<A, I, N> {
                 wgo ? {
                     pend: U::<1>::from(0u8),
                     px.at(self.paddr.get()): wh.data,
+                    wbeats: self.wbeats.get() + 1,
                 },
                 take_read ? {
                     rleft: q.len,
