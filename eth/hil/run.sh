@@ -5,7 +5,12 @@
 # static binary, and runs it there over ssh under a timeout.
 #
 #   run [--server=HOST] [--interface=fpga-a200t-eth0] [--count=64]
-#       [--size=64] [--seconds=10]
+#       [--size=64] [--seconds=10] [--mode=echo|send|count]
+#
+# `--mode=echo`, the default, is the echo design's test. `send` sends
+# one burst of `--count` numbered frames of `--size` bytes to the
+# board, and `count` counts the board's frames for `--seconds`: the
+# throughput run of issue 1038, `ethperf.rs` at the board's end.
 #
 # The tester opens a raw socket, which needs either root or
 # `cap_net_raw` on the uploaded binary. The link has to be up. Both are
@@ -28,6 +33,7 @@ interface=fpga-a200t-eth0
 count=64
 size=64
 seconds=10
+mode=echo
 for a in "$@"; do
   case "$a" in
     --server=*) server="${a#*=}" ;;
@@ -35,6 +41,7 @@ for a in "$@"; do
     --count=*) count="${a#*=}" ;;
     --size=*) size="${a#*=}" ;;
     --seconds=*) seconds="${a#*=}" ;;
+    --mode=*) mode="${a#*=}" ;;
     *) echo "unknown argument: $a" >&2; exit 2 ;;
   esac
 done
@@ -63,5 +70,11 @@ if [[ "$want" != "$have" ]]; then
     "sudo -n setcap cap_net_raw+ep \$HOME/txhdl_ethtest/ethtest" ||
     echo "[ethtest] could not grant the capability; run setcap there by hand"
 fi
+case "$mode" in
+  echo) args="'$interface' '$count' '$size' '$seconds'" ;;
+  send) args="send '$interface' '$count' '$size'" ;;
+  count) args="count '$interface' '$seconds'" ;;
+  *) echo "unknown mode: $mode" >&2; exit 2 ;;
+esac
 ssh -o BatchMode=yes "$server" \
-  "timeout --signal=TERM --kill-after=5 $((seconds + 20)) $dir/ethtest '$interface' '$count' '$size' '$seconds'"
+  "timeout --signal=TERM --kill-after=5 $((seconds + 20)) $dir/ethtest $args"

@@ -4,6 +4,17 @@
 // what the echo design returns.
 //
 //	ethtest INTERFACE COUNT PAYLOAD_BYTES SECONDS
+//	ethtest send INTERFACE COUNT FRAME_BYTES
+//	ethtest count INTERFACE SECONDS
+//
+// The last two are issue 1038's throughput run against the flagship,
+// whose port has no echo: `send` sends one burst of numbered frames as
+// fast as the socket takes them, for `ethperf.rs` on the board to
+// count, and `count` counts the board's frames and times them. Both use
+// the type `perfType`, since the flagship hands `0x88b5` to its remote
+// peripheral and not to the slots. They are modes of this binary, not a
+// binary of their own, because the raw socket's capability is granted
+// to this one file.
 //
 // A frame goes out with a fixed source address of its own, the adapter's
 // address as its destination, a type nothing else uses, and a payload
@@ -38,6 +49,11 @@ import (
 // else on a cable answers it.
 const ethType = 0x88b5
 
+// The throughput run's type, and the magic its frames start with.
+const perfType = 0x88b6
+
+var perfMagic = []byte("TXHDL-PERF")
+
 // The first bytes of every payload, so that a frame of this test is not
 // mistaken for anything else on the wire.
 var magic = []byte("TXHDL-ETH-HIL\x00")
@@ -52,6 +68,10 @@ func htons(v uint16) uint16 {
 }
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "send" || os.Args[1] == "count") {
+		perf(os.Args[1], os.Args[2:])
+		return
+	}
 	if len(os.Args) != 5 {
 		fmt.Fprintln(os.Stderr,
 			"usage: ethtest INTERFACE COUNT PAYLOAD_BYTES SECONDS")
