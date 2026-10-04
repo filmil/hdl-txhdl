@@ -380,8 +380,14 @@ is zero, \code{a1} the tree, and a jump to OpenSBI. The tree is
 written last, with the initramfs's range and the command line in its
 \code{/chosen}, and the packer refuses an image longer than fastboot
 takes, its download size less the header page the host puts in front
-of a file, naming the sizes. The rule \code{boot\_image} chains
-the steps, and \code{fastboot boot NAME.bin} sends the result. The
+of a file, naming the sizes. The command line is
+\code{earlycon console=ttySIF0} unless a boot asks for another, so the
+kernel speaks on the serial port from its first line (issue~\#1125).
+The rule \code{boot\_image} chains the steps, and
+\code{fastboot boot NAME.bin} sends the result; its \code{model}
+attribute adds \code{mem=64M} for a boot on the machine below, where
+setting up the board's whole gigabyte is most of the kernel's early
+work, and the board's own image boots with all of it. The
 machine above is its first reader: a test boots a packed image there
 and checks the shim's registers and every part's address before an
 image ever reaches the board.
