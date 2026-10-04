@@ -301,6 +301,16 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A unit that answers its own reset writes its memory under it:
+#   bazel run //lib/examples:ex_rstmemown
+rust_binary(
+    name = "ex_rstmemown",
+    srcs = ["ex_rstmemown.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A reset empties the channel between two units:  bazel run //lib/examples:ex_flush
 rust_binary(
     name = "ex_flush",
@@ -1286,6 +1296,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_reset.rs",
         "ex_ownrst.rs",
         "ex_rstmem.rs",
+        "ex_rstmemown.rs",
         "ex_flush.rs",
         "ex_start.rs",
         "ex_chanwait.rs",

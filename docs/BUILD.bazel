@@ -674,6 +674,22 @@ waveform(
     ],
 )
 
+# A unit that answers its own reset writes its memory under it, a wipe
+# a word a cycle (issue 966).
+waveform(
+    name = "rstmemown",
+    example = "//lib/examples:ex_rstmemown",
+    lowered = ("wipe", "wipe"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//rst=>rst",
+        "//we=>we",
+        "//a=>a",
+        "//wipe/at=>at",
+        "//q=>q",
+    ],
+)
+
 # A unit that takes its own reset and checks its count only out of it
 # (issue 633).
 waveform(
