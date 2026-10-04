@@ -239,6 +239,36 @@ sh_test(
     ],
 )
 
+# What the board's server takes, `max-download-size`, from the server's
+# own sources: the staging area's size in its overlay, less the page
+# `jump.S` runs from (issue 1080). The harness and its test read this,
+# so neither can promise more than the board takes; `//tools/bootimg`
+# reads the same two files.
+genrule(
+    name = "fastboot_limits",
+    srcs = [
+        "fastboot/app/boards/ax7a200b.overlay",
+        "fastboot/app/src/main.c",
+    ],
+    outs = [
+        "fastboot/fb_limits.h",
+        "fastboot/fb_limits.txt",
+    ],
+    cmd = """
+size=$$(sed -n 's/^[[:space:]]*reg = <0x[0-9a-fA-F]* \\(0x[0-9a-fA-F]*\\)>;.*/\\1/p' \\
+    $(location fastboot/app/boards/ax7a200b.overlay))
+page=$$(sed -n 's/^#define JUMP_PAGE \\([0-9]*\\).*/\\1/p' \\
+    $(location fastboot/app/src/main.c))
+if [ -z "$$size" ] || [ -z "$$page" ]; then
+    echo "fastboot_limits: no staging size or JUMP_PAGE in the server's sources" >&2
+    exit 1
+fi
+max=$$(( size - page ))
+printf '/* Generated from the server overlay and main.c (issue 1080). */\\n#define FB_MAX_DOWNLOAD 0x%08xu\\n' "$$max" >$(location fastboot/fb_limits.h)
+printf '0x%08x\\n' "$$max" >$(location fastboot/fb_limits.txt)
+""",
+)
+
 # The core on a host socket.
 cc_binary(
     name = "fastboot_host",
