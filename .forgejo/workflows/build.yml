@@ -175,11 +175,15 @@ jobs:
           echo "log_export $(date +%s)" >> /tmp/ci-times
           {
             echo "run ${GITHUB_RUN_NUMBER} on ${GITHUB_SHA} (${GITHUB_EVENT_NAME}, ${GITHUB_REF_NAME}): ${{ job.status }}"
-            # Which runner took the run, so a record says which machine its
-            # numbers are of (#940). The runner context and the variable are
-            # tried in turn; the container's host name is the last resort and
-            # names only the container.
+            # Which runner took the run, and whether it gave the job the
+            # shared Bazel caches, so a record says which machine its numbers
+            # are of (#940). Forgejo fills neither the runner context nor
+            # RUNNER_NAME (run 1566), so the names of the variables that
+            # mention a runner are listed too, without their values, and the
+            # system rc's disk cache line says whether the caches are there.
             echo "runner: ${RUNNER_CTX:-${RUNNER_NAME:-unknown}} (host $(hostname))"
+            echo "runner variables: $(env | cut -d= -f1 | grep -i runner | sort | tr '\n' ' ')"
+            echo "disk cache: $(grep -h -- '--disk_cache' /etc/bazel.bazelrc 2>/dev/null | head -1 || true)"
             echo "cache key hit: ${{ steps.cache.outputs.cache-hit }}"
             echo "=== seconds, by step ==="
             awk 'NR > 1 { printf "%-14s %6d\n", $1, $2 - t } { t = $2 }' /tmp/ci-times
