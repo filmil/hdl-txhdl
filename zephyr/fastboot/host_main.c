@@ -13,6 +13,7 @@
  * OUT_FILE and exits 0; on `reboot` it exits 0 having written nothing.
  */
 #include "fastboot.h"
+#include "zephyr/fastboot/fb_limits.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -22,8 +23,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-/* What `max-download-size` says, and what is set aside for it. */
-#define STAGE_BYTES (16u << 20)
+/* What `max-download-size` says, and what is set aside for it: what the
+ * board's server takes, from its own sources (issue 1080). */
+#define STAGE_BYTES FB_MAX_DOWNLOAD
 
 struct host {
 	int fd;

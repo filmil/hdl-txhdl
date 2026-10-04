@@ -272,7 +272,10 @@ printf '0x%08x\\n' "$$max" >$(location fastboot/fb_limits.txt)
 # The core on a host socket.
 cc_binary(
     name = "fastboot_host",
-    srcs = ["fastboot/host_main.c"],
+    srcs = [
+        "fastboot/fb_limits.h",
+        "fastboot/host_main.c",
+    ],
     copts = [
         "-std=c11",
         "-D_DEFAULT_SOURCE",
@@ -293,8 +296,10 @@ sh_test(
         "$(rootpath @multitool//tools/fastboot)",
         "$(rootpath //cpu/vreteno/rust:hello_ram_bin)",
         "$(rootpath //cpu/vreteno/rust:hello_fastboot)",
+        "$(rootpath fastboot/fb_limits.txt)",
     ],
     data = [
+        "fastboot/fb_limits.txt",
         ":fastboot_host",
         "@multitool//tools/fastboot",
         "//cpu/vreteno/rust:hello_fastboot",

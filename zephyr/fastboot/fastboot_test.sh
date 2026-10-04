@@ -6,7 +6,7 @@
 # written here: the point of choosing fastboot was that the host tool
 # already exists, so the tool is the test.
 #
-#   fastboot_test.sh HARNESS FASTBOOT PROGRAM PADDED
+#   fastboot_test.sh HARNESS FASTBOOT PROGRAM PADDED LIMIT
 #
 # The harness serves the same core the Zephyr server runs, on a free
 # port of 127.0.0.1. The tool reads `max-download-size`, then `fastboot
@@ -20,12 +20,19 @@
 # decides whether the file is one (issue 799), and boots PADDED, the
 # same program padded by `vreteno_fastboot`, byte for byte, with the
 # program unchanged at its start.
+#
+# Last the boundary, LIMIT, which is what the board's server says for
+# `max-download-size`, generated from its overlay and `main.c` (issue
+# 1080): the longest image that fits boots, and one byte more is
+# refused.
 set -euo pipefail
 
 harness="$1"
 fastboot="$2"
 program="$3"
 padded="$4"
+# What the board's server takes, from its sources (issue 1080).
+limit="$(cat "$5")"
 work="${TEST_TMPDIR:-$(mktemp -d)}"
 
 # Starts the harness, which serves one client and exits, and leaves
@@ -59,8 +66,8 @@ head -c 100003 /dev/urandom >"$work/image.bin"
 serve
 size="$("$fastboot" -s "$target" getvar max-download-size 2>&1 |
 	sed -n 's/^max-download-size: //p')"
-if [[ "$size" != "0x01000000" ]]; then
-	echo "max-download-size: expected 0x01000000, got '$size'" >&2
+if [[ "$size" != "$limit" ]]; then
+	echo "max-download-size: expected $limit, as the board's server, got '$size'" >&2
 	exit 1
 fi
 kill "$pid" 2>/dev/null || true
@@ -101,3 +108,30 @@ if [[ -n "$(tail -c +"$(($(wc -c <"$program") + 1))" "$padded" | tr -d '\0')" ]]
 fi
 boot "$padded"
 echo "stock fastboot booted the padded program, $(wc -c <"$padded") bytes"
+
+# The boundary (issue 1080). `fastboot boot` puts a header of one 2048
+# byte page in front of a file and pads the file to a page, so the
+# longest file that fits is the limit less a page, and it boots byte for
+# byte; a byte more takes a page more, past the limit, and the core
+# refuses the download, as the board's server does, with nothing staged.
+fits=$(( limit - 2048 ))
+head -c "$fits" /dev/urandom >"$work/fits.bin"
+boot "$work/fits.bin"
+echo "stock fastboot booted $fits bytes, the longest that fits"
+head -c "$(( fits + 1 ))" /dev/urandom >"$work/over.bin"
+serve
+refused=0
+timeout 120 "$fastboot" -s "$target" boot "$work/over.bin" 2>"$work/err" || refused=1
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+trap - EXIT
+if [[ $refused == 0 || -s "$work/out.bin" ]]; then
+	echo "fastboot took $(( fits + 1 )) bytes, a byte past the limit" >&2
+	exit 1
+fi
+if ! grep -q "size out of range" "$work/err"; then
+	echo "fastboot refused $(( fits + 1 )) bytes for another reason:" >&2
+	cat "$work/err" >&2
+	exit 1
+fi
+echo "the server refuses $(( fits + 1 )) bytes, a byte too many: size out of range"
