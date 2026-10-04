@@ -1,14 +1,32 @@
 # SPDX-License-Identifier: Apache-2.0
 """The boot image as a rule (issue 1019).
 
-`boot_image(name, opensbi, kernel, system_map, initramfs, bootargs)`
-writes NAME.bin: the initramfs's range from the kernel's map, the device
+`boot_image(name, opensbi, kernel, system_map, initramfs, bootargs,
+model)` writes NAME.bin: the initramfs's range from the kernel's map, the device
 tree with that range and the command line in `/chosen`, compiled by
 `dtc`, and the image packed by `//tools/bootimg`. Fastboot takes it
 whole: `fastboot boot NAME.bin`.
+
+`bootargs` defaults to the device tree's own, `earlycon console=ttySIF0`
+(issue 1125). `model = True` adds `mem=64M`, for a boot on the machine
+model: the kernel then sets up 64 MiB rather than the board's gigabyte,
+which is most of what it does before devtmpfs. The board boots with all
+of its memory, so the board's image leaves it off.
 """
 
-def boot_image(name, opensbi, kernel, system_map, initramfs, bootargs, **kwargs):
+BOOTARGS = "earlycon console=ttySIF0"
+
+def boot_image(
+        name,
+        opensbi,
+        kernel,
+        system_map,
+        initramfs,
+        bootargs = BOOTARGS,
+        model = False,
+        **kwargs):
+    if model:
+        bootargs = bootargs + " mem=64M"
     native.genrule(
         name = name + "_layout",
         srcs = [system_map, initramfs],
