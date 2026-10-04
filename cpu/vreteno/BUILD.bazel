@@ -369,6 +369,10 @@ rust_test(
     name = "lockstep_test",
     srcs = ["tests/lockstep.rs"],
     edition = "2021",
+    # The random programs under paging run every fetch over the bus,
+    # and take two minutes alone, past the default five beside the
+    # board's simulations (issue 1014).
+    timeout = "long",
     deps = [
         ":vreteno32",
         "//lib:txhdl",
