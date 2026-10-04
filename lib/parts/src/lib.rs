@@ -15,6 +15,8 @@ pub mod buffer;
 pub mod bus;
 pub mod cdc;
 pub mod cfgflash;
+#[cfg(test)]
+mod derives;
 pub mod dma;
 pub mod dtm;
 pub mod eth;
