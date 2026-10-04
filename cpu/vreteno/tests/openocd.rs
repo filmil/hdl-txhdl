@@ -21,8 +21,8 @@ use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::dtm::Tck;
 use txhdl_parts::eth::EthByte;
 use vreteno32::board::{Board, BoardIn, BoardOut};
-use vreteno32::core::Vreteno;
 use vreteno32::dmem::Dmem;
+use vreteno32::hart::Hart;
 use vreteno32::rom::Rom;
 
 /// The Artix-7 XC7A200T's identity, which OpenOCD is told to expect.
@@ -280,7 +280,7 @@ fn rig(busy: bool) -> Rig {
 fn rig_with(text: Vec<u32>, busy: bool) -> Rig {
     let data: Vec<u8> = WORDS.iter().flat_map(|w| w.to_le_bytes()).collect();
     let board = Box::leak(Box::new(Board::<4> {
-        cpu: Vreteno::with(&text),
+        cpu: Hart::with(&text),
         rom: Rom::with(&text),
         dmem: Dmem::with(&data),
         ..Default::default()

@@ -129,11 +129,12 @@ pub const MISA: u32 =
     0x4000_0000 | (1 << 20) | (1 << 18) | (1 << 12) | (1 << 8) | (1 << 2) | 1;
 
 /// The core's address translation, as a device tree names it in
-/// `mmu-type`: none yet, since the core has no supervisor mode and no
-/// page tables. `misa` has no letter for it, so it is stated here, for
-/// the tools that describe the core; the change that adds Sv32 sets it
-/// to `Some("riscv,sv32")` (issues 279 and 1015).
-pub const MMU: Option<&str> = None;
+/// `mmu-type`: Sv32, which the hart's unit translates for (issue 1014).
+/// `misa` has no letter for it, so it is stated here, for the tools
+/// that describe the core. A hart with no `mmu-type` is one OpenSBI
+/// disables in the tree it hands the kernel, which then finds no timer
+/// on it (issues 279 and 1015).
+pub const MMU: Option<&str> = Some("riscv,sv32");
 
 /// The two machine counters, each 64 bits and each read as two
 /// words. The specification makes them writable, so that software can

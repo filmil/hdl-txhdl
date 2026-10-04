@@ -11,8 +11,9 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
-use vreteno32::core::{Vreteno, Writeback};
+use vreteno32::core::Writeback;
 use vreteno32::dmem::Dmem;
+use vreteno32::hart::Hart;
 use vreteno32::isa::{
     add, addi, beq, csrrs, csrrsi, csrrw, csrrwi, decode, disasm, ebreak, halt,
     jal, jalr, lui, lw, mret, or, sw, Kind, CAUSE_FETCH_ACCESS, CAUSE_MEXT,
@@ -97,7 +98,8 @@ fn lockstep_with(
     reset_at: Option<u64>,
     seip: Option<fn(u64) -> bool>,
 ) -> Model {
-    let mut cpu = Vreteno::with(program);
+    let mut hart = Hart::with(program);
+    let cpu = &hart.core;
     let (pc, ir_pc, valid, regs, halted) =
         (cpu.pc, cpu.ir_pc, cpu.valid, cpu.regs.clone(), cpu.halted);
     let (in_debug, dpc, dcsr) = (cpu.debug, cpu.dpc, cpu.dcsr);
@@ -225,7 +227,7 @@ fn lockstep_with(
             ),
             join2(
                 dmem.run(dbus, ()),
-                cpu.run(
+                hart.run(
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
                         resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,

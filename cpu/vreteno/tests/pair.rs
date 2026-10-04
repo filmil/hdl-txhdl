@@ -13,8 +13,9 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
-use vreteno32::core::{Vreteno, Writeback};
+use vreteno32::core::Writeback;
 use vreteno32::dmem::Dmem;
+use vreteno32::hart::Hart;
 use vreteno32::pair::Pair;
 use vreteno32::program::random;
 use vreteno32::timer::Timer;
@@ -50,8 +51,8 @@ impl AddrMap<1> for SerialMap {
 /// so at the end.
 fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
     let mut pair = Pair::<IW> {
-        one: Vreteno::with(program),
-        two: Vreteno::with(program),
+        one: Hart::with(program),
+        two: Hart::with(program),
         ..Default::default()
     };
     let mut dmem = Dmem::<IW>::default();

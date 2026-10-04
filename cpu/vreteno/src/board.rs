@@ -23,9 +23,10 @@
 //! own ports, as are the board's clock going in and the design's clock
 //! coming out, since the controller makes it. `DIV` is the serial
 //! port's clock divider.
-use crate::core::{Vreteno, Writeback};
+use crate::core::Writeback;
 use crate::debug::Dm;
 use crate::dmem::Dmem;
+use crate::hart::Hart;
 use crate::isa;
 use crate::rom::Rom;
 use crate::timer::Timer;
@@ -188,7 +189,7 @@ pub const DM_AT: usize = <DmMap as AddrMap<1>>::RANGES[0].0;
 /// The board's design.
 #[derive(Trace, Default)]
 pub struct Board<const DIV: u32> {
-    pub cpu: Vreteno<2>,
+    pub cpu: Hart<2>,
     pub host: AxiHost<32, 32, 4, 2, 4>,
     /// The second host: Vivado's JTAG-to-AXI master, on the top beside
     /// the board's, reached over the cable that programs the part, so
