@@ -1890,3 +1890,36 @@ fn random_programs_under_paging() {
     assert!(causes[CAUSE_STORE_PAGE as usize] >= 50, "{seen}");
     assert!(causes[CAUSE_ILLEGAL as usize] >= 50, "{seen}");
 }
+
+/// `fence.i` makes what a program stored into code what it then runs:
+/// a word run from the data memory, rewritten, and run again after the
+/// fence runs as rewritten, though the fetch's buffer still held it.
+/// The code at 0x1100 is `addi x5, x5, 1` and a return, and two returns
+/// after that. While the first return runs, the fetch takes the word
+/// after it, at 0x1108, which is the word its buffer then holds; that
+/// word is rewritten into `addi x5, x5, 2` and jumped to.
+#[test]
+fn fence_i_runs_the_code_as_stored() {
+    use vreteno32::isa::*;
+    // The new word, addi x5, x5, 2, in two instructions.
+    let w = addi(5, 5, 2);
+    let p = [
+        lui(2, 1),         // the data memory, where the code is
+        addi(5, 0, 0),     // x5 counts what the code added
+        jalr(1, 2, 0x100), // run it: x5 += 1
+        lui(6, w.wrapping_add(0x800) >> 12),
+        addi(6, 6, ((w << 20) as i32) >> 20),
+        sw(6, 2, 0x108),
+        0x0000_100f,       // fence.i
+        jalr(1, 2, 0x108), // run the rewritten word: x5 += 2
+        halt(),
+    ];
+    let mut data = vec![0u32; 0x48];
+    data[0x40] = addi(5, 5, 1);
+    data[0x41] = jalr(0, 1, 0);
+    data[0x42] = jalr(0, 1, 0);
+    data[0x43] = jalr(0, 1, 0);
+    let m = lockstep(&p, &data, "fence.i", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[5], 3, "once as it was, once as rewritten");
+}

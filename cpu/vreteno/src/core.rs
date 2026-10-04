@@ -1186,8 +1186,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // after: it waits in execute until every store the core
             // has posted has been answered, and a load already waits
             // for its answer, so nothing else is outstanding. Both
-            // fences share the opcode; there is no cache to flush.
+            // fences share the opcode and wait alike.
             let is_fence = opcode == 0x0f;
+            // `fence.i` waits as `fence` does and then refetches the
+            // next instruction with the fetch's buffer dropped, so that
+            // what runs is what memory holds (issue 1096).
+            let is_fencei = is_fence & (f3 == 1);
             // `sfence.vma` waits as a fence does, so that the tables a
             // program wrote are in memory before a walk reads them
             // (issue 1014).
@@ -1679,6 +1683,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 | (csr_write & (f12 == isa::CSR_SATP));
             let refetch =
                 Bit::from(is_sfence) | (csr_op & (f12 == isa::CSR_SATP));
+            let fencei_go = run & Bit::from(is_fencei);
             let wval = select!(opcode.raw() => {
                 0x37 => imm_u,
                 0x17 => pc + imm_u,
@@ -1698,6 +1703,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 0x67 => (a + imm_i) & !U::<32>::from(1u32),
                 0x6f => pc + imm_j,
                 0x63 => pc + imm_b,
+                0x0f => mux(trap, trap_vec, link),
                 0x73 => mux(
                     trap,
                     trap_vec,
@@ -1713,6 +1719,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 0x6f | 0x67 => Bit::One,
                 0x63 => taken,
                 0x73 => is_mret | is_sret | trap | refetch,
+                0x0f => trap | Bit::from(is_fencei),
                 _ => trap,
             });
 
@@ -1850,8 +1857,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // translation on in `satp`, a change of mode, which a trap,
             // a return or a resume may be. The fetch's translation and
             // its buffer go, and a fetch out on the bus is dropped when
-            // it answers (issue 1014).
+            // it answers (issue 1014). A `fence.i` drops them the same
+            // way, so that the code it fetches next is what memory holds
+            // (issue 1096).
             let vctx = flush_go
+                | fencei_go
                 | (satp_r.bit(31)
                     & (trap | mret_ok | sret_ok | resume_take | wb_fault));
             let f_fill = f_resp & !self.f_drop;
