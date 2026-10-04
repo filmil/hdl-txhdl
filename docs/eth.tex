@@ -400,6 +400,49 @@ halves of the MAC through \code{EthSlots}, on the fifth slot of its
 peripheral page, with an engine that fetches a frame to send from the
 DDR3 and one that stores a frame received into it (issue~151).
 
+\begin{table}[htbp]
+\caption{The port on the board through the engines and through the
+core's own copy, a thousand frames each, on 2026-10-04. Receive was
+paced by the sender at 25\,020 and 16\,681 frames a second.}
+\label{tab:e-perf}
+\centering
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+Way & Bytes & Frames/s & MB/s & Cycles \\
+\midrule
+send, engine & 60 & 90\,001 & 5.4 & 155 \\
+send, copy & 60 & 20\,787 & 1.2 & 3\,735 \\
+send, engine & 1514 & 8\,358 & 12.7 & 158 \\
+send, copy & 1514 & 1\,104 & 1.7 & 84\,663 \\
+receive, engine & 60 & 24\,989 & 1.5 & 883 \\
+receive, copy & 60 & 12\,545 & 0.8 & 4\,247 \\
+receive, engine & 1514 & 16\,672 & 25.2 & 884 \\
+receive, copy & 1514 & 913 & 1.4 & 105\,059 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:e-perf} is that path measured on the board by
+\code{ethperf.rs}, on the flagship built for issue~1022, against the
+core copying each frame through the slot itself (issue~1038). There
+is no register path on the board to compare with, so the copy stands
+for the least one would cost; \code{EthLite}, a byte to each bus
+transaction, would cost more, and a true comparison wants it on the
+board. The last column is the core's own cycles a frame, not those
+it spent waiting for the port.
+
+With the engines the core's cost is the same at any size, about 155
+cycles to hand over a frame and 880 to note one received. The copy
+costs about 225 cycles a word, a word of DDR3 at a time through the
+bridge, so a full frame is 85\,000 cycles to send and 105\,000 to
+receive. Sending full frames through the engine reaches 12.7~MB/s,
+which is the fetch engine reading the DDR3, the path issue~1023 is
+about. Receiving took 25.2~MB/s with no frame lost, and the 60-byte
+frames lost one in a thousand at the sender's pace. At the line rate
+the receiver keeps about one full frame in five, since it holds a
+frame and two slots and nothing holds the sender back. Every frame
+the board sent was counted at the other end of the cable.
+
 Writing the part found three things in the lowering, each worked
 around here at the time, and all three since fixed. A wire named for
 a reserved word of either target

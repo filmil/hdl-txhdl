@@ -386,6 +386,7 @@ Each line gives the frames, the timer's ticks from first to last at a hundred mi
 A receive line says how many of the thousand arrived, how many were lost, and how many other frames came.
 `board-1038-count.log` gives the frames the server counted for each length, and their rate as the server saw it; it should count two thousand of each transmit size.
 `board-1038-send.log` gives the rate the server sent at, which bounds what the receive side can show.
+Then the whole run once more, with the loader's previous watch over first, since two loaders on the serial port fail, and the bursts paced with `--gap-us=40` for the 60-byte frames and `--gap-us=60` for the 1514: at the line rate the receiver loses most of a burst, and the paced pass shows what it keeps up with.
 
 Pass: `ethperf`, four `tx` lines, four `rx waiting` and `rx` lines, `ethperf done`; and the server counted every frame sent.
 Losses on receive are a result, not a failure: the receiver holds one frame, and a burst faster than the store engine drains it loses frames.
