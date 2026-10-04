@@ -79,7 +79,7 @@ fn box_of(op: &Insn, w: usize, h: usize) -> (i32, i32, i32, i32) {
 /// box's first pixel: its start and that many of each step, in the
 /// thirty-two bits the rasteriser's adders wrap in, then clamped to a
 /// byte. A value below nought is nought, one of 256 or more is 255.
-fn channel(start: u32, dx: u32, dy: u32, i: i32, j: i32) -> u32 {
+pub(crate) fn channel(start: u32, dx: u32, dy: u32, i: i32, j: i32) -> u32 {
     let v = start
         .wrapping_add(dx.wrapping_mul(i as u32))
         .wrapping_add(dy.wrapping_mul(j as u32));

@@ -68,7 +68,7 @@ pub fn house() -> Vec<Op> {
 
 /// The traced run: a screen small enough that a waveform of the whole
 /// render can be drawn and a testbench of it can be replayed, with
-/// one of each kind of entry.
+/// one of each kind of entry, the shaded triangle last.
 pub fn small() -> Vec<Op> {
     vec![
         Op::Clear { colour: 0x00_0020 },
@@ -84,6 +84,12 @@ pub fn small() -> Vec<Op> {
             a: (9, 13),
             b: (14, 13),
             c: (14, 5),
+        },
+        Op::Gouraud {
+            a: (24, 120),
+            b: (120, 248),
+            c: (8, 248),
+            colours: [0xff_0000, 0x00_ff00, 0x00_00ff],
         },
     ]
 }

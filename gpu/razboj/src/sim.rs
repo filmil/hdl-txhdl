@@ -413,6 +413,30 @@ mod tests {
         assert_eq!(got.writes, (2 * W * H + 1) as u64, "pixels written");
     }
 
+    /// A shaded triangle is drawn as the model draws it: each pixel the
+    /// three planes at its centre, wound either way, hanging off the
+    /// screen, and under a flat triangle drawn over part of it
+    /// (issue 989).
+    #[test]
+    fn a_shaded_triangle_agrees_with_the_model() {
+        let colours = [0xff_8000, 0x10_ff40, 0x30_20ff];
+        let shaded = |a, b, c| Op::Gouraud { a, b, c, colours };
+        let (a, b, c) = ((24, 24), (232, 40), (56, 232));
+        agree(&[bg(0x20_2020), shaded(a, b, c)], "shaded");
+        agree(&[bg(0x20_2020), shaded(a, c, b)], "wound the other way");
+        agree(
+            &[bg(0), shaded((-80, -40), (400, 60), (90, 330))],
+            "off the screen",
+        );
+        let flat = Op::TriQ4 {
+            colour: 0xab_cdef,
+            a: (100, 100),
+            b: (250, 120),
+            c: (140, 250),
+        };
+        agree(&[bg(0), shaded(a, b, c), flat], "under a flat one");
+    }
+
     #[test]
     fn a_scene_of_every_kind_agrees_with_the_model() {
         agree(&scene::small(), "the small scene");

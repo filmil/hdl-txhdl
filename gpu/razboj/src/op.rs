@@ -320,3 +320,34 @@ fn clip(
     }
     Some((x0 as u32, y0 as u32, x1 as u32, y1 as u32))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Op, U};
+    use crate::model::channel;
+
+    /// A shaded triangle's planes give back the colour of each vertex at
+    /// the pixel whose centre the vertex is, wound either way and so with
+    /// its colours swapped by the encoder (issue 989).
+    #[test]
+    fn a_shaded_triangle_has_its_colours_at_its_vertices() {
+        // The centres of pixels 1,1 and 14,2 and 3,14.
+        let (a, b, c) = ((24, 24), (232, 40), (56, 232));
+        let (ca, cb, cc) = (0xff_8000, 0x10_ff40, 0x30_20ff);
+        for (b, c, colours) in [(b, c, [ca, cb, cc]), (c, b, [ca, cc, cb])] {
+            let op = Op::Gouraud { a, b, c, colours };
+            let i = op.encode(16, 16).expect("a triangle on the screen");
+            let (x0, y0) = (i.x0.raw() as i32, i.y0.raw() as i32);
+            let raw = |u: U<32>| u.raw() as u32;
+            for (p, want) in [(a, colours[0]), (b, colours[1]), (c, colours[2])]
+            {
+                let (di, dj) = (p.0 / 16 - x0, p.1 / 16 - y0);
+                let ch = |s, dx, dy| channel(raw(s), raw(dx), raw(dy), di, dj);
+                let got = (ch(i.r0, i.rdx, i.rdy) << 16)
+                    | (ch(i.g0, i.gdx, i.gdy) << 8)
+                    | ch(i.b0, i.bdx, i.bdy);
+                assert_eq!(got, want, "the vertex at {p:?}");
+            }
+        }
+    }
+}
