@@ -1449,8 +1449,9 @@ hardware that makes that possible is the memory management unit. On a
 thirty-two bit RISC-V hart it is Sv32: a virtual address is translated
 through a table of two levels into a physical one, page by page, and
 an access the table does not allow traps (issue~\#1014). This section
-is the unit on its own, \code{Mmu} in \code{lib/parts/src/mmu.rs}; it
-is not in the core yet. Where it goes was decided by measuring first,
+is the unit, \code{Mmu} in \code{lib/parts/src/mmu.rs}, and
+Section~\ref{sec:v-hart} the core around it. Where it goes was decided
+by measuring first,
 in \code{docs/sv32-timing.md} (issue~\#1009): the core asks with an
 address it already holds in a register, so the lookup is off the two
 paths that set the clock, at the cost of a cycle per access that goes
@@ -1553,6 +1554,95 @@ meets it.},label={lst:v-mmu-ex}]{lib/examples/ex_mmu.rs}
 
 \lstinputlisting[style=ascii,caption={What \code{ex\_mmu} printed when
 the build ran it.},label={lst:v-mmu-out}]{out_mmu.txt}
+
+\subsection{In the core}
+\label{sec:v-hart}
+
+\code{Hart}, Listing~\ref{lst:v-hart}, joins the unit and the core
+with the core's ports and nothing more, so the board, the pair, the
+runs and the tests hold a hart where they held a core. The unit goes
+first in the join, since its answers are registers the core reads in
+the same step. The core's requests are registers too, and the unit
+reads them a step late in simulation and on time in hardware; so the
+core believes an answer only two cycles after it made the request,
+which is right in both, since the unit holds its answer as long as the
+request is held. The walker's reads go out through the core's own port
+on the bus, one at a time, once every store the core has posted has
+been answered. Only one read of the fetch's, the data's or the
+walker's is ever out.
+
+Translation is on below machine mode when \code{satp} says so. The
+fetch then takes every word from the bus, the boot memory's included,
+since a page may map anywhere. It keeps one translation, of the page it
+last asked for, in \code{ft\_valid}, \code{ft\_vpn} and \code{ft\_ppn},
+and asks the unit only when the word it wants is on another page, so a
+fetch within a page costs nothing more. A page that faults is kept the
+same way, and its words are taken as faults at once, without a read.
+The fault is the first half's if that half's page faults, else the
+second's, which is on the next page only for a thirty-two bit
+instruction in a page's last halfword; the trap's value is the address
+of the half that faulted.
+
+A load, a store, \code{lr.w}, \code{sc.w} or an AMO waits in execute
+for its physical address. The address the adder computed goes into
+\code{x\_va}, the unit is asked from that register, and the answer is
+kept in \code{x\_pa}, \code{x\_pf} and \code{x\_af} until the
+instruction leaves execute. A page fault is cause 13 for a load and
+\code{lr.w} and 15 for the rest, which write; a walk that reads nothing
+is an access fault, 5 or 7. Either is taken from those registers, so
+neither the choice of trap nor the redirect waits on anything late. A
+misaligned access traps as one whatever its page says, as the
+specification orders the two.
+
+A write of \code{satp} and an \code{sfence.vma} tell the unit to flush,
+and refetch the instruction after them, since that one was fetched
+under the old translations. \code{sfence.vma} first waits, as a fence
+does, until every store is answered, so that the tables a kernel wrote
+are in memory before a walk reads them. A change of mode with
+translation on, a trap, a return or a resume, drops the fetch's one
+translation and its buffer, and a fetch out on the bus across any of
+these is dropped when it answers. \code{fence.i} does the same to the
+buffer: it used not to, and a program that rewrote the word the buffer
+held ran the old one (issue~\#1096).
+
+The lockstep test holds the hart to the model, which translates with
+\code{translate} and keeps nothing. One program writes tables into the
+data memory's one page, the root and the second level both, and runs
+supervisor mode through every kind of page: allowed and not, under
+\code{SUM} and \code{MXR}, a walk that reads nothing, ten pages twice
+past a buffer's eight entries, an entry rewritten and flushed, a jump
+where no page is, and an instruction that straddles into a page that is
+not there; it checks every trap's cause and value. \code{random\_vm}
+then runs the random programs' body in supervisor or user mode, over
+tables the seed chooses, with the page faults delegated or not, and
+machine mode either stepping past one or doing what a kernel does:
+setting what the entry lacks, flushing, and running the instruction
+again. Ninety-six seeds run in lockstep. The cost is the fetch: under
+translation every word comes from the bus, and every return translates
+its page again, which the instruction cache of issue~\#1021 is for.
+
+The flagship, Vreteno's board with the Ethernet and HDMI parts on one
+FPGA, places and routes with the hart in it. On 2026-10-04 at commit
+\code{f9be2042} it met the core's ten nanoseconds with 0.099~ns of
+slack, and hold with 0.028~ns, in 21\,327 LUTs and 19\,786
+flip-flops, as much slack as it had with user and supervisor mode
+alone (issue~\#1012). Its worst path is now in the
+fetch's buffer, from the address the buffer holds through the compare
+with the one the fetch wants and the add of the next word's, into the
+buffer's register again. It took two tries. The first run missed by
+1.599~ns: the delegation of a trap, which chooses between \code{stvec}
+and \code{mtvec} and so feeds the next program counter, had the new
+faults ahead of the late choices, so the stall's settling went through
+two more multiplexers on its way to the boot memory's address. With the
+faults chosen first, from registers, it missed by 0.274~ns, on the
+stall itself, which waited on the adder twice, once for the bus and
+once for the translation. A misaligned access now waits as an aligned
+one does and traps when it runs, so the stall waits on no adder at all,
+and the path that had set the clock since the stall was written is no
+longer the worst.
+
+\lstinputlisting[caption={\code{hart.rs}: the core and its unit, with
+the core's ports.},label={lst:v-hart}]{cpu/vreteno/src/hart.rs}
 
 \section{The Netlist}
 \label{sec:v-netlist}
