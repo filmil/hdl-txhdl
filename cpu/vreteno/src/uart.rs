@@ -21,13 +21,16 @@
 //! port's interrupt line is high while one that `ie` enables is.
 //! The lines rest high.
 //!
-//! Three resets differ from SiFive's, so that a program that never
+//! Two resets differ from SiFive's, so that a program that never
 //! writes the controls finds the port as it was before this map: both
-//! enables start set, and so does `ie`'s receive bit, so the interrupt
-//! line is high while a received byte waits. `div` starts at `DIV` less
-//! one: 867 for 115200 baud at 100 MHz, and 3 in the runs that are
-//! checked, so that a byte takes forty cycles rather than nine
-//! thousand.
+//! enables start set. `div` starts at `DIV` less one: 867 for 115200
+//! baud at 100 MHz, and 3 in the runs that are checked, so that a byte
+//! takes forty cycles rather than nine thousand. `ie` starts clear, as
+//! SiFive's does, so the interrupt line stays low until a program asks
+//! for it; Linux's driver relies on that, and a receive bit that
+//! started set let the loader's bytes leave a request pending in the
+//! interrupt controller, which Linux took before its port was ready
+//! (issues 1136 and 1137).
 use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
 use txhdl::regmap;
 use txhdl::types::{Bit, U};
@@ -91,7 +94,7 @@ regmap! { serial (serial_read, serial_we, serial_re), 3: [
     ]),
     (4, ie, rw, "which watermarks raise the interrupt line", [
         (txwm, 0, 1, rw, 0, "the transmit watermark"),
-        (rxwm, 1, 1, rw, 1, "the receive watermark"),
+        (rxwm, 1, 1, rw, 0, "the receive watermark"),
     ]),
     (5, ip, ro, "which watermarks are passed", [
         (txwm, 0, 1, ro, 0, "fewer than txcnt bytes wait to be sent"),
@@ -174,7 +177,7 @@ impl<const DIV: u32> Default for Uart<DIV> {
             rxen: Reg::new(Bit::One),
             rxcnt: Reg::default(),
             ie_txwm: Reg::default(),
-            ie_rxwm: Reg::new(Bit::One),
+            ie_rxwm: Reg::default(),
             div: Reg::new(U::from(DIV - 1)),
         }
     }
@@ -276,7 +279,7 @@ impl<const DIV: u32> Unit for Uart<DIV> {
                 self.rxen.set(Bit::One);
                 self.rxcnt.set(0);
                 self.ie_txwm.set(Bit::Zero);
-                self.ie_rxwm.set(Bit::One);
+                self.ie_rxwm.set(Bit::Zero);
                 self.div.set(U::from(DIV - 1));
             } else {
                 if we.bit(2).to_bool() {
