@@ -784,6 +784,27 @@ vreteno_flat(
     program = ":ethtx_ram",
 )
 
+# The Ethernet port's throughput, through the slots and against the
+# core's own copy of each frame, for the loader (#1038).
+rust_binary(
+    name = "ethperf_ram",
+    srcs = ["ethperf.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+    ],
+)
+
+vreteno_flat(
+    name = "ethperf_ram_bin",
+    platform = ":vreteno",
+    program = ":ethperf_ram",
+)
+
 # The Ethernet port's receive interrupt taken by the core, for the
 # loader (#786).
 rust_binary(
