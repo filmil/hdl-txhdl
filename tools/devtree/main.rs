@@ -376,11 +376,31 @@ mod tests {
         );
     }
 
-    /// The hart's ISA string is what `misa` says: RV32IMC, no A, no F.
+    /// The hart's ISA string is what `misa` says, whatever it gains:
+    /// every letter it reports, in the specification's order, except S
+    /// and U, which name privilege modes rather than extensions. A
+    /// literal here went stale twice, when A (#1010) and then S and U
+    /// (#1012) reached `misa`. A letter the generator does not know
+    /// fails here, so it is added there rather than left out.
     #[test]
     fn the_isa_is_what_misa_reports() {
-        assert_eq!(isa(), "rv32imc_zicsr");
-        assert_eq!(extensions(), ["i", "m", "c", "zicsr"]);
+        let order = "imafdqc";
+        let mut want: Vec<char> = ('a'..='z')
+            .filter(|c| MISA & (1 << (*c as u32 - 'a' as u32)) != 0)
+            .filter(|c| !"su".contains(*c))
+            .collect();
+        want.sort_by_key(|c| {
+            order
+                .find(*c)
+                .unwrap_or_else(|| panic!("misa has {c}, unknown to isa()"))
+        });
+        let letters: String = want.iter().collect();
+        assert_eq!(isa(), format!("rv32{letters}_zicsr"));
+        let mut ext: Vec<String> = want.iter().map(|c| c.to_string()).collect();
+        ext.push("zicsr".to_string());
+        assert_eq!(extensions(), ext);
+        // What the core has whatever else it gains.
+        assert!(letters.starts_with("im") && letters.ends_with('c'));
     }
 
     /// A boot image's choices land in `/chosen`.
