@@ -2032,3 +2032,59 @@ fn mprv_loads_and_stores_as_the_previous_mode() {
     assert_eq!(log, (CAUSE_LOAD_PAGE, page(0x213) + 0x10, CAUSE_ECALL_S));
     assert_eq!(m.x[20] >> 17 & 1, 0, "the return cleared MPRV");
 }
+
+/// A misaligned access goes where `medeleg` sends its cause, which the
+/// core chooses last, by the misaligned check (issue 1130): a load's,
+/// delegated, to the supervisor's handler, and a store's, not, to
+/// machine mode's, each from supervisor mode.
+#[test]
+fn a_misaligned_access_traps_where_it_is_delegated() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, sh, s_code, not_ecall) =
+        (a.label(), a.label(), a.label(), a.label());
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.abs(sh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_STVEC, 31));
+    a.wide(addi(5, 0, 1 << 4)); // a misaligned load, not a store
+    a.wide(csrrw(0, CSR_MEDELEG, 5));
+    a.wide(lui(5, 1));
+    a.wide(addi(5, 5, -0x800)); // MPP = supervisor
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    a.abs(s_code, |s| addi(31, 0, s as i32));
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    a.place(s_code);
+    a.wide(lui(2, 1)); // the data memory
+    a.wide(lw(10, 2, 2)); // to the supervisor
+    a.wide(sw(10, 2, 1)); // to machine mode
+    a.wide(ecall());
+    a.align();
+    a.place(sh);
+    a.wide(csrrs(22, CSR_SCAUSE, 0));
+    a.wide(csrrs(23, CSR_STVAL, 0));
+    a.wide(csrrs(24, CSR_SEPC, 0));
+    a.wide(addi(24, 24, 4));
+    a.wide(csrrw(0, CSR_SEPC, 24));
+    a.wide(sret());
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(addi(26, 0, 9));
+    a.to(not_ecall, |o| bne(21, 26, o));
+    a.wide(halt());
+    a.place(not_ecall);
+    a.wide(addi(20, 21, 0));
+    a.wide(csrrs(25, CSR_MTVAL, 0));
+    a.wide(csrrs(26, CSR_MEPC, 0));
+    a.wide(addi(26, 26, 4));
+    a.wide(csrrw(0, CSR_MEPC, 26));
+    a.wide(mret());
+    let m =
+        lockstep(&a.words(), &[], "misaligned, delegated", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!((m.x[22], m.x[23]), (CAUSE_LOAD_MISALIGNED, 0x1002));
+    assert_eq!((m.x[20], m.x[25]), (CAUSE_STORE_MISALIGNED, 0x1001));
+}
