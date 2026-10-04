@@ -29,6 +29,7 @@ fn maps() -> Vec<(&'static str, &'static RegMap)> {
         ("i2c", &txhdl_parts::i2c::regs::MAP),
         ("mdio", &txhdl_parts::mdio::regs::MAP),
         ("pwm", &txhdl_parts::pwm::regs::MAP),
+        ("scan", &txhdl_parts::scanout::scan::MAP),
         ("sd", &txhdl_parts::sd::regs::MAP),
         ("spi", &txhdl_parts::spi::regs::MAP),
         ("syscon", &txhdl_parts::syscon::regs::MAP),

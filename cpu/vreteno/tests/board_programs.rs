@@ -266,6 +266,17 @@ fn every_base_in_the_hal_is_where_the_router_puts_it() {
     ];
     let hal = hal_map();
     for (name, value) in &hal {
+        if name == "SCAN" {
+            // The scanout's registers share the video slot, above the
+            // split bit of `ScanVideo` (issue 151).
+            let video = SlotMap::RANGES[2].0;
+            assert_eq!(
+                *value,
+                video + (1 << txhdl_parts::scanout::SCAN_BIT),
+                "the HAL's SCAN is not the video slot's upper half"
+            );
+            continue;
+        }
         if name == "FLASH_PROGRAMS" {
             let flash = BoardMap::RANGES[7].0;
             assert_eq!(

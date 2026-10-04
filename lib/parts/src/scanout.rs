@@ -415,6 +415,11 @@ impl Unit for VidMux {
 }
 // end{vmux}
 
+/// The address bit that splits the video slot: [`Hdmi`]'s words below
+/// it, [`ScanCtl`]'s from `1 << SCAN_BIT`. A program's map adds this to
+/// the slot's base, and a test holds the two to each other.
+pub const SCAN_BIT: usize = 7;
+
 // begin{video}
 /// The video peripheral with a scanout beside it, on the pixel clock:
 /// what the board's third slot holds (issue 151).
@@ -451,7 +456,7 @@ pub struct ScanVideo<
     const STRIDE: usize,
 > {
     /// The slot, split by address bit 7.
-    pub split: LiteSplit<32, 32, 4, 7>,
+    pub split: LiteSplit<32, 32, 4, SCAN_BIT>,
     /// The scanout's registers, from `0x80`.
     pub ctl: ScanCtl,
     /// The beam, counted again for the pair.

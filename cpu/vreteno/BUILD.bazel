@@ -76,6 +76,7 @@ rust_test(
     deps = [
         ":vreteno32",
         "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
     ],
 )
 

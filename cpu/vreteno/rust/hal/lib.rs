@@ -11,7 +11,7 @@
 //! * [`map`], the address map of the board and the simulation, in one
 //!   place;
 //! * the peripherals as types with methods, [`Uart`], [`Timer`],
-//!   [`Plic`], [`Pwm`] and [`Video`], each a set of volatile accesses
+//!   [`Plic`], [`Pwm`], [`Video`] and [`Scan`], each a set of volatile accesses
 //!   at the map's addresses and nothing else;
 //! * [`csr`], the control and status registers the core has;
 //! * [`trap`], an entry that saves a frame, reads `mcause`, and
@@ -30,7 +30,7 @@
 
 use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
-use vreteno_regs::{hdmi, pwm, timer, uart};
+use vreteno_regs::{hdmi, pwm, scan, timer, uart};
 
 pub mod trap;
 
@@ -51,6 +51,9 @@ pub mod map {
     pub const PWM: usize = 0x0000_3100;
     /// The video peripheral, on the flagship.
     pub const VIDEO: usize = 0x0000_3200;
+    /// The scanout's registers, in the upper half of the video slot
+    /// (issue 151).
+    pub const SCAN: usize = 0x0000_3280;
     /// The remote peripheral, answered by a program across the
     /// Ethernet port.
     pub const REMOTE: usize = 0x0000_3300;
@@ -334,6 +337,46 @@ impl Video {
     /// Paint a twelve-bit colour at the cursor, and move it on.
     pub fn pixel(colour: u32) {
         wr(Self::PIXEL, colour);
+    }
+}
+
+/// The scanout beside the video peripheral (issue 151): the frame's
+/// base in memory, the bit that shows the scanout rather than the
+/// framebuffer, and the underflow bit, which a write clears. A frame is
+/// 640 by 480 words, `0x00RRGGBB`, 2560 bytes a line.
+pub struct Scan;
+
+impl Scan {
+    // The scanout's words, as its map declares them (issue 709).
+    const BASE: usize = map::SCAN + scan::BASE;
+    const CTRL: usize = map::SCAN + scan::CTRL;
+    const STATUS: usize = map::SCAN + scan::STATUS;
+    const CLEAR: usize = map::SCAN + scan::CLEAR;
+
+    /// Columns and rows of a frame, and bytes from one line to the next.
+    pub const WIDTH: u32 = 640;
+    pub const HEIGHT: u32 = 480;
+    pub const STRIDE: u32 = 2560;
+
+    /// Where the next frame starts: taken at the vertical sync.
+    pub fn base(at: u32) {
+        wr(Self::BASE, at);
+    }
+
+    /// Show the scanout, or the framebuffer again.
+    pub fn show(on: bool) {
+        wr(Self::CTRL, on as u32);
+    }
+
+    /// Whether a column has been shown before its word arrived since
+    /// the bit was last cleared.
+    pub fn underflow() -> bool {
+        rd(Self::STATUS) & scan::STATUS_UNDER_MASK != 0
+    }
+
+    /// Clear the underflow bit.
+    pub fn clear() {
+        wr(Self::CLEAR, 1);
     }
 }
 
