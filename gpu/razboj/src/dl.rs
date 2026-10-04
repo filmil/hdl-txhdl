@@ -17,10 +17,19 @@
 //!   word 0   [1:0] kind      [25:2] colour
 //!   word 1   [9:0] x0       [25:16] y0
 //!   word 2   [9:0] x1       [25:16] y1
-//!   word 3  [11:0] ax       [27:16] ay
-//!   word 4  [11:0] bx       [27:16] by
-//!   word 5  [11:0] cx       [27:16] cy
+//!   word 3  [15:0] ax       [31:16] ay
+//!   word 4  [15:0] bx       [31:16] by
+//!   word 5  [15:0] cx       [31:16] cy
+//!   word 6  r0      word 7  rdx     word 8  rdy
+//!   word 9  g0      word 10 gdx     word 11 gdy
+//!   word 12 b0      word 13 bdx     word 14 bdy
+//!   word 15  [7:0] alpha
 //! ```
+//!
+//! Words 6 to 14 are a shaded triangle's three planes, each the
+//! channel's value at the box's first pixel and its two steps, with
+//! sixteen bits of fraction; the other kinds leave them zero. Word 15
+//! is every entry's alpha, which the pixel takes in its top byte.
 //!
 //! Beside the list is one more word, the count: how many instructions
 //! the list holds, in its low sixteen bits. The rasteriser reads it
@@ -37,11 +46,11 @@ use crate::op::{Insn, Kind};
 
 // begin{format}
 /// Words an instruction takes, a power of two.
-pub const WORDS: usize = 8;
+pub const WORDS: usize = 16;
 /// The shift from an instruction's index to its byte address.
-pub const BYTE_SHIFT: usize = 5;
+pub const BYTE_SHIFT: usize = 6;
 /// Words of an instruction that carry anything.
-pub const USED: usize = 6;
+pub const USED: usize = 16;
 
 /// One instruction as the words a program writes.
 pub fn encode(i: &Insn) -> [u32; WORDS] {
@@ -49,6 +58,7 @@ pub fn encode(i: &Insn) -> [u32; WORDS] {
         Kind::Clear => 0u32,
         Kind::Rect => 1,
         Kind::Tri => 2,
+        Kind::Shaded => 3,
     };
     let lo = |v: u128| v as u32;
     let mut w = [0u32; WORDS];
@@ -58,6 +68,11 @@ pub fn encode(i: &Insn) -> [u32; WORDS] {
     w[3] = lo(i.ax.raw()) | (lo(i.ay.raw()) << 16);
     w[4] = lo(i.bx.raw()) | (lo(i.by.raw()) << 16);
     w[5] = lo(i.cx.raw()) | (lo(i.cy.raw()) << 16);
+    let planes = [i.r0, i.rdx, i.rdy, i.g0, i.gdx, i.gdy, i.b0, i.bdx, i.bdy];
+    for (k, p) in planes.iter().enumerate() {
+        w[6 + k] = lo(p.raw());
+    }
+    w[15] = lo(i.alpha.raw());
     w
 }
 // end{format}
@@ -67,7 +82,8 @@ pub fn decode(w: &[u32]) -> Insn {
     let kind = match w[0] & 3 {
         0 => Kind::Clear,
         1 => Kind::Rect,
-        _ => Kind::Tri,
+        2 => Kind::Tri,
+        _ => Kind::Shaded,
     };
     let f = |word: usize, shift: usize, bits: u32| {
         (w[word] >> shift) & ((1 << bits) - 1)
@@ -75,16 +91,26 @@ pub fn decode(w: &[u32]) -> Insn {
     Insn {
         kind,
         colour: U::from((w[0] >> 2) & 0xff_ffff),
+        alpha: U::from(w[15] & 0xff),
         x0: U::from(f(1, 0, 10)),
         y0: U::from(f(1, 16, 10)),
         x1: U::from(f(2, 0, 10)),
         y1: U::from(f(2, 16, 10)),
-        ax: U::from(f(3, 0, 12)),
-        ay: U::from(f(3, 16, 12)),
-        bx: U::from(f(4, 0, 12)),
-        by: U::from(f(4, 16, 12)),
-        cx: U::from(f(5, 0, 12)),
-        cy: U::from(f(5, 16, 12)),
+        ax: U::from(f(3, 0, 16)),
+        ay: U::from(f(3, 16, 16)),
+        bx: U::from(f(4, 0, 16)),
+        by: U::from(f(4, 16, 16)),
+        cx: U::from(f(5, 0, 16)),
+        cy: U::from(f(5, 16, 16)),
+        r0: U::from(w[6]),
+        rdx: U::from(w[7]),
+        rdy: U::from(w[8]),
+        g0: U::from(w[9]),
+        gdx: U::from(w[10]),
+        gdy: U::from(w[11]),
+        b0: U::from(w[12]),
+        bdx: U::from(w[13]),
+        bdy: U::from(w[14]),
     }
 }
 
@@ -109,7 +135,7 @@ mod tests {
         let ops = vec![
             Op::Clear { colour: 0x12_3456 },
             Op::Rect {
-                colour: 0x65_4321,
+                colour: 0x8065_4321,
                 x: 3,
                 y: 5,
                 w: 7,
@@ -130,14 +156,18 @@ mod tests {
             let got = decode(&words[i * WORDS..]);
             assert_eq!(got.kind, want.kind, "kind of {i}");
             assert_eq!(got.colour.raw(), want.colour.raw(), "colour of {i}");
+            assert_eq!(got.alpha.raw(), want.alpha.raw(), "alpha of {i}");
             assert_eq!(got.x0.raw(), want.x0.raw(), "x0 of {i}");
             assert_eq!(got.y1.raw(), want.y1.raw(), "y1 of {i}");
             assert_eq!(got.ax.raw(), want.ax.raw(), "ax of {i}");
             assert_eq!(got.cy.raw(), want.cy.raw(), "cy of {i}");
         }
-        // A vertex off the screen is two's complement in twelve bits
-        // and comes back as it went in.
+        // A vertex off the screen is two's complement in sixteen bits,
+        // in sixteenths of a pixel, and comes back as it went in.
         let t = decode(&words[2 * WORDS..]);
-        assert_eq!(crate::op::signed(t.ax), -4, "a negative vertex");
+        assert_eq!(crate::op::signed(t.ax), -4 * 16, "a negative vertex");
+        // The alpha is word 15's low byte, apart from the colour.
+        let r = decode(&words[WORDS..]);
+        assert_eq!((r.alpha.raw(), r.colour.raw()), (0x80, 0x65_4321));
     }
 }

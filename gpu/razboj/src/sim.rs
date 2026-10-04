@@ -28,6 +28,9 @@ pub struct Run {
     pub cycles: u64,
     /// Read bursts the memory took and read beats it sent, until then.
     pub reads: (u64, u64),
+    /// Write beats the memory took, until then: one a pixel written,
+    /// and one for each count written back.
+    pub writes: u64,
 }
 
 /// Render `ops` on the hardware. The screen is `1 << LOGW` by `H`
@@ -134,7 +137,7 @@ pub fn run_lists<
     // finished, so a second handle on it is kept here, and on the
     // counts of what was read.
     let pixels = fb.px.clone();
-    let (rbursts, rbeats) = (fb.rbursts, fb.rbeats);
+    let (rbursts, rbeats, wbeats) = (fb.rbursts, fb.rbeats, fb.wbeats);
 
     if wave {
         if let Some(mut t) = Wave::from_env() {
@@ -184,6 +187,7 @@ pub fn run_lists<
                 fb: (0..w * H).map(|i| pixels.read(i).raw() as u32).collect(),
                 cycles,
                 reads: (rbursts.get().raw() as u64, rbeats.get().raw() as u64),
+                writes: wbeats.get().raw() as u64,
             });
             if next == lists.len() {
                 break;
@@ -244,9 +248,11 @@ pub fn run_lists<
 #[cfg(test)]
 mod tests {
     use super::{run, run_lists};
+    use crate::dl::image;
     use crate::model;
     use crate::op::{assemble, Kind, Op};
     use crate::scene;
+    use std::collections::BTreeSet;
 
     /// The screen the tests use: sixteen by sixteen.
     const LOGW: usize = 4;
@@ -323,9 +329,9 @@ mod tests {
     /// the first, in colours of their own (issue 983).
     #[test]
     fn a_list_of_three_hundred_entries_is_drawn_whole() {
-        const N: usize = 4096;
+        const N: usize = 8192;
         const DL: usize = 0x1000;
-        const CTRL: usize = 0x3800;
+        const CTRL: usize = 0x7000;
         let ops: Vec<Op> = (0..300)
             .map(|i: i32| Op::Rect {
                 colour: 0x01_0101 * (i as u32 % 200) + i as u32,
@@ -341,8 +347,8 @@ mod tests {
         assert_eq!(got.fb, model::render(&insns, W, H), "300 entries");
     }
 
-    /// An entry is fetched as one read burst of six beats, so every
-    /// entry costs five beats more than it costs bursts; a poll of
+    /// An entry is fetched as one read burst of sixteen beats, so every
+    /// entry costs fifteen beats more than it costs bursts; a poll of
     /// the count is one beat and one burst, and costs neither
     /// (issue 983).
     #[test]
@@ -351,7 +357,197 @@ mod tests {
         let n = assemble(&ops, W, H).len() as u64;
         let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
         let (bursts, beats) = got.reads;
-        assert_eq!(beats - bursts, 5 * n, "{bursts} bursts, {beats} beats");
+        assert_eq!(beats - bursts, 15 * n, "{bursts} bursts, {beats} beats");
+    }
+
+    /// A mesh of triangles sharing edges, over the whole screen: four
+    /// by four cells of four pixels, each cut in two along a diagonal
+    /// that runs through pixel centres, the inner vertices moved by
+    /// sixteenths of a pixel. Every pixel is covered by exactly one
+    /// triangle, in the model, and the hardware writes each exactly
+    /// once and draws what the model draws (issue 988).
+    #[test]
+    fn a_mesh_draws_every_pixel_once() {
+        let jitter = |i: i32, j: i32| -> (i32, i32) {
+            if i == 0 || j == 0 || i == 4 || j == 4 {
+                (0, 0)
+            } else {
+                ((i * 7 + j * 3) % 11 - 5, (i * 5 + j * 7) % 13 - 6)
+            }
+        };
+        let v = |i: i32, j: i32| {
+            let (dx, dy) = jitter(i, j);
+            (64 * i + dx, 64 * j + dy)
+        };
+        let mut ops = vec![bg(0)];
+        let mut colour = 0x10_0000;
+        for j in 0..4 {
+            for i in 0..4 {
+                let (a, b, c, d) =
+                    (v(i, j), v(i + 1, j), v(i + 1, j + 1), v(i, j + 1));
+                for (p, q, r) in [(a, b, c), (a, c, d)] {
+                    colour += 0x01_0203;
+                    ops.push(Op::TriQ4 {
+                        colour,
+                        a: p,
+                        b: q,
+                        c: r,
+                    });
+                }
+            }
+        }
+        let list = assemble(&ops, W, H);
+        assert_eq!(list.len(), 33, "a clear and 32 triangles");
+        let cover = model::coverage(&list[1..], W, H);
+        assert!(
+            cover.iter().all(|&n| n == 1),
+            "every pixel covered once: {cover:?}"
+        );
+        // Thirty-three entries reach past the usual count's place, so
+        // the memory is the larger one the long list uses.
+        const N: usize = 4096;
+        const DL: usize = 0x1000;
+        const CTRL: usize = 0x3800;
+        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
+        assert_eq!(got.fb, model::render(&list, W, H), "the picture");
+        // The clear writes every pixel, the mesh every pixel once more,
+        // and the count is written back to zero at the end.
+        assert_eq!(got.writes, (2 * W * H + 1) as u64, "pixels written");
+    }
+
+    /// A shaded triangle is drawn as the model draws it: each pixel the
+    /// three planes at its centre, wound either way, hanging off the
+    /// screen, and under a flat triangle drawn over part of it
+    /// (issue 989).
+    #[test]
+    fn a_shaded_triangle_agrees_with_the_model() {
+        let colours = [0xff_8000, 0x10_ff40, 0x30_20ff];
+        let shaded = |a, b, c| Op::Gouraud { a, b, c, colours };
+        let (a, b, c) = ((24, 24), (232, 40), (56, 232));
+        agree(&[bg(0x20_2020), shaded(a, b, c)], "shaded");
+        agree(&[bg(0x20_2020), shaded(a, c, b)], "wound the other way");
+        agree(
+            &[bg(0), shaded((-80, -40), (400, 60), (90, 330))],
+            "off the screen",
+        );
+        let flat = Op::TriQ4 {
+            colour: 0xab_cdef,
+            a: (100, 100),
+            b: (250, 120),
+            c: (140, 250),
+        };
+        agree(&[bg(0), shaded(a, b, c), flat], "under a flat one");
+    }
+
+    /// Every entry writes its alpha in the pixel's top byte: a clear's,
+    /// a rectangle's, a flat triangle's and a shaded one's, the last
+    /// its first vertex's, and no other (issue 990).
+    #[test]
+    fn alpha_is_written_in_the_pixels_top_byte() {
+        let ops = [
+            bg(0x1120_3040),
+            Op::Rect {
+                colour: 0x2240_5060,
+                x: 1,
+                y: 1,
+                w: 5,
+                h: 4,
+            },
+            Op::Tri {
+                colour: 0x3370_8090,
+                a: (8, 1),
+                b: (15, 6),
+                c: (9, 7),
+            },
+            Op::Gouraud {
+                a: (24, 136),
+                b: (120, 248),
+                c: (8, 248),
+                colours: [0x44ff_0000, 0x9900_ff00, 0xaa00_00ff],
+            },
+        ];
+        agree(&ops, "alpha");
+        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
+        let alphas: BTreeSet<u32> = got.fb.iter().map(|p| p >> 24).collect();
+        assert_eq!(alphas, BTreeSet::from([0x11, 0x22, 0x33, 0x44]));
+    }
+
+    /// A scissor box: nothing outside it is touched, inside it the
+    /// picture is the model's, and a clear under it fills only the box.
+    /// A box that holds the screen is no box at all, and one wholly off
+    /// it draws nothing (issue 990).
+    #[test]
+    fn nothing_outside_the_scissor_box_is_touched() {
+        let (x0, y0, x1, y1) = (3, 4, 11, 12);
+        let scissor = Op::Scissor {
+            x: x0,
+            y: y0,
+            w: x1 - x0 + 1,
+            h: y1 - y0 + 1,
+        };
+        let drawn = [
+            bg(0x20_4060),
+            Op::Rect {
+                colour: 0x80_8080,
+                x: 0,
+                y: 0,
+                w: 6,
+                h: 6,
+            },
+            Op::Tri {
+                colour: 0xc0_4040,
+                a: (-2, 10),
+                b: (18, 2),
+                c: (8, 18),
+            },
+            Op::Gouraud {
+                a: (0, 0),
+                b: (256, 64),
+                c: (64, 256),
+                colours: [0xff_0000, 0x00_ff00, 0x00_00ff],
+            },
+        ];
+        let with = |first: Op| {
+            let mut ops = vec![bg(0x10_1010), first];
+            ops.extend(drawn);
+            ops
+        };
+        let ops = with(scissor);
+        agree(&ops, "scissored");
+        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
+        for y in 0..H as i32 {
+            for x in 0..W as i32 {
+                let inside = (x0..=x1).contains(&x) && (y0..=y1).contains(&y);
+                if !inside {
+                    let p = got.fb[y as usize * W + x as usize];
+                    assert_eq!(p, 0x10_1010, "pixel {x},{y} outside");
+                }
+            }
+        }
+        let list = assemble(&ops, W, H);
+        assert_eq!(list[1].kind, Kind::Rect, "a clear under a scissor box");
+        // A box that holds the screen assembles as no box.
+        let whole = Op::Scissor {
+            x: -5,
+            y: -5,
+            w: 100,
+            h: 100,
+        };
+        let mut plain = with(whole);
+        plain.remove(1);
+        assert_eq!(
+            image(&assemble(&with(whole), W, H)),
+            image(&assemble(&plain, W, H)),
+            "a scissor box the size of the screen"
+        );
+        // One off the screen leaves only the first clear.
+        let gone = Op::Scissor {
+            x: 20,
+            y: 0,
+            w: 4,
+            h: 4,
+        };
+        assert_eq!(assemble(&with(gone), W, H).len(), 1, "nothing inside");
     }
 
     #[test]

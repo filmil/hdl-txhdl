@@ -69,13 +69,14 @@ Figure~\ref{fig:g-scene} is the demonstration, drawn by the
 rasteriser, written into the framebuffer over AXI, read back out of
 it and written to a file by the same program. It is sixty-four by
 sixty-four pixels and eight entries of a display list: a clear, three
-rectangles and four triangles.
+rectangles, three flat triangles and a shaded one, the hill, lit from
+above.
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.62\columnwidth]{scene.png}
 \caption{The demonstration, as Razboj drew it. Eight entries, four
-thousand and ninety-six pixels, 16\,376 cycles.}
+thousand and ninety-six pixels, 16\,329 cycles.}
 \label{fig:g-scene}
 \end{figure}
 
@@ -85,10 +86,15 @@ thousand and ninety-six pixels, 16\,376 cycles.}
 \section{The Display List}
 \label{sec:g-list}
 
-A display list is a little instruction set, and its three entries
+A display list is a little instruction set, and its four entries
 carry different things. A clear carries a colour and nothing else. A
-rectangle carries a box. A triangle carries three vertices. That is
+rectangle carries a box. A triangle carries three vertices, and a
+shaded triangle carries a colour at each of them as well. That is
 what an \code{enum} says in Rust, and it is what a program writes.
+A colour is \code{0xAARRGGBB}: the alpha goes into the top byte of the
+pixel, which the colour leaves free, so the framebuffer holds it for
+whatever reads it next; nothing here does yet. A shaded triangle blends
+red, green and blue, and its alpha is its first vertex's all over.
 
 \gpupart{op.rs}{op}{The instruction set: \code{Op} as a program writes
 it, \code{Kind} as the hardware reads it, and \code{Insn} as it goes
@@ -98,9 +104,10 @@ on the wire.}{lst:g-op}
 every field a step of the rasteriser reads has to be at a fixed place:
 the lowered subset slices a channel's word at constant offsets, and a
 variable-width encoding would want a length field and a shifter in
-front of everything else. A clear therefore leaves the box and the
-vertices at zero and a rectangle leaves the vertices at zero, and the
-kind says which of them mean anything. That is a fixed-width
+front of everything else. A clear therefore leaves the box, the
+vertices and the shading at zero, a rectangle leaves the vertices and
+the shading at zero, and a flat triangle the shading; the kind says
+which of them mean anything. That is a fixed-width
 instruction word, and it costs what one costs: the widest entry sets
 the width, and the narrow ones pay for it.
 
@@ -112,18 +119,34 @@ box to the screen, winds the triangle so that its inside is where
 every edge function is non-negative, and drops an entry that would
 draw nothing.}{lst:g-encode}
 
-The kind is read by the hardware in one place and decides two things.
-A triangle is the entry whose edge functions are tested; a clear is
+One more entry draws nothing and is not an instruction at all:
+\code{Op::Scissor} sets a box that the entries after it are drawn
+inside, until the next one. The rasteriser only ever walks an entry's
+box, so clipping that box to the scissor box is the whole of the
+scissor test, and the assembler does it as it clips to the screen,
+once an entry. A clear under a scissor box is the one entry that
+changes: it becomes a rectangle of that box, since the box the
+rasteriser supplies for a clear is the screen. A box that holds the
+screen is no box, and a box wholly off it draws nothing until the next.
+Nothing in the hardware knows there is a scissor box.
+
+The kind is read by the hardware in one place and decides three
+things. A triangle, flat or shaded, is the entry whose edge functions
+are tested; a shaded triangle is the entry whose colour is worked out
+at each pixel; a clear is
 the entry whose box the rasteriser supplies, from the screen size in
 its own type, since a clear is the whole screen by definition and
 there is nothing for the instruction to say. A rectangle is the plain
-case, its box read and its edges ignored. Those three lines are the
+case, its box read and its edges ignored. These lines are the
 whole of the decoder:
 
 \begin{lstlisting}[frame=none,numbers=none]
-let covered = (self.kind.get() != Kind::Tri) | (n0 & n1 & n2);
+let boxed = Bit::from(self.kind.get() != Kind::Tri)
+    & Bit::from(self.kind.get() != Kind::Shaded);
 let clearing = self.skind.get() == Kind::Clear;
 let wx = mux(clearing, zero16, self.sx0.get().resize::<16>());
+let shaded = self.kind.get() == Kind::Shaded;
+let rgb = mux(shaded, shade, self.colour.get());
 \end{lstlisting}
 
 A wider instruction set would grow that decoder and not the walk,
@@ -141,11 +164,10 @@ thing software and hardware both have to agree on, so it is stated
 once, in \code{gpu/razboj/src/dl.rs}.
 
 \gpupart{dl.rs}{format}{The display list as a program writes it:
-eight words an instruction, six of which say anything, and no field
-across a word.}{lst:g-format}
+sixteen words an instruction, and no field across a word.}{lst:g-format}
 
-An instruction takes eight words, so that the address of the
-$i$th is the list's base plus $i$ shifted by five, a shift rather
+An instruction takes sixteen words, so that the address of the
+$i$th is the list's base plus $i$ shifted by six, a shift rather
 than a multiply. No field crosses a word, so a program writes a field
 with a shift and a mask and the rasteriser reads it with a slice at a
 constant offset. Beside the list is one more word, the count. The
@@ -156,7 +178,7 @@ answers in the same word: when the list is drawn it writes the count
 back to zero. Nothing else passes between the two.
 
 So the rasteriser has a front end. It polls the count, fetches the
-six words of an instruction as one read burst of six beats, latching
+sixteen words of an instruction as one read burst of sixteen beats, latching
 each field as its beat lands, draws the instruction, and fetches the
 next; when
 the count is used up the list is done, and Section~\ref{sec:g-lists}
@@ -165,7 +187,9 @@ included, and the setup the walk needs takes three cycles after the
 fetch; Section~\ref{sec:g-vivado} says why. One burst is
 out at a time, because the front end has nothing to do until the
 answer lands, so an entry costs one round trip of the link and then
-a beat a cycle, where six single reads cost six round trips. The
+a beat a cycle, where sixteen single reads cost sixteen round trips.
+Every entry is fetched whole, so an entry that is not a shaded
+triangle reads nine words of zeros, nine cycles it could skip. The
 count is sixteen bits, so a list holds up to 65535 entries.
 
 \section{List After List}
@@ -195,7 +219,7 @@ pixel's write is answered the zero goes out on \code{issue} and
 The polls that follow, on \code{issue} and \code{rdata}, read a count of
 zero while the run writes the next list in, as a program would. The
 next poll reads a count of two, \code{finished} and \code{idle} fall,
-and the next list's first entry arrives as one burst of six beats.}
+and the next list's first entry arrives as one burst of sixteen beats.}
 \label{fig:g-lists}
 \end{figure*}
 
@@ -205,19 +229,47 @@ and the next list's first entry arrives as one burst of six beats.}
 An edge function is linear. For the edge from $a$ to $b$,
 \[ e(x, y) = (b_x - a_x)(y - a_y) - (b_y - a_y)(x - a_x), \]
 which is zero on the edge, positive on one side and negative on the
-other. Stepping one pixel to the right adds $-(b_y - a_y)$ and
-stepping one row down adds $(b_x - a_x)$, whatever the pixel. So the
+other. A vertex is in sixteenths of a pixel, and the function is taken
+at each pixel's centre, so a triangle can lie between pixels and
+cover the ones whose centres it covers. Stepping one pixel to the
+right adds sixteen times $-(b_y - a_y)$ and stepping one row down
+adds sixteen times $(b_x - a_x)$, whatever the pixel. So the
 rasteriser keeps, for each of the three edges, its value at the
 current pixel, its value at the start of the current row, and those
 two steps.
+
+A centre exactly on an edge belongs to one triangle only: the one for
+which the edge is a top or a left edge, where inside lies to the
+right, or below a level edge. The setup subtracts one from the
+starting value of every other edge, so that a centre on it fails the
+sign test there, and of two triangles sharing an edge exactly one
+draws the pixels on it. A mesh of triangles over the screen draws
+every pixel once and misses none, which a test checks against the
+model and against the count of pixels written.
+
+A shaded triangle's colour is linear across it in the same way, one
+plane for each of red, green and blue, and so each channel is kept
+exactly as an edge is: its value at the current pixel and at the start
+of the current row, and its two steps, with sixteen bits of fraction
+below the byte the pixel takes. The host works a plane out once per
+triangle, from the three vertices and their colours, as its value at
+the centre of the box's first pixel and what it gains a pixel to the
+right and a row down, and the rasteriser loads those as they land and
+does no setup for them at all. A channel below nought is written as
+nought and one of 256 or more as 255, which a pixel at the very edge
+of the triangle can reach by the rounding of the steps; the plane
+itself does not wrap inside the triangle, since the value there is
+between two of the vertices' colours.
 
 \gpupart{raster.rs}{state}{The rasteriser's state.}{lst:g-state}
 
 The only multiplications are the six of the setup, done side by side
 in the second of the three cycles the setup takes; the per-pixel work
-is three adds and three sign tests. The arithmetic is thirty-two bits of two's complement, which
+is three adds and three sign tests, and three adds more for a shaded
+triangle's channels. The arithmetic is thirty-two bits of two's complement, which
 is wide enough for every product of two differences of vertices in
-the range an entry may use. It was sixteen bits first, and a
+the range an entry may use: 1024 pixels either side of the origin, in
+sixteenths. It was sixteen bits first, and a
 pseudorandom scene with a vertex off the screen found the overflow
 within a dozen tries, which is the argument for the soak test rather
 than for the directed ones.
@@ -228,7 +280,7 @@ The rasteriser is two processes. The first takes the link's answers
 every cycle, says whether the pixel under the walk is in the
 primitive, and counts what is in flight. The second is the front end
 written as the sequence it is: poll the count until the list is
-ready, then for each instruction fetch its six words, as one read
+ready, then for each instruction fetch its sixteen words, as one read
 burst with each beat latched as it lands, and walk its box, every row and
 every column a counted loop, a pixel a turn; when the list is drawn
 it writes the count back to zero and polls again. The lowering numbers the waits into a state
@@ -237,9 +289,9 @@ netlist keeps what the hand-numbered machine before it kept in a
 phase and a step without the source naming either.
 
 The walk is one pixel per turn: the column advances and each edge
-takes its column step, and at the end of a row the column goes back
-to the first and each edge is reloaded from its row value plus its
-row step, with one cycle between rows for the box to read back. A
+and channel takes its column step, and at the end of a row the column
+goes back to the first and each edge and channel is reloaded from its
+row value plus its row step, with one cycle between rows for the box to read back. A
 pixel is written only when the link has room for the burst and its
 beat, and the turn holds until then, so backpressure from the bus
 stops the rasteriser rather than losing pixels.
@@ -274,9 +326,12 @@ the read waits a cycle for it.
 \centering
 \input{razboj_timing.tex}
 \caption{The triangle fetched and begun. \code{word} counts the
-instruction's words as the front end reads them, which land as one
-burst on \code{rdata}, a beat a cycle; as the last lands \code{kind} turns
-from \code{Rect} to \code{Tri}. The three cycles of the setup
+instruction's words as the front end reads them, in hexadecimal, so
+it reads \code{10} once all sixteen are in; they land as one
+burst on \code{rdata}, a beat a cycle; as the sixth lands \code{kind}
+turns from \code{Rect} to \code{Tri}, the nine after it are a
+shaded triangle's planes, zeros for a flat one, and the last is its
+alpha. The three cycles of the setup
 follow, in which \code{x} and \code{y} hold, and from there they walk
 the triangle's box and \code{hit} is
 whether the pixel is inside it; where \code{hit} is low no burst is
@@ -351,19 +406,24 @@ The locals in the rasteriser are
 The rasteriser has been synthesised, out of context, with the board's
 parameters: thirty-two-bit addresses, two-bit identifiers, and a 640
 by 480 screen in rows of 1024 pixels (\code{//gpu/razboj:razboj\_synth}).
-Placed and routed (\code{:razboj\_pnr}), it takes 1026 LUTs, 787
-registers and 18 DSP blocks, and no block RAM: less than one per cent
-of the part's logic. The multiplications of the setup are the DSP
-blocks.
+Placed and routed (\code{:razboj\_pnr}), it takes 1683 LUTs, 1323
+registers and 18 DSP blocks, and no block RAM: about one per cent of
+the part's logic. The multiplications of the setup are the DSP
+blocks. The shading added 373 LUTs and 386 registers to the flat
+rasteriser, and no DSP block, since the host does its division and the
+rasteriser only adds; its twelve 32-bit accumulators are 384 of those
+registers. The alpha added 14 LUTs and 9 registers more, its byte and
+the fetch counter's fifth bit; the scissor box added nothing, since it
+is the assembler's.
 
 It meets the 100\,MHz the board's bus runs at, with a worst setup
-slack of $+1.279$\,ns and hold met. It did not at first. The setup
+slack of $+1.193$\,ns and hold met. It did not at first. The setup
 of a triangle computed each edge's value at the box's first pixel, two
 32-bit products and a subtraction, in the one cycle the entry's last
 word landed, a path of 11.66\,ns, and the slack was $-1.660$\,ns
 (issue 1034). The setup now takes three cycles, the differences, then
 the six products side by side, then their sums, and the worst path is
-one multiplication, 8.11\,ns. That costs three cycles an entry: the
+one multiplication, 8.20\,ns. That costs three cycles an entry: the
 demonstration's eight entries take 24 cycles more, about 0.15 per
 cent.
 
@@ -373,11 +433,21 @@ cent.
 It is minimal, and the ways in which it is minimal are worth naming.
 There is one pixel per cycle and no more; no depth buffer, so
 primitives are drawn in the order the display list gives them; no
-interpolation, so a triangle is one colour; no texture; no clipping
+interpolation but of colour, and that in the screen's plane, without
+the correction for perspective a texture would need; an alpha
+written and never read, so nothing is blended; no texture; no
+clipping
 of geometry, only of the box; and one burst out at a time, so each
 entry's fetch waits a round trip of the link. Every one of those is a
 thing to add on top of what is here rather than a thing to work
 around.
+
+The shading is split the same way. The host works out each plane,
+which takes a division, and the hardware only steps it. A rasteriser
+that took the three colours and did the division itself would carry
+three words where it now carries nine, and it would change the setup
+and nothing after it: the walk would step the same accumulators by the
+same steps, wherever those came from (issue 989).
 
 A CPU writing the display list is the step the bus was for, and it is
 taken in the network document~\cite{noc}: the core~\cite{vreteno}

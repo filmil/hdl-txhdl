@@ -22,10 +22,11 @@ use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
 // begin{op}
 /// A display list entry, as a program writes it. Coordinates are in
-/// pixels and may lie off the screen; the encoder clips.
+/// pixels and may lie off the screen; the encoder clips. A colour is
+/// `0xAARRGGBB`, and its alpha goes into the pixel's top byte as it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
-    /// Fill the screen.
+    /// Fill the screen, or the scissor box when one is set.
     Clear { colour: u32 },
     /// Fill a rectangle `w` by `h` pixels at `x`, `y`.
     Rect {
@@ -35,13 +36,36 @@ pub enum Op {
         w: i32,
         h: i32,
     },
-    /// Fill a triangle, in either winding.
+    /// Fill a triangle, in either winding, its vertices in whole
+    /// pixels.
     Tri {
         colour: u32,
         a: (i32, i32),
         b: (i32, i32),
         c: (i32, i32),
     },
+    /// The same with its vertices in sixteenths of a pixel, the
+    /// precision the rasteriser keeps: `(16, 8)` is a pixel across and
+    /// half a pixel down.
+    TriQ4 {
+        colour: u32,
+        a: (i32, i32),
+        b: (i32, i32),
+        c: (i32, i32),
+    },
+    /// A triangle with a colour at each vertex, blended across it:
+    /// Gouraud shading. Vertices in sixteenths of a pixel. Red, green
+    /// and blue are blended; the alpha is the first vertex's, all over.
+    Gouraud {
+        a: (i32, i32),
+        b: (i32, i32),
+        c: (i32, i32),
+        colours: [u32; 3],
+    },
+    /// From here on, draw only inside a box `w` by `h` pixels at `x`,
+    /// `y`: the scissor box. A box that holds the screen turns it off.
+    /// It is state the assembler keeps, and draws nothing itself.
+    Scissor { x: i32, y: i32, w: i32, h: i32 },
 }
 
 /// Which entry an instruction is. The rasteriser reads this and
@@ -53,6 +77,7 @@ pub enum Kind {
     Clear,
     Rect,
     Tri,
+    Shaded,
 }
 
 /// An entry as it goes to the rasteriser: one shape, as wide as the
@@ -65,6 +90,9 @@ pub struct Insn {
     pub kind: Kind,
     /// The colour written, as `0xRRGGBB`. Every entry has one.
     pub colour: U<24>,
+    /// The alpha written, in the pixel's top byte. Every entry has one,
+    /// and nothing yet reads it back.
+    pub alpha: U<8>,
     /// The box to walk, both ends included, clipped to the screen. A
     /// rectangle's and a triangle's; a clear's comes from the
     /// rasteriser's own screen size.
@@ -73,67 +101,123 @@ pub struct Insn {
     pub x1: U<10>,
     pub y1: U<10>,
     /// A triangle's vertices, wound so that its inside is where every
-    /// edge function is non-negative. Two's complement, so a vertex
-    /// may lie off the screen on any side; see [`VMIN`].
-    pub ax: U<12>,
-    pub ay: U<12>,
-    pub bx: U<12>,
-    pub by: U<12>,
-    pub cx: U<12>,
-    pub cy: U<12>,
+    /// edge function is non-negative. Sixteenths of a pixel in two's
+    /// complement, so a vertex may lie between pixels and off the
+    /// screen on any side; see [`VMIN`].
+    pub ax: U<16>,
+    pub ay: U<16>,
+    pub bx: U<16>,
+    pub by: U<16>,
+    pub cx: U<16>,
+    pub cy: U<16>,
+    /// A shaded triangle's three channels, red, green and blue, each a
+    /// plane: its value at the centre of the box's first pixel, and
+    /// what it gains a pixel to the right and a row down. Sixteen bits
+    /// of fraction in thirty-two of two's complement. The assembler
+    /// works them out, once a triangle; the rasteriser only adds.
+    pub r0: U<32>,
+    pub rdx: U<32>,
+    pub rdy: U<32>,
+    pub g0: U<32>,
+    pub gdx: U<32>,
+    pub gdy: U<32>,
+    pub b0: U<32>,
+    pub bdx: U<32>,
+    pub bdy: U<32>,
 }
 // end{op}
 
-/// The range a vertex may take. A vertex is twelve bits of two's
-/// complement, and the rasteriser's edge arithmetic is thirty-two
-/// bits, which is wide enough for every product of two differences
-/// of vertices in this range.
-pub const VMIN: i32 = -2048;
-pub const VMAX: i32 = 2047;
+/// Sixteenths of a pixel: the bits of a vertex below the pixel.
+pub const SUB_BITS: u32 = 4;
+pub const SUB: i32 = 1 << SUB_BITS;
 
-/// A vertex as it is stored: twelve bits of two's complement.
-pub fn vertex(v: i32) -> U<12> {
-    U::from((v & 0xfff) as u32)
+/// The range a vertex may take, in sixteenths of a pixel: 1024 pixels
+/// either side of the origin. The rasteriser's edge arithmetic is
+/// thirty-two bits, and a product of two differences of vertices in
+/// this range, measured at a pixel of a screen of up to 1024, is at
+/// most 2^30, so two of them and their difference fit.
+pub const VMIN: i32 = -1024 * SUB;
+pub const VMAX: i32 = 1024 * SUB - 1;
+
+/// A vertex as it is stored: sixteen bits of two's complement, in
+/// sixteenths of a pixel.
+pub fn vertex(v: i32) -> U<16> {
+    U::from((v & 0xffff) as u32)
 }
 
-/// A stored vertex read back as a number.
-pub fn signed(v: U<12>) -> i32 {
-    let r = v.raw() as i32;
-    if r >= 2048 {
-        r - 4096
-    } else {
-        r
-    }
+/// A stored vertex read back as a number of sixteenths.
+pub fn signed(v: U<16>) -> i32 {
+    v.raw() as u16 as i16 as i32
 }
 
 /// Twice the signed area of the triangle `a`, `b`, `c`: positive when
 /// the three are wound the way the rasteriser wants.
-fn area2(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> i32 {
-    (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+fn area2(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> i64 {
+    let d =
+        |p: (i32, i32), q: (i32, i32)| ((q.0 - p.0) as i64, (q.1 - p.1) as i64);
+    let ((bx, by), (cx, cy)) = (d(a, b), d(a, c));
+    bx * cy - by * cx
+}
+
+/// A box of pixels, both ends included: the first column and row, then
+/// the last.
+pub type Bounds = (u32, u32, u32, u32);
+
+/// The whole of a screen of `sw` by `sh` pixels.
+pub fn screen(sw: usize, sh: usize) -> Bounds {
+    (0, 0, sw as u32 - 1, sh as u32 - 1)
 }
 
 // begin{encode}
 impl Op {
     /// The instruction this entry encodes to on a screen of `sw` by
-    /// `sh` pixels, or `None` when there is nothing to draw: a box
-    /// wholly off the screen, a rectangle with no pixels in it, or a
-    /// triangle with no area. The assembler does the clipping and the
-    /// winding so that the rasteriser does neither.
+    /// `sh` pixels with no scissor box, or `None` when there is nothing
+    /// to draw: a box wholly off the screen, a rectangle with no pixels
+    /// in it, a triangle with no area, or a scissor box, which is state.
+    /// The assembler does the clipping and the winding so that the
+    /// rasteriser does neither.
     pub fn encode(&self, sw: usize, sh: usize) -> Option<Insn> {
+        self.encode_in(screen(sw, sh), sw, sh)
+    }
+
+    /// The same, drawn only inside `within`, which lies on the screen:
+    /// the scissor box. The rasteriser walks only an entry's box, so
+    /// clipping the box to the scissor box is the whole of the scissor
+    /// test, done once an entry rather than once a pixel.
+    pub fn encode_in(
+        &self,
+        within: Bounds,
+        sw: usize,
+        sh: usize,
+    ) -> Option<Insn> {
+        let shade = |c: u32| (U::from(c & 0xff_ffff), U::from(c >> 24));
         match *self {
             // A clear says only its colour. The box is the screen,
-            // and the rasteriser supplies it.
-            Op::Clear { colour } => Some(Insn {
-                kind: Kind::Clear,
-                colour: U::from(colour),
-                ..Insn::default()
-            }),
+            // and the rasteriser supplies it. Under a scissor box it is
+            // a rectangle of that box.
+            Op::Clear { colour } if within == screen(sw, sh) => {
+                let (colour, alpha) = shade(colour);
+                Some(Insn {
+                    kind: Kind::Clear,
+                    colour,
+                    alpha,
+                    ..Insn::default()
+                })
+            }
+            Op::Clear { colour } => {
+                let (x0, y0, x1, y1) = within;
+                let (x, y) = (x0 as i32, y0 as i32);
+                let (w, h) = ((x1 - x0 + 1) as i32, (y1 - y0 + 1) as i32);
+                Op::Rect { colour, x, y, w, h }.encode_in(within, sw, sh)
+            }
             Op::Rect { colour, x, y, w, h } => {
                 let (x0, y0, x1, y1) =
-                    clip(x, y, x + w - 1, y + h - 1, sw, sh)?;
+                    clip(x, y, x + w - 1, y + h - 1, within)?;
+                let (colour, alpha) = shade(colour);
                 Some(Insn {
                     kind: Kind::Rect,
-                    colour: U::from(colour),
+                    colour,
+                    alpha,
                     x0: U::from(x0),
                     y0: U::from(y0),
                     x1: U::from(x1),
@@ -142,71 +226,181 @@ impl Op {
                 })
             }
             Op::Tri { colour, a, b, c } => {
-                // The winding the rasteriser wants: swap two vertices
-                // when the signed area says the other way.
-                let (b, c) = if area2(a, b, c) < 0 { (c, b) } else { (b, c) };
-                if area2(a, b, c) == 0 {
-                    return None;
+                let q = |p: (i32, i32)| (p.0 * SUB, p.1 * SUB);
+                Op::TriQ4 {
+                    colour,
+                    a: q(a),
+                    b: q(b),
+                    c: q(c),
                 }
-                // Every vertex must be in range, since the edge
-                // arithmetic is sized for that range and no wider.
-                let ok = |p: (i32, i32)| {
-                    (VMIN..=VMAX).contains(&p.0) && (VMIN..=VMAX).contains(&p.1)
-                };
-                if !ok(a) || !ok(b) || !ok(c) {
-                    return None;
-                }
-                let lo = |f: fn((i32, i32)) -> i32| f(a).min(f(b)).min(f(c));
-                let hi = |f: fn((i32, i32)) -> i32| f(a).max(f(b)).max(f(c));
-                let (x0, y0, x1, y1) = clip(
-                    lo(|p| p.0),
-                    lo(|p| p.1),
-                    hi(|p| p.0),
-                    hi(|p| p.1),
-                    sw,
-                    sh,
-                )?;
-                Some(Insn {
-                    kind: Kind::Tri,
-                    colour: U::from(colour),
-                    x0: U::from(x0),
-                    y0: U::from(y0),
-                    x1: U::from(x1),
-                    y1: U::from(y1),
-                    ax: vertex(a.0),
-                    ay: vertex(a.1),
-                    bx: vertex(b.0),
-                    by: vertex(b.1),
-                    cx: vertex(c.0),
-                    cy: vertex(c.1),
-                })
+                .encode_in(within, sw, sh)
             }
+            Op::TriQ4 { colour, a, b, c } => {
+                triangle(colour, a, b, c, None, within)
+            }
+            Op::Gouraud { a, b, c, colours } => {
+                triangle(colours[0], a, b, c, Some(colours), within)
+            }
+            Op::Scissor { .. } => None,
         }
     }
 }
 
+/// A triangle in sixteenths of a pixel, inside `within`: flat in
+/// `colour`, or shaded from a colour at each vertex.
+fn triangle(
+    colour: u32,
+    a: (i32, i32),
+    b: (i32, i32),
+    c: (i32, i32),
+    shades: Option<[u32; 3]>,
+    within: Bounds,
+) -> Option<Insn> {
+    // The winding the rasteriser wants: swap two vertices, and their
+    // colours, when the signed area says the other way.
+    let swap = area2(a, b, c) < 0;
+    let (b, c) = if swap { (c, b) } else { (b, c) };
+    let shades = shades.map(|s| if swap { [s[0], s[2], s[1]] } else { s });
+    if area2(a, b, c) == 0 {
+        return None;
+    }
+    // Every vertex must be in range, since the edge arithmetic is
+    // sized for that range and no wider.
+    let ok = |p: (i32, i32)| {
+        (VMIN..=VMAX).contains(&p.0) && (VMIN..=VMAX).contains(&p.1)
+    };
+    if !ok(a) || !ok(b) || !ok(c) {
+        return None;
+    }
+    // The box: every pixel whose centre the triangle could cover, from
+    // the pixel the lowest vertex is in to the pixel the highest is in.
+    let px = |v: i32| v.div_euclid(SUB);
+    let lo = |f: fn((i32, i32)) -> i32| px(f(a).min(f(b)).min(f(c)));
+    let hi = |f: fn((i32, i32)) -> i32| px(f(a).max(f(b)).max(f(c)));
+    let (x0, y0, x1, y1) =
+        clip(lo(|p| p.0), lo(|p| p.1), hi(|p| p.0), hi(|p| p.1), within)?;
+    let mut insn = Insn {
+        kind: Kind::Tri,
+        colour: U::from(colour & 0xff_ffff),
+        alpha: U::from(colour >> 24),
+        x0: U::from(x0),
+        y0: U::from(y0),
+        x1: U::from(x1),
+        y1: U::from(y1),
+        ax: vertex(a.0),
+        ay: vertex(a.1),
+        bx: vertex(b.0),
+        by: vertex(b.1),
+        cx: vertex(c.0),
+        cy: vertex(c.1),
+        ..Insn::default()
+    };
+    if let Some(s) = shades {
+        insn.kind = Kind::Shaded;
+        let first = (x0 as i32 * SUB + SUB / 2, y0 as i32 * SUB + SUB / 2);
+        let [r, g, bl] = [16, 8, 0].map(|at| {
+            let ch = |v: u32| ((v >> at) & 0xff) as i64;
+            plane(a, b, c, [ch(s[0]), ch(s[1]), ch(s[2])], first)
+        });
+        (insn.r0, insn.rdx, insn.rdy) = r;
+        (insn.g0, insn.gdx, insn.gdy) = g;
+        (insn.b0, insn.bdx, insn.bdy) = bl;
+    }
+    Some(insn)
+}
 // end{encode}
 
-/// A display list assembled: every entry that draws something, in
-/// order, as the instructions the rasteriser reads.
-pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
-    ops.iter().filter_map(|o| o.encode(sw, sh)).collect()
+/// One channel's plane across a triangle wound as the rasteriser wants,
+/// with values `v` at its vertices: the value at `first`, the centre of
+/// the box's first pixel, and what it gains a pixel right and a row
+/// down, each with sixteen bits of fraction, rounded to the nearest.
+/// The start carries half a unit more, so that the byte the rasteriser
+/// takes above the fraction, which drops it, is the nearest one.
+fn plane(
+    a: (i32, i32),
+    b: (i32, i32),
+    c: (i32, i32),
+    v: [i64; 3],
+    first: (i32, i32),
+) -> (U<32>, U<32>, U<32>) {
+    let d = |p: (i32, i32), q: (i32, i32)| {
+        ((q.0 - p.0) as i128, (q.1 - p.1) as i128)
+    };
+    let ((ux, uy), (vx, vy)) = (d(a, b), d(a, c));
+    let area = ux * vy - uy * vx;
+    let (db, dc) = ((v[1] - v[0]) as i128, (v[2] - v[0]) as i128);
+    // The gradient, per sixteenth of a pixel, is (nx, ny) / area.
+    let nx = db * vy - dc * uy;
+    let ny = dc * ux - db * vx;
+    let one = 1i128 << 16;
+    let round = |n: i128| (n + area / 2).div_euclid(area);
+    let (px, py) = d(a, first);
+    let start = v[0] as i128 * one + one / 2 + round((nx * px + ny * py) * one);
+    let word = |x: i128| U::<32>::from(x as i64 as i32 as u32);
+    (
+        word(start),
+        word(round(nx * SUB as i128 * one)),
+        word(round(ny * SUB as i128 * one)),
+    )
 }
 
-/// A box clipped to the screen, both ends included, or `None` when
-/// nothing of it is on the screen.
-fn clip(
-    x0: i32,
-    y0: i32,
-    x1: i32,
-    y1: i32,
-    sw: usize,
-    sh: usize,
-) -> Option<(u32, u32, u32, u32)> {
-    let (x0, y0) = (x0.max(0), y0.max(0));
-    let (x1, y1) = (x1.min(sw as i32 - 1), y1.min(sh as i32 - 1));
+/// A display list assembled: every entry that draws something, in
+/// order, as the instructions the rasteriser reads. A scissor box holds
+/// from where it is set to where the next is, and one wholly off the
+/// screen draws nothing until then.
+pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
+    let mut within = Some(screen(sw, sh));
+    let mut out = Vec::new();
+    for op in ops {
+        if let Op::Scissor { x, y, w, h } = *op {
+            within = clip(x, y, x + w - 1, y + h - 1, screen(sw, sh));
+        } else if let Some(insn) = within.and_then(|b| op.encode_in(b, sw, sh))
+        {
+            out.push(insn);
+        }
+    }
+    out
+}
+
+/// A box clipped to `within`, the screen or a scissor box on it, both
+/// ends included, or `None` when nothing of it is inside.
+fn clip(x0: i32, y0: i32, x1: i32, y1: i32, within: Bounds) -> Option<Bounds> {
+    let (wx0, wy0, wx1, wy1) = within;
+    let (x0, y0) = (x0.max(wx0 as i32), y0.max(wy0 as i32));
+    let (x1, y1) = (x1.min(wx1 as i32), y1.min(wy1 as i32));
     if x1 < x0 || y1 < y0 {
         return None;
     }
     Some((x0 as u32, y0 as u32, x1 as u32, y1 as u32))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Op, U};
+    use crate::model::channel;
+
+    /// A shaded triangle's planes give back the colour of each vertex at
+    /// the pixel whose centre the vertex is, wound either way and so with
+    /// its colours swapped by the encoder (issue 989).
+    #[test]
+    fn a_shaded_triangle_has_its_colours_at_its_vertices() {
+        // The centres of pixels 1,1 and 14,2 and 3,14.
+        let (a, b, c) = ((24, 24), (232, 40), (56, 232));
+        let (ca, cb, cc) = (0xff_8000, 0x10_ff40, 0x30_20ff);
+        for (b, c, colours) in [(b, c, [ca, cb, cc]), (c, b, [ca, cc, cb])] {
+            let op = Op::Gouraud { a, b, c, colours };
+            let i = op.encode(16, 16).expect("a triangle on the screen");
+            let (x0, y0) = (i.x0.raw() as i32, i.y0.raw() as i32);
+            let raw = |u: U<32>| u.raw() as u32;
+            for (p, want) in [(a, colours[0]), (b, colours[1]), (c, colours[2])]
+            {
+                let (di, dj) = (p.0 / 16 - x0, p.1 / 16 - y0);
+                let ch = |s, dx, dy| channel(raw(s), raw(dx), raw(dy), di, dj);
+                let got = (ch(i.r0, i.rdx, i.rdy) << 16)
+                    | (ch(i.g0, i.gdx, i.gdy) << 8)
+                    | ch(i.b0, i.bdx, i.bdy);
+                assert_eq!(got, want, "the vertex at {p:?}");
+            }
+        }
+    }
 }

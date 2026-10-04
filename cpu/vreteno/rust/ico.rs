@@ -44,10 +44,13 @@ const UART: *mut u32 = 0x3000 as *mut u32;
 /// `soc::DL_BASE` and `soc::DL_CTRL`.
 const DL: *mut u32 = 0x2000 as *mut u32;
 const CTRL: *mut u32 = 0x4000 as *mut u32;
-/// Words an instruction takes, and the words of it that say
-/// anything: `razboj::dl::WORDS` and `razboj::dl::USED`.
-const WORDS: usize = 8;
-const USED: usize = 6;
+/// Words an instruction takes, `razboj::dl::WORDS`, and the words of
+/// it a flat triangle says: the kind and colour, the box and the three
+/// vertices. The planes of a shaded one follow, and a flat one leaves
+/// them alone, since the rasteriser reads them only for a shaded one.
+/// The last word is every entry's alpha.
+const WORDS: usize = 16;
+const FLAT: usize = 6;
 
 /// The screen, which is `soc::LOGW` and `soc::H`.
 const W: i32 = 128;
@@ -122,20 +125,23 @@ fn say(line: &[u8]) {
 }
 
 /// One instruction of the display list, written where the rasteriser
-/// will look for it. Only the words that say something are written;
-/// the rest of the eight an instruction takes are never read.
-fn emit(at: usize, words: &[u32; USED]) {
+/// will look for it: the words a flat entry says, and its alpha, which
+/// is nought, so a pixel's top byte stays clear. The planes between are
+/// read only for a shaded triangle and are not written.
+fn emit(at: usize, words: &[u32; FLAT]) {
     unsafe {
         for (i, w) in words.iter().enumerate() {
             write_volatile(DL.add(at * WORDS + i), *w);
         }
+        write_volatile(DL.add(at * WORDS + WORDS - 1), 0);
     }
 }
 
-/// A vertex as the display list carries it: twelve bits of two's
-/// complement, in the low or the high half of a word.
+/// A vertex as the display list carries it: sixteenths of a pixel,
+/// sixteen bits of two's complement, in the low or the high half of a
+/// word (issue 988). The vertices here are whole pixels.
 fn pair(x: i32, y: i32) -> u32 {
-    ((x as u32) & 0xfff) | (((y as u32) & 0xfff) << 16)
+    (((x * 16) as u32) & 0xffff) | ((((y * 16) as u32) & 0xffff) << 16)
 }
 
 /// The three vertices a face is made of.
