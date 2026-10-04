@@ -75,7 +75,7 @@ rectangles and four triangles.
 \centering
 \includegraphics[width=0.62\columnwidth]{scene.png}
 \caption{The demonstration, as Razboj drew it. Eight entries, four
-thousand and ninety-six pixels, 16\,592 cycles.}
+thousand and ninety-six pixels, 16\,376 cycles.}
 \label{fig:g-scene}
 \end{figure}
 
@@ -156,15 +156,17 @@ answers in the same word: when the list is drawn it writes the count
 back to zero. Nothing else passes between the two.
 
 So the rasteriser has a front end. It polls the count, fetches the
-six words of an instruction one read at a time, latching each field
-as its word lands, draws the instruction, and fetches the next; when
+six words of an instruction as one read burst of six beats, latching
+each field as its beat lands, draws the instruction, and fetches the
+next; when
 the count is used up the list is done, and Section~\ref{sec:g-lists}
-says what follows. The
-third vertex is not latched: its word is the last, so the setup reads
-it straight off the bus in the cycle the walk starts. One read is out
-at a time, because the front end has nothing to do until the answer
-lands. The fetch costs the demonstration six reads an entry,
-which is a few hundred cycles out of 16\,592.
+says what follows. Every field is latched, the third vertex's
+included, and the setup the walk needs takes three cycles after the
+fetch; Section~\ref{sec:g-vivado} says why. One burst is
+out at a time, because the front end has nothing to do until the
+answer lands, so an entry costs one round trip of the link and then
+a beat a cycle, where six single reads cost six round trips. The
+count is sixteen bits, so a list holds up to 65535 entries.
 
 \section{List After List}
 \label{sec:g-lists}
@@ -193,7 +195,7 @@ pixel's write is answered the zero goes out on \code{issue} and
 The polls that follow, on \code{issue} and \code{rdata}, read a count of
 zero while the run writes the next list in, as a program would. The
 next poll reads a count of two, \code{finished} and \code{idle} fall,
-and the first word of the next list is fetched.}
+and the next list's first entry arrives as one burst of six beats.}
 \label{fig:g-lists}
 \end{figure*}
 
@@ -211,9 +213,9 @@ two steps.
 
 \gpupart{raster.rs}{state}{The rasteriser's state.}{lst:g-state}
 
-The only multiplications are the six of the setup, done in the cycle
-an entry is taken; the per-pixel work is three adds and three sign
-tests. The arithmetic is thirty-two bits of two's complement, which
+The only multiplications are the six of the setup, done side by side
+in the second of the three cycles the setup takes; the per-pixel work
+is three adds and three sign tests. The arithmetic is thirty-two bits of two's complement, which
 is wide enough for every product of two differences of vertices in
 the range an entry may use. It was sixteen bits first, and a
 pseudorandom scene with a vertex off the screen found the overflow
@@ -226,8 +228,8 @@ The rasteriser is two processes. The first takes the link's answers
 every cycle, says whether the pixel under the walk is in the
 primitive, and counts what is in flight. The second is the front end
 written as the sequence it is: poll the count until the list is
-ready, then for each instruction fetch its six words, one read at a
-time and each latched as it lands, and walk its box, every row and
+ready, then for each instruction fetch its six words, as one read
+burst with each beat latched as it lands, and walk its box, every row and
 every column a counted loop, a pixel a turn; when the list is drawn
 it writes the count back to zero and polls again. The lowering numbers the waits into a state
 register of its own and gives each counted loop a counter, so the
@@ -263,7 +265,7 @@ identifier the tracker granted is not needed, since a write's answer
 matters only as a count and the front end has one read out at a time,
 so it is taken and dropped. An identifier is handed back on
 \code{release} as the answer arrives: a write's with its response, a
-read's with its beat. That is what keeps four transactions in flight
+read's with its last beat. That is what keeps four transactions in flight
 and no more. A write's response is taken before a read's beat in the
 cycle both arrive, since only one identifier goes back a cycle, and
 the read waits a cycle for it.
@@ -272,10 +274,11 @@ the read waits a cycle for it.
 \centering
 \input{razboj_timing.tex}
 \caption{The triangle fetched and begun. \code{word} counts the
-instruction's words as the front end reads them, which land one at
-a time on \code{rdata}; as the last word lands \code{kind} turns
-from \code{Rect} to \code{Tri}. From
-there \code{x} and \code{y} walk the triangle's box and \code{hit} is
+instruction's words as the front end reads them, which land as one
+burst on \code{rdata}, a beat a cycle; as the last lands \code{kind} turns
+from \code{Rect} to \code{Tri}. The three cycles of the setup
+follow, in which \code{x} and \code{y} hold, and from there they walk
+the triangle's box and \code{hit} is
 whether the pixel is inside it; where \code{hit} is low no burst is
 issued, so the row is walked and nothing is written. \code{inflight}
 is the writes whose response has not come back.}
@@ -342,6 +345,28 @@ The locals in the rasteriser are
 \code{px}, \code{py} and \code{held} for that reason, where \code{x},
 \code{y} and \code{waiting} would read better.
 
+\section{Through Vivado}
+\label{sec:g-vivado}
+
+The rasteriser has been synthesised, out of context, with the board's
+parameters: thirty-two-bit addresses, two-bit identifiers, and a 640
+by 480 screen in rows of 1024 pixels (\code{//gpu/razboj:razboj\_synth}).
+Placed and routed (\code{:razboj\_pnr}), it takes 1026 LUTs, 787
+registers and 18 DSP blocks, and no block RAM: less than one per cent
+of the part's logic. The multiplications of the setup are the DSP
+blocks.
+
+It meets the 100\,MHz the board's bus runs at, with a worst setup
+slack of $+1.279$\,ns and hold met. It did not at first. The setup
+of a triangle computed each edge's value at the box's first pixel, two
+32-bit products and a subtraction, in the one cycle the entry's last
+word landed, a path of 11.66\,ns, and the slack was $-1.660$\,ns
+(issue 1034). The setup now takes three cycles, the differences, then
+the six products side by side, then their sums, and the worst path is
+one multiplication, 8.11\,ns. That costs three cycles an entry: the
+demonstration's eight entries take 24 cycles more, about 0.15 per
+cent.
+
 \section{What It Is Not}
 \label{sec:g-not}
 
@@ -349,8 +374,8 @@ It is minimal, and the ways in which it is minimal are worth naming.
 There is one pixel per cycle and no more; no depth buffer, so
 primitives are drawn in the order the display list gives them; no
 interpolation, so a triangle is one colour; no texture; no clipping
-of geometry, only of the box; and one read out at a time, so the
-fetch is as slow as the link's round trip. Every one of those is a
+of geometry, only of the box; and one burst out at a time, so each
+entry's fetch waits a round trip of the link. Every one of those is a
 thing to add on top of what is here rather than a thing to work
 around.
 

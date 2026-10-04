@@ -3,6 +3,7 @@
 # writes pixels into memory over AXI, the framebuffer behind the bus,
 # and the demonstration that renders a scene and shows it.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -74,4 +75,55 @@ rust_test(
     name = "razboj_test",
     crate = ":razboj",
     edition = "2021",
+)
+
+# The rasteriser with the board's parameters, as Verilog (issue 984).
+rust_binary(
+    name = "netlist",
+    srcs = ["src/bin/netlist.rs"],
+    edition = "2021",
+    deps = [":razboj"],
+)
+
+genrule(
+    name = "razboj_v",
+    outs = ["razboj.v"],
+    cmd = "$(location :netlist) > $@",
+    tools = [":netlist"],
+)
+
+# Razboj through Vivado, out of context: its ports are the partition's
+# pins and not pads, the constraints name the clock and nothing else,
+# so the bitstream is a stub and the reports are the point, as for the
+# core (//cpu/vreteno:vreteno_pnr). Manual, so `//...` leaves them
+# out, and tagged vivado_ci for the Vivado CI job of issue 1030.
+#
+#   bazel build //gpu/razboj:razboj_pnr
+filegroup(
+    name = "razboj_xdc",
+    srcs = ["razboj.xdc"],
+)
+
+vivado_synthesis2(
+    name = "razboj_synth",
+    srcs = [":razboj_v"],
+    part = "xc7a200tfbg484-2",
+    synth_design_options = "-mode out_of_context",
+    top = "razboj",
+    xdcs = [":razboj_xdc"],
+    tags = [
+        "manual",
+        "vivado_ci",
+    ],
+)
+
+vivado_place_and_route2(
+    name = "razboj_pnr",
+    placeholder_bitstream = True,
+    synthesis = ":razboj_synth",
+    xdcs = [":razboj_xdc"],
+    tags = [
+        "manual",
+        "vivado_ci",
+    ],
 )

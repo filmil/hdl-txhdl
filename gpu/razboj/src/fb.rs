@@ -2,14 +2,16 @@
 //! The framebuffer: `N` words of memory behind an AXI peripheral end,
 //! one word per pixel, `N` a power of two.
 //!
-//! It answers single-beat bursts, which is all the rasteriser makes.
-//! A read is answered from the memory in the cycle the request is
-//! taken; a write is held until its beat arrives, because AXI4 puts
+//! It answers single-beat writes, which is all the rasteriser makes,
+//! and read bursts of any length, since the rasteriser fetches a
+//! display list entry as one. A read's first beat is answered from the
+//! memory in the cycle the request is taken and the rest follow a beat
+//! a cycle; a write is held until its beat arrives, because AXI4 puts
 //! no identifier on the write data channel and the beat therefore
 //! comes when it comes. The word address is the byte address shifted
 //! by two and masked to the memory, so a stray address wraps instead
 //! of ending the run.
-use txhdl::comp::{Clock, DefaultClock, Mem, Reg, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, Mem, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{Answer, PerPort, Resp, R};
@@ -28,6 +30,16 @@ pub struct Fb<const A: usize, const I: usize, const N: usize> {
     pub pend: Reg<U<1>>,
     pub paddr: Reg<U<16>>,
     pub pid: Reg<U<I>>,
+    /// A read burst being answered after its first beat: the beats
+    /// still to send, the word the next one reads, and the identifier
+    /// every beat carries.
+    pub rleft: Reg<U<8>>,
+    pub raddr: Reg<U<16>>,
+    pub rid: Reg<U<I>>,
+    /// Read bursts taken and read beats sent, for a run to count what
+    /// the rasteriser asked of the memory.
+    pub rbursts: Reg<U<32>>,
+    pub rbeats: Reg<U<32>>,
 }
 // end{state}
 
@@ -46,9 +58,13 @@ impl<const A: usize, const I: usize, const N: usize> Unit for Fb<A, I, N> {
             // masked away.
             let at =
                 (q.addr >> WORD).resize::<16>() & U::<16>::from((N - 1) as u32);
-            // A read is answered at once; a write is held until its
-            // beat arrives, and only one is held at a time.
-            let take_read = qoff & q.read & bus.r.ready() & !held;
+            // A read's first beat is answered at once and the rest a
+            // beat a cycle, one burst at a time; a write is held until
+            // its beat arrives, and only one is held at a time.
+            let mask = U::<16>::from((N - 1) as u32);
+            let reading = Bit::from(self.rleft.get() != 0);
+            let more = reading & bus.r.ready();
+            let take_read = qoff & q.read & bus.r.ready() & !held & !reading;
             let take_write = qoff & !q.read & !held;
             let _ = bus.req.recv_if(take_read | take_write);
             let wh = bus.w.head();
@@ -64,13 +80,32 @@ impl<const A: usize, const I: usize, const N: usize> Unit for Fb<A, I, N> {
                     pend: U::<1>::from(0u8),
                     px.at(self.paddr.get()): wh.data,
                 },
+                take_read ? {
+                    rleft: q.len,
+                    raddr: (at + 1) & mask,
+                    rid: q.id,
+                    rbursts: self.rbursts.get() + 1,
+                    rbeats: self.rbeats.get() + 1,
+                },
+                more ? {
+                    rleft: self.rleft.get() - 1,
+                    raddr: (self.raddr.get() + 1) & mask,
+                    rbeats: self.rbeats.get() + 1,
+                },
             });
-            if take_read.to_bool() {
+            // One beat a cycle: a burst's first, or the next of the one
+            // being answered.
+            let rat = mux(more, self.raddr.get(), at);
+            if (take_read | more).to_bool() {
                 bus.r.send(R {
-                    id: q.id,
-                    data: self.px.read(at),
+                    id: mux(more, self.rid.get(), q.id),
+                    data: self.px.read(rat),
                     resp: Resp::Okay,
-                    last: Bit::One,
+                    last: mux(
+                        more,
+                        Bit::from(self.rleft.get() == 1),
+                        Bit::from(q.len == 0),
+                    ),
                 });
             }
             if wgo.to_bool() {
@@ -88,5 +123,12 @@ impl<const A: usize, const I: usize, const N: usize> Fb<A, I, N> {
     /// A pixel, for the run and the tests to look at.
     pub fn pixel(&self, at: usize) -> u32 {
         self.px.read(at).raw() as u32
+    }
+    /// Read bursts taken and read beats sent so far.
+    pub fn reads(&self) -> (u64, u64) {
+        (
+            self.rbursts.get().raw() as u64,
+            self.rbeats.get().raw() as u64,
+        )
     }
 }
