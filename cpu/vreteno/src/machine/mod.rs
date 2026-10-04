@@ -82,6 +82,14 @@ pub struct Devices {
     pub clint: clint::Clint,
     pub plic: plic::Plic,
     pub uart: uart::Uart,
+    /// The lines the PLIC drives, as last worked out, and whether they
+    /// have to be worked out again: they change only when a program
+    /// reaches the PLIC or the serial port, or when a byte arrives, so
+    /// a step need not ask them otherwise (issue 1132).
+    pub meip: bool,
+    pub seip: bool,
+    pub stale: bool,
+    pub rx_seen: usize,
 }
 
 /// The bus the model reaches the devices through.
@@ -99,9 +107,11 @@ impl Bus for Board {
             return Some(d.clint.load(off));
         }
         if let Some(off) = inside(map.plic, addr) {
+            d.stale = true;
             return Some(d.plic.load(off));
         }
         if let Some(off) = inside(map.uart, addr) {
+            d.stale = true;
             return Some(d.uart.load(off));
         }
         None
@@ -122,10 +132,12 @@ impl Bus for Board {
             return true;
         }
         if let Some(off) = inside(map.plic, addr) {
+            d.stale = true;
             d.plic.store(off, v);
             return true;
         }
         if let Some(off) = inside(map.uart, addr) {
+            d.stale = true;
             d.uart.store(off, v);
             return true;
         }
@@ -149,6 +161,10 @@ impl Machine {
             clint: clint::Clint::default(),
             plic: plic::Plic::new(PLIC_SOURCES),
             uart: uart::Uart::default(),
+            meip: false,
+            seip: false,
+            stale: true,
+            rx_seen: 0,
         })));
         let model = Model {
             bus: Some(board.clone() as Rc<dyn Bus>),
@@ -181,17 +197,21 @@ impl Machine {
     pub fn step(&mut self) {
         {
             let mut d = self.board.0.borrow_mut();
-            let rx = d.uart.irq();
-            d.plic.line(SERIAL_SOURCE, rx);
+            if d.stale || d.uart.rx.len() != d.rx_seen {
+                let rx = d.uart.irq();
+                d.plic.line(SERIAL_SOURCE, rx);
+                // The second target, the supervisor's, is `mip.SEIP`'s
+                // line (issue 1094).
+                (d.meip, d.seip) = (d.plic.irq(0), d.plic.irq(1));
+                d.rx_seen = d.uart.rx.len();
+                d.stale = false;
+            }
             // `time` is the CLINT's count, as the board gives the core
             // the timer's (issue 1111).
             self.model.time = d.clint.mtime;
             self.model.tirq = d.clint.mtip();
             self.model.msip = d.clint.msip;
-            let meip = d.plic.irq(0);
-            // The second target, the supervisor's, is `mip.SEIP`'s line
-            // (issue 1094).
-            let seip = d.plic.irq(1);
+            let (meip, seip) = (d.meip, d.seip);
             drop(d);
             self.model.line(meip);
             self.model.sline(seip);
