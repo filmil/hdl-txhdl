@@ -828,3 +828,58 @@ fn openocd_halts_a_core_waiting_in_wfi() {
         done.status
     );
 }
+
+/// A program that has ended, by writing `mhalt`, halts when OpenOCD
+/// asks (issue 1047): the stopped core enters debug mode on the halt
+/// request, at the instruction after the write, with its registers as
+/// the program left them. Before this the request was never taken and
+/// OpenOCD's examine gave up with "unable to halt hart 0", on the board
+/// after any program that had finished.
+#[test]
+fn openocd_halts_a_core_that_has_stopped() {
+    use vreteno32::isa::{addi, halt};
+    let mut rig = rig_with(vec![addi(5, 0, 42), halt()], false);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let script = format!(
+        "adapter driver remote_bitbang\n\
+         remote_bitbang host 127.0.0.1\n\
+         remote_bitbang port {port}\n\
+         transport select jtag\n\
+         jtag newtap xc7 tap -irlen {IR_LEN} -expected-id {IDCODE:#010x}\n\
+         target create xc7.cpu riscv -chain-position xc7.tap\n\
+         riscv use_bscan_tunnel 5\n\
+         riscv set_mem_access sysbus\n\
+         riscv set_command_timeout_sec 120\n\
+         init\n\
+         halt\n\
+         echo \"state [xc7.cpu curstate]\"\n\
+         echo [capture {{reg pc}}]\n\
+         echo [capture {{reg t0}}]\n\
+         shutdown\n"
+    );
+    let run = Openocd::start(&openocd(), &script, &tmp("stopped")).unwrap();
+    let served = serve(listener, &mut rig, Duration::from_secs(120)).unwrap();
+    let done = run.finish(Duration::from_secs(60)).unwrap();
+    let log = &done.log;
+    eprintln!("{log}");
+    assert!(served.rises > 0, "OpenOCD clocked the TAP: {served:?}\n{log}");
+    assert!(
+        !log.contains("unable to halt"),
+        "a stopped core refused the halt:\n{log}"
+    );
+    assert!(log.contains("state halted"), "halted:\n{log}");
+    assert!(
+        log.contains("pc (/32): 0x00000008"),
+        "halted after the write to mhalt:\n{log}"
+    );
+    assert!(
+        log.contains("t0 (/32): 0x0000002a"),
+        "the register as the program left it:\n{log}"
+    );
+    assert!(
+        done.status.is_some_and(|s| s.success()),
+        "OpenOCD ended well: {:?}\n{log}",
+        done.status
+    );
+}

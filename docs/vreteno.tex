@@ -487,6 +487,10 @@ cycle and acted on once per entry, redirects the fetch to
 \code{dpc}; with \code{dcsr.step} set it arms a step, and the next
 instruction to run asks to enter again before the one after it,
 which is how a debugger walks a program an instruction at a time.
+A core that has stopped itself, by writing \code{mhalt}, enters the
+mode on a halt request too, with \code{dpc} the instruction after the
+write, and the stop ends, so a debugger can read what a finished
+program left and resume it (issue~1047).
 \code{dcsr} holds the specification's version, the privilege,
 \code{ebreakm}, \code{step} and the cause, and nothing else is
 written. The two requests are inputs of the core and the mode is
