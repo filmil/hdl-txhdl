@@ -591,6 +591,90 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
         a.emit(mret());
     }
     a.place(body);
+    random_body(&mut a, &mut next, len);
+    // The end: x27 says so, and the environment call reaches machine
+    // mode, through the supervisor when it was delegated, and halts
+    // there, which no other mode may (issue 1012).
+    a.emit(addi(27, 0, 0x5a));
+    a.emit(ecall());
+    // The handler: an interrupt is returned from, its line having
+    // dropped, since the external bit is the line and not a latch
+    // (#788); an exception returns past the instruction that trapped.
+    a.align();
+    a.place(handler);
+    a.emit(csrrs(31, CSR_MCAUSE, 0));
+    a.to(sync, |o| bge(31, 0, o));
+    // And the timer's next: the count plus 64. The count sits far
+    // from the compare in the controller's window, too far for one
+    // base register, so it is reached through x31 and the compare's
+    // high half is written zero, which it is in a run this short.
+    a.emit(lui(31, (CLINT_BASE + MTIME_OFF + 8) >> 12));
+    a.emit(lw(31, 31, -8)); // x31 = the count's low half
+    a.emit(addi(31, 31, 64));
+    a.emit(sw(0, 30, 4)); // the compare's high half is zero
+    a.emit(sw(31, 30, 0)); // and its low half is the count plus 64
+    a.emit(fence()); // so the store has landed and the line has dropped
+                     // before the return (issues 420, 432)
+    if dsoft {
+        a.emit(csrrsi(0, CSR_MIP, 2)); // the supervisor's, delegated
+    }
+    a.emit(mret());
+    // An exception returns past the instruction that trapped, which is
+    // four bytes long for an ecall and for an illegal instruction whose
+    // low two bits are both set, and two for the rest. mcause is 11 or
+    // 2, so its bit 3 says ecall; x29 is the handler's too.
+    a.place(sync);
+    a.emit(addi(29, 0, 0x5a));
+    a.to(the_end, |o| beq(27, 29, o));
+    a.emit(csrrs(29, CSR_MTVAL, 0));
+    a.emit(andi(29, 29, 3)); // the trap value's low two bits
+    a.emit(andi(31, 31, 8)); // 8 for an ecall
+    a.emit(or(29, 29, 31)); // 3 or 8 for four bytes
+    a.emit(sltiu(29, 29, 3)); // 1 for two bytes
+    a.emit(slli(29, 29, 1));
+    a.emit(csrrs(31, CSR_MEPC, 0));
+    a.emit(addi(31, 31, 4));
+    a.emit(sub(31, 31, 29)); // mepc + 4 - 2, or + 4
+    a.emit(csrrw(0, CSR_MEPC, 31));
+    a.emit(mret());
+    a.place(the_end);
+    a.emit(halt());
+    // The supervisor's handler, the same through its own registers: its
+    // software interrupt is cleared and returned from, an exception is
+    // stepped past, and the end is passed on to machine mode. Its
+    // scratch registers are x24 and x26 rather than the machine's x29
+    // and x31, since machine mode's interrupts are taken below machine
+    // mode whatever MIE says, and so in the middle of this handler.
+    a.align();
+    a.place(s_handler);
+    a.emit(csrrs(26, CSR_SCAUSE, 0));
+    a.to(s_sync, |o| bge(26, 0, o));
+    a.emit(csrrci(0, CSR_SIP, 2));
+    a.emit(sret());
+    a.place(s_sync);
+    a.emit(addi(24, 0, 0x5a));
+    a.to(s_up, |o| beq(27, 24, o));
+    a.emit(csrrs(24, CSR_STVAL, 0));
+    a.emit(andi(24, 24, 3));
+    a.emit(andi(26, 26, 8));
+    a.emit(or(24, 24, 26));
+    a.emit(sltiu(24, 24, 3));
+    a.emit(slli(24, 24, 1));
+    a.emit(csrrs(26, CSR_SEPC, 0));
+    a.emit(addi(26, 26, 4));
+    a.emit(sub(26, 26, 24));
+    a.emit(csrrw(0, CSR_SEPC, 26));
+    a.emit(sret());
+    a.place(s_up);
+    a.emit(ecall());
+    a.words()
+}
+
+/// The body of a random program, to `len` halfwords: what [`random`]
+/// runs between its setup and its handlers. x2 is the data's base and
+/// x30 the timer compare's, and neither is written, nor x27, which says
+/// the end, nor x31, the handler's.
+fn random_body(a: &mut Asm, next: &mut impl FnMut() -> u64, len: usize) {
     while a.halves.len() < 2 * len {
         let r = next();
         // Half the instructions are shaped to have a compressed
@@ -763,80 +847,4 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
         a.compress = squeeze;
         a.emit(w);
     }
-    // The end: x27 says so, and the environment call reaches machine
-    // mode, through the supervisor when it was delegated, and halts
-    // there, which no other mode may (issue 1012).
-    a.emit(addi(27, 0, 0x5a));
-    a.emit(ecall());
-    // The handler: an interrupt is returned from, its line having
-    // dropped, since the external bit is the line and not a latch
-    // (#788); an exception returns past the instruction that trapped.
-    a.align();
-    a.place(handler);
-    a.emit(csrrs(31, CSR_MCAUSE, 0));
-    a.to(sync, |o| bge(31, 0, o));
-    // And the timer's next: the count plus 64. The count sits far
-    // from the compare in the controller's window, too far for one
-    // base register, so it is reached through x31 and the compare's
-    // high half is written zero, which it is in a run this short.
-    a.emit(lui(31, (CLINT_BASE + MTIME_OFF + 8) >> 12));
-    a.emit(lw(31, 31, -8)); // x31 = the count's low half
-    a.emit(addi(31, 31, 64));
-    a.emit(sw(0, 30, 4)); // the compare's high half is zero
-    a.emit(sw(31, 30, 0)); // and its low half is the count plus 64
-    a.emit(fence()); // so the store has landed and the line has dropped
-                     // before the return (issues 420, 432)
-    if dsoft {
-        a.emit(csrrsi(0, CSR_MIP, 2)); // the supervisor's, delegated
-    }
-    a.emit(mret());
-    // An exception returns past the instruction that trapped, which is
-    // four bytes long for an ecall and for an illegal instruction whose
-    // low two bits are both set, and two for the rest. mcause is 11 or
-    // 2, so its bit 3 says ecall; x29 is the handler's too.
-    a.place(sync);
-    a.emit(addi(29, 0, 0x5a));
-    a.to(the_end, |o| beq(27, 29, o));
-    a.emit(csrrs(29, CSR_MTVAL, 0));
-    a.emit(andi(29, 29, 3)); // the trap value's low two bits
-    a.emit(andi(31, 31, 8)); // 8 for an ecall
-    a.emit(or(29, 29, 31)); // 3 or 8 for four bytes
-    a.emit(sltiu(29, 29, 3)); // 1 for two bytes
-    a.emit(slli(29, 29, 1));
-    a.emit(csrrs(31, CSR_MEPC, 0));
-    a.emit(addi(31, 31, 4));
-    a.emit(sub(31, 31, 29)); // mepc + 4 - 2, or + 4
-    a.emit(csrrw(0, CSR_MEPC, 31));
-    a.emit(mret());
-    a.place(the_end);
-    a.emit(halt());
-    // The supervisor's handler, the same through its own registers: its
-    // software interrupt is cleared and returned from, an exception is
-    // stepped past, and the end is passed on to machine mode. Its
-    // scratch registers are x24 and x26 rather than the machine's x29
-    // and x31, since machine mode's interrupts are taken below machine
-    // mode whatever MIE says, and so in the middle of this handler.
-    a.align();
-    a.place(s_handler);
-    a.emit(csrrs(26, CSR_SCAUSE, 0));
-    a.to(s_sync, |o| bge(26, 0, o));
-    a.emit(csrrci(0, CSR_SIP, 2));
-    a.emit(sret());
-    a.place(s_sync);
-    a.emit(addi(24, 0, 0x5a));
-    a.to(s_up, |o| beq(27, 24, o));
-    a.emit(csrrs(24, CSR_STVAL, 0));
-    a.emit(andi(24, 24, 3));
-    a.emit(andi(26, 26, 8));
-    a.emit(or(24, 24, 26));
-    a.emit(sltiu(24, 24, 3));
-    a.emit(slli(24, 24, 1));
-    a.emit(csrrs(26, CSR_SEPC, 0));
-    a.emit(addi(26, 26, 4));
-    a.emit(sub(26, 26, 24));
-    a.emit(csrrw(0, CSR_SEPC, 26));
-    a.emit(sret());
-    a.place(s_up);
-    a.emit(ecall());
-    a.words()
 }
