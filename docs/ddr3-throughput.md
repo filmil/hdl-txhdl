@@ -96,3 +96,26 @@ A second figure agrees: issue 1038's measurement has the Ethernet fetch engine r
 
 So reads today are about 15 MB/s, a fifth of what the scanout alone needs.
 The design does not depend on `L`: any `L` above a few cycles leaves reads far below the scanout's need without item 1, and every option above provides it.
+
+## 7. The controller's AXI port, generated
+
+The user chose C on October 4, 2026, and the first of its steps is done: `//ddr3:ddr3_mig_axi` generates AMD's controller with its AXI4 port, from `ddr3/mig/ddr3_mig_axi.prj`, the native project file with `PortInterface` set to AXI.
+It answers the question C was conditional on: the port can be 32 bits wide with the controller's wide native interface behind it.
+
+What the generated top level, `ddr3_mig_axi.v`, offers:
+
+| Parameter | Value |
+|---|---|
+| `C_S_AXI_DATA_WIDTH` | 32, the link's width |
+| `C_S_AXI_ID_WIDTH` | 5, the link's identifier since issue 1041 |
+| `C_S_AXI_ADDR_WIDTH` | 30, the memory's whole 1 GiB as bytes |
+| `C_S_AXI_SUPPORTS_NARROW_BURST` | 0: every beat is the full 32 bits |
+| `C_RD_WR_ARB_ALGORITHM` | `RD_PRI_REG`, the generator's default |
+| `nCK_PER_CLK` and `DQ_WIDTH` | 4 and 32, so the native interface behind the port is 256 bits a cycle |
+
+The port carries all five AXI4 channels with burst length, size, burst type, lock, cache, protection and quality of service, and the user clock and reset beside them.
+It has no region signals, which the link carries, so the part that joins the link to these pins leaves the link's region unconnected.
+Splitting a burst into the memory's commands and converting 32 bits to 256 are AMD's, inside the generated core; how many transactions it keeps outstanding is for step 3 to measure.
+
+What generation alone cannot say is the port's size and its read latency.
+Both come with step 3, which puts `Ddr3Per` on this port: its synthesis gives the size, and its simulation and then the board give the latency, which is what the path's throughput turns on.
