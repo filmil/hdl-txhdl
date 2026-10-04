@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# The first program (issue 1018): mount what the shell needs, say so on
+# a line a test can wait for, run one command, and hand over to a shell.
+/bin/busybox mount -t proc proc /proc
+/bin/busybox mount -t sysfs sysfs /sys
+/bin/busybox --install -s
+echo "txhdl: userspace is up"
+uname -a
+exec /bin/sh

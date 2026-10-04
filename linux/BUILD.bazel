@@ -11,12 +11,18 @@
 #
 # The kernel is `rv32_defconfig` with `probe.config` over it; a later
 # change trims it to this machine.
+load("@rules_rust//rust:defs.bzl", "rust_test")
+
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["build.sh"])
+exports_files([
+    "build.sh",
+    "userspace.sh",
+])
 
 _TOOLS = [
     "build.sh",
+    "userspace.sh",
     "@kbuild_tree//:all",
     "@llvm_toolchain_llvm//:bin",
     "@llvm_toolchain_llvm//:lib",
@@ -62,4 +68,76 @@ genrule(
           "$(execpath fw_jump.bin) $(execpath fw_jump.elf)",
     tags = ["manual"],
     tools = _TOOLS,
+)
+
+# The userspace (issue 1018): BusyBox on musl, static, for rv32imac at the
+# soft-float ABI, and an initramfs that holds it, built with the same
+# LLVM by userspace.sh. Manual, as the kernel is:
+#
+#   bazel build //linux:initramfs
+#
+# The sysroot: musl, the kernel's interface headers, and compiler-rt's
+# builtins and start and end objects for the core, as one tar.
+genrule(
+    name = "rv32_sysroot",
+    srcs = [
+        "@compiler_rt//:src",
+        "@linux//:src",
+        "@musl//:src",
+    ],
+    outs = ["rv32_sysroot.tar"],
+    cmd = _ENV + " $(execpath userspace.sh) sysroot " +
+          "$(execpath @compiler_rt//:src) $(execpath @musl//:src) " +
+          "$(execpath @linux//:src) $@",
+    tags = ["manual"],
+    tools = _TOOLS,
+)
+
+# BusyBox, its defconfig with busybox.config over it, and the whole
+# configuration it was built with.
+genrule(
+    name = "busybox",
+    srcs = [
+        ":rv32_sysroot",
+        "@busybox//:src",
+        "busybox.config",
+    ],
+    outs = [
+        "bin/busybox",
+        "busybox.full.config",
+    ],
+    cmd = _ENV + " $(execpath userspace.sh) busybox " +
+          "$(execpath :rv32_sysroot) $(execpath @busybox//:src) " +
+          "$(execpath busybox.config) $(execpath bin/busybox) " +
+          "$(execpath busybox.full.config)",
+    tags = ["manual"],
+    tools = _TOOLS,
+)
+
+# The initramfs: BusyBox, /bin/sh linked to it, the console and null
+# devices, and `init`, packed by the kernel's own gen_init_cpio.
+genrule(
+    name = "initramfs",
+    srcs = [
+        "bin/busybox",
+        "init",
+        "@linux//:src",
+    ],
+    outs = ["initramfs.cpio"],
+    cmd = _ENV + " $(execpath userspace.sh) initramfs " +
+          "$(execpath bin/busybox) $(execpath init) $(execpath @linux//:src) $@",
+    tags = ["manual"],
+    tools = _TOOLS,
+)
+
+# What the initramfs holds, read back from the archive: every entry a
+# boot needs, as what it should be, and BusyBox a static program for the
+# core. Manual, since it builds the userspace; booting it is M9's model.
+rust_test(
+    name = "initramfs_test",
+    srcs = ["initramfs_test.rs"],
+    data = ["initramfs.cpio"],
+    edition = "2021",
+    env = {"INITRAMFS": "$(rootpath initramfs.cpio)"},
+    tags = ["manual"],
 )

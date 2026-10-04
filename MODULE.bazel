@@ -429,6 +429,43 @@ http_archive(
     ],
 )
 
+# The userspace, an initramfs of BusyBox on musl (issue 1018), built with
+# the same LLVM. The LLVM release carries compiler-rt's builtins for the
+# host alone, and a static program at `ilp32` needs them for soft float
+# and 64-bit division, so they are built from compiler-rt's source, at
+# the release's own version. musl takes the two patches its author
+# published for CVE-2025-26519.
+http_archive(
+    name = "compiler_rt",
+    build_file = "//third_party/linux:source.BUILD.bazel",
+    sha256 = "15277402f6fd63397c0917a5c7171cda82d16d226094b828c1ed0f58f73b9c69",
+    strip_prefix = "compiler-rt-20.1.8.src",
+    urls = [
+        "https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.8/compiler-rt-20.1.8.src.tar.xz",
+    ],
+)
+
+http_archive(
+    name = "musl",
+    build_file = "//third_party/linux:source.BUILD.bazel",
+    patch_args = ["-p1"],
+    patches = [
+        "//third_party/linux:musl-cve-2025-26519-1.patch",
+        "//third_party/linux:musl-cve-2025-26519-2.patch",
+    ],
+    sha256 = "a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4",
+    strip_prefix = "musl-1.2.5",
+    urls = ["https://musl.libc.org/releases/musl-1.2.5.tar.gz"],
+)
+
+http_archive(
+    name = "busybox",
+    build_file = "//third_party/linux:source.BUILD.bazel",
+    sha256 = "3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4",
+    strip_prefix = "busybox-1.37.0",
+    urls = ["https://busybox.net/downloads/busybox-1.37.0.tar.bz2"],
+)
+
 deb_tree(
     name = "kbuild_tree",
     locks = ["//third_party/kbuild:trixie.lock.tsv"],

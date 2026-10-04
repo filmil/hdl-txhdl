@@ -3,10 +3,11 @@
 # make, flex, bison with its m4, and bc, as the Debian packages they are
 # published as, with the libraries they need; `trixie.lock.tsv` is that
 # closure, written by //tools/debclosure and pinned by checksum
-# (issue 1008):
+# (issue 1008). bzip2 is BusyBox's: its build compresses its own
+# configuration and usage text with it (issue 1018).
 #
 #   bazel run //tools/debclosure -- -suite=trixie \
-#       -skip=libc6,libgcc-s1 make flex bison bc
+#       -skip=libc6,libgcc-s1 make flex bison bc bzip2
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["trixie.lock.tsv"])

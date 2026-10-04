@@ -4,4 +4,10 @@
 exports_files([
     "linux.BUILD.bazel",
     "opensbi.BUILD.bazel",
+    # The userspace's (issue 1018): one build file for each of the three
+    # source trees, and musl's two patches for CVE-2025-26519, in iconv,
+    # as its author published them on the musl list on February 13, 2025.
+    "source.BUILD.bazel",
+    "musl-cve-2025-26519-1.patch",
+    "musl-cve-2025-26519-2.patch",
 ])
