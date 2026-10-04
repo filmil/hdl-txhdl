@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The reference: RV32IMC as a program, one `step` per instruction,
+//! The reference: RV32IMAC as a program, one `step` per instruction,
 //! written against the decoder and nothing else. The core is checked
 //! against it, in lockstep, every cycle.
 use crate::core::IMEM_BYTES;
@@ -7,11 +7,12 @@ use crate::isa::{
     compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT, CAUSE_ECALL,
     CAUSE_FETCH_ACCESS, CAUSE_ILLEGAL, CAUSE_LOAD_ACCESS,
     CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER,
-    CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK, CSR_DCSR, CSR_DPC,
-    CSR_MARCHID, CSR_MBUSQUIET, CSR_MCAUSE, CSR_MCYCLE, CSR_MCYCLEH, CSR_MEPC,
-    CSR_MHALT, CSR_MHARTID, CSR_MIE, CSR_MIMPID, CSR_MINSTRET, CSR_MINSTRETH,
-    CSR_MIP, CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC,
-    CSR_MVENDORID, MEXT, MISA, MSOFT, MTIMECMP_OFF, MTIMER, UART_BASE,
+    CAUSE_STORE_ACCESS, CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK,
+    CSR_DCSR, CSR_DPC, CSR_MARCHID, CSR_MBUSQUIET, CSR_MCAUSE, CSR_MCYCLE,
+    CSR_MCYCLEH, CSR_MEPC, CSR_MHALT, CSR_MHARTID, CSR_MIE, CSR_MIMPID,
+    CSR_MINSTRET, CSR_MINSTRETH, CSR_MIP, CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS,
+    CSR_MTVAL, CSR_MTVEC, CSR_MVENDORID, MEXT, MISA, MSOFT, MTIMECMP_OFF,
+    MTIMER, UART_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -110,6 +111,9 @@ pub struct Model {
     /// instruction has run, stepped, which asks to enter again.
     pub step_armed: bool,
     pub stepped: bool,
+    /// The reservation `lr.w` makes and `sc.w` uses up: the word's byte
+    /// address, or none (issue 1010).
+    pub rsv: Option<u32>,
 }
 
 impl Default for Model {
@@ -136,6 +140,7 @@ impl Default for Model {
             dcsr: 0x4000_0003,
             step_armed: false,
             stepped: false,
+            rsv: None,
         }
     }
 }
@@ -174,7 +179,8 @@ pub fn misaligned(kind: Kind, addr: u32) -> bool {
     use Kind::*;
     match kind {
         Lh | Lhu | Sh => addr & 1 != 0,
-        Lw | Sw => addr & 3 != 0,
+        Lw | Sw | LrW | ScW | AmoswapW | AmoaddW | AmoxorW | AmoandW
+        | AmoorW | AmominW | AmomaxW | AmominuW | AmomaxuW => addr & 3 != 0,
         _ => false,
     }
 }
@@ -450,6 +456,7 @@ impl Model {
         self.dcsr = 0x4000_0003;
         self.step_armed = false;
         self.stepped = false;
+        self.rsv = None;
     }
 
     /// A write the debug module makes while the core is in debug mode:
@@ -600,6 +607,79 @@ impl Model {
                     };
                     self.set_word(addr, v);
                 }
+            }
+            // The A extension (issue 1010). One hart, so atomic within
+            // it: `lr.w` loads and reserves the word, `sc.w` stores only
+            // to the reserved word and uses the reservation up either
+            // way, and an AMO reads the word, writes the operation's
+            // result and returns the old word. A misaligned one traps,
+            // `lr.w` as a load and the rest as a store; a word the bus
+            // refuses is a load's access fault for `lr.w` and a store's
+            // for an AMO, which writes nothing.
+            LrW => {
+                if misaligned(d.kind, a) {
+                    self.trap(CAUSE_LOAD_MISALIGNED, a);
+                    return;
+                }
+                self.rsv = Some(a);
+                if a >= DEVICES && self.dev_err && !self.csr.busquiet {
+                    self.trap(CAUSE_LOAD_ACCESS, a);
+                    return;
+                }
+                let Some(word) = self.word(imem, a) else {
+                    self.trap(CAUSE_LOAD_ACCESS, a);
+                    return;
+                };
+                rd = Some(word);
+            }
+            ScW => {
+                let held = self.rsv == Some(a);
+                self.rsv = None;
+                if misaligned(d.kind, a) {
+                    self.trap(CAUSE_STORE_MISALIGNED, a);
+                    return;
+                }
+                if held {
+                    if self.word(imem, a).is_none() {
+                        self.halted = Some(Halt::Fault(a));
+                        return;
+                    }
+                    self.set_word(a, b);
+                }
+                rd = Some(!held as u32);
+            }
+            AmoswapW | AmoaddW | AmoxorW | AmoandW | AmoorW | AmominW
+            | AmomaxW | AmominuW | AmomaxuW => {
+                if misaligned(d.kind, a) {
+                    self.trap(CAUSE_STORE_MISALIGNED, a);
+                    return;
+                }
+                let refused = a >= DEVICES && self.dev_err;
+                if refused && !self.csr.busquiet {
+                    self.trap(CAUSE_STORE_ACCESS, a);
+                    return;
+                }
+                let Some(old) = self.word(imem, a) else {
+                    self.trap(CAUSE_STORE_ACCESS, a);
+                    return;
+                };
+                let new = match d.kind {
+                    AmoswapW => b,
+                    AmoaddW => old.wrapping_add(b),
+                    AmoxorW => old ^ b,
+                    AmoandW => old & b,
+                    AmoorW => old | b,
+                    AmominW => (old as i32).min(b as i32) as u32,
+                    AmomaxW => (old as i32).max(b as i32) as u32,
+                    AmominuW => old.min(b),
+                    _ => old.max(b),
+                };
+                // A refusal the program asked to be quiet about reads
+                // the bus's word and writes nothing, as a load does.
+                if !refused {
+                    self.set_word(a, new);
+                }
+                rd = Some(old);
             }
             Addi => rd = Some(a.wrapping_add(imm)),
             Slti => rd = Some(((a as i32) < (imm as i32)) as u32),

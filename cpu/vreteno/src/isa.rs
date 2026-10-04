@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! RV32IMC as bits: the encoders a program is written with, and the
+//! RV32IMAC as bits: the encoders a program is written with, and the
 //! decoder the reference model reads with, which reads a compressed
 //! instruction as the thirty-two bit one it stands for. The core
 //! decodes and expands on its own, from the fields of the word, so the
@@ -64,6 +64,18 @@ pub enum Kind {
     Csrrwi,
     Csrrsi,
     Csrrci,
+    // The A extension, the word forms (issue 1010).
+    LrW,
+    ScW,
+    AmoswapW,
+    AmoaddW,
+    AmoxorW,
+    AmoandW,
+    AmoorW,
+    AmominW,
+    AmomaxW,
+    AmominuW,
+    AmomaxuW,
     Illegal,
 }
 
@@ -81,9 +93,9 @@ pub const CSR_MTVAL: u32 = 0x343;
 /// What this core is, as `misa` reports it: `MXL` of 1 for a 32-bit
 /// machine in the top two bits, and the letters `I`, `M` and `C` in
 /// the extension bits, which are numbered from `A` at zero. So
-/// RV32IMC, which is what the core implements.
+/// RV32IMAC, which is what the core implements.
 pub const CSR_MISA: u32 = 0x301;
-pub const MISA: u32 = 0x4000_0000 | (1 << 12) | (1 << 8) | (1 << 2);
+pub const MISA: u32 = 0x4000_0000 | (1 << 12) | (1 << 8) | (1 << 2) | 1;
 
 /// The two machine counters, each 64 bits and each read as two
 /// words. The specification makes them writable, so that software can
@@ -255,6 +267,7 @@ pub const OP_IMM: u32 = 0x13;
 pub const OP_OP: u32 = 0x33;
 pub const OP_FENCE: u32 = 0x0f;
 pub const OP_SYSTEM: u32 = 0x73;
+pub const OP_AMO: u32 = 0x2f;
 
 // The six formats.
 fn r(op: u32, rd: u32, f3: u32, rs1: u32, rs2: u32, f7: u32) -> u32 {
@@ -352,6 +365,43 @@ pub fn sh(rs2: u32, rs1: u32, off: i32) -> u32 {
 }
 pub fn sw(rs2: u32, rs1: u32, off: i32) -> u32 {
     s(OP_STORE, 2, rs1, rs2, off)
+}
+/// An A instruction, word wide, by its five-bit function (issue 1010).
+pub fn amo(funct5: u32, rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(OP_AMO, rd, 2, rs1, rs2, funct5 << 2)
+}
+pub fn lr_w(rd: u32, rs1: u32) -> u32 {
+    amo(0b00010, rd, rs1, 0)
+}
+pub fn sc_w(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    amo(0b00011, rd, rs1, rs2)
+}
+pub fn amoswap_w(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    amo(0b00001, rd, rs1, rs2)
+}
+pub fn amoadd_w(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    amo(0b00000, rd, rs1, rs2)
+}
+pub fn amoxor_w(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    amo(0b00100, rd, rs1, rs2)
+}
+pub fn amoand_w(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    amo(0b01100, rd, rs1, rs2)
+}
+pub fn amoor_w(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    amo(0b01000, rd, rs1, rs2)
+}
+pub fn amomin_w(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    amo(0b10000, rd, rs1, rs2)
+}
+pub fn amomax_w(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    amo(0b10100, rd, rs1, rs2)
+}
+pub fn amominu_w(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    amo(0b11000, rd, rs1, rs2)
+}
+pub fn amomaxu_w(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    amo(0b11100, rd, rs1, rs2)
 }
 pub fn addi(rd: u32, rs1: u32, imm: i32) -> u32 {
     i(OP_IMM, rd, 0, rs1, imm)
@@ -930,6 +980,22 @@ pub fn decode(w: u32) -> Decoded {
             _ => d(Illegal, 0),
         },
         OP_FENCE => d(Fence, 0),
+        // The A extension's word forms; `aq` and `rl`, bits 26 and 25,
+        // are taken as given, since one hart in order orders them all.
+        OP_AMO if f3 == 2 => match w >> 27 {
+            0b00010 if rs2 == 0 => d(LrW, 0),
+            0b00011 => d(ScW, 0),
+            0b00001 => d(AmoswapW, 0),
+            0b00000 => d(AmoaddW, 0),
+            0b00100 => d(AmoxorW, 0),
+            0b01100 => d(AmoandW, 0),
+            0b01000 => d(AmoorW, 0),
+            0b10000 => d(AmominW, 0),
+            0b10100 => d(AmomaxW, 0),
+            0b11000 => d(AmominuW, 0),
+            0b11100 => d(AmomaxuW, 0),
+            _ => d(Illegal, 0),
+        },
         // The system instructions: the immediate is the CSR address,
         // and an immediate form's operand sits in the rs1 field.
         OP_SYSTEM => match (f3, w >> 20) {
@@ -980,6 +1046,12 @@ pub fn disasm(w: u32) -> String {
         Fence | Ecall | Ebreak | Mret | Wfi => m,
         Csrrw | Csrrs | Csrrc => format!("{m} x{rd}, {imm:#x}, x{rs1}"),
         Csrrwi | Csrrsi | Csrrci => format!("{m} x{rd}, {imm:#x}, {rs1}"),
+        LrW => format!("lr.w x{rd}, (x{rs1})"),
+        ScW | AmoswapW | AmoaddW | AmoxorW | AmoandW | AmoorW | AmominW
+        | AmomaxW | AmominuW | AmomaxuW => {
+            let m = m.trim_end_matches('w');
+            format!("{m}.w x{rd}, x{rs2}, (x{rs1})")
+        }
         Illegal => format!("illegal {w:#010x}"),
     }
 }
@@ -1008,6 +1080,24 @@ mod tests {
             (remu(4, 5, 6), Kind::Remu, Some(4), Some(5), Some(6), 0),
             (ebreak(), Kind::Ebreak, None, None, None, 0),
             (mret(), Kind::Mret, None, None, None, 0),
+            (lr_w(3, 4), Kind::LrW, Some(3), Some(4), Some(0), 0),
+            (sc_w(3, 4, 5), Kind::ScW, Some(3), Some(4), Some(5), 0),
+            (
+                amoadd_w(3, 4, 5),
+                Kind::AmoaddW,
+                Some(3),
+                Some(4),
+                Some(5),
+                0,
+            ),
+            (
+                amomaxu_w(3, 4, 5),
+                Kind::AmomaxuW,
+                Some(3),
+                Some(4),
+                Some(5),
+                0,
+            ),
             (
                 csrrw(5, CSR_MEPC, 6),
                 Kind::Csrrw,
