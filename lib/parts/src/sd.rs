@@ -1443,6 +1443,21 @@ mod tests {
     where
         F: std::future::Future<Output = ()>,
     {
+        run_late(card, 0, client)
+    }
+
+    /// The same, with what the card drives reaching the host `lag`
+    /// cycles late: the card clock's way out to the card, the card's
+    /// own delay in driving and the way back, which on the board come
+    /// to about 22 ns at the specification's slowest card (issue 929).
+    fn run_late<F>(
+        card: SdCard,
+        lag: usize,
+        client: impl FnOnce(Host) -> F,
+    ) -> SdCard
+    where
+        F: std::future::Future<Output = ()>,
+    {
         let link = axi_lite::<32, 32, 4>();
         let bus: LitePort<32, 32, 4> = link.per.into();
         let (cmd_in_o, cmd_in) = signal::<Bit, DefaultClock>();
@@ -1478,6 +1493,7 @@ mod tests {
             ),
         ));
         let mut card = card;
+        let mut late = std::collections::VecDeque::new();
         cmd_in_o.set(Bit::One);
         dat_in_o.set(U::<4>::from(0xfu8));
         for _ in 0..4_000_000 {
@@ -1487,17 +1503,16 @@ mod tests {
             let cmd = cmd_out.get().to_bool();
             let dat = dat_out.get().raw() as u8;
             card.step(sclk.get().to_bool(), host_cmd, cmd, host_dat, dat);
+            // What the card drives, `lag` cycles on.
+            late.push_back((card.cmd_out(), card.dat_out()));
+            let (card_cmd, card_dat) = if late.len() > lag {
+                late.pop_front().unwrap()
+            } else {
+                (true, 0xf)
+            };
             // The lines: whoever drives, and high when nobody does.
-            cmd_in_o.set(Bit::from_bool(if host_cmd {
-                cmd
-            } else {
-                card.cmd_out()
-            }));
-            dat_in_o.set(U::<4>::from(if host_dat {
-                dat
-            } else {
-                card.dat_out()
-            }));
+            cmd_in_o.set(Bit::from_bool(if host_cmd { cmd } else { card_cmd }));
+            dat_in_o.set(U::<4>::from(if host_dat { dat } else { card_dat }));
             if *done.borrow() {
                 return card;
             }
@@ -1559,6 +1574,58 @@ mod tests {
         assert_eq!(block_words(&card, 5), sent, "and as the card holds it");
     }
 
+    /// At 25 MHz, `DIV` 1, a card whose lines reach the host up to
+    /// three cycles after it drives them, 30 ns, is brought up, written
+    /// and read on four lines (issue 929). On the board the clock's way
+    /// out, the slowest card the specification allows (tODLY, 14 ns)
+    /// and the way back come to about 22 ns, inside the three.
+    ///
+    /// A model stepped by cycles cannot show where reading fails,
+    /// since it has no setup time to miss: a card a whole card clock
+    /// late is read too, a clock late. What it shows is that the host,
+    /// driving a cycle after the fall and sampling two after the rise,
+    /// moves the block right whatever the lag; where it stops meeting
+    /// the card's timing is the timing report's to say.
+    #[test]
+    fn a_card_slow_to_drive_is_read_and_written_at_25_mhz() {
+        for lag in 0..=3 {
+            let card = SdCard::default();
+            let want = block_words(&card, 3);
+            let words: Vec<u32> = (0..WORDS as u32)
+                .map(|i| i.wrapping_mul(0x9e37_79b9) ^ lag as u32)
+                .collect();
+            let sent = words.clone();
+            let card = run_late(card, lag, |h| async move {
+                write(&h, regs::ctrl, DIV).await;
+                bring_up(&h, true).await;
+                let s = command(&h, 17, 3, CMD_SHORT | CMD_READ).await;
+                assert_eq!(faults(s), 0, "lag {lag}, CMD17: {s:#x}");
+                assert_eq!(take(&h).await, want, "lag {lag}, block 3");
+                fill(&h, &words).await;
+                let s = command(&h, 24, 5, CMD_SHORT | CMD_WRITE).await;
+                assert_eq!(faults(s), 0, "lag {lag}, CMD24: {s:#x}");
+                assert_eq!((s >> 6) & 7, 2, "lag {lag}, the card took it");
+            });
+            assert_eq!(card.bad_commands, 0, "lag {lag}, every command's CRC");
+            assert_eq!(block_words(&card, 5), sent, "lag {lag}, block 5");
+        }
+    }
+
+    /// A divider of 0 runs as 1: a half of the card clock is at least
+    /// two cycles, so the host's driving and sampling, which trail the
+    /// clock, never fall on one cycle (issue 929).
+    #[test]
+    fn a_divider_of_zero_runs_as_one() {
+        let card = SdCard::default();
+        let want = block_words(&card, 2);
+        run(card, |h| async move {
+            write(&h, regs::ctrl, 0).await;
+            bring_up(&h, false).await;
+            let s = command(&h, 17, 2, CMD_SHORT | CMD_READ).await;
+            assert_eq!(faults(s), 0, "CMD17: {s:#x}");
+            assert_eq!(take(&h).await, want, "block 2");
+        });
+    }
     #[test]
     fn several_blocks_go_each_way() {
         let card = SdCard::default();
