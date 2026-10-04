@@ -25,6 +25,7 @@ Those reasons live here.
 | `vivado-setup.md` | Vivado for this repository from nothing: why the ordinary build needs none, the hermetic installation and the host one, and what goes in your own `user.bazelrc` |
 | `noc-bursts.md` | Why a multi-beat write did not cross the network on chip, which of the stated reasons survived measurement, what each candidate design cost in bits, which one was chosen, and how it was built (section 7) |
 | `opengl-gap.md` | What Razboj does against what OpenGL ES 1.1 and a subset of 2.0 ask for, the gaps sized, a staged path from Razboj on the board to a fixed-function GL, and the issues to file for it (issue 926) |
+| `ddr3-throughput.md` | What limits the shared path into DDR3, measured in simulation, and three ways to widen it, with the recommendation and the order of the work (issue 1023) |
 | `board-checks.md` | Every board check the issues owe, as commands in session order: the bitstreams to build first, what each run should print, what to keep, and which issue it closes |
 
 The documents typeset here are the ones `cover.tex` names:
