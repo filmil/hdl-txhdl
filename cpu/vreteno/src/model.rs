@@ -4,15 +4,19 @@
 //! against it, in lockstep, every cycle.
 use crate::core::IMEM_BYTES;
 use crate::isa::{
-    compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT, CAUSE_ECALL,
+    compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT,
     CAUSE_FETCH_ACCESS, CAUSE_ILLEGAL, CAUSE_LOAD_ACCESS,
-    CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER,
-    CAUSE_STORE_ACCESS, CAUSE_STORE_MISALIGNED, CLINT_BASE, CLINT_MASK,
-    CSR_DCSR, CSR_DPC, CSR_MARCHID, CSR_MBUSQUIET, CSR_MCAUSE, CSR_MCYCLE,
-    CSR_MCYCLEH, CSR_MEPC, CSR_MHALT, CSR_MHARTID, CSR_MIE, CSR_MIMPID,
-    CSR_MINSTRET, CSR_MINSTRETH, CSR_MIP, CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS,
-    CSR_MTVAL, CSR_MTVEC, CSR_MVENDORID, MEXT, MISA, MSOFT, MTIMECMP_OFF,
-    MTIMER, UART_BASE,
+    CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER, CAUSE_SEXT,
+    CAUSE_SSOFT, CAUSE_STIMER, CAUSE_STORE_ACCESS, CAUSE_STORE_MISALIGNED,
+    CLINT_BASE, CLINT_MASK, CSR_CYCLE, CSR_CYCLEH, CSR_DCSR, CSR_DPC,
+    CSR_INSTRET, CSR_INSTRETH, CSR_MARCHID, CSR_MBUSQUIET, CSR_MCAUSE,
+    CSR_MCOUNTEREN, CSR_MCYCLE, CSR_MCYCLEH, CSR_MEDELEG, CSR_MEPC, CSR_MHALT,
+    CSR_MHARTID, CSR_MIDELEG, CSR_MIE, CSR_MIMPID, CSR_MINSTRET, CSR_MINSTRETH,
+    CSR_MIP, CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS, CSR_MSTATUSH, CSR_MTVAL,
+    CSR_MTVEC, CSR_MVENDORID, CSR_SATP, CSR_SCAUSE, CSR_SCOUNTEREN, CSR_SEPC,
+    CSR_SIE, CSR_SIP, CSR_SSCRATCH, CSR_SSTATUS, CSR_STVAL, CSR_STVEC,
+    CSR_TIME, CSR_TIMEH, MEXT, MISA, MSOFT, MTIMECMP_OFF, MTIMER, SEXT, SSOFT,
+    STIMER, UART_BASE,
 };
 
 /// Where data memory begins and how much there is, in bytes. The
@@ -46,6 +50,20 @@ pub struct Csr {
     pub mtval: u32,
     /// `mbusquiet`, bit 0 (issue 417).
     pub busquiet: bool,
+    /// User and supervisor mode (issue 1012): the delegations, the
+    /// supervisor's pending bits that software sets, its registers,
+    /// and the counter enables.
+    pub medeleg: u32,
+    pub mideleg: u32,
+    pub mip_sw: u32,
+    pub stvec: u32,
+    pub sscratch: u32,
+    pub sepc: u32,
+    pub scause: u32,
+    pub stval: u32,
+    pub satp: u32,
+    pub mcounteren: u32,
+    pub scounteren: u32,
 }
 
 /// A machine around the model: the memories and devices its fetches,
@@ -114,6 +132,12 @@ pub struct Model {
     /// The reservation `lr.w` makes and `sc.w` uses up: the word's byte
     /// address, or none (issue 1010).
     pub rsv: Option<u32>,
+    /// The privilege the hart runs at: 3 machine, 1 supervisor, 0 user
+    /// (issue 1012).
+    pub prv: u32,
+    /// The timer's count as the core saw it, which `time` reads: the
+    /// caller sets it, as it sets the device word.
+    pub time: u64,
 }
 
 impl Default for Model {
@@ -141,12 +165,37 @@ impl Default for Model {
             step_armed: false,
             stepped: false,
             rsv: None,
+            prv: 3,
+            time: 0,
         }
     }
 }
 
 const MIE: u32 = 1 << 3;
 const MPIE: u32 = 1 << 7;
+/// The rest of `mstatus` that user and supervisor mode bring (issue
+/// 1012), what of it is writable, and what `sstatus` shows of it.
+const SIE: u32 = 1 << 1;
+const SPIE: u32 = 1 << 5;
+const SPP: u32 = 1 << 8;
+const MPP: u32 = 3 << 11;
+const SUM: u32 = 1 << 18;
+const MXR: u32 = 1 << 19;
+const MSTATUS_W: u32 = SIE | MIE | SPIE | MPIE | SPP | MPP | SUM | MXR;
+const SSTATUS_W: u32 = SIE | SPIE | SPP | SUM | MXR;
+/// The exceptions machine mode may delegate: all but an environment
+/// call from machine mode and the reserved causes.
+const MEDELEG_W: u32 = 0xb3ff;
+/// What a write leaves of `mstatus`: the writable fields, and `MPP`
+/// as one of the three modes there are, a 2 read as user mode.
+fn mstatus_w(v: u32) -> u32 {
+    let v = v & MSTATUS_W;
+    if v & MPP == 2 << 11 {
+        v & !MPP
+    } else {
+        v
+    }
+}
 
 /// The instruction at `pc` in the instruction memory, as thirty-two
 /// bits, and its length in bytes; `None` past the memory's end. The
@@ -301,6 +350,32 @@ impl Model {
         }
     }
 
+    /// `mip` whole: the external line, the timer's and the software
+    /// interrupt's, and the supervisor's bits software set.
+    fn mip_all(&self) -> u32 {
+        self.csr.mip | self.mtip() | self.msip() | self.csr.mip_sw
+    }
+
+    /// Whether the hart, at its privilege, may reach a CSR at all: the
+    /// address's bits 9 and 8 name the least privilege that may, and a
+    /// counter below machine mode wants its bit in `mcounteren`, and in
+    /// user mode in `scounteren` as well (issue 1012).
+    fn csr_allowed(&self, addr: u32) -> bool {
+        if self.prv < (addr >> 8 & 3) {
+            return false;
+        }
+        if matches!(addr, 0xc00..=0xc02 | 0xc80..=0xc82) {
+            let bit = 1 << (addr & 3);
+            if self.prv < 3 && self.csr.mcounteren & bit == 0 {
+                return false;
+            }
+            if self.prv == 0 && self.csr.scounteren & bit == 0 {
+                return false;
+            }
+        }
+        true
+    }
+
     fn csr_read(&self, addr: u32) -> Option<u32> {
         Some(match addr {
             CSR_MSTATUS => self.csr.mstatus,
@@ -309,7 +384,7 @@ impl Model {
             CSR_MEPC => self.csr.mepc,
             CSR_MCAUSE => self.csr.mcause,
             CSR_MIE => self.csr.mie,
-            CSR_MIP => self.csr.mip | self.mtip() | self.msip(),
+            CSR_MIP => self.mip_all(),
             CSR_MTVAL => self.csr.mtval,
             // The halt holds nothing: it reads as zero, and a write of
             // an odd value to it stops the machine.
@@ -335,6 +410,28 @@ impl Model {
             CSR_MINSTRET => self.minstret as u32,
             CSR_MINSTRETH => (self.minstret >> 32) as u32,
             CSR_MCYCLE | CSR_MCYCLEH => 0,
+            CSR_MEDELEG => self.csr.medeleg,
+            // Its upper half holds nothing here (issue 1076).
+            CSR_MSTATUSH => 0,
+            CSR_MIDELEG => self.csr.mideleg,
+            CSR_MCOUNTEREN => self.csr.mcounteren,
+            CSR_SCOUNTEREN => self.csr.scounteren,
+            CSR_SSTATUS => self.csr.mstatus & SSTATUS_W,
+            CSR_SIE => self.csr.mie & self.csr.mideleg,
+            CSR_SIP => self.mip_all() & self.csr.mideleg,
+            CSR_STVEC => self.csr.stvec,
+            CSR_SSCRATCH => self.csr.sscratch,
+            CSR_SEPC => self.csr.sepc,
+            CSR_SCAUSE => self.csr.scause,
+            CSR_STVAL => self.csr.stval,
+            CSR_SATP => self.csr.satp,
+            // Zicntr: the cycles as `mcycle`, which the model cannot
+            // know; the count the timer gave; the retirements.
+            CSR_CYCLE | CSR_CYCLEH => 0,
+            CSR_TIME => self.time as u32,
+            CSR_TIMEH => (self.time >> 32) as u32,
+            CSR_INSTRET => self.minstret as u32,
+            CSR_INSTRETH => (self.minstret >> 32) as u32,
             _ => return None,
         })
     }
@@ -348,21 +445,49 @@ impl Model {
 
     fn csr_write(&mut self, addr: u32, v: u32) {
         match addr {
-            CSR_MSTATUS => self.csr.mstatus = v & (MIE | MPIE),
+            CSR_MSTATUS => self.csr.mstatus = mstatus_w(v),
             CSR_MTVEC => self.csr.mtvec = v & !3,
             CSR_MSCRATCH => self.csr.mscratch = v,
             CSR_MEPC => self.csr.mepc = v & !1,
             CSR_MCAUSE => self.csr.mcause = v,
-            CSR_MIE => self.csr.mie = v & (MEXT | MSOFT | MTIMER),
+            CSR_MIE => {
+                self.csr.mie =
+                    v & (MEXT | MSOFT | MTIMER | SEXT | SSOFT | STIMER)
+            }
             // MEIP is read only, and the timer's and the software
-            // interrupt's bits are their lines: a write changes nothing.
-            CSR_MIP => {}
+            // interrupt's bits are their lines: a write changes none of
+            // those. The supervisor's three are software's (issue 1012).
+            CSR_MIP => self.csr.mip_sw = v & (SEXT | SSOFT | STIMER),
+            CSR_MEDELEG => self.csr.medeleg = v & MEDELEG_W,
+            CSR_MIDELEG => self.csr.mideleg = v & (SEXT | SSOFT | STIMER),
+            CSR_MCOUNTEREN => self.csr.mcounteren = v & 7,
+            CSR_SCOUNTEREN => self.csr.scounteren = v & 7,
+            CSR_SSTATUS => {
+                self.csr.mstatus =
+                    (self.csr.mstatus & !SSTATUS_W) | (v & SSTATUS_W)
+            }
+            CSR_SIE => {
+                let d = self.csr.mideleg;
+                self.csr.mie = (self.csr.mie & !d) | (v & d)
+            }
+            // Of `sip`, supervisor software may set and clear its own
+            // software interrupt, when it is delegated.
+            CSR_SIP => {
+                let d = self.csr.mideleg & SSOFT;
+                self.csr.mip_sw = (self.csr.mip_sw & !d) | (v & d)
+            }
+            CSR_STVEC => self.csr.stvec = v & !3,
+            CSR_SSCRATCH => self.csr.sscratch = v,
+            CSR_SEPC => self.csr.sepc = v & !1,
+            CSR_SCAUSE => self.csr.scause = v,
+            CSR_STVAL => self.csr.stval = v,
+            CSR_SATP => self.csr.satp = v,
             CSR_MTVAL => self.csr.mtval = v,
             CSR_MBUSQUIET => self.csr.busquiet = v & 1 != 0,
             // `ebreakm` and `step` are the debugger's; the rest is the
             // core's to say.
             CSR_DCSR => {
-                self.dcsr = 0x4000_0003 | (v & 0x8004) | (self.dcsr & 0x1c0)
+                self.dcsr = 0x4000_0000 | (v & 0x8004) | (self.dcsr & 0x1c3)
             }
             CSR_DPC => self.dpc = v & !1,
             CSR_MINSTRET => {
@@ -380,35 +505,68 @@ impl Model {
     /// are saved, the interrupt enable is saved and cleared, and the
     /// handler is next. The trap value is the word for an illegal
     /// instruction and zero otherwise.
+    ///
+    /// A trap below machine mode whose cause machine mode delegated, in
+    /// `medeleg` for an exception and `mideleg` for an interrupt, goes to
+    /// the supervisor instead, through its own registers (issue 1012).
     fn trap(&mut self, cause: u32, tval: u32) {
-        self.csr.mepc = self.pc;
-        self.csr.mcause = cause;
-        self.csr.mtval = tval;
-        let mie = self.csr.mstatus & MIE != 0;
-        self.csr.mstatus = if mie { MPIE } else { 0 };
-        self.pc = self.csr.mtvec;
+        let deleg = if cause >> 31 == 1 {
+            self.csr.mideleg
+        } else {
+            self.csr.medeleg
+        };
+        let s = &mut self.csr.mstatus;
+        if self.prv < 3 && deleg >> (cause & 31) & 1 == 1 {
+            self.csr.sepc = self.pc;
+            self.csr.scause = cause;
+            self.csr.stval = tval;
+            let spie = if *s & SIE != 0 { SPIE } else { 0 };
+            let spp = if self.prv == 1 { SPP } else { 0 };
+            *s = (*s & !(SIE | SPIE | SPP)) | spie | spp;
+            self.prv = 1;
+            self.pc = self.csr.stvec;
+        } else {
+            self.csr.mepc = self.pc;
+            self.csr.mcause = cause;
+            self.csr.mtval = tval;
+            let mpie = if *s & MIE != 0 { MPIE } else { 0 };
+            *s = (*s & !(MIE | MPIE | MPP)) | mpie | (self.prv << 11);
+            self.prv = 3;
+            self.pc = self.csr.mtvec;
+        }
     }
 
     /// The interrupt that would be taken before the next instruction,
     /// if any: the external one first, then the software one, then the
     /// timer's, each pending and enabled in `mie`, with interrupts
     /// enabled in `mstatus`.
+    ///
+    /// One machine mode keeps is taken below machine mode always and in
+    /// it with `MIE`; one it delegated is taken below supervisor mode
+    /// always, in it with `SIE`, and never in machine mode; and the
+    /// machine's come first (issue 1012).
     pub fn interrupt(&self) -> Option<u32> {
-        if self.csr.mstatus & MIE == 0 {
-            return None;
-        }
-        let pending = (self.csr.mip | self.mtip() | self.msip()) & self.csr.mie;
+        let pending = self.mip_all() & self.csr.mie;
+        let s = self.csr.mstatus;
+        let m_on = self.prv < 3 || s & MIE != 0;
+        let s_on = self.prv == 0 || (self.prv == 1 && s & SIE != 0);
+        let m = if m_on { pending & !self.csr.mideleg } else { 0 };
+        let sv = if s_on { pending & self.csr.mideleg } else { 0 };
+        let set = if m != 0 { m } else { sv };
         // The order the specification gives: the external interrupt
-        // first, then the software one, then the timer's.
-        if pending & MEXT != 0 {
-            Some(CAUSE_MEXT)
-        } else if pending & MSOFT != 0 {
-            Some(CAUSE_MSOFT)
-        } else if pending & MTIMER != 0 {
-            Some(CAUSE_MTIMER)
-        } else {
-            None
-        }
+        // first, then the software one, then the timer's, the
+        // machine's before the supervisor's.
+        [
+            (MEXT, CAUSE_MEXT),
+            (MSOFT, CAUSE_MSOFT),
+            (MTIMER, CAUSE_MTIMER),
+            (SEXT, CAUSE_SEXT),
+            (SSOFT, CAUSE_SSOFT),
+            (STIMER, CAUSE_STIMER),
+        ]
+        .into_iter()
+        .find(|&(bit, _)| set & bit != 0)
+        .map(|(_, cause)| cause)
     }
 
     /// One instruction, or the interrupt taken instead of it when
@@ -430,7 +588,8 @@ impl Model {
         } else {
             3
         };
-        self.dcsr = 0x4000_0003 | (self.dcsr & 0x8004) | (cause << 6);
+        self.dcsr =
+            0x4000_0000 | (self.dcsr & 0x8004) | (cause << 6) | self.prv;
         self.dpc = self.pc;
         // A machine that had stopped itself is halted no longer: the
         // debugger may resume it from `dpc` (issue 1047).
@@ -457,6 +616,7 @@ impl Model {
         self.step_armed = false;
         self.stepped = false;
         self.rsv = None;
+        self.prv = 3;
     }
 
     /// A write the debug module makes while the core is in debug mode:
@@ -472,6 +632,11 @@ impl Model {
     pub fn resume(&mut self) {
         self.debug = false;
         self.pc = self.dpc;
+        // The mode the hart was in, as `dcsr.prv` says (issue 1012).
+        self.prv = match self.dcsr & 3 {
+            2 => 0,
+            p => p,
+        };
         self.step_armed = self.dcsr & 4 != 0;
     }
 
@@ -735,8 +900,10 @@ impl Model {
                 self.trap(CAUSE_BREAKPOINT, self.pc);
                 return;
             }
+            // The cause says which mode called: 8 user, 9 supervisor,
+            // 11 machine (issue 1012).
             Ecall => {
-                self.trap(CAUSE_ECALL, 0);
+                self.trap(8 + self.prv, 0);
                 return;
             }
             Illegal => {
@@ -749,17 +916,45 @@ impl Model {
             // waiting state: it retires `wfi` and moves on, and the
             // core's wait shows up as cycles in which it retires
             // nothing, which is what the test measures.
-            Wfi => {}
+            // Below supervisor mode it is an illegal instruction.
+            Wfi => {
+                if self.prv == 0 {
+                    self.trap(CAUSE_ILLEGAL, w);
+                    return;
+                }
+            }
+            // `mret` only in machine mode and `sret` not in user mode;
+            // each returns to the mode it saved and leaves user mode
+            // behind in its place (issue 1012).
             Mret => {
-                let mpie = self.csr.mstatus & MPIE != 0;
-                self.csr.mstatus = MPIE | if mpie { MIE } else { 0 };
+                if self.prv < 3 {
+                    self.trap(CAUSE_ILLEGAL, w);
+                    return;
+                }
+                let s = self.csr.mstatus;
+                let mie = if s & MPIE != 0 { MIE } else { 0 };
+                self.csr.mstatus = (s & !(MIE | MPP)) | MPIE | mie;
+                self.prv = s >> 11 & 3;
                 next = self.csr.mepc;
+            }
+            Sret => {
+                if self.prv == 0 {
+                    self.trap(CAUSE_ILLEGAL, w);
+                    return;
+                }
+                let s = self.csr.mstatus;
+                let sie = if s & SPIE != 0 { SIE } else { 0 };
+                self.csr.mstatus = (s & !(SIE | SPP)) | SPIE | sie;
+                self.prv = s >> 8 & 1;
+                next = self.csr.sepc;
             }
             Csrrw | Csrrs | Csrrc | Csrrwi | Csrrsi | Csrrci => {
                 // `dcsr` and `dpc` only in debug mode, which a program
                 // never runs in: the debugger writes them through
                 // `debug_write` (issue 972).
-                if matches!(imm, CSR_DCSR | CSR_DPC) && !self.debug {
+                if (matches!(imm, CSR_DCSR | CSR_DPC) && !self.debug)
+                    || !self.csr_allowed(imm)
+                {
                     self.trap(CAUSE_ILLEGAL, w);
                     return;
                 }
@@ -774,12 +969,9 @@ impl Model {
                 // specification says and is not the same as the value
                 // in the register being zero.
                 let writes = matches!(d.kind, Csrrw | Csrrwi) || d.rs1 != 0;
-                if writes
-                    && matches!(
-                        imm,
-                        CSR_MVENDORID | CSR_MARCHID | CSR_MIMPID | CSR_MHARTID
-                    )
-                {
+                // That is the information registers and, since issue
+                // 1012, the unprivileged counters.
+                if writes && imm >> 10 == 3 {
                     self.trap(CAUSE_ILLEGAL, w);
                     return;
                 }

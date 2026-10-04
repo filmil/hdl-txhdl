@@ -57,6 +57,7 @@ pub enum Kind {
     Ecall,
     Ebreak,
     Mret,
+    Sret,
     Wfi,
     Csrrw,
     Csrrs,
@@ -82,6 +83,32 @@ pub enum Kind {
 /// The control and status registers the core has: enough to take a
 /// trap and return from it. The rest are illegal.
 pub const CSR_MSTATUS: u32 = 0x300;
+/// User and supervisor mode (issue 1012): the delegation registers, the
+/// counter enables, the supervisor's registers, and the unprivileged
+/// counters, Zicntr.
+pub const CSR_MEDELEG: u32 = 0x302;
+/// `mstatus`'s upper half, which RV32 has and this core holds nothing in:
+/// it reads as zero and a write changes nothing (issue 1076), and
+/// OpenSBI clears a bit of it before anything else.
+pub const CSR_MSTATUSH: u32 = 0x310;
+pub const CSR_MIDELEG: u32 = 0x303;
+pub const CSR_MCOUNTEREN: u32 = 0x306;
+pub const CSR_SSTATUS: u32 = 0x100;
+pub const CSR_SIE: u32 = 0x104;
+pub const CSR_STVEC: u32 = 0x105;
+pub const CSR_SCOUNTEREN: u32 = 0x106;
+pub const CSR_SSCRATCH: u32 = 0x140;
+pub const CSR_SEPC: u32 = 0x141;
+pub const CSR_SCAUSE: u32 = 0x142;
+pub const CSR_STVAL: u32 = 0x143;
+pub const CSR_SIP: u32 = 0x144;
+pub const CSR_SATP: u32 = 0x180;
+pub const CSR_CYCLE: u32 = 0xc00;
+pub const CSR_TIME: u32 = 0xc01;
+pub const CSR_INSTRET: u32 = 0xc02;
+pub const CSR_CYCLEH: u32 = 0xc80;
+pub const CSR_TIMEH: u32 = 0xc81;
+pub const CSR_INSTRETH: u32 = 0xc82;
 pub const CSR_MTVEC: u32 = 0x305;
 pub const CSR_MSCRATCH: u32 = 0x340;
 pub const CSR_MEPC: u32 = 0x341;
@@ -95,7 +122,8 @@ pub const CSR_MTVAL: u32 = 0x343;
 /// the extension bits, which are numbered from `A` at zero. So
 /// RV32IMAC, which is what the core implements.
 pub const CSR_MISA: u32 = 0x301;
-pub const MISA: u32 = 0x4000_0000 | (1 << 12) | (1 << 8) | (1 << 2) | 1;
+pub const MISA: u32 =
+    0x4000_0000 | (1 << 20) | (1 << 18) | (1 << 12) | (1 << 8) | (1 << 2) | 1;
 
 /// The two machine counters, each 64 bits and each read as two
 /// words. The specification makes them writable, so that software can
@@ -176,6 +204,18 @@ pub const CAUSE_STORE_MISALIGNED: u32 = 6;
 /// since a store is posted and its answer comes back later (issue 417).
 pub const CAUSE_STORE_ACCESS: u32 = 7;
 pub const CAUSE_ECALL: u32 = 11;
+/// An environment call from user and from supervisor mode; the one
+/// above is from machine mode (issue 1012).
+pub const CAUSE_ECALL_U: u32 = 8;
+pub const CAUSE_ECALL_S: u32 = 9;
+/// The supervisor's three interrupts and their bits in `mip` and `mie`,
+/// each two below the machine's (issue 1012).
+pub const CAUSE_SEXT: u32 = 0x8000_0009;
+pub const CAUSE_STIMER: u32 = 0x8000_0005;
+pub const CAUSE_SSOFT: u32 = 0x8000_0001;
+pub const SEXT: u32 = 1 << 9;
+pub const STIMER: u32 = 1 << 5;
+pub const SSOFT: u32 = 1 << 1;
 pub const CAUSE_MEXT: u32 = 0x8000_000b;
 pub const CAUSE_MTIMER: u32 = 0x8000_0007;
 /// A software interrupt: what a program raises for itself by writing
@@ -496,6 +536,10 @@ pub fn ebreak() -> u32 {
 }
 pub fn mret() -> u32 {
     i(OP_SYSTEM, 0, 0, 0, 0x302)
+}
+/// Return from a supervisor's trap (issue 1012).
+pub fn sret() -> u32 {
+    i(OP_SYSTEM, 0, 0, 0, 0x102)
 }
 /// Wait for an interrupt: the core stops fetching until one is
 /// pending and enabled, whether or not interrupts are enabled
@@ -1002,6 +1046,7 @@ pub fn decode(w: u32) -> Decoded {
             (0, 0) => d(Ecall, 0),
             (0, 1) => d(Ebreak, 0),
             (0, 0x302) => d(Mret, 0),
+            (0, 0x102) => d(Sret, 0),
             (0, 0x105) => d(Wfi, 0),
             (1, csr) => d(Csrrw, csr as i32),
             (2, csr) => d(Csrrs, csr as i32),
@@ -1043,7 +1088,7 @@ pub fn disasm(w: u32) -> String {
         | Mulh | Mulhsu | Mulhu | Div | Divu | Rem | Remu => {
             format!("{m} x{rd}, x{rs1}, x{rs2}")
         }
-        Fence | Ecall | Ebreak | Mret | Wfi => m,
+        Fence | Ecall | Ebreak | Mret | Sret | Wfi => m,
         Csrrw | Csrrs | Csrrc => format!("{m} x{rd}, {imm:#x}, x{rs1}"),
         Csrrwi | Csrrsi | Csrrci => format!("{m} x{rd}, {imm:#x}, {rs1}"),
         LrW => format!("lr.w x{rd}, (x{rs1})"),
