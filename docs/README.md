@@ -27,6 +27,7 @@ Those reasons live here.
 | `opengl-gap.md` | What Razboj does against what OpenGL ES 1.1 and a subset of 2.0 ask for, the gaps sized, a staged path from Razboj on the board to a fixed-function GL, and the issues to file for it (issue 926) |
 | `ddr3-throughput.md` | What limits the shared path into DDR3, measured in simulation, and three ways to widen it, with the recommendation and the order of the work (issue 1023) |
 | `gles.md` | The GL ES 1.1 Common-Lite library on Vreteno, designed before its language is chosen: the API subset, the pipeline on the CPU, the fixed-point formats against Razboj's display list, the frame and the tiles, the icosahedron as the first program, and the language choice for the user (issue 995) |
+| `razboj-tiles.md` | Razboj drawing in tiles, as the user decided: the tile size, the tile buffer in block RAM, binning on the CPU, finished tiles to DDR3 in bursts, the block RAM budget, and the order to build it in (issue 991) |
 | `board-checks.md` | Every board check the issues owe, as commands in session order: the bitstreams to build first, what each run should print, what to keep, and which issue it closes |
 | `sv32-timing.md` | Where Sv32 translation sits in the core, the walker and the TLB sizes, the core's two critical paths measured with a prototype TLB and with operands read at the edge, the cost in cycles of each option, and the recommendation (issue 1009) |
 
