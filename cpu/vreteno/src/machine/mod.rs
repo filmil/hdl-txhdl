@@ -183,6 +183,9 @@ impl Machine {
             let mut d = self.board.0.borrow_mut();
             let rx = d.uart.irq();
             d.plic.line(SERIAL_SOURCE, rx);
+            // `time` is the CLINT's count, as the board gives the core
+            // the timer's (issue 1111).
+            self.model.time = d.clint.mtime;
             self.model.tirq = d.clint.mtip();
             self.model.msip = d.clint.msip;
             let meip = d.plic.irq(0);
@@ -291,6 +294,25 @@ mod tests {
         m.run(2);
         assert_eq!(m.model.csr.mip & SEXT, SEXT, "the supervisor's line");
         assert_eq!(m.model.csr.mip & MEXT, 0, "and not the machine's");
+    }
+
+    /// `rdtime` reads the CLINT's count, one an instruction: three
+    /// instructions before it, it reads three (issue 1111).
+    #[test]
+    fn time_is_the_clints_count() {
+        use crate::isa::{csrrs, CSR_TIME};
+        let mut m = Machine::new();
+        let nop = 0x0000_0013u32;
+        let halt = (0x7c0u32 << 20) | (1 << 15) | (5 << 12) | 0x73;
+        let prog: Vec<u8> = [nop, nop, nop, csrrs(5, CSR_TIME, 0), halt]
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        m.load(0x4000_0000, &prog);
+        m.boot(0x4000_0000, 0);
+        m.run(10);
+        assert!(m.model.halted.is_some());
+        assert_eq!(m.model.x[5], 3, "the count after three instructions");
     }
 
     /// A load from where nothing is, between the devices, faults.
