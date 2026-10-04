@@ -1,0 +1,11 @@
+# suite	trixie
+# snapshot	20250901T000000Z
+# name	version	size	sha256	url	fallback
+bc	1.07.1-4	103196	d055a11f0f9c5f8fe78b31d502c01dfe46ddf9c24f753aaddadaaff95fcc75ad	https://deb.debian.org/debian/pool/main/b/bc/bc_1.07.1-4_amd64.deb	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/b/bc/bc_1.07.1-4_amd64.deb
+bison	2:3.8.2+dfsg-1+b2	1169636	ce6eb1f7aad18850e32d223a68f54bcbe756d74f138c8ec5460ad9d220f4d335	https://deb.debian.org/debian/pool/main/b/bison/bison_3.8.2+dfsg-1+b2_amd64.deb	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/b/bison/bison_3.8.2+dfsg-1+b2_amd64.deb
+flex	2.6.4-8.2+b4	423136	75f963765232c356d0a2fb70e780dfa9de2425aca036ec60eefb7fc98a2c905b	https://deb.debian.org/debian/pool/main/f/flex/flex_2.6.4-8.2+b4_amd64.deb	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/f/flex/flex_2.6.4-8.2+b4_amd64.deb
+libreadline8t64	8.2-6	168832	eeadf2b5e755c9f183883feea2d9b5b28560284275d5f54d3e55d0923b1d0967	https://deb.debian.org/debian/pool/main/r/readline/libreadline8t64_8.2-6_amd64.deb	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/r/readline/libreadline8t64_8.2-6_amd64.deb
+libtinfo6	6.5+20250216-2	348380	8b9f6a7983e9418564e48a627518de4c03917b56efe68d7f3e93bd8fffa1cc10	https://deb.debian.org/debian/pool/main/n/ncurses/libtinfo6_6.5+20250216-2_amd64.deb	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/n/ncurses/libtinfo6_6.5+20250216-2_amd64.deb
+m4	1.4.19-8	293956	221b3e224708c1da2a1a88b6824380593579b2254ae7d914afa14cbd5d343334	https://deb.debian.org/debian/pool/main/m/m4/m4_1.4.19-8_amd64.deb	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/m/m4/m4_1.4.19-8_amd64.deb
+make	4.4.1-2	463104	70a9709e665383b06068ccd423d62ea191b65355f318a25565dbf324b254cec6	https://deb.debian.org/debian/pool/main/m/make-dfsg/make_4.4.1-2_amd64.deb	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/m/make-dfsg/make_4.4.1-2_amd64.deb
+readline-common	8.2-6	69360	f77e8aa0bf0de618f11cb0b21658a4ed60f177d63b3cf26d7fc3706b6d0eaaa9	https://deb.debian.org/debian/pool/main/r/readline/readline-common_8.2-6_all.deb	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/r/readline/readline-common_8.2-6_all.deb

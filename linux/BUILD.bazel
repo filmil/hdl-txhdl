@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+# Linux on Vreteno (issue 279): the mainline kernel and OpenSBI, built
+# with the hermetic LLVM from sources pinned by checksum, and nothing of
+# the system's but the shell's own commands (issue 1008).
+#
+# The probe of M1: whether both build for this core with no GCC, and
+# how big they are against the 16 MiB fastboot loads. Both are manual,
+# since a kernel is many minutes of work:
+#
+#   bazel build //linux:kernel //linux:opensbi
+#
+# The kernel is `rv32_defconfig` with `probe.config` over it; a later
+# change trims it to this machine.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["build.sh"])
+
+_TOOLS = [
+    "build.sh",
+    "@kbuild_tree//:all",
+    "@llvm_toolchain_llvm//:bin",
+    "@llvm_toolchain_llvm//:lib",
+    "@llvm_toolchain_llvm//:include",
+    "@sysroot_bullseye//tree:sysroot",
+    "@python_3_12_host//:python",
+]
+
+# The trees' files; build.sh finds where each begins from them.
+_ENV = " ".join([
+    "KBUILD_FILES='$(execpaths @kbuild_tree//:all)'",
+    "LLVM_FILES='$(execpaths @llvm_toolchain_llvm//:bin)'",
+    "SYSROOT=$(execpath @sysroot_bullseye//tree:sysroot)",
+    "PYTHON3=$(execpath @python_3_12_host//:python)",
+])
+
+genrule(
+    name = "kernel",
+    srcs = [
+        "@linux//:src",
+        "probe.config",
+    ],
+    outs = [
+        "Image",
+        "kernel.config",
+        "System.map",
+    ],
+    cmd = _ENV + " $(execpath build.sh) kernel $(execpath @linux//:src) " +
+          "$(execpath probe.config) $(execpath Image) $(execpath kernel.config) " +
+          "$(execpath System.map)",
+    tags = ["manual"],
+    tools = _TOOLS,
+)
+
+genrule(
+    name = "opensbi",
+    srcs = ["@opensbi//:src"],
+    outs = [
+        "fw_jump.bin",
+        "fw_jump.elf",
+    ],
+    cmd = _ENV + " $(execpath build.sh) opensbi $(execpath @opensbi//:src) " +
+          "$(execpath fw_jump.bin) $(execpath fw_jump.elf)",
+    tags = ["manual"],
+    tools = _TOOLS,
+)

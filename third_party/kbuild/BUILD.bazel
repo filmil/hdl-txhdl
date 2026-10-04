@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# The programs Kbuild runs that the tree does not otherwise have: GNU
+# make, flex, bison with its m4, and bc, as the Debian packages they are
+# published as, with the libraries they need; `trixie.lock.tsv` is that
+# closure, written by //tools/debclosure and pinned by checksum
+# (issue 1008):
+#
+#   bazel run //tools/debclosure -- -suite=trixie \
+#       -skip=libc6,libgcc-s1 make flex bison bc
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["trixie.lock.tsv"])
+
+alias(
+    name = "tree",
+    actual = "@kbuild_tree//:all",
+)

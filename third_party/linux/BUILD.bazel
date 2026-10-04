@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# The build files the fetched kernel and OpenSBI archives are given
+# (issue 1008); //linux builds them.
+exports_files([
+    "linux.BUILD.bazel",
+    "opensbi.BUILD.bazel",
+])

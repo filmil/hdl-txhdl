@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# OpenSBI's source, as one directory: the build reads it
+# with `make -C ... O=...` and writes nothing into it, and a directory is
+# one input to sandbox rather than every file (issue 1008).
+filegroup(
+    name = "src",
+    srcs = ["."],
+    visibility = ["//visibility:public"],
+)

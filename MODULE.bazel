@@ -153,7 +153,7 @@ bazel_dep(name = "toolchains_llvm", version = "1.10.0")
 bazel_dep(name = "bazel_skylib", version = "1.9.2")
 
 cc_toolchain = use_extension("//third_party/llvm:extension.bzl", "cc_toolchain")
-use_repo(cc_toolchain, "llvm_toolchain", "sysroot_bullseye")
+use_repo(cc_toolchain, "llvm_toolchain", "llvm_toolchain_llvm", "sysroot_bullseye")
 
 # Only the Linux one. The repository also declares toolchains for bare
 # metal RISC-V, and those would be picked for the core's own platform,
@@ -402,4 +402,34 @@ http_archive(
     urls = [
         "https://github.com/zephyrproject-rtos/mbedtls/archive/4952e1328529ee549d412b498ea71c54f30aa3b1.tar.gz",
     ],
+)
+
+# Linux on Vreteno (issue 279): the mainline kernel and OpenSBI, pinned
+# by checksum, and the four programs Kbuild runs that the tree does not
+# otherwise have, `make`, `flex`, `bison` and `bc`, as Debian packages
+# the way Yosys is (issue 1008). The kernel and OpenSBI are built with
+# the hermetic LLVM above, `LLVM=1`, and no GCC; see //linux.
+http_archive(
+    name = "linux",
+    build_file = "//third_party/linux:linux.BUILD.bazel",
+    sha256 = "f410638061a165c12f42ab871d2f3fcd525515359b5faeee80969cff84524df9",
+    strip_prefix = "linux-6.18.55",
+    urls = [
+        "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.55.tar.xz",
+    ],
+)
+
+http_archive(
+    name = "opensbi",
+    build_file = "//third_party/linux:opensbi.BUILD.bazel",
+    sha256 = "d11702103f177a2914e94eec57ce5ed820296d874f6b6525c4482e55d71a3667",
+    strip_prefix = "opensbi-1.6",
+    urls = [
+        "https://github.com/riscv-software-src/opensbi/archive/refs/tags/v1.6.tar.gz",
+    ],
+)
+
+deb_tree(
+    name = "kbuild_tree",
+    locks = ["//third_party/kbuild:trixie.lock.tsv"],
 )
