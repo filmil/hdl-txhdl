@@ -363,6 +363,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let mut halted_at = None;
     let mut listed_at = None;
     let mut drawn_at = None;
+    let mut count = 0usize;
     let mut cycles = 0u64;
     for c in 0..limit {
         sim.cycle();
@@ -374,6 +375,9 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
         }
         if listed_at.is_none() && ram.word(DL_CTRL / 4).raw() != 0 {
             listed_at = Some(c);
+            // Read now: the rasteriser writes it back to zero once the
+            // list is drawn (issue 982).
+            count = ram.word(DL_CTRL / 4).raw() as usize;
         }
         if drawn_at.is_none() && idle.get().to_bool() {
             drawn_at = Some(c);
@@ -391,8 +395,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     }
     stop();
     // What the program asked for, read back out of the memory the way
-    // the rasteriser read it.
-    let count = ram.word(DL_CTRL / 4).raw() as usize;
+    // the rasteriser read it, with the count as it was when written.
     let list = (0..count)
         .map(|i| {
             let at = DL_BASE / 4 + i * razboj::dl::WORDS;

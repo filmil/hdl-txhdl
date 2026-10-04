@@ -22,6 +22,13 @@
 //! written as the sequence it is, and a second process takes the
 //! link's answers every cycle.
 //!
+//! It draws list after list. When a list is drawn and every write it
+//! made has been answered, it writes the count back to zero and reads
+//! it again, so a program waits for the zero, writes the next list and
+//! then its count, and the next list is drawn. `idle` says the same on
+//! a line: it falls when a count that is not zero is read and rises
+//! once that list's zero has been answered.
+//!
 //! It is an AXI host, and it writes as a host client writes: a burst
 //! of one beat per pixel, issued on `issue` with its beat on `wbeat`
 //! in the same cycle, with the identifier the tracker granted handed
@@ -109,7 +116,8 @@ pub struct Raster<
     /// Which instruction is being fetched, and which of its words.
     pub insn: Reg<U<8>>,
     pub word: Reg<U<3>>,
-    /// The list is drawn.
+    /// The last list is drawn and its count written back to zero; a
+    /// count read that is not zero clears it.
     pub finished: Reg<Bit>,
     /// The instruction being assembled, word by word. The third
     /// vertex is not here: its word is the last one, so it is read
@@ -155,7 +163,8 @@ impl<
     /// rasteriser is idle. The second is the front end as a
     /// sequence: poll the count until the list is ready, then for
     /// each instruction fetch its six words and walk its box a pixel
-    /// a turn, and when the list is drawn wait for ever.
+    /// a turn, and when the list is drawn write its count back to zero
+    /// and poll again.
     async fn run(
         &mut self,
         (grant, done, rdata): (Rx<Grant<I>>, Rx<Done<I>>, Rx<R<32, I>>),
@@ -230,9 +239,13 @@ impl<
                         .to_bool()
                     })
                     .await;
+                    // A count that is not zero is a new list, so the
+                    // last one is no longer what `idle` reports.
+                    let count = rdata.head().data.slice::<0, 8>();
                     with!(self <= {
-                        left: rdata.head().data.slice::<0, 8>(),
+                        left: count,
                         insn: U::<8>::from(0u8),
+                        finished: mux(count == 0, self.finished.get(), Bit::Zero),
                     });
                     DefaultClock::rising().await;
                     if self.left.get() != 0 {
@@ -471,10 +484,45 @@ impl<
                             }
                             self.insn.set(self.insn.get() + 1);
                         }
-                        // The list is drawn; nothing follows.
-                        self.finished.set(Bit::One);
+                        // The list is drawn. Once every write it made
+                        // has been answered, the count goes back to
+                        // zero: that is how a program learns the list
+                        // is done and may write the next, and `idle`
+                        // rises with it. The zero is answered before
+                        // the count is read again, so a memory that
+                        // reorders a read past a write cannot hand back
+                        // the old count and have the list drawn twice.
                         until(DefaultClock::rising, || {
-                            !self.finished.get().to_bool()
+                            (Bit::from(self.inflight.get() == 0)
+                                & issue.ready()
+                                & wbeat.ready())
+                            .to_bool()
+                        })
+                        .await;
+                        issue.send(Issue {
+                            read: Bit::Zero,
+                            addr: U::<A>::from(CTRL as u32),
+                            len: U::<8>::from(0u8),
+                            size: U::<3>::from(2u8),
+                            burst: BurstKind::Incr,
+                            lock: Bit::Zero,
+                            cache: U::<4>::from(0u8),
+                            prot: U::<3>::from(0u8),
+                            qos: U::<4>::from(0u8),
+                            region: U::<4>::from(0u8),
+                        });
+                        wbeat.send(W {
+                            data: U::<32>::from(0u8),
+                            strb: U::<4>::from(15u8),
+                            last: Bit::One,
+                        });
+                        with!(self <= {
+                            issued: self.issued.get() + 1,
+                            finished: Bit::One,
+                        });
+                        DefaultClock::rising().await;
+                        until(DefaultClock::rising, || {
+                            Bit::from(self.inflight.get() == 0).to_bool()
                         })
                         .await;
                     }
