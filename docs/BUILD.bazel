@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_latex_host//latex:defs.bzl", "combined_pdf", "latex_document")
 load(":waveform.bzl", "waveform")
@@ -363,15 +364,42 @@ genrule(
 # The build stamp: the commit and the day, from Bazel's workspace status
 # (tools/workspace_status.sh), as \buildstamp for every document. A
 # build outside Bazel has no file and falls back to a draft note.
+#
+# Every document reads buildstamp.tex, and stable-status.txt changes with
+# every commit, so a stamped build typesets every document again on every
+# commit: no cache can serve them. --//docs:stamp=off writes a fixed
+# stamp that reads no workspace status, so a document whose sources did not
+# change comes from the cache. The `ci` config in .bazelrc sets it, for
+# pull-request and push builds; the release build stamps.
+string_flag(
+    name = "stamp",
+    build_setting_default = "on",
+    values = [
+        "off",
+        "on",
+    ],
+)
+
+config_setting(
+    name = "unstamped",
+    flag_values = {":stamp": "off"},
+)
+
 genrule(
     name = "buildstamp",
     outs = ["buildstamp.tex"],
-    cmd = "c=$$(grep '^STABLE_GIT_COMMIT ' bazel-out/stable-status.txt | cut -d' ' -f2);" +
-          " t=$$(grep '^BUILD_TIMESTAMP ' bazel-out/volatile-status.txt | cut -d' ' -f2);" +
-          " d=$$(date -u -d @$$t +%Y-%m-%d);" +
-          " printf '\\\\newcommand{\\\\buildstamp}{Built by Bazel from commit" +
-          " \\\\code{%s} on %s.}\\n' \"$$c\" \"$$d\" > $@",
-    stamp = 1,
+    cmd = select({
+        ":unstamped": "printf '\\\\newcommand{\\\\buildstamp}{Built by Bazel, unstamped.}\\n' > $@",
+        "//conditions:default": "c=$$(grep '^STABLE_GIT_COMMIT ' bazel-out/stable-status.txt | cut -d' ' -f2);" +
+                                " t=$$(grep '^BUILD_TIMESTAMP ' bazel-out/volatile-status.txt | cut -d' ' -f2);" +
+                                " d=$$(date -u -d @$$t +%Y-%m-%d);" +
+                                " printf '\\\\newcommand{\\\\buildstamp}{Built by Bazel from commit" +
+                                " \\\\code{%s} on %s.}\\n' \"$$c\" \"$$d\" > $@",
+    }),
+    stamp = select({
+        ":unstamped": 0,
+        "//conditions:default": 1,
+    }),
 )
 
 latex_document(
