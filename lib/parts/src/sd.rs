@@ -7,8 +7,8 @@
 //! card's own protocol: a command line, `CMD`, that carries 48-bit
 //! commands out and 48- or 136-bit responses back, and one or four
 //! data lines, `DAT`, that carry blocks of 512 bytes either way, each
-//! line with a CRC-16 of its own, at 25 or 50 MHz once the card is
-//! up. Every command carries a CRC-7, and so does every response but
+//! line with a CRC-16 of its own, at up to 25 MHz here once the card
+//! is up. Every command carries a CRC-7, and so does every response but
 //! the one to `ACMD41`, whose CRC field is all ones (issue 153).
 //!
 //! The host here does one command at a time, and with it at most one
@@ -36,8 +36,10 @@
 //! `ctrl` is the divider in bits 0 to 7, `wide` in bit 8 and the
 //! interrupt enable in bit 9. A half of a card clock takes `div + 1`
 //! cycles, so the card's clock is the system's over `2 * (div + 1)`:
-//! at 100 MHz, 124 is 400 kHz for the start, 1 is 25 MHz and 0 is
-//! 50 MHz.
+//! at 100 MHz, 124 is 400 kHz for the start, 3 is 12.5 MHz and 1 is
+//! 25 MHz. A divider of 0 runs as 1, since the host's work trails the
+//! clock and a half of one cycle would put its driving and its
+//! sampling on one cycle (issue 929).
 //!
 //! `cmd` is the index in bits 0 to 5, the response in bits 6 and 7
 //! (0 none, 1 short, 2 long), read in bit 8, write in bit 9, waited for
@@ -56,9 +58,16 @@
 //! 16 to 23 and the read pointer in bits 24 to 31. Writing bit 1
 //! clears done and the faults.
 //!
-//! Timing is the card's: the host drives its lines on the falling edge
-//! of the clock it makes and samples the card's on the rising edge,
-//! and the card does the same. A CRC is checked the way a shift
+//! Timing is the card's: the host drives its lines after the falling
+//! edge of the clock it makes and samples the card's after the rising
+//! edge, and the card does the same. The host drives a cycle after the
+//! fall, and samples two cycles after the rise, from input registers
+//! that took the lines a cycle after it, each a register the pad feeds
+//! and nothing else, so that it packs into the IOB. So a card has the
+//! half clock and a cycle to answer in, 30 ns at 25 MHz, against the
+//! 20 ns it had when the host sampled on the rise itself through the
+//! logic behind the pad, which the clock's way out, the card's 14 ns
+//! at default speed and the way back did not fit (issue 929). A CRC is checked the way a shift
 //! register does it: the received CRC is fed into the same register
 //! after the data, and what is left is zero when they agree.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
@@ -244,6 +253,19 @@ pub struct Sd {
     pub dat_o: Reg<U<4>>,
     /// Whether the host drives `DAT`.
     pub dat_drv: Reg<Bit>,
+    /// The card's `CMD` as the input register took it, every cycle: a
+    /// register the pad feeds and nothing else, so it packs into the
+    /// IOB (issue 929).
+    pub cin_q: Reg<Bit>,
+    /// The card's `DAT`, the same way.
+    pub din_q: Reg<U<4>>,
+    /// The card clock fell a cycle ago: the host drives now.
+    pub fall_d: Reg<Bit>,
+    /// The card clock rose a cycle ago.
+    pub rise_d1: Reg<Bit>,
+    /// It rose two cycles ago: the host samples now, from the input
+    /// registers, which took the lines a cycle after the rise.
+    pub rise_d2: Reg<Bit>,
 }
 // end{state}
 
@@ -318,8 +340,10 @@ impl Unit for Sd {
             let done = self.done.get();
             let cmd_o = self.cmd_o.get();
             let dat_o = self.dat_o.get();
-            let cin = cmd_in.get();
-            let din = dat_in.get();
+            // The card's lines, as the input registers took them a cycle
+            // ago (issue 929).
+            let cin = self.cin_q.get();
+            let din = self.din_q.get();
             let dat0 = din.bit(0);
             // The command word's fields.
             let rlong = cmdw.slice::<6, 2>() == 2;
@@ -328,12 +352,23 @@ impl Unit for Sd {
             let wr = cmdw.bit(9);
             let waitbusy = cmdw.bit(10);
             let nocrc = cmdw.bit(11);
-            // The card clock. `strobe` is the moment it turns over,
-            // `falling` the turn down, on which the host drives, and
-            // `rising` the turn up, on which it samples.
-            let strobe = busy & (tick == div);
-            let falling = strobe & half;
-            let rising = strobe & !half;
+            // The card clock. `strobe` is the moment it turns over: a
+            // half takes at least two cycles, since the host's work
+            // trails the clock below and at one cycle a half the two
+            // kinds of work would fall on one cycle (issue 929).
+            let hdiv = mux(div == 0, U::<8>::from(1u8), div);
+            let strobe = busy & (tick == hdiv);
+            let fall_now = strobe & half;
+            let rise_now = strobe & !half;
+            // The host drives a cycle after the clock falls, and samples
+            // two cycles after it rises, from input registers that took
+            // the lines one cycle after the rise. So the card has the
+            // half a clock less a cycle to drive in, not the half less
+            // the pads and the logic behind them, which is what lets the
+            // host read at 25 MHz; and at two cycles a half or more the
+            // drive and the sample never fall on one cycle.
+            let falling = self.fall_d.get() & busy;
+            let rising = self.rise_d2.get() & busy;
             // The bus.
             let arh = bus.ar.head();
             let awh = bus.aw.head();
@@ -569,6 +604,13 @@ impl Unit for Sd {
                 // The clock.
                 busy ? tick: mux(strobe, U::<8>::from(0u8), tick + 1),
                 strobe ? half: !half,
+                // The input registers and the trailing strobes, every
+                // cycle (issue 929).
+                cin_q: cmd_in.get(),
+                din_q: dat_in.get(),
+                fall_d: fall_now,
+                rise_d1: rise_now,
+                rise_d2: self.rise_d1.get(),
                 // Clocks alone: the line stays high and the count runs.
                 falling & in_clocks ? n: n + 1,
                 falling & in_clocks & (n == 79) ? phase: U::<4>::from(FINISH),
