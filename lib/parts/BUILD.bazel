@@ -69,10 +69,10 @@ rust_test(
 )
 
 # The AXI link's fuzzing alone, over many more seeds than the 24 that
-# `parts_test` runs: what the nightly release runs. Manual, since it is
-# a long run.
+# `parts_test` runs: what the nightly fuzz workflow, fuzz.yml, runs over
+# 1024 seeds. Manual, since it is a long run.
 #
-#   bazel test //lib/parts:axi_fuzz_test --test_env=AXI_FUZZ_SEEDS=512
+#   bazel test //lib/parts:axi_fuzz_test --test_env=AXI_FUZZ_SEEDS=1024
 rust_test(
     name = "axi_fuzz_test",
     args = ["bus::axi::fuzz::"],

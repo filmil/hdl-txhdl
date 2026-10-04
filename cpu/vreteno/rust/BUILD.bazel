@@ -695,8 +695,8 @@ rust_library(
 
 # The programs whose peripheral addresses `//cpu/vreteno:board_programs_test`
 # holds to the board's map. They are built `#[cfg(board_run)]`, so
-# nothing else compiles those constants, and a wrong one is silent when
-# it runs as well (issues 415 and 417).
+# nothing else compiles those constants, and a wrong one shows only
+# when it runs, as a bus error trap (issues 415 and 417).
 filegroup(
     name = "addressed_sources",
     srcs = [

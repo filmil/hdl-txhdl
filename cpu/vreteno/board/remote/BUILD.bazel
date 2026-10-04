@@ -94,7 +94,7 @@ go_test(
 # Uploads the sender and an image and runs it there:
 #
 #   bazel run //cpu/vreteno/board/remote:load -- \
-#       --image=$PWD/bazel-bin/cpu/vreteno/rust/hello.bin
+#       --image=$PWD/bazel-bin/cpu/vreteno/rust/hello_ram_bin.bin
 sh_binary(
     name = "load",
     srcs = ["load.sh"],

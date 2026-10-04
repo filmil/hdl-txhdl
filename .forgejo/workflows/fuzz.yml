@@ -7,8 +7,9 @@
 # interleaving, which is what a longer run is for. The target below runs
 # the fuzzing alone and is manual, so it is not part of `//...`, and this
 # workflow is where it runs, with a wider seed range. A seed that fails
-# names itself in the assertion, so it can be run again by hand with
-# `AXI_FUZZ_SEEDS` set past it.
+# names itself in the client's assertions and in the deadline, so it
+# can be run again by hand with `AXI_FUZZ_SEEDS` set past it; a failure
+# the monitor catches names no seed.
 name: fuzz
 
 on:

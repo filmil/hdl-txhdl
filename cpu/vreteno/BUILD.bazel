@@ -63,8 +63,8 @@ rust_test(
 
 # The board programs against the map they run on. They are built
 # `#[cfg(board_run)]`, so no other target compiles their constants,
-# and the core does not trap on a bus error, so a wrong address is
-# silent when it runs too (issues 415 and 417).
+# and a wrong address shows only when it runs, as a bus error trap
+# (issues 415 and 417).
 rust_test(
     name = "board_programs_test",
     srcs = ["tests/board_programs.rs"],
@@ -182,7 +182,8 @@ genrule(
     tools = [":board_netlist"],
 )
 
-# The encoders against the decoder.
+# The library's unit tests: the encoders against the decoder, and the
+# core's, the model's, the timer's and the debug module's own.
 rust_test(
     name = "isa_test",
     crate = ":vreteno32",
