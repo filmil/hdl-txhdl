@@ -49,6 +49,7 @@ use txhdl_parts::pwm::Pwm;
 use txhdl_parts::redundant::{Check, Tee};
 use txhdl_parts::remote::eth::RemoteLink;
 use txhdl_parts::remote::Remote;
+use txhdl_parts::scanout::{LinePair, ScanFetch};
 use txhdl_parts::sd::Sd;
 use txhdl_parts::spi::Spi;
 use txhdl_parts::station::Station3;
@@ -441,9 +442,19 @@ fn main() {
         LineFetch::<32, 2, 16, 16>::lowered("linefetch"),
     );
     sheet(
+        "LinePair",
+        "LinePair<8, 3, 4, 6, 32, ClkPix>",
+        LinePair::<8, 3, 4, 6, 32, ClkPix>::lowered("linepair"),
+    );
+    sheet(
         "LineStore",
         "LineStore<32, 2, 16, 16>",
         LineStore::<32, 2, 16, 16>::lowered("linestore"),
+    );
+    sheet(
+        "ScanFetch",
+        "ScanFetch<32, 16, 8>",
+        ScanFetch::<32, 16, 8>::lowered("scanfetch"),
     );
     sheet("NoBeats", "NoBeats", NoBeats::lowered("nobeats"));
     sheet("NoReads", "NoReads", NoReads::lowered("noreads"));

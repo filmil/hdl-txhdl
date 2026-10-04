@@ -1,0 +1,96 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: LinePair
+\datasheet{LinePair}{The pixel-clock end of a scanout from memory: two
+lines, one shown while the other fills, each asked for a line ahead.}
+
+\dsfacts{\code{lib/parts/src/scanout.rs}}%
+{\code{txhdl\_parts::scanout::LinePair<LEN, AW, ROWS, TOTAL, STRIDE, C>}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+A video peripheral that shows a frame from memory cannot wait for
+memory pixel by pixel: the beam does not stop. \code{LinePair} sits on
+the pixel clock beside the raster and holds two lines. The beam reads
+one while the other fills, and they change places at the start of each
+line. At that start it asks for the line after the one about to be
+shown, so each line has the whole of the line before it to arrive in.
+The bus side of the same scanout is \code{ScanFetch}, and between the
+two the request and the words cross clocks through \code{ChanCdc}
+(issue 151).
+
+The frame's base address is a register taken at the vertical sync, so
+a host that draws into one buffer and shows another flips them with
+one write. A column the beam shows before its word has arrived sets
+\code{starved}, a sticky bit that \code{clear} resets, so a run can
+show that no line starved.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{LEN} & The words in a visible line, at most \code{1 << AW}. \\
+\code{AW} & The width of a column. \\
+\code{ROWS} & The visible rows of a frame. \\
+\code{TOTAL} & The rows of a frame, blanking included. \\
+\code{STRIDE} & The bytes from one line's start in memory to the next's. \\
+\code{C} & The pixel clock. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables below use \code{LinePair<8, 3, 4, 6, 32, ClkPix>}, the pair
+of \code{ex\_scanpair}: lines of eight words, four visible rows of
+six.
+
+\dstables{LinePair}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A word is taken whenever one is offered, into the line filling
+at the next column. The pair is what the fetch is backpressured by,
+and a line longer than \code{LEN} loses its tail rather than stalling.
+\item At a line's start (\code{line} high) the two lines change
+places, and the line filling's count starts again. A word taken in
+that same cycle counts in the line just filled.
+\item At a line's start a request goes out on \code{req}, if it has
+room: the address of the line after the one about to be shown. On the
+frame's last row it is the frame's first line, at the base taken at
+the last vertical sync.
+\item \code{pix} is the word at \code{col} in the line not filling, a
+cycle after \code{col} names it.
+\item Once the frame's first line has been asked for, a visible column
+at or past the words that line had when it was swapped in sets
+\code{starved}, until \code{clear}.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_scanpair} runs \code{LinePair} on a pixel clock
+unrelated to the bus clock, with \code{ScanFetch}, \code{LineFetch},
+\code{AxiHost}, \code{AxiPer}, a memory and \code{ChanCdc} both ways.
+The memory stalls its beats, standing in for a refresh. Three frames
+with a short stall in every line show every pixel as the word at its
+place and never set \code{starved}; a fourth with one stall longer than
+a line sets it, and it stays set until it is cleared.
+\item \code{//docs:scanpair\_sim\_linepair\_linepair\_tb\_test} and
+\code{//docs:scanpair\_vsim\_linepair\_test} simulate the netlist
+against that run under nvc and Verilator.
+\end{itemize}
+
+\subsection*{Used by}
+
+The example \code{ex\_scanpair}. Nothing on a board holds it yet: the
+join with the video peripheral is the rest of issue 151.
+
+\subsection*{Limits}
+
+One line a request, and a line is \code{LEN} words; there is no
+horizontal offset or scaling. A line that arrives late is shown with
+whatever its columns held, and \code{starved} is the only report of
+it. It runs on one clock, \code{C}.

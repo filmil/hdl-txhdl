@@ -1,0 +1,69 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: ScanFetch
+\datasheet{ScanFetch}{The bus-clock end of a scanout from memory: a line
+request taken and \code{LineFetch} started on it.}
+
+\dsfacts{\code{lib/parts/src/scanout.rs}}%
+{\code{txhdl\_parts::scanout::ScanFetch<A, WC, LEN>}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{LinePair}, on the pixel clock, asks for each line a line ahead;
+the request crosses to the bus clock through \code{ChanCdc}, and
+\code{ScanFetch} is what takes it there. It hands the line's address
+and length to \code{LineFetch}'s \code{base}, \code{words} and
+\code{go}, and takes the next request only once that fetch has started
+and finished (issue 151).
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The width of an address, in bits. \\
+\code{WC} & The width of \code{LineFetch}'s word count. \\
+\code{LEN} & The words in a line, the count every fetch asks for. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables below use \code{ScanFetch<32, 16, 8>}, the fetcher's end of
+\code{ex\_scanpair}.
+
+\dstables{ScanFetch}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \code{at}, \code{count} and \code{start} go to \code{LineFetch}'s
+\code{base}, \code{words} and \code{go}: the line's address, \code{LEN},
+and a pulse of one cycle.
+\item A request is taken from \code{lines} only when no fetch is
+running, none is about to start, and none has been started that has
+not yet said it is running.
+\item The request is cut to \code{A} bits.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_scanpair}, as \code{LinePair}'s sheet says, with this
+on the bus clock between the crossing and \code{LineFetch}.
+\item \code{//docs:scanpair\_sim\_scanfetch\_scanfetch\_tb\_test} and
+\code{//docs:scanpair\_vsim\_scanfetch\_test} simulate the netlist
+against that run under nvc and Verilator.
+\end{itemize}
+
+\subsection*{Used by}
+
+The example \code{ex\_scanpair}. Nothing on a board holds it yet: the
+join with the video peripheral is the rest of issue 151.
+
+\subsection*{Limits}
+
+One line at a time: the next request waits for the fetch before it to
+finish, so the pixel side must ask no faster than a line's fetch takes.
+It runs on one clock, \code{DefaultClock}.
