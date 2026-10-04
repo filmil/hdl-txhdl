@@ -344,6 +344,26 @@ The locals in the rasteriser are
 \code{px}, \code{py} and \code{held} for that reason, where \code{x},
 \code{y} and \code{waiting} would read better.
 
+\section{Through Vivado}
+\label{sec:g-vivado}
+
+The rasteriser has been synthesised, out of context, with the board's
+parameters: thirty-two-bit addresses, two-bit identifiers, and a 640
+by 480 screen in rows of 1024 pixels (\code{//gpu/razboj:razboj\_synth}).
+It takes 1057 LUTs, 626 registers and 18 DSP blocks, and no block
+RAM: less than one per cent of the part's logic. The multiplications
+of the setup are the DSP blocks.
+
+It does not yet meet the 100\,MHz the board's bus runs at. Placed and
+routed (\code{:razboj\_pnr}), its worst setup slack is $-1.660$\,ns,
+on 90 of 1145 endpoints, and hold is met. The worst path is the
+setup of a triangle: each edge's value at the box's first pixel is two
+32-bit products and a subtraction, all in the one cycle the entry's
+last word lands, through two DSP blocks and nine carry chains in
+11.66\,ns. Spreading the setup over two or three cycles is issue 1034,
+and until it is done the routed target is left out of the Vivado
+checks in CI.
+
 \section{What It Is Not}
 \label{sec:g-not}
 
