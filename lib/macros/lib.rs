@@ -6148,7 +6148,9 @@ fn find_runs(ts: &[TokenTree], out: &mut Vec<(String, Group, Span)>) {
 /// written beside it.
 ///
 /// `run` is a `loop` whose first statement waits for an edge, rising
-/// or falling, which lowers to one clocked block; or a loop of several
+/// or falling, which lowers to one clocked block; or a loop whose only
+/// wait is a channel's, which takes the channel's clock (issue 881);
+/// or a loop of several
 /// waits, or of a wait under `if`, which lowers to a state machine with
 /// a state per wait; or a `join2` of such loops, or of the children's
 /// `run`, for a unit of units. A `for` over a fixed range is unrolled,

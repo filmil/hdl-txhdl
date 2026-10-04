@@ -258,8 +258,8 @@ A hand-written Verilog or VHDL module can be a child: give it a Rust
 model for the simulation and an \code{impl Lower} that returns
 \code{netlist::foreign(..)}. The netlist instantiates it by its own
 name. Going the other way, the build rules \code{verilog\_unit()}
-and \code{vhdl\_unit()} turn a netlist back into a unit you can run
-next to the Rust it came from.
+and \code{vhdl\_unit()} make a unit you can run of any Verilog or
+VHDL module, a netlist or one written by hand.
 
 \head{What the lowering reads}
 A loop of one wait, then reads, \code{let}s and drives: one clocked

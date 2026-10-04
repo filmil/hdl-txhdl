@@ -812,9 +812,10 @@ pub enum Checked {
     Cover,
 }
 
-/// One process of a unit: a loop of one wait, on the rising or the
-/// falling edge of its clock, and the statements after the wait. A
-/// clocked block in the netlist.
+/// One process of a unit: one loop of `run`, on the rising or the
+/// falling edge of its clock. A loop of one wait is the statements
+/// after it; a loop of several is a state machine with a state per
+/// wait. A clocked block in the netlist, if it drives anything.
 #[derive(Clone)]
 pub struct Process {
     /// The clock this process waits on.
@@ -850,7 +851,9 @@ pub struct Lowered {
     /// all of them; the emitters say so in a comment, so that a reader
     /// can map a wire back to the `let` it came from (issue 171).
     pub wire_names: Vec<(String, String)>,
-    /// One per loop of `run`: a clocked block in the netlist.
+    /// One per loop of `run`: a clocked block in the netlist, except
+    /// for one that drives nothing, which gets no block (as
+    /// `chanpair_last` in `//docs:chanwait.v`).
     pub procs: Vec<Process>,
     /// A memory's first words, as `Mem::with` gave them: a program.
     pub init: Vec<(String, Vec<u128>)>,
