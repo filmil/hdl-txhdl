@@ -52,6 +52,14 @@ common:ci --curses=no
 common:ci --color=no
 common:ci --show_progress_rate_limit=60
 
+# CI keeps no output it does not need: an action's outputs stay in the
+# disk cache, and only those another local action reads are copied into
+# the output tree (#937). Measured from fresh output bases at e392f1e,
+# every action a disk cache hit: 55 s to build rather than 59 to 60, and
+# 331 MB of output tree rather than 1633. The release workflow builds
+# without `--config=ci`, since it gathers the PDFs from `bazel-out`.
+build:ci --remote_download_minimal
+
 # Shared caches on the hdlfactory hosts, where the file exists; a no-op
 # elsewhere. The repository cache there already holds the installer.
 try-import /data/cache/ci.bazelrc
