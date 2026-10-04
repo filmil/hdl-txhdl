@@ -105,8 +105,9 @@ root=$(pwd)
 # Zephyr's test data, which has trees that look like a Zephyr.
 zbase=$root/$ZEPHYR_ROOT
 
-# The tools, on one path of our own, so nothing of the system's is
-# reachable even if it is installed.
+# The tools, on one path of our own and ahead of the system's, so that
+# the fetched ones are the ones found; the system's /usr/bin and /bin stay
+# on the path for the shell's own commands.
 bin=$root/.zbin
 rm -rf "$bin" && mkdir -p "$bin"
 ln -sf "$root/$CMAKE" "$bin/cmake"
@@ -212,7 +213,8 @@ zephyr_image = rule(
     implementation = _zephyr_image_impl,
     doc = "A Zephyr image for a board of this repository's, built " +
           "with the fetched CMake, ninja, devicetree compiler, " +
-          "Python and RISC-V compiler, and nothing of the system's.",
+          "Python and RISC-V compiler; the shell's own commands still " +
+          "come from the system.",
     attrs = {
         "board": attr.string(
             doc = "The board, as `-DBOARD` takes it.",

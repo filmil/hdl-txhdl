@@ -17,7 +17,8 @@
  *   0x20  r/w1c: bit 0, a frame went out. Not used; see below.
  *   0x24  r/w:   bit 0, let a sent frame raise the interrupt.
  *
- * `lib/parts/src/eth.rs` is the hardware and states the same map;
+ * `lib/parts/src/ethslots.rs` is the hardware and states the same map,
+ * from which `//tools/regmap` writes `vreteno/regs/ethslots.h`;
  * `cpu/vreteno/tests/zephyr_dts.rs` checks that this file and that one
  * still agree.
  *

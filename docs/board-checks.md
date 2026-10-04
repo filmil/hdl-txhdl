@@ -174,6 +174,9 @@ Capture: both files, and run the load twice more; then give all three captures t
 A bitstream that folds samples before the extractor is read with `-fold=2`, so that a lag of the words is also said in samples of the source (#794).
 It closes #458 once the numbers are on it; the datasheet in #521 is written after them.
 
+Done in part: extractor captures were taken on the board, and `docs/examples_sections/67_trng.tex` and `zephyr/drivers/entropy/vreteno_condition.h` report them, with the bias within its bound, about 0.99 bits per bit of min-entropy, and a correlation between neighbouring bits in every capture, at a lag that moves between builds.
+So the second pass criterion is not met, and what is owed is the three-capture pooled report and the raw words' correlations on #458, then #521, and a board run of the conditioned output, `//zephyr:entropy`.
+
 `trngstat` is a first estimate and not an SP 800-90B assessment: 4096 words is below the million samples the standard's full battery wants.
 If the numbers are to be quoted as an assessment, the next step is a longer capture, which the program would need to be changed to print.
 `trng_ram_bin` also prints samples in a row rather than windows of 32, which is what measures a period longer than a word, in two sections: `rawrun`, the run joined from overlapping windows a loop read (#805), and `rawcap`, the peripheral's own capture of 8192 samples (#817).

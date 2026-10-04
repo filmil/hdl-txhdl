@@ -31,9 +31,10 @@ config 2ND_LVL_ISR_TBL_OFFSET
 
 # Three sources, numbered from one: the serial port's receive line,
 # the board's own input, and a frame arriving on the Ethernet port.
-# The device tree says three in `riscv,ndev`; the table needs a slot
-# for the unused zero as well, so it is four wide and the highest
-# number is `2ND_LVL_ISR_TBL_OFFSET` plus three, which is fifteen.
+# The device tree says four in `riscv,ndev`, counting the unused zero
+# as Zephyr's PLIC driver does, and the table is four wide for the same
+# reason, so the highest number is `2ND_LVL_ISR_TBL_OFFSET` plus three,
+# which is fifteen.
 config MAX_IRQ_PER_AGGREGATOR
 	default 4
 

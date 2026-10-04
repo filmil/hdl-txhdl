@@ -22,7 +22,7 @@
 #define UART_STATUS_FULL_MASK 0x4
 #define UART_STATUS_FULL_WIDTH 1
 #define UART_STATUS_FULL_RESET 0x0
-#define UART_RX 0x08 /* read; the read takes it: the oldest byte received; the read takes it */
+#define UART_RX 0x08 /* read; the read takes it: the oldest byte received */
 #define UART_RX_DATA_SHIFT 0 /* read; the read takes it: the byte */
 #define UART_RX_DATA_MASK 0xff
 #define UART_RX_DATA_WIDTH 8

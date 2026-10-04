@@ -14,7 +14,8 @@ config ENTROPY_VRETENO
 	  random subsystem take its numbers from a device rather than from
 	  the test generator, which is a counter.
 
-	  The SHA-256 is Mbed TLS's, which the SoC turns on by default
-	  with this driver. It is not selected here, since Mbed TLS can
-	  select ENTROPY_GENERATOR, which this depends on, and Kconfig
-	  calls that a loop. The driver does not compile without it.
+	  The SHA-256 is Mbed TLS's, which an image with this driver
+	  turns on with CONFIG_MBEDTLS=y; the port's CMakeLists.txt
+	  refuses one that does not. It is not selected here, since
+	  Mbed TLS can select ENTROPY_GENERATOR, which this depends on,
+	  and Kconfig calls that a loop. The driver does not compile without it.

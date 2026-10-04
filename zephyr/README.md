@@ -92,9 +92,12 @@ loader uses too, and jumps.
 The copy overwrites the Zephyr that is doing it, so it runs from a few
 words of position-independent assembly moved first to the staging
 area's last page, `fastboot/app/src/jump.S`.
-A program longer than 16 MiB is refused, because the Ethernet engines
-store received frames at `0x4100_0000` and go on doing so after the
-jump.
+A download over `0x00fff000` bytes, the staging area less the last
+page the copy routine takes, is refused, so a program is always
+shorter than that; separately, `boot` refuses a program over 16 MiB,
+because the Ethernet engines store received frames at `0x4100_0000`
+and go on doing so after the jump.
+The host test's server has no jump page and offers the full 16 MiB.
 
 `getvar`, `download` and `boot` are answered.
 `flash` and `erase` fail, since nothing on this machine writes
@@ -212,9 +215,20 @@ a store of the byte, which is what the hardware asks for.
 An image links at `0x4000_0000`, RV32 with compressed instructions and
 the soft-float ABI.
 
+On 2026-09-28 Zephyr ran on the flagship as fastboot (issue 143), sent
+by the serial loader into flagship `9755f9c85be5d066`, built with PR 795
+and PR 791, issue 786's two fixes: the SoC selects `RISCV_HAS_PLIC`,
+and the device tree's `riscv,ndev` counts source 0.
+It listened on port 5554, answered `getvar max-download-size` with
+`0x00fff000`, and booted a program sent with `fastboot boot`, which
+printed `hello from rust`.
+The same three checks passed again on 2026-10-01, on main `b747d42`'s
+flagship; both runs are recorded on issue 143.
+
 ## Building it hermetically
 
-Bazel builds images from this module with nothing from the system
+Bazel builds images from this module with every tool it names fetched
+by checksum, and only the shell's own commands from the system
 (issue 390): `zephyr_image` in `zephyr/defs.bzl` hands Zephyr's own
 CMake, Kconfig and Python every tool by checksum and takes the ELF,
 the raw image and the generated configuration out.

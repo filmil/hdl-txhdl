@@ -76,7 +76,7 @@ regmap! { serial (serial_read, serial_we, serial_re), 2: [
         (ready, 1, 1, ro, 0, "a byte received and not yet read"),
         (full, 2, 1, ro, 0, "the buffer of eight is full"),
     ]),
-    (2, rx, rc, "the oldest byte received; the read takes it", [
+    (2, rx, rc, "the oldest byte received", [
         (data, 0, 8, rc, 0, "the byte"),
     ]),
 ] }

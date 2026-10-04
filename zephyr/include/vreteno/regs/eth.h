@@ -22,7 +22,7 @@
 #define ETH_TXBYTE_LAST_MASK 0x100
 #define ETH_TXBYTE_LAST_WIDTH 1
 #define ETH_TXBYTE_LAST_RESET 0x0
-#define ETH_RXBYTE 0x08 /* read; the read takes it: the oldest received byte; a read takes it */
+#define ETH_RXBYTE 0x08 /* read; the read takes it: the oldest received byte */
 #define ETH_RXBYTE_DATA_SHIFT 0 /* read only: the byte */
 #define ETH_RXBYTE_DATA_MASK 0xff
 #define ETH_RXBYTE_DATA_WIDTH 8

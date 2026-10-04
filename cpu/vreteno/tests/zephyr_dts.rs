@@ -401,7 +401,8 @@ fn the_entropy_driver_reads_the_registers_the_source_has() {
     let c = TRNG_DRIVER;
     // The source's own map, `regs` in `lib/parts/src/trng.rs`: data,
     // status, control, raw; bit 0 ready and bit 8 the fault in the
-    // status, bit 0 run and bit 1 clear in the control. The driver
+    // status, bit 9 the run bit read back and bit 10 the proportion
+    // test's fault, bit 0 run and bit 1 clear in the control. The driver
     // takes each from the map's header (issue 709).
     assert!(
         c.contains("#include <vreteno/regs/trng.h>"),
@@ -415,6 +416,7 @@ fn the_entropy_driver_reads_the_registers_the_source_has() {
         ("VRETENO_TRNG_STATUS_READY", "TRNG_STATUS_READY_MASK"),
         ("VRETENO_TRNG_STATUS_FAULT", "TRNG_STATUS_FAULT_MASK"),
         ("VRETENO_TRNG_STATUS_RUN", "TRNG_STATUS_RUN_MASK"),
+        ("VRETENO_TRNG_STATUS_APTFAULT", "TRNG_STATUS_APTFAULT_MASK"),
         ("VRETENO_TRNG_CTRL_RUN", "TRNG_CTRL_RUN_MASK"),
         ("VRETENO_TRNG_CTRL_CLEAR", "TRNG_CTRL_CLEAR_MASK"),
     ] {
@@ -427,6 +429,8 @@ fn the_entropy_driver_reads_the_registers_the_source_has() {
     assert_eq!(t::RAW, 0xc, "raw, hardware");
     assert_eq!(t::STATUS_READY, 1, "ready, hardware");
     assert_eq!(t::STATUS_FAULT, 1 << 8, "fault, hardware");
+    assert_eq!(t::STATUS_RUN, 1 << 9, "run read back, hardware");
+    assert_eq!(t::STATUS_APTFAULT, 1 << 10, "aptfault, hardware");
     assert_eq!(t::CTRL_RUN, 1, "run, hardware");
     assert_eq!(t::CTRL_CLEAR, 2, "clear, hardware");
     let dts = DTSI;

@@ -451,7 +451,7 @@ regmap! { regs (regs_read, regs_we, regs_re), 2: [
         (data, 0, 8, wo, 0, "the byte"),
         (last, 8, 1, wo, 0, "the frame's last byte"),
     ]),
-    (2, rxbyte, rc, "the oldest received byte; a read takes it", [
+    (2, rxbyte, rc, "the oldest received byte", [
         (data, 0, 8, ro, 0, "the byte"),
         (last, 8, 1, ro, 0, "the frame's last byte"),
         (valid, 9, 1, ro, 0, "a byte was there"),
