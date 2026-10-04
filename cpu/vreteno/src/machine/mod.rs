@@ -212,6 +212,13 @@ impl Machine {
         n
     }
 
+    /// Bytes arriving on the serial port's line, in order, as a terminal
+    /// typed them; the port's receive queue takes them and its
+    /// interrupt follows (issue 1127).
+    pub fn type_bytes(&mut self, bytes: &[u8]) {
+        self.board.0.borrow_mut().uart.rx.extend(bytes);
+    }
+
     /// What the serial port has sent.
     pub fn sent(&self) -> Vec<u8> {
         self.board.0.borrow().uart.sent.clone()
@@ -313,6 +320,35 @@ mod tests {
         m.run(10);
         assert!(m.model.halted.is_some());
         assert_eq!(m.model.x[5], 3, "the count after three instructions");
+    }
+
+    /// What is typed reaches a program that reads the port: an echo
+    /// loop sends back each byte it receives and stops at a newline
+    /// (issue 1127).
+    #[test]
+    fn typed_bytes_reach_a_program_that_reads_the_port() {
+        use crate::isa::{addi, blt, bne, halt, lui, lw, sw};
+        let prog: Vec<u8> = [
+            lui(5, 3),      // t0 = the serial port, 0x3000
+            lw(6, 5, 4),    // t1 = rxdata
+            blt(6, 0, -4),  // nothing yet: bit 31 is set
+            sw(6, 5, 0),    // send it back
+            addi(7, 0, 10), // t2 = '\n'
+            bne(6, 7, -16), // until a newline
+            halt(),
+        ]
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
+        let mut m = Machine::new();
+        m.load(0x4000_0000, &prog);
+        m.boot(0x4000_0000, 0);
+        m.run(50);
+        assert!(m.sent().is_empty(), "nothing typed, nothing sent");
+        m.type_bytes(b"hi\n");
+        m.run(200);
+        assert!(m.model.halted.is_some(), "the newline stopped it");
+        assert_eq!(m.sent(), b"hi\n");
     }
 
     /// A load from where nothing is, between the devices, faults.

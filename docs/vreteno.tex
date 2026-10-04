@@ -363,7 +363,8 @@ targets, and the serial port as SiFive's. A loader lays an image and
 a device tree blob into the DDR3 and starts the hart as a bootloader
 would, \code{a0} the hart's number and \code{a1} the blob's address,
 and \code{//cpu/vreteno:machine} runs it with the serial port's output
-on the terminal. A program built for the board's DDR3 runs there
+on the terminal and the terminal's input on the port, so a shell on the
+machine can be typed into or fed from a pipe (issue~\#1127). A program built for the board's DDR3 runs there
 unchanged: \code{hello\_ram\_bin} prints its line and halts after 267
 instructions. Without a bus the model is the board's reference as
 above, and the lockstep test holds the core to it as before.

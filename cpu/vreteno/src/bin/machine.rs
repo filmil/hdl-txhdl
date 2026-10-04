@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The Vreteno board as a fast machine, from the command line (issue
 //! 1016): a flat image and a device tree blob loaded into the DDR3, the
-//! hart started at the image, and the serial port's output on standard
-//! output as it is sent.
+//! hart started at the image, the serial port's output on standard
+//! output as it is sent, and standard input on the port's receive side
+//! as it arrives (issue 1127), so a shell on the machine can be typed
+//! into or fed from a pipe.
 //!
 //! ```text
 //! bazel run //cpu/vreteno:machine -- --image $PWD/fw_jump.bin \
@@ -12,7 +14,8 @@
 //!
 //! It stops when the hart halts, or after `--steps` instructions, and
 //! says which, with the program counter, on standard error.
-use std::io::Write;
+use std::io::{Read, Write};
+use std::sync::mpsc;
 use vreteno32::machine::Machine;
 
 /// Where the image goes and starts, by default: the DDR3's base, which
@@ -66,7 +69,23 @@ fn main() {
     let mut ran = 0u64;
     // A slice at a time, so the output streams without a check every
     // instruction.
+    // Standard input, read on a thread of its own so that a read that
+    // waits for a terminal never stops the machine; what has arrived is
+    // handed to the port between slices.
+    let (typed_tx, typed) = mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut stdin = std::io::stdin();
+        let mut buf = [0u8; 256];
+        while let Ok(n) = stdin.read(&mut buf) {
+            if n == 0 || typed_tx.send(buf[..n].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
     while ran < steps && m.model.halted.is_none() {
+        while let Ok(bytes) = typed.try_recv() {
+            m.type_bytes(&bytes);
+        }
         ran += m.run((steps - ran).min(100_000));
         let sent = &m.board.0.borrow().uart.sent;
         if sent.len() > shown {
