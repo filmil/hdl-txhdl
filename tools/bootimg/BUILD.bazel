@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# The boot image: the shim, OpenSBI, the device tree, the kernel and the
+# initramfs as one blob for fastboot (issue 1019).
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "bootimg",
+    srcs = ["main.rs"],
+    edition = "2021",
+)
+
+# The layout's rules, and the image booting in the machine model.
+rust_test(
+    name = "bootimg_test",
+    srcs = ["main.rs"],
+    edition = "2021",
+    deps = ["//cpu/vreteno:vreteno32"],
+)
