@@ -21,12 +21,9 @@ use vreteno32::uart::serial;
 // the build knows these files are inputs: editing one reruns this.
 const DTSI: &str =
     include_str!("../../../zephyr/dts/riscv/hdlfactory/vreteno.dtsi");
-const DRIVER: &str =
-    include_str!("../../../zephyr/drivers/serial/uart_vreteno.c");
 const SOC_KCONFIG: &str =
     include_str!("../../../zephyr/soc/hdlfactory/vreteno/Kconfig");
-const UART_KCONFIG: &str =
-    include_str!("../../../zephyr/drivers/serial/Kconfig.vreteno");
+const SOC_H: &str = include_str!("../../../zephyr/soc/hdlfactory/vreteno/soc.h");
 const ETH_DRIVER: &str =
     include_str!("../../../zephyr/drivers/ethernet/eth_vreteno.c");
 const ETH_KCONFIG: &str =
@@ -136,36 +133,36 @@ fn the_timer_is_a_clint_at_the_offsets_a_driver_expects() {
     );
 }
 
-/// The driver's register map is the one the hardware states, and the
-/// device tree's console is the port the driver binds to.
+/// The port is SiFive's `sifive,uart0` (issue 1011), and Zephyr's stock
+/// driver drives it: every offset and bit `uart_sifive.c` and Linux's
+/// `serial/sifive.c` hard-code is where the hardware's map puts it, and
+/// the device tree's console is a node that driver binds to.
 #[test]
-fn the_driver_reads_the_registers_the_port_has() {
-    let c = DRIVER;
-    // The port's own map, `regmap!`'s `serial` in
-    // `cpu/vreteno/src/uart.rs` (issue 669): a byte written to the
-    // first word goes out, the second word is the status, and a read
-    // of the third takes the oldest byte received. The driver takes
-    // each from the map's header (issue 709).
-    assert!(
-        c.contains("#include <vreteno/regs/uart.h>"),
-        "the driver includes the map's header"
-    );
-    for (local, gen) in [
-        ("VRETENO_UART_DATA", "UART_TX"),
-        ("VRETENO_UART_STATUS", "UART_STATUS"),
-        ("VRETENO_UART_RX", "UART_RX"),
-        ("VRETENO_STATUS_BUSY", "UART_STATUS_BUSY_MASK"),
-        ("VRETENO_STATUS_RX", "UART_STATUS_READY_MASK"),
-        ("VRETENO_STATUS_FULL", "UART_STATUS_FULL_MASK"),
-    ] {
-        assert_eq!(defined_as(c, local), gen, "`{local}` is the map's");
-        assert!(in_map(&serial::MAP, "UART", gen), "the map has `{gen}`");
-    }
+fn the_port_is_the_one_the_stock_driver_drives() {
+    assert_eq!(serial::txdata, 0x00, "txdata");
+    assert_eq!(serial::rxdata, 0x04, "rxdata");
+    assert_eq!(serial::txctrl, 0x08, "txctrl");
+    assert_eq!(serial::rxctrl, 0x0c, "rxctrl");
+    assert_eq!(serial::ie, 0x10, "ie");
+    assert_eq!(serial::ip, 0x14, "ip");
+    assert_eq!(serial::div, 0x18, "div");
+    assert_eq!(serial::txdata_full.mask(), 1 << 31, "TXDATA_FULL");
+    assert_eq!(serial::rxdata_empty.mask(), 1 << 31, "RXDATA_EMPTY");
+    assert_eq!(serial::rxdata_data.mask(), 0xff, "RXDATA_MASK");
+    assert_eq!(serial::txctrl_txen.mask(), 1, "TXCTRL_TXEN");
+    assert_eq!(serial::rxctrl_rxen.mask(), 1, "RXCTRL_RXEN");
+    assert_eq!(serial::txctrl_txcnt.mask(), 0x7 << 16, "CTRL_CNT, tx");
+    assert_eq!(serial::rxctrl_rxcnt.mask(), 0x7 << 16, "CTRL_CNT, rx");
+    assert_eq!(serial::ie_txwm.mask(), 1, "IE_TXWM");
+    assert_eq!(serial::ie_rxwm.mask(), 2, "IE_RXWM");
+    assert_eq!(serial::ip_txwm.mask(), 1, "IP_TXWM");
+    assert_eq!(serial::ip_rxwm.mask(), 2, "IP_RXWM");
     let dts = DTSI;
     assert!(
-        dts.contains("compatible = \"hdlfactory,vreteno-uart\""),
-        "the node the driver binds to"
+        dts.contains("compatible = \"sifive,uart0\""),
+        "the node the stock driver binds to"
     );
+    assert!(dts.contains("clocks = <&pclk>"), "and its clock");
     assert!(
         dts.contains("zephyr,console = &uart0"),
         "and the console is that port"
@@ -198,20 +195,23 @@ fn the_port_asks_for_the_instruction_set_the_core_has() {
 /// of the driver, so both are asserted here.
 #[test]
 fn the_console_is_reachable_and_not_merely_compiled() {
-    // `UART_CONSOLE` depends on `SERIAL_HAS_DRIVER`, which every
-    // serial driver is expected to select. Without it the symbol
-    // never becomes visible, the board's `CONFIG_UART_CONSOLE=y` is
-    // dropped without a word, and the image has no console at all.
+    // The stock driver instantiates a port only when the board turns
+    // that port on; without it the driver compiles, binds nothing, and
+    // the image has no console at all (issue 1011).
     assert!(
-        UART_KCONFIG.contains("select SERIAL_HAS_DRIVER"),
-        "the driver must announce itself, or there is no console"
+        BOARD_DEFCONFIG.contains("CONFIG_UART_SIFIVE_PORT_0=y"),
+        "the board turns the driver's first port on"
     );
-    // `sys_read32` and `sys_write32` are declared by the
-    // architecture's header, which `zephyr/arch/cpu.h` reaches.
-    // `zephyr/sys/sys_io.h` alone leaves them implicit.
+    // The driver divides the SoC's peripheral clock into the baud rate,
+    // and a SoC that does not define it does not compile the driver.
     assert!(
-        DRIVER.contains("#include <zephyr/arch/cpu.h>"),
-        "the accessors come from the architecture, not the generic header"
+        SOC_H.contains("SIFIVE_PERIPHERAL_CLOCK_FREQUENCY")
+            && SOC_H.contains("DT_NODELABEL(pclk)"),
+        "the SoC names the clock the port runs on"
+    );
+    assert!(
+        DTSI.contains("clock-frequency = <DT_FREQ_M(100)>"),
+        "and the clock is the memory controller's 100 MHz"
     );
     // The board asks for the console the driver provides.
     assert!(

@@ -2,4 +2,3 @@
 
 rsource "entropy/Kconfig.vreteno"
 rsource "ethernet/Kconfig.vreteno"
-rsource "serial/Kconfig.vreteno"

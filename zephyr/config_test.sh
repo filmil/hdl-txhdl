@@ -26,10 +26,11 @@ want() {
 	fi
 }
 
-# The module was reached at all. Without `-DZEPHYR_MODULES` this is
-# the line that goes missing, and nothing else complains: the build
-# succeeds and the image has none of this repository in it.
-want "CONFIG_UART_VRETENO=y"
+# The console is SiFive's driver on the port (issue 1011): the device
+# tree's `sifive,uart0` node turned it on, and the board turned its
+# first port on.
+want "CONFIG_UART_SIFIVE=y"
+want "CONFIG_UART_SIFIVE_PORT_0=y"
 
 # The driver announced itself, so the console is a console. Missing
 # this makes `CONFIG_UART_CONSOLE` invisible rather than off, and the
@@ -37,7 +38,9 @@ want "CONFIG_UART_VRETENO=y"
 want "CONFIG_SERIAL_HAS_DRIVER=y"
 want "CONFIG_UART_CONSOLE=y"
 
-# The SoC and the board are this machine's.
+# The SoC and the board are this machine's, which also says the module
+# was reached at all: without `-DZEPHYR_MODULES` these go missing, and
+# nothing else complains, the image having none of this repository in it.
 want "CONFIG_SOC_VRETENO=y"
 want 'CONFIG_BOARD="ax7a200b"'
 

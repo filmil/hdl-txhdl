@@ -17,9 +17,8 @@ west build -b ax7a200b samples/hello_world \
   -- -DZEPHYR_EXTRA_MODULES=/path/to/txhdl/zephyr
 ```
 
-The module declares its own roots, so the board `ax7a200b`, the SoC
-`vreteno` and the binding for the serial port are found here rather
-than in Zephyr's tree.
+The module declares its own roots, so the board `ax7a200b` and the SoC
+`vreteno` are found here rather than in Zephyr's tree.
 
 Driving CMake directly, without `west`, needs a different flag.
 `ZEPHYR_EXTRA_MODULES` is collected and then passed to a script that
@@ -44,8 +43,6 @@ cmake -B build -S samples/hello_world -GNinja \
 | `soc/hdlfactory/vreteno/` | the SoC: RV32IMC, no atomics, 100 MHz |
 | `boards/hdlfactory/ax7a200b/` | the board: the image lives in DDR3 |
 | `dts/riscv/hdlfactory/vreteno.dtsi` | the machine, at the addresses it decodes |
-| `dts/bindings/serial/` | the binding for the serial port |
-| `drivers/serial/uart_vreteno.c` | the console driver, polled |
 | `dts/bindings/ethernet/` | the binding for the Ethernet port |
 | `drivers/ethernet/eth_vreteno.c` | the Ethernet driver, a port of LiteEth's, over the port's frame engines |
 | `dts/bindings/rng/` | the binding for the entropy source |
@@ -122,22 +119,21 @@ What checks it, off the board:
 
 What needs the board: a program received over the real port and run.
 
-## Why a driver rather than a 16550
+## Why the serial port is SiFive's
 
-The serial port is three registers: a byte written to the first goes
-out, the second is the status, and a read of the third takes the
-oldest byte received.
-Growing it a 16550 register map would mean a line control register, a
-line status register, an interrupt enable and a divisor latch inside a
-peripheral the bootloader and every board test depend on, to save
-about eighty lines of driver.
-The driver is the reversible choice and it touches no hardware that is
-already proven.
-
-If Linux is taken up, issue 279, that calculus changes: Linux has an
-8250 driver too, and a 16550 map would then pay twice.
-The decision is recorded here so that the second person to ask does
-not have to work it out again.
+The serial port's registers are SiFive's `sifive,uart0` (issue 1011), and the
+console is Zephyr's own `uart_sifive` driver, which the device tree's node
+binds and the board's `CONFIG_UART_SIFIVE_PORT_0=y` turns on.
+Until then the port was three registers of its own, with a driver of
+its own here, and this section argued that a driver was cheaper than
+growing the hardware a standard map.
+Linux on this core, issue 279, changed that: Linux, OpenSBI and Zephyr
+all drive SiFive's map with drivers somebody else maintains, so the
+hardware took the map once rather than this repository carrying a
+driver for each.
+SiFive's map is the smaller of the standard ones, seven registers, and
+the port kept its reset behaviour by starting with both enables and the
+receive interrupt on.
 
 ## What checks it
 
@@ -208,10 +204,10 @@ later build, 14644 bytes today, with the drivers changed since, the
 register headers of issue 709 among them, and it has not itself been
 run on the board.
 
-What an ELF proves without the board is that the module is reached: `CONFIG_UART_VRETENO` and `CONFIG_UART_CONSOLE` are set in
-the generated configuration, `uart_vreteno_poll_out` is in the image,
-and it compiles to a spin on bit 0 of the status register followed by
-a store of the byte, which is what the hardware asks for.
+What an ELF proves without the board is that the module is reached:
+`CONFIG_UART_SIFIVE`, `CONFIG_UART_SIFIVE_PORT_0` and
+`CONFIG_UART_CONSOLE` are set in the generated configuration, beside
+the SoC and the board.
 An image links at `0x4000_0000`, RV32 with compressed instructions and
 the soft-float ABI.
 

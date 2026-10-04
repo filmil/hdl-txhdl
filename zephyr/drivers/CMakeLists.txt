@@ -2,4 +2,3 @@
 
 add_subdirectory(entropy)
 add_subdirectory(ethernet)
-add_subdirectory(serial)

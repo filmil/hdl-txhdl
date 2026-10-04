@@ -52,8 +52,9 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <zephyr/net/net_pkt.h>
 /*
  * `sys_read32` and `sys_write32` are the architecture's, not the
- * generic header's, exactly as in `uart_vreteno.c`. Including only
- * `zephyr/sys/sys_io.h` compiles to an implicit declaration.
+ * generic header's, as this port's own serial driver had them before
+ * issue 1011. Including only `zephyr/sys/sys_io.h` compiles to an
+ * implicit declaration.
  */
 #include <zephyr/arch/cpu.h>
 #include <zephyr/sys/sys_io.h>
