@@ -59,6 +59,10 @@ common:ci --show_progress_rate_limit=60
 # 331 MB of output tree rather than 1633. The release workflow builds
 # without `--config=ci`, since it gathers the PDFs from `bazel-out`.
 build:ci --remote_download_minimal
+# The documents unstamped in CI, so that a commit alone does not typeset
+# them all again (docs/BUILD.bazel, :buildstamp). The release build
+# (release.yml, no --config=ci) stamps.
+build:ci --//docs:stamp=off
 
 # Shared caches on the hdlfactory hosts, where the file exists; a no-op
 # elsewhere. The repository cache there already holds the installer.
