@@ -14,9 +14,10 @@ import (
 )
 
 func perf(mode string, args []string) {
-	if (mode == "send" && len(args) != 3) || (mode == "count" && len(args) != 2) {
+	if (mode == "send" && len(args) != 3 && len(args) != 4) ||
+		(mode == "count" && len(args) != 2) {
 		fmt.Fprintln(os.Stderr,
-			"usage: ethtest send INTERFACE COUNT FRAME_BYTES | ethtest count INTERFACE SECONDS")
+			"usage: ethtest send INTERFACE COUNT FRAME_BYTES [GAP_US] | ethtest count INTERFACE SECONDS")
 		os.Exit(2)
 	}
 	iface, err := net.InterfaceByName(args[0])
@@ -42,7 +43,11 @@ func perf(mode string, args []string) {
 	copy(addr.Addr[:], []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
 	check(syscall.Bind(fd, addr))
 	if mode == "send" {
-		send(fd, addr, atoi(args[1]), atoi(args[2]))
+		gap := 0
+		if len(args) == 4 {
+			gap = atoi(args[3])
+		}
+		send(fd, addr, atoi(args[1]), atoi(args[2]), gap)
 	} else {
 		count(fd, atoi(args[1]))
 	}
@@ -50,8 +55,8 @@ func perf(mode string, args []string) {
 
 // send sends `n` frames of `size` bytes, without the check sequence,
 // to every station, numbered from zero, one after the other as fast as
-// the socket takes them.
-func send(fd int, addr *syscall.SockaddrLinklayer, n, size int) {
+// the socket takes them, or `gap` microseconds apart, start to start.
+func send(fd int, addr *syscall.SockaddrLinklayer, n, size, gap int) {
 	if size < 14+len(perfMagic)+2 {
 		size = 14 + len(perfMagic) + 2
 	}
@@ -69,7 +74,14 @@ func send(fd int, addr *syscall.SockaddrLinklayer, n, size int) {
 		frames[i] = f
 	}
 	start := time.Now()
-	for _, f := range frames {
+	for i, f := range frames {
+		if gap > 0 {
+			// Spun rather than slept, since a sleep this short
+			// overshoots by more than the gap.
+			at := start.Add(time.Duration(i*gap) * time.Microsecond)
+			for time.Now().Before(at) {
+			}
+		}
 		check(syscall.Sendto(fd, f, 0, addr))
 	}
 	took := time.Since(start)

@@ -5,7 +5,7 @@
 # static binary, and runs it there over ssh under a timeout.
 #
 #   run [--server=HOST] [--interface=fpga-a200t-eth0] [--count=64]
-#       [--size=64] [--seconds=10] [--mode=echo|send|count]
+#       [--size=64] [--seconds=10] [--mode=echo|send|count] [--gap-us=0]
 #
 # `--mode=echo`, the default, is the echo design's test. `send` sends
 # one burst of `--count` numbered frames of `--size` bytes to the
@@ -34,6 +34,7 @@ count=64
 size=64
 seconds=10
 mode=echo
+gap=0
 for a in "$@"; do
   case "$a" in
     --server=*) server="${a#*=}" ;;
@@ -42,6 +43,7 @@ for a in "$@"; do
     --size=*) size="${a#*=}" ;;
     --seconds=*) seconds="${a#*=}" ;;
     --mode=*) mode="${a#*=}" ;;
+    --gap-us=*) gap="${a#*=}" ;;
     *) echo "unknown argument: $a" >&2; exit 2 ;;
   esac
 done
@@ -72,7 +74,7 @@ if [[ "$want" != "$have" ]]; then
 fi
 case "$mode" in
   echo) args="'$interface' '$count' '$size' '$seconds'" ;;
-  send) args="send '$interface' '$count' '$size'" ;;
+  send) args="send '$interface' '$count' '$size' '$gap'" ;;
   count) args="count '$interface' '$seconds'" ;;
   *) echo "unknown mode: $mode" >&2; exit 2 ;;
 esac
