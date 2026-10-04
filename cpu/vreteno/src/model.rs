@@ -187,7 +187,10 @@ const SPP: u32 = 1 << 8;
 const MPP: u32 = 3 << 11;
 const SUM: u32 = 1 << 18;
 const MXR: u32 = 1 << 19;
-const MSTATUS_W: u32 = SIE | MIE | SPIE | MPIE | SPP | MPP | SUM | MXR;
+/// Loads and stores in machine mode as the mode `MPP` names (issue
+/// 1105).
+const MPRV: u32 = 1 << 17;
+const MSTATUS_W: u32 = SIE | MIE | SPIE | MPIE | SPP | MPP | MPRV | SUM | MXR;
 const SSTATUS_W: u32 = SIE | SPIE | SPP | SUM | MXR;
 /// The exceptions machine mode may delegate: all but an environment
 /// call from machine mode and the reserved causes.
@@ -387,16 +390,21 @@ impl Model {
         store: bool,
     ) -> Result<u32, (u32, u32)> {
         let access = if store { Access::Store } else { Access::Load };
-        translate(|pa| self.pte_word(imem, pa), self.vm_mode(), va, access)
-            .map_err(|f| {
-                let cause = match (f, store) {
-                    (Fault::Page, false) => CAUSE_LOAD_PAGE,
-                    (Fault::Page, true) => CAUSE_STORE_PAGE,
-                    (Fault::Access, false) => CAUSE_LOAD_ACCESS,
-                    (Fault::Access, true) => CAUSE_STORE_ACCESS,
-                };
-                (cause, va)
-            })
+        // In machine mode with `MPRV` set, as the mode `MPP` names
+        // (issue 1105).
+        let mut m = self.vm_mode();
+        if self.prv == 3 && self.csr.mstatus & MPRV != 0 {
+            m.prv = (self.csr.mstatus >> 11 & 3) as u8;
+        }
+        translate(|pa| self.pte_word(imem, pa), m, va, access).map_err(|f| {
+            let cause = match (f, store) {
+                (Fault::Page, false) => CAUSE_LOAD_PAGE,
+                (Fault::Page, true) => CAUSE_STORE_PAGE,
+                (Fault::Access, false) => CAUSE_LOAD_ACCESS,
+                (Fault::Access, true) => CAUSE_STORE_ACCESS,
+            };
+            (cause, va)
+        })
     }
 
     /// A store's word. Above the data memory the store is a device's
@@ -1106,7 +1114,10 @@ impl Model {
                 }
                 let s = self.csr.mstatus;
                 let mie = if s & MPIE != 0 { MIE } else { 0 };
-                self.csr.mstatus = (s & !(MIE | MPP)) | MPIE | mie;
+                // A return below machine mode clears `MPRV` (issue 1105).
+                let mprv = if s >> 11 & 3 == 3 { s & MPRV } else { 0 };
+                self.csr.mstatus =
+                    (s & !(MIE | MPP | MPRV)) | MPIE | mie | mprv;
                 self.prv = s >> 11 & 3;
                 next = self.csr.mepc;
             }
@@ -1117,7 +1128,7 @@ impl Model {
                 }
                 let s = self.csr.mstatus;
                 let sie = if s & SPIE != 0 { SIE } else { 0 };
-                self.csr.mstatus = (s & !(SIE | SPP)) | SPIE | sie;
+                self.csr.mstatus = (s & !(SIE | SPP | MPRV)) | SPIE | sie;
                 self.prv = s >> 8 & 1;
                 next = self.csr.sepc;
             }
