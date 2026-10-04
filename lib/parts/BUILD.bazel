@@ -44,6 +44,7 @@ rust_library(
         "src/mmu/tests.rs",
         "src/plic.rs",
         "src/pwm.rs",
+        "src/lowering.rs",
         "src/regmap.rs",
         "src/redundant.rs",
         "src/remote.rs",

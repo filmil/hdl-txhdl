@@ -28,6 +28,8 @@ pub mod flashwin;
 pub mod gpio;
 pub mod hdmi;
 pub mod i2c;
+#[cfg(test)]
+mod lowering;
 pub mod mdio;
 pub mod mmu;
 pub mod plic;
