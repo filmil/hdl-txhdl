@@ -470,16 +470,18 @@ impl Unit<(), Tx<W<32, 4>>> for NoBeats {
 /// host's read answers have nobody to go to. This holds that channel
 /// and takes nothing from it. Nothing is ever sent on it either, since
 /// a client that issues no reads is answered with no read data, so
-/// never taking is never a stall.
+/// never taking is never a stall. `I` is the host's identifier width,
+/// two for the Ethernet port's store engine and one for the SD host's.
+/// It has no default, since the derive refuses one (issue 1044).
 #[derive(Trace, Default)]
-pub struct NoReads {
+pub struct NoReads<const I: usize> {
     /// As for [`NoBeats`]: a unit is a struct of registers.
     pub idle: Reg<Bit>,
 }
 
 #[lower]
-impl Unit<Rx<R<32, 2>>, ()> for NoReads {
-    async fn run(&mut self, reads: Rx<R<32, 2>>, _o: ()) {
+impl<const I: usize> Unit<Rx<R<32, I>>, ()> for NoReads<I> {
+    async fn run(&mut self, reads: Rx<R<32, I>>, _o: ()) {
         loop {
             DefaultClock::rising().await;
             let _ = reads.recv_if(self.idle.get());

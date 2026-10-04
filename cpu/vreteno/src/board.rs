@@ -359,7 +359,7 @@ pub struct Board<const DIV: u32> {
     /// is held by one that uses it no more: the fetch engine's write
     /// beats, and the store engine's read data.
     pub fnobeats: NoBeats,
-    pub snoreads: NoReads,
+    pub snoreads: NoReads<2>,
     // end{ethdma}
     // begin{scan}
     /// The video scanout's bus side (issue 151): `ScanFetch` takes each
