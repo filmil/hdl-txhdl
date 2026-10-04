@@ -241,9 +241,9 @@ fn hal_map() -> Vec<(String, usize)> {
 ///
 /// The registers inside each peripheral come from the maps through
 /// `vreteno_regs`, but the bases are typed in the HAL, and a router
-/// that moved one would leave every program that uses the HAL reading
-/// zero without a word, as issue 417 says. So a base the HAL adds must
-/// be added here too, or this fails.
+/// that moved one would leave every program that uses the HAL taking a
+/// bus error trap at run time (issue 417) rather than failing here. So
+/// a base the HAL adds must be added here too, or this fails.
 #[test]
 fn every_base_in_the_hal_is_where_the_router_puts_it() {
     let board = |i: usize| (BoardMap::RANGES[i].0, BoardMap::NAMES[i]);

@@ -26,7 +26,7 @@ use txhdl::{lower, Trace, Transaction as TransactionDerive, Value};
 pub struct Job {
     /// The word.
     pub word: U<8>,
-    /// How many copies, one to fifteen.
+    /// How many copies, zero to fifteen.
     pub times: U<4>,
 }
 
