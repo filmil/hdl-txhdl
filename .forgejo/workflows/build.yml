@@ -14,8 +14,18 @@ jobs:
   build:
     runs-on: docker
     steps:
+      # Every run records how long its steps took and how much Bazel ran
+      # (#940): each step below writes the time it ended, and the last
+      # step turns the marks into wall times. A step that `uses:` an
+      # action cannot write its own, so a mark follows it.
+      - name: Mark the start
+        run: echo "start $(date +%s)" > /tmp/ci-times
+
       - name: Checkout
         uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Mark the checkout
+        run: echo "checkout $(date +%s)" >> /tmp/ci-times
 
       # Nothing else is installed here. Every other tool this build needs
       # comes from MODULE.bazel, TeX and the C and C++ toolchain among
@@ -37,6 +47,7 @@ jobs:
             https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
           echo "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992  /usr/local/bin/bazel" | sha256sum -c
           chmod +x /usr/local/bin/bazel
+          echo "bazelisk $(date +%s)" >> /tmp/ci-times
 
       # A cold build fetches every toolchain MODULE.bazel pins, TeX, Rust,
       # the simulators and the Zephyr toolchain among them, and builds nvc
@@ -49,8 +60,14 @@ jobs:
       # The cache tars each matched path whole and a `!` line drops only an
       # exact match, so excluding `install` means listing its siblings:
       # `_bazel_root` is itself excluded and its children listed instead.
-      - name: Cache Bazel
-        uses: https://code.forgejo.org/actions/cache@v4
+      #
+      # Restored here and saved by its own step at the end, rather than by
+      # the combined action's post step, so that the save is a step the
+      # run's record can time (#940). The save keeps the combined action's
+      # rule: only when the key missed, and only when the job succeeded.
+      - name: Restore the Bazel cache
+        id: cache
+        uses: https://code.forgejo.org/actions/cache/restore@v4
         with:
           path: |
             ~/.cache/bazel/*
@@ -62,12 +79,16 @@ jobs:
           restore-keys: |
             bazel-
 
+      - name: Mark the cache restore
+        run: echo "cache_restore $(date +%s)" >> /tmp/ci-times
+
       # `pipefail`, or the step's status is `tee`'s, which is 0: a build that
       # failed would pass here and turn the run red only in the test step
       # below, with its error inside that step's output (#538).
       - name: Build everything
         run: |
           set -o pipefail
+          trap 'echo "build $(date +%s)" >> /tmp/ci-times' EXIT
           bazel build --config=ci //... 2>&1 | tee -a /tmp/ci-bazel.log
 
       # Bazel exits 4 when testing is requested and no test target exists,
@@ -77,11 +98,28 @@ jobs:
       - name: Test everything
         run: |
           set -o pipefail
+          trap 'echo "test $(date +%s)" >> /tmp/ci-times' EXIT
           bazel test --config=ci //... --test_output=errors 2>&1 | tee -a /tmp/ci-bazel.log || {
             status=$?
             [ "$status" -eq 4 ] || exit "$status"
             echo "no test targets yet; build is the only gate"
           }
+
+      - name: Save the Bazel cache
+        if: success() && steps.cache.outputs.cache-hit != 'true'
+        uses: https://code.forgejo.org/actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/bazel/*
+            !~/.cache/bazel/_bazel_root
+            ~/.cache/bazel/_bazel_root/*
+            !~/.cache/bazel/_bazel_root/install
+            ~/.cache/bazelisk
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: Mark the cache save
+        if: always()
+        run: echo "cache_save $(date +%s)" >> /tmp/ci-times
 
       # `fj` cannot read Actions logs and the API's log routes answer 404
       # even with a token, so a failing run exports its own. It lands on the
@@ -119,3 +157,42 @@ jobs:
           git -C "$d" -c user.name=ci -c user.email=ci@invalid \
             commit -qm "ci log for run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
           git -C "$d" push -q origin ci-logs
+
+      # Every run, passing or not, leaves a short record on `ci-stats`
+      # (#940): its number, commit and outcome, each step's wall time in
+      # seconds from the marks above, and Bazel's own summary lines from
+      # build and test, which say how many actions ran and how many were
+      # cache hits. One file a run, so two records never collide; failures
+      # still export their log to `ci-logs` above.
+      #
+      #   git fetch origin ci-stats && git show origin/ci-stats:<file>
+      - name: Record the run
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "log_export $(date +%s)" >> /tmp/ci-times
+          {
+            echo "run ${GITHUB_RUN_NUMBER} on ${GITHUB_SHA} (${GITHUB_EVENT_NAME}, ${GITHUB_REF_NAME}): ${{ job.status }}"
+            echo "cache key hit: ${{ steps.cache.outputs.cache-hit }}"
+            echo "=== seconds, by step ==="
+            awk 'NR > 1 { printf "%-14s %6d\n", $1, $2 - t } { t = $2 }' /tmp/ci-times
+            echo "=== bazel ==="
+            grep -E 'INFO: [0-9,]+ processes|INFO: Elapsed time|Executed [0-9]+ out of [0-9]+ test' \
+              /tmp/ci-bazel.log 2>/dev/null || echo "(no bazel log)"
+          } > /tmp/ci-record.txt 2>&1 || echo "(record incomplete)" >> /tmp/ci-record.txt
+          cat /tmp/ci-record.txt
+          d=$(mktemp -d)
+          url="https://ci:${GITHUB_TOKEN}@git.hdlfactory.com/${GITHUB_REPOSITORY}.git"
+          if git -C "$d" clone -q --depth 1 --branch ci-stats "$url" . 2>/dev/null; then
+            :
+          else
+            git -C "$d" init -q -b ci-stats
+            git -C "$d" remote add origin "$url"
+          fi
+          cp /tmp/ci-record.txt \
+            "$d/run-${GITHUB_RUN_NUMBER}-$(date -u +%Y%m%dT%H%M%S)-${GITHUB_SHA:0:8}.txt"
+          git -C "$d" add -A
+          git -C "$d" -c user.name=ci -c user.email=ci@invalid \
+            commit -qm "ci record for run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
+          git -C "$d" push -q origin ci-stats
