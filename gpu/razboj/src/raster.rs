@@ -15,11 +15,17 @@
 //! after the entry is fetched. This is what makes the per-pixel work
 //! three adds and three sign tests.
 //!
+//! A shaded triangle's colour is linear in the same way, so each of its
+//! three channels is kept as an edge is, with the same two steps, and
+//! the per-pixel work is three adds more. The host works out each
+//! channel's value at the box's first pixel and its steps, so those
+//! need no setup here at all.
+//!
 //! It finds its own work. The display list is in memory, in the
 //! format `crate::dl` states, and the rasteriser reads it over the
 //! same link it writes pixels on: it reads the count at `CTRL` until
-//! it is not zero, then the six words of each instruction at `DL`,
-//! as one read burst of six beats, then walks what they say. The
+//! it is not zero, then the fifteen words of each instruction at `DL`,
+//! as one read burst of fifteen beats, then walks what they say. The
 //! count is sixteen bits, so a list holds up to 65535 entries. That
 //! front end is written as the sequence it is, and a second process
 //! takes the link's answers every cycle.
@@ -57,7 +63,7 @@ const WORD: usize = 2;
 /// The shift from an instruction's index to its byte address, which
 /// is `razboj::dl::BYTE_SHIFT` and is stated here because the lowering
 /// wants a constant it can see.
-const SHIFT: usize = 5;
+const SHIFT: usize = 6;
 
 // begin{state}
 /// The rasteriser. `A` is the address width, `I` the AXI identifier
@@ -101,6 +107,21 @@ pub struct Raster<
     pub d0y: Reg<U<32>>,
     pub d1y: Reg<U<32>>,
     pub d2y: Reg<U<32>>,
+    /// A shaded triangle's three channels, kept as the edges are: each
+    /// at this pixel, at the start of this row, and its two steps.
+    /// Sixteen bits of fraction below the byte the pixel takes.
+    pub cr: Reg<U<32>>,
+    pub cg: Reg<U<32>>,
+    pub cb: Reg<U<32>>,
+    pub lr: Reg<U<32>>,
+    pub lg: Reg<U<32>>,
+    pub lb: Reg<U<32>>,
+    pub crx: Reg<U<32>>,
+    pub cgx: Reg<U<32>>,
+    pub cbx: Reg<U<32>>,
+    pub cry: Reg<U<32>>,
+    pub cgy: Reg<U<32>>,
+    pub cby: Reg<U<32>>,
     /// Pixels written, and responses taken, each counted round; their
     /// difference is what is in flight, and the two are apart so that
     /// the walk and the answers each keep a count of their own.
@@ -113,11 +134,14 @@ pub struct Raster<
     /// it is the one thing a waveform of a triangle wants to show,
     /// and the walk waits on it.
     pub hit: Wire<Bit>,
+    /// The word this pixel takes, its colour, which for a shaded
+    /// triangle is worked out from its three channels here.
+    pub rgb: Wire<U<32>>,
     /// Instructions in the list, once the count has been read.
     pub left: Reg<U<16>>,
     /// Which instruction is being fetched, and which of its words.
     pub insn: Reg<U<16>>,
-    pub word: Reg<U<3>>,
+    pub word: Reg<U<4>>,
     /// The last list is drawn and its count written back to zero; a
     /// count read that is not zero clears it.
     pub finished: Reg<Bit>,
@@ -162,6 +186,17 @@ fn top_left(dx: U<32>, dy: U<32>) -> Bit {
     let right = !dx.bit(31) & Bit::from(dx != 0);
     let down = !dy.bit(31) & Bit::from(dy != 0);
     right | (Bit::from(dx == 0) & down)
+}
+
+/// One channel of a shaded pixel: the byte above a channel's sixteen
+/// bits of fraction, nought when the value is below nought and 255 when
+/// it is 256 or more, which a pixel on the box's edge can reach since
+/// the plane goes on past the triangle.
+#[lower]
+fn channel(v: U<32>) -> U<8> {
+    let over = Bit::from(v.slice::<24, 8>() != 0);
+    let top = mux(over, U::<8>::from(255u8), v.slice::<16, 8>());
+    mux(v.bit(31), U::<8>::from(0u8), top)
 }
 
 /// Whether a read's beat is taken this cycle: one is offered, the
@@ -218,13 +253,23 @@ impl<
                     let _ = rdata.recv_if(rel_room & !dv);
                     let _ = grant.recv_if(grant.peek().is_some());
                     // Whether this pixel is in the primitive: every
-                    // pixel of a box, and of a triangle the pixels at
-                    // which no edge function is negative.
+                    // pixel of a box, and of a triangle, flat or
+                    // shaded, the pixels at which no edge function is
+                    // negative.
                     let n0 = !self.e0.get().bit(31);
                     let n1 = !self.e1.get().bit(31);
                     let n2 = !self.e2.get().bit(31);
-                    self.hit
-                        .set((self.kind.get() != Kind::Tri) | (n0 & n1 & n2));
+                    let boxed = Bit::from(self.kind.get() != Kind::Tri)
+                        & Bit::from(self.kind.get() != Kind::Shaded);
+                    self.hit.set(boxed | (n0 & n1 & n2));
+                    // The colour this pixel takes: a shaded triangle's
+                    // three planes here, and every other entry's own.
+                    let shade = channel(self.cr.get())
+                        .concat::<8, 16>(channel(self.cg.get()))
+                        .concat::<8, 24>(channel(self.cb.get()));
+                    let shaded = self.kind.get() == Kind::Shaded;
+                    let rgb = mux(shaded, shade, self.colour.get());
+                    self.rgb.set(rgb.resize::<32>());
                     let open = self.issued.get() - self.answered.get();
                     self.inflight.set(open);
                     with!(self <= {
@@ -287,11 +332,11 @@ impl<
                             // read back, and for the sequence to
                             // begin a turn with.
                             DefaultClock::rising().await;
-                            self.word.set(U::<3>::from(0u8));
-                            // The instruction's six words, as one read
-                            // burst of six beats, each latched as it
-                            // lands. An entry is eight words from an
-                            // address a multiple of thirty-two, so the
+                            self.word.set(U::<4>::from(0u8));
+                            // The instruction's fifteen words, as one
+                            // read burst of fifteen beats, each latched
+                            // as it lands. An entry is sixteen words from
+                            // an address a multiple of sixty-four, so the
                             // burst never crosses anything a burst may
                             // not.
                             until(DefaultClock::rising, || {
@@ -302,7 +347,7 @@ impl<
                                 read: Bit::One,
                                 addr: U::<A>::from(DL as u32)
                                     + (self.insn.get().resize::<A>() << SHIFT),
-                                len: U::<8>::from(5u8),
+                                len: U::<8>::from(14u8),
                                 size: U::<3>::from(2u8),
                                 burst: BurstKind::Incr,
                                 lock: Bit::Zero,
@@ -311,7 +356,7 @@ impl<
                                 qos: U::<4>::from(0u8),
                                 region: U::<4>::from(0u8),
                             });
-                            for _ in 0..6 {
+                            for _ in 0..15 {
                                 until(DefaultClock::rising, || {
                                     landing(
                                         rdata.peek().is_some(),
@@ -355,16 +400,19 @@ impl<
                                     last_y,
                                     self.sy1.get().resize::<16>(),
                                 );
+                                // The kind, from the word's low two
+                                // bits: a clear, a rectangle, or a
+                                // triangle, flat or shaded.
+                                let tri_kind =
+                                    mux(word0 == 2, Kind::Tri, Kind::Shaded);
+                                let rect_or_tri =
+                                    mux(word0 == 1, Kind::Rect, tri_kind);
                                 if self.word.get() == 0 {
                                     with!(self <= {
                                         skind: mux(
                                             word0 == 0,
                                             Kind::Clear,
-                                            mux(
-                                                word0 == 1,
-                                                Kind::Rect,
-                                                Kind::Tri,
-                                            ),
+                                            rect_or_tri,
                                         ),
                                         scol: rh.data.slice::<2, 24>(),
                                     });
@@ -405,6 +453,39 @@ impl<
                                         scx: rh.data.slice::<0, 16>(),
                                         scy: rh.data.slice::<16, 16>(),
                                     });
+                                }
+                                // A shaded triangle's planes, each its
+                                // value at the box's first pixel and its
+                                // two steps, which the host worked out,
+                                // so they go straight to the walk. The
+                                // other entries carry zeros here.
+                                let v = rh.data;
+                                if self.word.get() == 6 {
+                                    with!(self <= { cr: v, lr: v });
+                                }
+                                if self.word.get() == 7 {
+                                    self.crx.set(v);
+                                }
+                                if self.word.get() == 8 {
+                                    self.cry.set(v);
+                                }
+                                if self.word.get() == 9 {
+                                    with!(self <= { cg: v, lg: v });
+                                }
+                                if self.word.get() == 10 {
+                                    self.cgx.set(v);
+                                }
+                                if self.word.get() == 11 {
+                                    self.cgy.set(v);
+                                }
+                                if self.word.get() == 12 {
+                                    with!(self <= { cb: v, lb: v });
+                                }
+                                if self.word.get() == 13 {
+                                    self.cbx.set(v);
+                                }
+                                if self.word.get() == 14 {
+                                    self.cby.set(v);
                                 }
                             }
                             // The setup the walk asks for: per edge, the
@@ -535,36 +616,44 @@ impl<
                                             region: U::<4>::from(0u8),
                                         });
                                         wbeat.send(W {
-                                            data: self
-                                                .colour
-                                                .get()
-                                                .resize::<32>(),
+                                            data: self.rgb.get(),
                                             strb: U::<4>::from(15u8),
                                             last: Bit::One,
                                         });
                                         self.issued.set(self.issued.get() + 1);
                                     }
                                     // The column advances and each edge
-                                    // takes its column step.
+                                    // and each channel takes its column
+                                    // step.
                                     with!(self <= {
                                         x: px + 1,
                                         e0: self.e0.get() + self.d0x.get(),
                                         e1: self.e1.get() + self.d1x.get(),
                                         e2: self.e2.get() + self.d2x.get(),
+                                        cr: self.cr.get() + self.crx.get(),
+                                        cg: self.cg.get() + self.cgx.get(),
+                                        cb: self.cb.get() + self.cbx.get(),
                                     });
                                 }
                                 // The next row: the column goes back to
-                                // the first and each edge is reloaded
-                                // from its row value plus its row step.
+                                // the first and each edge and channel is
+                                // reloaded from its row value plus its
+                                // row step.
                                 let q0 = self.r0.get() + self.d0y.get();
                                 let q1 = self.r1.get() + self.d1y.get();
                                 let q2 = self.r2.get() + self.d2y.get();
+                                let qr = self.lr.get() + self.cry.get();
+                                let qg = self.lg.get() + self.cgy.get();
+                                let qb = self.lb.get() + self.cby.get();
                                 with!(self <= {
                                     x: self.xa.get(),
                                     y: self.y.get() + 1,
                                     e0: q0, r0: q0,
                                     e1: q1, r1: q1,
                                     e2: q2, r2: q2,
+                                    cr: qr, lr: qr,
+                                    cg: qg, lg: qg,
+                                    cb: qb, lb: qb,
                                 });
                             }
                             self.insn.set(self.insn.get() + 1);

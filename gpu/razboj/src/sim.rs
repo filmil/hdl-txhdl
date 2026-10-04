@@ -327,9 +327,9 @@ mod tests {
     /// the first, in colours of their own (issue 983).
     #[test]
     fn a_list_of_three_hundred_entries_is_drawn_whole() {
-        const N: usize = 4096;
+        const N: usize = 8192;
         const DL: usize = 0x1000;
-        const CTRL: usize = 0x3800;
+        const CTRL: usize = 0x7000;
         let ops: Vec<Op> = (0..300)
             .map(|i: i32| Op::Rect {
                 colour: 0x01_0101 * (i as u32 % 200) + i as u32,
@@ -345,8 +345,8 @@ mod tests {
         assert_eq!(got.fb, model::render(&insns, W, H), "300 entries");
     }
 
-    /// An entry is fetched as one read burst of six beats, so every
-    /// entry costs five beats more than it costs bursts; a poll of
+    /// An entry is fetched as one read burst of fifteen beats, so every
+    /// entry costs fourteen beats more than it costs bursts; a poll of
     /// the count is one beat and one burst, and costs neither
     /// (issue 983).
     #[test]
@@ -355,7 +355,7 @@ mod tests {
         let n = assemble(&ops, W, H).len() as u64;
         let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
         let (bursts, beats) = got.reads;
-        assert_eq!(beats - bursts, 5 * n, "{bursts} bursts, {beats} beats");
+        assert_eq!(beats - bursts, 14 * n, "{bursts} bursts, {beats} beats");
     }
 
     /// A mesh of triangles sharing edges, over the whole screen: four

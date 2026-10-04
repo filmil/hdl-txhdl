@@ -64,7 +64,7 @@ pub const H: usize = 96;
 /// four kilobytes the linker script gives the data memory.
 pub const DATA_BASE: usize = 0x1000;
 /// Where the display list sits, above the program's data. There is
-/// room for the hundred and twenty-eight instructions that reach as
+/// room for the sixty-four instructions that reach as
 /// far as the serial port, which is the next thing in the map.
 pub const DL_BASE: usize = 0x2000;
 /// Where its count sits, past the serial port's four words at

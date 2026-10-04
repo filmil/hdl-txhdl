@@ -4,6 +4,7 @@
 //! same edge functions, but it says them as a program rather than as
 //! a step per cycle, so that the two agreeing means something.
 use crate::op::{signed, Insn, Kind, SUB};
+use txhdl::types::U;
 
 /// An edge function of the edge from `a` to `b`, at `p`, all in
 /// sixteenths of a pixel. Positive on one side, negative on the other,
@@ -29,7 +30,7 @@ fn top_left(a: (i32, i32), b: (i32, i32)) -> bool {
 /// a left one, so that of two triangles sharing an edge, exactly one
 /// draws a pixel on it: the top-left rule.
 fn inside(op: &Insn, x: i32, y: i32) -> bool {
-    if op.kind != Kind::Tri {
+    if op.kind != Kind::Tri && op.kind != Kind::Shaded {
         return true;
     }
     let v = |x, y| (signed(x), signed(y));
@@ -74,6 +75,38 @@ fn box_of(op: &Insn, w: usize, h: usize) -> (i32, i32, i32, i32) {
     }
 }
 
+/// One channel of a plane, `i` pixels right and `j` rows down of the
+/// box's first pixel: its start and that many of each step, in the
+/// thirty-two bits the rasteriser's adders wrap in, then clamped to a
+/// byte. A value below nought is nought, one of 256 or more is 255.
+fn channel(start: u32, dx: u32, dy: u32, i: i32, j: i32) -> u32 {
+    let v = start
+        .wrapping_add(dx.wrapping_mul(i as u32))
+        .wrapping_add(dy.wrapping_mul(j as u32));
+    if v & 0x8000_0000 != 0 {
+        0
+    } else if v >> 24 != 0 {
+        255
+    } else {
+        (v >> 16) & 0xff
+    }
+}
+
+/// The colour an entry writes at the pixel `i` right and `j` down of its
+/// box's first: its own, or a shaded triangle's three planes there.
+fn colour(op: &Insn, i: i32, j: i32) -> u32 {
+    if op.kind != Kind::Shaded {
+        return op.colour.raw() as u32;
+    }
+    let p = |a: U<32>, b: U<32>, c: U<32>| {
+        channel(a.raw() as u32, b.raw() as u32, c.raw() as u32, i, j)
+    };
+    let r = p(op.r0, op.rdx, op.rdy);
+    let g = p(op.g0, op.gdx, op.gdy);
+    let b = p(op.b0, op.bdx, op.bdy);
+    (r << 16) | (g << 8) | b
+}
+
 /// A display list rendered into a framebuffer of `w` by `h` pixels.
 pub fn render(ops: &[Insn], w: usize, h: usize) -> Vec<u32> {
     let mut fb = vec![0u32; w * h];
@@ -82,7 +115,8 @@ pub fn render(ops: &[Insn], w: usize, h: usize) -> Vec<u32> {
         for y in y0..=y1 {
             for x in x0..=x1 {
                 if inside(op, x, y) {
-                    fb[y as usize * w + x as usize] = op.colour.raw() as u32;
+                    fb[y as usize * w + x as usize] =
+                        colour(op, x - x0, y - y0);
                 }
             }
         }

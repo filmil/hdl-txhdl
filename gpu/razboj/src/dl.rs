@@ -20,7 +20,14 @@
 //!   word 3  [15:0] ax       [31:16] ay
 //!   word 4  [15:0] bx       [31:16] by
 //!   word 5  [15:0] cx       [31:16] cy
+//!   word 6  r0      word 7  rdx     word 8  rdy
+//!   word 9  g0      word 10 gdx     word 11 gdy
+//!   word 12 b0      word 13 bdx     word 14 bdy
 //! ```
+//!
+//! Words 6 to 14 are a shaded triangle's three planes, each the
+//! channel's value at the box's first pixel and its two steps, with
+//! sixteen bits of fraction; the other kinds leave them zero.
 //!
 //! Beside the list is one more word, the count: how many instructions
 //! the list holds, in its low sixteen bits. The rasteriser reads it
@@ -37,11 +44,11 @@ use crate::op::{Insn, Kind};
 
 // begin{format}
 /// Words an instruction takes, a power of two.
-pub const WORDS: usize = 8;
+pub const WORDS: usize = 16;
 /// The shift from an instruction's index to its byte address.
-pub const BYTE_SHIFT: usize = 5;
+pub const BYTE_SHIFT: usize = 6;
 /// Words of an instruction that carry anything.
-pub const USED: usize = 6;
+pub const USED: usize = 15;
 
 /// One instruction as the words a program writes.
 pub fn encode(i: &Insn) -> [u32; WORDS] {
@@ -49,6 +56,7 @@ pub fn encode(i: &Insn) -> [u32; WORDS] {
         Kind::Clear => 0u32,
         Kind::Rect => 1,
         Kind::Tri => 2,
+        Kind::Shaded => 3,
     };
     let lo = |v: u128| v as u32;
     let mut w = [0u32; WORDS];
@@ -58,6 +66,10 @@ pub fn encode(i: &Insn) -> [u32; WORDS] {
     w[3] = lo(i.ax.raw()) | (lo(i.ay.raw()) << 16);
     w[4] = lo(i.bx.raw()) | (lo(i.by.raw()) << 16);
     w[5] = lo(i.cx.raw()) | (lo(i.cy.raw()) << 16);
+    let planes = [i.r0, i.rdx, i.rdy, i.g0, i.gdx, i.gdy, i.b0, i.bdx, i.bdy];
+    for (k, p) in planes.iter().enumerate() {
+        w[6 + k] = lo(p.raw());
+    }
     w
 }
 // end{format}
@@ -67,7 +79,8 @@ pub fn decode(w: &[u32]) -> Insn {
     let kind = match w[0] & 3 {
         0 => Kind::Clear,
         1 => Kind::Rect,
-        _ => Kind::Tri,
+        2 => Kind::Tri,
+        _ => Kind::Shaded,
     };
     let f = |word: usize, shift: usize, bits: u32| {
         (w[word] >> shift) & ((1 << bits) - 1)
@@ -85,6 +98,15 @@ pub fn decode(w: &[u32]) -> Insn {
         by: U::from(f(4, 16, 16)),
         cx: U::from(f(5, 0, 16)),
         cy: U::from(f(5, 16, 16)),
+        r0: U::from(w[6]),
+        rdx: U::from(w[7]),
+        rdy: U::from(w[8]),
+        g0: U::from(w[9]),
+        gdx: U::from(w[10]),
+        gdy: U::from(w[11]),
+        b0: U::from(w[12]),
+        bdx: U::from(w[13]),
+        bdy: U::from(w[14]),
     }
 }
 
