@@ -35,6 +35,7 @@ bazel build //tools/trngstat
 bazel build //cpu/vreteno/rust:phyregs_ram_bin       # the PHY's registers, #864
 bazel build //cpu/vreteno/rust:phydelay_ram_bin      # the PHY's delay bits, #869
 bazel build //cpu/vreteno/rust:sdprobe_ram_bin       # the SD card, #153
+bazel build //cpu/vreteno/rust:ethperf_ram_bin //eth/hil:run   # Ethernet throughput, #1038
 ```
 
 A Vivado build that the memory watchdog can reach is killed partway, so run each one detached, with `nohup` and `disown`, and poll its log.
@@ -348,6 +349,48 @@ Pass, in this order:
 A picture with the bars but no logo, or bars of the wrong colours, points at the pixel format, `0x00RRGGBB`.
 Put the log, and a photograph of the screen, on #151.
 
+### Ethernet throughput, #1038
+
+The Ethernet half of #151: the port's throughput through the slots and the DMA engines, against the core's own copy of each frame.
+The board has no register path to the MAC, since `EthLite` is not on it, so the baseline is the copy a register path would have to make at least, timed on its own; a path that moved a byte per bus transaction would cost more.
+A true register baseline would need `EthLite` on the board as a slot of its own, and a flagship rebuild.
+
+Same bitstream and cable as the scanout above, in the same session.
+The flagship has no echo, so the machine at the other end of the cable both counts what the board sends and sends what the board counts, with `ethtest`'s two modes for it.
+Its frames have the type `0x88b6`, since the port gives `0x88b5` to the remote peripheral and not to the slots.
+
+```sh
+bazel build //cpu/vreteno/rust:ethperf_ram_bin //eth/hil:run
+# Once, so that the tester is uploaded and given its capability before
+# two copies of it run at the same time.
+bazel run //eth/hil:run -- --mode=count --seconds=1
+bazel run //eth/hil:run -- --mode=count --seconds=60 \
+    2>&1 | tee board-1038-count.log &
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/ethperf_ram_bin.bin --seconds=120 \
+    2>&1 | tee board-1038.log &
+# When board-1038.log says `rx waiting 60`:
+for s in 60 60 1514 1514; do
+  bazel run //eth/hil:run -- --mode=send --count=1000 --size=$s --seconds=5 \
+      2>&1 | tee -a board-1038-send.log
+  sleep 3
+done
+wait
+```
+
+The program sends a thousand frames of 60 bytes and a thousand of 1514, each size twice: `tx dma`, the frame written into both transmit slots once and the core only handing the engine a slot and a length; and `tx copy`, the core writing each frame into its slot first, overlapping the previous frame's send.
+Then it receives the four bursts in order: `rx dma` notes each frame's number, `rx copy` also copies the frame word by word out of its slot.
+The lengths are the frame's bytes without the check sequence, so 60 is the minimum frame on the wire and 1514 the largest.
+
+Each line gives the frames, the timer's ticks from first to last at a hundred million a second, the frames and kilobytes a second, and `cycles/frame`, the core's cycles spent on the frame itself rather than waiting for the port.
+A receive line says how many of the thousand arrived, how many were lost, and how many other frames came.
+`board-1038-count.log` gives the frames the server counted for each length, and their rate as the server saw it; it should count two thousand of each transmit size.
+`board-1038-send.log` gives the rate the server sent at, which bounds what the receive side can show.
+
+Pass: `ethperf`, four `tx` lines, four `rx waiting` and `rx` lines, `ethperf done`; and the server counted every frame sent.
+Losses on receive are a result, not a failure: the receiver holds one frame, and a burst faster than the store engine drains it loses frames.
+Put the three logs on #151 and #1038, and the numbers into #151's results.
+
 ## 8. The DDR3 through MIG, #188
 
 `vreteno_board_pnr` boots the DDR3 test from its boot memory, so it starts as soon as the part is configured; start the watcher first.
@@ -379,17 +422,6 @@ It closes #188.
 Then put the flagship back: `bazel run //flagship:flagship_flash -- "${PROG[@]}"`, and power the board off and on once more.
 
 ## 9. The checks that cannot run yet
-
-### #151, direct memory access for Ethernet and HDMI
-
-The issue's done-when asks for throughput against the register path, for Ethernet and for HDMI, measured on the board.
-The HDMI half has its check now, the scanout under load in section 7.
-The Ethernet half still needs two things that do not exist yet.
-
-* **A measurement program.** Nothing in `cpu/vreteno/rust/` times a transfer: one that sends and receives a fixed number of frames through the slots and through the registers, and prints the time each took from the timer, is the Ethernet half.
-* **A baseline.** The register path has never been timed on the board either, so the comparison needs both runs.
-
-#151 stays open.
 
 ### #312, the configuration flash
 
