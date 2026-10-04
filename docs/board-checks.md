@@ -363,7 +363,7 @@ Pass, in this order:
 * On the monitor: eight colour bars over a grey ramp, the TxHDL logo in the bottom right corner, steady, with no torn or repeated lines.
 
 `scan idle 1` means a line came late with nothing else on the bus: the fetch or the crossing is wrong, not the bandwidth.
-`scan load 1` with `scan idle 0` means the scanout's share of the bus is not enough under this load; that is the case for widening the arbiter rather than nesting the scanout under the send engine's port (`docs/vreteno.tex`).
+`scan load 1` with `scan idle 0` means the scanout's share of the bus, a turn in five under this load (`docs/vreteno.tex`), is not enough: the case for giving the scanout priority, or for more than one access in flight to the DDR3 (#1023).
 `frames 0` means the port never became ready, so the load was the copy alone; say so with the result.
 A picture with the bars but no logo, or bars of the wrong colours, points at the pixel format, `0x00RRGGBB`.
 Put the log, and a photograph of the screen, on #151.

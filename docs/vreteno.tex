@@ -1784,9 +1784,9 @@ front of it, \code{Arbiter2} then, with the core's tracker on one port
 and the pins on the other. An arbiter puts the port number above a
 host's own identifier, so the peripheral side of the bus carries four
 bits where it carried two: two for a host's own and two for the port,
-which is room for four hosts. The board has four now,
-\code{Arbiter4} over the core, the pins and the Ethernet port's two
-engines (issue~\#151), so a fifth host would widen it. The debug
+which is room for four hosts. Four filled it, \code{Arbiter4} over
+the core, the pins and the Ethernet port's two engines
+(issue~\#151); the fifth widened it, below. The debug
 transport of Section~\ref{sec:v-dtm} does not: it shares the pins'
 port, through an \code{Arbiter2} of its own in front of it, the pins
 and the transport one bit of identifier each, which is what the
@@ -1794,19 +1794,28 @@ JTAG-to-AXI master's IP ever used. Every peripheral's
 tracker, the memories, the timer and the bridges were widened with
 it; none of them names the width except at its instantiation.
 
-The video scanout's fetch is a fifth host (issue~\#151), and it is
-joined the same way: it shares the Ethernet send engine's port
-through \code{farb}, an \code{Arbiter2}, one bit of identifier each,
-so nothing past the arbiter widens. The cost is its share of the bus
-when every host is busy. A line of 640 words, 2560 bytes, must arrive
-within the 31.8\,$\mu$s of the line before it, about 80\,MB/s. The
-link moves at most four bytes a beat at 100\,MHz, 400\,MB/s, and the
-DDR3 controller behind it less. With every port
-offering a burst, each of the four ports wins one turn in four and
-each side of \code{farb} one in eight, and a turn is a burst of
-sixteen beats, so the scanout's worst share is an eighth of what the
-link delivers, 50\,MB/s at the most.
-That is short of a line only while all five hosts move bursts back to
+The video scanout's fetch is a fifth host (issue~\#151). It first
+shared the Ethernet send engine's port through a nested
+\code{Arbiter2}, as the debug transport shares the pins', so that
+nothing past the arbiter widened. With more hosts coming, the SD
+card's engine and Razboj among them, the choice was to widen once and
+stop nesting (issue~\#1022): the arbiter is \code{Arbiter5} and
+the peripheral side carries five bits of identifier, two for a
+host's own and three for the port. Three bits of port number cover
+up to eight hosts, so each one after the fifth raises the arbiter's
+count and widens nothing behind it. Every peripheral's tracker, the
+router, the bridges and the DDR3's were widened again with it, each
+at its instantiation.
+
+The cost of a host is its share of the bus when every host is busy.
+For the scanout, a line of 640 words, 2560 bytes, must arrive within
+the 31.8\,$\mu$s of the line before it, about 80\,MB/s. The link
+moves at most four bytes a beat at 100\,MHz, 400\,MB/s, and the DDR3
+controller behind it less. With every port offering a burst, each of
+the five wins one turn in five, and a turn is a burst of sixteen
+beats, so the scanout's worst share is a fifth of what the link
+delivers, 80\,MB/s at the most: a line's need, with nothing to
+spare. That bound holds only while all five hosts move bursts back to
 back for a whole line, which the core's single-word accesses do not.
 The scanout's sticky underflow bit is what says whether it ever
 happens, and the board check runs the scanout with the core copying
