@@ -34,9 +34,16 @@
 //! and a refresh lands about four times in it, so the margin is the
 //! line time against forty bursts and four refreshes, not a burst's
 //! latency against a pixel.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
+use crate::bus::axi::Resp;
+use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LitePort, LiteR, LiteW};
+use crate::bus::lite_split::LiteSplit;
+use crate::hdmi::{Hdmi, Raster, VideoOut};
+use txhdl::comp::{
+    chan, join2, mux, signal, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx,
+    Unit,
+};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, with, Trace};
+use txhdl::{lower, regmap, with, Trace};
 
 // begin{pair}
 /// Two lines of pixels on the clock that shows them, and the requests
@@ -255,3 +262,387 @@ impl<const A: usize, const WC: usize, const LEN: usize> Unit
     }
 }
 // end{fetch_run}
+
+// begin{regs}
+// The scanout's AXI-Lite words, in the upper half of the video slot.
+regmap! { scan (scan_read, scan_we), 2: [
+    (0, base, rw, "the byte the next frame starts at in memory"),
+    (1, ctrl, rw, "what the screen shows", [
+        (scan, 0, 1, rw, 0, "the scanout when set, the framebuffer when clear"),
+    ]),
+    (2, status, ro, "how the scanout has kept up", [
+        (under, 0, 1, ro, 0, "a column was shown before its word arrived"),
+    ]),
+    (3, clear, wo, "a write clears the underflow bit"),
+] }
+// end{regs}
+
+// begin{ctl}
+/// The scanout's registers on AXI-Lite, `scan`: the frame's base, the
+/// bit that picks the scanout over the framebuffer, and the underflow
+/// bit, read and cleared.
+///
+/// Its three outputs are registers, for [`LinePair`] and the video
+/// multiplexer to read. The underflow bit comes back from [`LinePair`]
+/// over a channel, through [`ScanTap`], rather than on a wire: this
+/// unit drives `clear`, which [`LinePair`] reads, so it runs before
+/// [`LinePair`], and a wire back from it would be read a step stale.
+/// A channel commits at the end of the step whichever ran first. The
+/// bit read here is therefore up to three cycles behind the pair's,
+/// in the run and the netlist alike, which a host reading it after a
+/// frame does not see.
+#[derive(Trace, Default)]
+pub struct ScanCtl {
+    /// Where the next frame starts.
+    pub fbase: Reg<U<32>>,
+    /// Show the scanout.
+    pub show: Reg<Bit>,
+    /// High for the one cycle after a write to `clear`.
+    pub clr: Reg<Bit>,
+    /// The underflow bit, as the channel last said it.
+    pub seen: Reg<Bit>,
+}
+// end{ctl}
+
+// begin{ctl_run}
+#[lower]
+impl Unit for ScanCtl {
+    async fn run(
+        &mut self,
+        bus: LitePort<32, 32, 4>,
+        (under, base, mode, clear): (Rx<U<2>>, Out<U<32>>, Out<Bit>, Out<Bit>),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            base.set(self.fbase.get());
+            mode.set(self.show.get());
+            clear.set(self.clr.get());
+            let heard = Bit::from(under.peek().is_some());
+            let said = under.head().bit(0);
+            let _ = under.recv_if(heard);
+            let arh = bus.ar.head();
+            let awh = bus.aw.head();
+            let rsel = arh.addr.slice::<2, 2>();
+            let wsel = awh.addr.slice::<2, 2>();
+            let rgo = bus.r.ready() & bus.ar.peek().is_some();
+            let _ = bus.ar.recv_if(bus.r.ready());
+            let wgo = bus.b.ready()
+                & bus.aw.peek().is_some()
+                & bus.w.peek().is_some();
+            let _ = bus.aw.recv_if(wgo);
+            let _ = bus.w.recv_if(wgo);
+            let written = bus.w.head().data;
+            let we = scan_we(wgo, wsel);
+            let word = scan_read(
+                rsel,
+                self.fbase.get(),
+                scan_ctrl_pack(self.show.get()),
+                scan_status_pack(self.seen.get()),
+                U::<32>::from(0u8),
+            );
+            with!(self <= {
+                we.bit(0) ? fbase: written,
+                we.bit(1) ? show: scan_ctrl_scan(written),
+                clr: we.bit(3),
+                heard ? seen: said,
+            });
+            if rgo.to_bool() {
+                bus.r.send(LiteR {
+                    data: word,
+                    resp: Resp::Okay,
+                });
+            }
+            if wgo.to_bool() {
+                bus.b.send(LiteB { resp: Resp::Okay });
+            }
+        }
+    }
+}
+// end{ctl_run}
+
+// begin{tap}
+/// [`LinePair`]'s underflow bit onto a channel, for [`ScanCtl`]: a
+/// wire read after [`LinePair`] has driven it, sent on whenever the
+/// channel has room.
+#[derive(Trace, Default)]
+pub struct ScanTap {}
+
+#[lower]
+impl Unit for ScanTap {
+    async fn run(&mut self, starved: In<Bit>, tap: Tx<U<2>>) {
+        loop {
+            DefaultClock::rising().await;
+            // Two bits, the bit in the low one, rather than a `Bit` or
+            // a `U<1>`: a one-bit channel inside a unit of units is a
+            // `std_logic` net in the VHDL, on the channel's `unsigned`
+            // ports (issue 953).
+            let one = U::<2>::from(1u8);
+            let zero = U::<2>::from(0u8);
+            if tap.ready().to_bool() {
+                tap.send(mux(starved.get(), one, zero));
+            }
+        }
+    }
+}
+// end{tap}
+
+// begin{vmux}
+/// What the screen shows: [`Hdmi`]'s picture with its own pixel, or
+/// the same timing with the scanout's. Wires only, read after both
+/// have driven them, and both pixels are a cycle behind the column
+/// that named them, so they line up with the syncs [`Hdmi`] delays to
+/// meet its own. A scanout pixel is `0x00RRGGBB`.
+#[derive(Trace, Default)]
+pub struct VidMux {}
+
+#[lower]
+impl Unit for VidMux {
+    async fn run(
+        &mut self,
+        (mode, pix, rgb_in, hs_in, vs_in, de_in): (
+            In<Bit>,
+            In<U<32>>,
+            In<U<24>>,
+            In<Bit>,
+            In<Bit>,
+            In<Bit>,
+        ),
+        (rgb, hsync, vsync, de): (Out<U<24>>, Out<Bit>, Out<Bit>, Out<Bit>),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            let shown = mux(mode.get(), pix.get().resize::<24>(), rgb_in.get());
+            rgb.set(shown);
+            hsync.set(hs_in.get());
+            vsync.set(vs_in.get());
+            de.set(de_in.get());
+        }
+    }
+}
+// end{vmux}
+
+// begin{video}
+/// The video peripheral with a scanout beside it, on the pixel clock:
+/// what the board's third slot holds (issue 151).
+///
+/// The slot is split by address bit 7: [`Hdmi`]'s words below `0x80`,
+/// as they always were, and [`ScanCtl`]'s from `0x80`. [`Raster`]
+/// counts the beam again for [`LinePair`], which asks for lines on
+/// `req` and takes their words on `words`, both of which leave this
+/// unit for the bus clock. [`VidMux`] puts either picture on the pins.
+///
+/// `HV` to `VBP` and `SHIFT` are [`Hdmi`]'s. `AW` is the width of a
+/// column, `TOTAL` the rows of a frame, which must be `VV + VFP + VSW +
+/// VBP`, and `STRIDE` the bytes from one line to the next in memory.
+/// `TOTAL` is stated because a parameter cannot be a sum of others
+/// here; the `Default` refuses one that disagrees.
+///
+/// The children run in an order that puts every wire's driver before
+/// its reader: [`Raster`] and [`ScanCtl`], then [`LinePair`], then
+/// [`ScanTap`] and [`Hdmi`], then [`VidMux`]. The one path the other
+/// way, the underflow bit back to [`ScanCtl`], is a channel.
+#[derive(Trace)]
+pub struct ScanVideo<
+    const HV: usize,
+    const HFP: usize,
+    const HSW: usize,
+    const HBP: usize,
+    const VV: usize,
+    const VFP: usize,
+    const VSW: usize,
+    const VBP: usize,
+    const SHIFT: usize,
+    const AW: usize,
+    const TOTAL: usize,
+    const STRIDE: usize,
+> {
+    /// The slot, split by address bit 7.
+    pub split: LiteSplit<32, 32, 4, 7>,
+    /// The scanout's registers, from `0x80`.
+    pub ctl: ScanCtl,
+    /// The beam, counted again for the pair.
+    pub raster: Raster<HV, HFP, HSW, HBP, VV, VFP, VSW, VBP, AW>,
+    /// The two lines.
+    pub pair: LinePair<HV, AW, VV, TOTAL, STRIDE, DefaultClock>,
+    /// The underflow bit back to the registers.
+    pub tap: ScanTap,
+    /// The video peripheral, below `0x80`.
+    pub hdmi: Hdmi<HV, HFP, HSW, HBP, VV, VFP, VSW, VBP, SHIFT>,
+    /// Which picture reaches the pins.
+    pub vmux: VidMux,
+}
+// end{video}
+
+impl<
+        const HV: usize,
+        const HFP: usize,
+        const HSW: usize,
+        const HBP: usize,
+        const VV: usize,
+        const VFP: usize,
+        const VSW: usize,
+        const VBP: usize,
+        const SHIFT: usize,
+        const AW: usize,
+        const TOTAL: usize,
+        const STRIDE: usize,
+    > Default
+    for ScanVideo<
+        HV,
+        HFP,
+        HSW,
+        HBP,
+        VV,
+        VFP,
+        VSW,
+        VBP,
+        SHIFT,
+        AW,
+        TOTAL,
+        STRIDE,
+    >
+{
+    fn default() -> Self {
+        assert_eq!(TOTAL, VV + VFP + VSW + VBP, "TOTAL is the frame's rows");
+        assert!(HV <= 1 << AW, "a visible line's columns fit in AW bits");
+        ScanVideo {
+            split: LiteSplit::default(),
+            ctl: ScanCtl::default(),
+            raster: Raster::default(),
+            pair: LinePair::default(),
+            tap: ScanTap::default(),
+            hdmi: Hdmi::default(),
+            vmux: VidMux::default(),
+        }
+    }
+}
+
+// begin{video_run}
+#[lower]
+impl<
+        const HV: usize,
+        const HFP: usize,
+        const HSW: usize,
+        const HBP: usize,
+        const VV: usize,
+        const VFP: usize,
+        const VSW: usize,
+        const VBP: usize,
+        const SHIFT: usize,
+        const AW: usize,
+        const TOTAL: usize,
+        const STRIDE: usize,
+    > Unit
+    for ScanVideo<
+        HV,
+        HFP,
+        HSW,
+        HBP,
+        VV,
+        VFP,
+        VSW,
+        VBP,
+        SHIFT,
+        AW,
+        TOTAL,
+        STRIDE,
+    >
+{
+    async fn run(
+        &mut self,
+        bus: LitePort<32, 32, 4>,
+        (words, req, rgb, hsync, vsync, de): (
+            Rx<U<32>>,
+            Tx<U<32>>,
+            Out<U<24>>,
+            Out<Bit>,
+            Out<Bit>,
+            Out<Bit>,
+        ),
+    ) {
+        // The two halves of the slot, a channel each way per AXI-Lite
+        // channel: the split drives each `_tx` of an address or a word
+        // and reads each `_rx` of an answer.
+        let (lo_aw, lo_aw_rx) = chan::<LiteAw<32>, DefaultClock>();
+        let (lo_ar, lo_ar_rx) = chan::<LiteAr<32>, DefaultClock>();
+        let (lo_w, lo_w_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (lo_b_tx, lo_b) = chan::<LiteB, DefaultClock>();
+        let (lo_r_tx, lo_r) = chan::<LiteR<32>, DefaultClock>();
+        let (hi_aw, hi_aw_rx) = chan::<LiteAw<32>, DefaultClock>();
+        let (hi_ar, hi_ar_rx) = chan::<LiteAr<32>, DefaultClock>();
+        let (hi_w, hi_w_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (hi_b_tx, hi_b) = chan::<LiteB, DefaultClock>();
+        let (hi_r_tx, hi_r) = chan::<LiteR<32>, DefaultClock>();
+        let (col_o, col) = signal::<U<AW>, DefaultClock>();
+        let (vis_o, vis) = signal::<Bit, DefaultClock>();
+        let (line_o, line) = signal::<Bit, DefaultClock>();
+        let (row_o, row) = signal::<U<12>, DefaultClock>();
+        let (frame_o, frame) = signal::<Bit, DefaultClock>();
+        let (base_o, base) = signal::<U<32>, DefaultClock>();
+        let (mode_o, mode) = signal::<Bit, DefaultClock>();
+        let (clear_o, clear) = signal::<Bit, DefaultClock>();
+        let (pix_o, pix) = signal::<U<32>, DefaultClock>();
+        let (starved_o, starved) = signal::<Bit, DefaultClock>();
+        let (tap_tx, tap_rx) = chan::<U<2>, DefaultClock>();
+        let (hrgb_o, hrgb) = signal::<U<24>, DefaultClock>();
+        let (hhs_o, hhs) = signal::<Bit, DefaultClock>();
+        let (hvs_o, hvs) = signal::<Bit, DefaultClock>();
+        let (hde_o, hde) = signal::<Bit, DefaultClock>();
+        join2(
+            join2(
+                join2(
+                    self.split.run(
+                        bus,
+                        (
+                            lo_aw, lo_ar, lo_w, lo_b, lo_r, hi_aw, hi_ar, hi_w,
+                            hi_b, hi_r,
+                        ),
+                    ),
+                    self.raster.run((), (col_o, vis_o, line_o, row_o, frame_o)),
+                ),
+                join2(
+                    self.ctl.run(
+                        LitePort {
+                            aw: hi_aw_rx,
+                            ar: hi_ar_rx,
+                            w: hi_w_rx,
+                            b: hi_b_tx,
+                            r: hi_r_tx,
+                        },
+                        (tap_rx, base_o, mode_o, clear_o),
+                    ),
+                    self.pair.run(
+                        (words, col, vis, line, row, frame, base, clear),
+                        (pix_o, req, starved_o),
+                    ),
+                ),
+            ),
+            join2(
+                join2(
+                    self.tap.run(starved, tap_tx),
+                    self.hdmi.run(
+                        LitePort {
+                            aw: lo_aw_rx,
+                            ar: lo_ar_rx,
+                            w: lo_w_rx,
+                            b: lo_b_tx,
+                            r: lo_r_tx,
+                        },
+                        VideoOut {
+                            rgb: hrgb_o,
+                            hsync: hhs_o,
+                            vsync: hvs_o,
+                            de: hde_o,
+                        },
+                    ),
+                ),
+                self.vmux.run(
+                    (mode, pix, hrgb, hhs, hvs, hde),
+                    (rgb, hsync, vsync, de),
+                ),
+            ),
+        )
+        .await;
+    }
+}
+// end{video_run}
