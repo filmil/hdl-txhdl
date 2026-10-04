@@ -8,7 +8,8 @@ Author: automated coding assistant, with human supervision.
 Issue 1023 asks to measure the path every DDR3 user shares, then raise its throughput.
 Step 1, the measurement, is `//ddr3:bw` in simulation and `ddr3bw_ram_bin` on the board (`docs/board-checks.md`, "The path into DDR3").
 This note designs steps 2 and 3 from what step 1 found.
-The board run gives one number this note leaves as a symbol: `L`, the cycles AMD's controller takes to answer a read.
+The board run gives the one number the design leaves as a symbol: `L`, the cycles AMD's controller takes to answer a read.
+On the board it is about 23 (section 6).
 
 ## 1. What limits the path today
 
@@ -27,7 +28,7 @@ So, today, at 100 MHz, reasoning from the wrapper for the writes and leaving the
 | Writes | about 6 | about 66 |
 | Reads | `L + 4` | `400 / (L + 4)` |
 
-At `L` = 20 a read path gives 17 MB/s; at `L` = 30, 12 MB/s.
+On the board `L` is about 23, so the read path gives about 27 cycles a word, 14.8 MB/s.
 The scanout reads 74 MB/s at 640 by 480 and 60 Hz, so it cannot be fed from DDR3 through this path at any plausible `L`, before anyone else asks for a byte.
 
 The memory is not the limit.
@@ -86,7 +87,12 @@ A is cheap and gives most of the read gain, so it is the fallback if C or B stal
 
 If step 1 rules C out, steps 2 and 3 become B's unit and its tests, and step 4 is unchanged.
 
-## 6. What the board number changes
+## 6. What the board measured
 
-Only the figures in the table of section 1 and the urgency.
+hil ran `ddr3bw_ram_bin` on the flagship on October 4, 2026, which has the same core, data memory and path into DDR3 as the boot bitstream, with the other hosts idle.
+Sixteen loads took 841, 837, 834 and 826 cycles against the DDR3 and 397 against the data memory, about 27 cycles a word more; less the bridge's four, the controller adds `L` = 23 or so.
+The stores took 250 against both memories, as the simulation predicted: the core cannot fill the path.
+A second figure agrees: issue 1038's measurement has the Ethernet fetch engine reading frames from DDR3 at 12.7 MB/s, through the same path.
+
+So reads today are about 15 MB/s, a fifth of what the scanout alone needs.
 The design does not depend on `L`: any `L` above a few cycles leaves reads far below the scanout's need without item 1, and every option above provides it.
