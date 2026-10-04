@@ -10,6 +10,7 @@ tools pinned in //:multitool.lock.json; and draws the text as TikZ
 NAME_timing.tex.
 """
 
+load("//tools:quiet.bzl", "quiet_cmd")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_nvc//nvc:rules.bzl", "vhdl_test")
@@ -116,17 +117,17 @@ def waveform(
         name = name + "_db",
         srcs = [name + ".fst"],
         outs = [name + ".db"],
-        cmd = "$(location @multitool//tools/vcdcvt) -logtostderr" +
-              " -in $(location " + name + ".fst) -format sqlite -out $@",
+        cmd = quiet_cmd("$(location @multitool//tools/vcdcvt) -logtostderr" +
+              " -in $(location " + name + ".fst) -format sqlite -out $@"),
         tools = ["@multitool//tools/vcdcvt"],
     )
     native.genrule(
         name = name + "_dt",
         srcs = [name + ".db"],
         outs = [name + ".dt"],
-        cmd = "$(location @multitool//tools/sqlite2drawtiming) -logtostderr" +
+        cmd = quiet_cmd("$(location @multitool//tools/sqlite2drawtiming) -logtostderr" +
               " -in $(location " + name + ".db) -ndots 1 " +
-              " ".join(["-signal '" + s + "'" for s in signals]) + " > $@",
+              " ".join(["-signal '" + s + "'" for s in signals]) + " > $@"),
         tools = ["@multitool//tools/sqlite2drawtiming"],
     )
     order = ",".join([s.split("=>")[-1] for s in signals])
