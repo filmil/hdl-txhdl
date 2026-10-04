@@ -509,6 +509,28 @@ mod tests {
 
     type Host = LiteHost<32, 32, 4>;
 
+    /// Each `let` the netlist's comments name is paired with the wire it
+    /// became, its own name or that name with `_w` added where a field
+    /// has it (issue 949). The register map's helper is inlined before
+    /// the `let`s and adds wires of its own, and the comments were paired
+    /// by place: `let written` was named the wire `regs_we_wgo_1`.
+    #[test]
+    fn each_let_names_the_wire_it_became() {
+        let net = Mdio::lowered("mdio");
+        assert!(!net.wire_names.is_empty(), "the unit has `let`s");
+        for (l, w) in &net.wire_names {
+            let own = w == l || w.trim_end_matches("_w") == l;
+            assert!(own, "`let {l}` is paired with the wire {w}");
+        }
+        assert!(
+            net.wire_names
+                .iter()
+                .any(|(l, w)| l == "written" && w == "written_w"),
+            "{:?}",
+            net.wire_names
+        );
+    }
+
     /// Half of an MDC cycle in these runs: three cycles, so a frame is
     /// 64 bits of six cycles.
     const DIV: u32 = 2;
