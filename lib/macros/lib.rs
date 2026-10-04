@@ -93,7 +93,9 @@ fn parse_item(input: TokenStream) -> Item {
             let mut names = Vec::new();
             let mut full = Vec::new();
             for p in params.into_iter().filter(|p| !p.is_empty()) {
-                let text: String = p
+                // An `impl`'s parameters carry no defaults, so a
+                // default is the struct's alone (issue 1044).
+                let text: String = without_default(&p)
                     .iter()
                     .map(|t| t.to_string())
                     .collect::<Vec<_>>()
@@ -127,6 +129,28 @@ fn parse_item(input: TokenStream) -> Item {
         args,
         body,
     }
+}
+
+/// One generic parameter without its default: everything before an `=`
+/// that is not inside the parameter's own angle brackets, such as the
+/// `=` of `T: Iterator<Item = u8>`. A `->` is an arrow, not a bracket.
+fn without_default(p: &[TokenTree]) -> &[TokenTree] {
+    let mut depth = 0i32;
+    let mut arrow = false;
+    for (k, t) in p.iter().enumerate() {
+        if let TokenTree::Punct(q) = t {
+            match q.as_char() {
+                '<' => depth += 1,
+                '>' if !arrow => depth -= 1,
+                '=' if depth == 0 => return &p[..k],
+                _ => {}
+            }
+            arrow = q.as_char() == '-' && q.spacing() == Spacing::Joint;
+        } else {
+            arrow = false;
+        }
+    }
+    p
 }
 
 /// The field names of a braced struct body, in order.
