@@ -3,16 +3,27 @@
 //! for every count of sources, with `Plic1` to `Plic8` naming the
 //! counts.
 //!
-//! It is the RISC-V PLIC with one target, an AXI-Lite peripheral at
-//! the standard offsets from its base:
+//! It is the RISC-V PLIC with two targets, the hart's machine mode and
+//! its supervisor mode (issue 1013), an AXI-Lite peripheral at the
+//! standard offsets from its base:
 //!
 //! | offset      | word                                             |
 //! |-------------|--------------------------------------------------|
 //! | `0x4 * i`   | source `i`'s priority, 0 to 7; 0 never interrupts |
 //! | `0x1000`    | the pending bits, bit `i` for source `i`; read only |
-//! | `0x2000`    | the enable bits, the same way                    |
-//! | `0x20_0000` | the threshold: a priority must be above it       |
-//! | `0x20_0004` | claim on a read, complete on a write             |
+//! | `0x2000`    | the machine target's enable bits, the same way   |
+//! | `0x2080`    | the supervisor target's enable bits              |
+//! | `0x20_0000` | the machine target's threshold                   |
+//! | `0x20_0004` | its claim on a read, complete on a write         |
+//! | `0x20_1000` | the supervisor target's threshold                |
+//! | `0x20_1004` | its claim and complete                           |
+//!
+//! The two targets share the sources, their gateways and the pending
+//! bits; each has its own enables, threshold and line. A claim by
+//! either takes the source's request, and a complete by either ends its
+//! service, so a source enabled for both is served by whichever claims
+//! first. The supervisor line is `mip.SEIP`'s, which reaches the core
+//! with its supervisor mode (issue 1012).
 //!
 //! Every other offset reads as zero and ignores a write. Sources are
 //! numbered from 1; source 0 does not exist, and its bits read zero.
@@ -30,7 +41,7 @@
 //! enabled source of the highest priority above the threshold, the
 //! lowest number winning a tie, and clears its pending bit; it answers
 //! 0 when there is none. Writing that number back is the complete.
-//! The interrupt line is a register, high a cycle after a claim would
+//! Each target's line is a register, high a cycle after its claim would
 //! answer with a source. A write ignores its strobe.
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
@@ -39,8 +50,9 @@ use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 
 // begin{state}
-/// A platform-level interrupt controller of `N` sources and one
-/// target, `N` from 1 to 31, the most one word of pending bits holds.
+/// A platform-level interrupt controller of `N` sources and two
+/// targets, machine and supervisor, `N` from 1 to 31, the most one word
+/// of pending bits holds.
 /// `EDGE` has a bit per source, set for a source that asks on a rising
 /// edge rather than while its line is high. One unit for every count:
 /// the sources are an array of ports and the priorities an array of
@@ -51,12 +63,17 @@ use txhdl::{lower, with, Trace};
 pub struct Plic<const N: usize, const EDGE: usize> {
     /// The priority of each source, `prio[s - 1]` for source `s`.
     pub prio: Regs<U<3>, N>,
-    /// The target's threshold: only a priority above it interrupts.
+    /// The machine target's threshold: only a priority above it
+    /// interrupts.
     pub threshold: Reg<U<3>>,
+    /// The supervisor target's threshold.
+    pub sthreshold: Reg<U<3>>,
     /// A request not yet claimed, a bit per source.
     pub pending: Reg<U<32>>,
-    /// The sources the target takes, a bit per source.
+    /// The sources the machine target takes, a bit per source.
     pub enable: Reg<U<32>>,
+    /// The sources the supervisor target takes.
+    pub senable: Reg<U<32>>,
     /// A request forwarded and not yet completed, a bit per source.
     pub active: Reg<U<32>>,
     /// A rising edge that came while its source was active, kept to
@@ -64,8 +81,10 @@ pub struct Plic<const N: usize, const EDGE: usize> {
     pub held: Reg<U<32>>,
     /// The lines as they were a cycle ago, to see an edge.
     pub prev: Reg<U<32>>,
-    /// The interrupt line, as a register.
+    /// The machine target's line, as a register.
     pub asserted: Reg<Bit>,
+    /// The supervisor target's line.
+    pub sasserted: Reg<Bit>,
 }
 // end{state}
 
@@ -95,7 +114,7 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
     async fn run(
         &mut self,
         bus: LitePort<32, 32, 4>,
-        (rst, srcs, irq): (In<Bit>, [In<Bit>; N], Out<Bit>),
+        (rst, srcs, irq, sirq): (In<Bit>, [In<Bit>; N], Out<Bit>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -117,6 +136,8 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
             let pending = self.pending.get();
             let enable = self.enable.get();
             let threshold = self.threshold.get();
+            let senable = self.senable.get();
+            let sthreshold = self.sthreshold.get();
             // A level source asks while its line is high; an edge
             // source asks on a rising edge, or on one it holds. A
             // request goes forward when its source is not active.
@@ -129,8 +150,12 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
             // enabled and above the threshold, and one is taken over the
             // best so far only at a higher priority, so the lowest
             // number wins a tie.
+            // Each target chooses alike, from its own enables and above
+            // its own threshold.
             let mut best = U::<5>::from(0u8);
             let mut best_pr = U::<3>::from(0u8);
+            let mut sbest = U::<5>::from(0u8);
+            let mut sbest_pr = U::<3>::from(0u8);
             for i in 0..N {
                 let p = self.prio[i].get();
                 let cand = pending.bit(i + 1)
@@ -139,6 +164,12 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
                 let take = cand & Bit::from(p > best_pr);
                 best = mux(take, U::<5>::from(i + 1), best);
                 best_pr = mux(take, p, best_pr);
+                let scand = pending.bit(i + 1)
+                    & senable.bit(i + 1)
+                    & Bit::from(p > sthreshold);
+                let stake = scand & Bit::from(p > sbest_pr);
+                sbest = mux(stake, U::<5>::from(i + 1), sbest);
+                sbest_pr = mux(stake, p, sbest_pr);
             }
             // end{choice}
             // begin{bus}
@@ -161,13 +192,21 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
             let wprio = wdata.slice::<0, 3>();
             let wenable = wdata & sources;
             let wnum = wdata.slice::<0, 5>();
-            // A claim takes the best source's request; a complete of a
-            // number in range ends that source's service.
+            // A claim takes its target's best source's request; a
+            // complete of a number in range ends that source's service,
+            // from either target. One read and one write a cycle, so
+            // the two targets never claim, or complete, together.
             let claim = take_read & Bit::from(roff == 0x20_0004);
+            let sclaim = take_read & Bit::from(roff == 0x20_1004);
+            let in_range = Bit::from(wdata <= N as u32);
             let complete = wgo
-                & Bit::from(woff == 0x20_0004)
-                & Bit::from(wdata <= N as u32);
-            let claimed = mux(claim, one << (best.raw() as usize), none);
+                & Bit::from((woff == 0x20_0004) | (woff == 0x20_1004))
+                & in_range;
+            let claimed = mux(
+                claim,
+                one << (best.raw() as usize),
+                mux(sclaim, one << (sbest.raw() as usize), none),
+            );
             let completed = mux(complete, one << (wnum.raw() as usize), none);
             // What a read answers, by the offset.
             let mut word = mux(
@@ -179,7 +218,23 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
                     mux(
                         roff == 0x20_0000,
                         threshold.zext::<32>(),
-                        mux(roff == 0x20_0004, best.zext::<32>(), none),
+                        mux(
+                            roff == 0x20_0004,
+                            best.zext::<32>(),
+                            mux(
+                                roff == 0x2080,
+                                senable,
+                                mux(
+                                    roff == 0x20_1000,
+                                    sthreshold.zext::<32>(),
+                                    mux(
+                                        roff == 0x20_1004,
+                                        sbest.zext::<32>(),
+                                        none,
+                                    ),
+                                ),
+                            ),
+                        ),
                     ),
                 ),
             );
@@ -215,13 +270,20 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
             with!(self <= {
                 wgo & (woff == 0x2000) ? enable: wenable,
                 wgo & (woff == 0x20_0000) ? threshold: wprio,
+                wgo & (woff == 0x2080) ? senable: wenable,
+                wgo & (woff == 0x20_1000) ? sthreshold: wprio,
                 rst ? {
                     enable: none,
                     threshold: U::<3>::from(0u8),
+                    senable: none,
+                    sthreshold: U::<3>::from(0u8),
                 },
             });
             self.asserted.set(mux(rst, Bit::Zero, Bit::from(best != 0)));
+            self.sasserted
+                .set(mux(rst, Bit::Zero, Bit::from(sbest != 0)));
             irq.set(self.asserted);
+            sirq.set(self.sasserted);
             // end{drives}
         }
     }
@@ -235,6 +297,14 @@ pub const ENABLE: u32 = 0x2000;
 pub const THRESHOLD: u32 = 0x20_0000;
 /// The offset of the target's claim and complete word.
 pub const CLAIM: u32 = 0x20_0004;
+/// The offset of the supervisor target's enable bits: the second
+/// context's, `0x2000 + 0x80`.
+pub const S_ENABLE: u32 = 0x2080;
+/// The offset of the supervisor target's threshold, `0x20_0000 +
+/// 0x1000`.
+pub const S_THRESHOLD: u32 = 0x20_1000;
+/// The offset of its claim and complete word.
+pub const S_CLAIM: u32 = 0x20_1004;
 
 /// The offset of source `i`'s priority.
 pub const fn priority(i: u32) -> u32 {
@@ -306,17 +376,19 @@ mod tests {
         let (s2_o, s2) = signal::<Bit, DefaultClock>();
         let (s3_o, s3) = signal::<Bit, DefaultClock>();
         let (irq_o, irq) = signal::<Bit, DefaultClock>();
+        let (sirq_o, sirq) = signal::<Bit, DefaultClock>();
         let done = Rc::new(RefCell::new(false));
         let d = done.clone();
         let rig = Rig {
             host: link.host,
             lines: [s1_o, s2_o, s3_o],
             irq,
+            sirq,
         };
         let body = client(rig);
         let mut plic = Plic3::<EDGE>::default();
         let mut sim = Running::new(join2(
-            plic.run(bus, (rst, [s1, s2, s3], irq_o)),
+            plic.run(bus, (rst, [s1, s2, s3], irq_o, sirq_o)),
             async move {
                 body.await;
                 *d.borrow_mut() = true;
@@ -335,11 +407,12 @@ mod tests {
     }
 
     /// What a test holds: the link's host end, a line per source, and
-    /// the interrupt line.
+    /// the two targets' interrupt lines.
     struct Rig {
         host: Host,
         lines: [Out<Bit>; 3],
         irq: txhdl::comp::In<Bit>,
+        sirq: txhdl::comp::In<Bit>,
     }
 
     impl Rig {
@@ -348,6 +421,9 @@ mod tests {
         }
         fn irq(&self) -> bool {
             self.irq.get().to_bool()
+        }
+        fn sirq(&self) -> bool {
+            self.sirq.get().to_bool()
         }
     }
 
@@ -378,6 +454,68 @@ mod tests {
             assert_eq!(read(h, PENDING).await, 0);
             // A priority reads back as written.
             assert_eq!(read(h, priority(2)).await, 3);
+        });
+    }
+
+    /// The supervisor target has its own enables, threshold, claim and
+    /// line, at the second context's offsets, and the machine target
+    /// sees none of it (issue 1013).
+    #[test]
+    fn the_supervisor_target_is_a_target_of_its_own() {
+        run3::<0, _>(|rig| async move {
+            let h = &rig.host;
+            write(h, priority(1), 2).await;
+            write(h, priority(3), 5).await;
+            write(h, S_ENABLE, 0xa).await;
+            write(h, S_THRESHOLD, 1).await;
+            assert_eq!(read(h, S_ENABLE).await, 0xa, "sources 1 and 3");
+            assert_eq!(read(h, S_THRESHOLD).await, 1);
+            assert_eq!(read(h, ENABLE).await, 0, "the machine's are its own");
+            rig.line(1, true);
+            rig.line(3, true);
+            cycles(3).await;
+            assert!(rig.sirq(), "the supervisor line asks");
+            assert!(!rig.irq(), "the machine target enables nothing");
+            assert_eq!(read(h, CLAIM).await, 0, "and claims nothing");
+            assert_eq!(read(h, S_CLAIM).await, 3, "the higher priority");
+            assert_eq!(read(h, S_CLAIM).await, 1);
+            assert_eq!(read(h, S_CLAIM).await, 0, "both in service");
+            cycles(2).await;
+            assert!(!rig.sirq(), "nothing left to claim");
+            // A complete through the supervisor's word ends the service,
+            // and a source still asking asks again.
+            write(h, S_CLAIM, 3).await;
+            cycles(3).await;
+            assert!(rig.sirq(), "source 3 asks again");
+            assert_eq!(read(h, S_CLAIM).await, 3);
+            // Its threshold masks as the machine's does.
+            write(h, S_CLAIM, 1).await;
+            write(h, S_THRESHOLD, 5).await;
+            cycles(3).await;
+            assert!(!rig.sirq(), "priority 2 is not above 5");
+        });
+    }
+
+    /// A source both targets take is served once, by whichever claims
+    /// it first; the other's claim then finds nothing.
+    #[test]
+    fn a_source_enabled_for_both_targets_is_claimed_once() {
+        run3::<0, _>(|rig| async move {
+            let h = &rig.host;
+            write(h, priority(2), 1).await;
+            write(h, ENABLE, 0x4).await;
+            write(h, S_ENABLE, 0x4).await;
+            rig.line(2, true);
+            cycles(3).await;
+            assert!(rig.irq() && rig.sirq(), "both targets see it");
+            assert_eq!(read(h, S_CLAIM).await, 2, "the supervisor takes it");
+            assert_eq!(read(h, CLAIM).await, 0, "and the machine finds none");
+            cycles(2).await;
+            assert!(!rig.irq() && !rig.sirq(), "neither line asks now");
+            rig.line(2, false);
+            write(h, CLAIM, 2).await;
+            cycles(3).await;
+            assert!(!rig.irq(), "a complete by either target ends it");
         });
     }
 

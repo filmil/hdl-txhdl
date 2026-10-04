@@ -7,13 +7,18 @@
 //! priority first, the lowest number winning a tie, nothing at or
 //! below the threshold, a level source still high asking again after
 //! its complete, and an edge that came during a service asking once
-//! on the complete. The controller is lowered, and the build simulates
-//! its netlist against this run under nvc and under Verilator.
+//! on the complete. Last, the supervisor target, the second context:
+//! source 3 enabled for it alone asks on its line, not the machine's,
+//! and is claimed and completed at its own offsets (issue 1013). The
+//! controller is lowered, and the build simulates its netlist against
+//! this run under nvc and under Verilator.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, Clock, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
-use txhdl_parts::plic::{priority, Plic3, CLAIM, ENABLE, PENDING, THRESHOLD};
+use txhdl_parts::plic::{
+    priority, Plic3, CLAIM, ENABLE, PENDING, S_CLAIM, S_ENABLE, THRESHOLD,
+};
 
 /// Three sources; the second asks on an edge.
 type Plic = Plic3<0b100>;
@@ -69,6 +74,7 @@ fn main() {
     let (src2_o, src2) = signal::<Bit, DefaultClock>();
     let (src3_o, src3) = signal::<Bit, DefaultClock>();
     let (irq_o, irq) = signal::<Bit, DefaultClock>();
+    let (sirq_o, sirq) = signal::<Bit, DefaultClock>();
     let mut plic = Plic::default();
 
     if let Some(mut wave) = Wave::from_env() {
@@ -83,6 +89,7 @@ fn main() {
         wave.add("bus_b", &bus.b);
         wave.add("bus_r", &bus.r);
         wave.add("irq", &irq);
+        wave.add("sirq", &sirq);
         wave.add("plic", &plic);
         wave.start();
     }
@@ -96,6 +103,7 @@ fn main() {
         }
     };
     let irq_line = irq.clone();
+    let sirq_line = sirq.clone();
     let client = async move {
         let h = &host;
         let say = |what: &str, v: u32| {
@@ -163,16 +171,32 @@ fn main() {
         say("pending at the end", read(h, PENDING).await);
         assert!(!irq_line.get().to_bool());
         println!("every request claimed once, in order");
+        // The supervisor target: source 3 for it alone.
+        write(h, ENABLE, 0).await;
+        write(h, S_ENABLE, 0x8).await;
+        line(3, true);
+        cycles(3).await;
+        let lines = (irq_line.get().to_bool(), sirq_line.get().to_bool());
+        println!("t={:>3} machine and supervisor lines {lines:?}", now());
+        assert_eq!(lines, (false, true), "only the supervisor's asks");
+        let got = read(h, S_CLAIM).await;
+        say("supervisor claim", got);
+        assert_eq!(got, 3);
+        line(3, false);
+        write(h, S_CLAIM, 3).await;
+        cycles(3).await;
+        assert!(!sirq_line.get().to_bool(), "completed, and low");
+        println!("the supervisor target served source 3 on its own");
     };
 
     // The client first: it drives the source lines, which are wires,
     // and the controller reads them in the same step.
-    let hardware = plic.run(bus, (rst, [src1, src2, src3], irq_o));
+    let hardware = plic.run(bus, (rst, [src1, src2, src3], irq_o, sirq_o));
     let mut sim = Running::new(join2(client, hardware));
     rst_o.set(Bit::One);
     sim.cycle();
     rst_o.set(Bit::Zero);
-    for _ in 0..220 {
+    for _ in 0..300 {
         sim.cycle();
     }
     stop();
