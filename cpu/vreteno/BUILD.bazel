@@ -449,10 +449,10 @@ vivado_place_and_route2(
 )
 
 # The board on the Alinx AX7A200B: the lowered design with the DDR3 test
-# in its memories, UberDDR3's controller, and the hand-written top with
-# the PLL, the resets and the pins. The constraints name the board's
-# pins, the memory's among them, so this bitstream is real. Manual, as
-# every Vivado target is.
+# in its memories, AMD's MIG controller, which makes the design's clock,
+# and the hand-written top with the resets and the pins. The
+# constraints name the board's pins, the memory's among them, so this
+# bitstream is real. Manual, as every Vivado target is.
 #
 #   bazel build //cpu/vreteno:vreteno_board_pnr
 filegroup(
@@ -563,8 +563,9 @@ vivado_program_device(
 # Program the board where it is, on the machine .bazelrc names in
 # TXHDL_BOARD_SERVER: the daemon brings hw_server up there and a tunnel
 # here, //cpu/vreteno/board/remote says how; then Vivado connects to
-# the tunnel. Bring the tunnel up first, since the daemon is started
-# beside the connection, not before it:
+# the tunnel. The run starts the daemon itself and waits up to two
+# minutes for the server to answer (issue 392), so bringing the tunnel
+# up first is optional:
 #
 #   bazel run //cpu/vreteno/board/remote:hw_server
 #   bazel run //cpu/vreteno:vreteno_board_prog -- \
@@ -637,7 +638,7 @@ vivado_ila(
     data_depth = 4096,
     part = "xc7a200tfbg484-2",
     # rst, halt, calib, uart_tx, rx, brk, pwm_pins, vaw, var, vw,
-    # net_tx, said, mem_rst_n: each channel is its valid and its data.
+    # net_tx, said, ui_rst: each channel is its valid and its data.
     probe_widths = [1, 1, 1, 1, 1, 1, 4, 36, 36, 37, 10, 1, 1],
     tags = ["manual"],
 )

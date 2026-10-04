@@ -5,8 +5,8 @@
 // names.
 //
 // The controller's user interface moves a burst of eight words at a
-// time, 256 bits of data and 32 mask bits, which is wider than a TxHDL
-// value can be and wider than a bus of words needs. This module narrows
+// time, 256 bits of data and 32 mask bits, which is wider than a bus of
+// words needs. This module narrows
 // it and does nothing else. A word address is the controller's address
 // above three bits of lane: the request goes to the controller at that
 // address with its low three bits clear, the word repeated across the
