@@ -217,7 +217,8 @@ impl<
                     // The count, which says the list is ready; a zero
                     // means poll again. A read is issued once the link
                     // has room for it.
-                    until(DefaultClock::rising, || issue.ready().to_bool()).await;
+                    until(DefaultClock::rising, || issue.ready().to_bool())
+                        .await;
                     issue.send(Issue {
                         read: Bit::One,
                         addr: U::<A>::from(CTRL as u32),
@@ -268,7 +269,8 @@ impl<
                                     addr: U::<A>::from(DL as u32)
                                         + (self.insn.get().resize::<A>()
                                             << SHIFT)
-                                        + (self.word.get().resize::<A>() << WORD),
+                                        + (self.word.get().resize::<A>()
+                                            << WORD),
                                     len: U::<8>::from(0u8),
                                     size: U::<3>::from(2u8),
                                     burst: BurstKind::Incr,
@@ -311,8 +313,9 @@ impl<
                                 // carry theirs.
                                 let clearing = self.skind.get() == Kind::Clear;
                                 let zero16 = U::<16>::from(0u8);
-                                let last_x =
-                                    U::<16>::from(((1usize << LOGW) - 1) as u32);
+                                let last_x = U::<16>::from(
+                                    ((1usize << LOGW) - 1) as u32,
+                                );
                                 let last_y = U::<16>::from((H - 1) as u32);
                                 let wx = mux(
                                     clearing,
@@ -354,7 +357,11 @@ impl<
                                         skind: mux(
                                             word0 == 0,
                                             Kind::Clear,
-                                            mux(word0 == 1, Kind::Rect, Kind::Tri),
+                                            mux(
+                                                word0 == 1,
+                                                Kind::Rect,
+                                                Kind::Tri,
+                                            ),
                                         ),
                                         scol: rh.data.slice::<2, 24>(),
                                     });
@@ -431,7 +438,8 @@ impl<
                                     // own base need not, and an address
                                     // that wrapped would land on
                                     // whatever else the map has there.
-                                    let pixel_at = (((py << LOGW) + px) << WORD)
+                                    let pixel_at = (((py << LOGW) + px)
+                                        << WORD)
                                         .resize::<A>()
                                         + U::<A>::from(BASE as u32);
                                     if self.hit.get().to_bool() {
@@ -454,7 +462,10 @@ impl<
                                             region: U::<4>::from(0u8),
                                         });
                                         wbeat.send(W {
-                                            data: self.colour.get().resize::<32>(),
+                                            data: self
+                                                .colour
+                                                .get()
+                                                .resize::<32>(),
                                             strb: U::<4>::from(15u8),
                                             last: Bit::One,
                                         });
