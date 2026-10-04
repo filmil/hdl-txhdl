@@ -805,11 +805,19 @@ count of sources, whose sources are an array of ports and whose
 priorities are an array of registers, \code{Plic1} to \code{Plic8}
 naming the counts; it is an AXI-Lite peripheral behind a bridge of
 its own. Its words are the
-RISC-V PLIC's for one target: a priority per source from \code{0x4},
+RISC-V PLIC's for two targets, the hart's machine mode and its
+supervisor mode: a priority per source from \code{0x4},
 three bits, where 0 never interrupts; the pending bits at
-\code{0x1000}; the enable bits at \code{0x2000}; the threshold at
-\code{0x20\_0000}; and the claim word at \code{0x20\_0004}. Sources are
-numbered from 1, and a source's number is its bit.
+\code{0x1000}; the machine target's enable bits at \code{0x2000}, its
+threshold at \code{0x20\_0000} and its claim word at
+\code{0x20\_0004}; and the supervisor target's at \code{0x2080},
+\code{0x20\_1000} and \code{0x20\_1004}, the second context's
+offsets. Sources are numbered from 1, and a source's number is its
+bit. The two targets share the sources and the pending bits, so a
+source enabled for both is served by whichever claims it first; the
+supervisor's line is \code{mip.SEIP}'s, which the core takes once it
+has a supervisor mode (issues~\#1012 and \#1013), and until then the
+board leaves it unread.
 
 A source's line goes through a gateway first,
 Listing~\ref{lst:v-plic-gateway}. A level source asks while its line is
@@ -824,9 +832,11 @@ sources that keeps the best so far. A source is a candidate when it is pending,
 enabled and above the threshold, and the best has the highest
 priority, the lowest number winning a tie. A read of the claim word
 answers with the best source's number, or 0, and clears its pending
-bit; a write of the number back is the complete. The interrupt line is
-a register, high a cycle after there is a best source, so the core
-reads it as it reads the timer's.
+bit; a write of the number back is the complete. Each target chooses
+alike, from its own enables and above its own threshold, and each
+target's interrupt line is a register, high a cycle after it has a
+best source, so the core reads the machine one as it reads the
+timer's.
 
 \code{ex\_plic}, Listing~\ref{lst:v-plic-ex}, drives a \code{Plic3}
 whose second source asks on an edge, the way a handler would: it sets
@@ -834,7 +844,10 @@ the priorities to 1, 3 and 3 and raises all three lines. The claims
 come out 2, 3 and 1, and a fourth claim answers 0. On the completes the
 two level sources still high ask again and the edge source does not. A
 threshold of 1 hides a priority of 1, and a second pulse on the edge
-source during its service asks once on its complete.
+source during its service asks once on its complete. Last, source 3
+is enabled for the supervisor target alone: it asks on that target's
+line and not the machine's, and is claimed and completed at the
+supervisor's offsets.
 Figure~\ref{fig:v-plic} is the start of that run. The build simulates
 the controller's netlist against the run under nvc and Verilator, and
 \code{//lib/parts:parts\_test} checks the same four rules on their
