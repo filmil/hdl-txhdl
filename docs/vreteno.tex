@@ -375,8 +375,19 @@ packs it: OpenSBI's \code{fw\_jump} at \code{0x4008\_0000}, the device
 tree at \code{0x4030\_0000}, the kernel at \code{0x4040\_0000}, where
 OpenSBI jumps, and the initramfs past the kernel's \code{\_end}, taken
 from its \code{System.map}, so that the kernel's BSS is clear of it.
-Four instructions at the front stand in for a bootloader: \code{a0}
-is zero, \code{a1} the tree, and a jump to OpenSBI. The tree is
+A few instructions at the front stand in for a bootloader: \code{a0}
+is zero, \code{a1} the tree, and a jump to OpenSBI. Before the jump
+they leave the serial port and the interrupt controller as SiFive's
+parts leave them at reset, as Linux's drivers expect
+(issue~\#1136). Our port resets with its receive interrupt enabled,
+so the serial loader's bytes raise its line, and the controller keeps
+the request. Linux's driver enables the source before it has
+registered the port, so the request reached the handler with no port
+and the kernel panicked. The shim writes the port's \code{ie} to zero,
+claims and completes every request the controller holds, and leaves
+every source disabled at priority zero. \code{boot\_loaded\_test}
+boots Linux on the machine with the port as the loader leaves it. The
+tree is
 written last, with the initramfs's range and the command line in its
 \code{/chosen}, and the packer refuses an image longer than fastboot
 takes, its download size less the header page the host puts in front

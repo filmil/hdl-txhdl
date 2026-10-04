@@ -10,6 +10,17 @@
 //! OpenSBI. OpenSBI then starts the kernel at `FW_JUMP_ADDR` and hands
 //! it the same tree.
 //!
+//! Before the jump the shim leaves the serial port and the interrupt
+//! controller as SiFive's parts leave them at reset, which is what
+//! Linux's drivers expect (issue 1136). Our port resets with its
+//! receive interrupt enabled, so the serial loader's bytes raise its
+//! line, and the controller's gateway keeps the request after the line
+//! falls. Linux's driver enables the source before it has registered
+//! the port, takes the request at once, and dies on the missing port.
+//! So the shim writes the port's `ie` to zero, then claims and
+//! completes, in the machine's context, every request the controller
+//! holds, and leaves every source disabled at priority zero.
+//!
 //! The layout, from the image's base:
 //!
 //! | address       | what                                             |
@@ -62,17 +73,94 @@ const _: () = assert!((LIMIT - BASE).is_multiple_of(HEADER));
 /// The initramfs's alignment.
 const ALIGN: u32 = 0x1_0000;
 
-/// The shim's instructions: `a0 = 0`, `a1 = DTB`, `t0 = OPENSBI`, and
-/// a jump to `t0`. Both addresses have low twelve bits of zero, so a
-/// `lui` alone loads each.
-pub fn shim() -> [u32; 4] {
+/// The serial port's page, and its `ie` word in it.
+pub const UART: u32 = 0x3000;
+pub const UART_IE: u32 = 0x10;
+/// The interrupt controller, its sources, numbered from one, and the
+/// machine context's enable word, and its threshold and claim words.
+pub const PLIC: u32 = 0x0c00_0000;
+pub const PLIC_SOURCES: u32 = 3;
+pub const PLIC_ENABLE: u32 = PLIC + 0x2000;
+pub const PLIC_THRESHOLD: u32 = PLIC + 0x20_0000;
+pub const PLIC_CLAIM: u32 = 4;
+
+/// The shim's instructions. First the port's `ie` is written zero,
+/// and the controller drained: each source at priority one and
+/// enabled, the threshold zero, then a claim read and written back
+/// until one reads zero, then each source disabled and at priority
+/// zero again. Then `a0 = 0`, `a1 = DTB`, `t0 = OPENSBI`, and a jump to
+/// `t0`. Every address it names has low twelve bits of zero, or is
+/// within twelve bits of one that has, so a `lui` loads each.
+pub fn shim() -> Vec<u32> {
     let lui = |rd: u32, imm: u32| (imm & 0xffff_f000) | (rd << 7) | 0x37;
-    [
-        0x0000_0513,      // addi a0, x0, 0
-        lui(11, DTB),     // lui a1, DTB
-        lui(5, OPENSBI),  // lui t0, OPENSBI
-        (5 << 15) | 0x67, // jalr x0, 0(t0)
-    ]
+    let addi = |rd: u32, rs: u32, imm: i32| {
+        ((imm as u32 & 0xfff) << 20) | (rs << 15) | (rd << 7) | 0x13
+    };
+    let lw = |rd: u32, rs: u32, off: u32| {
+        (off << 20) | (rs << 15) | (2 << 12) | (rd << 7) | 0x03
+    };
+    let sw = |src: u32, rs: u32, off: u32| {
+        ((off >> 5) << 25)
+            | (src << 20)
+            | (rs << 15)
+            | (2 << 12)
+            | ((off & 0x1f) << 7)
+            | 0x23
+    };
+    // A branch or a jump of `off` bytes, forwards or back.
+    let beq = |rs1: u32, rs2: u32, off: i32| {
+        let o = off as u32;
+        (((o >> 12) & 1) << 31)
+            | (((o >> 5) & 0x3f) << 25)
+            | (rs2 << 20)
+            | (rs1 << 15)
+            | (((o >> 1) & 0xf) << 8)
+            | (((o >> 11) & 1) << 7)
+            | 0x63
+    };
+    let jal0 = |off: i32| {
+        let o = off as u32;
+        (((o >> 20) & 1) << 31)
+            | (((o >> 1) & 0x3ff) << 21)
+            | (((o >> 11) & 1) << 20)
+            | (((o >> 12) & 0xff) << 12)
+            | 0x6f
+    };
+    let (t0, t1, t2) = (5, 6, 7);
+    let enable_all: u32 = ((1 << (PLIC_SOURCES + 1)) - 1) & !1;
+    let mut w = vec![
+        lui(t0, UART),
+        sw(0, t0, UART_IE), // ie = 0: the port's line falls
+        lui(t0, PLIC),
+        addi(t1, 0, 1),
+    ];
+    for s in 1..=PLIC_SOURCES {
+        w.push(sw(t1, t0, 4 * s)); // priority 1
+    }
+    w.extend([
+        lui(t2, PLIC_ENABLE),
+        addi(t1, 0, enable_all as i32),
+        sw(t1, t2, 0), // every source enabled
+        lui(t2, PLIC_THRESHOLD),
+        sw(0, t2, 0), // threshold 0
+        // Claim until nothing is left, completing each.
+        lw(t1, t2, PLIC_CLAIM),
+        beq(t1, 0, 12),
+        sw(t1, t2, PLIC_CLAIM),
+        jal0(-12),
+        lui(t2, PLIC_ENABLE),
+        sw(0, t2, 0), // every source disabled
+    ]);
+    for s in 1..=PLIC_SOURCES {
+        w.push(sw(0, t0, 4 * s)); // priority 0, as reset leaves it
+    }
+    w.extend([
+        addi(10, 0, 0),    // a0 = 0
+        lui(11, DTB),      // a1 = DTB
+        lui(t0, OPENSBI),  // t0 = OPENSBI
+        (t0 << 15) | 0x67, // jalr x0, 0(t0)
+    ]);
+    w
 }
 
 /// A symbol's address from a `System.map`: `ADDR TYPE NAME` a line.
@@ -292,5 +380,56 @@ mod tests {
         assert_eq!(b.load(KERNEL), Some(0x4b4b_4b4b));
         assert_eq!(b.load(l.initrd.0), Some(0x1a1a_1a1a));
         assert_eq!(b.load(l.initrd.0 - 4), Some(0), "nothing before it");
+    }
+
+    /// The addresses the shim names are the machine's, and the board's.
+    #[test]
+    fn the_shims_addresses_are_the_machines() {
+        use vreteno32::machine::{plic, PLIC_SOURCES as N};
+        assert_eq!(UART, vreteno32::isa::UART_BASE);
+        assert_eq!(PLIC_SOURCES as usize, N);
+        let d = vreteno32::machine::Map::board();
+        assert_eq!(d.uart.0, UART);
+        assert_eq!(d.plic.0, PLIC);
+        assert_eq!(PLIC_ENABLE - PLIC, plic::ENABLE[0]);
+        assert_eq!(PLIC_THRESHOLD - PLIC, plic::THRESHOLD[0]);
+        assert_eq!(PLIC_THRESHOLD - PLIC + PLIC_CLAIM, plic::CLAIM[0]);
+    }
+
+    /// The serial port as the loader leaves it on the board (issue
+    /// 1136): its receive interrupt enabled and a byte waiting, so the
+    /// controller holds the request before the image runs. The shim
+    /// leaves the port's `ie` zero, nothing pending or in service,
+    /// every source disabled at priority zero, and the byte still there
+    /// to be read; and it still lands at OpenSBI as before.
+    #[test]
+    fn the_shim_leaves_no_request_from_the_loader() {
+        let mhalt =
+            ((0x7c0u32 << 20) | (1 << 15) | (5 << 12) | 0x73).to_le_bytes();
+        let opensbi: Vec<u8> = mhalt.to_vec();
+        let l = layout(&map(0x2_0000), 0x200).unwrap();
+        let img =
+            pack(&opensbi, &[0xd0; 4], &[0x4b; 4], &[0x1a; 4], &l).unwrap();
+        let mut m = Machine::new();
+        m.load(BASE, &img);
+        m.boot(BASE, DTB);
+        m.board.0.borrow_mut().uart.ie = 2;
+        m.type_bytes(b"x");
+        // The first step gives the controller the port's line.
+        m.step();
+        {
+            let d = m.board.0.borrow();
+            assert_ne!(d.plic.pending, 0, "the loader's request is held");
+        }
+        m.run(200);
+        assert_eq!(m.model.pc, OPENSBI + 4, "at OpenSBI, past its halt");
+        assert_eq!((m.model.x[10], m.model.x[11]), (0, DTB));
+        let d = m.board.0.borrow();
+        assert_eq!(d.uart.ie, 0, "the port's interrupts off");
+        assert_eq!(d.plic.pending, 0, "nothing pending");
+        assert_eq!(d.plic.active, 0, "nothing in service");
+        assert_eq!(d.plic.enable, [0, 0], "every source disabled");
+        assert!(d.plic.prio.iter().all(|&p| p == 0), "priorities zero");
+        assert_eq!(d.uart.rx.len(), 1, "the byte is still to be read");
     }
 }
