@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Probe 20. The clock domain in the signal's type, against the library's
-// `Clock`, `DefaultClock` and `Crossing`. A single-clock design never
-// names a domain; a two-clock design names exactly the second.
-use txhdl::comp::{signal, Clock, Crossing, DefaultClock, In, Out, Reg};
+// `Clock` and `DefaultClock`. A single-clock design never names a
+// domain; a two-clock design names exactly the second. What crosses
+// between them is a channel, through `ChanCdc` in the parts (issue
+// 1017); probe 20b is what happens to a wire that tries.
+use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Reg};
 use txhdl::types::U;
 
 pub struct Clk400;
@@ -26,15 +28,17 @@ impl<C: Clock> Probe<C> {
     }
 }
 
-pub fn two_clocks() -> (Counter, Crossing<U<32>, DefaultClock, Clk400>, Dsp) {
+/// The two, each on its own clock and each with a signal of its own.
+pub fn two_clocks() -> (Counter, In<U<32>>, Out<U<32>, Clk400>, Dsp) {
     let (tx, rx) = signal::<U<32>, DefaultClock>();
-    let (xing, rx400) = Crossing::<U<32>, DefaultClock, Clk400>::new(rx);
+    let (tx400, rx400) = signal::<U<32>, Clk400>();
     (
         Counter {
             out: tx,
             n: Reg::new(U::new(0)),
         },
-        xing,
+        rx,
+        tx400,
         Dsp { inp: rx400 },
     )
 }

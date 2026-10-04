@@ -509,35 +509,6 @@ pub fn chan<T: Transaction, C: Clock>() -> (Tx<T, C>, Rx<T, C>) {
     Chan::<T, C>::new().split()
 }
 
-/// The only way a wire goes from one clock domain to another; a
-/// channel goes by `ChanCdc` in `txhdl_parts`. A real one is a
-/// synchroniser or an asynchronous FIFO. Its type is the guarantee: a
-/// signal in domain `B` can be produced from one in `A` by nothing else.
-pub struct Crossing<T: Copy + Default, A: Clock, B: Clock> {
-    from: In<T, A>,
-    to: Out<T, B>,
-}
-
-impl<T: Copy + Default, A: Clock, B: Clock> Crossing<T, A, B> {
-    /// A crossing from a signal in domain `A`, and the signal in
-    /// domain `B` it produces. The second is the only way to get one,
-    /// which is what makes the type a guarantee rather than a
-    /// convention.
-    pub fn new(from: In<T, A>) -> (Self, In<T, B>) {
-        let (to, rx) = signal::<T, B>();
-        (Crossing { from, to }, rx)
-    }
-    /// The synchroniser: samples the source at every edge of the
-    /// destination clock. A process of the unit that owns the crossing;
-    /// `run` joins it with the others.
-    pub async fn run(&self) {
-        loop {
-            rising::<B>().await;
-            self.to.set(self.from.get())
-        }
-    }
-}
-
 // ---------------------------------------------------------------------
 // State
 
@@ -1344,7 +1315,8 @@ impl_join!(A 0, B 1, C 2, D 3, E 4, G 5);
 /// apart by their waker, which [`join2`] and [`join_all`] give each
 /// child fresh. A process is in the domain of the last edge it crossed;
 /// the executor does not check that it stays there, and state of
-/// another domain read without a [`Crossing`] is a hazard the prototype
+/// another domain read other than through `ChanCdc` in `txhdl_parts`
+/// (issue 1017) is a hazard the prototype
 /// runs rather than refuses.
 mod clock {
     use std::any::TypeId;
@@ -1712,7 +1684,7 @@ pub fn elaborate<C: Config>() -> C::Top {
 /// and GTKWave open both, and `Wave::from_env` takes whichever the
 /// environment names, `TXHDL_FST` first.
 pub mod trace {
-    use super::{clock, now, Clock, Crossing, In, Mem, Out, Reg, Rx, Tx};
+    use super::{clock, now, Clock, In, Mem, Out, Reg, Rx, Tx};
     use crate::types::Value;
     use std::cell::RefCell;
     use std::collections::BTreeMap;
@@ -2026,14 +1998,6 @@ pub mod trace {
         probe(&scope.child("tx_ready"), 1, kind, cell, tx_ready);
         let p = c.clone();
         parts(&scope.child("tx_data"), kind, cell, move || p.offered.get());
-    }
-    impl<T: Value + Default + 'static, A: Clock, B: Clock> Traceable
-        for Crossing<T, A, B>
-    {
-        fn trace(&self, scope: &Scope) {
-            self.from.trace(&scope.child("from"));
-            self.to.trace(&scope.child("to"));
-        }
     }
     /// A memory is not traced; its ports are. It says where it is only
     /// to `memories`.

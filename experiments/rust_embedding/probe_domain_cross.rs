@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Probe 20b. A crossing without a `Crossing`. Expected to fail twice: a
+// Probe 20b. A wire crossing clocks with nothing between (issue 1017:
+// a value crosses as a channel, through `ChanCdc`). Expected to fail twice: a
 // named clock into another, and the default clock into a named one.
 use txhdl::comp::{signal, Clock, DefaultClock, In};
 use txhdl::types::U;

@@ -14,7 +14,6 @@ EXAMPLES = [
     "ex_interface",
     "ex_unit",
     "ex_pipeline",
-    "ex_clock",
     "ex_hierarchy",
 ]
 
@@ -28,6 +27,18 @@ EXAMPLES = [
     )
     for name in EXAMPLES
 ]
+
+# Two clocks, and the one way across them, ChanCdc (issue 1017).
+rust_library(
+    name = "ex_clock",
+    srcs = ["ex_clock.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
 
 # A design is a program:  bazel run //lib/examples:ex_config -- asic
 rust_binary(
@@ -206,7 +217,10 @@ rust_binary(
     name = "ex_fifo",
     srcs = ["ex_fifo.rs"],
     edition = "2021",
-    deps = ["//lib:txhdl"],
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
@@ -1270,6 +1284,7 @@ rust_binary(
 # to the document build and the formatter check below reads the same
 # list, so a new example joins both at once.
 SOURCES = [n + ".rs" for n in EXAMPLES] + [
+        "ex_clock.rs",
         "ex_config.rs",
         "ex_blinky.rs",
         "ex_case.rs",

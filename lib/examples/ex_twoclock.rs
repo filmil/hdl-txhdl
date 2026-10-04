@@ -8,7 +8,7 @@
 //! counter's do.
 //! Nothing crosses between them here. That is deliberate: what this
 //! example is for is the checking rather than the crossing, and a
-//! crossing would put the interesting part inside a `Crossing` rather
+//! crossing would put the interesting part inside a `ChanCdc` rather
 //! than at the ports where a testbench can see it.
 //!
 //! Until issue 131 the build could not check such a unit at all. The
