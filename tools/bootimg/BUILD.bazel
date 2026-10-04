@@ -18,3 +18,16 @@ rust_test(
     edition = "2021",
     deps = ["//cpu/vreteno:vreteno32"],
 )
+
+load(":defs.bzl", "boot_image")
+
+# The rule end to end on stand-ins, so a change to any step is built
+# before the real kernel and initramfs exist on main.
+boot_image(
+    name = "sample",
+    bootargs = "earlycon=sbi console=ttySIF0",
+    initramfs = "testdata/initramfs.cpio",
+    kernel = "testdata/Image",
+    opensbi = "testdata/opensbi.bin",
+    system_map = "testdata/System.map",
+)

@@ -1,0 +1,3 @@
+c0000000 T _start
+c0001000 T start_kernel
+c0020000 B _end
