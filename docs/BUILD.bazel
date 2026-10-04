@@ -2903,6 +2903,22 @@ waveform(
     ],
 )
 
+# The A extension's program on the same machine, so that the core's
+# netlist is co-simulated against every atomic too (issue 1010).
+waveform(
+    name = "vreteno_amo",
+    example = "//cpu/vreteno:vreteno_amo",
+    lowered = [("vreteno_amo", "cpu")],
+    until = 60,
+    signals = [
+        "//clocks/clk=>clk",
+        "//cpu/pc=>pc",
+        "//instr=>instr",
+        "//wb/done=>done",
+        "//wb/val=>val",
+    ],
+)
+
 # Three windows on the same run: a byte going out on the port's line,
 # a byte coming in, and the bus carrying a status poll and the write.
 waveform(

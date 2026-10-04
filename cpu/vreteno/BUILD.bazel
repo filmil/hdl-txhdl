@@ -285,6 +285,21 @@ rust_binary(
     ],
 )
 
+# The same machine running the A extension's program instead of the
+# demonstration, so that the netlist is co-simulated against atomics
+# too (issue 1010).
+rust_binary(
+    name = "vreteno_amo",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    rustc_env = {"VRETENO_PROGRAM": "atomics"},
+    deps = [
+        ":vreteno32",
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+)
+
 # Rust compiled for the core, run on it: the hello world of issue 79.
 #   bazel run //cpu/vreteno:hello
 rust_binary(

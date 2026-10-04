@@ -54,7 +54,15 @@ impl AddrMap<1> for SerialMap {
 }
 
 fn main() {
-    let program = demo();
+    // The demonstration, or, built as `vreteno_amo`, the A extension's
+    // program, whose run the netlist is co-simulated against too
+    // (issue 1010).
+    let atomics = option_env!("VRETENO_PROGRAM") == Some("atomics");
+    let program = if atomics {
+        vreteno32::program::atomics()
+    } else {
+        demo()
+    };
     let mut cpu = Vreteno::with(&program);
     let (wb_pc, regs) = (cpu.wb_pc, cpu.regs.clone());
     // Read to know when the external interrupt has been taken.
@@ -371,10 +379,15 @@ fn main() {
     }
     // The run takes both interrupts the program counts, the timer's and
     // the external one, as the lockstep test does (issue 958).
-    assert_eq!(regs.read(8usize).raw(), 2, "x8 counts both interrupts");
+    if !atomics {
+        assert_eq!(regs.read(8usize).raw(), 2, "x8 counts both interrupts");
+    }
     // The netlist, with the program in its instruction memory, which
     // the lowering cannot see: Mem::with gave it at run time.
-    let mut lowered = Vreteno::<IW>::lowered("vreteno");
+    // Its own entity's name for the atomics' run, since the
+    // testbench of each is named for the entity it drives.
+    let mut lowered =
+        Vreteno::<IW>::lowered(if atomics { "vreteno_amo" } else { "vreteno" });
     let words: Vec<u128> = program.iter().map(|&w| w as u128).collect();
     lowered.init("imem", &words);
     // The router and the three peripherals, each told under which

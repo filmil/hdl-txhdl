@@ -14,11 +14,10 @@ use txhdl_parts::bus::router::Router;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
 use vreteno32::isa::{
-    add, addi, beq, csrrs, csrrsi, csrrw, csrrwi, decode, disasm,
-    ebreak, halt, jal, jalr, lui, lw, mret, or, sw, Kind, CAUSE_FETCH_ACCESS,
-    CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER, CAUSE_STORE_ACCESS, CSR_DCSR,
-    CSR_MBUSQUIET, CSR_MCAUSE, CSR_MEPC, CSR_MIE, CSR_MSTATUS, CSR_MTVAL,
-    CSR_MTVEC, MISA,
+    add, addi, beq, csrrs, csrrsi, csrrw, csrrwi, decode, disasm, ebreak, halt,
+    jal, jalr, lui, lw, mret, or, sw, Kind, CAUSE_FETCH_ACCESS, CAUSE_MEXT,
+    CAUSE_MSOFT, CAUSE_MTIMER, CAUSE_STORE_ACCESS, CSR_DCSR, CSR_MBUSQUIET,
+    CSR_MCAUSE, CSR_MEPC, CSR_MIE, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MISA,
 };
 use vreteno32::model::{Halt, Model};
 use vreteno32::program::{demo, idle, in_memory, machine_info, random, soft};
@@ -486,6 +485,17 @@ fn lockstep(
                         | Kind::Sb
                         | Kind::Sh
                         | Kind::Sw
+                        | Kind::LrW
+                        | Kind::ScW
+                        | Kind::AmoswapW
+                        | Kind::AmoaddW
+                        | Kind::AmoxorW
+                        | Kind::AmoandW
+                        | Kind::AmoorW
+                        | Kind::AmominW
+                        | Kind::AmomaxW
+                        | Kind::AmominuW
+                        | Kind::AmomaxuW
                 ));
         let want = [
             model.csr.mstatus,
@@ -597,7 +607,7 @@ fn a_program_reads_what_the_machine_says_it_is() {
     let m = lockstep(&machine_info(), &[], "machine info", None, None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.mem[0], 0, "mhartid, this machine's one hart");
-    assert_eq!(m.mem[1], MISA, "misa: RV32IMC");
+    assert_eq!(m.mem[1], MISA, "misa: RV32IMAC");
     assert_eq!(
         m.mem[2], 1,
         "one illegal instruction, the write to a read-only register"
@@ -605,10 +615,10 @@ fn a_program_reads_what_the_machine_says_it_is() {
     // The letters, spelled out, so the number above is not the only
     // thing that says what the core is.
     assert_eq!(m.mem[1] >> 30, 1, "MXL: a 32-bit machine");
-    for (bit, letter) in [(8, 'I'), (12, 'M'), (2, 'C')] {
+    for (bit, letter) in [(8, 'I'), (12, 'M'), (2, 'C'), (0, 'A')] {
         assert!(m.mem[1] & (1 << bit) != 0, "misa should have {letter}");
     }
-    for (bit, letter) in [(0, 'A'), (5, 'F'), (3, 'D')] {
+    for (bit, letter) in [(5, 'F'), (3, 'D')] {
         assert!(m.mem[1] & (1 << bit) == 0, "misa should not have {letter}");
     }
 }
@@ -726,7 +736,9 @@ fn random_programs() {
         assert_eq!(m.halted, Some(Halt::Break), "seed {seed} faulted");
     }
     let counts = format!("{short} compressed, {wide} whole, {straddle} across");
-    assert!(short > 3000, "{counts}");
+    // The atomics, which have no compressed spelling, took some of the
+    // slots in issue 1010: 2876 compressed then, against 3000 before.
+    assert!(short > 2500, "{counts}");
     assert!(wide > 3000, "{counts}");
     assert!(straddle > 2000, "{counts}");
 }
@@ -1139,4 +1151,111 @@ fn a_fetch_from_nowhere_is_an_instruction_access_fault() {
     assert_eq!(m.x[23], CAUSE_FETCH_ACCESS, "the cause names the fetch");
     assert_eq!(m.x[24], 0x0300_0000, "the address that was fetched");
     assert_eq!(m.x[7], 1, "and the program went on");
+}
+
+/// The A extension's word forms against the data memory (issue 1010):
+/// each AMO returns the old word and leaves its result, `rd` of zero
+/// writes nothing and still stores, an AMO whose operand is its own
+/// address register still works, `lr.w` and `sc.w` on one word store
+/// and write 0, and an `sc.w` with the reservation used up stores
+/// nothing and writes 1. The core and the model agree every cycle.
+#[test]
+fn atomics_read_modify_and_write_one_word() {
+    use vreteno32::isa::*;
+    let mut p = vec![lui(2, 0x1)]; // x2 = 0x1000, the data memory
+                                   // The word at 0x1000 + 4k holds 10 + k; x5 = -3, x6 = 7.
+    for k in 0..12 {
+        p.push(addi(7, 0, 10 + k));
+        p.push(sw(7, 2, 4 * k));
+    }
+    p.push(addi(5, 0, -3));
+    p.push(addi(6, 0, 7));
+    let ops: [fn(u32, u32, u32) -> u32; 9] = [
+        amoswap_w, amoadd_w, amoxor_w, amoand_w, amoor_w, amomin_w, amomax_w,
+        amominu_w, amomaxu_w,
+    ];
+    for (k, op) in ops.iter().enumerate() {
+        let r = 10 + k as u32;
+        p.push(addi(29, 2, 4 * k as i32));
+        p.push(op(r, 29, if k % 2 == 0 { 5 } else { 6 }));
+    }
+    // rd zero, and an operand that is the address register itself.
+    p.push(addi(29, 2, 36));
+    p.push(amoadd_w(0, 29, 6));
+    p.push(addi(28, 2, 40));
+    p.push(amoswap_w(19, 28, 28));
+    // A reservation used once, then gone.
+    p.push(addi(29, 2, 44));
+    p.push(lr_w(20, 29));
+    p.push(sc_w(21, 29, 6));
+    p.push(sc_w(22, 29, 5));
+    p.push(halt());
+    let m = lockstep(&p, &[], "atomics", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    let old: Vec<u32> = (10..19).map(|r| m.x[r]).collect();
+    assert_eq!(old, (10..19).collect::<Vec<u32>>(), "each AMO's old word");
+    let m5 = (-3i32) as u32;
+    let want = [
+        m5,      // swap -3
+        11 + 7,  // add 7
+        12 ^ m5, // xor -3
+        13 & 7,  // and 7
+        14 | m5, // or -3
+        7,       // min(15, 7)
+        16,      // max(16, -3)
+        7,       // minu(17, 7)
+        m5,      // maxu(18, -3)
+    ];
+    assert_eq!(&m.mem[0..9], &want, "each AMO's result");
+    assert_eq!(m.mem[9], 19 + 7, "rd zero still stores");
+    assert_eq!(m.x[19], 20, "the old word, through its own address");
+    assert_eq!(m.mem[10], 0x1000 + 40, "the address register stored");
+    assert_eq!(m.x[20], 21, "lr.w reads the word");
+    assert_eq!(m.x[21], 0, "sc.w with the reservation stores");
+    assert_eq!(m.x[22], 1, "sc.w without it does not");
+    assert_eq!(m.mem[11], 7, "only the first sc.w stored");
+}
+
+/// A misaligned A instruction traps (issue 1010): `lr.w` as a load,
+/// cause 4, and `sc.w` and an AMO as a store, cause 6, each with the
+/// address as the trap value; none of them writes its register or the
+/// memory, and `sc.w`'s reservation is used up all the same.
+#[test]
+fn a_misaligned_atomic_traps() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let handler = a.label();
+    a.wide(lui(2, 1)); // x2 = 0x1000, the data memory
+    a.abs(handler, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.wide(addi(8, 0, 0)); // x8 counts the traps
+    a.wide(addi(9, 0, 0)); // x9 sums the causes
+    a.wide(addi(6, 0, 7));
+    a.wide(sw(6, 2, 0)); // the word at 0x1000 is 7
+    a.wide(addi(28, 2, 2));
+    a.wide(lr_w(10, 28)); // cause 4
+    a.wide(addi(28, 2, 1));
+    a.wide(sc_w(11, 28, 6)); // cause 6
+    a.wide(addi(28, 2, 3));
+    a.wide(amoadd_w(12, 28, 6)); // cause 6
+    a.wide(lw(13, 2, 0)); // still 7
+    a.wide(halt());
+    a.align();
+    a.place(handler);
+    a.wide(csrrs(20, CSR_MCAUSE, 0));
+    a.wide(csrrs(21, CSR_MTVAL, 0));
+    a.wide(add(9, 9, 20));
+    a.wide(addi(8, 8, 1));
+    a.wide(csrrs(22, CSR_MEPC, 0));
+    a.wide(addi(22, 22, 4));
+    a.wide(csrrw(0, CSR_MEPC, 22));
+    a.wide(mret());
+    let m = lockstep(&a.words(), &[], "misaligned atomics", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[8], 3, "three traps");
+    assert_eq!(m.x[9], 4 + 6 + 6, "a load's cause, then a store's twice");
+    assert_eq!(m.x[21], 0x1003, "the last trap value is the address");
+    assert_eq!([m.x[10], m.x[11], m.x[12]], [0, 0, 0], "nothing written");
+    assert_eq!(m.x[13], 7, "and the word unchanged");
 }

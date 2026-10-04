@@ -327,6 +327,31 @@ pub fn soft() -> Vec<u32> {
     a.words()
 }
 
+/// The A extension's word forms, each once, against the data memory,
+/// for the netlist's co-simulation (issue 1010): a word set to 5, each
+/// AMO on it in turn with 3 or -2 as the register, then `lr.w` and two
+/// `sc.w`, the first of which stores. It leaves the old words in x10 to
+/// x18, `lr.w`'s in x19, 0 and 1 in x20 and x21, and the last word at
+/// the first data word, and halts.
+pub fn atomics() -> Vec<u32> {
+    let mut p = vec![
+        lui(2, DATA_BASE >> 12),
+        addi(5, 0, 5),
+        sw(5, 2, 0),
+        addi(6, 0, 3),
+        addi(7, 0, -2),
+    ];
+    let ops: [fn(u32, u32, u32) -> u32; 9] = [
+        amoadd_w, amoswap_w, amoxor_w, amoor_w, amoand_w, amomin_w, amomax_w,
+        amominu_w, amomaxu_w,
+    ];
+    for (k, op) in ops.iter().enumerate() {
+        p.push(op(10 + k as u32, 2, if k % 2 == 0 { 6 } else { 7 }));
+    }
+    p.extend([lr_w(19, 2), sc_w(20, 2, 6), sc_w(21, 2, 7), halt()]);
+    p
+}
+
 /// What the machine says it is, read by a program: `mhartid`, `misa`
 /// and a write to a read-only register, which traps.
 ///
@@ -594,9 +619,39 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
             },
             22 => sh(rs2, 2, off + (amt as i32 & 2)),
             23 => sb(rs2, 2, off + (amt as i32 & 3)),
-            24 => match r >> 60 & 1 {
+            24 => match r >> 60 & 3 {
                 0 => lw(rd, 2, off),
-                _ => lw(rd, 30, (amt as i32 & 3) * 4),
+                1 => lw(rd, 30, (amt as i32 & 3) * 4),
+                // The A extension (issue 1010), on an aligned word of
+                // the data memory, its address in x28 since an A
+                // instruction takes no offset and the handler below
+                // uses x29: an AMO; or `lr.w` and
+                // `sc.w` on one word, which stores; or `sc.w` alone,
+                // which mostly does not.
+                // The guard below comes after the choice, and these emit
+                // first, so a reserved destination is passed over here.
+                2 | 3 if rd == 2 || rd == 30 || rd == 31 => continue,
+                2 => {
+                    a.emit(addi(28, 2, off));
+                    match amt % 9 {
+                        0 => amoswap_w(rd, 28, rs2),
+                        1 => amoadd_w(rd, 28, rs2),
+                        2 => amoxor_w(rd, 28, rs2),
+                        3 => amoand_w(rd, 28, rs2),
+                        4 => amoor_w(rd, 28, rs2),
+                        5 => amomin_w(rd, 28, rs2),
+                        6 => amomax_w(rd, 28, rs2),
+                        7 => amominu_w(rd, 28, rs2),
+                        _ => amomaxu_w(rd, 28, rs2),
+                    }
+                }
+                _ => {
+                    a.emit(addi(28, 2, off));
+                    if amt & 1 == 0 {
+                        a.emit(lr_w(rd, 28));
+                    }
+                    sc_w(rd, 28, rs2)
+                }
             },
             25 => lh(rd, 2, off + (amt as i32 & 2)),
             26 => lb(rd, 2, off + (amt as i32 & 3)),
