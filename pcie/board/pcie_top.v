@@ -3,8 +3,9 @@
 // BAR1, is a PCIe-to-AXI bridge, and `pcie_bar`, which `#[lower]` writes
 // for `pcie::bar::PcieBar`, behind that window. The core's DMA engine
 // and its register block, BAR0, are there and unused (issue 451).
-// Written by hand, since it holds what a lowered unit cannot say: the transceivers' reference clock buffer, the endpoint core, and
-// its clock and reset handed to the lowered design.
+// Written by hand, since it holds what a lowered unit cannot say: the
+// transceivers' reference clock buffer, the endpoint core, and its clock
+// and reset handed to the lowered design.
 //
 // The lowered design runs on the endpoint's user clock, so nothing
 // crosses a clock. Its reset is high while the endpoint's is low. The

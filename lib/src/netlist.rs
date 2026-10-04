@@ -4240,9 +4240,10 @@ mod tests {
     /// Verilator refuses and nvc does not; the lowering refuses it
     /// first, and says which to rename (issue 367).
     #[test]
-    #[should_panic(
-        expected = "field `slow` of `two` holds a child, and the instance would take the name of the clock `slow`"
-    )]
+    // `expected` is matched as a substring, so it is the message's start,
+    // which names the field and its child, and the rest is left out to
+    // stay within the listing's frame in //docs:runtime (issue 1061).
+    #[should_panic(expected = "field `slow` of `two` holds a child")]
     fn a_child_named_after_its_clock_is_refused() {
         parent_with_child_named("slow").checked();
     }
