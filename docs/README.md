@@ -24,6 +24,7 @@ Those reasons live here.
 | `on-chip-debug.md` | What the board shows today, the options for debugging the SoC on it, what each costs, and the order to do them in |
 | `vivado-setup.md` | Vivado for this repository from nothing: why the ordinary build needs none, the hermetic installation and the host one, and what goes in your own `user.bazelrc` |
 | `noc-bursts.md` | Why a multi-beat write did not cross the network on chip, which of the stated reasons survived measurement, what each candidate design cost in bits, which one was chosen, and how it was built (section 7) |
+| `opengl-gap.md` | What Razboj does against what OpenGL ES 1.1 and a subset of 2.0 ask for, the gaps sized, a staged path from Razboj on the board to a fixed-function GL, and the issues to file for it (issue 926) |
 | `board-checks.md` | Every board check the issues owe, as commands in session order: the bitstreams to build first, what each run should print, what to keep, and which issue it closes |
 
 The documents typeset here are the ones `cover.tex` names:
