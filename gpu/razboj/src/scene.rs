@@ -5,11 +5,12 @@
 use crate::op::Op;
 
 // begin{scene}
-/// The demonstration: a house under a hill, with a sun of two
-/// triangles.
+/// The demonstration: a house under a hill lit from above, with a sun
+/// of two triangles.
 pub fn house() -> Vec<Op> {
     let sky = 0x10_1830;
-    let hill = 0x37_474f;
+    let hill = 0x26_3238;
+    let summit = 0x90_a4ae;
     let grass = 0x2e_7d32;
     let wall = 0x8d_6e63;
     let roof = 0xc6_2828;
@@ -17,11 +18,13 @@ pub fn house() -> Vec<Op> {
     let sun = 0xfd_d835;
     vec![
         Op::Clear { colour: sky },
-        Op::Tri {
-            colour: hill,
-            a: (38, 48),
-            b: (63, 48),
-            c: (52, 24),
+        // The hill is shaded, dark at its foot and light at its top;
+        // a shaded triangle's vertices are in sixteenths of a pixel.
+        Op::Gouraud {
+            a: (38 * 16, 48 * 16),
+            b: (63 * 16, 48 * 16),
+            c: (52 * 16, 24 * 16),
+            colours: [hill, hill, summit],
         },
         Op::Rect {
             colour: grass,
