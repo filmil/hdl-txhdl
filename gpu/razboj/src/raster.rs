@@ -11,8 +11,9 @@
 //! another. The rasteriser therefore keeps, per edge, the value at
 //! the current pixel, the value at the start of the current row, and
 //! the two steps; the only multiplications are the six of the setup,
-//! done in the cycle the entry is taken. This is what makes the
-//! per-pixel work three adds and three sign tests.
+//! done side by side in the second of the three cycles the setup takes
+//! after the entry is fetched. This is what makes the per-pixel work
+//! three adds and three sign tests.
 //!
 //! It finds its own work. The display list is in memory, in the
 //! format `crate::dl` states, and the rasteriser reads it over the
@@ -120,9 +121,7 @@ pub struct Raster<
     /// The last list is drawn and its count written back to zero; a
     /// count read that is not zero clears it.
     pub finished: Reg<Bit>,
-    /// The instruction being assembled, word by word. The third
-    /// vertex is not here: its word is the last one, so it is read
-    /// straight off the bus in the cycle the walk is set up.
+    /// The instruction being assembled, word by word.
     pub skind: Reg<Kind>,
     pub scol: Reg<U<24>>,
     pub sx0: Reg<U<10>>,
@@ -133,6 +132,17 @@ pub struct Raster<
     pub say: Reg<U<12>>,
     pub sbx: Reg<U<12>>,
     pub sby: Reg<U<12>>,
+    pub scx: Reg<U<12>>,
+    pub scy: Reg<U<12>>,
+    /// The setup, over three cycles after the fetch: per edge, the
+    /// distances from its first vertex to the box's first pixel, and
+    /// then, in the same registers, those times the edge's steps.
+    pub u0x: Reg<U<32>>,
+    pub u0y: Reg<U<32>>,
+    pub u1x: Reg<U<32>>,
+    pub u1y: Reg<U<32>>,
+    pub u2x: Reg<U<32>>,
+    pub u2y: Reg<U<32>>,
 }
 // end{state}
 
@@ -296,20 +306,6 @@ impl<
                                 let rh = rdata.head();
                                 self.word.set(self.word.get() + 1);
                                 let word0 = rh.data.slice::<0, 2>();
-                                // The setup the walk asks for: per
-                                // edge, the two steps and the value at
-                                // the box's first pixel. A vertex is
-                                // two's complement and is widened by
-                                // its sign; the box's first pixel is a
-                                // screen coordinate and is widened by
-                                // zero. The third vertex is the word
-                                // that is landing.
-                                let ax = self.sax.get().sext::<32>();
-                                let ay = self.say.get().sext::<32>();
-                                let bx = self.sbx.get().sext::<32>();
-                                let by = self.sby.get().sext::<32>();
-                                let cx = rh.data.slice::<0, 12>().sext::<32>();
-                                let cy = rh.data.slice::<16, 12>().sext::<32>();
                                 // The box. A clear says only its
                                 // colour, so its box is the screen,
                                 // which the rasteriser knows from its
@@ -341,21 +337,6 @@ impl<
                                     last_y,
                                     self.sy1.get().resize::<16>(),
                                 );
-                                let sx = wx.resize::<32>();
-                                let sy = wy.resize::<32>();
-                                let zero = U::<32>::from(0u8);
-                                let t0x = zero - (by - ay);
-                                let t0y = bx - ax;
-                                let s0 = (bx - ax).mul::<32>(sy - ay)
-                                    - (by - ay).mul::<32>(sx - ax);
-                                let t1x = zero - (cy - by);
-                                let t1y = cx - bx;
-                                let s1 = (cx - bx).mul::<32>(sy - by)
-                                    - (cy - by).mul::<32>(sx - bx);
-                                let t2x = zero - (ay - cy);
-                                let t2y = ax - cx;
-                                let s2 = (ax - cx).mul::<32>(sy - cy)
-                                    - (ay - cy).mul::<32>(sx - cx);
                                 if self.word.get() == 0 {
                                     with!(self <= {
                                         skind: mux(
@@ -403,13 +384,61 @@ impl<
                                         xa: wx,
                                         xb: bx1,
                                         yb: by1,
-                                        e0: s0, r0: s0, d0x: t0x, d0y: t0y,
-                                        e1: s1, r1: s1, d1x: t1x, d1y: t1y,
-                                        e2: s2, r2: s2, d2x: t2x, d2y: t2y,
+                                        scx: rh.data.slice::<0, 12>(),
+                                        scy: rh.data.slice::<16, 12>(),
                                     });
                                 }
                             }
-                            // An edge, for the box to read back.
+                            // The setup the walk asks for: per edge, the
+                            // two steps and the value at the box's first
+                            // pixel. It takes three cycles, so that no
+                            // cycle holds more than one multiplication
+                            // (issue 1034). A vertex is two's complement
+                            // and is widened by its sign; the box's first
+                            // pixel is a screen coordinate and is widened
+                            // by zero.
+                            DefaultClock::rising().await;
+                            let ax = self.sax.get().sext::<32>();
+                            let ay = self.say.get().sext::<32>();
+                            let bx = self.sbx.get().sext::<32>();
+                            let by = self.sby.get().sext::<32>();
+                            let cx = self.scx.get().sext::<32>();
+                            let cy = self.scy.get().sext::<32>();
+                            let sx = self.x.get().resize::<32>();
+                            let sy = self.y.get().resize::<32>();
+                            let zero = U::<32>::from(0u8);
+                            // The steps, and each edge's distances to
+                            // the box's first pixel.
+                            with!(self <= {
+                                d0x: zero - (by - ay), d0y: bx - ax,
+                                d1x: zero - (cy - by), d1y: cx - bx,
+                                d2x: zero - (ay - cy), d2y: ax - cx,
+                                u0x: sx - ax, u0y: sy - ay,
+                                u1x: sx - bx, u1y: sy - by,
+                                u2x: sx - cx, u2y: sy - cy,
+                            });
+                            // The products, each in the register it read.
+                            DefaultClock::rising().await;
+                            with!(self <= {
+                                u0x: self.d0x.get().mul::<32>(self.u0x.get()),
+                                u0y: self.d0y.get().mul::<32>(self.u0y.get()),
+                                u1x: self.d1x.get().mul::<32>(self.u1x.get()),
+                                u1y: self.d1y.get().mul::<32>(self.u1y.get()),
+                                u2x: self.d2x.get().mul::<32>(self.u2x.get()),
+                                u2y: self.d2y.get().mul::<32>(self.u2y.get()),
+                            });
+                            // Each edge at the box's first pixel: the
+                            // sum of its two products.
+                            DefaultClock::rising().await;
+                            let s0 = self.u0x.get() + self.u0y.get();
+                            let s1 = self.u1x.get() + self.u1y.get();
+                            let s2 = self.u2x.get() + self.u2y.get();
+                            with!(self <= {
+                                e0: s0, r0: s0,
+                                e1: s1, r1: s1,
+                                e2: s2, r2: s2,
+                            });
+                            // An edge, for the walk to read back.
                             DefaultClock::rising().await;
                             // The walk: every row of the box, and
                             // every column of the row, a pixel a
