@@ -71,12 +71,13 @@ pub fn house() -> Vec<Op> {
 
 /// The traced run: a screen small enough that a waveform of the whole
 /// render can be drawn and a testbench of it can be replayed, with
-/// one of each kind of entry, the shaded triangle last.
+/// one of each kind of entry, the shaded triangle last; the rectangle
+/// and the shaded triangle carry an alpha, so it is in the trace.
 pub fn small() -> Vec<Op> {
     vec![
         Op::Clear { colour: 0x00_0020 },
         Op::Rect {
-            colour: 0x40_8060,
+            colour: 0x8040_8060,
             x: 2,
             y: 2,
             w: 5,
@@ -92,7 +93,7 @@ pub fn small() -> Vec<Op> {
             a: (24, 120),
             b: (120, 248),
             c: (8, 248),
-            colours: [0xff_0000, 0x00_ff00, 0x00_00ff],
+            colours: [0xc0ff_0000, 0x00_ff00, 0x00_00ff],
         },
     ]
 }

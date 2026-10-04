@@ -135,7 +135,7 @@ mod tests {
         let ops = vec![
             Op::Clear { colour: 0x12_3456 },
             Op::Rect {
-                colour: 0x65_4321,
+                colour: 0x8065_4321,
                 x: 3,
                 y: 5,
                 w: 7,
@@ -156,6 +156,7 @@ mod tests {
             let got = decode(&words[i * WORDS..]);
             assert_eq!(got.kind, want.kind, "kind of {i}");
             assert_eq!(got.colour.raw(), want.colour.raw(), "colour of {i}");
+            assert_eq!(got.alpha.raw(), want.alpha.raw(), "alpha of {i}");
             assert_eq!(got.x0.raw(), want.x0.raw(), "x0 of {i}");
             assert_eq!(got.y1.raw(), want.y1.raw(), "y1 of {i}");
             assert_eq!(got.ax.raw(), want.ax.raw(), "ax of {i}");
@@ -165,5 +166,8 @@ mod tests {
         // in sixteenths of a pixel, and comes back as it went in.
         let t = decode(&words[2 * WORDS..]);
         assert_eq!(crate::op::signed(t.ax), -4 * 16, "a negative vertex");
+        // The alpha is word 15's low byte, apart from the colour.
+        let r = decode(&words[WORDS..]);
+        assert_eq!((r.alpha.raw(), r.colour.raw()), (0x80, 0x65_4321));
     }
 }
