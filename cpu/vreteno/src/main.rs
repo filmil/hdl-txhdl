@@ -90,6 +90,7 @@ fn main() {
     // takes forty.
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
     let (sirq_out, sirq) = signal::<Bit, DefaultClock>();
+    let (time_out, time) = signal::<U<64>, DefaultClock>();
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
     let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
@@ -142,6 +143,8 @@ fn main() {
         // for them with a port they cannot drive; `fst2tb` says so and
         // refuses. See issue 270.
         w.add("sirq", &sirq);
+        // The timer's count, a port of both lowered units (issue 1012).
+        w.add("time", &time);
         w.add("tx", &tx);
         w.add("rx", &rx);
         w.add("uirq", &uirq);
@@ -226,7 +229,7 @@ fn main() {
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run(tbus, (rst_t, tirq_out, sirq_out)),
+                timer.run(tbus, (rst_t, tirq_out, sirq_out, time_out)),
                 uart.run(ubus, (rst_u, rx, tx_out, uirq_out)),
             ),
             join2(
@@ -234,7 +237,7 @@ fn main() {
                 cpu.run(
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
-                        resumereq, dbg_regno, dbg_wdata, dbg_we,
+                        resumereq, dbg_regno, dbg_wdata, dbg_we, time,
                     ),
                     (
                         halt_out,

@@ -36,6 +36,14 @@ use txhdl::types::{Bit, U};
 use txhdl::{case, lower, select, when, with, Trace, Value};
 use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, Resp, R, W};
 
+/// `mstatus`'s fields that user and supervisor mode bring (issue 1012):
+/// what of it is writable, and what `sstatus` shows of it.
+const MSTATUS_W: u32 = 0x000c_19aa;
+const SSTATUS_W: u32 = 0x000c_0122;
+/// The exceptions machine mode may delegate, and the interrupts.
+const MEDELEG_W: u32 = 0xb3ff;
+const MIDELEG_W: u32 = 0x222;
+
 /// Words of instruction memory. The data memory is a device on the
 /// bus, `crate::dmem`, at `DATA_BASE` as the model has it.
 pub const IMEM_WORDS: usize = 1024;
@@ -486,6 +494,17 @@ pub struct Csrs {
     pub dcsr: U<32>,
     pub dpc: U<32>,
     pub busquiet: Bit,
+    /// User and supervisor mode (issue 1012).
+    pub medeleg: U<32>,
+    pub mideleg: U<32>,
+    pub counteren: U<6>,
+    pub stvec: U<32>,
+    pub sscratch: U<32>,
+    pub sepc: U<32>,
+    pub scause: U<32>,
+    pub stval: U<32>,
+    pub satp: U<32>,
+    pub time: U<64>,
 }
 
 /// A CSR read, by its number. The registers come as one struct, which
@@ -510,6 +529,29 @@ fn csr_read(f12: U<12>, c: Csrs) -> U<32> {
         0xb80 => c.mcycle.slice::<32, 32>(),
         0xb02 => c.minstret.slice::<0, 32>(),
         0xb82 => c.minstret.slice::<32, 32>(),
+        // User and supervisor mode (issue 1012): the delegations and
+        // counter enables, the supervisor's views of `mstatus`, `mie`
+        // and `mip`, its own registers, and the unprivileged counters,
+        // which read the machine's and, for `time`, the timer's count.
+        0x302 => c.medeleg,
+        0x303 => c.mideleg,
+        0x306 => c.counteren.slice::<0, 3>().zext::<32>(),
+        0x106 => c.counteren.slice::<3, 3>().zext::<32>(),
+        0x100 => c.mstatus & U::<32>::from(SSTATUS_W),
+        0x104 => c.mie & c.mideleg,
+        0x144 => c.mip & c.mideleg,
+        0x105 => c.stvec,
+        0x140 => c.sscratch,
+        0x141 => c.sepc,
+        0x142 => c.scause,
+        0x143 => c.stval,
+        0x180 => c.satp,
+        0xc00 => c.mcycle.slice::<0, 32>(),
+        0xc01 => c.time.slice::<0, 32>(),
+        0xc81 => c.time.slice::<32, 32>(),
+        0xc80 => c.mcycle.slice::<32, 32>(),
+        0xc02 => c.minstret.slice::<0, 32>(),
+        0xc82 => c.minstret.slice::<32, 32>(),
         // `mvendorid`, `marchid`, `mimpid` and `mhartid` all read as
         // zero, which the default below gives them, and so does the
         // halt. What makes them legal rather than illegal is
@@ -529,7 +571,10 @@ fn csr_known(f12: U<12>) -> Bit {
     select!(f12.raw() => {
         0x300 | 0x305 | 0x340 | 0x341 | 0x342 | 0x304 | 0x344
         | 0x343 | 0x7c0 | 0x7c1 | 0x7b0 | 0x7b1 | 0x301 | 0xf11 | 0xf12 | 0xf13
-        | 0xf14 | 0xb00 | 0xb02 | 0xb80 | 0xb82 => Bit::One,
+        | 0xf14 | 0xb00 | 0xb02 | 0xb80 | 0xb82 | 0x302 | 0x303 | 0x306 | 0x310
+        | 0x100 | 0x104 | 0x105 | 0x106 | 0x140 | 0x141 | 0x142 | 0x143
+        | 0x144 | 0x180 | 0xc00 | 0xc01 | 0xc02 | 0xc80 | 0xc81
+        | 0xc82 => Bit::One,
         _ => Bit::Zero,
     })
 }
@@ -539,10 +584,50 @@ fn csr_known(f12: U<12>) -> Bit {
 /// instruction; a read is not.
 #[lower]
 fn csr_ro(f12: U<12>) -> Bit {
-    select!(f12.raw() => {
-        0xf11..=0xf14 => Bit::One,
-        _ => Bit::Zero,
-    })
+    Bit::from(f12.slice::<10, 2>() == 3)
+}
+
+/// Bit `i` of a word, for a delegation register read by a cause
+/// (issue 1012).
+#[lower]
+fn bit_of(v: U<32>, i: U<5>) -> Bit {
+    (v >> (i.raw() as usize)).bit(0)
+}
+
+/// The interrupt taken of a set of pending and enabled ones, in the
+/// specification's order: external, software, timer, the machine's
+/// before the supervisor's (issue 1012).
+#[lower]
+fn int_cause(set: U<32>) -> U<32> {
+    mux(
+        set.bit(11),
+        U::<32>::from(isa::CAUSE_MEXT),
+        mux(
+            set.bit(3),
+            U::<32>::from(isa::CAUSE_MSOFT),
+            mux(
+                set.bit(7),
+                U::<32>::from(isa::CAUSE_MTIMER),
+                mux(
+                    set.bit(9),
+                    U::<32>::from(isa::CAUSE_SEXT),
+                    mux(
+                        set.bit(1),
+                        U::<32>::from(isa::CAUSE_SSOFT),
+                        U::<32>::from(isa::CAUSE_STIMER),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// What a write leaves of `mstatus`: its writable fields, with `MPP`
+/// one of the three modes there are, a 2 taken as user mode.
+#[lower]
+fn mstatus_w(v: U<32>) -> U<32> {
+    let v = v & U::<32>::from(MSTATUS_W);
+    mux(v.slice::<11, 2>() == 2, v & !U::<32>::from(0x1800u32), v)
 }
 
 /// A CSR's new value: replaced, set or cleared by the source, which
@@ -653,6 +738,21 @@ pub struct Vreteno<const IW: usize> {
     pub mie: Reg<U<32>>,
     pub mip: Reg<U<32>>,
     pub mtval: Reg<U<32>>,
+    /// User and supervisor mode (issue 1012): the privilege, 3 machine,
+    /// 1 supervisor, 0 user; the delegations; the supervisor's pending
+    /// bits software sets; its registers; and the counter enables,
+    /// machine's low and supervisor's high.
+    pub prv: Reg<U<2>>,
+    pub medeleg: Reg<U<32>>,
+    pub mideleg: Reg<U<32>>,
+    pub mip_sw: Reg<U<32>>,
+    pub stvec: Reg<U<32>>,
+    pub sscratch: Reg<U<32>>,
+    pub sepc: Reg<U<32>>,
+    pub scause: Reg<U<32>>,
+    pub stval: Reg<U<32>>,
+    pub satp: Reg<U<32>>,
+    pub counteren: Reg<U<6>>,
     pub wb_dev: Reg<U<32>>,
     /// Whether the bus refused the load whose answer is in `wb_dev`:
     /// the load then traps as it retires, a load access fault at its
@@ -771,6 +871,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             dbg_regno,
             dbg_wdata,
             dbg_we,
+            time,
         ): (
             In<Bit>,
             In<Bit>,
@@ -784,6 +885,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             In<U<16>>,
             In<U<32>>,
             In<Bit>,
+            // The timer's count, which `time` reads (issue 1012).
+            In<U<64>>,
         ),
         (halt, instr, wb, issue, wbeat, release, dbg, dbg_rdata): (
             Out<Bit>,
@@ -944,11 +1047,26 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // the stall the interrupt waits for.
             // The timer's line is a register's output on the timer's
             // side, so it is read as state is.
+            //
+            // With user and supervisor mode (issue 1012) an interrupt
+            // machine mode keeps is taken below machine mode always and
+            // in it with `MIE`; one it delegated in `mideleg` is taken
+            // below supervisor mode always, in it with `SIE`, and never
+            // in machine mode; and the machine's come first.
             let mtip = tirq;
-            let ext_ok = mie_r.bit(11) & mip.bit(11);
-            let soft_ok = mie_r.bit(3) & sirq;
-            let tim_ok = mie_r.bit(7) & mtip;
-            let int_ok = mstatus.bit(3) & (ext_ok | soft_ok | tim_ok);
+            let prv = self.prv.get();
+            let mideleg = self.mideleg.get();
+            let mip_all = mip
+                | mux(mtip, U::<32>::from(isa::MTIMER), U::<32>::from(0u32))
+                | mux(sirq, U::<32>::from(isa::MSOFT), U::<32>::from(0u32))
+                | self.mip_sw.get();
+            let pend = mip_all & mie_r;
+            let m_on = (prv != 3) | mstatus.bit(3);
+            let s_on = (prv == 0) | ((prv == 1) & mstatus.bit(1));
+            let m_set = mux(m_on, pend & !mideleg, U::<32>::from(0u32));
+            let s_set = mux(s_on, pend & mideleg, U::<32>::from(0u32));
+            let int_set = mux(m_set != 0, m_set, s_set);
+            let int_ok = int_set != 0;
             let stall_m = m_here & !int_ok & !m_done;
             // A `fence` orders what came before it against what comes
             // after: it waits in execute until every store the core
@@ -1045,7 +1163,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // `wfi`, and a debugger that could not stop it there could
             // not attach to it (issue 930). The `wfi` has retired, so
             // the core halts on the instruction after it.
-            let wake = ext_ok | soft_ok | tim_ok | haltreq;
+            let wake = (pend != 0) | haltreq;
             self.stall.set(
                 stall_ld
                     | stall_m
@@ -1139,11 +1257,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let f12 = ir.slice::<20, 12>();
             let is_sys = opcode == 0x73;
             let csr_op = is_sys & (f3 != 0);
-            let mip_now = mux(
-                sirq,
-                mux(tirq, mip | isa::MTIMER, mip) | isa::MSOFT,
-                mux(tirq, mip | isa::MTIMER, mip),
-            );
+            let mip_now = mip_all;
             let csr_old = csr_read(
                 mux(in_debug, dbg_csr, f12),
                 Csrs {
@@ -1160,6 +1274,16 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     dcsr,
                     dpc,
                     busquiet: self.busquiet.get(),
+                    medeleg: self.medeleg.get(),
+                    mideleg,
+                    counteren: self.counteren.get(),
+                    stvec: self.stvec.get(),
+                    sscratch: self.sscratch.get(),
+                    sepc: self.sepc.get(),
+                    scause: self.scause.get(),
+                    stval: self.stval.get(),
+                    satp: self.satp.get(),
+                    time: time.get(),
                 },
             );
             let csr_known = csr_known(f12);
@@ -1176,13 +1300,29 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // write, as the debug specification has it (issue 972). The
             // debug module reaches them through its own port, below.
             let dbg_only = (f12 == isa::CSR_DCSR) | (f12 == isa::CSR_DPC);
-            let csr_bad = (csr_ro(f12) & csr_writes) | (dbg_only & !in_debug);
+            // A CSR names in its bits 9 and 8 the least privilege that
+            // may reach it, and a counter below machine mode wants its
+            // enable, the machine's and in user mode the supervisor's
+            // too (issue 1012).
+            let is_ctr = (f12.slice::<8, 4>() == 0xc)
+                & (f12.slice::<2, 5>() == 0)
+                & (f12.slice::<0, 2>() != 3);
+            let cen = self.counteren.get();
+            let ctr_i = f12.slice::<0, 2>();
+            let ctr_ok = !is_ctr
+                | (((prv == 3) | bit_of(cen.zext::<32>(), ctr_i.zext::<5>()))
+                    & ((prv != 0)
+                        | bit_of(cen.zext::<32>(), ctr_i.zext::<5>() + 3)));
+            let priv_ok = (prv >= f12.slice::<8, 2>()) & ctr_ok;
+            let csr_bad =
+                (csr_ro(f12) & csr_writes) | (dbg_only & !in_debug) | !priv_ok;
             let csr_src = mux(f3.bit(2), rs1.zext::<32>(), a);
             let csr_new = csr_value(f3, csr_old, csr_src);
             let sys0 = is_sys & (f3 == 0);
             let is_ecall = sys0 & (f12 == 0);
             // `is_ebreak` is decoded above, where debug entry needs it.
             let is_mret = sys0 & (f12 == 0x302);
+            let is_sret = sys0 & (f12 == 0x102);
             let is_wfi = sys0 & (f12 == 0x105);
             let known = select!(opcode.raw() => {
                 0x37 | 0x17 | 0x6f | 0x67 | 0x63 | 0x03 | 0x23 | 0x13 | 0x33
@@ -1191,8 +1331,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 0x73 => (csr_op & csr_known & !csr_bad)
                     | is_ecall
                     | is_ebreak
-                    | is_mret
-                    | is_wfi,
+                    // `mret` only in machine mode, `sret` and `wfi` not in
+                    // user mode (issue 1012).
+                    | (is_mret & (prv == 3))
+                    | (is_sret & (prv != 0))
+                    | (is_wfi & (prv != 0)),
                 _ => Bit::Zero,
             });
             // A trap: ecall, a word the core does not know, or the
@@ -1215,18 +1358,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // before the timer's.
             let cause = mux(
                 int_take,
-                mux(
-                    ext_ok,
-                    U::<32>::from(isa::CAUSE_MEXT),
-                    mux(
-                        soft_ok,
-                        U::<32>::from(isa::CAUSE_MSOFT),
-                        U::<32>::from(isa::CAUSE_MTIMER),
-                    ),
-                ),
+                int_cause(int_set),
                 mux(
                     is_ecall,
-                    U::<32>::from(isa::CAUSE_ECALL),
+                    // 8 from user mode, 9 from supervisor, 11 from machine.
+                    U::<32>::from(8u32) + prv.zext::<32>(),
                     mux(
                         is_ebreak,
                         U::<32>::from(isa::CAUSE_BREAKPOINT),
@@ -1255,12 +1391,65 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             );
             let tval = mux(st_take, U::<32>::from(0u32), tval);
             let tval = mux(run & self.ir_bad, pc, tval);
-            let mie_bit = mstatus.bit(3);
-            let mpie = mstatus.bit(7);
-            let trap_status =
-                mux(mie_bit, U::<32>::from(0x80u32), U::<32>::from(0u32));
-            let mret_status =
-                mux(mpie, U::<32>::from(0x88u32), U::<32>::from(0x80u32));
+            // Where a trap goes (issue 1012): below machine mode, to the
+            // supervisor when machine mode delegated its cause, in
+            // `mideleg` for an interrupt and `medeleg` for an exception,
+            // and else to machine mode. Each saves its enable and the
+            // mode it came from, and `mret` and `sret` restore them and
+            // leave user mode behind in their place.
+            let zero32 = U::<32>::from(0u32);
+            //
+            // The choice is on the redirect's path, so it is not made
+            // from the cause, which settles late, behind the address's
+            // adder: an interrupt goes to the supervisor exactly when no
+            // interrupt machine mode keeps is pending and enabled, which
+            // is registers alone, and each exception's bit of `medeleg`
+            // is read beforehand, so that what settles late only chooses
+            // between two of them.
+            let medeleg = self.medeleg.get();
+            let d_ecall = mux(prv == 1, medeleg.bit(9), medeleg.bit(8));
+            let d_mis = mux(is_store | is_rmw, medeleg.bit(6), medeleg.bit(4));
+            let d_exc = mux(
+                fetch_bad,
+                medeleg.bit(1),
+                mux(
+                    st_take,
+                    medeleg.bit(7),
+                    mux(
+                        is_ecall,
+                        d_ecall,
+                        mux(
+                            is_ebreak,
+                            medeleg.bit(3),
+                            mux(unaligned, d_mis, medeleg.bit(2)),
+                        ),
+                    ),
+                ),
+            );
+            let to_s = (prv != 3) & mux(int_take, Bit::from(m_set == 0), d_exc);
+            let wb_code = mux(
+                self.wb_amo,
+                U::<5>::from(isa::CAUSE_STORE_ACCESS as u8),
+                U::<5>::from(isa::CAUSE_LOAD_ACCESS as u8),
+            );
+            let to_s_wb = (prv != 3) & bit_of(medeleg, wb_code);
+            let stvec = self.stvec.get();
+            let trap_vec = mux(to_s, stvec, mtvec);
+            let wb_vec = mux(to_s_wb, stvec, mtvec);
+            let m_trap_status = (mstatus & !U::<32>::from(0x1888u32))
+                | mux(mstatus.bit(3), U::<32>::from(0x80u32), zero32)
+                | (prv.zext::<32>() << 11);
+            let s_trap_status = (mstatus & !U::<32>::from(0x122u32))
+                | mux(mstatus.bit(1), U::<32>::from(0x20u32), zero32)
+                | mux(prv == 1, U::<32>::from(0x100u32), zero32);
+            let mret_status = (mstatus & !U::<32>::from(0x1808u32))
+                | U::<32>::from(0x80u32)
+                | mux(mstatus.bit(7), U::<32>::from(0x8u32), zero32);
+            let sret_status = (mstatus & !U::<32>::from(0x102u32))
+                | U::<32>::from(0x20u32)
+                | mux(mstatus.bit(5), U::<32>::from(0x2u32), zero32);
+            let mret_ok = run & is_mret & (prv == 3);
+            let sret_ok = run & is_sret & (prv != 0);
             // Only an instruction that writes writes: a set or a clear
             // from `x0` or a zero immediate is a read, and wrote the
             // value it read back after the count, so `mcycle` and
@@ -1307,13 +1496,17 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 0x67 => (a + imm_i) & !U::<32>::from(1u32),
                 0x6f => pc + imm_j,
                 0x63 => pc + imm_b,
-                0x73 => mux(is_mret, mepc, mtvec),
-                _ => mtvec,
+                0x73 => mux(
+                    trap,
+                    trap_vec,
+                    mux(is_mret, mepc, mux(is_sret, self.sepc.get(), trap_vec)),
+                ),
+                _ => trap_vec,
             });
             let jump = select!(opcode.raw() => {
                 0x6f | 0x67 => Bit::One,
                 0x63 => taken,
-                0x73 => is_mret | trap,
+                0x73 => is_mret | is_sret | trap,
                 _ => trap,
             });
 
@@ -1474,7 +1667,40 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // does. A trap's writes come after the CSR writes, and win.
             with!(self <= {
                 csr_write & (f12 == isa::CSR_MSTATUS) ?
-                    mstatus: csr_new & 0x88,
+                    mstatus: mstatus_w(csr_new),
+                // User and supervisor mode (issue 1012).
+                csr_write & (f12 == isa::CSR_SSTATUS) ?
+                    mstatus: (mstatus & !U::<32>::from(SSTATUS_W))
+                        | (csr_new & U::<32>::from(SSTATUS_W)),
+                csr_write & (f12 == isa::CSR_SIE) ?
+                    mie: (mie_r & !mideleg) | (csr_new & mideleg),
+                csr_write & (f12 == isa::CSR_MIP) ?
+                    mip_sw: csr_new & U::<32>::from(MIDELEG_W),
+                csr_write & (f12 == isa::CSR_SIP) ?
+                    mip_sw: (self.mip_sw.get() & !(mideleg & 2))
+                        | (csr_new & mideleg & 2),
+                csr_write & (f12 == isa::CSR_MEDELEG) ?
+                    medeleg: csr_new & U::<32>::from(MEDELEG_W),
+                csr_write & (f12 == isa::CSR_MIDELEG) ?
+                    mideleg: csr_new & U::<32>::from(MIDELEG_W),
+                csr_write & (f12 == isa::CSR_MCOUNTEREN) ?
+                    counteren: self
+                        .counteren
+                        .get()
+                        .slice::<3, 3>()
+                        .concat::<_, 6>(csr_new.slice::<0, 3>()),
+                csr_write & (f12 == isa::CSR_SCOUNTEREN) ?
+                    counteren: csr_new
+                        .slice::<0, 3>()
+                        .concat::<_, 6>(self.counteren.get().slice::<0, 3>()),
+                csr_write & (f12 == isa::CSR_STVEC) ?
+                    stvec: csr_new & !U::<32>::from(3u32),
+                csr_write & (f12 == isa::CSR_SSCRATCH) ? sscratch: csr_new,
+                csr_write & (f12 == isa::CSR_SEPC) ?
+                    sepc: csr_new & !U::<32>::from(1u32),
+                csr_write & (f12 == isa::CSR_SCAUSE) ? scause: csr_new,
+                csr_write & (f12 == isa::CSR_STVAL) ? stval: csr_new,
+                csr_write & (f12 == isa::CSR_SATP) ? satp: csr_new,
                 csr_write & (f12 == isa::CSR_MTVEC) ?
                     mtvec: csr_new & !U::<32>::from(3u32),
                 csr_write & (f12 == isa::CSR_MSCRATCH) ? mscratch: csr_new,
@@ -1483,32 +1709,54 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 csr_write & (f12 == isa::CSR_MCAUSE) ? mcause: csr_new,
                 csr_write & (f12 == isa::CSR_MIE) ? mie: csr_new
                     & U::<32>::from(
-                        isa::MEXT | isa::MSOFT | isa::MTIMER,
+                        isa::MEXT
+                            | isa::MSOFT
+                            | isa::MTIMER
+                            | MIDELEG_W,
                     ),
                 csr_write & (f12 == isa::CSR_MTVAL) ? mtval: csr_new,
                 mip: mux(irq, U::<32>::from(isa::MEXT), U::<32>::from(0u32)),
-                trap ? {
+                trap & !to_s ? {
                     mepc: pc,
                     mcause: cause,
                     mtval: tval,
-                    mstatus: trap_status,
+                    mstatus: m_trap_status,
+                    prv: U::<2>::from(3u8),
                 },
-                wb_fault ? {
+                trap & to_s ? {
+                    sepc: pc,
+                    scause: cause,
+                    stval: tval,
+                    mstatus: s_trap_status,
+                    prv: U::<2>::from(1u8),
+                },
+                // An AMO's refused word is a store's access fault.
+                wb_fault & !to_s_wb ? {
                     mepc: self.wb_pc.get(),
-                    // An AMO's refused word is a store's access fault.
-                    mcause: mux(
-                        self.wb_amo,
-                        U::<32>::from(isa::CAUSE_STORE_ACCESS),
-                        U::<32>::from(isa::CAUSE_LOAD_ACCESS),
-                    ),
+                    mcause: wb_code.zext::<32>(),
                     mtval: wb_alu,
-                    mstatus: trap_status,
+                    mstatus: m_trap_status,
+                    prv: U::<2>::from(3u8),
+                },
+                wb_fault & to_s_wb ? {
+                    sepc: self.wb_pc.get(),
+                    scause: wb_code.zext::<32>(),
+                    stval: wb_alu,
+                    mstatus: s_trap_status,
+                    prv: U::<2>::from(1u8),
                 },
                 st_take ? st_err: Bit::Zero,
                 take_done & done_bad & !self.busquiet ? st_err: Bit::One,
                 csr_write & (f12 == isa::CSR_MBUSQUIET) ?
                     busquiet: csr_new.bit(0),
-                run & is_mret ? mstatus: mret_status,
+                mret_ok ? {
+                    mstatus: mret_status,
+                    prv: mstatus.slice::<11, 2>(),
+                },
+                sret_ok ? {
+                    mstatus: sret_status,
+                    prv: mstatus.slice::<8, 1>().zext::<2>(),
+                },
                 // `wfi` retires and the core then waits. An interrupt
                 // already pending means there is nothing to wait for,
                 // and the wake below wins over the wait for that
@@ -1546,7 +1794,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     minstret: (self.minstret.get()
                         & U::<64>::from(0xffff_ffffu64))
                         | (csr_new.zext::<64>() << 32),
-                run & is_wfi ? waiting: Bit::One,
+                // Only a `wfi` that is legal waits: in user mode it traps
+                // instead (issue 1012).
+                run & is_wfi & (prv != 0) ? waiting: Bit::One,
                 wake ? waiting: Bit::Zero,
                 rst ? waiting: Bit::Zero,
                 // Debug mode. On entry the cause says why, in bits 8
@@ -1564,7 +1814,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 dbg_take ? {
                     debug: Bit::One,
                     dpc: pc,
-                    dcsr: U::<32>::from(0x4000_0003u32)
+                    dcsr: U::<32>::from(0x4000_0000u32)
+                        | prv.zext::<32>()
                         | (dcsr & U::<32>::from(0x8004u32))
                         | mux(
                             is_ebreak & ebreakm,
@@ -1579,6 +1830,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 },
                 resume_take ? {
                     debug: Bit::Zero,
+                    // The mode the hart was in, as `dcsr.prv` says.
+                    prv: mux(
+                        dcsr.slice::<0, 2>() == 2,
+                        U::<2>::from(0u8),
+                        dcsr.slice::<0, 2>(),
+                    ),
                     step_armed: dcsr.bit(2),
                     resume_seen: Bit::One,
                 },
@@ -1588,17 +1845,17 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     stepped: Bit::One,
                 },
                 csr_write & (f12 == isa::CSR_DCSR) ?
-                    dcsr: U::<32>::from(0x4000_0003u32)
+                    dcsr: U::<32>::from(0x4000_0000u32)
                         | (csr_new & U::<32>::from(0x8004u32))
-                        | (dcsr & U::<32>::from(0x1c0u32)),
+                        | (dcsr & U::<32>::from(0x1c3u32)),
                 csr_write & (f12 == isa::CSR_DPC) ?
                     dpc: csr_new & U::<32>::from(0xffff_fffeu32),
                 // The debug module writes the two, from outside, while
                 // the core is halted.
                 in_debug & dbg_we & !dbg_is_gpr & (dbg_csr == isa::CSR_DCSR) ?
-                    dcsr: U::<32>::from(0x4000_0003u32)
+                    dcsr: U::<32>::from(0x4000_0000u32)
                         | (dbg_wdata & U::<32>::from(0x8004u32))
-                        | (dcsr & U::<32>::from(0x1c0u32)),
+                        | (dcsr & U::<32>::from(0x1c3u32)),
                 in_debug & dbg_we & !dbg_is_gpr & (dbg_csr == isa::CSR_DPC) ?
                     dpc: dbg_wdata & U::<32>::from(0xffff_fffeu32),
                 // A reset puts the CSRs back as configuration left
@@ -1630,6 +1887,17 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     st_err: Bit::Zero,
                     stores_out: U::<3>::from(0u8),
                     busquiet: Bit::Zero,
+                    prv: U::<2>::from(3u8),
+                    medeleg: U::<32>::from(0u32),
+                    mideleg: U::<32>::from(0u32),
+                    mip_sw: U::<32>::from(0u32),
+                    stvec: U::<32>::from(0u32),
+                    sscratch: U::<32>::from(0u32),
+                    sepc: U::<32>::from(0u32),
+                    scause: U::<32>::from(0u32),
+                    stval: U::<32>::from(0u32),
+                    satp: U::<32>::from(0u32),
+                    counteren: U::<6>::from(0u8),
                 },
             });
             // The sequencer. It starts when an M instruction is in execute
@@ -1749,7 +2017,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     mux(
                         resume_take,
                         dpc,
-                        mux(int_take | st_take | wb_fault, mtvec, target),
+                        mux(
+                            wb_fault,
+                            wb_vec,
+                            mux(int_take | st_take, trap_vec, target),
+                        ),
                     ),
                 ),
             );

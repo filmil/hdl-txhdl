@@ -199,6 +199,8 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     // The system has no interrupt controller, so nothing raises a
     // software interrupt in it.
     let (_sirq_o, sirq) = signal::<Bit, DefaultClock>();
+    // No timer on this machine, so `time` reads zero (issue 1012).
+    let (_time_o, time) = signal::<U<64>, DefaultClock>();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
     // No debugger here: its request lines stay low and what the
     // core says about debug mode is not read (issue 154).
@@ -328,7 +330,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
             cpu.run(
                 (
                     rst_c, irq, tirq, sirq, crdata, cdone, grant, haltreq,
-                    resumereq, dbg_regno, dbg_wdata, dbg_we,
+                    resumereq, dbg_regno, dbg_wdata, dbg_we, time,
                 ),
                 (
                     halt_out,

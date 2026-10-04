@@ -76,13 +76,15 @@ impl<const I: usize> Unit for Timer<I> {
     async fn run(
         &mut self,
         bus: PerPort<32, 32, 4, I>,
-        (rst, tirq, sirq): (In<Bit>, Out<Bit>, Out<Bit>),
+        // The count goes to the core too, which `time` reads (issue 1012).
+        (rst, tirq, sirq, time): (In<Bit>, Out<Bit>, Out<Bit>, Out<U<64>>),
     ) {
         loop {
             DefaultClock::rising().await;
             let rst = rst.get();
             // The two words are sliced below, so they are read once.
             let (mtime, mtimecmp) = (self.mtime.get(), self.mtimecmp.get());
+            time.set(mtime);
             let q = bus.req.head();
             let qoff = bus.req.peek().is_some();
             let held = self.pend.get() == 1;
@@ -211,8 +213,9 @@ mod tests {
         let (_rst_out, rst) = signal::<Bit, DefaultClock>();
         let (tirq, _tirq) = signal::<Bit, DefaultClock>();
         let (sirq, _sirq) = signal::<Bit, DefaultClock>();
+        let (time, _time) = signal::<U<64>, DefaultClock>();
         let port = PerPort { req, w, ans, r };
-        let mut sim = Running::new(t.run(port, (rst, tirq, sirq)));
+        let mut sim = Running::new(t.run(port, (rst, tirq, sirq, time)));
         let at = U::<32>::from(0x0200_0000 + off);
         let req_at = |read| PerReq {
             read,

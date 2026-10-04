@@ -619,6 +619,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (tirq_o, tirq_i) = signal::<Bit, DefaultClock>();
         // The software interrupt the controller raises for a program.
         let (sirq_o, sirq_i) = signal::<Bit, DefaultClock>();
+        let (time_o, time_i) = signal::<U<64>, DefaultClock>();
         let (uirq_o, uirq_i) = signal::<Bit, DefaultClock>();
         let (eirq_o, eirq_i) = signal::<Bit, DefaultClock>();
         // The PLIC's supervisor line, `mip.SEIP`'s, which the core takes
@@ -1018,7 +1019,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                         ans: ans1_tx,
                                         r: rb1_tx,
                                     },
-                                    (rst_timer, tirq_o, sirq_o),
+                                    (rst_timer, tirq_o, sirq_o, time_o),
                                 ),
                             ),
                             join2(
@@ -1119,6 +1120,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                     dbg_regno_i,
                                     dbg_wdata_i,
                                     dbg_we_i,
+                                    time_i,
                                 ),
                                 (
                                     halt,
