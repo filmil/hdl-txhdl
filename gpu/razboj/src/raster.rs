@@ -417,13 +417,19 @@ impl<
                                     // own base need not, and an address
                                     // that wrapped would land on
                                     // whatever else the map has there.
-                                    let addr = (((py << LOGW) + px) << WORD)
+                                    let pixel_at = (((py << LOGW) + px) << WORD)
                                         .resize::<A>()
                                         + U::<A>::from(BASE as u32);
                                     if self.hit.get().to_bool() {
+                                        // `pixel_at` and not `addr`:
+                                        // the lowering took the field
+                                        // `addr:` of the write after
+                                        // the walk for a use of a
+                                        // local of that name (issue
+                                        // 1024).
                                         issue.send(Issue {
                                             read: Bit::Zero,
-                                            addr,
+                                            addr: pixel_at,
                                             len: U::<8>::from(0u8),
                                             size: U::<3>::from(2u8),
                                             burst: BurstKind::Incr,
