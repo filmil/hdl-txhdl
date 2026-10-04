@@ -5,7 +5,10 @@
 % build ran it, and the waveform is that run's.
 \documentclass[journal,9pt]{IEEEtran}
 
-\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+% The listings are whole ranges of Rust that rustfmt sets at 80 columns,
+% not the 70 the house style's 6pt is for. The frame holds 76 columns at
+% 6pt, so 5.6pt, which fits 80 with about 5pt to spare (issue 1033).
+\newcommand{\listingsize}{\fontsize{5.6}{6.6}\selectfont}
 \input{housestyle}
 \usepackage{graphicx}
 
