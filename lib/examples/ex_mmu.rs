@@ -19,7 +19,7 @@ use txhdl::comp::{
 };
 use txhdl::types::{Bit, U};
 use txhdl_parts::mmu::pte::{to, A, D, R, U as USER, V, W, X};
-use txhdl_parts::mmu::{satp, Mmu8, Pte};
+use txhdl_parts::mmu::{satp, DReq, IReq, Mmu8, Pte, Res};
 
 /// The first level's table, and a second level's.
 const ROOT: u32 = 0x8000_0000;
@@ -43,19 +43,10 @@ fn main() {
     let (sum_o, sum) = signal::<Bit, DefaultClock>();
     let (mxr_o, mxr) = signal::<Bit, DefaultClock>();
     let (flush_o, flush) = signal::<Bit, DefaultClock>();
-    let (ireq_o, ireq) = signal::<Bit, DefaultClock>();
-    let (iva_o, iva) = signal::<U<32>, DefaultClock>();
-    let (dreq_o, dreq) = signal::<Bit, DefaultClock>();
-    let (dva_o, dva) = signal::<U<32>, DefaultClock>();
-    let (store_o, store) = signal::<Bit, DefaultClock>();
-    let (iok_o, iok) = signal::<Bit, DefaultClock>();
-    let (ipa_o, ipa) = signal::<U<32>, DefaultClock>();
-    let (ifault_o, ifault) = signal::<Bit, DefaultClock>();
-    let (ierr_o, ierr) = signal::<Bit, DefaultClock>();
-    let (dok_o, dok) = signal::<Bit, DefaultClock>();
-    let (dpa_o, dpa) = signal::<U<32>, DefaultClock>();
-    let (dfault_o, dfault) = signal::<Bit, DefaultClock>();
-    let (derr_o, derr) = signal::<Bit, DefaultClock>();
+    let (ireq_o, ireq) = signal::<IReq, DefaultClock>();
+    let (dreq_o, dreq) = signal::<DReq, DefaultClock>();
+    let (ires_o, ires) = signal::<Res, DefaultClock>();
+    let (dres_o, dres) = signal::<Res, DefaultClock>();
     let (ptw_tx, ptw_rx) = chan::<U<32>, DefaultClock>();
     let (pte_tx, pte_rx) = chan::<Pte, DefaultClock>();
     let mut mmu = Mmu8::default();
@@ -69,19 +60,10 @@ fn main() {
         wave.add("mxr", &mxr);
         wave.add("flush", &flush);
         wave.add("ireq", &ireq);
-        wave.add("ireq_va", &iva);
         wave.add("dreq", &dreq);
-        wave.add("dreq_va", &dva);
-        wave.add("dreq_store", &store);
         wave.add("pte", &pte_rx);
-        wave.add("ires_ok", &iok);
-        wave.add("ires_pa", &ipa);
-        wave.add("ires_fault", &ifault);
-        wave.add("ires_err", &ierr);
-        wave.add("dres_ok", &dok);
-        wave.add("dres_pa", &dpa);
-        wave.add("dres_fault", &dfault);
-        wave.add("dres_err", &derr);
+        wave.add("ires", &ires);
+        wave.add("dres", &dres);
         wave.add("ptw", &ptw_tx);
         wave.add("mmu", &mmu);
         wave.start();
@@ -115,41 +97,38 @@ fn main() {
         }
     };
 
-    let ports = (
-        (ireq_o, iva_o, iok, ipa, ifault, ierr),
-        (dreq_o, dva_o, dok, dpa, dfault, derr),
-    );
+    let ports = (ireq_o, dreq_o, ires, dres);
     let client = async move {
-        let (
-            (ireq, iva, iok, ipa, ifault, ierr),
-            (dreq, dva, dok, dpa, dfault, derr),
-        ) = &ports;
-        // One request on a port, held until it is answered.
-        let ask = |data: bool, va: u32, st: bool| {
-            let (req, addr) = if data { (dreq, dva) } else { (ireq, iva) };
-            let (ok, pa, fault, err) = if data {
-                (dok, dpa, dfault, derr)
+        let (ireq, dreq, ires, dres) = &ports;
+        // A port's request: whether there is one, and the address.
+        let put = move |data: bool, req: Bit, va: u32, st: bool| {
+            let va = U::<32>::from(va);
+            if data {
+                let store = Bit::from_bool(st);
+                dreq.set(DReq { req, va, store });
             } else {
-                (iok, ipa, ifault, ierr)
-            };
-            req.set(Bit::One);
-            addr.set(U::<32>::from(va));
-            store_o.set(Bit::from_bool(st));
+                ireq.set(IReq { req, va });
+            }
+        };
+        // One request on a port, held until it is answered.
+        let ask = move |data: bool, va: u32, st: bool| {
+            put(data, Bit::One, va, st);
             async move {
                 let mut n = 0;
                 loop {
                     DefaultClock::rising().await;
                     n += 1;
-                    let what = if ok.get().to_bool() {
-                        format!("{:#010x}", pa.get().raw())
-                    } else if fault.get().to_bool() {
+                    let r = if data { dres.get() } else { ires.get() };
+                    let what = if r.ok.to_bool() {
+                        format!("{:#010x}", r.pa.raw())
+                    } else if r.fault.to_bool() {
                         "page fault".to_string()
-                    } else if err.get().to_bool() {
+                    } else if r.err.to_bool() {
                         "access fault".to_string()
                     } else {
                         continue;
                     };
-                    req.set(Bit::Zero);
+                    put(data, Bit::Zero, va, st);
                     let port = if data && st {
                         "store"
                     } else if data {
@@ -192,8 +171,7 @@ fn main() {
         flush_o.set(Bit::Zero);
         assert_eq!(ask(true, 0x0040_1000, true).await, "0x41001000");
         // Both ports miss at once: the data port's walk goes first.
-        ireq.set(Bit::One);
-        iva.set(U::<32>::from(0x0040_2000u32));
+        put(false, Bit::One, 0x0040_2000, false);
         let d = ask(true, 0xc000_0040, false).await;
         assert_eq!(d, "0x40400040");
         assert_eq!(ask(false, 0x0040_2000, false).await, "0x41002000");
@@ -205,14 +183,8 @@ fn main() {
     // The client first: it drives the request wires, which the unit
     // reads in the same step.
     let hardware = mmu.run(
-        (
-            rst, satp_i, prv, sum, mxr, flush, ireq, iva, dreq, dva, store,
-            pte_rx,
-        ),
-        (
-            iok_o, ipa_o, ifault_o, ierr_o, dok_o, dpa_o, dfault_o, derr_o,
-            ptw_tx,
-        ),
+        (rst, satp_i, prv, sum, mxr, flush, ireq, dreq, pte_rx),
+        (ires_o, dres_o, ptw_tx),
     );
     mxr_o.set(Bit::Zero);
     let mut sim = Running::new(join2(join2(client, hardware), memory));

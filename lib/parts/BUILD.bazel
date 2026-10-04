@@ -205,11 +205,11 @@ vivado_place_and_route2(
     # and the worst from register to register.
     post_route_design = [
         'puts "TXHDL-PROBE ipa"',
-        'puts [report_timing -from [get_ports -filter {NAME =~ "ireq_va*"}] -to [get_cells -filter {NAME =~ "ipa_reg*" || NAME =~ "iok_reg*" || NAME =~ "ipf_reg*"}] -max_paths 1 -return_string]',
+        'puts [report_timing -from [get_ports -filter {NAME =~ "ireq*"}] -to [get_cells -filter {NAME =~ "ipa_reg*" || NAME =~ "iok_reg*" || NAME =~ "ipf_reg*"}] -max_paths 1 -return_string]',
         'puts "TXHDL-PROBE dpa"',
-        'puts [report_timing -from [get_ports -filter {NAME =~ "dreq_va*"}] -to [get_cells -filter {NAME =~ "dpa_reg*" || NAME =~ "dok_reg*" || NAME =~ "dpf_reg*"}] -max_paths 1 -return_string]',
+        'puts [report_timing -from [get_ports -filter {NAME =~ "dreq*"}] -to [get_cells -filter {NAME =~ "dpa_reg*" || NAME =~ "dok_reg*" || NAME =~ "dpf_reg*"}] -max_paths 1 -return_string]',
         'puts "TXHDL-PROBE out"',
-        'puts [report_timing -to [get_ports -filter {NAME =~ "ires_*" || NAME =~ "dres_*"}] -max_paths 1 -return_string]',
+        'puts [report_timing -to [get_ports -filter {NAME =~ "ires*" || NAME =~ "dres*"}] -max_paths 1 -return_string]',
         'puts "TXHDL-PROBE regs"',
         'puts [report_timing -max_paths 1 -return_string]',
         'puts "TXHDL-PROBE end"',
