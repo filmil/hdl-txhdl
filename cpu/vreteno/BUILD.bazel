@@ -49,6 +49,45 @@ rust_library(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The same library optimised, for the fast machine alone (issue 1132):
+# the model at opt-level 3 runs some nine times faster than at the
+# build's default of 0, and only //cpu/vreteno:machine pays the longer
+# compile.
+rust_library(
+    name = "vreteno32_opt",
+    srcs = [
+        "src/board.rs",
+        "src/core.rs",
+        "src/debug.rs",
+        "src/dmem.rs",
+        "src/hart.rs",
+        "src/rom.rs",
+        "src/isa.rs",
+        "src/lib.rs",
+        "src/machine/clint.rs",
+        "src/machine/memory.rs",
+        "src/machine/mod.rs",
+        "src/machine/plic.rs",
+        "src/machine/uart.rs",
+        "src/model.rs",
+        "src/pair.rs",
+        "src/program.rs",
+        "src/run.rs",
+        "src/term.rs",
+        "src/timer.rs",
+        "src/uart.rs",
+    ],
+    crate_name = "vreteno32",
+    edition = "2021",
+    rustc_flags = ["-Copt-level=3"],
+    deps = [
+        "//ddr3",
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # The board's design as one lowered unit, on the programs compiled for
 # the core, and its netlist with the DDR3 controller in it.
 rust_test(
@@ -197,7 +236,8 @@ rust_binary(
     name = "machine",
     srcs = ["src/bin/machine.rs"],
     edition = "2021",
-    deps = [":vreteno32"],
+    rustc_flags = ["-Copt-level=3"],
+    deps = [":vreteno32_opt"],
 )
 
 # The library's unit tests: the encoders against the decoder, and the

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The DDR3, as plain memory: a gigabyte from `0x4000_0000`, kept in
 //! pages made when first written, so a model that touches a few
-//! megabytes holds a few megabytes (issue 1016).
-use std::collections::HashMap;
+//! megabytes holds a few megabytes (issue 1016). The pages are found by
+//! their number in a table, not hashed, since every fetch and every load
+//! of the machine comes through here (issue 1132): a gigabyte is 262 144
+//! of them, two megabytes of table.
 
 /// Words in a page: 4 KiB.
 const PAGE_WORDS: usize = 1024;
@@ -12,7 +14,7 @@ const PAGE_WORDS: usize = 1024;
 pub struct Memory {
     pub base: u32,
     pub len: u32,
-    pages: HashMap<u32, Box<[u32; PAGE_WORDS]>>,
+    pages: Vec<Option<Box<[u32; PAGE_WORDS]>>>,
 }
 
 impl Memory {
@@ -20,7 +22,7 @@ impl Memory {
         Memory {
             base,
             len,
-            pages: HashMap::new(),
+            pages: vec![None; (len as usize).div_ceil(PAGE_WORDS * 4)],
         }
     }
 
@@ -29,23 +31,21 @@ impl Memory {
         addr.wrapping_sub(self.base) < self.len
     }
 
-    fn at(addr: u32, base: u32) -> (u32, usize) {
+    fn at(addr: u32, base: u32) -> (usize, usize) {
         let w = (addr.wrapping_sub(base) / 4) as usize;
-        ((w / PAGE_WORDS) as u32, w % PAGE_WORDS)
+        (w / PAGE_WORDS, w % PAGE_WORDS)
     }
 
     /// The word at `addr`, which `holds`.
     pub fn load(&self, addr: u32) -> u32 {
         let (p, i) = Self::at(addr, self.base);
-        self.pages.get(&p).map_or(0, |page| page[i])
+        self.pages[p].as_ref().map_or(0, |page| page[i])
     }
 
     /// The word at `addr`, written.
     pub fn store(&mut self, addr: u32, v: u32) {
         let (p, i) = Self::at(addr, self.base);
-        self.pages
-            .entry(p)
-            .or_insert_with(|| Box::new([0; PAGE_WORDS]))[i] = v;
+        self.pages[p].get_or_insert_with(|| Box::new([0; PAGE_WORDS]))[i] = v;
     }
 
     /// Bytes laid down from `addr`, little-endian, as a loader does.
