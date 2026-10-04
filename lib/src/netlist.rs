@@ -2741,14 +2741,23 @@ impl Lowered {
         writeln!(out, "begin").unwrap();
         for (n, k, w, c) in &self.nets {
             if matches!(k, Kind::Tx | Kind::Rx) {
+                // A one-bit channel's nets are `std_logic`, as the
+                // children's ports are, and the channel's data ports are
+                // `unsigned(0 downto 0)`, so the bit is joined by its
+                // element (issue 953).
+                let (td, rd) = if *w == 1 {
+                    ("tx_data(0)", "rx_data(0)")
+                } else {
+                    ("tx_data", "rx_data")
+                };
                 writeln!(
                     out,
                     "  {n}_chan : entity work.{chan} \
                      generic map (W => {w}) port map (\n    clk => {c}, \
                      rst => {rs},\n    \
-                     tx_data => {n}_tx_data, tx_valid => {n}_tx_valid, \
+                     {td} => {n}_tx_data, tx_valid => {n}_tx_valid, \
                      tx_ready => {n}_tx_ready,\n    \
-                     rx_data => {n}_rx_data, rx_valid => {n}_rx_valid, \
+                     {rd} => {n}_rx_data, rx_valid => {n}_rx_valid, \
                      rx_ready => {n}_rx_ready\n  );",
                     rs = crate::comp::RESET_NAME
                 )
@@ -4077,6 +4086,40 @@ mod tests {
         parent.instances[0].conns =
             vec![("aw".to_string(), "link_aw".to_string())];
         parent.checked();
+    }
+
+    /// A one-bit channel between children: its nets are `std_logic`, as
+    /// the ports joined to them are, and the channel's `unsigned(0
+    /// downto 0)` data ports take the bit by its element, which nvc
+    /// otherwise refuses (issue 953). A wider one is joined whole.
+    #[test]
+    fn a_one_bit_channel_is_joined_by_its_element() {
+        let one_bit = |w: usize| {
+            let mut parent = parent_with_child_named("ticker");
+            parent.nets.push(("tap".to_string(), Kind::Tx, w, "clk"));
+            for (p, k) in [("tx", Kind::Tx), ("rx", Kind::Rx)] {
+                parent.instances[0].unit.ports.push((
+                    p.to_string(),
+                    k,
+                    w,
+                    "clk",
+                ));
+                parent.instances[0]
+                    .conns
+                    .push((p.to_string(), "tap".to_string()));
+            }
+            parent.checked().vhdl()
+        };
+        let v = one_bit(1);
+        assert!(
+            v.contains("signal tap_tx_data, tap_rx_data : std_logic;"),
+            "{v}"
+        );
+        assert!(v.contains("tx_data(0) => tap_tx_data,"), "{v}");
+        assert!(v.contains("rx_data(0) => tap_rx_data,"), "{v}");
+        let v = one_bit(2);
+        assert!(v.contains("tx_data => tap_tx_data,"), "{v}");
+        assert!(v.contains("rx_data => tap_rx_data,"), "{v}");
     }
 
     /// A unit that states things of its register: a check under a
