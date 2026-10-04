@@ -18,7 +18,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load(":defs.bzl", "zephyr_image")
+load(":defs.bzl", "analyses_under_python_test", "zephyr_image")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -45,6 +45,15 @@ zephyr_image(
 # `eth_vreteno.c` to a compiler, and the driver is checked only as
 # text: the state `uart_vreteno.c` was in when it kept an implicit
 # declaration of `sys_read32`.
+# From a workspace that depends on TxHDL the default Python is the
+# root module's, not this one's 3.12; the image still analyses, since
+# the rule takes Zephyr's packages at 3.12 itself (issue 1001).
+analyses_under_python_test(
+    name = "other_python_test",
+    python_version = "3.11",
+    target = ":hello_world",
+)
+
 zephyr_image(
     name = "hello_world_net",
     board = "ax7a200b",

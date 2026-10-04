@@ -296,3 +296,42 @@ zephyr_image = rule(
     },
 )
 
+# A test that `target` analyses when the default Python is another
+# version than the one this module makes the default, which is what a
+# workspace depending on TxHDL has (issue 1001). It takes the target
+# under a transition and none of its files, so the target is analysed
+# and not built: an image that would not analyse fails the test at
+# analysis, and one that would costs nothing more.
+def _other_python_impl(settings, attr):
+    return {_PYTHON_VERSION: attr.python_version}
+
+_other_python = transition(
+    implementation = _other_python_impl,
+    inputs = [],
+    outputs = [_PYTHON_VERSION],
+)
+
+def _analyses_under_python_test_impl(ctx):
+    script = ctx.actions.declare_file(ctx.label.name + ".sh")
+    ctx.actions.write(
+        output = script,
+        is_executable = True,
+        content = "#!/usr/bin/env bash\necho '%s analyses with Python %s as the default'\n" % (
+            ctx.attr.target[0].label,
+            ctx.attr.python_version,
+        ),
+    )
+    return [DefaultInfo(executable = script)]
+
+analyses_under_python_test = rule(
+    implementation = _analyses_under_python_test_impl,
+    test = True,
+    doc = "Passes when `target` analyses with another Python as the default.",
+    attrs = {
+        "target": attr.label(mandatory = True, cfg = _other_python),
+        "python_version": attr.string(
+            mandatory = True,
+            doc = "The default Python a dependent workspace might have.",
+        ),
+    },
+)
