@@ -135,6 +135,7 @@ rust_test(
     edition = "2021",
     deps = [
         ":vreteno32",
+        "//ddr3",
         "//cpu/vreteno/rust:boot_program",
         "//cpu/vreteno/rust:ddr3_program",
         "//cpu/vreteno/rust:ethrx_program",

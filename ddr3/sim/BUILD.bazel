@@ -4,7 +4,7 @@
 # in the tree is, since they need the hermetic Vivado install:
 #
 #   bazel test //ddr3/sim:example_test   # AMD's own: the traffic generator
-#   bazel test //ddr3/sim:wrapper_test   # ours: the narrow Wishbone wrapper
+#   bazel test //ddr3/sim:wrapper_test   # ours: the AXI4 wrapper, timed
 #
 # The model and the vendor's testbench come out of the controller's
 # example design, which `//ddr3:ddr3_mig` keeps beside the core.
@@ -120,7 +120,8 @@ vivado_test(
 )
 
 # Ours: the wrapper the design instantiates, calibrated, written and
-# read back through the narrow Wishbone.
+# read back through its AXI4 port, and the port's latencies printed,
+# which `ddr3::Ddr3`'s model takes.
 vivado_library(
     name = "wrapper_tb",
     srcs = [
@@ -131,7 +132,7 @@ vivado_library(
     deps = [
         ":glbl",
         ":micron",
-        "//ddr3:ddr3_mig",
+        "//ddr3:ddr3_mig_axi",
     ],
 )
 
