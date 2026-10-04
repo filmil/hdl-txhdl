@@ -857,12 +857,10 @@ pub struct Lowered {
     /// A register's value before the first edge, as `Reg::new` gave it.
     ///
     /// A register not named here starts at zero, which is what
-    /// `Reg::default` does. The lowering cannot read this from the
-    /// unit's type, for the same reason it cannot read a memory's
-    /// words: the value belongs to the instance the run made, and
-    /// `Fields::fields` is written from the field's type. So whoever
-    /// lowers a unit whose register starts at anything else says it
-    /// again here, as they already do for a memory (issue 359).
+    /// `Reg::default` does. The generated `lowered` fills this from
+    /// the unit's `Default`, its own registers read before any edge
+    /// ([`starts`], issue 890), and [`Lowered::init_reg`] adds to it
+    /// for a top the run built some other way (issue 359).
     pub init_regs: Vec<(String, u128)>,
     /// The registers the netlist marks `ASYNC_REG`, as
     /// [`Fields::ASYNC_REGS`] names them: a synchroniser's stages.
@@ -2158,9 +2156,9 @@ impl Lowered {
         writeln!(out, "module {name}(\n  {}\n);", plist.join(",\n  ")).unwrap();
         for (n, k, w, d) in &self.fields {
             match k {
-                // What the runtime's register starts at: zero, unless
-                // the unit was built with `Reg::new` and whoever
-                // lowered it said so.
+                // What the runtime's register starts at: what the unit's
+                // `Default` gave it, or `init_reg` for a top built
+                // otherwise, and zero if neither names it.
                 // A synchroniser's stage says so, as `chan_cdc.v` does by
                 // hand (#884).
                 Some(Kind::Reg) => writeln!(
@@ -2590,8 +2588,8 @@ impl Lowered {
                 "(others => '0')".to_string()
             };
             match k {
-                // Zero unless whoever lowered the unit said what
-                // `Reg::new` gave it, as for a memory's words.
+                // What the unit's `Default` gave it, or `init_reg` for a
+                // top built otherwise; zero if neither names it.
                 Some(Kind::Reg) => {
                     let start = self.reg_init_vhdl(n);
                     writeln!(out, "  signal {n} : {} := {start};", ty(*w))

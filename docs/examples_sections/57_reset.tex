@@ -32,10 +32,10 @@ reset has no tick, so nothing drives the count at that edge, and the
 reset puts it back all the same: it reaches every register at every
 edge while it is high, driven or not, as the netlist's \code{if (rst)}
 does around every enable (issue 727). What it puts back is five,
-where the count started, and not zero. The netlist is written from
-the type, which does not hold the five, so the example says it again
-with \code{init\_reg}, and the reset branch of each netlist writes
-that value as its declaration does (issue 728).
+where the count started, and not zero. The netlist takes the five
+from the ticker's \code{Default}, as the run does (issue 890), and the
+reset branch of each netlist writes that value as its declaration
+does (issue 728).
 
 \lstinputlisting[caption={\code{ex\_reset.rs}. Run with \code{bazel run //lib/examples:ex\_reset}.},label={lst:x-reset}]{lib/examples/ex_reset.rs}
 

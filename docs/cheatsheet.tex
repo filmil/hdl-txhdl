@@ -250,7 +250,8 @@ has no wait. \code{DefaultClock} you name only in a wait.
 You don't write one. Every module gets \code{rst}, and while it's
 high every register returns to its first value and every channel
 empties. If a unit must \emph{do} something on reset, take
-\code{rst: In<Bit>} and read it; it joins the same net.
+\code{rst: In<Bit>} and read it; it joins the same net, and that
+unit's own registers do under reset only what its body says.
 
 \head{Other people's hardware}
 A hand-written Verilog or VHDL module can be a child: give it a Rust

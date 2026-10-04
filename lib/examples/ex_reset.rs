@@ -10,9 +10,9 @@
 //! run asserts the reset for two cycles in the middle, and the count
 //! starts again from five, where it started; the trace records the
 //! reset, so the simulations of the Verilog and the VHDL drive it at
-//! the same cycles and must agree with the Rust. The netlist is told
-//! the five with `init_reg`, and its reset puts back that value and
-//! not zero (issue 728).
+//! the same cycles and must agree with the Rust. The netlist takes the
+//! five from the ticker's `Default`, as the run does (issue 890), and
+//! its reset puts back that value and not zero (issue 728).
 //!
 //! The count is driven only on a tick, and the first cycle of the
 //! reset has none: the reset reaches a register whether or not the
@@ -102,10 +102,8 @@ fn main() {
     }
     println!("t={:>2} count {}", now(), total.get().raw());
 
-    // The netlist is written from the type, which does not hold the
-    // five; `init_reg` says it again.
-    let mut net = Ticker::lowered("ticker");
-    net.init_reg("count", 5);
+    // The netlist starts the count at five, as `Default` does.
+    let net = Ticker::lowered("ticker");
     print!("\n{}", net.verilog());
     stop();
     txhdl::netlist::write_vhdl_from_env(&net);
