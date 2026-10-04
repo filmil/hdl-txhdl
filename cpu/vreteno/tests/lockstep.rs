@@ -158,6 +158,9 @@ fn lockstep(
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
     let (sirq_out, sirq) = signal::<Bit, DefaultClock>();
     let (time_out, time) = signal::<U<64>, DefaultClock>();
+    // The supervisor's external line, which no controller here drives
+    // (issue 1094).
+    let (_seirq_out, seirq) = signal::<Bit, DefaultClock>();
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
     let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
@@ -210,7 +213,7 @@ fn lockstep(
                 cpu.run(
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
-                        resumereq, dbg_regno, dbg_wdata, dbg_we, time,
+                        resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
                     ),
                     (
                         halt_out,

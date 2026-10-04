@@ -440,7 +440,14 @@ impl Model {
     /// line, set and cleared by the controller and not by software, as
     /// the privileged specification has MEIP (#788).
     pub fn line(&mut self, high: bool) {
-        self.csr.mip = if high { MEXT } else { 0 };
+        self.csr.mip = (self.csr.mip & !MEXT) | if high { MEXT } else { 0 };
+    }
+
+    /// The supervisor's external line, from the controller's second
+    /// target: SEIP, which a read of `mip` shows ORed with the bit
+    /// software sets, and which no write changes (issue 1094).
+    pub fn sline(&mut self, high: bool) {
+        self.csr.mip = (self.csr.mip & !SEXT) | if high { SEXT } else { 0 };
     }
 
     fn csr_write(&mut self, addr: u32, v: u32) {
@@ -979,10 +986,18 @@ impl Model {
                     Csrrw | Csrrs | Csrrc => a,
                     _ => d.rs1,
                 };
+                // A set or a clear of `mip` modifies the software's SEIP,
+                // not the controller's line a read shows with it (issue
+                // 1094).
+                let base = if imm == CSR_MIP {
+                    (old & !SEXT) | (self.csr.mip_sw & SEXT)
+                } else {
+                    old
+                };
                 let v = match d.kind {
                     Csrrw | Csrrwi => src,
-                    Csrrs | Csrrsi => old | src,
-                    _ => old & !src,
+                    Csrrs | Csrrsi => base | src,
+                    _ => base & !src,
                 };
                 // A read writes nothing, as the core does not (#807).
                 if writes {

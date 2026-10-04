@@ -872,6 +872,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             dbg_wdata,
             dbg_we,
             time,
+            seirq,
         ): (
             In<Bit>,
             In<Bit>,
@@ -887,6 +888,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             In<Bit>,
             // The timer's count, which `time` reads (issue 1012).
             In<U<64>>,
+            // The interrupt controller's supervisor line, `mip.SEIP`'s
+            // (issue 1094).
+            In<Bit>,
         ),
         (halt, instr, wb, issue, wbeat, release, dbg, dbg_rdata): (
             Out<Bit>,
@@ -1318,6 +1322,16 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 (csr_ro(f12) & csr_writes) | (dbg_only & !in_debug) | !priv_ok;
             let csr_src = mux(f3.bit(2), rs1.zext::<32>(), a);
             let csr_new = csr_value(f3, csr_old, csr_src);
+            // A write to `mip` reads and modifies the software's SEIP and
+            // not the controller's line, which a read shows ORed with it:
+            // the line would otherwise latch into the software's bit on a
+            // set or a clear of another bit (issue 1094).
+            let sext = U::<32>::from(isa::SEXT);
+            let mip_new = csr_value(
+                f3,
+                (csr_old & !sext) | (self.mip_sw.get() & sext),
+                csr_src,
+            );
             let sys0 = is_sys & (f3 == 0);
             let is_ecall = sys0 & (f12 == 0);
             // `is_ebreak` is decoded above, where debug entry needs it.
@@ -1675,7 +1689,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 csr_write & (f12 == isa::CSR_SIE) ?
                     mie: (mie_r & !mideleg) | (csr_new & mideleg),
                 csr_write & (f12 == isa::CSR_MIP) ?
-                    mip_sw: csr_new & U::<32>::from(MIDELEG_W),
+                    mip_sw: mip_new & U::<32>::from(MIDELEG_W),
                 csr_write & (f12 == isa::CSR_SIP) ?
                     mip_sw: (self.mip_sw.get() & !(mideleg & 2))
                         | (csr_new & mideleg & 2),
@@ -1715,7 +1729,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                             | MIDELEG_W,
                     ),
                 csr_write & (f12 == isa::CSR_MTVAL) ? mtval: csr_new,
-                mip: mux(irq, U::<32>::from(isa::MEXT), U::<32>::from(0u32)),
+                // The supervisor's external line beside it, SEIP, from the
+                // controller's second target; a read shows it ORed with
+                // the software's bit in `mip_sw` (issue 1094).
+                mip: mux(irq, U::<32>::from(isa::MEXT), U::<32>::from(0u32))
+                    | mux(
+                        seirq.get(),
+                        U::<32>::from(isa::SEXT),
+                        U::<32>::from(0u32),
+                    ),
                 trap & !to_s ? {
                     mepc: pc,
                     mcause: cause,

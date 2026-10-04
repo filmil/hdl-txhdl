@@ -201,6 +201,9 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let (_sirq_o, sirq) = signal::<Bit, DefaultClock>();
     // No timer on this machine, so `time` reads zero (issue 1012).
     let (_time_o, time) = signal::<U<64>, DefaultClock>();
+    // The supervisor's external line, which no controller here drives
+    // (issue 1094).
+    let (_seirq_out, seirq) = signal::<Bit, DefaultClock>();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
     // No debugger here: its request lines stay low and what the
     // core says about debug mode is not read (issue 154).
@@ -330,7 +333,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
             cpu.run(
                 (
                     rst_c, irq, tirq, sirq, crdata, cdone, grant, haltreq,
-                    resumereq, dbg_regno, dbg_wdata, dbg_we, time,
+                    resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
                 ),
                 (
                     halt_out,
