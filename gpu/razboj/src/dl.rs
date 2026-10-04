@@ -23,9 +23,9 @@
 //! ```
 //!
 //! Beside the list is one more word, the count: how many instructions
-//! the list holds. The rasteriser reads it until it is not zero, and
-//! that is how a program says the list is ready. A program therefore
-//! writes the list first and the count last.
+//! the list holds, in its low sixteen bits. The rasteriser reads it
+//! until it is not zero, and that is how a program says the list is
+//! ready. A program therefore writes the list first and the count last.
 //!
 //! The count sits beside the list and not in it, so whoever lays the
 //! two out leaves the list room for the longest it will hold: a list

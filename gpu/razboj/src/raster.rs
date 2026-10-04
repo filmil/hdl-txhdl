@@ -18,9 +18,10 @@
 //! format `crate::dl` states, and the rasteriser reads it over the
 //! same link it writes pixels on: it reads the count at `CTRL` until
 //! it is not zero, then the six words of each instruction at `DL`,
-//! one read at a time, then walks what they say. That front end is
-//! written as the sequence it is, and a second process takes the
-//! link's answers every cycle.
+//! as one read burst of six beats, then walks what they say. The
+//! count is sixteen bits, so a list holds up to 65535 entries. That
+//! front end is written as the sequence it is, and a second process
+//! takes the link's answers every cycle.
 //!
 //! It draws list after list. When a list is drawn and every write it
 //! made has been answered, it writes the count back to zero and reads
@@ -112,9 +113,9 @@ pub struct Raster<
     /// and the walk waits on it.
     pub hit: Wire<Bit>,
     /// Instructions in the list, once the count has been read.
-    pub left: Reg<U<8>>,
+    pub left: Reg<U<16>>,
     /// Which instruction is being fetched, and which of its words.
-    pub insn: Reg<U<8>>,
+    pub insn: Reg<U<16>>,
     pub word: Reg<U<3>>,
     /// The last list is drawn and its count written back to zero; a
     /// count read that is not zero clears it.
@@ -203,7 +204,9 @@ impl<
                     });
                     // Both a write's response and a read's beat give
                     // an identifier back, and one goes out a cycle.
-                    if (dgo | got).to_bool() {
+                    // A read burst gives its identifier back with its
+                    // last beat, not with each.
+                    if (dgo | (got & rh.last)).to_bool() {
                         release.send(Grant {
                             id: mux(dgo, dh.id, rh.id),
                         });
@@ -242,10 +245,10 @@ impl<
                     .await;
                     // A count that is not zero is a new list, so the
                     // last one is no longer what `idle` reports.
-                    let count = rdata.head().data.slice::<0, 8>();
+                    let count = rdata.head().data.slice::<0, 16>();
                     with!(self <= {
                         left: count,
-                        insn: U::<8>::from(0u8),
+                        insn: U::<16>::from(0u8),
                         finished:
                             mux(count == 0, self.finished.get(), Bit::Zero),
                     });
@@ -257,29 +260,30 @@ impl<
                             // begin a turn with.
                             DefaultClock::rising().await;
                             self.word.set(U::<3>::from(0u8));
-                            // The instruction's six words, one read
-                            // at a time, each latched as it lands.
+                            // The instruction's six words, as one read
+                            // burst of six beats, each latched as it
+                            // lands. An entry is eight words from an
+                            // address a multiple of thirty-two, so the
+                            // burst never crosses anything a burst may
+                            // not.
+                            until(DefaultClock::rising, || {
+                                issue.ready().to_bool()
+                            })
+                            .await;
+                            issue.send(Issue {
+                                read: Bit::One,
+                                addr: U::<A>::from(DL as u32)
+                                    + (self.insn.get().resize::<A>() << SHIFT),
+                                len: U::<8>::from(5u8),
+                                size: U::<3>::from(2u8),
+                                burst: BurstKind::Incr,
+                                lock: Bit::Zero,
+                                cache: U::<4>::from(0u8),
+                                prot: U::<3>::from(0u8),
+                                qos: U::<4>::from(0u8),
+                                region: U::<4>::from(0u8),
+                            });
                             for _ in 0..6 {
-                                until(DefaultClock::rising, || {
-                                    issue.ready().to_bool()
-                                })
-                                .await;
-                                issue.send(Issue {
-                                    read: Bit::One,
-                                    addr: U::<A>::from(DL as u32)
-                                        + (self.insn.get().resize::<A>()
-                                            << SHIFT)
-                                        + (self.word.get().resize::<A>()
-                                            << WORD),
-                                    len: U::<8>::from(0u8),
-                                    size: U::<3>::from(2u8),
-                                    burst: BurstKind::Incr,
-                                    lock: Bit::Zero,
-                                    cache: U::<4>::from(0u8),
-                                    prot: U::<3>::from(0u8),
-                                    qos: U::<4>::from(0u8),
-                                    region: U::<4>::from(0u8),
-                                });
                                 until(DefaultClock::rising, || {
                                     landing(
                                         rdata.peek().is_some(),
