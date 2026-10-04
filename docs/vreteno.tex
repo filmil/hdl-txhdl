@@ -1151,11 +1151,14 @@ to the handler at \code{0x144}, at \code{t} 308 in place of the first
 \code{div}, once the timer reaches the compare of 150: cause seven
 and the top bit in \code{x23}, the compare moved past the end of the
 run, one counted into \code{x8}, and the return to the \code{div} it
-displaced, which starts again. The line's interrupt is not taken,
-and \code{x8} ends at one: its pulse at cycle forty comes while only
-the timer's is enabled, the core's pending bit is the line rather
-than a latch, and by the time the echo enables it the port's bytes
-have been read and its line is low (issue 958). The two traps are the
+displaced, which starts again. The line's interrupt comes next. The
+line is raised at cycle forty and held until the core takes it, as a
+device holds its line until it is served, since the core's pending
+bit is the line rather than a latch (issue 958). The moment the echo's
+\code{csrrw} at \code{0x128} enables it, at \code{t} 1274, it is taken
+in place of the \code{ecall} after it: cause eleven and the top bit in
+\code{x23}, two counted into \code{x8}, and the return to the
+\code{ecall}, which traps in its turn. The two traps are the
 last jumps to the handler, the first from the \code{ecall} with
 eleven read into \code{x23}, the second from the illegal word, all
 ones and thirty-two bits long, with two, each with its bubble, as the

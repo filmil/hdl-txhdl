@@ -147,9 +147,8 @@ impl Asm {
 /// and three bytes echoed from it, then the halt. Interrupts are
 /// enabled from the start, the timer's at once and set to 150, the
 /// line's after the echo, since the port's byte raises it too; the
-/// handler counts interrupts in x8: two under the lockstep test, which
-/// holds the line until it is taken, and one in the printed run, whose
-/// single pulse is gone before the line's interrupt is enabled. It
+/// handler counts interrupts in x8, two by the end, the line being held
+/// until the core takes its interrupt, as both runs hold it. It
 /// leaves 110 in x10 and at the first data word, the second trap's
 /// cause in x23, 5 in x24, 0xfe01 in x25, -220 in x26, -55 in x29
 /// and -2 in x30, and has written OK, a newline and the three bytes
