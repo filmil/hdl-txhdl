@@ -86,9 +86,13 @@ jobs:
           git --no-pager log --oneline -1
 
       # The sessions on this host run Vivado by hand as well, and two runs
-      # at once exhaust its memory. Both take /data/cache/vivado.lock, so
-      # neither starts while the other runs; the job waits up to 90 minutes
-      # for it. RUNNER_BAZEL_STARTUP_FLAGS and RUNNER_BAZEL_FLAGS come from
+      # at once exhaust its memory. Both take
+      # /data/cache/vivado-install/vivado.lock, so neither starts while the
+      # other runs; the job waits up to 90 minutes for it. The lock is in
+      # the install cache because the runner mounts that directory into
+      # the job's container, read-write and at the same path, and does not
+      # mount /data/cache itself (#1099).
+      # RUNNER_BAZEL_STARTUP_FLAGS and RUNNER_BAZEL_FLAGS come from
       # the runner and carry its cache locations; they expand to nothing on
       # a runner that sets neither.
       - name: Build the tagged Vivado targets
@@ -103,7 +107,7 @@ jobs:
             exit 0
           fi
           echo "$targets"
-          flock -w 5400 /data/cache/vivado.lock \
+          flock -w 5400 /data/cache/vivado-install/vivado.lock \
             bazel ${RUNNER_BAZEL_STARTUP_FLAGS:-} build ${RUNNER_BAZEL_FLAGS:-} \
               $targets 2>&1 | tee .ci/bazel.log
 
