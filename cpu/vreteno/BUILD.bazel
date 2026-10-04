@@ -189,6 +189,16 @@ genrule(
     tools = [":board_netlist"],
 )
 
+# The board as a fast machine, for software too large for the
+# cycle-level runs (issue 1016):
+#   bazel run //cpu/vreteno:machine -- --image $PWD/fw_jump.bin --dtb ...
+rust_binary(
+    name = "machine",
+    srcs = ["src/bin/machine.rs"],
+    edition = "2021",
+    deps = [":vreteno32"],
+)
+
 # The library's unit tests: the encoders against the decoder, and the
 # core's, the model's, the timer's and the debug module's own.
 rust_test(
