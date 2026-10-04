@@ -254,6 +254,10 @@ module vreteno_board_ila (
     .vw_data(vw_data), .vw_valid(vw_valid), .vw_ready(1'b1),
     .vb_data(2'd0), .vb_valid(1'b0), .vb_ready(),
     .vr_data(34'd0), .vr_valid(1'b0), .vr_ready(),
+    // No scanout on this top (issue 151): no line is asked for, and
+    // the words' ready is high so nothing could ever wait on it.
+    .scan_req_data(32'd0), .scan_req_valid(1'b0), .scan_req_ready(),
+    .scan_words_data(), .scan_words_valid(), .scan_words_ready(1'b1),
     // The remote peripheral at `0x3300` sends its transactions out as
     // Ethernet frames, and this board has no Ethernet port: the
     // frames go nowhere and none come back, so a program that touches

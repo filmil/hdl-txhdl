@@ -61,6 +61,7 @@ use txhdl_parts::plic::Plic3;
 use txhdl_parts::pwm::Pwm;
 use txhdl_parts::remote::eth::{RemoteLink, ETHERTYPE};
 use txhdl_parts::remote::{Answer as RemoteAnswer, Ask, Remote};
+use txhdl_parts::scanout::ScanFetch;
 use txhdl_parts::sd::{Sd, SdLines};
 use txhdl_parts::spi::{Spi, SpiLines};
 use txhdl_parts::trng::Entropy;
@@ -215,7 +216,10 @@ pub struct Board<const DIV: u32> {
     /// send and the one that stores a frame received (issue 151). The
     /// peripheral side carries four bits of identifier, two for the
     /// hosts' own and two for the port, which was room for exactly
-    /// these four and is now full: a fifth host widens it.
+    /// these four and is full. The video scanout's fetch is a fifth
+    /// host, and rather than widen every identifier past the arbiter it
+    /// shares the send engine's port through `farb`, as the debug
+    /// transport shares the JTAG master's through `jarb`.
     ///
     /// Taking turns rather than fixed priority, so that an engine
     /// moving a frame cannot hold the core off the bus for the length
@@ -340,9 +344,9 @@ pub struct Board<const DIV: u32> {
     /// Each engine is a host of its own on the link, since each issues
     /// bursts of its own, and the wire is shared with the remote
     /// peripheral by EtherType.
-    pub fhost: AxiHost<32, 32, 4, 2, 4>,
+    pub fhost: AxiHost<32, 32, 4, 1, 2>,
     pub shost: AxiHost<32, 32, 4, 2, 4>,
-    pub fetch: LineFetch<32, 2, 16, 16>,
+    pub fetch: LineFetch<32, 1, 16, 16>,
     pub store: LineStore<32, 2, 16, 16>,
     pub fout: FrameOut,
     pub flen: FrameLen,
@@ -357,6 +361,31 @@ pub struct Board<const DIV: u32> {
     pub fnobeats: NoBeats,
     pub snoreads: NoReads,
     // end{ethdma}
+    // begin{scan}
+    /// The video scanout's bus side (issue 151): `ScanFetch` takes each
+    /// line request that arrives on `scan_req` from the pixel clock and
+    /// starts `vfetch` on it, whose words leave on `scan_words` for the
+    /// line pair. The crossings are the board top's, as the video
+    /// slot's are.
+    pub scan: ScanFetch<32, 16, 640>,
+    pub vfetch: LineFetch<32, 1, 16, 16>,
+    pub vhost: AxiHost<32, 32, 4, 1, 2>,
+    /// The scanout's fetch never writes.
+    pub vnobeats: NoBeats,
+    /// The send engine and the scanout onto the arbiter's third port,
+    /// one bit of identifier each, so the bus behind keeps its four.
+    ///
+    /// A line of 640 words, 2560 bytes, must arrive within the 31.8 us
+    /// of the line before it, about 80 MB/s. The link moves four bytes
+    /// a beat at 100 MHz, 400 MB/s; with every host offering, each of
+    /// the four ports wins a turn in four and each side of this one a
+    /// turn in eight, and a turn is a burst of sixteen beats, so the
+    /// scanout's share is an eighth, 50 MB/s, at the worst. That is
+    /// below what a line needs only while all five hosts move bursts
+    /// back to back for a whole line, which the core's single words do
+    /// not; the sticky underflow bit is what says whether it happens.
+    pub farb: Arbiter2<32, 32, 4, 1, 2, 0>,
+    // end{scan}
     /// Three sources, each asking while its line is high: the serial
     /// port's receive interrupt, the board's own `irq` input, and the
     /// Ethernet port's arrival.
@@ -398,6 +427,8 @@ pub struct BoardIn {
     pub bscan_update: In<Bit, Tck>,
     pub bscan_tdi: In<Bit, Tck>,
     pub bscan_reset: In<Bit, Tck>,
+    /// The scanout's line requests, from the pixel clock's side.
+    pub scan_req: Rx<U<32>>,
 }
 
 /// The board's outputs: the halt and the serial line, the modulator,
@@ -468,6 +499,8 @@ pub struct BoardOut {
     pub sd_dat_oe: Out<Bit>,
     /// The transport's data out, to `BSCANE2`'s TDO.
     pub bscan_tdo: Out<Bit, Tck>,
+    /// The scanout's words, to the pixel clock's side.
+    pub scan_words: Tx<U<32>>,
 }
 // end{ports}
 
@@ -495,6 +528,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
             bscan_update,
             bscan_tdi,
             bscan_reset,
+            scan_req,
         }: BoardIn,
         BoardOut {
             halt,
@@ -546,6 +580,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
             sd_dat_out,
             sd_dat_oe,
             bscan_tdo,
+            scan_words,
         }: BoardOut,
     ) {
         // The reset, read by the core, the timer and the serial port.
@@ -790,10 +825,34 @@ impl<const DIV: u32> Unit for Board<DIV> {
         // Each engine's host, and its place on the arbiter.
         let (fissue_tx, fissue_rx) = chan::<Issue<32>, DefaultClock>();
         let (fwbeat_tx, fwbeat_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (frelease_tx, frelease_rx) = chan::<Grant<2>, DefaultClock>();
-        let (fgrant_tx, fgrant_rx) = chan::<Grant<2>, DefaultClock>();
-        let (fdone_tx, fdone_rx) = chan::<Done<2>, DefaultClock>();
-        let (frdata_tx, frdata_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (frelease_tx, frelease_rx) = chan::<Grant<1>, DefaultClock>();
+        let (fgrant_tx, fgrant_rx) = chan::<Grant<1>, DefaultClock>();
+        let (fdone_tx, fdone_rx) = chan::<Done<1>, DefaultClock>();
+        let (frdata_tx, frdata_rx) = chan::<R<32, 1>, DefaultClock>();
+        // The send engine's host and the scanout's onto `farb`, a bit
+        // of identifier each; `faw` and the rest below are `farb`'s
+        // side of the arbiter's third port.
+        let (efaw_tx, efaw_rx) = chan::<Aw<32, 1>, DefaultClock>();
+        let (efar_tx, efar_rx) = chan::<Ar<32, 1>, DefaultClock>();
+        let (efw_tx, efw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (efb_tx, efb_rx) = chan::<B<1>, DefaultClock>();
+        let (efr_tx, efr_rx) = chan::<R<32, 1>, DefaultClock>();
+        let (scaw_tx, scaw_rx) = chan::<Aw<32, 1>, DefaultClock>();
+        let (scar_tx, scar_rx) = chan::<Ar<32, 1>, DefaultClock>();
+        let (scw_tx, scw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (scb_tx, scb_rx) = chan::<B<1>, DefaultClock>();
+        let (scr_tx, scr_rx) = chan::<R<32, 1>, DefaultClock>();
+        // The scanout's fetch and its host.
+        let (scissue_tx, scissue_rx) = chan::<Issue<32>, DefaultClock>();
+        let (scwbeat_tx, scwbeat_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (screlease_tx, screlease_rx) = chan::<Grant<1>, DefaultClock>();
+        let (scgrant_tx, scgrant_rx) = chan::<Grant<1>, DefaultClock>();
+        let (scdone_tx, scdone_rx) = chan::<Done<1>, DefaultClock>();
+        let (scrdata_tx, scrdata_rx) = chan::<R<32, 1>, DefaultClock>();
+        let (scat_o, scat_i) = signal::<U<32>, DefaultClock>();
+        let (sccount_o, sccount_i) = signal::<U<16>, DefaultClock>();
+        let (scstart_o, scstart_i) = signal::<Bit, DefaultClock>();
+        let (scrun_o, scrun_i) = signal::<Bit, DefaultClock>();
         let (faw_tx, faw_rx) = chan::<Aw<32, 2>, DefaultClock>();
         let (far_tx, far_rx) = chan::<Ar<32, 2>, DefaultClock>();
         let (fw_tx, fw_rx) = chan::<W<32, 4>, DefaultClock>();
@@ -1455,13 +1514,13 @@ join2(
                                 (
                                     fissue_rx,
                                     fwbeat_rx,
-                                    fb_rx,
-                                    fr_rx,
+                                    efb_rx,
+                                    efr_rx,
                                     frelease_rx,
                                 ),
                                 (
-                                    faw_tx, far_tx, fw_tx, fgrant_tx, fdone_tx,
-                                    frdata_tx,
+                                    efaw_tx, efar_tx, efw_tx, fgrant_tx,
+                                    fdone_tx, frdata_tx,
                                 ),
                             ),
                             self.shost.run(
@@ -1479,8 +1538,62 @@ join2(
                             ),
                         ),
                         join2(
-                            self.fnobeats.run((), fwbeat_tx),
-                            self.snoreads.run(srdata_rx, ()),
+                            join2(
+                                self.fnobeats.run((), fwbeat_tx),
+                                self.snoreads.run(srdata_rx, ()),
+                            ),
+                            // The scanout: the fetch before `ScanFetch`,
+                            // which reads whether it is running.
+                            join2(
+                                join2(
+                                    self.vfetch.run(
+                                        (
+                                            scgrant_rx, scdone_rx, scrdata_rx,
+                                            scat_i, sccount_i, scstart_i,
+                                        ),
+                                        (
+                                            scissue_tx, screlease_tx,
+                                            scan_words, scrun_o,
+                                        ),
+                                    ),
+                                    self.scan.run(
+                                        (scan_req, scrun_i),
+                                        (scat_o, sccount_o, scstart_o),
+                                    ),
+                                ),
+                                join2(
+                                    join2(
+                                        self.vhost.run(
+                                            (
+                                                scissue_rx, scwbeat_rx,
+                                                scb_rx, scr_rx, screlease_rx,
+                                            ),
+                                            (
+                                                scaw_tx, scar_tx, scw_tx,
+                                                scgrant_tx, scdone_tx,
+                                                scrdata_tx,
+                                            ),
+                                        ),
+                                        self.vnobeats.run((), scwbeat_tx),
+                                    ),
+                                    self.farb.run(
+                                        (
+                                            [efaw_rx, scaw_rx],
+                                            [efar_rx, scar_rx],
+                                            [efw_rx, scw_rx],
+                                            fb_rx,
+                                            fr_rx,
+                                        ),
+                                        (
+                                            faw_tx,
+                                            far_tx,
+                                            fw_tx,
+                                            [efb_tx, scb_tx],
+                                            [efr_tx, scr_tx],
+                                        ),
+                                    ),
+                                ),
+                            ),
                         ),
                     ),
                 ),

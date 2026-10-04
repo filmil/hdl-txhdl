@@ -329,6 +329,7 @@ fn rig_with(text: Vec<u32>, busy: bool) -> Rig {
             bscan_update: update,
             bscan_tdi: tdi,
             bscan_reset: reset,
+            scan_req: chan::<U<32>, DefaultClock>().1,
             jtag: AxiHostPins {
                 awid: signal::<U<1>, DefaultClock>().1,
                 awaddr: signal::<U<32>, DefaultClock>().1,
@@ -406,6 +407,8 @@ fn rig_with(text: Vec<u32>, busy: bool) -> Rig {
             sd_dat_out: signal::<U<4>, DefaultClock>().0,
             sd_dat_oe: out(),
             bscan_tdo: tdo_o,
+            // No scanout runs here: nothing asks for a line.
+            scan_words: chan::<U<32>, DefaultClock>().0,
         },
     ));
     // Out of reset, the serial line idle, and the cable's half period

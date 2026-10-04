@@ -433,6 +433,7 @@ fn run_all(
             bscan_update: signal::<Bit, Tck>().1,
             bscan_tdi: signal::<Bit, Tck>().1,
             bscan_reset: signal::<Bit, Tck>().1,
+            scan_req: chan::<U<32>, DefaultClock>().1,
             jtag: AxiHostPins {
                 awid: signal::<U<1>, DefaultClock>().1,
                 awaddr,
@@ -510,6 +511,8 @@ fn run_all(
             sd_dat_out: sd_dat_out_o,
             sd_dat_oe: sd_dat_oe_o,
             bscan_tdo: signal::<Bit, Tck>().0,
+            // No scanout runs here: nothing asks for a line.
+            scan_words: chan::<U<32>, DefaultClock>().0,
         },
     ));
     rst_o.set(Bit::One);
