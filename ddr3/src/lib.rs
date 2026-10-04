@@ -169,7 +169,7 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
 /// the Wishbone lines.
 #[derive(Trace, Default)]
 pub struct Ddr3Per {
-    pub bridge: AxiWb<32, 4, AW>,
+    pub bridge: AxiWb<32, 5, AW>,
     pub ctl: Ddr3,
 }
 
@@ -177,7 +177,7 @@ pub struct Ddr3Per {
 impl Unit for Ddr3Per {
     async fn run(
         &mut self,
-        bus: PerPort<32, 32, 4, 4>,
+        bus: PerPort<32, 32, 4, 5>,
         (
             sys_clk,
             sys_rst,
@@ -291,14 +291,14 @@ mod tests {
             host_out,
             per_in,
             per_out,
-        } = axi_to_unit::<32, 32, 4, 4, 16>();
-        let bus: PerPort<32, 32, 4, 4> = per_client.into();
+        } = axi_to_unit::<32, 32, 4, 5, 16>();
+        let bus: PerPort<32, 32, 4, 5> = per_client.into();
         let (_sys_clk_o, sys_clk) = signal::<Bit, DefaultClock>();
         let (_sys_rst_o, sys_rst) = signal::<Bit, DefaultClock>();
         let (calib_o, calib) = signal::<Bit, DefaultClock>();
         let bits = || signal::<Bit, DefaultClock>().0;
-        let mut h = AxiHost::<32, 32, 4, 4, 16>::default();
-        let mut p = AxiPer::<32, 32, 4, 4>::default();
+        let mut h = AxiHost::<32, 32, 4, 5, 16>::default();
+        let mut p = AxiPer::<32, 32, 4, 5>::default();
         let mut mem = Ddr3Per::default();
         let seen = Rc::new(RefCell::new(Vec::new()));
         let out = seen.clone();

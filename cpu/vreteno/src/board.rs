@@ -37,7 +37,7 @@ use txhdl::comp::{
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
-use txhdl_parts::bus::arbiter::{Arbiter2, Arbiter4};
+use txhdl_parts::bus::arbiter::{Arbiter2, Arbiter5};
 use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerPort, PerReq, B, R,
     W,
@@ -126,7 +126,7 @@ impl AddrMap<8> for BoardMap {
     ];
 }
 
-pub type BoardRouter = Router<8, BoardMap, 32, 32, 4, 4>;
+pub type BoardRouter = Router<8, BoardMap, 32, 32, 4, 5>;
 // end{map}
 
 // begin{litemaps}
@@ -211,23 +211,23 @@ pub struct Board<const DIV: u32> {
     /// past the arbiter widens: the JTAG master's IP only ever used one
     /// of the two bits it had. Taking turns, as the arbiter does.
     pub jarb: Arbiter2<32, 32, 4, 1, 2, 0>,
-    /// The four hosts onto one link: the core, the JTAG master, and
-    /// the Ethernet port's two engines, the one that fetches a frame to
-    /// send and the one that stores a frame received (issue 151). The
-    /// peripheral side carries four bits of identifier, two for the
-    /// hosts' own and two for the port, which was room for exactly
-    /// these four and is full. The video scanout's fetch is a fifth
-    /// host, and rather than widen every identifier past the arbiter it
-    /// shares the send engine's port through `farb`, as the debug
-    /// transport shares the JTAG master's through `jarb`.
+    /// The five hosts onto one link: the core, the JTAG master, the
+    /// Ethernet port's two engines, the one that fetches a frame to
+    /// send and the one that stores a frame received, and the video
+    /// scanout's fetch (issue 151). The peripheral side carries five
+    /// bits of identifier, two for the hosts' own and three for the
+    /// port, which is room for eight: a sixth, seventh and eighth host
+    /// raise the count and widen nothing (issue 1022). Four bits held
+    /// exactly four hosts, and the scanout had shared the send engine's
+    /// port until the user chose widening over nesting further.
     ///
     /// Taking turns rather than fixed priority, so that an engine
     /// moving a frame cannot hold the core off the bus for the length
-    /// of it.
-    pub arb: Arbiter4<32, 32, 4, 2, 4, 0>,
+    /// of it. With every host offering, each wins one turn in five.
+    pub arb: Arbiter5<32, 32, 4, 2, 5, 0>,
     pub router: BoardRouter,
-    pub pdmem: AxiPer<32, 32, 4, 4>,
-    pub ptimer: AxiPer<32, 32, 4, 4>,
+    pub pdmem: AxiPer<32, 32, 4, 5>,
+    pub ptimer: AxiPer<32, 32, 4, 5>,
     // begin{vslot}
     /// Nine small peripherals share the page at `0x3000`: the serial
     /// port at `0x3000`, the pulse width modulator at `0x3100`,
@@ -256,22 +256,22 @@ pub struct Board<const DIV: u32> {
     ///
     /// The fifth is a field, because `EthSlots` runs on the bus clock
     /// like every other peripheral here and wants no crossing.
-    pub puart: LiteBridge<9, SlotMap, 32, 32, 4, 4>,
+    pub puart: LiteBridge<9, SlotMap, 32, 32, 4, 5>,
     // end{vslot}
-    pub pddr3: AxiPer<32, 32, 4, 4>,
-    pub pplic: LiteBridge<1, PlicMap, 32, 32, 4, 4>,
+    pub pddr3: AxiPer<32, 32, 4, 5>,
+    pub pplic: LiteBridge<1, PlicMap, 32, 32, 4, 5>,
     /// The debug module, on a router port of its own behind a bridge
     /// of its own, so the JTAG host reaches it while the core is
     /// halted (issue 154).
-    pub pdm: LiteBridge<1, DmMap, 32, 32, 4, 4>,
+    pub pdm: LiteBridge<1, DmMap, 32, 32, 4, 5>,
     pub dmod: Dm,
     /// The boot memory on the bus, at address zero, readable and not
     /// writable: the same words the core fetches from inside itself,
     /// so a load can read a constant beside the code (#268).
-    pub prom: AxiPer<32, 32, 4, 4>,
-    pub rom: Rom<4>,
-    pub dmem: Dmem<4>,
-    pub timer: Timer<4>,
+    pub prom: AxiPer<32, 32, 4, 5>,
+    pub rom: Rom<5>,
+    pub dmem: Dmem<5>,
+    pub timer: Timer<5>,
     pub uart: Uart<DIV>,
     pub pwm: Pwm,
     pub ddr3: Ddr3Per,
@@ -325,9 +325,9 @@ pub struct Board<const DIV: u32> {
     /// waits on the status register.
     pub sd: Sd,
     /// The window's tracker, on the router's eighth port.
-    pub pflash: AxiPer<32, 32, 4, 4>,
+    pub pflash: AxiPer<32, 32, 4, 5>,
     /// The window.
-    pub flashwin: FlashWin<FLASH_DIV, 4>,
+    pub flashwin: FlashWin<FLASH_DIV, 5>,
     /// The startup block and the pins, write enable refused.
     pub cfgflash: CfgFlash<1>,
     // end{cfgflash}
@@ -344,9 +344,9 @@ pub struct Board<const DIV: u32> {
     /// Each engine is a host of its own on the link, since each issues
     /// bursts of its own, and the wire is shared with the remote
     /// peripheral by EtherType.
-    pub fhost: AxiHost<32, 32, 4, 1, 2>,
+    pub fhost: AxiHost<32, 32, 4, 2, 4>,
     pub shost: AxiHost<32, 32, 4, 2, 4>,
-    pub fetch: LineFetch<32, 1, 16, 16>,
+    pub fetch: LineFetch<32, 2, 16, 16>,
     pub store: LineStore<32, 2, 16, 16>,
     pub fout: FrameOut,
     pub flen: FrameLen,
@@ -368,23 +368,10 @@ pub struct Board<const DIV: u32> {
     /// line pair. The crossings are the board top's, as the video
     /// slot's are.
     pub scan: ScanFetch<32, 16, 640>,
-    pub vfetch: LineFetch<32, 1, 16, 16>,
-    pub vhost: AxiHost<32, 32, 4, 1, 2>,
+    pub vfetch: LineFetch<32, 2, 16, 16>,
+    pub vhost: AxiHost<32, 32, 4, 2, 4>,
     /// The scanout's fetch never writes.
     pub vnobeats: NoBeats,
-    /// The send engine and the scanout onto the arbiter's third port,
-    /// one bit of identifier each, so the bus behind keeps its four.
-    ///
-    /// A line of 640 words, 2560 bytes, must arrive within the 31.8 us
-    /// of the line before it, about 80 MB/s. The link moves four bytes
-    /// a beat at 100 MHz, 400 MB/s; with every host offering, each of
-    /// the four ports wins a turn in four and each side of this one a
-    /// turn in eight, and a turn is a burst of sixteen beats, so the
-    /// scanout's share is an eighth, 50 MB/s, at the worst. That is
-    /// below what a line needs only while all five hosts move bursts
-    /// back to back for a whole line, which the core's single words do
-    /// not; the sticky underflow bit is what says whether it happens.
-    pub farb: Arbiter2<32, 32, 4, 1, 2, 0>,
     // end{scan}
     /// Three sources, each asking while its line is high: the serial
     /// port's receive interrupt, the board's own `irq` input, and the
@@ -648,56 +635,56 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (dreqx_tx, dreqx_rx) = chan::<U<41>, DefaultClock>();
         let (dans_tx, dans_rx) = chan::<U<34>, DefaultClock>();
         let (dansx_tx, dansx_rx) = chan::<U<34>, Tck>();
-        let (xaw_tx, xaw_rx) = chan::<Aw<32, 4>, DefaultClock>();
-        let (xar_tx, xar_rx) = chan::<Ar<32, 4>, DefaultClock>();
+        let (xaw_tx, xaw_rx) = chan::<Aw<32, 5>, DefaultClock>();
+        let (xar_tx, xar_rx) = chan::<Ar<32, 5>, DefaultClock>();
         let (xw_tx, xw_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (xb_tx, xb_rx) = chan::<B<4>, DefaultClock>();
-        let (xr_tx, xr_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (xb_tx, xb_rx) = chan::<B<5>, DefaultClock>();
+        let (xr_tx, xr_rx) = chan::<R<32, 5>, DefaultClock>();
         // The router and each peripheral's tracker.
-        let (aw0_tx, aw0_rx) = chan::<Aw<32, 4>, DefaultClock>();
-        let (ar0_tx, ar0_rx) = chan::<Ar<32, 4>, DefaultClock>();
+        let (aw0_tx, aw0_rx) = chan::<Aw<32, 5>, DefaultClock>();
+        let (ar0_tx, ar0_rx) = chan::<Ar<32, 5>, DefaultClock>();
         let (w0_tx, w0_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b0_tx, b0_rx) = chan::<B<4>, DefaultClock>();
-        let (r0_tx, r0_rx) = chan::<R<32, 4>, DefaultClock>();
-        let (aw1_tx, aw1_rx) = chan::<Aw<32, 4>, DefaultClock>();
-        let (ar1_tx, ar1_rx) = chan::<Ar<32, 4>, DefaultClock>();
+        let (b0_tx, b0_rx) = chan::<B<5>, DefaultClock>();
+        let (r0_tx, r0_rx) = chan::<R<32, 5>, DefaultClock>();
+        let (aw1_tx, aw1_rx) = chan::<Aw<32, 5>, DefaultClock>();
+        let (ar1_tx, ar1_rx) = chan::<Ar<32, 5>, DefaultClock>();
         let (w1_tx, w1_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b1_tx, b1_rx) = chan::<B<4>, DefaultClock>();
-        let (r1_tx, r1_rx) = chan::<R<32, 4>, DefaultClock>();
-        let (aw2_tx, aw2_rx) = chan::<Aw<32, 4>, DefaultClock>();
-        let (ar2_tx, ar2_rx) = chan::<Ar<32, 4>, DefaultClock>();
+        let (b1_tx, b1_rx) = chan::<B<5>, DefaultClock>();
+        let (r1_tx, r1_rx) = chan::<R<32, 5>, DefaultClock>();
+        let (aw2_tx, aw2_rx) = chan::<Aw<32, 5>, DefaultClock>();
+        let (ar2_tx, ar2_rx) = chan::<Ar<32, 5>, DefaultClock>();
         let (w2_tx, w2_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b2_tx, b2_rx) = chan::<B<4>, DefaultClock>();
-        let (r2_tx, r2_rx) = chan::<R<32, 4>, DefaultClock>();
-        let (aw3_tx, aw3_rx) = chan::<Aw<32, 4>, DefaultClock>();
-        let (ar3_tx, ar3_rx) = chan::<Ar<32, 4>, DefaultClock>();
+        let (b2_tx, b2_rx) = chan::<B<5>, DefaultClock>();
+        let (r2_tx, r2_rx) = chan::<R<32, 5>, DefaultClock>();
+        let (aw3_tx, aw3_rx) = chan::<Aw<32, 5>, DefaultClock>();
+        let (ar3_tx, ar3_rx) = chan::<Ar<32, 5>, DefaultClock>();
         let (w3_tx, w3_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b3_tx, b3_rx) = chan::<B<4>, DefaultClock>();
-        let (r3_tx, r3_rx) = chan::<R<32, 4>, DefaultClock>();
-        let (aw4_tx, aw4_rx) = chan::<Aw<32, 4>, DefaultClock>();
-        let (ar4_tx, ar4_rx) = chan::<Ar<32, 4>, DefaultClock>();
+        let (b3_tx, b3_rx) = chan::<B<5>, DefaultClock>();
+        let (r3_tx, r3_rx) = chan::<R<32, 5>, DefaultClock>();
+        let (aw4_tx, aw4_rx) = chan::<Aw<32, 5>, DefaultClock>();
+        let (ar4_tx, ar4_rx) = chan::<Ar<32, 5>, DefaultClock>();
         let (w4_tx, w4_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b4_tx, b4_rx) = chan::<B<4>, DefaultClock>();
-        let (r4_tx, r4_rx) = chan::<R<32, 4>, DefaultClock>();
-        let (aw5_tx, aw5_rx) = chan::<Aw<32, 4>, DefaultClock>();
-        let (ar5_tx, ar5_rx) = chan::<Ar<32, 4>, DefaultClock>();
+        let (b4_tx, b4_rx) = chan::<B<5>, DefaultClock>();
+        let (r4_tx, r4_rx) = chan::<R<32, 5>, DefaultClock>();
+        let (aw5_tx, aw5_rx) = chan::<Aw<32, 5>, DefaultClock>();
+        let (ar5_tx, ar5_rx) = chan::<Ar<32, 5>, DefaultClock>();
         let (w5_tx, w5_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b5_tx, b5_rx) = chan::<B<4>, DefaultClock>();
-        let (r5_tx, r5_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (b5_tx, b5_rx) = chan::<B<5>, DefaultClock>();
+        let (r5_tx, r5_rx) = chan::<R<32, 5>, DefaultClock>();
         // The boot memory's tracker and the memory.
-        let (req5_tx, req5_rx) = chan::<PerReq<32, 4>, DefaultClock>();
+        let (req5_tx, req5_rx) = chan::<PerReq<32, 5>, DefaultClock>();
         let (wd5_tx, wd5_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (ans5_tx, ans5_rx) = chan::<Answer<4>, DefaultClock>();
-        let (rb5_tx, rb5_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (ans5_tx, ans5_rx) = chan::<Answer<5>, DefaultClock>();
+        let (rb5_tx, rb5_rx) = chan::<R<32, 5>, DefaultClock>();
         // Each peripheral's tracker and the peripheral.
-        let (req0_tx, req0_rx) = chan::<PerReq<32, 4>, DefaultClock>();
+        let (req0_tx, req0_rx) = chan::<PerReq<32, 5>, DefaultClock>();
         let (wd0_tx, wd0_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (ans0_tx, ans0_rx) = chan::<Answer<4>, DefaultClock>();
-        let (rb0_tx, rb0_rx) = chan::<R<32, 4>, DefaultClock>();
-        let (req1_tx, req1_rx) = chan::<PerReq<32, 4>, DefaultClock>();
+        let (ans0_tx, ans0_rx) = chan::<Answer<5>, DefaultClock>();
+        let (rb0_tx, rb0_rx) = chan::<R<32, 5>, DefaultClock>();
+        let (req1_tx, req1_rx) = chan::<PerReq<32, 5>, DefaultClock>();
         let (wd1_tx, wd1_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (ans1_tx, ans1_rx) = chan::<Answer<4>, DefaultClock>();
-        let (rb1_tx, rb1_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (ans1_tx, ans1_rx) = chan::<Answer<5>, DefaultClock>();
+        let (rb1_tx, rb1_rx) = chan::<R<32, 5>, DefaultClock>();
         // The serial port speaks AXI-Lite, behind its bridge.
         let (law_tx, law_rx) = chan::<LiteAw<32>, DefaultClock>();
         let (lar_tx, lar_rx) = chan::<LiteAr<32>, DefaultClock>();
@@ -742,15 +729,15 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (sd_irq_o, _sd_irq_i) = signal::<Bit, DefaultClock>();
         // The window on the router's eighth port, its wires to the pins,
         // and the reset the pins hold it in until the flash is ready.
-        let (aw7_tx, aw7_rx) = chan::<Aw<32, 4>, DefaultClock>();
-        let (ar7_tx, ar7_rx) = chan::<Ar<32, 4>, DefaultClock>();
+        let (aw7_tx, aw7_rx) = chan::<Aw<32, 5>, DefaultClock>();
+        let (ar7_tx, ar7_rx) = chan::<Ar<32, 5>, DefaultClock>();
         let (w7_tx, w7_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b7_tx, b7_rx) = chan::<B<4>, DefaultClock>();
-        let (r7_tx, r7_rx) = chan::<R<32, 4>, DefaultClock>();
-        let (req7_tx, req7_rx) = chan::<PerReq<32, 4>, DefaultClock>();
+        let (b7_tx, b7_rx) = chan::<B<5>, DefaultClock>();
+        let (r7_tx, r7_rx) = chan::<R<32, 5>, DefaultClock>();
+        let (req7_tx, req7_rx) = chan::<PerReq<32, 5>, DefaultClock>();
         let (wd7_tx, wd7_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (ans7_tx, ans7_rx) = chan::<Answer<4>, DefaultClock>();
-        let (rb7_tx, rb7_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (ans7_tx, ans7_rx) = chan::<Answer<5>, DefaultClock>();
+        let (rb7_tx, rb7_rx) = chan::<R<32, 5>, DefaultClock>();
         let (w_sclk_o, w_sclk_i) = signal::<Bit, DefaultClock>();
         let (w_mosi_o, w_mosi_i) = signal::<Bit, DefaultClock>();
         let (w_cs_n_o, w_cs_n_i) = signal::<Bit, DefaultClock>();
@@ -825,30 +812,23 @@ impl<const DIV: u32> Unit for Board<DIV> {
         // Each engine's host, and its place on the arbiter.
         let (fissue_tx, fissue_rx) = chan::<Issue<32>, DefaultClock>();
         let (fwbeat_tx, fwbeat_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (frelease_tx, frelease_rx) = chan::<Grant<1>, DefaultClock>();
-        let (fgrant_tx, fgrant_rx) = chan::<Grant<1>, DefaultClock>();
-        let (fdone_tx, fdone_rx) = chan::<Done<1>, DefaultClock>();
-        let (frdata_tx, frdata_rx) = chan::<R<32, 1>, DefaultClock>();
-        // The send engine's host and the scanout's onto `farb`, a bit
-        // of identifier each; `faw` and the rest below are `farb`'s
-        // side of the arbiter's third port.
-        let (efaw_tx, efaw_rx) = chan::<Aw<32, 1>, DefaultClock>();
-        let (efar_tx, efar_rx) = chan::<Ar<32, 1>, DefaultClock>();
-        let (efw_tx, efw_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (efb_tx, efb_rx) = chan::<B<1>, DefaultClock>();
-        let (efr_tx, efr_rx) = chan::<R<32, 1>, DefaultClock>();
-        let (scaw_tx, scaw_rx) = chan::<Aw<32, 1>, DefaultClock>();
-        let (scar_tx, scar_rx) = chan::<Ar<32, 1>, DefaultClock>();
+        let (frelease_tx, frelease_rx) = chan::<Grant<2>, DefaultClock>();
+        let (fgrant_tx, fgrant_rx) = chan::<Grant<2>, DefaultClock>();
+        let (fdone_tx, fdone_rx) = chan::<Done<2>, DefaultClock>();
+        let (frdata_tx, frdata_rx) = chan::<R<32, 2>, DefaultClock>();
+        // The scanout's host onto the arbiter's fifth port.
+        let (scaw_tx, scaw_rx) = chan::<Aw<32, 2>, DefaultClock>();
+        let (scar_tx, scar_rx) = chan::<Ar<32, 2>, DefaultClock>();
         let (scw_tx, scw_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (scb_tx, scb_rx) = chan::<B<1>, DefaultClock>();
-        let (scr_tx, scr_rx) = chan::<R<32, 1>, DefaultClock>();
+        let (scb_tx, scb_rx) = chan::<B<2>, DefaultClock>();
+        let (scr_tx, scr_rx) = chan::<R<32, 2>, DefaultClock>();
         // The scanout's fetch and its host.
         let (scissue_tx, scissue_rx) = chan::<Issue<32>, DefaultClock>();
         let (scwbeat_tx, scwbeat_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (screlease_tx, screlease_rx) = chan::<Grant<1>, DefaultClock>();
-        let (scgrant_tx, scgrant_rx) = chan::<Grant<1>, DefaultClock>();
-        let (scdone_tx, scdone_rx) = chan::<Done<1>, DefaultClock>();
-        let (scrdata_tx, scrdata_rx) = chan::<R<32, 1>, DefaultClock>();
+        let (screlease_tx, screlease_rx) = chan::<Grant<2>, DefaultClock>();
+        let (scgrant_tx, scgrant_rx) = chan::<Grant<2>, DefaultClock>();
+        let (scdone_tx, scdone_rx) = chan::<Done<2>, DefaultClock>();
+        let (scrdata_tx, scrdata_rx) = chan::<R<32, 2>, DefaultClock>();
         let (scat_o, scat_i) = signal::<U<32>, DefaultClock>();
         let (sccount_o, sccount_i) = signal::<U<16>, DefaultClock>();
         let (scstart_o, scstart_i) = signal::<Bit, DefaultClock>();
@@ -869,10 +849,10 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (sw_tx, sw_rx) = chan::<W<32, 4>, DefaultClock>();
         let (sb_tx, sb_rx) = chan::<B<2>, DefaultClock>();
         let (sr_tx, sr_rx) = chan::<R<32, 2>, DefaultClock>();
-        let (req3_tx, req3_rx) = chan::<PerReq<32, 4>, DefaultClock>();
+        let (req3_tx, req3_rx) = chan::<PerReq<32, 5>, DefaultClock>();
         let (wd3_tx, wd3_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (ans3_tx, ans3_rx) = chan::<Answer<4>, DefaultClock>();
-        let (rb3_tx, rb3_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (ans3_tx, ans3_rx) = chan::<Answer<5>, DefaultClock>();
+        let (rb3_tx, rb3_rx) = chan::<R<32, 5>, DefaultClock>();
         // The interrupt controller speaks AXI-Lite too, behind a
         // bridge of its own.
         let (paw_tx, paw_rx) = chan::<LiteAw<32>, DefaultClock>();
@@ -881,11 +861,11 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (pb_tx, pb_rx) = chan::<LiteB, DefaultClock>();
         let (pr_tx, pr_rx) = chan::<LiteR<32>, DefaultClock>();
         // And the debug module, on the seventh port.
-        let (aw6_tx, aw6_rx) = chan::<Aw<32, 4>, DefaultClock>();
-        let (ar6_tx, ar6_rx) = chan::<Ar<32, 4>, DefaultClock>();
+        let (aw6_tx, aw6_rx) = chan::<Aw<32, 5>, DefaultClock>();
+        let (ar6_tx, ar6_rx) = chan::<Ar<32, 5>, DefaultClock>();
         let (w6_tx, w6_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b6_tx, b6_rx) = chan::<B<4>, DefaultClock>();
-        let (r6_tx, r6_rx) = chan::<R<32, 4>, DefaultClock>();
+        let (b6_tx, b6_rx) = chan::<B<5>, DefaultClock>();
+        let (r6_tx, r6_rx) = chan::<R<32, 5>, DefaultClock>();
         let (daw_tx, daw_rx) = chan::<LiteAw<32>, DefaultClock>();
         let (dar_tx, dar_rx) = chan::<LiteAr<32>, DefaultClock>();
         let (dw_tx, dw_rx) = chan::<LiteW<32, 4>, DefaultClock>();
@@ -1102,9 +1082,15 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                     ),
                                     self.arb.run(
                                         (
-                                            [aw_rx, jaw_rx, faw_rx, saw_rx],
-                                            [ar_rx, jar_rx, far_rx, sar_rx],
-                                            [w_rx, jw_rx, fw_rx, sw_rx],
+                                            [
+                                                aw_rx, jaw_rx, faw_rx, saw_rx,
+                                                scaw_rx,
+                                            ],
+                                            [
+                                                ar_rx, jar_rx, far_rx, sar_rx,
+                                                scar_rx,
+                                            ],
+                                            [w_rx, jw_rx, fw_rx, sw_rx, scw_rx],
                                             xb_rx,
                                             xr_rx,
                                         ),
@@ -1112,8 +1098,8 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             xaw_tx,
                                             xar_tx,
                                             xw_tx,
-                                            [b_tx, jb_tx, fb_tx, sb_tx],
-                                            [r_tx, jr_tx, fr_tx, sr_tx],
+                                            [b_tx, jb_tx, fb_tx, sb_tx, scb_tx],
+                                            [r_tx, jr_tx, fr_tx, sr_tx, scr_tx],
                                         ),
                                     ),
                                 ),
@@ -1514,12 +1500,12 @@ join2(
                                 (
                                     fissue_rx,
                                     fwbeat_rx,
-                                    efb_rx,
-                                    efr_rx,
+                                    fb_rx,
+                                    fr_rx,
                                     frelease_rx,
                                 ),
                                 (
-                                    efaw_tx, efar_tx, efw_tx, fgrant_tx,
+                                    faw_tx, far_tx, fw_tx, fgrant_tx,
                                     fdone_tx, frdata_tx,
                                 ),
                             ),
@@ -1562,36 +1548,18 @@ join2(
                                     ),
                                 ),
                                 join2(
-                                    join2(
-                                        self.vhost.run(
-                                            (
-                                                scissue_rx, scwbeat_rx,
-                                                scb_rx, scr_rx, screlease_rx,
-                                            ),
-                                            (
-                                                scaw_tx, scar_tx, scw_tx,
-                                                scgrant_tx, scdone_tx,
-                                                scrdata_tx,
-                                            ),
-                                        ),
-                                        self.vnobeats.run((), scwbeat_tx),
-                                    ),
-                                    self.farb.run(
+                                    self.vhost.run(
                                         (
-                                            [efaw_rx, scaw_rx],
-                                            [efar_rx, scar_rx],
-                                            [efw_rx, scw_rx],
-                                            fb_rx,
-                                            fr_rx,
+                                            scissue_rx, scwbeat_rx,
+                                            scb_rx, scr_rx, screlease_rx,
                                         ),
                                         (
-                                            faw_tx,
-                                            far_tx,
-                                            fw_tx,
-                                            [efb_tx, scb_tx],
-                                            [efr_tx, scr_tx],
+                                            scaw_tx, scar_tx, scw_tx,
+                                            scgrant_tx, scdone_tx,
+                                            scrdata_tx,
                                         ),
                                     ),
+                                    self.vnobeats.run((), scwbeat_tx),
                                 ),
                             ),
                         ),
