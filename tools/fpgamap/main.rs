@@ -70,7 +70,7 @@ fn label(who: &str) -> &'static str {
         "memory" => "DDR3 controller",
         "ethernet" => "Ethernet",
         "video" => "Video and I2C",
-        "crossing" => "Crossing",
+        "crossing" => "Clock crossings",
         _ => "Top level",
     }
 }
