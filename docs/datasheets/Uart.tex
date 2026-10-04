@@ -1,25 +1,32 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: Uart
-\datasheet{Uart}{Vreteno's serial port: an AXI-Lite peripheral with a line each way and a receive buffer of eight.}
+\datasheet{Uart}{Vreteno's serial port: an AXI-Lite peripheral with SiFive's register map, a line each way and a queue of eight on each side.}
 
 \dsfacts{\code{cpu/vreteno/src/uart.rs}}{\code{vreteno32::uart::Uart}}%
 {\code{//docs:vreteno}, \code{//docs:noc}}
 
 \subsection*{Function}
 
-\code{Uart} sends bytes on \code{tx} and receives them on \code{rx},
-one start bit, eight data bits least significant first and one stop
-bit, each \code{DIV} cycles long. The lines rest high. A received byte
-lands in a buffer of eight, and \code{irq} is high while the buffer
-holds any.
+\code{Uart} sends bytes on \code{tx} and receives them on \code{rx}.
+A frame is one start bit, eight data bits least significant first and
+one stop bit, or two with \code{nstop}. Each bit lasts \code{div} plus
+one cycles. The lines rest high.
+
+Its registers are SiFive's \code{sifive,uart0} (issue 1011), so
+Linux's \code{serial/sifive.c}, OpenSBI's console and Zephyr's
+\code{uart\_sifive} drive it unchanged. A byte written to
+\code{txdata} joins a transmit queue of eight. A byte received lands
+in a receive queue of eight, and a read of \code{rxdata} takes the
+oldest. \code{irq} is high while a watermark that \code{ie} enables is
+passed.
 
 It is an AXI-Lite peripheral. It sits behind a \code{LiteBridge<1, ..>},
 which hands it one transaction at a time with no identifier and no
 burst. Its link is one port, \code{bus}, a \code{LitePort} of the
 five channels: reads come on \code{bus\_ar} and are answered on
 \code{bus\_r}; writes come on \code{bus\_aw} and \code{bus\_w} and
-are answered on \code{bus\_b}. The input \code{rst} stops both sides
-and empties the buffer.
+are answered on \code{bus\_b}. The input \code{rst} stops both sides,
+empties both queues and puts the controls back to their reset values.
 
 \subsection*{Parameters}
 
@@ -28,9 +35,10 @@ and empties the buffer.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{DIV} & Cycles per bit on both lines. The tables use 868, which
+\code{DIV} & The bit period \code{div} starts with, in cycles; the
+register resets to \code{DIV} less one. The tables use 868, which
 \code{uart.rs} states is 115200 baud at 100~MHz, as the board runs.
-The checked runs use 4, and \code{board\_netlist sim} uses 16. \\
+The checked runs use 4. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -39,15 +47,23 @@ The checked runs use 4, and \code{board\_netlist sim} uses 16. \\
 
 Offsets from the port's base. On the board the base is \code{0x3000},
 which is also \code{isa::UART\_BASE}. The port selects the word by
-bits 3 and 2 of the address.
+bits 4 to 2 of the address.
 
 \dsregs{Uart}
 
-The map is declared as \code{serial}. A write to \code{tx} starts a
-frame if the port is idle, and otherwise the byte is dropped. A read of
-\code{rx} takes the oldest byte out of the buffer, which is what its
-access says. Writes to \code{status} and \code{rx} are ignored, and
-\code{0xc}, which no register names, reads zero.
+The map is declared as \code{serial}. Bit 31 of \code{txdata} reads
+one while the transmit queue is full, and a byte written then is
+dropped. A read of \code{rxdata} takes the oldest byte; bit 31 reads
+one when there was none, and the low byte then reads zero. \code{ip}'s
+\code{txwm} is set while fewer than \code{txcnt} bytes wait to go
+out, and its \code{rxwm} while more than \code{rxcnt} wait to be read.
+Writes to \code{rxdata} and \code{ip} are ignored, and \code{0x1c},
+which no register names, reads zero.
+
+Three resets differ from SiFive's, so that a program that never writes
+the controls finds the port running: \code{txen}, \code{rxen} and
+\code{ie}'s \code{rxwm} start set. So \code{irq} is high while a
+received byte waits, as before this map.
 
 \dstables{Uart}
 
@@ -59,28 +75,33 @@ access says. Writes to \code{status} and \code{rx} are ignored, and
 \item A write is taken when \code{bus\_b} has room and both
 \code{bus\_aw} and \code{bus\_w} hold a request. It is answered with
 \code{OKAY} in the same cycle, whichever word it names.
-\item A byte written to word 0 while the port is idle loads the ten
-bits of its frame into \code{shift} and ten into \code{bits}. It also
-goes into \code{last}, and \code{sent} counts it.
+\item A byte written to \code{txdata} with the queue not full goes in
+at the queue's tail. It also goes into \code{last}, and \code{sent}
+counts it.
+\item When the line is idle, the queue holds a byte and \code{txen}
+is set, the oldest byte leaves the queue. Its frame loads into
+\code{shift}, and \code{bits} into ten, or eleven with \code{nstop}.
 \item While \code{bits} is not zero the port is busy and \code{tx} is
-bit 0 of \code{shift}. Every \code{DIV} cycles the frame shifts down
-and \code{bits} counts down. When idle, \code{tx} is high.
+bit 0 of \code{shift}. Every \code{div} plus one cycles the frame
+shifts down and \code{bits} counts down. When idle, \code{tx} is high.
 \item The \code{rx} line passes through one register, \code{line},
 before the logic.
-\item When the port is not receiving and \code{line} is low, a frame
-begins. The port samples \code{line} in cycle \code{DIV/2} of each of
-the ten bits.
+\item When the port is not receiving, \code{rxen} is set and
+\code{line} is low, a frame begins. The port samples \code{line} in
+the middle cycle of each of the ten bits.
 \item A high where the start bit should be is a false start, and the
 frame is dropped. The eight data bits shift into \code{rx\_shift}.
-\item A high stop bit lands the byte. If the buffer holds eight, the
-byte is dropped and \code{dropped} counts it; else it goes in at the
-tail and \code{received} counts it. A low stop bit lands nothing.
-\item A read of word 2 with a byte in the buffer removes the oldest. A
-push and a removal in the same cycle leave the count unchanged.
-\item \code{irq} is high while the buffer's count is not zero.
+\item A high stop bit lands the byte. If the receive queue holds
+eight, the byte is dropped and \code{dropped} counts it; else it goes
+in at the tail and \code{received} counts it. A low stop bit lands
+nothing.
+\item A push and a removal in the same cycle leave either queue's
+count unchanged.
+\item \code{irq} is \code{ie}'s \code{txwm} and \code{ip}'s
+\code{txwm}, or \code{ie}'s \code{rxwm} and \code{ip}'s \code{rxwm}.
 \item With \code{rst} high, \code{bits}, \code{tick},
-\code{rx\_bits}, \code{rx\_tick}, \code{head} and \code{count} go to
-zero.
+\code{rx\_bits} and \code{rx\_tick} go to zero, both queues empty, and
+the controls and \code{div} return to their reset values.
 \end{itemize}
 
 \subsection*{Verification}
@@ -93,15 +114,17 @@ zero.
 \code{OK} and a newline, receive three bytes, and echo them.
 \item \code{//cpu/vreteno:hello\_test},
 \code{//cpu/vreteno:hello\_cc\_test} and \code{//cpu/vreteno:board\_test}
-check what compiled programs print on \code{tx}.
+check what compiled programs print on \code{tx}. The harnesses run the
+line on after the halt, while the transmit queue empties.
+\item \code{//cpu/vreteno:zephyr\_port\_test} checks that the map's
+offsets and masks are the ones Zephyr's stock \code{uart\_sifive}
+driver uses, that Zephyr's device tree names the port
+\code{sifive,uart0} with its clock, and that the console is that port.
 \item The build simulates \code{Uart<4>}'s netlist, the entity
 \code{uart4}, against the trace of \code{//cpu/vreteno:vreteno} under
 nvc and Verilator: \code{//docs:vreteno\_sim\_uart4\_uart4\_tb\_test}
 and \code{//docs:vreteno\_vsim\_uart4\_test}. The run also writes
 \code{Uart<868>}'s netlist, which no test simulates.
-\item \code{//docs:vreteno} reports that the board, programmed with the
-design from before the DDR3 memory was on the bus, said \code{OK} at
-115200 baud and echoed the three bytes a watcher typed.
 \end{itemize}
 
 \subsection*{Used by}
@@ -110,14 +133,16 @@ design from before the DDR3 memory was on the bus, said \code{OK} at
 \code{irq} as source 1 of the interrupt controller. The
 demonstration \code{//cpu/vreteno:vreteno}, the lockstep test and
 \code{run.rs}. The system in \code{soc}, where it is the serial port at
-corner 1,1 of the lattice.
+corner 1,1 of the lattice. Zephyr's console on Vreteno, through the
+stock \code{uart\_sifive} driver.
 
 \subsection*{Limits}
 
-A byte written while a frame is going out is dropped, and a byte
-received with the buffer full is dropped and counted. A program polls
-the status and keeps up. \code{sent}, \code{received} and
-\code{dropped} are eight-bit counters that are not on the bus. The port
-checks no address beyond bits 3 and 2, since the bridge sends it only
-its own range. The frame is fixed at ten bits, with no parity bit, and
-the port has no flow-control lines.
+A byte written while the transmit queue is full is dropped, and a
+byte received with the receive queue full is dropped and counted.
+\code{sent}, \code{received} and \code{dropped} are eight-bit counters
+that are not on the bus. The port checks no address beyond bits 4 to
+2, since the bridge sends it only its own range. There is no parity
+bit and no flow-control line. Unlike SiFive's, the receive
+watermark's interrupt is enabled from reset; a driver that wants it off
+writes \code{ie}.
