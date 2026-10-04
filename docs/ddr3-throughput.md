@@ -150,12 +150,14 @@ The model in `ddr3::Ddr3` answers with the common case: a read's first beat 24 s
 |---|---|---|
 | Reads, four bursts of sixteen in flight, at any latency up to 32 | 1.01 to 1.04 | 386 to 398 |
 | Reads, one burst at a time, at latency 24 | 2.81 | 142 |
-| Writes, at any latency | 1.25 | about 320 |
+| Writes, at any latency up to 32 | 1.06 to 1.09 | 365 to 376 |
 | `Ddr3Per` with its model, reads | 1.03 | 390 |
-| `Ddr3Per` with its model, writes | 1.25 | 321 |
+| `Ddr3Per` with its model, writes | 1.06 | 376 |
 
 A read pays the latency once a burst rather than once a word, and with bursts in flight not even that.
-A write costs a beat a cycle and four cycles a burst more, which is a gap the host leaves between write bursts on the link and not the path's (issue 1121).
+A write costs a beat a cycle, and one step a burst once the testbench client's window is full and it waits on its oldest burst before issuing the next.
+Until issue 1121 the client also waited three steps a burst for its identifier before sending the first beat, which made writes 1.25 cycles a word here.
+That wait was the simulation client's, not a hardware host's.
 Against section 1's 27 cycles a word for reads on the board, that is the gain the issue asked for, if the board agrees.
 
 The core's own timing of the path, `the_ddr3_path_is_timed_by_the_core`, now finds a DDR3 load costing the model's read latency less two cycles more than a data memory load, since the pins part and the port take two cycles fewer than the data memory's tracker and block RAM.

@@ -255,9 +255,9 @@ On this link it cannot, and that is measured rather than assumed:
 \begin{center}\footnotesize
 \begin{tabular}{@{}ll@{}}
 \toprule
-the store issued & tick 28 \\
-the load answered & tick 44 \\
-the store answered & tick 46 \\
+the store issued & tick 22 \\
+the load answered & tick 38 \\
+the store answered & tick 40 \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -404,8 +404,8 @@ of each answer, two steps to a cycle.
 \begin{figure}[htbp]
 \centering
 \input{axi_reg_timing.tex}
-\caption{The first write and its read. The write's request waits on
-\code{req} until its beat comes on \code{wd}. A cycle later both are
+\caption{The first write and its read. The write's request and its
+beat come together, on \code{req} and \code{wd}. A cycle later both are
 taken, \code{word} changes, and the response goes out on \code{ans}.
 The read is answered on \code{rb} a cycle after its request
 comes.}

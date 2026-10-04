@@ -1765,8 +1765,8 @@ waveform(
         "//rx/rx_valid=>rx_valid",
         "//irq=>irq",
     ],
-    from_tick = 119,
-    until = 329,
+    from_tick = 115,
+    until = 325,
 )
 
 # Video for an HDMI encoder chip behind AXI-Lite, and the I2C master
@@ -1918,8 +1918,8 @@ waveform(
         "//spi/rxb=>rxb",
         "//spi/busy=>busy",
     ],
-    from_tick = 179,
-    until = 319,
+    from_tick = 167,
+    until = 307,
 )
 
 # The system control block: the reset a program asked for, held for
@@ -1937,8 +1937,8 @@ waveform(
         "//block/hold=>hold",
         "//block/scratch=>scratch",
     ],
-    from_tick = 145,
-    until = 199,
+    from_tick = 133,
+    until = 187,
 )
 
 # The watchdog, at the end of its second timeout: the count reaching
@@ -1956,8 +1956,8 @@ waveform(
         "//block/status=>status",
         "//block/hold=>hold",
     ],
-    from_tick = 565,
-    until = 615,
+    from_tick = 549,
+    until = 599,
 )
 
 # One thing run twice and compared: a tee hands each word to both
@@ -2011,8 +2011,8 @@ waveform(
         "//sd/left=>left",
         "//store_busy=>store_busy",
     ],
-    from_tick = 39400,
-    until = 40400,
+    from_tick = 39190,
+    until = 40190,
 )
 
 # The SD host sending a command: the card clock, the command line
@@ -2031,8 +2031,8 @@ waveform(
         "//sd/n=>n",
         "//sd/crc7=>crc7",
     ],
-    from_tick = 29,
-    until = 89,
+    from_tick = 17,
+    until = 77,
 )
 
 # The entropy source starting: the rings' samples arriving once the
@@ -2052,8 +2052,8 @@ waveform(
         "//trng/runlen=>runlen",
         "//trng/count=>count",
     ],
-    from_tick = 13,
-    until = 73,
+    from_tick = 9,
+    until = 69,
 )
 
 # The adaptive proportion test tripped by a biased source, checked in
@@ -2150,8 +2150,8 @@ waveform(
         "//remote/busy=>busy",
         "//remote/tag=>tag",
     ],
-    from_tick = 7,
-    until = 97,
+    from_tick = 3,
+    until = 93,
 )
 
 waveform(
