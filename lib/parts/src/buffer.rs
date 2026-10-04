@@ -8,8 +8,8 @@
 //! combinational path between them, which is what the runtime
 //! promises and what a board needs. The netlist does not use it:
 //! between two lowered units where the run had a channel it puts the
-//! hand-written `txhdl_chan`. This one is used by `ex_buffer` and the
-//! datasheets.
+//! hand-written channel module, `<top>_txhdl_chan`. This one is used
+//! by `ex_buffer` and the datasheets.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};

@@ -876,8 +876,9 @@ pub struct Lowered {
     /// join its children: name, `Tx` for a channel or `Out` for a
     /// wire, the payload's width and the clock. A channel is a buffer
     /// of two between its ends, as the runtime's is, an instance of
-    /// `txhdl_chan` with the sender's three nets on one side and the
-    /// receiver's on the other; a wire is one net.
+    /// the netlist's channel module, `<top>_txhdl_chan`, with the
+    /// sender's three nets on one side and the receiver's on the other;
+    /// a wire is one net.
     pub nets: Vec<(String, Kind, usize, &'static str)>,
     /// The children of a unit of units, each a module of its own
     /// instantiated once here.
@@ -1628,6 +1629,32 @@ impl Lowered {
         self.nets.iter().any(|(_, k, _, _)| matches!(k, Kind::Tx))
             || self.instances.iter().any(|i| i.unit.has_chan_nets())
     }
+    /// Every module or entity name this netlist defines or
+    /// instantiates, its own and its children's, foreign ones included.
+    fn unit_names(&self, out: &mut Vec<String>) {
+        out.push(self.name.clone());
+        for i in &self.instances {
+            i.unit.unit_names(out);
+        }
+    }
+    /// The channel module's name in this netlist: the top's name and
+    /// `_txhdl_chan`, so that two netlists in one design, or in one
+    /// file, never define the same module twice (issue 979). VHDL reads
+    /// names without case, so a unit of the netlist whose name is this
+    /// one in any case is refused, naming both.
+    fn chan_name(&self) -> String {
+        let chan = format!("{}_txhdl_chan", self.name);
+        let mut names = Vec::new();
+        self.unit_names(&mut names);
+        if let Some(n) = names.iter().find(|n| n.eq_ignore_ascii_case(&chan)) {
+            panic!(
+                "`{}` names its channel module `{chan}`, which the unit \
+                 `{n}` already is; rename the field that holds `{n}`",
+                self.name
+            );
+        }
+        chan
+    }
     /// Whether a register is driven by a falling-edge process.
     fn falling_reg(&self, name: &str) -> bool {
         fn drives(d: &[(Target, Expr)], name: &str) -> bool {
@@ -2096,10 +2123,16 @@ impl Lowered {
     /// The Verilog.
     pub fn verilog(&self) -> String {
         let esc = self.escaped();
-        let mut out = esc.verilog_in();
-        if self.has_chan_nets() {
+        let chans = self.has_chan_nets();
+        let chan = if chans {
+            esc.chan_name()
+        } else {
+            format!("{}_txhdl_chan", esc.name)
+        };
+        let mut out = esc.verilog_in(&chan);
+        if chans {
             out.push('\n');
-            out.push_str(CHAN_VERILOG);
+            out.push_str(&CHAN_VERILOG.replace("txhdl_chan", &chan));
         }
         out
     }
@@ -2119,8 +2152,8 @@ impl Lowered {
     }
 
     /// This unit's module and its children's, without the channel
-    /// module, which the outermost unit adds once.
-    fn verilog_in(&self) -> String {
+    /// module, which the outermost unit adds once, as `chan`.
+    fn verilog_in(&self, chan: &str) -> String {
         // A foreign module comes as its own source.
         if self.foreign.is_some() {
             return String::new();
@@ -2224,7 +2257,7 @@ impl Lowered {
                      wire {n}_tx_ready;\n  \
                      wire {r}{n}_rx_data;\n  wire {n}_rx_valid;\n  \
                      wire {n}_rx_ready;\n  \
-                     txhdl_chan #(.W({w})) {n}_chan(\n    .clk({c}), \
+                     {chan} #(.W({w})) {n}_chan(\n    .clk({c}), \
                      .rst({rs}),\n    \
                      .tx_data({n}_tx_data), .tx_valid({n}_tx_valid), \
                      .tx_ready({n}_tx_ready),\n    \
@@ -2482,7 +2515,7 @@ impl Lowered {
         // The children's modules follow the parent's, each whole.
         for inst in &self.instances {
             out.push('\n');
-            out.push_str(&inst.unit.verilog_in());
+            out.push_str(&inst.unit.verilog_in(chan));
         }
         out
     }
@@ -2492,17 +2525,23 @@ impl Lowered {
     /// as the process waits, and a concurrent assignment per wire.
     pub fn vhdl(&self) -> String {
         let esc = self.escaped();
+        let chans = self.has_chan_nets();
+        let chan = if chans {
+            esc.chan_name()
+        } else {
+            format!("{}_txhdl_chan", esc.name)
+        };
         let mut out = String::new();
-        if self.has_chan_nets() {
-            out.push_str(CHAN_VHDL);
+        if chans {
+            out.push_str(&CHAN_VHDL.replace("txhdl_chan", &chan));
             out.push('\n');
         }
-        out.push_str(&esc.vhdl_in());
+        out.push_str(&esc.vhdl_in(&chan));
         out
     }
     /// This unit's entity and its children's, without the channel
     /// entity, which the outermost unit puts first once.
-    fn vhdl_in(&self) -> String {
+    fn vhdl_in(&self, chan: &str) -> String {
         // A foreign entity comes as its own source.
         if self.foreign.is_some() {
             return String::new();
@@ -2546,7 +2585,7 @@ impl Lowered {
         // The children's entities come first, since an entity is
         // analysed before it is instantiated.
         for inst in &self.instances {
-            let child = inst.unit.vhdl_in();
+            let child = inst.unit.vhdl_in(chan);
             if !child.is_empty() {
                 out.push_str(&child);
                 out.push('\n');
@@ -2704,7 +2743,7 @@ impl Lowered {
             if matches!(k, Kind::Tx | Kind::Rx) {
                 writeln!(
                     out,
-                    "  {n}_chan : entity work.txhdl_chan \
+                    "  {n}_chan : entity work.{chan} \
                      generic map (W => {w}) port map (\n    clk => {c}, \
                      rst => {rs},\n    \
                      tx_data => {n}_tx_data, tx_valid => {n}_tx_valid, \
@@ -3033,7 +3072,9 @@ impl Lowered {
 /// buffer of two, `head` and `tail`, the receiver's `valid` and
 /// `data` the head as the edge left it, the sender's `ready` the
 /// tail's room; a take moves the tail up and an offer fills the
-/// first free place, the take first. In Verilog, a module.
+/// first free place, the take first. In Verilog, a module. Its name,
+/// `txhdl_chan` here, is replaced by the netlist's own, `<top>_txhdl_chan`
+/// (issue 979).
 const CHAN_VERILOG: &str = "`timescale 1ns/1ps
 module txhdl_chan #(parameter W = 1)(
   input clk,
@@ -3068,7 +3109,8 @@ module txhdl_chan #(parameter W = 1)(
 endmodule
 ";
 
-/// The same channel in VHDL, an entity with the width as a generic.
+/// The same channel in VHDL, an entity with the width as a generic,
+/// named per netlist the same way.
 const CHAN_VHDL: &str = "library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -4231,5 +4273,108 @@ mod tests {
             chained(&[("a", &[])], &["x <= 1;"]),
             ["if (a) begin", "end else begin", "x <= 1;", "end"]
         );
+    }
+
+    /// A unit of units named `name` whose children are joined by a
+    /// channel of eight bits, `link`: a netlist that needs the channel
+    /// module.
+    fn joined_by_a_channel(name: &str) -> Lowered {
+        let mut net = parent_with_child_named("ticker");
+        net.name = name.to_string();
+        // A child's module is named for its parent and its field, as
+        // the lowering names it.
+        net.instances[0].unit.name = format!("{name}_ticker");
+        net.nets.push(("link".to_string(), Kind::Tx, 8, "clk"));
+        net
+    }
+
+    /// The names a netlist defines: `module NAME` in Verilog, `entity
+    /// NAME is` in VHDL, each as many times as it is written.
+    fn defined(text: &str, verilog: bool) -> Vec<String> {
+        text.lines()
+            .filter_map(|l| {
+                if verilog {
+                    l.strip_prefix("module ")
+                } else {
+                    l.strip_prefix("entity ")?.strip_suffix(" is")
+                }
+            })
+            .map(|l| {
+                l.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// Two netlists that each join children by a channel, in one
+    /// design: the flagship's board and its scanout (issue 979). Every
+    /// module and every entity is defined once across the two, so the
+    /// two files go into one synthesis, and into one file, as
+    /// `write_netlists_from_env` writes several units, without a
+    /// definition repeated.
+    #[test]
+    fn two_netlists_with_channels_define_nothing_twice() {
+        let (a, b) =
+            (joined_by_a_channel("board"), joined_by_a_channel("scan"));
+        for verilog in [true, false] {
+            let text =
+                |l: &Lowered| if verilog { l.verilog() } else { l.vhdl() };
+            let both = format!("{}\n{}", text(&a), text(&b));
+            let mut names = defined(&both, verilog);
+            let all = names.len();
+            names.sort();
+            names.dedup();
+            assert_eq!(names.len(), all, "a name defined twice in:\n{both}");
+        }
+    }
+
+    /// Each netlist defines the channel module it instantiates, under
+    /// a name of its own, and a netlist with no channel defines none.
+    #[test]
+    fn a_netlist_defines_the_channel_it_instantiates() {
+        let net = joined_by_a_channel("board");
+        let v = net.verilog();
+        assert!(
+            defined(&v, true).contains(&"board_txhdl_chan".to_string()),
+            "{v}"
+        );
+        assert!(v.contains("board_txhdl_chan #(.W(8)) link_chan("), "{v}");
+        let h = net.vhdl();
+        assert!(
+            defined(&h, false).contains(&"board_txhdl_chan".to_string()),
+            "{h}"
+        );
+        assert!(
+            h.contains("link_chan : entity work.board_txhdl_chan"),
+            "{h}"
+        );
+        assert!(h.contains("architecture rtl of board_txhdl_chan is"), "{h}");
+        let plain = three_regs();
+        assert!(!plain.verilog().contains("txhdl_chan"));
+        assert!(!plain.vhdl().contains("txhdl_chan"));
+    }
+
+    /// A child whose module would take the channel module's name, in
+    /// any case, since VHDL reads names without it, is refused rather
+    /// than defined twice.
+    #[test]
+    #[should_panic(expected = "names its channel module `board_txhdl_chan`")]
+    fn a_unit_named_as_the_channel_is_refused() {
+        let mut net = joined_by_a_channel("board");
+        net.instances[0].unit.name = "Board_TXHDL_Chan".to_string();
+        let _ = net.vhdl();
+    }
+
+    /// The same name on a netlist with no channel is no clash, since
+    /// that netlist defines no channel module.
+    #[test]
+    fn a_unit_so_named_without_a_channel_is_accepted() {
+        let mut net = parent_with_child_named("ticker");
+        net.name = "board".to_string();
+        net.instances[0].unit.name = "board_txhdl_chan".to_string();
+        let _ = net.verilog();
+        let _ = net.vhdl();
     }
 }
