@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: Entropy, RingOsc
-\datasheet{Entropy}{The entropy source whole: eight ring oscillators as a foreign module, and the peripheral that conditions their samples.}
+\datasheet{Entropy}{The entropy source whole: eight ring oscillators as a foreign module, and the peripheral that watches, debiases and buffers their samples.}
 
 \dsfacts{\code{lib/parts/src/trng.rs}}{\code{txhdl\_parts::trng::Entropy}}%
 {\code{//docs:examples}, \code{//docs:vreteno}}
@@ -78,8 +78,10 @@ with the module's simulation branch inside; manual.
 \subsection*{Used by}
 
 \code{Board}, as \code{entropy} on the sixth slot of the peripheral
-page at \code{0x3500}, behind \code{LiteBridge<7, ..>}, and Zephyr's entropy
-driver \code{zephyr/drivers/entropy/entropy\_vreteno.c} through it.
+page at \code{0x3500}, behind the page's \code{LiteBridge}, and Zephyr's
+entropy driver \code{zephyr/drivers/entropy/entropy\_vreteno.c} through
+it, which conditions the words with SHA-256 and refuses on either of
+\code{Trng}'s health test faults (issues 780 and 918).
 \code{ex\_trng} holds the two children apart, so that the samples are
 a traced port of the lowered \code{Trng}.
 

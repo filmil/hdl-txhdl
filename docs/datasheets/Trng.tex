@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: Trng
-\datasheet{Trng}{The entropy source's conditioning: the rings' samples folded, watched, debiased and buffered as words behind AXI-Lite.}
+\datasheet{Trng}{The entropy source's hardware: the rings' samples XORed to one bit, watched by two health tests, debiased and buffered as words behind AXI-Lite.}
 
 \dsfacts{\code{lib/parts/src/trng.rs}}{\code{txhdl\_parts::trng::Trng}}%
 {\code{//docs:examples}}
@@ -11,19 +11,26 @@
 ring oscillator of \code{RingOsc}, and makes words of entropy a host
 reads. Each cycle it folds the eight to one bit by exclusive or, which
 is less biased than any one of them, and does three things with the
-stream. It watches it: the repetition count test of NIST SP 800-90B,
-a count of identical bits in a row, raises a sticky fault at
-\code{RCT\_CUTOFF}, forty, and the buffer stops filling. It debiases
+stream. It watches it with the two continuous health tests of NIST SP
+800-90B. The repetition count test, a count of identical bits in a
+row, raises a sticky fault at \code{RCT\_CUTOFF}, forty. The adaptive
+proportion test counts, in each window of \code{APT\_WINDOW}, 1024,
+how many bits equal the window's first, and raises a sticky fault of
+its own at \code{APT\_CUTOFF}, 793 (issue 918). Either fault stops the
+buffer filling. It debiases
 it: von Neumann's extractor takes the bits in pairs, \code{01} a zero,
 \code{10} a one, \code{00} and \code{11} nothing, so a bias in the
 source cancels at the cost of three bits in four. And it buffers it:
 the bits that survive fill a word from the top, and whole words wait
 in a buffer of \code{WORDS}, four, which a host takes one at a time.
 A word that finds the buffer full is dropped.
+The words are not handed out as they are: Zephyr's driver conditions
+them with SHA-256, 32 words to each 32 bytes (issue 780), because the
+extractor removes bias and not dependence.
 
 Beside the words it keeps a capture for measuring the source (issue
 817). A write of \code{cap} fills a buffer of \code{CAP\_WORDS}, 256
-words, from the folded samples as they come, one word every 32 cycles
+words, from the samples as they come, one word every 32 cycles
 while the source runs, so the capture is 8192 samples in a row with
 none missing. A host reads it out afterwards at any pace, a word at a
 time through \code{capidx} and \code{capword}. \code{raw} alone cannot
@@ -38,10 +45,14 @@ bit, which holds the rings still while it is low.
 
 \subsection*{Parameters}
 
-None. \code{RINGS}, eight, \code{RCT\_CUTOFF}, forty, and
-\code{WORDS}, four, are constants of \code{trng.rs}. The cutoff is
+None. \code{RINGS}, eight, \code{RCT\_CUTOFF}, forty,
+\code{APT\_WINDOW}, 1024, \code{APT\_CUTOFF}, 793, and \code{WORDS},
+four, are constants of \code{trng.rs}. The repetition count cutoff is
 \code{1 + 20 / H} for a false alarm rate of one in a million at a
-min-entropy \code{H} of half a bit per sample, rounded to forty.
+min-entropy \code{H} of half a bit per sample, rounded to forty. The
+proportion cutoff is \code{1 + CRITBINOM(1024, 2\textsuperscript{-H},
+1 - 2\textsuperscript{-20})} at the same \code{H}, section 4.4.2's
+formula; the window is the size the standard sets for a binary source.
 
 \subsection*{Register map}
 
@@ -52,7 +63,8 @@ Offsets from the peripheral's base. The port selects the word by bits
 
 A read of \code{data} takes the oldest word, and reads zero when none
 is waiting. \code{ctrl}'s \code{clear} is written only: a one clears
-the fault, and it reads back zero. Writes to \code{data},
+both faults and starts the proportion test's window again, and it
+reads back zero. Writes to \code{data},
 \code{status}, \code{raw} and \code{capword} are ignored. \code{raw}
 is the samples before the extractor. \code{cap}'s \code{start} is
 written only, and its \code{busy} and \code{done} are read only.
@@ -65,9 +77,11 @@ written only, and its \code{busy} and \code{done} are read only.
 \item With the run bit clear nothing is sampled, \code{en} is low and
 the buffer keeps what it holds, so a host stops the source and reads
 out what is waiting.
-\item The test runs on every folded sample while the run bit is set,
-before the extractor. A trip in the cycle of a clear stays tripped.
-While the fault is set no pair is taken, so no word is made.
+\item Both tests run on every sample while the run bit is set, before
+the extractor. A repetition count trip in the cycle of a clear stays
+tripped; a proportion trip in that cycle is dropped, since the clear
+starts a new window. While either fault is set no pair is taken, so no
+word is made.
 \item A read of \code{data} takes the oldest word when one is waiting
 and answers zero otherwise; a word arriving in the cycle of a read
 that empties the buffer is kept.
@@ -75,7 +89,7 @@ that empties the buffer is kept.
 beat is taken, with \code{OKAY}. A write needs its address beat, its
 data beat and room on \code{bus\_b} in the same cycle, and is answered
 \code{OKAY} in that cycle.
-\item \code{raw} shifts in one folded sample a cycle while the run
+\item \code{raw} shifts in one sample a cycle while the run
 bit is set, newest lowest, and is what a program on the board reads
 in a loop to measure the source.
 \item A capture fills only while the run bit is set: each sample goes
@@ -83,7 +97,7 @@ into the word being filled, and the word is written whole when it
 holds 32, the same 32 \code{raw} reads then, so the words are samples
 in a row with none missing and none twice. \code{busy} is set while it
 fills and \code{done} when all 256 words are whole. The extractor and
-the health test run on regardless.
+the health tests run on regardless.
 \end{itemize}
 
 \subsection*{Verification}
@@ -94,7 +108,15 @@ model rings and from stated streams: nothing comes before the run bit,
 eight words come and differ, the buffer holds four and drains oldest
 first, an alternating stream gives all zeros or all ones by the order
 of its pairs, a stuck stream trips the fault after the cutoff and a
-clear takes while a stream just under the cutoff does not.
+clear takes while a stream just under the cutoff does not; a stuck
+stream trips both tests, a stream of ones four cycles in five with no run
+past four trips the proportion test alone and stops the buffer, three
+in four stays under its cutoff, and the model rings trip neither.
+\item \code{//docs:trng\_apt\_sim\_trng\_apt\_tb\_test} and
+\code{//docs:trng\_apt\_vsim\_test} simulate the netlist against the
+run of \code{ex\_trng\_apt}, where a biased source trips the
+proportion test and a clear clears it, so the test is checked in the
+netlist through the trip.
 \item \code{//docs:trng\_sim\_trng\_tb\_test} and
 \code{//docs:trng\_vsim\_test} simulate the netlist against the run of
 \code{ex\_trng} under nvc and Verilator, with the model rings' samples
@@ -110,7 +132,9 @@ found whole among the model's samples (issue 805).
 \subsection*{Used by}
 
 \code{Entropy}, as \code{trng}, and through it \code{Board} at
-\code{0x3500}. \code{ex\_trng}.
+\code{0x3500}, where Zephyr's driver
+(\code{zephyr/drivers/entropy/entropy\_vreteno.c}) reads it and refuses
+on either fault. \code{ex\_trng} and \code{ex\_trng\_apt}.
 
 \subsection*{Limits}
 
@@ -118,5 +142,7 @@ Nothing here is evidence of randomness: every run is against a model
 of the rings, and what the tests prove is the folding, the test, the
 extractor and the buffer. The source's bias and entropy are measured
 on the board, from \code{raw}, the capture and \code{data}, and
-issues 458 and 780 record how far that has gone. The test is the repetition count alone; the
-adaptive proportion test of the same standard is not implemented.
+issues 458 and 780 record how far that has gone. Nothing here is
+certified to SP 800-90B or FIPS 140: the two tests are the standard's,
+at its cutoffs for half a bit a sample, and the conditioning is in
+software, in the driver.
