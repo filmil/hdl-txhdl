@@ -1989,9 +1989,10 @@ fn mprv_loads_and_stores_as_the_previous_mode() {
     a.wide(addi(12, 11, 1));
     a.wide(sw(12, 10, 0x14)); // to 0x1014
     li(&mut a, 13, page(0x213));
-    a.wide(lw(14, 13, 0x10)); // a user page: faults, and is stepped past
-                              // The handler's return left MPP at user mode: the supervisor's
-                              // again, and SUM, and the user page reads.
+    // A user page: faults, and is stepped past.
+    a.wide(lw(14, 13, 0x10));
+    // The handler's return left MPP at user mode: the supervisor's
+    // again, and SUM, and the user page reads.
     li(&mut a, 5, 1 << 11 | 1 << 18);
     a.wide(csrrs(0, CSR_MSTATUS, 5));
     a.wide(lw(15, 13, 0x10)); // 0x1234
