@@ -186,8 +186,12 @@ impl Machine {
             self.model.tirq = d.clint.mtip();
             self.model.msip = d.clint.msip;
             let meip = d.plic.irq(0);
+            // The second target, the supervisor's, is `mip.SEIP`'s line
+            // (issue 1094).
+            let seip = d.plic.irq(1);
             drop(d);
             self.model.line(meip);
+            self.model.sline(seip);
         }
         let interrupt = self.model.interrupt();
         self.model.step(&[], interrupt);
