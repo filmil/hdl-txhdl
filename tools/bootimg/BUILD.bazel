@@ -15,6 +15,12 @@ rust_binary(
 rust_test(
     name = "bootimg_test",
     srcs = ["main.rs"],
+    # The fastboot server's sources, which the test reads the download
+    # limit from, so that the packer's copy of it cannot drift.
+    data = [
+        "//zephyr:fastboot/app/boards/ax7a200b.overlay",
+        "//zephyr:fastboot/app/src/main.c",
+    ],
     edition = "2021",
     deps = ["//cpu/vreteno:vreteno32"],
 )

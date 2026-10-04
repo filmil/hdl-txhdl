@@ -24,9 +24,10 @@
 //! which covers the BSS and the early tables past the end of `Image`,
 //! so the initramfs is placed past all of it; and the tree is placed
 //! below the kernel, so its `/chosen`, which names the initramfs's range,
-//! does not move what it names. The image may not pass `0x4100_0000`,
-//! the 16 MiB fastboot takes, and the packer says by how much if it
-//! would.
+//! does not move what it names. The image may not be longer than
+//! fastboot will take (issue 1078): the server's `max-download-size`,
+//! less the header page stock `fastboot boot` wraps a file in. The
+//! packer says by how much if it would be.
 //!
 //! `bootimg layout --system-map F --initramfs F` prints the initramfs's
 //! range, for `//tools/devtree`'s `--initrd`; `bootimg pack` writes the
@@ -40,8 +41,24 @@ pub const OPENSBI: u32 = 0x4008_0000;
 pub const DTB: u32 = 0x4030_0000;
 /// The kernel, OpenSBI's `FW_JUMP_ADDR`.
 pub const KERNEL: u32 = 0x4040_0000;
-/// The first byte past what fastboot takes: 16 MiB.
-pub const LIMIT: u32 = 0x4100_0000;
+/// What the board's fastboot server takes, its `max-download-size`:
+/// the staging area of 16 MiB less the page `jump.S` runs from
+/// (`zephyr/fastboot/app/src/main.c`, `MAX_DOWNLOAD`). A test reads
+/// both from the server's sources.
+pub const MAX_DOWNLOAD: u32 = 0x0100_0000 - 0x1000;
+/// The header stock `fastboot boot` puts in front of a plain file: one
+/// page of a version 0 Android boot image, at the tool's default page
+/// size of 2048, with the file after it. The server finds the file at
+/// the header's page size (`fb_kernel` in `zephyr/fastboot/fastboot.c`).
+pub const HEADER: u32 = 2048;
+/// The first byte past the longest image fastboot takes: the file and
+/// its header within `MAX_DOWNLOAD`, the file rounded up to a page as
+/// the tool pads it.
+pub const LIMIT: u32 = BASE + (MAX_DOWNLOAD - HEADER) / HEADER * HEADER;
+// The longest image and the tool's header fit the server's download,
+// and the image needs no padding past it.
+const _: () = assert!(LIMIT - BASE + HEADER <= MAX_DOWNLOAD);
+const _: () = assert!((LIMIT - BASE).is_multiple_of(HEADER));
 /// The initramfs's alignment.
 const ALIGN: u32 = 0x1_0000;
 
@@ -85,10 +102,12 @@ pub fn layout(map: &str, initrd_len: u32) -> Result<Layout, String> {
     let initrd = (at, at + initrd_len);
     if initrd.1 > LIMIT {
         return Err(format!(
-            "the image ends at {:#x}, {:#x} past the 16 MiB fastboot takes: \
-             the kernel is {extent:#x} with its BSS and the initramfs {initrd_len:#x}",
+            "the image ends at {:#x}, {:#x} past the {:#x} bytes fastboot \
+             takes: the kernel is {extent:#x} with its BSS and the \
+             initramfs {initrd_len:#x}",
             initrd.1,
-            initrd.1 - LIMIT
+            initrd.1 - LIMIT,
+            LIMIT - BASE
         ));
     }
     Ok(Layout {
@@ -198,8 +217,48 @@ mod tests {
     #[test]
     fn an_image_past_16_mib_is_refused_with_its_sizes() {
         let e = layout(&map(0x60_0000), 0x70_0000).unwrap_err();
-        assert!(e.contains("past the 16 MiB"), "{e}");
+        assert!(e.contains("bytes fastboot takes"), "{e}");
         assert!(e.contains("0x600000") && e.contains("0x700000"), "{e}");
+    }
+
+    /// The last byte fastboot takes is allowed and the next is not.
+    #[test]
+    fn the_image_may_be_as_long_as_fastboot_takes_and_no_longer() {
+        let room = LIMIT - 0x4042_0000;
+        assert_eq!(layout(&map(0x2_0000), room).unwrap().end, LIMIT);
+        assert!(layout(&map(0x2_0000), room + 1).is_err());
+    }
+
+    /// `MAX_DOWNLOAD` is what the server's sources make it: the
+    /// staging area's size in the overlay, less `JUMP_PAGE`.
+    #[test]
+    fn max_download_is_the_servers() {
+        let text = |p: &str| {
+            let r = std::env::var("TEST_SRCDIR").unwrap();
+            std::fs::read_to_string(format!("{r}/_main/{p}"))
+                .unwrap_or_else(|e| panic!("{p}: {e}"))
+        };
+        let overlay = text("zephyr/fastboot/app/boards/ax7a200b.overlay");
+        let reg = overlay
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("reg = <"))
+            .expect("the staging area's reg");
+        let size = reg.trim_end_matches(">;").split_whitespace().nth(1);
+        let hex = |s: &str| u32::from_str_radix(s.trim_start_matches("0x"), 16);
+        let stage = hex(size.expect("its size")).unwrap();
+        let main = text("zephyr/fastboot/app/src/main.c");
+        let jump: u32 = main
+            .lines()
+            .find_map(|l| l.strip_prefix("#define JUMP_PAGE "))
+            .expect("JUMP_PAGE")
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(
+            main.contains("#define MAX_DOWNLOAD (STAGE_SIZE - JUMP_PAGE)"),
+            "the server's limit is computed as this test computes it"
+        );
+        assert_eq!(MAX_DOWNLOAD, stage - jump);
     }
 
     /// The shim's words are the instructions they claim to be: run in
