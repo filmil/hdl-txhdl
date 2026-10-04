@@ -26,6 +26,7 @@ Those reasons live here.
 | `noc-bursts.md` | Why a multi-beat write did not cross the network on chip, which of the stated reasons survived measurement, what each candidate design cost in bits, which one was chosen, and how it was built (section 7) |
 | `opengl-gap.md` | What Razboj does against what OpenGL ES 1.1 and a subset of 2.0 ask for, the gaps sized, a staged path from Razboj on the board to a fixed-function GL, and the issues to file for it (issue 926) |
 | `ddr3-throughput.md` | What limits the shared path into DDR3, measured in simulation, and three ways to widen it, with the recommendation and the order of the work (issue 1023) |
+| `gles.md` | The GL ES 1.1 Common-Lite library on Vreteno, designed before its language is chosen: the API subset, the pipeline on the CPU, the fixed-point formats against Razboj's display list, the frame and the tiles, the icosahedron as the first program, and the language choice for the user (issue 995) |
 | `board-checks.md` | Every board check the issues owe, as commands in session order: the bitstreams to build first, what each run should print, what to keep, and which issue it closes |
 | `sv32-timing.md` | Where Sv32 translation sits in the core, the walker and the TLB sizes, the core's two critical paths measured with a prototype TLB and with operands read at the edge, the cost in cycles of each option, and the recommendation (issue 1009) |
 
