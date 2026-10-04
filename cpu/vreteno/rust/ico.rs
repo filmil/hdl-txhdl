@@ -132,10 +132,11 @@ fn emit(at: usize, words: &[u32; USED]) {
     }
 }
 
-/// A vertex as the display list carries it: twelve bits of two's
-/// complement, in the low or the high half of a word.
+/// A vertex as the display list carries it: sixteenths of a pixel,
+/// sixteen bits of two's complement, in the low or the high half of a
+/// word (issue 988). The vertices here are whole pixels.
 fn pair(x: i32, y: i32) -> u32 {
-    ((x as u32) & 0xfff) | (((y as u32) & 0xfff) << 16)
+    (((x * 16) as u32) & 0xffff) | ((((y * 16) as u32) & 0xffff) << 16)
 }
 
 /// The three vertices a face is made of.

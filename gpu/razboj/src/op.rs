@@ -35,8 +35,18 @@ pub enum Op {
         w: i32,
         h: i32,
     },
-    /// Fill a triangle, in either winding.
+    /// Fill a triangle, in either winding, its vertices in whole
+    /// pixels.
     Tri {
+        colour: u32,
+        a: (i32, i32),
+        b: (i32, i32),
+        c: (i32, i32),
+    },
+    /// The same with its vertices in sixteenths of a pixel, the
+    /// precision the rasteriser keeps: `(16, 8)` is a pixel across and
+    /// half a pixel down.
+    TriQ4 {
         colour: u32,
         a: (i32, i32),
         b: (i32, i32),
@@ -73,43 +83,48 @@ pub struct Insn {
     pub x1: U<10>,
     pub y1: U<10>,
     /// A triangle's vertices, wound so that its inside is where every
-    /// edge function is non-negative. Two's complement, so a vertex
-    /// may lie off the screen on any side; see [`VMIN`].
-    pub ax: U<12>,
-    pub ay: U<12>,
-    pub bx: U<12>,
-    pub by: U<12>,
-    pub cx: U<12>,
-    pub cy: U<12>,
+    /// edge function is non-negative. Sixteenths of a pixel in two's
+    /// complement, so a vertex may lie between pixels and off the
+    /// screen on any side; see [`VMIN`].
+    pub ax: U<16>,
+    pub ay: U<16>,
+    pub bx: U<16>,
+    pub by: U<16>,
+    pub cx: U<16>,
+    pub cy: U<16>,
 }
 // end{op}
 
-/// The range a vertex may take. A vertex is twelve bits of two's
-/// complement, and the rasteriser's edge arithmetic is thirty-two
-/// bits, which is wide enough for every product of two differences
-/// of vertices in this range.
-pub const VMIN: i32 = -2048;
-pub const VMAX: i32 = 2047;
+/// Sixteenths of a pixel: the bits of a vertex below the pixel.
+pub const SUB_BITS: u32 = 4;
+pub const SUB: i32 = 1 << SUB_BITS;
 
-/// A vertex as it is stored: twelve bits of two's complement.
-pub fn vertex(v: i32) -> U<12> {
-    U::from((v & 0xfff) as u32)
+/// The range a vertex may take, in sixteenths of a pixel: 1024 pixels
+/// either side of the origin. The rasteriser's edge arithmetic is
+/// thirty-two bits, and a product of two differences of vertices in
+/// this range, measured at a pixel of a screen of up to 1024, is at
+/// most 2^30, so two of them and their difference fit.
+pub const VMIN: i32 = -1024 * SUB;
+pub const VMAX: i32 = 1024 * SUB - 1;
+
+/// A vertex as it is stored: sixteen bits of two's complement, in
+/// sixteenths of a pixel.
+pub fn vertex(v: i32) -> U<16> {
+    U::from((v & 0xffff) as u32)
 }
 
-/// A stored vertex read back as a number.
-pub fn signed(v: U<12>) -> i32 {
-    let r = v.raw() as i32;
-    if r >= 2048 {
-        r - 4096
-    } else {
-        r
-    }
+/// A stored vertex read back as a number of sixteenths.
+pub fn signed(v: U<16>) -> i32 {
+    v.raw() as u16 as i16 as i32
 }
 
 /// Twice the signed area of the triangle `a`, `b`, `c`: positive when
 /// the three are wound the way the rasteriser wants.
-fn area2(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> i32 {
-    (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+fn area2(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> i64 {
+    let d =
+        |p: (i32, i32), q: (i32, i32)| ((q.0 - p.0) as i64, (q.1 - p.1) as i64);
+    let ((bx, by), (cx, cy)) = (d(a, b), d(a, c));
+    bx * cy - by * cx
 }
 
 // begin{encode}
@@ -142,6 +157,16 @@ impl Op {
                 })
             }
             Op::Tri { colour, a, b, c } => {
+                let q = |p: (i32, i32)| (p.0 * SUB, p.1 * SUB);
+                Op::TriQ4 {
+                    colour,
+                    a: q(a),
+                    b: q(b),
+                    c: q(c),
+                }
+                .encode(sw, sh)
+            }
+            Op::TriQ4 { colour, a, b, c } => {
                 // The winding the rasteriser wants: swap two vertices
                 // when the signed area says the other way.
                 let (b, c) = if area2(a, b, c) < 0 { (c, b) } else { (b, c) };
@@ -156,8 +181,14 @@ impl Op {
                 if !ok(a) || !ok(b) || !ok(c) {
                     return None;
                 }
-                let lo = |f: fn((i32, i32)) -> i32| f(a).min(f(b)).min(f(c));
-                let hi = |f: fn((i32, i32)) -> i32| f(a).max(f(b)).max(f(c));
+                // The box: every pixel whose centre the triangle could
+                // cover, from the pixel the lowest vertex is in to the
+                // pixel the highest is in.
+                let px = |v: i32| v.div_euclid(SUB);
+                let lo =
+                    |f: fn((i32, i32)) -> i32| px(f(a).min(f(b)).min(f(c)));
+                let hi =
+                    |f: fn((i32, i32)) -> i32| px(f(a).max(f(b)).max(f(c)));
                 let (x0, y0, x1, y1) = clip(
                     lo(|p| p.0),
                     lo(|p| p.1),

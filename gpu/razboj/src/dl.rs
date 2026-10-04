@@ -17,9 +17,9 @@
 //!   word 0   [1:0] kind      [25:2] colour
 //!   word 1   [9:0] x0       [25:16] y0
 //!   word 2   [9:0] x1       [25:16] y1
-//!   word 3  [11:0] ax       [27:16] ay
-//!   word 4  [11:0] bx       [27:16] by
-//!   word 5  [11:0] cx       [27:16] cy
+//!   word 3  [15:0] ax       [31:16] ay
+//!   word 4  [15:0] bx       [31:16] by
+//!   word 5  [15:0] cx       [31:16] cy
 //! ```
 //!
 //! Beside the list is one more word, the count: how many instructions
@@ -79,12 +79,12 @@ pub fn decode(w: &[u32]) -> Insn {
         y0: U::from(f(1, 16, 10)),
         x1: U::from(f(2, 0, 10)),
         y1: U::from(f(2, 16, 10)),
-        ax: U::from(f(3, 0, 12)),
-        ay: U::from(f(3, 16, 12)),
-        bx: U::from(f(4, 0, 12)),
-        by: U::from(f(4, 16, 12)),
-        cx: U::from(f(5, 0, 12)),
-        cy: U::from(f(5, 16, 12)),
+        ax: U::from(f(3, 0, 16)),
+        ay: U::from(f(3, 16, 16)),
+        bx: U::from(f(4, 0, 16)),
+        by: U::from(f(4, 16, 16)),
+        cx: U::from(f(5, 0, 16)),
+        cy: U::from(f(5, 16, 16)),
     }
 }
 
@@ -135,9 +135,9 @@ mod tests {
             assert_eq!(got.ax.raw(), want.ax.raw(), "ax of {i}");
             assert_eq!(got.cy.raw(), want.cy.raw(), "cy of {i}");
         }
-        // A vertex off the screen is two's complement in twelve bits
-        // and comes back as it went in.
+        // A vertex off the screen is two's complement in sixteen bits,
+        // in sixteenths of a pixel, and comes back as it went in.
         let t = decode(&words[2 * WORDS..]);
-        assert_eq!(crate::op::signed(t.ax), -4, "a negative vertex");
+        assert_eq!(crate::op::signed(t.ax), -4 * 16, "a negative vertex");
     }
 }

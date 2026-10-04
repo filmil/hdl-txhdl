@@ -128,12 +128,12 @@ pub struct Raster<
     pub sy0: Reg<U<10>>,
     pub sx1: Reg<U<10>>,
     pub sy1: Reg<U<10>>,
-    pub sax: Reg<U<12>>,
-    pub say: Reg<U<12>>,
-    pub sbx: Reg<U<12>>,
-    pub sby: Reg<U<12>>,
-    pub scx: Reg<U<12>>,
-    pub scy: Reg<U<12>>,
+    pub sax: Reg<U<16>>,
+    pub say: Reg<U<16>>,
+    pub sbx: Reg<U<16>>,
+    pub sby: Reg<U<16>>,
+    pub scx: Reg<U<16>>,
+    pub scy: Reg<U<16>>,
     /// The setup, over three cycles after the fetch: per edge, the
     /// distances from its first vertex to the box's first pixel, and
     /// then, in the same registers, those times the edge's steps.
@@ -143,8 +143,26 @@ pub struct Raster<
     pub u1y: Reg<U<32>>,
     pub u2x: Reg<U<32>>,
     pub u2y: Reg<U<32>>,
+    /// Which of the three edges is a top or a left one, for the fill
+    /// rule.
+    pub tl0: Reg<Bit>,
+    pub tl1: Reg<Bit>,
+    pub tl2: Reg<Bit>,
 }
 // end{state}
+
+/// Whether an edge is a top or a left one, from how its function moves:
+/// by `dx` a pixel to the right and `dy` a pixel down. It is a left edge
+/// when the function grows to the right, which is where inside lies, and
+/// a top edge when it is level and grows downwards. A pixel centre on
+/// such an edge is drawn, and one on any other edge is not, so that of
+/// two triangles sharing an edge exactly one draws a pixel on it.
+#[lower]
+fn top_left(dx: U<32>, dy: U<32>) -> Bit {
+    let right = !dx.bit(31) & Bit::from(dx != 0);
+    let down = !dy.bit(31) & Bit::from(dy != 0);
+    right | (Bit::from(dx == 0) & down)
+}
 
 /// Whether a read's beat is taken this cycle: one is offered, the
 /// release has room for its identifier, and no write response is
@@ -365,14 +383,14 @@ impl<
                                 }
                                 if self.word.get() == 3 {
                                     with!(self <= {
-                                        sax: rh.data.slice::<0, 12>(),
-                                        say: rh.data.slice::<16, 12>(),
+                                        sax: rh.data.slice::<0, 16>(),
+                                        say: rh.data.slice::<16, 16>(),
                                     });
                                 }
                                 if self.word.get() == 4 {
                                     with!(self <= {
-                                        sbx: rh.data.slice::<0, 12>(),
-                                        sby: rh.data.slice::<16, 12>(),
+                                        sbx: rh.data.slice::<0, 16>(),
+                                        sby: rh.data.slice::<16, 16>(),
                                     });
                                 }
                                 if self.word.get() == 5 {
@@ -384,8 +402,8 @@ impl<
                                         xa: wx,
                                         xb: bx1,
                                         yb: by1,
-                                        scx: rh.data.slice::<0, 12>(),
-                                        scy: rh.data.slice::<16, 12>(),
+                                        scx: rh.data.slice::<0, 16>(),
+                                        scy: rh.data.slice::<16, 16>(),
                                     });
                                 }
                             }
@@ -393,10 +411,11 @@ impl<
                             // two steps and the value at the box's first
                             // pixel. It takes three cycles, so that no
                             // cycle holds more than one multiplication
-                            // (issue 1034). A vertex is two's complement
-                            // and is widened by its sign; the box's first
-                            // pixel is a screen coordinate and is widened
-                            // by zero.
+                            // (issue 1034). A vertex is sixteenths of a
+                            // pixel in two's complement and is widened by
+                            // its sign; the box's first pixel is a screen
+                            // coordinate, sampled at its centre, sixteen
+                            // times it and eight more (issue 988).
                             DefaultClock::rising().await;
                             let ax = self.sax.get().sext::<32>();
                             let ay = self.say.get().sext::<32>();
@@ -404,8 +423,10 @@ impl<
                             let by = self.sby.get().sext::<32>();
                             let cx = self.scx.get().sext::<32>();
                             let cy = self.scy.get().sext::<32>();
-                            let sx = self.x.get().resize::<32>();
-                            let sy = self.y.get().resize::<32>();
+                            let half = U::<32>::from(8u8);
+                            let x16 = self.x.get().resize::<32>() << 4;
+                            let y16 = self.y.get().resize::<32>() << 4;
+                            let (sx, sy) = (x16 + half, y16 + half);
                             let zero = U::<32>::from(0u8);
                             // The steps, and each edge's distances to
                             // the box's first pixel.
@@ -417,22 +438,41 @@ impl<
                                 u1x: sx - bx, u1y: sy - by,
                                 u2x: sx - cx, u2y: sy - cy,
                             });
-                            // The products, each in the register it read.
+                            // The products, each in the register it read;
+                            // the steps become a pixel's, sixteen of the
+                            // vertices' units; and each edge's place in
+                            // the fill rule.
                             DefaultClock::rising().await;
+                            let (d0x, d0y) = (self.d0x.get(), self.d0y.get());
+                            let (d1x, d1y) = (self.d1x.get(), self.d1y.get());
+                            let (d2x, d2y) = (self.d2x.get(), self.d2y.get());
                             with!(self <= {
-                                u0x: self.d0x.get().mul::<32>(self.u0x.get()),
-                                u0y: self.d0y.get().mul::<32>(self.u0y.get()),
-                                u1x: self.d1x.get().mul::<32>(self.u1x.get()),
-                                u1y: self.d1y.get().mul::<32>(self.u1y.get()),
-                                u2x: self.d2x.get().mul::<32>(self.u2x.get()),
-                                u2y: self.d2y.get().mul::<32>(self.u2y.get()),
+                                u0x: d0x.mul::<32>(self.u0x.get()),
+                                u0y: d0y.mul::<32>(self.u0y.get()),
+                                u1x: d1x.mul::<32>(self.u1x.get()),
+                                u1y: d1y.mul::<32>(self.u1y.get()),
+                                u2x: d2x.mul::<32>(self.u2x.get()),
+                                u2y: d2y.mul::<32>(self.u2y.get()),
+                                d0x: d0x << 4, d0y: d0y << 4,
+                                d1x: d1x << 4, d1y: d1y << 4,
+                                d2x: d2x << 4, d2y: d2y << 4,
+                                tl0: top_left(d0x, d0y),
+                                tl1: top_left(d1x, d1y),
+                                tl2: top_left(d2x, d2y),
                             });
                             // Each edge at the box's first pixel: the
-                            // sum of its two products.
+                            // sum of its two products, less one on an
+                            // edge that is neither top nor left, so that
+                            // a centre exactly on it fails the sign test.
                             DefaultClock::rising().await;
-                            let s0 = self.u0x.get() + self.u0y.get();
-                            let s1 = self.u1x.get() + self.u1y.get();
-                            let s2 = self.u2x.get() + self.u2y.get();
+                            let (keep, less) =
+                                (U::<32>::from(0u8), U::<32>::from(1u8));
+                            let s0 = self.u0x.get() + self.u0y.get()
+                                - mux(self.tl0.get(), keep, less);
+                            let s1 = self.u1x.get() + self.u1y.get()
+                                - mux(self.tl1.get(), keep, less);
+                            let s2 = self.u2x.get() + self.u2y.get()
+                                - mux(self.tl2.get(), keep, less);
                             with!(self <= {
                                 e0: s0, r0: s0,
                                 e1: s1, r1: s1,
