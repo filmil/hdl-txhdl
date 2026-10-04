@@ -74,17 +74,6 @@ use std::collections::BTreeMap;
 #[path = "../../lib/src/reserved.rs"]
 mod reserved;
 
-/// Whether a port starts high: the `ready` a unit reads from a
-/// channel it sends on, which is high at power-on because an empty
-/// elastic buffer has room. It matters for one cycle and one only.
-/// The testbench's first edge is the run's first cycle, and no trace
-/// sample stands for the inputs of that cycle: the sample at tick
-/// zero already holds the state it left and the inputs of the cycle
-/// after it. Leaving every input at zero therefore says the run
-/// began with every channel full, which is the one thing a fresh
-/// channel is not, and a unit that acts in its first cycle, as the
-/// rasteriser does when it goes looking for its display list, is
-/// then a cycle out for the whole run.
 /// The names a trace carries more than once, each with the widths it
 /// was carried at, in the order the trace names them.
 ///
@@ -114,6 +103,17 @@ fn collisions(read: &[(String, Vec<String>)]) -> Vec<(String, Vec<usize>)> {
         .collect()
 }
 
+/// Whether a port starts high: the `ready` a unit reads from a
+/// channel it sends on, which is high at power-on because an empty
+/// elastic buffer has room. It matters for one cycle and one only.
+/// The testbench's first edge is the run's first cycle, and no trace
+/// sample stands for the inputs of that cycle: the sample at tick
+/// zero already holds the state it left and the inputs of the cycle
+/// after it. Leaving every input at zero therefore says the run
+/// began with every channel full, which is the one thing a fresh
+/// channel is not, and a unit that acts in its first cycle, as the
+/// rasteriser does when it goes looking for its display list, is
+/// then a cycle out for the whole run.
 fn empty_ready(name: &str, dir: &str) -> bool {
     dir == "txin" && name.ends_with("_ready")
 }
