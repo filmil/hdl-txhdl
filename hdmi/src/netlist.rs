@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The HDMI demonstration's netlist: the video peripheral at 640 by 480
 //! with a test picture in its framebuffer, and the I2C master timed for
-//! the board, as Verilog on standard output.
+//! the board, as Verilog on standard output. With `scan` as its
+//! argument, the video peripheral is `scan_video` instead: the same
+//! peripheral with the scanout from memory beside it, which the
+//! flagship holds (issue 151).
 //!
 //! Nothing on the demonstration writes the framebuffer, so the picture
 //! is in the netlist's initial values: eight colour bars over the top
 //! two thirds, a grey ramp under them, and a white border.
 use txhdl_parts::hdmi::{vga, Hdmi, I2cInit, FB_WORDS};
+use txhdl_parts::scanout::ScanVideo;
 
 /// The framebuffer is 160 by 120, a framebuffer pixel 4 by 4.
 type Video = Hdmi<
@@ -19,6 +23,24 @@ type Video = Hdmi<
     { vga::VSW },
     { vga::VBP },
     2,
+>;
+
+/// The same peripheral with a scanout beside it: a line is 640 words,
+/// a column ten bits, a frame 525 rows and a line 2560 bytes apart in
+/// memory.
+type Scan = ScanVideo<
+    { vga::HV },
+    { vga::HFP },
+    { vga::HSW },
+    { vga::HBP },
+    { vga::VV },
+    { vga::VFP },
+    { vga::VSW },
+    { vga::VBP },
+    2,
+    10,
+    525,
+    2560,
 >;
 
 /// A quarter of an I2C bit is 63 cycles of 25.2 MHz, so a bit is at
@@ -49,8 +71,20 @@ fn main() {
             words[y << 8 | x] = picture(x, y);
         }
     }
-    let mut video = Video::lowered("hdmi_video");
-    video.init("fb", &words);
     let master = Master::lowered("hdmi_i2c");
-    print!("{}\n{}", video.verilog(), master.verilog());
+    let video = if std::env::args().nth(1).as_deref() == Some("scan") {
+        // The picture is in the peripheral inside.
+        let mut scan = Scan::lowered("scan_video");
+        for inst in &mut scan.instances {
+            if inst.name == "hdmi" {
+                inst.unit.init("fb", &words);
+            }
+        }
+        scan.verilog()
+    } else {
+        let mut video = Video::lowered("hdmi_video");
+        video.init("fb", &words);
+        video.verilog()
+    };
+    print!("{}\n{}", video, master.verilog());
 }

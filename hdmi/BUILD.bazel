@@ -29,6 +29,15 @@ genrule(
     tools = [":netlist"],
 )
 
+# The same, with `scan_video`, the peripheral and the scanout from
+# memory beside it, in place of `hdmi_video`: what the flagship holds.
+genrule(
+    name = "scan_v",
+    outs = ["hdmi_scan_units.v"],
+    cmd = "$(location :netlist) scan > $@",
+    tools = [":netlist"],
+)
+
 filegroup(
     name = "demo_xdc",
     srcs = [
