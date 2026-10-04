@@ -76,7 +76,7 @@ above.
 \centering
 \includegraphics[width=0.62\columnwidth]{scene.png}
 \caption{The demonstration, as Razboj drew it. Eight entries, four
-thousand and ninety-six pixels, 16\,321 cycles.}
+thousand and ninety-six pixels, 16\,329 cycles.}
 \label{fig:g-scene}
 \end{figure}
 
@@ -91,6 +91,10 @@ carry different things. A clear carries a colour and nothing else. A
 rectangle carries a box. A triangle carries three vertices, and a
 shaded triangle carries a colour at each of them as well. That is
 what an \code{enum} says in Rust, and it is what a program writes.
+A colour is \code{0xAARRGGBB}: the alpha goes into the top byte of the
+pixel, which the colour leaves free, so the framebuffer holds it for
+whatever reads it next; nothing here does yet. A shaded triangle blends
+red, green and blue, and its alpha is its first vertex's all over.
 
 \gpupart{op.rs}{op}{The instruction set: \code{Op} as a program writes
 it, \code{Kind} as the hardware reads it, and \code{Insn} as it goes
@@ -114,6 +118,17 @@ per primitive rather than once per pixel.
 box to the screen, winds the triangle so that its inside is where
 every edge function is non-negative, and drops an entry that would
 draw nothing.}{lst:g-encode}
+
+One more entry draws nothing and is not an instruction at all:
+\code{Op::Scissor} sets a box that the entries after it are drawn
+inside, until the next one. The rasteriser only ever walks an entry's
+box, so clipping that box to the scissor box is the whole of the
+scissor test, and the assembler does it as it clips to the screen,
+once an entry. A clear under a scissor box is the one entry that
+changes: it becomes a rectangle of that box, since the box the
+rasteriser supplies for a clear is the screen. A box that holds the
+screen is no box, and a box wholly off it draws nothing until the next.
+Nothing in the hardware knows there is a scissor box.
 
 The kind is read by the hardware in one place and decides three
 things. A triangle, flat or shaded, is the entry whose edge functions
@@ -149,8 +164,7 @@ thing software and hardware both have to agree on, so it is stated
 once, in \code{gpu/razboj/src/dl.rs}.
 
 \gpupart{dl.rs}{format}{The display list as a program writes it:
-sixteen words an instruction, fifteen of which say anything, and no
-field across a word.}{lst:g-format}
+sixteen words an instruction, and no field across a word.}{lst:g-format}
 
 An instruction takes sixteen words, so that the address of the
 $i$th is the list's base plus $i$ shifted by six, a shift rather
@@ -164,7 +178,7 @@ answers in the same word: when the list is drawn it writes the count
 back to zero. Nothing else passes between the two.
 
 So the rasteriser has a front end. It polls the count, fetches the
-fifteen words of an instruction as one read burst of fifteen beats, latching
+sixteen words of an instruction as one read burst of sixteen beats, latching
 each field as its beat lands, draws the instruction, and fetches the
 next; when
 the count is used up the list is done, and Section~\ref{sec:g-lists}
@@ -173,7 +187,7 @@ included, and the setup the walk needs takes three cycles after the
 fetch; Section~\ref{sec:g-vivado} says why. One burst is
 out at a time, because the front end has nothing to do until the
 answer lands, so an entry costs one round trip of the link and then
-a beat a cycle, where fifteen single reads cost fifteen round trips.
+a beat a cycle, where sixteen single reads cost sixteen round trips.
 Every entry is fetched whole, so an entry that is not a shaded
 triangle reads nine words of zeros, nine cycles it could skip. The
 count is sixteen bits, so a list holds up to 65535 entries.
@@ -205,7 +219,7 @@ pixel's write is answered the zero goes out on \code{issue} and
 The polls that follow, on \code{issue} and \code{rdata}, read a count of
 zero while the run writes the next list in, as a program would. The
 next poll reads a count of two, \code{finished} and \code{idle} fall,
-and the next list's first entry arrives as one burst of fifteen beats.}
+and the next list's first entry arrives as one burst of sixteen beats.}
 \label{fig:g-lists}
 \end{figure*}
 
@@ -266,7 +280,7 @@ The rasteriser is two processes. The first takes the link's answers
 every cycle, says whether the pixel under the walk is in the
 primitive, and counts what is in flight. The second is the front end
 written as the sequence it is: poll the count until the list is
-ready, then for each instruction fetch its fifteen words, as one read
+ready, then for each instruction fetch its sixteen words, as one read
 burst with each beat latched as it lands, and walk its box, every row and
 every column a counted loop, a pixel a turn; when the list is drawn
 it writes the count back to zero and polls again. The lowering numbers the waits into a state
@@ -312,10 +326,12 @@ the read waits a cycle for it.
 \centering
 \input{razboj_timing.tex}
 \caption{The triangle fetched and begun. \code{word} counts the
-instruction's words as the front end reads them, which land as one
+instruction's words as the front end reads them, in hexadecimal, so
+it reads \code{10} once all sixteen are in; they land as one
 burst on \code{rdata}, a beat a cycle; as the sixth lands \code{kind}
-turns from \code{Rect} to \code{Tri}, and the nine after it are a
-shaded triangle's planes, zeros for a flat one. The three cycles of the setup
+turns from \code{Rect} to \code{Tri}, the nine after it are a
+shaded triangle's planes, zeros for a flat one, and the last is its
+alpha. The three cycles of the setup
 follow, in which \code{x} and \code{y} hold, and from there they walk
 the triangle's box and \code{hit} is
 whether the pixel is inside it; where \code{hit} is low no burst is
@@ -416,7 +432,8 @@ It is minimal, and the ways in which it is minimal are worth naming.
 There is one pixel per cycle and no more; no depth buffer, so
 primitives are drawn in the order the display list gives them; no
 interpolation but of colour, and that in the screen's plane, without
-the correction for perspective a texture would need; no texture; no
+the correction for perspective a texture would need; an alpha
+written and never read, so nothing is blended; no texture; no
 clipping
 of geometry, only of the box; and one burst out at a time, so each
 entry's fetch waits a round trip of the link. Every one of those is a

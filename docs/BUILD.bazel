@@ -1418,8 +1418,8 @@ waveform(
         "//b/tx_valid=>b",
         "//raster/inflight=>inflight",
     ],
-    from_tick = 1535,
-    until = 1660,
+    from_tick = 1540,
+    until = 1665,
     width = 8.2,
 )
 
@@ -1440,8 +1440,8 @@ waveform(
         "//raster/finished=>finished",
         "//idle=>idle",
     ],
-    from_tick = 1960,
-    until = 2120,
+    from_tick = 1968,
+    until = 2130,
     width = 8.2,
 )
 
