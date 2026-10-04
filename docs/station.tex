@@ -170,8 +170,8 @@ Read down the rows.
   cycle 8 the sink has taken line 2, there is room, line 1 is sent,
   and cell 1 clears: \code{0101}.
 \item The half word tagged 2, offered in cycle 7, completes line 2
-  in cycle 9, \code{0001}; the last half word, tagged 0, completes
-  line 0 in cycle 11, and the mask is empty. The sink takes lines 1,
+  in cycle 9, \code{0001}; the last half word, tagged 0, offered
+  in cycle 10, completes line 0 in cycle 12, and the mask is empty. The sink takes lines 1,
   2 and 0 in cycles 11, 12 and 15.
 \end{itemize}
 
@@ -285,7 +285,7 @@ what each author had to write, and what each got checked.
 The end of Listing~\ref{lst:s-out} is the Verilog of the example's
 station, as the lowering wrote it. Each mask is a register of four
 bits and each input's cells a memory of four words; every wire of
-the step is named for the rule's word: \code{offered0},
+the step is named for the rule's word:
 \code{cell\_free0}, \code{completes0}, \code{line\_tag},
 \code{send\_line}, \code{take0}, \code{cell\_bit0},
 \code{line\_clear}, \code{out0}. The tag and the value of an input

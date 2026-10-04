@@ -77,9 +77,10 @@ and at the halt the data memory must; the demonstration program and
 sixty-four random ones pass, and a deliberately broken shift, a
 branch that does not squash the word after it, and a return from a
 trap that leaves the wrong status, each fail at their first use. And as a netlist: the VHDL
-the lowering writes, with the program in its instruction memory, is
-simulated under nvc against the trace the Rust core wrote, every
-register and output at every tick, and agrees. Every listing here
+and the Verilog the lowering writes, with the program in its
+instruction memory, are simulated under nvc and Verilator against the
+trace the Rust core wrote, every register and output at every tick,
+and agree. Every listing here
 is the file in the tree, and the trace and the figure are what the
 build produced when it ran the core.
 \end{abstract}
@@ -113,8 +114,8 @@ that refactoring honest: the test changed in one place, the core in
 one file, and the same programs passed. Last, the lowering
 grew until the core was a netlist, and the core was rewritten in the
 subset the lowering reads, with the lockstep check again holding the
-rewrite to the same behaviour; and the netlist simulates, under nvc,
-against the trace the Rust core wrote, which is the check the smaller
+rewrite to the same behaviour; and the netlist simulates, under nvc
+and Verilator, against the trace the Rust core wrote, which is the check the smaller
 examples~\cite{examples} pass. What the lowering had to grow for
 this is stated in Section~\ref{sec:v-netlist}. Then, with the
 netlist synthesized and its memories and its timing known, the core
@@ -138,11 +139,11 @@ disassembler is for traces a person reads, such as
 Listing~\ref{lst:v-out}. The system instructions are there with the
 rest. \code{ecall}, \code{ebreak} and \code{mret} share an opcode
 and a function code and differ in their upper twelve bits; in the
-six CSR forms those bits name the register. The five machine-mode
-registers the core has, \code{mstatus}, \code{mtvec},
-\code{mscratch}, \code{mepc} and \code{mcause}, and the
-causes it raises, are constants beside them, with \code{mie},
-\code{mip}, \code{mtval}, the external and the timer interrupt's
+six CSR forms those bits name the register. The eight machine-mode
+registers a trap uses, \code{mstatus}, \code{mtvec},
+\code{mscratch}, \code{mepc}, \code{mcause}, \code{mie},
+\code{mip} and \code{mtval}, and the causes the core raises, are
+constants beside them, with the external and the timer interrupt's
 bits and causes, and the timer's and the serial port's addresses.
 The two machine counters are there, \code{mcycle} and
 \code{minstret}, each 64 bits and each read as two words. They are
@@ -251,9 +252,11 @@ counter, the registers, a data memory, the eight control registers,
 and whether it has halted. One \code{step} is one instruction,
 written against the decoder in the plainest Rust that says what the
 manual says. It is the oracle: the core is right when it agrees with
-this, cycle by cycle. The data memory begins at \code{DATA\_BASE},
-and a load or store outside it is a fault, so a wild address in a
-random program is caught rather than wrapped.
+this, cycle by cycle. The data memory begins at \code{DATA\_BASE}.
+Below it a load reads the boot memory and above it the devices
+answer; a load or store in the gap between the two memories is a
+fault, so a wild address in a random program is caught rather than
+wrapped.
 
 The traps are the manual's, machine mode only. An \code{ecall}, or a
 word the decoder does not know, is a trap: the address of the word
@@ -326,9 +329,11 @@ multiplicand or divisor, and two sign bits; the word a load read
 from the bus and whether a load is waiting on it; and two memories:
 the register file, and the instruction memory loaded from the
 program with \code{Mem::with}. The data memory is a device on the
-bus, a unit of its own. Its input is
-the reset and its outputs are the halt, the word executed, and a
-\code{Writeback} value: whether an instruction retired this cycle,
+bus, a unit of its own. Its inputs are
+the reset, the three interrupt lines, the bus's answers and the
+debugger's requests, and its outputs are the halt, the word
+executed, a \code{Writeback} value, the bus's requests and the
+debugger's answers; the \code{Writeback} value says whether an instruction retired this cycle,
 the register it wrote and what it wrote, which is what the waveform
 decodes field by field and the lockstep test steps the model on.
 The pieces of the step that are functions of their operands alone
@@ -428,7 +433,7 @@ signs put back, the product or quotient negated when the signs
 differed, the remainder given the dividend's sign, a quotient by
 zero left as the all-ones the steps produce, and it goes through the
 ordinary writeback. So a multiply takes three cycles and a division
-thirty-three, and one set of registers serves both. The multiplier
+thirty-four, and one set of registers serves both. The multiplier
 reads registers and writes registers, so it is a path of its own, a
 cycle long, and not on the one that sets the clock; the first form
 of the sequencer multiplied by thirty-two shifts and adds, and the
@@ -464,8 +469,9 @@ does and the lockstep test steps the model on it. A division in
 flight when an interrupt is taken is cancelled, and starts again
 when the handler returns, on the registers as they are then: the
 sequencer must never step under an instruction other than its own,
-which is a defect the random programs found. The board's line is
-tied low; the run and the test drive it.
+which is a defect the random programs found. On the board the line is the
+interrupt controller's, whose input from the board itself is tied
+low; the run and the test drive it.
 
 Debug mode is the third thing that keeps a live instruction from
 running, and it is entered as an interrupt is taken: before the
@@ -599,8 +605,8 @@ its range, so it checks no address. What the memory costs as a unit
 of its own is the bus's round trip: a load's request crosses the
 core's channel, the router and the memory's channel, the memory
 reads and answers, and the answer crosses the memory's channel, the
-router and the core's channel, so a load retires six cycles after
-its execute where the memory in the core had it retire in one. The
+router and the core's channel, so a load retires ten cycles after
+its execute, the nine bubbles before each load in the run, where the memory in the core had it retire in one. The
 random programs pay it in the wait in writeback and nothing else,
 and the board's own memory could take the same place. The
 timer, Listing~\ref{lst:v-timer}, is the second device, in the
@@ -745,7 +751,8 @@ counter takes the target, and the next cycle executes nothing, which
 is the one-cycle penalty a machine pays for resolving branches in
 its second stage. Reset empties the instruction register and
 restarts the fetch at zero; a halting instruction stops the fetch
-and parks its counter on itself, as the model's counter parks, and
+and parks its counter one instruction past it, as the model's
+counter parks, and
 sets the halt a cycle later when it retires, so the two agree there
 as well. The fetch counter's drive is shaped for the netlist. The
 redirect is the last thing the cycle decides, a compare or an add on
@@ -862,9 +869,9 @@ port's buffer and raises its line. The controller raises the core's,
 and the handler claims, reads one byte and completes. A byte still in
 the buffer keeps the port's line high, so the controller asks again on
 the complete, and the next byte is the next interrupt. The core's
-pending bit for the external interrupt is set by its line and cleared
-only by software, so the crate's dispatcher clears it after the
-handler; the controller's line fell a cycle after the claim. \code{//cpu/vreteno:board\_test} runs the board's design on it,
+pending bit for the external interrupt is the controller's line, so
+the crate's dispatcher clears nothing after the handler; the
+controller's line fell a cycle after the claim. \code{//cpu/vreteno:board\_test} runs the board's design on it,
 with a terminal that types \code{ping}, and the program says
 \code{got ping in 4 interrupts}.
 
@@ -903,7 +910,8 @@ interrupts are enabled in \code{mie} and interrupts in
 run and the timer fires in the middle of it. An \code{ecall} and then the
 word of all ones, which is illegal, enter the handler. The handler
 reads the cause into \code{x23} and branches on its sign: an
-interrupt is cleared in \code{mip}, the timer's has the compare
+interrupt has nothing to clear in \code{mip}, whose bits are the
+lines, and the timer's has the compare
 moved past the end of the run and a \code{fence} after it, since the
 store is posted and the line drops only when it lands, and either is counted in \code{x8}
 and returned from to the word it interrupted; an exception has
@@ -1032,8 +1040,9 @@ them was a multiply, so the pair was overwritten and the quotient
 came back wrong nineteen steps short. The sequencer is cancelled by
 an interrupt now.
 
-The line is the test's. For the demonstration it is one pulse at
-cycle forty; for a random program it is high in one cycle of sixteen
+The line is the test's. For the demonstration program it is
+raised at cycle forty and held until the core takes it, since the
+pending bit is the line and not a latch; for a random program it is high in one cycle of sixteen
 from the seed. The core decides on the pending bit as it stood
 before the cycle, so the test reads that bit with the two enables
 while the instruction is in execute, and tells the model, when the
@@ -1127,23 +1136,26 @@ stage was empty; Listing~\ref{lst:v-out} is what it printed when the
 build ran it. An instruction the program holds compressed is marked
 with a \code{c} and printed as the instruction it stands for, which
 is what the core executes; the address after it is two bytes on
-rather than four. The timer's interrupt is the first jump to the
-handler at \code{0x140}, as soon as interrupts are enabled and before
-the loop, since the compare is zero until the store of 150 lands:
-cause seven and the top bit in \code{x23}, the compare moved past the
-end of the run, one counted into \code{x8}, and the return to the
-instruction it interrupted. The loop is visible as the three
-instructions at \code{0x30} that repeat ten times with a bubble after
-each taken \code{bne}, the call as the jump to \code{0x13a} and the
-compressed return to \code{0x3c}, each with its bubble, and the loads
-as the sign and zero extensions of the same byte and half. The one
-load stall is the bubble after \code{lw}, where the next instruction
-adds to what it loaded; each multiply is a run of three and each
-divide a run of thirty-three, which the run prints as one line with
-the count, and the last line of the printout is what the port said,
-decoded from its line. The line's interrupt comes once the echo has
-enabled it, in place of the \code{ecall}, with eleven and the top bit
-in \code{x23}, and returns to that \code{ecall}. The two traps are the
+rather than four. The loop is visible as the three
+instructions at \code{0x36} that repeat ten times with a bubble after
+each taken \code{bne}, the call as the jump to \code{0x140} and the
+compressed return to \code{0x42}, each with its bubble, and the loads
+as the sign and zero extensions of the same byte and half, each after
+the nine bubbles of the bus's round trip. The one stall a load causes
+after it is the bubble after \code{lw}, where the next instruction
+adds to what it loaded; each multiply is a run of two bubbles and
+each divide a run of thirty-three, which the run prints as one line
+with the count, and the last line of the printout is what the port
+said, decoded from its line. The timer's interrupt is the first jump
+to the handler at \code{0x144}, at \code{t} 308 in place of the first
+\code{div}, once the timer reaches the compare of 150: cause seven
+and the top bit in \code{x23}, the compare moved past the end of the
+run, one counted into \code{x8}, and the return to the \code{div} it
+displaced, which starts again. The line's interrupt is not taken,
+and \code{x8} ends at one: its pulse at cycle forty comes while only
+the timer's is enabled, the core's pending bit is the line rather
+than a latch, and by the time the echo enables it the port's bytes
+have been read and its line is low (issue 958). The two traps are the
 last jumps to the handler, the first from the \code{ecall} with
 eleven read into \code{x23}, the second from the illegal word, all
 ones and thirty-two bits long, with two, each with its bubble, as the
@@ -1311,8 +1323,8 @@ The netlist was checked as the model was: a testbench that could not
 fail would prove nothing. The register file is not traced, so the
 testbench cannot see it, but every write to it shows in the
 writeback output the next tick, and every read shows in the program
-counter and the outputs that follow; the six hundred and forty-seven
-ticks of the demonstration exercise every instruction of
+counter and the outputs that follow; the six hundred and sixty-two
+cycles of the demonstration exercise every instruction of
 the program through both, the two traps and their returns included,
 since a wrong \code{mepc} or \code{mtvec} is a wrong program
 counter, and every register of the sequencer at every step of three
@@ -1965,9 +1977,9 @@ instruction moves \code{frame.mepc} on. The dispatcher reads
 interrupt line or that exception cause; an interrupt nobody registered
 for is taken and ignored, and an exception nobody registered for halts
 the core, since a program that traps where it did not expect to has
-nothing sensible to resume. The core's pending bit for the external
-interrupt is cleared here, after the handler, which is the one thing
-about this core a portable dispatcher would not know.
+nothing sensible to resume. Nothing is cleared after the handler: the
+core's pending bit for the external interrupt is the controller's
+line, as the specification has it.
 
 \lstinputlisting[caption={\code{cpu/vreteno/rust/hal/trap.rs}: the
 frame, the entry, the dispatcher, and how a handler is
@@ -2051,8 +2063,9 @@ goes up when they stop agreeing and stays up until reset.
 What makes the comparison worth anything is that both cores see
 exactly the same inputs in the same cycles. The wires are given to
 both; each of the three channels the pair receives goes through a
-\code{Tee}, a part that hands a word to both cores in one cycle or to
-neither, so neither core can be a word ahead. Each of the three
+\code{Tee}, a part that offers each word to both cores and takes the next
+only once both have taken it, so neither core can be more than a
+word ahead. Each of the three
 channels the cores drive goes through a \code{Check}, which takes a
 word from both in the same cycle, passes the first core's on and
 raises its line when the two differ. Both parts are in
