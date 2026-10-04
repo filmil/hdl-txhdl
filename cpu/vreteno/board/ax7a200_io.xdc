@@ -91,12 +91,12 @@ set_multicycle_path 3 -setup -end \
 set_multicycle_path 2 -hold -end \
     -from flash_cclk -to [get_clocks -of_objects $flash_reg_c]
 
-# The SD card slot's timing (issue 914), for the fastest divider a
-# program uses, div = 3: 12.5 MHz. The host (lib/parts/src/sd.rs) makes
-# the card's clock itself, from the register `half`, which toggles every
-# div + 1 = 4 cycles of the design's clock, so sd_clk is the design's
-# clock divided by eight, forwarded through its pad.
-create_generated_clock -name sd_clk -divide_by 8 \
+# The SD card slot's timing (issues 914 and 929), for the fastest
+# divider a program uses, div = 1: 25 MHz. The host (lib/parts/src/sd.rs)
+# makes the card's clock itself, from the register `half`, which toggles
+# every div + 1 = 2 cycles of the design's clock, so sd_clk is the
+# design's clock divided by four, forwarded through its pad.
+create_generated_clock -name sd_clk -divide_by 4 \
     -source [get_pins -hierarchical -filter {NAME =~ */sd/half_reg/C}] \
     [get_ports sd_clk]
 
@@ -116,30 +116,29 @@ set_input_delay -clock sd_clk -clock_fall -max [expr {14.0 + $sd_trace}] \
 set_input_delay -clock sd_clk -clock_fall -min 0.0 \
     [get_ports {sd_cmd sd_dat[*]}]
 
-# Which edges are real. The host changes its lines only on the cycle
-# `half` falls, sd_clk's falling edge, so each value stands for a whole
-# card clock, eight of the design's cycles, and the card takes it on the
-# rise in the middle, four cycles after the change. Left alone, the tool
-# would launch on every cycle of the design's clock and allow one. So
-# the setup launches four cycles early (-start 4), and the hold is seven
-# (-start 7): the next change comes at the following fall, forty
-# nanoseconds after the rise the old value was taken on, which is a hold
-# requirement of -40 ns. A hold of three, the usual setup less one,
-# would check a change on the rise itself, which this host never makes,
-# and the router answered it with ten nanoseconds of detour on the data
-# lines (as #889 found on the flash's pins).
+# The card's lines are taken by input registers in the pads' IOBs, so
+# that what lies between a pad and its register is the pad alone.
+set_property IOB TRUE [get_cells -hierarchical -filter \
+    {NAME =~ */sd/cin_q_reg* || NAME =~ */sd/din_q_reg*}]
+
+# Which edges are real. The host changes its lines a cycle after
+# `half` falls, and the card takes them on the next rise, a cycle
+# later: the tool's own one-cycle setup, so no multicycle. A value then
+# stands until the cycle after the next fall, three cycles after the
+# rise that took it, so the hold is three (-start 3), a -30 ns
+# requirement; each hold from 0 to 4 was read off the routed design.
+# The usual hold, checked on the rise itself, is a change this host
+# never makes, and the router answers it with detours on the data
+# lines (#889, #914).
 set sd_out_regs [get_cells -hierarchical -filter \
     {NAME =~ */sd/cmd_o_reg* || NAME =~ */sd/dat_o_reg* || \
      NAME =~ */sd/cmd_drv_reg* || NAME =~ */sd/dat_drv_reg*}]
-set_multicycle_path 4 -setup -start -from $sd_out_regs \
+set_multicycle_path 3 -hold -start -from $sd_out_regs \
     -to [get_ports {sd_cmd sd_dat[*]}]
-set_multicycle_path 7 -hold -start -from $sd_out_regs \
-    -to [get_ports {sd_cmd sd_dat[*]}]
-# The card's lines, driven after a fall, are sampled on the cycle
-# `half` rises, four of the design's cycles after that fall: the
-# capture is four cycles of the capturing clock late (-end 4). The card
-# changes them again only at the next fall, forty nanoseconds after
-# that sample, so the hold is seven (-end 7), -40 ns, for the same
-# reason as the outputs'.
-set_multicycle_path 4 -setup -end -from [get_ports {sd_cmd sd_dat[*]}]
-set_multicycle_path 7 -hold -end -from [get_ports {sd_cmd sd_dat[*]}]
+# The card drives after a fall, and the input registers take its lines
+# three cycles after that fall, a cycle after the next rise: the
+# capture is three cycles of the capturing clock late (-end 3). The
+# card drives again only after the next fall, a cycle after that
+# capture, so the hold is three (-end 3), a -10 ns requirement.
+set_multicycle_path 3 -setup -end -from [get_ports {sd_cmd sd_dat[*]}]
+set_multicycle_path 3 -hold -end -from [get_ports {sd_cmd sd_dat[*]}]

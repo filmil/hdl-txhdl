@@ -19,12 +19,11 @@
 //!   partition table carries, `boot none` if not.
 //!
 //! The card is identified at 400 kHz, as the specification asks of a
-//! card not yet known, and read at 12.5 MHz. At 25 MHz a read has 20 ns
-//! from the card clock's fall, which the host makes, to the host's
-//! sample: the clock's way out, the card's 14 ns to drive at default
-//! speed, and the data's way back, about as long as the window. At
-//! 12.5 MHz the window is 40 ns. Block 0 is address 0 on a
-//! card of either capacity, so the read needs no case for either.
+//! card not yet known, and read at 25 MHz, the default speed's top: the
+//! host samples a card's lines a cycle after the rise, from registers in
+//! the pads, which gives a card 30 ns to answer in (issue 929). Block 0
+//! is address 0 on a card of either capacity, so the read needs no case
+//! for either.
 //!
 //! The program only reads. It sends no write command, so the card
 //! holds afterwards exactly what it held before.
@@ -38,9 +37,9 @@ use vreteno_regs::sd;
 const SD: *mut u32 = map::SD as *mut u32;
 
 /// A half of a card clock is `DIV + 1` cycles of the board's 100 MHz:
-/// 400 kHz to identify the card, 12.5 MHz to read it.
+/// 400 kHz to identify the card, 25 MHz to read it.
 const SLOW: u32 = 124;
-const FAST: u32 = 3;
+const FAST: u32 = 1;
 
 /// The command word's response field: none, 48 bits, 136 bits.
 const SHORT: u32 = 1 << sd::CMD_RESP_SHIFT;
