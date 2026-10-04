@@ -310,7 +310,7 @@ impl Unit for ScanCtl {
     async fn run(
         &mut self,
         bus: LitePort<32, 32, 4>,
-        (under, base, mode, clear): (Rx<U<2>>, Out<U<32>>, Out<Bit>, Out<Bit>),
+        (under, base, mode, clear): (Rx<Bit>, Out<U<32>>, Out<Bit>, Out<Bit>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -318,7 +318,7 @@ impl Unit for ScanCtl {
             mode.set(self.show.get());
             clear.set(self.clr.get());
             let heard = Bit::from(under.peek().is_some());
-            let said = under.head().bit(0);
+            let said = under.head();
             let _ = under.recv_if(heard);
             let arh = bus.ar.head();
             let awh = bus.aw.head();
@@ -369,17 +369,11 @@ pub struct ScanTap {}
 
 #[lower]
 impl Unit for ScanTap {
-    async fn run(&mut self, starved: In<Bit>, tap: Tx<U<2>>) {
+    async fn run(&mut self, starved: In<Bit>, tap: Tx<Bit>) {
         loop {
             DefaultClock::rising().await;
-            // Two bits, the bit in the low one, rather than a `Bit` or
-            // a `U<1>`: a one-bit channel inside a unit of units is a
-            // `std_logic` net in the VHDL, on the channel's `unsigned`
-            // ports (issue 953).
-            let one = U::<2>::from(1u8);
-            let zero = U::<2>::from(0u8);
             if tap.ready().to_bool() {
-                tap.send(mux(starved.get(), one, zero));
+                tap.send(starved.get());
             }
         }
     }
@@ -583,7 +577,7 @@ impl<
         let (clear_o, clear) = signal::<Bit, DefaultClock>();
         let (pix_o, pix) = signal::<U<32>, DefaultClock>();
         let (starved_o, starved) = signal::<Bit, DefaultClock>();
-        let (tap_tx, tap_rx) = chan::<U<2>, DefaultClock>();
+        let (tap_tx, tap_rx) = chan::<Bit, DefaultClock>();
         let (hrgb_o, hrgb) = signal::<U<24>, DefaultClock>();
         let (hhs_o, hhs) = signal::<Bit, DefaultClock>();
         let (hvs_o, hvs) = signal::<Bit, DefaultClock>();
