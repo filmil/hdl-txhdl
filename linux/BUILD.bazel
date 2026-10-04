@@ -190,3 +190,25 @@ sh_test(
     ],
     tags = ["manual"],
 )
+
+# The same with the serial port as the loader leaves it on the board:
+# its receive interrupt on and a byte waiting, which the interrupt
+# controller holds as a request until the boot shim drains it. Without
+# the drain the SiFive driver's probe takes it before the port exists
+# and panics, as it did on the board (issue 1136).
+sh_test(
+    name = "boot_loaded_test",
+    size = "large",
+    srcs = ["boot_test.sh"],
+    args = [
+        "$(rootpath //cpu/vreteno:machine)",
+        "$(rootpath :model_boot)",
+        "--as-loaded",
+        "x",
+    ],
+    data = [
+        ":model_boot",
+        "//cpu/vreteno:machine",
+    ],
+    tags = ["manual"],
+)
