@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+# Linux on the machine model, nightly (issue 1016, M9 of #279).
+#
+# //linux:boot_test builds the kernel, OpenSBI and the initramfs from
+# their pinned sources, packs them with //tools/bootimg, and boots the
+# image on //cpu/vreteno:machine to BusyBox's prompt. It is manual: the
+# kernel is many minutes of work and the boot a few more, which every
+# pull request should not pay. This job runs it once a night, after the
+# Vivado one, and by hand on a branch that touches the core's model, the
+# machine, the device tree or the boot image.
+name: linux
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  boot:
+    runs-on: docker
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Install Bazelisk (pinned)
+        run: |
+          set -eux
+          { command -v curl && command -v git; } >/dev/null 2>&1 || {
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends ca-certificates curl git
+          }
+          curl -fsSL -o /usr/local/bin/bazel \
+            https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
+          echo "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992  /usr/local/bin/bazel" | sha256sum -c
+          chmod +x /usr/local/bin/bazel
+
+      - name: Restore the Bazelisk cache
+        id: cache
+        uses: https://code.forgejo.org/actions/cache/restore@v4
+        with:
+          path: ~/.cache/bazelisk
+          key: bazelisk-${{ hashFiles('.bazelversion') }}
+
+      # The console is the result, so it is printed whole, pass or fail.
+      - name: Boot Linux on the machine model
+        run: |
+          set -o pipefail
+          bazel test --config=ci //linux:boot_test --test_output=all
+
+      - name: Save the Bazelisk cache
+        if: success() && steps.cache.outputs.cache-hit != 'true'
+        uses: https://code.forgejo.org/actions/cache/save@v4
+        with:
+          path: ~/.cache/bazelisk
+          key: ${{ steps.cache.outputs.cache-primary-key }}
