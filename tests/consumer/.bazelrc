@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+# Where Bazel looks modules up: TxHDL's own dependencies come from
+# these two registries, the second being the Bazel Central Registry.
+common --registry=https://raw.githubusercontent.com/filmil/bazel-registry/main
+common --registry=https://bcr.bazel.build
+
+# This workspace sits inside TxHDL's tree, so it makes no `bazel-*`
+# symlinks: the tree's own `//...` would walk into them.
+common --symlink_prefix=/
+
+# And no lock file: TxHDL is this tree, by `local_path_override`, so a
+# lock of its module graph would be stale at the next change to it.
+common --lockfile_mode=off

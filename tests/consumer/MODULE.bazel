@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: Apache-2.0
+# A workspace that depends on TxHDL, for the targets that compile a
+# program for Vreteno: the Zephyr images and the system on a chip's
+# demonstration (issue 1001). `//tests:consumer_check` runs a Bazel of
+# its own here; this tree is TxHDL's, so TxHDL comes from it rather
+# than from a commit of the mirror, as it would in a workspace of yours.
+module(
+    name = "consumer",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "rules_rust", version = "0.74.0")
+bazel_dep(name = "txhdl", version = "0.0.0")
+local_path_override(
+    module_name = "txhdl",
+    path = "../..",
+)
+
+# The Rust compiler, at the version TxHDL compiles with, as in
+# tutorial/blinky. The Rust rules read a toolchain only from the root
+# module, by their design, so these lines are the workspace's to write
+# and TxHDL's own copy of them is not read.
+#
+# `extra_target_triples` is the one line a workspace adds for TxHDL's
+# programs for the core, such as `@txhdl//soc:demo`: it fetches the
+# standard library for Vreteno's target, and without it those targets
+# find no Rust toolchain. A workspace that only uses TxHDL's library,
+# as the blinky does, needs none of it. Zephyr's images need nothing
+# here: TxHDL takes their Python packages at its own version.
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    extra_target_triples = ["riscv32imc-unknown-none-elf"],
+    versions = ["1.90.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# Checks of TxHDL as somebody else's dependency, which a build inside
+# this tree cannot see, since here TxHDL is the root module.
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+# Runs a Bazel of its own in tests/consumer, a workspace that depends
+# on TxHDL, and analyses the targets that failed from such a workspace
+# (issue 1001). By hand, since it fetches what TxHDL fetches:
+#
+#   bazel run //tests:consumer_check
+sh_binary(
+    name = "consumer_check",
+    srcs = ["consumer_check.sh"],
+)
