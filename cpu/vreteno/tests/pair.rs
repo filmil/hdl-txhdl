@@ -61,6 +61,7 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
     let (sirq_out, sirq) = signal::<Bit, DefaultClock>();
+    let (time_out, time) = signal::<U<64>, DefaultClock>();
     let (fault_out, fault_in) = signal::<Bit, DefaultClock>();
     let (tx_out, _tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
@@ -88,13 +89,16 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run(tbus, (rst_t, tirq_out, sirq_out)),
+                timer.run(tbus, (rst_t, tirq_out, sirq_out, time_out)),
                 uart.run(ubus, (rst_u, rx, tx_out, uirq_out)),
             ),
             join2(
                 dmem.run(dbus, ()),
                 pair.run(
-                    (rst, irq, tirq, sirq, fault_in, crdata, cdone, grant),
+                    (
+                        rst, irq, tirq, sirq, time, fault_in, crdata, cdone,
+                        grant,
+                    ),
                     (
                         halt_out,
                         instr_out,

@@ -73,3 +73,30 @@ fn a_read_of_a_counter_costs_it_nothing() {
          stall, so the same number every time and never zero: {cycles:?}"
     );
 }
+
+/// `time` is the timer's count (issue 1012): a program reads it, loads
+/// the CLINT's `mtime` over the bus, and reads it again, and the three
+/// come in order and close together, since they are one count read
+/// three ways a few cycles apart.
+#[test]
+fn time_reads_the_timers_count() {
+    use vreteno32::isa::*;
+    let mtime = CLINT_BASE + MTIME_OFF;
+    let p = [
+        lui(2, 1), // the data memory
+        lui(6, (mtime + 0x800) >> 12),
+        csrrs(5, CSR_TIME, 0),
+        lw(7, 6, ((mtime << 20) as i32) >> 20),
+        csrrs(8, CSR_TIME, 0),
+        sw(5, 2, 0),
+        sw(7, 2, 4),
+        sw(8, 2, 8),
+        halt(),
+    ];
+    let ran = run(&p, &[], 4000);
+    assert!(ran.halted_at.is_some(), "the program did not halt");
+    let (t1, m, t2) = (ran.mem[0], ran.mem[1], ran.mem[2]);
+    assert!(t1 > 0, "the count runs: {t1}");
+    assert!(t1 <= m && m <= t2, "in order: {t1} {m} {t2}");
+    assert!(t2 - t1 < 60, "a few cycles apart: {t1} {t2}");
+}

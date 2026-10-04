@@ -16,8 +16,10 @@ use vreteno32::dmem::Dmem;
 use vreteno32::isa::{
     add, addi, beq, csrrs, csrrsi, csrrw, csrrwi, decode, disasm, ebreak, halt,
     jal, jalr, lui, lw, mret, or, sw, Kind, CAUSE_FETCH_ACCESS, CAUSE_MEXT,
-    CAUSE_MSOFT, CAUSE_MTIMER, CAUSE_STORE_ACCESS, CSR_DCSR, CSR_MBUSQUIET,
-    CSR_MCAUSE, CSR_MEPC, CSR_MIE, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MISA,
+    CAUSE_MSOFT, CAUSE_MTIMER, CAUSE_SEXT, CAUSE_SSOFT, CAUSE_STIMER,
+    CAUSE_STORE_ACCESS, CSR_DCSR, CSR_MBUSQUIET, CSR_MCAUSE, CSR_MEPC, CSR_MIE,
+    CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, MEXT, MISA, MSOFT, MTIMER, SEXT, SSOFT,
+    STIMER,
 };
 use vreteno32::model::{Halt, Model};
 use vreteno32::program::{demo, idle, in_memory, machine_info, random, soft};
@@ -110,7 +112,19 @@ fn lockstep(
         ("mie", cpu.mie),
         ("mip", cpu.mip),
         ("mtval", cpu.mtval),
+        // User and supervisor mode (issue 1012).
+        ("medeleg", cpu.medeleg),
+        ("mideleg", cpu.mideleg),
+        ("mip_sw", cpu.mip_sw),
+        ("stvec", cpu.stvec),
+        ("sscratch", cpu.sscratch),
+        ("sepc", cpu.sepc),
+        ("scause", cpu.scause),
+        ("stval", cpu.stval),
+        ("satp", cpu.satp),
     ];
+    let (prv, counteren) = (cpu.prv, cpu.counteren);
+    let (mideleg_r, mip_sw_r) = (cpu.mideleg, cpu.mip_sw);
     let (mip, mie, mstatus) = (cpu.mip, cpu.mie, cpu.mstatus);
 
     let mut timer = Timer::<IW>::default();
@@ -143,6 +157,7 @@ fn lockstep(
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
     let (sirq_out, sirq) = signal::<Bit, DefaultClock>();
+    let (time_out, time) = signal::<U<64>, DefaultClock>();
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
     let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
@@ -187,7 +202,7 @@ fn lockstep(
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run(tbus, (rst_t, tirq_out, sirq_out)),
+                timer.run(tbus, (rst_t, tirq_out, sirq_out, time_out)),
                 uart.run(ubus, (rst_u, rx, tx_out, uirq_out)),
             ),
             join2(
@@ -195,7 +210,7 @@ fn lockstep(
                 cpu.run(
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
-                        resumereq, dbg_regno, dbg_wdata, dbg_we,
+                        resumereq, dbg_regno, dbg_wdata, dbg_we, time,
                     ),
                     (
                         halt_out,
@@ -369,24 +384,38 @@ fn lockstep(
         let refused = wb_err.get().to_bool();
         let line_now = pending.get().to_bool();
         let soft_now = msip.get().to_bool();
-        let ext = mip.get().bit(11).to_bool() && mie.get().bit(11).to_bool();
-        let sft = soft_now && mie.get().bit(3).to_bool();
-        let tim = line_now && mie.get().bit(7).to_bool();
-        // The order the specification gives, which the core keeps.
-        // A refused store is taken first, and whether or not
+        // The interrupt the core takes, by its rule (issue 1012): the
+        // pending and enabled ones machine mode keeps, below machine
+        // mode or with MIE, before those it delegated, below
+        // supervisor mode or in it with SIE; within each, the
+        // external, the software and the timer's, the machine's
+        // first. A refused store is taken first, and whether or not
         // interrupts are enabled: it is a trap, not an interrupt.
+        let pend = (mip.get().raw() as u32
+            | if line_now { MTIMER } else { 0 }
+            | if soft_now { MSOFT } else { 0 }
+            | mip_sw_r.get().raw() as u32)
+            & mie.get().raw() as u32;
+        let (p, st) = (prv.get().raw() as u32, mstatus.get().raw() as u32);
+        let dl = mideleg_r.get().raw() as u32;
+        let m_set = if p != 3 || st & 8 != 0 { pend & !dl } else { 0 };
+        let s_on = p == 0 || (p == 1 && st & 2 != 0);
+        let s_set = if s_on { pend & dl } else { 0 };
+        let set = if m_set != 0 { m_set } else { s_set };
         let taken_now = if st_err.get().to_bool() {
             Some(CAUSE_STORE_ACCESS)
-        } else if !mstatus.get().bit(3).to_bool() {
-            None
-        } else if ext {
-            Some(CAUSE_MEXT)
-        } else if sft {
-            Some(CAUSE_MSOFT)
-        } else if tim {
-            Some(CAUSE_MTIMER)
         } else {
-            None
+            [
+                (MEXT, CAUSE_MEXT),
+                (MSOFT, CAUSE_MSOFT),
+                (MTIMER, CAUSE_MTIMER),
+                (SEXT, CAUSE_SEXT),
+                (SSOFT, CAUSE_SSOFT),
+                (STIMER, CAUSE_STIMER),
+            ]
+            .into_iter()
+            .find(|&(bit, _)| set & bit != 0)
+            .map(|(_, cause)| cause)
         };
         sim.cycle();
         term.see(tx.get().to_bool());
@@ -481,6 +510,8 @@ fn lockstep(
                         | Kind::Csrrci
                         | Kind::Ecall
                         | Kind::Mret
+                        | Kind::Sret
+                        | Kind::Wfi
                         | Kind::Illegal
                         | Kind::Sb
                         | Kind::Sh
@@ -506,6 +537,15 @@ fn lockstep(
             model.csr.mie,
             model.csr.mip,
             model.csr.mtval,
+            model.csr.medeleg,
+            model.csr.mideleg,
+            model.csr.mip_sw,
+            model.csr.stvec,
+            model.csr.sscratch,
+            model.csr.sepc,
+            model.csr.scause,
+            model.csr.stval,
+            model.csr.satp,
         ];
         for ((name, r), w) in csrs.iter().zip(want) {
             if !system {
@@ -513,6 +553,12 @@ fn lockstep(
             }
         }
         if !system {
+            assert_eq!(prv.get().raw() as u32, model.prv, "prv after {here}");
+            assert_eq!(
+                counteren.get().raw() as u32,
+                model.csr.mcounteren | model.csr.scounteren << 3,
+                "counteren after {here}"
+            );
             assert_eq!(dpc.get().raw() as u32, model.dpc, "dpc after {here}");
             assert_eq!(
                 dcsr.get().raw() as u32,
@@ -714,6 +760,9 @@ fn random_programs() {
     // the upper half of a word, read off the programs from the start:
     // the mix the compressed fetch has to get right.
     let (mut short, mut wide, mut straddle) = (0, 0, 0);
+    // Runs that took a trap to the supervisor, and of those whose last
+    // was a delegated interrupt (issue 1012).
+    let (mut s_traps, mut s_ints) = (0, 0);
     for seed in 0..64 {
         let p = random(seed, 200);
         let mut at = 0;
@@ -734,7 +783,15 @@ fn random_programs() {
             None,
         );
         assert_eq!(m.halted, Some(Halt::Break), "seed {seed} faulted");
+        if m.csr.scause != 0 {
+            s_traps += 1;
+            if m.csr.scause >> 31 == 1 {
+                s_ints += 1;
+            }
+        }
     }
+    assert!(s_traps >= 8, "delegated traps in {s_traps} runs");
+    assert!(s_ints >= 2, "delegated interrupts last in {s_ints} runs");
     let counts = format!("{short} compressed, {wide} whole, {straddle} across");
     // The atomics, which have no compressed spelling, took some of the
     // slots in issue 1010: 2876 compressed then, against 3000 before.
@@ -1258,4 +1315,136 @@ fn a_misaligned_atomic_traps() {
     assert_eq!(m.x[21], 0x1003, "the last trap value is the address");
     assert_eq!([m.x[10], m.x[11], m.x[12]], [0, 0, 0], "nothing written");
     assert_eq!(m.x[13], 7, "and the word unchanged");
+}
+
+/// User and supervisor mode (issue 1012). Machine mode delegates an
+/// environment call from user mode and an illegal instruction, enables
+/// `instret` below it, and returns into supervisor mode, which reads
+/// `sstatus`, traps on `mstatus`, and returns into user mode. User mode
+/// reads `instret`, and traps on `cycle`, `wfi` and `sret`, each to the
+/// supervisor's handler, which steps past it; its `ecall` goes to the
+/// supervisor too, which calls machine mode in turn, and machine mode,
+/// which delegated nothing from supervisor mode, halts.
+#[test]
+fn user_and_supervisor_modes_trap_where_they_are_sent() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, sh, s_code, u_code, skip) =
+        (a.label(), a.label(), a.label(), a.label(), a.label());
+    a.wide(addi(8, 0, 0)); // x8 counts the supervisor's traps
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.abs(sh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_STVEC, 31));
+    a.wide(addi(5, 0, 0x104)); // ecall from U and an illegal instruction
+    a.wide(csrrw(0, CSR_MEDELEG, 5));
+    a.wide(csrrwi(0, CSR_MCOUNTEREN, 4)); // instret, not cycle
+                                          // mstatush: a write is ignored and a read is zero (issue 1076).
+    a.wide(addi(12, 0, -1));
+    a.wide(csrrc(0, CSR_MSTATUSH, 12));
+    a.wide(csrrw(13, CSR_MSTATUSH, 12));
+    a.wide(csrrs(14, CSR_MSTATUSH, 0));
+    a.wide(csrrwi(0, CSR_SCOUNTEREN, 4));
+    a.wide(lui(5, 1));
+    a.wide(addi(5, 5, -0x800)); // x5 = 0x800, MPP = supervisor
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    a.abs(s_code, |s| addi(31, 0, s as i32));
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    // Supervisor mode.
+    a.place(s_code);
+    a.wide(csrrs(6, CSR_SSTATUS, 0));
+    a.wide(csrrs(7, CSR_MSTATUS, 0)); // illegal here
+    a.wide(addi(9, 0, 0x100));
+    a.wide(csrrc(0, CSR_SSTATUS, 9)); // SPP = user
+    a.abs(u_code, |u| addi(31, 0, u as i32));
+    a.wide(csrrw(0, CSR_SEPC, 31));
+    a.wide(sret());
+    // User mode.
+    a.place(u_code);
+    // Into x0: a counter's value is the pipeline's and not the
+    // model's to know, so only that the read is legal is checked.
+    a.wide(csrrs(0, CSR_INSTRET, 0));
+    a.wide(csrrs(11, CSR_CYCLE, 0)); // not enabled
+    a.wide(wfi()); // illegal in user mode
+    a.wide(sret()); // and so is this
+    a.wide(ecall());
+    a.wide(halt()); // never reached
+                    // The supervisor's handler: an environment call from user mode is
+                    // passed on to machine mode; anything else is stepped past.
+    a.align();
+    a.place(sh);
+    a.wide(csrrs(22, CSR_SCAUSE, 0));
+    a.wide(addi(8, 8, 1));
+    a.wide(addi(23, 0, 8));
+    a.to(skip, |o| bne(22, 23, o));
+    a.wide(ecall());
+    a.place(skip);
+    a.wide(csrrs(24, CSR_SEPC, 0));
+    a.wide(addi(24, 24, 4));
+    a.wide(csrrw(0, CSR_SEPC, 24));
+    a.wide(sret());
+    // Machine mode's handler: the cause, the mode it came from, done.
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(csrrs(25, CSR_MSTATUS, 0));
+    a.wide(halt());
+    let m = lockstep(&a.words(), &[], "modes", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[8], 5, "mstatus, cycle, wfi, sret and the ecall");
+    assert_eq!(m.x[22], 8, "the last the supervisor saw: ecall from U");
+    assert_eq!(m.x[21], 9, "machine mode saw the supervisor's ecall");
+    assert_eq!(m.x[25] >> 11 & 3, 1, "MPP says supervisor");
+    assert_eq!(m.x[7], 0, "the illegal read wrote nothing");
+    assert_eq!(m.x[11], 0, "nor the disabled counter");
+    assert_eq!(m.prv, 3, "ending in machine mode");
+    assert_eq!([m.x[13], m.x[14]], [0, 0], "mstatush holds nothing");
+}
+
+/// A delegated interrupt (issue 1012): machine mode delegates the
+/// supervisor's software interrupt, enables it, raises it in `mip` and
+/// returns into supervisor mode with `SIE` set; the interrupt is taken
+/// there at once, by the supervisor's handler, which clears it through
+/// `sip` and returns to the instruction it interrupted.
+#[test]
+fn a_delegated_interrupt_reaches_the_supervisor() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, sh, s_code) = (a.label(), a.label(), a.label());
+    a.wide(addi(8, 0, 0));
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.abs(sh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_STVEC, 31));
+    a.wide(csrrwi(0, CSR_MIDELEG, 2));
+    a.wide(csrrwi(0, CSR_MIE, 2));
+    a.wide(lui(5, 1));
+    a.wide(addi(5, 5, -0x800 + 2)); // MPP = supervisor, SIE
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    a.abs(s_code, |s| addi(31, 0, s as i32));
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(csrrsi(0, CSR_MIP, 2)); // the supervisor's software interrupt
+    a.wide(mret());
+    a.place(s_code);
+    a.wide(addi(9, 0, 7));
+    a.wide(ecall());
+    a.align();
+    a.place(sh);
+    a.wide(csrrs(22, CSR_SCAUSE, 0));
+    a.wide(addi(8, 8, 1));
+    a.wide(csrrci(0, CSR_SIP, 2));
+    a.wide(sret());
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(halt());
+    let m = lockstep(&a.words(), &[], "delegated", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[8], 1, "taken once");
+    assert_eq!(m.x[22], CAUSE_SSOFT, "as the supervisor's software one");
+    assert_eq!(m.x[9], 7, "and the interrupted code ran after");
+    assert_eq!(m.x[21], CAUSE_ECALL_S, "then called machine mode");
 }

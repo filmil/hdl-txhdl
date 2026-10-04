@@ -107,7 +107,7 @@ ssh $TXHDL_BOARD_SERVER openocd -f /tmp/txhdl-ax7a200.cfg -c "'\
   resume; echo \"state [xc7.cpu curstate]\"; shutdown'" 2>&1 | tee board-154-openocd.log
 ```
 
-Pass: `tap/device found: 0x13636093`, `Examined RISC-V core; found 1 harts` with `XLEN=32` and `misa=0x40001105` (RV32IMAC since #1010; `0x40001104` on a bitstream from before it), `state halted`, a `pc`, the four words, a `stepped pc` one instruction on, and `state running`, which is the session `//cpu/vreteno:openocd_test` runs against the simulated board.
+Pass: `tap/device found: 0x13636093`, `Examined RISC-V core; found 1 harts` with `XLEN=32` and `misa=0x40141105` (RV32IMAC with S and U since #1012; `0x40001105` before it and `0x40001104` before #1010), `state halted`, a `pc`, the four words, a `stepped pc` one instruction on, and `state running`, which is the session `//cpu/vreteno:openocd_test` runs against the simulated board.
 If OpenOCD says `no device found`, read the cable's product name on the server, `cat /sys/bus/usb/devices/*/product`, and set `ftdi device_desc` in the configuration to it.
 Capture: `board-154-openocd.log`, posted on #154.
 

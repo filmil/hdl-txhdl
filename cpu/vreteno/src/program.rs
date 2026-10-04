@@ -549,17 +549,48 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     };
     let mut a = Asm::default();
     let (handler, sync) = (a.label(), a.label());
+    let (s_handler, s_sync, s_up, the_end, body) =
+        (a.label(), a.label(), a.label(), a.label(), a.label());
+    // The mode the body runs in, and what machine mode delegates to the
+    // supervisor, by the seed (issue 1012): an illegal instruction, an
+    // environment call from user mode, and the supervisor's software
+    // interrupt, which the machine's handler raises on every interrupt
+    // it takes. An environment call from supervisor mode is never
+    // delegated, so that the end below reaches machine mode.
+    let prv = [3u32, 1, 0][(seed % 3) as usize];
+    let medeleg = (seed >> 2 & 1) as i32 * 4 + (seed >> 3 & 1) as i32 * 0x100;
+    let dsoft = seed >> 4 & 1 == 1;
     a.emit(lui(2, DATA_BASE >> 12));
     a.abs(handler, |h| addi(31, 0, h as i32));
     a.emit(csrrw(0, CSR_MTVEC, 31));
+    a.abs(s_handler, |h| addi(31, 0, h as i32));
+    a.emit(csrrw(0, CSR_STVEC, 31));
+    a.emit(addi(31, 0, medeleg));
+    a.emit(csrrw(0, CSR_MEDELEG, 31));
     // Interrupts enabled from the start; the line is the test's.
     a.emit(lui(31, 1));
     a.emit(srli(31, 31, 1));
-    a.emit(ori(31, 31, 0x80));
+    a.emit(ori(31, 31, if dsoft { 0x82 } else { 0x80 }));
     a.emit(csrrw(0, CSR_MIE, 31)); // the line and the timer
-                                   // x30 = the compare's page, kept, since the handler writes it.
+    if dsoft {
+        a.emit(csrrwi(0, CSR_MIDELEG, 2));
+    }
+    // x30 = the compare's page, kept, since the handler writes it.
     a.emit(lui(30, (CLINT_BASE + MTIMECMP_OFF) >> 12));
-    a.emit(csrrsi(0, CSR_MSTATUS, 8));
+    if prv == 3 {
+        a.emit(csrrsi(0, CSR_MSTATUS, 8));
+    } else {
+        // Into the body's mode: MPP, MPIE so that machine mode's
+        // interrupts stay enabled, SIE in supervisor mode.
+        let st = (prv << 11 | 0x80 | if prv == 1 { 2 } else { 0 }) as i32;
+        a.emit(lui(31, (st as u32 + 0x800) >> 12));
+        a.emit(addi(31, 31, (st << 20) >> 20));
+        a.emit(csrrw(0, CSR_MSTATUS, 31));
+        a.abs(body, |b| addi(31, 0, b as i32));
+        a.emit(csrrw(0, CSR_MEPC, 31));
+        a.emit(mret());
+    }
+    a.place(body);
     while a.halves.len() < 2 * len {
         let r = next();
         // Half the instructions are shaped to have a compressed
@@ -630,7 +661,9 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
                 // which mostly does not.
                 // The guard below comes after the choice, and these emit
                 // first, so a reserved destination is passed over here.
-                2 | 3 if rd == 2 || rd == 30 || rd == 31 => continue,
+                2 | 3 if rd == 2 || rd == 27 || rd == 30 || rd == 31 => {
+                    continue
+                }
                 2 => {
                     a.emit(addi(28, 2, off));
                     match amt % 9 {
@@ -722,14 +755,19 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
         };
         // x2 stays the data base and x30 the timer's, so the loads and
         // stores stay in range, and x31 is the handler's own.
-        if (rd == 2 || rd == 30 || rd == 31) && !matches!(r & 31, 21..=23 | 30)
+        if (rd == 2 || rd == 27 || rd == 30 || rd == 31)
+            && !matches!(r & 31, 21..=23 | 30)
         {
             continue;
         }
         a.compress = squeeze;
         a.emit(w);
     }
-    a.emit(halt());
+    // The end: x27 says so, and the environment call reaches machine
+    // mode, through the supervisor when it was delegated, and halts
+    // there, which no other mode may (issue 1012).
+    a.emit(addi(27, 0, 0x5a));
+    a.emit(ecall());
     // The handler: an interrupt is returned from, its line having
     // dropped, since the external bit is the line and not a latch
     // (#788); an exception returns past the instruction that trapped.
@@ -748,12 +786,17 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     a.emit(sw(31, 30, 0)); // and its low half is the count plus 64
     a.emit(fence()); // so the store has landed and the line has dropped
                      // before the return (issues 420, 432)
+    if dsoft {
+        a.emit(csrrsi(0, CSR_MIP, 2)); // the supervisor's, delegated
+    }
     a.emit(mret());
     // An exception returns past the instruction that trapped, which is
     // four bytes long for an ecall and for an illegal instruction whose
     // low two bits are both set, and two for the rest. mcause is 11 or
     // 2, so its bit 3 says ecall; x29 is the handler's too.
     a.place(sync);
+    a.emit(addi(29, 0, 0x5a));
+    a.to(the_end, |o| beq(27, 29, o));
     a.emit(csrrs(29, CSR_MTVAL, 0));
     a.emit(andi(29, 29, 3)); // the trap value's low two bits
     a.emit(andi(31, 31, 8)); // 8 for an ecall
@@ -765,5 +808,35 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     a.emit(sub(31, 31, 29)); // mepc + 4 - 2, or + 4
     a.emit(csrrw(0, CSR_MEPC, 31));
     a.emit(mret());
+    a.place(the_end);
+    a.emit(halt());
+    // The supervisor's handler, the same through its own registers: its
+    // software interrupt is cleared and returned from, an exception is
+    // stepped past, and the end is passed on to machine mode. Its
+    // scratch registers are x24 and x26 rather than the machine's x29
+    // and x31, since machine mode's interrupts are taken below machine
+    // mode whatever MIE says, and so in the middle of this handler.
+    a.align();
+    a.place(s_handler);
+    a.emit(csrrs(26, CSR_SCAUSE, 0));
+    a.to(s_sync, |o| bge(26, 0, o));
+    a.emit(csrrci(0, CSR_SIP, 2));
+    a.emit(sret());
+    a.place(s_sync);
+    a.emit(addi(24, 0, 0x5a));
+    a.to(s_up, |o| beq(27, 24, o));
+    a.emit(csrrs(24, CSR_STVAL, 0));
+    a.emit(andi(24, 24, 3));
+    a.emit(andi(26, 26, 8));
+    a.emit(or(24, 24, 26));
+    a.emit(sltiu(24, 24, 3));
+    a.emit(slli(24, 24, 1));
+    a.emit(csrrs(26, CSR_SEPC, 0));
+    a.emit(addi(26, 26, 4));
+    a.emit(sub(26, 26, 24));
+    a.emit(csrrw(0, CSR_SEPC, 26));
+    a.emit(sret());
+    a.place(s_up);
+    a.emit(ecall());
     a.words()
 }
