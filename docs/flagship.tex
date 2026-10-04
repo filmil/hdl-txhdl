@@ -108,6 +108,14 @@ software on a laptop, against the bus it will really sit on, and the
 design does not change when the software becomes hardware.
 Section~\ref{sec:f-remote} is that peripheral. The port echoed every
 good frame until this; a frame cannot be both echoed and answered.
+The core reaches the MAC as well, through \code{EthSlots} on the fifth
+slot of its page, so a program sends and receives frames of its own:
+on September 28, 2026 the frames of \code{ethtx} were counted at the
+board server, and \code{ethrx} and \code{ethirq} worked. The fastboot
+server of issue~\#143, a Zephyr program the loader sends down the serial
+line, listened on port 5554 that day, answered \code{getvar} and booted
+a program sent with \code{fastboot boot}, and it passed the same three
+checks again on October 1.
 
 \emph{The HDMI output.} The video peripheral with its framebuffer and
 the I2C master that configures the SiI9134 encoder~\cite{hdmi}. Here
@@ -587,14 +595,6 @@ crate.},label={lst:f-logo2rs},tabsize=2]{tools/logo2rs/main.go}
 
 \section{What is not done}
 \label{sec:f-todo}
-
-\emph{The core's own frames do not reach the network yet.} The core
-reaches the MAC through \code{EthSlots} on the fifth slot of its page,
-so a program can send a frame of its own choosing, and the fastboot
-server of issue~\#143 listens on the board. The board's frames reach a
-host: on September 28, 2026 the frames of \code{ethtx} were counted at
-the board server, and \code{ethrx} and \code{ethirq} worked as well,
-so what issue~\#786 found is in the software.
 
 \emph{One program paints the screen, and it is the whole of what is
 known about painting it.} Section~\ref{sec:f-first} says what it

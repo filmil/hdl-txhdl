@@ -219,6 +219,9 @@ The table `bazel run //ddr3:bw` prints then gives the path's throughput near tha
 The stores are expected to differ little, as in simulation: the core fetches each store over the bus slower than the path takes it, so they say the core cannot fill the path, not how fast the path is.
 Post the log on #1023.
 
+Done on October 4, 2026, by hil, on the flagship: sixteen loads took 841, 837, 834 and 826 cycles against the DDR3 and 397 against the data memory, about 27 cycles a word more, so the controller adds about 23.
+The result and what it decides are in `docs/ddr3-throughput.md`, section 6, and on #1023.
+
 ## 7. Fastboot, #143
 
 The flagship built on September 26 missed timing (section 10); it has met it since #753 closed (9777b4a9).
@@ -420,6 +423,9 @@ A receive line says how many of the thousand arrived, how many were lost, and ho
 Then the whole run once more, with the loader's previous watch over first, since two loaders on the serial port fail, and the bursts paced with `--gap-us=40` for the 60-byte frames and `--gap-us=60` for the 1514: at the line rate the receiver loses most of a burst, and the paced pass shows what it keeps up with.
 
 Pass: `ethperf`, four `tx` lines, four `rx waiting` and `rx` lines, `ethperf done`; and the server counted every frame sent.
+
+Done on October 4, 2026, on the flagship built for #1022: a thousand frames each way through the engines and through the core's own copy.
+The results are table `tab:e-perf` in `docs/eth.tex`, and on #1038.
 Losses on receive are a result, not a failure: the receiver holds one frame, and a burst faster than the store engine drains it loses frames.
 Put the three logs on #151 and #1038, and the numbers into #151's results.
 
