@@ -105,7 +105,8 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let (instr_out, _instr) = signal::<U<32>, DefaultClock>();
     let (wb_out, _wb) = signal::<Writeback, DefaultClock>();
     // The core's link and one per peripheral, with the router between
-    // the core's tracker and the three peripherals'.
+    // the core's tracker and the four peripherals, the boot memory one
+    // of them.
     let cl = axi_units::<32, 32, 4, IW>();
     let dl = axi_units::<32, 32, 4, IW>();
     let tl = axi_units::<32, 32, 4, IW>();

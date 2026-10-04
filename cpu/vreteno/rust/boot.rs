@@ -37,7 +37,9 @@
 //! Every step says something on the serial port, so a load that failed
 //! is never confused with a program that loaded and then crashed:
 //! `boot` when it is waiting, `load` when a header arrived, `ok` before
-//! it jumps, and `bad magic`, `bad len` or `bad sum` when it will not.
+//! it jumps, and `bad len` or `bad sum` when it will not. A stream
+//! without the magic word is never refused: the loader reads on until
+//! it finds one.
 //! After a refusal it waits for another stream rather than stopping,
 //! since the usual cause is a half-typed command on the other end.
 //! Two more words tell a loaded program that came back from a reset,
@@ -62,7 +64,7 @@
 use core::panic::PanicInfo;
 use core::ptr::write_volatile;
 
-/// The serial port, as `hello.rs` has it: the data word, then the
+/// The serial port, as the HAL's `Uart` has it: the data word, then the
 /// status, whose bit 0 is busy sending and bit 1 a byte waiting.
 const UART: *mut u32 = 0x3000 as *mut u32;
 const UART_STATUS: usize = vreteno_regs::uart::STATUS / 4;
@@ -170,8 +172,9 @@ extern "C" fn main() -> ! {
         say(b" at ");
         say_hex(mepc);
         put(b'\n');
-        // Said once: the core's reset line leaves the CSRs as they
-        // were (issue 419), so a later start would repeat a stale cause.
+        // Said once: a later start at zero that is neither a trap nor a
+        // reset, a program jumping back to the loader, would repeat a
+        // stale cause. The reset line clears them too (issue 419).
         unsafe {
             core::arch::asm!("csrw mcause, zero", "csrw mepc, zero");
         }

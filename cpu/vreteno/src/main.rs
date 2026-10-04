@@ -286,7 +286,7 @@ fn main() {
     // The interrupt line: one pulse, in the loop.
     let irq_at = 40;
     // A run of bubbles prints as one line with its count: a divide is
-    // thirty-three of them, a multiply three.
+    // thirty-three of them, a multiply two.
     let mut bubbles: Option<(u64, u32)> = None;
     let flush = |bubbles: &mut Option<(u64, u32)>| {
         if let Some((from, n)) = bubbles.take() {

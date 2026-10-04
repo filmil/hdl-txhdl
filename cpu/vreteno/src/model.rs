@@ -347,8 +347,9 @@ impl Model {
     }
 
     /// The interrupt that would be taken before the next instruction,
-    /// if any: the external one first, then the timer's, each pending
-    /// and enabled in `mie`, with interrupts enabled in `mstatus`.
+    /// if any: the external one first, then the software one, then the
+    /// timer's, each pending and enabled in `mie`, with interrupts
+    /// enabled in `mstatus`.
     pub fn interrupt(&self) -> Option<u32> {
         if self.csr.mstatus & MIE == 0 {
             return None;

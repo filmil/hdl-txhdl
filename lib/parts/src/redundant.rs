@@ -7,8 +7,9 @@
 //! exactly the same inputs, in the same cycles, and if neither can run
 //! ahead of the other; both of those are what these two parts are for.
 //!
-//! `Tee` sends one stream to two receivers, and takes a word only when
-//! both have room, so neither copy is a cycle ahead. `Check` takes a
+//! `Tee` sends one stream to two receivers: each takes the held word in
+//! its own cycle, and the next word comes in only once both have taken
+//! it, so neither copy is more than a word ahead. `Check` takes a
 //! word from each copy, in the same cycle, passes the first copy's on,
 //! and raises a line that stays raised when the two differ.
 //!

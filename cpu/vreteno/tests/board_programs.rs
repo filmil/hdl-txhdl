@@ -4,13 +4,11 @@
 //! Every program under `cpu/vreteno/rust/` reaches its peripherals
 //! through an address written by hand, and nothing else checks those.
 //! The programs that matter are built `#[cfg(board_run)]`, so the
-//! compiler never sees their constants in a normal build, and the
-//! core does not trap on a bus error, so a wrong address is not
-//! caught when it runs either: the router answers `DecErr`, the core
-//! takes the answer's data, and the program reads zero and carries on
-//! (issue 417).
+//! compiler never sees their constants in a normal build. A wrong
+//! address shows only when the program runs: the router answers
+//! `DecErr` and the core takes a bus error trap (issue 417).
 //!
-//! So a mistake here is silent at build time and at run time both.
+//! So a mistake here is silent at build time, and found late.
 //! `ddr3_board` read the timer at `0x2000` from the day it was
 //! written until issue 415, and the only symptom was a board that
 //! printed its header and then nothing at all.

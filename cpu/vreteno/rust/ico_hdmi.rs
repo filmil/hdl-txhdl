@@ -75,7 +75,7 @@ use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
 use vreteno_regs::{hdmi, uart};
 
-/// The serial port, as `hello.rs` has it.
+/// The serial port, as the HAL's `map::UART` has it.
 const UART: *mut u32 = 0x3000 as *mut u32;
 /// The video peripheral, the third slot of the same page.
 const VIDEO: *mut u32 = 0x3200 as *mut u32;

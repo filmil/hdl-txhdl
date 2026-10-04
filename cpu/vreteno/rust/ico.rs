@@ -38,7 +38,7 @@
 use core::panic::PanicInfo;
 use core::ptr::write_volatile;
 
-/// The serial port, as `hello.rs` has it.
+/// The serial port, as the HAL's `map::UART` has it.
 const UART: *mut u32 = 0x3000 as *mut u32;
 /// Where the display list goes, and where its count goes. These are
 /// `soc::DL_BASE` and `soc::DL_CTRL`.

@@ -23,7 +23,7 @@
 use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
 
-/// The serial port, as `hello.rs` has it.
+/// The serial port, as the HAL's `map::UART` has it.
 const UART: *mut u32 = 0x3000 as *mut u32;
 /// The timer's count, low half, one a cycle from the reset.
 const MTIME: *mut u32 =

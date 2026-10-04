@@ -9,10 +9,11 @@
 //!
 //! `Pair` holds two `Vreteno` cores. Every input the pair is given
 //! goes to both: the wires directly, and the three channels through a
-//! `Tee` each, which hands a word to both cores in one cycle or to
-//! neither. Every output is compared: the three channels through a
-//! `Check` each, which takes a word from both cores in one cycle,
-//! passes the first core's on and raises a line when the two differ,
+//! `Tee` each, which offers each word to both cores and takes the
+//! next only once both have taken it. Every output is compared: the
+//! three channels through a `Check` each, which takes a word from
+//! both cores in one cycle, passes the first core's on and raises a
+//! line when the two differ,
 //! and the three wires through `Watch`, which compares them every
 //! cycle.
 //!

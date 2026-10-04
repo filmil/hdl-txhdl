@@ -26,7 +26,7 @@
 use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
 
-/// The serial port, as `hello.rs` has it.
+/// The serial port, as the HAL's `map::UART` has it.
 const UART: *mut u32 = 0x3000 as *mut u32;
 /// The Ethernet port's registers, on the fifth slot of the page.
 const ETH: *mut u32 = 0x3400 as *mut u32;

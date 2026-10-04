@@ -147,10 +147,13 @@ impl Asm {
 /// and three bytes echoed from it, then the halt. Interrupts are
 /// enabled from the start, the timer's at once and set to 150, the
 /// line's after the echo, since the port's byte raises it too; the
-/// handler counts interrupts in x8, two by the end. It leaves 110 in
-/// x10 and at the first data word, the second trap's cause in x23, 5
-/// in x24, 0xfe01 in x25, -220 in x26, -55 in x29 and -2 in x30, and
-/// has written OK, a newline and the three bytes to the serial port.
+/// handler counts interrupts in x8: two under the lockstep test, which
+/// holds the line until it is taken, and one in the printed run, whose
+/// single pulse is gone before the line's interrupt is enabled. It
+/// leaves 110 in x10 and at the first data word, the second trap's
+/// cause in x23, 5 in x24, 0xfe01 in x25, -220 in x26, -55 in x29
+/// and -2 in x30, and has written OK, a newline and the three bytes
+/// to the serial port.
 pub fn demo() -> Vec<u32> {
     // Every instruction that has a compressed spelling is written in
     // it, as a compiler would, so the fetch sees both lengths.
@@ -205,7 +208,7 @@ pub fn demo() -> Vec<u32> {
     a.emit(xori(20, 7, -1)); // x20 = 1
 
     // The M extension: a multiply takes three cycles in the core, a
-    // divide thirty-three.
+    // divide thirty-four.
     a.emit(mul(26, 10, 7)); // x26 = 110 * -2 = -220
     a.emit(mulh(27, 7, 7)); // x27 = high word of 4 = 0
     a.emit(mulhu(28, 7, 7)); // x28 = high word of 0xfffffffe^2
@@ -227,7 +230,8 @@ pub fn demo() -> Vec<u32> {
     // The port's other side: three bytes typed at the terminal, each
     // taken once the status says one has come, and echoed once the
     // port is free. Then the line's interrupt is enabled: the bytes
-    // raised it too, and it is pending by now.
+    // raised it too, but the pending bit is the line (#788), so it is
+    // pending only while a byte waits or the line is held.
     for _ in 0..3 {
         let (came, free) = (a.label(), a.label());
         a.place(came);
