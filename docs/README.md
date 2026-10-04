@@ -27,6 +27,7 @@ Those reasons live here.
 | `opengl-gap.md` | What Razboj does against what OpenGL ES 1.1 and a subset of 2.0 ask for, the gaps sized, a staged path from Razboj on the board to a fixed-function GL, and the issues to file for it (issue 926) |
 | `ddr3-throughput.md` | What limits the shared path into DDR3, measured in simulation, and three ways to widen it, with the recommendation and the order of the work (issue 1023) |
 | `board-checks.md` | Every board check the issues owe, as commands in session order: the bitstreams to build first, what each run should print, what to keep, and which issue it closes |
+| `sv32-timing.md` | Where Sv32 translation sits in the core, the walker and the TLB sizes, the core's two critical paths measured with a prototype TLB and with operands read at the edge, the cost in cycles of each option, and the recommendation (issue 1009) |
 
 The documents typeset here are the ones `cover.tex` names:
 `article.tex` with `sections/` is the merge, `//docs:article`;
