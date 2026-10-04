@@ -26,6 +26,8 @@ pub const IDS: usize = 4;
 pub struct Run {
     pub fb: Vec<u32>,
     pub cycles: u64,
+    /// Read bursts the memory took and read beats it sent, until then.
+    pub reads: (u64, u64),
 }
 
 /// Render `ops` on the hardware. The screen is `1 << LOGW` by `H`
@@ -129,8 +131,10 @@ pub fn run_lists<
         ..Default::default()
     };
     // The framebuffer is read out of the memory when the run has
-    // finished, so a second handle on it is kept here.
+    // finished, so a second handle on it is kept here, and on the
+    // counts of what was read.
     let pixels = fb.px.clone();
+    let (rbursts, rbeats) = (fb.rbursts, fb.rbeats);
 
     if wave {
         if let Some(mut t) = Wave::from_env() {
@@ -179,6 +183,7 @@ pub fn run_lists<
             runs.push(Run {
                 fb: (0..w * H).map(|i| pixels.read(i).raw() as u32).collect(),
                 cycles,
+                reads: (rbursts.get().raw() as u64, rbeats.get().raw() as u64),
             });
             if next == lists.len() {
                 break;
@@ -311,6 +316,42 @@ mod tests {
         let both: Vec<_> = first.iter().chain(&second).copied().collect();
         assert_eq!(runs[1].fb, model::render(&both, W, H), "the second");
         assert!(runs[1].cycles > runs[0].cycles);
+    }
+
+    /// A list longer than 255 entries, which an eight-bit count cut
+    /// short: three hundred single pixels, the last forty-four over
+    /// the first, in colours of their own (issue 983).
+    #[test]
+    fn a_list_of_three_hundred_entries_is_drawn_whole() {
+        const N: usize = 4096;
+        const DL: usize = 0x1000;
+        const CTRL: usize = 0x3800;
+        let ops: Vec<Op> = (0..300)
+            .map(|i: i32| Op::Rect {
+                colour: 0x01_0101 * (i as u32 % 200) + i as u32,
+                x: i % 16,
+                y: (i / 16) % 16,
+                w: 1,
+                h: 1,
+            })
+            .collect();
+        let insns = assemble(&ops, W, H);
+        assert_eq!(insns.len(), 300);
+        let got = super::run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
+        assert_eq!(got.fb, model::render(&insns, W, H), "300 entries");
+    }
+
+    /// An entry is fetched as one read burst of six beats, so every
+    /// entry costs five beats more than it costs bursts; a poll of
+    /// the count is one beat and one burst, and costs neither
+    /// (issue 983).
+    #[test]
+    fn an_entry_is_fetched_in_one_burst() {
+        let ops = scene::small();
+        let n = assemble(&ops, W, H).len() as u64;
+        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
+        let (bursts, beats) = got.reads;
+        assert_eq!(beats - bursts, 5 * n, "{bursts} bursts, {beats} beats");
     }
 
     #[test]
