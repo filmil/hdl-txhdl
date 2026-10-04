@@ -308,7 +308,11 @@ sh_test(
 )
 
 # The copy-and-jump `boot` ends in, for the core's model to run.
-exports_files(["fastboot/app/src/jump.S"])
+exports_files([
+    "fastboot/app/boards/ax7a200b.overlay",
+    "fastboot/app/src/jump.S",
+    "fastboot/app/src/main.c",
+])
 
 # The register headers the drivers include, one per map the parts
 # declare with `regmap!` (issue 709). They are committed, since a

@@ -344,6 +344,23 @@ unchanged: \code{hello\_ram\_bin} prints its line and halts after 267
 instructions. Without a bus the model is the board's reference as
 above, and the lockstep test holds the core to it as before.
 
+What Linux boots from is one image, which fastboot loads at
+\code{0x4000\_0000} and jumps to (issue~\#1019). \code{//tools/bootimg}
+packs it: OpenSBI's \code{fw\_jump} at \code{0x4008\_0000}, the device
+tree at \code{0x4030\_0000}, the kernel at \code{0x4040\_0000}, where
+OpenSBI jumps, and the initramfs past the kernel's \code{\_end}, taken
+from its \code{System.map}, so that the kernel's BSS is clear of it.
+Four instructions at the front stand in for a bootloader: \code{a0}
+is zero, \code{a1} the tree, and a jump to OpenSBI. The tree is
+written last, with the initramfs's range and the command line in its
+\code{/chosen}, and the packer refuses an image longer than fastboot
+takes, its download size less the header page the host puts in front
+of a file, naming the sizes. The rule \code{boot\_image} chains
+the steps, and \code{fastboot boot NAME.bin} sends the result. The
+machine above is its first reader: a test boots a packed image there
+and checks the shim's registers and every part's address before an
+image ever reaches the board.
+
 \lstinputlisting[caption={\code{model.rs}: the reference
 model.},label={lst:v-model}]{cpu/vreteno/src/model.rs}
 
