@@ -85,7 +85,8 @@ wire is drawn, and its length is a delay.
 The Vreteno core has been through the first of those~\cite{vreteno}.
 It runs on an Alinx AX7A200B at 100\,MHz, and what it said on the
 board is what its simulation said. This document puts the same
-netlist through the second, and reports what the flow found.
+netlist, as it stood at commit 2c812d3 on 17 September 2026, through
+the second, and reports what the flow found.
 
 None of it is a tapeout. No foundry has a process that matches this
 library, no mask was made, and the checks a foundry demands are not
@@ -142,9 +143,10 @@ Two such lock files are in the tree. Yosys 0.52 and the ten libraries
 it needs are eleven packages and thirteen megabytes. OpenROAD is the
 last release its project published as a package, fifty two megabytes
 of its own, and the closure of what it links against is a hundred and
-thirty one packages and seventy two megabytes more, most of that Qt,
-which the program links against whether or not a window is ever
-opened. Beside them is the solver its placer uses, which the package
+thirty one packages and seventy five megabytes more, as packages to
+download, two thirds of it Qt and the Mesa, LLVM, X and ICU libraries
+Qt brings, which the program links against whether or not a window is
+ever opened. Beside them is the solver its placer uses, which the package
 names in its runtime path and does not carry.
 
 Nothing unpacks them but Bazel. A \code{.deb} is an \code{ar} archive
@@ -370,8 +372,8 @@ found. Inserting scan is a synthesis option and a set of extra pins,
 and it is the difference between a chip that works and a chip you can
 show works.
 
-\emph{Reset.} The core resets its pipeline, and the register file is
-not reset at all. On an FPGA that is harmless: the bitstream writes
+\emph{Reset.} The core resets its pipeline, its CSRs, both counters and
+its debug registers, and the register file is not reset at all. On an FPGA that is harmless: the bitstream writes
 every register on the way in. On silicon the register file powers up
 holding nothing in particular, which the instruction set does not
 mind for thirty one of its thirty two words and does mind for the
