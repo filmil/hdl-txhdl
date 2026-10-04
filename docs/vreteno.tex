@@ -490,12 +490,13 @@ which is how a debugger walks a program an instruction at a time.
 \code{dcsr} holds the specification's version, the privilege,
 \code{ebreakm}, \code{step} and the cause, and nothing else is
 written. The two requests are inputs of the core and the mode is
-its output \code{dbg}; the board drives the inputs from the debug
-module of issue 154, and the lockstep test drives them from a plan, Section~\ref{sec:v-lockstep}. The CSR
-instructions read and write \code{dcsr} and \code{dpc} from any
-mode, where the specification allows them only in debug mode; the
-restriction waits for the module, since until then a test sets
-\code{step} and \code{ebreakm} by writing them from the program.
+its output \code{dbg}; on the board the debug module of issue 154
+drives them, and the lockstep test drives them from a plan,
+Section~\ref{sec:v-lockstep}. The CSR instructions read and write
+\code{dcsr} and \code{dpc} from any mode, where the specification
+allows them only in debug mode: the restriction is not enforced, and
+the lockstep tests set \code{step} and \code{ebreakm} by writing them
+from the program (issue~972).
 
 The reset line puts the CSRs back as configuration left them: the
 status, the trap vector, the enables and the pending bits, the trap
@@ -1639,17 +1640,20 @@ that frees the port whatever happens here; it prints what the board
 says for a while and may type a reply once the board has said a
 line.
 
-The watcher is opened after the programming, and not before it.
-Reconfiguring the part puts its pins into high impedance, which the
-board's serial bridge reads as a break, and a reader that already has
-the port open receives nothing for the rest of its session. A reader
-opened afterwards receives normally. The measurement is in issue~195:
-with a bitstream that says one line a second in the part, a watcher held
-open across a reconfiguration saw no bytes in 150 seconds, and one
-opened straight after saw 360 bytes in 30. This cost an evening of runs
-that looked like a silent design, which is why the board's program now
-says a header and a dot every ten seconds: a board that keeps talking
-for two minutes can be read whenever the reader is ready.
+The watcher is opened before the programming, since the board's
+program says its first line within seconds of the part being
+configured. On 2026-10-04 a watcher opened before
+\code{vreteno\_board\_prog} and held across the reconfiguration
+received the DDR3 test whole (issue~965). It was not always so. Issue~195
+measured the opposite: with a bitstream that says one line a second in
+the part, a watcher held open across a reconfiguration saw no bytes in
+150 seconds, and one opened straight after saw 360 bytes in 30, which
+was read as the reconfiguration's high-impedance pins making a break on
+the board's serial bridge. That cost an evening of runs that looked
+like a silent design, which is why the board's program says a header
+and a dot every ten seconds: a board that keeps talking for two minutes
+can be read whenever the reader is ready, whichever order turns out to
+hold.
 
 The bitstream in that measurement is \code{//cpu/vreteno/board/probe},
 which has no core, no memory and no bus: the board's 200~MHz clock, a

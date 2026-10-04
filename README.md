@@ -95,18 +95,21 @@ from here over ssh; `.bazelrc` names the machine in `TXHDL_BOARD_SERVER`,
 and `--server=HOST` on either command below overrides it.
 Vivado's `hw_server` and the cable's libraries come out of the hermetic
 Vivado into a bundle; the first command uploads it, starts it there and
-tunnels its port back as `localhost:3122`; the second has Vivado connect
-to the tunnel and write the FPGA; the third watches the serial port
-there for a while.
-Open the watcher after programming, not before: reconfiguring the part
-reads as a break on the serial bridge, and a watcher already open
-receives nothing for the rest of its session (issue 195; the Vreteno
-document has the measurement).
+tunnels its port back as `localhost:3122`; the second watches the serial
+port there for a while, in the background; the third has Vivado connect
+to the tunnel and write the FPGA.
+Start the watcher before programming: the board's program prints its
+first line within seconds of the part being configured, and a watcher
+opened afterwards can miss it.
+On 2026-10-04 a watcher opened before `vreteno_board_prog` received
+the DDR3 test whole (#965); issue 195 had once found that a watcher
+held open across a reconfiguration received nothing, and that no
+longer holds.
 
 ```sh
 bazel run //cpu/vreteno/board/remote:hw_server
+bazel run //cpu/vreteno/board/remote:serial -- --seconds=180 &
 bazel run //cpu/vreteno:vreteno_board_prog -- --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
-bazel run //cpu/vreteno/board/remote:serial -- --seconds=180
 ```
 
 The bitstream holds the DDR3 test: it says `vreteno ddr3 test`, a dot
