@@ -3,7 +3,7 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_latex_host//latex:defs.bzl", "combined_pdf", "latex_document")
 load(":waveform.bzl", "waveform")
 load("//tools/formal:defs.bzl", "formal_run", "formal_test", "formal_trace")
-load("//tools/pdfedge:defs.bzl", "pdf_edge_test")
+load("//tools/pdfedge:defs.bzl", "pdf_edge_test", "pdf_frame_test")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_nvc//nvc:rules.bzl", "vhdl_test")
 load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
@@ -3666,6 +3666,15 @@ DOCUMENTS = [
 # reads the rendered pages back, which is what a reader sees.
 pdf_edge_test(
     name = "edge_test",
+    pdfs = DOCUMENTS,
+)
+
+# Every listing line ends inside its frame, or the test names the
+# document, the page and the word (issue 1061). A source line wider
+# than its column runs past the frame and stays on the page, so the
+# edge test above passes it, and neither LaTeX nor rustfmt says a word.
+pdf_frame_test(
+    name = "frame_test",
     pdfs = DOCUMENTS,
 )
 
