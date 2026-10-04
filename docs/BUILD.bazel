@@ -1152,6 +1152,8 @@ latex_document(
         ":trng_apt_timing",
         ":sd_run",
         ":sd_timing",
+        ":sddma_run",
+        ":sddma_timing",
         ":regmap_run",
         ":regmap_timing",
         ":tracer_run",

@@ -1799,24 +1799,40 @@ shared the Ethernet send engine's port through a nested
 \code{Arbiter2}, as the debug transport shares the pins', so that
 nothing past the arbiter widened. With more hosts coming, the SD
 card's engine and Razboj among them, the choice was to widen once and
-stop nesting (issue~\#1022): the arbiter is \code{Arbiter5} and
-the peripheral side carries five bits of identifier, two for a
-host's own and three for the port. Three bits of port number cover
-up to eight hosts, so each one after the fifth raises the arbiter's
-count and widens nothing behind it. Every peripheral's tracker, the
-router, the bridges and the DDR3's were widened again with it, each
-at its instantiation.
+stop nesting (issue~\#1022): the peripheral side carries five bits of
+identifier, two for a host's own and three for the port. Three bits of
+port number cover up to eight hosts, so each one after the fifth
+raises the arbiter's count and widens nothing behind it. Every
+peripheral's tracker, the router, the bridges and the DDR3's were
+widened again with it, each at its instantiation.
+
+The SD card's engines took the sixth port (issue~\#912), and the
+arbiter is \code{Arbiter6}. They are two, a store engine for a read
+and a fetch engine for a write, and they reach that port through an
+\code{Arbiter2} of their own. That is a nest after all, and the reason
+against nesting does not apply to it: hosts behind one port share its
+turns, and these two never offer at the same time, since a command
+is a read or a write and none starts until the last has finished.
+The host checks the two busy lines are never high together. The nest
+keeps two ports free, for Razboj and a texture fetch.
 
 The cost of a host is its share of the bus when every host is busy.
 For the scanout, a line of 640 words, 2560 bytes, must arrive within
 the 31.8\,$\mu$s of the line before it, about 80\,MB/s. The link
 moves at most four bytes a beat at 100\,MHz, 400\,MB/s, and the DDR3
-controller behind it less. With every port offering a burst, each of
-the five wins one turn in five, and a turn is a burst of sixteen
-beats, so the scanout's worst share is a fifth of what the link
-delivers, 80\,MB/s at the most: a line's need, with nothing to
-spare. That bound holds only while all five hosts move bursts back to
-back for a whole line, which the core's single-word accesses do not.
+controller behind it less. With every port offering a burst, each
+wins one turn in six, and a turn is a burst of sixteen beats. The
+SD port offers a burst only as fast as the card fills one, though,
+at most 12.5\,MB/s on four lines at 25\,MHz, so the other five share
+nearly all of the link and the scanout's worst share is about
+77\,MB/s, just short of a line's need. That bound holds only while
+every other host moves bursts back to back for a whole line, which
+the core's single-word accesses do not. The tighter limit is behind
+the arbiter: the DDR3 path takes one access at a time, and measured
+at the model's best latency the whole path moves about 79\,MB/s
+(issue~\#1023), so a scanout under load already fills it. More than
+one access in flight, or whole bursts to the controller, is what
+changes that, and is issue~\#1023's to decide.
 The scanout's sticky underflow bit is what says whether it ever
 happens, and the board check runs the scanout with the core copying
 in the DDR3 and the Ethernet port sending, so that the bit is read

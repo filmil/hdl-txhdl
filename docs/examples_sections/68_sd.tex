@@ -42,8 +42,8 @@ block and reads it back.
 A multi-block transfer is one command, \code{CMD18} or \code{CMD25},
 then data-only transfers a block at a time, then \code{CMD12}. A card
 streams a read back to back, and keeping up with that at 25~MHz
-through a register is what DMA is for; the host here has one buffer,
-and the engines of Section~\ref{sec:x-dma} are what would feed it.
+through a register is what the host's way to memory is for, the
+subject of Section~\ref{sec:x-sddma}.
 
 \begin{figure}[htbp]
 \centering

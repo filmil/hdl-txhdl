@@ -339,6 +339,18 @@ Done on October 3, 2026, by txhdl-hil, twice, the two runs agreeing line for lin
 Its block 0 is a partition table with one FAT32 partition from sector 8192, 0x03b84000 sectors long, and the run ended `wide same` and `boot 55aa`.
 Both logs are on #153.
 
+### The SD card through memory, #912
+
+The same as for #153 above, from the bitstream of #912's change, which carries the SD host's two engines, with the same card in the slot.
+`sdprobe` now ends with one more line: blocks 0 to 3 read with one `CMD18` straight into the DDR3, the card sending them back to back, then the same four blocks read one at a time through the buffer and compared word by word.
+Nothing is written to the card.
+
+Pass: the six lines above, unchanged, then `dma same`.
+`dma differs` and a number names the first block whose words in memory are not the ones the one-block read gave.
+A `cmd18 failed` or `cmd12 failed` line means the multi-block read itself went wrong, before any comparison.
+`//cpu/vreteno:board_test`'s `the_sd_card_is_read_on_the_board` runs the same program against the model card and expects `dma same`.
+Put the log on #912; it closes #912 when it passes.
+
 ### The video scanout under load, #151
 
 The flagship from the change that joins the scanout to the board (#151's second pull request), programmed over JTAG, with a monitor on the HDMI connector and the Ethernet cable in, as for fastboot above.
@@ -363,7 +375,7 @@ Pass, in this order:
 * On the monitor: eight colour bars over a grey ramp, the TxHDL logo in the bottom right corner, steady, with no torn or repeated lines.
 
 `scan idle 1` means a line came late with nothing else on the bus: the fetch or the crossing is wrong, not the bandwidth.
-`scan load 1` with `scan idle 0` means the scanout's share of the bus, a turn in five under this load (`docs/vreteno.tex`), is not enough: the case for giving the scanout priority, or for more than one access in flight to the DDR3 (#1023).
+`scan load 1` with `scan idle 0` means the scanout's share of the bus, a turn in six under this load (`docs/vreteno.tex`), is not enough: the case for giving the scanout priority, or for more than one access in flight to the DDR3 (#1023).
 `frames 0` means the port never became ready, so the load was the copy alone; say so with the result.
 A picture with the bars but no logo, or bars of the wrong colours, points at the pixel format, `0x00RRGGBB`.
 Put the log, and a photograph of the screen, on #151.

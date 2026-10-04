@@ -1,0 +1,50 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Card's Blocks Through Memory}
+\label{sec:x-sddma}
+
+A card sends the blocks of a multi-block read back to back, and the
+card in Section~\ref{sec:x-sd} was given a gap between them to let a
+program empty the buffer through a register. A real card gives
+nothing like that. \code{Sd} therefore has a way to memory: the two
+engines of Section~\ref{sec:x-dma}, \code{LineStore} for a read and
+\code{LineFetch} for a write, and two more registers, \code{dma}, where
+in memory the blocks start, and \code{blocks}, how many (issue~912).
+
+A command with a count of blocks runs them on its own. The 128-word
+buffer becomes a ring between the card's lines and an engine. For a
+read, each word goes to the store engine as soon as the lines have
+filled it, so the buffer never holds more than a few words. For a
+write, the fetch engine's words go into the ring while it has room,
+and a block goes out only once all of it is in, since the card cannot
+be kept waiting in the middle of one. The command is done when its
+last block is over and its engine has finished, so a program waits on
+\code{status} as it does for any command, and then sends \code{CMD12}
+to stop the card.
+
+The two engines share one way onto the bus, an \code{Arbiter2}, and
+never move words at the same time. A command is a read or a write and
+never both, and no command starts until the last one, engine and all,
+has finished. The host says as much in a \code{check!} that the two
+busy lines are never high together, and the run counts the cycles in
+which they are, which must be none.
+
+The run brings the card up on four lines, writes two blocks from
+memory to blocks 4 and 5 with \code{CMD25}, and reads them back into
+another part of memory with \code{CMD18}, the card sending its blocks
+a clock apart. It checks that the card holds what memory held and that
+memory holds it again. The host is lowered, and its netlist is
+simulated against the run under nvc and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{sddma_timing.tex}
+\caption{The read's first block ending and the second starting: a
+word to the store engine every eight card clocks, \code{fill} never
+above one, \code{left} down to one at the block's end, and the store
+engine busy throughout.}
+\label{fig:x-sddma}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_sddma.rs}. Run with \code{bazel run //lib/examples:ex\_sddma}.},label={lst:x-sddma}]{lib/examples/ex_sddma.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_sddma} printed when the build ran it: the card up, the two blocks written and read back, and no cycle with both engines running.},label={lst:x-sddma-out}]{out_sddma.txt}
