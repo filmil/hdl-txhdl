@@ -18,6 +18,8 @@
 //! instantiated in it and the memory's pins among its ports, so a
 //! board top has only to join those pins to the package's, give it the
 //! board's clock, and take the design's clock back from it.
+pub mod bw;
+
 use txhdl::comp::trace::Kind;
 use txhdl::comp::{
     join2, signal, Clock, DefaultClock, In, Out, Pad, Reg, Unit,
