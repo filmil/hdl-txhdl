@@ -97,8 +97,32 @@ fn extensions() -> Vec<String> {
     v
 }
 
-/// The tree, as `dtc` reads it.
+/// What a boot image adds to `/chosen`: where the initramfs is, and
+/// the kernel's command line (issue 1019).
+#[derive(Default)]
+pub struct Chosen {
+    /// The initramfs's first byte and the byte after its last.
+    pub initrd: Option<(u32, u32)>,
+    /// The kernel's command line.
+    pub bootargs: Option<String>,
+}
+
+/// The tree, as `dtc` reads it, with nothing chosen but the console.
 pub fn dts() -> String {
+    dts_with(&Chosen::default())
+}
+
+/// The tree, with what a boot image chooses.
+pub fn dts_with(chosen: &Chosen) -> String {
+    let mut extra = String::new();
+    if let Some((start, end)) = chosen.initrd {
+        extra.push_str(&format!(
+            "\n\t\tlinux,initrd-start = <{start:#010x}>;\n\t\tlinux,initrd-end = <{end:#010x}>;"
+        ));
+    }
+    if let Some(args) = &chosen.bootargs {
+        extra.push_str(&format!("\n\t\tbootargs = \"{args}\";"));
+    }
     let (ddr, ddr_len) = range::<8, BoardMap>(named::<8, BoardMap>("DDR3"));
     let (rom, rom_len) = range::<8, BoardMap>(named::<8, BoardMap>("boot"));
     let (dmem, dmem_len) =
@@ -138,7 +162,7 @@ pub fn dts() -> String {
 	}};
 
 	chosen {{
-		stdout-path = "serial0:{BAUD}n8";
+		stdout-path = "serial0:{BAUD}n8";{extra}
 	}};
 
 	cpus {{
@@ -233,8 +257,29 @@ pub fn dts() -> String {
     )
 }
 
+/// `devtree [--initrd START END] [--bootargs ARGS]`: the tree, with a
+/// boot image's choices when given.
 fn main() {
-    print!("{}", dts());
+    let mut chosen = Chosen::default();
+    let mut args = std::env::args().skip(1);
+    let num = |s: String| {
+        let h = s.trim_start_matches("0x").replace('_', "");
+        u32::from_str_radix(&h, 16).unwrap_or_else(|_| panic!("not hex: {s}"))
+    };
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--initrd" => {
+                let start = num(args.next().expect("--initrd START END"));
+                let end = num(args.next().expect("--initrd START END"));
+                chosen.initrd = Some((start, end));
+            }
+            "--bootargs" => {
+                chosen.bootargs = Some(args.next().expect("--bootargs ARGS"))
+            }
+            _ => panic!("unknown argument {a}"),
+        }
+    }
+    print!("{}", dts_with(&chosen));
 }
 
 #[cfg(test)]
@@ -336,6 +381,19 @@ mod tests {
     fn the_isa_is_what_misa_reports() {
         assert_eq!(isa(), "rv32imc_zicsr");
         assert_eq!(extensions(), ["i", "m", "c", "zicsr"]);
+    }
+
+    /// A boot image's choices land in `/chosen`.
+    #[test]
+    fn the_initrd_and_the_command_line_are_chosen() {
+        let t = dts_with(&Chosen {
+            initrd: Some((0x4080_0000, 0x4090_0000)),
+            bootargs: Some("earlycon console=ttySIF0".into()),
+        });
+        assert_eq!(cells(&t, "chosen {", "linux,initrd-start"), [0x4080_0000]);
+        assert_eq!(cells(&t, "chosen {", "linux,initrd-end"), [0x4090_0000]);
+        assert!(t.contains("bootargs = \"earlycon console=ttySIF0\";"));
+        assert!(!dts().contains("initrd"), "nothing chosen by default");
     }
 
     /// The hart names its MMU exactly when the design says it has one.
