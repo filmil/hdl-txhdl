@@ -492,11 +492,12 @@ which is how a debugger walks a program an instruction at a time.
 written. The two requests are inputs of the core and the mode is
 its output \code{dbg}; on the board the debug module of issue 154
 drives them, and the lockstep test drives them from a plan,
-Section~\ref{sec:v-lockstep}. The CSR instructions read and write
-\code{dcsr} and \code{dpc} from any mode, where the specification
-allows them only in debug mode: the restriction is not enforced, and
-the lockstep tests set \code{step} and \code{ebreakm} by writing them
-from the program (issue~972).
+Section~\ref{sec:v-lockstep}. The CSR instructions name \code{dcsr}
+and \code{dpc} only in debug mode, as the specification has it: from
+machine mode a read or a write of either is an illegal instruction
+and writes nothing (issue~972). A debugger sets \code{step} and
+\code{ebreakm} through the module's own port, the abstract command,
+while the core is halted.
 
 The reset line puts the CSRs back as configuration left them: the
 status, the trap vector, the enables and the pending bits, the trap
@@ -1083,17 +1084,21 @@ counter is \code{dpc}, since nothing is in flight and the fetch has
 run ahead. \code{dpc} and \code{dcsr} are compared with the other
 control registers and the mode itself in every cycle, so a core that
 ran an instruction while halted, or entered a cycle late, fails on
-the program counter or on a register. Three programs use the plan.
+the program counter or on a register. Three programs use the plan,
+which also names what the debugger writes through the module's port
+at an entry, as OpenOCD writes \code{dcsr}.
 The demonstration, halted at cycle two hundred, held for twenty
 cycles and resumed, ends as it does without the debugger, with one
-entry whose cause is the request. A program that sets
-\code{dcsr.step}, halted once and resumed as often as it asks, enters
-again after every instruction with the step as the cause until the
-instruction that clears the bit has run, and then runs to its halt
-with every step counted in a register. And a program that sets
-\code{dcsr.ebreakm} enters at its \code{ebreak}, with the breakpoint
-as the cause and the instruction's address in \code{dpc}, and is
-left there, held. The plan with no resume left ends the run in the
+entry whose cause is the request. A program halted once, with
+\code{dcsr.step} written at that entry and resumed as often as the
+plan asks, enters again after every instruction with the step as the
+cause until the tenth entry clears the bit, and then runs to its halt
+with every step counted in a register. And a program halted at its
+start, with \code{dcsr.ebreakm} written and resumed once, enters
+at its \code{ebreak}, with the breakpoint as the cause and the
+instruction's address in \code{dpc}, and is left there, held. A
+fourth program, with no plan, reads and writes both registers from
+machine mode and traps on every access. The plan with no resume left ends the run in the
 mode, which is the one run that does not end in the halt.
 
 The reset line is the test's too, high for one cycle when a run asks
