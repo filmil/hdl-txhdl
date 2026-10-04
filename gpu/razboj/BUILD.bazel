@@ -117,12 +117,13 @@ vivado_synthesis2(
     ],
 )
 
-# Not yet tagged vivado_ci: the triangle setup misses 100 MHz by 1.66 ns
-# (issue 1034), and the CI job fails on negative slack.
 vivado_place_and_route2(
     name = "razboj_pnr",
     placeholder_bitstream = True,
     synthesis = ":razboj_synth",
     xdcs = [":razboj_xdc"],
-    tags = ["manual"],
+    tags = [
+        "manual",
+        "vivado_ci",
+    ],
 )
