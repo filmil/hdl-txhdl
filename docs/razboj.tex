@@ -406,22 +406,24 @@ The locals in the rasteriser are
 The rasteriser has been synthesised, out of context, with the board's
 parameters: thirty-two-bit addresses, two-bit identifiers, and a 640
 by 480 screen in rows of 1024 pixels (\code{//gpu/razboj:razboj\_synth}).
-Placed and routed (\code{:razboj\_pnr}), it takes 1669 LUTs, 1314
+Placed and routed (\code{:razboj\_pnr}), it takes 1683 LUTs, 1323
 registers and 18 DSP blocks, and no block RAM: about one per cent of
 the part's logic. The multiplications of the setup are the DSP
 blocks. The shading added 373 LUTs and 386 registers to the flat
 rasteriser, and no DSP block, since the host does its division and the
 rasteriser only adds; its twelve 32-bit accumulators are 384 of those
-registers.
+registers. The alpha added 14 LUTs and 9 registers more, its byte and
+the fetch counter's fifth bit; the scissor box added nothing, since it
+is the assembler's.
 
 It meets the 100\,MHz the board's bus runs at, with a worst setup
-slack of $+1.166$\,ns and hold met. It did not at first. The setup
+slack of $+1.193$\,ns and hold met. It did not at first. The setup
 of a triangle computed each edge's value at the box's first pixel, two
 32-bit products and a subtraction, in the one cycle the entry's last
 word landed, a path of 11.66\,ns, and the slack was $-1.660$\,ns
 (issue 1034). The setup now takes three cycles, the differences, then
 the six products side by side, then their sums, and the worst path is
-one multiplication, 8.22\,ns. That costs three cycles an entry: the
+one multiplication, 8.20\,ns. That costs three cycles an entry: the
 demonstration's eight entries take 24 cycles more, about 0.15 per
 cent.
 
