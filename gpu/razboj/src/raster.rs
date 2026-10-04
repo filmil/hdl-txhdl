@@ -245,7 +245,8 @@ impl<
                     with!(self <= {
                         left: count,
                         insn: U::<8>::from(0u8),
-                        finished: mux(count == 0, self.finished.get(), Bit::Zero),
+                        finished:
+                            mux(count == 0, self.finished.get(), Bit::Zero),
                     });
                     DefaultClock::rising().await;
                     if self.left.get() != 0 {
