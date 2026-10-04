@@ -16,6 +16,25 @@ Zephyr, build an ELF, pass, and be testing a Zephyr with none of this
 repository in it.
 """
 
+# The Python packages Zephyr's build imports come from the `zephyr_py`
+# hub, which `pip.parse` makes for Python 3.12 only, and the hub picks
+# a package by rules_python's version setting. That setting is 3.12
+# because this module makes 3.12 the default, which only the root
+# module may: from a workspace that depends on TxHDL the default is the
+# root's, the hub matches nothing, and analysis fails (issue 1001). So
+# the packages are taken at 3.12 here, whoever the root is, the same
+# version as the interpreter the rule runs them with.
+_PYTHON_VERSION = "@rules_python//python/config_settings:python_version"
+
+def _python_312_impl(_settings, _attr):
+    return {_PYTHON_VERSION: "3.12"}
+
+_python_312 = transition(
+    implementation = _python_312_impl,
+    inputs = [],
+    outputs = [_PYTHON_VERSION],
+)
+
 def _zephyr_image_impl(ctx):
     if bool(ctx.attr.sample) == bool(ctx.attr.app):
         fail("give exactly one of `sample` and `app`")
@@ -250,6 +269,7 @@ zephyr_image = rule(
         ),
         "_ninja": attr.label(default = "@ninja//:ninja", allow_files = True),
         "_py_deps": attr.label_list(
+            cfg = _python_312,
             default = [
                 "@zephyr_py//pyyaml",
                 "@zephyr_py//pykwalify",
@@ -275,3 +295,4 @@ zephyr_image = rule(
         "_mbedtls": attr.label(default = "@zephyr_mbedtls//:all"),
     },
 )
+
