@@ -46,7 +46,7 @@ vivado_synthesis2(
     srcs = [
         "//cpu/vreteno:board_boot_v",
         "//eth:mac_v",
-        "//hdmi:demo_v",
+        "//hdmi:scan_v",
         "//lib/board:chan_cdc",
         "//lib/board:bscan_user4",
         "//eth:eth_rgmii",

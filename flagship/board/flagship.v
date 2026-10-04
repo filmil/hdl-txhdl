@@ -286,6 +286,12 @@ module flagship (
     .vw_data(vw_data), .vw_valid(vw_valid), .vw_ready(vw_ready),
     .vb_data(vb_data), .vb_valid(vb_valid), .vb_ready(vb_ready),
     .vr_data(vr_data), .vr_valid(vr_valid), .vr_ready(vr_ready),
+    // The scanout's line requests in and words out (issue 151), on the
+    // core's clock, crossed below.
+    .scan_req_data(sreq_data), .scan_req_valid(sreq_valid),
+    .scan_req_ready(sreq_ready),
+    .scan_words_data(swords_data), .scan_words_valid(swords_valid),
+    .scan_words_ready(swords_ready),
     // The remote peripheral at `0x3300`, whose frames leave and
     // arrive on the Ethernet port, crossed below.
     .net_tx_data(net_tx_data), .net_tx_valid(net_tx_valid),
@@ -474,6 +480,10 @@ module flagship (
   wire vb_valid, vb_ready, vr_valid, vr_ready;
   wire qaw_valid, qaw_ready, qar_valid, qar_ready, qw_valid, qw_ready;
   wire qb_valid, qb_ready, qr_valid, qr_ready;
+  // The scanout's two channels, each side of the crossing.
+  wire [31:0] sreq_data, preq_data, swords_data, pwords_data;
+  wire sreq_valid, sreq_ready, preq_valid, preq_ready;
+  wire swords_valid, swords_ready, pwords_valid, pwords_ready;
 
   // The three channels that carry a request, from the core's clock to
   // the pixel clock, and the two that carry an answer, back.
@@ -508,7 +518,27 @@ module flagship (
     .rd_ready(vr_ready)
   );
 
-  hdmi_video video (
+  // The scanout's words, to the pixel clock, and its line requests,
+  // back (issue 151). The words' FIFO holds more than a line, 1024
+  // words, so the bus's read data never waits on the pixel side: the
+  // line pair asks one line ahead and takes a word a pixel, a quarter
+  // of the rate a burst arrives at.
+  chan_cdc #(.W(32), .AW(10)) swords_cdc (
+    .wr_clk(clk), .wr_data(swords_data), .wr_valid(swords_valid),
+    .wr_ready(swords_ready),
+    .rd_clk(pixclk), .rd_data(pwords_data), .rd_valid(pwords_valid),
+    .rd_ready(pwords_ready)
+  );
+  chan_cdc #(.W(32), .AW(2)) sreq_cdc (
+    .wr_clk(pixclk), .wr_data(preq_data), .wr_valid(preq_valid),
+    .wr_ready(preq_ready),
+    .rd_clk(clk), .rd_data(sreq_data), .rd_valid(sreq_valid),
+    .rd_ready(sreq_ready)
+  );
+
+  // The video peripheral with the scanout beside it: `hdmi_video`'s
+  // words below `0x80` of the slot, the scanout's from there.
+  scan_video video (
     .clk(pixclk),
     .rst(pix_rst),
     .bus_aw_data(qaw_data), .bus_aw_valid(qaw_valid), .bus_aw_ready(qaw_ready),
@@ -516,6 +546,9 @@ module flagship (
     .bus_w_data(qw_data), .bus_w_valid(qw_valid), .bus_w_ready(qw_ready),
     .bus_b_data(qb_data), .bus_b_valid(qb_valid), .bus_b_ready(qb_ready),
     .bus_r_data(qr_data), .bus_r_valid(qr_valid), .bus_r_ready(qr_ready),
+    .words_data(pwords_data), .words_valid(pwords_valid),
+    .words_ready(pwords_ready),
+    .req_data(preq_data), .req_valid(preq_valid), .req_ready(preq_ready),
     .rgb(hdmi_d), .hsync(hdmi_hs), .vsync(hdmi_vs), .de(hdmi_de)
   );
   // The chip's clock is the pixel clock turned over, so the chip's
