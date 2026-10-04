@@ -6,7 +6,7 @@
 # section on the HDMI output. The manual states neither the I/O standard
 # of those pins nor which of the chip's data inputs are red, green and
 # blue; LVCMOS33, as for the board's other user pins, and red on the top
-# eight bits are to be confirmed on the board.
+# eight bits; the test picture confirmed both on the board.
 
 # The board's 200 MHz clock, and the LEDs.
 create_clock -add -name sys_clk_p -period 5.0 -waveform {0 2.5} \

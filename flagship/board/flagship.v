@@ -61,8 +61,10 @@
 // and the one going in is 128 bytes deep because the port delivers a
 // byte every 8 ns and the core reads one every 10.
 //
-// Nothing else crosses: the Ethernet and the memory share the board,
-// the reset button and the LEDs with the rest, and nothing more.
+// Nothing else crosses at the top: the Ethernet and the memory share
+// the board, the reset button and the LEDs with the rest. Inside
+// `board` the debug transport's accesses cross from the cable's clock,
+// TCK, to the core's and back, through two more `ChanCdc` (issue 154).
 //
 // The LEDs are lit when driven low. Four lights and more than four
 // things worth watching, so they are the four a person at the board

@@ -33,8 +33,9 @@
 //!
 //! The line is three-state. `mdio_out` is the level and `mdio_oe` high
 //! drives it, so a board wrapper drives the pad from the two and reads
-//! the pad back into `mdio_in`. The board has a pull-up on MDIO, as
-//! 802.3 asks, so a line nobody drives reads one.
+//! the pad back into `mdio_in`. 802.3 asks for a pull-up on MDIO, so
+//! that a line nobody drives reads one; the flagship sets the FPGA's
+//! own on the pad.
 use txhdl::comp::{join2, mux, until, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, regmap, with, Trace};

@@ -6,9 +6,9 @@
 # memory come from cpu/vreteno/board/ax7a200.xdc and
 # cpu/vreteno/board/ax7a200_ddr3.xdc; the PHY's pins from
 # eth/board/eth_pins.xdc; the encoder's from hdmi/board/hdmi_pins.xdc.
-# Those four files are the one copy of each pin in the tree, and this
-# design reads them rather than restating them, so a pin corrected for
-# one design is corrected for the flagship in the same change.
+# Those four files are the flagship's one copy of each pin, and this
+# design reads them rather than restating them, so a pin corrected
+# there is corrected for the flagship in the same change.
 #
 # What is left is the part no single subsystem owns: the three clock
 # generators hang off one input, and nothing crosses between their

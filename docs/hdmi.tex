@@ -182,13 +182,13 @@ Listing~\ref{lst:h-table} is the table the master writes: a register
 that takes the chip out of power-down for the input the board wires,
 and one that sets its output to DVI, the picture with no HDMI packets.
 None of the documents this part was written from states the chip's
-registers, so these values are to be confirmed against the SiI9134's
-documentation or the board vendor's example before the board is
-expected to show a picture. They are one table in the source, and the
+registers, so these values were written unconfirmed, and the run on
+the board confirmed them: the chip accepted every write and showed the
+picture. They are one table in the source, and the
 functions that give the master its entries.
 
-\hdmipart{table}{The chip's configuration, to be
-confirmed.}{lst:h-table}
+\hdmipart{table}{The chip's configuration, confirmed on the
+board.}{lst:h-table}
 
 \section{The Run}
 \label{sec:h-run}
@@ -280,11 +280,16 @@ pins. No input or output delay is constrained on the chip's pins, so
 that slack says nothing about the timing between the FPGA and the
 chip.
 
-The constraints name the clock, the LEDs, and the chip's 31 pins from
-the table in the AX7A200B manual.
+The constraints name the clock and the LEDs, in
+\code{hdmi/board/ax7a200\_hdmi.xdc}, and the chip's 32 pins, from the
+table in the AX7A200B manual, in \code{hdmi/board/hdmi\_pins.xdc},
+which the flagship reads too.
 
 \lstinputlisting[caption={\code{hdmi/board/ax7a200\_hdmi.xdc}: the
 board's pins.},label={lst:h-xdc}]{hdmi/board/ax7a200_hdmi.xdc}
+
+\lstinputlisting[caption={\code{hdmi/board/hdmi\_pins.xdc}: the
+chip's pins.},label={lst:h-pins}]{hdmi/board/hdmi_pins.xdc}
 
 \section{What Is Not Done}
 \label{sec:h-not}

@@ -115,13 +115,13 @@ core reaches the peripheral, so a program can paint the screen.
 \section{The third slot}
 \label{sec:f-slot}
 
-The core's router has seven ports, in Table~\ref{tab:f-map}, one of
+The core's router has eight ports, in Table~\ref{tab:f-map}, one of
 them the boot memory, read-only at address zero, and none to spare.
 The small peripherals share the page at \code{0x3000} behind an
 AXI-Lite bridge, each a sixteenth of it, for exactly that reason: a
 peripheral of six registers does not deserve a port of its own. The
 video peripheral is three registers, so it takes the third sixteenth,
-at \code{0x3200}, among the eight in Table~\ref{tab:f-page}, with its
+at \code{0x3200}, among the nine in Table~\ref{tab:f-page}, with its
 words in Table~\ref{tab:f-hdmi}. The tables are written by
 \code{//tools/memmap} from the maps the router and the
 page's bridge decode, so they are the map the bitstream has.
@@ -213,6 +213,10 @@ because the port delivers a byte every 8\,ns and the core reads one
 every 10, so a whole frame has to fit while the reader catches up.
 A frame that arrives while the last one is still coming out of the MAC
 is lost, which is a transaction the peripheral's patience covers.
+
+Those two are what crosses at the top. Inside the board unit the debug
+transport's accesses cross as well, from the cable's clock, TCK, to
+the core's and back, through two more of the same FIFO (issue 154).
 
 \lstinputlisting[caption={\code{lib/board/chan\_cdc.v}: a lowered
 unit's channel, carried from one clock to
@@ -338,10 +342,10 @@ The constraints are shared rather than copied. The board's clock, its
 reset, its LEDs, its serial port and its memory come from the two files
 under \code{cpu/vreteno/board/}; the PHY's pins from
 \code{eth/board/eth\_pins.xdc}; the encoder's from
-\code{hdmi/board/hdmi\_pins.xdc}. Each pin of this board is named in
-exactly one file in the tree, and every design that drives that pin
-reads it, so a pin corrected for one design is corrected for the
-flagship in the same change. What is left for the flagship's own file
+\code{hdmi/board/hdmi\_pins.xdc}. Each pin the flagship drives is named in
+exactly one of the files it reads, so a pin corrected there is
+corrected for the flagship in the same change; the single designs'
+own files restate the clock, the reset and the LEDs. What is left for the flagship's own file
 is the part no subsystem owns: telling the three generators apart for
 timing.
 
@@ -508,9 +512,11 @@ its pins and the core, which is where the wires it carries want it. The
 same logic, the same pins, a different neighbour, and the placer moved
 it eighty columns.
 
-\emph{The memory controller is nearly as large as the core, its bus and
-all of its peripherals together}, 9\,493 cells to their 10\,719, and
-it is pinned hard against the memory's bank. That is worth knowing
+\emph{The memory controller was nearly as large as the core, its bus
+and all of its peripherals together}, 9\,493 cells to their 10\,719
+with UberDDR3, before MIG replaced it (issue 188), and it was pinned
+hard against the memory's bank; the map has not been drawn again
+since. That is worth knowing
 before adding anything that wants to be near those pins.
 
 \emph{A crossing sits between what it crosses.} The five FIFOs that
@@ -583,10 +589,10 @@ crate.},label={lst:f-logo2rs},tabsize=2]{tools/logo2rs/main.go}
 \emph{The core's own frames do not reach the network yet.} The core
 reaches the MAC through \code{EthSlots} on the fifth slot of its page,
 so a program can send a frame of its own choosing, and the fastboot
-server of issue~\#143 listens on the board. But no host has heard the
-board's frames: a host on the same cable sees nothing from it, while
-the echo design on the same board and the same MAC halves returns its
-frames (issue~\#786).
+server of issue~\#143 listens on the board. The board's frames reach a
+host: on September 28, 2026 the frames of \code{ethtx} were counted at
+the board server, and \code{ethrx} and \code{ethirq} worked as well,
+so what issue~\#786 found is in the software.
 
 \emph{One program paints the screen, and it is the whole of what is
 known about painting it.} Section~\ref{sec:f-first} says what it

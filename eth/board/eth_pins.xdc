@@ -47,5 +47,5 @@ set_property PACKAGE_PIN N13 [get_ports {eth_mdc}]
 set_property PACKAGE_PIN P14 [get_ports {eth_mdio}]
 set_property PACKAGE_PIN R14 [get_ports {eth_reset_n}]
 
-# Every Ethernet pin, to be confirmed on the board.
+# Every Ethernet pin.
 set_property IOSTANDARD LVCMOS33 [get_ports {eth_*}]

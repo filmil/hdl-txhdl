@@ -5,8 +5,8 @@
 # names. The Ethernet pins are the JL2121-N040I PHY's, from the table
 # of the AX7A200B manual's section on the gigabit Ethernet interface.
 # The I/O standard of the Ethernet pins is LVCMOS33 as for the board's
-# other user pins; the manual does not state it, and it is to be
-# confirmed on the board.
+# other user pins; the manual does not state it, and the port
+# works with it.
 
 # The board's 200 MHz clock, and the LEDs.
 create_clock -add -name sys_clk_p -period 5.0 -waveform {0 2.5} \

@@ -15,8 +15,8 @@
 // changes about as often as the die does.
 //
 // The background of the source is a dark gradient that reads as noise
-// once it is four bits, so a pixel darker than -dark is written as
-// transparent, which is the one colour a caller can test for and skip.
+// once it is four bits, so a box as dark as -dark or darker is written
+// as transparent, which is the one colour a caller can test for and skip.
 // That leaves the hat and the lettering, which is what a logo in a
 // corner is for.
 //

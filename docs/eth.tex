@@ -261,7 +261,9 @@ dropped.
 The Alinx AX7A200B has one gigabit port, a JL2121-N040I PHY on
 RGMII. The PHY negotiates 10, 100 or 1000~Mbit and full or half duplex
 by itself, from the levels on its configuration pins at power on, and
-answers on its management bus at address 3. RGMII sends a GMII byte as two nibbles a cycle, the low
+by the manual's power-on table answers on its management bus at
+address 3; on the board it answered at address 0, the first address a
+scan tries. RGMII sends a GMII byte as two nibbles a cycle, the low
 nibble on the clock's rising edge and the high nibble on its falling
 edge, and a control line that is the valid line on the rising edge and
 valid exclusive-or error on the falling edge. Two edges per cycle are
@@ -325,11 +327,16 @@ flip-flops and 19 pins. No input or output delay is constrained on the
 RGMII pins yet, so that slack says nothing about the timing between
 the FPGA and the PHY.
 
-The constraints name the clock, the LEDs and the fifteen pins of the
-PHY, from the table in the AX7A200B manual.
+The constraints name the clock and the LEDs, in
+\code{eth/board/ax7a200\_eth.xdc}, and the fifteen pins of the PHY,
+from the table in the AX7A200B manual, in
+\code{eth/board/eth\_pins.xdc}, which the flagship reads too.
 
 \lstinputlisting[caption={\code{eth/board/ax7a200\_eth.xdc}: the
 board's pins.},label={lst:e-xdc}]{eth/board/ax7a200_eth.xdc}
+
+\lstinputlisting[caption={\code{eth/board/eth\_pins.xdc}: the PHY's
+pins.},label={lst:e-pins}]{eth/board/eth_pins.xdc}
 
 \section{What Is Not Done}
 \label{sec:e-not}
@@ -377,9 +384,11 @@ sending the next, and compares what returns with what went out.
 Only gigabit works. At 100 or 10~Mbit the PHY sends a nibble per
 cycle, and neither half of the MAC takes a byte over two cycles. The
 PHY negotiates any of the three speeds, so the port on the other end
-of the cable has to be a gigabit port. The management interface is
-left idle, so the PHY runs on its power-on configuration, nothing
-restricts what it advertises, and nothing reads its link state.
+of the cable has to be a gigabit port. In the echo the management
+interface is left idle, so the PHY runs on its power-on
+configuration, nothing restricts what it advertises, and nothing
+reads its link state. The flagship has an MDIO master on its eighth
+slot, at \code{0x3700} (issue 864).
 
 Each half holds one frame. A receiver whose frame the client has not
 yet read drops the next one, and a client that wants to keep frames

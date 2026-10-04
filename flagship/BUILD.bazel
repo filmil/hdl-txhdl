@@ -4,10 +4,11 @@
 # flash so that the board comes up as itself. See issue #224.
 #
 # Nothing here is new hardware. The Vreteno board with its DDR3 memory,
-# the Ethernet echo and the HDMI output are each proven on this board
-# on their own, and this puts the three in one part, on one clock input,
-# with the loader in the core's boot memory so that the software on the
-# flagship is whatever was last sent down the serial port.
+# the Ethernet port, proven as the echo design, and the HDMI output are
+# each proven on this board on their own, and this puts the three in
+# one part, on one clock input, with the loader in the core's boot
+# memory so that the software on the flagship is whatever was last sent
+# down the serial port.
 load(
     "@rules_vivado//build/vivado:rules.bzl",
     "vivado_program_device",

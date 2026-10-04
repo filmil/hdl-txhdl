@@ -206,9 +206,9 @@ fn pixel(colour: u32) {
     }
 }
 
-/// Wait for the raster to reach the vertical blanking, and then for it
-/// to leave, so that a frame starts at a known place rather than
-/// wherever the last one finished.
+/// Wait for the raster to leave the vertical blanking, if it is in one,
+/// and then to enter the next, so that a frame starts at the start of a
+/// blanking rather than wherever the last one finished.
 fn wait_blanking() {
     unsafe {
         while read_volatile(VIDEO.add(STATUS)) & BLANKING != 0 {}
