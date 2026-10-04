@@ -29,6 +29,7 @@ pub mod gpio;
 pub mod hdmi;
 pub mod i2c;
 pub mod mdio;
+pub mod mmu;
 pub mod plic;
 pub mod pwm;
 pub mod redundant;
