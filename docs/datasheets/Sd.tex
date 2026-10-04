@@ -49,7 +49,8 @@ Writing \code{cmd} starts the command. Writing a one to
 
 A half of a card clock takes \code{div + 1} cycles, so the card's
 clock is the system's over \code{2 * (div + 1)}: at 100~MHz, 124 is
-the 400~kHz a card starts at, 1 is 25~MHz and 0 is 50~MHz.
+the 400~kHz a card starts at, 1 is 25~MHz, the fastest this host
+runs, and 0 runs as 1 (issue 929).
 
 \dstables{Sd}
 
@@ -125,7 +126,9 @@ the board.
 \subsection*{Limits}
 
 Only reading has met a real card: on 2026-10-03 the board read a
-32~GB card's CID and block 0, its partition table, twice (issue 153).
+32~GB card's CID and block 0, its partition table, twice (issue 153),
+and on 2026-10-04 read them again at 25~MHz, line for line the same
+(issue 929).
 No write has been sent to a card on the board, and \code{sdprobe}
 sends none.
 
