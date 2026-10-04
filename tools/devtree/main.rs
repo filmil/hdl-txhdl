@@ -96,9 +96,14 @@ fn extensions() -> Vec<String> {
     v
 }
 
+/// The kernel's command line when nothing else is asked for: the
+/// console on the SiFive port from the first line the kernel prints,
+/// so a boot that dies before the console driver binds still says why
+/// (issue 1125).
+pub const BOOTARGS: &str = "earlycon console=ttySIF0";
+
 /// What a boot image adds to `/chosen`: where the initramfs is, and
-/// the kernel's command line (issue 1019).
-#[derive(Default)]
+/// the kernel's command line (issue 1019), [`BOOTARGS`] by default.
 pub struct Chosen {
     /// The initramfs's first byte and the byte after its last.
     pub initrd: Option<(u32, u32)>,
@@ -106,7 +111,17 @@ pub struct Chosen {
     pub bootargs: Option<String>,
 }
 
-/// The tree, as `dtc` reads it, with nothing chosen but the console.
+impl Default for Chosen {
+    fn default() -> Self {
+        Chosen {
+            initrd: None,
+            bootargs: Some(BOOTARGS.to_string()),
+        }
+    }
+}
+
+/// The tree, as `dtc` reads it, with nothing chosen but the console and
+/// the default command line.
 pub fn dts() -> String {
     dts_with(&Chosen::default())
 }
@@ -413,6 +428,10 @@ mod tests {
         assert_eq!(cells(&t, "chosen {", "linux,initrd-end"), [0x4090_0000]);
         assert!(t.contains("bootargs = \"earlycon console=ttySIF0\";"));
         assert!(!dts().contains("initrd"), "nothing chosen by default");
+        assert!(
+            dts().contains("bootargs = \"earlycon console=ttySIF0\";"),
+            "but the console from the first line (issue 1125)"
+        );
     }
 
     /// The hart names its MMU exactly when the design says it has one.
