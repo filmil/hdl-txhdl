@@ -548,9 +548,16 @@ fn lockstep_with(
         // instruction does, so it is skipped for the same reason: the
         // address is the one the core used, since the registers agree.
         // Under translation any load may trap, on its page (issue
-        // 1014).
+        // 1014), and a load is translated in machine mode too while
+        // `MPRV` names another mode (issue 1105).
         let d = decode(executed);
-        let translating = model.csr.satp >> 31 == 1 && model.prv != 3;
+        let st = model.csr.mstatus;
+        let dprv = if model.prv == 3 && st >> 17 & 1 == 1 {
+            st >> 11 & 3
+        } else {
+            model.prv
+        };
+        let translating = model.csr.satp >> 31 == 1 && dprv != 3;
         let bad_access = matches!(
             d.kind,
             Kind::Lb | Kind::Lh | Kind::Lw | Kind::Lbu | Kind::Lhu
@@ -1922,4 +1929,92 @@ fn fence_i_runs_the_code_as_stored() {
     let m = lockstep(&p, &data, "fence.i", None, None, None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[5], 3, "once as it was, once as rewritten");
+}
+
+/// `MPRV` (issue 1105): machine mode, with translation on and `MPRV`
+/// set, loads and stores as the mode `MPP` names, which is how OpenSBI
+/// reads the instruction a supervisor trapped on. A supervisor's page
+/// reads and writes; a user page faults until `SUM` is set; the fetch
+/// stays machine mode's, untranslated; a trap taken meanwhile sets
+/// `MPP` to machine mode, so the handler's own accesses are physical;
+/// and a return to supervisor mode clears `MPRV`.
+#[test]
+fn mprv_loads_and_stores_as_the_previous_mode() {
+    use txhdl_parts::mmu::pte::{to, A, D, R, U, V, W, X};
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let page = |j: u32| 0xc000_0000 | (j << 12);
+    let mut a = Asm::default();
+    let (mh, s_code, not_ecall) = (a.label(), a.label(), a.label());
+    // The tables, from x3 = 0x1800: the boot memory as a supervisor's
+    // megapage where it is, and two pages of the second level over the
+    // data memory, a supervisor's and a user's.
+    a.wide(lui(3, 2));
+    a.wide(addi(3, 3, -0x800));
+    let entry = |a: &mut Asm, idx: u32, v: u32| {
+        li(a, 5, v);
+        a.wide(sw(5, 3, (4 * idx) as i32 - 0x800));
+    };
+    entry(&mut a, 0x200, to(0, V | R | X | A));
+    entry(&mut a, 0x300, to(0x1000, V));
+    entry(&mut a, 0x210, to(0x1000, V | R | W | A | D));
+    entry(&mut a, 0x213, to(0x1000, V | R | W | U | A | D));
+    // A word to read, at 0x1010, written physically.
+    a.wide(lui(9, 1));
+    li(&mut a, 7, 0x1234);
+    a.wide(sw(7, 9, 0x10));
+    la(&mut a, 31, mh, 0);
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    li(&mut a, 5, txhdl_parts::mmu::satp(0x1000));
+    a.wide(csrrw(0, CSR_SATP, 5));
+    li(&mut a, 28, 0x1400); // machine mode's log, physical
+                            // MPRV, with MPP the supervisor's.
+    li(&mut a, 5, 1 << 17 | 1 << 11);
+    a.wide(csrrs(0, CSR_MSTATUS, 5));
+    li(&mut a, 10, page(0x210));
+    a.wide(lw(11, 10, 0x10)); // 0x1234, through the table
+    a.wide(addi(12, 11, 1));
+    a.wide(sw(12, 10, 0x14)); // to 0x1014
+    li(&mut a, 13, page(0x213));
+    a.wide(lw(14, 13, 0x10)); // a user page: faults, and is stepped past
+                              // The handler's return left MPP at user mode: the supervisor's
+                              // again, and SUM, and the user page reads.
+    li(&mut a, 5, 1 << 11 | 1 << 18);
+    a.wide(csrrs(0, CSR_MSTATUS, 5));
+    a.wide(lw(15, 13, 0x10)); // 0x1234
+                              // Into supervisor mode, which clears MPRV.
+    la(&mut a, 31, s_code, 0x8000_0000);
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    a.place(s_code);
+    a.wide(lw(16, 10, 0x14)); // 0x1235, what machine mode stored
+    a.wide(ecall());
+    // Machine mode's handler: log, and halt on the supervisor's call
+    // with mstatus in x20, else step past.
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(csrrs(22, CSR_MTVAL, 0));
+    a.wide(sw(21, 28, 0));
+    a.wide(sw(22, 28, 4));
+    a.wide(addi(28, 28, 8));
+    a.wide(addi(23, 0, 9));
+    a.to(not_ecall, |o| bne(21, 23, o));
+    a.wide(csrrs(20, CSR_MSTATUS, 0));
+    a.wide(halt());
+    a.place(not_ecall);
+    a.wide(csrrs(23, CSR_MEPC, 0));
+    a.wide(addi(23, 23, 4));
+    a.wide(csrrw(0, CSR_MEPC, 23));
+    a.wide(mret());
+    let m = lockstep(&a.words(), &[], "mprv", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[11], 0x1234, "machine mode read through the table");
+    assert_eq!(m.mem[5], 0x1235, "and wrote through it");
+    assert_eq!(m.x[14], 0, "the user page faulted and wrote nothing");
+    assert_eq!(m.x[15], 0x1234, "and read under SUM");
+    assert_eq!(m.x[16], 0x1235, "the supervisor reads what it wrote");
+    let log = (m.mem[0x100], m.mem[0x101], m.mem[0x102]);
+    assert_eq!(log, (CAUSE_LOAD_PAGE, page(0x213) + 0x10, CAUSE_ECALL_S));
+    assert_eq!(m.x[20] >> 17 & 1, 0, "the return cleared MPRV");
 }
