@@ -317,6 +317,35 @@ Done on October 3, 2026, by txhdl-hil, twice, the two runs agreeing line for lin
 Its block 0 is a partition table with one FAT32 partition from sector 8192, 0x03b84000 sectors long, and the run ended `wide same` and `boot 55aa`.
 Both logs are on #153.
 
+### The video scanout under load, #151
+
+The flagship from the change that joins the scanout to the board (#151's second pull request), programmed over JTAG, with a monitor on the HDMI connector and the Ethernet cable in, as for fastboot above.
+Nothing is written to flash.
+
+```sh
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/scanprobe_ram_bin.bin --seconds=25 \
+    2>&1 | tee board-151-scan.log
+```
+
+The program paints a 640 by 480 frame into the DDR3 and shows it through the scanout.
+It reads the underflow bit after two seconds on an idle bus.
+Then it reads it again after ten seconds in which the core copies a quarter of a megabyte back and forth in the DDR3 and the Ethernet port sends a full frame whenever it is ready.
+
+Pass, in this order:
+* `scan probe`.
+* `scan idle 0`.
+* `scan load 0`, with the copies and frames counted, both above zero.
+* `scan ok`.
+* On the monitor: eight colour bars over a grey ramp, the TxHDL logo in the bottom right corner, steady, with no torn or repeated lines.
+
+`scan idle 1` means a line came late with nothing else on the bus: the fetch or the crossing is wrong, not the bandwidth.
+`scan load 1` with `scan idle 0` means the scanout's share of the bus is not enough under this load; that is the case for widening the arbiter rather than nesting the scanout under the send engine's port (`docs/vreteno.tex`).
+`frames 0` means the port never became ready, so the load was the copy alone; say so with the result.
+A picture with the bars but no logo, or bars of the wrong colours, points at the pixel format, `0x00RRGGBB`.
+Put the log, and a photograph of the screen, on #151.
+
 ## 8. The DDR3 through MIG, #188
 
 `vreteno_board_pnr` boots the DDR3 test from its boot memory, so it starts as soon as the part is configured; start the watcher first.
@@ -352,10 +381,10 @@ Then put the flagship back: `bazel run //flagship:flagship_flash -- "${PROG[@]}"
 ### #151, direct memory access for Ethernet and HDMI
 
 The issue's done-when asks for throughput against the register path, for Ethernet and for HDMI, measured on the board.
-None of the three things that needs exists yet.
+The HDMI half has its check now, the scanout under load in section 7.
+The Ethernet half still needs two things that do not exist yet.
 
 * **A measurement program.** Nothing in `cpu/vreteno/rust/` times a transfer: one that sends and receives a fixed number of frames through the slots and through the registers, and prints the time each took from the timer, is the Ethernet half.
-* **The scanout on the board.** `ex_scanout` and `ex_dmawb` prove the pieces off-board, and nothing joins them to the video peripheral in a bitstream, so HDMI has no DMA path on the board to measure.
 * **A baseline.** The register path has never been timed on the board either, so the comparison needs both runs.
 
 #151 stays open.

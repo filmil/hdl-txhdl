@@ -1787,6 +1787,25 @@ JTAG-to-AXI master's IP ever used. Every peripheral's
 tracker, the memories, the timer and the bridges were widened with
 it; none of them names the width except at its instantiation.
 
+The video scanout's fetch is a fifth host (issue~\#151), and it is
+joined the same way: it shares the Ethernet send engine's port
+through \code{farb}, an \code{Arbiter2}, one bit of identifier each,
+so nothing past the arbiter widens. The cost is its share of the bus
+when every host is busy. A line of 640 words, 2560 bytes, must arrive
+within the 31.8\,$\mu$s of the line before it, about 80\,MB/s. The
+link moves at most four bytes a beat at 100\,MHz, 400\,MB/s, and the
+DDR3 controller behind it less. With every port
+offering a burst, each of the four ports wins one turn in four and
+each side of \code{farb} one in eight, and a turn is a burst of
+sixteen beats, so the scanout's worst share is an eighth of what the
+link delivers, 50\,MB/s at the most.
+That is short of a line only while all five hosts move bursts back to
+back for a whole line, which the core's single-word accesses do not.
+The scanout's sticky underflow bit is what says whether it ever
+happens, and the board check runs the scanout with the core copying
+in the DDR3 and the Ethernet port sending, so that the bit is read
+under contention and not on an idle bus.
+
 \code{vreteno\_board\_jtag.v} is the top with the master, the board's
 own top with one block added, and every other top ties the pins off,
 so the shipping bitstreams are unchanged in what they do.
