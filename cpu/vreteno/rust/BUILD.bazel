@@ -597,6 +597,31 @@ vreteno_flat(
     program = ":ico_hdmi",
 )
 
+# The video scanout under load on the flagship (issue 151): a frame
+# painted into the DDR3 and shown from there, and the scanout's
+# underflow bit read on an idle bus and then while the core copies in
+# the DDR3 and the Ethernet port sends. Sent down the wire like the
+# icosahedron.
+rust_binary(
+    name = "scanprobe_ram",
+    srcs = ["scanprobe.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
+vreteno_flat(
+    name = "scanprobe_ram_bin",
+    platform = ":vreteno",
+    program = ":scanprobe_ram",
+)
+
 # A word to the remote peripheral and back: the last hop of #335 seen
 # from the core, with a program on another machine answering the
 # frames. Sent down the wire like the icosahedron.
