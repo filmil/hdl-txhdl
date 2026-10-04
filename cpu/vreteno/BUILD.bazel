@@ -444,6 +444,10 @@ vivado_synthesis2(
 vivado_place_and_route2(
     name = "vreteno_pnr",
     synthesis = ":vreteno_synth2",
+    # No pins, so the bitstream is the stub the comment above names:
+    # under rules_vivado 3.16 a failed write_bitstream fails the build
+    # unless the target opts in (issue 967).
+    placeholder_bitstream = True,
     xdcs = [":vreteno_xdc"],
     tags = ["manual"],
 )
