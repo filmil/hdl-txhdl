@@ -74,14 +74,17 @@ kernel)
     make -C "$root/$src" O="$out" ARCH=riscv LLVM=1 \
       HOSTCC="$host_cc" HOSTLDFLAGS="-fuse-ld=lld" "$@"
   }
-  # The 32-bit defconfig, then this design's fragment over it.
-  k rv32_defconfig
+  # The smallest kernel there is, then this machine over it (issue
+  # 1074): cutting the rv32 defconfig down stayed at 25 MiB.
+  k tinyconfig
   "$root/$src/scripts/kconfig/merge_config.sh" -m -O "$out" \
     "$out/.config" "$root/$frag"
   k olddefconfig
   # Every line of the fragment must have survived the merge: a symbol
   # Kconfig refused, for a dependency the fragment did not meet, is
-  # silently dropped otherwise.
+  # silently dropped otherwise. Every such line is named, then the
+  # build stops, so one run shows them all.
+  dropped=0
   while IFS= read -r line; do
     case $line in "" | "#"*) continue ;; esac
     if [[ $line == *"=n" ]]; then
@@ -89,13 +92,14 @@ kernel)
       if grep -q "^$sym=" "$out/.config"; then
         echo "the fragment asks for $line and the config has" \
           "$(grep "^$sym=" "$out/.config")" >&2
-        exit 1
+        dropped=1
       fi
     elif ! grep -qx "$line" "$out/.config"; then
       echo "the fragment asks for $line and the config does not have it" >&2
-      exit 1
+      dropped=1
     fi
   done < "$root/$frag"
+  [ "$dropped" -eq 0 ] || exit 1
   k -j"$jobs" Image
   cp "$out/arch/riscv/boot/Image" "$image"
   cp "$out/.config" "$config"
