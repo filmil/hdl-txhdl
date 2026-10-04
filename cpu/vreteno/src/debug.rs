@@ -8,8 +8,9 @@
 //! the cable. Here that space is on the bus: an AXI-Lite peripheral
 //! at `DM_BASE`, each of the interface's registers a word at four
 //! times its number, so the JTAG-to-AXI host of the board reaches it
-//! from the hardware manager today and a transport of its own reaches
-//! it the same way when there is one. The registers are the
+//! from the hardware manager, and the debug transport, `Dtm` and
+//! `DtmBridge` in `txhdl_parts::dtm`, reaches it the same way from a
+//! stock OpenOCD. The registers are the
 //! specification's, at their numbers, with what this design has:
 //!
 //! | number | register     | what                                          |
@@ -20,7 +21,7 @@
 //! | `0x12` | `hartinfo`   | zero: no scratch registers, no data window     |
 //! | `0x16` | `abstractcs` | `busy` 12, `cmderr` 10 to 8, `datacount` 1    |
 //! | `0x17` | `command`    | access register, 32 bits, `regno` 15 to 0      |
-//! | `0x38` | `sbcs`       | system bus access: version 1, 32-bit, errors   |
+//! | `0x38` | `sbcs`       | system bus access: v1, 8 to 32 bits, errors    |
 //! | `0x39` | `sbaddress0` | the address of the next system bus access      |
 //! | `0x3c` | `sbdata0`    | the word a system bus access reads or writes   |
 //! | `0x40` | `haltsum0`   | bit 0, the one hart, halted                    |
@@ -41,9 +42,10 @@
 //! system's clock, since that is where the bus master is: a write of
 //! `sbaddress0` or `sbdata0`, or a read of `sbdata0`, becomes an access
 //! on the link, with `sbreadonaddr`, `sbreadondata`, `sbautoincrement`
-//! and `sberror` as the specification has them, at the one width of 32
-//! bits. A debugger reaching the module from the board's bus, as the
-//! JTAG-to-AXI host does, has the bus itself and does not need them.
+//! and `sberror` as the specification has them, at widths of 8, 16 and
+//! 32 bits (issue 873). A debugger reaching the module from the board's
+//! bus, as the JTAG-to-AXI host does, has the bus itself and does not
+//! need them.
 //!
 //! The core's side is a halt request and a resume request in, and
 //! debug mode out, which is what `dmstatus` reports; the resume

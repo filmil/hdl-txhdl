@@ -30,8 +30,8 @@ The core exposes `halt`, `instr`, the retiring instruction word, and
 `wb`, a `Writeback { done, rd, val }` (`cpu/vreteno/src/core.rs:610-627`
 and `:1104-1110`).
 The board unit makes the `instr` and `retire` signals and connects them
-to nothing: `cpu/vreteno/src/board.rs:134-135` creates them and no port
-carries them out.
+to nothing: `cpu/vreteno/src/board.rs` creates them, as `instr_o`
+and `retire_o`, and no port carries them out.
 So the retiring instruction and the register it wrote are already
 computed on the board, and are thrown away a wire later.
 
@@ -111,8 +111,9 @@ The probes are chosen before synthesis, so a question nobody thought of
 costs another run.
 The part has room: when this was written the board design, with the
 UberDDR3 controller, used 8100 LUT, 6959 FF and four block RAM tiles, and
-with AMD's controller since issue 188 it uses 10 964 LUTs and 9 850
-flip-flops (the board's section in `docs/vreteno.tex`), on a part where
+with AMD's controller, the configuration flash and the entropy source's
+capture buffer it used 12 296 LUTs and 11 209 flip-flops at eed5b7f
+(the board's section in `docs/vreteno.tex`), on a part where
 the DDR3 controller and the core together still leave most of the
 fabric unused.
 
@@ -151,9 +152,8 @@ more part on the bus.
 
 A `BSCANE2` primitive gives user logic the JTAG chain that is already
 wired to the board's USB cable, with no extra pins.
-Nothing in the tree instantiates it today: no `BSCANE2`, `STARTUPE2`,
-`DNA_PORT` or `ICAP` anywhere, only `IBUFDS`, `PLLE2_BASE` and `BUFG`
-(`cpu/vreteno/board/vreteno_board.v:67-97`).
+When this was written nothing in the tree instantiated it; it is now
+`lib/board/bscan_user4.v`, used by `cpu/vreteno/board/vreteno_board.v`.
 A bridge from that chain to the board's AXI router would let a host
 read and write every address the map already names: the data memory,
 the timer, the UART, the PLIC, the DDR3 window
@@ -254,9 +254,9 @@ a pin, a clock, a PHY, a memory controller's calibration.
    the access-register command for the general registers and the
    CSRs, reached through step 3's host by
    `//cpu/vreteno:vreteno_board_dm_probe`.
-   What is left of step 4 is the transport, `BSCANE2` and a debug
-   transport module, and then OpenOCD; and system bus access, which
-   the JTAG host makes unnecessary until then.
+   The transport, `BSCANE2` and a debug transport module, and system
+   bus access followed, and a stock OpenOCD drives them in
+   simulation, `//cpu/vreteno:openocd_test`.
 
 Steps 1 and 2 are independent of each other and of the core.
 Steps 3 and 4 are the ones that change the core, and 4 subsumes much of
@@ -278,8 +278,6 @@ test, the first step of the plan on issue 154:
 
 Still owed:
 
-* abstract access to the register file and to memory while halted,
-  which the register file's port count decides;
 * `dcsr` and `dpc` only in debug mode, which waits for the module,
   since until then a test sets `step` and `ebreakm` by writing them
   from the program.
