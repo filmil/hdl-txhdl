@@ -170,10 +170,16 @@ jobs:
         if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUNNER_CTX: ${{ runner.name }}
         run: |
           echo "log_export $(date +%s)" >> /tmp/ci-times
           {
             echo "run ${GITHUB_RUN_NUMBER} on ${GITHUB_SHA} (${GITHUB_EVENT_NAME}, ${GITHUB_REF_NAME}): ${{ job.status }}"
+            # Which runner took the run, so a record says which machine its
+            # numbers are of (#940). The runner context and the variable are
+            # tried in turn; the container's host name is the last resort and
+            # names only the container.
+            echo "runner: ${RUNNER_CTX:-${RUNNER_NAME:-unknown}} (host $(hostname))"
             echo "cache key hit: ${{ steps.cache.outputs.cache-hit }}"
             echo "=== seconds, by step ==="
             awk 'NR > 1 { printf "%-14s %6d\n", $1, $2 - t } { t = $2 }' /tmp/ci-times
