@@ -1724,7 +1724,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     mux(
                         is_mret,
                         mepc,
-                        mux(is_sret, self.sepc.get(), mux(refetch, link, trap_vec)),
+                        mux(
+                            is_sret,
+                            self.sepc.get(),
+                            mux(refetch, link, trap_vec),
+                        ),
                     ),
                 ),
                 _ => trap_vec,
