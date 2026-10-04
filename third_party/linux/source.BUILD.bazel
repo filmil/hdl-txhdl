@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# A fetched source tree as one directory: the userspace's build reads
+# it and writes nothing into it, and a directory is one input to
+# sandbox rather than every file (issue 1018). compiler-rt, musl and
+# BusyBox are each given this file.
+filegroup(
+    name = "src",
+    srcs = ["."],
+    visibility = ["//visibility:public"],
+)
