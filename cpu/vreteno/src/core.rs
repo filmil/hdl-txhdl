@@ -1623,7 +1623,22 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             );
             let to_s_wb = (prv != 3) & bit_of(medeleg, wb_code);
             let stvec = self.stvec.get();
-            let trap_vec = mux(to_s, stvec, mtvec);
+            // The trap's vector, on the way to the next program counter,
+            // chosen last by whether the access is misaligned, which
+            // settles behind the adder: the vector of every other trap
+            // and that of a misaligned one are found beforehand, and the
+            // check picks between them, one multiplexer from the fetch's
+            // address (issue 1130). It is the vector `to_s` says.
+            let to_s_other = (prv != 3)
+                & mux(
+                    int_take,
+                    Bit::from(m_set == 0),
+                    mux(st_take, medeleg.bit(7), d_early),
+                );
+            let vec_other = mux(to_s_other, stvec, mtvec);
+            let vec_mis = mux((prv != 3) & d_mis, stvec, mtvec);
+            let trap_vec =
+                mux(unaligned & !int_take & !st_take, vec_mis, vec_other);
             let wb_vec = mux(to_s_wb, stvec, mtvec);
             let m_trap_status = (mstatus & !U::<32>::from(0x1888u32))
                 | mux(mstatus.bit(3), U::<32>::from(0x80u32), zero32)
