@@ -696,7 +696,20 @@ fn lockstep_with(
             return model;
         }
     }
-    panic!("{what}: no halt in 32768 cycles; retired {retired}, model pc {:#x}, causes {:?}, mcause {} mepc {:#x} mtval {:#x} scause {} sepc {:#x} stval {:#x} prv {}", model.pc, model.causes, model.csr.mcause, model.csr.mepc, model.csr.mtval, model.csr.scause, model.csr.sepc, model.csr.stval, model.prv);
+    panic!(
+        "{what}: no halt in 32768 cycles; retired {retired}, model pc \
+         {:#x}, causes {:?}, mcause {} mepc {:#x} mtval {:#x} scause {} \
+         sepc {:#x} stval {:#x} prv {}",
+        model.pc,
+        model.causes,
+        model.csr.mcause,
+        model.csr.mepc,
+        model.csr.mtval,
+        model.csr.scause,
+        model.csr.sepc,
+        model.csr.stval,
+        model.prv
+    );
 }
 
 #[test]
