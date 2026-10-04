@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: Plic, Plic1, Plic2, Plic3, Plic4, Plic5, Plic6, Plic7, Plic8
-\datasheet{Plic}{The platform-level interrupt controller: one to thirty-one sources and one target, at the RISC-V PLIC's offsets.}
+\datasheet{Plic}{The platform-level interrupt controller: one to thirty-one sources and two targets, machine and supervisor, at the RISC-V PLIC's offsets.}
 
 \dsfacts{\code{lib/parts/src/plic.rs}}%
 {\code{txhdl\_parts::plic::Plic<N, EDGE>}, and \code{Plic1} to \code{Plic8}, which name the counts}%
@@ -8,18 +8,22 @@
 
 \subsection*{Function}
 
-A controller gathers the interrupt lines of several sources into one
-line for one target, a hart's machine mode, and lets software ask which
-source to serve. Each source \textit{i}, numbered from 1, is an input line,
-\code{srcs\_}\textit{i}\code{-1}, of the array of ports \code{srcs}. The output \code{irq} is the
-target's line. Software reaches the controller as an AXI-Lite
+A controller gathers the interrupt lines of several sources into a
+line for each of two targets, a hart's machine mode and its supervisor
+mode (issue 1013), and lets software ask which source to serve. Each
+source \textit{i}, numbered from 1, is an input line,
+\code{srcs\_}\textit{i}\code{-1}, of the array of ports \code{srcs}. The
+output \code{irq} is the machine target's line and \code{sirq} the
+supervisor target's, \code{mip.SEIP}'s. The two targets share the
+sources, their gateways and the pending bits; each has its own enable
+bits, threshold and line. Software reaches the controller as an AXI-Lite
 peripheral whose link is one port, \code{bus}, a \code{LitePort} of
 the five channels: reads come on \code{bus\_ar} and are answered on
 \code{bus\_r}, and writes come on \code{bus\_aw} and \code{bus\_w}
 and are answered on \code{bus\_b}. It sits behind a
 \code{LiteBridge<1, ..>}, which sends it only its own range.
-The input \code{rst} clears the requests, the line, the priorities, the
-enable bits and the threshold.
+The input \code{rst} clears the requests, both lines, the priorities,
+and both targets' enable bits and thresholds.
 
 It is one unit for any count of sources, \code{N} a const parameter
 (issue 500): the sources are an array of ports and the priorities an
@@ -30,7 +34,9 @@ enable, active, held and previous-line words are 32 bits whatever
 \code{N} stay zero; a source's number is 5 bits. \code{Plic1} to
 \code{Plic8} are type aliases that name counts. \code{plic.rs} also names the
 offsets, \code{PENDING}, \code{ENABLE}, \code{THRESHOLD} and
-\code{CLAIM}, and \code{priority(i)}.
+\code{CLAIM} for the machine target, \code{S\_ENABLE},
+\code{S\_THRESHOLD} and \code{S\_CLAIM} for the supervisor target, and
+\code{priority(i)}.
 
 \subsection*{Parameters}
 
@@ -52,7 +58,7 @@ board does. \\
 \subsection*{Register map}
 
 Offsets from the controller's base, which are the RISC-V PLIC's for
-one target. The controller decodes the low 22 bits of an address. On
+two targets, contexts 0 and 1. The controller decodes the low 22 bits of an address. On
 the board the base is \code{0x0c00\_0000}.
 
 \begin{center}\footnotesize
@@ -64,11 +70,17 @@ Offset & Word & Access \\
 Read and write, for \textit{i} from 1 to \textit{N}. \\
 \code{0x1000} & The pending bits, bit \textit{i} for source \textit{i} &
 Read only. \\
-\code{0x2000} & The enable bits, the same way & Read and write; bit 0
-does not stick. \\
-\code{0x20\_0000} & The threshold, 3 bits & Read and write. \\
-\code{0x20\_0004} & Claim and complete & A read claims; a write
-completes. \\
+\code{0x2000} & The machine target's enable bits, the same way & Read
+and write; bit 0 does not stick. \\
+\code{0x2080} & The supervisor target's enable bits & The same. \\
+\code{0x20\_0000} & The machine target's threshold, 3 bits & Read and
+write. \\
+\code{0x20\_0004} & The machine target's claim and complete & A read
+claims; a write completes. \\
+\code{0x20\_1000} & The supervisor target's threshold, 3 bits & Read
+and write. \\
+\code{0x20\_1004} & The supervisor target's claim and complete & The
+same. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -90,20 +102,28 @@ Going forward sets the source's bits in \code{pending} and in
 \item An edge that comes while its source is \code{active} sets its bit
 in \code{held}, one deep, and it asks as soon as the source is no
 longer active.
-\item \textbf{The choice.} A source is a candidate when it is pending,
-enabled, and its priority is above \code{threshold}. The best
+\item \textbf{The choice}, made for each target. A source is a
+candidate for a target when it is pending, enabled in that target's
+bits, \code{enable} or \code{senable}, and its priority is above that
+target's threshold, \code{threshold} or \code{sthreshold}. The best
 candidate has the highest priority, and the lowest number wins a tie.
 A priority of 0 is never above a threshold, so it never interrupts.
-\item \textbf{A claim.} A read of \code{0x20\_0004} answers with the
-best candidate's number, or 0 for none, and clears that source's
-\code{pending} bit. The source stays \code{active}.
+\item \textbf{A claim.} A read of a target's claim word,
+\code{0x20\_0004} or \code{0x20\_1004}, answers with that target's best
+candidate's number, or 0 for none, and clears that source's
+\code{pending} bit. The source stays \code{active}. So a source
+enabled for both targets is served by whichever claims first, and the
+other then finds it no longer pending. One read is taken a cycle, so
+the two never claim together.
 \item \textbf{A complete.} A write of a number from 0 to \textit{N} to
-\code{0x20\_0004} clears that source's \code{active} bit. A larger
-number changes nothing. A level source whose line is still high then
-asks again at once.
-\item \textbf{The line.} \code{asserted} is set each cycle when there
-is a best candidate, and \code{irq} follows \code{asserted}, so the
-line is a register's output and lags the choice by a cycle.
+either claim word clears that source's \code{active} bit, whichever
+target claimed it. A larger number changes nothing. A level source
+whose line is still high then asks again at once.
+\item \textbf{The lines.} \code{asserted} is set each cycle when the
+machine target has a best candidate, and \code{sasserted} when the
+supervisor target has one. \code{irq} follows \code{asserted} and
+\code{sirq} follows \code{sasserted}, so each line is a register's
+output and lags its choice by a cycle.
 \item \textbf{The bus.} A read is answered in the cycle it is taken, and
 a write is taken when its address and its word are both there, and
 answered \code{Okay} at once. Every answer is \code{Okay}.
@@ -118,13 +138,20 @@ answered \code{Okay} at once. Every answer is \code{Okay}.
 \item \code{the\_highest\_priority\_is\_claimed\_first\_and\_the\_lowest\_number\_wins\_a\_tie};
 \item \code{a\_priority\_at\_or\_below\_the\_threshold\_does\_not\_interrupt};
 \item \code{a\_claimed\_source\_asks\_again\_only\_after\_its\_complete};
-\item \code{an\_edge\_source\_asks\_once\_per\_edge\_and\_a\_level\_source\_while\_high}.
+\item \code{an\_edge\_source\_asks\_once\_per\_edge\_and\_a\_level\_source\_while\_high};
+\item \code{the\_supervisor\_target\_is\_a\_target\_of\_its\_own}: its
+enables and threshold read back, its line asks, and its claims and
+completes follow the same rules;
+\item \code{a\_source\_enabled\_for\_both\_targets\_is\_claimed\_once}:
+both lines ask, the first claim takes it and the other target finds
+none, and a complete by either ends the service.
 \end{itemize}
 \code{the\_eight\_source\_controller\_lowers} writes \code{Plic8}'s
 Verilog.
 \item \code{ex\_plic} runs \code{Plic3<0b100>} against a host that
-claims and completes, and the build simulates its netlist against that
-run under nvc and Verilator: \code{//docs:plic\_sim\_plic3\_tb\_test}
+claims and completes, last on the supervisor target, where source 3
+enabled for it alone raises \code{sirq} and not \code{irq}. The build
+simulates its netlist against that run under nvc and Verilator: \code{//docs:plic\_sim\_plic3\_tb\_test}
 and \code{//docs:plic\_vsim\_test}.
 \item \code{input\_comes\_by\_interrupt\_one\_byte\_each}, in
 \code{//cpu/vreteno:board\_test}, runs the board's \code{Plic3} under a
@@ -137,12 +164,13 @@ compiled program that takes the serial port's input by interrupt.
 \code{plic} behind the bridge \code{pplic}: source 1 is the serial
 port's receive interrupt, source 2 the board's \code{irq} input,
 source 3 the Ethernet peripheral's, and
-\code{irq} is the core's external interrupt. \code{Plic3<0b100>} in the
-example \code{ex\_plic}.
+\code{irq} is the core's external interrupt. \code{sirq} goes to
+\code{seirq}, which nothing reads yet: the core has its supervisor mode
+(issue 1012) but no input for the line (issue 1094). \code{Plic3<0b100>} in the example \code{ex\_plic}.
 
 \subsection*{Limits}
 
-It has one target and no per-target context beyond it. Priorities are 3
+It has two targets, contexts 0 and 1, and no others. Priorities are 3
 bits, so from 0 to 7. A write ignores its strobe and writes the whole
 field. The controller checks no address above bit 21, and relies on its
 bridge for the rest. An edge source holds one edge during a service; a
