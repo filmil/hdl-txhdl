@@ -3013,6 +3013,8 @@ latex_document(
         ":vreteno_bus_timing",
         ":plic_run",
         ":plic_timing",
+        ":mmu_run",
+        ":mmu_timing",
         "//lib/parts:sources",
         "//cpu/vreteno:sources",
         "//cpu/vreteno/rust/hal:sources",

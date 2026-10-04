@@ -18,6 +18,12 @@
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/plic.rs}}
 
+% A range of the Sv32 unit, by its begin/end markers.
+\newcommand{\mmupart}[3]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/mmu.rs}}
+
 \title{Vreteno: An RV32IMC Core in TxHDL}
 
 \author{Filip Filmar and Dragiša Janković%
@@ -1367,6 +1373,119 @@ program itself is in the data memory, and every instruction after the
 jump comes back over the bus. The model fetches from the same place
 and the two agree cycle by cycle, which is what says the fetch is a
 fetch and not a guess.
+
+\section{Virtual Memory}
+\label{sec:v-mmu}
+
+Linux runs each program in an address space of its own, and the
+hardware that makes that possible is the memory management unit. On a
+thirty-two bit RISC-V hart it is Sv32: a virtual address is translated
+through a table of two levels into a physical one, page by page, and
+an access the table does not allow traps (issue~\#1014). This section
+is the unit on its own, \code{Mmu} in \code{lib/parts/src/mmu.rs}; it
+is not in the core yet. Where it goes was decided by measuring first,
+in \code{docs/sv32-timing.md} (issue~\#1009): the core asks with an
+address it already holds in a register, so the lookup is off the two
+paths that set the clock, at the cost of a cycle per access that goes
+to the bus.
+
+The unit has two translation lookaside buffers, one for fetches and one
+for data, each of eight entries, fully associative and refilled in
+turn, and one walker that fills both. Listing~\ref{lst:v-mmu-lookup}
+is the lookup. Every entry is compared with the request's page at
+once; a megapage, a leaf at the first level, covers four megabytes and
+compares only the upper ten bits. The answer is a register, so it
+comes a cycle after the request: on a hit, the physical address, or a
+page fault if the entry does not allow the access. A miss answers
+nothing, and the core holds its request, the address and the request
+bit both steady, while the walker reads the table; the answer comes a
+cycle after the entry is filled. An answer always belongs to the
+request of the cycle before, so one that arrives after the core has
+moved on is for the old request, and the core ignores it. Outside
+supervisor and user mode, or with \code{satp.MODE} clear, the address
+passes through unchanged, with the same latency of a cycle, so the
+core has one rule for every access.
+
+The check, Listing~\ref{lst:v-mmu-check}, is the specification's:
+execute for a fetch, write for a store, read for a load or execute
+under \code{MXR}; a user page only from user mode, and from supervisor
+mode only for data under \code{SUM}; and the accessed bit always, with
+the dirty bit for a store. The walker, Listing~\ref{lst:v-mmu-walk},
+never writes. An entry whose accessed or dirty bit is clear is a page
+fault, and the kernel sets the bit and flushes, which the
+specification allows; a walker that wrote would need an atomic read
+and write on the bus. It reads one entry at a time over a channel of
+its own, which the core will put on its bus port: \code{satp}'s page
+first, indexed by the upper ten bits of the page number, then the
+second level's if the first entry points to one. An invalid entry, a
+pointer at the second level and a megapage whose low page number is
+not zero are page faults; a read that fails, or a page past the
+board's thirty-two bits of physical address, is an access fault.
+A flush, on a write of \code{satp} or an \code{sfence.vma}, empties
+both buffers, and a walk under way when it comes finishes without
+filling anything. A request in the cycle of a flush is not answered
+from the buffers as they were: it is held, and answered from the
+emptied ones by a walk. Address space identifiers are not kept, which the
+specification allows.
+
+\mmupart{lookup}{The lookup: every entry at once, and the answer in the
+cycle.}{lst:v-mmu-lookup}
+
+\mmupart{check}{The check an entry's bits must pass.}{lst:v-mmu-check}
+
+\mmupart{walk}{The walker: the first level's entry, the answer, and
+what makes it a fault.}{lst:v-mmu-walk}
+
+\code{translate} in the same file is the reference: the
+specification's walk with no buffer at all. The tests in
+\code{lib/parts/src/mmu/tests.rs} hold the unit to it, against tables
+in a memory that answers the walker after a few cycles: a page walked
+once and then hit a cycle after it is asked, a megapage, every fault,
+the flush, a flush in the middle of a walk and a request in the cycle
+of one, the turn in which entries are replaced, and six hundred random
+requests over random tables, on both ports and in every mode.
+
+\code{//lib/parts:mmu\_pnr} places and routes \code{Mmu8} alone, out of
+context, against the core's ten nanosecond clock, with the requests
+arriving a nanosecond after the edge, as from a register of the core's.
+It meets the clock with 2.440\,ns to spare, in 493 LUTs and 919
+flip-flops, the eight entries of each buffer held in flip-flops rather
+than block RAM. The lookup, from the request's address through every
+entry's compare and the check into the answer's registers, has
+3.583\,ns to spare for a fetch and 3.713\,ns for data, and the answers
+leave those registers 1.22\,ns before they reach the unit's edge. The
+answer was not always a register. Used in the cycle it was asked, it
+took 7.86\,ns from the address to the physical address, and the core's
+bus request already spends 8.9\,ns of its own
+(\code{docs/sv32-timing.md}), so the two would not have fit in one
+cycle. The register costs the one cycle per access that the note
+already counts, and the board's place and route will say what the
+paths are in place.
+
+\code{ex\_mmu}, Listing~\ref{lst:v-mmu-ex}, is the unit as a kernel
+meets it. A fetch from the kernel's text walks one level to a megapage
+and then hits; a load from a user page faults until \code{SUM} is set;
+a store to a page whose dirty bit is clear faults until the kernel sets
+it and flushes; and with both ports missing at once, the data port's
+walk goes first, since its instruction is the older.
+Figure~\ref{fig:v-mmu} is the first walk. The build simulates the
+unit's netlist against the run under nvc and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{mmu_timing.tex}
+\caption{A fetch from the kernel's text: the request, the walk's one
+read on \code{ptw} and its answer on \code{pte}, and the answer to the
+fetch, then the next fetch from the same megapage, a hit answered a
+cycle after it is asked.}
+\label{fig:v-mmu}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_mmu.rs}: translation as a kernel
+meets it.},label={lst:v-mmu-ex}]{lib/examples/ex_mmu.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_mmu} printed when
+the build ran it.},label={lst:v-mmu-out}]{out_mmu.txt}
 
 \section{The Netlist}
 \label{sec:v-netlist}
