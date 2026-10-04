@@ -145,7 +145,7 @@ jobs:
           # name stop the release rather than one overwriting the other.
           topic() {
             case "$1" in
-              cover|showcase|paper|article|embedding|txhdl|stats|dynamics) echo overview ;;
+              cover|showcase|paper|article|embedding|stats|dynamics) echo overview ;;
               tutorial|zero|station|axi|prove|cheatsheet) echo tutorials ;;
               runtime|examples|datasheets) echo reference ;;
               vreteno|vreteno_figures|tapeout|razboj|noc|eth|hdmi|flagship|pcie) echo designs ;;
@@ -159,6 +159,10 @@ jobs:
               rel="${f#bazel-out/*/bin/}"
               case "$f" in
                 *.fst) cp "$f" "dist/waveforms/$(basename "$f")" ;;
+                # The merged document is not published: the PDFs ship on
+                # their own and in docs-pdfs.zip instead (issue 941).
+                # //docs:all still builds it.
+                */txhdl.pdf) ;;
                 *.pdf)
                   t="$(topic "$(basename "$f" .pdf)")"
                   mkdir -p "dist/pdf/$t"
@@ -176,6 +180,13 @@ jobs:
             t="$(basename "$d")"
             tar -C "$d" -czf "dist/release/docs-$t.tar.gz" .
           done
+          # Every document in one archive, flat, each under its own name
+          # (issue 941). The job image has zip; -j drops the topic
+          # directories, so every PDF sits at the top under its own name,
+          # and -X leaves out the owner and time fields of this runner.
+          if [ -n "$(ls dist/pdf/*/*.pdf 2>/dev/null)" ]; then
+            zip -q -j -X dist/release/docs-pdfs.zip dist/pdf/*/*.pdf
+          fi
           if [ -n "$(ls -A dist/waveforms)" ]; then
             tar -C dist/waveforms -czf dist/release/docs-waveforms.tar.gz .
           fi
