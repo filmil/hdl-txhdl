@@ -119,11 +119,19 @@ Verilator: \code{//docs:axi\_arbiter\_sim\_axi\_arbiter\_tb\_test} and
 
 \subsection*{Used by}
 
-\code{Board}, as \code{arb}, an \code{Arbiter4<32, 32, 4, 2, 4, 0>} in
-front of its router: the core's tracker on port 0, the JTAG master's
-pins on port 1 (issue 241), and the Ethernet port's fetch and store
-engines on ports 2 and 3 (issue 151). Its peripheral side has four
-bits of identifier, which four hosts fill, so a fifth widens the bus.
+\code{Board}, three times. As \code{arb}, an
+\code{Arbiter6<32, 32, 4, 2, 5, 0>} in front of its router, it takes
+the core's tracker on port 0; on port 1 \code{jarb}, which shares it
+between the JTAG master's pins (issue 241) and the debug transport's
+bridge (issue 154); the Ethernet port's fetch and store engines on
+ports 2 and 3 (issue 151); the video scanout's fetch on port 4 (issue
+151); and on port 5 \code{sdarb}, the SD card host's two engines
+(issue 912). Its peripheral side has five bits of identifier, two for
+a host's own and three for the port, so up to eight hosts fit without
+widening anything past it (issue 1022). \code{jarb} and \code{sdarb}
+are each an \code{Arbiter2<32, 32, 4, 1, 2, 0>}, giving their two hosts
+one bit of identifier each. The SD engines never offer at the same
+time, so neither takes a turn from the other.
 
 \subsection*{Limits}
 
