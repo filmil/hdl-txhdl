@@ -1546,3 +1546,35 @@ fn the_supervisor_external_line_reaches_the_supervisor() {
     assert!(m.x[9] > 0, "the supervisor's code ran before it");
     assert_eq!(m.x[21], CAUSE_ECALL_S, "then called machine mode");
 }
+
+/// A load that traps in execute traps once, for its own cause, whatever
+/// the bus said about the load before it: a misaligned load right after
+/// a refused one is a misaligned load and nothing more.
+#[test]
+fn a_load_that_traps_in_execute_is_not_refused_as_well() {
+    let handler = 8 * 4;
+    let p = [
+        addi(6, 0, handler),
+        csrrw(0, CSR_MTVEC, 6),
+        lui(4, 0x3000), // 0x0300_0000: nobody's
+        lw(5, 4, 0),    // refused: a load access fault
+        lw(5, 4, 1),    // misaligned, and only that
+        addi(7, 0, 1),
+        halt(),
+        addi(0, 0, 0),
+        // The handler, at 32: counts, keeps the causes in order a
+        // nibble each, and steps past.
+        csrrs(23, CSR_MCAUSE, 0),
+        addi(25, 25, 1),
+        vreteno32::isa::slli(28, 28, 4),
+        add(28, 28, 23),
+        csrrs(27, CSR_MEPC, 0),
+        addi(27, 27, 4),
+        csrrw(0, CSR_MEPC, 27),
+        mret(),
+    ];
+    let m = lockstep(&p, &[], "a refusal, then a trap", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[28], 0x54, "an access fault, then a misaligned load");
+    assert_eq!(m.x[25], 2, "two traps");
+}

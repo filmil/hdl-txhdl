@@ -1999,8 +1999,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     self.wb_alu <= mux(is_load, addr, wval);
                     self.wb_f3 <= f3;
                     self.wb_lane <= lane;
-                    self.wb_load <= is_load & run;
-                    self.wb_amo <= is_rmw & run & !unaligned;
+                    // Only a load that went out waits for an answer, and
+                    // only it can be refused: one that trapped in
+                    // execute went nowhere (issue 1084).
+                    self.wb_load <= send_load;
+                    self.wb_amo <= is_rmw & send_load;
                     self.amo_op <= funct5;
                     self.amo_b <= b;
                     self.wb_stop <= halting
