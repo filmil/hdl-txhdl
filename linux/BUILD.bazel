@@ -9,8 +9,8 @@
 #
 #   bazel build //linux:kernel //linux:opensbi
 #
-# The kernel is `rv32_defconfig` with `probe.config` over it; a later
-# change trims it to this machine.
+# The kernel is `tinyconfig` with `vreteno.config` over it: only what
+# this machine has (issue 1074).
 load("@rules_rust//rust:defs.bzl", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -43,7 +43,7 @@ genrule(
     name = "kernel",
     srcs = [
         "@linux//:src",
-        "probe.config",
+        "vreteno.config",
     ],
     outs = [
         "Image",
@@ -51,7 +51,8 @@ genrule(
         "System.map",
     ],
     cmd = _ENV + " $(execpath build.sh) kernel $(execpath @linux//:src) " +
-          "$(execpath probe.config) $(execpath Image) $(execpath kernel.config) " +
+          "$(execpath vreteno.config) $(execpath Image) " +
+          "$(execpath kernel.config) " +
           "$(execpath System.map)",
     tags = ["manual"],
     tools = _TOOLS,

@@ -74,8 +74,9 @@ kernel)
     make -C "$root/$src" O="$out" ARCH=riscv LLVM=1 \
       HOSTCC="$host_cc" HOSTLDFLAGS="-fuse-ld=lld" "$@"
   }
-  # The 32-bit defconfig, then this design's fragment over it.
-  k rv32_defconfig
+  # The smallest kernel there is, then this machine over it (issue
+  # 1074): cutting the rv32 defconfig down stayed at 25 MiB.
+  k tinyconfig
   "$root/$src/scripts/kconfig/merge_config.sh" -m -O "$out" \
     "$out/.config" "$root/$frag"
   k olddefconfig
