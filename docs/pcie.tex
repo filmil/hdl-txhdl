@@ -19,6 +19,10 @@
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/bus/axi_pins.rs}}
+\newcommand{\perpinspart}[3]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/bus/axi_per_pins.rs}}
 \newcommand{\barpart}[3]{%
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
@@ -170,6 +174,67 @@ handed back.}
 The unit is lowered, and its netlist agrees with this run under
 \code{nvc} and under Verilator: \code{//docs:axi\_pins\_sim\_axi\_pins\_tb\_test}
 and \code{//docs:axi\_pins\_vsim\_test}.
+
+\section{The Pins the Other Way}
+\label{sec:p-perpins}
+
+A core from elsewhere can also be an AXI4 peripheral: AMD's DDR3
+controller, generated with its AXI4 port, is one, and putting the
+board's memory behind that port is what issue~\#1023 is for.
+\code{AxiPerPins} is \code{AxiPins} turned round. It stands on the
+link's peripheral end, where a peripheral tracker would, and holds
+nothing.
+
+\perpinspart{ports}{The pins, the other way.}{lst:p-perports}
+
+The peripheral drives eleven pins, the readies and the answers, and
+those are a struct of their own, \code{AxiPerDriven}, held as
+\code{inp.pins} beside the three channels from the link. The unit
+drives the rest, the address phases, the write beats and the two
+readies of the answers, as its outputs beside the two channels back
+to the link.
+
+\perpinspart{unit}{\code{AxiPerPins}: the step.}{lst:p-perunit}
+
+An address phase or a write beat at the head of its channel is the
+peripheral's \code{valid} and fields, taken in the step the
+peripheral's \code{ready} is high. A write response or a read beat
+the peripheral offers goes onto its channel in the step the channel
+has room, and the room is the peripheral's \code{ready}. Every field
+of the link's address phase goes to a pin but the region: AMD's
+controller has none, as a peripheral joined to one link needs none,
+since the region is how an interconnect tells one decoded range of a
+peripheral from another. \code{AxQOS} goes out, since the controller
+reads it.
+
+\code{ex\_axi\_per\_pins} puts a memory on the pins, written as a
+simulation, behind \code{AxiPerPins<30, 32, 4, 5>}, the controller's
+widths, with a host tracker and a client on the link's other end. The
+memory runs ahead of the unit in the step, as the host does in the
+example above, since the unit reads the wires it drives. The client
+writes three words, reads four back, and reads past the memory's end,
+which the peripheral refuses.
+
+\lstinputlisting[caption={\code{ex\_axi\_per\_pins.rs}: a memory on
+pins, and a client in front.},label={lst:p-perex}]{lib/examples/ex_axi_per_pins.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_axi\_per\_pins}
+printed when the build ran it.},label={lst:p-perout}]{out_axi_per_pins.txt}
+
+\begin{figure}[htbp]
+\centering
+\input{axi_per_pins_timing.tex}
+\caption{The write the other way: its address phase and its three
+beats taken off the link's channels as the peripheral, always ready,
+takes them, and its response sent back on the link.}
+\label{fig:p-perpins}
+\end{figure}
+
+{\raggedright
+The unit is lowered, and its netlist agrees with this run under
+\code{nvc} and under Verilator:
+\code{//docs:axi\_per\_pins\_sim\_axi\_per\_pins\_tb\_test} and
+\code{//docs:axi\_per\_pins\_vsim\_test}.\par}
 
 \section{Behind BAR1}
 \label{sec:p-bar}

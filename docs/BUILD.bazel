@@ -3589,6 +3589,8 @@ latex_document(
         ":vendored_tex",
         ":axi_pins_run",
         ":axi_pins_timing",
+        ":axi_per_pins_run",
+        ":axi_per_pins_timing",
         "//lib/examples:sources",
         "//lib/parts:sources",
         "//pcie:sources",
