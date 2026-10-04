@@ -15,11 +15,11 @@
 //! every cycle, so what is on the command and data lines is the
 //! protocol and not a shortcut.
 //!
-//! The card's clock runs at half the system's here, to keep the run
-//! short; a board starts at 400 kHz and moves to 25 MHz once the card
-//! is up. The host is lowered, and the build simulates
-//! its netlist against this run under nvc and Verilator, with the
-//! card's lines as the run recorded them.
+//! The card's clock runs at a quarter of the system's here, the fastest
+//! the host goes, to keep the run short; a board starts at 400 kHz and
+//! moves to 25 MHz once the card is up. The host is lowered, and the
+//! build simulates its netlist against this run under nvc and
+//! Verilator, with the card's lines as the run recorded them.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::map::AddrMap;
@@ -50,8 +50,9 @@ impl AddrMap<1> for SdMap {
 
 const BASE: u32 = 0x1000;
 
-/// A half of a card clock in one cycle.
-const DIV: u32 = 0;
+/// A half of a card clock in two cycles, the fewest the host takes:
+/// 25 MHz from a 100 MHz clock (issue 929).
+const DIV: u32 = 1;
 
 fn main() {
     let Link {
