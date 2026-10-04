@@ -644,44 +644,51 @@ peripheral.},label={lst:v-dmem}]{cpu/vreteno/src/dmem.rs}
 peripheral.},label={lst:v-timer}]{cpu/vreteno/src/timer.rs}
 
 The serial port, Listing~\ref{lst:v-uart}, is the third device,
-with a line each way. It is an AXI-Lite peripheral, so it holds no
-state for the bus: a read takes an address and answers the word in
-the same cycle, and a write takes an address and a word together and
-answers at once. A byte written to its first word goes out on
+with a line each way, and its registers are SiFive's
+\code{sifive,uart0} (issue 1011), so that the serial drivers of Linux,
+OpenSBI and Zephyr drive it as they are rather than one written here.
+It is an AXI-Lite peripheral, so it holds no state for the bus: a read
+takes an address and answers the word in the same cycle, and a write
+takes an address and a word together and answers at once. A byte
+written to \code{txdata} joins a queue of eight, and while the queue
+holds any and \code{txctrl}'s enable is set, the oldest goes out on
 the line as a start bit, the eight bits least significant first, and
-a stop bit, each \code{DIV} cycles long. A frame coming in on the
-other line is sampled in the middle of each bit, once a low on the
-resting line has said a start bit is there: a high where the start
-bit should be is a false start and the frame is dropped, the eight
-bits in between are shifted in, and a high at the stop bit lands the
-byte in a buffer of eight behind the port's third word, where a load
-takes the oldest. The buffer is a memory of eight bytes with the
-index of the oldest and a count, a push at the landing and a pop at
-the load, both in one cycle leaving the count where it was; so a
-terminal may type ahead of the program, as the terminal of the runs
-does, its bytes back to back. The port's interrupt line is high
-while the buffer holds any; on the board it is source 1 of the
-interrupt controller, whose line is the core's external interrupt, and
-the demonstration joins it to the line it drives. Its second
-word is the status, bit 0 busy while a frame is going out, bit 1 a
-byte received and not yet read, and bit 2 the buffer full. A byte
-written while busy is dropped, and a byte received when the buffer
-is full is dropped and counted, so a program polls the status and
-keeps up.
-\code{DIV} is a parameter of the unit: 868 for 115\,200 baud at
-100~MHz on the board, and 4 in the runs that are checked, so that a
-byte takes forty cycles rather than nine thousand. The two are the
-same unit lowered twice. The line in goes through one register
-before the logic, as a pin's should. The port's pieces, whether an
-address is its own, the frame a byte goes out as, the frame after a
-bit, a bit's last cycle and middle and a bit taken in, are functions
-under \code{\#[lower]}, inlined where the step calls them, so the step
-is the two sides' drives; the examples document~\cite{examples}
-states the form. Its three words are declared once, with
-\code{regmap!}, the third as a register the read takes, and the
-macro writes the word a load reads, which word a write goes to,
-when a read takes a byte, and the offsets the Zephyr driver is held
-to (issue 669). The run and the lockstep
+a stop bit, or two, each \code{div} plus one cycles long; a write
+while the queue is full is dropped, and a read of \code{txdata} says
+so in its bit 31. A frame coming in on the other line is sampled in
+the middle of each bit, once a low on the resting line has said a
+start bit is there: a high where the start bit should be is a false
+start and the frame is dropped, the eight bits in between are shifted
+in, and a high at the stop bit lands the byte in a queue of eight
+behind \code{rxdata}, whose read takes the oldest and says in bit 31
+when there was none. Each queue is a memory of eight bytes with the
+index of the oldest and a count, a push and a pop in one cycle leaving
+the count where it was; so a terminal may type ahead of the program,
+as the terminal of the runs does, its bytes back to back, and a
+program may write a line without waiting between its bytes.
+\code{ip} says which watermark is passed, the transmit queue holding
+fewer than \code{txctrl}'s count or the receive queue more than
+\code{rxctrl}'s, and the port's interrupt line is high while one that
+\code{ie} enables is; on the board it is source 1 of the interrupt
+controller, whose line is the core's external interrupt, and the
+demonstration joins it to the line it drives. Three resets differ
+from SiFive's, so that a program that never writes the controls finds
+the port as it was before the map: both enables start set, and so does
+\code{ie}'s receive bit, so the line is high while a received byte
+waits. \code{div} starts at the unit's parameter \code{DIV} less one:
+867 for 115\,200 baud at 100~MHz on the board, and 3 in the runs that
+are checked, so that a byte takes forty cycles rather than nine
+thousand. The two are the same unit lowered twice, and a driver sets
+\code{div} from the clock it is told the port runs on. The line in
+goes through one register before the logic, as a pin's should. The
+port's pieces, the frame a byte goes out as, the frame after a bit, a
+bit's middle and a bit taken in, are functions under \code{\#[lower]},
+inlined where the step calls them, so the step is the two sides'
+drives; the examples document~\cite{examples} states the form. Its
+seven words are declared once, with \code{regmap!}, \code{rxdata} as a
+register the read takes, and the macro writes the word a load reads,
+which word a write goes to, when a read takes a byte, and the offsets
+a test holds to the ones SiFive's drivers use (issue 669). The run and the lockstep
 test put a terminal on the two lines, \code{term.rs}: it decodes
 what the core sends, and once the core has said a line it types
 three bytes back, a pause between them for the program to take
@@ -922,10 +929,10 @@ reads it back into \code{x24}, so that two is in \code{x23} and
 five in \code{x24} at the end, and two in \code{x8}: the line,
 raised once, and the timer. Before the traps it writes OK and a
 newline to the serial port, a byte at a time. Each byte waits for a
-load of the status to say the port is free, the polling loop every
-program writes for a port like this. Then it echoes three bytes:
-each waits for the status to say one has come, takes it from the
-third word, waits for the port to be free and writes it back; the
+load of \code{txdata} to say the queue has room, its sign bit clear,
+the polling loop every program writes for a port like this. Then it
+echoes three bytes: each loads \code{rxdata} until its sign bit says a
+byte came, which the load takes, waits for room and writes it back; the
 terminal typed the three back to back, so the second and third
 waited in the port's buffer. The
 timer's interrupt is enabled from the start and the line's only
@@ -1143,7 +1150,7 @@ with a \code{c} and printed as the instruction it stands for, which
 is what the core executes; the address after it is two bytes on
 rather than four. The loop is visible as the three
 instructions at \code{0x36} that repeat ten times with a bubble after
-each taken \code{bne}, the call as the jump to \code{0x140} and the
+each taken \code{bne}, the call as the jump to \code{0x110} and the
 compressed return to \code{0x42}, each with its bubble, and the loads
 as the sign and zero extensions of the same byte and half, each after
 the nine bubbles of the bus's round trip. The one stall a load causes
@@ -1152,7 +1159,7 @@ adds to what it loaded; each multiply is a run of two bubbles and
 each divide a run of thirty-three, which the run prints as one line
 with the count, and the last line of the printout is what the port
 said, decoded from its line. The timer's interrupt is the first jump
-to the handler at \code{0x144}, at \code{t} 308 in place of the first
+to the handler at \code{0x114}, at \code{t} 308 in place of the first
 \code{div}, once the timer reaches the compare of 150: cause seven
 and the top bit in \code{x23}, the compare moved past the end of the
 run, one counted into \code{x8}, and the return to the \code{div} it
@@ -1160,7 +1167,7 @@ displaced, which starts again. The line's interrupt comes next. The
 line is raised at cycle forty and held until the core takes it, as a
 device holds its line until it is served, since the core's pending
 bit is the line rather than a latch (issue 958). The moment the echo's
-\code{csrrw} at \code{0x128} enables it, at \code{t} 1274, it is taken
+\code{csrrw} at \code{0x0f8} enables it, at \code{t} 1140, it is taken
 in place of the \code{ecall} after it: cause eleven and the top bit in
 \code{x23}, two counted into \code{x8}, and the return to the
 \code{ecall}, which traps in its turn. The two traps are the
@@ -1331,7 +1338,7 @@ The netlist was checked as the model was: a testbench that could not
 fail would prove nothing. The register file is not traced, so the
 testbench cannot see it, but every write to it shows in the
 writeback output the next tick, and every read shows in the program
-counter and the outputs that follow; the six hundred and sixty-two
+counter and the outputs that follow; the six hundred and six
 cycles of the demonstration exercise every instruction of
 the program through both, the two traps and their returns included,
 since a wrong \code{mepc} or \code{mtvec} is a wrong program
