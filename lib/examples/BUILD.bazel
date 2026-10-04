@@ -152,6 +152,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The video peripheral with a scanout beside it, programmed over its
+# slot:  bazel run //lib/examples:ex_scanvideo
+rust_binary(
+    name = "ex_scanvideo",
+    srcs = ["ex_scanvideo.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Reading memory in bursts:  bazel run //lib/examples:ex_dma
 rust_binary(
     name = "ex_dma",
@@ -1269,6 +1282,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_ethslots.rs",
         "ex_scanout.rs",
         "ex_scanpair.rs",
+        "ex_scanvideo.rs",
         "ex_reset.rs",
         "ex_ownrst.rs",
         "ex_rstmem.rs",

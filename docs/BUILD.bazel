@@ -863,6 +863,25 @@ waveform(
     ],
 )
 
+# The video peripheral with a scanout beside it, simulated whole as one
+# netlist: the fourth frame's rows 1 to 3, where the memory stalls for a
+# line, the pair starves, and the registers hear of it a few cycles on.
+waveform(
+    name = "scanvideo",
+    example = "//lib/examples:ex_scanvideo",
+    lowered = [("scanvideo", "scanvideo")],
+    signals = [
+        "//de=>de",
+        "//req/tx_valid=>req",
+        "//words/rx_valid=>word",
+        "//scanvideo/pair/rgot=>rgot",
+        "//scanvideo/pair/under=>under",
+        "//scanvideo/ctl/seen=>seen",
+    ],
+    from_tick = 2780,
+    until = 3300,
+)
+
 # A scanout a line ahead of the beam, and a line that starves when the
 # memory stalls longer than a line (issue 151). The window is the
 # fourth frame's rows 1 to 3, where the long stall is.
