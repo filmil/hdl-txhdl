@@ -100,6 +100,7 @@ rust_test(
         "//cpu/vreteno/rust:sdprobe_program",
         "//cpu/vreteno/rust:hello_program",
         "//cpu/vreteno/rust:irq_program",
+        "//cpu/vreteno/rust:ddr3bw_program",
         "//cpu/vreteno/rust:steps_program",
         "//cpu/vreteno/rust:trng_program",
         "//lib:txhdl",

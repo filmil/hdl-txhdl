@@ -444,6 +444,50 @@ vreteno_flat(
 )
 
 
+# The path into DDR3 timed by the core (issue 1023): sixteen loads and
+# sixteen stores, from the data memory, against the DDR3 and against the
+# data memory. Built into the boot memory for //cpu/vreteno:board_test,
+# which checks it says what the simulated board's memory gives, and
+# below for the loader, which is how it runs on the board.
+rust_binary(
+    name = "ddr3bw",
+    srcs = ["ddr3bw.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_image(
+    name = "ddr3bw_image",
+    platform = ":vreteno",
+    program = ":ddr3bw",
+)
+
+rust_library(
+    name = "ddr3bw_program",
+    srcs = [":ddr3bw_image"],
+    crate_name = "ddr3bw_program",
+    edition = "2021",
+)
+
+rust_binary(
+    name = "ddr3bw_ram",
+    srcs = ["ddr3bw.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_flat(
+    name = "ddr3bw_ram_bin",
+    platform = ":vreteno",
+    program = ":ddr3bw_ram",
+)
+
 # The same test, built for the board: `--cfg=board_run` adds the header
 # line and a dot every ten seconds around the test, which a simulation
 # would pay for in simulated time and which the tests that read the

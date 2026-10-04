@@ -1367,3 +1367,50 @@ fn mcycle_steps_steadily_between_two_reads() {
     // counter the one count it wrote back over.
     assert_eq!(steps[0], 13, "cycles between the two reads");
 }
+
+/// The path into DDR3 timed by the core (issue 1023): sixteen loads,
+/// then sixteen stores and a fence, from the data memory, against the
+/// DDR3 and against the data memory, four times each. Every run of a
+/// kind takes the same cycles.
+///
+/// A load waits for its word, so the loads' difference is what a word
+/// costs the DDR3's path over the block RAM's: four cycles here, the
+/// bridge's own, since the controller's model answers in one; on the
+/// board it is that and the controller's latency, which is what the
+/// board run is for. The stores barely differ, one cycle in sixteen
+/// words: the core fetches each one over the bus, from the data memory,
+/// slower than the path takes posted words, so the stores show that the
+/// core cannot fill the path, not how fast the path is.
+#[test]
+fn the_ddr3_path_is_timed_by_the_core() {
+    let ran = run(ddr3bw_program::TEXT, ddr3bw_program::DATA, b"", 80000);
+    assert!(ran.halted_at.is_some(), "and halted: {}", ran.said);
+    let of = |what: &str| -> Vec<u32> {
+        ran.said
+            .lines()
+            .filter_map(|l| l.strip_prefix(&format!("bw {what} ")))
+            .map(|n| n.parse().expect("a number"))
+            .collect()
+    };
+    let (ld, lm) = (of("load ddr3"), of("load dmem"));
+    let (sd, sm) = (of("store ddr3"), of("store dmem"));
+    for (what, v) in [
+        ("load ddr3", &ld),
+        ("load dmem", &lm),
+        ("store ddr3", &sd),
+        ("store dmem", &sm),
+    ] {
+        assert_eq!(v.len(), 4, "four runs of {what}: {}", ran.said);
+        assert!(v.iter().all(|&c| c == v[0]), "{what} steady: {v:?}");
+    }
+    assert_eq!(
+        ld[0] - lm[0],
+        16 * 4,
+        "a load costs the DDR3 four cycles more"
+    );
+    assert_eq!(
+        sd[0] - sm[0],
+        1,
+        "the stores wait on the core, not the path"
+    );
+}
