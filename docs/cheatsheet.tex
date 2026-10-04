@@ -237,7 +237,7 @@ lowering writes one module with an instance per child.
 
 \head{Clocks}
 \begin{vocab}
-\code{struct Slow; impl Clock for Slow} & a clock: a name and a period in ticks \\
+\code{struct Slow; impl Clock for Slow} & a clock: name, period, phase in ticks \\
 \code{Reg<T, Slow>}, \code{In<T, Slow>} & state and ports on that clock \\
 \code{Slow::rising().await} & a process waits on one clock \\
 \code{ChanCdc} & the one way across clocks: a channel, in \code{//lib/parts} \\
@@ -262,7 +262,7 @@ VHDL module, a netlist or one written by hand.
 
 \head{What the lowering reads}
 A loop of one wait, then reads, \code{let}s and drives: one clocked
-block. Several waits, or one under \code{if}, make a state machine,
+block. Several waits, some under \code{if}, make a state machine,
 a state per wait, and an output a state sets holds until another
 sets it. \code{for i in 0..N} over an array of ports is unrolled for
 each \code{N}. Inside,
@@ -281,7 +281,7 @@ testbench follows. Want a nicer name in the netlist?
 
 \head{Register maps and checks}
 \begin{vocab}
-\code{regmap! \{ m (m\_read, m\_we), 2: [..] \}} & a peripheral's map said once: the decode, the C header, the datasheet table \\
+\code{regmap! \{ m (m\_read, m\_we[, m\_re]), 2: [..] \}} & a peripheral's map said once: decode, C header, datasheet table \\
 \code{(1, ctrl, rw, "..", [(run, 0, 1, ..)])} & a register and its bit fields \\
 \code{check!(c, "why")} & must hold where it is reached; an \code{assert} in the netlist \\
 \code{assume!(c, "why")}, \code{cover!(c, "why")} & taken for granted; can happen \\
@@ -289,8 +289,8 @@ testbench follows. Want a nicer name in the netlist?
 
 \head{Pipelines and builds}
 \begin{vocab}
-\code{\#[pipeline(..)] async fn} & a pipeline; stages fall where you \code{.await} \\
-\code{pipeline::drive(f, rx, tx)} & one call of \code{f} per cycle; all stall while the oldest is done and \code{tx} is full \\
+\code{\#[pipeline(..)] async fn} & stages at each \code{.await}; its Verilog has no handshake \\
+\code{pipeline::drive(f, rx, tx)} & a call of \code{f} per input; all stall while the oldest is done and \code{tx} is full \\
 \code{config! \{ Fpga: C for Top<Fpga> \{..\} \}} & a build as one item \\
 \end{vocab}
 

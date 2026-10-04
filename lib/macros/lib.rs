@@ -6151,8 +6151,9 @@ fn find_runs(ts: &[TokenTree], out: &mut Vec<(String, Group, Span)>) {
 /// or falling, which lowers to one clocked block; or a loop whose only
 /// wait is a channel's, which takes the channel's clock (issue 881);
 /// or a loop of several
-/// waits, or of a wait under `if`, which lowers to a state machine with
-/// a state per wait; or a `join2` of such loops, or of the children's
+/// waits, some of them under `if`, which lowers to a state machine with
+/// a state per wait (a loop whose only wait is under `if` is refused);
+/// or a `join2` of such loops, or of the children's
 /// `run`, for a unit of units. A `for` over a fixed range is unrolled,
 /// and one whose body waits is a counted loop. Inside, `let` names a
 /// wire, `with!`, `when!`, `case!` and Rust's `if` and `match` choose
