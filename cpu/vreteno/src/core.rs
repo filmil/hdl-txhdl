@@ -35,7 +35,7 @@ use txhdl::funcs::{lt_signed, sra};
 use txhdl::types::{Bit, U};
 use txhdl::{case, lower, select, when, with, Trace, Value};
 use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, Resp, R, W};
-use txhdl_parts::mmu::Pte;
+use txhdl_parts::mmu::{DReq, IReq, Pte, Res};
 
 /// `mstatus`'s fields that user and supervisor mode bring (issue 1012),
 /// and `MPRV` (issue 1105): what of it is writable, and what `sstatus`
@@ -922,14 +922,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             dbg_we,
             time,
             seirq,
-            ires_ok,
-            ires_pa,
-            ires_fault,
-            ires_err,
-            dres_ok,
-            dres_pa,
-            dres_fault,
-            dres_err,
+            ires,
+            dres,
             ptw,
         ): (
             In<Bit>,
@@ -950,16 +944,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // (issue 1094).
             In<Bit>,
             // The memory management unit's answers, registers, to the
-            // fetch and to the data, and its walker's reads (issue
-            // 1014).
-            In<Bit>,
-            In<U<32>>,
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            In<U<32>>,
-            In<Bit>,
-            In<Bit>,
+            // fetch and to the data, and its walker's reads (issues
+            // 1014 and 1122).
+            In<Res>,
+            In<Res>,
             Rx<U<32>>,
         ),
         (
@@ -977,10 +965,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             mmu_mxr,
             mmu_flush,
             ireq,
-            ireq_va,
             dreq,
-            dreq_va,
-            dreq_store,
             pte,
         ): (
             Out<Bit>,
@@ -998,11 +983,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             Out<Bit>,
             Out<Bit>,
             Out<Bit>,
-            Out<Bit>,
-            Out<U<32>>,
-            Out<Bit>,
-            Out<U<32>>,
-            Out<Bit>,
+            Out<IReq>,
+            Out<DReq>,
             Tx<Pte>,
         ),
     ) {
@@ -1893,11 +1875,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // on, since the unit sees the request a cycle late in
             // simulation and on time in hardware, and an answer in
             // either is for the request the unit saw a cycle before.
+            let (imr, dmr) = (ires.get(), dres.get());
             let i_age = self.i_age.get();
             let i_need = f_want & vm & !f_th & !self.f_wait;
             let i_take = self.i_req
                 & Bit::from(i_age == 2)
-                & (ires_ok.get() | ires_fault.get() | ires_err.get());
+                & (imr.ok | imr.fault | imr.err);
             // The data's the same way, for the access in execute, once
             // its operands are in.
             let x_age = self.x_age.get();
@@ -1911,7 +1894,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 & !amo_busy;
             let x_take = self.x_req
                 & Bit::from(x_age == 2)
-                & (dres_ok.get() | dres_fault.get() | dres_err.get());
+                & (dmr.ok | dmr.fault | dmr.err);
             with!(self <= {
                 f_send ? {
                     f_wait: Bit::One,
@@ -1956,9 +1939,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     i_req: Bit::Zero,
                     ft_valid: Bit::One,
                     ft_vpn: self.i_va.get().slice::<12, 20>(),
-                    ft_ppn: ires_pa.get().slice::<12, 20>(),
-                    ft_pf: ires_fault.get(),
-                    ft_af: ires_err.get()
+                    ft_ppn: imr.pa.slice::<12, 20>(),
+                    ft_pf: imr.fault,
+                    ft_af: imr.err
                 },
                 x_start ? {
                     x_req: Bit::One,
@@ -1970,9 +1953,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 x_take ? {
                     x_req: Bit::Zero,
                     x_done: Bit::One,
-                    x_pa: dres_pa.get(),
-                    x_pf: dres_fault.get(),
-                    x_af: dres_err.get()
+                    x_pa: dmr.pa,
+                    x_pf: dmr.fault,
+                    x_af: dmr.err
                 },
                 // The answer is the instruction's in execute, and goes
                 // when it does.
@@ -2016,11 +1999,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             mmu_sum.set(mstatus.bit(18));
             mmu_mxr.set(mstatus.bit(19));
             mmu_flush.set(self.flush.get());
-            ireq.set(self.i_req.get());
-            ireq_va.set(self.i_va.get());
-            dreq.set(self.x_req.get());
-            dreq_va.set(self.x_va.get());
-            dreq_store.set(self.x_st.get());
+            ireq.set(IReq {
+                req: self.i_req.get(),
+                va: self.i_va.get(),
+            });
+            dreq.set(DReq {
+                req: self.x_req.get(),
+                va: self.x_va.get(),
+                store: self.x_st.get(),
+            });
             case!(rst => {
                 Bit::One => { self.dev_wait <= Bit::Zero },
                 _ if send_load.to_bool() => { self.dev_wait <= Bit::One },

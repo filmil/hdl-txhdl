@@ -15,7 +15,7 @@ use txhdl::comp::{chan, join2, signal, DefaultClock, In, Out, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
 use txhdl_parts::bus::axi::{Done, Grant, Issue, R, W};
-use txhdl_parts::mmu::{Mmu8, Pte};
+use txhdl_parts::mmu::{DReq, IReq, Mmu8, Pte, Res};
 
 use crate::core::{Vreteno, Writeback};
 
@@ -91,20 +91,11 @@ impl<const IW: usize> Unit for Hart<IW> {
         let (sum_o, sum_i) = signal::<Bit, DefaultClock>();
         let (mxr_o, mxr_i) = signal::<Bit, DefaultClock>();
         let (flush_o, flush_i) = signal::<Bit, DefaultClock>();
-        let (ireq_o, ireq_i) = signal::<Bit, DefaultClock>();
-        let (iva_o, iva_i) = signal::<U<32>, DefaultClock>();
-        let (dreq_o, dreq_i) = signal::<Bit, DefaultClock>();
-        let (dva_o, dva_i) = signal::<U<32>, DefaultClock>();
-        let (dst_o, dst_i) = signal::<Bit, DefaultClock>();
+        let (ireq_o, ireq_i) = signal::<IReq, DefaultClock>();
+        let (dreq_o, dreq_i) = signal::<DReq, DefaultClock>();
         // What the unit answers.
-        let (iok_o, iok_i) = signal::<Bit, DefaultClock>();
-        let (ipa_o, ipa_i) = signal::<U<32>, DefaultClock>();
-        let (ipf_o, ipf_i) = signal::<Bit, DefaultClock>();
-        let (iaf_o, iaf_i) = signal::<Bit, DefaultClock>();
-        let (dok_o, dok_i) = signal::<Bit, DefaultClock>();
-        let (dpa_o, dpa_i) = signal::<U<32>, DefaultClock>();
-        let (dpf_o, dpf_i) = signal::<Bit, DefaultClock>();
-        let (daf_o, daf_i) = signal::<Bit, DefaultClock>();
+        let (ires_o, ires_i) = signal::<Res, DefaultClock>();
+        let (dres_o, dres_i) = signal::<Res, DefaultClock>();
         // The walker's reads, which the core puts on the bus, and what
         // they read.
         let (ptw_tx, ptw_rx) = chan::<U<32>, DefaultClock>();
@@ -113,24 +104,20 @@ impl<const IW: usize> Unit for Hart<IW> {
             self.mmu.run(
                 (
                     rst_mmu, satp_i, prv_i, sum_i, mxr_i, flush_i, ireq_i,
-                    iva_i, dreq_i, dva_i, dst_i, pte_rx,
+                    dreq_i, pte_rx,
                 ),
-                (
-                    iok_o, ipa_o, ipf_o, iaf_o, dok_o, dpa_o, dpf_o, daf_o,
-                    ptw_tx,
-                ),
+                (ires_o, dres_o, ptw_tx),
             ),
             self.core.run(
                 (
                     rst, irq, tirq, sirq, rdata, done, grant, haltreq,
                     resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
-                    iok_i, ipa_i, ipf_i, iaf_i, dok_i, dpa_i, dpf_i, daf_i,
-                    ptw_rx,
+                    ires_i, dres_i, ptw_rx,
                 ),
                 (
                     halt, instr, wb, issue, wbeat, release, dbg, dbg_rdata,
-                    satp_o, prv_o, sum_o, mxr_o, flush_o, ireq_o, iva_o,
-                    dreq_o, dva_o, dst_o, pte_tx,
+                    satp_o, prv_o, sum_o, mxr_o, flush_o, ireq_o, dreq_o,
+                    pte_tx,
                 ),
             ),
         )
