@@ -82,6 +82,69 @@ pub trait Bus: std::fmt::Debug {
     fn store(&self, addr: u32, v: u32, mask: u32) -> bool;
 }
 
+/// Translations the machine has made, for the fast machine alone (issue
+/// 1132): 256 entries, direct mapped by the virtual page and the access,
+/// each tagged with everything a translation depends on, so a hit is the
+/// walk's own answer. Only a translation that succeeded is kept, so a
+/// fault always walks. A write of `satp`, an `sfence.vma` and a reset
+/// empty it, as they would a hart's. The model in lockstep with the core
+/// runs without a bus and so without this: there the reference walks
+/// every access.
+#[derive(Clone, Debug, Default)]
+pub struct Tlb {
+    entries: Vec<Option<TlbEntry>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TlbEntry {
+    vpn: u32,
+    satp: u32,
+    prv: u8,
+    sum: bool,
+    mxr: bool,
+    access: u8,
+    ppn: u32,
+}
+
+impl Tlb {
+    const SIZE: usize = 256;
+
+    fn key(vpn: u32, access: Access) -> usize {
+        (vpn as usize ^ (access as usize * 0x55)) & (Self::SIZE - 1)
+    }
+
+    fn get(&self, vpn: u32, m: &Mode, access: Access) -> Option<u32> {
+        let e = (*self.entries.get(Self::key(vpn, access))?)?;
+        let hit = e.vpn == vpn
+            && e.satp == m.satp
+            && e.prv == m.prv
+            && e.sum == m.sum
+            && e.mxr == m.mxr
+            && e.access == access as u8;
+        hit.then_some(e.ppn)
+    }
+
+    fn put(&mut self, vpn: u32, m: &Mode, access: Access, ppn: u32) {
+        if self.entries.is_empty() {
+            self.entries = vec![None; Self::SIZE];
+        }
+        self.entries[Self::key(vpn, access)] = Some(TlbEntry {
+            vpn,
+            satp: m.satp,
+            prv: m.prv,
+            sum: m.sum,
+            mxr: m.mxr,
+            access: access as u8,
+            ppn,
+        });
+    }
+
+    /// Every translation forgotten.
+    pub fn flush(&mut self) {
+        self.entries.clear();
+    }
+}
+
 /// The architectural state, and only that.
 #[derive(Clone, Debug)]
 pub struct Model {
@@ -89,6 +152,8 @@ pub struct Model {
     /// and store goes to it. `None` is the board as the lockstep test
     /// holds the core to it, its memories the model's own.
     pub bus: Option<std::rc::Rc<dyn Bus>>,
+    /// The fast machine's translations; empty and unused without a bus.
+    pub tlb: std::cell::RefCell<Tlb>,
     pub pc: u32,
     pub x: [u32; 32],
     pub mem: Vec<u32>,
@@ -149,6 +214,7 @@ impl Default for Model {
     fn default() -> Self {
         Model {
             bus: None,
+            tlb: Default::default(),
             pc: 0,
             x: [0; 32],
             mem: vec![0; DATA_BYTES as usize / 4],
@@ -349,6 +415,27 @@ impl Model {
     /// which is where the core's second word is. A page fault's value
     /// is the address of the half that faulted, and an access fault's
     /// the instruction's, as the core's fetch from the bus gives.
+    /// `translate`, through the TLB when the model is in a machine.
+    fn walk(
+        &self,
+        imem: &[u32],
+        m: Mode,
+        va: u32,
+        access: Access,
+    ) -> Result<u32, Fault> {
+        let read = |pa| self.pte_word(imem, pa);
+        if self.bus.is_none() {
+            return translate(read, m, va, access);
+        }
+        let vpn = va >> 12;
+        if let Some(ppn) = self.tlb.borrow().get(vpn, &m, access) {
+            return Ok(ppn << 12 | (va & 0xfff));
+        }
+        let pa = translate(read, m, va, access)?;
+        self.tlb.borrow_mut().put(vpn, &m, access, pa >> 12);
+        Ok(pa)
+    }
+
     fn fetch_vm(
         &self,
         imem: &[u32],
@@ -358,20 +445,21 @@ impl Model {
         if m.satp >> 31 == 0 || m.prv == 3 {
             return self.fetch_at(imem, pc).ok_or((CAUSE_FETCH_ACCESS, pc));
         }
-        let read = |pa| self.pte_word(imem, pa);
         let fault = |f: Fault, at: u32| match f {
             Fault::Page => (CAUSE_FETCH_PAGE, at),
             Fault::Access => (CAUSE_FETCH_ACCESS, pc),
         };
-        let pa0 =
-            translate(read, m, pc, Access::Fetch).map_err(|f| fault(f, pc))?;
+        let pa0 = self
+            .walk(imem, m, pc, Access::Fetch)
+            .map_err(|f| fault(f, pc))?;
         let lo = self.fetch_half(imem, pa0).ok_or((CAUSE_FETCH_ACCESS, pc))?;
         if is_compressed(lo) {
             return Ok((compressed(lo).unwrap_or(lo as u32), 2));
         }
         let pc2 = pc.wrapping_add(2);
         let pa1 = if pc2 & 0xfff == 0 {
-            translate(read, m, pc2, Access::Fetch).map_err(|f| fault(f, pc2))?
+            self.walk(imem, m, pc2, Access::Fetch)
+                .map_err(|f| fault(f, pc2))?
         } else {
             pa0.wrapping_add(2)
         };
@@ -396,7 +484,7 @@ impl Model {
         if self.prv == 3 && self.csr.mstatus & MPRV != 0 {
             m.prv = (self.csr.mstatus >> 11 & 3) as u8;
         }
-        translate(|pa| self.pte_word(imem, pa), m, va, access).map_err(|f| {
+        self.walk(imem, m, va, access).map_err(|f| {
             let cause = match (f, store) {
                 (Fault::Page, false) => CAUSE_LOAD_PAGE,
                 (Fault::Page, true) => CAUSE_STORE_PAGE,
@@ -603,7 +691,10 @@ impl Model {
             CSR_SEPC => self.csr.sepc = v & !1,
             CSR_SCAUSE => self.csr.scause = v,
             CSR_STVAL => self.csr.stval = v,
-            CSR_SATP => self.csr.satp = v,
+            CSR_SATP => {
+                self.csr.satp = v;
+                self.tlb.borrow_mut().flush();
+            }
             CSR_MTVAL => self.csr.mtval = v,
             CSR_MBUSQUIET => self.csr.busquiet = v & 1 != 0,
             // `ebreakm` and `step` are the debugger's; the rest is the
@@ -731,6 +822,7 @@ impl Model {
     /// rather than the machine's state (issue 419).
     pub fn reset(&mut self) {
         self.pc = 0;
+        self.tlb.borrow_mut().flush();
         self.csr = Csr::default();
         self.minstret = 0;
         self.mtimecmp = u64::MAX;
@@ -1097,6 +1189,7 @@ impl Model {
                     self.trap(CAUSE_ILLEGAL, w);
                     return;
                 }
+                self.tlb.borrow_mut().flush();
             }
             Wfi => {
                 if self.prv == 0 {
@@ -1203,6 +1296,67 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
+
+    /// A memory of words for the TLB's test, as a machine's bus.
+    #[derive(Debug, Default)]
+    struct Words(std::cell::RefCell<std::collections::HashMap<u32, u32>>);
+
+    impl Bus for Words {
+        fn load(&self, addr: u32) -> Option<u32> {
+            Some(*self.0.borrow().get(&addr).unwrap_or(&0))
+        }
+        fn store(&self, addr: u32, v: u32, mask: u32) -> bool {
+            let mut m = self.0.borrow_mut();
+            let w = m.entry(addr).or_insert(0);
+            *w = (*w & !mask) | (v & mask);
+            true
+        }
+    }
+
+    /// The machine's TLB answers as the walk does (issue 1132): a miss
+    /// walks and keeps the answer, a hit gives the same address, a
+    /// changed entry is not seen until `sfence.vma` or a write of
+    /// `satp`, as on a hart, and a fault is never kept.
+    #[test]
+    fn the_machines_tlb_answers_as_the_walk_does() {
+        use txhdl_parts::mmu::pte::{to, A, D, R, V, W};
+        let root = 0x8000_0000u32;
+        let l0 = 0x8000_1000u32;
+        let words = std::rc::Rc::new(Words::default());
+        let put = |a: u32, v: u32| assert!(words.store(a, v, u32::MAX));
+        let va = 0x0040_1234u32;
+        let leaf = l0 + ((va >> 12) & 0x3ff) * 4;
+        put(root + (va >> 22) * 4, to(l0, V));
+        put(leaf, to(0x5000_0000, V | R | W | A | D));
+        let mut m = Model {
+            bus: Some(words.clone() as std::rc::Rc<dyn Bus>),
+            ..Model::default()
+        };
+        m.prv = 1;
+        m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
+        let walk = |m: &Model, store: bool| {
+            let access = if store { Access::Store } else { Access::Load };
+            let read = |pa| m.pte_word(&[], pa);
+            translate(read, m.vm_mode(), va, access)
+        };
+        assert_eq!(m.data_pa(&[], va, false), Ok(0x5000_0234));
+        assert_eq!(Ok(0x5000_0234), walk(&m, false), "the walk agrees");
+        assert_eq!(m.data_pa(&[], va, false), Ok(0x5000_0234), "a hit");
+        // The page moves. Until a flush the TLB keeps the old one, as a
+        // hart's may; after it, the new one.
+        put(leaf, to(0x6000_0000, V | R | W | A | D));
+        assert_eq!(m.data_pa(&[], va, false), Ok(0x5000_0234), "kept");
+        m.tlb.borrow_mut().flush();
+        assert_eq!(m.data_pa(&[], va, false), Ok(0x6000_0234), "flushed");
+        assert_eq!(Ok(0x6000_0234), walk(&m, false));
+        // A store to a page whose dirty bit is clear faults every time.
+        put(leaf, to(0x6000_0000, V | R | W | A));
+        m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
+        assert_eq!(m.data_pa(&[], va, true), Err((CAUSE_STORE_PAGE, va)));
+        assert_eq!(m.data_pa(&[], va, true), Err((CAUSE_STORE_PAGE, va)));
+        assert_eq!(m.data_pa(&[], va, false), Ok(0x6000_0234));
+    }
+
     use super::*;
     use crate::isa::{addi, c_addi, c_jal, c_jr, c_nop, halt, lui};
 
