@@ -1208,6 +1208,20 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The link's peripheral end on a peripheral's AXI4 pins, the mirror of
+# ex_axi_pins (issue 1023):
+#   bazel run //lib/examples:ex_axi_per_pins
+rust_binary(
+    name = "ex_axi_per_pins",
+    srcs = ["ex_axi_per_pins.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # An I2C master on AXI-Lite, with a device on the two lines:
 #   bazel run //lib/examples:ex_i2c
 rust_binary(
@@ -1396,6 +1410,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_axi_lite.rs",
         "ex_i2c.rs",
         "ex_mdio.rs",
+        "ex_axi_per_pins.rs",
         "ex_axi_pins.rs",
         "ex_plic.rs",
         "ex_mmu.rs",

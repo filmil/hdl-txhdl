@@ -1639,6 +1639,29 @@ waveform(
     width = 7.4,
 )
 
+# The link's peripheral end on a peripheral's AXI4 pins (issue 1023): a
+# write's address phase and beats taken off the link's channels as the
+# peripheral is ready, and its response sent back on the link.
+waveform(
+    name = "axi_per_pins",
+    example = "//lib/examples:ex_axi_per_pins",
+    lowered = ("axi_per_pins", "pins"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//inp_aw/tx_valid=>aw",
+        "//outp_awvalid=>awvalid",
+        "//inp_pins_awready=>awready",
+        "//inp_w/tx_valid=>w",
+        "//outp_wvalid=>wvalid",
+        "//outp_wlast=>wlast",
+        "//inp_pins_bvalid=>bvalid",
+        "//outp_bready=>bready",
+        "//outp_b/tx_valid=>b",
+    ],
+    until = 24,
+    width = 7.4,
+)
+
 # An I2C master: the address going out a bit at a time, the device's
 # acknowledge, and the clock the device stretches.
 waveform(
@@ -3595,6 +3618,8 @@ latex_document(
         ":vendored_tex",
         ":axi_pins_run",
         ":axi_pins_timing",
+        ":axi_per_pins_run",
+        ":axi_per_pins_timing",
         "//lib/examples:sources",
         "//lib/parts:sources",
         "//pcie:sources",

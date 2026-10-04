@@ -14,6 +14,7 @@ rust_library(
         "src/ethslots.rs",
         "src/bus/axi.rs",
         "src/bus/axi_lite.rs",
+        "src/bus/axi_per_pins.rs",
         "src/bus/axi_pins.rs",
         "src/bus/lite_split.rs",
         "src/bus/noc.rs",

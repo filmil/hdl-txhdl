@@ -135,11 +135,15 @@ all under `//docs`:
 * `//docs:pcie` is PCIe on the AX7A200B: AMD's XDMA endpoint, which
   `//pcie:xdma_x2` generates with `vivado_ip`; `AxiPins` in
   `//lib/parts` under `bus::axi_pins`, which joins a host's AXI4 pins to
-  the link's channels, with its example `ex_axi_pins`; and `//pcie`, the
+  the link's channels, with its example `ex_axi_pins`; `AxiPerPins`
+  under `bus::axi_per_pins`, the same the other way, which joins the
+  link's channels to a peripheral's AXI4 pins, with its example
+  `ex_axi_per_pins`; and `//pcie`, the
   lowered design behind BAR1 and the hand-written top, which
   `//pcie:endpoint_synth` and `//pcie:endpoint_pnr` put through Vivado
   to a bitstream.
-  `ex_axi_pins` is documented there and not in `//docs:examples`.
+  `ex_axi_pins` and `ex_axi_per_pins` are documented there and not in
+  `//docs:examples`.
 * `//docs:datasheets` is a datasheet per component: every unit under
   `#[lower]` outside the examples, and every family a macro writes.
   The prose of each sheet is in `docs/datasheets/<Key>.tex`; its
