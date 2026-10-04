@@ -1360,8 +1360,8 @@ is an Artix-7, \code{xc7a200tfbg484-2}, with a clock constraint of
 ten nanoseconds and no pins, since the question is whether the
 netlist synthesizes and to what, not where it goes on a board.
 Synthesis took two minutes and finished with no error and no
-critical warning. Among its warnings, the writeback stage's program
-counter, which only the lockstep test reads, was removed as unused.
+critical warning. Table~\ref{tab:v-synth} is its report, run on
+2026-10-04 at commit \code{a2b06993}.
 
 \begin{table}[htbp]
 \caption{The core on an Artix-7, after synthesis; the data memory,
@@ -1372,9 +1372,9 @@ the timer and the serial port, units of their own, are not in it.}
 \toprule
 Resource & Used \\
 \midrule
-LUTs, as logic & 2151 \\
+LUTs, as logic & 2624 \\
 LUTs, as distributed RAM & 48 \\
-Flip-flops & 489 \\
+Flip-flops & 809 \\
 Block RAM tiles & 2 \\
 DSP blocks & 4 \\
 \bottomrule
@@ -1404,28 +1404,28 @@ and the stage registered the load's, and the LUT count fell by a
 third. The register file, 32 by 32 with one write port and two
 reads, is twelve of the small distributed primitives, which is what
 a register file of that size is on this family. The flip-flops are
-the core's registers less one, the
-writeback
-stage's program counter, which only the lockstep test reads and
-synthesis removed as unused, with a warning that says so, and less
-the bits a mask makes constant: \code{mstatus} has two bits that
+the core's registers less the bits a mask makes constant: \code{mstatus} has two bits that
 can be set, and \code{mtvec} and \code{mepc} lose the alignment
 bits the core clears on every write. The rest of the control
 registers stay, since every bit can be read back through a CSR
-instruction.
+instruction. Synthesis also
+trims \code{f\_w1}, the word after the counter as a fetch from the
+bus returned it, from 32 bits to 16, with a warning: an instruction
+that crosses into that word takes only its lower half.
 
 The netlist is also placed and routed, \code{bazel build
 //cpu/vreteno:vreteno\_pnr}, with the same constraint and no pins,
 so the bitstream is a stub and the reports are the point. It is
 synthesised out of context, so its ports are the partition's pins
 and not pads: the core has 308 ports and the package 285 pins, and placement failed on them until it was
-(issue~971). The routed design meets ten nanoseconds with 0.366~ns
-of slack, and hold with 0.132~ns, in 2749 LUTs and 810 flip-flops.
-The critical path is 9.069~ns, of which routing is three quarters,
-through twelve levels of logic: from the first register field of the
+(issue~971). Run on 2026-10-04 at commit \code{a2b06993}, the routed
+design meets ten nanoseconds with 0.267~ns of slack, and hold with
+0.132~ns, in 2622 LUTs and 809 flip-flops. The critical path is
+9.717~ns, of which routing is two thirds, through seventeen levels of
+logic, nine of them carry: from the first register field of the
 instruction register, through the register file's read and the
-branch's compare, into the next program counter and the instruction
-memory's address. The last run that placed, on an older core, had
+operand's forwarding, along the ALU's adder, into the writeback
+stage's result. The last run that placed, on an older core, had
 9.661~ns, 0.296~ns of slack and hold 0.102~ns, from the second register field
 through the operand's forwarding into the ALU's compare and the
 writeback value.
