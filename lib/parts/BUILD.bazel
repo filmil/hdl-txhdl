@@ -2,7 +2,7 @@
 # Parts: units the language provides as hardware, written in the
 # language's own lowerable subset. The channel buffer is the first.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
-load("//tools/vivado:defs.bzl", "vivado_synthesis2")
+load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
 
 rust_library(
     name = "txhdl_parts",
@@ -172,4 +172,48 @@ vivado_synthesis2(
     tags = ["manual"],
     top = "switch",
     xdcs = [":noc_xdc"],
+)
+
+# The Sv32 unit, Mmu8, alone and out of context against the core's ten
+# nanosecond clock (issue 1014): whether its registers meet the clock,
+# and how long the answer takes from the virtual address the core holds
+# in a register to the physical address it sends. Manual, as every
+# Vivado target here is.
+#
+#   bazel build //lib/parts:mmu_pnr
+filegroup(
+    name = "mmu_xdc",
+    srcs = ["mmu.xdc"],
+)
+
+vivado_synthesis2(
+    name = "mmu_synth",
+    srcs = ["//docs:mmu.v"],
+    part = "xc7a200tfbg484-2",
+    synth_design_options = "-mode out_of_context",
+    tags = ["manual"],
+    top = "mmu8",
+    xdcs = [":mmu_xdc"],
+)
+
+vivado_place_and_route2(
+    name = "mmu_pnr",
+    # The paths the core will put the unit on: from each port's address
+    # into its answer's registers, from those registers to the ports,
+    # and the worst from register to register.
+    post_route_design = [
+        'puts "TXHDL-PROBE ipa"',
+        'puts [report_timing -from [get_ports -filter {NAME =~ "ireq_va*"}] -to [get_cells -filter {NAME =~ "ipa_reg*" || NAME =~ "iok_reg*" || NAME =~ "ipf_reg*"}] -max_paths 1 -return_string]',
+        'puts "TXHDL-PROBE dpa"',
+        'puts [report_timing -from [get_ports -filter {NAME =~ "dreq_va*"}] -to [get_cells -filter {NAME =~ "dpa_reg*" || NAME =~ "dok_reg*" || NAME =~ "dpf_reg*"}] -max_paths 1 -return_string]',
+        'puts "TXHDL-PROBE out"',
+        'puts [report_timing -to [get_ports -filter {NAME =~ "ires_*" || NAME =~ "dres_*"}] -max_paths 1 -return_string]',
+        'puts "TXHDL-PROBE regs"',
+        'puts [report_timing -max_paths 1 -return_string]',
+        'puts "TXHDL-PROBE end"',
+    ],
+    placeholder_bitstream = True,
+    synthesis = ":mmu_synth",
+    tags = ["manual"],
+    xdcs = [":mmu_xdc"],
 )
