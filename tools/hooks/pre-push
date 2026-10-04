@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# Refuses a push whose tree fails the two checks a targeted test run
+# leaves out and CI does not: the crates' formatting and every
+# document's words on their page (issue 1133).
+#
+# Turned on once per clone, for every worktree of it:
+#
+#   git config core.hooksPath tools/hooks
+#
+# The path is relative, so each worktree runs its own checkout's copy;
+# a worktree whose base predates this file has none, and pushes as
+# before. `git push --no-verify` skips it, which is for emergencies.
+set -uo pipefail
+
+# Git hands the refs being pushed on standard input, one per line:
+# local ref, local sha, remote ref, remote sha. A push that only
+# deletes branches sends nothing to check.
+zero=0000000000000000000000000000000000000000
+pushing=0
+while read -r _ lsha _ _; do
+  [ "$lsha" = "$zero" ] || pushing=1
+done
+[ "$pushing" -eq 1 ] || exit 0
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "pre-push: the worktree has uncommitted changes; the checks run on" >&2
+  echo "pre-push: the files as they are, not as they were committed." >&2
+fi
+
+echo "pre-push: bazel test //:fmt_test //docs:edge_test" >&2
+log=$(mktemp)
+trap 'rm -f "$log"' EXIT
+if bazel test //:fmt_test //docs:edge_test --test_output=errors \
+  >"$log" 2>&1; then
+  exit 0
+fi
+
+echo "pre-push: refused. The end of the test run:" >&2
+tail -n 25 "$log" >&2
+if grep -qE "//:fmt_test +FAILED|Rustfmt .* failed" "$log"; then
+  echo "pre-push: format with" >&2
+  echo "  bazel run @rules_rust//:rustfmt --@rules_rust//:rustfmt.toml=//:rustfmt.toml -- //..." >&2
+fi
+if grep -qE "//docs:edge_test +FAILED" "$log"; then
+  echo "pre-push: a word lies past a page's edge: wrap the line, shorten" >&2
+  echo "  the text, or make the float page wide, then commit and push." >&2
+fi
+exit 1
