@@ -197,7 +197,7 @@ dropped; clear, which reset leaves, either is an access fault, as
 Section~\ref{sec:v-core} says.
 
 Five more say what the machine is rather than what it is doing.
-\code{misa} reports RV32IMAC, and \code{mvendorid}, \code{marchid},
+\code{misa} reports RV32IMAC with supervisor and user mode, and \code{mvendorid}, \code{marchid},
 \code{mimpid} and \code{mhartid} read as zero: an unassigned vendor,
 an unspecified architecture and implementation, and one hart, which is
 hart zero. They are there because a stock kernel reads one of them
@@ -226,6 +226,16 @@ two, told apart by the five bits at the top: \code{lr.w}, whose
 the three logical ones, and the signed and unsigned minimum and
 maximum (issue~1010). Bits 26 and 25, \code{aq} and \code{rl}, are
 decoded and set aside, since one hart in order already orders them.
+User and supervisor mode (issue~1012) add \code{sret}, a system
+instruction beside \code{mret}; the supervisor's registers,
+\code{sstatus}, \code{sie} and \code{sip}, which are views of the
+machine's, and \code{stvec}, \code{sscratch}, \code{sepc},
+\code{scause}, \code{stval} and \code{satp}; the delegation registers
+\code{medeleg} and \code{mideleg}; the counter enables
+\code{mcounteren} and \code{scounteren}; and the unprivileged
+counters \code{cycle}, \code{time} and \code{instret} with their high
+halves. A CSR's address names in its bits 9 and 8 the least privilege
+that may reach it, and one whose top two bits are set is read-only.
 A unit test checks each format's encoder against the decoder.
 
 The compressed instructions are sixteen-bit spellings of instructions
@@ -325,7 +335,19 @@ stores only while it is reserved, writes 0 if it stored and 1 if not,
 and uses the reservation up either way. A misaligned one traps,
 \code{lr.w} as a load and the rest as a store, and a word the bus
 refuses is a load's access fault for \code{lr.w} and a store's for
-an AMO.
+an AMO. The privilege is a number, 3 machine, 1 supervisor, 0 user. A
+trap below machine mode whose cause machine mode delegated, in
+\code{medeleg} for an exception and \code{mideleg} for an interrupt,
+goes to the supervisor through its registers, saving \code{SIE} and
+the mode in \code{SPIE} and \code{SPP}; any other goes to machine mode,
+saving \code{MIE} and the mode in \code{MPIE} and \code{MPP}. An
+interrupt machine mode keeps is taken below machine mode always and in
+it with \code{MIE}; one it delegated is taken below supervisor mode
+always and in it with \code{SIE}; the machine's come first.
+\code{mret} and \code{sret} return to the saved mode and leave user
+mode in its place, and \code{ecall}'s cause is 8 plus the mode it came
+from. A CSR the mode may not reach, \code{mret} below machine mode, and
+\code{sret} and \code{wfi} in user mode are illegal instructions.
 
 The same model is also a fast machine, for software too large for the
 cycle-level runs: a kernel, and what boots it (issue~\#1016). Given a
@@ -495,6 +517,25 @@ instruction first waits, as \code{fence} does, for the stores already
 posted, so \code{aq} and \code{rl} need nothing more. The cost is
 time, not clock: an AMO on the data memory takes about forty cycles,
 most of them the wait for the previous one's store.
+
+User and supervisor mode (issue~1012) are a two-bit privilege register
+and the supervisor's registers beside the machine's, and they are
+built so that a trap's destination is decided the way its cause is:
+\code{to\_s} is one bit of \code{medeleg} or \code{mideleg}, picked by
+the cause's low five bits, and it chooses the vector, \code{stvec} or
+\code{mtvec}, the registers the trap writes, and the status it
+leaves. The interrupt is chosen from the pending and enabled bits
+split by \code{mideleg}, the machine's set first when the mode allows
+it, which is a function of registers alone and so adds nothing to
+the paths that set the clock. \code{mip}'s supervisor bits are
+software's: machine mode sets them, which is how a supervisor gets
+its timer from the SBI, and the supervisor clears its own software
+interrupt through \code{sip}. \code{time} reads the timer's count,
+which the timer hands the core on a port of its own, so that the CLINT
+and the counter cannot disagree. Writing the lockstep test for this
+found that a \code{wfi} the core refused in user mode still set its
+wait, and a core that waited for an interrupt nothing would send; the
+wait now asks that the instruction be legal.
 
 Three of the cycle's decisions, whether the instruction in execute
 is stalled, whether an interrupt takes its place and whether the
@@ -1024,7 +1065,11 @@ data base, now and then a forward branch over one or two words, so
 both outcomes of every branch condition occur, the M extension in
 half the places an \code{or} would go, the A extension's word forms
 on an aligned data word through \code{x28}, an AMO, or \code{lr.w}
-and \code{sc.w} on one word, or \code{sc.w} alone, the six CSR forms on
+and \code{sc.w} on one word, or \code{sc.w} alone; the mode the
+body runs in, machine, supervisor or user, with illegal instructions,
+user mode's environment calls and the supervisor's software interrupt
+each delegated or not by the seed, and a supervisor's handler beside
+the machine's; and the six CSR forms on
 \code{mscratch}, \code{mcause}, \code{mepc} and \code{mtval},
 and now and then an \code{ecall} or an illegal instruction: a word of
 zeros, which is two illegal halfwords, a reserved compressed halfword,
