@@ -643,6 +643,21 @@ waveform(
     ],
 )
 
+# Whether a receive took something: `recv_if`'s answer to `is_some()` is
+# the take, one bit, and not the transaction's data (issue 1079).
+waveform(
+    name = "recv_some",
+    example = "//lib/examples:ex_recv_some",
+    lowered = ("takers", "takers"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//go=>go",
+        "//took=>took",
+        "//count=>count",
+        "//takers/source/n=>n",
+    ],
+)
+
 # A unit that answers the reset itself, and the run's reset that leaves
 # its registers to it (issue 878).
 waveform(

@@ -334,6 +334,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Whether a receive took something:  bazel run //lib/examples:ex_recv_some
+rust_binary(
+    name = "ex_recv_some",
+    srcs = ["ex_recv_some.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A unit that answers the reset itself:  bazel run //lib/examples:ex_ownrst
 rust_binary(
     name = "ex_ownrst",
@@ -1341,6 +1350,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_rstmem.rs",
         "ex_rstmemown.rs",
         "ex_flush.rs",
+        "ex_recv_some.rs",
         "ex_start.rs",
         "ex_chanwait.rs",
         "ex_rstcheck.rs",
