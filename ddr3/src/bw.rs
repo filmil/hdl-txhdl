@@ -9,7 +9,8 @@
 //! one's beats. So a read costs the controller's latency once a burst,
 //! not once a word, and with a few bursts in flight even that overlaps,
 //! which leaves a word a cycle. A write takes a beat a cycle too, with
-//! four cycles between bursts that the host leaves (issue 1121).
+//! no step between bursts (issue 1121) while the client has room to
+//! issue the next before it waits on an old one.
 //!
 //! [`pins`] measures that path with the controller replaced by a memory
 //! on its pins that answers after a given latency, so the cost per word
@@ -234,19 +235,27 @@ mod tests {
         }
     }
 
-    /// Writes take a beat a cycle, and four cycles a burst more, whatever
-    /// the latency: the pins part takes a beat in any step the link has
-    /// one and the memory is ready, so those four are a gap on the
-    /// link's write channel between one burst and the next, which is the
-    /// host's, not the path's (issue 1121).
+    /// Writes take a beat a cycle, whatever the latency. While the client
+    /// has bursts to spare in its window, one burst's beats follow the
+    /// last's with no step between them (issue 1121). Once the window is
+    /// full, the client waits on its oldest burst before issuing the
+    /// next, and that wait costs a step a burst, which is the client's
+    /// and not the link's.
     #[test]
-    fn a_write_takes_a_beat_a_cycle_and_four_a_burst() {
+    fn a_write_takes_a_beat_a_cycle() {
+        let one = pins(0, 16, 1, true).cycles;
+        let full = pins(0, 16, WINDOW, true).cycles;
+        assert_eq!(
+            full - one,
+            16 * (WINDOW as u64 - 1),
+            "no step between bursts while the window has room"
+        );
         for latency in [0, 16, 32] {
             // The last response's latency is the one nothing hides.
             let m = pins(latency, 16, 64, true);
             let c = (m.cycles - latency) as f64 / m.words as f64;
             assert!(
-                (c - 20.0 / 16.0).abs() < 0.01,
+                (c - 17.0 / 16.0).abs() < 0.01,
                 "latency {latency}: {c} cycles a word"
             );
         }
