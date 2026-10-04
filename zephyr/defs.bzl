@@ -177,7 +177,15 @@ remap="$remap -ffile-prefix-map=$mreal=./$MODULE_DIR"
 breal=$(dirname "$(dirname "$(readlink -f "$root/$MBEDTLS_ROOT/zephyr/module.yml")")")
 remap="$remap -ffile-prefix-map=$breal=./$MBEDTLS_ROOT"
 
+# Zephyr keeps a cache of what the compiler can do, and looks for a
+# writable place for it in XDG_CACHE_HOME, then HOME, then its own tree.
+# A sandbox gives it neither of the first two, so it wrote into the
+# fetched Zephyr, which is an input of this action and lives in the
+# repository cache every workspace here shares: each build changed its
+# own inputs, and no image was ever a cache hit (issue 936). Named here,
+# inside the build directory, it is the action's own.
 "$root/$CMAKE" -B "$build" -S "$src" -G Ninja \
+  -DUSER_CACHE_DIR="$build/.usercache" \
   -DBOARD="$BOARD" $conf_arg \
   -DEXTRA_CFLAGS="$remap" \
   -DEXTRA_CXXFLAGS="$remap" \
