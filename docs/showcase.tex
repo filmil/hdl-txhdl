@@ -72,9 +72,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 74\,615 lines of Rust: 17\,399 of runtime
-and macros, 22\,216 of parts, 15\,564 in a hundred and eight examples,
-16\,287 of Vreteno with its board, and 3\,149 of Razboj, DDR3,
+Together they are 77\,321 lines of Rust: 18\,082 of runtime
+and macros, 22\,699 of parts, 16\,564 in a hundred and fifteen examples,
+16\,827 of Vreteno with its board, and 3\,149 of Razboj, DDR3,
 Ethernet, HDMI, PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -89,6 +89,7 @@ The channel, a buffer of two & runtime & inside a parent \\
 Buffer; FIFO & parts & both \\
 A channel across two clocks & parts & yes \\
 Memory engines, 3; tie-offs, 2 & parts & the engines \\
+A scanout from memory: two lines a line ahead, and their fetch & parts & both \\
 Stations of 2 to 10 inputs & parts & 2 and 3 \\
 An AXI router, one unit for N peripherals & parts & 3 \\
 An AXI arbiter, one unit for 2 to 8 hosts & parts & 2 \\
@@ -105,7 +106,7 @@ System control: identity, cause, reset & parts & yes \\
 Watchdog: a countdown, a key, a window & parts & yes \\
 Four modulated outputs, shadowed duties & parts & yes \\
 A trace buffer, the last N entries & parts & yes \\
-An entropy source: eight rings folded, checked, debiased, captured & parts & yes \\
+An entropy source: eight rings, two health tests, debiased, captured & parts & yes \\
 A tee and a check, for running one thing twice & parts & both \\
 A flash read as memory, mode 0 only & parts & both \\
 The configuration flash through \code{STARTUPE2}, write enable refused & parts & yes \\
@@ -115,7 +116,7 @@ Vreteno; boot and data memory, timer, serial port & \code{cpu} & four of five \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
 PCIe BAR registers; the BAR as one unit & \code{pcie} & not yet \\
-The examples' own units & examples & 58, in 48 files, all 48 \\
+The examples' own units & examples & 78, in 61 files, all 61 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -403,18 +404,18 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs three hundred and seventy-three
-targets, of which two hundred and twelve are netlists under both
-simulators; the rest are the core's model and programs, the board's
+its ports. \code{bazel test //...} runs four hundred targets, of
+which two hundred and twenty-eight are netlists under both simulators; the rest are the core's model and programs, the board's
 own run, OpenOCD and gdb on it through the debug transport, Razboj, the parts, the SoC's run, ten proofs, the width of
-every waveform, and the tools. Nine more are tagged manual: the
+every waveform, and the tools. Ten more are tagged manual: the
 board and its DDR3 under
 Vivado's simulator, the DDR3 controller alone and AMD's own test of
 it under the same, the PCIe endpoint on its own and against a root
 port under the same, the AXI link's fuzzing over many seeds, which
 the nightly run does, the check that every component has a
-datasheet, which a sweep of the documents runs, and two that a routed
-bitstream leaves the configuration flash's program area alone.
+datasheet, which a sweep of the documents runs, two that a routed
+bitstream leaves the configuration flash's program area alone, and one
+that the flash image holds its program there.
 
 A run checks the inputs it was given; a proof checks all of them. A
 unit states what must hold with \code{check!}, what it assumes of its
