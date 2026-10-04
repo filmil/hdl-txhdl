@@ -12,7 +12,7 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
-use vreteno32::isa::disasm;
+use vreteno32::isa::{disasm, CAUSE_MEXT};
 use vreteno32::program::demo;
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
@@ -57,6 +57,8 @@ fn main() {
     let program = demo();
     let mut cpu = Vreteno::with(&program);
     let (wb_pc, regs) = (cpu.wb_pc, cpu.regs.clone());
+    // Read to know when the external interrupt has been taken.
+    let mcause = cpu.mcause;
     let mut dmem = Dmem::default();
     let lanes = (
         dmem.lane0.clone(),
@@ -283,8 +285,13 @@ fn main() {
             "t", "pc", "instruction", "writes"
         );
     }
-    // The interrupt line: one pulse, in the loop.
+    // The interrupt line: raised at cycle 40 and held until the core
+    // takes the interrupt, as a device holds its line until it is
+    // served. The core's pending bit is the line itself (#788), so a
+    // single pulse that came while the interrupt was masked would be
+    // gone before the program enables it (issue 958).
     let irq_at = 40;
+    let mut held = false;
     // A run of bubbles prints as one line with its count: a divide is
     // thirty-three of them, a multiply two.
     let mut bubbles: Option<(u64, u32)> = None;
@@ -302,7 +309,14 @@ fn main() {
     let mut term = Terminal::new(b"yes");
     for cycle in 0..1200 {
         let at = wb_pc.get().raw() as u32;
-        irq_out.set((cycle == irq_at) | uirq.get());
+        if cycle == irq_at {
+            held = true;
+        }
+        // Served: taking it writes the external interrupt's cause.
+        if mcause.get().raw() as u32 == CAUSE_MEXT {
+            held = false;
+        }
+        irq_out.set(Bit::from_bool(held) | uirq.get());
         rx_out.set(term.level());
         sim.cycle();
         term.see(tx.get().to_bool());
@@ -355,6 +369,9 @@ fn main() {
     for a in 0..3usize {
         println!("mem[{a}] = {:#010x}", word(a));
     }
+    // The run takes both interrupts the program counts, the timer's and
+    // the external one, as the lockstep test does (issue 958).
+    assert_eq!(regs.read(8usize).raw(), 2, "x8 counts both interrupts");
     // The netlist, with the program in its instruction memory, which
     // the lowering cannot see: Mem::with gave it at run time.
     let mut lowered = Vreteno::<IW>::lowered("vreteno");
