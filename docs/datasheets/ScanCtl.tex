@@ -1,0 +1,68 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: ScanCtl
+\datasheet{ScanCtl}{The scanout's registers: the frame's base, the bit
+that shows the scanout, and the underflow bit, read and cleared.}
+
+\dsfacts{\code{lib/parts/src/scanout.rs}}%
+{\code{txhdl\_parts::scanout::ScanCtl}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{ScanCtl} holds what a program sets and reads of a scanout from
+memory (issue 151): where the next frame starts, whether the screen
+shows the scanout or the video peripheral's own framebuffer, and
+whether a column was ever shown before its word arrived. Its three
+outputs are registers, for \code{LinePair} and \code{VidMux} to read.
+
+The underflow bit comes back from \code{LinePair} over a channel,
+through \code{ScanTap}, rather than on a wire. \code{ScanCtl} drives
+\code{clear}, which \code{LinePair} reads, so it runs before
+\code{LinePair}, and a wire back would be read a step stale in the run
+while the netlist reads it fresh. A channel commits at the end of the
+step whichever unit ran first.
+
+\subsection*{Register map}
+
+The unit decodes the word from address bits 3 to 2. In
+\code{ScanVideo} it sits above \code{1 << SCAN\_BIT}, \code{0x80}, of
+the video slot, so on the board its words are at \code{0x3280} to
+\code{0x328c}, the HAL's \code{map::SCAN}.
+
+\dsregs{ScanCtl}
+
+A write to \code{clear} of any value clears the underflow bit; the
+word itself is not kept.
+
+\dstables{ScanCtl}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \code{base}, \code{mode} and \code{clear} are driven from the
+registers \code{fbase}, \code{show} and \code{clr}; \code{clr} is high
+for the one cycle after a write to \code{clear}.
+\item The underflow bit is \code{seen}, the last value the channel
+brought. It can read high for a few cycles after a clear, the values
+already in the channel, the same in the run and the netlist.
+\item Reads and writes are answered the cycle they are taken.
+\end{itemize}
+
+\subsection*{Verification}
+
+\code{ex\_scanvideo} sets the base and the scanout bit, reads the
+underflow bit clear after a clean frame, set after a frame whose
+memory stalls for a line, and clear again after a write to
+\code{clear}. \code{//docs:scanvideo\_sim\_scanvideo\_tb\_test} and
+\code{//docs:scanvideo\_vsim\_test} simulate it inside
+\code{ScanVideo}'s netlist against that run.
+
+\subsection*{Used by}
+
+\code{ScanVideo}. On the board, \code{cpu/vreteno/rust/scanprobe.rs}
+uses it through the HAL's \code{Scan}.
+
+\subsection*{Limits}
+
+One base, taken at each vertical sync; there is no interrupt, so a
+program reads the underflow bit.

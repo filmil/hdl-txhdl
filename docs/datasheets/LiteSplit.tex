@@ -1,0 +1,74 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: LiteSplit
+\datasheet{LiteSplit}{One AXI-Lite slot split in two by an address bit,
+so that two peripherals share a slot.}
+
+\dsfacts{\code{lib/parts/src/bus/lite\_split.rs}}%
+{\code{txhdl\_parts::bus::lite\_split::LiteSplit<A, D, S, BIT>}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+The board's peripheral page gives each peripheral one slot of 256 bytes,
+and a slot is one AXI-Lite link. \code{LiteSplit} puts two peripherals
+in one slot: a transaction whose address has bit \code{BIT} low goes to
+the first, \code{lo}, and one whose bit is high to the second,
+\code{hi}. Neither peripheral sees the bit, since each decodes only the
+low bits of its own words (issue 151).
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The address width. \\
+\code{D} & The data width. \\
+\code{S} & The strobe width, \code{D / 8}. \\
+\code{BIT} & The address bit that picks the side. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables below use \code{LiteSplit<32, 32, 4, 7>}, the split inside
+\code{ScanVideo}: the video peripheral below \code{0x80} of the slot,
+the scanout's registers from there.
+
+\dstables{LiteSplit}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A read is taken when none is out and its side's address channel
+has room, and goes to that side; \code{rpend} and \code{rside} remember
+it until its word comes back, from that side only, and goes up when
+the host has room for it.
+\item A write's address and word are taken together, when none is out
+and both of its side's channels have room; \code{wpend} and
+\code{wside} remember it until its response comes back from that side.
+\item One read and one write may be out at once, but never two of
+either, so two answers on one channel never pass each other.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_scanvideo} reaches both sides through it: a pixel
+painted through \code{Hdmi}'s cursor below \code{0x80}, and the
+scanout's base, control, status and clear above it.
+\item \code{//docs:scanvideo\_sim\_scanvideo\_tb\_test} and
+\code{//docs:scanvideo\_vsim\_test} simulate \code{ScanVideo}'s
+netlist, this unit inside it, against that run.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{ScanVideo}, which the flagship holds in the video slot at
+\code{0x3200}.
+
+\subsection*{Limits}
+
+One outstanding read and one outstanding write, which is what the
+AXI4-to-AXI-Lite bridge in front of it issues; a host that pipelines
+several waits for each answer. Two sides only.

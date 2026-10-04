@@ -25,6 +25,7 @@ use txhdl_parts::bus::axi::{AxiHost, AxiPer};
 use txhdl_parts::bus::axi::{Issue, R};
 use txhdl_parts::bus::axi_lite::LiteBridge;
 use txhdl_parts::bus::axi_pins::AxiPins;
+use txhdl_parts::bus::lite_split::LiteSplit;
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
 use txhdl_parts::bus::noc::mesh::Mesh;
 use txhdl_parts::bus::noc::node::Node;
@@ -49,7 +50,7 @@ use txhdl_parts::pwm::Pwm;
 use txhdl_parts::redundant::{Check, Tee};
 use txhdl_parts::remote::eth::RemoteLink;
 use txhdl_parts::remote::Remote;
-use txhdl_parts::scanout::{LinePair, ScanFetch};
+use txhdl_parts::scanout::{LinePair, ScanCtl, ScanFetch, ScanVideo};
 use txhdl_parts::sd::Sd;
 use txhdl_parts::spi::Spi;
 use txhdl_parts::station::Station3;
@@ -456,6 +457,25 @@ fn main() {
         "ScanFetch<32, 16, 8>",
         ScanFetch::<32, 16, 8>::lowered("scanfetch"),
     );
+    sheet("ScanCtl", "ScanCtl", ScanCtl::lowered("scan_ctl"));
+    sheet(
+        "ScanVideo",
+        "ScanVideo<640, 16, 96, 48, 480, 10, 2, 33, 2, 10, 525, 2560>",
+        ScanVideo::<
+            { vga::HV },
+            { vga::HFP },
+            { vga::HSW },
+            { vga::HBP },
+            { vga::VV },
+            { vga::VFP },
+            { vga::VSW },
+            { vga::VBP },
+            2,
+            10,
+            525,
+            2560,
+        >::lowered("scan_video"),
+    );
     sheet("NoBeats", "NoBeats", NoBeats::lowered("nobeats"));
     sheet("NoReads", "NoReads", NoReads::<2>::lowered("noreads"));
     sheet(
@@ -487,6 +507,11 @@ fn main() {
         "LiteBridge",
         "LiteBridge<1, SerialMap, 32, 32, 4, 2>",
         LiteBridge::<1, SerialMap, 32, 32, 4, 2>::lowered("lite_bridge"),
+    );
+    sheet(
+        "LiteSplit",
+        "LiteSplit<32, 32, 4, 7>",
+        LiteSplit::<32, 32, 4, 7>::lowered("lite_split"),
     );
     sheet(
         "AxiWb",
@@ -641,6 +666,7 @@ fn main() {
     regs("EthSlots", &txhdl_parts::ethslots::regs::MAP);
     regs("Gpio", &txhdl_parts::gpio::regs::MAP);
     regs("Hdmi", &txhdl_parts::hdmi::regs::MAP);
+    regs("ScanCtl", &txhdl_parts::scanout::scan::MAP);
     regs("I2c", &txhdl_parts::i2c::regs::MAP);
     regs("Mdio", &txhdl_parts::mdio::regs::MAP);
     regs("Pwm", &txhdl_parts::pwm::regs::MAP);

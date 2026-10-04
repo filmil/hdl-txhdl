@@ -1,0 +1,95 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: ScanVideo, ScanTap, VidMux, Raster
+\datasheet{ScanVideo}{The video peripheral with a scanout from memory
+beside it, programmed over one AXI-Lite slot.}
+
+\dsfacts{\code{lib/parts/src/scanout.rs}}%
+{\code{txhdl\_parts::scanout::ScanVideo<HV, HFP, HSW, HBP, VV, VFP,
+VSW, VBP, SHIFT, AW, TOTAL, STRIDE>}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{ScanVideo} is what the flagship's video slot holds (issue 151): the
+video peripheral \code{Hdmi}, unchanged, and beside it a scanout that
+shows a frame from memory, with a multiplexer that puts one picture or
+the other on the pins. It is a unit of seven, on the pixel clock:
+
+\begin{itemize}
+\item \code{LiteSplit} divides the slot by address bit 7: \code{Hdmi}'s
+words below \code{0x80}, \code{ScanCtl}'s from there.
+\item \code{Raster}, in \code{lib/parts/src/hdmi.rs}, counts the beam
+again with \code{Hdmi}'s own functions and parameters, for
+\code{LinePair}. It drives the column, the visible part, the line and
+frame starts and the row from registers. It is the scanout's raster,
+not Razboj's rasteriser, which has a sheet of its own under the same
+name (issue 1055).
+\item \code{LinePair} holds two lines and asks for each a line ahead,
+on \code{req}; their words arrive on \code{words}. Both channels
+leave the unit for the bus clock.
+\item \code{ScanTap} puts \code{LinePair}'s underflow bit on a channel
+back to \code{ScanCtl}.
+\item \code{VidMux} puts \code{Hdmi}'s pixel or the scanout's, a
+\code{0x00RRGGBB} word, on the pins, with \code{Hdmi}'s syncs either
+way.
+\end{itemize}
+
+The children run in an order that puts every wire's driver before its
+reader: \code{Raster} and \code{ScanCtl}, then \code{LinePair}, then
+\code{ScanTap} and \code{Hdmi}, then \code{VidMux}. The one path the
+other way, the underflow bit, is a channel. Counting the beam twice is
+what keeps that order possible, and \code{ex\_scanvideo} checks the two
+counts agree on every cycle.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{HV} to \code{VBP}, \code{SHIFT} & \code{Hdmi}'s: the video mode, and
+a framebuffer pixel's size on the screen. \\
+\code{AW} & The width of a column; \code{HV} is at most \code{1 << AW}. \\
+\code{TOTAL} & The rows of a frame, \code{VV + VFP + VSW + VBP}; the
+\code{Default} refuses one that disagrees. \\
+\code{STRIDE} & The bytes from one line to the next in memory. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables below use the flagship's: 640 by 480 at 60~Hz, a
+framebuffer pixel of four by four, ten bits of column, 525 rows and
+2560 bytes a line, as \code{hdmi/src/netlist.rs} writes \code{scan\_video}.
+
+\dstables{ScanVideo}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{ex\_scanvideo} runs the whole unit with \code{LineFetch},
+\code{ScanFetch} and a memory that stalls on command. It paints a
+pixel through \code{Hdmi} and sees it, shows two frames of scanout and
+checks every visible pixel, reads the underflow bit over the slot as a
+stall sets it and a write clears it, and asserts that \code{Raster}'s
+count is \code{Hdmi}'s on every cycle, across a reset.
+\item \code{//docs:scanvideo\_sim\_scanvideo\_tb\_test} and
+\code{//docs:scanvideo\_vsim\_test} simulate its netlist against that
+run under nvc and Verilator.
+\item On the board, \code{scanprobe} shows a frame from the DDR3 and
+reads the underflow bit idle and under load; both read clear
+(\code{docs/board-checks.md}, PR 1041's session).
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{flagship/board/flagship.v}, in the video slot at \code{0x3200},
+with \code{chan\_cdc} carrying \code{req} and \code{words} across to
+the board's \code{ScanFetch} and \code{LineFetch}.
+
+\subsection*{Limits}
+
+One mode at a time, fixed by its parameters. The scanout and the
+framebuffer share the syncs, so the scanout's frame is the video mode's
+size, with no scaling. The underflow bit reaches the registers a few
+cycles after \code{LinePair} sets it.
