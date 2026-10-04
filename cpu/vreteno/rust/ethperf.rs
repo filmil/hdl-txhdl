@@ -191,8 +191,10 @@ fn send(len: u32, copy: bool) {
         work = work.wrapping_add(csr::cycles().wrapping_sub(c));
         i += 1;
     }
-    // The last frame gone: the port goes busy, then ready.
-    while reg(TX_READY) & 1 == 1 && Timer::ticks().wrapping_sub(start) < SECOND {}
+    // The last frame gone. The fence waits until the start's write
+    // has been answered, so the port says busy from then until the
+    // frame is out, or ready if it already is.
+    unsafe { core::arch::asm!("fence") };
     while reg(TX_READY) & 1 == 0 {}
     let ticks = Timer::ticks().wrapping_sub(start);
     Uart::say(if copy { b"tx copy " } else { b"tx dma " });
