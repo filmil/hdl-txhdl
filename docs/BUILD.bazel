@@ -2877,6 +2877,28 @@ waveform(
     ],
 )
 
+# Sv32 translation in Vreteno's document: a fetch that walks one level
+# and fills an entry, then hits, each answered a cycle after it asks.
+waveform(
+    name = "mmu",
+    example = "//lib/examples:ex_mmu",
+    lowered = ("mmu8", "mmu"),
+    from_tick = 7,
+    until = 36,
+    width = 15.5,
+    signals = [
+        "//clocks/clk=>clk",
+        "//ireq=>ireq",
+        "//ireq_va=>va",
+        "//mmu/busy=>busy",
+        "//ptw/tx_valid=>ptw",
+        "//ptw/tx_data=>ptw_addr",
+        "//pte/rx_valid=>pte",
+        "//ires_ok=>ok",
+        "//ires_pa=>pa",
+    ],
+)
+
 # Vreteno: the RV32IMC core, its run and the opening cycles of its
 # waveform, in its own document.
 waveform(
