@@ -1416,12 +1416,19 @@ instruction.
 
 The netlist is also placed and routed, \code{bazel build
 //cpu/vreteno:vreteno\_pnr}, with the same constraint and no pins,
-so the bitstream is a stub and the reports are the point. The routed
-design meets ten nanoseconds with 0.296~ns of slack, and hold with
-0.102~ns. The critical path is 9.661~ns, of which routing is three
-quarters, through twelve levels of logic: from the second register
-field of the instruction register, through the operand's read and
-its forwarding into the ALU's compare, and into the writeback value.
+so the bitstream is a stub and the reports are the point. It is
+synthesised out of context, so its ports are the partition's pins
+and not pads: the core has 308 ports and the package 285 pins, and placement failed on them until it was
+(issue~971). The routed design meets ten nanoseconds with 0.366~ns
+of slack, and hold with 0.132~ns, in 2749 LUTs and 810 flip-flops.
+The critical path is 9.069~ns, of which routing is three quarters,
+through twelve levels of logic: from the first register field of the
+instruction register, through the register file's read and the
+branch's compare, into the next program counter and the instruction
+memory's address. The last run that placed, on an older core, had
+9.661~ns, 0.296~ns of slack and hold 0.102~ns, from the second register field
+through the operand's forwarding into the ALU's compare and the
+writeback value.
 The expander of compressed instructions is in the fetch, before the
 instruction register, and is not on it. Before the compressed
 instructions the slack was 0.315~ns, on a path from the writeback's
