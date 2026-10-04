@@ -329,12 +329,12 @@ mod tests {
     fn typed_bytes_reach_a_program_that_reads_the_port() {
         use crate::isa::{addi, blt, bne, halt, lui, lw, sw};
         let prog: Vec<u8> = [
-            lui(5, 3),         // t0 = the serial port, 0x3000
-            lw(6, 5, 4),       // t1 = rxdata
-            blt(6, 0, -4),     // nothing yet: bit 31 is set
-            sw(6, 5, 0),       // send it back
-            addi(7, 0, 10),    // t2 = '\n'
-            bne(6, 7, -16),    // until a newline
+            lui(5, 3),      // t0 = the serial port, 0x3000
+            lw(6, 5, 4),    // t1 = rxdata
+            blt(6, 0, -4),  // nothing yet: bit 31 is set
+            sw(6, 5, 0),    // send it back
+            addi(7, 0, 10), // t2 = '\n'
+            bne(6, 7, -16), // until a newline
             halt(),
         ]
         .iter()
