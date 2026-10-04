@@ -1214,6 +1214,8 @@ latex_document(
         ":rstmemown_run",
         ":rstmemown_timing",
         ":flush_run",
+        ":recv_some_run",
+        ":recv_some_timing",
         ":flush_timing",
         ":start_run",
         ":start_timing",

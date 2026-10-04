@@ -1,0 +1,34 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Whether a Receive Took Something}
+\label{sec:x-recvsome}
+
+\code{recv\_if(c)} takes a transaction when \code{c} holds and the
+channel offers one, and gives it back as \code{Some}. Asked
+\code{is\_some()}, the answer is that take: one bit, the condition and
+the channel's valid. A unit names the receive, \code{let got =
+inp.recv\_if(go)}, and asks it afterwards; the transaction itself is
+\code{got}'s data, and \code{got.is\_some()} is not.
+
+\code{Takers} holds a \code{Source}, which offers its next count
+whenever the channel has room, and a \code{Taker}, which takes a word
+on every other cycle, shows on \code{took} whether it took one, and
+counts what it took. The channel carries a word and a flag, nine bits,
+so a lowering that gave the take as the data would be wrong in a way
+both netlists show. The lowering once did (issue 1079): nvc refused the
+VHDL, a nine-bit value where a bit belongs, and Verilator ran the
+Verilog, where \code{took} showed the data's low bit and the count went
+up for any word on the channel that was not zero, taken or not. The
+run asserts eight takes, and both netlists are checked against it.
+
+\begin{figure}[htbp]
+\centering
+\input{recv_some_timing.tex}
+\caption{A take on every other cycle: \code{took} is high each time
+\code{go} is and a word is offered, and \code{count} climbs by one at
+each, whatever the word.}
+\label{fig:x-recvsome}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_recv\_some.rs}. Run with \code{bazel run //lib/examples:ex\_recv\_some}.},label={lst:x-recvsome}]{lib/examples/ex_recv_some.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_recv\_some} printed when the build ran it: the takes counted, and the netlist, with the taker's \code{took} driven by the channel's valid and the condition.},label={lst:x-recvsome-out}]{out_recv_some.txt}
