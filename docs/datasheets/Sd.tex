@@ -113,13 +113,21 @@ specification's own examples.
 
 \subsection*{Used by}
 
-The example \code{ex\_sd}. Nothing on a board holds it yet.
+The example \code{ex\_sd}, and the board: the Vreteno board holds it
+in the peripheral page's ninth slot, at \code{0x3800}, with the card
+slot's pins in bank 16 (E13 the clock, E14 the command line, D15,
+D14, F14 and F13 the data lines) on every top that holds the board.
+\code{cpu/vreteno/rust/sdprobe.rs} brings a card up and prints its CID
+and block 0; \code{//cpu/vreteno:board\_test} runs it against
+\code{SdCard}, and \code{docs/board-checks.md} says how to run it on
+the board.
 
 \subsection*{Limits}
 
-\textbf{Not yet on hardware.} The board half of issue 153, the card
-slot, reading the card's CID and block 0 from a real card, is owed,
-and nothing here has met a real card.
+Only reading has met a real card: on 2026-10-03 the board read a
+32~GB card's CID and block 0, its partition table, twice (issue 153).
+No write has been sent to a card on the board, and \code{sdprobe}
+sends none.
 
 One command and at most one block at a time, and the block moves
 through a register. A card streams a multi-block read back to back,
