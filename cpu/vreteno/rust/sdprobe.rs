@@ -17,6 +17,11 @@
 //!   what the card sends.
 //! * `boot 55aa` if the block ends with the boot signature a
 //!   partition table carries, `boot none` if not.
+//! * `dma same` if blocks 0 to 3, read with one `CMD18` straight into
+//!   the DDR3 by the host's store engine while the card sends them back
+//!   to back, match the same blocks read one at a time through the
+//!   buffer; `dma differs` and the block's number if one does not
+//!   (issue 912).
 //!
 //! The card is identified at 400 kHz, as the specification asks of a
 //! card not yet known, and read at 25 MHz, the default speed's top: the
@@ -59,6 +64,12 @@ const TRIES: u32 = 2000;
 /// The words of a block.
 const WORDS: usize = 128;
 
+/// Where in the DDR3 the blocks read through memory land: above the
+/// mebibyte a loaded program takes.
+const DMA_AT: u32 = 0x4010_0000;
+/// How many blocks, from block 0.
+const DMA_BLOCKS: u32 = 4;
+
 entry!(main);
 
 fn reg(at: usize) -> u32 {
@@ -99,7 +110,13 @@ fn must(index: u32, arg: u32, flags: u32) {
 /// Block 0 into `words`, as the card sends it, on whichever lines the
 /// host is set to.
 fn block0(words: &mut [u32; WORDS]) {
-    must(17, 0, SHORT | sd::CMD_READ_MASK);
+    block(0, words);
+}
+
+/// The block at `addr`, as the command takes it, into `words` through
+/// the buffer.
+fn block(addr: u32, words: &mut [u32; WORDS]) {
+    must(17, addr, SHORT | sd::CMD_READ_MASK);
     for w in words.iter_mut() {
         *w = reg(sd::DATA);
     }
@@ -190,5 +207,34 @@ fn main() -> ! {
     } else {
         b"boot none\n"
     });
+    // Blocks 0 to 3 through memory, with one command, then the stop. A
+    // card of standard capacity takes a byte address, one of high
+    // capacity a block's number.
+    let step = if ocr & 0x4000_0000 != 0 { 1 } else { 512 };
+    set(sd::DMA, DMA_AT);
+    set(sd::BLOCKS, DMA_BLOCKS);
+    must(18, 0, SHORT | sd::CMD_READ_MASK);
+    set(sd::BLOCKS, 0);
+    must(12, 0, SHORT | sd::CMD_BUSY_MASK);
+    // The same blocks one at a time, through the buffer, against what
+    // the store engine put in memory.
+    let mut b = 0;
+    while b < DMA_BLOCKS {
+        let mut words = [0u32; WORDS];
+        block(b * step, &mut words);
+        let at = (DMA_AT + b * 512) as *const u32;
+        let mut k = 0;
+        while k < WORDS {
+            if unsafe { read_volatile(at.add(k)) } != words[k] {
+                Uart::say(b"dma differs ");
+                Uart::put_decimal(b);
+                Uart::put(b'\n');
+                halt()
+            }
+            k += 1;
+        }
+        b += 1;
+    }
+    Uart::say(b"dma same\n");
     halt()
 }

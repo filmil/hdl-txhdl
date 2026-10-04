@@ -788,7 +788,7 @@ fn the_sd_card_is_read_on_the_board() {
         }
         want.push('\n');
     }
-    want += "wide same\nboot 55aa\n";
+    want += "wide same\nboot 55aa\ndma same\n";
     let net = Net {
         card: Some(card),
         ..Net::default()
