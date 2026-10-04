@@ -170,16 +170,18 @@ Read down the rows.
   cycle 8 the sink has taken line 2, there is room, line 1 is sent,
   and cell 1 clears: \code{0101}.
 \item The half word tagged 2, offered in cycle 7, completes line 2
-  in cycle 9, \code{0001}; the last half word, tagged 0, offered
-  in cycle 10, completes line 0 in cycle 12, and the mask is empty. The sink takes lines 1,
-  2 and 0 in cycles 11, 12 and 15.
+  in cycle 9, \code{0001}. The last half word, tagged 0, is offered in
+  cycle 10; in cycle 11 the output still holds lines 1 and 2, so there
+  is no room and it waits, and it completes line 0 in cycle 12, when
+  the masks are empty. The sink takes lines 1, 2 and 0 in cycles 11, 12
+  and 15.
 \end{itemize}
 
 Figure~\ref{fig:s-wave} is the same run as a waveform: the inputs'
 tags with their \code{valid} and \code{ready}, the masks, and the
 output's tag and values with its handshake. The \code{ready} of the
-second input is low through cycles 6 and 7, the wait of the rule's
-fourth point.
+second input is low through cycles 6 and 7, and again in cycle 11,
+the waits of the rule's fourth point.
 
 \begin{figure*}[t]
 \centering
@@ -267,14 +269,19 @@ what each author had to write, and what each got checked.
   beside the TxHDL station. The TxHDL station ran as a program
   against the rule written with loops for four hundred cycles before
   it was ever a netlist, and its netlist is checked against its own
-  run under two simulators on every build, in both languages.
+  run under two simulators on every build. That holds for the two
+  stations the examples lower, \code{Station2} in \code{ex\_station}
+  and \code{Station3} in \code{ex\_compose}; \code{Station4} to
+  \code{Station10} are written by the same macro and lowered nowhere
+  in the tree.
 \item \textbf{Lines.} By the count in Listing~\ref{lst:s-sizes} the
   Verilog is the shorter text, by about half once comments are left
   out. The TxHDL text is a generator's, one clause per line, and it
   carries what the Verilog does not: the line struct, the types as
   parameters, and the struct of the state that the trace and the
   netlist read. Count instead what an author writes: the Verilog
-  author writes every line of the fifty, for this count of inputs
+  author writes every one of its fifty-three lines, comments left
+  out, for this count of inputs
   and these widths; the TxHDL designer writes \code{station!(Station2,
   2)} once for all widths, and the type at the use.
 \end{itemize}
@@ -285,8 +292,9 @@ what each author had to write, and what each got checked.
 The end of Listing~\ref{lst:s-out} is the Verilog of the example's
 station, as the lowering wrote it. Each mask is a register of four
 bits and each input's cells a memory of four words; every wire of
-the step is named for the rule's word:
-\code{cell\_free0}, \code{completes0}, \code{line\_tag},
+the step is named for the rule's word, with an input's own
+\code{in0\_valid} standing for offered: \code{cell\_free0},
+\code{completes0}, \code{line\_tag},
 \code{send\_line}, \code{take0}, \code{cell\_bit0},
 \code{line\_clear}, \code{out0}. The tag and the value of an input
 are slices of the input's data, at the bits the payload's derive laid
