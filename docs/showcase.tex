@@ -72,9 +72,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 77\,321 lines of Rust: 18\,082 of runtime
-and macros, 22\,699 of parts, 16\,564 in a hundred and fifteen examples,
-16\,827 of Vreteno with its board, and 3\,149 of Razboj, DDR3,
+Together they are 79\,578 lines of Rust: 18\,324 of runtime
+and macros, 23\,435 of parts, 17\,098 in a hundred and seventeen examples,
+17\,328 of Vreteno with its board, and 3\,393 of Razboj, DDR3,
 Ethernet, HDMI, PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -89,12 +89,12 @@ The channel, a buffer of two & runtime & inside a parent \\
 Buffer; FIFO & parts & both \\
 A channel across two clocks & parts & yes \\
 Memory engines, 3; tie-offs, 2 & parts & the engines \\
-A scanout from memory: two lines a line ahead, and their fetch & parts & both \\
+A scanout from memory: two lines a line ahead, their fetch, and the video peripheral it joins & parts & all three \\
 Stations of 2 to 10 inputs & parts & 2 and 3 \\
 An AXI router, one unit for N peripherals & parts & 3 \\
 An AXI arbiter, one unit for 2 to 8 hosts & parts & 2 \\
 AXI host and peripheral trackers & parts & both \\
-An AXI-Lite bridge, one unit for N peripherals & parts & 1 and 2 \\
+An AXI-Lite bridge, one unit for N peripherals; a slot split in two & parts & 1 and 2; the split in a parent \\
 AXI to Wishbone bridge & parts & yes \\
 AXI host pins to the link's channels & parts & yes \\
 An interrupt controller, one unit for 1 to 31 sources & parts & 3 \\
@@ -116,7 +116,7 @@ Vreteno; boot and data memory, timer, serial port & \code{cpu} & four of five \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
 PCIe BAR registers; the BAR as one unit & \code{pcie} & not yet \\
-The examples' own units & examples & 78, in 61 files, all 61 \\
+The examples' own units & examples & 79, in 62 files, all 62 \\
 \bottomrule
 \end{tabular}
 \end{table}
