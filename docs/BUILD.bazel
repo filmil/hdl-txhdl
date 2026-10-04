@@ -1440,8 +1440,8 @@ waveform(
         "//raster/finished=>finished",
         "//idle=>idle",
     ],
-    from_tick = 1720,
-    until = 1840,
+    from_tick = 1680,
+    until = 1800,
     width = 8.2,
 )
 

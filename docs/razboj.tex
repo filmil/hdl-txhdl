@@ -75,7 +75,7 @@ rectangles and four triangles.
 \centering
 \includegraphics[width=0.62\columnwidth]{scene.png}
 \caption{The demonstration, as Razboj drew it. Eight entries, four
-thousand and ninety-six pixels, 16\,376 cycles.}
+thousand and ninety-six pixels, 16\,249 cycles.}
 \label{fig:g-scene}
 \end{figure}
 
@@ -205,11 +205,23 @@ and the next list's first entry arrives as one burst of six beats.}
 An edge function is linear. For the edge from $a$ to $b$,
 \[ e(x, y) = (b_x - a_x)(y - a_y) - (b_y - a_y)(x - a_x), \]
 which is zero on the edge, positive on one side and negative on the
-other. Stepping one pixel to the right adds $-(b_y - a_y)$ and
-stepping one row down adds $(b_x - a_x)$, whatever the pixel. So the
+other. A vertex is in sixteenths of a pixel, and the function is taken
+at each pixel's centre, so a triangle can lie between pixels and
+cover the ones whose centres it covers. Stepping one pixel to the
+right adds sixteen times $-(b_y - a_y)$ and stepping one row down
+adds sixteen times $(b_x - a_x)$, whatever the pixel. So the
 rasteriser keeps, for each of the three edges, its value at the
 current pixel, its value at the start of the current row, and those
 two steps.
+
+A centre exactly on an edge belongs to one triangle only: the one for
+which the edge is a top or a left edge, where inside lies to the
+right, or below a level edge. The setup subtracts one from the
+starting value of every other edge, so that a centre on it fails the
+sign test there, and of two triangles sharing an edge exactly one
+draws the pixels on it. A mesh of triangles over the screen draws
+every pixel once and misses none, which a test checks against the
+model and against the count of pixels written.
 
 \gpupart{raster.rs}{state}{The rasteriser's state.}{lst:g-state}
 
@@ -217,7 +229,8 @@ The only multiplications are the six of the setup, done side by side
 in the second of the three cycles the setup takes; the per-pixel work
 is three adds and three sign tests. The arithmetic is thirty-two bits of two's complement, which
 is wide enough for every product of two differences of vertices in
-the range an entry may use. It was sixteen bits first, and a
+the range an entry may use: 1024 pixels either side of the origin, in
+sixteenths. It was sixteen bits first, and a
 pseudorandom scene with a vertex off the screen found the overflow
 within a dozen tries, which is the argument for the soak test rather
 than for the directed ones.
