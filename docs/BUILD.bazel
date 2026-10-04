@@ -1168,6 +1168,8 @@ latex_document(
         ":scanout_timing",
         ":scanpair_run",
         ":scanpair_timing",
+        ":scanvideo_run",
+        ":scanvideo_timing",
         ":reset_run",
         ":reset_timing",
         ":ownrst_run",

@@ -1,0 +1,82 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Scanout Beside the Video Peripheral}
+\label{sec:x-scanvideo}
+
+\S\ref{sec:x-scanpair} has the scanout's two ends. This section puts
+the pixel end beside the video peripheral, the one the board's third
+slot already holds, and lets a host program it over that slot. The
+result, \code{ScanVideo}, is one lowered unit of seven:
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}l@{}}
+\code{slot -- LiteSplit -- Hdmi, below 0x80 -- VidMux -- pins} \\
+\code{slot -- LiteSplit -- ScanCtl, from 0x80 -- LinePair -- VidMux} \\
+\code{Raster -- LinePair -- ScanTap -- ScanCtl} \\
+\end{tabular}
+\end{center}
+
+\code{LiteSplit} divides the slot by address bit 7: \code{Hdmi}'s
+words stay below \code{0x80}, as they were, and \code{ScanCtl}'s
+registers start there. \code{ScanCtl} holds the frame's base, the bit
+that shows the scanout rather than the framebuffer, and the underflow
+bit, which a write clears. \code{VidMux} puts one picture or the other
+on the pins, with \code{Hdmi}'s syncs either way.
+
+\subsection{Why the beam is counted twice}
+
+A wire between two units is a wire in the netlist, read in the same
+cycle it is driven. A run has to step one unit and then the other,
+so a wire is read right only by a unit that runs after the one
+driving it. Here the control goes one way, from the registers to the
+line pair, and the status comes back, so whichever order the units
+run in, one direction is read a step late. The run and the netlist
+would then disagree, and the co-simulation says so.
+
+Two things break the loop. The underflow bit comes back over a
+channel, through \code{ScanTap}: a channel commits at the end of the
+step, whichever unit ran first, so the bit reaches the registers a
+few cycles late in the run and the netlist alike. And the line pair
+does not read the beam out of \code{Hdmi}: \code{Raster} counts it
+again, with \code{Hdmi}'s own functions and parameters, so it runs
+first and every wire it drives is read after it.
+
+Two counters that must agree are a risk, so the run checks them on
+every cycle, through a reset in the middle of a frame:
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=raster-raster,caption={\code{lib/parts/src/hdmi.rs}: the beam,
+counted again.},label={lst:x-scanvideo-raster}]{lib/parts/src/hdmi.rs}
+
+\subsection{What the run checks}
+
+The host paints one pixel of the framebuffer, through \code{Hdmi}'s
+cursor below \code{0x80}, and frame 0 shows it and black elsewhere.
+Then it writes the frame's base and sets the scanout bit, and frames
+1 and 2 show every visible pixel as the word at its place in memory.
+Frame 3's memory stalls for a whole line, and a read of the status
+after it finds the underflow bit set; a write clears it at the start
+of frame 4, and a read at its end finds it clear.
+
+\begin{figure}[htbp]
+\centering
+\input{scanvideo_timing.tex}
+\caption{Frame 3: no word arrives while the memory holds the row
+after, \code{rgot} is short at that row's start, \code{under} sets in
+the pair, and \code{seen} follows it in the registers a few cycles
+later, over the channel.}
+\label{fig:x-scanvideo}
+\end{figure}
+
+The whole of \code{ScanVideo} is one netlist, simulated against the
+run under nvc and Verilator.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=video_run-video_run,caption={\code{lib/parts/src/scanout.rs}:
+the seven units, in the order that puts every driver before its
+reader.},label={lst:x-scanvideo-run}]{lib/parts/src/scanout.rs}
+
+\lstinputlisting[caption={\code{ex\_scanvideo.rs}. Run with \code{bazel run //lib/examples:ex\_scanvideo}.},label={lst:x-scanvideo}]{lib/examples/ex_scanvideo.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_scanvideo} printed when the build ran it: the pixels checked, the underflow bit read over the slot, the cycles the two counts agreed, and the start of the netlist.},label={lst:x-scanvideo-out}]{out_scanvideo.txt}
