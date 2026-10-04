@@ -48,6 +48,7 @@ const CTRL: *mut u32 = 0x4000 as *mut u32;
 /// it a flat triangle says: the kind and colour, the box and the three
 /// vertices. The planes of a shaded one follow, and a flat one leaves
 /// them alone, since the rasteriser reads them only for a shaded one.
+/// The last word is every entry's alpha.
 const WORDS: usize = 16;
 const FLAT: usize = 6;
 
@@ -124,13 +125,15 @@ fn say(line: &[u8]) {
 }
 
 /// One instruction of the display list, written where the rasteriser
-/// will look for it. Only the words that say something are written;
-/// the rest of the eight an instruction takes are never read.
+/// will look for it: the words a flat entry says, and its alpha, which
+/// is nought, so a pixel's top byte stays clear. The planes between are
+/// read only for a shaded triangle and are not written.
 fn emit(at: usize, words: &[u32; FLAT]) {
     unsafe {
         for (i, w) in words.iter().enumerate() {
             write_volatile(DL.add(at * WORDS + i), *w);
         }
+        write_volatile(DL.add(at * WORDS + WORDS - 1), 0);
     }
 }
 

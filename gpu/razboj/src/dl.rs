@@ -23,11 +23,13 @@
 //!   word 6  r0      word 7  rdx     word 8  rdy
 //!   word 9  g0      word 10 gdx     word 11 gdy
 //!   word 12 b0      word 13 bdx     word 14 bdy
+//!   word 15  [7:0] alpha
 //! ```
 //!
 //! Words 6 to 14 are a shaded triangle's three planes, each the
 //! channel's value at the box's first pixel and its two steps, with
-//! sixteen bits of fraction; the other kinds leave them zero.
+//! sixteen bits of fraction; the other kinds leave them zero. Word 15
+//! is every entry's alpha, which the pixel takes in its top byte.
 //!
 //! Beside the list is one more word, the count: how many instructions
 //! the list holds, in its low sixteen bits. The rasteriser reads it
@@ -48,7 +50,7 @@ pub const WORDS: usize = 16;
 /// The shift from an instruction's index to its byte address.
 pub const BYTE_SHIFT: usize = 6;
 /// Words of an instruction that carry anything.
-pub const USED: usize = 15;
+pub const USED: usize = 16;
 
 /// One instruction as the words a program writes.
 pub fn encode(i: &Insn) -> [u32; WORDS] {
@@ -70,6 +72,7 @@ pub fn encode(i: &Insn) -> [u32; WORDS] {
     for (k, p) in planes.iter().enumerate() {
         w[6 + k] = lo(p.raw());
     }
+    w[15] = lo(i.alpha.raw());
     w
 }
 // end{format}
@@ -88,6 +91,7 @@ pub fn decode(w: &[u32]) -> Insn {
     Insn {
         kind,
         colour: U::from((w[0] >> 2) & 0xff_ffff),
+        alpha: U::from(w[15] & 0xff),
         x0: U::from(f(1, 0, 10)),
         y0: U::from(f(1, 16, 10)),
         x1: U::from(f(2, 0, 10)),

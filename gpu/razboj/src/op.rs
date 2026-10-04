@@ -22,10 +22,11 @@ use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
 // begin{op}
 /// A display list entry, as a program writes it. Coordinates are in
-/// pixels and may lie off the screen; the encoder clips.
+/// pixels and may lie off the screen; the encoder clips. A colour is
+/// `0xAARRGGBB`, and its alpha goes into the pixel's top byte as it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
-    /// Fill the screen.
+    /// Fill the screen, or the scissor box when one is set.
     Clear { colour: u32 },
     /// Fill a rectangle `w` by `h` pixels at `x`, `y`.
     Rect {
@@ -52,14 +53,19 @@ pub enum Op {
         b: (i32, i32),
         c: (i32, i32),
     },
-    /// A triangle with a colour at each vertex, `0xRRGGBB`, blended
-    /// across it: Gouraud shading. Vertices in sixteenths of a pixel.
+    /// A triangle with a colour at each vertex, blended across it:
+    /// Gouraud shading. Vertices in sixteenths of a pixel. Red, green
+    /// and blue are blended; the alpha is the first vertex's, all over.
     Gouraud {
         a: (i32, i32),
         b: (i32, i32),
         c: (i32, i32),
         colours: [u32; 3],
     },
+    /// From here on, draw only inside a box `w` by `h` pixels at `x`,
+    /// `y`: the scissor box. A box that holds the screen turns it off.
+    /// It is state the assembler keeps, and draws nothing itself.
+    Scissor { x: i32, y: i32, w: i32, h: i32 },
 }
 
 /// Which entry an instruction is. The rasteriser reads this and
@@ -84,6 +90,9 @@ pub struct Insn {
     pub kind: Kind,
     /// The colour written, as `0xRRGGBB`. Every entry has one.
     pub colour: U<24>,
+    /// The alpha written, in the pixel's top byte. Every entry has one,
+    /// and nothing yet reads it back.
+    pub alpha: U<8>,
     /// The box to walk, both ends included, clipped to the screen. A
     /// rectangle's and a triangle's; a clear's comes from the
     /// rasteriser's own screen size.
@@ -150,28 +159,65 @@ fn area2(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> i64 {
     bx * cy - by * cx
 }
 
+/// A box of pixels, both ends included: the first column and row, then
+/// the last.
+pub type Bounds = (u32, u32, u32, u32);
+
+/// The whole of a screen of `sw` by `sh` pixels.
+pub fn screen(sw: usize, sh: usize) -> Bounds {
+    (0, 0, sw as u32 - 1, sh as u32 - 1)
+}
+
 // begin{encode}
 impl Op {
     /// The instruction this entry encodes to on a screen of `sw` by
-    /// `sh` pixels, or `None` when there is nothing to draw: a box
-    /// wholly off the screen, a rectangle with no pixels in it, or a
-    /// triangle with no area. The assembler does the clipping and the
-    /// winding so that the rasteriser does neither.
+    /// `sh` pixels with no scissor box, or `None` when there is nothing
+    /// to draw: a box wholly off the screen, a rectangle with no pixels
+    /// in it, a triangle with no area, or a scissor box, which is state.
+    /// The assembler does the clipping and the winding so that the
+    /// rasteriser does neither.
     pub fn encode(&self, sw: usize, sh: usize) -> Option<Insn> {
+        self.encode_in(screen(sw, sh), sw, sh)
+    }
+
+    /// The same, drawn only inside `within`, which lies on the screen:
+    /// the scissor box. The rasteriser walks only an entry's box, so
+    /// clipping the box to the scissor box is the whole of the scissor
+    /// test, done once an entry rather than once a pixel.
+    pub fn encode_in(
+        &self,
+        within: Bounds,
+        sw: usize,
+        sh: usize,
+    ) -> Option<Insn> {
+        let shade = |c: u32| (U::from(c & 0xff_ffff), U::from(c >> 24));
         match *self {
             // A clear says only its colour. The box is the screen,
-            // and the rasteriser supplies it.
-            Op::Clear { colour } => Some(Insn {
-                kind: Kind::Clear,
-                colour: U::from(colour),
-                ..Insn::default()
-            }),
+            // and the rasteriser supplies it. Under a scissor box it is
+            // a rectangle of that box.
+            Op::Clear { colour } if within == screen(sw, sh) => {
+                let (colour, alpha) = shade(colour);
+                Some(Insn {
+                    kind: Kind::Clear,
+                    colour,
+                    alpha,
+                    ..Insn::default()
+                })
+            }
+            Op::Clear { colour } => {
+                let (x0, y0, x1, y1) = within;
+                let (x, y) = (x0 as i32, y0 as i32);
+                let (w, h) = ((x1 - x0 + 1) as i32, (y1 - y0 + 1) as i32);
+                Op::Rect { colour, x, y, w, h }.encode_in(within, sw, sh)
+            }
             Op::Rect { colour, x, y, w, h } => {
                 let (x0, y0, x1, y1) =
-                    clip(x, y, x + w - 1, y + h - 1, sw, sh)?;
+                    clip(x, y, x + w - 1, y + h - 1, within)?;
+                let (colour, alpha) = shade(colour);
                 Some(Insn {
                     kind: Kind::Rect,
-                    colour: U::from(colour),
+                    colour,
+                    alpha,
                     x0: U::from(x0),
                     y0: U::from(y0),
                     x1: U::from(x1),
@@ -187,28 +233,28 @@ impl Op {
                     b: q(b),
                     c: q(c),
                 }
-                .encode(sw, sh)
+                .encode_in(within, sw, sh)
             }
             Op::TriQ4 { colour, a, b, c } => {
-                triangle(colour, a, b, c, None, sw, sh)
+                triangle(colour, a, b, c, None, within)
             }
             Op::Gouraud { a, b, c, colours } => {
-                triangle(colours[0], a, b, c, Some(colours), sw, sh)
+                triangle(colours[0], a, b, c, Some(colours), within)
             }
+            Op::Scissor { .. } => None,
         }
     }
 }
 
-/// A triangle in sixteenths of a pixel: flat in `colour`, or shaded
-/// from a colour at each vertex.
+/// A triangle in sixteenths of a pixel, inside `within`: flat in
+/// `colour`, or shaded from a colour at each vertex.
 fn triangle(
     colour: u32,
     a: (i32, i32),
     b: (i32, i32),
     c: (i32, i32),
     shades: Option<[u32; 3]>,
-    sw: usize,
-    sh: usize,
+    within: Bounds,
 ) -> Option<Insn> {
     // The winding the rasteriser wants: swap two vertices, and their
     // colours, when the signed area says the other way.
@@ -232,10 +278,11 @@ fn triangle(
     let lo = |f: fn((i32, i32)) -> i32| px(f(a).min(f(b)).min(f(c)));
     let hi = |f: fn((i32, i32)) -> i32| px(f(a).max(f(b)).max(f(c)));
     let (x0, y0, x1, y1) =
-        clip(lo(|p| p.0), lo(|p| p.1), hi(|p| p.0), hi(|p| p.1), sw, sh)?;
+        clip(lo(|p| p.0), lo(|p| p.1), hi(|p| p.0), hi(|p| p.1), within)?;
     let mut insn = Insn {
         kind: Kind::Tri,
-        colour: U::from(colour),
+        colour: U::from(colour & 0xff_ffff),
+        alpha: U::from(colour >> 24),
         x0: U::from(x0),
         y0: U::from(y0),
         x1: U::from(x1),
@@ -298,23 +345,29 @@ fn plane(
 }
 
 /// A display list assembled: every entry that draws something, in
-/// order, as the instructions the rasteriser reads.
+/// order, as the instructions the rasteriser reads. A scissor box holds
+/// from where it is set to where the next is, and one wholly off the
+/// screen draws nothing until then.
 pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
-    ops.iter().filter_map(|o| o.encode(sw, sh)).collect()
+    let mut within = Some(screen(sw, sh));
+    let mut out = Vec::new();
+    for op in ops {
+        if let Op::Scissor { x, y, w, h } = *op {
+            within = clip(x, y, x + w - 1, y + h - 1, screen(sw, sh));
+        } else if let Some(insn) = within.and_then(|b| op.encode_in(b, sw, sh))
+        {
+            out.push(insn);
+        }
+    }
+    out
 }
 
-/// A box clipped to the screen, both ends included, or `None` when
-/// nothing of it is on the screen.
-fn clip(
-    x0: i32,
-    y0: i32,
-    x1: i32,
-    y1: i32,
-    sw: usize,
-    sh: usize,
-) -> Option<(u32, u32, u32, u32)> {
-    let (x0, y0) = (x0.max(0), y0.max(0));
-    let (x1, y1) = (x1.min(sw as i32 - 1), y1.min(sh as i32 - 1));
+/// A box clipped to `within`, the screen or a scissor box on it, both
+/// ends included, or `None` when nothing of it is inside.
+fn clip(x0: i32, y0: i32, x1: i32, y1: i32, within: Bounds) -> Option<Bounds> {
+    let (wx0, wy0, wx1, wy1) = within;
+    let (x0, y0) = (x0.max(wx0 as i32), y0.max(wy0 as i32));
+    let (x1, y1) = (x1.min(wx1 as i32), y1.min(wy1 as i32));
     if x1 < x0 || y1 < y0 {
         return None;
     }

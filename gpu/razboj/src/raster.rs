@@ -24,8 +24,8 @@
 //! It finds its own work. The display list is in memory, in the
 //! format `crate::dl` states, and the rasteriser reads it over the
 //! same link it writes pixels on: it reads the count at `CTRL` until
-//! it is not zero, then the fifteen words of each instruction at `DL`,
-//! as one read burst of fifteen beats, then walks what they say. The
+//! it is not zero, then the sixteen words of each instruction at `DL`,
+//! as one read burst of sixteen beats, then walks what they say. The
 //! count is sixteen bits, so a list holds up to 65535 entries. That
 //! front end is written as the sequence it is, and a second process
 //! takes the link's answers every cycle.
@@ -84,6 +84,8 @@ pub struct Raster<
     /// functions are tested, and the waveform names it.
     pub kind: Reg<Kind>,
     pub colour: Reg<U<24>>,
+    /// The alpha the entry writes, in the pixel's top byte.
+    pub alpha: Reg<U<8>>,
     /// Where the walk is, and the box it walks: the first column, the
     /// last column and the last row.
     pub x: Reg<U<16>>,
@@ -134,14 +136,15 @@ pub struct Raster<
     /// it is the one thing a waveform of a triangle wants to show,
     /// and the walk waits on it.
     pub hit: Wire<Bit>,
-    /// The word this pixel takes, its colour, which for a shaded
-    /// triangle is worked out from its three channels here.
+    /// The word this pixel takes, the entry's alpha above its colour,
+    /// which for a shaded triangle is worked out from its three
+    /// channels here.
     pub rgb: Wire<U<32>>,
     /// Instructions in the list, once the count has been read.
     pub left: Reg<U<16>>,
     /// Which instruction is being fetched, and which of its words.
     pub insn: Reg<U<16>>,
-    pub word: Reg<U<4>>,
+    pub word: Reg<U<5>>,
     /// The last list is drawn and its count written back to zero; a
     /// count read that is not zero clears it.
     pub finished: Reg<Bit>,
@@ -262,14 +265,15 @@ impl<
                     let boxed = Bit::from(self.kind.get() != Kind::Tri)
                         & Bit::from(self.kind.get() != Kind::Shaded);
                     self.hit.set(boxed | (n0 & n1 & n2));
-                    // The colour this pixel takes: a shaded triangle's
-                    // three planes here, and every other entry's own.
+                    // The word this pixel takes: its alpha above a
+                    // shaded triangle's three planes here, or above
+                    // every other entry's own colour.
                     let shade = channel(self.cr.get())
                         .concat::<8, 16>(channel(self.cg.get()))
                         .concat::<8, 24>(channel(self.cb.get()));
                     let shaded = self.kind.get() == Kind::Shaded;
                     let rgb = mux(shaded, shade, self.colour.get());
-                    self.rgb.set(rgb.resize::<32>());
+                    self.rgb.set(self.alpha.get().concat::<24, 32>(rgb));
                     let open = self.issued.get() - self.answered.get();
                     self.inflight.set(open);
                     with!(self <= {
@@ -332,9 +336,9 @@ impl<
                             // read back, and for the sequence to
                             // begin a turn with.
                             DefaultClock::rising().await;
-                            self.word.set(U::<4>::from(0u8));
-                            // The instruction's fifteen words, as one
-                            // read burst of fifteen beats, each latched
+                            self.word.set(U::<5>::from(0u8));
+                            // The instruction's sixteen words, as one
+                            // read burst of sixteen beats, each latched
                             // as it lands. An entry is sixteen words from
                             // an address a multiple of sixty-four, so the
                             // burst never crosses anything a burst may
@@ -347,7 +351,7 @@ impl<
                                 read: Bit::One,
                                 addr: U::<A>::from(DL as u32)
                                     + (self.insn.get().resize::<A>() << SHIFT),
-                                len: U::<8>::from(14u8),
+                                len: U::<8>::from(15u8),
                                 size: U::<3>::from(2u8),
                                 burst: BurstKind::Incr,
                                 lock: Bit::Zero,
@@ -356,7 +360,7 @@ impl<
                                 qos: U::<4>::from(0u8),
                                 region: U::<4>::from(0u8),
                             });
-                            for _ in 0..15 {
+                            for _ in 0..16 {
                                 until(DefaultClock::rising, || {
                                     landing(
                                         rdata.peek().is_some(),
@@ -486,6 +490,10 @@ impl<
                                 }
                                 if self.word.get() == 14 {
                                     self.cby.set(v);
+                                }
+                                // Every entry's alpha, last.
+                                if self.word.get() == 15 {
+                                    self.alpha.set(v.slice::<0, 8>());
                                 }
                             }
                             // The setup the walk asks for: per edge, the

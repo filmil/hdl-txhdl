@@ -345,8 +345,8 @@ mod tests {
         assert_eq!(got.fb, model::render(&insns, W, H), "300 entries");
     }
 
-    /// An entry is fetched as one read burst of fifteen beats, so every
-    /// entry costs fourteen beats more than it costs bursts; a poll of
+    /// An entry is fetched as one read burst of sixteen beats, so every
+    /// entry costs fifteen beats more than it costs bursts; a poll of
     /// the count is one beat and one burst, and costs neither
     /// (issue 983).
     #[test]
@@ -355,7 +355,7 @@ mod tests {
         let n = assemble(&ops, W, H).len() as u64;
         let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
         let (bursts, beats) = got.reads;
-        assert_eq!(beats - bursts, 14 * n, "{bursts} bursts, {beats} beats");
+        assert_eq!(beats - bursts, 15 * n, "{bursts} bursts, {beats} beats");
     }
 
     /// A mesh of triangles sharing edges, over the whole screen: four
