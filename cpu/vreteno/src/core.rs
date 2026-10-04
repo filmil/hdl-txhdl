@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Vreteno: a three-stage RV32IMC core. One process, and on every edge
+//! Vreteno: a three-stage RV32IMAC core. One process, and on every edge
 //! three things at once: the fetch stage reads the instruction at the
 //! program counter into the instruction register, sixteen bits or
 //! thirty-two, a compressed one as the instruction it stands for, so
@@ -417,6 +417,26 @@ fn store_data(f3: U<3>, b: U<32>) -> U<32> {
         .concat::<_, 32>(b0)
 }
 
+/// An AMO's new word, from the old one and the register, by the
+/// instruction's five-bit function (issue 1010). It runs in writeback
+/// on two registers, off the execute stage's paths.
+#[lower]
+fn amo_alu(op: U<5>, old: U<32>, b: U<32>) -> U<32> {
+    let lt = lt_signed(old, b);
+    let ltu = old < b;
+    select!(op.raw() => {
+        1 => b,
+        0 => old + b,
+        4 => old ^ b,
+        12 => old & b,
+        8 => old | b,
+        16 => mux(lt, old, b),
+        20 => mux(lt, b, old),
+        24 => mux(ltu, old, b),
+        _ => mux(ltu, b, old),
+    })
+}
+
 /// Which lanes a store writes, the highest lane first: one for a
 /// byte, two for a half, all four for a word.
 #[lower]
@@ -646,6 +666,19 @@ pub struct Vreteno<const IW: usize> {
     /// waits for: the tracker gives out four identifiers, so at most
     /// four are out (issue 432).
     pub stores_out: Reg<U<3>>,
+    /// The A extension (issue 1010). The reservation `lr.w` makes: a
+    /// word's address, and whether it holds.
+    pub rsv_valid: Reg<Bit>,
+    pub rsv_at: Reg<U<30>>,
+    /// An AMO in writeback: whether the instruction there is one, its
+    /// function and its register operand, kept from execute; its
+    /// phase after the load's answer, 1 to compute and 2 to store;
+    /// and the word it stores.
+    pub wb_amo: Reg<Bit>,
+    pub amo_op: Reg<U<5>>,
+    pub amo_b: Reg<U<32>>,
+    pub amo_ph: Reg<U<2>>,
+    pub amo_val: Reg<U<32>>,
     /// `mbusquiet`: bus refusals read zero and drop the store instead
     /// of trapping, for a program that polls a peripheral which may
     /// refuse on purpose (issue 417).
@@ -833,7 +866,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let wb_val = mux(self.wb_load, loaded, wb_alu);
             // A device load sits in writeback while its wait is on, and
             // retires the cycle after its answer has landed.
-            let wb_here = self.wb_valid & !self.dev_wait;
+            // An AMO sits in writeback after its load's answer, while
+            // its word is computed and stored (issue 1010).
+            let amo_ph = self.amo_ph.get();
+            let amo_busy = amo_ph != 0;
+            let wb_here = self.wb_valid & !self.dev_wait & !amo_busy;
             // A refused load retires as a trap: nothing is written, the
             // instruction behind it is squashed, and the fetch restarts
             // at the handler. Its address is what the ALU computed.
@@ -919,8 +956,23 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // for its answer, so nothing else is outstanding. Both
             // fences share the opcode; there is no cache to flush.
             let is_fence = opcode == 0x0f;
+            // The A extension's word forms (issue 1010): `lr.w`, `sc.w`
+            // and the nine AMOs, by the five-bit function in bits 31 to
+            // 27; `aq` and `rl` are taken as given, since every one of
+            // them waits here as a fence does, for the stores posted
+            // before it.
+            let funct5 = ir.slice::<27, 5>();
+            let is_aop = (opcode == 0x2f) & (f3 == 2);
+            let is_lr = is_aop & (funct5 == 2) & (rs2 == 0);
+            let is_sc = is_aop & (funct5 == 3);
+            let is_rmw = is_aop
+                & select!(funct5.raw() => {
+                    0 | 1 | 4 | 8 | 12 | 16 | 20 | 24 | 28 => Bit::One,
+                    _ => Bit::Zero,
+                });
+            let is_a = is_lr | is_sc | is_rmw;
             let stall_fence = self.valid
-                & Bit::from(is_fence)
+                & (Bit::from(is_fence) | is_a)
                 & Bit::from(self.stores_out.get() != 0);
             // A load or store to the bus, which is every address, the
             // boot memory included. A store goes out when the bus has room; a
@@ -935,10 +987,19 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             );
             let addr = a + select!(opcode.raw() => {
                 0x23 => imm_s,
+                0x2f => U::<32>::from(0u32),
                 _ => imm_i,
             });
-            let is_load = opcode == 0x03;
-            let is_store = opcode == 0x23;
+            // `lr.w` and an AMO read as a load does, and the AMO's store
+            // comes later, from writeback; `sc.w` stores as a store
+            // does, if its reservation holds. The reservation is
+            // compared with the register, not the sum, since an A
+            // instruction adds no offset, which keeps the compare off
+            // the adder's path.
+            let is_load = (opcode == 0x03) | is_lr | is_rmw;
+            let is_store = (opcode == 0x23) | is_sc;
+            let sc_ok =
+                self.rsv_valid & (self.rsv_at.get() == a.slice::<2, 30>());
             // A half wants an even address and a word one that is a
             // multiple of four; a byte is never misaligned. The
             // specification lets a core either support an unaligned
@@ -992,6 +1053,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     | stall_bus
                     | stall_fetch
                     | self.dev_wait
+                    | amo_busy
                     | self.waiting,
             );
             let stall = self.stall.get();
@@ -1063,7 +1125,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // What the instruction does: the value it writes back, if
             // any, where it goes next, and whether the core knows it.
             let writes = select!(opcode.raw() => {
-                0x37 | 0x17 | 0x6f | 0x67 | 0x03 | 0x13 | 0x33 => Bit::One,
+                0x37 | 0x17 | 0x6f | 0x67 | 0x03 | 0x13 | 0x33
+                | 0x2f => Bit::One,
                 0x73 => (f3 != 0).into(),
                 _ => Bit::Zero,
             });
@@ -1124,6 +1187,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let known = select!(opcode.raw() => {
                 0x37 | 0x17 | 0x6f | 0x67 | 0x63 | 0x03 | 0x23 | 0x13 | 0x33
                 | 0x0f => Bit::One,
+                0x2f => is_a,
                 0x73 => (csr_op & csr_known & !csr_bad)
                     | is_ecall
                     | is_ebreak
@@ -1142,7 +1206,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // it was going, and its trap value is the address, which is
             // what a handler emulating the access needs.
             let misaligned = mux(
-                is_store,
+                is_store | is_rmw,
                 U::<32>::from(isa::CAUSE_STORE_MISALIGNED),
                 U::<32>::from(isa::CAUSE_LOAD_MISALIGNED),
             );
@@ -1222,12 +1286,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 mux(run, halting, self.stopped.get()),
             );
             let wrote = run & writes & (rd != 0) & !trap;
-            let store = run & is_store & !unaligned;
+            // `sc.w` stores only while its reservation holds.
+            let store = run & is_store & !unaligned & (!is_sc | sc_ok);
             let wval = select!(opcode.raw() => {
                 0x37 => imm_u,
                 0x17 => pc + imm_u,
                 0x6f | 0x67 => link,
                 0x73 => csr_old,
+                // `sc.w` writes 0 when it stored and 1 when it did not.
+                0x2f => mux(sc_ok, U::<32>::from(0u32), U::<32>::from(1u32)),
                 _ => mux(is_m, m_res, alu),
             });
             // Where the instruction goes next, other than on: a jump's
@@ -1281,6 +1348,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // of no use here and is dropped.
             let _ = grant.recv_if(grant.peek().is_some());
             let send_store = store;
+            // An AMO's store, from writeback, once its word is computed
+            // and the bus has room; nothing of execute's goes out then,
+            // since execute waits for it, and it goes before a fetch.
+            let amo_go = (amo_ph == 2) & issue.ready() & wbeat.ready();
+            let st_go = send_store | amo_go;
             // A fetch goes out when the words it wants are not in the
             // buffer, nothing else of the core's is out, and the
             // channel has room. The second word is asked for after the
@@ -1292,12 +1364,13 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 & !self.dev_wait
                 & !send_load
                 & !send_store
+                & !amo_go
                 & issue.ready();
-            let send_any = send_load | send_store | f_send;
+            let send_any = send_load | st_go | f_send;
             if bool::from(send_any) {
                 issue.send(Issue {
-                    read: !send_store,
-                    addr: mux(f_send, f_addr, addr),
+                    read: !st_go,
+                    addr: mux(f_send, f_addr, mux(amo_go, wb_alu, addr)),
                     len: U::<8>::from(0u8),
                     size: U::<3>::from(2u8),
                     burst: BurstKind::Incr,
@@ -1308,10 +1381,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     region: U::<4>::from(0u8),
                 });
             }
-            if bool::from(send_store) {
+            if bool::from(st_go) {
                 wbeat.send(W {
-                    data: sdata,
-                    strb: en,
+                    data: mux(amo_go, self.amo_val.get(), sdata),
+                    strb: mux(amo_go, U::<4>::from(15u8), en),
                     last: Bit::One,
                 });
             }
@@ -1362,6 +1435,35 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 _ => {},
             });
 
+            // The AMO's phases (issue 1010): the answer to its load, if
+            // the bus gave the word, starts them; the new word is
+            // computed from two registers, the old word and the
+            // register operand, then stored, and the instruction then
+            // retires with the old word. The reservation: `lr.w` makes
+            // it and every `sc.w` uses it up, whether it stored or not.
+            let amo_start = d_resp & self.wb_amo & !resp_bad;
+            with!(self <= {
+                amo_start ? amo_ph: U::<2>::from(1u8),
+                amo_ph == 1 ? {
+                    amo_val: amo_alu(
+                        self.amo_op.get(),
+                        self.wb_dev.get(),
+                        self.amo_b.get(),
+                    ),
+                    amo_ph: U::<2>::from(2u8)
+                },
+                amo_go ? amo_ph: U::<2>::from(0u8),
+                run & is_lr & !unaligned ? {
+                    rsv_valid: Bit::One,
+                    rsv_at: a.slice::<2, 30>()
+                },
+                run & is_sc ? rsv_valid: Bit::Zero,
+                rst ? {
+                    amo_ph: U::<2>::from(0u8),
+                    rsv_valid: Bit::Zero
+                },
+            });
+
             // The CSRs: written by a CSR instruction, by a trap, by mret.
             // The three never coincide in one instruction.
             // The external interrupt's pending bit is the line, taken
@@ -1393,7 +1495,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 },
                 wb_fault ? {
                     mepc: self.wb_pc.get(),
-                    mcause: U::<32>::from(isa::CAUSE_LOAD_ACCESS),
+                    // An AMO's refused word is a store's access fault.
+                    mcause: mux(
+                        self.wb_amo,
+                        U::<32>::from(isa::CAUSE_STORE_ACCESS),
+                        U::<32>::from(isa::CAUSE_LOAD_ACCESS),
+                    ),
                     mtval: wb_alu,
                     mstatus: trap_status,
                 },
@@ -1415,9 +1522,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 !self.stopped ? mcycle: self.mcycle.get() + 1,
                 // The stores out: one more as one goes, one fewer as one
                 // is answered, and the count when both happen at once.
-                send_store & !take_done ?
+                st_go & !take_done ?
                     stores_out: self.stores_out.get() + 1,
-                take_done & !send_store ?
+                take_done & !st_go ?
                     stores_out: self.stores_out.get() - 1,
                 wb_here ? minstret: self.minstret.get() + 1,
                 // A write lands after the count, so a program that
@@ -1603,9 +1710,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     self.wb_f3 <= f3;
                     self.wb_lane <= lane;
                     self.wb_load <= is_load & run;
+                    self.wb_amo <= is_rmw & run & !unaligned;
+                    self.amo_op <= funct5;
+                    self.amo_b <= b;
                     self.wb_stop <= halting
                 },
-                _ if self.dev_wait.to_bool() => {},
+                _ if (self.dev_wait | amo_busy).to_bool() => {},
                 _ => {
                     self.wb_valid <= Bit::Zero;
                     self.wb_rd <= 0;
