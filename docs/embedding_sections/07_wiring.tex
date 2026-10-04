@@ -175,13 +175,14 @@ expected `In<u32, Clk400>`, found `In<u32, Clk100>`
 expected `In<u32, Clk400>`, found `In<u32>`
 \end{lstlisting}
 
-The only path between clocks is a \code{Crossing<T, A, B>}, which takes
-an \code{In<T, A>} and yields an \code{In<T, B>}. A real one is a
-synchroniser or an asynchronous FIFO. The point is not what it contains
-but that it is the only thing that can produce a signal in the other
-domain, so a crossing cannot be forgotten. That is the failure the merged
-specification handled by having the compiler notice two tags differ;
-here the type system notices.
+The only path a wire takes between clocks is a
+\code{Crossing<T, A, B>}, which takes an \code{In<T, A>} and yields an
+\code{In<T, B>}; a channel crosses by \code{ChanCdc} instead. A real
+crossing is a synchroniser or an asynchronous FIFO. The point is not
+what it contains but that it is the only thing that can produce a
+signal in the other domain, so a crossing cannot be forgotten. That is
+the failure the merged specification handled by having the compiler
+notice two tags differ; here the type system notices.
 
 A unit that does not care which clock it is in says so by being generic
 over \code{C: Clock}, which is the Rust way of saying it and costs the
