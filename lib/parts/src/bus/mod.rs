@@ -15,6 +15,7 @@ pub mod arbiter;
 pub mod axi;
 pub mod axi_lite;
 pub mod axi_pins;
+pub mod lite_split;
 pub mod noc;
 pub mod router;
 pub mod wb;
