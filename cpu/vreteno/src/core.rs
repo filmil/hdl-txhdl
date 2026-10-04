@@ -979,8 +979,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // are enabled globally: the specification lets a core
             // resume with `mstatus.MIE` clear, and a kernel idles
             // inside its own interrupt lock, so a wait that waited for
-            // the global bit would never end.
-            let wake = ext_ok | soft_ok | tim_ok;
+            // the global bit would never end. A halt request ends it
+            // too, as the debug specification asks: a kernel idles in
+            // `wfi`, and a debugger that could not stop it there could
+            // not attach to it (issue 930). The `wfi` has retired, so
+            // the core halts on the instruction after it.
+            let wake = ext_ok | soft_ok | tim_ok | haltreq;
             self.stall.set(
                 stall_ld
                     | stall_m
