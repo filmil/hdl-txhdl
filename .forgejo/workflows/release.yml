@@ -110,9 +110,13 @@ jobs:
           restore-keys: |
             bazel-
 
+      # The log is kept for the export at the end, and `pipefail` keeps
+      # the status Bazel's rather than `tee`'s (#538).
       - name: Build everything
         if: steps.decide.outputs.proceed == 'true'
-        run: bazel build //...
+        run: |
+          set -o pipefail
+          bazel build //... 2>&1 | tee -a /tmp/release.log
 
       # Only what this build of //docs produces is gathered, as bazel cquery
       # lists it; external repositories hold PNGs of their own. bazel-bin
@@ -131,6 +135,7 @@ jobs:
         if: steps.decide.outputs.proceed == 'true'
         run: |
           set -eu
+          exec > >(tee -a /tmp/release.log) 2>&1
           mkdir -p dist/release dist/waveforms
           # Each PDF goes into the archive of its topic (issue 642). A
           # document not named here lands in docs-other with a warning, so
@@ -241,3 +246,45 @@ jobs:
             echo "uploaded $name"
           done
           echo "released $TAG on GitHub as release $id"
+
+      # A failed release exports its own log, as the build does, since the
+      # Actions log cannot be read through `fj` or the API (#466). It lands
+      # on the same `ci-logs` branch, named release-<run>, readable by
+      # anyone who can clone:
+      #
+      #   git fetch origin ci-logs && git show origin/ci-logs:<file>
+      #
+      # The nightly of 2026-10-04 (run 1520) failed after 22 minutes with
+      # nothing to read (#940). What the publish step did is not in the
+      # file, since an action's output cannot be teed, so the tail says
+      # what was gathered and how big it was instead.
+      - name: Export the log on failure
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "=== release run ${GITHUB_RUN_NUMBER} on ${GITHUB_SHA} (${GITHUB_EVENT_NAME}) ==="
+            echo "=== df -h ==="; df -h / /data/cache/bazel 2>/dev/null | sort -u
+            echo "=== free -m ==="; free -m
+            echo "=== dist/release ==="
+            ls -la dist/release 2>/dev/null || echo "(no dist/release)"
+            du -sh dist/release 2>/dev/null || true
+            echo "=== log tail ==="
+            tail -c 60000 /tmp/release.log 2>/dev/null || echo "(no log)"
+          } > /tmp/release-tail.log 2>&1 || echo "(capture failed)" >> /tmp/release-tail.log
+          d=$(mktemp -d)
+          url="https://ci:${GITHUB_TOKEN}@git.hdlfactory.com/${GITHUB_REPOSITORY}.git"
+          # Add to the branch when it exists; start it when it does not.
+          if git -C "$d" clone -q --depth 1 --branch ci-logs "$url" . 2>/dev/null; then
+            :
+          else
+            git -C "$d" init -q -b ci-logs
+            git -C "$d" remote add origin "$url"
+          fi
+          cp /tmp/release-tail.log \
+            "$d/release-${GITHUB_RUN_NUMBER}-$(date -u +%Y%m%dT%H%M%S)-${GITHUB_SHA:0:8}.log"
+          git -C "$d" add -A
+          git -C "$d" -c user.name=ci -c user.email=ci@invalid \
+            commit -qm "release log for run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
+          git -C "$d" push -q origin ci-logs
