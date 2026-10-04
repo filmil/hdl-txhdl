@@ -58,8 +58,8 @@ const WINDOW: usize = 4;
 /// The host's side of a run: `bursts` bursts of `beats` words, all
 /// reads or all writes, issued back to back with [`WINDOW`] in flight.
 /// `done` is set when the last is answered.
-async fn client(
-    host: txhdl_parts::bus::axi::Host<32, 32, 4, 4, 16>,
+async fn client<const I: usize>(
+    host: txhdl_parts::bus::axi::Host<32, 32, 4, I, 16>,
     beats: usize,
     bursts: usize,
     write: bool,
@@ -69,7 +69,7 @@ async fn client(
     let mut pending = std::collections::VecDeque::new();
     for b in 0..bursts {
         if pending.len() == WINDOW {
-            let p: txhdl_parts::bus::axi::Pending<32, 4> =
+            let p: txhdl_parts::bus::axi::Pending<32, I> =
                 pending.pop_front().expect("a burst in flight");
             assert_eq!(p.done().await.resp, Resp::Okay);
         }
@@ -166,14 +166,14 @@ pub fn ddr3_per(beats: usize, bursts: usize, write: bool) -> Measured {
         host_out,
         per_in,
         per_out,
-    } = axi_to_unit::<32, 32, 4, 4, 16>();
-    let bus: PerPort<32, 32, 4, 4> = per_client.into();
+    } = axi_to_unit::<32, 32, 4, 5, 16>();
+    let bus: PerPort<32, 32, 4, 5> = per_client.into();
     let (_sys_clk_o, sys_clk) = signal::<Bit, DefaultClock>();
     let (_sys_rst_o, sys_rst) = signal::<Bit, DefaultClock>();
     let (calib_o, calib) = signal::<Bit, DefaultClock>();
     let bits = || signal::<Bit, DefaultClock>().0;
-    let mut h = AxiHost::<32, 32, 4, 4, 16>::default();
-    let mut p = AxiPer::<32, 32, 4, 4>::default();
+    let mut h = AxiHost::<32, 32, 4, 5, 16>::default();
+    let mut p = AxiPer::<32, 32, 4, 5>::default();
     let mut mem = Ddr3Per::default();
     let done = Rc::new(Cell::new(false));
     let finished = done.clone();
