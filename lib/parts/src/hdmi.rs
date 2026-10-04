@@ -299,6 +299,87 @@ impl<
 }
 // end{run}
 
+// begin{raster}
+/// The raster of [`Hdmi`], counted again for a unit beside it that
+/// must know where the beam is: a scanout's line pair (issue 151).
+///
+/// It is [`Hdmi`]'s two counters, from the same functions with the
+/// same parameters, so the two count alike from reset and never part.
+/// They are counted again rather than read out of [`Hdmi`] because a
+/// wire between two units is read after it is driven only if the
+/// reader runs second, and the reader here also drives what
+/// [`Hdmi`]'s neighbours read; a register of its own breaks the loop.
+/// `ex_scanvideo` checks that the two agree on every cycle of a frame
+/// and across a reset.
+///
+/// Every output is a register or a function of registers, so it is
+/// this step's whatever reads it. `col` is the column's low `AW` bits,
+/// `vis` the visible part, `line` the first column of every row,
+/// `row` the row, and `frame` the first column of the first row after
+/// the visible ones, where a new frame's base is taken.
+#[derive(Trace, Default)]
+pub struct Raster<
+    const HV: usize,
+    const HFP: usize,
+    const HSW: usize,
+    const HBP: usize,
+    const VV: usize,
+    const VFP: usize,
+    const VSW: usize,
+    const VBP: usize,
+    const AW: usize,
+> {
+    /// The column, as [`Hdmi`]'s `hc`.
+    pub hc: Reg<U<12>>,
+    /// The row, as [`Hdmi`]'s `vc`.
+    pub vc: Reg<U<12>>,
+}
+
+#[lower]
+impl<
+        const HV: usize,
+        const HFP: usize,
+        const HSW: usize,
+        const HBP: usize,
+        const VV: usize,
+        const VFP: usize,
+        const VSW: usize,
+        const VBP: usize,
+        const AW: usize,
+    > Unit for Raster<HV, HFP, HSW, HBP, VV, VFP, VSW, VBP, AW>
+{
+    async fn run(
+        &mut self,
+        _i: (),
+        (col, vis, line, row, frame): (
+            Out<U<AW>>,
+            Out<Bit>,
+            Out<Bit>,
+            Out<U<12>>,
+            Out<Bit>,
+        ),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            let hc = self.hc.get();
+            let vc = self.vc.get();
+            let h_last = axis_end::<HV, HFP, HSW, HBP>(hc);
+            let v_last = axis_end::<VV, VFP, VSW, VBP>(vc);
+            let first = hc == U::<12>::from(0u8);
+            col.set(hc.resize::<AW>());
+            vis.set(Bit::from(visible::<HV>(hc) & visible::<VV>(vc)));
+            line.set(Bit::from(first));
+            row.set(vc);
+            frame.set(Bit::from(first & (vc == U::<12>::from(VV as u32))));
+            with!(self <= {
+                hc: mux(h_last, U::<12>::from(0u8), hc + 1),
+                h_last ? vc: mux(v_last, U::<12>::from(0u8), vc + 1),
+            });
+        }
+    }
+}
+// end{raster}
+
 // begin{table}
 /// The SiI9134's configuration, one register write per entry: the
 /// chip's I2C address as eight bits, write bit included, the register,
