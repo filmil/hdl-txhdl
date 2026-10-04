@@ -71,3 +71,20 @@ vivado_ip(
     tags = ["manual"],
     vlnv = "xilinx.com:ip:mig_7series:4.2",
 )
+
+# The same controller with its own AXI4 port in place of the native one
+# (issue 1023, option C): the project file in `mig/` is the native one's
+# with `PortInterface` set to AXI, a 32-bit data port, the link's five
+# identifier bits, and the memory's whole 1 GiB as a 30-bit byte
+# address. Generated beside the native one, to record what AMD's port
+# offers before anything is moved onto it. Manual:
+#
+#   bazel build //ddr3:ddr3_mig_axi
+vivado_ip(
+    name = "ddr3_mig_axi",
+    config = {"XML_INPUT_FILE": "data:ddr3_mig_axi.prj"},
+    data = ["mig/ddr3_mig_axi.prj"],
+    part = "xc7a200tfbg484-2",
+    tags = ["manual"],
+    vlnv = "xilinx.com:ip:mig_7series:4.2",
+)
