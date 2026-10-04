@@ -5,19 +5,21 @@
 use crate::core::IMEM_BYTES;
 use crate::isa::{
     compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT,
-    CAUSE_FETCH_ACCESS, CAUSE_ILLEGAL, CAUSE_LOAD_ACCESS,
-    CAUSE_LOAD_MISALIGNED, CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER, CAUSE_SEXT,
-    CAUSE_SSOFT, CAUSE_STIMER, CAUSE_STORE_ACCESS, CAUSE_STORE_MISALIGNED,
-    CLINT_BASE, CLINT_MASK, CSR_CYCLE, CSR_CYCLEH, CSR_DCSR, CSR_DPC,
-    CSR_INSTRET, CSR_INSTRETH, CSR_MARCHID, CSR_MBUSQUIET, CSR_MCAUSE,
-    CSR_MCOUNTEREN, CSR_MCYCLE, CSR_MCYCLEH, CSR_MEDELEG, CSR_MEPC, CSR_MHALT,
-    CSR_MHARTID, CSR_MIDELEG, CSR_MIE, CSR_MIMPID, CSR_MINSTRET, CSR_MINSTRETH,
-    CSR_MIP, CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS, CSR_MSTATUSH, CSR_MTVAL,
-    CSR_MTVEC, CSR_MVENDORID, CSR_SATP, CSR_SCAUSE, CSR_SCOUNTEREN, CSR_SEPC,
-    CSR_SIE, CSR_SIP, CSR_SSCRATCH, CSR_SSTATUS, CSR_STVAL, CSR_STVEC,
-    CSR_TIME, CSR_TIMEH, MEXT, MISA, MSOFT, MTIMECMP_OFF, MTIMER, SEXT, SSOFT,
-    STIMER, UART_BASE,
+    CAUSE_FETCH_ACCESS, CAUSE_FETCH_PAGE, CAUSE_ILLEGAL, CAUSE_LOAD_ACCESS,
+    CAUSE_LOAD_MISALIGNED, CAUSE_LOAD_PAGE, CAUSE_MEXT, CAUSE_MSOFT,
+    CAUSE_MTIMER, CAUSE_SEXT, CAUSE_SSOFT, CAUSE_STIMER, CAUSE_STORE_ACCESS,
+    CAUSE_STORE_MISALIGNED, CAUSE_STORE_PAGE, CLINT_BASE, CLINT_MASK,
+    CSR_CYCLE, CSR_CYCLEH, CSR_DCSR, CSR_DPC, CSR_INSTRET, CSR_INSTRETH,
+    CSR_MARCHID, CSR_MBUSQUIET, CSR_MCAUSE, CSR_MCOUNTEREN, CSR_MCYCLE,
+    CSR_MCYCLEH, CSR_MEDELEG, CSR_MEPC, CSR_MHALT, CSR_MHARTID, CSR_MIDELEG,
+    CSR_MIE, CSR_MIMPID, CSR_MINSTRET, CSR_MINSTRETH, CSR_MIP, CSR_MISA,
+    CSR_MSCRATCH, CSR_MSTATUS, CSR_MSTATUSH, CSR_MTVAL, CSR_MTVEC,
+    CSR_MVENDORID, CSR_SATP, CSR_SCAUSE, CSR_SCOUNTEREN, CSR_SEPC, CSR_SIE,
+    CSR_SIP, CSR_SSCRATCH, CSR_SSTATUS, CSR_STVAL, CSR_STVEC, CSR_TIME,
+    CSR_TIMEH, MEXT, MISA, MSOFT, MTIMECMP_OFF, MTIMER, SEXT, SSOFT, STIMER,
+    UART_BASE,
 };
+use txhdl_parts::mmu::{translate, Access, Fault, Mode};
 
 /// Where data memory begins and how much there is, in bytes. The
 /// program lives at zero, in the boot memory; the two do not overlap,
@@ -138,6 +140,9 @@ pub struct Model {
     /// The timer's count as the core saw it, which `time` reads: the
     /// caller sets it, as it sets the device word.
     pub time: u64,
+    /// The exceptions taken, counted by cause, which a test reads to
+    /// say what its programs exercised (issue 1014).
+    pub causes: [u32; 16],
 }
 
 impl Default for Model {
@@ -167,6 +172,7 @@ impl Default for Model {
             rsv: None,
             prv: 3,
             time: 0,
+            causes: [0; 16],
         }
     }
 }
@@ -290,6 +296,107 @@ impl Model {
         }
         let off = addr.wrapping_sub(DATA_BASE);
         (off < DATA_BYTES).then(|| self.mem[(off / 4) as usize])
+    }
+
+    /// What a translation reads (issue 1014): `satp`, the privilege,
+    /// and `SUM` and `MXR`.
+    fn vm_mode(&self) -> Mode {
+        Mode {
+            satp: self.csr.satp,
+            prv: self.prv as u8,
+            sum: self.csr.mstatus & SUM != 0,
+            mxr: self.csr.mstatus & MXR != 0,
+        }
+    }
+
+    /// A page table entry as the walker reads it: from the boot memory
+    /// or the data memory. One among the devices is beyond the model,
+    /// as a fetch from one is, so it is taken as nothing.
+    fn pte_word(&self, imem: &[u32], pa: u32) -> Option<u32> {
+        // In a machine it is whatever the bus answers there.
+        if let Some(bus) = &self.bus {
+            return bus.load(pa & !3);
+        }
+        if pa >= DEVICES {
+            return None;
+        }
+        self.word(imem, pa)
+    }
+
+    /// The halfword at physical address `at`, of the boot memory or the
+    /// data memory, as the core fetches it from the bus.
+    fn fetch_half(&self, imem: &[u32], at: u32) -> Option<u16> {
+        if let Some(bus) = &self.bus {
+            return Some((bus.load(at & !3)? >> (8 * (at & 2))) as u16);
+        }
+        if at < IMEM_BYTES {
+            let w = imem.get((at / 4) as usize).copied().unwrap_or(0);
+            return Some((w >> (8 * (at & 2))) as u16);
+        }
+        let off = at.wrapping_sub(DATA_BASE);
+        (off < DATA_BYTES)
+            .then(|| (self.mem[(off / 4) as usize] >> (8 * (at & 2))) as u16)
+    }
+
+    /// The instruction at `pc` and its length, or the trap its fetch
+    /// raises, as a cause and a value (issue 1014). Without
+    /// translation it is what `fetch_at` says. With it, the first
+    /// half's page is translated, and the second half's when a
+    /// thirty-two bit instruction's second half begins the next page,
+    /// which is where the core's second word is. A page fault's value
+    /// is the address of the half that faulted, and an access fault's
+    /// the instruction's, as the core's fetch from the bus gives.
+    fn fetch_vm(
+        &self,
+        imem: &[u32],
+        pc: u32,
+    ) -> Result<(u32, u32), (u32, u32)> {
+        let m = self.vm_mode();
+        if m.satp >> 31 == 0 || m.prv == 3 {
+            return self.fetch_at(imem, pc).ok_or((CAUSE_FETCH_ACCESS, pc));
+        }
+        let read = |pa| self.pte_word(imem, pa);
+        let fault = |f: Fault, at: u32| match f {
+            Fault::Page => (CAUSE_FETCH_PAGE, at),
+            Fault::Access => (CAUSE_FETCH_ACCESS, pc),
+        };
+        let pa0 =
+            translate(read, m, pc, Access::Fetch).map_err(|f| fault(f, pc))?;
+        let lo = self.fetch_half(imem, pa0).ok_or((CAUSE_FETCH_ACCESS, pc))?;
+        if is_compressed(lo) {
+            return Ok((compressed(lo).unwrap_or(lo as u32), 2));
+        }
+        let pc2 = pc.wrapping_add(2);
+        let pa1 = if pc2 & 0xfff == 0 {
+            translate(read, m, pc2, Access::Fetch).map_err(|f| fault(f, pc2))?
+        } else {
+            pa0.wrapping_add(2)
+        };
+        let hi = self.fetch_half(imem, pa1).ok_or((CAUSE_FETCH_ACCESS, pc))?;
+        Ok(((hi as u32) << 16 | lo as u32, 4))
+    }
+
+    /// The physical address of a data access at `va`, or the trap it
+    /// raises with `va` as its value: a page fault, or an access fault
+    /// where the walk read nothing (issue 1014). Without translation,
+    /// `va` itself.
+    fn data_pa(
+        &self,
+        imem: &[u32],
+        va: u32,
+        store: bool,
+    ) -> Result<u32, (u32, u32)> {
+        let access = if store { Access::Store } else { Access::Load };
+        translate(|pa| self.pte_word(imem, pa), self.vm_mode(), va, access)
+            .map_err(|f| {
+                let cause = match (f, store) {
+                    (Fault::Page, false) => CAUSE_LOAD_PAGE,
+                    (Fault::Page, true) => CAUSE_STORE_PAGE,
+                    (Fault::Access, false) => CAUSE_LOAD_ACCESS,
+                    (Fault::Access, true) => CAUSE_STORE_ACCESS,
+                };
+                (cause, va)
+            })
     }
 
     /// A store's word. Above the data memory the store is a device's
@@ -517,6 +624,9 @@ impl Model {
     /// `medeleg` for an exception and `mideleg` for an interrupt, goes to
     /// the supervisor instead, through its own registers (issue 1012).
     fn trap(&mut self, cause: u32, tval: u32) {
+        if let Some(n) = self.causes.get_mut(cause as usize) {
+            *n += 1;
+        }
         let deleg = if cause >> 31 == 1 {
             self.csr.mideleg
         } else {
@@ -660,14 +770,23 @@ impl Model {
         // the instruction access fault (issue 423). The model has no
         // words for a device either, so a program run from one is
         // beyond it.
-        let Some((w, len)) = self.fetch_at(imem, self.pc) else {
-            self.trap(CAUSE_FETCH_ACCESS, self.pc);
-            return;
-        };
+        //
+        // Under translation the fetch may fault on its page instead
+        // (issue 1014). An interrupt is taken ahead of either, as the
+        // core takes one instead of the instruction in execute,
+        // whatever its fetch said.
+        let fetched = self.fetch_vm(imem, self.pc);
         if let Some(cause) = interrupt {
             self.trap(cause, 0);
             return;
         }
+        let (w, len) = match fetched {
+            Ok(f) => f,
+            Err((cause, tval)) => {
+                self.trap(cause, tval);
+                return;
+            }
+        };
         // The instruction about to run is the stepped one, if a step
         // was armed: the core asks to enter again before the next.
         if self.step_armed {
@@ -711,25 +830,33 @@ impl Model {
                 }
             }
             Lb | Lh | Lw | Lbu | Lhu => {
-                let addr = a.wrapping_add(imm);
+                let va = a.wrapping_add(imm);
                 // A half wants an even address and a word a multiple of
                 // four. The core raises the exception rather than
                 // supporting the access, which the specification allows
                 // and issue 138 asked for, so the model does too.
-                if misaligned(d.kind, addr) {
-                    self.trap(CAUSE_LOAD_MISALIGNED, addr);
+                if misaligned(d.kind, va) {
+                    self.trap(CAUSE_LOAD_MISALIGNED, va);
                     return;
                 }
+                // Then the translation, which may fault (issue 1014).
+                let addr = match self.data_pa(imem, va, false) {
+                    Ok(pa) => pa,
+                    Err((cause, tval)) => {
+                        self.trap(cause, tval);
+                        return;
+                    }
+                };
                 // The bus refused: the caller says so with the answer,
                 // and the load is an access fault at its address.
                 if addr >= DEVICES && self.dev_err && !self.csr.busquiet {
-                    self.trap(CAUSE_LOAD_ACCESS, addr);
+                    self.trap(CAUSE_LOAD_ACCESS, va);
                     return;
                 }
                 // Between the boot memory and the data memory nothing
                 // answers, and the router says so: an access fault too.
                 let Some(word) = self.word(imem, addr) else {
-                    self.trap(CAUSE_LOAD_ACCESS, addr);
+                    self.trap(CAUSE_LOAD_ACCESS, va);
                     return;
                 };
                 let byte = (word >> (8 * (addr & 3))) & 0xff;
@@ -743,11 +870,18 @@ impl Model {
                 });
             }
             Sb | Sh | Sw => {
-                let addr = a.wrapping_add(imm);
-                if misaligned(d.kind, addr) {
-                    self.trap(CAUSE_STORE_MISALIGNED, addr);
+                let va = a.wrapping_add(imm);
+                if misaligned(d.kind, va) {
+                    self.trap(CAUSE_STORE_MISALIGNED, va);
                     return;
                 }
+                let addr = match self.data_pa(imem, va, true) {
+                    Ok(pa) => pa,
+                    Err((cause, tval)) => {
+                        self.trap(cause, tval);
+                        return;
+                    }
+                };
                 // In a machine the store goes out with its lanes' mask,
                 // and nothing is read first (issue 1016).
                 if let Some(bus) = &self.bus {
@@ -794,11 +928,18 @@ impl Model {
                     return;
                 }
                 self.rsv = Some(a);
-                if a >= DEVICES && self.dev_err && !self.csr.busquiet {
+                let pa = match self.data_pa(imem, a, false) {
+                    Ok(pa) => pa,
+                    Err((cause, tval)) => {
+                        self.trap(cause, tval);
+                        return;
+                    }
+                };
+                if pa >= DEVICES && self.dev_err && !self.csr.busquiet {
                     self.trap(CAUSE_LOAD_ACCESS, a);
                     return;
                 }
-                let Some(word) = self.word(imem, a) else {
+                let Some(word) = self.word(imem, pa) else {
                     self.trap(CAUSE_LOAD_ACCESS, a);
                     return;
                 };
@@ -811,12 +952,21 @@ impl Model {
                     self.trap(CAUSE_STORE_MISALIGNED, a);
                     return;
                 }
+                // The core translates whether or not the reservation
+                // holds, so a page fault traps either way.
+                let pa = match self.data_pa(imem, a, true) {
+                    Ok(pa) => pa,
+                    Err((cause, tval)) => {
+                        self.trap(cause, tval);
+                        return;
+                    }
+                };
                 if held {
-                    if self.word(imem, a).is_none() {
+                    if self.word(imem, pa).is_none() {
                         self.halted = Some(Halt::Fault(a));
                         return;
                     }
-                    self.set_word(a, b);
+                    self.set_word(pa, b);
                 }
                 rd = Some(!held as u32);
             }
@@ -826,12 +976,20 @@ impl Model {
                     self.trap(CAUSE_STORE_MISALIGNED, a);
                     return;
                 }
-                let refused = a >= DEVICES && self.dev_err;
+                // An AMO writes, so it is translated as a store.
+                let pa = match self.data_pa(imem, a, true) {
+                    Ok(pa) => pa,
+                    Err((cause, tval)) => {
+                        self.trap(cause, tval);
+                        return;
+                    }
+                };
+                let refused = pa >= DEVICES && self.dev_err;
                 if refused && !self.csr.busquiet {
                     self.trap(CAUSE_STORE_ACCESS, a);
                     return;
                 }
-                let Some(old) = self.word(imem, a) else {
+                let Some(old) = self.word(imem, pa) else {
                     self.trap(CAUSE_STORE_ACCESS, a);
                     return;
                 };
@@ -849,7 +1007,7 @@ impl Model {
                 // A refusal the program asked to be quiet about reads
                 // the bus's word and writes nothing, as a load does.
                 if !refused {
-                    self.set_word(a, new);
+                    self.set_word(pa, new);
                 }
                 rd = Some(old);
             }
@@ -924,6 +1082,14 @@ impl Model {
             // core's wait shows up as cycles in which it retires
             // nothing, which is what the test measures.
             // Below supervisor mode it is an illegal instruction.
+            // Not in user mode; there is nothing for the model to drop,
+            // since it holds no translations (issue 1014).
+            SfenceVma => {
+                if self.prv == 0 {
+                    self.trap(CAUSE_ILLEGAL, w);
+                    return;
+                }
+            }
             Wfi => {
                 if self.prv == 0 {
                     self.trap(CAUSE_ILLEGAL, w);
