@@ -98,12 +98,17 @@ fn driven(s: &str) -> Option<&str> {
 
 /// The first identifier among `ts`, at any depth, that is one of
 /// `names`, unless it follows a `.`, which makes it a field or a
-/// method rather than a name of the body.
+/// method rather than a name of the body, or is followed by a single
+/// `:`, which makes it a field's name in a struct literal or pattern,
+/// `addr: value`, and not a use (issue 1024). The shorthand `Issue {
+/// addr, .. }` is a use, and is still found.
 fn first_use(ts: &[TokenTree], names: &[String]) -> Option<(String, Span)> {
     let mut prev_dot = false;
-    for t in ts {
+    for (k, t) in ts.iter().enumerate() {
         match t {
-            TokenTree::Ident(i) if !prev_dot => {
+            TokenTree::Ident(i)
+                if !prev_dot && !names_a_field(&ts[k + 1..]) =>
+            {
                 let s = i.to_string();
                 if names.contains(&s) {
                     return Some((s, i.span()));
@@ -120,6 +125,18 @@ fn first_use(ts: &[TokenTree], names: &[String]) -> Option<(String, Span)> {
         prev_dot = matches!(t, TokenTree::Punct(p) if p.as_char() == '.');
     }
     None
+}
+
+/// Whether the tokens after an identifier make it a field's name, as
+/// `name: value` does: a single `:`, and not the first of a path's two,
+/// which comes joined to the second.
+fn names_a_field(rest: &[TokenTree]) -> bool {
+    match rest.first() {
+        Some(TokenTree::Punct(p)) => {
+            p.as_char() == ':' && p.spacing() == Spacing::Alone
+        }
+        _ => false,
+    }
 }
 
 /// The names a `let` statement binds: one, or the members of a tuple.
