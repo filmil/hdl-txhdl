@@ -47,9 +47,27 @@ pub struct Csr {
     pub busquiet: bool,
 }
 
+/// A machine around the model: the memories and devices its fetches,
+/// loads and stores reach, by word address (issue 1016). The model does
+/// its sub-word merging for loads; a store goes out as a word and a mask
+/// of the bits it writes, so a device is not read on the way to being
+/// written. `&self`, since a device keeps its state behind a cell.
+pub trait Bus: std::fmt::Debug {
+    /// The word at `addr`, word-aligned, or `None` where nothing
+    /// answers.
+    fn load(&self, addr: u32) -> Option<u32>;
+    /// The bits of `v` that `mask` names, written at `addr`,
+    /// word-aligned; `false` where nothing answers.
+    fn store(&self, addr: u32, v: u32, mask: u32) -> bool;
+}
+
 /// The architectural state, and only that.
 #[derive(Clone, Debug)]
 pub struct Model {
+    /// The machine the model runs in, when it is one: every fetch, load
+    /// and store goes to it. `None` is the board as the lockstep test
+    /// holds the core to it, its memories the model's own.
+    pub bus: Option<std::rc::Rc<dyn Bus>>,
     pub pc: u32,
     pub x: [u32; 32],
     pub mem: Vec<u32>,
@@ -97,6 +115,7 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Model {
+            bus: None,
             pc: 0,
             x: [0; 32],
             mem: vec![0; DATA_BYTES as usize / 4],
@@ -170,6 +189,18 @@ impl Model {
     /// `IMEM_BYTES` or from the data memory above it, which is what
     /// the core does once it fetches from the bus (issue 134).
     fn fetch_at(&self, imem: &[u32], pc: u32) -> Option<(u32, u32)> {
+        if let Some(bus) = &self.bus {
+            let half = |at: u32| -> Option<u16> {
+                Some((bus.load(at & !3)? >> (8 * (at & 2))) as u16)
+            };
+            let lo = half(pc)?;
+            if crate::isa::is_compressed(lo) {
+                let w = crate::isa::compressed(lo).unwrap_or(lo as u32);
+                return Some((w, 2));
+            }
+            let hi = half(pc.wrapping_add(2))?;
+            return Some(((hi as u32) << 16 | lo as u32, 4));
+        }
         if pc < IMEM_BYTES {
             return fetch(imem, pc);
         }
@@ -193,6 +224,9 @@ impl Model {
     /// answered the core with, which the caller handed over. `None`
     /// between the boot memory and the data memory.
     fn word(&self, imem: &[u32], addr: u32) -> Option<u32> {
+        if let Some(bus) = &self.bus {
+            return bus.load(addr & !3);
+        }
         if addr < IMEM_BYTES {
             return Some(*imem.get((addr / 4) as usize).unwrap_or(&0));
         }
@@ -210,6 +244,9 @@ impl Model {
     /// core, which does not look at a write's answer, so it changes
     /// nothing here either.
     fn set_word(&mut self, addr: u32, v: u32) -> bool {
+        if let Some(bus) = &self.bus {
+            return bus.store(addr & !3, v, u32::MAX);
+        }
         if addr < IMEM_BYTES {
             return true;
         }
@@ -532,22 +569,37 @@ impl Model {
                     self.trap(CAUSE_STORE_MISALIGNED, addr);
                     return;
                 }
-                let Some(word) = self.word(imem, addr) else {
-                    self.halted = Some(Halt::Fault(addr));
-                    return;
-                };
-                let v = match d.kind {
-                    Sb => {
-                        let lane = 8 * (addr & 3);
-                        (word & !(0xff << lane)) | ((b & 0xff) << lane)
+                // In a machine the store goes out with its lanes' mask,
+                // and nothing is read first (issue 1016).
+                if let Some(bus) = &self.bus {
+                    let (lanes, shift) = match d.kind {
+                        Sb => (0xff, 8 * (addr & 3)),
+                        Sh => (0xffff, 16 * (addr >> 1 & 1)),
+                        _ => (u32::MAX, 0),
+                    };
+                    let v = (b & lanes) << shift;
+                    if !bus.store(addr & !3, v, lanes << shift) {
+                        self.halted = Some(Halt::Fault(addr));
+                        return;
                     }
-                    Sh => {
-                        let lane = 16 * (addr >> 1 & 1);
-                        (word & !(0xffff << lane)) | ((b & 0xffff) << lane)
-                    }
-                    _ => b,
-                };
-                self.set_word(addr, v);
+                } else {
+                    let Some(word) = self.word(imem, addr) else {
+                        self.halted = Some(Halt::Fault(addr));
+                        return;
+                    };
+                    let v = match d.kind {
+                        Sb => {
+                            let lane = 8 * (addr & 3);
+                            (word & !(0xff << lane)) | ((b & 0xff) << lane)
+                        }
+                        Sh => {
+                            let lane = 16 * (addr >> 1 & 1);
+                            (word & !(0xffff << lane)) | ((b & 0xffff) << lane)
+                        }
+                        _ => b,
+                    };
+                    self.set_word(addr, v);
+                }
             }
             Addi => rd = Some(a.wrapping_add(imm)),
             Slti => rd = Some(((a as i32) < (imm as i32)) as u32),
