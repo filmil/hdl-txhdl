@@ -81,6 +81,10 @@ rust_test(
 
 rust_test(
     name = "board_test",
+    # The whole board, several programs and a card identified at 400 kHz:
+    # 165 s alone and near the medium size's 300 s under a suite's load,
+    # which it crossed once (issue 956).
+    size = "large",
     srcs = ["tests/board.rs"],
     edition = "2021",
     deps = [
