@@ -37,7 +37,7 @@ use txhdl::comp::{
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
-use txhdl_parts::bus::arbiter::{Arbiter2, Arbiter5};
+use txhdl_parts::bus::arbiter::{Arbiter2, Arbiter6};
 use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerPort, PerReq, B, R,
     W,
@@ -211,10 +211,11 @@ pub struct Board<const DIV: u32> {
     /// past the arbiter widens: the JTAG master's IP only ever used one
     /// of the two bits it had. Taking turns, as the arbiter does.
     pub jarb: Arbiter2<32, 32, 4, 1, 2, 0>,
-    /// The five hosts onto one link: the core, the JTAG master, the
+    /// The six hosts onto one link: the core, the JTAG master, the
     /// Ethernet port's two engines, the one that fetches a frame to
-    /// send and the one that stores a frame received, and the video
-    /// scanout's fetch (issue 151). The peripheral side carries five
+    /// send and the one that stores a frame received, the video
+    /// scanout's fetch (issue 151), and the SD card's two engines
+    /// behind `sdarb` (issue 912). The peripheral side carries five
     /// bits of identifier, two for the hosts' own and three for the
     /// port, which is room for eight: a sixth, seventh and eighth host
     /// raise the count and widen nothing (issue 1022). Four bits held
@@ -223,8 +224,8 @@ pub struct Board<const DIV: u32> {
     ///
     /// Taking turns rather than fixed priority, so that an engine
     /// moving a frame cannot hold the core off the bus for the length
-    /// of it. With every host offering, each wins one turn in five.
-    pub arb: Arbiter5<32, 32, 4, 2, 5, 0>,
+    /// of it. With every host offering, each wins one turn in six.
+    pub arb: Arbiter6<32, 32, 4, 2, 5, 0>,
     pub router: BoardRouter,
     pub pdmem: AxiPer<32, 32, 4, 5>,
     pub ptimer: AxiPer<32, 32, 4, 5>,
@@ -324,6 +325,28 @@ pub struct Board<const DIV: u32> {
     /// interrupt controller's three sources are taken, and a program
     /// waits on the status register.
     pub sd: Sd,
+    /// The SD host's engines (issue 912): a read's blocks stored into
+    /// memory as the card sends them, a write's fetched out of it as
+    /// the card takes them, each with a host of its own. One command
+    /// is a read or a write and never both, and the host starts no
+    /// command until the last one's engine has finished, so the two
+    /// never move words at once: the `dmaon` state with the command
+    /// word's read and write bits makes them exclusive, and the host
+    /// checks that the two busy lines are never high together.
+    pub sdstore: LineStore<32, 1, 16, 16>,
+    pub sdfetch: LineFetch<32, 1, 16, 16>,
+    pub sdshost: AxiHost<32, 32, 4, 1, 2>,
+    pub sdfhost: AxiHost<32, 32, 4, 1, 2>,
+    /// The store engine never reads, and the fetch engine never writes.
+    pub sdnoreads: NoReads<1>,
+    pub sdnobeats: NoBeats,
+    /// The two engines onto the arbiter's sixth port, a bit of
+    /// identifier each. This is a nest, which the arbiter's widening
+    /// was meant to end, and it is one because the reason does not
+    /// apply: hosts that share a port share its turns, and these two
+    /// never offer at the same time, so neither takes a turn from the
+    /// other. It keeps two ports free, for Razboj and a texture fetch.
+    pub sdarb: Arbiter2<32, 32, 4, 1, 2, 0>,
     /// The window's tracker, on the router's eighth port.
     pub pflash: AxiPer<32, 32, 4, 5>,
     /// The window.
@@ -727,6 +750,45 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (pb_sd_tx, pb_sd_rx) = chan::<LiteB, DefaultClock>();
         let (pr_sd_tx, pr_sd_rx) = chan::<LiteR<32>, DefaultClock>();
         let (sd_irq_o, _sd_irq_i) = signal::<Bit, DefaultClock>();
+        // The SD host's engines, their hosts, and `sdarb`'s side of the
+        // arbiter's sixth port (issue 912).
+        let (sdout_tx, sdout_rx) = chan::<U<32>, DefaultClock>();
+        let (sdin_tx, sdin_rx) = chan::<U<32>, DefaultClock>();
+        let (sdat_o, sdat_i) = signal::<U<32>, DefaultClock>();
+        let sdat_f = sdat_i.clone();
+        let (sdbytes_o, sdbytes_i) = signal::<U<16>, DefaultClock>();
+        let (sdwords_o, sdwords_i) = signal::<U<16>, DefaultClock>();
+        let (sdsgo_o, sdsgo_i) = signal::<Bit, DefaultClock>();
+        let (sdfgo_o, sdfgo_i) = signal::<Bit, DefaultClock>();
+        let (sdsbusy_o, sdsbusy_i) = signal::<Bit, DefaultClock>();
+        let (sdfbusy_o, sdfbusy_i) = signal::<Bit, DefaultClock>();
+        let (dsissue_tx, dsissue_rx) = chan::<Issue<32>, DefaultClock>();
+        let (dswbeat_tx, dswbeat_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (dsrelease_tx, dsrelease_rx) = chan::<Grant<1>, DefaultClock>();
+        let (dsgrant_tx, dsgrant_rx) = chan::<Grant<1>, DefaultClock>();
+        let (dsdone_tx, dsdone_rx) = chan::<Done<1>, DefaultClock>();
+        let (dsrdata_tx, dsrdata_rx) = chan::<R<32, 1>, DefaultClock>();
+        let (dfissue_tx, dfissue_rx) = chan::<Issue<32>, DefaultClock>();
+        let (dfwbeat_tx, dfwbeat_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (dfrelease_tx, dfrelease_rx) = chan::<Grant<1>, DefaultClock>();
+        let (dfgrant_tx, dfgrant_rx) = chan::<Grant<1>, DefaultClock>();
+        let (dfdone_tx, dfdone_rx) = chan::<Done<1>, DefaultClock>();
+        let (dfrdata_tx, dfrdata_rx) = chan::<R<32, 1>, DefaultClock>();
+        let (dsaw_tx, dsaw_rx) = chan::<Aw<32, 1>, DefaultClock>();
+        let (dsar_tx, dsar_rx) = chan::<Ar<32, 1>, DefaultClock>();
+        let (dsw_tx, dsw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (dsb_tx, dsb_rx) = chan::<B<1>, DefaultClock>();
+        let (dsr_tx, dsr_rx) = chan::<R<32, 1>, DefaultClock>();
+        let (dfaw_tx, dfaw_rx) = chan::<Aw<32, 1>, DefaultClock>();
+        let (dfar_tx, dfar_rx) = chan::<Ar<32, 1>, DefaultClock>();
+        let (dfw_tx, dfw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (dfb_tx, dfb_rx) = chan::<B<1>, DefaultClock>();
+        let (dfr_tx, dfr_rx) = chan::<R<32, 1>, DefaultClock>();
+        let (sdaw_tx, sdaw_rx) = chan::<Aw<32, 2>, DefaultClock>();
+        let (sdar_tx, sdar_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (sdw_tx, sdw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (sdb_tx, sdb_rx) = chan::<B<2>, DefaultClock>();
+        let (sdr_tx, sdr_rx) = chan::<R<32, 2>, DefaultClock>();
         // The window on the router's eighth port, its wires to the pins,
         // and the reset the pins hold it in until the flash is ready.
         let (aw7_tx, aw7_rx) = chan::<Aw<32, 5>, DefaultClock>();
@@ -1084,13 +1146,16 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                         (
                                             [
                                                 aw_rx, jaw_rx, faw_rx, saw_rx,
-                                                scaw_rx,
+                                                scaw_rx, sdaw_rx,
                                             ],
                                             [
                                                 ar_rx, jar_rx, far_rx, sar_rx,
-                                                scar_rx,
+                                                scar_rx, sdar_rx,
                                             ],
-                                            [w_rx, jw_rx, fw_rx, sw_rx, scw_rx],
+                                            [
+                                                w_rx, jw_rx, fw_rx, sw_rx,
+                                                scw_rx, sdw_rx,
+                                            ],
                                             xb_rx,
                                             xr_rx,
                                         ),
@@ -1098,8 +1163,14 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             xaw_tx,
                                             xar_tx,
                                             xw_tx,
-                                            [b_tx, jb_tx, fb_tx, sb_tx, scb_tx],
-                                            [r_tx, jr_tx, fr_tx, sr_tx, scr_tx],
+                                            [
+                                                b_tx, jb_tx, fb_tx, sb_tx,
+                                                scb_tx, sdb_tx,
+                                            ],
+                                            [
+                                                r_tx, jr_tx, fr_tx, sr_tx,
+                                                scr_tx, sdr_tx,
+                                            ],
                                         ),
                                     ),
                                 ),
@@ -1395,6 +1466,15 @@ join2(
                                                                 dat_out: sd_dat_out,
                                                                 dat_oe: sd_dat_oe,
                                                                 irq: sd_irq_o,
+                                                                dma_in: sdin_rx,
+                                                                dma_out: sdout_tx,
+                                                                dma_at: sdat_o,
+                                                                dma_bytes: sdbytes_o,
+                                                                dma_words: sdwords_o,
+                                                                store_go: sdsgo_o,
+                                                                fetch_go: sdfgo_o,
+                                                                store_busy: sdsbusy_i,
+                                                                fetch_busy: sdfbusy_i,
                                                             },
                                                         ),
                                                         ),
@@ -1559,7 +1639,75 @@ join2(
                                             scrdata_tx,
                                         ),
                                     ),
-                                    self.vnobeats.run((), scwbeat_tx),
+                                    join2(
+                                        self.vnobeats.run((), scwbeat_tx),
+                                        // The SD host's engines, after the host, whose starts and
+                                        // lengths they read.
+                                        join2(
+                                            join2(
+                                                join2(
+                                                    self.sdstore.run(
+                                                        (
+                                                            dsgrant_rx, dsdone_rx, sdout_rx, sdat_i,
+                                                            sdbytes_i, sdsgo_i,
+                                                        ),
+                                                        (dsissue_tx, dswbeat_tx, dsrelease_tx, sdsbusy_o),
+                                                    ),
+                                                    self.sdfetch.run(
+                                                        (
+                                                            dfgrant_rx, dfdone_rx, dfrdata_rx, sdat_f,
+                                                            sdwords_i, sdfgo_i,
+                                                        ),
+                                                        (dfissue_tx, dfrelease_tx, sdin_tx, sdfbusy_o),
+                                                    ),
+                                                ),
+                                                join2(
+                                                    self.sdshost.run(
+                                                        (
+                                                            dsissue_rx, dswbeat_rx, dsb_rx, dsr_rx,
+                                                            dsrelease_rx,
+                                                        ),
+                                                        (
+                                                            dsaw_tx, dsar_tx, dsw_tx, dsgrant_tx,
+                                                            dsdone_tx, dsrdata_tx,
+                                                        ),
+                                                    ),
+                                                    self.sdfhost.run(
+                                                        (
+                                                            dfissue_rx, dfwbeat_rx, dfb_rx, dfr_rx,
+                                                            dfrelease_rx,
+                                                        ),
+                                                        (
+                                                            dfaw_tx, dfar_tx, dfw_tx, dfgrant_tx,
+                                                            dfdone_tx, dfrdata_tx,
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                            join2(
+                                                join2(
+                                                    self.sdnoreads.run(dsrdata_rx, ()),
+                                                    self.sdnobeats.run((), dfwbeat_tx),
+                                                ),
+                                                self.sdarb.run(
+                                                    (
+                                                        [dsaw_rx, dfaw_rx],
+                                                        [dsar_rx, dfar_rx],
+                                                        [dsw_rx, dfw_rx],
+                                                        sdb_rx,
+                                                        sdr_rx,
+                                                    ),
+                                                    (
+                                                        sdaw_tx,
+                                                        sdar_tx,
+                                                        sdw_tx,
+                                                        [dsb_tx, dfb_tx],
+                                                        [dsr_tx, dfr_tx],
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
+                                    ),
                                 ),
                             ),
                         ),

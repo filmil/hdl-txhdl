@@ -105,5 +105,19 @@
 #define SD_RESP2 0x18 /* read only: its third */
 #define SD_RESP3 0x1c /* read only: its fourth */
 #define SD_DATA 0x20 /* read, write: read: the next word out; written: the next word in */
+#define SD_DMA 0x24 /* read, write: where in memory the next command's blocks start */
+#define SD_BLOCKS 0x28 /* read, write: blocks the next command moves through memory */
+#define SD_BLOCKS_COUNT_SHIFT 0 /* read, write: blocks to move; zero, through the buffer */
+#define SD_BLOCKS_COUNT_MASK 0x7f
+#define SD_BLOCKS_COUNT_WIDTH 7
+#define SD_BLOCKS_COUNT_RESET 0x0
+#define SD_BLOCKS_LEFT_SHIFT 16 /* read only: blocks still to move */
+#define SD_BLOCKS_LEFT_MASK 0x7f0000
+#define SD_BLOCKS_LEFT_WIDTH 7
+#define SD_BLOCKS_LEFT_RESET 0x0
+#define SD_BLOCKS_RUN_SHIFT 31 /* read only: an engine is still moving words */
+#define SD_BLOCKS_RUN_MASK 0x80000000
+#define SD_BLOCKS_RUN_WIDTH 1
+#define SD_BLOCKS_RUN_RESET 0x0
 
 #endif

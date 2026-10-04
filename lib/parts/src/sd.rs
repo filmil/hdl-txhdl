@@ -22,7 +22,16 @@
 //! went. A multi-block transfer is one command, `CMD18` or `CMD25`,
 //! followed by data-only transfers, one a block, and `CMD12`; a card
 //! streams a read back to back, and keeping up with that at 25 MHz
-//! through a register is what DMA is for, which is left for later.
+//! through a register is what the host's way to memory is for.
+//!
+//! That way is two engines of issue 151 beside the host, and a count of
+//! blocks in `blocks` (issue 912). A command with a count runs that many
+//! blocks on its own: the buffer becomes a ring between the lines and
+//! an engine, a read's words go to the store engine as they arrive and
+//! a write's come from the fetch engine, each block sent once all of it
+//! is in, and the command is done once its engine has finished too. A
+//! command is a read or a write and never both, and none starts until
+//! the last has finished, so the two engines never run at once.
 //!
 //! | Offset | Name | What it is |
 //! |---|---|---|
@@ -32,6 +41,8 @@
 //! | `0x0c` | `status` | busy, done, faults, CRC status, busy line, pointers |
 //! | `0x10` to `0x1c` | `resp0` to `resp3` | the response |
 //! | `0x20` | `data` | read: the next word out; written: the next word in |
+//! | `0x24` | `dma` | where in memory the next command's blocks start |
+//! | `0x28` | `blocks` | blocks to move through memory, those left, engine running |
 //!
 //! `ctrl` is the divider in bits 0 to 7, `wide` in bit 8 and the
 //! interrupt enable in bit 9. A half of a card clock takes `div + 1`
@@ -70,9 +81,9 @@
 //! at default speed and the way back did not fit (issue 929). A CRC is checked the way a shift
 //! register does it: the received CRC is fed into the same register
 //! after the data, and what is left is zero when they agree.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, with, Trace};
+use txhdl::{check, lower, with, Trace};
 
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
@@ -114,6 +125,12 @@ regmap! { regs (regs_read, regs_we), 4: [
     (6, resp2, ro, "its third"),
     (7, resp3, ro, "its fourth"),
     (8, data, rw, "read: the next word out; written: the next word in"),
+    (9, dma, rw, "where in memory the next command's blocks start"),
+    (10, blocks, rw, "blocks the next command moves through memory", [
+        (count, 0, 7, rw, 0, "blocks to move; zero, through the buffer"),
+        (left, 16, 7, ro, 0, "blocks still to move"),
+        (run, 31, 1, ro, 0, "an engine is still moving words"),
+    ]),
 ] }
 
 /// `ctrl` bit 8: four data lines.
@@ -179,6 +196,26 @@ pub struct SdLines {
     pub dat_oe: Out<Bit>,
     /// A finished command, when the interrupt is enabled.
     pub irq: Out<Bit>,
+    /// The words a write's blocks are sent from, out of memory, from
+    /// the fetch engine (issue 912).
+    pub dma_in: Rx<U<32>>,
+    /// The words a read's blocks bring in, to the store engine.
+    pub dma_out: Tx<U<32>>,
+    /// Where in memory the engines start, for one command's blocks.
+    pub dma_at: Out<U<32>>,
+    /// The store engine's length in bytes, and the fetch engine's in
+    /// words.
+    pub dma_bytes: Out<U<16>>,
+    /// The fetch engine's length in words.
+    pub dma_words: Out<U<16>>,
+    /// Start the store engine, for a read.
+    pub store_go: Out<Bit>,
+    /// Start the fetch engine, for a write.
+    pub fetch_go: Out<Bit>,
+    /// The store engine is moving words.
+    pub store_busy: In<Bit>,
+    /// The fetch engine is moving words.
+    pub fetch_busy: In<Bit>,
 }
 
 // begin{state}
@@ -266,6 +303,23 @@ pub struct Sd {
     /// It rose two cycles ago: the host samples now, from the input
     /// registers, which took the lines a cycle after the rise.
     pub rise_d2: Reg<Bit>,
+    /// Where in memory the next command's blocks start (issue 912).
+    pub dmaat: Reg<U<32>>,
+    /// Blocks the next command moves through memory; zero, none.
+    pub count: Reg<U<7>>,
+    /// Blocks of the running command still to move.
+    pub left: Reg<U<7>>,
+    /// The running command moves its blocks through memory: the buffer
+    /// is a ring between the lines and an engine, and the host runs
+    /// block after block without the program.
+    pub dmaon: Reg<Bit>,
+    /// Words in the ring, from none to a whole block. Its pointers are
+    /// seven bits, so a full ring and an empty one look alike to them.
+    pub fill: Reg<U<8>>,
+    /// High for the one cycle that starts the store engine.
+    pub sgo: Reg<Bit>,
+    /// High for the one cycle that starts the fetch engine.
+    pub fgo: Reg<Bit>,
 }
 // end{state}
 
@@ -311,6 +365,15 @@ impl Unit for Sd {
             dat_out,
             dat_oe,
             irq,
+            dma_in,
+            dma_out,
+            dma_at,
+            dma_bytes,
+            dma_words,
+            store_go,
+            fetch_go,
+            store_busy,
+            fetch_busy,
         }: SdLines,
     ) {
         loop {
@@ -392,6 +455,24 @@ impl Unit for Sd {
             let start_wr = regs_cmd_write(written);
             let start_only = regs_cmd_only(written);
             let start_clocks = regs_cmd_clocks(written);
+            // A command that moves its blocks through memory: one with
+            // a block, and a count of them. A read and a write are never
+            // both: a command word with both bits is a read, so the store
+            // engine and the fetch engine are started by commands that
+            // exclude each other, and a command starts only when the last
+            // has finished, which waits for its engine to finish too.
+            let count = self.count.get();
+            let left = self.left.get();
+            let dmaon = self.dmaon.get();
+            let fill = self.fill.get();
+            let start_dma =
+                start & (count != 0) & !start_clocks & (start_rd | start_wr);
+            let dmard = dmaon & rd;
+            let dmawr = dmaon & wr & !rd;
+            check!(
+                !(store_busy.get() & fetch_busy.get()),
+                "the store and the fetch engine never run together"
+            );
             // Where a command starts: clocks alone, a block alone, or
             // the command itself.
             let start_data =
@@ -459,6 +540,19 @@ impl Unit for Sd {
             );
             let dstep = mux(wide, U::<6>::from(4u8), U::<6>::from(1u8));
             let dfull = dbit & (dn + dstep == 32);
+            // The ring, in a read through memory: each word the lines
+            // fill goes to the store engine as soon as it can take one.
+            let drain = dmard & (fill != 0) & dma_out.ready();
+            // In a write through memory: each word the fetch engine
+            // offers goes in while the ring has room, and a block goes
+            // out only once all of it is in.
+            let take = dmawr
+                & Bit::from(dma_in.peek().is_some())
+                & (fill < 128)
+                & !push;
+            let taken = dma_in.head();
+            let _ = dma_in.recv_if(take);
+            let block_ready = !dmawr | (fill >= 128);
             // A block going out: two clocks of quiet, the start bit,
             // the data from the buffer, the CRC of each line, the end
             // bit, then the line released for the card's answer.
@@ -472,6 +566,28 @@ impl Unit for Sd {
             // bit or nibble is needed.
             let fresh = dn == 0;
             let src = mux(fresh, self.words.read(rptr), dsr);
+            // Words into the ring and out of it this cycle.
+            let into = (dmard & dfull) | take;
+            let outof = drain | (dmawr & out_data & fresh);
+            let fill_next = mux(
+                into,
+                mux(outof, fill, fill + 1),
+                mux(outof, fill - 1, fill),
+            );
+            // The engines are finished with the command's words: a
+            // read's are all in memory, a write's all fetched.
+            let engines_idle = !store_busy.get()
+                & !fetch_busy.get()
+                & !self.sgo.get()
+                & !self.fgo.get();
+            let drained = !dmaon | ((fill == 0) & engines_idle);
+            let failed = self.rtimeout.get()
+                | self.rcrc.get()
+                | self.dtimeout.get()
+                | self.dcrc.get();
+            let finishing = in_finish & (drained | failed);
+            // Another block after this one, in a transfer through memory.
+            let more = dmaon & (left > 1);
             let obit = src.bit(31);
             let onib = src.slice::<28, 4>();
             let oshift = mux(wide, src << 4u32, src << 1u32);
@@ -546,6 +662,12 @@ impl Unit for Sd {
                 resp.slice::<64, 32>(),
                 resp.slice::<96, 32>(),
                 self.words.read(rptr),
+                self.dmaat.get(),
+                regs_blocks_pack(
+                    count,
+                    left,
+                    store_busy.get() | fetch_busy.get(),
+                ),
             );
             with!(self <= {
                 we.bit(0) ? {
@@ -554,6 +676,8 @@ impl Unit for Sd {
                     ie: regs_ctrl_ie(written),
                 },
                 we.bit(2) ? arg: written,
+                we.bit(9) ? dmaat: written,
+                we.bit(10) ? count: regs_blocks_count(written),
                 clear ? {
                     wptr: U::<7>::from(0u8),
                     rptr: U::<7>::from(0u8),
@@ -601,6 +725,24 @@ impl Unit for Sd {
                 },
                 start & start_rd ? wptr: U::<7>::from(0u8),
                 start & start_wr ? rptr: U::<7>::from(0u8),
+                // A transfer through memory starts with the ring empty
+                // and its engine told where and how much.
+                start ? {
+                    dmaon: start_dma,
+                    left: mux(start_dma, count, U::<7>::from(0u8)),
+                },
+                start_dma ? {
+                    wptr: U::<7>::from(0u8),
+                    rptr: U::<7>::from(0u8),
+                },
+                sgo: start_dma & start_rd,
+                fgo: start_dma & start_wr & !start_rd,
+                fill: mux(start_dma, U::<8>::from(0u8), fill_next),
+                drain ? rptr: rptr + 1,
+                take ? {
+                    words.at(wptr): taken,
+                    wptr: wptr + 1,
+                },
                 // The clock.
                 busy ? tick: mux(strobe, U::<8>::from(0u8), tick + 1),
                 strobe ? half: !half,
@@ -695,8 +837,11 @@ impl Unit for Sd {
                     n: U::<13>::from(0u8),
                     waited: U::<24>::from(0u8),
                 },
+                // A read through memory runs on to the next block, which
+                // the card streams after this one, unless this one was bad.
+                dend & more & !dbad ? phase: U::<4>::from(DWAIT),
                 // A block out.
-                falling & in_dsend & (n < 2) ? n: n + 1,
+                falling & in_dsend & (n < 2) & block_ready ? n: n + 1,
                 out_start ? {
                     dat_drv: Bit::One,
                     dat_o: U::<4>::from(0u8),
@@ -766,8 +911,21 @@ impl Unit for Sd {
                     phase: U::<4>::from(FINISH),
                 },
                 bclear ? phase: U::<4>::from(FINISH),
+                // A block of a transfer through memory is over: its
+                // last bit in, or the card out of busy after it.
+                (dmard & dend) | (dmawr & bclear) ? left: left - 1,
+                // A write through memory sends the next block once the
+                // card has left busy, unless this one was refused.
+                bclear & dmawr & more & !self.dcrc.get() ? {
+                    phase: U::<4>::from(DSEND),
+                    n: U::<13>::from(0u8),
+                    crc0: U::<16>::from(0u8),
+                    crc1: U::<16>::from(0u8),
+                    crc2: U::<16>::from(0u8),
+                    crc3: U::<16>::from(0u8),
+                },
                 // Done: the clock stops low.
-                in_finish ? {
+                finishing ? {
                     busy: Bit::Zero,
                     phase: U::<4>::from(IDLE),
                     done: Bit::One,
@@ -791,6 +949,14 @@ impl Unit for Sd {
             dat_out.set(dat_o);
             dat_oe.set(self.dat_drv.get());
             irq.set(done & ie);
+            dma_at.set(self.dmaat.get());
+            dma_bytes.set(count.zext::<16>() << 9u32);
+            dma_words.set(count.zext::<16>() << 7u32);
+            store_go.set(self.sgo.get());
+            fetch_go.set(self.fgo.get());
+            if drain.to_bool() {
+                dma_out.send(self.words.read(rptr));
+            }
         }
     }
 }
@@ -1312,7 +1478,7 @@ mod tests {
     use crate::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LiteW};
     use std::cell::RefCell;
     use std::rc::Rc;
-    use txhdl::comp::{join2, signal, Running};
+    use txhdl::comp::{chan, join2, signal, Running};
 
     type Host = LiteHost<32, 32, 4>;
 
@@ -1458,6 +1624,87 @@ mod tests {
     where
         F: std::future::Future<Output = ()>,
     {
+        run_engines(card, lag, Vec::new(), client).0
+    }
+
+    /// The store engine as a test sees it: started by `go`, it takes
+    /// the words of `bytes` from the host and keeps them, and says it
+    /// is busy until it has them all (issue 912).
+    struct StoreModel {
+        got: Rc<RefCell<Vec<u32>>>,
+        at: Rc<RefCell<Vec<u32>>>,
+        want: u32,
+    }
+
+    /// What the store model takes: the words, the start, the length
+    /// and the address.
+    type StoreIn = (Rx<U<32>>, In<Bit>, In<U<16>>, In<U<32>>);
+
+    impl Unit<StoreIn, Out<Bit>> for StoreModel {
+        async fn run(
+            &mut self,
+            (words, go, bytes, at): StoreIn,
+            busy: Out<Bit>,
+        ) {
+            loop {
+                DefaultClock::rising().await;
+                if go.get().to_bool() {
+                    self.want = bytes.get().raw() as u32 / 4;
+                    self.at.borrow_mut().push(at.get().raw() as u32);
+                }
+                if self.want > 0 {
+                    if let Some(w) = words.recv_if(true) {
+                        self.got.borrow_mut().push(w.raw() as u32);
+                        self.want -= 1;
+                    }
+                }
+                busy.set(Bit::from_bool(self.want > 0));
+            }
+        }
+    }
+
+    /// The fetch engine: started by `go`, it offers the next `words`
+    /// of `src` as the host has room, busy until all are taken.
+    struct FetchModel {
+        src: Vec<u32>,
+        next: usize,
+        left: u32,
+    }
+
+    impl Unit<(In<Bit>, In<U<16>>), (Tx<U<32>>, Out<Bit>)> for FetchModel {
+        async fn run(
+            &mut self,
+            (go, words): (In<Bit>, In<U<16>>),
+            (out, busy): (Tx<U<32>>, Out<Bit>),
+        ) {
+            loop {
+                DefaultClock::rising().await;
+                if go.get().to_bool() {
+                    self.left = words.get().raw() as u32;
+                }
+                if self.left > 0 && out.ready().to_bool() {
+                    out.send(U::<32>::from(self.src[self.next]));
+                    self.next += 1;
+                    self.left -= 1;
+                }
+                busy.set(Bit::from_bool(self.left > 0));
+            }
+        }
+    }
+
+    /// Run `client` against the host and `card`, with the two engines'
+    /// models: the fetch engine offering `src`, and what the store
+    /// engine took answered with the card, with the addresses each
+    /// start named.
+    fn run_engines<F>(
+        card: SdCard,
+        lag: usize,
+        src: Vec<u32>,
+        client: impl FnOnce(Host) -> F,
+    ) -> (SdCard, Vec<u32>, Vec<u32>)
+    where
+        F: std::future::Future<Output = ()>,
+    {
         let link = axi_lite::<32, 32, 4>();
         let bus: LitePort<32, 32, 4> = link.per.into();
         let (cmd_in_o, cmd_in) = signal::<Bit, DefaultClock>();
@@ -1468,6 +1715,27 @@ mod tests {
         let (dat_out_o, dat_out) = signal::<U<4>, DefaultClock>();
         let (dat_oe_o, dat_oe) = signal::<Bit, DefaultClock>();
         let (irq_o, _irq) = signal::<Bit, DefaultClock>();
+        let (din_tx, din_rx) = chan::<U<32>, DefaultClock>();
+        let (dout_tx, dout_rx) = chan::<U<32>, DefaultClock>();
+        let (at_o, at) = signal::<U<32>, DefaultClock>();
+        let (bytes_o, bytes) = signal::<U<16>, DefaultClock>();
+        let (words_o, words) = signal::<U<16>, DefaultClock>();
+        let (sgo_o, sgo) = signal::<Bit, DefaultClock>();
+        let (fgo_o, fgo) = signal::<Bit, DefaultClock>();
+        let (sbusy_o, sbusy) = signal::<Bit, DefaultClock>();
+        let (fbusy_o, fbusy) = signal::<Bit, DefaultClock>();
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let ats = Rc::new(RefCell::new(Vec::new()));
+        let mut store = StoreModel {
+            got: got.clone(),
+            at: ats.clone(),
+            want: 0,
+        };
+        let mut fetch = FetchModel {
+            src,
+            next: 0,
+            left: 0,
+        };
         let done = Rc::new(RefCell::new(false));
         let d = done.clone();
         let body = client(link.host);
@@ -1477,19 +1745,34 @@ mod tests {
         };
         let mut host = Sd::default();
         let mut sim = Running::new(join2(
-            client,
-            host.run(
-                bus,
-                SdLines {
-                    cmd_in,
-                    dat_in,
-                    sclk: sclk_o,
-                    cmd_out: cmd_out_o,
-                    cmd_oe: cmd_oe_o,
-                    dat_out: dat_out_o,
-                    dat_oe: dat_oe_o,
-                    irq: irq_o,
-                },
+            join2(
+                client,
+                host.run(
+                    bus,
+                    SdLines {
+                        cmd_in,
+                        dat_in,
+                        sclk: sclk_o,
+                        cmd_out: cmd_out_o,
+                        cmd_oe: cmd_oe_o,
+                        dat_out: dat_out_o,
+                        dat_oe: dat_oe_o,
+                        irq: irq_o,
+                        dma_in: din_rx,
+                        dma_out: dout_tx,
+                        dma_at: at_o,
+                        dma_bytes: bytes_o,
+                        dma_words: words_o,
+                        store_go: sgo_o,
+                        fetch_go: fgo_o,
+                        store_busy: sbusy,
+                        fetch_busy: fbusy,
+                    },
+                ),
+            ),
+            join2(
+                store.run((dout_rx, sgo, bytes, at), sbusy_o),
+                fetch.run((fgo, words), (din_tx, fbusy_o)),
             ),
         ));
         let mut card = card;
@@ -1514,7 +1797,9 @@ mod tests {
             cmd_in_o.set(Bit::from_bool(if host_cmd { cmd } else { card_cmd }));
             dat_in_o.set(U::<4>::from(if host_dat { dat } else { card_dat }));
             if *done.borrow() {
-                return card;
+                let got = got.borrow().clone();
+                let ats = ats.borrow().clone();
+                return (card, got, ats);
             }
         }
         panic!("the client did not finish");
@@ -1731,5 +2016,66 @@ mod tests {
         assert_eq!(crc7(&bits), 0x4a);
         let ones = vec![true; 4096];
         assert_eq!(crc16(&ones), 0x7fa1);
+    }
+
+    /// A multi-block read through memory, on four lines, with the card
+    /// sending its blocks back to back: a clock between one block's
+    /// end and the next one's start, where the buffer read through a
+    /// register cannot keep up (issue 912). The host runs the blocks on
+    /// its own, and the store engine has every word, in order.
+    #[test]
+    fn blocks_read_back_to_back_go_to_memory() {
+        let card = SdCard {
+            multi_gap: 1,
+            ..SdCard::default()
+        };
+        let want: Vec<u32> =
+            (0..6).flat_map(|b| block_words(&card, b)).collect();
+        let (_card, got, ats) =
+            run_engines(card, 0, Vec::new(), |h| async move {
+                write(&h, regs::ctrl, DIV).await;
+                bring_up(&h, true).await;
+                write(&h, regs::dma, 0x4100_0000).await;
+                write(&h, regs::blocks, 6).await;
+                let s = command(&h, 18, 0, CMD_SHORT | CMD_READ).await;
+                assert_eq!(faults(s), 0, "CMD18: {s:#x}");
+                let b = read(&h, regs::blocks).await;
+                assert_eq!(b >> 16 & 0x7f, 0, "no block left: {b:#x}");
+                assert_eq!(b >> 31, 0, "no engine running: {b:#x}");
+                write(&h, regs::blocks, 0).await;
+                let s = command(&h, 12, 0, CMD_SHORT | CMD_BUSY).await;
+                assert_eq!(faults(s), 0, "CMD12: {s:#x}");
+            });
+        assert_eq!(ats, [0x4100_0000], "one start, at the address given");
+        assert_eq!(got.len(), 6 * WORDS, "six blocks of words");
+        assert_eq!(got, want, "blocks 0 to 5, in order");
+    }
+
+    /// A multi-block write from memory: the fetch engine's words go to
+    /// the card block after block, each sent once all of it is in the
+    /// ring and the card has left busy after the last (issue 912).
+    #[test]
+    fn blocks_written_from_memory_reach_the_card() {
+        let card = SdCard::default();
+        let src: Vec<u32> = (0..4 * WORDS as u32)
+            .map(|i| i.wrapping_mul(0x9e37_79b9) ^ 0x5a5a)
+            .collect();
+        let sent = src.clone();
+        let (card, got, ats) = run_engines(card, 0, src, |h| async move {
+            write(&h, regs::ctrl, DIV).await;
+            bring_up(&h, true).await;
+            write(&h, regs::dma, 0x4200_0000).await;
+            write(&h, regs::blocks, 4).await;
+            let s = command(&h, 25, 2, CMD_SHORT | CMD_WRITE).await;
+            assert_eq!(faults(s), 0, "CMD25: {s:#x}");
+            write(&h, regs::blocks, 0).await;
+            let s = command(&h, 12, 0, CMD_SHORT | CMD_BUSY).await;
+            assert_eq!(faults(s), 0, "CMD12: {s:#x}");
+        });
+        assert!(got.is_empty(), "nothing stored: a write never reads");
+        assert!(ats.is_empty(), "and the store engine never started");
+        let held: Vec<u32> =
+            (2..6).flat_map(|b| block_words(&card, b)).collect();
+        assert_eq!(held, sent, "blocks 2 to 5, as the card holds them");
     }
 }

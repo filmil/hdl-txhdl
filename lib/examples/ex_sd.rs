@@ -21,7 +21,7 @@
 //! build simulates its netlist against this run under nvc and
 //! Verilator, with the card's lines as the run recorded them.
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::{join2, now, signal, DefaultClock, Running, Unit};
+use txhdl::comp::{chan, join2, now, signal, DefaultClock, Running, Unit};
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
@@ -76,6 +76,17 @@ fn main() {
     let (dat_out_o, dat_out) = signal::<U<4>, DefaultClock>();
     let (dat_oe_o, dat_oe) = signal::<Bit, DefaultClock>();
     let (irq_o, irq) = signal::<Bit, DefaultClock>();
+    // The host's way to memory, unused here: no command names a count
+    // of blocks, so neither engine is started. `ex_sddma` uses it.
+    let (_dma_in_tx, dma_in) = chan::<U<32>, DefaultClock>();
+    let (dma_out, _dma_out_rx) = chan::<U<32>, DefaultClock>();
+    let (dma_at_o, dma_at) = signal::<U<32>, DefaultClock>();
+    let (dma_bytes_o, dma_bytes) = signal::<U<16>, DefaultClock>();
+    let (dma_words_o, dma_words) = signal::<U<16>, DefaultClock>();
+    let (store_go_o, store_go) = signal::<Bit, DefaultClock>();
+    let (fetch_go_o, fetch_go) = signal::<Bit, DefaultClock>();
+    let (_store_busy_o, store_busy) = signal::<Bit, DefaultClock>();
+    let (_fetch_busy_o, fetch_busy) = signal::<Bit, DefaultClock>();
 
     let mut host_unit = HostUnit::default();
     let mut bridge = Bridge::default();
@@ -101,6 +112,15 @@ fn main() {
         wave.add("dat_out", &dat_out);
         wave.add("dat_oe", &dat_oe);
         wave.add("irq", &irq);
+        wave.add("dma_in", &dma_in);
+        wave.add("dma_out", &dma_out);
+        wave.add("dma_at", &dma_at);
+        wave.add("dma_bytes", &dma_bytes);
+        wave.add("dma_words", &dma_words);
+        wave.add("store_go", &store_go);
+        wave.add("fetch_go", &fetch_go);
+        wave.add("store_busy", &store_busy);
+        wave.add("fetch_busy", &fetch_busy);
         wave.add("sd", &sd);
         wave.start();
     }
@@ -237,6 +257,15 @@ fn main() {
                     dat_out: dat_out_o,
                     dat_oe: dat_oe_o,
                     irq: irq_o,
+                    dma_in,
+                    dma_out,
+                    dma_at: dma_at_o,
+                    dma_bytes: dma_bytes_o,
+                    dma_words: dma_words_o,
+                    store_go: store_go_o,
+                    fetch_go: fetch_go_o,
+                    store_busy,
+                    fetch_busy,
                 },
             ),
             client,
