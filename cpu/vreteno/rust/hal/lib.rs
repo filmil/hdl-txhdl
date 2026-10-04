@@ -95,26 +95,27 @@ fn wr(at: usize, v: u32) {
     unsafe { write_volatile(at as *mut u32, v) }
 }
 
-/// The serial port: three words, and a fourth that reads zero, as its
-/// map declares them. The first is the byte to send, the second the
-/// status, whose bit 0 is high while a frame is still going
-/// out and whose bit 1 is high while a received byte waits, and the
-/// third the oldest received byte, which reading takes.
+/// The serial port, SiFive's `sifive,uart0` (issue 1011): `txdata`, whose
+/// bit 31 says the queue of eight is full, takes a byte to send;
+/// `rxdata`'s read takes the oldest received byte, its bit 31 set when
+/// none was waiting; and `ip`'s receive bit says a byte waits, while
+/// the receive watermark is zero, as it is after a reset.
 pub struct Uart;
 
 impl Uart {
     // The port's words and bits, as its map declares them (issue 709).
-    const DATA: usize = map::UART + uart::TX;
-    const STATUS: usize = map::UART + uart::STATUS;
-    const RX: usize = map::UART + uart::RX;
-    const TX_BUSY: u32 = uart::STATUS_BUSY_MASK;
-    const RX_READY: u32 = uart::STATUS_READY_MASK;
+    const TXDATA: usize = map::UART + uart::TXDATA;
+    const RXDATA: usize = map::UART + uart::RXDATA;
+    const IP: usize = map::UART + uart::IP;
+    const TX_FULL: u32 = uart::TXDATA_FULL_MASK;
+    const RX_EMPTY: u32 = uart::RXDATA_EMPTY_MASK;
+    const RX_WAITING: u32 = uart::IP_RXWM_MASK;
 
-    /// Send one byte, once the port is free to take it. A byte written
-    /// while the port is busy is dropped, so the wait is not optional.
+    /// Send one byte, once the queue has room for it. A byte written
+    /// while the queue is full is dropped, so the wait is not optional.
     pub fn put(byte: u8) {
-        while rd(Self::STATUS) & Self::TX_BUSY != 0 {}
-        wr(Self::DATA, byte as u32);
+        while rd(Self::TXDATA) & Self::TX_FULL != 0 {}
+        wr(Self::TXDATA, byte as u32);
     }
 
     /// Send every byte of `text`.
@@ -159,15 +160,16 @@ impl Uart {
         }
     }
 
-    /// Whether a received byte waits.
+    /// Whether a received byte waits, without taking it.
     pub fn ready() -> bool {
-        rd(Self::STATUS) & Self::RX_READY != 0
+        rd(Self::IP) & Self::RX_WAITING != 0
     }
 
-    /// The oldest received byte, if one waits.
+    /// The oldest received byte, if one waits: the read takes it.
     pub fn get() -> Option<u8> {
-        if Self::ready() {
-            Some(rd(Self::RX) as u8)
+        let word = rd(Self::RXDATA);
+        if word & Self::RX_EMPTY == 0 {
+            Some(word as u8)
         } else {
             None
         }

@@ -386,10 +386,11 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
             break;
         }
     }
-    // The core stops the moment it writes `mhalt` and the last byte
-    // is still going out a bit at a time, so the line is read to the
-    // end of the frame before the run is judged.
-    for _ in 0..64 {
+    // The core stops the moment it writes `mhalt` and the port is
+    // still sending what its queue holds (issue 1011), up to eight bytes
+    // and the one going out, so the line is read to the end of the last
+    // frame before the run is judged.
+    for _ in 0..(10 * 10 * 4 + 64) {
         sim.cycle();
         term.see(tx.get().to_bool());
     }

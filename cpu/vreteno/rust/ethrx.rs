@@ -40,11 +40,11 @@ const SLOT: u32 = 0x800;
 
 fn put(byte: u8) {
     unsafe {
-        while UART.add(vreteno_regs::uart::STATUS / 4).read_volatile()
-            & vreteno_regs::uart::STATUS_BUSY_MASK
+        while UART.add(vreteno_regs::uart::TXDATA / 4).read_volatile()
+            & vreteno_regs::uart::TXDATA_FULL_MASK
             != 0
         {}
-        write_volatile(UART.add(vreteno_regs::uart::TX / 4), byte as u32);
+        write_volatile(UART.add(vreteno_regs::uart::TXDATA / 4), byte as u32);
     }
 }
 

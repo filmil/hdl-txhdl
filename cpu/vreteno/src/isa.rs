@@ -188,8 +188,9 @@ pub const MSIP_OFF: u32 = crate::timer::clint::msip;
 pub const MTIMECMP_OFF: u32 = crate::timer::clint::mtimecmp_lo;
 /// The count, low half then high.
 pub const MTIME_OFF: u32 = crate::timer::clint::mtime_lo;
-/// The serial port's three words: a byte to send, the status, whose
-/// bit 0 is busy, and the byte received (issue 669).
+/// The serial port, SiFive's `sifive,uart0` map (issue 1011): `txdata`
+/// at 0, whose bit 31 says the queue is full, and `rxdata` at 4, whose
+/// read takes the oldest byte and whose bit 31 says none waited.
 pub const UART_BASE: u32 = 0x3000;
 
 /// The Ethernet port's registers, the fifth of the sixteen slots the

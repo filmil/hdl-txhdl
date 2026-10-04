@@ -214,15 +214,14 @@ pub fn demo() -> Vec<u32> {
     a.emit(div(29, 10, 7)); // x29 = 110 / -2 = -55
     a.emit(rem(30, 7, 5)); // x30 = -2 rem 10 = -2
 
-    // The serial port: three bytes, each written once the port is not
-    // busy, which a load of the status says.
+    // The serial port: three bytes, each written once its queue has
+    // room, which a load of `txdata` says in its sign bit (issue 1011).
     a.emit(lui(1, UART_BASE >> 12)); // x1 = the port; the call is done
     for byte in b"OK\n" {
         let wait = a.label();
         a.place(wait);
-        a.emit(lw(21, 1, 4)); // x21 = status
-        a.emit(andi(21, 21, 1)); // busy?
-        a.to(wait, |o| bne(21, 0, o)); // then ask again
+        a.emit(lw(21, 1, 0)); // x21 = txdata, bit 31 full
+        a.to(wait, |o| blt(21, 0, o)); // full: ask again
         a.emit(addi(21, 0, *byte as i32)); // the byte
         a.emit(sw(21, 1, 0)); // out it goes
     }
@@ -234,14 +233,11 @@ pub fn demo() -> Vec<u32> {
     for _ in 0..3 {
         let (came, free) = (a.label(), a.label());
         a.place(came);
-        a.emit(lw(21, 1, 4)); // x21 = status
-        a.emit(andi(21, 21, 2)); // a byte received?
-        a.to(came, |o| beq(21, 0, o)); // else ask again
-        a.emit(lw(20, 1, 8)); // x20 = the byte, which clears the bit
+        a.emit(lw(20, 1, 4)); // x20 = rxdata, which takes the byte
+        a.to(came, |o| blt(20, 0, o)); // bit 31, none came: ask again
         a.place(free);
-        a.emit(lw(21, 1, 4)); // x21 = status
-        a.emit(andi(21, 21, 1)); // busy?
-        a.to(free, |o| bne(21, 0, o)); // then ask again
+        a.emit(lw(21, 1, 0)); // x21 = txdata, bit 31 full
+        a.to(free, |o| blt(21, 0, o)); // full: ask again
         a.emit(sw(20, 1, 0)); // the byte, back out
     }
     a.emit(csrrw(0, CSR_MIE, 9)); // mie = both

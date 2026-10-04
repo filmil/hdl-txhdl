@@ -104,14 +104,14 @@ static FC: [u8; NF] = [
     5, 1, 7, 10, 11, 9, 4, 2, 6, 8, 4, 2, 6, 8, 9, 5, 11, 10, 7, 1,
 ];
 
-/// Send one byte, once the port is free to take it.
+/// Send one byte, once the queue has room for it.
 fn put(byte: u8) {
     unsafe {
-        while UART.add(vreteno_regs::uart::STATUS / 4).read_volatile()
-            & vreteno_regs::uart::STATUS_BUSY_MASK
+        while UART.add(vreteno_regs::uart::TXDATA / 4).read_volatile()
+            & vreteno_regs::uart::TXDATA_FULL_MASK
             != 0
         {}
-        write_volatile(UART.add(vreteno_regs::uart::TX / 4), byte as u32);
+        write_volatile(UART.add(vreteno_regs::uart::TXDATA / 4), byte as u32);
     }
 }
 

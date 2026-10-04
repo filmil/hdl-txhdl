@@ -602,8 +602,11 @@ fn run_all(
             break;
         }
     }
-    // The last byte is still going out when the core halts.
-    for _ in 0..64 {
+    // The port is still sending what its queue holds when the core
+    // halts (issue 1011): up to eight bytes and the one going out, each
+    // a frame of ten bits of four cycles, and a cycle between frames;
+    // ten frames and a margin cover it.
+    for _ in 0..(10 * 10 * 4 + 64) {
         sim.cycle();
         term.see(tx.get().to_bool());
     }
@@ -987,13 +990,14 @@ fn input_comes_by_interrupt_one_byte_each() {
 /// A byte at a time onto the serial port, waiting while it is busy.
 /// `x1` holds the page the port is on.
 fn say(a: &mut vreteno32::program::Asm, text: &[u8]) {
-    use vreteno32::isa::{addi, andi, bne, lw, sw};
+    use vreteno32::isa::{addi, blt, lw, sw};
     for byte in text {
+        // Wait while the port's queue is full, which a load of
+        // `txdata` says in its sign bit (issue 1011).
         let wait = a.label();
         a.place(wait);
-        a.emit(lw(2, 1, 4)); // x2 = the status
-        a.emit(andi(2, 2, 1)); // busy?
-        a.to(wait, |off| bne(2, 0, off));
+        a.emit(lw(2, 1, 0)); // x2 = txdata, bit 31 full
+        a.to(wait, |off| blt(2, 0, off));
         a.emit(addi(3, 0, *byte as i32));
         a.emit(sw(3, 1, 0)); // the byte goes out
     }
@@ -1137,16 +1141,15 @@ fn the_netlist_holds_the_controller() {
 /// compiled image is linked for the boot memory and this one runs
 /// wherever the stream says, which is what a loader is for.
 fn payload() -> Vec<u32> {
-    use vreteno32::isa::{addi, andi, bne, halt, lui, lw, sw, UART_BASE};
+    use vreteno32::isa::{addi, blt, halt, lui, lw, sw, UART_BASE};
     let mut a = vreteno32::program::Asm::default();
     a.emit(lui(1, UART_BASE >> 12)); // x1 = the serial port
     for byte in b"hi\n" {
-        // Wait while the port is busy, then write the byte.
+        // Wait while the port's queue is full, then write the byte.
         let wait = a.label();
         a.place(wait);
-        a.emit(lw(2, 1, 4)); // x2 = the status
-        a.emit(andi(2, 2, 1)); // busy?
-        a.to(wait, |off| bne(2, 0, off));
+        a.emit(lw(2, 1, 0)); // x2 = txdata, bit 31 full
+        a.to(wait, |off| blt(2, 0, off));
         a.emit(addi(3, 0, *byte as i32));
         a.emit(sw(3, 1, 0)); // the byte goes out
     }

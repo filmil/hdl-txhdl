@@ -5,7 +5,7 @@
 # `//tools/regmap` writes every map into one file of constants, and
 # this crate, which depends on nothing, is that file. A program or the
 # HAL names it in `deps` and addresses a peripheral as `base +
-# vreteno_regs::uart::STATUS`, so that a register moved in the hardware
+# vreteno_regs::uart::TXDATA`, so that a register moved in the hardware
 # moves in the software with it.
 #
 # Not manual, unlike the HAL: it is constants and nothing else, so it

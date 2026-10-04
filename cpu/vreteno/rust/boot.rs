@@ -64,13 +64,14 @@
 use core::panic::PanicInfo;
 use core::ptr::write_volatile;
 
-/// The serial port, as the HAL's `Uart` has it: the data word, then the
-/// status, whose bit 0 is busy sending and bit 1 a byte waiting.
+/// The serial port, as the HAL's `Uart` has it, SiFive's map (issue
+/// 1011): `txdata`, whose bit 31 says the queue is full, and `rxdata`,
+/// whose read takes the oldest byte and whose bit 31 says none waited.
 const UART: *mut u32 = 0x3000 as *mut u32;
-const UART_STATUS: usize = vreteno_regs::uart::STATUS / 4;
-const UART_RX: usize = vreteno_regs::uart::RX / 4;
-const TX_BUSY: u32 = vreteno_regs::uart::STATUS_BUSY_MASK;
-const RX_READY: u32 = vreteno_regs::uart::STATUS_READY_MASK;
+const UART_TXDATA: usize = vreteno_regs::uart::TXDATA / 4;
+const UART_RXDATA: usize = vreteno_regs::uart::RXDATA / 4;
+const TX_FULL: u32 = vreteno_regs::uart::TXDATA_FULL_MASK;
+const RX_EMPTY: u32 = vreteno_regs::uart::RXDATA_EMPTY_MASK;
 
 /// `TXLD`, least significant byte first.
 const MAGIC: u32 = 0x444c_5854;
@@ -95,8 +96,8 @@ const ACK: u8 = b'K';
 
 fn put(byte: u8) {
     unsafe {
-        while UART.add(UART_STATUS).read_volatile() & TX_BUSY != 0 {}
-        write_volatile(UART.add(vreteno_regs::uart::TX / 4), byte as u32);
+        while UART.add(UART_TXDATA).read_volatile() & TX_FULL != 0 {}
+        write_volatile(UART.add(UART_TXDATA), byte as u32);
     }
 }
 
@@ -109,8 +110,12 @@ fn say(line: &[u8]) {
 /// The next byte on the line, waiting for as long as it takes.
 fn get() -> u32 {
     unsafe {
-        while UART.add(UART_STATUS).read_volatile() & RX_READY == 0 {}
-        UART.add(UART_RX).read_volatile() & 0xff
+        loop {
+            let word = UART.add(UART_RXDATA).read_volatile();
+            if word & RX_EMPTY == 0 {
+                return word & 0xff;
+            }
+        }
     }
 }
 
@@ -244,18 +249,18 @@ extern "C" fn main() -> ! {
         say(b"ok ");
         say_hex(addr);
         put(b'\n');
-        // Wait for the last byte to leave the line before the jump, so
-        // that a program which starts by saying something does not cut
-        // this message in half. Then a fence: the stores above are
-        // posted, and the reads of the serial port in between say
-        // nothing about whether they have landed, so what ordered the
-        // jump after the last store was the millisecond the line took
-        // (issue 550). Since issue 432 a `fence` stalls until every
+        // No wait for the line: the port queues what it is given, so a
+        // program which starts by saying something queues behind this
+        // message rather than cutting it in half (issue 1011), as long
+        // as it waits for room as `put` does. Then a fence: the stores
+        // above are posted, and the reads of the serial port in between
+        // say nothing about whether they have landed, so what ordered
+        // the jump after the last store was the millisecond the line
+        // took (issue 550). Since issue 432 a `fence` stalls until every
         // posted store has been answered, and this core has no
         // instruction cache, so a fence is what the jump needs and
         // `fence.i` would add nothing.
         unsafe {
-            while UART.add(UART_STATUS).read_volatile() & TX_BUSY != 0 {}
             core::arch::asm!("fence");
             let entry: extern "C" fn() -> ! =
                 core::mem::transmute(addr as usize);

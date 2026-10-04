@@ -244,11 +244,13 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
             break;
         }
     }
-    // The core stops the moment it writes `mhalt`, and the last byte
-    // is still going out a bit at a time: a frame is ten bits of four
-    // cycles. The line is read to the end of it before the run is
-    // judged, or the last character would always be missing.
-    for _ in 0..64 {
+    // The core stops the moment it writes `mhalt`, and the port is
+    // still sending what its queue holds (issue 1011): up to eight
+    // bytes and the one going out, each a frame of ten bits of four
+    // cycles, and a cycle between frames; ten frames and a margin
+    // cover it. The line is read to the end of the last before the run is
+    // judged, or the last characters would always be missing.
+    for _ in 0..(10 * 10 * 4 + 64) {
         sim.cycle();
         term.see(tx.get().to_bool());
     }

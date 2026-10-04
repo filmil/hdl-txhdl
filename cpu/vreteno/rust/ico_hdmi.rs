@@ -172,10 +172,10 @@ fn sqrt(v: i32) -> i32 {
 
 fn put(byte: u8) {
     unsafe {
-        while read_volatile(UART.add(uart::STATUS / 4)) & uart::STATUS_BUSY_MASK
+        while read_volatile(UART.add(uart::TXDATA / 4)) & uart::TXDATA_FULL_MASK
             != 0
         {}
-        write_volatile(UART.add(uart::TX / 4), byte as u32);
+        write_volatile(UART.add(uart::TXDATA / 4), byte as u32);
     }
 }
 
