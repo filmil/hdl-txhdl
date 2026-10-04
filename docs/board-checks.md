@@ -28,7 +28,8 @@ bazel build //cpu/vreteno:vreteno_board_boot_pnr   # the loader, #550 and #458
 bazel build //cpu/vreteno:vreteno_board_pnr        # the DDR3 test, #188
 bazel build //flagship:flagship_pnr                # Ethernet and the loader, #143
 bazel build //cpu/vreteno/rust:hello_ram_bin //cpu/vreteno/rust:hello_fastboot \
-    //cpu/vreteno/rust:trng_ram_bin //cpu/vreteno/rust:steps_ram_bin
+    //cpu/vreteno/rust:trng_ram_bin //cpu/vreteno/rust:steps_ram_bin \
+    //cpu/vreteno/rust:ddr3bw_ram_bin
 bazel build //zephyr:fastboot @multitool//tools/fastboot
 bazel build //third_party/gdb //cpu/vreteno/rust:gdbprobe_elf   # gdb, #872
 bazel build //tools/trngstat
@@ -199,6 +200,24 @@ Pass: eight lines of `mcycle step 13`.
 That is what `board_test`'s `mcycle_steps_steadily_between_two_reads` pins in simulation; the core from before #807's fix printed a steady 12 there, a count lost to each read.
 A steady number other than 13 is the board's fetch differing from the simulation's and is a finding to note on #848; a number that moves from line to line means the routine did not run from the data memory.
 It closes #848 once the result is on it.
+
+### The path into DDR3, #1023
+
+Same bitstream again.
+`ddr3bw_ram_bin` writes two routines into the data memory, sixteen loads and sixteen stores with a fence, and times each with `mcycle`, four times against the DDR3 and four times against the data memory.
+
+```sh
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/ddr3bw_ram_bin.bin --seconds=10 \
+    2>&1 | tee board-1023-ddr3bw.log
+```
+
+Pass: sixteen lines, four each of `bw load ddr3`, `bw load dmem`, `bw store ddr3` and `bw store dmem`, each four steady.
+In simulation, `board_test`'s `the_ddr3_path_is_timed_by_the_core` pins 461, 397, 251 and 250: the DDR3's loads cost four cycles a word more than the data memory's, the bridge's own, since the controller's model answers in one cycle.
+On the board, the loads' difference divided by sixteen, less those four, is what AMD's controller adds to a word, and that is the number #1023 wants.
+The table `bazel run //ddr3:bw` prints then gives the path's throughput near that latency, since a word costs the latency and four cycles.
+The stores are expected to differ little, as in simulation: the core fetches each store over the bus slower than the path takes it, so they say the core cannot fill the path, not how fast the path is.
+Post the log on #1023.
 
 ## 7. Fastboot, #143
 
