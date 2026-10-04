@@ -454,7 +454,11 @@ vivado_place_and_route2(
     # unless the target opts in (issue 967).
     placeholder_bitstream = True,
     xdcs = [":vreteno_xdc"],
-    tags = ["manual"],
+    # vivado_ci: the nightly Vivado job builds it (#1030).
+    tags = [
+        "manual",
+        "vivado_ci",
+    ],
 )
 
 # The board on the Alinx AX7A200B: the lowered design with the DDR3 test
