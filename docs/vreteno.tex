@@ -343,7 +343,9 @@ the mode in \code{SPIE} and \code{SPP}; any other goes to machine mode,
 saving \code{MIE} and the mode in \code{MPIE} and \code{MPP}. An
 interrupt machine mode keeps is taken below machine mode always and in
 it with \code{MIE}; one it delegated is taken below supervisor mode
-always and in it with \code{SIE}; the machine's come first.
+always and in it with \code{SIE}; the machine's come first. The
+model takes the supervisor's external line on \code{sline}, beside
+\code{line} for the machine's.
 \code{mret} and \code{sret} return to the saved mode and leave user
 mode in its place, and \code{ecall}'s cause is 8 plus the mode it came
 from. A CSR the mode may not reach, \code{mret} below machine mode, and
@@ -929,9 +931,12 @@ threshold at \code{0x20\_0000} and its claim word at
 offsets. Sources are numbered from 1, and a source's number is its
 bit. The two targets share the sources and the pending bits, so a
 source enabled for both is served by whichever claims it first; the
-supervisor's line is \code{mip.SEIP}'s, which the core takes once it
-has a supervisor mode (issues~\#1012 and \#1013), and until then the
-board leaves it unread.
+supervisor's line is \code{mip.SEIP}'s: the core takes it on its
+input \code{seirq}, registered as the machine's line is (issue~\#1094).
+A read of \code{mip} or \code{sip} shows SEIP as that line ORed with
+the bit software may set, and a set or a clear of \code{mip} modifies
+only software's bit, so the line never latches into it, as the
+privileged specification requires.
 
 A source's line goes through a gateway first,
 Listing~\ref{lst:v-plic-gateway}. A level source asks while its line is
