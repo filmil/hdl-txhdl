@@ -422,9 +422,12 @@ vivado_synthesis(
 
 # Implementation: synthesis again through the newer rule, which writes
 # its timing summary, then place and route with the timing summary,
-# the utilization and the DRC report of the routed design. The
-# constraints name the clock and no pins, so the bitstream is a stub;
-# the reports are the point.
+# the utilization and the DRC report of the routed design. The core is
+# synthesised out of context, so its ports are the partition's pins and
+# not pads: with the debug port it has more ports than the package has
+# pins, and placement failed on them (issue 971). The constraints name
+# the clock and no pins, so the bitstream is a stub; the reports are the
+# point.
 #
 #   bazel build //cpu/vreteno:vreteno_pnr
 filegroup(
@@ -436,6 +439,7 @@ vivado_synthesis2(
     name = "vreteno_synth2",
     srcs = ["//docs:vreteno.v"],
     part = "xc7a200tfbg484-2",
+    synth_design_options = "-mode out_of_context",
     top = "vreteno",
     xdcs = [":vreteno_xdc"],
     tags = ["manual"],
