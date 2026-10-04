@@ -126,7 +126,7 @@ refactoring too.
 \section{The Instruction Set as Bits}
 \label{sec:v-isa}
 
-Listing~\ref{lst:v-isa} is RV32IMC as encoders and a decoder. An
+Listing~\ref{lst:v-isa} is RV32IMAC as encoders and a decoder. An
 encoder per mnemonic builds the word, the six formats being six
 functions of their fields; the decoder takes a word apart into its
 mnemonic, its registers and its immediate, sign-extended. The core
@@ -191,7 +191,7 @@ dropped; clear, which reset leaves, either is an access fault, as
 Section~\ref{sec:v-core} says.
 
 Five more say what the machine is rather than what it is doing.
-\code{misa} reports RV32IMC, and \code{mvendorid}, \code{marchid},
+\code{misa} reports RV32IMAC, and \code{mvendorid}, \code{marchid},
 \code{mimpid} and \code{mhartid} read as zero: an unassigned vendor,
 an unspecified architecture and implementation, and one hart, which is
 hart zero. They are there because a stock kernel reads one of them
@@ -213,8 +213,14 @@ lets an implementation ignore what is written, which is what this one
 does. The M extension is the
 register format with \code{funct7} one: the four multiplies, which
 differ in which operand is signed and which half of the product they
-keep, and the two divides and two remainders, signed and unsigned. A
-unit test checks each format's encoder against the decoder.
+keep, and the two divides and two remainders, signed and unsigned. The
+A extension's word forms are opcode \code{0x2f} with \code{funct3}
+two, told apart by the five bits at the top: \code{lr.w}, whose
+\code{rs2} must be zero, \code{sc.w} and the nine AMOs, swap, add,
+the three logical ones, and the signed and unsigned minimum and
+maximum (issue~1010). Bits 26 and 25, \code{aq} and \code{rl}, are
+decoded and set aside, since one hart in order already orders them.
+A unit test checks each format's encoder against the decoder.
 
 The compressed instructions are sixteen-bit spellings of instructions
 above, and \code{isa} has an encoder for each, named \code{c\_} and
@@ -307,6 +313,13 @@ high word is the top of a 64-bit product of the operands extended
 as the instruction says, and a division is the wrapping one, which
 gives the manual's answer for the one overflow; division by zero,
 which Rust would refuse, is spelled out, all ones and the dividend.
+The A extension is a read, the operation and a write, with the old
+word in \code{rd}; \code{lr.w} reserves the word and \code{sc.w}
+stores only while it is reserved, writes 0 if it stored and 1 if not,
+and uses the reservation up either way. A misaligned one traps,
+\code{lr.w} as a load and the rest as a store, and a word the bus
+refuses is a load's access fault for \code{lr.w} and a store's for
+an AMO.
 
 The same model is also a fast machine, for software too large for the
 cycle-level runs: a kernel, and what boots it (issue~\#1016). Given a
@@ -456,6 +469,26 @@ cycle long, and not on the one that sets the clock; the first form
 of the sequencer multiplied by thirty-two shifts and adds, and the
 change to the multiplier was one step's arm and the count it starts
 from.
+
+The A extension (issue~1010) is the third use of the writeback stage's
+hold, and it is placed to keep its arithmetic off the two paths that
+set the clock, the operands' forwarding into the adder and the branch
+into the next counter, which the design note \code{docs/sv32-timing.md}
+measured. An AMO goes out as a load does, from execute, and its word
+lands in writeback. There the instruction stays for two more cycles:
+in the first the new word is computed by \code{amo\_alu}, from two
+registers, the old word and the register operand kept from execute;
+in the second it goes out as a store, from writeback, with the
+address the load used. Then the instruction retires with the old
+word. \code{lr.w} is a load that also sets a one-word reservation,
+and \code{sc.w} is a store that goes out only while the reservation
+holds, writing 0 or 1. The reservation is compared with the address
+register itself rather than with the adder's sum, which an A
+instruction does not need since it adds no offset. Every A
+instruction first waits, as \code{fence} does, for the stores already
+posted, so \code{aq} and \code{rl} need nothing more. The cost is
+time, not clock: an AMO on the data memory takes about forty cycles,
+most of them the wait for the previous one's store.
 
 Three of the cycle's decisions, whether the instruction in execute
 is stalled, whether an interrupt takes its place and whether the
@@ -983,7 +1016,9 @@ from a seed: every register operation, aligned stores and loads
 within the first data words through \code{x2}, which it keeps at the
 data base, now and then a forward branch over one or two words, so
 both outcomes of every branch condition occur, the M extension in
-half the places an \code{or} would go, the six CSR forms on
+half the places an \code{or} would go, the A extension's word forms
+on an aligned data word through \code{x28}, an AMO, or \code{lr.w}
+and \code{sc.w} on one word, or \code{sc.w} alone, the six CSR forms on
 \code{mscratch}, \code{mcause}, \code{mepc} and \code{mtval},
 and now and then an \code{ecall} or an illegal instruction: a word of
 zeros, which is two illegal halfwords, a reserved compressed halfword,
@@ -1377,7 +1412,11 @@ cycles of the demonstration exercise every instruction of
 the program through both, the two traps and their returns included,
 since a wrong \code{mepc} or \code{mtvec} is a wrong program
 counter, and every register of the sequencer at every step of three
-multiplies and two divides, since the whole unit is traced. The
+multiplies and two divides, since the whole unit is traced. A second
+run, \code{vreteno\_amo}, is the same machine with the A extension's
+program in place of the demonstration, every AMO, \code{lr.w} and two
+\code{sc.w}, and the core's netlist is checked against its trace the
+same way, under its own entity's name (issue~1010). The
 router, the timer, the serial port and its bridge are checked from
 the same trace as entities of their own, each channel's six wires and each
 line among the signals, so the bus is checked from every end. One
