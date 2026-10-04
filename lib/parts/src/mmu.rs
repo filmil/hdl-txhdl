@@ -44,6 +44,42 @@ use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
+/// A fetch's request: whether there is one, and its virtual address.
+/// The core holds both steady until the answer comes (issue 1122).
+#[derive(ValueDerive, Clone, Copy, Default, PartialEq, Debug)]
+pub struct IReq {
+    /// A fetch is asked for.
+    pub req: Bit,
+    /// Its virtual address.
+    pub va: U<32>,
+}
+
+/// A data access's request: whether there is one, its virtual address,
+/// and whether it is a store.
+#[derive(ValueDerive, Clone, Copy, Default, PartialEq, Debug)]
+pub struct DReq {
+    /// An access is asked for.
+    pub req: Bit,
+    /// Its virtual address.
+    pub va: U<32>,
+    /// It is a store, not a load.
+    pub store: Bit,
+}
+
+/// A port's answer, a cycle after its request: at most one of ok,
+/// fault and err is set, and none on a miss.
+#[derive(ValueDerive, Clone, Copy, Default, PartialEq, Debug)]
+pub struct Res {
+    /// The access is allowed, at pa.
+    pub ok: Bit,
+    /// The physical address.
+    pub pa: U<32>,
+    /// A page fault.
+    pub fault: Bit,
+    /// An access fault.
+    pub err: Bit,
+}
+
 /// The walker's answer: a page table entry, or that its read failed.
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct Pte {
@@ -165,54 +201,18 @@ fn allowed(
 impl<const E: usize> Unit for Mmu<E> {
     async fn run(
         &mut self,
-        (
-            rst,
-            satp,
-            prv,
-            sum,
-            mxr,
-            flush,
-            ireq,
-            ireq_va,
-            dreq,
-            dreq_va,
-            dreq_store,
-            pte,
-        ): (
+        (rst, satp, prv, sum, mxr, flush, ireq, dreq, pte): (
             In<Bit>,
             In<U<32>>,
             In<U<2>>,
             In<Bit>,
             In<Bit>,
             In<Bit>,
-            In<Bit>,
-            In<U<32>>,
-            In<Bit>,
-            In<U<32>>,
-            In<Bit>,
+            In<IReq>,
+            In<DReq>,
             Rx<Pte>,
         ),
-        (
-            ires_ok,
-            ires_pa,
-            ires_fault,
-            ires_err,
-            dres_ok,
-            dres_pa,
-            dres_fault,
-            dres_err,
-            ptw,
-        ): (
-            Out<Bit>,
-            Out<U<32>>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<U<32>>,
-            Out<Bit>,
-            Out<Bit>,
-            Tx<U<32>>,
-        ),
+        (ires, dres, ptw): (Out<Res>, Out<Res>, Tx<U<32>>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -221,9 +221,9 @@ impl<const E: usize> Unit for Mmu<E> {
             let (rst, flush) = (rst.get(), flush.get());
             let (satp, prv) = (satp.get(), prv.get());
             let (sum, mxr) = (sum.get(), mxr.get());
-            let (ireq, iva) = (ireq.get(), ireq_va.get());
-            let (dreq, dva) = (dreq.get(), dreq_va.get());
-            let store = dreq_store.get();
+            let (iq, dq) = (ireq.get(), dreq.get());
+            let (ireq, iva) = (iq.req, iq.va);
+            let (dreq, dva, store) = (dq.req, dq.va, dq.store);
             // Translation is on outside machine mode when `satp` says.
             let vm = satp.bit(31) & Bit::from(prv != 3);
             let user = Bit::from(prv == 0);
@@ -304,14 +304,18 @@ impl<const E: usize> Unit for Mmu<E> {
                     daf: Bit::Zero,
                 },
             });
-            ires_ok.set(self.iok.get());
-            ires_pa.set(self.ipa.get());
-            ires_fault.set(self.ipf.get());
-            ires_err.set(self.iaf.get());
-            dres_ok.set(self.dok.get());
-            dres_pa.set(self.dpa.get());
-            dres_fault.set(self.dpf.get());
-            dres_err.set(self.daf.get());
+            ires.set(Res {
+                ok: self.iok.get(),
+                pa: self.ipa.get(),
+                fault: self.ipf.get(),
+                err: self.iaf.get(),
+            });
+            dres.set(Res {
+                ok: self.dok.get(),
+                pa: self.dpa.get(),
+                fault: self.dpf.get(),
+                err: self.daf.get(),
+            });
             // end{lookup}
             // begin{walk}
             // A miss with no fault on record starts a walk when the

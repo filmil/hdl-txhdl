@@ -19,19 +19,10 @@ struct Rig {
     sum: Out<Bit>,
     mxr: Out<Bit>,
     flush: Out<Bit>,
-    ireq: Out<Bit>,
-    iva: Out<U<32>>,
-    dreq: Out<Bit>,
-    dva: Out<U<32>>,
-    store: Out<Bit>,
-    iok: In<Bit>,
-    ipa: In<U<32>>,
-    ifault: In<Bit>,
-    ierr: In<Bit>,
-    dok: In<Bit>,
-    dpa: In<U<32>>,
-    dfault: In<Bit>,
-    derr: In<Bit>,
+    ireq: Out<IReq>,
+    dreq: Out<DReq>,
+    ires: In<Res>,
+    dres: In<Res>,
     mem: Mem,
     reads: Rc<RefCell<Vec<u32>>>,
     latency: Rc<Cell<usize>>,
@@ -68,6 +59,27 @@ impl Rig {
         self.reads.borrow().len()
     }
 
+    /// A port's request: whether there is one, the address, and for
+    /// the data port whether it is a store.
+    fn request(&self, port: Port, on: bool, va: u32, store: bool) {
+        let (req, va) = (Bit::from_bool(on), U::<32>::from(va));
+        match port {
+            Port::I => self.ireq.set(IReq { req, va }),
+            Port::D => {
+                let store = Bit::from_bool(store);
+                self.dreq.set(DReq { req, va, store })
+            }
+        }
+    }
+
+    /// A port's answer, as it stands.
+    fn answer(&self, port: Port) -> Res {
+        match port {
+            Port::I => self.ires.get(),
+            Port::D => self.dres.get(),
+        }
+    }
+
     /// A flush, for one cycle.
     async fn flush(&self) {
         self.flush.set(Bit::One);
@@ -83,30 +95,21 @@ impl Rig {
         va: u32,
         store: bool,
     ) -> (Result<u32, Fault>, usize) {
-        let (req, addr) = match port {
-            Port::I => (&self.ireq, &self.iva),
-            Port::D => (&self.dreq, &self.dva),
-        };
-        req.set(Bit::One);
-        addr.set(U::<32>::from(va));
-        self.store.set(Bit::from_bool(store));
+        self.request(port, true, va, store);
         for n in 1..400 {
             DefaultClock::rising().await;
-            let (ok, pa, fault, err) = match port {
-                Port::I => (&self.iok, &self.ipa, &self.ifault, &self.ierr),
-                Port::D => (&self.dok, &self.dpa, &self.dfault, &self.derr),
-            };
-            let got = if ok.get().to_bool() {
-                Some(Ok(pa.get().raw() as u32))
-            } else if fault.get().to_bool() {
+            let r = self.answer(port);
+            let got = if r.ok.to_bool() {
+                Some(Ok(r.pa.raw() as u32))
+            } else if r.fault.to_bool() {
                 Some(Err(Fault::Page))
-            } else if err.get().to_bool() {
+            } else if r.err.to_bool() {
                 Some(Err(Fault::Access))
             } else {
                 None
             };
             if let Some(got) = got {
-                req.set(Bit::Zero);
+                self.request(port, false, va, store);
                 cycles(1).await;
                 return (got, n);
             }
@@ -156,19 +159,10 @@ where
     let (sum_o, sum) = signal::<Bit, DefaultClock>();
     let (mxr_o, mxr) = signal::<Bit, DefaultClock>();
     let (flush_o, flush) = signal::<Bit, DefaultClock>();
-    let (ireq_o, ireq) = signal::<Bit, DefaultClock>();
-    let (iva_o, iva) = signal::<U<32>, DefaultClock>();
-    let (dreq_o, dreq) = signal::<Bit, DefaultClock>();
-    let (dva_o, dva) = signal::<U<32>, DefaultClock>();
-    let (store_o, store) = signal::<Bit, DefaultClock>();
-    let (iok_o, iok) = signal::<Bit, DefaultClock>();
-    let (ipa_o, ipa) = signal::<U<32>, DefaultClock>();
-    let (ifault_o, ifault) = signal::<Bit, DefaultClock>();
-    let (ierr_o, ierr) = signal::<Bit, DefaultClock>();
-    let (dok_o, dok) = signal::<Bit, DefaultClock>();
-    let (dpa_o, dpa) = signal::<U<32>, DefaultClock>();
-    let (dfault_o, dfault) = signal::<Bit, DefaultClock>();
-    let (derr_o, derr) = signal::<Bit, DefaultClock>();
+    let (ireq_o, ireq) = signal::<IReq, DefaultClock>();
+    let (dreq_o, dreq) = signal::<DReq, DefaultClock>();
+    let (ires_o, ires) = signal::<Res, DefaultClock>();
+    let (dres_o, dres) = signal::<Res, DefaultClock>();
     let (ptw_tx, ptw_rx) = chan::<U<32>, DefaultClock>();
     let (pte_tx, pte_rx) = chan::<Pte, DefaultClock>();
     let mem: Mem = Rc::default();
@@ -181,18 +175,9 @@ where
         mxr: mxr_o,
         flush: flush_o,
         ireq: ireq_o,
-        iva: iva_o,
         dreq: dreq_o,
-        dva: dva_o,
-        store: store_o,
-        iok,
-        ipa,
-        ifault,
-        ierr,
-        dok,
-        dpa,
-        dfault,
-        derr,
+        ires,
+        dres,
         mem: mem.clone(),
         reads: reads.clone(),
         latency: latency.clone(),
@@ -219,14 +204,8 @@ where
     let d = done.clone();
     let mut mmu = Mmu8::default();
     let hardware = mmu.run(
-        (
-            rst, satp, prv, sum, mxr, flush, ireq, iva, dreq, dva, store,
-            pte_rx,
-        ),
-        (
-            iok_o, ipa_o, ifault_o, ierr_o, dok_o, dpa_o, dfault_o, derr_o,
-            ptw_tx,
-        ),
+        (rst, satp, prv, sum, mxr, flush, ireq, dreq, pte_rx),
+        (ires_o, dres_o, ptw_tx),
     );
     // The client first: it drives the request wires, which the unit
     // reads in the same step.
@@ -504,14 +483,12 @@ fn a_flush_during_a_walk_drops_what_it_finds() {
         rig.latency.set(6);
         let va = 0x0040_6000;
         map(&rig, va, 0x4000_0000, RWXAD);
-        rig.dreq.set(Bit::One);
-        rig.dva.set(U::<32>::from(va));
-        rig.store.set(Bit::Zero);
+        rig.request(Port::D, true, va, false);
         cycles(3).await;
         // Mid-walk: the tables change, and the flush says so.
         map(&rig, va, 0x4100_0000, RWXAD);
         rig.flush().await;
-        rig.dreq.set(Bit::Zero);
+        rig.request(Port::D, false, va, false);
         cycles(1).await;
         assert_eq!(rig.check(Port::D, va, false).await, Ok(0x4100_0000));
     });
@@ -529,22 +506,21 @@ fn a_request_in_the_cycle_of_a_flush_is_answered_after_it() {
         let n = rig.reads();
         map(&rig, va, 0x4100_0000, RWXAD);
         rig.flush.set(Bit::One);
-        rig.dreq.set(Bit::One);
-        rig.dva.set(U::<32>::from(va));
-        rig.store.set(Bit::Zero);
+        rig.request(Port::D, true, va, false);
         cycles(1).await;
         rig.flush.set(Bit::Zero);
         cycles(1).await;
-        assert!(!rig.dok.get().to_bool(), "not answered from the old entry");
+        let ok = || rig.answer(Port::D).ok.to_bool();
+        assert!(!ok(), "not answered from the old entry");
         let mut waited = 0;
-        while !rig.dok.get().to_bool() {
+        while !ok() {
             cycles(1).await;
             waited += 1;
             assert!(waited < 100, "never answered");
         }
-        assert_eq!(rig.dpa.get().raw() as u32, 0x4100_0000);
+        assert_eq!(rig.answer(Port::D).pa.raw() as u32, 0x4100_0000);
         assert_eq!(rig.reads(), n + 2, "it walked");
-        rig.dreq.set(Bit::Zero);
+        rig.request(Port::D, false, va, false);
         cycles(1).await;
     });
 }
@@ -574,20 +550,18 @@ fn the_data_port_walks_first() {
         map(&rig, iv, 0x4000_0000, RWXAD);
         rig.put(l1(dv), pte::to(0x8000_2000, V));
         rig.put(l0(0x8000_2000, dv), pte::to(0x4100_0000, RWXAD));
-        rig.ireq.set(Bit::One);
-        rig.iva.set(U::<32>::from(iv));
-        rig.dreq.set(Bit::One);
-        rig.dva.set(U::<32>::from(dv));
+        rig.request(Port::I, true, iv, false);
+        rig.request(Port::D, true, dv, false);
         let (mut i, mut d) = (false, false);
         while !(i && d) {
             cycles(1).await;
-            if rig.iok.get().to_bool() {
+            if rig.answer(Port::I).ok.to_bool() {
                 i = true;
-                rig.ireq.set(Bit::Zero);
+                rig.request(Port::I, false, iv, false);
             }
-            if rig.dok.get().to_bool() {
+            if rig.answer(Port::D).ok.to_bool() {
                 d = true;
-                rig.dreq.set(Bit::Zero);
+                rig.request(Port::D, false, dv, false);
             }
         }
         assert_eq!(
