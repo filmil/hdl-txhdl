@@ -11,6 +11,8 @@
 #
 # The kernel is `rv32_defconfig` with `probe.config` over it; a later
 # change trims it to this machine.
+load("@rules_rust//rust:defs.bzl", "rust_test")
+
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
@@ -128,3 +130,14 @@ genrule(
     tools = _TOOLS,
 )
 
+# What the initramfs holds, read back from the archive: every entry a
+# boot needs, as what it should be, and BusyBox a static program for the
+# core. Manual, since it builds the userspace; booting it is M9's model.
+rust_test(
+    name = "initramfs_test",
+    srcs = ["initramfs_test.rs"],
+    data = ["initramfs.cpio"],
+    edition = "2021",
+    env = {"INITRAMFS": "$(rootpath initramfs.cpio)"},
+    tags = ["manual"],
+)
