@@ -268,6 +268,31 @@ mod tests {
         assert!(m.model.tirq, "the count passed the compare");
     }
 
+    /// A byte arriving on the serial port, its source enabled for the
+    /// controller's supervisor target only, raises `mip.SEIP` and not
+    /// MEIP (issue 1094).
+    #[test]
+    fn the_supervisor_target_raises_seip() {
+        use crate::isa::{MEXT, SEXT};
+        let mut m = Machine::new();
+        let nop = 0x0000_0013u32.to_le_bytes();
+        let prog: Vec<u8> = (0..16).flat_map(|_| nop).collect();
+        m.load(0x4000_0000, &prog);
+        m.boot(0x4000_0000, 0);
+        {
+            let mut d = m.board.0.borrow_mut();
+            d.plic.store(4 * SERIAL_SOURCE as u32, 1);
+            d.plic.store(plic::ENABLE[1], 1 << SERIAL_SOURCE);
+            // The model resets `ie` to zero where the hardware sets the
+            // receive watermark (issue 1097).
+            d.uart.ie = 2;
+            d.uart.rx.push_back(b'x');
+        }
+        m.run(2);
+        assert_eq!(m.model.csr.mip & SEXT, SEXT, "the supervisor's line");
+        assert_eq!(m.model.csr.mip & MEXT, 0, "and not the machine's");
+    }
+
     /// A load from where nothing is, between the devices, faults.
     #[test]
     fn nothing_answers_outside_the_map() {

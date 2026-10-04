@@ -82,6 +82,21 @@ fn lockstep(
     dbg: Option<&DebugPlan>,
     reset_at: Option<u64>,
 ) -> Model {
+    lockstep_with(program, data, what, seed, dbg, reset_at, None)
+}
+
+/// The same, with the supervisor's external line, `seirq`, high in the
+/// cycles `seip` says, as the interrupt controller's second target would
+/// hold it (issue 1094).
+fn lockstep_with(
+    program: &[u32],
+    data: &[u32],
+    what: &str,
+    seed: Option<u64>,
+    dbg: Option<&DebugPlan>,
+    reset_at: Option<u64>,
+    seip: Option<fn(u64) -> bool>,
+) -> Model {
     let mut cpu = Vreteno::with(program);
     let (pc, ir_pc, valid, regs, halted) =
         (cpu.pc, cpu.ir_pc, cpu.valid, cpu.regs.clone(), cpu.halted);
@@ -160,7 +175,7 @@ fn lockstep(
     let (time_out, time) = signal::<U<64>, DefaultClock>();
     // The supervisor's external line, which no controller here drives
     // (issue 1094).
-    let (_seirq_out, seirq) = signal::<Bit, DefaultClock>();
+    let (seirq_out, seirq) = signal::<Bit, DefaultClock>();
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
     let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
@@ -328,6 +343,8 @@ fn lockstep(
         };
         let raised = pulse || uirq.get().to_bool();
         irq_out.set(raised);
+        let s_raised = seip.is_some_and(|f| f(cycle as u64));
+        seirq_out.set(Bit::from_bool(s_raised));
         rx_out.set(term.level());
         // The debugger's lines for this cycle: the halt request from
         // its cycle until the core is in debug mode, and a resume for
@@ -468,6 +485,7 @@ fn lockstep(
         }
         // The pending bit is the line, taken at this edge in both.
         model.line(raised);
+        model.sline(s_raised);
         let here =
             format!("{what}, cycle {cycle}, pc {at:#x}: {}", disasm(executed));
         assert_eq!(arch_pc().raw() as u32, model.pc, "pc after {here}");
@@ -1449,5 +1467,82 @@ fn a_delegated_interrupt_reaches_the_supervisor() {
     assert_eq!(m.x[8], 1, "taken once");
     assert_eq!(m.x[22], CAUSE_SSOFT, "as the supervisor's software one");
     assert_eq!(m.x[9], 7, "and the interrupted code ran after");
+    assert_eq!(m.x[21], CAUSE_ECALL_S, "then called machine mode");
+}
+
+/// The interrupt controller's supervisor line reaches `mip.SEIP`
+/// (issue 1094). In machine mode, with the line high, a clear of
+/// another bit of `mip` leaves the software's SEIP alone, so the bit
+/// falls with the line. Then, delegated, the line's next pulse is taken
+/// by the supervisor's handler as its external interrupt.
+#[test]
+fn the_supervisor_external_line_reaches_the_supervisor() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, sh, s_code) = (a.label(), a.label(), a.label());
+    let (wait_hi, wait_lo, s_loop, s_wait) =
+        (a.label(), a.label(), a.label(), a.label());
+    a.wide(addi(8, 0, 0));
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.abs(sh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_STVEC, 31));
+    a.wide(addi(5, 0, SEXT as i32));
+    a.wide(csrrw(0, CSR_MIDELEG, 5));
+    a.wide(csrrw(0, CSR_MIE, 5));
+    // The first pulse, in machine mode: a clear of SSIP while the line
+    // is high must not keep SEIP once the line falls.
+    a.place(wait_hi);
+    a.wide(csrrs(6, CSR_MIP, 0));
+    a.wide(andi(6, 6, SEXT as i32));
+    a.to(wait_hi, |o| beq(6, 0, o));
+    a.wide(csrrci(0, CSR_MIP, 2));
+    a.place(wait_lo);
+    a.wide(csrrs(6, CSR_MIP, 0));
+    a.wide(andi(6, 6, SEXT as i32));
+    a.to(wait_lo, |o| bne(6, 0, o));
+    a.wide(csrrs(23, CSR_MIP, 0));
+    // Down to supervisor mode with SIE, to wait for the second pulse.
+    a.wide(lui(5, 1));
+    a.wide(addi(5, 5, -0x800 + 2)); // MPP = supervisor, SIE
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    a.abs(s_code, |s| addi(31, 0, s as i32));
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    a.place(s_code);
+    a.place(s_loop);
+    a.wide(addi(9, 9, 1));
+    a.to(s_loop, |o| beq(8, 0, o));
+    a.wide(ecall());
+    // The supervisor's handler: the cause, a count, and a wait for the
+    // line to fall, since only the controller can lower it.
+    a.align();
+    a.place(sh);
+    a.wide(csrrs(22, CSR_SCAUSE, 0));
+    a.wide(addi(8, 8, 1));
+    a.place(s_wait);
+    a.wide(csrrs(6, CSR_SIP, 0));
+    a.wide(andi(6, 6, SEXT as i32));
+    a.to(s_wait, |o| bne(6, 0, o));
+    a.wide(sret());
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(halt());
+    let m = lockstep_with(
+        &a.words(),
+        &[],
+        "seip",
+        None,
+        None,
+        None,
+        Some(|c| (300..340).contains(&c) || (900..940).contains(&c)),
+    );
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[23] & SEXT, 0, "SEIP fell with the line");
+    assert_eq!(m.x[8], 1, "taken once, in supervisor mode");
+    assert_eq!(m.x[22], CAUSE_SEXT, "as the supervisor's external one");
+    assert!(m.x[9] > 0, "the supervisor's code ran before it");
     assert_eq!(m.x[21], CAUSE_ECALL_S, "then called machine mode");
 }
