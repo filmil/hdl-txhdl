@@ -58,6 +58,18 @@ rust_binary(
 )
 
 # The hardware against the model, pixel by pixel.
+# Two lists one after the other, traced, with the rasteriser's netlist
+# (issue 982).
+rust_binary(
+    name = "trace_lists",
+    srcs = ["src/trace_lists.rs"],
+    edition = "2021",
+    deps = [
+        ":razboj",
+        "//lib:txhdl",
+    ],
+)
+
 rust_test(
     name = "razboj_test",
     crate = ":razboj",

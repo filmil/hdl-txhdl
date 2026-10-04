@@ -1421,6 +1421,28 @@ waveform(
     width = 8.2,
 )
 
+# Razboj drawing two lists one after the other: the first list done, its
+# count written back to zero, the next list written in and drawn
+# (issue 982). Only the rasteriser is lowered, since the next list
+# reaches the framebuffer's memory from the run rather than its port.
+waveform(
+    name = "razboj_lists",
+    example = "//gpu/razboj:trace_lists",
+    lowered = ("raster_lists", "raster"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//issue/tx_valid=>issue",
+        "//rdata/tx_valid=>rdata",
+        "//raster/left=>left",
+        "//raster/inflight=>inflight",
+        "//raster/finished=>finished",
+        "//idle=>idle",
+    ],
+    from_tick = 1880,
+    until = 2000,
+    width = 8.2,
+)
+
 # The demonstration's picture, rendered by Razboj and written by it.
 genrule(
     name = "razboj_scene",

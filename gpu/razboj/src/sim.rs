@@ -71,6 +71,35 @@ pub fn run_list<
     wave: bool,
     netlists: bool,
 ) -> Run {
+    let mut runs =
+        run_lists::<LOGW, H, N, DL, CTRL>(&[insns.to_vec()], wave, netlists);
+    runs.pop().expect("one list, one run")
+}
+
+/// Render several display lists one after another, as a program
+/// drawing frame after frame does: the first is in the memory from
+/// the start, and each of the others is written once the rasteriser
+/// says the one before is done, a word a cycle with its count last,
+/// which is what a program on the same memory would do. A [`Run`] per
+/// list: the framebuffer as that list left it, and the cycles until
+/// then.
+///
+/// With one list both units' netlists are written, and the build
+/// checks both against this run. With more, only the rasteriser's
+/// are, since the lists after the first reach the framebuffer's memory
+/// from here and not through its port, which its netlist cannot see.
+pub fn run_lists<
+    const LOGW: usize,
+    const H: usize,
+    const N: usize,
+    const DL: usize,
+    const CTRL: usize,
+>(
+    lists: &[Vec<Insn>],
+    wave: bool,
+    netlists: bool,
+) -> Vec<Run> {
+    let insns: &[Insn] = &lists[0];
     let w = 1usize << LOGW;
     // The memory the rasteriser reads its work out of and writes its
     // pixels into: the framebuffer at nought, the display list at
@@ -135,21 +164,48 @@ pub fn run_list<
         ),
     ));
     // The rasteriser finds its own work, so the run only waits for it
-    // to say it has nothing left to draw and nothing left in flight.
+    // to say a list is drawn: `idle` rising. Then the next list goes
+    // in, and the run waits for `idle` to fall and rise again.
     let mut cycles = 0u64;
-    let cap = 128 * N as u64 + 2000;
+    let cap = (128 * N as u64 + 2000) * lists.len() as u64;
+    let mut runs = Vec::new();
+    let mut was_idle = false;
+    let mut next = 1;
     loop {
         sim.cycle();
         cycles += 1;
-        if idle.get().to_bool() {
-            break;
+        let now_idle = idle.get().to_bool();
+        if now_idle && !was_idle {
+            runs.push(Run {
+                fb: (0..w * H).map(|i| pixels.read(i).raw() as u32).collect(),
+                cycles,
+            });
+            if next == lists.len() {
+                break;
+            }
+            // The program: the next list, a word a cycle, since the
+            // memory takes one write a cycle, and the count last.
+            for (i, word) in crate::dl::image(&lists[next]).iter().enumerate() {
+                pixels.write(DL / 4 + i, U::<32>::from(*word));
+                sim.cycle();
+                cycles += 1;
+            }
+            pixels.write(CTRL / 4, U::<32>::from(lists[next].len() as u32));
+            next += 1;
         }
+        was_idle = now_idle;
         assert!(cycles < cap, "the render did not finish in {cap} cycles");
     }
     if wave {
         stop();
     }
-    if netlists {
+    if netlists && lists.len() > 1 {
+        // A name of its own, since the one-list run's netlist is
+        // `raster` and the two are checked side by side.
+        let r =
+            Raster::<ADDR, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster_lists");
+        txhdl::netlist::write_netlists_from_env(&[&r]);
+    } else if netlists {
         let r = Raster::<ADDR, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster");
         // The memory starts with the display list in it, which the
         // lowering cannot see: `Mem::with` gave it at run time. The
@@ -174,10 +230,7 @@ pub fn run_list<
         txhdl::netlist::write_netlists_from_env(&[&r, &f]);
     }
     let _ = start;
-    Run {
-        fb: (0..w * H).map(|i| pixels.read(i).raw() as u32).collect(),
-        cycles,
-    }
+    runs
 }
 
 /// The hardware against the rule written with loops: every scene
@@ -185,7 +238,7 @@ pub fn run_list<
 /// framebuffer, must leave exactly what the model leaves.
 #[cfg(test)]
 mod tests {
-    use super::run;
+    use super::{run, run_lists};
     use crate::model;
     use crate::op::{assemble, Kind, Op};
     use crate::scene;
@@ -220,6 +273,44 @@ mod tests {
     /// A full-screen clear, as every test starts with.
     fn bg(colour: u32) -> Op {
         Op::Clear { colour }
+    }
+
+    /// Two lists drawn back to back, as two frames are: the second is
+    /// drawn over what the first left, both pictures are the model's,
+    /// and the rasteriser says it is done twice, writing the count back
+    /// to zero each time (issue 982).
+    #[test]
+    fn two_lists_are_drawn_one_after_the_other() {
+        let first = assemble(&scene::small(), W, H);
+        let second = assemble(
+            &[
+                Op::Rect {
+                    colour: 0x12_3456,
+                    x: 2,
+                    y: 3,
+                    w: 6,
+                    h: 5,
+                },
+                Op::Tri {
+                    colour: 0xfe_dcba,
+                    a: (9, 1),
+                    b: (15, 12),
+                    c: (4, 14),
+                },
+            ],
+            W,
+            H,
+        );
+        let runs = run_lists::<LOGW, H, N, DL, CTRL>(
+            &[first.clone(), second.clone()],
+            false,
+            false,
+        );
+        assert_eq!(runs.len(), 2, "two lists, two done");
+        assert_eq!(runs[0].fb, model::render(&first, W, H), "the first");
+        let both: Vec<_> = first.iter().chain(&second).copied().collect();
+        assert_eq!(runs[1].fb, model::render(&both, W, H), "the second");
+        assert!(runs[1].cycles > runs[0].cycles);
     }
 
     #[test]

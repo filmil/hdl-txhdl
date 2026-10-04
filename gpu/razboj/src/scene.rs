@@ -87,3 +87,25 @@ pub fn small() -> Vec<Op> {
         },
     ]
 }
+
+/// The frame after [`small`], for the run that draws two lists one
+/// after the other: the rectangle moved and the triangle turned, drawn
+/// over what the first list left rather than over a clear, so the
+/// second picture shows both lists.
+pub fn small_next() -> Vec<Op> {
+    vec![
+        Op::Rect {
+            colour: 0x60_a080,
+            x: 4,
+            y: 7,
+            w: 6,
+            h: 5,
+        },
+        Op::Tri {
+            colour: 0xe0_c040,
+            a: (8, 1),
+            b: (15, 9),
+            c: (3, 4),
+        },
+    ]
+}
