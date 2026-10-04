@@ -56,9 +56,9 @@ fn in_map(map: &RegMap, p: &str, gen: &str) -> bool {
     map.regs.iter().any(|r| {
         let reg = format!("{p}_{}", r.name.to_uppercase());
         reg == gen
-            || r.fields.iter().any(|f| {
-                format!("{reg}_{}_MASK", f.name.to_uppercase()) == gen
-            })
+            || r.fields
+                .iter()
+                .any(|f| format!("{reg}_{}_MASK", f.name.to_uppercase()) == gen)
     })
 }
 
@@ -169,23 +169,20 @@ fn the_port_is_the_one_the_stock_driver_drives() {
     );
 }
 
-/// The core is RV32IMC, and the port says so in both places that
+/// The core is RV32IMAC, and the port says so in both places that
 /// matter: the ISA string the toolchain reads and the SoC's Kconfig,
-/// which must not select an A extension this core does not have.
+/// which selects the A extension and the builtin atomics (issue 1010).
 #[test]
 fn the_port_asks_for_the_instruction_set_the_core_has() {
     let dts = DTSI;
-    assert!(dts.contains("riscv,isa = \"rv32imc_zicsr\""), "the ISA");
+    assert!(dts.contains("riscv,isa = \"rv32imac_zicsr\""), "the ISA");
     let kconfig = SOC_KCONFIG;
     assert!(kconfig.contains("RISCV_ISA_EXT_M"), "multiply");
     assert!(kconfig.contains("RISCV_ISA_EXT_C"), "compressed");
+    assert!(kconfig.contains("RISCV_ISA_EXT_A"), "atomics");
     assert!(
-        !kconfig.contains("RISCV_ISA_EXT_A"),
-        "the core has no atomics and the port must not claim them"
-    );
-    assert!(
-        kconfig.contains("ATOMIC_OPERATIONS_C"),
-        "so the atomics are the C ones"
+        kconfig.contains("ATOMIC_OPERATIONS_BUILTIN"),
+        "so the atomics are the instructions"
     );
 }
 

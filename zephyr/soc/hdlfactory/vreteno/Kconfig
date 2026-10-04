@@ -10,12 +10,14 @@ config SOC_VRETENO
 	select RISCV_HAS_PLIC
 	select RISCV_ISA_RV32I
 	select RISCV_ISA_EXT_M
+	select RISCV_ISA_EXT_A
 	select RISCV_ISA_EXT_C
 	select RISCV_ISA_EXT_ZICSR
-	select ATOMIC_OPERATIONS_C
+	select ATOMIC_OPERATIONS_BUILTIN
 	select INCLUDE_RESET_VECTOR
 
-# The core is RV32IMC and `misa` says so, so there is no A extension
-# here and the atomic operations are the C ones. That is a statement
-# about the hardware rather than a configuration choice: selecting the
-# instructions would produce an image the core traps on.
+# The core is RV32IMAC and `misa` says so (issue 1010), so the A
+# extension is selected and the atomic operations are the compiler's
+# builtins, its `amo` and `lr`/`sc` instructions. That is a statement
+# about the hardware: before issue 1010 the same image trapped on its
+# first atomic, and the C ones stood in.

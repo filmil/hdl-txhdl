@@ -40,7 +40,7 @@ cmake -B build -S samples/hello_world -GNinja \
 |---|---|
 | `zephyr/module.yml` | the manifest, and the roots |
 | `soc/hdlfactory/` | the family, which is what the hardware model reads |
-| `soc/hdlfactory/vreteno/` | the SoC: RV32IMC, no atomics, 100 MHz |
+| `soc/hdlfactory/vreteno/` | the SoC: RV32IMAC, 100 MHz |
 | `boards/hdlfactory/ax7a200b/` | the board: the image lives in DDR3 |
 | `dts/riscv/hdlfactory/vreteno.dtsi` | the machine, at the addresses it decodes |
 | `dts/bindings/ethernet/` | the binding for the Ethernet port |

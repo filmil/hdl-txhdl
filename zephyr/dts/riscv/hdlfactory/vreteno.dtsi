@@ -6,9 +6,9 @@
 // this file cannot drift from the router's map without a test saying
 // so.
 //
-// The core is RV32IMC with the machine mode registers. It has no A
-// extension, which is why the SoC selects neither atomic instructions
-// nor the atomic emulation that would need them.
+// The core is RV32IMAC with the machine mode registers: the A
+// extension's word forms are in it (issue 1010), so the SoC selects
+// the atomic instructions and the compiler's builtin atomics.
 
 /dts-v1/;
 #include <mem.h>
@@ -42,7 +42,7 @@
 			device_type = "cpu";
 			compatible = "hdlfactory,vreteno", "riscv";
 			reg = <0>;
-			riscv,isa = "rv32imc_zicsr";
+			riscv,isa = "rv32imac_zicsr";
 			status = "okay";
 
 			hlic: interrupt-controller {

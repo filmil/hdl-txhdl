@@ -48,9 +48,10 @@ want 'CONFIG_BOARD="ax7a200b"'
 # on once, and the image built without a clock and said nothing.
 want "CONFIG_RISCV_MACHINE_TIMER=y"
 
-# The core is RV32IMC, so the atomics are the C ones. An image that
-# claimed the A extension would trap on its first atomic.
-want "CONFIG_ATOMIC_OPERATIONS_C=y"
+# The core is RV32IMAC (issue 1010), so the atomics are the
+# instructions, through the compiler's builtins.
+want "CONFIG_RISCV_ISA_EXT_A=y"
+want "CONFIG_ATOMIC_OPERATIONS_BUILTIN=y"
 
 if [ "$fail" -ne 0 ]; then
 	echo
