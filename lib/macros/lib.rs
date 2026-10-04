@@ -4076,7 +4076,7 @@ struct Cx<'a> {
     /// The name each wire takes when a field has the one it wanted:
     /// chosen here, where the ports and the other wires are known,
     /// and used by the constant that makes the choice.
-    wire_alts: &'a mut Vec<String>,
+    wire_alts: &'a mut Vec<(String, String)>,
     /// Each wire as the `let` named it, as the netlist names it, and
     /// where the `let` names it, for the checks on names.
     named: &'a mut Vec<(String, String, Span)>,
@@ -4741,7 +4741,7 @@ fn lower_stmts(
                 let chosen = format!("Self::__TXHDL_WIRE_{idx}");
                 cx.wires.push((w.clone(), v));
                 cx.named.push((name.clone(), w.clone(), n[0].span()));
-                cx.wire_alts.push(alt);
+                cx.wire_alts.push((w.clone(), alt));
                 cx.subst
                     .push((name, format!("NlE::Name({chosen}.to_string())")));
             }
@@ -6556,7 +6556,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // `let` names that became wires of the netlist, with what drives
     // each; a name bound twice gets a numbered second wire.
     let mut wires: Vec<(String, String)> = Vec::new();
-    let mut wire_alts: Vec<String> = Vec::new();
+    let mut wire_alts: Vec<(String, String)> = Vec::new();
     let mut named: Vec<(String, String, Span)> = Vec::new();
     let mut procs: Vec<String> = Vec::new();
     // The hidden registers of the processes of several waits: the
@@ -6683,8 +6683,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     for (k, (w, _)) in wires.iter().enumerate() {
         // The name the constant falls back to when a field has taken
         // this one: `_w` until nothing else has it.
-        let mut alt = match wire_alts.get(k) {
-            Some(a) => a.clone(),
+        // Found by the wire's name and not its place: an inlined helper
+        // adds wires that have no alternative of their own (issue 949).
+        let mut alt = match wire_alts.iter().find(|(n, _)| n == w) {
+            Some((_, a)) => a.clone(),
             None => format!("{w}_w"),
         };
         while taken_names.contains(&alt) {
@@ -6806,10 +6808,17 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             .chain(ties)
             .collect::<Vec<_>>()
             .join(",\n"),
+        // Each `let` with the constant of the wire it became, found by the
+        // wire's name: the constants number every wire, and an inlined
+        // helper adds wires no `let` named, so a `let`'s place among the
+        // named ones is not its wire's (issue 949).
         wire_names = named
             .iter()
-            .enumerate()
-            .map(|(k, (n, _, _))| {
+            .map(|(n, net, _)| {
+                let k = wires
+                    .iter()
+                    .position(|(w, _)| w == net)
+                    .expect("a named wire is among the wires");
                 format!(
                     "(\"{n}\".to_string(), Self::__TXHDL_WIRE_{k}.to_string())"
                 )
