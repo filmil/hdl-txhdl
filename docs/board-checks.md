@@ -6,7 +6,7 @@ Author: automated coding assistant, with human supervision.
 
 Seven issues wait on the AX7A200B, and each of them says what it wants from the board in its own comments.
 This file puts those wants in one place, as commands to run in order, with what each should print and what to keep.
-Four of the checks can run on the next board session; the fifth, fastboot, waits on a flagship that meets timing (#750 and #753); two cannot run yet, and section 9 says what each still lacks.
+Four of the checks can run on the next board session; the fifth, fastboot, no longer waits on timing, since the flagship has met it since #750 and #753 closed; two cannot run yet, and section 9 says what each still lacks.
 
 Nothing here writes the flash or touches the board until the user says the board server is back.
 
@@ -70,8 +70,6 @@ The checks share bitstreams, so this order programs the part four times and writ
 3. `flagship_prog`, then fastboot (section 7).
 4. `vreteno_board_prog`, then the DDR3 test from JTAG, then from the flash (section 8).
 5. `flagship_flash`, which puts the flagship back in the flash, where it lives.
-
-Steps 3 and 5 wait on #750 and #753, as section 10 says.
 
 ## 4. The debug module, #154
 
@@ -200,7 +198,7 @@ It closes #848 once the result is on it.
 
 ## 7. Fastboot, #143
 
-This check waits on #750 and #753: the flagship bitstream built on September 26 misses timing, and section 10 says why.
+The flagship built on September 26 missed timing (section 10); it has met it since #753 closed (9777b4a9).
 
 The fastboot server is the Zephyr program `//zephyr:fastboot`, sent down the serial line by the flagship's loader; it takes the address `192.168.1.50` on the board's Ethernet port.
 The port is cabled to the board server's interface `fpga-a200t-eth0`, so the fastboot client runs there, over ssh, and that interface wants an address on the same network, once:
@@ -328,6 +326,8 @@ bazel run //cpu/vreteno:vreteno_board_prog -- "${PROG[@]}"
 
 The watcher runs for 240 seconds because programming alone takes about 40 and the test prints after it; a 90-second watcher closed before the first line on September 28.
 
+Done over JTAG on September 28, 2026: the design said `ddr3 ok` (`docs/vreteno.tex`, 46f82d7). The run from the flash below is what is owed.
+
 Pass: `vreteno ddr3 test`, a row of dots, `ddr3 ok`, and dots after it; the third LED, the controller's calibration, lit.
 `ddr3 bad` means the memory answered with words it was not given; no `ddr3` at all after the dots means the controller did not calibrate.
 
@@ -342,7 +342,7 @@ Pass: the same four lines.
 Capture: both logs, and a photograph of the LEDs if the serial line says nothing.
 It closes #188.
 
-Then, once the flagship meets timing, put the flagship back: `bazel run //flagship:flagship_flash -- "${PROG[@]}"`, and power the board off and on once more.
+Then put the flagship back: `bazel run //flagship:flagship_flash -- "${PROG[@]}"`, and power the board off and on once more.
 
 ## 9. The checks that cannot run yet
 
@@ -359,8 +359,9 @@ None of the three things that needs exists yet.
 
 ### #312, the configuration flash
 
-Nothing board-side exists: `STARTUPE2` is not instantiated in any top, no program reads the flash's JEDEC identity, and the layout of programs beside the bitstream is not written down.
-#312 lists the four pieces; each is work before any board time.
+`STARTUPE2` is in every top, and `flashid` read the chip's identity, `0020ba18`, on the board (`docs/vreteno.tex`).
+The layout, programs from `0x00A0_0000`, is in `docs/flagship.tex`, and the flash image carries a program there since d1a2078a.
+What #312 still asks of the board is on the issue.
 
 ## 10. What was built
 
@@ -390,4 +391,5 @@ Section 8 then leaves the Vreteno board in the flash rather than the flagship, w
 All four logs carry one more critical warning, the ring oscillators' false path matching no net (#751); the three Vreteno bitstreams meet timing regardless.
 
 With the clock groups corrected (PR 754), the flagship rebuilt from `e061051` misses by 1.892 ns over 2582 endpoints, all inside the two Ethernet domains: the transmitter reads its frame store straight into the output pins, and the receiver's store is flops that every received byte fans out to (#753).
-That is the second thing the flagship waits on.
+That was the second thing the flagship waited on.
+Both are fixed: rebuilt after #753 (9777b4a9), the flagship meets timing, with a worst slack of +0.341 ns.

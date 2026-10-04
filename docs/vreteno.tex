@@ -490,9 +490,8 @@ which is how a debugger walks a program an instruction at a time.
 \code{dcsr} holds the specification's version, the privilege,
 \code{ebreakm}, \code{step} and the cause, and nothing else is
 written. The two requests are inputs of the core and the mode is
-its output \code{dbg}; the board ties the inputs low until the
-debug module of issue 154 drives them, and the lockstep test drives
-them from a plan, Section~\ref{sec:v-lockstep}. The CSR
+its output \code{dbg}; the board drives the inputs from the debug
+module of issue 154, and the lockstep test drives them from a plan, Section~\ref{sec:v-lockstep}. The CSR
 instructions read and write \code{dcsr} and \code{dpc} from any
 mode, where the specification allows them only in debug mode; the
 restriction waits for the module, since until then a test sets
@@ -1605,11 +1604,15 @@ unconstrained. The design takes 12\,296 LUTs, 11\,209 flip-flops, five
 block RAM tiles, four DSP blocks, 86 pins, the controller's PLL and
 MMCM, its 64 output and 32 input serialisers with 32 delays, and the
 \code{STARTUPE2} that clocks the configuration flash. These are the
-numbers of \code{main} with the configuration flash and the entropy
-source's capture buffer on it (issue 842). The memory's pins carry no
-input or output delay, as in the a200t examples, since the controller
-calibrates their timing itself, and neither do four other inputs and
-eight other outputs, which the report counts as such. The report's
+numbers of \code{main} at eed5b7f, with the configuration flash and
+the entropy source's capture buffer on it (issue 842); the pins'
+constraints, the MDIO master, the debug transport and the SD card
+host came after, and the size has not been measured since. The
+memory's pins carry no input or output delay, as in the a200t
+examples, since the controller calibrates their timing itself. The
+board's other pins are timed, or cut by a false path, in
+\code{board/ax7a200\_io.xdc} (issue 847), so none is left without a
+delay. The report's
 eight combinational loops are the entropy source's eight rings, which
 are loops by design and cut by a false path.
 
@@ -1661,8 +1664,10 @@ OK and a newline on the serial port at 115\,200 baud, the watcher
 typed \code{yes}, and the board echoed the three bytes: six bytes on
 the line, the same six the lockstep test's model had recorded. The
 LEDs were looked at on the board itself, by an author with a camera:
-they do what the top says, and the photographs and the video are the
-record. Holding the reset puts the halt LED out; releasing it says OK
+they did what that run's top said, and the photographs and the video
+are the record. The top below is today's, whose LEDs show the halt,
+the first start bit on the serial line, the memory's calibration and
+a heartbeat. Holding the reset puts the halt LED out; releasing it says OK
 and waits for three keys again.
 
 \lstinputlisting[caption={\code{board/vreteno\_board.v}: the board
@@ -1829,8 +1834,8 @@ pins, a master model that follows a plan of writes, reads and waits,
 against a program counting to three thousand: it halts the core, reads
 the count and \code{dpc}, writes the count to its end, resumes, and the
 program finishes at once, which is the write having landed. On the
-board, \code{vreteno\_board\_dm\_probe} does the same from the hardware
-manager against whatever program runs.
+board, \code{vreteno\_board\_dm\_probe} is to do the same from the hardware
+manager against whatever program runs; that run is owed (issue 154).
 
 \subsection{The debug transport}
 \label{sec:v-dtm}
