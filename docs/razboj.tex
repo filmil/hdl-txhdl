@@ -72,7 +72,7 @@ rectangles and four triangles.
 \centering
 \includegraphics[width=0.62\columnwidth]{scene.png}
 \caption{The demonstration, as Razboj drew it. Eight entries, four
-thousand and ninety-six pixels, thirteen thousand cycles.}
+thousand and ninety-six pixels, 16\,584 cycles.}
 \label{fig:g-scene}
 \end{figure}
 
@@ -159,7 +159,7 @@ third vertex is not latched: its word is the last, so the setup reads
 it straight off the bus in the cycle the walk starts. One read is out
 at a time, because the front end has nothing to do until the answer
 lands. The fetch costs the demonstration six reads an entry,
-which is a few hundred cycles out of thirteen thousand.
+which is a few hundred cycles out of 16\,584.
 
 \section{The Rasteriser}
 \label{sec:g-raster}
@@ -261,7 +261,7 @@ A write is held until its beat arrives, because AXI4 puts no
 identifier on the write data channel, so the beat belongs to the
 oldest address phase and there is nothing to match it by but order.
 One write is held at a time, which is why the demonstration takes
-about three cycles a pixel rather than one; a framebuffer that took a
+about four cycles a pixel rather than one; a framebuffer that took a
 request and its beat together in the cycle both were offered would be
 the first thing to improve.
 

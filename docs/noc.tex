@@ -424,8 +424,8 @@ display list drawn by the rasteriser alone on a direct link.}
 \toprule
  & link & lattice \\
 \midrule
-The core writes the list & & 13\,191 \\
-The GPU draws the list & 36\,516 & 78\,391 \\
+The core writes the list & & 12\,364 \\
+The GPU draws the list & 45\,468 & 82\,438 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -433,7 +433,7 @@ The GPU draws the list & 36\,516 & 78\,391 \\
 The demonstration prints both numbers for the GPU. It hands the list
 the core wrote to the rasteriser and its framebuffer joined by a
 plain link, draws it again, and checks that the picture is the same.
-On the lattice the rasteriser takes a little over twice as long,
+On the lattice the rasteriser takes nearly twice as long,
 counted from the cycle the count is written.
 
 That is the cost of throughput rather than of latency. A hop adds
@@ -463,7 +463,10 @@ A node holds three flip-flops per switch and six in all: the
 \code{turn} of each round robin, and nothing else. Everything that
 carries a packet is combinational, and the flip-flops that bound those
 paths are the channels' on either side of the node, which belong to
-whatever instantiates it. Table~\ref{tab:n-timing} is the answer.
+whatever instantiates it. Table~\ref{tab:n-timing} is the answer, as
+measured at commit 7a8e89e, when the node's place in the lattice was
+a type parameter; \code{noc\_netlist} has since left \code{col} and
+\code{row} as inputs, and the table has not been measured again.
 
 \begin{table}[htbp]
 \caption{One node, and one switch inside it, through synthesis for

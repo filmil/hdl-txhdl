@@ -141,7 +141,7 @@ State is counted for the configuration `//soc` uses: `A` 32, `D` 32,
 `S` 4, `I` 2, `XB` and `YB` 2, `NIDS` 4, and a length cap `L` of 16.
 A data beat carried across is 37 bits, data and strobe and `last`,
 which is the width of the `w` port on both bridges.
-Today `HostBridge` holds 4 bits, `PerBridge` 30, and a switch 3.
+On September 19, before the split, `HostBridge` held 4 bits, the refusal's `eat`, `owe` and `bad`, `PerBridge` 30, and a switch 3; the split has since added the burst's state to `HostBridge` (section 7).
 
 The baseline is measured rather than asserted.
 `//lib/parts:switch_synth` and `//lib/parts:node_synth` put one
@@ -178,9 +178,9 @@ lattice, counting a hop as a cycle:
 
 AXI4 allows 256 beats for `INCR`, 16 for `FIXED` and `WRAP`, and no
 burst may cross a 4 KiB boundary.
-Nothing in this tree sends more than one beat, and the traffic that
-will is a DMA engine moving a frame, which chooses its own burst
-length.
+On September 19 nothing in this tree sent more than one beat; the
+traffic that does now is the DMA engines of issue 151 moving a frame
+(`lib/parts/src/dma.rs`), each choosing its own burst length.
 
 So the cap is a parameter, `L`, and the policy above it is `SlvErr`
 rather than splitting: a host that asks for more than the network was
