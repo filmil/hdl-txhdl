@@ -1592,7 +1592,13 @@ instruction leaves execute. A page fault is cause 13 for a load and
 is an access fault, 5 or 7. Either is taken from those registers, so
 neither the choice of trap nor the redirect waits on anything late. A
 misaligned access traps as one whatever its page says, as the
-specification orders the two.
+specification orders the two. In machine mode with \code{MPRV} set, a
+load or a store is translated and checked as the mode \code{MPP} names,
+and the fetch is not; that is how OpenSBI reads the instruction a
+supervisor trapped on, which Linux makes it do before its first
+program runs. The core tells the unit the data's mode, which is the
+fetch's but under \code{MPRV}, and a return below machine mode clears
+the bit (issue~\#1105).
 
 A write of \code{satp} and an \code{sfence.vma} tell the unit to flush,
 and refetch the instruction after them, since that one was fetched
