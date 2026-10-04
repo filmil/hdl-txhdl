@@ -37,9 +37,10 @@ use txhdl::{case, lower, select, when, with, Trace, Value};
 use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, Resp, R, W};
 use txhdl_parts::mmu::Pte;
 
-/// `mstatus`'s fields that user and supervisor mode bring (issue 1012):
-/// what of it is writable, and what `sstatus` shows of it.
-const MSTATUS_W: u32 = 0x000c_19aa;
+/// `mstatus`'s fields that user and supervisor mode bring (issue 1012),
+/// and `MPRV` (issue 1105): what of it is writable, and what `sstatus`
+/// shows of it.
+const MSTATUS_W: u32 = 0x000e_19aa;
 const SSTATUS_W: u32 = 0x000c_0122;
 /// The exceptions machine mode may delegate, and the interrupts.
 const MEDELEG_W: u32 = 0xb3ff;
@@ -1106,6 +1107,13 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // by their virtual address.
             let satp_r = self.satp.get();
             let vm = satp_r.bit(31) & Bit::from(self.prv.get() != 3);
+            // A load or a store in machine mode with `MPRV` set is
+            // translated and checked as the mode `MPP` names, which is
+            // how OpenSBI reads a supervisor's memory; the fetch is not
+            // (issue 1105).
+            let mprv = mstatus.bit(17) & Bit::from(self.prv.get() == 3);
+            let dprv = mux(mprv, mstatus.slice::<11, 2>(), self.prv.get());
+            let dvm = satp_r.bit(31) & Bit::from(dprv != 3);
             let far = Bit::from(fetch_pc >= U::<32>::from(IMEM_BYTES)) | vm;
             let want = fetch_pc & U::<32>::from(0xffff_fffcu32);
             let f_at = self.f_at.get();
@@ -1279,7 +1287,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 & (is_load | is_store)
                 & (!(issue.ready() & wbeat.ready())
                     | self.p_wait
-                    | (vm & !self.x_done));
+                    | (dvm & !self.x_done));
             // A word of the instruction is still on the bus: the core
             // waits for it, which is what makes a program above the
             // boot memory slow and correct.
@@ -1641,10 +1649,16 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let s_trap_status = (mstatus & !U::<32>::from(0x122u32))
                 | mux(mstatus.bit(1), U::<32>::from(0x20u32), zero32)
                 | mux(prv == 1, U::<32>::from(0x100u32), zero32);
+            // A return below machine mode clears `MPRV` (issue 1105).
             let mret_status = (mstatus & !U::<32>::from(0x1808u32))
+                & !mux(
+                    mstatus.slice::<11, 2>() != 3,
+                    U::<32>::from(0x2_0000u32),
+                    zero32,
+                )
                 | U::<32>::from(0x80u32)
                 | mux(mstatus.bit(7), U::<32>::from(0x8u32), zero32);
-            let sret_status = (mstatus & !U::<32>::from(0x102u32))
+            let sret_status = (mstatus & !U::<32>::from(0x2_0102u32))
                 | U::<32>::from(0x20u32)
                 | mux(mstatus.bit(5), U::<32>::from(0x2u32), zero32);
             let mret_ok = run & is_mret & (prv == 3);
@@ -1885,7 +1899,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let x_age = self.x_age.get();
             let x_start = here
                 & (is_load | is_store)
-                & vm
+                & dvm
                 & !self.x_done
                 & !self.x_req
                 & !stall_ld
@@ -1991,7 +2005,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // What the unit is told: the translation's state, and the
             // two requests, all registers.
             mmu_satp.set(satp_r);
-            mmu_prv.set(prv);
+            // The data's mode, which is the fetch's but under `MPRV`, and
+            // the fetch asks only below machine mode, where `MPRV` is
+            // clear (issue 1105).
+            mmu_prv.set(dprv);
             mmu_sum.set(mstatus.bit(18));
             mmu_mxr.set(mstatus.bit(19));
             mmu_flush.set(self.flush.get());
