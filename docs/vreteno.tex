@@ -308,6 +308,23 @@ as the instruction says, and a division is the wrapping one, which
 gives the manual's answer for the one overflow; division by zero,
 which Rust would refuse, is spelled out, all ones and the dividend.
 
+The same model is also a fast machine, for software too large for the
+cycle-level runs: a kernel, and what boots it (issue~\#1016). Given a
+\code{Bus}, it sends every fetch, load and store there instead of to
+its own memories, and a store goes out as a word and a mask of its
+lanes, so that a device is never read on the way to being written.
+\code{cpu/vreteno/src/machine} puts the board around it at the
+addresses its maps give: the DDR3 as a gigabyte of plain memory, the
+CLINT with its count moving one an instruction, the PLIC with its two
+targets, and the serial port as SiFive's. A loader lays an image and
+a device tree blob into the DDR3 and starts the hart as a bootloader
+would, \code{a0} the hart's number and \code{a1} the blob's address,
+and \code{//cpu/vreteno:machine} runs it with the serial port's output
+on the terminal. A program built for the board's DDR3 runs there
+unchanged: \code{hello\_ram\_bin} prints its line and halts after 267
+instructions. Without a bus the model is the board's reference as
+above, and the lockstep test holds the core to it as before.
+
 \lstinputlisting[caption={\code{model.rs}: the reference
 model.},label={lst:v-model}]{cpu/vreteno/src/model.rs}
 
