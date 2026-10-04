@@ -116,9 +116,12 @@ pub fn reset() -> bool {
 /// The netlist gives such a unit no clearing branch, since what it
 /// does under reset is in its body (issue 633), and so the run's reset
 /// leaves its registers to the body too, rather than putting them back
-/// on top of what the body drives (issue 878). Only the unit's own
-/// registers: a child that declares no `rst` keeps the reset, as its
-/// module does in the netlist.
+/// on top of what the body drives (issue 878). Its memories are the
+/// same: the netlist does not gate their writes on the reset, so the
+/// run keeps a write the body makes under reset rather than dropping
+/// it (issue 966). Only the unit's own registers and memories: a child
+/// that declares no `rst` keeps the reset, as its module does in the
+/// netlist.
 pub fn answers_reset(unit: &impl trace::Traceable) {
     let own: Vec<usize> = trace::collect("u", unit)
         .into_iter()
@@ -126,7 +129,13 @@ pub fn answers_reset(unit: &impl trace::Traceable) {
         .filter(|p| p.path.matches('.').count() == 1)
         .map(|p| p.cell)
         .collect();
-    clock::OWN_RESET.with(|o| o.borrow_mut().extend(own));
+    let mems: Vec<usize> = trace::memories("u", unit)
+        .into_iter()
+        .filter(|(path, _)| path.matches('.').count() == 1)
+        .map(|(_, cell)| cell)
+        .collect();
+    clock::OWN_RESET
+        .with(|o| o.borrow_mut().extend(own.into_iter().chain(mems)));
 }
 
 /// Assert or release the reset, for a testbench.
@@ -1005,13 +1014,24 @@ struct MemCell<T: Copy> {
     next: Cell<Option<(usize, T)>>,
 }
 
+impl<T: Copy> MemCell<T> {
+    /// Whether the memory's unit answers the reset in its own body, so
+    /// that the run's reset leaves its writes alone (issue 966).
+    fn answers_own_reset(&self) -> bool {
+        let at = self as *const MemCell<T> as usize;
+        clock::OWN_RESET.with(|o| o.borrow().contains(&at))
+    }
+}
+
 impl<T: Copy> Commit for MemCell<T> {
     fn apply(&self) {
         // A write under reset is dropped, as a register's drive is: a
         // unit held in reset changes nothing, and the netlist puts the
         // write in the branch out of reset (issue 877). The words are
-        // kept, since a reset is not a reload.
-        if reset() {
+        // kept, since a reset is not a reload. A unit that answers the
+        // reset itself has no such branch, so its writes are its body's
+        // to make, as its registers' drives are (issue 966).
+        if reset() && !self.answers_own_reset() {
             self.next.take();
             return;
         }
@@ -1381,9 +1401,9 @@ mod clock {
         /// whether or not anything drives it at the edge (issue 727).
         pub static REGS: RefCell<Vec<&'static dyn super::Reset>> =
             RefCell::new(Vec::new());
-        /// The registers whose unit answers the reset itself, by
-        /// their cells: the reset leaves them to the unit's body
-        /// (issue 878).
+        /// The registers and memories whose unit answers the reset
+        /// itself, by their cells: the reset leaves them to the unit's
+        /// body (issues 878 and 966).
         pub static OWN_RESET: RefCell<std::collections::HashSet<usize>> =
             RefCell::new(std::collections::HashSet::new());
         /// Every channel still held, for the same reason: a reset
@@ -1764,6 +1784,20 @@ pub mod trace {
 
     thread_local! {
         static PROBES: RefCell<Vec<Probe>> = const { RefCell::new(Vec::new()) };
+        /// The memories met while `memories` walks a unit, by path and
+        /// cell; `None` the rest of the time, so tracing is unchanged.
+        static MEMS: RefCell<Option<Vec<(String, usize)>>> =
+            const { RefCell::new(None) };
+    }
+
+    /// Every memory under `t`, by its dotted path under `name` and its
+    /// cell, as an address. A memory registers no probe, since it is
+    /// not traced; this is how the reset finds a unit's own memories
+    /// (issue 966). The probes the walk registers are thrown away.
+    pub fn memories(name: &str, t: &impl Traceable) -> Vec<(String, usize)> {
+        let saved = MEMS.with(|m| m.replace(Some(Vec::new())));
+        let _ = collect(name, t);
+        MEMS.with(|m| m.replace(saved)).unwrap_or_default()
     }
 
     /// Trace the reset, for every run and whether or not anything
@@ -2001,9 +2035,17 @@ pub mod trace {
             self.to.trace(&scope.child("to"));
         }
     }
-    /// A memory is not traced; its ports are.
+    /// A memory is not traced; its ports are. It says where it is only
+    /// to `memories`.
     impl<T: Copy, const N: usize, C: Clock> Traceable for Mem<T, N, C> {
-        fn trace(&self, _: &Scope) {}
+        fn trace(&self, scope: &Scope) {
+            let cell = std::rc::Rc::as_ptr(&self.0) as *const () as usize;
+            MEMS.with(|m| {
+                if let Some(found) = m.borrow_mut().as_mut() {
+                    found.push((scope.path().to_string(), cell));
+                }
+            });
+        }
     }
     /// Plain values in a unit are constants, and register nothing.
     macro_rules! untraced {
