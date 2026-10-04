@@ -9,6 +9,7 @@ includes the run's log and its trace. Both run formal.sh, which says
 how the tools are found and what the modes mean (issue 581).
 """
 
+load("//tools:quiet.bzl", "quiet_cmd")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 _TOOLS = [
@@ -94,17 +95,17 @@ def formal_trace(name, run, signals, width = None, until = None):
         name = name + "_db",
         srcs = [run + ".vcd"],
         outs = [name + ".db"],
-        cmd = "$(location @multitool//tools/vcdcvt) -logtostderr" +
-              " -in $(location " + run + ".vcd) -format sqlite -out $@",
+        cmd = quiet_cmd("$(location @multitool//tools/vcdcvt) -logtostderr" +
+              " -in $(location " + run + ".vcd) -format sqlite -out $@"),
         tools = ["@multitool//tools/vcdcvt"],
     )
     native.genrule(
         name = name + "_dt",
         srcs = [name + ".db"],
         outs = [name + ".dt"],
-        cmd = "$(location @multitool//tools/sqlite2drawtiming) -logtostderr" +
+        cmd = quiet_cmd("$(location @multitool//tools/sqlite2drawtiming) -logtostderr" +
               " -in $(location " + name + ".db) -ndots 1 " +
-              " ".join(["-signal '" + s + "'" for s in signals]) + " > $@",
+              " ".join(["-signal '" + s + "'" for s in signals]) + " > $@"),
         tools = ["@multitool//tools/sqlite2drawtiming"],
     )
     order = ",".join([s.split("=>")[-1] for s in signals])
