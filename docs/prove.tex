@@ -144,7 +144,8 @@ cover point is not part of a proof.
 A proof that has never failed proves nothing about the tool. So the
 build makes two broken copies of the netlist and proves those too,
 expecting each to fail. One removes the assumption, so a step of
-three is allowed and the count leaves the digits. The other tightens
+three is allowed: nine and three wrap to two, and the check that a
+wrap lands on nought or one fails. The other tightens
 the first check from \code{count <= 4'h9} to \code{count <= 4'h8},
 which nine breaks. Here is the tightened one under the same engine.
 

@@ -2374,8 +2374,9 @@ waveform(
 # The digit's statements proved for every input, not only checked on
 # the run (issue 581): the proof as written must hold, and two broken
 # copies must fail, or the proof proves nothing. One copy has the
-# assumption removed, so a step of three is allowed and the count
-# leaves the digits; the other tightens a check to a count no higher
+# assumption removed, so a step of three is allowed, nine and three
+# wrap to two, and the check that a wrap lands on nought or one fails;
+# the other tightens a check to a count no higher
 # than eight, which nine breaks. The proof runs `abc pdr` inside the
 # pinned yosys-abc and needs no solver; the bounded runs, which give a
 # trace, and the cover run use the pinned z3.
