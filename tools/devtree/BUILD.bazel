@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+# The Vreteno board's device tree, for Linux, from the maps the design
+# decodes (issue 1015).
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "devtree",
+    srcs = ["main.rs"],
+    edition = "2021",
+    deps = [
+        "//cpu/vreteno:vreteno32",
+        "//lib:txhdl",
+    ],
+)
+
+# Every address in the tree held to the maps, the interrupts to the
+# sources the design wires, the ISA string to `misa`.
+rust_test(
+    name = "devtree_test",
+    crate = ":devtree",
+    edition = "2021",
+)
+
+genrule(
+    name = "dts",
+    outs = ["vreteno.dts"],
+    cmd = "$(location :devtree) > $@",
+    tools = [":devtree"],
+)
+
+# The tree compiled by dtc, which refuses a malformed one; a warning
+# fails the build too, since a warning here is a binding written wrong.
+genrule(
+    name = "dtb",
+    srcs = [":dts"],
+    outs = ["vreteno.dtb"],
+    cmd = "$(location @dtc//:dtc) -I dts -O dtb -o $@ $(location :dts) " +
+          "2> $@.log; status=$$?; cat $@.log >&2; " +
+          "[ $$status -eq 0 ] && [ ! -s $@.log ]",
+    tools = ["@dtc//:dtc"],
+)
