@@ -266,7 +266,6 @@ pub struct Board<const DIV: u32> {
     /// like every other peripheral here and wants no crossing.
     pub puart: LiteBridge<9, SlotMap, 32, 32, 4, 5>,
     // end{vslot}
-    pub pddr3: AxiPer<32, 32, 4, 5>,
     pub pplic: LiteBridge<1, PlicMap, 32, 32, 4, 5>,
     /// The debug module, on a router port of its own behind a bridge
     /// of its own, so the JTAG host reaches it while the core is
@@ -922,10 +921,6 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (sw_tx, sw_rx) = chan::<W<32, 4>, DefaultClock>();
         let (sb_tx, sb_rx) = chan::<B<2>, DefaultClock>();
         let (sr_tx, sr_rx) = chan::<R<32, 2>, DefaultClock>();
-        let (req3_tx, req3_rx) = chan::<PerReq<32, 5>, DefaultClock>();
-        let (wd3_tx, wd3_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (ans3_tx, ans3_rx) = chan::<Answer<5>, DefaultClock>();
-        let (rb3_tx, rb3_rx) = chan::<R<32, 5>, DefaultClock>();
         // The interrupt controller speaks AXI-Lite too, behind a
         // bridge of its own.
         let (paw_tx, paw_rx) = chan::<LiteAw<32>, DefaultClock>();
@@ -1377,176 +1372,162 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                         ),
                                     ),
                                     join2(
-                                        self.pddr3.run(
-                                            (
-                                                aw3_rx, ar3_rx, w3_rx, ans3_rx,
-                                                rb3_rx,
-                                            ),
-                                            (req3_tx, wd3_tx, b3_tx, r3_tx),
-                                        ),
                                         join2(
-                                            join2(
-                                                self.pplic.run(
-                                                    (
-                                                        aw4_rx,
-                                                        ar4_rx,
-                                                        w4_rx,
-                                                        [pb_rx],
-                                                        [pr_rx],
-                                                    ),
-                                                    (
-                                                        [paw_tx],
-                                                        [par_tx],
-                                                        [pw_tx],
-                                                        b4_tx,
-                                                        r4_tx,
-                                                    ),
+                                            self.pplic.run(
+                                                (
+                                                    aw4_rx,
+                                                    ar4_rx,
+                                                    w4_rx,
+                                                    [pb_rx],
+                                                    [pr_rx],
                                                 ),
+                                                (
+                                                    [paw_tx],
+                                                    [par_tx],
+                                                    [pw_tx],
+                                                    b4_tx,
+                                                    r4_tx,
+                                                ),
+                                            ),
 join2(
-                                                join2(
-                                                    self.prom.run(
-                                                        (
-                                                            aw5_rx, ar5_rx,
-                                                            w5_rx, ans5_rx,
-                                                            rb5_rx,
-                                                        ),
-                                                        (
-                                                            req5_tx, wd5_tx,
-                                                            b5_tx, r5_tx,
-                                                        ),
+                                            join2(
+                                                self.prom.run(
+                                                    (
+                                                        aw5_rx, ar5_rx,
+                                                        w5_rx, ans5_rx,
+                                                        rb5_rx,
                                                     ),
-                                                    self.rom.run(
-                                                        PerPort {
-                                                            req: req5_rx,
-                                                            w: wd5_rx,
-                                                            ans: ans5_tx,
-                                                            r: rb5_tx,
-                                                        },
-                                                        (),
+                                                    (
+                                                        req5_tx, wd5_tx,
+                                                        b5_tx, r5_tx,
                                                     ),
                                                 ),
-                                                // The flash: the master and the window
-                                                // before the pins, which read the lines
-                                                // both drive this step (issue 312).
+                                                self.rom.run(
+                                                    PerPort {
+                                                        req: req5_rx,
+                                                        w: wd5_rx,
+                                                        ans: ans5_tx,
+                                                        r: rb5_tx,
+                                                    },
+                                                    (),
+                                                ),
+                                            ),
+                                            // The flash: the master and the window
+                                            // before the pins, which read the lines
+                                            // both drive this step (issue 312).
+                                            join2(
                                                 join2(
                                                     join2(
-                                                        join2(
-                                                        self.spi.run(
-                                                            LitePort {
-                                                                aw: paw_spi_rx,
-                                                                ar: par_spi_rx,
-                                                                w: pw_spi_rx,
-                                                                b: pb_spi_tx,
-                                                                r: pr_spi_tx,
-                                                            },
-                                                            SpiLines {
-                                                                miso: fl_miso,
-                                                                sclk: m_sclk_o,
-                                                                mosi: m_mosi_o,
-                                                                cs_n: m_cs_n_o,
-                                                                irq: spi_irq_o,
-                                                            },
-                                                        ),
-                                                        join2(
-                                                        self.mdio.run(
-                                                            LitePort {
-                                                                aw: paw_mdio_rx,
-                                                                ar: par_mdio_rx,
-                                                                w: pw_mdio_rx,
-                                                                b: pb_mdio_tx,
-                                                                r: pr_mdio_tx,
-                                                            },
-                                                            MdioLines {
-                                                                mdio_in: phy_mdio_in,
-                                                                mdc: phy_mdc,
-                                                                mdio_out: phy_mdio_out,
-                                                                mdio_oe: phy_mdio_oe,
-                                                            },
-                                                        ),
-                                                        self.sd.run(
-                                                            LitePort {
-                                                                aw: paw_sd_rx,
-                                                                ar: par_sd_rx,
-                                                                w: pw_sd_rx,
-                                                                b: pb_sd_tx,
-                                                                r: pr_sd_tx,
-                                                            },
-                                                            SdLines {
-                                                                cmd_in: sd_cmd_in,
-                                                                dat_in: sd_dat_in,
-                                                                sclk: sd_clk,
-                                                                cmd_out: sd_cmd_out,
-                                                                cmd_oe: sd_cmd_oe,
-                                                                dat_out: sd_dat_out,
-                                                                dat_oe: sd_dat_oe,
-                                                                irq: sd_irq_o,
-                                                                dma_in: sdin_rx,
-                                                                dma_out: sdout_tx,
-                                                                dma_at: sdat_o,
-                                                                dma_bytes: sdbytes_o,
-                                                                dma_words: sdwords_o,
-                                                                store_go: sdsgo_o,
-                                                                fetch_go: sdfgo_o,
-                                                                store_busy: sdsbusy_i,
-                                                                fetch_busy: sdfbusy_i,
-                                                            },
-                                                        ),
-                                                        ),
-                                                        ),
-                                                        join2(
-                                                            self.pflash.run(
-                                                                (aw7_rx, ar7_rx, w7_rx, ans7_rx, rb7_rx),
-                                                                (req7_tx, wd7_tx, b7_tx, r7_tx),
-                                                            ),
-                                                            self.flashwin.run(
-                                                                PerPort {
-                                                                    req: req7_rx,
-                                                                    w: wd7_rx,
-                                                                    ans: ans7_tx,
-                                                                    r: rb7_tx,
-                                                                },
-                                                                (w_rst_i, fl_miso_win, w_sclk_o, w_mosi_o, w_cs_n_o),
-                                                            ),
-                                                        ),
+                                                    self.spi.run(
+                                                        LitePort {
+                                                            aw: paw_spi_rx,
+                                                            ar: par_spi_rx,
+                                                            w: pw_spi_rx,
+                                                            b: pb_spi_tx,
+                                                            r: pr_spi_tx,
+                                                        },
+                                                        SpiLines {
+                                                            miso: fl_miso,
+                                                            sclk: m_sclk_o,
+                                                            mosi: m_mosi_o,
+                                                            cs_n: m_cs_n_o,
+                                                            irq: spi_irq_o,
+                                                        },
                                                     ),
-                                                    self.cfgflash.run(
-                                                        (m_sclk_i, m_mosi_i, m_cs_n_i, w_sclk_i, w_mosi_i, w_cs_n_i),
-                                                        (fl_cclk, fl_mosi, fl_cs_n, w_rst_o, fl_refused),
+                                                    join2(
+                                                    self.mdio.run(
+                                                        LitePort {
+                                                            aw: paw_mdio_rx,
+                                                            ar: par_mdio_rx,
+                                                            w: pw_mdio_rx,
+                                                            b: pb_mdio_tx,
+                                                            r: pr_mdio_tx,
+                                                        },
+                                                        MdioLines {
+                                                            mdio_in: phy_mdio_in,
+                                                            mdc: phy_mdc,
+                                                            mdio_out: phy_mdio_out,
+                                                            mdio_oe: phy_mdio_oe,
+                                                        },
+                                                    ),
+                                                    self.sd.run(
+                                                        LitePort {
+                                                            aw: paw_sd_rx,
+                                                            ar: par_sd_rx,
+                                                            w: pw_sd_rx,
+                                                            b: pb_sd_tx,
+                                                            r: pr_sd_tx,
+                                                        },
+                                                        SdLines {
+                                                            cmd_in: sd_cmd_in,
+                                                            dat_in: sd_dat_in,
+                                                            sclk: sd_clk,
+                                                            cmd_out: sd_cmd_out,
+                                                            cmd_oe: sd_cmd_oe,
+                                                            dat_out: sd_dat_out,
+                                                            dat_oe: sd_dat_oe,
+                                                            irq: sd_irq_o,
+                                                            dma_in: sdin_rx,
+                                                            dma_out: sdout_tx,
+                                                            dma_at: sdat_o,
+                                                            dma_bytes: sdbytes_o,
+                                                            dma_words: sdwords_o,
+                                                            store_go: sdsgo_o,
+                                                            fetch_go: sdfgo_o,
+                                                            store_busy: sdsbusy_i,
+                                                            fetch_busy: sdfbusy_i,
+                                                        },
+                                                    ),
+                                                    ),
+                                                    ),
+                                                    join2(
+                                                        self.pflash.run(
+                                                            (aw7_rx, ar7_rx, w7_rx, ans7_rx, rb7_rx),
+                                                            (req7_tx, wd7_tx, b7_tx, r7_tx),
+                                                        ),
+                                                        self.flashwin.run(
+                                                            PerPort {
+                                                                req: req7_rx,
+                                                                w: wd7_rx,
+                                                                ans: ans7_tx,
+                                                                r: rb7_tx,
+                                                            },
+                                                            (w_rst_i, fl_miso_win, w_sclk_o, w_mosi_o, w_cs_n_o),
+                                                        ),
                                                     ),
                                                 ),
-),
+                                                self.cfgflash.run(
+                                                    (m_sclk_i, m_mosi_i, m_cs_n_i, w_sclk_i, w_mosi_i, w_cs_n_i),
+                                                    (fl_cclk, fl_mosi, fl_cs_n, w_rst_o, fl_refused),
+                                                ),
                                             ),
-                                            // The peripheral before the link, so
-                                            // a transaction and the first byte of
-                                            // its frame are one step apart rather
-                                            // than two.
-                                            join2(
-                                                self.remote.run(
-                                                    LitePort {
-                                                        aw: paw_rem_rx,
-                                                        ar: par_rem_rx,
-                                                        w: pw_rem_rx,
-                                                        b: pb_rem_tx,
-                                                        r: pr_rem_tx,
-                                                    },
-                                                    (ans_rx, ask_tx),
-                                                ),
-                                                self.link.run(
-                                                    (ask_rx, tolink_rx),
-                                                    (ans_tx, fromlink_tx),
-                                                ),
+),
+                                        ),
+                                        // The peripheral before the link, so
+                                        // a transaction and the first byte of
+                                        // its frame are one step apart rather
+                                        // than two.
+                                        join2(
+                                            self.remote.run(
+                                                LitePort {
+                                                    aw: paw_rem_rx,
+                                                    ar: par_rem_rx,
+                                                    w: pw_rem_rx,
+                                                    b: pb_rem_tx,
+                                                    r: pr_rem_tx,
+                                                },
+                                                (ans_rx, ask_tx),
+                                            ),
+                                            self.link.run(
+                                                (ask_rx, tolink_rx),
+                                                (ans_tx, fromlink_tx),
                                             ),
                                         ),
                                     ),
                                 ),
                             ),
                             self.ddr3.run(
-                                PerPort {
-                                    req: req3_rx,
-                                    w: wd3_rx,
-                                    ans: ans3_tx,
-                                    r: rb3_tx,
-                                },
+                                (aw3_rx, ar3_rx, w3_rx, b3_tx, r3_tx),
                                 (
                                     sys_clk, sys_rst, calib, ui_clk, ui_rst,
                                     ck_p, ck_n, mem_rst_n, cke, cs_n, ras_n,
