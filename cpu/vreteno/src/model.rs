@@ -389,6 +389,9 @@ impl Model {
         };
         self.dcsr = 0x4000_0003 | (self.dcsr & 0x8004) | (cause << 6);
         self.dpc = self.pc;
+        // A machine that had stopped itself is halted no longer: the
+        // debugger may resume it from `dpc` (issue 1047).
+        self.halted = None;
         self.debug = true;
         self.stepped = false;
     }

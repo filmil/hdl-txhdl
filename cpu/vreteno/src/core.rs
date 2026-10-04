@@ -1018,6 +1018,13 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let dbg_req = haltreq | self.stepped | (is_ebreak & ebreakm);
             self.dbg_take.set(live & dbg_req);
             let dbg_take = self.dbg_take.get();
+            // A core that has stopped itself, by writing `mhalt`, is not
+            // live, and so took no halt request either, which left a
+            // debugger nothing to attach to after any program that had
+            // ended (issue 1047). It enters debug mode on the request,
+            // at the instruction after the write, where the stop left
+            // the fetch, and the stop ends: a resume runs on from there.
+            let stop_take = !rst & self.stopped & !in_debug & haltreq;
             // A store the bus refused is taken before the instruction,
             // as an interrupt is, ahead of one, and whether or not
             // interrupts are enabled: it is a trap.
@@ -1209,8 +1216,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // restarting (issue 398). The CSRs are put back by the same
             // line, below, which that fix left as they were (issue 419).
             let halting = csr_write & (f12 == isa::CSR_MHALT) & csr_new.bit(0);
-            let stop =
-                mux(rst, Bit::Zero, mux(run, halting, self.stopped.get()));
+            let stop = mux(
+                rst | stop_take,
+                Bit::Zero,
+                mux(run, halting, self.stopped.get()),
+            );
             let wrote = run & writes & (rd != 0) & !trap;
             let store = run & is_store & !unaligned;
             let wval = select!(opcode.raw() => {
@@ -1261,7 +1271,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let rf_at = mux(dbg_gpr_we, dbg_gpr, wb_rd);
             let rf_val = mux(dbg_gpr_we, dbg_wdata, wb_val);
             when!(rf_we => self { regs.at(rf_at): rf_val });
-            self.halted.set(!rst & (self.halted | self.wb_stop));
+            self.halted
+                .set(!rst & !stop_take & (self.halted | self.wb_stop));
             // The bus: a load or a store is a burst of one beat at
             // the address, and a store's beat carries the data with
             // the lanes it covers as its strobe. The load's wait is a
@@ -1437,6 +1448,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 // and `step` are kept. A resume leaves, arming a step
                 // when asked; one instruction later the step has run
                 // and the next entry is requested.
+                stop_take ? {
+                    debug: Bit::One,
+                    dpc: fetch_pc,
+                    dcsr: U::<32>::from(0x4000_00c3u32)
+                        | (dcsr & U::<32>::from(0x8004u32)),
+                },
                 dbg_take ? {
                     debug: Bit::One,
                     dpc: pc,
