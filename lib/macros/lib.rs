@@ -1715,6 +1715,23 @@ fn parse_call(ts: &[TokenTree]) -> Result<Call, String> {
     })
 }
 
+/// For `let v = rx.recv_if(c)` or `let v = rx.recv()`, binds `v#some` to
+/// the take, so that `v.is_some()` lowers to it and not to the data
+/// `v` itself is bound to (issue 1079). `let _ = ...` binds nothing.
+fn bind_take(
+    ts: &[TokenTree],
+    take: String,
+    subst: &mut Vec<(String, String)>,
+) {
+    if let (Some(TokenTree::Ident(l)), Some(TokenTree::Ident(v))) =
+        (ts.first(), ts.get(1))
+    {
+        if l.to_string() == "let" && v.to_string() != "_" {
+            subst.push((format!("{v}#some"), take));
+        }
+    }
+}
+
 fn split_commas(g: &Group) -> Vec<Vec<TokenTree>> {
     let toks: Vec<TokenTree> = g.stream().into_iter().collect();
     let mask = turbofish(&toks);
@@ -3549,6 +3566,25 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     };
                     return Ok(ename(&format!("{ch}_{part}")));
                 }
+                // Whether a receive took something: a name bound to
+                // `rx.recv_if(c)` or `rx.recv()` carries, beside its
+                // data, the take, under the name with `#some`, which no
+                // identifier can be. Asked `is_some()` it is the take,
+                // one bit, and not the transaction's data (issue 1079).
+                if let ([TokenTree::Ident(n)], "is_some" | "is_none") =
+                    (recv, m.as_str())
+                {
+                    let key = format!("{n}#some");
+                    if let Some((_, took)) =
+                        subst.iter().rev().find(|(k, _)| *k == key)
+                    {
+                        return Ok(if m == "is_some" {
+                            took.clone()
+                        } else {
+                            format!("NlE::Not(Box::new({took}))")
+                        });
+                    }
+                }
                 let l = tr(recv, subst)?;
                 let mut a = Vec::new();
                 for x in &args {
@@ -4664,6 +4700,7 @@ fn lower_stmts(
             stmts.push(format!(
                 "NlS::Drive(NlT::Name(\"{rx}_ready\".to_string()), {g})"
             ));
+            bind_take(&ts, ename(&format!("{rx}_valid")), &mut cx.subst);
         }
         // A receive under a condition of its own: ready is the
         // condition, and the take happens when it holds and a
@@ -4693,10 +4730,11 @@ fn lower_stmts(
             // Ready is the take: the condition and a transaction
             // offered, which is what the runtime records.
             let v = ename(&format!("{rx}_valid"));
+            let take = format!("NlE::Bin(\"&\", Box::new({c}), Box::new({v}))");
             stmts.push(format!(
-                "NlS::Drive(NlT::Name(\"{rx}_ready\".to_string()), \
-                     NlE::Bin(\"&\", Box::new({c}), Box::new({v})))"
+                "NlS::Drive(NlT::Name(\"{rx}_ready\".to_string()), {take})"
             ));
+            bind_take(&ts, take, &mut cx.subst);
         }
         if text.starts_with("let") {
             // `let a = e` or `let (a, b) = (e1, e2)`, bound pairwise.
