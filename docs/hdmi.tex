@@ -5,7 +5,9 @@
 % running the example.
 \documentclass[journal,9pt]{IEEEtran}
 
-\newcommand{\listingsize}{\fontsize{6}{7}\selectfont}
+% Listings of Rust set by rustfmt at 80 columns: 5.6pt is what fits
+% the frame of a column (issue 1061).
+\newcommand{\listingsize}{\fontsize{5.6}{6.6}\selectfont}
 \input{housestyle}
 \input{memmap}
 
