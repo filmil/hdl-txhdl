@@ -27,6 +27,10 @@ def boot_image(
         **kwargs):
     if model:
         bootargs = bootargs + " mem=64M"
+    # Every step carries the image's tags, so that an image of manual
+    # inputs, a kernel built from source say, is manual all the way and
+    # `bazel build //...` does not reach it through a step.
+    tags = kwargs.get("tags", [])
     native.genrule(
         name = name + "_layout",
         srcs = [system_map, initramfs],
@@ -35,6 +39,7 @@ def boot_image(
               " --system-map $(location " + system_map + ")" +
               " --initramfs $(location " + initramfs + ") > $@",
         tools = ["//tools/bootimg"],
+        tags = tags,
     )
     native.genrule(
         name = name + "_dts",
@@ -43,6 +48,7 @@ def boot_image(
         cmd = "$(location //tools/devtree) --initrd $$(cat $(location " +
               name + ".layout)) --bootargs '" + bootargs + "' > $@",
         tools = ["//tools/devtree"],
+        tags = tags,
     )
     native.genrule(
         name = name + "_dtb",
@@ -52,6 +58,7 @@ def boot_image(
               name + ".dts) 2> $@.log; s=$$?; cat $@.log >&2; " +
               "[ $$s -eq 0 ] && [ ! -s $@.log ]",
         tools = ["@dtc//:dtc"],
+        tags = tags,
     )
     native.genrule(
         name = name,
