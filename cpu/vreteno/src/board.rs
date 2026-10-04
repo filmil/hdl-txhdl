@@ -126,6 +126,12 @@ impl AddrMap<8> for BoardMap {
     ];
 }
 
+/// The platform-level interrupt controller's sources, in the order of
+/// the array `Board` gives it: source `n` is entry `n - 1`. Source 0
+/// is reserved, as every PLIC's is. The device tree reads the numbers
+/// from here (issue 1015).
+pub const PLIC_SOURCES: [&str; 3] = ["serial", "irq", "ethernet"];
+
 pub type BoardRouter = Router<8, BoardMap, 32, 32, 4, 5>;
 // end{map}
 

@@ -97,6 +97,13 @@ pub const CSR_MTVAL: u32 = 0x343;
 pub const CSR_MISA: u32 = 0x301;
 pub const MISA: u32 = 0x4000_0000 | (1 << 12) | (1 << 8) | (1 << 2) | 1;
 
+/// The core's address translation, as a device tree names it in
+/// `mmu-type`: none yet, since the core has no supervisor mode and no
+/// page tables. `misa` has no letter for it, so it is stated here, for
+/// the tools that describe the core; the change that adds Sv32 sets it
+/// to `Some("riscv,sv32")` (issues 279 and 1015).
+pub const MMU: Option<&str> = None;
+
 /// The two machine counters, each 64 bits and each read as two
 /// words. The specification makes them writable, so that software can
 /// set a starting point, and this core allows that.
