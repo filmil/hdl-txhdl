@@ -7,7 +7,7 @@
 //! in what they do is theirs and not their inputs'; and that the
 //! comparison covers everything a core says, not a sample of it.
 //!
-//! `Pair` holds two `Vreteno` cores. Every input the pair is given
+//! `Pair` holds two `Vreteno` harts. Every input the pair is given
 //! goes to both: the wires directly, and the three channels through a
 //! `Tee` each, which offers each word to both cores and takes the
 //! next only once both have taken it. Every output is compared: the
@@ -32,7 +32,8 @@ use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{Done, Grant, Issue, R, W};
 use txhdl_parts::redundant::{Check, Tee};
 
-use crate::core::{Vreteno, Writeback};
+use crate::core::Writeback;
+use crate::hart::Hart;
 
 // begin{watch}
 /// The three wires a core drives, from both cores, and the three lines
@@ -114,9 +115,9 @@ impl Unit for Inject {
 #[derive(Trace, Default)]
 pub struct Pair<const IW: usize> {
     /// The core whose work leaves the pair.
-    pub one: Vreteno<IW>,
+    pub one: Hart<IW>,
     /// The core that only checks.
-    pub two: Vreteno<IW>,
+    pub two: Hart<IW>,
     /// The read answers, to both cores.
     pub tee_rdata: Tee<R<32, IW>>,
     /// The write completions, to both.

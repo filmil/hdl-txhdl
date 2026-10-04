@@ -19,7 +19,16 @@ fn load(net: &mut Lowered, text: &[u32], data: &[u8]) {
     let text: Vec<u128> = text.iter().map(|&w| w as u128).collect();
     for inst in &mut net.instances {
         match inst.name.as_str() {
-            "cpu" => inst.unit.init("imem", &text),
+            // The hart: the instruction memory is its core's (issue
+            // 1014), reached by hand, since an `init` the hart has no
+            // memory for is dropped without a word (#1104).
+            "cpu" => {
+                for c in &mut inst.unit.instances {
+                    if c.name == "core" {
+                        c.unit.init("imem", &text);
+                    }
+                }
+            }
             // The same words again, on the bus, read-only.
             "rom" => inst.unit.init("words", &text),
             "dmem" => {

@@ -5,6 +5,7 @@ pub mod board;
 pub mod core;
 pub mod debug;
 pub mod dmem;
+pub mod hart;
 pub mod isa;
 pub mod machine;
 pub mod model;

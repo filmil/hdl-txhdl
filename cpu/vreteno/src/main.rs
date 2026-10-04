@@ -10,8 +10,9 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
-use vreteno32::core::{Vreteno, Writeback};
+use vreteno32::core::Writeback;
 use vreteno32::dmem::Dmem;
+use vreteno32::hart::Hart;
 use vreteno32::isa::{disasm, CAUSE_MEXT};
 use vreteno32::program::demo;
 use vreteno32::term::Terminal;
@@ -63,7 +64,8 @@ fn main() {
     } else {
         demo()
     };
-    let mut cpu = Vreteno::with(&program);
+    let mut hart = Hart::with(&program);
+    let cpu = &hart.core;
     let (wb_pc, regs) = (cpu.wb_pc, cpu.regs.clone());
     // Read to know when the external interrupt has been taken.
     let mcause = cpu.mcause;
@@ -203,7 +205,8 @@ fn main() {
         w.add("uw", &ubus.w);
         w.add("ub", &ubus.b);
         w.add("ur", &ubus.r);
-        w.add("cpu", &cpu);
+        w.add("cpu", cpu);
+        w.add("mmu", &hart.mmu);
         w.add("dmem", &dmem);
         w.add("router", &router);
         w.add("timer", &timer);
@@ -238,7 +241,7 @@ fn main() {
             ),
             join2(
                 dmem.run(dbus, ()),
-                cpu.run(
+                hart.run(
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
                         resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
@@ -392,11 +395,19 @@ fn main() {
     // The netlist, with the program in its instruction memory, which
     // the lowering cannot see: Mem::with gave it at run time.
     // Its own entity's name for the atomics' run, since the
-    // testbench of each is named for the entity it drives.
+    // testbench of each is named for the entity it drives. It is the
+    // hart's, whose ports are what the run traced, and the program
+    // goes into its core's memory (issue 1014), by hand, since an
+    // `init` the hart has no memory for is dropped without a word
+    // (#1104).
     let mut lowered =
-        Vreteno::<IW>::lowered(if atomics { "vreteno_amo" } else { "vreteno" });
+        Hart::<IW>::lowered(if atomics { "vreteno_amo" } else { "vreteno" });
     let words: Vec<u128> = program.iter().map(|&w| w as u128).collect();
-    lowered.init("imem", &words);
+    for c in &mut lowered.instances {
+        if c.name == "core" {
+            c.unit.init("imem", &words);
+        }
+    }
     // The router and the three peripherals, each told under which
     // scope the run traced its channels, since a channel two units
     // share has a port name of its own on each side; the serial port

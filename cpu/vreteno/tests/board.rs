@@ -22,8 +22,8 @@ use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
 use txhdl_parts::sd::SdCard;
 use txhdl_parts::spi::FlashDevice;
 use vreteno32::board::{Board, BoardIn, BoardOut, REMOTE_DEV};
-use vreteno32::core::Vreteno;
 use vreteno32::dmem::Dmem;
+use vreteno32::hart::Hart;
 use vreteno32::rom::Rom;
 use vreteno32::term::Terminal;
 
@@ -309,7 +309,7 @@ fn run_all(
         card,
     } = net;
     let mut board = TestBoard {
-        cpu: Vreteno::with(text),
+        cpu: Hart::with(text),
         rom: Rom::with(text),
         dmem: Dmem::with(data),
         ..Default::default()

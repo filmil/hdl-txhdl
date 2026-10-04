@@ -27,10 +27,9 @@
 //! that change it change the tree with them. `riscv,isa` and
 //! `riscv,isa-extensions` are `misa`'s letters: the A extension, or the
 //! S of a supervisor mode, appears when `misa` gains it. `mmu-type` is
-//! `isa::MMU`, which `misa` has no letter for: today it is none, so the
-//! hart has no `mmu-type` and the kernel is a no-MMU build, and the
-//! change that adds Sv32 sets the constant and the tree says
-//! `riscv,sv32`.
+//! `isa::MMU`, which `misa` has no letter for: `riscv,sv32` since the
+//! hart has Sv32 (#1014). Without it, OpenSBI disables the hart in the
+//! tree it hands the kernel.
 //!
 //! The build compiles the tree with `dtc`, which refuses one that is
 //! malformed, and a test here holds every address to the maps.

@@ -35,6 +35,7 @@ use txhdl::funcs::{lt_signed, sra};
 use txhdl::types::{Bit, U};
 use txhdl::{case, lower, select, when, with, Trace, Value};
 use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, Resp, R, W};
+use txhdl_parts::mmu::Pte;
 
 /// `mstatus`'s fields that user and supervisor mode bring (issue 1012):
 /// what of it is writable, and what `sstatus` shows of it.
@@ -825,6 +826,53 @@ pub struct Vreteno<const IW: usize> {
     /// Whether the fetch that is out is for the second word of a
     /// thirty-two bit instruction that straddles two words.
     pub f_second: Reg<Bit>,
+    // begin{vm}
+    /// Virtual memory (issue 1014). The fetch's translation of one
+    /// page, the last it asked for: whether there is one, the virtual
+    /// page, the physical page, and whether the page is a page fault
+    /// or an access fault, which the fetch then takes its words as.
+    pub ft_valid: Reg<Bit>,
+    pub ft_vpn: Reg<U<20>>,
+    pub ft_ppn: Reg<U<20>>,
+    pub ft_pf: Reg<Bit>,
+    pub ft_af: Reg<Bit>,
+    /// The fetch's request to the unit: whether one is out, the
+    /// address, and how many cycles it has been held, up to two.
+    pub i_req: Reg<Bit>,
+    pub i_va: Reg<U<32>>,
+    pub i_age: Reg<U<2>>,
+    /// Whether each word in the fetch buffer is a page fault.
+    pub f_pf0: Reg<Bit>,
+    pub f_pf1: Reg<Bit>,
+    /// The fetch out on the bus was asked under translations that
+    /// have since gone, so its answer is dropped.
+    pub f_drop: Reg<Bit>,
+    /// The instruction in execute is a fetch's page fault, and the
+    /// fault is in its second half, which is on the next page.
+    pub ir_pf: Reg<Bit>,
+    pub ir_pf2: Reg<Bit>,
+    /// The data's request to the unit, for the load, store or AMO in
+    /// execute: whether one is out, the address, how many cycles it
+    /// has been held, and whether it is for a store.
+    pub x_req: Reg<Bit>,
+    pub x_va: Reg<U<32>>,
+    pub x_age: Reg<U<2>>,
+    pub x_st: Reg<Bit>,
+    /// The answer, kept until the instruction leaves execute: whether
+    /// there is one, the physical address, and the two faults.
+    pub x_done: Reg<Bit>,
+    pub x_pa: Reg<U<32>>,
+    pub x_pf: Reg<Bit>,
+    pub x_af: Reg<Bit>,
+    /// The flush the unit is told of, the cycle after an
+    /// `sfence.vma` or a write of `satp` ran.
+    pub flush: Reg<Bit>,
+    /// A read of the walker's is out on the bus.
+    pub p_wait: Reg<Bit>,
+    /// The physical address of the access in writeback, which an
+    /// AMO's store goes to.
+    pub wb_pa: Reg<U<32>>,
+    // end{vm}
 }
 
 impl<const IW: usize> Vreteno<IW> {
@@ -873,6 +921,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             dbg_we,
             time,
             seirq,
+            ires_ok,
+            ires_pa,
+            ires_fault,
+            ires_err,
+            dres_ok,
+            dres_pa,
+            dres_fault,
+            dres_err,
+            ptw,
         ): (
             In<Bit>,
             In<Bit>,
@@ -891,8 +948,40 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // The interrupt controller's supervisor line, `mip.SEIP`'s
             // (issue 1094).
             In<Bit>,
+            // The memory management unit's answers, registers, to the
+            // fetch and to the data, and its walker's reads (issue
+            // 1014).
+            In<Bit>,
+            In<U<32>>,
+            In<Bit>,
+            In<Bit>,
+            In<Bit>,
+            In<U<32>>,
+            In<Bit>,
+            In<Bit>,
+            Rx<U<32>>,
         ),
-        (halt, instr, wb, issue, wbeat, release, dbg, dbg_rdata): (
+        (
+            halt,
+            instr,
+            wb,
+            issue,
+            wbeat,
+            release,
+            dbg,
+            dbg_rdata,
+            mmu_satp,
+            mmu_prv,
+            mmu_sum,
+            mmu_mxr,
+            mmu_flush,
+            ireq,
+            ireq_va,
+            dreq,
+            dreq_va,
+            dreq_store,
+            pte,
+        ): (
             Out<Bit>,
             Out<U<32>>,
             Out<Writeback>,
@@ -901,6 +990,19 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             Tx<Grant<IW>>,
             Out<Bit>,
             Out<U<32>>,
+            // What the unit translates by, the requests, and the
+            // walker's answers (issue 1014).
+            Out<U<32>>,
+            Out<U<2>>,
+            Out<Bit>,
+            Out<Bit>,
+            Out<Bit>,
+            Out<Bit>,
+            Out<U<32>>,
+            Out<Bit>,
+            Out<U<32>>,
+            Out<Bit>,
+            Tx<Pte>,
         ),
     ) {
         loop {
@@ -996,7 +1098,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // come from the bus instead, into a buffer of two, since a
             // thirty-two bit instruction at an odd halfword takes its
             // upper half from the word after.
-            let far = fetch_pc >= U::<32>::from(IMEM_BYTES);
+            //
+            // Virtual memory (issue 1014): translation is on below
+            // machine mode when `satp` says, for the fetch and the data
+            // alike, and then every fetch is from the bus, at the
+            // address the unit translated, and the buffer holds words
+            // by their virtual address.
+            let satp_r = self.satp.get();
+            let vm = satp_r.bit(31) & Bit::from(self.prv.get() != 3);
+            let far = Bit::from(fetch_pc >= U::<32>::from(IMEM_BYTES)) | vm;
             let want = fetch_pc & U::<32>::from(0xffff_fffcu32);
             let f_at = self.f_at.get();
             let f_have = self.f_have.get();
@@ -1076,8 +1186,19 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // after: it waits in execute until every store the core
             // has posted has been answered, and a load already waits
             // for its answer, so nothing else is outstanding. Both
-            // fences share the opcode; there is no cache to flush.
+            // fences share the opcode and wait alike.
             let is_fence = opcode == 0x0f;
+            // `fence.i` waits as `fence` does and then refetches the
+            // next instruction with the fetch's buffer dropped, so that
+            // what runs is what memory holds (issue 1096).
+            let is_fencei = is_fence & (f3 == 1);
+            // `sfence.vma` waits as a fence does, so that the tables a
+            // program wrote are in memory before a walk reads them
+            // (issue 1014).
+            let is_sfence = (opcode == 0x73)
+                & (f3 == 0)
+                & (ir.slice::<25, 7>() == 0x09)
+                & (rd == 0);
             // The A extension's word forms (issue 1010): `lr.w`, `sc.w`
             // and the nine AMOs, by the five-bit function in bits 31 to
             // 27; `aq` and `rl` are taken as given, since every one of
@@ -1094,7 +1215,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 });
             let is_a = is_lr | is_sc | is_rmw;
             let stall_fence = self.valid
-                & (Bit::from(is_fence) | is_a)
+                & (Bit::from(is_fence) | is_a | Bit::from(is_sfence))
                 & Bit::from(self.stores_out.get() != 0);
             // A load or store to the bus, which is every address, the
             // boot memory included. A store goes out when the bus has room; a
@@ -1142,10 +1263,23 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // clock; there is room whenever the devices keep up, and
             // they do. A device load's wait for its answer is a
             // register, so the hold for it is state too.
-            let stall_bus = here
+            //
+            // Under translation (issue 1014) the access waits here for
+            // its physical address, which the unit answers from the
+            // address register a cycle or more later, and while a walk
+            // reads the bus it waits for that, since only one read is
+            // ever out.
+            //
+            // A misaligned access waits the same way and traps when it
+            // runs, so the wait does not hang on the adder: one term,
+            // of the decode and registers, is all the address costs the
+            // fetch's hold. Its translation is asked for too, and is
+            // not used, since the misaligned trap comes first.
+            let stall_mem = here
                 & (is_load | is_store)
-                & !unaligned
-                & !(issue.ready() & wbeat.ready());
+                & (!(issue.ready() & wbeat.ready())
+                    | self.p_wait
+                    | (vm & !self.x_done));
             // A word of the instruction is still on the bus: the core
             // waits for it, which is what makes a program above the
             // boot memory slow and correct.
@@ -1153,8 +1287,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // A word the bus refused is fetched as zero, which decodes as
             // an illegal instruction and so runs nothing; the mark goes
             // with it into execute, where the cause is named.
-            let f_fault = far & (self.f_bad0 | (need1 & self.f_bad1));
-            let fetched = mux(f_fault, U::<32>::from(0u32), fetched);
+            // A page fault the same way (issue 1014): the first word's
+            // comes first, then an access fault in it, then the second
+            // word's of either.
+            let f_pf = far & (self.f_pf0 | (!self.f_bad0 & need1 & self.f_pf1));
+            let f_fault = far & !f_pf & (self.f_bad0 | (need1 & self.f_bad1));
+            let fetched = mux(f_fault | f_pf, U::<32>::from(0u32), fetched);
             let f_ready = !far | (hit0 & (!need1 | hit1));
             let stall_fetch = !f_ready;
             // `wfi` holds the core here until an interrupt is pending
@@ -1172,7 +1310,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 stall_ld
                     | stall_m
                     | stall_fence
-                    | stall_bus
+                    | stall_mem
                     | stall_fetch
                     | self.dev_wait
                     | amo_busy
@@ -1219,7 +1357,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // Resume: once per request, to `dpc`, arming a single step
             // when `dcsr.step` asks for one.
             let resume_take = in_debug & resumereq & !self.resume_seen;
-            let send_load = run & is_load & !unaligned;
+            // The access's translation faulted: it traps and goes
+            // nowhere. Registers alone, since the answer only comes for
+            // an access that is aligned (issue 1014).
+            let xf = self.x_done & (self.x_pf | self.x_af);
+            let send_load = run & is_load & !unaligned & !xf;
 
             // The ALU, shared by the register and immediate forms; bit
             // 30 means subtract or arithmetic shift, except that an
@@ -1349,14 +1491,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     // user mode (issue 1012).
                     | (is_mret & (prv == 3))
                     | (is_sret & (prv != 0))
-                    | (is_wfi & (prv != 0)),
+                    | (is_wfi & (prv != 0))
+                    | (Bit::from(is_sfence) & (prv != 0)),
                 _ => Bit::Zero,
             });
             // A trap: ecall, a word the core does not know, or the
             // interrupt. The cause, the address and the trap value go to
             // the CSRs, the interrupt enable is saved and cleared, and
             // the handler is the redirect.
-            let trap = (run & (is_ecall | is_ebreak | !known | unaligned))
+            let trap = (run & (is_ecall | is_ebreak | !known | unaligned | xf))
                 | int_take
                 | st_take;
             // The exception an unaligned access raises says which way
@@ -1393,6 +1536,25 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let fetch_bad = run & self.ir_bad;
             let cause =
                 mux(fetch_bad, U::<32>::from(isa::CAUSE_FETCH_ACCESS), cause);
+            // The page faults and a walk's access faults (issue 1014).
+            let fetch_pf = run & self.ir_pf;
+            let cause =
+                mux(fetch_pf, U::<32>::from(isa::CAUSE_FETCH_PAGE), cause);
+            let x_cause = mux(
+                self.x_st,
+                mux(
+                    self.x_pf,
+                    U::<32>::from(isa::CAUSE_STORE_PAGE),
+                    U::<32>::from(isa::CAUSE_STORE_ACCESS),
+                ),
+                mux(
+                    self.x_pf,
+                    U::<32>::from(isa::CAUSE_LOAD_PAGE),
+                    U::<32>::from(isa::CAUSE_LOAD_ACCESS),
+                ),
+            );
+            // A misaligned access traps as one, whatever its page says.
+            let cause = mux(run & xf & !unaligned, x_cause, cause);
             // The trap value: the word for an instruction the core does
             // not know, the address for an unaligned access, and the
             // breakpoint's own address, which is what the
@@ -1405,6 +1567,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             );
             let tval = mux(st_take, U::<32>::from(0u32), tval);
             let tval = mux(run & self.ir_bad, pc, tval);
+            // A page fault's value is the virtual address that
+            // faulted: the instruction's, or its second half's when that
+            // is on the next page, or the access's (issue 1014).
+            let tval = mux(
+                fetch_pf,
+                mux(self.ir_pf2, pc + U::<32>::from(2u32), pc),
+                tval,
+            );
+            let tval = mux(run & xf, self.x_va.get(), tval);
             // Where a trap goes (issue 1012): below machine mode, to the
             // supervisor when machine mode delegated its cause, in
             // `mideleg` for an interrupt and `medeleg` for an exception,
@@ -1423,23 +1594,37 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let medeleg = self.medeleg.get();
             let d_ecall = mux(prv == 1, medeleg.bit(9), medeleg.bit(8));
             let d_mis = mux(is_store | is_rmw, medeleg.bit(6), medeleg.bit(4));
-            let d_exc = mux(
-                fetch_bad,
-                medeleg.bit(1),
+            let d_xf = mux(
+                self.x_st,
+                mux(self.x_pf, medeleg.bit(15), medeleg.bit(7)),
+                mux(self.x_pf, medeleg.bit(13), medeleg.bit(5)),
+            );
+            // The choices made from registers and the decode come first,
+            // the fetch's faults and the translation's among them, and
+            // the two late ones choose last: a store's refusal, behind
+            // the stall, and a misaligned access, behind the adder. A
+            // misaligned access is none of the others but a translation's
+            // fault, which it comes before: a word the fetch faulted on
+            // decodes as no access (issue 1014).
+            let d_early = mux(
+                self.ir_pf,
+                medeleg.bit(12),
                 mux(
-                    st_take,
-                    medeleg.bit(7),
+                    self.ir_bad,
+                    medeleg.bit(1),
                     mux(
-                        is_ecall,
-                        d_ecall,
+                        xf,
+                        d_xf,
                         mux(
-                            is_ebreak,
-                            medeleg.bit(3),
-                            mux(unaligned, d_mis, medeleg.bit(2)),
+                            is_ecall,
+                            d_ecall,
+                            mux(is_ebreak, medeleg.bit(3), medeleg.bit(2)),
                         ),
                     ),
                 ),
             );
+            let d_exc =
+                mux(st_take, medeleg.bit(7), mux(unaligned, d_mis, d_early));
             let to_s = (prv != 3) & mux(int_take, Bit::from(m_set == 0), d_exc);
             let wb_code = mux(
                 self.wb_amo,
@@ -1490,7 +1675,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             );
             let wrote = run & writes & (rd != 0) & !trap;
             // `sc.w` stores only while its reservation holds.
-            let store = run & is_store & !unaligned & (!is_sc | sc_ok);
+            let store = run & is_store & !unaligned & (!is_sc | sc_ok) & !xf;
+            // A flush: an `sfence.vma` that runs, or a write of `satp`.
+            // Either is followed by a refetch of the next instruction,
+            // under the translations as they now are (issue 1014).
+            let flush_go = (run & Bit::from(is_sfence) & (prv != 0))
+                | (csr_write & (f12 == isa::CSR_SATP));
+            let refetch =
+                Bit::from(is_sfence) | (csr_op & (f12 == isa::CSR_SATP));
+            let fencei_go = run & Bit::from(is_fencei);
             let wval = select!(opcode.raw() => {
                 0x37 => imm_u,
                 0x17 => pc + imm_u,
@@ -1510,17 +1703,23 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 0x67 => (a + imm_i) & !U::<32>::from(1u32),
                 0x6f => pc + imm_j,
                 0x63 => pc + imm_b,
+                0x0f => mux(trap, trap_vec, link),
                 0x73 => mux(
                     trap,
                     trap_vec,
-                    mux(is_mret, mepc, mux(is_sret, self.sepc.get(), trap_vec)),
+                    mux(
+                        is_mret,
+                        mepc,
+                        mux(is_sret, self.sepc.get(), mux(refetch, link, trap_vec)),
+                    ),
                 ),
                 _ => trap_vec,
             });
             let jump = select!(opcode.raw() => {
                 0x6f | 0x67 => Bit::One,
                 0x63 => taken,
-                0x73 => is_mret | is_sret | trap,
+                0x73 => is_mret | is_sret | trap | refetch,
+                0x0f => trap | Bit::from(is_fencei),
                 _ => trap,
             });
 
@@ -1566,18 +1765,60 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // first, since only the first says whether it is wanted.
             let f_want = far & (!hit0 | (need1 & !hit1));
             let f_addr = mux(hit0, want + 4, want);
+            // Under translation (issue 1014) a fetch goes out once the
+            // page of the word it wants is translated, at the physical
+            // address; a page that faults is not read, and its words
+            // are taken as faults at once.
+            let f_th = self.ft_valid
+                & Bit::from(self.ft_vpn.get() == f_addr.slice::<12, 20>());
+            let f_tf = self.ft_pf | self.ft_af;
+            let f_pa = mux(
+                vm,
+                self.ft_ppn.get().concat::<_, 32>(f_addr.slice::<0, 12>()),
+                f_addr,
+            );
             let f_send = f_want
+                & (!vm | (f_th & !f_tf))
                 & !self.f_wait
+                & !self.p_wait
                 & !self.dev_wait
                 & !send_load
                 & !send_store
                 & !amo_go
                 & issue.ready();
-            let send_any = send_load | st_go | f_send;
+            let f_ffill = f_want & vm & f_th & f_tf & !self.f_wait;
+            // A walk's read goes out when nothing else of the core's is
+            // out or going and every store is answered, so that it reads
+            // what the program wrote.
+            let p_send = ptw.peek().is_some()
+                & !self.f_wait
+                & !self.p_wait
+                & !self.dev_wait
+                & !send_load
+                & !st_go
+                & !f_send
+                & Bit::from(self.stores_out.get() == 0)
+                & issue.ready();
+            let p_addr = ptw.head();
+            let _ = ptw.recv_if(p_send);
+            let send_any = send_load | st_go | f_send | p_send;
+            // The address: the access's, which settles last behind its
+            // adder, goes through one choice, and the rest are chosen
+            // among beforehand.
+            let other = mux(
+                p_send,
+                p_addr,
+                mux(
+                    f_send,
+                    f_pa,
+                    mux(amo_go, self.wb_pa.get(), self.x_pa.get()),
+                ),
+            );
+            let use_addr = !p_send & !f_send & !amo_go & !self.x_done;
             if bool::from(send_any) {
                 issue.send(Issue {
                     read: !st_go,
-                    addr: mux(f_send, f_addr, mux(amo_go, wb_alu, addr)),
+                    addr: mux(use_addr, addr, other),
                     len: U::<8>::from(0u8),
                     size: U::<3>::from(2u8),
                     burst: BurstKind::Incr,
@@ -1600,14 +1841,59 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     id: mux(take_done, dh.id, rh.id),
                 });
             }
-            // An answer belongs to whichever of the two is out, and
-            // only one ever is.
+            // An answer belongs to whichever of the three is out, and
+            // only one ever is: the fetch's, the walker's, or the
+            // data's.
             let f_resp = resp_valid & self.f_wait;
-            let d_resp = resp_valid & !self.f_wait;
+            let p_resp = resp_valid & self.p_wait;
+            let d_resp = resp_valid & !self.f_wait & !self.p_wait;
+            if bool::from(p_resp) {
+                pte.send(Pte {
+                    data: resp_data,
+                    err: resp_bad,
+                });
+            }
+            // A change of the translations: a flush, or, with
+            // translation on in `satp`, a change of mode, which a trap,
+            // a return or a resume may be. The fetch's translation and
+            // its buffer go, and a fetch out on the bus is dropped when
+            // it answers (issue 1014). A `fence.i` drops them the same
+            // way, so that the code it fetches next is what memory holds
+            // (issue 1096).
+            let vctx = flush_go
+                | fencei_go
+                | (satp_r.bit(31)
+                    & (trap | mret_ok | sret_ok | resume_take | wb_fault));
+            let f_fill = f_resp & !self.f_drop;
             let second = self.f_second.get();
             let asked = self.f_asked.get();
             when!(d_resp => self { wb_dev: resp_data });
             when!(d_resp => self { wb_err: resp_bad });
+            // The fetch's request to the unit (issue 1014): made for the
+            // page of the word the fetch wants when it is not the page
+            // translated, held, and answered no sooner than two cycles
+            // on, since the unit sees the request a cycle late in
+            // simulation and on time in hardware, and an answer in
+            // either is for the request the unit saw a cycle before.
+            let i_age = self.i_age.get();
+            let i_need = f_want & vm & !f_th & !self.f_wait;
+            let i_take = self.i_req
+                & Bit::from(i_age == 2)
+                & (ires_ok.get() | ires_fault.get() | ires_err.get());
+            // The data's the same way, for the access in execute, once
+            // its operands are in.
+            let x_age = self.x_age.get();
+            let x_start = here
+                & (is_load | is_store)
+                & vm
+                & !self.x_done
+                & !self.x_req
+                & !stall_ld
+                & !self.dev_wait
+                & !amo_busy;
+            let x_take = self.x_req
+                & Bit::from(x_age == 2)
+                & (dres_ok.get() | dres_fault.get() | dres_err.get());
             with!(self <= {
                 f_send ? {
                     f_wait: Bit::One,
@@ -1615,24 +1901,105 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     f_second: hit0
                 },
                 f_resp ? f_wait: Bit::Zero,
-                f_resp & !second ? {
+                f_fill & !second ? {
                     f_w0: resp_data,
                     f_bad0: resp_bad,
+                    f_pf0: Bit::Zero,
                     f_at: asked,
                     f_have: U::<2>::from(1u8)
                 },
-                f_resp & second ? {
+                f_fill & second ? {
                     f_w1: resp_data,
                     f_bad1: resp_bad,
+                    f_pf1: Bit::Zero,
                     f_have: U::<2>::from(2u8)
                 },
+                f_ffill & !hit0 ? {
+                    f_w0: U::<32>::from(0u32),
+                    f_bad0: self.ft_af,
+                    f_pf0: self.ft_pf,
+                    f_at: f_addr,
+                    f_have: U::<2>::from(1u8)
+                },
+                f_ffill & hit0 ? {
+                    f_w1: U::<32>::from(0u32),
+                    f_bad1: self.ft_af,
+                    f_pf1: self.ft_pf,
+                    f_have: U::<2>::from(2u8)
+                },
+                f_resp ? f_drop: Bit::Zero,
+                i_need & !self.i_req ? {
+                    i_req: Bit::One,
+                    i_va: f_addr,
+                    i_age: U::<2>::from(0u8)
+                },
+                self.i_req & (i_age != 2) ? i_age: i_age + 1,
+                i_take ? {
+                    i_req: Bit::Zero,
+                    ft_valid: Bit::One,
+                    ft_vpn: self.i_va.get().slice::<12, 20>(),
+                    ft_ppn: ires_pa.get().slice::<12, 20>(),
+                    ft_pf: ires_fault.get(),
+                    ft_af: ires_err.get()
+                },
+                x_start ? {
+                    x_req: Bit::One,
+                    x_va: addr,
+                    x_age: U::<2>::from(0u8),
+                    x_st: is_store | is_rmw
+                },
+                self.x_req & (x_age != 2) ? x_age: x_age + 1,
+                x_take ? {
+                    x_req: Bit::Zero,
+                    x_done: Bit::One,
+                    x_pa: dres_pa.get(),
+                    x_pf: dres_fault.get(),
+                    x_af: dres_err.get()
+                },
+                // The answer is the instruction's in execute, and goes
+                // when it does.
+                !stall | wb_fault ? {
+                    x_req: Bit::Zero,
+                    x_done: Bit::Zero
+                },
+                vctx ? {
+                    f_have: U::<2>::from(0u8),
+                    ft_valid: Bit::Zero,
+                    i_req: Bit::Zero,
+                    x_req: Bit::Zero
+                },
+                vctx & self.f_wait & !f_resp ? f_drop: Bit::One,
+                p_send ? p_wait: Bit::One,
+                p_resp ? p_wait: Bit::Zero,
+                flush: flush_go,
                 rst ? {
                     f_wait: Bit::Zero,
                     f_have: U::<2>::from(0u8),
                     f_bad0: Bit::Zero,
                     f_bad1: Bit::Zero,
+                    f_pf0: Bit::Zero,
+                    f_pf1: Bit::Zero,
+                    f_drop: Bit::Zero,
+                    ft_valid: Bit::Zero,
+                    i_req: Bit::Zero,
+                    x_req: Bit::Zero,
+                    x_done: Bit::Zero,
+                    p_wait: Bit::Zero,
+                    flush: Bit::Zero,
                 },
             });
+            // What the unit is told: the translation's state, and the
+            // two requests, all registers.
+            mmu_satp.set(satp_r);
+            mmu_prv.set(prv);
+            mmu_sum.set(mstatus.bit(18));
+            mmu_mxr.set(mstatus.bit(19));
+            mmu_flush.set(self.flush.get());
+            ireq.set(self.i_req.get());
+            ireq_va.set(self.i_va.get());
+            dreq.set(self.x_req.get());
+            dreq_va.set(self.x_va.get());
+            dreq_store.set(self.x_st.get());
             case!(rst => {
                 Bit::One => { self.dev_wait <= Bit::Zero },
                 _ if send_load.to_bool() => { self.dev_wait <= Bit::One },
@@ -1997,10 +2364,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     // A load's value comes from the bus, so its slot
                     // keeps the address, which its fault reports.
                     self.wb_alu <= mux(is_load, addr, wval);
+                    // An AMO's store goes to the physical address.
+                    self.wb_pa <= mux(self.x_done, self.x_pa.get(), addr);
                     self.wb_f3 <= f3;
                     self.wb_lane <= lane;
-                    self.wb_load <= is_load & run;
-                    self.wb_amo <= is_rmw & run & !unaligned;
+                    // Only a load that went out waits for an answer, and
+                    // only it can be refused: one that trapped in
+                    // execute went nowhere (issue 1084).
+                    self.wb_load <= send_load;
+                    self.wb_amo <= is_rmw & send_load;
                     self.amo_op <= funct5;
                     self.amo_b <= b;
                     self.wb_stop <= halting
@@ -2059,6 +2431,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 _ => {
                     self.ir <= fetched;
                     self.ir_bad <= f_fault;
+                    self.ir_pf <= f_pf;
+                    self.ir_pf2 <= !self.f_pf0;
                     self.ir_c <= Bit::from(short);
                     self.ir_pc <= fetch_pc;
                     self.valid <= !redirect

@@ -7,8 +7,9 @@
 //! different question: what came out of the serial port, and did the
 //! core stop by itself. That is this, in one call, so that a program
 //! in any language reaching the core is run and judged the same way.
-use crate::core::{Vreteno, Writeback};
+use crate::core::Writeback;
 use crate::dmem::Dmem;
+use crate::hart::Hart;
 use crate::rom::Rom;
 use crate::term::Terminal;
 use crate::timer::Timer;
@@ -70,7 +71,8 @@ pub struct Ran {
 /// Run `text` on the core with `data` in its memory, for at most
 /// `limit` cycles.
 pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
-    let mut cpu = Vreteno::with(text);
+    let mut hart = Hart::with(text);
+    let cpu = &hart.core;
     // The data memory's initial bytes, and the boot memory on the bus:
     // the same words the core fetches, readable by a load and not
     // writable, so a program's constants can sit beside its code.
@@ -139,7 +141,8 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
         w.add("tx", &tx);
         w.add("issue", &issue);
         w.add("grant", &grant);
-        w.add("cpu", &cpu);
+        w.add("cpu", cpu);
+        w.add("mmu", &hart.mmu);
         w.add("uart", &uart);
         w.add("halt", &halt);
         w.start();
@@ -153,7 +156,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
             ),
             join2(
                 join2(dmem.run(dbus, ()), rom.run(rbus, ())),
-                cpu.run(
+                hart.run(
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
                         resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,

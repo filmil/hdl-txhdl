@@ -35,7 +35,8 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
 use txhdl_parts::bus::noc::mesh::lattice;
 use txhdl_parts::bus::noc::node::Node;
-use vreteno32::core::{Vreteno, Writeback};
+use vreteno32::core::Writeback;
+use vreteno32::hart::Hart;
 use vreteno32::term::Terminal;
 use vreteno32::uart::Uart;
 
@@ -192,7 +193,8 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
     let mut ctrk = AxiHost::<32, 32, 4, IW, NIDS>::default();
     let mut cbr = Bridge::<0, 0>::default();
-    let mut cpu = Vreteno::<IW>::with(text);
+    let mut hart = Hart::<IW>::with(text);
+    let cpu = &hart.core;
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
@@ -284,7 +286,8 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
         w.add("tx", &tx);
         w.add("halt", &halt);
         w.add("idle", &idle);
-        w.add("cpu", &cpu);
+        w.add("cpu", cpu);
+        w.add("mmu", &hart.mmu);
         w.add("raster", &raster);
         w.add("uart", &uart);
         w.start();
@@ -330,7 +333,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     );
     let ends = join2(
         join2(
-            cpu.run(
+            hart.run(
                 (
                     rst_c, irq, tirq, sirq, crdata, cdone, grant, haltreq,
                     resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,

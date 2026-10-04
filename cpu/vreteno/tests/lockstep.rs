@@ -11,8 +11,9 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
-use vreteno32::core::{Vreteno, Writeback};
+use vreteno32::core::Writeback;
 use vreteno32::dmem::Dmem;
+use vreteno32::hart::Hart;
 use vreteno32::isa::{
     add, addi, beq, csrrs, csrrsi, csrrw, csrrwi, decode, disasm, ebreak, halt,
     jal, jalr, lui, lw, mret, or, sw, Kind, CAUSE_FETCH_ACCESS, CAUSE_MEXT,
@@ -23,6 +24,7 @@ use vreteno32::isa::{
 };
 use vreteno32::model::{Halt, Model};
 use vreteno32::program::{demo, idle, in_memory, machine_info, random, soft};
+use vreteno32::rom::Rom;
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
@@ -31,18 +33,21 @@ use vreteno32::uart::Uart;
 const IW: usize = 2;
 const NIDS: usize = 4;
 /// The address map: the data memory at its page, the timer at
-/// `0x0200_0000`, and the serial port at `0x3000`.
+/// `0x0200_0000`, the serial port at `0x3000`, and the boot memory at
+/// zero, as the board has it, which a fetch under translation reads
+/// (issue 1014).
 struct RunMap;
 
-impl AddrMap<3> for RunMap {
-    const RANGES: [(usize, usize); 3] = [
+impl AddrMap<4> for RunMap {
+    const RANGES: [(usize, usize); 4] = [
         (0x1000, 0xf000),
         (0x0200_0000, 0xffff_0000),
         (0x3000, 0xf000),
+        (0x0000, 0xffff_f000),
     ];
 }
 
-type Rtr = Router<3, RunMap, 32, 32, 4, IW>;
+type Rtr = Router<4, RunMap, 32, 32, 4, IW>;
 
 /// The bridge the serial port sits behind: one AXI-Lite peripheral,
 /// at the range the router gives the port.
@@ -97,7 +102,8 @@ fn lockstep_with(
     reset_at: Option<u64>,
     seip: Option<fn(u64) -> bool>,
 ) -> Model {
-    let mut cpu = Vreteno::with(program);
+    let mut hart = Hart::with(program);
+    let cpu = &hart.core;
     let (pc, ir_pc, valid, regs, halted) =
         (cpu.pc, cpu.ir_pc, cpu.valid, cpu.regs.clone(), cpu.halted);
     let (in_debug, dpc, dcsr) = (cpu.debug, cpu.dpc, cpu.dcsr);
@@ -197,6 +203,10 @@ fn lockstep_with(
     let dl = axi_units::<32, 32, 4, IW>();
     let tl = axi_units::<32, 32, 4, IW>();
     let ul = axi_units::<32, 32, 4, IW>();
+    let rl = axi_units::<32, 32, 4, IW>();
+    let rbus = PerPort::from(rl.per_client);
+    let mut rom = Rom::<IW>::with(program);
+    let mut rper = AxiPer::<32, 32, 4, IW>::default();
     let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
     let dbus = PerPort::from(dl.per_client);
     let tbus = PerPort::from(tl.per_client);
@@ -225,7 +235,7 @@ fn lockstep_with(
             ),
             join2(
                 dmem.run(dbus, ()),
-                cpu.run(
+                hart.run(
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
                         resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
@@ -251,13 +261,38 @@ fn lockstep_with(
                         cl.per_in.0,
                         cl.per_in.1,
                         cl.per_in.2,
-                        [dl.host_in.2, tl.host_in.2, ul.host_in.2],
-                        [dl.host_in.3, tl.host_in.3, ul.host_in.3],
+                        [
+                            dl.host_in.2,
+                            tl.host_in.2,
+                            ul.host_in.2,
+                            rl.host_in.2,
+                        ],
+                        [
+                            dl.host_in.3,
+                            tl.host_in.3,
+                            ul.host_in.3,
+                            rl.host_in.3,
+                        ],
                     ),
                     (
-                        [dl.host_out.0, tl.host_out.0, ul.host_out.0],
-                        [dl.host_out.1, tl.host_out.1, ul.host_out.1],
-                        [dl.host_out.2, tl.host_out.2, ul.host_out.2],
+                        [
+                            dl.host_out.0,
+                            tl.host_out.0,
+                            ul.host_out.0,
+                            rl.host_out.0,
+                        ],
+                        [
+                            dl.host_out.1,
+                            tl.host_out.1,
+                            ul.host_out.1,
+                            rl.host_out.1,
+                        ],
+                        [
+                            dl.host_out.2,
+                            tl.host_out.2,
+                            ul.host_out.2,
+                            rl.host_out.2,
+                        ],
                         cl.per_out.2,
                         cl.per_out.3,
                     ),
@@ -268,9 +303,12 @@ fn lockstep_with(
                     dper.run(dl.per_in, dl.per_out),
                     tper.run(tl.per_in, tl.per_out),
                 ),
-                ubridge.run(
-                    (ul.per_in.0, ul.per_in.1, ul.per_in.2, [bb], [br]),
-                    ([baw], [bar], [bw], ul.per_out.2, ul.per_out.3),
+                join2(
+                    ubridge.run(
+                        (ul.per_in.0, ul.per_in.1, ul.per_in.2, [bb], [br]),
+                        ([baw], [bar], [bw], ul.per_out.2, ul.per_out.3),
+                    ),
+                    join2(rper.run(rl.per_in, rl.per_out), rom.run(rbus, ())),
                 ),
             ),
         ),
@@ -509,14 +547,18 @@ fn lockstep_with(
         // A load that traps writes the CSRs in execute as a system
         // instruction does, so it is skipped for the same reason: the
         // address is the one the core used, since the registers agree.
+        // Under translation any load may trap, on its page (issue
+        // 1014).
         let d = decode(executed);
+        let translating = model.csr.satp >> 31 == 1 && model.prv != 3;
         let bad_access = matches!(
             d.kind,
             Kind::Lb | Kind::Lh | Kind::Lw | Kind::Lbu | Kind::Lhu
-        ) && vreteno32::model::misaligned(
-            d.kind,
-            model.x[d.rs1 as usize].wrapping_add(d.imm as u32),
-        );
+        ) && (translating
+            || vreteno32::model::misaligned(
+                d.kind,
+                model.x[d.rs1 as usize].wrapping_add(d.imm as u32),
+            ));
         let system = executing
             && !stall.get().to_bool()
             && (taken.is_some()
@@ -647,7 +689,7 @@ fn lockstep_with(
             return model;
         }
     }
-    panic!("{what}: no halt in 32768 cycles");
+    panic!("{what}: no halt in 32768 cycles; retired {retired}, model pc {:#x}, causes {:?}, mcause {} mepc {:#x} mtval {:#x} scause {} sepc {:#x} stval {:#x} prv {}", model.pc, model.causes, model.csr.mcause, model.csr.mepc, model.csr.mtval, model.csr.scause, model.csr.sepc, model.csr.stval, model.prv);
 }
 
 #[test]
@@ -1545,4 +1587,339 @@ fn the_supervisor_external_line_reaches_the_supervisor() {
     assert_eq!(m.x[22], CAUSE_SEXT, "as the supervisor's external one");
     assert!(m.x[9] > 0, "the supervisor's code ran before it");
     assert_eq!(m.x[21], CAUSE_ECALL_S, "then called machine mode");
+}
+
+/// Two instructions that load `v` into `rd`.
+fn li(a: &mut vreteno32::program::Asm, rd: u32, v: u32) {
+    use vreteno32::isa::{addi, lui};
+    a.wide(lui(rd, v.wrapping_add(0x800) >> 12));
+    a.wide(addi(rd, rd, ((v << 20) as i32) >> 20));
+}
+
+/// Two instructions that load `base` plus a label's address into `rd`.
+fn la(a: &mut vreteno32::program::Asm, rd: u32, l: usize, base: u32) {
+    use vreteno32::isa::{addi, lui};
+    a.abs(l, move |x| {
+        lui(rd, base.wrapping_add(x).wrapping_add(0x800) >> 12)
+    });
+    a.abs(l, move |x| {
+        addi(rd, rd, ((base.wrapping_add(x) << 20) as i32) >> 20)
+    });
+}
+
+/// Virtual memory (issue 1014). Machine mode writes page tables into
+/// the data memory, turns translation on in `satp`, delegates the load
+/// and the store page faults, and returns into supervisor mode at a
+/// virtual address; the supervisor then loads, stores and runs atomics
+/// through pages that allow them and pages that do not, and jumps
+/// where nothing is mapped.
+///
+/// The data memory is one page, so the root table and the second level
+/// are that page both, and their entries sit at indices nothing else
+/// uses: the root's at 0x200, 0x300 and 0x301, the second level's from
+/// 0x210, and the program's data below 0x800. The code runs from the
+/// boot memory, mapped as a megapage at `0x8000_0000`, and once as a
+/// page whose next page is unmapped, where an instruction whose second
+/// half is on that next page faults there.
+#[test]
+fn sv32_translates_and_faults_where_the_tables_say() {
+    use txhdl_parts::mmu::pte::{to, A, D, R, U, V, W, X};
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    const CODE: u32 = 0x8000_0000;
+    const DATA: u32 = 0xc021_0000;
+    let page = |j: u32| 0xc000_0000 | (j << 12);
+    let mut a = Asm::default();
+    let (mh, sh, s_code, not_ecall, skip) =
+        (a.label(), a.label(), a.label(), a.label(), a.label());
+    // The tables, an entry at a time, from x3 = 0x1800, index 0x200.
+    a.wide(lui(3, 2));
+    a.wide(addi(3, 3, -0x800));
+    let entry = |a: &mut Asm, idx: u32, v: u32| {
+        li(a, 5, v);
+        a.wide(sw(5, 3, (4 * idx) as i32 - 0x800));
+    };
+    entry(&mut a, 0x200, to(0, V | R | X | A));
+    entry(&mut a, 0x300, to(0x1000, V));
+    entry(&mut a, 0x301, to(0x3000_0000, V));
+    entry(&mut a, 0x210, to(0x1000, V | R | W | A | D));
+    entry(&mut a, 0x211, to(0x1000, V | R | A));
+    entry(&mut a, 0x212, to(0x1000, V | R | W | A));
+    entry(&mut a, 0x213, to(0x1000, V | R | W | U | A | D));
+    entry(&mut a, 0x215, to(0x1000, V | X | A));
+    entry(&mut a, 0x216, to(0x3000_0000, V | R | W | A | D));
+    entry(&mut a, 0x217, to(0x1000, V | W | A | D));
+    entry(&mut a, 0x218, to(0x1000, V));
+    entry(&mut a, 0x222, to(0, V | X | A));
+    for i in 0..10 {
+        entry(&mut a, 0x230 + i, to(0x1000, V | R | W | A | D));
+    }
+    li(&mut a, 5, txhdl_parts::mmu::satp(0x1000));
+    a.wide(csrrw(0, CSR_SATP, 5));
+    la(&mut a, 31, mh, 0);
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    la(&mut a, 31, sh, CODE);
+    a.wide(csrrw(0, CSR_STVEC, 31));
+    li(&mut a, 5, 1 << 13 | 1 << 15);
+    a.wide(csrrw(0, CSR_MEDELEG, 5));
+    li(&mut a, 5, 0x800); // MPP = supervisor
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    li(&mut a, 30, DATA + 0x100); // the supervisor's log, virtual
+    li(&mut a, 28, 0x1400); // the machine's, physical
+    a.wide(addi(8, 0, 0));
+    a.wide(addi(9, 0, 0));
+    la(&mut a, 31, s_code, CODE);
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+
+    // Supervisor mode, at a virtual address.
+    a.place(s_code);
+    li(&mut a, 10, DATA);
+    a.wide(addi(11, 0, 0x55));
+    a.wide(sw(11, 10, 0x10));
+    a.wide(lw(12, 10, 0x10));
+    li(&mut a, 13, page(0x211)); // read only
+    a.wide(lw(14, 13, 0x10));
+    a.wide(sw(11, 13, 0x10));
+    li(&mut a, 13, page(0x212)); // dirty bit clear
+    a.wide(lw(14, 13, 0x10));
+    a.wide(sw(11, 13, 0x10));
+    li(&mut a, 13, page(0x213)); // a user page, then with SUM
+    a.wide(lw(15, 13, 0x10));
+    li(&mut a, 5, 1 << 18);
+    a.wide(csrrs(0, CSR_SSTATUS, 5));
+    a.wide(lw(15, 13, 0x10));
+    a.wide(csrrc(0, CSR_SSTATUS, 5));
+    li(&mut a, 13, page(0x214)); // invalid
+    a.wide(lw(16, 13, 0x10));
+    a.wide(sw(11, 13, 0x10));
+    a.wide(amoadd_w(17, 13, 11));
+    a.wide(lr_w(17, 13));
+    a.wide(lw(16, 13, 0x11)); // misaligned there: that, not the page
+    li(&mut a, 13, page(0x215)); // execute only, then with MXR
+    a.wide(lw(16, 13, 0x10));
+    li(&mut a, 5, 1 << 19);
+    a.wide(csrrs(0, CSR_SSTATUS, 5));
+    a.wide(lw(16, 13, 0x10));
+    a.wide(csrrc(0, CSR_SSTATUS, 5));
+    li(&mut a, 13, page(0x216)); // where nothing answers
+    a.wide(lw(16, 13, 0x10));
+    li(&mut a, 13, page(0x217)); // write without read
+    a.wide(lw(16, 13, 0x10));
+    li(&mut a, 13, page(0x218)); // a pointer at the last level
+    a.wide(lw(16, 13, 0x10));
+    li(&mut a, 13, 0xc040_0000); // a table where nothing answers
+    a.wide(lw(16, 13, 0));
+    li(&mut a, 13, DATA + 0x20); // atomics where they may
+    a.wide(amoadd_w(18, 13, 11));
+    a.wide(lr_w(19, 13));
+    a.wide(sc_w(20, 13, 11));
+    li(&mut a, 13, page(0x211) + 0x20); // and where they may only read
+    a.wide(lr_w(19, 13));
+    a.wide(sc_w(20, 13, 11));
+    a.wide(amoswap_w(18, 13, 11));
+    // Ten pages, twice, past the eight entries the data's buffer has.
+    for _ in 0..2 {
+        for i in 0..10 {
+            li(&mut a, 13, page(0x230 + i));
+            a.wide(addi(11, 11, 1));
+            a.wide(sw(11, 13, 0x30));
+            a.wide(lw(6, 13, 0x30));
+        }
+    }
+    // Take the write away from the first of them through its own
+    // entry, then drop the translations: it reads and does not write.
+    li(&mut a, 13, DATA + 4 * 0x230);
+    li(&mut a, 5, to(0x1000, V | R | A));
+    a.wide(sw(5, 13, 0));
+    a.wide(sfence_vma(0, 0));
+    li(&mut a, 13, page(0x230));
+    a.wide(lw(6, 13, 0x30));
+    a.wide(sw(6, 13, 0x30));
+    // A jump where no page is, and one to an instruction whose second
+    // half is on a page that is not there.
+    li(&mut a, 13, 0x8040_0000);
+    a.wide(jalr(1, 13, 0));
+    li(&mut a, 13, page(0x222) + 0xffe);
+    a.wide(jalr(1, 13, 0));
+    a.wide(ecall());
+
+    // The supervisor's handler: log the cause and the value, step past.
+    a.align();
+    a.place(sh);
+    a.wide(csrrs(24, CSR_SCAUSE, 0));
+    a.wide(csrrs(25, CSR_STVAL, 0));
+    a.wide(sw(24, 30, 0));
+    a.wide(sw(25, 30, 4));
+    a.wide(addi(30, 30, 8));
+    a.wide(addi(8, 8, 1));
+    a.wide(csrrs(26, CSR_SEPC, 0));
+    a.wide(addi(26, 26, 4));
+    a.wide(csrrw(0, CSR_SEPC, 26));
+    a.wide(sret());
+    // Machine mode's: log, halt on the supervisor's call, return from a
+    // fetch's fault to where the jump came from, and else step past.
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(csrrs(22, CSR_MTVAL, 0));
+    a.wide(sw(21, 28, 0));
+    a.wide(sw(22, 28, 4));
+    a.wide(addi(28, 28, 8));
+    a.wide(addi(9, 9, 1));
+    a.wide(addi(23, 0, 9));
+    a.to(not_ecall, |o| bne(21, 23, o));
+    a.wide(halt());
+    a.place(not_ecall);
+    a.wide(addi(23, 0, 12));
+    a.to(skip, |o| bne(21, 23, o));
+    a.wide(csrrw(0, CSR_MEPC, 1));
+    a.wide(mret());
+    a.place(skip);
+    a.wide(csrrs(23, CSR_MEPC, 0));
+    a.wide(addi(23, 23, 4));
+    a.wide(csrrw(0, CSR_MEPC, 23));
+    a.wide(mret());
+    // The first half of a thirty-two bit instruction in the boot
+    // memory's last halfword.
+    assert!(a.here() <= 0xffe, "the program is {} bytes", a.here());
+    a.halves.resize(0x7ff, 0);
+    a.emit_c(0x0013);
+    let m = lockstep(&a.words(), &[], "sv32", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    let log = |at: u32, n: usize| -> Vec<(u32, u32)> {
+        let w = (at - vreteno32::model::DATA_BASE) as usize / 4;
+        (0..n)
+            .map(|i| (m.mem[w + 2 * i], m.mem[w + 2 * i + 1]))
+            .collect()
+    };
+    let (lp, sp) = (CAUSE_LOAD_PAGE, CAUSE_STORE_PAGE);
+    assert_eq!(
+        log(0x1100, 13),
+        vec![
+            (sp, page(0x211) + 0x10),
+            (sp, page(0x212) + 0x10),
+            (lp, page(0x213) + 0x10),
+            (lp, page(0x214) + 0x10),
+            (sp, page(0x214) + 0x10),
+            (sp, page(0x214)),
+            (lp, page(0x214)),
+            (lp, page(0x215) + 0x10),
+            (lp, page(0x217) + 0x10),
+            (lp, page(0x218) + 0x10),
+            (sp, page(0x211) + 0x20),
+            (sp, page(0x211) + 0x20),
+            (sp, page(0x230) + 0x30),
+        ],
+        "what the supervisor was sent"
+    );
+    assert_eq!(m.x[8], 13);
+    assert_eq!(
+        log(0x1400, 6),
+        vec![
+            (CAUSE_LOAD_MISALIGNED, page(0x214) + 0x11),
+            (CAUSE_LOAD_ACCESS, page(0x216) + 0x10),
+            (CAUSE_LOAD_ACCESS, 0xc040_0000),
+            (CAUSE_FETCH_PAGE, 0x8040_0000),
+            (CAUSE_FETCH_PAGE, page(0x223)),
+            (CAUSE_ECALL_S, 0),
+        ],
+        "what machine mode was sent"
+    );
+    assert_eq!(m.x[12], 0x55, "a load through a page");
+    assert_eq!(m.x[20], 0, "sc.w stored where it may");
+}
+
+/// A load that traps in execute traps once, for its own cause, whatever
+/// the bus said about the load before it: a misaligned load right after
+/// a refused one is a misaligned load and nothing more.
+#[test]
+fn a_load_that_traps_in_execute_is_not_refused_as_well() {
+    let handler = 8 * 4;
+    let p = [
+        addi(6, 0, handler),
+        csrrw(0, CSR_MTVEC, 6),
+        lui(4, 0x3000), // 0x0300_0000: nobody's
+        lw(5, 4, 0),    // refused: a load access fault
+        lw(5, 4, 1),    // misaligned, and only that
+        addi(7, 0, 1),
+        halt(),
+        addi(0, 0, 0),
+        // The handler, at 32: counts, keeps the causes in order a
+        // nibble each, and steps past.
+        csrrs(23, CSR_MCAUSE, 0),
+        addi(25, 25, 1),
+        vreteno32::isa::slli(28, 28, 4),
+        add(28, 28, 23),
+        csrrs(27, CSR_MEPC, 0),
+        addi(27, 27, 4),
+        csrrw(0, CSR_MEPC, 27),
+        mret(),
+    ];
+    let m = lockstep(&p, &[], "a refusal, then a trap", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[28], 0x54, "an access fault, then a misaligned load");
+    assert_eq!(m.x[25], 2, "two traps");
+}
+
+/// Random programs under Sv32 (issue 1014), over page tables the seed
+/// chooses, in supervisor and in user mode: every page fault and its
+/// handling, the delegated ones and machine mode's, with a fix and a
+/// flush now and then, against the model, which keeps no translations.
+#[test]
+fn random_programs_under_paging() {
+    use vreteno32::isa::{CAUSE_ILLEGAL, CAUSE_LOAD_PAGE, CAUSE_STORE_PAGE};
+    let mut causes = [0u32; 16];
+    for seed in 0..96 {
+        let p = vreteno32::program::random_vm(seed, 300);
+        let m = lockstep(
+            &p,
+            &[],
+            &format!("random paged seed {seed}"),
+            Some(seed),
+            None,
+            None,
+        );
+        assert_eq!(m.halted, Some(Halt::Break), "seed {seed} faulted");
+        for (c, n) in causes.iter_mut().zip(m.causes) {
+            *c += n;
+        }
+    }
+    let seen = format!("exceptions by cause: {causes:?}");
+    assert!(causes[CAUSE_LOAD_PAGE as usize] >= 50, "{seen}");
+    assert!(causes[CAUSE_STORE_PAGE as usize] >= 50, "{seen}");
+    assert!(causes[CAUSE_ILLEGAL as usize] >= 50, "{seen}");
+}
+
+/// `fence.i` makes what a program stored into code what it then runs:
+/// a word run from the data memory, rewritten, and run again after the
+/// fence runs as rewritten, though the fetch's buffer still held it.
+/// The code at 0x1100 is `addi x5, x5, 1` and a return, and two returns
+/// after that. While the first return runs, the fetch takes the word
+/// after it, at 0x1108, which is the word its buffer then holds; that
+/// word is rewritten into `addi x5, x5, 2` and jumped to.
+#[test]
+fn fence_i_runs_the_code_as_stored() {
+    use vreteno32::isa::*;
+    // The new word, addi x5, x5, 2, in two instructions.
+    let w = addi(5, 5, 2);
+    let p = [
+        lui(2, 1),         // the data memory, where the code is
+        addi(5, 0, 0),     // x5 counts what the code added
+        jalr(1, 2, 0x100), // run it: x5 += 1
+        lui(6, w.wrapping_add(0x800) >> 12),
+        addi(6, 6, ((w << 20) as i32) >> 20),
+        sw(6, 2, 0x108),
+        0x0000_100f,       // fence.i
+        jalr(1, 2, 0x108), // run the rewritten word: x5 += 2
+        halt(),
+    ];
+    let mut data = vec![0u32; 0x48];
+    data[0x40] = addi(5, 5, 1);
+    data[0x41] = jalr(0, 1, 0);
+    data[0x42] = jalr(0, 1, 0);
+    data[0x43] = jalr(0, 1, 0);
+    let m = lockstep(&p, &data, "fence.i", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[5], 3, "once as it was, once as rewritten");
 }

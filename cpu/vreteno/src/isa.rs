@@ -59,6 +59,9 @@ pub enum Kind {
     Mret,
     Sret,
     Wfi,
+    /// `sfence.vma`: the translations the core holds are dropped
+    /// (issue 1014).
+    SfenceVma,
     Csrrw,
     Csrrs,
     Csrrc,
@@ -126,11 +129,12 @@ pub const MISA: u32 =
     0x4000_0000 | (1 << 20) | (1 << 18) | (1 << 12) | (1 << 8) | (1 << 2) | 1;
 
 /// The core's address translation, as a device tree names it in
-/// `mmu-type`: none yet, since the core has no supervisor mode and no
-/// page tables. `misa` has no letter for it, so it is stated here, for
-/// the tools that describe the core; the change that adds Sv32 sets it
-/// to `Some("riscv,sv32")` (issues 279 and 1015).
-pub const MMU: Option<&str> = None;
+/// `mmu-type`: Sv32, which the hart's unit translates for (issue 1014).
+/// `misa` has no letter for it, so it is stated here, for the tools
+/// that describe the core. A hart with no `mmu-type` is one OpenSBI
+/// disables in the tree it hands the kernel, which then finds no timer
+/// on it (issues 279 and 1015).
+pub const MMU: Option<&str> = Some("riscv,sv32");
 
 /// The two machine counters, each 64 bits and each read as two
 /// words. The specification makes them writable, so that software can
@@ -211,6 +215,12 @@ pub const CAUSE_STORE_MISALIGNED: u32 = 6;
 /// since a store is posted and its answer comes back later (issue 417).
 pub const CAUSE_STORE_ACCESS: u32 = 7;
 pub const CAUSE_ECALL: u32 = 11;
+/// The three page faults of virtual memory (issue 1014): a fetch, a
+/// load, and a store or an AMO, whose page the tables do not allow.
+/// The trap value is the virtual address that faulted.
+pub const CAUSE_FETCH_PAGE: u32 = 12;
+pub const CAUSE_LOAD_PAGE: u32 = 13;
+pub const CAUSE_STORE_PAGE: u32 = 15;
 /// An environment call from user and from supervisor mode; the one
 /// above is from machine mode (issue 1012).
 pub const CAUSE_ECALL_U: u32 = 8;
@@ -547,6 +557,12 @@ pub fn mret() -> u32 {
 /// Return from a supervisor's trap (issue 1012).
 pub fn sret() -> u32 {
     i(OP_SYSTEM, 0, 0, 0, 0x102)
+}
+/// `sfence.vma rs1, rs2`: drop the translations the core holds. The
+/// core drops all of them whatever the two registers say, which the
+/// specification allows (issue 1014).
+pub fn sfence_vma(rs1: u32, rs2: u32) -> u32 {
+    r(OP_SYSTEM, 0, 0, rs1, rs2, 0x09)
 }
 /// Wait for an interrupt: the core stops fetching until one is
 /// pending and enabled, whether or not interrupts are enabled
@@ -1055,6 +1071,9 @@ pub fn decode(w: u32) -> Decoded {
             (0, 0x302) => d(Mret, 0),
             (0, 0x102) => d(Sret, 0),
             (0, 0x105) => d(Wfi, 0),
+            (0, f12) if f12 >> 5 == 0x09 && (w >> 7) & 0x1f == 0 => {
+                d(SfenceVma, 0)
+            }
             (1, csr) => d(Csrrw, csr as i32),
             (2, csr) => d(Csrrs, csr as i32),
             (3, csr) => d(Csrrc, csr as i32),
@@ -1096,6 +1115,7 @@ pub fn disasm(w: u32) -> String {
             format!("{m} x{rd}, x{rs1}, x{rs2}")
         }
         Fence | Ecall | Ebreak | Mret | Sret | Wfi => m,
+        SfenceVma => format!("sfence.vma x{rs1}, x{rs2}"),
         Csrrw | Csrrs | Csrrc => format!("{m} x{rd}, {imm:#x}, x{rs1}"),
         Csrrwi | Csrrsi | Csrrci => format!("{m} x{rd}, {imm:#x}, {rs1}"),
         LrW => format!("lr.w x{rd}, (x{rs1})"),

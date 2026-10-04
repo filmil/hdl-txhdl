@@ -591,6 +591,90 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
         a.emit(mret());
     }
     a.place(body);
+    random_body(&mut a, &mut next, len);
+    // The end: x27 says so, and the environment call reaches machine
+    // mode, through the supervisor when it was delegated, and halts
+    // there, which no other mode may (issue 1012).
+    a.emit(addi(27, 0, 0x5a));
+    a.emit(ecall());
+    // The handler: an interrupt is returned from, its line having
+    // dropped, since the external bit is the line and not a latch
+    // (#788); an exception returns past the instruction that trapped.
+    a.align();
+    a.place(handler);
+    a.emit(csrrs(31, CSR_MCAUSE, 0));
+    a.to(sync, |o| bge(31, 0, o));
+    // And the timer's next: the count plus 64. The count sits far
+    // from the compare in the controller's window, too far for one
+    // base register, so it is reached through x31 and the compare's
+    // high half is written zero, which it is in a run this short.
+    a.emit(lui(31, (CLINT_BASE + MTIME_OFF + 8) >> 12));
+    a.emit(lw(31, 31, -8)); // x31 = the count's low half
+    a.emit(addi(31, 31, 64));
+    a.emit(sw(0, 30, 4)); // the compare's high half is zero
+    a.emit(sw(31, 30, 0)); // and its low half is the count plus 64
+    a.emit(fence()); // so the store has landed and the line has dropped
+                     // before the return (issues 420, 432)
+    if dsoft {
+        a.emit(csrrsi(0, CSR_MIP, 2)); // the supervisor's, delegated
+    }
+    a.emit(mret());
+    // An exception returns past the instruction that trapped, which is
+    // four bytes long for an ecall and for an illegal instruction whose
+    // low two bits are both set, and two for the rest. mcause is 11 or
+    // 2, so its bit 3 says ecall; x29 is the handler's too.
+    a.place(sync);
+    a.emit(addi(29, 0, 0x5a));
+    a.to(the_end, |o| beq(27, 29, o));
+    a.emit(csrrs(29, CSR_MTVAL, 0));
+    a.emit(andi(29, 29, 3)); // the trap value's low two bits
+    a.emit(andi(31, 31, 8)); // 8 for an ecall
+    a.emit(or(29, 29, 31)); // 3 or 8 for four bytes
+    a.emit(sltiu(29, 29, 3)); // 1 for two bytes
+    a.emit(slli(29, 29, 1));
+    a.emit(csrrs(31, CSR_MEPC, 0));
+    a.emit(addi(31, 31, 4));
+    a.emit(sub(31, 31, 29)); // mepc + 4 - 2, or + 4
+    a.emit(csrrw(0, CSR_MEPC, 31));
+    a.emit(mret());
+    a.place(the_end);
+    a.emit(halt());
+    // The supervisor's handler, the same through its own registers: its
+    // software interrupt is cleared and returned from, an exception is
+    // stepped past, and the end is passed on to machine mode. Its
+    // scratch registers are x24 and x26 rather than the machine's x29
+    // and x31, since machine mode's interrupts are taken below machine
+    // mode whatever MIE says, and so in the middle of this handler.
+    a.align();
+    a.place(s_handler);
+    a.emit(csrrs(26, CSR_SCAUSE, 0));
+    a.to(s_sync, |o| bge(26, 0, o));
+    a.emit(csrrci(0, CSR_SIP, 2));
+    a.emit(sret());
+    a.place(s_sync);
+    a.emit(addi(24, 0, 0x5a));
+    a.to(s_up, |o| beq(27, 24, o));
+    a.emit(csrrs(24, CSR_STVAL, 0));
+    a.emit(andi(24, 24, 3));
+    a.emit(andi(26, 26, 8));
+    a.emit(or(24, 24, 26));
+    a.emit(sltiu(24, 24, 3));
+    a.emit(slli(24, 24, 1));
+    a.emit(csrrs(26, CSR_SEPC, 0));
+    a.emit(addi(26, 26, 4));
+    a.emit(sub(26, 26, 24));
+    a.emit(csrrw(0, CSR_SEPC, 26));
+    a.emit(sret());
+    a.place(s_up);
+    a.emit(ecall());
+    a.words()
+}
+
+/// The body of a random program, to `len` halfwords: what [`random`]
+/// and [`random_vm`] run between their setups and their handlers. x2
+/// is the data's base and x30 the timer compare's, and neither is
+/// written, nor x27, which says the end, nor x31, the handler's.
+fn random_body(a: &mut Asm, next: &mut impl FnMut() -> u64, len: usize) {
     while a.halves.len() < 2 * len {
         let r = next();
         // Half the instructions are shaped to have a compressed
@@ -763,80 +847,235 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
         a.compress = squeeze;
         a.emit(w);
     }
-    // The end: x27 says so, and the environment call reaches machine
-    // mode, through the supervisor when it was delegated, and halts
-    // there, which no other mode may (issue 1012).
+}
+
+/// Two instructions that load `v` into `rd`.
+fn li(a: &mut Asm, rd: u32, v: u32) {
+    a.wide(lui(rd, v.wrapping_add(0x800) >> 12));
+    a.wide(addi(rd, rd, ((v << 20) as i32) >> 20));
+}
+
+/// Two instructions that load `base` plus a label's address into `rd`.
+fn la(a: &mut Asm, rd: u32, l: usize, base: u32) {
+    a.abs(l, move |x| {
+        lui(rd, base.wrapping_add(x).wrapping_add(0x800) >> 12)
+    });
+    a.abs(l, move |x| {
+        addi(rd, rd, ((base.wrapping_add(x) << 20) as i32) >> 20)
+    });
+}
+
+/// Five instructions that leave in `rd` the length of the instruction
+/// whose first halfword is in `rd`: four bytes when its low two bits
+/// are both set, else two.
+fn length_of(a: &mut Asm, rd: u32) {
+    a.wide(andi(rd, rd, 3));
+    a.wide(addi(rd, rd, -3));
+    a.wide(sltiu(rd, rd, 1));
+    a.wide(slli(rd, rd, 1));
+    a.wide(addi(rd, rd, 2));
+}
+
+/// A random program under Sv32 (issue 1014): the body of [`random`],
+/// run in supervisor or user mode with translation on, over page tables
+/// the seed chooses.
+///
+/// The tables are in the data memory's one page, the root and the
+/// second level both. The code is the boot memory, mapped where it is
+/// by a megapage of the root's for supervisor mode, and again at
+/// `0x0040_0000` with the user bit for user mode; the timer's
+/// controller is mapped where it is too, so the body's base for it
+/// holds. The data's base is a page of the second level's, at an index
+/// the seed chooses, whose entry the seed chooses as well: allowing
+/// everything, or missing the dirty bit, the write, the accessed bit,
+/// the right user bit or the valid bit, or execute only. `SUM` and
+/// `MXR` are set by the seed. The body's data is at offset 0x400 of the
+/// page, clear of every entry.
+///
+/// The load and the store page faults are delegated to the supervisor
+/// by the seed. The supervisor's handler steps past one; machine
+/// mode's, by the seed, either steps past or does what a kernel does
+/// under Svade: sets what the entry lacks, drops the translations, and
+/// returns to the instruction to run it again. Both handlers find the
+/// length of the instruction that trapped by reading its first
+/// halfword, which is in the boot memory at the address's low twelve
+/// bits.
+pub fn random_vm(seed: u64, len: usize) -> Vec<u32> {
+    use txhdl_parts::mmu::pte::{to, A, D, R, U, V, W, X};
+    let mut s = seed.wrapping_mul(0x9e3779b97f4a7c15) | 1;
+    let mut next = move || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        s
+    };
+    let mut a = Asm::default();
+    let (handler, sync, fix, the_end, body) =
+        (a.label(), a.label(), a.label(), a.label(), a.label());
+    let (maybe_fix, step) = (a.label(), a.label());
+    let (s_handler, s_sync, s_up) = (a.label(), a.label(), a.label());
+    let user = seed & 1 == 1;
+    let u = if user { U } else { 0 };
+    let j = 0x210 + (seed >> 9) as u32 % 0x30;
+    let page = 0x1000;
+    let perm = match (seed >> 1) % 8 {
+        0 | 1 => to(page, V | R | W | A | D | u),
+        2 => to(page, V | R | W | A | u),
+        3 => to(page, V | R | A | u),
+        4 => to(page, V | R | W | D | u),
+        5 => to(page, V | R | W | A | D | (U ^ u)),
+        6 => to(page, R | W | A | D | u),
+        _ => to(page, V | X | A | D | u),
+    };
+    let fixing = seed >> 4 & 1 == 1;
+    let (sum, mxr) = (seed >> 5 & 1 == 1, seed >> 6 & 1 == 1);
+    // The load and the store page faults, an illegal instruction, and
+    // an environment call from user mode, each by a bit of the seed.
+    let medeleg = [(7, 1u32 << 13), (8, 1 << 15), (10, 4), (11, 0x100)]
+        .iter()
+        .filter(|&&(bit, _)| seed >> bit & 1 == 1)
+        .fold(0, |m, &(_, d)| m | d);
+    let dsoft = seed >> 12 & 1 == 1;
+    // The tables, from x3 = 0x1800, the second half of the page.
+    a.wide(lui(3, 2));
+    a.wide(addi(3, 3, -0x800));
+    let entry = |a: &mut Asm, idx: u32, v: u32| {
+        li(a, 5, v);
+        a.wide(sw(5, 3, (4 * idx) as i32 - 0x800));
+    };
+    entry(&mut a, 0, to(0, V | R | X | A));
+    if user {
+        entry(&mut a, 1, to(0, V | R | X | A | U));
+    }
+    entry(
+        &mut a,
+        CLINT_BASE >> 22,
+        to(CLINT_BASE, V | R | W | A | D | u),
+    );
+    entry(&mut a, 0x300, to(page, V));
+    entry(&mut a, j, perm);
+    li(&mut a, 5, txhdl_parts::mmu::satp(page));
+    a.wide(csrrw(0, CSR_SATP, 5));
+    la(&mut a, 31, handler, 0);
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    la(&mut a, 31, s_handler, 0);
+    a.wide(csrrw(0, CSR_STVEC, 31));
+    li(&mut a, 31, medeleg);
+    a.wide(csrrw(0, CSR_MEDELEG, 31));
+    // The interrupts, as `random` has them.
+    a.wide(lui(31, 1));
+    a.wide(srli(31, 31, 1));
+    a.wide(ori(31, 31, if dsoft { 0x82 } else { 0x80 }));
+    a.wide(csrrw(0, CSR_MIE, 31));
+    if dsoft {
+        a.wide(csrrwi(0, CSR_MIDELEG, 2));
+    }
+    a.wide(lui(30, (CLINT_BASE + MTIMECMP_OFF) >> 12));
+    li(&mut a, 2, 0xc000_0000 | j << 12 | 0x400);
+    let prv = if user { 0 } else { 1 };
+    let st = prv << 11
+        | 0x80
+        | if user { 0 } else { 2 }
+        | (sum as u32) << 18
+        | (mxr as u32) << 19;
+    li(&mut a, 31, st);
+    a.wide(csrrw(0, CSR_MSTATUS, 31));
+    la(&mut a, 31, body, if user { 0x0040_0000 } else { 0 });
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    a.place(body);
+    random_body(&mut a, &mut next, len);
+    a.compress = false;
     a.emit(addi(27, 0, 0x5a));
     a.emit(ecall());
-    // The handler: an interrupt is returned from, its line having
-    // dropped, since the external bit is the line and not a latch
-    // (#788); an exception returns past the instruction that trapped.
+    // Machine mode's handler: an interrupt as in `random`, but the
+    // timer's next is 512 cycles on rather than 64. Under translation
+    // every fetch is from the bus, and a return re-translates its page,
+    // so 64 cycles is less than a return and an instruction take, and
+    // the body would never run another.
     a.align();
     a.place(handler);
-    a.emit(csrrs(31, CSR_MCAUSE, 0));
+    a.wide(csrrs(31, CSR_MCAUSE, 0));
     a.to(sync, |o| bge(31, 0, o));
-    // And the timer's next: the count plus 64. The count sits far
-    // from the compare in the controller's window, too far for one
-    // base register, so it is reached through x31 and the compare's
-    // high half is written zero, which it is in a run this short.
-    a.emit(lui(31, (CLINT_BASE + MTIME_OFF + 8) >> 12));
-    a.emit(lw(31, 31, -8)); // x31 = the count's low half
-    a.emit(addi(31, 31, 64));
-    a.emit(sw(0, 30, 4)); // the compare's high half is zero
-    a.emit(sw(31, 30, 0)); // and its low half is the count plus 64
-    a.emit(fence()); // so the store has landed and the line has dropped
-                     // before the return (issues 420, 432)
+    a.wide(lui(31, (CLINT_BASE + MTIME_OFF + 8) >> 12));
+    a.wide(lw(31, 31, -8));
+    a.wide(addi(31, 31, 512));
+    a.wide(sw(0, 30, 4));
+    a.wide(sw(31, 30, 0));
+    a.wide(fence());
     if dsoft {
-        a.emit(csrrsi(0, CSR_MIP, 2)); // the supervisor's, delegated
+        a.wide(csrrsi(0, CSR_MIP, 2));
     }
-    a.emit(mret());
-    // An exception returns past the instruction that trapped, which is
-    // four bytes long for an ecall and for an illegal instruction whose
-    // low two bits are both set, and two for the rest. mcause is 11 or
-    // 2, so its bit 3 says ecall; x29 is the handler's too.
+    a.wide(mret());
+    // An exception: the end halts; a page fault on the data's page is
+    // fixed, when the seed says so; anything else is stepped past,
+    // which a fault elsewhere must be, since fixing the data's entry
+    // does nothing for it: an `sc.w` after `lr.w x28, (x28)` stores
+    // where the word it loaded points.
     a.place(sync);
-    a.emit(addi(29, 0, 0x5a));
+    a.wide(addi(29, 0, 0x5a));
     a.to(the_end, |o| beq(27, 29, o));
-    a.emit(csrrs(29, CSR_MTVAL, 0));
-    a.emit(andi(29, 29, 3)); // the trap value's low two bits
-    a.emit(andi(31, 31, 8)); // 8 for an ecall
-    a.emit(or(29, 29, 31)); // 3 or 8 for four bytes
-    a.emit(sltiu(29, 29, 3)); // 1 for two bytes
-    a.emit(slli(29, 29, 1));
-    a.emit(csrrs(31, CSR_MEPC, 0));
-    a.emit(addi(31, 31, 4));
-    a.emit(sub(31, 31, 29)); // mepc + 4 - 2, or + 4
-    a.emit(csrrw(0, CSR_MEPC, 31));
-    a.emit(mret());
+    if fixing {
+        a.wide(addi(29, 31, -(CAUSE_LOAD_PAGE as i32)));
+        a.to(maybe_fix, |o| beq(29, 0, o));
+        a.wide(addi(29, 31, -(CAUSE_STORE_PAGE as i32)));
+        a.to(step, |o| bne(29, 0, o));
+        a.place(maybe_fix);
+        a.wide(csrrs(29, CSR_MTVAL, 0));
+        a.wide(xor(29, 29, 2));
+        a.wide(srli(29, 29, 12));
+        a.to(fix, |o| beq(29, 0, o));
+    }
+    a.place(step);
+    a.wide(csrrs(31, CSR_MEPC, 0));
+    a.wide(slli(31, 31, 20));
+    a.wide(srli(31, 31, 20));
+    a.wide(lhu(29, 31, 0));
+    length_of(&mut a, 29);
+    a.wide(csrrs(31, CSR_MEPC, 0));
+    a.wide(add(31, 31, 29));
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    if fixing {
+        // The entry, from x31 = 0x2000: valid, readable, writable,
+        // accessed and dirty, and the user's when the body is.
+        let at = (4 * j) as i32 - 0x1000;
+        a.place(fix);
+        a.wide(lui(31, 2));
+        a.wide(lw(29, 31, at));
+        a.wide(ori(29, 29, (V | R | W | A | D) as i32));
+        if user {
+            a.wide(ori(29, 29, U as i32));
+        } else {
+            a.wide(andi(29, 29, !(U as i32)));
+        }
+        a.wide(sw(29, 31, at));
+        a.wide(sfence_vma(0, 0));
+        a.wide(mret());
+    }
     a.place(the_end);
-    a.emit(halt());
-    // The supervisor's handler, the same through its own registers: its
-    // software interrupt is cleared and returned from, an exception is
-    // stepped past, and the end is passed on to machine mode. Its
-    // scratch registers are x24 and x26 rather than the machine's x29
-    // and x31, since machine mode's interrupts are taken below machine
-    // mode whatever MIE says, and so in the middle of this handler.
+    a.wide(halt());
+    // The supervisor's handler: its software interrupt as in `random`,
+    // the end passed on to machine mode, and anything else stepped past.
     a.align();
     a.place(s_handler);
-    a.emit(csrrs(26, CSR_SCAUSE, 0));
+    a.wide(csrrs(26, CSR_SCAUSE, 0));
     a.to(s_sync, |o| bge(26, 0, o));
-    a.emit(csrrci(0, CSR_SIP, 2));
-    a.emit(sret());
+    a.wide(csrrci(0, CSR_SIP, 2));
+    a.wide(sret());
     a.place(s_sync);
-    a.emit(addi(24, 0, 0x5a));
+    a.wide(addi(24, 0, 0x5a));
     a.to(s_up, |o| beq(27, 24, o));
-    a.emit(csrrs(24, CSR_STVAL, 0));
-    a.emit(andi(24, 24, 3));
-    a.emit(andi(26, 26, 8));
-    a.emit(or(24, 24, 26));
-    a.emit(sltiu(24, 24, 3));
-    a.emit(slli(24, 24, 1));
-    a.emit(csrrs(26, CSR_SEPC, 0));
-    a.emit(addi(26, 26, 4));
-    a.emit(sub(26, 26, 24));
-    a.emit(csrrw(0, CSR_SEPC, 26));
-    a.emit(sret());
+    a.wide(csrrs(26, CSR_SEPC, 0));
+    a.wide(slli(26, 26, 20));
+    a.wide(srli(26, 26, 20));
+    a.wide(lhu(24, 26, 0));
+    length_of(&mut a, 24);
+    a.wide(csrrs(26, CSR_SEPC, 0));
+    a.wide(add(26, 26, 24));
+    a.wide(csrrw(0, CSR_SEPC, 26));
+    a.wide(sret());
     a.place(s_up);
-    a.emit(ecall());
+    a.wide(ecall());
     a.words()
 }
