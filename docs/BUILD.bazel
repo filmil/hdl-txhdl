@@ -1194,6 +1194,8 @@ latex_document(
         ":slowfirst_timing",
         ":rstmem_run",
         ":rstmem_timing",
+        ":rstmemown_run",
+        ":rstmemown_timing",
         ":flush_run",
         ":flush_timing",
         ":start_run",

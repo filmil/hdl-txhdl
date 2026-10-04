@@ -1,0 +1,33 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Unit That Answers the Reset Writes Its Memory}
+\label{sec:x-rstmemown}
+
+\S\ref{sec:x-rstmem} drops a memory write made while the reset is
+held, and \S\ref{sec:x-ownrst} leaves a unit that declares
+\code{rst} to say in its body what the reset does to its registers.
+The two meet in a unit that declares \code{rst} and writes a memory:
+its memory is its body's too. The netlist gives such a unit no branch
+out of reset, so its writes are not gated, and the run keeps them as
+well (issue 966).
+
+The clearest reason to want it is \code{Wipe}: a store that clears
+itself while the reset is held, a word a cycle, so that it comes out
+of reset empty whatever it held before. The run fills the store, holds
+the reset for as many cycles as the store has words, then writes one
+word and reads all four back. Every word is the one the wipe wrote,
+except the one written after it. A memory is not traced, so the
+simulations of the netlist see the store through \code{q} and are
+checked against the run there.
+
+\begin{figure}[htbp]
+\centering
+\input{rstmemown_timing.tex}
+\caption{The store filled, four cycles of \code{rst} with \code{at}
+walking the words, one write at word 2, and the store read back:
+\code{0xee} everywhere but word 2.}
+\label{fig:x-rstmemown}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_rstmemown.rs}. Run with \code{bazel run //lib/examples:ex\_rstmemown}.},label={lst:x-rstmemown}]{lib/examples/ex_rstmemown.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_rstmemown} printed when the build ran it: the store read back, then the netlist, whose memory write is not gated on the reset.},label={lst:x-rstmemown-out}]{out_rstmemown.txt}
