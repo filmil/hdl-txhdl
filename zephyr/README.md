@@ -146,12 +146,15 @@ uses: the serial port at `UART_BASE`, the machine timer's `mtime` and
 `mtimecmp` at the offsets above `CLINT_BASE` that Zephyr's own driver
 reads, the interrupt controller where RISC-V machines put it, and the
 DDR3 where the router decodes it.
-The driver's register map and the SoC's instruction set are checked
-the same way, and so are the two things that have already made this
-port build an image with no console: the driver selecting
-`SERIAL_HAS_DRIVER`, without which `UART_CONSOLE` is not even a
-visible symbol, and the driver reaching the architecture's
-`sys_read32` rather than leaving it implicit.
+The serial port is SiFive's `sifive,uart0` (issue 1011), driven by
+Zephyr's stock `uart_sifive`, so the test holds every offset and bit
+that driver hard-codes to the hardware's own map, and checks that the
+device tree's console is a `sifive,uart0` node with its clock.
+The SoC's instruction set is checked the same way, and so are the
+things that would build an image with no console: the board turning
+the driver's first port on, the SoC naming the peripheral clock the
+driver divides, `soc.h`'s `SIFIVE_PERIPHERAL_CLOCK_FREQUENCY`, and
+the board enabling `UART_CONSOLE`.
 
 Moving the serial port by one page in the device tree fails that test,
 which was tried rather than assumed.
