@@ -628,10 +628,9 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (time_o, time_i) = signal::<U<64>, DefaultClock>();
         let (uirq_o, uirq_i) = signal::<Bit, DefaultClock>();
         let (eirq_o, eirq_i) = signal::<Bit, DefaultClock>();
-        // The PLIC's supervisor line, `mip.SEIP`'s, which the core takes
-        // once it has a supervisor mode (issue 1012); until then nothing
-        // reads it (issue 1013).
-        let (seirq_o, _seirq_i) = signal::<Bit, DefaultClock>();
+        // The PLIC's supervisor line, `mip.SEIP`'s, to the core (issue
+        // 1094).
+        let (seirq_o, seirq_i) = signal::<Bit, DefaultClock>();
         // The tracker and the router.
         let (aw_tx, aw_rx) = chan::<Aw<32, 2>, DefaultClock>();
         let (ar_tx, ar_rx) = chan::<Ar<32, 2>, DefaultClock>();
@@ -1127,6 +1126,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                     dbg_wdata_i,
                                     dbg_we_i,
                                     time_i,
+                                    seirq_i,
                                 ),
                                 (
                                     halt,
