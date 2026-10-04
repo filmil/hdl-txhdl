@@ -592,6 +592,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The SD host moving blocks through memory, back to back:
+#   bazel run //lib/examples:ex_sddma
+rust_binary(
+    name = "ex_sddma",
+    srcs = ["ex_sddma.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # An SD card host, against a model card:  bazel run //lib/examples:ex_sd
 rust_binary(
     name = "ex_sd",
@@ -1343,6 +1356,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_redundant.rs",
         "ex_regmap.rs",
         "ex_sd.rs",
+        "ex_sddma.rs",
         "ex_tracer.rs",
         "ex_trng.rs",
         "ex_trng_apt.rs",

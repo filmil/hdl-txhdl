@@ -1926,6 +1926,24 @@ waveform(
     until = 69,
 )
 
+# The SD host moving two blocks each way through memory, the card's
+# blocks back to back (issue 912): the second block's start on the
+# data lines, the ring between the lines and the store engine.
+waveform(
+    name = "sddma",
+    example = "//lib/examples:ex_sddma",
+    lowered = ("sd_dma", "sd"),
+    signals = [
+        "//sd/phase=>phase",
+        "//dma_out/tx_valid=>word",
+        "//sd/fill=>fill",
+        "//sd/left=>left",
+        "//store_busy=>store_busy",
+    ],
+    from_tick = 39400,
+    until = 40400,
+)
+
 # The SD host sending a command: the card clock, the command line
 # driven bit by bit with the host holding it, the phase and the bit
 # count, over the start of CMD0.
