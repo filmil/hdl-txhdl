@@ -338,7 +338,7 @@ mod tests {
         // quietly vacuous the day the write starts completing first:
         // it would still pass, and would be checking that a load sees
         // a store that already landed, which nobody doubted. Measured
-        // when this was written: read answered at 44, write at 46.
+        // when this was written: read answered at 38, write at 40.
         assert!(
             t_read < t_write,
             "the store was answered at {t_write}, before the load at \
