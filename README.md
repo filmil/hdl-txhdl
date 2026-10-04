@@ -133,6 +133,21 @@ fj -H git.hdlfactory.com actions dispatch release.yml main -R origin
 fj -H git.hdlfactory.com release list -R origin
 ```
 
+## Before pushing
+
+A push runs two checks that a targeted test run leaves out: the crates' formatting, `//:fmt_test`, and every document's words on their page, `//docs:edge_test`.
+`tools/hooks/pre-push` runs both and refuses the push if either fails, naming the fix (issue 1133).
+Turn it on once per clone:
+
+```sh
+git config core.hooksPath tools/hooks
+```
+
+That setting lives in the clone's `.git/config`, so it applies to every worktree of the clone.
+The path is relative, so each worktree runs the hook from its own checkout; a worktree whose base predates the hook has none, and pushes as before.
+When nothing has changed since the last build both tests come from the cache in seconds; a change to a document or to code a document includes typesets it again first.
+`git push --no-verify` skips the hook, and is for emergencies only.
+
 ## Running the workflows locally
 
 The workflows live in `.forgejo/workflows`, because the canonical remote is
