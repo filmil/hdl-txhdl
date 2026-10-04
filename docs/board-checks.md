@@ -4,9 +4,9 @@
 Status: written September 26, 2026, while the board server was unreachable.
 Author: automated coding assistant, with human supervision.
 
-Seven issues wait on the AX7A200B, and each of them says what it wants from the board in its own comments.
+Twelve issues have waited on the AX7A200B, and each of them says what it wants from the board in its own comments.
 This file puts those wants in one place, as commands to run in order, with what each should print and what to keep.
-Four of the checks can run on the next board session; the fifth, fastboot, no longer waits on timing, since the flagship has met it since #750 and #753 closed; two cannot run yet, and section 9 says what each still lacks.
+Three are done, #143, #153 and #864, and two in part, #188 and #458, as their sections record; the rest wait on a board session, and section 9 says what the two that cannot run yet still lack.
 
 Nothing here writes the flash or touches the board until the user says the board server is back.
 
@@ -234,6 +234,8 @@ The three checks #143 lists, in its comment on PR #528:
 1. The console says `fastboot: listening on port 5554`.
 2. `getvar max-download-size` answers `0x00fff000`.
 3. `fastboot boot` of `hello_fastboot` ends with `hello from rust` on the serial line, which proves the copy, the jump and the posted stores read back on real DDR3.
+
+Done on September 28 and again on October 1, 2026: all three passed, on flagship `9755f9c85be5d066` and on main `b747d42`'s flagship; both runs are on #143 and in `zephyr/README.md`.
 
 `hello_fastboot` is `hello_ram_bin` padded with zeros to 4096 bytes.
 Stock `fastboot` refuses the 148 bytes of `hello_ram_bin` as `too short`, before it sends anything, because it reads a boot image header's worth of a file first (#799); `//zephyr:fastboot_test` checks both off the board.

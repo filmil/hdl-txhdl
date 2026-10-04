@@ -46,6 +46,9 @@ published somewhere stable, and is not modified here.
 | `sby/` | SymbiYosys, fetched from its release tag by checksum, and `requirements.txt`, its Python pins |
 | `zephyr/` | The build file Zephyr's fetched archive is given, and `requirements.txt`, the Python its build imports |
 | `riscv_gcc/` | The build file the fetched RISC-V toolchain is given |
+| `llvm/` | The extension that makes the hermetic LLVM C and C++ toolchain from `toolchains_llvm`, over the sysroot below (issue 782) |
+| `sysroot/` | The Debian bullseye C library and GCC runtime the LLVM toolchain links against, as a lock file (issue 782) |
+| `gdb/` | gdb-multiarch and its libraries, from Debian trixie, for the debug transport's harness (issue 872) |
 
 `rules_multitool_root_hubs.patch` beside them is a patch to a fetched
 module, upstream's own fix, applied until it reaches the registry.

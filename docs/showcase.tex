@@ -267,8 +267,8 @@ Vreteno, Razboj, a memory and a serial port sit on the four corners of a
 two by two lattice, as Fig.~\ref{fig:s-noc} shows, and run together: the core works out an
 icosahedron and writes it into the memory they share as a display
 list, and the rasteriser, which has been watching for it, reads the
-list and draws it there. Drawing across the lattice takes Razboj a
-little over twice as long as on a link, which is what never waiting
+list and draws it there. Drawing across the lattice takes Razboj
+nearly twice as long as on a link, which is what never waiting
 for an answer costs on a network that moves one packet a node a cycle.
 
 
@@ -370,7 +370,8 @@ as Verilog. It depends on the project the way anyone else would,
 through the public mirror at a named commit. The tree builds the same
 blinky as a check, against its own library rather than the mirror, so
 the tutorial's source cannot rot. The build fetches every toolchain in
-Table~\ref{tab:w-tools} itself, by checksum or from source. Nothing is
+Table~\ref{tab:w-tools} itself, by checksum or from source, but Vivado,
+whose archive AMD gives out only after a login. Nothing else is
 installed by hand, on a workstation or in CI.
 
 \begin{table}[htbp]
@@ -404,8 +405,8 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs four hundred targets, of
-which two hundred and twenty-eight are netlists under both simulators; the rest are the core's model and programs, the board's
+its ports. \code{bazel test //...} runs four hundred and nine targets, of
+which two hundred and thirty-four are netlists under both simulators; the rest are the core's model and programs, the board's
 own run, OpenOCD and gdb on it through the debug transport, Razboj, the parts, the SoC's run, ten proofs, the width of
 every waveform, and the tools. Ten more are tagged manual: the
 board and its DDR3 under

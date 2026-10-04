@@ -4,7 +4,7 @@
 # file that the build then fetches by checksum. Run by hand when a pin
 # is to move; what it writes is committed.
 #
-#   bazel run //tools/debclosure -- -suite=trixie yosys
+#   bazel run //tools/debclosure -- -suite=trixie -skip=libc6,libgcc-s1 yosys
 load("@rules_go//go:def.bzl", "go_binary")
 
 package(default_visibility = ["//visibility:public"])
