@@ -87,7 +87,8 @@ Both icosahedron programs work in fixed point for that reason (`ico_hdmi.rs:35`)
 
 **The memory.**
 A gigabyte of DDR3 behind AMD's MIG, reached through the bridge from AXI to Wishbone, which takes one burst at a time (`lib/parts/src/bus/wb.rs:7`).
-The memory runs at 400 MHz on 16 data bits, so its peak is 1.6 GB/s, and a real access pattern reaches well under that.
+The memory is two x16 chips on one command bus, so one memory 32 bits wide, not two: its peak at 400 MHz, on both edges, is 3.2 GB/s (issue 1040; this said 16 bits and 1.6 GB/s at first).
+What stands in front of it is far slower: the bridge has one access in flight, and the wrapper before the controller spends a whole controller burst of eight words on each 32-bit word (issue 1023).
 
 **The room on the part.**
 The flagship uses 10,999 slice LUTs (8.2 per cent of the XC7A200T), 16.5 of 365 block RAM tiles and four DSP blocks (`docs/flagship.tex:450`).
@@ -179,7 +180,7 @@ Sizes are relative, by what this repository's work has taken before.
 **The bandwidth question, which item 11 turns on.**
 At one pixel per cycle and 100 MHz, a depth test reads 2 bytes and writes 2 more, and the colour write is 4: 800 MB/s before blending, which adds a 4-byte read.
 The scanout takes about 74 MB/s for 640 by 480 at 60 frames a second.
-Against DDR3 at 1.6 GB/s peak, through a bridge that takes one burst at a time, per-pixel reads and writes to DDR3 will not run at one pixel per cycle.
+Against DDR3 at 3.2 GB/s peak the arithmetic would allow it, but not through the path in front of the memory today, one access in flight and a controller burst spent on each word, so per-pixel reads and writes to DDR3 will not run at one pixel per cycle until issue 1023 widens that path.
 Two designs avoid it.
 
 * **Depth in block RAM.**
