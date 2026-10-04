@@ -49,35 +49,35 @@ jobs:
           chmod +x /usr/local/bin/bazel
           echo "bazelisk $(date +%s)" >> /tmp/ci-times
 
-      # A cold build fetches every toolchain MODULE.bazel pins, TeX, Rust,
-      # the simulators and the Zephyr toolchain among them, and builds nvc
-      # from source. The runner is serial, so a cache miss costs every other queued run.
+      # Only Bazelisk's download of Bazel itself is cached here, keyed on
+      # the version it fetches. Everything a build needs again is already
+      # shared on the runner, mounted from /data/cache/bazel and named in
+      # /etc/bazel.bazelrc: the disk cache holds every action's outputs and
+      # the repository cache the downloads, and the repositories that
+      # declare themselves reproducible (#938).
       #
-      # Everything under ~/.cache/bazel except Bazel's install base (#540).
-      # Bazel dates the install base's files ten years ahead on purpose, so
-      # restoring it printed a tar warning per file, about 440 lines at the
-      # top of every log, and Bazel re-extracts it in a few seconds anyway.
-      # The cache tars each matched path whole and a `!` line drops only an
-      # exact match, so excluding `install` means listing its siblings:
-      # `_bazel_root` is itself excluded and its children listed instead.
+      # Until #939 this step also tarred the whole of ~/.cache/bazel, the
+      # output base with its build outputs and sandbox litter, 2.3 to 4 GB,
+      # and that made a job slower, not faster. Measured on eph4 at
+      # 6a35c05, in this job's image with the runner's mounts: a fresh
+      # output base built //... in 136 s and 148 s, and the same build with
+      # the tarball restored took 28 s plus 237 s and 52 s plus 121 s,
+      # because Bazel checks every restored output against the action
+      # cache; run 1544's record had the restore alone at 129 s. Saving it
+      # is also where run 1521 sat (#943). Keeping only `external` and the
+      # action cache is no better: that build fails, the action cache
+      # vouching for outputs that are not there.
       #
-      # Restored here and saved by its own step at the end, rather than by
-      # the combined action's post step, so that the save is a step the
-      # run's record can time (#940). The save keeps the combined action's
-      # rule: only when the key missed, and only when the job succeeded.
-      - name: Restore the Bazel cache
+      # Restored here and saved by its own step at the end, so that both
+      # are steps the run's record can time (#940). The save keeps the
+      # combined action's rule: only when the key missed, and only when
+      # the job succeeded.
+      - name: Restore the Bazelisk cache
         id: cache
         uses: https://code.forgejo.org/actions/cache/restore@v4
         with:
-          path: |
-            ~/.cache/bazel/*
-            !~/.cache/bazel/_bazel_root
-            ~/.cache/bazel/_bazel_root/*
-            !~/.cache/bazel/_bazel_root/install
-            ~/.cache/bazelisk
-          key: bazel-${{ hashFiles('.bazelversion', '.bazelrc', 'MODULE.bazel', 'MODULE.bazel.lock') }}
-          restore-keys: |
-            bazel-
+          path: ~/.cache/bazelisk
+          key: bazelisk-${{ hashFiles('.bazelversion') }}
 
       - name: Mark the cache restore
         run: echo "cache_restore $(date +%s)" >> /tmp/ci-times
@@ -105,16 +105,11 @@ jobs:
             echo "no test targets yet; build is the only gate"
           }
 
-      - name: Save the Bazel cache
+      - name: Save the Bazelisk cache
         if: success() && steps.cache.outputs.cache-hit != 'true'
         uses: https://code.forgejo.org/actions/cache/save@v4
         with:
-          path: |
-            ~/.cache/bazel/*
-            !~/.cache/bazel/_bazel_root
-            ~/.cache/bazel/_bazel_root/*
-            !~/.cache/bazel/_bazel_root/install
-            ~/.cache/bazelisk
+          path: ~/.cache/bazelisk
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Mark the cache save

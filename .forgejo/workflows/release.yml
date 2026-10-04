@@ -99,16 +99,14 @@ jobs:
           echo "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992  /usr/local/bin/bazel" | sha256sum -c
           chmod +x /usr/local/bin/bazel
 
-      - name: Cache Bazel
+      # Bazelisk's download alone, as in build.yml, which says why the
+      # output base is no longer tarred (#939).
+      - name: Cache Bazelisk
         if: steps.decide.outputs.proceed == 'true'
         uses: https://code.forgejo.org/actions/cache@v4
         with:
-          path: |
-            ~/.cache/bazel
-            ~/.cache/bazelisk
-          key: bazel-${{ hashFiles('.bazelversion', '.bazelrc', 'MODULE.bazel', 'MODULE.bazel.lock') }}
-          restore-keys: |
-            bazel-
+          path: ~/.cache/bazelisk
+          key: bazelisk-${{ hashFiles('.bazelversion') }}
 
       # The log is kept for the export at the end, and `pipefail` keeps
       # the status Bazel's rather than `tee`'s (#538).
