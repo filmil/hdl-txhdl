@@ -316,7 +316,7 @@ impl Model {
             CSR_MIP => {}
             CSR_MTVAL => self.csr.mtval = v,
             CSR_MBUSQUIET => self.csr.busquiet = v & 1 != 0,
-            // `ebreakm` and `step` are the program's; the rest is the
+            // `ebreakm` and `step` are the debugger's; the rest is the
             // core's to say.
             CSR_DCSR => {
                 self.dcsr = 0x4000_0003 | (v & 0x8004) | (self.dcsr & 0x1c0)
@@ -621,6 +621,13 @@ impl Model {
                 next = self.csr.mepc;
             }
             Csrrw | Csrrs | Csrrc | Csrrwi | Csrrsi | Csrrci => {
+                // `dcsr` and `dpc` only in debug mode, which a program
+                // never runs in: the debugger writes them through
+                // `debug_write` (issue 972).
+                if matches!(imm, CSR_DCSR | CSR_DPC) && !self.debug {
+                    self.trap(CAUSE_ILLEGAL, w);
+                    return;
+                }
                 let Some(old) = self.csr_read(imm) else {
                     self.trap(CAUSE_ILLEGAL, w);
                     return;

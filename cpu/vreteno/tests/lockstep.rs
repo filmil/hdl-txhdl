@@ -984,6 +984,44 @@ fn debug_ebreak() {
     assert_eq!(entries[1] & 0x8000, 0x8000, "ebreakm stays set");
 }
 
+/// Outside debug mode `dcsr` and `dpc` are not there: reading either,
+/// and writing either, is an illegal instruction in the core and the
+/// model alike, and the write changes nothing (issue 972).
+#[test]
+fn debug_csrs_trap_outside_debug_mode() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let handler = a.label();
+    a.abs(handler, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.wide(addi(8, 0, 0)); // x8 counts the traps
+    a.wide(addi(3, 0, -1));
+    a.wide(csrrs(5, CSR_DCSR, 0));
+    a.wide(csrrs(6, CSR_DPC, 0));
+    a.wide(csrrw(0, CSR_DCSR, 3));
+    a.wide(csrrw(0, CSR_DPC, 3));
+    a.wide(csrrsi(0, CSR_DCSR, 4));
+    a.wide(halt());
+    // The handler: the cause, the count, and on past the instruction.
+    a.align();
+    a.place(handler);
+    a.wide(csrrs(20, CSR_MCAUSE, 0));
+    a.wide(addi(8, 8, 1));
+    a.wide(csrrs(22, CSR_MEPC, 0));
+    a.wide(addi(22, 22, 4));
+    a.wide(csrrw(0, CSR_MEPC, 22));
+    a.wide(mret());
+    let p = a.words();
+    let m = lockstep(&p, &[], "dcsr from machine mode", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[8], 5, "every access trapped");
+    assert_eq!(m.x[20], CAUSE_ILLEGAL, "as an illegal instruction");
+    assert_eq!(m.x[5], 0, "a read that trapped wrote no register");
+    assert_eq!(m.x[6], 0);
+    assert_eq!(m.dcsr & 0x8004, 0, "the writes changed nothing");
+    assert_eq!(m.dpc, 0);
+}
 
 /// The reset line in the middle of a program that has set its trap
 /// vector and enabled an interrupt: the core starts again at zero with

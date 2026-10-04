@@ -1101,7 +1101,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // an illegal instruction; a read of one is not.
             let csr_writes = ((f3 & U::<3>::from(3u8)) == U::<3>::from(1u8))
                 | (rs1 != U::<5>::from(0u8));
-            let csr_bad = csr_ro(f12) & csr_writes;
+            // `dcsr` and `dpc` are the debugger's: an instruction that names
+            // either outside debug mode is illegal, a read as much as a
+            // write, as the debug specification has it (issue 972). The
+            // debug module reaches them through its own port, below.
+            let dbg_only = (f12 == isa::CSR_DCSR) | (f12 == isa::CSR_DPC);
+            let csr_bad = (csr_ro(f12) & csr_writes) | (dbg_only & !in_debug);
             let csr_src = mux(f3.bit(2), rs1.zext::<32>(), a);
             let csr_new = csr_value(f3, csr_old, csr_src);
             let sys0 = is_sys & (f3 == 0);
@@ -1189,7 +1194,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // from `x0` or a zero immediate is a read, and wrote the
             // value it read back after the count, so `mcycle` and
             // `minstret` lost one on every read of them (#807).
-            let csr_write = run & csr_op & csr_known & csr_writes;
+            // An illegal one writes nothing either: `dcsr` named from
+            // machine mode traps and stays as it was (issue 972).
+            let csr_write = run & csr_op & csr_known & csr_writes & !csr_bad;
             // Stopped: on a write of an odd value to `mhalt`, and then
             // for good; the halt itself follows a cycle later, when
             // the halting instruction retires. `ebreak` used to do
