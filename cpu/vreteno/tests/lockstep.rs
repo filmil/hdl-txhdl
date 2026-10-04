@@ -14,7 +14,7 @@ use txhdl_parts::bus::router::Router;
 use vreteno32::core::{Vreteno, Writeback};
 use vreteno32::dmem::Dmem;
 use vreteno32::isa::{
-    add, addi, beq, csrrci, csrrs, csrrsi, csrrw, csrrwi, decode, disasm,
+    add, addi, beq, csrrs, csrrsi, csrrw, csrrwi, decode, disasm,
     ebreak, halt, jal, jalr, lui, lw, mret, or, sw, Kind, CAUSE_FETCH_ACCESS,
     CAUSE_MEXT, CAUSE_MSOFT, CAUSE_MTIMER, CAUSE_STORE_ACCESS, CSR_DCSR,
     CSR_MBUSQUIET, CSR_MCAUSE, CSR_MEPC, CSR_MIE, CSR_MSTATUS, CSR_MTVAL,
@@ -65,6 +65,10 @@ pub struct DebugPlan {
     pub hold: u64,
     pub resumes: u32,
     pub entries: RefCell<Vec<u32>>,
+    /// What the debugger writes through the module while the core is
+    /// in debug mode: at the entry numbered, a CSR and its value, as
+    /// OpenOCD sets `dcsr.step` or `ebreakm` (issue 972).
+    pub writes: Vec<(usize, u32, u32)>,
 }
 
 /// Runs `program` on both until the core halts, checking after every
@@ -149,11 +153,11 @@ fn lockstep(
     let (haltreq_out, haltreq) = signal::<Bit, DefaultClock>();
     let (resumereq_out, resumereq) = signal::<Bit, DefaultClock>();
     let (debug_out, _debug) = signal::<Bit, DefaultClock>();
-    // The debug module's register access, absent here: the number and
-    // the word stay zero, the write never comes, the answer is unread.
-    let (_dbg_regno_o, dbg_regno) = signal::<U<16>, DefaultClock>();
-    let (_dbg_wdata_o, dbg_wdata) = signal::<U<32>, DefaultClock>();
-    let (_dbg_we_o, dbg_we) = signal::<Bit, DefaultClock>();
+    // The debug module's register access: a plan's writes drive the
+    // number, the word and the strobe for a cycle; the answer is unread.
+    let (dbg_regno_o, dbg_regno) = signal::<U<16>, DefaultClock>();
+    let (dbg_wdata_o, dbg_wdata) = signal::<U<32>, DefaultClock>();
+    let (dbg_we_o, dbg_we) = signal::<Bit, DefaultClock>();
     let (dbg_rdata_o, _dbg_rdata) = signal::<U<32>, DefaultClock>();
     // The core's link, and one per peripheral, with the router
     // between the core's tracker and the three peripherals'.
@@ -314,9 +318,19 @@ fn lockstep(
         // the level once per entry and the line must drop between.
         let debugging = in_debug.get().to_bool();
         let (mut hreq, mut rreq) = (false, false);
+        let mut dwrite: Option<(u32, u32)> = None;
         if let Some(plan) = dbg {
             if debugging {
                 held += 1;
+                // The entry's write, on its first cycle in debug mode.
+                if held == 1 {
+                    let entry = plan.entries.borrow().len().saturating_sub(1);
+                    dwrite = plan
+                        .writes
+                        .iter()
+                        .find(|(e, _, _)| *e == entry)
+                        .map(|&(_, c, v)| (c, v));
+                }
                 if held > plan.hold && resumes_left > 0 && resume_pulse == 0 {
                     resume_pulse = 2;
                     resumes_left -= 1;
@@ -334,6 +348,10 @@ fn lockstep(
         }
         haltreq_out.set(hreq);
         resumereq_out.set(rreq);
+        let (wc, wv) = dwrite.unwrap_or((0, 0));
+        dbg_regno_o.set(U::from(wc as u16));
+        dbg_wdata_o.set(U::from(wv));
+        dbg_we_o.set(Bit::from_bool(dwrite.is_some()));
         // The reset line, high for the one cycle the plan names: the
         // core and the devices see it in this cycle, and the model is
         // reset after it, once whatever retired in it has been stepped.
@@ -373,6 +391,9 @@ fn lockstep(
         };
         sim.cycle();
         term.see(tx.get().to_bool());
+        if let Some((c, v)) = dwrite {
+            model.debug_write(c, v);
+        }
         if executing && !stall.get().to_bool() {
             line = line_now;
             soft = soft_now;
@@ -891,6 +912,7 @@ fn debug_halt_and_resume() {
         hold: 20,
         resumes: 1,
         entries: RefCell::new(Vec::new()),
+        writes: Vec::new(),
     };
     let m = lockstep(&demo(), &[], "demo, halted", None, Some(&plan), None);
     assert_eq!(m.halted, Some(Halt::Break));
@@ -904,67 +926,64 @@ fn debug_halt_and_resume() {
 
 /// With `dcsr.step` set, every resume runs one instruction and the
 /// core is back in debug mode with the step as the cause, until the
-/// program clears the bit, after which a resume runs it to the end.
+/// debugger clears the bit, after which a resume runs it to the end.
+/// The debugger sets and clears it through the debug module, since
+/// the program may not name `dcsr` (issue 972).
 #[test]
 fn debug_single_steps() {
-    let mut p = vec![csrrsi(0, CSR_DCSR, 4)];
-    p.extend((0..40).map(|_| addi(1, 1, 1)));
-    p.push(csrrci(0, CSR_DCSR, 4));
+    let mut p: Vec<u32> = (0..40).map(|_| addi(1, 1, 1)).collect();
     p.extend((0..4).map(|_| addi(2, 2, 1)));
     p.push(halt());
+    // Set at the request's entry, cleared at the tenth step's.
     let plan = DebugPlan {
         halt_at: 20,
         hold: 3,
         resumes: 60,
         entries: RefCell::new(Vec::new()),
+        writes: vec![(0, CSR_DCSR, 4), (10, CSR_DCSR, 0)],
     };
     let m = lockstep(&p, &[], "single steps", None, Some(&plan), None);
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[1], 40, "every step ran exactly one instruction");
     assert_eq!(m.x[2], 4);
     let entries = plan.entries.borrow();
-    assert!(entries.len() > 4, "entries: {entries:x?}");
+    assert_eq!(entries.len(), 11, "entries: {entries:x?}");
     assert_eq!(cause(entries[0]), 3, "the first entry is the request");
-    // The last entry is the step that ran the clearing instruction,
-    // so the bit is set at every entry but that one.
-    let last = entries.len() - 1;
+    assert_eq!(entries[0] & 4, 0, "the bit is set after that entry");
     for (i, &e) in entries.iter().enumerate().skip(1) {
         assert_eq!(cause(e), 4, "entry {i} is a step: {e:#x}");
-        assert_eq!(e & 4, if i < last { 4 } else { 0 }, "step bit, entry {i}");
+        assert_eq!(e & 4, 4, "step bit, entry {i}");
     }
-    assert_eq!(m.dcsr & 4, 0, "the program cleared the step bit");
+    assert_eq!(m.dcsr & 4, 0, "the debugger cleared the step bit");
 }
 
 /// With `dcsr.ebreakm` set, `ebreak` enters debug mode instead of
 /// trapping: `dpc` is its address, the cause is the breakpoint, and
-/// the instruction before it ran. The plan never resumes, so the run
-/// ends held in debug mode.
+/// the instruction before it ran. The debugger halts the core at the
+/// start to set the bit through the debug module and resumes it once,
+/// so the run ends held in debug mode at the breakpoint.
 #[test]
 fn debug_ebreak() {
-    let p = [
-        lui(5, 0x8),
-        csrrs(0, CSR_DCSR, 5),
-        addi(1, 0, 7),
-        ebreak(),
-        addi(1, 0, 9),
-        halt(),
-    ];
+    let p = [addi(1, 0, 7), ebreak(), addi(1, 0, 9), halt()];
     let plan = DebugPlan {
-        halt_at: u64::MAX,
+        halt_at: 0,
         hold: 10,
-        resumes: 0,
+        resumes: 1,
         entries: RefCell::new(Vec::new()),
+        writes: vec![(0, CSR_DCSR, 0x8000)],
     };
     let m = lockstep(&p, &[], "ebreak", None, Some(&plan), None);
     assert!(m.debug, "held in debug mode");
     assert_eq!(m.halted, None, "no trap and no halt");
     assert_eq!(m.x[1], 7, "the instruction before the breakpoint ran");
-    assert_eq!(m.dpc, 12, "dpc is the breakpoint's address");
+    assert_eq!(m.dpc, 4, "dpc is the breakpoint's address");
     let entries = plan.entries.borrow();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(cause(entries[0]), 1, "the cause is the breakpoint");
-    assert_eq!(entries[0] & 0x8000, 0x8000, "ebreakm stays set");
+    assert_eq!(entries.len(), 2, "entries: {entries:x?}");
+    assert_eq!(cause(entries[0]), 3, "the first is the request");
+    assert_eq!(cause(entries[1]), 1, "the second is the breakpoint");
+    assert_eq!(entries[1] & 0x8000, 0x8000, "ebreakm stays set");
 }
+
 
 /// The reset line in the middle of a program that has set its trap
 /// vector and enabled an interrupt: the core starts again at zero with

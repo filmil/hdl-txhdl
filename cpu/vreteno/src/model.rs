@@ -412,6 +412,14 @@ impl Model {
         self.stepped = false;
     }
 
+    /// A write the debug module makes while the core is in debug mode:
+    /// `dcsr`'s `ebreakm` and `step`, or `dpc` (issue 972).
+    pub fn debug_write(&mut self, csr: u32, v: u32) {
+        if matches!(csr, CSR_DCSR | CSR_DPC) {
+            self.csr_write(csr, v);
+        }
+    }
+
     /// Debug mode left, to `dpc`, arming a single step when `dcsr.step`
     /// asks for one.
     pub fn resume(&mut self) {
