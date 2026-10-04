@@ -98,7 +98,14 @@ it compiles with in its own module, but the Rust rules read a version
 only from the root module, which here is the workspace, so without
 these lines the workspace would compile with the rules' default
 instead. The version is TxHDL's, 1.90.0, and the project's build
-checks that the two stay the same.
+checks that the two stay the same. A workspace that also builds
+TxHDL's programs for the core, such as the system on a chip's
+demonstration \code{@txhdl//soc:demo}, adds one line to the same
+call, \code{extra\_target\_triples = ["riscv32imc-unknown-none-elf"]},
+which fetches the standard library for Vreteno's target; the blinky
+needs no such line, and Zephyr's images need nothing at all.
+\code{tests/consumer} in the project's tree is such a workspace, and
+\code{bazel run //tests:consumer\_check} builds its targets from it.
 
 \lstinputlisting[style=ascii,caption={\code{MODULE.bazel}: two dependencies, one of them by commit, and the Rust compiler.},label={lst:z-module}]{tutorial/blinky/MODULE.bazel}
 
