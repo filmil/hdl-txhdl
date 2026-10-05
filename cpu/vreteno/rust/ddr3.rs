@@ -67,6 +67,19 @@ fn say(line: &[u8]) {
     }
 }
 
+/// Waits until nothing waits in the serial port's queue: the watermark
+/// set at one is passed once fewer than one byte waits, and the last
+/// byte is then in the shifter, a frame from the line. A halt before
+/// this cut the line short by what the queue still held (issue 1219).
+fn drain() {
+    use vreteno_regs::uart::{IP, IP_TXWM_MASK, TXCTRL, TXCTRL_TXCNT_SHIFT};
+    unsafe {
+        let txctrl = UART.add(TXCTRL as usize / 4);
+        txctrl.write_volatile(txctrl.read_volatile() | 1 << TXCTRL_TXCNT_SHIFT);
+        while UART.add(IP as usize / 4).read_volatile() & IP_TXWM_MASK == 0 {}
+    }
+}
+
 /// Waits for `ticks` of the timer's count. The count is 64 bits and
 /// this reads the low half only, which wraps every 43 seconds at 100
 /// MHz, so the difference is taken as it wraps.
@@ -133,6 +146,7 @@ extern "C" fn main() -> ! {
     }
     say(if bad == 0 { b"ok\n" } else { b"bad\n" });
     dots(DOTS_AFTER);
+    drain();
     // The verdict on a board whose serial port cannot be read: the core
     // halts only when every word came back, so the first LED, which
     // shows the halt, says the test passed. A failure spins here
