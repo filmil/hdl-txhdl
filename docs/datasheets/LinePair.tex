@@ -15,6 +15,12 @@ the pixel clock beside the raster and holds two lines. The beam reads
 one while the other fills, and they change places at the start of each
 line. At that start it asks for the line after the one about to be
 shown, so each line has the whole of the line before it to arrive in.
+It asks for nothing until \code{show} is high, and then it asks for a
+frame's first line, from the base, before any other. Out of a reset
+the next line's address is zero, and the line there is the boot
+memory's, whose one-beat answer to a burst hung the fetch for good on
+the board (issue 1178). So the picture starts with the first frame
+whose last row begins after \code{show} rises.
 The bus side of the same scanout is \code{ScanFetch}, and between the
 two the request and the words cross clocks through \code{ChanCdc}
 (issue 151).
@@ -61,6 +67,13 @@ that same cycle counts in the line just filled.
 room: the address of the line after the one about to be shown. On the
 frame's last row it is the frame's first line, at the base taken at
 the last vertical sync.
+\item While \code{show} is low nothing is asked for. The frame's first
+line is asked for at the start of the frame's last row with
+\code{show} high, and the lines after it only once it has been, so the
+first request after a reset or a hide is always the base's line.
+With \code{show} low the pair disarms: it asks for nothing more, and
+does not set \code{starved}. Shown again, it starts from the base's
+line as out of a reset.
 \item \code{pix} is the word at \code{col} in the line not filling, a
 cycle after \code{col} names it.
 \item Once the frame's first line has been asked for, a visible column

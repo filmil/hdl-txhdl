@@ -42,6 +42,9 @@ word itself is not kept.
 \item \code{base}, \code{mode} and \code{clear} are driven from the
 registers \code{fbase}, \code{show} and \code{clr}; \code{clr} is high
 for the one cycle after a write to \code{clear}.
+\item \code{mode} also starts the fetch: in \code{ScanVideo} it is
+\code{LinePair}'s \code{show}, so no line is read from memory until
+the show bit is set (issue 1178).
 \item The underflow bit is \code{seen}, the last value the channel
 brought. It can read high for a few cycles after a clear, the values
 already in the channel, the same in the run and the netlist.
