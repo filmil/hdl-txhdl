@@ -23,16 +23,27 @@ rust_library(
     crate_name = "razboj",
     edition = "2021",
     deps = [
+        ":tile",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
     ],
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Razboj's display list for the CPU, with no standard library so that a
+# Vreteno program can use it: the box clip, which the binning into tiles
+# shares (issue 1157).
+rust_library(
+    name = "tile",
+    srcs = ["tile/lib.rs"],
+    crate_name = "razboj_tile",
+    edition = "2021",
+)
+
 # The sources by name, for the documents' listings.
 filegroup(
     name = "sources",
-    srcs = glob(["src/*.rs"]),
+    srcs = glob(["src/*.rs"]) + ["tile/lib.rs"],
 )
 
 # Render the scene and show it:  bazel run //gpu/razboj:demo
