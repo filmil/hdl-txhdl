@@ -28,7 +28,11 @@ pub struct Counter {
 
 #[lower]
 impl Unit for Counter {
-    async fn run(&mut self, (en,): (In<Bit>,), (q, odd_q): (Out<U<8>>, Out<Bit>)) {
+    async fn run(
+        &mut self,
+        (en,): (In<Bit>,),
+        (q, odd_q): (Out<U<8>>, Out<Bit>),
+    ) {
         loop {
             DefaultClock::rising().await;
             let n = self.count.get();

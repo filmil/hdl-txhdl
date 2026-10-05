@@ -23,7 +23,8 @@ const DTSI: &str =
     include_str!("../../../zephyr/dts/riscv/hdlfactory/vreteno.dtsi");
 const SOC_KCONFIG: &str =
     include_str!("../../../zephyr/soc/hdlfactory/vreteno/Kconfig");
-const SOC_H: &str = include_str!("../../../zephyr/soc/hdlfactory/vreteno/soc.h");
+const SOC_H: &str =
+    include_str!("../../../zephyr/soc/hdlfactory/vreteno/soc.h");
 const ETH_DRIVER: &str =
     include_str!("../../../zephyr/drivers/ethernet/eth_vreteno.c");
 const ETH_KCONFIG: &str =

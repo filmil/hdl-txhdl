@@ -286,10 +286,8 @@ fn every_base_in_the_hal_is_where_the_router_puts_it() {
             );
             continue;
         }
-        let (_, (at, what)) = want
-            .iter()
-            .find(|(n, _)| n == name)
-            .unwrap_or_else(|| {
+        let (_, (at, what)) =
+            want.iter().find(|(n, _)| n == name).unwrap_or_else(|| {
                 panic!(
                     "the HAL's map has `{name}`, which this test does \
                      not hold to a port"
