@@ -279,6 +279,10 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
     let (uirq_out, _uirq) = signal::<Bit, DefaultClock>();
+    // Nothing rings here: the rasteriser reads the list's count back to
+    // back, as it did before the board's doorbell (issue 985).
+    let (ring_out, ring) = signal::<Bit, DefaultClock>();
+    ring_out.set(Bit::One);
 
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
@@ -350,7 +354,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
                 ),
             ),
             raster.run(
-                (ggrant, gdone, grdata),
+                (ggrant, gdone, grdata, ring),
                 (gissue, gwbeat, grelease, idle_out),
             ),
         ),
