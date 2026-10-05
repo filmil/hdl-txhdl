@@ -852,6 +852,41 @@ vreteno_flat(
     program = ":razprobe_ram",
 )
 
+# Gouraud shading on the board (issue 989): a shaded triangle drawn by
+# Razboj, and every pixel of the screen read back by the core and held
+# to what the list says, worked out as Razboj's model works it out.
+rust_binary(
+    name = "shadeprobe_ram",
+    srcs = [
+        "shadeprobe.rs",
+        "shadeprobe_list.rs",
+    ],
+    compile_data = ["vreteno_ram.ld"],
+    crate_root = "shadeprobe.rs",
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_flat(
+    name = "shadeprobe_ram_bin",
+    platform = ":vreteno",
+    program = ":shadeprobe_ram",
+)
+
+# The list shadeprobe writes, against Razboj's encoder and its model.
+rust_test(
+    name = "shadeprobe_list_test",
+    srcs = [
+        "shadeprobe_list.rs",
+        "shadeprobe_list_test.rs",
+    ],
+    crate_root = "shadeprobe_list_test.rs",
+    edition = "2021",
+    deps = ["//gpu/razboj"],
+)
+
 # The list razprobe writes, rendered on the host through Razboj's
 # model: every pixel the program checks holds what it expects there.
 rust_test(
