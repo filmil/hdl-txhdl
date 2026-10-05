@@ -301,7 +301,7 @@ struct Net<'a> {
 
 /// A scanout's pixel side on the board's `scan_req` and `scan_words`:
 /// the flagship's `LinePair` and a raster to drive it, on the board's
-/// clock, with frames of six rows of 640 columns so that a run sees
+/// clock, with frames of six rows of 800 columns so that a run sees
 /// several. From the reset it has no base, as on the board after every
 /// reset; at `show_at` a program gives it `base`.
 struct Scan {
@@ -310,10 +310,8 @@ struct Scan {
 }
 
 /// The raster and the pair: the flagship's line of 640 words, 4096
-/// bytes apart, and four visible rows of six. The raster has no
-/// horizontal blanking, since the pair reads its line at every column
-/// the raster names, and a column past 640 is past the line (#1194).
-type ScanRaster = Raster<640, 0, 0, 0, 4, 1, 1, 0, 10>;
+/// bytes apart in 800 columns, and four visible rows of six.
+type ScanRaster = Raster<640, 16, 96, 48, 4, 1, 1, 0, 10>;
 type ScanPair = LinePair<640, 10, 4, 6, 4096, DefaultClock>;
 
 /// What a scanout asked for and when its words came: the address, the
@@ -722,7 +720,7 @@ fn run_all(
 /// lines must come back from that base, whatever it did before.
 #[test]
 fn the_scanout_shows_a_base_given_after_the_reset() {
-    let frame = 6 * 640;
+    let frame = 6 * 800;
     let net = Net {
         scan: Some(Scan {
             base: 0x4100_1000,
