@@ -104,6 +104,24 @@ pub fn run_lists<
     wave: bool,
     netlists: bool,
 ) -> Vec<Run> {
+    run_lists_at::<ADDR, LOGW, H, N, DL, CTRL>(lists, wave, netlists)
+}
+
+/// The same on a link of `A` address bits rather than [`ADDR`], for a
+/// framebuffer past what sixteen bits reach: the board's is rows of
+/// 1024 words (issue 1178).
+pub fn run_lists_at<
+    const A: usize,
+    const LOGW: usize,
+    const H: usize,
+    const N: usize,
+    const DL: usize,
+    const CTRL: usize,
+>(
+    lists: &[Vec<Insn>],
+    wave: bool,
+    netlists: bool,
+) -> Vec<Run> {
     let insns: &[Insn] = &lists[0];
     let w = 1usize << LOGW;
     // The memory the rasteriser reads its work out of and writes its
@@ -121,7 +139,7 @@ pub fn run_lists<
         host_out,
         per_in,
         per_out,
-    } = axi_units::<ADDR, 32, 4, IDB>();
+    } = axi_units::<A, 32, 4, IDB>();
     let (issue, wbeat, release, grant, done, rdata) = host_client;
     let bus = PerPort::from(per_client);
     let (idle_out, idle) = signal::<Bit, DefaultClock>();
@@ -129,10 +147,10 @@ pub fn run_lists<
     let (ring_out, ring) = signal::<Bit, DefaultClock>();
     ring_out.set(Bit::One);
 
-    let mut host = AxiHost::<ADDR, 32, 4, IDB, IDS>::default();
-    let mut per = AxiPer::<ADDR, 32, 4, IDB>::default();
-    let mut raster = Raster::<ADDR, IDB, LOGW, H, 0, DL, CTRL>::default();
-    let mut fb = Fb::<ADDR, IDB, N> {
+    let mut host = AxiHost::<A, 32, 4, IDB, IDS>::default();
+    let mut per = AxiPer::<A, 32, 4, IDB>::default();
+    let mut raster = Raster::<A, IDB, LOGW, H, 0, DL, CTRL>::default();
+    let mut fb = Fb::<A, IDB, N> {
         px: Mem::with(&image),
         ..Default::default()
     };
@@ -218,18 +236,17 @@ pub fn run_lists<
     if netlists && lists.len() > 1 {
         // A name of its own, since the one-list run's netlist is
         // `raster` and the two are checked side by side.
-        let r =
-            Raster::<ADDR, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster_lists");
+        let r = Raster::<A, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster_lists");
         txhdl::netlist::write_netlists_from_env(&[&r]);
     } else if netlists {
-        let r = Raster::<ADDR, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster");
+        let r = Raster::<A, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster");
         // The memory starts with the display list in it, which the
         // lowering cannot see: `Mem::with` gave it at run time. The
         // netlist is told, or the fetch would read zeroes and the
         // simulated module would not follow the run it is checked
         // against. Only as far as the last word that says anything,
         // since the rest is the zero the array already starts at.
-        let mut f = Fb::<ADDR, IDB, N>::lowered("fb");
+        let mut f = Fb::<A, IDB, N>::lowered("fb");
         // The link's four channels are traced under the names the run
         // gives them, which the waveform names too; the netlist calls
         // them the bundle's.
@@ -254,7 +271,7 @@ pub fn run_lists<
 /// framebuffer, must leave exactly what the model leaves.
 #[cfg(test)]
 mod tests {
-    use super::{run, run_lists};
+    use super::{run, run_lists, run_lists_at};
     use crate::dl::image;
     use crate::model;
     use crate::op::{assemble, Kind, Op};
@@ -695,5 +712,47 @@ mod tests {
         }
         assert!(triangles > 8, "too few triangles drawn: {triangles}");
         assert!(drawn > 20, "too few entries drawn: {drawn}");
+    }
+
+    /// Rows past the sixteenth on the board's rows of 1024 pixels
+    /// (issue 1178). A pixel's byte offset there is past sixteen bits
+    /// from row 16 on, so a rasteriser that forms the offset at sixteen
+    /// bits and widens it after wraps every later row into the first
+    /// sixteen. The harness's own link is sixteen bits and cannot reach
+    /// that far, so this run is on twenty.
+    #[test]
+    fn rows_past_sixteen_land_where_the_model_puts_them() {
+        const LOGW: usize = 10;
+        const H: usize = 40;
+        let ops = [
+            Op::Rect {
+                colour: 0x12_3456,
+                x: 5,
+                y: 14,
+                w: 6,
+                h: 6,
+            },
+            Op::Tri {
+                colour: 0x65_4321,
+                a: (900, 24),
+                b: (1000, 38),
+                c: (800, 38),
+            },
+        ];
+        let insns = assemble(&ops, 1 << LOGW, H);
+        let want = model::render(&insns, 1 << LOGW, H);
+        let runs = run_lists_at::<20, LOGW, H, 65536, 0x3_0000, 0x3_8000>(
+            &[insns],
+            false,
+            false,
+        );
+        let got = &runs[0].fb;
+        for y in 0..H {
+            for x in 0..1usize << LOGW {
+                let i = (y << LOGW) + x;
+                assert_eq!(got[i], want[i], "pixel {x},{y}");
+            }
+        }
+        assert!(want.iter().filter(|&&p| p != 0).count() > 1000);
     }
 }

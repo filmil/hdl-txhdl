@@ -605,15 +605,18 @@ impl<
                                     // One pixel, as a burst of one
                                     // beat at the pixel's word. The
                                     // address is worked out at the
-                                    // link's width, not at the sixteen
-                                    // bits the walk is counted in: the
-                                    // offset into the framebuffer fits
-                                    // in sixteen, but the framebuffer's
-                                    // own base need not, and an address
-                                    // that wrapped would land on
-                                    // whatever else the map has there.
-                                    let addr = (((py << LOGW) + px) << WORD)
-                                        .resize::<A>()
+                                    // link's width from the start, not
+                                    // at the sixteen bits the walk is
+                                    // counted in: on the board's rows
+                                    // of 1024 a pixel's offset passes
+                                    // sixteen bits at row 16, and an
+                                    // offset formed there and widened
+                                    // after wrapped every later row
+                                    // into the first sixteen (issue
+                                    // 1178).
+                                    let addr = (((py.resize::<A>() << LOGW)
+                                        + px.resize::<A>())
+                                        << WORD)
                                         + U::<A>::from(BASE as u32);
                                     if self.hit.get().to_bool() {
                                         issue.send(Issue {
