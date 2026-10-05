@@ -43,6 +43,7 @@ rust_library(
     edition = "2021",
     deps = [
         "//ddr3",
+        "//gpu/razboj",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
     ],
@@ -82,6 +83,7 @@ rust_library(
     rustc_flags = ["-Copt-level=3"],
     deps = [
         "//ddr3",
+        "//gpu/razboj",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
     ],
@@ -136,6 +138,7 @@ rust_test(
     deps = [
         ":vreteno32",
         "//ddr3",
+        "//gpu/razboj",
         "//cpu/vreteno/rust:boot_program",
         "//cpu/vreteno/rust:ddr3_program",
         "//cpu/vreteno/rust:ethrx_program",

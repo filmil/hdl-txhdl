@@ -37,6 +37,12 @@
 //! a line: it falls when a count that is not zero is read and rises
 //! once that list's zero has been answered.
 //!
+//! It reads the count only while `ring` is high. Where the count is a
+//! register beside the rasteriser, as on the board (issue 985), the
+//! register drives `ring` high while it is not zero, so an idle
+//! rasteriser puts nothing on the link at all; where nothing does,
+//! `ring` is tied high and the count is read back to back.
+//!
 //! It is an AXI host, and it writes as a host client writes: a burst
 //! of one beat per pixel, issued on `issue` with its beat on `wbeat`
 //! in the same cycle, with the identifier the tracker granted handed
@@ -47,7 +53,7 @@
 //! The framebuffer's first word is at `BASE` and a pixel is one word,
 //! so a pixel's address is `BASE + ((y << LOGW) + x) * 4`.
 use txhdl::comp::{
-    join2, mux, until, Clock, DefaultClock, Out, Reg, Rx, Tx, Unit, Wire,
+    join2, mux, until, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit, Wire,
 };
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
@@ -234,7 +240,12 @@ impl<
     /// and poll again.
     async fn run(
         &mut self,
-        (grant, done, rdata): (Rx<Grant<I>>, Rx<Done<I>>, Rx<R<32, I>>),
+        (grant, done, rdata, ring): (
+            Rx<Grant<I>>,
+            Rx<Done<I>>,
+            Rx<R<32, I>>,
+            In<Bit>,
+        ),
         (issue, wbeat, release, idle): (
             Tx<Issue<A>>,
             Tx<W<32, 4>>,
@@ -295,8 +306,9 @@ impl<
             async {
                 loop {
                     // The count, which says the list is ready; a zero
-                    // means poll again. A read is issued once the link
-                    // has room for it.
+                    // means poll again. A read is issued while `ring`
+                    // is high, once the link has room for it.
+                    until(DefaultClock::rising, || ring.get().to_bool()).await;
                     until(DefaultClock::rising, || issue.ready().to_bool())
                         .await;
                     issue.send(Issue {

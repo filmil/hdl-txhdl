@@ -11,6 +11,7 @@ rust_library(
     name = "razboj",
     srcs = [
         "src/dl.rs",
+        "src/doorbell.rs",
         "src/fb.rs",
         "src/image.rs",
         "src/lib.rs",

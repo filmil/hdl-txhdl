@@ -64,7 +64,7 @@ impl Map {
             ddr: range::<8, BoardMap>("DDR3"),
             clint: range::<8, BoardMap>("timer"),
             plic: range::<8, BoardMap>("interrupt controller"),
-            uart: range::<9, SlotMap>("serial"),
+            uart: range::<10, SlotMap>("serial"),
         }
     }
 }

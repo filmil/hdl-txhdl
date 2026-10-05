@@ -201,7 +201,11 @@ count is sixteen bits, so a list holds up to 65535 entries.
 \label{sec:g-lists}
 
 A picture that moves is a list a frame, so the rasteriser draws list
-after list. When a list is drawn it waits until every write it made
+after list. It reads the count only while its \code{ring} input is
+high. On the board a doorbell, the register that holds the count,
+drives \code{ring} while the count is not zero, so an idle rasteriser
+puts no reads on the bus (issue~\#985). Here \code{ring} is tied
+high, and the count is polled back to back. When a list is drawn it waits until every write it made
 has been answered, writes the count back to zero, and waits for that
 write's answer too; then it polls the count again. A program waits
 for the zero, writes the next list, and writes its count last, as it

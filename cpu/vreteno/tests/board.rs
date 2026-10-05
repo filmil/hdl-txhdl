@@ -1420,3 +1420,93 @@ fn the_ddr3_path_is_timed_by_the_core() {
     );
     assert_eq!(sd - sm, 0, "the stores wait on the core, not the path");
 }
+
+/// `rd` = `v`, in two instructions, the upper part rounded for the
+/// sign of the lower.
+fn li(a: &mut vreteno32::program::Asm, rd: u32, v: u32) {
+    use vreteno32::isa::{addi, lui};
+    let lo = ((v & 0xfff) as i32) << 20 >> 20;
+    a.emit(lui(rd, (v.wrapping_sub(lo as u32)) >> 12));
+    a.emit(addi(rd, rd, lo));
+}
+
+/// A program that draws with Razboj (issue 985): it writes a display
+/// list of one rectangle into the DDR3, a word that the rectangle will
+/// not cover beside it, and the count into the doorbell; waits for the
+/// doorbell to read zero and for the rasteriser to say it is idle; and
+/// says whether the rectangle's corners took its colour and the word
+/// beside it is as it was.
+fn razboj_program() -> Vec<u32> {
+    use razboj::dl::encode;
+    use razboj::op::{Insn, Kind};
+    use vreteno32::board::{RAZBOJ_DL, RAZBOJ_DOORBELL, RAZBOJ_FB};
+    use vreteno32::isa::{beq, bne, halt, jal, lui, lw, sw, UART_BASE};
+    let mut a = vreteno32::program::Asm::default();
+    a.emit(lui(1, UART_BASE >> 12)); // x1 = the serial port, for say
+                                     // x15 = the doorbell, which is past an immediate's reach from x1.
+    li(&mut a, 15, RAZBOJ_DOORBELL as u32);
+    let pixel = |x: u32, y: u32| RAZBOJ_FB as u32 + (y * 1024 + x) * 4;
+    // Columns 3 to 6 and rows 2 to 4, both ends included.
+    let words = encode(&Insn {
+        kind: Kind::Rect,
+        colour: U::from(0x12_3456u32),
+        alpha: U::from(0xffu8),
+        x0: U::from(3u32),
+        y0: U::from(2u32),
+        x1: U::from(6u32),
+        y1: U::from(4u32),
+        ..Insn::default()
+    });
+    li(&mut a, 10, RAZBOJ_DL as u32);
+    for (i, w) in words.iter().enumerate() {
+        li(&mut a, 4, *w);
+        a.emit(sw(4, 10, 4 * i as i32));
+    }
+    li(&mut a, 11, pixel(7, 4)); // past the rectangle's last column
+    li(&mut a, 12, 0x0bad_f00d);
+    a.emit(sw(12, 11, 0));
+    // Ring: one entry. Then wait for the count to come back to zero,
+    // and for the status to say idle.
+    li(&mut a, 4, 1);
+    a.emit(sw(4, 15, 0)); // count
+    let drawn = a.label();
+    a.place(drawn);
+    a.emit(lw(5, 15, 0)); // count
+    a.to(drawn, |off| bne(5, 0, off));
+    let idle = a.label();
+    a.place(idle);
+    a.emit(lw(5, 15, 4)); // status
+    a.to(idle, |off| beq(5, 0, off));
+    li(&mut a, 13, 0xff12_3456); // the word a pixel takes
+    let bad = a.label();
+    let done = a.label();
+    for (x, y) in [(3, 2), (6, 2), (3, 4), (6, 4)] {
+        li(&mut a, 14, pixel(x, y));
+        a.emit(lw(5, 14, 0));
+        a.to(bad, |off| bne(5, 13, off));
+    }
+    a.emit(lw(5, 11, 0));
+    a.to(bad, |off| bne(5, 12, off));
+    say(&mut a, b"razboj ok\n");
+    a.to(done, |off| jal(0, off));
+    a.place(bad);
+    say(&mut a, b"razboj bad\n");
+    a.place(done);
+    a.emit(halt());
+    a.words()
+}
+
+/// Razboj on the board (issue 985): a program writes a display list
+/// into the DDR3 and rings the doorbell, the rasteriser draws it into
+/// the frame the scanout shows, through the arbiter's seventh port,
+/// and the program reads the pixels back. The only evidence is what
+/// the core reads through the real bus, so a pass covers the doorbell
+/// on the tenth slot, the rasteriser's poll of it, its fetch of the
+/// list and its bursts into the frame at the scanout's stride.
+#[test]
+fn razboj_draws_a_list_rung_on_the_doorbell() {
+    let text = razboj_program();
+    let ran = run(&text, &[], b"", 60000);
+    assert_eq!(ran.said, "razboj ok\n");
+    assert!(ran.halted_at.is_some(), "the core halted itself");
+}

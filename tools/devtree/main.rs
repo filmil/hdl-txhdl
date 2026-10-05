@@ -145,7 +145,7 @@ pub fn dts_with(chosen: &Chosen) -> String {
         range::<8, BoardMap>(named::<8, BoardMap>("timer"));
     let (plic, plic_len) =
         range::<8, BoardMap>(named::<8, BoardMap>("interrupt controller"));
-    let (uart, uart_len) = range::<9, SlotMap>(named::<9, SlotMap>("serial"));
+    let (uart, uart_len) = range::<10, SlotMap>(named::<10, SlotMap>("serial"));
     let exts = extensions()
         .iter()
         .map(|e| format!("\"{e}\""))

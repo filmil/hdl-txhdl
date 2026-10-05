@@ -32,13 +32,15 @@ use crate::rom::Rom;
 use crate::timer::Timer;
 use crate::uart::Uart;
 use ddr3::Ddr3Per;
+use razboj::doorbell::Doorbell;
+use razboj::raster::Raster;
 use txhdl::comp::{
     chan, join2, signal, DefaultClock, In, Out, Pad, Rx, Tx, Unit,
 };
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, Trace};
-use txhdl_parts::bus::arbiter::{Arbiter2, Arbiter6};
+use txhdl_parts::bus::arbiter::{Arbiter2, Arbiter7};
 use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerPort, PerReq, B, R,
     W,
@@ -134,6 +136,16 @@ impl AddrMap<8> for BoardMap {
 pub const PLIC_SOURCES: [&str; 3] = ["serial", "irq", "ethernet"];
 
 pub type BoardRouter = Router<8, BoardMap, 32, 32, 4, 5>;
+
+/// Where Razboj draws, and where its display list is: both in the DDR3
+/// (issue 985). The frame is the one the scanout shows, rows of 1024
+/// words, so the scanout's stride is 4096 bytes. The list may hold the
+/// 65 535 entries a count allows, four megabytes.
+pub const RAZBOJ_FB: usize = 0x4200_0000;
+pub const RAZBOJ_DL: usize = 0x4280_0000;
+/// Razboj's doorbell, the tenth slot of the peripheral page: the count
+/// a program writes last to start a list, which Razboj reads and clears.
+pub const RAZBOJ_DOORBELL: usize = 0x3900;
 // end{map}
 
 // begin{litemaps}
@@ -141,8 +153,8 @@ pub type BoardRouter = Router<8, BoardMap, 32, 32, 4, 5>;
 /// from 0x3000, in the order of the bridge's ports.
 pub struct SlotMap;
 
-impl AddrMap<9> for SlotMap {
-    const RANGES: [(usize, usize); 9] = [
+impl AddrMap<10> for SlotMap {
+    const RANGES: [(usize, usize); 10] = [
         (0x3000, 0xffff_ff00),
         (0x3100, 0xffff_ff00),
         (0x3200, 0xffff_ff00),
@@ -152,8 +164,9 @@ impl AddrMap<9> for SlotMap {
         (0x3600, 0xffff_ff00),
         (0x3700, 0xffff_ff00),
         (0x3800, 0xffff_ff00),
+        (0x3900, 0xffff_ff00),
     ];
-    const NAMES: [&'static str; 9] = [
+    const NAMES: [&'static str; 10] = [
         "the serial port",
         "the pulse width modulator",
         "the third slot, brought out of the unit",
@@ -163,6 +176,7 @@ impl AddrMap<9> for SlotMap {
         "the configuration flash's SPI master",
         "the Ethernet PHY's management interface",
         "the SD card host",
+        "Razboj's doorbell",
     ];
 }
 
@@ -218,11 +232,11 @@ pub struct Board<const DIV: u32> {
     /// past the arbiter widens: the JTAG master's IP only ever used one
     /// of the two bits it had. Taking turns, as the arbiter does.
     pub jarb: Arbiter2<32, 32, 4, 1, 2, 0>,
-    /// The six hosts onto one link: the core, the JTAG master, the
+    /// The seven hosts onto one link: the core, the JTAG master, the
     /// Ethernet port's two engines, the one that fetches a frame to
     /// send and the one that stores a frame received, the video
-    /// scanout's fetch (issue 151), and the SD card's two engines
-    /// behind `sdarb` (issue 912). The peripheral side carries five
+    /// scanout's fetch (issue 151), the SD card's two engines behind
+    /// `sdarb` (issue 912), and Razboj's rasteriser (issue 985). The peripheral side carries five
     /// bits of identifier, two for the hosts' own and three for the
     /// port, which is room for eight: a sixth, seventh and eighth host
     /// raise the count and widen nothing (issue 1022). Four bits held
@@ -231,26 +245,27 @@ pub struct Board<const DIV: u32> {
     ///
     /// Taking turns rather than fixed priority, so that an engine
     /// moving a frame cannot hold the core off the bus for the length
-    /// of it. With every host offering, each wins one turn in six.
-    pub arb: Arbiter6<32, 32, 4, 2, 5, 0>,
+    /// of it. With every host offering, each wins one turn in seven.
+    pub arb: Arbiter7<32, 32, 4, 2, 5, 0>,
     pub router: BoardRouter,
     pub pdmem: AxiPer<32, 32, 4, 5>,
     pub ptimer: AxiPer<32, 32, 4, 5>,
     // begin{vslot}
-    /// Nine small peripherals share the page at `0x3000`: the serial
+    /// Ten small peripherals share the page at `0x3000`: the serial
     /// port at `0x3000`, the pulse width modulator at `0x3100`,
     /// whatever the board hangs on the third slot at `0x3200`, the
     /// remote peripheral at `0x3300`, the Ethernet port's registers
     /// on the fifth slot at `0x3400`, the entropy source on the
     /// sixth at `0x3500`, the configuration flash's SPI master on the
     /// seventh at `0x3600`, the Ethernet PHY's MDIO master on the
-    /// eighth at `0x3700`, and the SD card host on the ninth at
-    /// `0x3800`, each a sixteenth of the page. The
+    /// eighth at `0x3700`, the SD card host on the ninth at `0x3800`,
+    /// and Razboj's doorbell on the tenth at `0x3900`, each a
+    /// sixteenth of the page. The
     /// router's ports go to memories and to the bus's own peripherals,
     /// and a peripheral of six registers does not want one of its own.
     ///
     /// The page was never the constraint and is not now. It is 4 KiB
-    /// and a slot is 256 bytes, so it holds sixteen and seven are
+    /// and a slot is 256 bytes, so it holds sixteen and six are
     /// still free; what was full was the bridge in front of it, which
     /// had four ports. So no address moves to make room for the fifth,
     /// and nothing that names one of the first four changes.
@@ -264,7 +279,7 @@ pub struct Board<const DIV: u32> {
     ///
     /// The fifth is a field, because `EthSlots` runs on the bus clock
     /// like every other peripheral here and wants no crossing.
-    pub puart: LiteBridge<9, SlotMap, 32, 32, 4, 5>,
+    pub puart: LiteBridge<10, SlotMap, 32, 32, 4, 5>,
     // end{vslot}
     pub pplic: LiteBridge<1, PlicMap, 32, 32, 4, 5>,
     /// The debug module, on a router port of its own behind a bridge
@@ -402,6 +417,13 @@ pub struct Board<const DIV: u32> {
     /// The scanout's fetch never writes.
     pub vnobeats: NoBeats,
     // end{scan}
+    /// Razboj's rasteriser (issue 985), the arbiter's seventh host. It
+    /// draws into the frame the scanout shows, at `RAZBOJ_FB`, from
+    /// the display list at `RAZBOJ_DL`, and polls its doorbell on the
+    /// tenth slot for the list's length.
+    pub raster: Raster<32, 2, 10, 480, RAZBOJ_FB, RAZBOJ_DL, RAZBOJ_DOORBELL>,
+    pub rhost: AxiHost<32, 32, 4, 2, 4>,
+    pub doorbell: Doorbell,
     /// Three sources, each asking while its line is high: the serial
     /// port's receive interrupt, the board's own `irq` input, and the
     /// Ethernet port's arrival.
@@ -603,6 +625,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let rst_timer = rst.clone();
         let rst_uart = rst.clone();
         let rst_plic = rst.clone();
+        let rst_bell = rst.clone();
         // The core and its tracker.
         let (issue_tx, issue_rx) = chan::<Issue<32>, DefaultClock>();
         let (wbeat_tx, wbeat_rx) = chan::<W<32, 4>, DefaultClock>();
@@ -901,6 +924,26 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (scgrant_tx, scgrant_rx) = chan::<Grant<2>, DefaultClock>();
         let (scdone_tx, scdone_rx) = chan::<Done<2>, DefaultClock>();
         let (scrdata_tx, scrdata_rx) = chan::<R<32, 2>, DefaultClock>();
+        // Razboj's host onto the arbiter's seventh port, its rasteriser,
+        // and its doorbell on the bridge's tenth slot.
+        let (raw_tx, raw_rx) = chan::<Aw<32, 2>, DefaultClock>();
+        let (rar_tx, rar_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (rw_tx, rw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (rb_tx, rb_rx) = chan::<B<2>, DefaultClock>();
+        let (rr_tx, rr_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (rissue_tx, rissue_rx) = chan::<Issue<32>, DefaultClock>();
+        let (rwbeat_tx, rwbeat_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (rrelease_tx, rrelease_rx) = chan::<Grant<2>, DefaultClock>();
+        let (rgrant_tx, rgrant_rx) = chan::<Grant<2>, DefaultClock>();
+        let (rdone_tx, rdone_rx) = chan::<Done<2>, DefaultClock>();
+        let (rrdata_tx, rrdata_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (ridle_o, ridle_i) = signal::<Bit, DefaultClock>();
+        let (ring_o, ring_i) = signal::<Bit, DefaultClock>();
+        let (paw_bell_tx, paw_bell_rx) = chan::<LiteAw<32>, DefaultClock>();
+        let (par_bell_tx, par_bell_rx) = chan::<LiteAr<32>, DefaultClock>();
+        let (pw_bell_tx, pw_bell_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (pb_bell_tx, pb_bell_rx) = chan::<LiteB, DefaultClock>();
+        let (pr_bell_tx, pr_bell_rx) = chan::<LiteR<32>, DefaultClock>();
         let (scat_o, scat_i) = signal::<U<32>, DefaultClock>();
         let (sccount_o, sccount_i) = signal::<U<16>, DefaultClock>();
         let (scstart_o, scstart_i) = signal::<Bit, DefaultClock>();
@@ -1155,15 +1198,15 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                         (
                                             [
                                                 aw_rx, jaw_rx, faw_rx, saw_rx,
-                                                scaw_rx, sdaw_rx,
+                                                scaw_rx, sdaw_rx, raw_rx,
                                             ],
                                             [
                                                 ar_rx, jar_rx, far_rx, sar_rx,
-                                                scar_rx, sdar_rx,
+                                                scar_rx, sdar_rx, rar_rx,
                                             ],
                                             [
                                                 w_rx, jw_rx, fw_rx, sw_rx,
-                                                scw_rx, sdw_rx,
+                                                scw_rx, sdw_rx, rw_rx,
                                             ],
                                             xb_rx,
                                             xr_rx,
@@ -1174,11 +1217,11 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             xw_tx,
                                             [
                                                 b_tx, jb_tx, fb_tx, sb_tx,
-                                                scb_tx, sdb_tx,
+                                                scb_tx, sdb_tx, rb_tx,
                                             ],
                                             [
                                                 r_tx, jr_tx, fr_tx, sr_tx,
-                                                scr_tx, sdr_tx,
+                                                scr_tx, sdr_tx, rr_tx,
                                             ],
                                         ),
                                     ),
@@ -1329,13 +1372,13 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                 lb_rx, pb_pwm_rx, vb,
                                                 pb_rem_rx, pb_eth_rx,
                                                 pb_trng_rx, pb_spi_rx, pb_mdio_rx,
-                                                pb_sd_rx,
+                                                pb_sd_rx, pb_bell_rx,
                                             ],
                                             [
                                                 lr_rx, pr_pwm_rx, vr,
                                                 pr_rem_rx, pr_eth_rx,
                                                 pr_trng_rx, pr_spi_rx, pr_mdio_rx,
-                                                pr_sd_rx,
+                                                pr_sd_rx, pr_bell_rx,
                                             ],
                                         ),
                                         (
@@ -1349,6 +1392,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                 paw_spi_tx,
                                                 paw_mdio_tx,
                                                 paw_sd_tx,
+                                                paw_bell_tx,
                                             ],
                                             [
                                                 lar_tx,
@@ -1360,12 +1404,13 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                                 par_spi_tx,
                                                 par_mdio_tx,
                                                 par_sd_tx,
+                                                par_bell_tx,
                                             ],
                                             [
                                                 lw_tx, pw_pwm_tx, vw,
                                                 pw_rem_tx, pw_eth_tx,
                                                 pw_trng_tx, pw_spi_tx, pw_mdio_tx,
-                                                pw_sd_tx,
+                                                pw_sd_tx, pw_bell_tx,
                                             ],
                                             b2_tx,
                                             r2_tx,
@@ -1635,7 +1680,40 @@ join2(
                                         ),
                                     ),
                                     join2(
-                                        self.vnobeats.run((), scwbeat_tx),
+                                        join2(
+                                            self.vnobeats.run((), scwbeat_tx),
+                                            // Razboj: the rasteriser before
+                                            // the doorbell, which reads
+                                            // whether it is idle.
+                                            join2(
+                                                join2(
+                                                    self.raster.run(
+                                                        (rgrant_rx, rdone_rx, rrdata_rx, ring_i),
+                                                        (rissue_tx, rwbeat_tx, rrelease_tx, ridle_o),
+                                                    ),
+                                                    self.doorbell.run(
+                                                        LitePort {
+                                                            aw: paw_bell_rx,
+                                                            ar: par_bell_rx,
+                                                            w: pw_bell_rx,
+                                                            b: pb_bell_tx,
+                                                            r: pr_bell_tx,
+                                                        },
+                                                        (rst_bell, ridle_i, ring_o),
+                                                    ),
+                                                ),
+                                                self.rhost.run(
+                                                    (
+                                                        rissue_rx, rwbeat_rx, rb_rx, rr_rx,
+                                                        rrelease_rx,
+                                                    ),
+                                                    (
+                                                        raw_tx, rar_tx, rw_tx, rgrant_tx,
+                                                        rdone_tx, rrdata_tx,
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
                                         // The SD host's engines, after the host, whose starts and
                                         // lengths they read.
                                         join2(

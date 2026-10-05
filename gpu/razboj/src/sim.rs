@@ -125,6 +125,9 @@ pub fn run_lists<
     let (issue, wbeat, release, grant, done, rdata) = host_client;
     let bus = PerPort::from(per_client);
     let (idle_out, idle) = signal::<Bit, DefaultClock>();
+    // Nothing rings here: the count is read back to back.
+    let (ring_out, ring) = signal::<Bit, DefaultClock>();
+    ring_out.set(Bit::One);
 
     let mut host = AxiHost::<ADDR, 32, 4, IDB, IDS>::default();
     let mut per = AxiPer::<ADDR, 32, 4, IDB>::default();
@@ -156,6 +159,7 @@ pub fn run_lists<
             t.add("ans", &per_in.3);
             t.add("rb", &per_in.4);
             t.add("idle", &idle);
+            t.add("ring", &ring);
             t.add("raster", &raster);
             t.add("fb", &fb);
             t.start();
@@ -166,7 +170,10 @@ pub fn run_lists<
     let mut sim = Running::new(join2(
         join2(host.run(host_in, host_out), per.run(per_in, per_out)),
         join2(
-            raster.run((grant, done, rdata), (issue, wbeat, release, idle_out)),
+            raster.run(
+                (grant, done, rdata, ring),
+                (issue, wbeat, release, idle_out),
+            ),
             fb.run(bus, ()),
         ),
     ));
