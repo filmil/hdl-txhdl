@@ -57,5 +57,13 @@ fb_jump:
 	addi	t1, t1, -1
 	j	3b
 2:
+	/*
+	 * The core fetches through an instruction cache (issue 1021), which
+	 * may still hold the words this image ran from before the copy
+	 * replaced them: a `fence.i` empties it, so the jump fetches the
+	 * program just written (issue 1211). Written as its encoding, since
+	 * neither assembler that reads this file is given Zifencei.
+	 */
+	.insn	i 0x0f, 1, x0, x0, 0	/* fence.i */
 	jr	a3
 fb_jump_end:
