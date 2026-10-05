@@ -2432,6 +2432,17 @@ image as Rust source. The rest of the tree depends on that source, so
 a program for the core is built by \code{bazel build //...} like
 anything else, with no flag to remember.
 
+The transition also sets the flags every crate built for the core is
+compiled with: optimised for size, no debug assertions, no overflow
+checks. A library a program links is built with them as the program
+is, and a build of the same library for this machine, its tests
+included, keeps its own (issue 1248). Before, a library that named no
+flags of its own was built for the core unoptimised. The logo's pixel
+table was copied whole for each pixel read, and the paint took 31
+seconds where it takes two (issue 1245). The GL ES library's list of
+a frame of the icosahedron took four times the instructions it takes
+now, and the program twice the bytes.
+
 \subsection*{What the machine will not let a compiler do}
 
 Two of the core's properties decided how a program had to be
