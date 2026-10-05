@@ -7,6 +7,8 @@
 //! - [`fb`]: the framebuffer, a unit and an AXI peripheral.
 //! - [`model`]: the same rasteriser written with loops, which the
 //!   hardware is checked against.
+//! - [`tiles`]: a display list binned into tiles, with the check that
+//!   it draws what the list draws.
 //! - [`image`]: the framebuffer as a PNG file and as colour on a
 //!   terminal.
 pub mod dl;
@@ -17,3 +19,4 @@ pub mod op;
 pub mod raster;
 pub mod scene;
 pub mod sim;
+pub mod tiles;

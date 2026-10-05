@@ -19,20 +19,38 @@ rust_library(
         "src/raster.rs",
         "src/scene.rs",
         "src/sim.rs",
+        "src/tiles.rs",
     ],
     crate_name = "razboj",
     edition = "2021",
     deps = [
+        ":tile",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
     ],
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Razboj's display list in tiles, for the CPU: the tile table and the
+# binning (issue 1157). No standard library, so that a Vreteno program
+# can use it as the tests do.
+rust_library(
+    name = "tile",
+    srcs = ["tile/lib.rs"],
+    crate_name = "razboj_tile",
+    edition = "2021",
+)
+
+rust_test(
+    name = "tile_test",
+    crate = ":tile",
+    edition = "2021",
+)
+
 # The sources by name, for the documents' listings.
 filegroup(
     name = "sources",
-    srcs = glob(["src/*.rs"]),
+    srcs = glob(["src/*.rs"]) + ["tile/lib.rs"],
 )
 
 # Render the scene and show it:  bazel run //gpu/razboj:demo
