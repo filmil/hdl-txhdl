@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # The path into DDR3: what limits it, and how to widen it
 
-Status: design, October 4, 2026, for issue 1023, steps 2 and 3.
+Status: design, October 4, 2026, for issue 1023, steps 2 and 3; section 8 records step 3.
 Read against main at `c310333`; paths are at that commit.
 Author: automated coding assistant, with human supervision.
 
@@ -119,3 +119,65 @@ Splitting a burst into the memory's commands and converting 32 bits to 256 are A
 
 What generation alone cannot say is the port's size and its read latency.
 Both come with step 3, which puts `Ddr3Per` on this port: its synthesis gives the size, and its simulation and then the board give the latency, which is what the path's throughput turns on.
+
+## 8. `Ddr3Per` on the AXI port
+
+Step 3 puts the design on the port of section 7.
+`Ddr3Per` is now `AxiPerPins` in front of the controller, and the board's router port goes straight to it, with no tracker in front, since the controller keeps its own transactions.
+The wrapper is `ddr3/hdl/ddr3_axi32.v`.
+It drops the link's top two address bits, which the design has already decoded, and gives the controller its AXI reset from the user clock's.
+`AxiWb` and `ddr3_wb32` are no longer on the path.
+
+**The controller's latency, in simulation.**
+`//ddr3/sim:wrapper_test` runs the wrapper and the controller against the Micron models, in cycles of the 100 MHz user clock:
+
+| What | Cycles |
+|---|---|
+| A read's first beat, after its address phase is taken | 25 |
+| The same, for a burst of sixteen | 27 |
+| The same, for the first read right after a write | 63 |
+| A write's response, after its last beat is taken | 3 |
+
+It also writes and reads a byte at an address that is not a word's, under that byte's strobe, as the core's byte accesses are; the controller was generated without narrow bursts, and a full-width beat at a byte's address is what it is given and what it handles.
+
+The testbench issues one transaction at a time, so it does not measure how many the controller keeps outstanding.
+The model in `ddr3::Ddr3` answers with the common case: a read's first beat 24 steps after it sees the address, which is a cycle after the address is taken, and a write's response 2 steps after its last beat.
+
+**The path, in simulation.**
+`//ddr3:bw` now measures `AxiPerPins` in front of a memory on its pins at a given latency, and `Ddr3Per` with its model:
+
+| | Cycles a word | MB/s at 100 MHz |
+|---|---|---|
+| Reads, four bursts of sixteen in flight, at any latency up to 32 | 1.01 to 1.04 | 386 to 398 |
+| Reads, one burst at a time, at latency 24 | 2.81 | 142 |
+| Writes, at any latency | 1.25 | about 320 |
+| `Ddr3Per` with its model, reads | 1.03 | 390 |
+| `Ddr3Per` with its model, writes | 1.25 | 321 |
+
+A read pays the latency once a burst rather than once a word, and with bursts in flight not even that.
+A write costs a beat a cycle and four cycles a burst more, which is a gap the host leaves between write bursts on the link and not the path's (issue 1121).
+Against section 1's 27 cycles a word for reads on the board, that is the gain the issue asked for, if the board agrees.
+
+The core's own timing of the path, `the_ddr3_path_is_timed_by_the_core`, now finds a DDR3 load costing the model's read latency less two cycles more than a data memory load, since the pins part and the port take two cycles fewer than the data memory's tracker and block RAM.
+The core's stores take the same cycles into either memory, since the core issues them no faster than it fetches the routine from the data memory; at a write latency of 4 rather than the controller's 2 the DDR3's came out 14 cycles faster in sixteen, so the stores say how the core issues them and not how fast the path is.
+
+**Size and timing.**
+`//flagship:flagship_pnr` on this branch, against the same target at main 36201f8, whose design is main's at the time of writing, measured the same way:
+
+| | Main 36201f8 | With the AXI port |
+|---|---|---|
+| Worst setup slack, `clk_pll_i` | +0.106 ns | +0.055 ns |
+| Worst hold slack | +0.032 ns | +0.031 ns |
+| LUTs | 21,315 | 23,347 |
+| Flip-flops | 19,786 | 21,959 |
+| Block RAM tiles | 18.5 | 18.5 |
+| DSPs | 4 | 4 |
+
+Every constraint is met in both.
+The worst setup path is the core's own in both, a register to the boot memory's address (`mstatus` here), and not the controller's; the core's slack swings by about 0.25 ns with placement alone (issue 1130), so the 0.05 ns it moved is within that.
+It is also within 0.06 ns of failing, which is the core's margin and what issue 1130 is about.
+The summary names only the worst path of each clock, so it does not say how close the controller's own paths come; its crossings to the other clocks have 5.9 ns or more.
+The design is about 2,000 LUTs and 2,200 flip-flops larger, which is the AXI port less what `AxiWb`, `ddr3_wb32` and the tracker in front of them took, and no block RAM larger.
+
+
+What the board says is step 4.

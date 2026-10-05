@@ -1870,10 +1870,12 @@ chip's identity, \code{0020ba18}, the MT25QL128's; found its write
 enable latch clear after a write enable the pins refused; and found
 the bitstream's sync word through the window at byte 48. Nothing was
 written to the flash.
-The DDR3 memory is a gigabyte behind the bridge from AXI to Wishbone
-and AMD's MIG controller, which the build generates. The controller
-is a module from elsewhere, so the netlist names its wrapper and does
-not write it, and the memory's pins, the data and strobe lines among
+The DDR3 memory is a gigabyte behind AMD's MIG controller, which the
+build generates with its own AXI4 port, and \code{AxiPerPins}, which
+puts the router's port onto the controller's pins with no tracker in
+front, since the controller keeps transactions outstanding itself
+(issue~\#1023). The controller is a module from elsewhere, so the
+netlist names its wrapper and does not write it, and the memory's pins, the data and strobe lines among
 them, are the module's own ports. \code{board\_netlist} writes it with
 a program already in the instruction memory and the data memory,
 since nothing on the machine loads them at run time.
@@ -2570,7 +2572,10 @@ Apache-2.0. The design with MIG ran on September 28, 2026, written into
 the part over JTAG, and said \code{ddr3 ok} the same way: the
 controller calibrates, the memory returns what it was given, and the
 core runs on after. The run from the flash after a power cycle is still
-owed (issue~\#188).
+owed (issue~\#188). Since issue~\#1023 the core reaches the controller
+through the controller's own AXI4 port rather than through
+\code{AxiWb}, and the run of that path on the board is the issue's
+fourth step.
 
 \begin{thebibliography}{10}
 

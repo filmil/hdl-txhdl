@@ -1128,9 +1128,9 @@ fn the_netlist_holds_the_controller() {
     let v = TestBoard::verilog("board");
     assert!(v.contains("module board("), "the top");
     assert!(v.contains("module board_cpu("), "the core");
-    assert!(v.contains("module board_ddr3_bridge("), "the bridge");
-    assert!(v.contains("ddr3_wb32 "), "the controller");
-    assert!(!v.contains("module ddr3_wb32"), "not written");
+    assert!(v.contains("module board_ddr3_pins("), "the pins");
+    assert!(v.contains("ddr3_axi32 "), "the controller");
+    assert!(!v.contains("module ddr3_axi32"), "not written");
     assert!(v.contains("ring_osc "), "the rings");
     assert!(!v.contains("module ring_osc"), "not written either");
     assert!(v.contains("inout [31:0] dq"), "the data pads");
@@ -1377,13 +1377,17 @@ fn mcycle_steps_steadily_between_two_reads() {
 /// kind takes the same cycles.
 ///
 /// A load waits for its word, so the loads' difference is what a word
-/// costs the DDR3's path over the block RAM's: four cycles here, the
-/// bridge's own, since the controller's model answers in one; on the
-/// board it is that and the controller's latency, which is what the
-/// board run is for. The stores barely differ, one cycle in sixteen
-/// words: the core fetches each one over the bus, from the data memory,
-/// slower than the path takes posted words, so the stores show that the
-/// core cannot fill the path, not how fast the path is.
+/// costs the DDR3's path over the block RAM's: the controller's read
+/// latency, which the model has, less two cycles, since the pins part
+/// and the controller's port take two cycles fewer than the data
+/// memory's tracker and block RAM. On the board it is the controller's
+/// own latency, which is what the board run is for. The stores take
+/// the same cycles into either memory: the core issues them no faster
+/// than it fetches the routine, over the bus, from the data memory, so
+/// they show that the core cannot fill the path, not how fast the path
+/// is. Their difference also turns on how the stores fall against those
+/// fetches: at a write latency of four rather than the controller's two,
+/// the stores into the DDR3 came out fourteen cycles faster.
 #[test]
 fn the_ddr3_path_is_timed_by_the_core() {
     let ran = run(ddr3bw_program::TEXT, ddr3bw_program::DATA, b"", 80000);
@@ -1406,14 +1410,13 @@ fn the_ddr3_path_is_timed_by_the_core() {
         assert_eq!(v.len(), 4, "four runs of {what}: {}", ran.said);
         assert!(v.iter().all(|&c| c == v[0]), "{what} steady: {v:?}");
     }
+    let (ld, lm, sd, sm) =
+        (ld[0] as i64, lm[0] as i64, sd[0] as i64, sm[0] as i64);
+    let latency = ddr3::MODEL_READ_LATENCY as i64;
     assert_eq!(
-        ld[0] - lm[0],
-        16 * 4,
-        "a load costs the DDR3 four cycles more"
+        ld - lm,
+        16 * (latency - 2),
+        "a load costs the DDR3 the controller's latency, less two"
     );
-    assert_eq!(
-        sd[0] - sm[0],
-        1,
-        "the stores wait on the core, not the path"
-    );
+    assert_eq!(sd - sm, 0, "the stores wait on the core, not the path");
 }
