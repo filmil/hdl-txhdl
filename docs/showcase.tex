@@ -144,7 +144,7 @@ The board & core, 8 devices, DDR3, a JTAG host, the debug transport & 3 runs, Op
 Ethernet & the MAC, the board's PHY & on the board \\
 Video & HDMI, its I2C, the board & on the board \\
 PCIe & XDMA endpoint, pins, registers & a run, Vivado \\
-The flagship & board, Ethernet, video, in one part & the board, routed \\
+The flagship & board, Ethernet, video, Razboj, in one part & the board, routed \\
 On silicon & Vreteno, Yosys, OpenROAD & routed, no DRC \\
 \bottomrule
 \end{tabular}
@@ -308,7 +308,10 @@ three edge functions incrementally, and writes each pixel that is
 inside the primitive as a single-beat AXI burst; the framebuffer is a
 memory behind the other end of the link. Both are lowered units, and
 the build simulates both netlists against the run that drew a smaller
-version of this picture.
+version of this picture. On the flagship the rasteriser is one more host
+on the board's bus: a program writes a list into the DDR3, rings a
+doorbell on the peripheral page, and the rasteriser draws into the
+frame the scanout shows.
 
 \section{Parts}
 
