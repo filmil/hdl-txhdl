@@ -2443,6 +2443,14 @@ seconds where it takes two (issue 1245). The GL ES library's list of
 a frame of the icosahedron took four times the instructions it takes
 now, and the program twice the bytes.
 
+The board's own test, \code{//cpu/vreteno:board\_test}, is built the
+other way round: everything it links, the simulation of the whole
+board among it, is optimised at level 3, through \code{opt\_test} in
+\code{tools/opt\_test.bzl}, with its debug assertions and overflow
+checks kept on, so it checks what it checked at level 0 (issue 1250).
+At level 0 the board ran some 1500 cycles a second and the test took
+670 to 1100 seconds; optimised it takes about 35.
+
 \subsection*{What the machine will not let a compiler do}
 
 Two of the core's properties decided how a program had to be
