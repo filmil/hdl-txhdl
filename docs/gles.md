@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # GL ES 1.1 Common-Lite on Vreteno: the design, before the language
 
-Status: design note, October 4, 2026, for issue 995 (gl-order/14), item 13 of `opengl-gap.md`.
+Status: design note, October 4, 2026, for issue 995 (gl-order/14), item 13 of `opengl-gap.md`; section 10 records the steps done.
 Read against `main` at `c3103332`, and against the open pull requests it names.
 Author: automated coding assistant, with human supervision.
 
@@ -251,6 +251,12 @@ Each step is a pull request, checked before the next.
    No Razboj yet.
 2. **Triangles to Razboj's words.**
    Clipping, culling, flat and smooth shading, the planes in 64 bits, and the instruction words, tested bit for bit against `op.rs` and `dl.rs`, and drawn by the model.
+   Steps 1 and 2 are done together in issue 1159, as the crate `//gles`, with the frame's binning of step 4 through `razboj_tile` (issue 1157).
+   It departs from sections 4 to 6 in three places.
+   The divide is one 64-bit division a window coordinate, straight to sixteenths and rounded to the nearest, because a reciprocal of w in 2.30 cannot hold 1/w for a w under a quarter.
+   The guard band stands a pixel inside Razboj's range, so that a vertex clipped onto it and rounded stays in range.
+   A vertex keeps its own colour or the current one until step 3 lights it.
+   The pictures are checked pixel for pixel against a second pipeline written with 128-bit integers to the same rules, through Razboj's model, binned and not; the words bit for bit against `op.rs` and `dl.rs`; and the window and the matrices against floating point.
 3. **Lighting.**
    The specification's sum, with the tables, tested against a reference.
 4. **The frame.**
