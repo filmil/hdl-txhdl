@@ -1,5 +1,5 @@
 {
-  "checksum": "cfafa5f047516625a491f644471d55cc4f87286b80b7f418cfed9253ff0ef16f",
+  "checksum": "eccb3777eb83f80673c55f42a9b1139e39f0c6db43a8c9f79ea3613fd162e1dd",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -212,6 +212,10 @@
           {
             "id": "fst-writer 0.3.1",
             "target": "fst_writer"
+          },
+          {
+            "id": "miniz_oxide 0.8.9",
+            "target": "miniz_oxide"
           },
           {
             "id": "wellen 0.25.6",
@@ -1811,6 +1815,7 @@
   },
   "direct_deps": [
     "fst-writer 0.3.1",
+    "miniz_oxide 0.8.9",
     "wellen 0.25.6"
   ],
   "direct_dev_deps": [],

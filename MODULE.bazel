@@ -103,7 +103,7 @@ multitool = use_extension("@rules_multitool//multitool:extension.bzl", "multitoo
 multitool.hub(lockfile = "//:multitool.lock.json")
 use_repo(multitool, "multitool")
 
-# Two external crates. The first is an FST writer, so a waveform is a
+# Three external crates. The first is an FST writer, so a waveform is a
 # compressed binary the tools read as they read VCD. Pinned by a lockfile;
 # `CARGO_BAZEL_REPIN=1 bazel sync --only=crates` regenerates it.
 crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
@@ -116,6 +116,13 @@ crate.spec(
 crate.spec(
     package = "wellen",
     version = "0.25.6",
+)
+# The third is a DEFLATE encoder in Rust, already pinned under the first
+# two, which //tools/gzip wraps as gzip so that the boot image's
+# initramfs is compressed without Python (issue 1201).
+crate.spec(
+    package = "miniz_oxide",
+    version = "0.8.9",
 )
 crate.from_specs(
     name = "crates",
