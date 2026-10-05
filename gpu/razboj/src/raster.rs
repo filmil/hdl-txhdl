@@ -66,6 +66,13 @@ use crate::op::Kind;
 /// own base. A word of the display list is addressed the same way.
 const WORD: usize = 2;
 
+/// The most beats a write burst takes, less one, as AXI's `len` says
+/// it: sixteen pixels (issue 987).
+const RUN: u32 = 15;
+
+/// The words of a 4 KiB page, less one, which a burst may not cross.
+const PAGE: u32 = 1023;
+
 /// The shift from an instruction's index to its byte address, which
 /// is `razboj::dl::BYTE_SHIFT` and is stated here because the lowering
 /// wants a constant it can see.
@@ -181,6 +188,9 @@ pub struct Raster<
     pub tl0: Reg<Bit>,
     pub tl1: Reg<Bit>,
     pub tl2: Reg<Bit>,
+    /// The beats still owed to the write burst under way; nought when
+    /// none is (issue 987).
+    pub beats: Reg<U<8>>,
 }
 // end{state}
 
@@ -594,35 +604,67 @@ impl<
                                 for _ in self.xa.get().raw() as usize
                                     ..=self.xb.get().raw() as usize
                                 {
+                                    // A burst under way needs room for
+                                    // its next beat; a pixel that would
+                                    // start one, room for the burst and
+                                    // its first beat.
                                     until(DefaultClock::rising, || {
-                                        (!self.hit.get()
-                                            | (issue.ready() & wbeat.ready()))
+                                        ((Bit::from(self.beats.get() != 0)
+                                            & wbeat.ready())
+                                            | (Bit::from(
+                                                self.beats.get() == 0,
+                                            ) & (!self.hit.get()
+                                                | (issue.ready()
+                                                    & wbeat.ready()))))
                                         .to_bool()
                                     })
                                     .await;
                                     let px = self.x.get();
                                     let py = self.y.get();
-                                    // One pixel, as a burst of one
-                                    // beat at the pixel's word. The
-                                    // address is worked out at the
-                                    // link's width from the start, not
-                                    // at the sixteen bits the walk is
-                                    // counted in: on the board's rows
-                                    // of 1024 a pixel's offset passes
-                                    // sixteen bits at row 16, and an
-                                    // offset formed there and widened
-                                    // after wrapped every later row
-                                    // into the first sixteen (issue
+                                    // The pixel's word. The address is
+                                    // worked out at the link's width
+                                    // from the start, not at the sixteen
+                                    // bits the walk is counted in: on
+                                    // the board's rows of 1024 a pixel's
+                                    // offset passes sixteen bits at row
+                                    // 16, and an offset formed there and
+                                    // widened after wrapped every later
+                                    // row into the first sixteen (issue
                                     // 1178).
                                     let addr = (((py.resize::<A>() << LOGW)
                                         + px.resize::<A>())
                                         << WORD)
                                         + U::<A>::from(BASE as u32);
-                                    if self.hit.get().to_bool() {
+                                    // A run of the row's pixels goes out
+                                    // as one burst (issue 987). A pixel
+                                    // in the primitive with no burst
+                                    // under way starts one, as long as
+                                    // the pixels left in the row, at
+                                    // most sixteen, and short of the
+                                    // next 4 KiB page; every pixel it
+                                    // covers takes a beat, its strobes
+                                    // on where the pixel is in the
+                                    // primitive and off where it is not.
+                                    // A triangle's pixels in a row are
+                                    // one run, so a burst wastes beats
+                                    // only past the run's end.
+                                    let on = self.beats.get() != 0;
+                                    let start = !on & self.hit.get().to_bool();
+                                    let rest =
+                                        (self.xb.get() - px).resize::<32>();
+                                    let page = U::<32>::from(PAGE)
+                                        - (addr.resize::<32>() >> WORD)
+                                            .slice::<0, 10>()
+                                            .resize::<32>();
+                                    let room = mux(rest < page, rest, page);
+                                    let run = U::<32>::from(RUN);
+                                    let len = mux(room < run, room, run)
+                                        .resize::<8>();
+                                    if start {
                                         issue.send(Issue {
                                             read: Bit::Zero,
                                             addr,
-                                            len: U::<8>::from(0u8),
+                                            len,
                                             size: U::<3>::from(2u8),
                                             burst: BurstKind::Incr,
                                             lock: Bit::Zero,
@@ -631,17 +673,34 @@ impl<
                                             qos: U::<4>::from(0u8),
                                             region: U::<4>::from(0u8),
                                         });
-                                        wbeat.send(W {
-                                            data: self.rgb.get(),
-                                            strb: U::<4>::from(15u8),
-                                            last: Bit::One,
-                                        });
                                         self.issued.set(self.issued.get() + 1);
                                     }
-                                    // The column advances and each edge
+                                    let owed = mux(on, self.beats.get(), len);
+                                    if on | start {
+                                        wbeat.send(W {
+                                            data: self.rgb.get(),
+                                            strb: mux(
+                                                self.hit.get(),
+                                                U::<4>::from(15u8),
+                                                U::<4>::from(0u8),
+                                            ),
+                                            last: Bit::from(mux(
+                                                on,
+                                                owed == 1,
+                                                owed == 0,
+                                            )),
+                                        });
+                                    }
+                                    // The column advances, each edge
                                     // and each channel takes its column
-                                    // step.
+                                    // step, and a burst under way owes
+                                    // one beat fewer.
                                     with!(self <= {
+                                        beats: mux(
+                                            on,
+                                            self.beats.get() - 1,
+                                            mux(start, len, self.beats.get()),
+                                        ),
                                         x: px + 1,
                                         e0: self.e0.get() + self.d0x.get(),
                                         e1: self.e1.get() + self.d1x.get(),
