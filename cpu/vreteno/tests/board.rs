@@ -1116,6 +1116,51 @@ fn input_comes_by_interrupt_one_byte_each() {
     assert!(ran.halted_at.is_some(), "the core halted itself");
 }
 
+/// A line pasted at the shell (issue 1153): the terminal types
+/// forty-eight bytes back to back, the line's full speed, while the
+/// program is busy elsewhere, and only then does it read them. Every
+/// byte must still be there. With a receive queue of eight, SiFive's
+/// depth, all but eight were dropped, which is what typing at Linux's
+/// shell on the board did.
+#[test]
+fn a_line_typed_back_to_back_waits_whole_in_the_receive_queue() {
+    use vreteno32::isa::{addi, blt, bne, halt, lui, lw, sw, UART_BASE};
+    let line: &[u8] = b"uname -a; cat /proc/cpuinfo; free; ls / # 48 by\n";
+    assert_eq!(line.len(), 48);
+    let mut a = vreteno32::program::Asm::default();
+    a.emit(lui(1, UART_BASE >> 12));
+    say(&mut a, b"go\n");
+    // Busy for longer than the line takes to arrive: forty cycles a
+    // byte at this divider, about two thousand for the line.
+    a.emit(lui(5, 2)); // x5 = 8192 rounds
+    let spin = a.label();
+    a.place(spin);
+    a.emit(addi(5, 5, -1));
+    a.to(spin, |off| bne(5, 0, off));
+    // Then every byte waiting, echoed, until `rxdata` says empty.
+    let next = a.label();
+    let done = a.label();
+    a.place(next);
+    a.emit(lw(4, 1, 4)); // x4 = rxdata, bit 31 empty
+    a.to(done, |off| blt(4, 0, off));
+    let wait = a.label();
+    a.place(wait);
+    a.emit(lw(2, 1, 0));
+    a.to(wait, |off| blt(2, 0, off));
+    a.emit(sw(4, 1, 0));
+    a.to(next, |off| bne(0, 1, off));
+    a.place(done);
+    a.emit(halt());
+    let ran = run(&a.words(), &[], line, 120_000);
+    assert!(ran.halted_at.is_some(), "the program halted: {}", ran.said);
+    assert_eq!(ran.typed, line.len(), "the terminal typed the line");
+    assert_eq!(
+        ran.said,
+        format!("go\n{}", String::from_utf8_lossy(line)),
+        "every byte of the line came back"
+    );
+}
+
 /// A byte at a time onto the serial port, waiting while it is busy.
 /// `x1` holds the page the port is on.
 fn say(a: &mut vreteno32::program::Asm, text: &[u8]) {

@@ -13,9 +13,10 @@
 //! or two with `nstop`, each `div` plus one cycles long. A write while
 //! the queue is full is dropped, and a read of `txdata` says so in its
 //! bit 31. A frame coming in on the other line while `rxen` is set,
-//! sampled in the middle of each bit, lands in a queue of eight behind
-//! `rxdata`, whose read takes the oldest and says in bit 31 when there
-//! was none; a byte that finds the queue full is dropped and counted.
+//! sampled in the middle of each bit, lands in a queue of sixty-four
+//! behind `rxdata`, whose read takes the oldest and says in bit 31 when
+//! there was none; a byte that finds the queue full is dropped and
+//! counted.
 //! `ip` says which watermark is passed, the transmit queue holding
 //! fewer than `txcnt` or the receive queue more than `rxcnt`, and the
 //! port's interrupt line is high while one that `ie` enables is.
@@ -130,12 +131,15 @@ pub struct Uart<const DIV: u32> {
     pub rx_shift: Reg<U<8>>,
     pub rx_bits: Reg<U<4>>,
     pub rx_tick: Reg<U<16>>,
-    /// The bytes received and not yet read: a queue of eight, the
+    /// The bytes received and not yet read: a queue of sixty-four, the
     /// index of the oldest and how many are held; how many came in
-    /// all, and how many found the queue full and were dropped.
-    pub fifo: Mem<U<8>, 8>,
-    pub head: Reg<U<3>>,
-    pub count: Reg<U<4>>,
+    /// all, and how many found the queue full and were dropped. Eight,
+    /// SiFive's depth, dropped a line pasted at Linux's shell, which
+    /// takes longer than eight characters' time to answer an interrupt
+    /// on this core (issue 1153).
+    pub fifo: Mem<U<8>, 64>,
+    pub head: Reg<U<6>>,
+    pub count: Reg<U<7>>,
     pub received: Reg<U<8>>,
     pub dropped: Reg<U<8>>,
     /// The controls, as `txctrl`, `rxctrl`, `ie` and `div` hold them.
@@ -194,7 +198,7 @@ impl<const DIV: u32> Unit for Uart<DIV> {
             DefaultClock::rising().await;
             let rst = rst.get().to_bool();
             let rx_ready = self.count != 0;
-            let rx_full = self.count == 8;
+            let rx_full = self.count == 64;
             let rx_data = self.fifo.read(self.head.get());
             let tx_full = self.tx_count == 8;
             let tx_some = self.tx_count != 0;
@@ -203,7 +207,7 @@ impl<const DIV: u32> Unit for Uart<DIV> {
             // The watermarks: the transmit queue holding fewer than its
             // count, the receive queue more than its.
             let txwm = self.tx_count.get() < self.txcnt.get().zext::<4>();
-            let rxwm = self.count.get() > self.rxcnt.get().zext::<4>();
+            let rxwm = self.count.get() > self.rxcnt.get().zext::<7>();
             // The bridge sends this peripheral only the transactions in
             // its range, so it checks no address. A read is answered in
             // the cycle it is taken, and a write is taken when its
@@ -367,7 +371,7 @@ impl<const DIV: u32> Unit for Uart<DIV> {
             let landed = sample & at_stop & line;
             let push = landed & !rx_full;
             let pop = read_rx & rx_ready;
-            let tail = self.head + self.count.get().slice::<0, 3>();
+            let tail = self.head + self.count.get().slice::<0, 6>();
             if landed {
                 if rx_full {
                     self.dropped.set(self.dropped + 1);
