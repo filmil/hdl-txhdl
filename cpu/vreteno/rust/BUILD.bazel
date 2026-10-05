@@ -7,7 +7,7 @@
 # standard library by checksum as it fetches everything else, and
 # nothing is installed on the machine. The linker is `rust-lld`, which
 # comes with the toolchain, so there is no cross binutils either.
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load(":defs.bzl", "vreteno_elf", "vreteno_fastboot", "vreteno_flat", "vreteno_image")
 
 package(default_visibility = ["//visibility:public"])
@@ -664,6 +664,48 @@ vreteno_flat(
     name = "scanprobe_ram_bin",
     platform = ":vreteno",
     program = ":scanprobe_ram",
+)
+
+# Razboj on the flagship (issue 1169): a list of a backdrop and three
+# shapes written into the DDR3, the doorbell rung, the pixels read back,
+# and the picture shown through the scanout. Sent down the wire like the
+# icosahedron. Not run on the simulated board: its full-screen clear is
+# over a million cycles there, and board_test's
+# razboj_draws_a_list_rung_on_the_doorbell covers the same path.
+rust_binary(
+    name = "razprobe_ram",
+    srcs = [
+        "razprobe.rs",
+        "razprobe_list.rs",
+    ],
+    compile_data = ["vreteno_ram.ld"],
+    crate_root = "razprobe.rs",
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+    ],
+)
+
+vreteno_flat(
+    name = "razprobe_ram_bin",
+    platform = ":vreteno",
+    program = ":razprobe_ram",
+)
+
+# The list razprobe writes, rendered on the host through Razboj's
+# model: every pixel the program checks holds what it expects there.
+rust_test(
+    name = "razprobe_list_test",
+    srcs = [
+        "razprobe_list.rs",
+        "razprobe_list_test.rs",
+    ],
+    crate_root = "razprobe_list_test.rs",
+    edition = "2021",
+    deps = ["//gpu/razboj"],
 )
 
 # A word to the remote peripheral and back: the last hop of #335 seen
