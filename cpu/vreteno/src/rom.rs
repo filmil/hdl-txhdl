@@ -127,3 +127,56 @@ impl<const I: usize> Unit for Rom<I> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use txhdl::comp::{join2, Running};
+    use txhdl_parts::bus::axi::{
+        axi_units, host_end, AxiHost, AxiPer, Host, Rd,
+    };
+
+    /// A read burst of sixteen beats, which is how the scanout's fetch
+    /// asks for a line, gets sixteen words in order with the last one
+    /// marked, and a single beat after it gets its one word as before
+    /// (issue 1193).
+    #[test]
+    fn a_read_burst_gets_every_beat() {
+        let program: Vec<u32> = (0..64u32).map(|i| 0x1000 + i).collect();
+        let mut rom = Rom::<2>::with(&program);
+        let u = axi_units::<32, 32, 4, 2>();
+        let host: Host<32, 32, 4, 2, 4> = host_end(u.host_client);
+        let bus = PerPort::from(u.per_client);
+        let done = Rc::new(RefCell::new(false));
+        let d = done.clone();
+        let client = async move {
+            let got = host.read(Rd::at(0x40u32, 16)).await.done().await;
+            assert_eq!(got.resp, Resp::Okay);
+            let raw: Vec<u128> = got.data.iter().map(|x| x.raw()).collect();
+            let want: Vec<u128> = (16..32).map(|i| 0x1000 + i).collect();
+            assert_eq!(raw, want, "the sixteen words, in order");
+            let got = host.read(Rd::at(0x8u32, 1)).await.done().await;
+            assert_eq!(got.data.len(), 1);
+            assert_eq!(got.data[0].raw(), 0x1002);
+            *d.borrow_mut() = true;
+        };
+        let mut tracker = AxiHost::<32, 32, 4, 2, 4>::default();
+        let mut per = AxiPer::<32, 32, 4, 2>::default();
+        let mut sim = Running::new(join2(
+            client,
+            join2(
+                tracker.run(u.host_in, u.host_out),
+                join2(per.run(u.per_in, u.per_out), rom.run(bus, ())),
+            ),
+        ));
+        for _ in 0..400 {
+            sim.cycle();
+            if *done.borrow() {
+                break;
+            }
+        }
+        assert!(*done.borrow(), "every beat of both reads came back");
+    }
+}
