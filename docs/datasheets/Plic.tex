@@ -164,9 +164,11 @@ compiled program that takes the serial port's input by interrupt.
 \code{plic} behind the bridge \code{pplic}: source 1 is the serial
 port's receive interrupt, source 2 the board's \code{irq} input,
 source 3 the Ethernet peripheral's, and
-\code{irq} is the core's external interrupt. \code{sirq} goes to
-\code{seirq}, which nothing reads yet: the core has its supervisor mode
-(issue 1012) but no input for the line (issue 1094). \code{Plic3<0b100>} in the example \code{ex\_plic}.
+\code{irq} is the core's machine external interrupt, \code{mip.MEIP},
+and \code{sirq} its supervisor external interrupt, \code{mip.SEIP}:
+the core takes it as \code{seirq} and registers it beside MEIP
+(issue 1094), which is how Linux in supervisor mode takes the serial
+port's and the Ethernet port's interrupts. \code{Plic3<0b100>} in the example \code{ex\_plic}.
 
 \subsection*{Limits}
 

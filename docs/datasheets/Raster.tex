@@ -137,8 +137,12 @@ row, a pixel a turn.
 start of this row and its two steps, in 32-bit two's complement. A
 step to the right adds the column step; a new row reloads from the row
 value plus the row step.
-\item \code{hit} is high when the kind is not a triangle, or when all
-three edge values have bit 31 clear.
+\item A pixel is sampled at its centre, and a vertex is in sixteenths
+of a pixel. \code{hit} is high when the kind is not a triangle, or when
+all three edge values are positive, or zero on a top or a left edge:
+\code{tl0} to \code{tl2} say which edges are, from the signs of
+their steps, set at the setup. So of two triangles sharing an edge,
+exactly one draws a pixel whose centre lies on it.
 \item A pixel with \code{hit} high is written when both \code{issue}
 and \code{wbeat} have room, which adds one to \code{issued}. The walk
 steps when the pixel needs no write or its write went out, so
@@ -179,6 +183,12 @@ Verilator: \code{//docs:razboj\_sim\_raster\_raster\_tb\_test} and
 \code{a\_core\_draws\_a\_solid\_and\_a\_gpu\_fills\_it}. Vreteno writes
 a display list on the lattice, the rasteriser draws it, and every pixel
 must match the model's picture of that list.
+\item It goes through Vivado out of context with the board's
+parameters, \code{//gpu/razboj:razboj\_synth} and
+\code{//gpu/razboj:razboj\_pnr}, and meets the board bus's 100~MHz
+since its setup was split into three cycles (issue 1034); the size and
+the slack of the last run are in \code{//docs:razboj}'s section on
+Vivado.
 \end{itemize}
 
 \subsection*{Used by}
