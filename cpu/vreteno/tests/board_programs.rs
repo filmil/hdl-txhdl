@@ -23,7 +23,9 @@ use vreteno32::isa::{
 const BOOT: &str = include_str!("../rust/boot.rs");
 const DDR3: &str = include_str!("../rust/ddr3.rs");
 const FADE: &str = include_str!("../rust/fade.rs");
-const ICO_HDMI: &str = include_str!("../rust/ico_hdmi.rs");
+// `ico_hdmi.rs` is not read here: since issue 986 it reaches the
+// board through the HAL, whose bases
+// `every_base_in_the_hal_is_where_the_router_puts_it` checks.
 const HAL: &str = include_str!("../rust/hal/lib.rs");
 
 /// A register's byte offset, as `vreteno_regs::<map>::<REG>` names it
@@ -89,11 +91,10 @@ fn decoded_by(addr: u32) -> Option<&'static str> {
 /// a wrong value, it is a word the program invents.
 #[test]
 fn every_address_a_board_program_uses_is_one_the_board_decodes() {
-    let programs: [(&str, &str, &[&str]); 4] = [
+    let programs: [(&str, &str, &[&str]); 3] = [
         ("boot.rs", BOOT, &["UART"]),
         ("ddr3.rs", DDR3, &["UART", "MTIME"]),
         ("fade.rs", FADE, &["UART", "MTIME", "PWM"]),
-        ("ico_hdmi.rs", ICO_HDMI, &["UART", "VIDEO"]),
     ];
     for (file, src, names) in programs {
         for name in names {
@@ -113,12 +114,7 @@ fn every_address_a_board_program_uses_is_one_the_board_decodes() {
 /// symptom of a wrong address is silence.
 #[test]
 fn every_program_writes_to_the_serial_port_the_design_has() {
-    let programs = [
-        ("boot.rs", BOOT),
-        ("ddr3.rs", DDR3),
-        ("fade.rs", FADE),
-        ("ico_hdmi.rs", ICO_HDMI),
-    ];
+    let programs = [("boot.rs", BOOT), ("ddr3.rs", DDR3), ("fade.rs", FADE)];
     for (file, src) in programs {
         assert_eq!(addr_of(src, "UART"), UART_BASE, "{file}'s serial port");
     }
@@ -142,17 +138,13 @@ fn the_programs_that_wait_read_the_timer_the_hardware_has() {
 /// page and on a sixteenth's boundary.
 #[test]
 fn the_peripherals_on_a_slot_are_inside_the_page_they_share() {
-    for (file, src, name) in
-        [("fade.rs", FADE, "PWM"), ("ico_hdmi.rs", ICO_HDMI, "VIDEO")]
-    {
-        let addr = addr_of(src, name);
-        assert_eq!(
-            addr & 0xffff_f000,
-            UART_BASE,
-            "{file}'s `{name}` is outside the peripheral page"
-        );
-        assert_eq!(addr & 0xff, 0, "{file}'s `{name}` is not on a slot");
-    }
+    let addr = addr_of(FADE, "PWM");
+    assert_eq!(
+        addr & 0xffff_f000,
+        UART_BASE,
+        "fade.rs's `PWM` is outside the peripheral page"
+    );
+    assert_eq!(addr & 0xff, 0, "fade.rs's `PWM` is not on a slot");
 }
 
 /// The Ethernet port's registers are on a slot the page decodes, and
