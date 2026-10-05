@@ -42,11 +42,16 @@
 //! before the CAS latency of six clocks, 15 ns. A read that meets a
 //! refresh and then a miss waits about 300 ns plus the controller's
 //! own pipeline. The board's mode is 640 by 480, 31.8 us a line of
-//! 800 columns, and a visible line is 640 words, forty bursts of
-//! sixteen. A line has the whole of the previous one to arrive in,
-//! and a refresh lands about four times in it, so the margin is the
-//! line time against forty bursts and four refreshes, not a burst's
-//! latency against a pixel.
+//! 800 columns, and a visible line is 640 words. A line has the whole
+//! of the previous one to arrive in, and a refresh lands about four
+//! times in it, so the margin is the line time against the bursts, the
+//! other hosts' turns between them and four refreshes, not a burst's
+//! latency against a pixel. The flagship fetches a line in ten bursts
+//! of 64 beats rather than forty of sixteen, since a burst pays the
+//! path's latency and its turn at the arbiter once (issue 1209): in the
+//! board's simulation, under the core copying in the DDR3 and the
+//! Ethernet port sending, a line took 4682 cycles of its 3175 in
+//! bursts of sixteen, and takes 1206.
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LitePort, LiteR, LiteW};
 use crate::bus::lite_split::LiteSplit;

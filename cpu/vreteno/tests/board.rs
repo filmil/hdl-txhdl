@@ -452,17 +452,26 @@ struct Net<'a> {
 
 /// A scanout's pixel side on the board's `scan_req` and `scan_words`:
 /// the flagship's `LinePair` and a raster to drive it, on the board's
-/// clock, with frames of six rows of 800 columns so that a run sees
-/// several. From the reset it has no base, as on the board after every
+/// clock, with frames of six rows so that a run sees several. A row is
+/// as long in the board's cycles as the flagship's is, [`SCAN_LINE`],
+/// so a line has as long to arrive as on the board (issue 1209). From the reset it has no base, as on the board after every
 /// reset; at `show_at` a program gives it `base`.
 struct Scan {
     base: u32,
     show_at: u64,
 }
 
+/// The flagship's line in the board's cycles: 800 columns of the 25.2
+/// MHz pixel clock, at 100 MHz.
+const SCAN_LINE: u64 = 3175;
+
 /// The raster and the pair: the flagship's line of 640 words, 4096
-/// bytes apart in 800 columns, and four visible rows of six.
-type ScanRaster = Raster<640, 16, 96, 48, 4, 1, 1, 0, 10>;
+/// bytes apart, a row of [`SCAN_LINE`] cycles, its back porch long
+/// enough to make it so, and four visible rows of six. The 640 words
+/// are read here a word a cycle rather than one every four, so the tail
+/// of a line is held to a harder deadline than on the board.
+type ScanRaster = Raster<640, 16, 96, 2423, 4, 1, 1, 0, 10>;
+const _: () = assert!(640 + 16 + 96 + 2423 == SCAN_LINE as usize);
 type ScanPair = LinePair<640, 10, 4, 6, 4096, DefaultClock>;
 
 /// What a scanout asked for and when its words came: the address, the
@@ -474,6 +483,9 @@ struct ScanLog {
     /// The cycle the pair said a line was stuck, and that line's
     /// address (issue 1197).
     stuck: Option<(u64, u32)>,
+    /// The first cycle the pair said a column was shown before its word
+    /// had arrived (issue 1209).
+    starved: Option<u64>,
 }
 
 fn run_all(
@@ -509,7 +521,7 @@ fn run_all(
     let (clear_o, clear) = signal::<Bit, DefaultClock>();
     let (show_o, show) = signal::<Bit, DefaultClock>();
     let (pix_o, _pix) = signal::<U<32>, DefaultClock>();
-    let (starved_o, _starved) = signal::<Bit, DefaultClock>();
+    let (starved_o, starved) = signal::<Bit, DefaultClock>();
     let (stuck_o, stuck) = signal::<Bit, DefaultClock>();
     let (stuck_at_o, stuck_at) = signal::<U<32>, DefaultClock>();
     let mut raster = ScanRaster::default();
@@ -846,6 +858,9 @@ fn run_all(
             typed_at = cycle;
         }
         if let Some(s) = &scan {
+            if starved.get().to_bool() && scan_log.starved.is_none() {
+                scan_log.starved = Some(cycle);
+            }
             if stuck.get().to_bool() && scan_log.stuck.is_none() {
                 scan_log.stuck = Some((cycle, stuck_at.get().raw() as u32));
             }
@@ -932,7 +947,7 @@ fn run_all(
 /// lines must come back from that base, whatever it did before.
 #[test]
 fn the_scanout_shows_a_base_given_after_the_reset() {
-    let frame = 6 * 800;
+    let frame = 6 * SCAN_LINE;
     let net = Net {
         scan: Some(Scan {
             base: 0x4100_1000,
@@ -2100,7 +2115,7 @@ fn every_slave_answers_every_burst() {
 /// rather than leaving a black screen and a clear underflow bit.
 #[test]
 fn a_line_that_never_comes_is_stuck() {
-    let frame = 6 * 800;
+    let frame = 6 * SCAN_LINE;
     let net = Net {
         scan: Some(Scan {
             base: 0x3200,
@@ -2123,8 +2138,223 @@ fn a_line_that_never_comes_is_stuck() {
     let (when, at) = ran.scan.stuck.expect("the pair said it was stuck");
     assert_eq!(at, 0x3200, "the line that did not come");
     assert!(
-        when <= first.1 + 3 * 800,
+        when <= first.1 + 3 * SCAN_LINE,
         "stuck at {when}, the line asked for at {}",
         first.1
     );
+}
+
+/// The load `scanprobe` puts on the board while it watches the scanout
+/// (issue 1209): the core copies 256 KiB back and forth in the DDR3, a
+/// word at a time with no pause, and every sixteen words starts the
+/// Ethernet port sending a full frame from the DDR3 if it is ready.
+/// With `razboj`, every sixteen words it also rings Razboj for a
+/// full-screen rectangle when the last one is drawn, which writes the
+/// frame a pixel a beat: a seventh host on the same memory.
+fn load_program(razboj: bool) -> Vec<u32> {
+    use txhdl_parts::ethslots::regs;
+    use vreteno32::board::{RAZBOJ_DL, RAZBOJ_DOORBELL};
+    use vreteno32::isa::{addi, andi, beq, bne, jal, lw, sw};
+    let mut a = vreteno32::program::Asm::default();
+    li(&mut a, 10, 0x3400); // x10: the Ethernet port's registers
+    li(&mut a, 4, 1514);
+    a.emit(sw(4, 10, regs::tx_length as i32));
+    a.emit(sw(0, 10, regs::tx_slot as i32));
+    li(&mut a, 14, RAZBOJ_DOORBELL as u32); // x14: the doorbell
+    if razboj {
+        // The list: one rectangle over the visible 640 by 480.
+        li(&mut a, 15, RAZBOJ_DL as u32);
+        let rect = [1 | (0x12_3456 << 2), 0, 639 | (479 << 16)];
+        for (i, w) in rect.iter().enumerate() {
+            li(&mut a, 4, *w);
+            a.emit(sw(4, 15, 4 * i as i32));
+        }
+    }
+    li(&mut a, 11, 0x4300_0000); // one half
+    li(&mut a, 12, 0x4304_0000); // the other
+    let outer = a.label();
+    a.place(outer);
+    a.emit(addi(5, 11, 0)); // from
+    a.emit(addi(6, 12, 0)); // to
+    li(&mut a, 7, 0x4004_0000);
+    a.emit(vreteno32::isa::add(7, 7, 11)); // from's end: from + 256 KiB
+    li(&mut a, 13, 0x4000_0000);
+    a.emit(vreteno32::isa::sub(7, 7, 13));
+    let word = a.label();
+    let skip = a.label();
+    a.place(word);
+    a.emit(lw(8, 5, 0));
+    a.emit(sw(8, 6, 0));
+    a.emit(addi(5, 5, 4));
+    a.emit(addi(6, 6, 4));
+    a.emit(andi(9, 5, 63));
+    a.to(skip, |off| bne(9, 0, off));
+    if razboj {
+        let busy = a.label();
+        a.emit(lw(9, 14, 0)); // the count
+        a.to(busy, |off| bne(9, 0, off));
+        a.emit(addi(9, 0, 1));
+        a.emit(sw(9, 14, 0)); // ring for the one rectangle
+        a.place(busy);
+    }
+    a.emit(lw(9, 10, regs::tx_ready as i32));
+    a.to(skip, |off| beq(9, 0, off));
+    a.emit(addi(9, 0, 1));
+    a.emit(sw(9, 10, regs::tx_start as i32));
+    a.place(skip);
+    a.to(word, |off| bne(5, 7, off));
+    // The halves change places, and the copy goes back.
+    a.emit(addi(13, 11, 0));
+    a.emit(addi(11, 12, 0));
+    a.emit(addi(12, 13, 0));
+    a.to(outer, |off| jal(0, off));
+    a.words()
+}
+
+/// How a run's lines came: the longest any took from being asked for
+/// to its last word, the mean, and how many took longer than a line.
+fn line_times(log: &ScanLog) -> (u64, u64, usize, usize) {
+    let took: Vec<u64> = log
+        .lines
+        .iter()
+        .filter_map(|(_, asked, got)| got.map(|g| g - asked))
+        .collect();
+    let late = took.iter().filter(|&&t| t > SCAN_LINE).count();
+    let max = took.iter().copied().max().unwrap_or(0);
+    let mean = took.iter().sum::<u64>() / took.len().max(1) as u64;
+    (max, mean, late, took.len())
+}
+
+/// The scanout against the board's own load, a line as long as the
+/// board's (issue 1209): idle, with the core copying in the DDR3 and the
+/// Ethernet port sending, and with Razboj drawing as well. Every line
+/// must come within half of the line it has, and no column may be shown
+/// before its word.
+///
+/// With the scanout's bursts of sixteen beats, as before #1209, the
+/// longest line took 1964 cycles idle, 4682 under the load and 4754
+/// with Razboj too, against a line of 3175: every line late under load,
+/// as the board showed. With the flagship's bursts of 64 the same runs
+/// take 974, 1206 and 1200; with bursts of 128 they took 809, 942 and
+/// 904, at a cost to the core that `a_core_load_waits_behind_the_scanout`
+/// measures.
+#[test]
+fn the_scanout_keeps_up_with_the_boards_load() {
+    let rows = 6 * 20;
+    for (what, text) in [
+        ("idle", hello_program::TEXT.to_vec()),
+        ("load", load_program(false)),
+        ("load and Razboj", load_program(true)),
+    ] {
+        let net = Net {
+            scan: Some(Scan {
+                base: 0x4200_0000,
+                show_at: 6 * SCAN_LINE,
+            }),
+            ..Net::default()
+        };
+        let ran = run_all(
+            &text,
+            hello_program::DATA,
+            b"",
+            &[],
+            (rows + 6) * SCAN_LINE,
+            net,
+            &[],
+        );
+        let (max, mean, late, n) = line_times(&ran.scan);
+        eprintln!(
+            "scan {what}: {n} lines, longest {max} cycles, mean {mean}, \
+             {late} longer than a line of {SCAN_LINE}, starved {:?}, \
+             frames sent {}",
+            ran.scan.starved,
+            ran.sent.len()
+        );
+        assert!(n >= 60, "{what}: only {n} lines came");
+        assert_eq!(late, 0, "{what}: lines later than a line");
+        assert_eq!(ran.scan.starved, None, "{what}: a column starved");
+        assert!(
+            2 * max < SCAN_LINE,
+            "{what}: the longest line took {max} of {SCAN_LINE} cycles"
+        );
+    }
+}
+
+/// A program that times the core's loads from the DDR3 (issue 1209):
+/// two thousand single-word loads, 64 bytes apart, each between two
+/// reads of `mcycle` and used at once, and the longest said in hex.
+fn load_wait_program() -> Vec<u32> {
+    use vreteno32::isa::{
+        add, addi, andi, bgeu, blt, bne, csrrs, halt, lui, lw, srli, sub, sw,
+        CSR_MCYCLE, UART_BASE,
+    };
+    let mut a = vreteno32::program::Asm::default();
+    a.emit(lui(1, UART_BASE >> 12)); // x1: the serial port, for say
+    li(&mut a, 5, 0x4300_0000);
+    a.emit(addi(20, 0, 0)); // x20: the longest
+    li(&mut a, 21, 2000);
+    let each = a.label();
+    let shorter = a.label();
+    a.place(each);
+    a.emit(csrrs(6, CSR_MCYCLE, 0));
+    a.emit(lw(8, 5, 0));
+    a.emit(add(9, 8, 0)); // the word, used
+    a.emit(csrrs(7, CSR_MCYCLE, 0));
+    a.emit(sub(7, 7, 6));
+    a.to(shorter, |off| bgeu(20, 7, off));
+    a.emit(addi(20, 7, 0));
+    a.place(shorter);
+    a.emit(addi(5, 5, 64));
+    a.emit(addi(21, 21, -1));
+    a.to(each, |off| bne(21, 0, off));
+    // The longest, in eight hex digits and a newline.
+    for k in (0..8).rev() {
+        a.emit(srli(22, 20, 4 * k));
+        a.emit(andi(22, 22, 15));
+        a.emit(addi(23, 0, 10));
+        let digit = a.label();
+        a.emit(addi(3, 22, b'0' as i32));
+        a.to(digit, |off| blt(22, 23, off));
+        a.emit(addi(3, 22, b'a' as i32 - 10));
+        a.place(digit);
+        let wait = a.label();
+        a.place(wait);
+        a.emit(lw(2, 1, 0));
+        a.to(wait, |off| blt(2, 0, off));
+        a.emit(sw(3, 1, 0));
+    }
+    say(&mut a, b"\n");
+    a.emit(halt());
+    a.words()
+}
+
+/// What the scanout's bursts cost the core (issue 1209): the longest a
+/// single load from the DDR3 waits, with no scanout and with the
+/// scanout fetching lines of the board's length. A burst holds the DDR3
+/// path for its beats, so a load behind one waits for it: 88 cycles
+/// with no scanout, and beside it 88 with bursts of 16, 94 with the
+/// flagship's 64 and 153 with 128.
+#[test]
+fn a_core_load_waits_behind_the_scanout() {
+    let text = load_wait_program();
+    let longest = |scan: Option<Scan>| -> u32 {
+        let net = Net {
+            scan,
+            ..Net::default()
+        };
+        let ran = run_all(&text, &[], b"", &[], 40 * SCAN_LINE, net, &[]);
+        let line = ran.said.lines().next().unwrap_or("");
+        u32::from_str_radix(line, 16)
+            .unwrap_or_else(|_| panic!("said {:?}", ran.said))
+    };
+    let alone = longest(None);
+    let beside = longest(Some(Scan {
+        base: 0x4200_0000,
+        show_at: SCAN_LINE,
+    }));
+    eprintln!(
+        "a core load waits at most {alone} cycles alone, {beside} beside \
+         the scanout"
+    );
+    assert!(beside < alone + 32, "a load waited {beside} cycles");
 }
