@@ -15,15 +15,19 @@ holds the display list and its count, which the rasteriser reads.
 It is the peripheral client of an \code{AxiPer}, and its link is one
 port, \code{bus}, a \code{PerPort} of the four channels: requests
 come on \code{bus\_req} and write beats on \code{bus\_w}, and answers
-go out on \code{bus\_ans} and \code{bus\_r}. It answers single-beat
-writes, which is all the rasteriser makes, and read bursts of any
-length, since the rasteriser fetches a display list entry as one: a
-read's first beat is answered from the memory in the cycle the request
-is taken and the rest follow a beat a cycle, one burst at a time. A
-write is held until its beat arrives. It counts what it served:
-\code{rbursts} read bursts taken, \code{rbeats} read beats sent and
-\code{wbeats} write beats taken, which a run reads to say how much of
-its time the link was busy.
+go out on \code{bus\_ans} and \code{bus\_r}. It answers write
+bursts and read bursts of any length. The rasteriser writes a run of a
+row's pixels as one write burst (issue 987) and fetches a display list
+entry as one read burst. A read's first beat is answered from the
+memory in the cycle the request is taken and the rest follow a beat a
+cycle, one burst at a time. A write is held while its beats arrive,
+since AXI4 puts no identifier on the write data channel, and is
+answered once, with its last beat. A beat writes only the bytes its
+strobes name, so a beat with none writes nothing. It counts what it
+served: \code{rbursts} read bursts taken, \code{rbeats} read beats
+sent, \code{wbursts} write bursts taken and \code{wbeats} write beats
+that wrote something, which a run reads to say how much of its time
+the link was busy and how many pixels it wrote.
 
 \subsection*{Parameters}
 
@@ -70,14 +74,17 @@ each. \\
 \item A read is taken when \code{bus\_r} has room and no write is waiting
 for its beat. It is answered on \code{bus\_r} in the cycle it is taken,
 with the word from \code{px}, \code{OKAY} and \code{last} set.
-\item A write is taken when no write is waiting. Its word and its
-identifier go into \code{paddr} and \code{pid}, and \code{pend} is
+\item A write is taken when no write is held. Its first word and its
+identifier go into \code{paddr} and \code{pid}, \code{pend} is set,
+and \code{wbursts} counts it.
+\item While a write is held, each of its beats is taken as it arrives,
+and the last only when \code{bus\_ans} has room. A beat writes the
+bytes its strobes name over the word at \code{paddr}, which then
+moves to the next word; \code{wbeats} counts a beat with any strobe
 set.
-\item The held write's beat is taken when it has arrived and
-\code{bus\_ans} has room. The whole beat is written to the word, and
-\code{bus\_ans} sends \code{OKAY} with \code{pid}. The strobe is not read.
-\item While a write waits for its beat, no request of either kind is
-taken.
+\item The last beat ends the write: \code{pend} clears and
+\code{bus\_ans} sends \code{OKAY} with \code{pid}.
+\item While a write is held, no request of either kind is taken.
 \item An address beyond the memory wraps rather than ending the run.
 \item \code{pixel} reads a word back for a run or a test.
 \end{itemize}
@@ -115,9 +122,9 @@ simulation-only \code{Ram}.
 
 \subsection*{Limits}
 
-A write is a burst of one beat, and its strobe is not looked at; a
-read burst's length is, and its beats are answered a cycle apart. It
-holds one write at a time. \code{//docs:razboj} states that
-this is why the demonstration takes about three cycles a pixel. The
+It holds one write at a time and takes no read while it does, and a
+read burst's beats are answered a cycle apart. A write burst's beats
+are taken as they come; its length is not read, and its last beat ends
+it. The
 word index is sixteen bits wide, so the framebuffer reaches at most
 65536 words.

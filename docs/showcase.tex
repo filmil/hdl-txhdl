@@ -307,9 +307,10 @@ into memory over AXI, read back and written out as this file.}
 
 Figure~\ref{fig:w-scene} was drawn by hardware. A rasteriser walks
 the box a display list entry gives it, one pixel a cycle, keeping
-three edge functions incrementally, and writes each pixel that is
-inside the primitive as a single-beat AXI burst; the framebuffer is a
-memory behind the other end of the link. Both are lowered units, and
+three edge functions incrementally, and writes a run of a row's
+pixels as one AXI burst of up to sixteen beats, with the strobes off
+where a pixel is outside the primitive; the framebuffer is a memory
+behind the other end of the link. Both are lowered units, and
 the build simulates both netlists against the run that drew a smaller
 version of this picture. On the flagship the rasteriser is one more host
 on the board's bus: a program writes a list into the DDR3, rings a

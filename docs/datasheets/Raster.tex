@@ -14,7 +14,10 @@ the display list at \code{DL}, as one read burst of sixteen beats, and
 walks the instruction's box one pixel per cycle. It writes the
 instruction's colour, its alpha in the top byte, at every pixel inside
 the primitive: every pixel of a clear or a rectangle, and every pixel
-of a triangle at which no edge function is negative. A shaded
+of a triangle at which no edge function is negative. A run of a row's
+pixels goes out as one write burst of up to sixteen beats, a beat a
+pixel, and a beat whose pixel is outside the primitive has its strobes
+off (issue 987). A shaded
 triangle's colour is three planes the host worked out, each stepped
 across the box as an edge is.
 
@@ -143,13 +146,20 @@ all three edge values are positive, or zero on a top or a left edge:
 \code{tl0} to \code{tl2} say which edges are, from the signs of
 their steps, set at the setup. So of two triangles sharing an edge,
 exactly one draws a pixel whose centre lies on it.
-\item A pixel with \code{hit} high is written when both \code{issue}
-and \code{wbeat} have room, which adds one to \code{issued}. The walk
-steps when the pixel needs no write or its write went out, so
-backpressure holds the walk.
-\item A pixel's write is a burst of one beat, size 2, \code{INCR},
-with the alpha above the 24-bit colour, strobe \code{0xf} and
-\code{last} set.
+\item A pixel with \code{hit} high and no burst under way starts one,
+when both \code{issue} and \code{wbeat} have room, which adds one to
+\code{issued}. The burst is size 2, \code{INCR}, and its length is the
+pixels left in the box's row, the words left before the next 4\,KB
+page, or sixteen, whichever is fewest, so no burst crosses a page.
+\code{beats} holds the beats it still owes.
+\item While a burst is under way, every pixel the walk steps over sends
+the next beat when \code{wbeat} has room, whatever the pixel: the
+alpha above the 24-bit colour, strobe \code{0xf} where \code{hit} is
+high and \code{0x0} where it is not, and \code{last} on the burst's
+last beat. A triangle's pixels in a row are one run, so a burst wastes
+beats only past the run's end.
+\item The walk steps when the pixel needs no write or its beat went
+out, so backpressure holds the walk.
 \item When the last instruction's box is walked and every write is
 answered, the count at \code{CTRL} is written back to zero, and
 \code{finished} is set as that write goes out. \code{inflight} is a wire, \code{issued} less \code{answered},
