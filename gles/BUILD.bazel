@@ -170,3 +170,18 @@ sh_test(
         ":capi_draw_ref",
     ],
 )
+
+# EGL in the model (issue 996): a program's calls through EGL's and GL's
+# entry points, swapping between the two buffers, with Razboj's model
+# drawing each frame.
+rust_test(
+    name = "egl_test",
+    srcs = ["tests/egl.rs"],
+    edition = "2021",
+    deps = [
+        ":capi",
+        ":egl",
+        ":gles",
+        "//gpu/razboj",
+    ],
+)
