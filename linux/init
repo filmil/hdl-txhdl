@@ -4,6 +4,10 @@
 # a line a test can wait for, run one command, and hand over to a shell.
 /bin/busybox mount -t proc proc /proc
 /bin/busybox mount -t sysfs sysfs /sys
+# The devices, which the kernel mounts itself only on a root it mounted,
+# not on an initramfs: the console's own tty is there, which the shell
+# takes as its controlling tty below (issue 1249).
+/bin/busybox mount -t devtmpfs devtmpfs /dev
 /bin/busybox --install -s
 echo "txhdl: userspace is up"
 uname -a
@@ -22,4 +26,14 @@ if /bin/busybox grep -q txhdl.net /proc/cmdline; then
 	*"3 packets received"*) echo "txhdl: network is up" ;;
 	esac
 fi
-exec /bin/sh
+# The shell takes the console as its controlling tty, so that Ctrl-C
+# reaches the command in the foreground: with a plain exec it had none,
+# said "can't access tty", and a command that hung at the board's
+# console could not be stopped (issue 1249). Only a session leader can
+# take one, and this is process 1, which leads its process group and so
+# cannot start a session, so the shell runs in a session of its own,
+# where cttyhack opens the console's tty for it. Process 1 must not
+# exit, so it waits for the shell, and starts another if it ends.
+while :; do
+	/bin/busybox setsid /bin/busybox cttyhack /bin/sh
+done
