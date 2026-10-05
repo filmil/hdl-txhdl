@@ -299,7 +299,7 @@ fn main() {
     stop();
     println!("pixels checked in frames 1 and 2: {checked}, wrong: {wrong}");
     println!("underflow at each frame's end:     {under_seen:?}");
-    println!("in the stalled frame, late by row {late:?}");
+    println!("in the stalled frame, late by row {late:?}, stale {stale:?}");
     assert_eq!(wrong, 0, "every pixel is the word at its place");
     assert_eq!(checked, 2 * ROWS * LEN, "two frames of pixels checked");
     assert_eq!(
@@ -308,14 +308,11 @@ fn main() {
         "no underflow until the long stall, then one, then cleared"
     );
     // A column whose word is late shows LATE, not the word the line
-    // before left in the buffer (issue 1209): in a row the stall made
-    // late, every column is LATE or its own word.
+    // before left in the buffer (issue 1209), and a late line's words
+    // land in its own row and not the next (issue 1233): every column
+    // of the stalled frame is LATE or its own word.
     assert!(late.iter().any(|&n| n > 0), "the long stall showed as LATE");
-    for r in 0..ROWS {
-        if late[r] > 0 {
-            assert_eq!(stale[r], 0, "row {r} showed a word not its own");
-        }
-    }
+    assert_eq!(stale, [0; ROWS], "a row showed a word not its own");
     let pair_net = Pair::lowered("linepair");
     let fetch_net = Fetch::lowered("scanfetch");
     txhdl::netlist::write_netlists_from_env(&[&pair_net, &fetch_net]);

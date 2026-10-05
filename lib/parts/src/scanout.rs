@@ -25,7 +25,13 @@
 //! sets `starved`, a sticky bit a host reads and clears, so a run on the
 //! board can show that no line ever starved rather than argue it, and is
 //! shown as [`LATE`], magenta, rather than as whatever word the line
-//! before left there (issue 1209). A line
+//! before left there (issue 1209). A word belongs to the line it was
+//! asked for, which the lines owed say (issue 1233): a line that starts
+//! before it has come whole takes the rest of its words into the half
+//! the beam reads, so its columns fill in as they come, and a line
+//! whose time has passed has the rest of its words dropped, rather than
+//! either landing in the half filling, where the next row would show
+//! them as its own. A line
 //! asked for that gets no word for two line times sets `stuck`, sticky
 //! too, with the line's address: a fetch that hangs says so, where on
 //! the board it once showed only as a black screen with `starved`
@@ -130,6 +136,13 @@ pub struct LinePair<
     pub hung: Reg<Bit, C>,
     /// That line's address.
     pub hung_at: Reg<U<32>, C>,
+    /// The line being shown had not come whole when it started, so its
+    /// words, as they come, go into the half the beam reads (issue
+    /// 1233).
+    pub late: Reg<Bit, C>,
+    /// Lines owed whose time has passed: their words are dropped rather
+    /// than written where another line's go (issue 1233).
+    pub behind: Reg<U<3>, C>,
 }
 // end{pair}
 
@@ -166,6 +179,8 @@ impl<
             quiet: Reg::default(),
             hung: Reg::default(),
             hung_at: Reg::default(),
+            late: Reg::default(),
+            behind: Reg::default(),
         }
     }
 }
@@ -218,10 +233,21 @@ impl<
             let word = inp.recv_if(true).unwrap_or_default();
             let w = self.wsel.get();
             let at = self.at.get();
+            // Where a word goes (issue 1233). A word of a line whose
+            // time has passed is dropped; one of the line being shown,
+            // which started before it came whole, goes into the half the
+            // beam reads, at its own column; any other goes into the
+            // half filling, as before.
+            let came = self.came.get();
+            let drop = take & (self.behind.get() != U::<3>::from(0u8));
+            let to_shown = take & !drop & self.late.get();
+            let normal = take & !drop & !self.late.get();
             let fits = at < U::<16>::from(LEN as u32);
-            let to_a = take & fits & !w;
-            let to_b = take & fits & w;
-            let slot = at.resize::<AW>();
+            let fits_late = came < U::<16>::from(LEN as u32);
+            // The beam reads `a` while `b` fills, and `b` while `a` does.
+            let into_a = (normal & fits & !w) | (to_shown & fits_late & w);
+            let into_b = (normal & fits & w) | (to_shown & fits_late & !w);
+            let slot = mux(to_shown, came.resize::<AW>(), at.resize::<AW>());
             // At a line's start the two change places, and the line
             // after the one about to be shown is asked for. The last
             // row of the frame asks for the frame's first.
@@ -239,7 +265,7 @@ impl<
             let inside = c.resize::<16>() < U::<16>::from(LEN as u32);
             let rc = mux(inside, c, U::<AW>::from(0u8));
             let px = mux(rd, self.a.read(rc), self.b.read(rc));
-            let got = mux(l, mux(take, at + 1, at), self.rgot.get());
+            let got = mux(l, mux(normal, at + 1, at), self.rgot.get());
             // A column shown before its word arrived.
             let starve =
                 self.armed.get() & vis.get() & (c.resize::<16>() >= got);
@@ -269,7 +295,6 @@ impl<
             // word for two line starts in a row did not come: `stuck`
             // is set, sticky, with its address, and the scanout goes on
             // asking, so the bit says why the screen is black.
-            let came = self.came.get();
             let counted = take & (owing != U::<3>::from(0u8));
             let whole = counted & (came + 1 == U::<16>::from(LEN as u32));
             let one = U::<3>::from(1u8);
@@ -295,6 +320,14 @@ impl<
             );
             let owing_next =
                 owing + mux(asked, one, none) - mux(whole, one, none);
+            // At a line's start, the lines still owed once this step's
+            // word is counted: none is on time; one is the line about to
+            // be shown, late; more are that line and lines whose time
+            // has passed, whose words are dropped.
+            let k = owing - mux(whole, one, none);
+            let late_now = k != none;
+            let behind_now = mux(k > one, k - one, none);
+            let behind = self.behind.get();
             let heard = self.heard.get() | take;
             let quiet = self.quiet.get();
             let silent = l & (owing != none) & !heard;
@@ -303,9 +336,11 @@ impl<
                 // A column whose word has not arrived shows LATE, not the
                 // word left there by the line before (issue 1209).
                 shown: mux(starve, U::<32>::from(LATE), px),
-                to_a ? a.at(slot): word,
-                to_b ? b.at(slot): word,
-                take ? at: at + 1,
+                into_a ? a.at(slot): word,
+                into_b ? b.at(slot): word,
+                normal ? at: at + 1,
+                // A late line's word counts as come in the half shown.
+                to_shown & !l ? rgot: came + 1,
                 // A word taken at the edge a line starts on belongs to
                 // the line just filled, so it counts there.
                 l ? {
@@ -334,6 +369,14 @@ impl<
                 lost & !self.hung.get() ? {
                     hung: Bit::One,
                     hung_at: o0,
+                },
+                // A line come whole while late: a passed one, one fewer
+                // to drop; else the line shown, which is no longer late.
+                !l & whole & (behind != none) ? behind: behind - one,
+                !l & whole & (behind == none) ? late: Bit::Zero,
+                l ? {
+                    late: late_now,
+                    behind: behind_now,
                 },
             });
             if asked.to_bool() {
