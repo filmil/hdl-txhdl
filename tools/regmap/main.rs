@@ -22,6 +22,7 @@ use txhdl::regmap::RegMap;
 /// adding a map each touch different lines.
 fn maps() -> Vec<(&'static str, &'static RegMap)> {
     vec![
+        ("doorbell", &razboj::doorbell::doorbell::MAP),
         ("eth", &txhdl_parts::eth::regs::MAP),
         ("ethslots", &txhdl_parts::ethslots::regs::MAP),
         ("gpio", &txhdl_parts::gpio::regs::MAP),

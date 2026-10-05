@@ -248,7 +248,7 @@ fn hal_map() -> Vec<(String, usize)> {
 fn every_base_in_the_hal_is_where_the_router_puts_it() {
     let board = |i: usize| (BoardMap::RANGES[i].0, BoardMap::NAMES[i]);
     let slot = |i: usize| (SlotMap::RANGES[i].0, SlotMap::NAMES[i]);
-    let want: [(&str, (usize, &str)); 14] = [
+    let want: [(&str, (usize, &str)); 15] = [
         ("ROM", board(5)),
         ("DMEM", board(0)),
         ("CLINT", board(1)),
@@ -260,6 +260,7 @@ fn every_base_in_the_hal_is_where_the_router_puts_it() {
         ("SPI", slot(6)),
         ("MDIO", slot(7)),
         ("SD", slot(8)),
+        ("DOORBELL", slot(9)),
         ("FLASH", board(7)),
         ("PLIC", board(4)),
         ("DDR3", board(3)),
@@ -304,4 +305,25 @@ fn every_base_in_the_hal_is_where_the_router_puts_it() {
             "the HAL's map has no `{name}`"
         );
     }
+}
+
+/// Where the HAL says Razboj draws and reads its list is where the
+/// board puts them (issue 1169): `Razboj::FRAME` and `Razboj::LIST` are
+/// typed in the HAL, which cannot depend on the board, so a board that
+/// moved either would leave a program drawing into memory nothing reads.
+#[test]
+fn razbojs_addresses_in_the_hal_are_the_boards() {
+    let typed = |name: &str| -> usize {
+        let key = format!("pub const {name}: u32 = 0x");
+        let at = HAL.find(&key).unwrap_or_else(|| panic!("no {name}"));
+        let rest = &HAL[at + key.len()..];
+        let hex: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_hexdigit() || *c == '_')
+            .filter(|c| *c != '_')
+            .collect();
+        usize::from_str_radix(&hex, 16).expect("a hex address")
+    };
+    assert_eq!(typed("FRAME"), vreteno32::board::RAZBOJ_FB);
+    assert_eq!(typed("LIST"), vreteno32::board::RAZBOJ_DL);
 }

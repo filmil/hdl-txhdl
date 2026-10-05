@@ -30,7 +30,7 @@
 
 use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
-use vreteno_regs::{hdmi, pwm, scan, timer, uart};
+use vreteno_regs::{doorbell, hdmi, pwm, scan, timer, uart};
 
 pub mod trap;
 
@@ -68,6 +68,9 @@ pub mod map {
     /// The SD card host: control, command, argument, status, the
     /// response's four words and the block buffer.
     pub const SD: usize = 0x0000_3800;
+    /// Razboj's doorbell: the display list's count, and the
+    /// rasteriser's idle line (issue 985).
+    pub const DOORBELL: usize = 0x0000_3900;
     /// The configuration flash, read as memory: 16 MiB, the bitstream
     /// first.
     pub const FLASH: usize = 0x2000_0000;
@@ -389,6 +392,40 @@ impl Scan {
     /// Clear the underflow bit.
     pub fn clear() {
         wr(Self::CLEAR, 1);
+    }
+}
+
+/// Razboj on the flagship (issue 985): the rasteriser draws the list at
+/// [`Razboj::LIST`] into the frame at [`Razboj::FRAME`], rows of 1024
+/// words as the scanout reads them, when a program writes the list's
+/// count to the doorbell. It writes the count back to zero when the
+/// list is drawn.
+pub struct Razboj;
+
+impl Razboj {
+    const COUNT: usize = map::DOORBELL + doorbell::COUNT;
+    const STATUS: usize = map::DOORBELL + doorbell::STATUS;
+
+    /// The framebuffer's first word, and the display list's: the
+    /// board's `RAZBOJ_FB` and `RAZBOJ_DL`.
+    pub const FRAME: u32 = 0x4200_0000;
+    pub const LIST: u32 = 0x4280_0000;
+
+    /// Draw the first `entries` of the list. Write the list first, and
+    /// ring only once [`Razboj::count`] reads zero.
+    pub fn ring(entries: u32) {
+        wr(Self::COUNT, entries);
+    }
+
+    /// The count: what is being drawn, or zero once it is drawn.
+    pub fn count() -> u32 {
+        rd(Self::COUNT) & doorbell::COUNT_COUNT_MASK
+    }
+
+    /// Whether the rasteriser has nothing left to draw and nothing in
+    /// flight.
+    pub fn idle() -> bool {
+        rd(Self::STATUS) & doorbell::STATUS_IDLE_MASK != 0
     }
 }
 
