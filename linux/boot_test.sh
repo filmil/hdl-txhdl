@@ -18,14 +18,15 @@ image="$2"
 shift 2
 out="${TEST_TMPDIR:-$(mktemp -d)}/console.txt"
 
-"$machine" --image "$image" --at 0x40000000 --steps 250000000 "$@" \
+"$machine" --image "$image" --at 0x40000000 --steps "${STEPS:-250000000}" "$@" \
     < /dev/null > "$out" 2> "$out.err" || true
 cat "$out"
 tail -2 "$out.err"
 
 fail=0
 # A test may ask for one more line, as boot_net_test asks for the
-# network's (issue 1203).
+# network's (issue 1203), and for more instructions in STEPS, as it
+# does for its pings a second apart (issue 1246).
 if [ -n "${EXPECT:-}" ]; then
     grep -q "$EXPECT" "$out" ||
         { echo "FAIL: never said: $EXPECT" >&2; fail=1; }
