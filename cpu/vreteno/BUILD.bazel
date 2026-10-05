@@ -5,6 +5,7 @@
 # against the model in lockstep.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools:opt_test.bzl", "opt_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -129,17 +130,22 @@ rust_test(
     ],
 )
 
-rust_test(
+# The whole board, several programs and a card identified at 400 kHz,
+# run built optimised with its checks on (issue 1250): at the build's
+# default of opt-level 0 it took 670 to 1100 s, and some 35 s so.
+opt_test(
     name = "board_test",
-    # The whole board, several programs and a card identified at 400 kHz:
-    # 165 s alone and near the medium size's 300 s under a suite's load,
-    # which it crossed once (issue 956). The scanout's load tests (issue
-    # 1209) took it to 890-1110 s, past the large size's 900 s, so it
-    # has the eternal timeout until it is split.
-    size = "large",
-    timeout = "eternal",
+    size = "medium",
+    test = ":board_test_rust",
+)
+
+# The test itself, which `board_test` above builds optimised and runs.
+# Manual, so that it is not run a second time as it is.
+rust_test(
+    name = "board_test_rust",
     srcs = ["tests/board.rs"],
     edition = "2021",
+    tags = ["manual"],
     deps = [
         ":vreteno32",
         "//ddr3",
