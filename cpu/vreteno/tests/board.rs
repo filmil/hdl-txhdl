@@ -1773,12 +1773,14 @@ fn mcycle_steps_steadily_between_two_reads() {
 /// memory's tracker and block RAM. On the board it is the controller's
 /// own latency, which is what the board run is for.
 ///
-/// The stores into the DDR3 take eight cycles more than into the data
+/// The stores into the DDR3 take seven cycles more than into the data
 /// memory, over sixteen. Before the instruction cache (issue 1021) the
 /// two were equal: the core issued stores no faster than it fetched the
 /// routine over the bus, so they showed that the core could not fill
 /// the path. From the cache it issues them faster than the DDR3's path
-/// takes them, and the difference is the path's.
+/// takes them, and the difference is the path's. It was eight with the
+/// cache alone; the fetch window (issue 1187) moves where the stores
+/// fall against the path's cycles, and it is seven.
 #[test]
 fn the_ddr3_path_is_timed_by_the_core() {
     let ran = run(ddr3bw_program::TEXT, ddr3bw_program::DATA, b"", 80000);
@@ -1812,7 +1814,7 @@ fn the_ddr3_path_is_timed_by_the_core() {
         16 * (latency - 2),
         "a load costs the DDR3 the controller's latency, less two"
     );
-    assert_eq!(sd - sm, 8, "the stores into the DDR3 wait on its path");
+    assert_eq!(sd - sm, 7, "the stores into the DDR3 wait on its path");
 }
 
 /// The DDR3's writes, reads and strobes, by the program the loader

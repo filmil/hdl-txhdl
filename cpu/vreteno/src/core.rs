@@ -849,6 +849,10 @@ pub struct Vreteno<const IW: usize> {
     pub f_bad1: Reg<Bit>,
     pub f_have: Reg<U<2>>,
     pub f_at: Reg<U<32>>,
+    /// The address of the buffer's second word, `f_at` plus four, kept
+    /// in a register so that the window's second compare has no add in
+    /// front of it (issue 1187).
+    pub f_at4: Reg<U<32>>,
     /// Whether the fetch that is out is for the second word of a
     /// thirty-two bit instruction that straddles two words.
     pub f_second: Reg<Bit>,
@@ -1150,7 +1154,23 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let f_have = self.f_have.get();
             let hit0 = (f_have != 0) & (f_at == want);
             let hit1 = (f_have == 2) & (f_at == want);
-            let w0 = mux(far, self.f_w0.get(), self.imem.read(widx));
+            // The buffer is a window of two words (issue 1187): the
+            // instruction may also begin in the second, the word after
+            // the one it held, which is the next instruction in a
+            // straight run. Both compares are with registers, side by
+            // side. The words are then read from the second, and the
+            // buffer slides along at the edge.
+            let f_at4 = self.f_at4.get();
+            let slide = far
+                & Bit::from(f_have == 2)
+                & Bit::from(f_at4 == want)
+                & !Bit::from(f_at == want);
+            let hitw = Bit::from(hit0) | slide;
+            let w0 = mux(
+                far,
+                mux(slide, self.f_w1.get(), self.f_w0.get()),
+                self.imem.read(widx),
+            );
             let w1 = mux(far, self.f_w1.get(), self.imem.read(widx + 1));
             let odd = fetch_pc.bit(1);
             let lo = mux(odd, w0.slice::<16, 16>(), w0.slice::<0, 16>());
@@ -1313,10 +1333,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // of the decode and registers, is all the address costs the
             // fetch's hold. Its translation is asked for too, and is
             // not used, since the misaligned trap comes first.
+            //
+            // A load waits as well while a fetch is out, since only one
+            // read is: the fetch ahead of time (issue 1187) is the one
+            // fetch that can be out under an instruction ready to run.
             let stall_mem = here
                 & (is_load | is_store)
                 & (!(issue.ready() & wbeat.ready())
                     | self.p_wait
+                    | (is_load & self.f_wait)
                     | (dvm & !self.x_done));
             // A word of the instruction is still on the bus: the core
             // waits for it, which is what makes a program above the
@@ -1328,10 +1353,13 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // A page fault the same way (issue 1014): the first word's
             // comes first, then an access fault in it, then the second
             // word's of either.
-            let f_pf = far & (self.f_pf0 | (!self.f_bad0 & need1 & self.f_pf1));
-            let f_fault = far & !f_pf & (self.f_bad0 | (need1 & self.f_bad1));
+            // A slide reads the first word's marks from the second's.
+            let e_pf0 = mux(slide, self.f_pf1.get(), self.f_pf0.get());
+            let e_bad0 = mux(slide, self.f_bad1.get(), self.f_bad0.get());
+            let f_pf = far & (e_pf0 | (!e_bad0 & need1 & self.f_pf1));
+            let f_fault = far & !f_pf & (e_bad0 | (need1 & self.f_bad1));
             let fetched = mux(f_fault | f_pf, U::<32>::from(0u32), fetched);
-            let f_ready = !far | (hit0 & (!need1 | hit1));
+            let f_ready = !far | (hitw & (!need1 | hit1));
             let stall_fetch = !f_ready;
             // `wfi` holds the core here until an interrupt is pending
             // and enabled. The wait does not ask whether interrupts
@@ -1830,7 +1858,14 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // buffer, nothing else of the core's is out, and the
             // channel has room. The second word is asked for after the
             // first, since only the first says whether it is wanted.
-            let f_want = far & (!hit0 | (need1 & !hit1));
+            // The word after the buffer's one is asked for ahead of time
+            // when it is in the same line (issue 1187), so a taken branch
+            // never waits behind the fill of a line it did not want. A
+            // slide sends nothing: the buffer slides first, and asks
+            // from there.
+            let next_in_line = Bit::from(f_at4.slice::<2, 2>() != 0);
+            let f_want =
+                far & !slide & (!hit0 | (!hit1 & (need1 | next_in_line)));
             let f_addr = mux(hit0, want + 4, want);
             // Under translation (issue 1014) a fetch goes out once the
             // page of the word it wants is translated, at the physical
@@ -1888,6 +1923,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let ic_line = ic_pa.slice::<4, 8>();
             let ic_t = self.ic_tag.read(ic_line);
             let ic_w = self.ic_data.read(ic_pa.slice::<2, 10>());
+            // The word after it, which a hit puts in the buffer's second
+            // place when it is in the same line (issue 1187).
+            let ic_w1 = self.ic_data.read(ic_pa.slice::<2, 10>() + 1);
             let looking = Bit::from(ic_st == 1);
             let filling = Bit::from(ic_st == 2);
             let ic_hit = ic_t.bit(20)
@@ -2068,6 +2106,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     f_bad0: f_err,
                     f_pf0: Bit::Zero,
                     f_at: asked,
+                    f_at4: asked + 4,
                     f_have: U::<2>::from(1u8)
                 },
                 f_fill & second ? {
@@ -2076,11 +2115,21 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     f_pf1: Bit::Zero,
                     f_have: U::<2>::from(2u8)
                 },
+                // A hit for the first word fills the second as well
+                // when the line holds it, so that a straight run takes
+                // a lookup for every two words (issue 1187).
+                l_hit & !second & Bit::from(ic_pa.slice::<2, 2>() != 3) ? {
+                    f_w1: ic_w1,
+                    f_bad1: Bit::Zero,
+                    f_pf1: Bit::Zero,
+                    f_have: U::<2>::from(2u8)
+                },
                 f_ffill & !hit0 ? {
                     f_w0: U::<32>::from(0u32),
                     f_bad0: self.ft_af,
                     f_pf0: self.ft_pf,
                     f_at: f_addr,
+                    f_at4: f_addr + 4,
                     f_have: U::<2>::from(1u8)
                 },
                 f_ffill & hit0 ? {
@@ -2150,6 +2199,17 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 !stall | wb_fault ? {
                     x_req: Bit::Zero,
                     x_done: Bit::Zero
+                },
+                // The buffer slides along to the word the instruction
+                // began in, its marks with it, when nothing is filling it
+                // (issue 1187).
+                slide & !self.f_wait & !f_ffill ? {
+                    f_w0: self.f_w1.get(),
+                    f_bad0: self.f_bad1.get(),
+                    f_pf0: self.f_pf1.get(),
+                    f_at: f_at4,
+                    f_at4: f_at4 + 4,
+                    f_have: U::<2>::from(1u8)
                 },
                 vctx ? {
                     f_have: U::<2>::from(0u8),
@@ -2659,7 +2719,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     self.ir <= fetched;
                     self.ir_bad <= f_fault;
                     self.ir_pf <= f_pf;
-                    self.ir_pf2 <= !self.f_pf0;
+                    self.ir_pf2 <= !e_pf0;
                     self.ir_c <= Bit::from(short);
                     self.ir_pc <= fetch_pc;
                     // The word behind an exception is squashed here,
