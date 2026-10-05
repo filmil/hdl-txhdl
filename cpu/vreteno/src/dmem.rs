@@ -3,11 +3,14 @@
 //! four memories of a byte, one per lane, so that a store of a byte or
 //! a half writes its lanes and reads nothing.
 //!
-//! It answers single-beat bursts, which is all the core makes. A read
-//! goes into the memory's own register at the edge, the synchronous
-//! read a block RAM has, and is answered the cycle after; a write is
+//! A read goes into the memory's own register at the edge, the
+//! synchronous read a block RAM has, and is answered the cycle after.
+//! A read burst of incrementing words is answered a beat a cycle, each
+//! word read as the one before it goes, which is what the core's
+//! instruction cache fills its lines with (issue 1021). A write is
 //! held until its beat arrives, because AXI4 puts no identifier on the
-//! write data channel. The router sends this peripheral only the
+//! write data channel, and is a single beat, which is all the core
+//! makes. The router sends this peripheral only the
 //! bursts in its range, so it checks no address.
 use txhdl::comp::{Clock, DefaultClock, Mem, Reg, Unit};
 use txhdl::types::{Bit, U};
@@ -28,6 +31,10 @@ pub struct Dmem<const I: usize> {
     pub word: Reg<U<32>>,
     pub rid: Reg<U<I>>,
     pub answer: Reg<Bit>,
+    /// The beats of a read burst left after the one in `word`, and
+    /// the word the next of them reads.
+    pub rleft: Reg<U<8>>,
+    pub raddr: Reg<U<10>>,
     /// A write taken and waiting for its beat: where it goes and which
     /// identifier answers it.
     pub pend: Reg<U<1>>,
@@ -82,10 +89,14 @@ impl<const I: usize> Unit for Dmem<I> {
             // The word this burst names, within the memory.
             let at = q.addr.slice::<2, 10>();
             // A read is taken when the register it lands in is free or
-            // is being emptied this cycle; a write is taken when no
-            // other write is waiting for its beat.
+            // is sending a burst's last beat this cycle; a write is
+            // taken when no other write is waiting for its beat.
             let send = queued & bus.r.ready();
-            let take_read = qoff & q.read & !held & (!queued | bus.r.ready());
+            let more = Bit::from(self.rleft.get() != 0);
+            let next = send & more;
+            let take_read =
+                qoff & q.read & !held & (!queued | (bus.r.ready() & !more));
+            let nat = self.raddr.get();
             let take_write = qoff & !q.read & !held;
             let _ = bus.req.recv_if(take_read | take_write);
             let wh = bus.w.head();
@@ -114,8 +125,21 @@ impl<const I: usize> Unit for Dmem<I> {
                         .concat::<_, 32>(self.lane0.read(at)),
                     rid: q.id,
                     answer: Bit::One,
+                    rleft: q.len,
+                    raddr: at + 1,
                 } else {
-                    send ? answer: Bit::Zero,
+                    next ? {
+                        word: self
+                            .lane3
+                            .read(nat)
+                            .concat::<_, 16>(self.lane2.read(nat))
+                            .concat::<_, 24>(self.lane1.read(nat))
+                            .concat::<_, 32>(self.lane0.read(nat)),
+                        rleft: self.rleft.get() - 1,
+                        raddr: nat + 1,
+                    } else {
+                        send ? answer: Bit::Zero,
+                    },
                 },
             });
             if send.to_bool() {
@@ -123,7 +147,7 @@ impl<const I: usize> Unit for Dmem<I> {
                     id: self.rid.get(),
                     data: self.word.get(),
                     resp: Resp::Okay,
-                    last: Bit::One,
+                    last: !more,
                 });
             }
             if wgo.to_bool() {
