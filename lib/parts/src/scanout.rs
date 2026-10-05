@@ -672,3 +672,67 @@ impl<
     }
 }
 // end{video_run}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hdmi::{vga, Raster};
+    use txhdl::comp::Running;
+
+    /// The flagship's pair and raster, a line of 640 words in 800
+    /// columns: the beam names columns 640 to 799 in the blanking, past
+    /// the line, and the pair must not read its line there (issue 1194).
+    /// Two lines are run, shown from the start, with the words of each
+    /// line given as they are asked for.
+    #[test]
+    fn the_blanking_columns_read_nothing_past_the_line() {
+        type R = Raster<
+            { vga::HV },
+            { vga::HFP },
+            { vga::HSW },
+            { vga::HBP },
+            { vga::VV },
+            { vga::VFP },
+            { vga::VSW },
+            { vga::VBP },
+            10,
+        >;
+        type P =
+            LinePair<{ vga::HV }, 10, { vga::VV }, 525, 4096, DefaultClock>;
+        let mut raster = R::default();
+        let mut pair = P::default();
+        let (col_o, col) = signal::<U<10>, DefaultClock>();
+        let (vis_o, vis) = signal::<Bit, DefaultClock>();
+        let (line_o, line) = signal::<Bit, DefaultClock>();
+        let (row_o, row) = signal::<U<12>, DefaultClock>();
+        let (frame_o, frame) = signal::<Bit, DefaultClock>();
+        let (base_o, base) = signal::<U<32>, DefaultClock>();
+        let (clear_o, clear) = signal::<Bit, DefaultClock>();
+        let (show_o, show) = signal::<Bit, DefaultClock>();
+        let (pix_o, _pix) = signal::<U<32>, DefaultClock>();
+        let (starved_o, _starved) = signal::<Bit, DefaultClock>();
+        let (words_tx, words) = chan::<U<32>, DefaultClock>();
+        let (req, req_rx) = chan::<U<32>, DefaultClock>();
+        base_o.set(U::<32>::from(0x4100_0000u32));
+        clear_o.set(Bit::Zero);
+        show_o.set(Bit::One);
+        let mut sim = Running::new(join2(
+            raster.run((), (col_o, vis_o, line_o, row_o, frame_o)),
+            pair.run(
+                (words, col, vis, line, row, frame, base, clear, show),
+                (pix_o, req, starved_o),
+            ),
+        ));
+        let mut owed = 0usize;
+        for _ in 0..2 * 800 {
+            if req_rx.recv_if(true).is_some() {
+                owed += vga::HV;
+            }
+            if owed > 0 && words_tx.ready().to_bool() {
+                words_tx.send(U::<32>::from(owed as u32));
+                owed -= 1;
+            }
+            sim.cycle();
+        }
+    }
+}
