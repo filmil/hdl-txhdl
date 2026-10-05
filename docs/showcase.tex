@@ -158,7 +158,10 @@ timer and the external interrupt. It is checked against a reference
 model of the instruction set written as a program, in lockstep, every
 cycle: the program counter, the thirty-one registers and the control
 registers must agree after each retirement, on a demonstration
-program and on sixty-four random ones.
+program and on sixty-four random ones. Above its boot memory it
+fetches through a four-kilobyte instruction cache, which runs a loop
+from memory at 4.1 cycles an instruction where a word over the bus
+for each took 14.7.
 
 It runs on hardware. The netlist goes through a hermetic Vivado onto
 an Alinx AX7A200B, and the board says on its serial port what the

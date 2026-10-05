@@ -16,8 +16,9 @@ It is the peripheral client of an \code{AxiPer}, and its link is one
 port, \code{bus}, a \code{PerPort} of the four channels: it takes
 requests on \code{bus\_req} and write beats on \code{bus\_w}, and
 answers on \code{bus\_ans} for a write and \code{bus\_r} for a read.
-It answers single-beat bursts,
-which is all the core makes.
+It answers a read burst of incrementing words a beat a cycle, which
+is what the core's instruction cache fills its lines with (issue 1021),
+and single-beat writes, which is all the core makes.
 
 \subsection*{Parameters}
 
@@ -59,7 +60,12 @@ of the beat, and \code{bus\_ans} sends \code{OKAY} with \code{pid}.
 is free or is being emptied in this cycle. The four lanes are read
 into \code{word} at the edge, the synchronous read a block RAM has.
 \item The read is answered on \code{bus\_r} the cycle after, with
-\code{rid}, \code{OKAY} and \code{last} set.
+\code{rid} and \code{OKAY}. A burst's \code{len} goes into
+\code{rleft} and the next word's index into \code{raddr}; while
+\code{rleft} is not zero, each beat sent reads the next word into
+\code{word} and counts \code{rleft} down, and the beat with
+\code{rleft} at zero has \code{last} set. A new read is taken only
+when the answer register is free or is sending a burst's last beat.
 \item While a write waits for its beat, no request of either kind is
 taken.
 \item \code{Dmem::with} fills the lanes from bytes before the first

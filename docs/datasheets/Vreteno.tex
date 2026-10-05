@@ -19,7 +19,12 @@ word, writes the register file and retires the instruction.
 The core holds two memories: the register file, 32 words, and the
 instruction memory, \code{IMEM\_WORDS} or 1024 words.
 \code{Vreteno::with} loads a program into the instruction memory. The
-data memory and every device are on the bus, outside the core.
+data memory and every device are on the bus, outside the core. Above
+the instruction memory the fetch reads from the bus, into a buffer of
+two words, and the words of the data memory and of DDR3 through an
+instruction cache (issue 1021): four kilobytes, 256 lines of four
+words, one way, indexed by the page offset and tagged by the physical
+page, in \code{ic\_data} and \code{ic\_tag}.
 
 The bus side is an AXI host written as hardware. The core issues a
 burst on \code{issue}, sends a store's beat on \code{wbeat}, and hands
@@ -105,6 +110,18 @@ the upper half of its word when bit 1 is set. If its low two bits are
 not both set it is a compressed instruction, expanded in the fetch;
 otherwise the halfword after it is the instruction's upper half. The
 counter moves on by two or four.
+\item A fetch above the instruction memory goes to the bus when its
+physical page is a device's, and to the cache when it is the data
+memory's or DDR3's. The cache reads the line's tag and the word the
+cycle after, at the address the fetch registered in \code{ic\_pa}. A
+hit puts the word in the fetch buffer. A miss reads the line as one
+burst of four beats, \code{len} 3, once nothing else of the core's is
+on the bus, writes each beat into the line, makes the line valid on the
+last, and looks the word up again. A refused beat ends the fetch with
+the word's access fault, and leaves the line invalid.
+\item \code{fence.i} and \code{rst} clear the cache's tags, one line a
+cycle, and a lookup waits until they are clear. A store does not reach
+the cache, so code written by stores runs after a \code{fence.i}.
 \item \code{ir\_c} says the instruction in execute was compressed.
 \code{jal} and \code{jalr} link the address two bytes on for a
 compressed one and four for the rest.
@@ -124,8 +141,9 @@ has the lanes it covers as its strobe.
 \code{dev\_wait} and sits in writeback, holding the pipeline, until
 its answer lands in \code{wb\_dev}.
 \item When a write response and a read beat arrive together, the
-write's identifier goes back first and the read's waits a cycle. The
-core drops what it receives on \code{grant}.
+write's identifier goes back first and the read's waits a cycle. A
+read's identifier goes back on its last beat, so once for a cache
+fill's four. The core drops what it receives on \code{grant}.
 \item \code{ecall} traps with cause 11 and \code{ebreak} with cause 3,
 which takes its own address as \code{mtval}. A word the core does not
 know traps with cause 2, and \code{mtval} takes the word. A halfword
@@ -186,6 +204,12 @@ of \code{run.rs} and check what the serial line says and that the core
 halted.
 \item \code{//cpu/vreteno:board\_test} and \code{//soc:demo\_test} run
 the core inside \code{Board} and on the lattice.
+\item \code{//cpu/vreteno:icache\_test} runs issue 1009's loop of three
+instructions from the instruction memory and from the data memory,
+through the cache, at 1.333 and 4.093 cycles an instruction (14.655
+from the data memory before the cache); the same loop across two
+lines; and a routine rewritten by a store and called again after
+\code{fence.i}, which runs the word stored.
 \item The build simulates \code{Vreteno<2>}'s netlist, with the
 demonstration program in its instruction memory, against the trace of
 \code{//cpu/vreteno:vreteno} under nvc and Verilator:
