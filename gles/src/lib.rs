@@ -79,6 +79,10 @@ pub struct Gl<'a> {
     frame: &'a mut [[u32; WORDS]],
     used: usize,
     screen: (u32, u32),
+    /// The window's first row in Razboj's framebuffer: zero, unless
+    /// EGL has put the window lower, on the half of a double buffer not
+    /// shown (issue 996). Nothing is drawn above it.
+    window_top: u32,
     mode: u32,
     mv: [Mat; gl::MAX_MODELVIEW_STACK_DEPTH],
     mv_top: usize,
@@ -114,6 +118,7 @@ impl<'a> Gl<'a> {
             frame,
             used: 0,
             screen: (sw, sh),
+            window_top: 0,
             mode: gl::MODELVIEW,
             mv: [IDENTITY; gl::MAX_MODELVIEW_STACK_DEPTH],
             mv_top: 0,
@@ -465,7 +470,16 @@ impl<'a> Gl<'a> {
             return self.fail(gl::INVALID_VALUE);
         }
         if mask & gl::COLOR_BUFFER_BIT != 0 {
-            let w = emit::clear(colour_word(&self.clear_colour));
+            let colour = colour_word(&self.clear_colour);
+            // Razboj's clear is of its own screen, the rows from zero; a
+            // window lower down is cleared as a rectangle of itself, so
+            // that the half of a double buffer being shown is left alone.
+            let w = if self.window_top == 0 {
+                emit::clear(colour)
+            } else {
+                let (sw, sh) = self.screen;
+                emit::rect(colour, (0, self.window_top, sw - 1, sh - 1))
+            };
             self.push(w);
         }
     }
@@ -476,6 +490,25 @@ impl<'a> Gl<'a> {
         }
         self.frame[self.used] = w;
         self.used += 1;
+    }
+
+    /// Draws from here on into `frame`, empty, as a window of `width`
+    /// by `height` pixels whose first row is Razboj's row `top`, keeping
+    /// every other part of the context's state: what EGL does at a swap,
+    /// moving the window to the half of a double buffer not shown
+    /// (issue 996). GL's window is the same size, so the viewport and
+    /// everything else a program set stand.
+    pub fn retarget(
+        &mut self,
+        frame: &'a mut [[u32; WORDS]],
+        width: u32,
+        height: u32,
+        top: u32,
+    ) {
+        self.frame = frame;
+        self.used = 0;
+        self.screen = (width, top + height);
+        self.window_top = top;
     }
 
     /// The frame so far, as the instructions an untiled Razboj reads.
@@ -759,7 +792,7 @@ impl<'a> Gl<'a> {
             (r(win[k].0), r(sh16 - win[k].1))
         };
         let (sw, sh) = self.screen;
-        let screen: Bounds = (0, 0, sw - 1, sh - 1);
+        let screen: Bounds = (0, self.window_top, sw - 1, sh - 1);
         // With two-sided lighting a back face shows the colours lit for
         // its back.
         let back_face = self.two_side && self.lighting && !front;

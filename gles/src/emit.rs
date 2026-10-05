@@ -127,3 +127,16 @@ pub fn clear(colour: u32) -> [u32; WORDS] {
     w[15] = colour >> 24;
     w
 }
+
+/// A rectangle filled in `colour`, `0xAARRGGBB`, over `within`, both
+/// ends included: the clear of a window that does not start at row zero
+/// (issue 996).
+pub fn rect(colour: u32, within: Bounds) -> [u32; WORDS] {
+    let (x0, y0, x1, y1) = within;
+    let mut w = [0u32; WORDS];
+    w[0] = 1 | ((colour & 0xff_ffff) << 2);
+    w[1] = x0 | (y0 << 16);
+    w[2] = x1 | (y1 << 16);
+    w[15] = colour >> 24;
+    w
+}

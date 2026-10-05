@@ -139,6 +139,25 @@ pub unsafe extern "C" fn gles_make_current(
     });
 }
 
+/// Moves the current context to `capacity` instructions at `frame`,
+/// empty, as a window of `width` by `height` pixels whose first row is
+/// Razboj's row `top`, keeping the rest of its state: what EGL does at a
+/// swap, issue 996. Not a GL call.
+#[no_mangle]
+pub unsafe extern "C" fn gles_retarget(
+    frame: *mut u32,
+    capacity: usize,
+    width: u32,
+    height: u32,
+    top: u32,
+) {
+    let entries =
+        core::slice::from_raw_parts_mut(frame as *mut [u32; WORDS], capacity);
+    if let Some(c) = current() {
+        c.gl.retarget(entries, width, height, top);
+    }
+}
+
 /// How many instructions the current context's frame holds so far.
 #[no_mangle]
 pub extern "C" fn gles_frame_len() -> usize {
