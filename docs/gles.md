@@ -274,6 +274,15 @@ Each step is a pull request, checked before the next.
    And the backdrop's rectangle at the head of each list is issue 986's own rather than `glClear`, since a clear is the whole screen and the second frame shares the framebuffer with the first.
    `//cpu/vreteno/rust:ico_gl_test` draws both through Razboj's model at 64 angles in each frame: the same faces, every face's colour within 2 of the other's in each channel, the worst being 2, and every pixel where the two differ beyond that on an edge of both.
    The cycles on the board wait for a board session.
+6. **The C ABI.**
+   The user chose Rust inside with C at the edge (section 9), and this is the edge, issue 1224, which EGL (issue 996) needs.
+   `gles/capi/lib.rs` has `extern "C"` functions with the names and types of Khronos's `GLES/gl.h` for the 41 entry points the library implements, over a current context and its client arrays.
+   The client arrays are read a vertex at a time, in the types Common-Lite allows, through `Gl::draw_vertices`, so nothing is copied or allocated.
+   `GLES/gl.h`, `GLES/glplatform.h` and `KHR/khrplatform.h` are not copied into the tree: `MODULE.bazel` fetches them from Khronos's OpenGL-Registry and EGL-Registry at pinned commits, by their sha256, and `//third_party/khronos:gles1` lays them out for `#include <GLES/gl.h>`.
+   The other 104 entry points gl.h declares, the floating-point ones among them, are C that `gles/capi/stubs.sh` writes from gl.h itself, leaving out every name `lib.rs` defines; each sets `GL_INVALID_OPERATION`, so every GL ES 1.1 program links and is told what it asked for is not there.
+   `glGetString(GL_VERSION)` says "OpenGL ES-CL 1.1 TxHDL, Common-Lite without textures, not conformant", which answers the last question of section 11 for now.
+   It departs from the plan in one place: making a context current is EGL's, so until issue 996 lands `gles_make_current` does it over a frame its caller owns, and `glFlush` and `glFinish` leave the frame for EGL to hand to Razboj.
+   `//gles:capi_test` draws one scene in C through `:gles_c` and through the Rust API, and holds the two frames to each other word for word, with what an unimplemented entry point and `glGetString` say.
 
 Points, lines, depth, blending and the scissor are added as issues 990, 992, 993 and 994 land, each with the entry points section 2 holds for it.
 
