@@ -487,6 +487,34 @@ An `mtval` of `00003900` means the doorbell refused a read it should answer; any
 Which of the three runs trapped says whether what ran before matters.
 Put the three logs on #1214.
 
+### Gouraud shading on the board, #989
+
+The flagship from any `main` that holds #985 (PR 1160), programmed over JTAG, with a monitor on the HDMI connector, as for Razboj above.
+Nothing is written to flash, and it needs no order against the other Razboj checks: the program sets the scanout's base itself.
+
+```sh
+bazel build //cpu/vreteno/rust:shadeprobe_ram_bin
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/shadeprobe_ram_bin.bin --seconds=20 \
+    2>&1 | tee board-989-shade.log
+```
+
+The program has Razboj draw a triangle with red, green and blue at its corners over a dark blue backdrop.
+Then it reads every one of the 640 by 480 pixels back and compares each with what Razboj's model draws there, which `//cpu/vreteno/rust:shadeprobe_list_test` holds the program's expectation to, pixel for pixel.
+
+Pass, in this order:
+* `shade probe`.
+* `shade rung`.
+* `shade idle` and a number of cycles.
+* `shade ok 104000`: every pixel as the model draws it, and the triangle's 104000 among them.
+* On the monitor: a triangle pointing up, red at its top, green at its bottom right and blue at its bottom left, blending smoothly between them, on dark blue, steady.
+
+`shade bad` gives the first wrong pixel's column, row, the word read and the word expected, and `shade wrong` how many were wrong.
+A few wrong pixels along an edge point at the edge rule rather than at the shading; wrong colours inside point at the planes' steps.
+`shade stuck` means the list was never finished, as `razboj stuck` above.
+Put the log, the cycle count, and a photograph of the screen on #989, which a pass finishes.
+
 ### Ethernet throughput, #1038
 
 The Ethernet half of #151: the port's throughput through the slots and the DMA engines, against the core's own copy of each frame.
