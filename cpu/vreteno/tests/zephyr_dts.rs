@@ -252,18 +252,19 @@ fn eth_word(name: &str) -> u32 {
 #[test]
 fn the_ethernet_driver_reads_the_words_the_hardware_decodes() {
     // The hardware selects a word and the driver names a byte
-    // offset. They have to be the same register.
+    // offset. They have to be the same register, at LiteX's own
+    // offsets, which Linux's `litex_liteeth` fixes (issue 1203).
     for (name, word) in [
         ("RX_SLOT", 0),
         ("RX_LENGTH", 1),
-        ("RX_EV_PENDING", 2),
-        ("RX_EV_ENABLE", 3),
-        ("TX_SLOT", 4),
-        ("TX_LENGTH", 5),
+        ("RX_EV_PENDING", 4),
+        ("RX_EV_ENABLE", 5),
         ("TX_START", 6),
         ("TX_READY", 7),
-        ("TX_EV_PENDING", 8),
-        ("TX_EV_ENABLE", 9),
+        ("TX_SLOT", 9),
+        ("TX_LENGTH", 10),
+        ("TX_EV_PENDING", 12),
+        ("TX_EV_ENABLE", 13),
     ] {
         assert_eq!(eth_word(name), word, "`{name}` should be word {word}");
     }
@@ -275,21 +276,21 @@ fn the_ethernet_driver_reads_the_words_the_hardware_decodes() {
     // the driver's name is the map's register at that word, and the
     // side the driver uses it on is one the access allows.
     let map = &txhdl_parts::ethslots::regs::MAP;
-    for word in [0, 1, 7, 8] {
+    for word in [0, 1, 7, 12] {
         let r = map.regs.iter().find(|r| r.index == word);
         assert!(
             r.is_some_and(|r| r.access != Access::Wo),
             "the hardware does not answer a read of word {word}"
         );
     }
-    for word in [2, 3, 4, 5, 6, 8, 9] {
+    for word in [4, 5, 6, 9, 10, 12, 13] {
         let r = map.regs.iter().find(|r| r.index == word);
         assert!(
             r.is_some_and(|r| r.access != Access::Ro),
             "the hardware does not take a write of word {word}"
         );
     }
-    for (name, word) in [("RX_EV_PENDING", 2), ("TX_START", 6)] {
+    for (name, word) in [("RX_EV_PENDING", 4), ("TX_START", 6)] {
         let r = map.regs.iter().find(|r| r.index == word).unwrap();
         assert_eq!(
             r.name.to_uppercase(),
