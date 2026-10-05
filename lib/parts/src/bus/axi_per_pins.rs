@@ -258,20 +258,92 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
 /// the pins, the way a core from elsewhere is one. A test or an example
 /// drives [`AxiPerPins`] with it, and runs it ahead of the unit in the
 /// join, as [`PinHost`] is run, since the pins are wires the unit reads
-/// in the same step. So it is always ready for an address phase and a
-/// beat, which it records a step later from what the unit drove, and it
-/// offers its answers one at a time, a response or a beat leaving when
-/// the unit's `ready` was high in the step it was offered.
+/// in the same step. So it records an address phase or a beat a step
+/// later, from what the unit drove while it was ready, and it offers its
+/// answers one at a time, a response or a beat leaving when the unit's
+/// `ready` was high in the step it was offered.
+///
+/// It is ready for everything at once and answers at once, unless it is
+/// given a timing: then it is not ready until a warm-up has passed, as a
+/// controller is not until it has calibrated, and it answers a read and
+/// a write a number of steps after taking them, as a controller does.
+/// That is what lets it stand for one in simulation.
 ///
 /// [`PinHost`]: super::axi_pins::sim::PinHost
 pub mod sim {
     use super::{AxiPerDriven, AxiPerPinsIn, AxiPerPinsOut};
     use crate::bus::axi::{Ar, Aw, B, R, W};
     use std::cell::RefCell;
-    use std::collections::VecDeque;
+    use std::collections::{HashMap, VecDeque};
     use std::rc::Rc;
     use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Rx, Tx};
     use txhdl::types::{Bit, U};
+
+    /// The pins a memory reads: what the unit drives, less the fields it
+    /// does not use. Every burst is taken as incrementing words, so
+    /// `AxSIZE` and `AxBURST` are not among them, and nor are `AxLOCK`,
+    /// `AxCACHE`, `AxPROT` and `AxQOS`.
+    pub struct PinRamIn<
+        const A: usize,
+        const D: usize,
+        const S: usize,
+        const I: usize,
+    > {
+        /// `AWID`.
+        pub awid: In<U<I>>,
+        /// `AWADDR`.
+        pub awaddr: In<U<A>>,
+        /// `AWLEN`.
+        pub awlen: In<U<8>>,
+        /// `AWVALID`.
+        pub awvalid: In<Bit>,
+        /// `WDATA`.
+        pub wdata: In<U<D>>,
+        /// `WSTRB`.
+        pub wstrb: In<U<S>>,
+        /// `WLAST`.
+        pub wlast: In<Bit>,
+        /// `WVALID`.
+        pub wvalid: In<Bit>,
+        /// `BREADY`.
+        pub bready: In<Bit>,
+        /// `ARID`.
+        pub arid: In<U<I>>,
+        /// `ARADDR`.
+        pub araddr: In<U<A>>,
+        /// `ARLEN`.
+        pub arlen: In<U<8>>,
+        /// `ARVALID`.
+        pub arvalid: In<Bit>,
+        /// `RREADY`.
+        pub rready: In<Bit>,
+    }
+
+    /// The pins a memory drives: its readies and its answers.
+    pub struct PinRamOut<const D: usize, const I: usize> {
+        /// `AWREADY`.
+        pub awready: Out<Bit>,
+        /// `WREADY`.
+        pub wready: Out<Bit>,
+        /// `ARREADY`.
+        pub arready: Out<Bit>,
+        /// `BID`.
+        pub bid: Out<U<I>>,
+        /// `BRESP`.
+        pub bresp: Out<U<2>>,
+        /// `BVALID`.
+        pub bvalid: Out<Bit>,
+        /// `RID`.
+        pub rid: Out<U<I>>,
+        /// `RDATA`.
+        pub rdata: Out<U<D>>,
+        /// `RRESP`.
+        pub rresp: Out<U<2>>,
+        /// `RLAST`.
+        pub rlast: Out<Bit>,
+        /// `RVALID`.
+        pub rvalid: Out<Bit>,
+    }
 
     /// The peripheral's ends of the pins, and its memory.
     pub struct PinRam<
@@ -280,129 +352,190 @@ pub mod sim {
         const S: usize,
         const I: usize,
     > {
-        aw: (In<U<I>>, In<U<A>>, In<U<8>>, In<Bit>),
-        w: (In<U<D>>, In<U<S>>, In<Bit>, In<Bit>),
-        ar: (In<U<I>>, In<U<A>>, In<U<8>>, In<Bit>),
-        bready: In<Bit>,
-        rready: In<Bit>,
-        ready: (Out<Bit>, Out<Bit>, Out<Bit>),
-        b: (Out<U<I>>, Out<U<2>>, Out<Bit>),
-        r: (Out<U<I>>, Out<U<D>>, Out<U<2>>, Out<Bit>, Out<Bit>),
-        mem: Rc<RefCell<Vec<U<D>>>>,
+        inp: PinRamIn<A, D, S, I>,
+        out: PinRamOut<D, I>,
+        mem: Rc<RefCell<HashMap<u128, U<D>>>>,
+        words: u128,
+        wraps: bool,
+        read_latency: u64,
+        write_latency: u64,
+        warmup: u64,
     }
 
     impl<const A: usize, const D: usize, const S: usize, const I: usize>
         PinRam<A, D, S, I>
     {
-        /// The memory's `i`th word.
-        pub fn word(&self, i: usize) -> U<D> {
-            self.mem.borrow()[i]
+        /// A memory of `words` words on the given pins, every word zero,
+        /// ready at once and answering at once.
+        pub fn on(
+            inp: PinRamIn<A, D, S, I>,
+            out: PinRamOut<D, I>,
+            words: u128,
+        ) -> Self {
+            PinRam {
+                inp,
+                out,
+                mem: Rc::new(RefCell::new(HashMap::new())),
+                words,
+                wraps: false,
+                read_latency: 0,
+                write_latency: 0,
+                warmup: 0,
+            }
         }
 
-        /// A handle on the memory, for a test to read after the run.
-        pub fn memory(&self) -> Rc<RefCell<Vec<U<D>>>> {
+        /// The same memory, not ready for its first `warmup` steps, with
+        /// a read's first beat offered `read` steps after its address was
+        /// taken and a write's response `write` steps after its last
+        /// beat was.
+        pub fn timed(mut self, read: u64, write: u64, warmup: u64) -> Self {
+            self.read_latency = read;
+            self.write_latency = write;
+            self.warmup = warmup;
+            self
+        }
+
+        /// The same memory, with an address past its end taken modulo
+        /// its size rather than refused, as a controller whose address is
+        /// narrower than the link's takes it.
+        pub fn wrapping(mut self) -> Self {
+            self.wraps = true;
+            self
+        }
+
+        /// The memory's `i`th word.
+        pub fn word(&self, i: u128) -> U<D> {
+            self.mem.borrow().get(&i).copied().unwrap_or_default()
+        }
+
+        /// A handle on the memory, for a test to read after the run: the
+        /// words written, by index.
+        pub fn memory(&self) -> Rc<RefCell<HashMap<u128, U<D>>>> {
             self.mem.clone()
+        }
+
+        /// The index of a word, and whether the memory has it.
+        fn index(&self, at: u128) -> (u128, bool) {
+            if self.wraps {
+                (at % self.words, true)
+            } else {
+                (at, at < self.words)
+            }
         }
 
         /// Answer bursts for ever: a write's beats go into the memory and
         /// its response follows the last; a read's beats come out one a
         /// step. A word past the memory's end is not written, and is
-        /// answered `SLVERR`, as is a read of one.
+        /// answered `SLVERR`, as is a read of one, unless the memory
+        /// wraps.
         pub async fn serve(self) {
             let shift = S.trailing_zeros();
-            let words = self.mem.borrow().len() as u128;
+            let inp = &self.inp;
+            let out = &self.out;
             // Write bursts awaiting their beats: identifier, first word,
             // beats so far, and whether any was past the end.
             let mut writes: VecDeque<(U<I>, u128, u128, bool)> =
                 VecDeque::new();
             let mut beats: VecDeque<(U<D>, U<S>, Bit)> = VecDeque::new();
-            let mut bq: VecDeque<(U<I>, u8)> = VecDeque::new();
-            let mut rq: VecDeque<(U<I>, u128, bool)> = VecDeque::new();
+            // Answers, each with the step it may be offered from.
+            let mut bq: VecDeque<(U<I>, u8, u64)> = VecDeque::new();
+            let mut rq: VecDeque<(U<I>, u128, bool, u64)> = VecDeque::new();
             let (mut b_offered, mut r_offered) = (false, false);
+            let mut ready = false;
+            let mut now: u64 = 0;
             loop {
                 DefaultClock::rising().await;
-                // What the unit drove in the last step, and whether it
-                // took what was offered then.
-                if self.aw.3.get().to_bool() {
-                    let first = self.aw.1.get().raw() >> shift;
-                    writes.push_back((self.aw.0.get(), first, 0, false));
+                now += 1;
+                // What the unit drove in the last step, taken if this
+                // memory was ready then, and whether it took what was
+                // offered then.
+                if ready && inp.awvalid.get().to_bool() {
+                    let first = inp.awaddr.get().raw() >> shift;
+                    writes.push_back((inp.awid.get(), first, 0, false));
                 }
-                if self.w.3.get().to_bool() {
+                if ready && inp.wvalid.get().to_bool() {
                     beats.push_back((
-                        self.w.0.get(),
-                        self.w.1.get(),
-                        self.w.2.get(),
+                        inp.wdata.get(),
+                        inp.wstrb.get(),
+                        inp.wlast.get(),
                     ));
                 }
-                if self.ar.3.get().to_bool() {
-                    let first = self.ar.1.get().raw() >> shift;
-                    let n = self.ar.2.get().raw() + 1;
+                if ready && inp.arvalid.get().to_bool() {
+                    let first = inp.araddr.get().raw() >> shift;
+                    let n = inp.arlen.get().raw() + 1;
+                    let due = now + self.read_latency;
                     for k in 0..n {
-                        rq.push_back((self.ar.0.get(), first + k, k + 1 == n));
+                        rq.push_back((
+                            inp.arid.get(),
+                            first + k,
+                            k + 1 == n,
+                            due,
+                        ));
                     }
                 }
-                if b_offered && self.bready.get().to_bool() {
+                if b_offered && inp.bready.get().to_bool() {
                     bq.pop_front();
                 }
-                if r_offered && self.rready.get().to_bool() {
+                if r_offered && inp.rready.get().to_bool() {
                     rq.pop_front();
                 }
                 while !writes.is_empty() && !beats.is_empty() {
                     let (data, strb, last) = beats.pop_front().unwrap();
                     let (id, first, k, mut bad) = writes.pop_front().unwrap();
-                    let at = first + k;
-                    if at < words {
+                    let (at, ok) = self.index(first + k);
+                    if ok {
                         let mut mem = self.mem.borrow_mut();
-                        let mut word = mem[at as usize].raw();
+                        let mut word =
+                            mem.get(&at).copied().unwrap_or_default().raw();
                         for lane in 0..S {
                             if (strb.raw() >> lane) & 1 == 1 {
                                 let m = 0xffu128 << (8 * lane);
                                 word = (word & !m) | (data.raw() & m);
                             }
                         }
-                        mem[at as usize] = U::<D>::new(word);
+                        mem.insert(at, U::<D>::new(word));
                     } else {
                         bad = true;
                     }
                     if last.to_bool() {
-                        bq.push_back((id, if bad { 2 } else { 0 }));
+                        let due = now + self.write_latency;
+                        bq.push_back((id, if bad { 2 } else { 0 }, due));
                     } else {
                         writes.push_front((id, first, k + 1, bad));
                     }
                 }
-                // Always ready, and the answers at the head on offer.
-                self.ready.0.set(Bit::One);
-                self.ready.1.set(Bit::One);
-                self.ready.2.set(Bit::One);
-                b_offered = !bq.is_empty();
-                if let Some(&(id, resp)) = bq.front() {
-                    self.b.0.set(id);
-                    self.b.1.set(U::<2>::from(resp));
+                // Ready once warm, and the answers at the head on offer
+                // once they are due.
+                ready = now > self.warmup;
+                out.awready.set(Bit::from_bool(ready));
+                out.wready.set(Bit::from_bool(ready));
+                out.arready.set(Bit::from_bool(ready));
+                b_offered =
+                    matches!(bq.front(), Some(&(_, _, due)) if due <= now);
+                if let Some(&(id, resp, _)) = bq.front() {
+                    out.bid.set(id);
+                    out.bresp.set(U::<2>::from(resp));
                 }
-                self.b.2.set(Bit::from_bool(b_offered));
-                r_offered = !rq.is_empty();
-                if let Some(&(id, at, last)) = rq.front() {
-                    let ok = at < words;
-                    let data = if ok {
-                        self.mem.borrow()[at as usize]
-                    } else {
-                        U::<D>::new(0)
-                    };
-                    self.r.0.set(id);
-                    self.r.1.set(data);
-                    self.r.2.set(U::<2>::from(if ok { 0u8 } else { 2u8 }));
-                    self.r.3.set(Bit::from_bool(last));
+                out.bvalid.set(Bit::from_bool(b_offered));
+                r_offered =
+                    matches!(rq.front(), Some(&(_, _, _, due)) if due <= now);
+                if let Some(&(id, at, last, _)) = rq.front() {
+                    let (at, ok) = self.index(at);
+                    let data = if ok { self.word(at) } else { U::<D>::new(0) };
+                    out.rid.set(id);
+                    out.rdata.set(data);
+                    out.rresp.set(U::<2>::from(if ok { 0u8 } else { 2u8 }));
+                    out.rlast.set(Bit::from_bool(last));
                 }
-                self.r.4.set(Bit::from_bool(r_offered));
+                out.rvalid.set(Bit::from_bool(r_offered));
             }
         }
     }
 
     /// Make the pins between an [`AxiPerPins`](super::AxiPerPins) and a
     /// [`PinRam`] of `words` words, with the link's channel ends given to
-    /// the unit where they belong. The pins the memory leaves unread,
-    /// `AxSIZE`, `AxBURST` (every burst is taken as incrementing words),
-    /// `AxLOCK`, `AxCACHE`, `AxPROT` and `AxQOS`, are wires nobody reads.
+    /// the unit where they belong. The pins the memory leaves unread are
+    /// wires nobody reads.
     #[allow(clippy::type_complexity)]
     pub fn pins<
         const A: usize,
@@ -450,17 +583,38 @@ pub mod sim {
         let (rlast_o, rlast) = wire::<Bit>();
         let (rvalid_o, rvalid) = wire::<Bit>();
         (
-            PinRam {
-                aw: (awid, awaddr, awlen, awvalid),
-                w: (wdata, wstrb, wlast, wvalid),
-                ar: (arid, araddr, arlen, arvalid),
-                bready,
-                rready,
-                ready: (awready_o, wready_o, arready_o),
-                b: (bid_o, bresp_o, bvalid_o),
-                r: (rid_o, rdata_o, rresp_o, rlast_o, rvalid_o),
-                mem: Rc::new(RefCell::new(vec![U::<D>::new(0); words])),
-            },
+            PinRam::on(
+                PinRamIn {
+                    awid,
+                    awaddr,
+                    awlen,
+                    awvalid,
+                    wdata,
+                    wstrb,
+                    wlast,
+                    wvalid,
+                    bready,
+                    arid,
+                    araddr,
+                    arlen,
+                    arvalid,
+                    rready,
+                },
+                PinRamOut {
+                    awready: awready_o,
+                    wready: wready_o,
+                    arready: arready_o,
+                    bid: bid_o,
+                    bresp: bresp_o,
+                    bvalid: bvalid_o,
+                    rid: rid_o,
+                    rdata: rdata_o,
+                    rresp: rresp_o,
+                    rlast: rlast_o,
+                    rvalid: rvalid_o,
+                },
+                words as u128,
+            ),
             AxiPerPinsIn {
                 pins: AxiPerDriven {
                     awready,
@@ -572,6 +726,70 @@ mod tests {
             }
         }
         assert!(*done.borrow(), "every burst was answered");
-        assert_eq!(mem.borrow()[3].raw(), 0x22, "the second word landed");
+        assert_eq!(mem.borrow()[&3].raw(), 0x22, "the second word landed");
+    }
+
+    /// The cycle a write of `beats` words is answered in, through a
+    /// memory with the timing given, and the cycles the read after it
+    /// takes.
+    fn timed(read: u64, write: u64, warmup: u64, beats: usize) -> (u64, u64) {
+        let Link {
+            host,
+            host_in,
+            host_out,
+            per_in,
+            per_out,
+            ..
+        } = axi::<16, 32, 4, 2, 4>();
+        let (aw, ar, w, _, _) = per_in;
+        let (_, _, b, r) = per_out;
+        let (ram, inp, outp) = pins::<16, 32, 4, 2>(aw, ar, w, b, r, 64);
+        let ram = ram.timed(read, write, warmup);
+        let at = Rc::new(RefCell::new((0u64, 0u64)));
+        let a = at.clone();
+        // The clock runs on across runs in one thread, so count from here.
+        let t0 = txhdl::comp::now();
+        let client = async move {
+            let words: Vec<U<32>> =
+                (0..beats).map(|i| U::from(i as u32)).collect();
+            let got = host.write(Wr::at(0x0u32), &words).await.done().await;
+            assert_eq!(got.resp, Resp::Okay);
+            a.borrow_mut().0 = (txhdl::comp::now() - t0) / DefaultClock::PERIOD;
+            let got = host.read(Rd::at(0x0u32, beats)).await.done().await;
+            assert_eq!(got.data, words);
+            a.borrow_mut().1 = (txhdl::comp::now() - t0) / DefaultClock::PERIOD;
+        };
+        let mut tracker = AxiHost::<16, 32, 4, 2, 4>::default();
+        let mut pinned = AxiPerPins::<16, 32, 4, 2>::default();
+        let mut sim = Running::new(join2(
+            client,
+            join2(
+                tracker.run(host_in, host_out),
+                join2(ram.serve(), pinned.run(inp, outp)),
+            ),
+        ));
+        for _ in 0..1000 {
+            sim.cycle();
+        }
+        let (w, r) = *at.borrow();
+        assert!(w > 0 && r > w, "both answered: {w} {r}");
+        (w, r - w)
+    }
+
+    /// A warm-up holds everything off until it has passed, and a latency
+    /// delays an answer by exactly itself: a read's first beat by the
+    /// read latency, after which the burst streams a beat a cycle, and a
+    /// write's response by the write latency.
+    #[test]
+    fn a_timed_memory_waits_and_then_answers_late() {
+        let (w0, r0) = timed(0, 0, 0, 8);
+        let (w1, r1) = timed(0, 0, 40, 8);
+        assert!(w1 >= 40, "the write waited for the warm-up: {w1}");
+        assert_eq!(r1, r0, "the read after it did not");
+        let (w2, r2) = timed(10, 3, 0, 8);
+        assert_eq!(r2, r0 + 10, "a read is ten cycles later");
+        assert_eq!(w2, w0 + 3, "a write is three cycles later");
+        let (_, r3) = timed(10, 3, 0, 16);
+        assert_eq!(r3 - r2, 8, "eight more beats, a cycle each");
     }
 }

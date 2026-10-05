@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The bandwidth of the path into DDR3, measured in simulation: the
-//! baseline issue 1023 asks for before the path is widened.
+//! The bandwidth of the path into DDR3, measured in simulation: what
+//! issue 1023 asked of the path, before and after it was widened.
 //!
 //! Every user of the board's DDR3 reaches it through one path: the link
-//! into `Ddr3Per`, its bridge `AxiWb`, and the Wishbone into the
-//! controller's wrapper. The bridge takes one burst at a time and puts
-//! each word on the Wishbone as its own request, waiting for the answer
-//! before the next, so the path's throughput is one word per round trip
-//! of the Wishbone, however many bursts the host has in flight; a
-//! longer burst saves only the cycle or so a burst costs of its own.
+//! into `Ddr3Per`, its `AxiPerPins`, and the controller's own AXI4 port.
+//! Nothing on the path holds a burst back: the pins part holds nothing,
+//! and the controller takes several bursts at once and streams each
+//! one's beats. So a read costs the controller's latency once a burst,
+//! not once a word, and with a few bursts in flight even that overlaps,
+//! which leaves a word a cycle. A write takes a beat a cycle too, with
+//! no step between bursts (issue 1121) while the client has room to
+//! issue the next before it waits on an old one.
 //!
-//! [`bridge`] measures that path with the controller replaced by a
-//! Wishbone memory that answers after a given latency, so the cost per
-//! word can be read off against the latency. [`ddr3_per`] measures the
-//! peripheral itself, whose controller model answers after one cycle,
-//! which is the best the path can do. The controller on the board takes
-//! longer; the board run of issue 1023 measures how much.
+//! [`pins`] measures that path with the controller replaced by a memory
+//! on its pins that answers after a given latency, so the cost per word
+//! can be read off against the latency. [`ddr3_per`] measures the
+//! peripheral itself, whose controller model answers after the
+//! controller's latency as the vendor's simulation measured it. The
+//! board run of issue 1023 measures the controller itself.
 use std::cell::Cell;
 use std::rc::Rc;
 use txhdl::comp::{join2, pad, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl_parts::bus::axi::{
-    axi_to_unit, AxiHost, AxiPer, HostLink, PerPort, Rd, Resp, Wr,
-};
-use txhdl_parts::bus::wb::sim::WbMem;
-use txhdl_parts::bus::wb::{AxiWb, WbMaster};
+use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Pending, Rd, Resp, Wr};
+use txhdl_parts::bus::axi_per_pins::sim::pins as pin_ram;
+use txhdl_parts::bus::axi_per_pins::AxiPerPins;
 
 use crate::Ddr3Per;
 
@@ -51,15 +51,14 @@ const BASE: u32 = 0x4000_0000;
 
 /// How many bursts the host keeps in flight. An identifier comes back
 /// when its answer is taken, so the host waits for the oldest answer
-/// before issuing past this; the bridge serves one at a time, so a few
-/// is as good as many.
-const WINDOW: usize = 4;
+/// before issuing past this.
+pub const WINDOW: usize = 4;
 
 /// The host's side of a run: `bursts` bursts of `beats` words, all
 /// reads or all writes, issued back to back with [`WINDOW`] in flight.
 /// `done` is set when the last is answered.
-async fn client<const I: usize>(
-    host: txhdl_parts::bus::axi::Host<32, 32, 4, I, 16>,
+async fn client(
+    host: Host<32, 32, 4, 5, 32>,
     beats: usize,
     bursts: usize,
     write: bool,
@@ -69,8 +68,7 @@ async fn client<const I: usize>(
     let mut pending = std::collections::VecDeque::new();
     for b in 0..bursts {
         if pending.len() == WINDOW {
-            let p: txhdl_parts::bus::axi::Pending<32, I> =
-                pending.pop_front().expect("a burst in flight");
+            let p: Pending<32, 5> = pending.pop_front().expect("in flight");
             assert_eq!(p.done().await.resp, Resp::Okay);
         }
         let at = BASE + (b * beats * 4) as u32;
@@ -87,66 +85,41 @@ async fn client<const I: usize>(
     done.set(true);
 }
 
-/// The bridge in front of a Wishbone memory answering after `latency`
-/// cycles: the cycles from the first burst issued to the last answered.
-pub fn bridge(
-    latency: u32,
+/// The pins part in front of a memory on its pins answering a read
+/// `latency` cycles after taking its address, and a write `latency`
+/// cycles after its last beat: the cycles from the first burst issued to the last
+/// answered.
+pub fn pins(
+    latency: u64,
     beats: usize,
     bursts: usize,
     write: bool,
 ) -> Measured {
-    let HostLink {
+    let Link {
         host,
-        per_client,
         host_in,
         host_out,
         per_in,
         per_out,
-    } = axi_to_unit::<32, 32, 4, 4, 16>();
-    let bus = PerPort::from(per_client);
-    let (cyc_o, cyc) = signal::<Bit, DefaultClock>();
-    let (stb_o, stb) = signal::<Bit, DefaultClock>();
-    let (we_o, we) = signal::<Bit, DefaultClock>();
-    let (adr_o, adr) = signal::<U<28>, DefaultClock>();
-    let (dat_o, dat) = signal::<U<32>, DefaultClock>();
-    let (sel_o, sel) = signal::<U<4>, DefaultClock>();
-    let (stall_o, stall) = signal::<Bit, DefaultClock>();
-    let (ack_o, ack) = signal::<Bit, DefaultClock>();
-    let (rdat_o, rdat) = signal::<U<32>, DefaultClock>();
-    let mut h = AxiHost::<32, 32, 4, 4, 16>::default();
-    let mut p = AxiPer::<32, 32, 4, 4>::default();
-    let mut bridge = AxiWb::<32, 4, 28>::default();
-    let mut mem = WbMem::<28>::new(latency, 0);
+        ..
+    } = axi::<32, 32, 4, 5, 32>();
+    let (aw, ar, w, _, _) = per_in;
+    let (_, _, b, r) = per_out;
+    let (ram, inp, outp) = pin_ram::<32, 32, 4, 5>(aw, ar, w, b, r, 1 << 20);
+    let ram = ram.wrapping().timed(latency, latency, 0);
+    let mut h = AxiHost::<32, 32, 4, 5, 32>::default();
+    let mut pinned = AxiPerPins::<32, 32, 4, 5>::default();
     let done = Rc::new(Cell::new(false));
     let finished = done.clone();
     let mut sim = Running::new(join2(
-        join2(h.run(host_in, host_out), p.run(per_in, per_out)),
+        h.run(host_in, host_out),
         join2(
-            join2(
-                mem.run(
-                    (cyc, stb, we, adr, dat, sel),
-                    (stall_o, ack_o, rdat_o),
-                ),
-                bridge.run(
-                    bus,
-                    WbMaster {
-                        stall,
-                        ack,
-                        rdat,
-                        cyc: cyc_o,
-                        stb: stb_o,
-                        we: we_o,
-                        adr: adr_o,
-                        dat: dat_o,
-                        sel: sel_o,
-                    },
-                ),
-            ),
+            join2(ram.serve(), pinned.run(inp, outp)),
             client(host, beats, bursts, write, done),
         ),
     ));
     let words = (beats * bursts) as u64;
-    let cap = words * (latency as u64 + 64) + 1000;
+    let cap = words * (latency + 64) + 1000;
     let mut cycles = 0;
     while !finished.get() {
         sim.cycle();
@@ -159,29 +132,29 @@ pub fn bridge(
 /// `Ddr3Per` itself, with its controller model: the cycles from the
 /// controller's calibration to the last burst answered.
 pub fn ddr3_per(beats: usize, bursts: usize, write: bool) -> Measured {
-    let HostLink {
+    let Link {
         host,
-        per_client,
         host_in,
         host_out,
         per_in,
         per_out,
-    } = axi_to_unit::<32, 32, 4, 5, 16>();
-    let bus: PerPort<32, 32, 4, 5> = per_client.into();
+        ..
+    } = axi::<32, 32, 4, 5, 32>();
+    let (aw, ar, w, _, _) = per_in;
+    let (_, _, b, r) = per_out;
     let (_sys_clk_o, sys_clk) = signal::<Bit, DefaultClock>();
     let (_sys_rst_o, sys_rst) = signal::<Bit, DefaultClock>();
     let (calib_o, calib) = signal::<Bit, DefaultClock>();
     let bits = || signal::<Bit, DefaultClock>().0;
-    let mut h = AxiHost::<32, 32, 4, 5, 16>::default();
-    let mut p = AxiPer::<32, 32, 4, 5>::default();
+    let mut h = AxiHost::<32, 32, 4, 5, 32>::default();
     let mut mem = Ddr3Per::default();
     let done = Rc::new(Cell::new(false));
     let finished = done.clone();
     let mut sim = Running::new(join2(
-        join2(h.run(host_in, host_out), p.run(per_in, per_out)),
+        h.run(host_in, host_out),
         join2(
             mem.run(
-                bus,
+                (aw, ar, w, b, r),
                 (
                     sys_clk,
                     sys_rst,
@@ -226,44 +199,79 @@ pub fn ddr3_per(beats: usize, bursts: usize, write: bool) -> Measured {
     }
 }
 
-/// The shape the measurement found, held: through the bridge a word
-/// costs the memory's latency and four cycles more, read or written,
-/// since one word is in flight at a time, and a burst adds about one
-/// cycle of its own, which is all a longer burst saves. When
-/// issue 1023 widens the path this is the test that has to change.
+/// The shape the measurement found, held. When the path changes again
+/// these are the tests that have to change.
 #[cfg(test)]
 mod tests {
-    use super::{bridge, ddr3_per};
+    use super::{ddr3_per, pins, WINDOW};
+    use crate::MODEL_READ_LATENCY;
 
+    /// With bursts in flight, a long read streams a word a cycle
+    /// whatever the latency, as long as the bursts in flight cover it.
     #[test]
-    fn a_word_costs_the_latency_and_four_cycles() {
-        for latency in [1, 4, 16] {
-            for write in [false, true] {
-                let m = bridge(latency, 16, 16, write);
-                let extra = m.cycles_per_word() - latency as f64;
-                assert!(
-                    (4.0..4.25).contains(&extra),
-                    "latency {latency}, write {write}: {} cycles a word",
-                    m.cycles_per_word()
-                );
-            }
+    fn a_read_streams_a_word_a_cycle() {
+        for latency in [1, 4, 16, 32] {
+            let m = pins(latency, 16, 64, false);
+            let c = m.cycles_per_word();
+            assert!(
+                (1.0..1.1).contains(&c),
+                "latency {latency}: {c} cycles a word"
+            );
         }
     }
 
+    /// One burst at a time pays the latency once a burst: a word costs a
+    /// cycle and the latency shared among the burst's words.
     #[test]
-    fn a_longer_burst_saves_only_its_own_cycle() {
-        let short = bridge(8, 1, 64, false).cycles_per_word();
-        let long = bridge(8, 64, 1, false).cycles_per_word();
-        assert!(
-            (0.75..1.25).contains(&(short - long)),
-            "one-word bursts {short}, a 64-word burst {long}"
-        );
+    fn one_burst_pays_the_latency_once() {
+        for latency in [4u64, 16, 32] {
+            let one = pins(latency, 16, 1, false).cycles_per_word();
+            let none = pins(0, 16, 1, false).cycles_per_word();
+            let extra = (one - none) * 16.0;
+            assert!(
+                (extra - latency as f64).abs() < 0.5,
+                "latency {latency}: {extra} cycles more a burst"
+            );
+        }
     }
 
+    /// Writes take a beat a cycle, whatever the latency. While the client
+    /// has bursts to spare in its window, one burst's beats follow the
+    /// last's with no step between them (issue 1121). Once the window is
+    /// full, the client waits on its oldest burst before issuing the
+    /// next, and that wait costs a step a burst, which is the client's
+    /// and not the link's.
     #[test]
-    fn the_peripheral_is_the_bridge_at_one_cycle() {
-        let per = ddr3_per(16, 16, false).cycles_per_word();
-        let best = bridge(1, 16, 16, false).cycles_per_word();
-        assert!((per - best).abs() < 0.25, "Ddr3Per {per}, bridge {best}");
+    fn a_write_takes_a_beat_a_cycle() {
+        let one = pins(0, 16, 1, true).cycles;
+        let full = pins(0, 16, WINDOW, true).cycles;
+        assert_eq!(
+            full - one,
+            16 * (WINDOW as u64 - 1),
+            "no step between bursts while the window has room"
+        );
+        for latency in [0, 16, 32] {
+            // The last response's latency is the one nothing hides.
+            let m = pins(latency, 16, 64, true);
+            let c = (m.cycles - latency) as f64 / m.words as f64;
+            assert!(
+                (c - 17.0 / 16.0).abs() < 0.01,
+                "latency {latency}: {c} cycles a word"
+            );
+        }
+    }
+
+    /// The peripheral with its model is the pins part at the model's
+    /// latency, reads and writes alike, with the window large enough to
+    /// cover it.
+    #[test]
+    fn the_peripheral_is_the_pins_at_the_models_latency() {
+        assert!(WINDOW * 16 > MODEL_READ_LATENCY as usize);
+        for write in [false, true] {
+            let per = ddr3_per(16, 64, write).cycles_per_word();
+            let at = pins(MODEL_READ_LATENCY as u64, 16, 64, write);
+            let at = at.cycles_per_word();
+            assert!((per - at).abs() < 0.1, "write {write}: {per} and {at}");
+        }
     }
 }

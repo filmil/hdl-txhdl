@@ -26,8 +26,9 @@ type Video = Hdmi<
 >;
 
 /// The same peripheral with a scanout beside it: a line is 640 words,
-/// a column ten bits, a frame 525 rows and a line 2560 bytes apart in
-/// memory.
+/// a column ten bits, a frame 525 rows and a line 4096 bytes apart in
+/// memory, the 1024 words of Razboj's row, of which the first 640 are
+/// shown (issue 985).
 type Scan = ScanVideo<
     { vga::HV },
     { vga::HFP },
@@ -40,7 +41,7 @@ type Scan = ScanVideo<
     2,
     10,
     525,
-    2560,
+    4096,
 >;
 
 /// A quarter of an I2C bit is 63 cycles of 25.2 MHz, so a bit is at

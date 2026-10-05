@@ -43,6 +43,7 @@ rust_library(
     edition = "2021",
     deps = [
         "//ddr3",
+        "//gpu/razboj",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
     ],
@@ -82,6 +83,7 @@ rust_library(
     rustc_flags = ["-Copt-level=3"],
     deps = [
         "//ddr3",
+        "//gpu/razboj",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
     ],
@@ -135,6 +137,8 @@ rust_test(
     edition = "2021",
     deps = [
         ":vreteno32",
+        "//ddr3",
+        "//gpu/razboj",
         "//cpu/vreteno/rust:boot_program",
         "//cpu/vreteno/rust:ddr3_program",
         "//cpu/vreteno/rust:ethrx_program",
@@ -567,7 +571,7 @@ vivado_synthesis2(
     part = "xc7a200tfbg484-2",
     top = "vreteno_board",
     xdcs = [":ax7a200_xdc"],
-    deps = ["//ddr3:ddr3_mig"],
+    deps = ["//ddr3:ddr3_mig_axi"],
     tags = ["manual"],
 )
 
@@ -592,7 +596,7 @@ vivado_synthesis2(
     part = "xc7a200tfbg484-2",
     top = "vreteno_board",
     xdcs = [":ax7a200_xdc"],
-    deps = ["//ddr3:ddr3_mig"],
+    deps = ["//ddr3:ddr3_mig_axi"],
     tags = ["manual"],
 )
 
@@ -609,7 +613,7 @@ vivado_synthesis2(
     part = "xc7a200tfbg484-2",
     top = "vreteno_board",
     xdcs = [":ax7a200_xdc"],
-    deps = ["//ddr3:ddr3_mig"],
+    deps = ["//ddr3:ddr3_mig_axi"],
     tags = ["manual"],
 )
 
@@ -746,7 +750,7 @@ vivado_synthesis2(
     xdcs = [":ax7a200_xdc"],
     deps = [
         ":board_ila",
-        "//ddr3:ddr3_mig",
+        "//ddr3:ddr3_mig_axi",
     ],
     tags = ["manual"],
 )
@@ -812,7 +816,7 @@ vivado_synthesis2(
     xdcs = [":ax7a200_xdc"],
     deps = [
         ":jtag_axi",
-        "//ddr3:ddr3_mig",
+        "//ddr3:ddr3_mig_axi",
     ],
     tags = ["manual"],
 )

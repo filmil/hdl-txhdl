@@ -9,8 +9,14 @@
 //! ```text
 //! bazel run //cpu/vreteno:machine -- --image $PWD/fw_jump.bin \
 //!     [--at 0x40000000] [--dtb $PWD/vreteno.dtb] [--dtb-at 0x41008000] \
-//!     [--steps 100000000]
+//!     [--steps 100000000] [--as-loaded BYTES]
 //! ```
+//!
+//! `--as-loaded` starts the serial port as the serial loader leaves it
+//! on the board (issue 1136): its receive interrupt enabled, as the
+//! hardware resets it, and `BYTES` waiting to be read, so the line is
+//! high and the interrupt controller has the request before the image
+//! runs.
 //!
 //! It stops when the hart halts, or after `--steps` instructions, and
 //! says which, with the program counter, on standard error.
@@ -40,6 +46,7 @@ fn main() {
     let mut dtb = None;
     let mut dtb_at = DTB_AT;
     let mut steps = 100_000_000u64;
+    let mut loaded = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val =
@@ -50,6 +57,7 @@ fn main() {
             "--dtb" => dtb = Some(val()),
             "--dtb-at" => dtb_at = number(&val()) as u32,
             "--steps" => steps = number(&val()),
+            "--as-loaded" => loaded = Some(val()),
             _ => panic!("unknown argument {a}"),
         }
     }
@@ -63,6 +71,10 @@ fn main() {
         m.load(dtb_at, &blob);
     }
     m.boot(at, if dtb.is_some() { dtb_at } else { 0 });
+    if let Some(bytes) = &loaded {
+        m.board.0.borrow_mut().uart.ie = 2;
+        m.type_bytes(bytes.as_bytes());
+    }
     let out = std::io::stdout();
     let mut out = out.lock();
     let mut shown = 0;

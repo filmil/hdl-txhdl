@@ -110,6 +110,14 @@ impl Uart {
     const TX_FULL: u32 = uart::TXDATA_FULL_MASK;
     const RX_EMPTY: u32 = uart::RXDATA_EMPTY_MASK;
     const RX_WAITING: u32 = uart::IP_RXWM_MASK;
+    const IE: usize = map::UART + uart::IE;
+
+    /// Let a received byte raise the port's interrupt line, or stop it:
+    /// `ie`'s receive bit, which a reset clears, as SiFive's does
+    /// (issue 1137).
+    pub fn interrupt_on_receive(on: bool) {
+        wr(Self::IE, if on { uart::IE_RXWM_MASK } else { 0 });
+    }
 
     /// Send one byte, once the queue has room for it. A byte written
     /// while the queue is full is dropped, so the wait is not optional.
@@ -345,7 +353,9 @@ impl Video {
 /// The scanout beside the video peripheral (issue 151): the frame's
 /// base in memory, the bit that shows the scanout rather than the
 /// framebuffer, and the underflow bit, which a write clears. A frame is
-/// 640 by 480 words, `0x00RRGGBB`, 2560 bytes a line.
+/// 640 by 480 words, `0x00RRGGBB`, 4096 bytes a line: a row of 1024
+/// words, as Razboj draws one, of which the first 640 are shown
+/// (issue 985).
 pub struct Scan;
 
 impl Scan {
@@ -358,7 +368,7 @@ impl Scan {
     /// Columns and rows of a frame, and bytes from one line to the next.
     pub const WIDTH: u32 = 640;
     pub const HEIGHT: u32 = 480;
-    pub const STRIDE: u32 = 2560;
+    pub const STRIDE: u32 = 4096;
 
     /// Where the next frame starts: taken at the vertical sync.
     pub fn base(at: u32) {

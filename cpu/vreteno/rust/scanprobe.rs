@@ -24,6 +24,10 @@ entry!(main);
 
 /// The frame, well above the program and the Ethernet port's slots.
 const FRAME: u32 = 0x4200_0000;
+/// Words from one row of the frame to the next, of which the first
+/// `Scan::WIDTH` are shown: the scanout's stride, which is Razboj's row
+/// (issue 985).
+const ROW: u32 = Scan::STRIDE / 4;
 /// The copy's two halves.
 const FROM: u32 = 0x4300_0000;
 const TO: u32 = 0x4304_0000;
@@ -83,7 +87,7 @@ fn paint() {
     while y < Scan::HEIGHT {
         let mut x = 0u32;
         while x < Scan::WIDTH {
-            let at = (y * Scan::WIDTH + x) as usize;
+            let at = (y * ROW + x) as usize;
             unsafe { write_volatile(base.add(at), picture(x, y)) };
             x += 1;
         }
@@ -101,14 +105,14 @@ fn paint() {
             let word = txhdl_logo::PIXELS
                 [((r >> 2) * txhdl_logo::W as u32 + (c >> 2)) as usize];
             if word != txhdl_logo::TRANSPARENT {
-                let at = ((top + r) * Scan::WIDTH + left + c) as usize;
+                let at = ((top + r) * ROW + left + c) as usize;
                 unsafe { write_volatile(base.add(at), wide(word as u32)) };
             }
             c += 1;
         }
         r += 1;
     }
-    let last = (Scan::WIDTH * Scan::HEIGHT - 1) as usize;
+    let last = ((Scan::HEIGHT - 1) * ROW + Scan::WIDTH - 1) as usize;
     let _ = unsafe { read_volatile(base.add(last)) };
 }
 

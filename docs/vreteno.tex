@@ -375,8 +375,19 @@ packs it: OpenSBI's \code{fw\_jump} at \code{0x4008\_0000}, the device
 tree at \code{0x4030\_0000}, the kernel at \code{0x4040\_0000}, where
 OpenSBI jumps, and the initramfs past the kernel's \code{\_end}, taken
 from its \code{System.map}, so that the kernel's BSS is clear of it.
-Four instructions at the front stand in for a bootloader: \code{a0}
-is zero, \code{a1} the tree, and a jump to OpenSBI. The tree is
+A few instructions at the front stand in for a bootloader: \code{a0}
+is zero, \code{a1} the tree, and a jump to OpenSBI. Before the jump
+they leave the serial port and the interrupt controller as SiFive's
+parts leave them at reset, as Linux's drivers expect
+(issue~\#1136). Our port resets with its receive interrupt enabled,
+so the serial loader's bytes raise its line, and the controller keeps
+the request. Linux's driver enables the source before it has
+registered the port, so the request reached the handler with no port
+and the kernel panicked. The shim writes the port's \code{ie} to zero,
+claims and completes every request the controller holds, and leaves
+every source disabled at priority zero. \code{boot\_loaded\_test}
+boots Linux on the machine with the port as the loader leaves it. The
+tree is
 written last, with the initramfs's range and the command line in its
 \code{/chosen}, and the packer refuses an image longer than fastboot
 takes, its download size less the header page the host puts in front
@@ -798,14 +809,16 @@ fewer than \code{txctrl}'s count or the receive queue more than
 \code{rxctrl}'s, and the port's interrupt line is high while one that
 \code{ie} enables is; on the board it is source 1 of the interrupt
 controller, whose line is the core's external interrupt, and the
-demonstration joins it to the line it drives. Three resets differ
-from SiFive's, so that a program that never writes the controls finds
-the port as it was before the map: both enables start set, and so does
-\code{ie}'s receive bit, so the line is high while a received byte
-waits. \code{div} starts at the unit's parameter \code{DIV} less one:
+demonstration joins it to the line it drives. Two resets differ from
+SiFive's, so that a program that never writes the controls finds the
+port as it was before the map: both enables start set, and
+\code{div} starts at the unit's parameter \code{DIV} less one:
 867 for 115\,200 baud at 100~MHz on the board, and 3 in the runs that
 are checked, so that a byte takes forty cycles rather than nine
-thousand. The two are the same unit lowered twice, and a driver sets
+thousand. \code{ie} starts clear, as SiFive's does: a receive bit that
+started set let the serial loader's bytes leave a request pending in
+the interrupt controller, which Linux took before its port was ready
+(issues~\#1136 and~\#1137). The two are the same unit lowered twice, and a driver sets
 \code{div} from the clock it is told the port runs on. The line in
 goes through one register before the logic, as a pin's should. The
 port's pieces, the frame a byte goes out as, the frame after a bit, a
@@ -1859,10 +1872,12 @@ chip's identity, \code{0020ba18}, the MT25QL128's; found its write
 enable latch clear after a write enable the pins refused; and found
 the bitstream's sync word through the window at byte 48. Nothing was
 written to the flash.
-The DDR3 memory is a gigabyte behind the bridge from AXI to Wishbone
-and AMD's MIG controller, which the build generates. The controller
-is a module from elsewhere, so the netlist names its wrapper and does
-not write it, and the memory's pins, the data and strobe lines among
+The DDR3 memory is a gigabyte behind AMD's MIG controller, which the
+build generates with its own AXI4 port, and \code{AxiPerPins}, which
+puts the router's port onto the controller's pins with no tracker in
+front, since the controller keeps transactions outstanding itself
+(issue~\#1023). The controller is a module from elsewhere, so the
+netlist names its wrapper and does not write it, and the memory's pins, the data and strobe lines among
 them, are the module's own ports. \code{board\_netlist} writes it with
 a program already in the instruction memory and the data memory,
 since nothing on the machine loads them at run time.
@@ -2178,16 +2193,32 @@ is a read or a write and none starts until the last has finished.
 The host checks the two busy lines are never high together. The nest
 keeps two ports free, for Razboj and a texture fetch.
 
+Razboj took the seventh (issue~\#985), and the arbiter is
+\code{Arbiter7}. Its rasteriser draws into the frame the scanout
+shows, at \code{0x4200\_0000}, from a display list at
+\code{0x4280\_0000}. It reads the list's count from a doorbell on the
+peripheral page's tenth slot, at \code{0x3900}: a register that holds
+zero from reset, so no word of memory can start a list nobody wrote.
+The doorbell also drives a line to the rasteriser, high while the
+count is not zero, and the rasteriser reads the count only then. An
+idle rasteriser therefore puts nothing on the bus. Reading the count
+back to back, or even once in 256 cycles, moved the timing of every
+other host's accesses, and the board tests that time the DDR3 path
+or sample the entropy source failed with it. Razboj's rows are
+$2^{10}$ words, so the scanout's stride became 4096 bytes, of which
+it shows the first 640 words. A board test writes a list of one rectangle,
+rings the doorbell, and reads the pixels back over the bus.
+
 The cost of a host is its share of the bus when every host is busy.
 For the scanout, a line of 640 words, 2560 bytes, must arrive within
 the 31.8\,$\mu$s of the line before it, about 80\,MB/s. The link
 moves at most four bytes a beat at 100\,MHz, 400\,MB/s, and the DDR3
 controller behind it less. With every port offering a burst, each
-wins one turn in six, and a turn is a burst of sixteen beats. The
+wins one turn in seven, and a turn is a burst of sixteen beats. The
 SD port offers a burst only as fast as the card fills one, though,
-at most 12.5\,MB/s on four lines at 25\,MHz, so the other five share
+at most 12.5\,MB/s on four lines at 25\,MHz, so the other six share
 nearly all of the link and the scanout's worst share is about
-77\,MB/s, just short of a line's need. That bound holds only while
+65\,MB/s, short of a line's need. That bound holds only while
 every other host moves bursts back to back for a whole line, which
 the core's single-word accesses do not. The tighter limit is behind
 the arbiter: the DDR3 path takes one access at a time, and measured
@@ -2559,7 +2590,10 @@ Apache-2.0. The design with MIG ran on September 28, 2026, written into
 the part over JTAG, and said \code{ddr3 ok} the same way: the
 controller calibrates, the memory returns what it was given, and the
 core runs on after. The run from the flash after a power cycle is still
-owed (issue~\#188).
+owed (issue~\#188). Since issue~\#1023 the core reaches the controller
+through the controller's own AXI4 port rather than through
+\code{AxiWb}, and the run of that path on the board is the issue's
+fourth step.
 
 \begin{thebibliography}{10}
 

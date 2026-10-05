@@ -7,13 +7,18 @@
 # passes when the console shows /init's marker and BusyBox's prompt.
 # About 200 million instructions, a few minutes at the model's speed,
 # so it is manual and the nightly linux workflow runs it.
+#
+# Arguments past the image go to the machine: boot_loaded_test passes
+# --as-loaded, the serial port as the loader leaves it on the board,
+# with a request the interrupt controller holds (issue 1136).
 set -o errexit -o nounset -o pipefail
 
 machine="$1"
 image="$2"
+shift 2
 out="${TEST_TMPDIR:-$(mktemp -d)}/console.txt"
 
-"$machine" --image "$image" --at 0x40000000 --steps 250000000 \
+"$machine" --image "$image" --at 0x40000000 --steps 250000000 "$@" \
     < /dev/null > "$out" 2> "$out.err" || true
 cat "$out"
 tail -2 "$out.err"

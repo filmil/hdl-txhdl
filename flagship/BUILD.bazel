@@ -57,7 +57,7 @@ vivado_synthesis2(
     part = "xc7a200tfbg484-2",
     top = "flagship",
     xdcs = [":flagship_xdc"],
-    deps = ["//ddr3:ddr3_mig"],
+    deps = ["//ddr3:ddr3_mig_axi"],
     tags = ["manual"],
 )
 

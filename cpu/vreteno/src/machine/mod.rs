@@ -64,7 +64,7 @@ impl Map {
             ddr: range::<8, BoardMap>("DDR3"),
             clint: range::<8, BoardMap>("timer"),
             plic: range::<8, BoardMap>("interrupt controller"),
-            uart: range::<9, SlotMap>("serial"),
+            uart: range::<10, SlotMap>("serial"),
         }
     }
 }
@@ -313,8 +313,9 @@ mod tests {
             let mut d = m.board.0.borrow_mut();
             d.plic.store(4 * SERIAL_SOURCE as u32, 1);
             d.plic.store(plic::ENABLE[1], 1 << SERIAL_SOURCE);
-            // The model resets `ie` to zero where the hardware sets the
-            // receive watermark (issue 1097).
+            // The receive watermark's enable, which the program would
+            // set, as both the model and the hardware reset it clear
+            // (issues 1097 and 1137).
             d.uart.ie = 2;
             d.uart.rx.push_back(b'x');
         }

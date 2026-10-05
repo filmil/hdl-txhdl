@@ -1190,41 +1190,52 @@ impl<
     /// never writes `len` or `last`. The beats go out before this
     /// returns, which is what keeps two writes in flight in the order
     /// AXI4 requires of the write data channel.
+    ///
+    /// The first beat goes out in the step the address phase does, and
+    /// the identifier is taken while the beats go, so that bursts
+    /// written back to back follow each other with no step between
+    /// them (issue 1121). A beat may reach the tracker before its
+    /// address phase leaves it, which AXI4 allows; the arbiter and the
+    /// router pass a beat on only once its address phase has gone
+    /// ahead of it.
     pub async fn write(&self, wr: Wr<A>, data: &[U<D>]) -> Pending<D, I> {
         assert!(!data.is_empty(), "a write burst with no beats");
         let len = (data.len() - 1) as u8;
-        let id = self
-            .issue(Issue {
-                read: Bit::Zero,
-                addr: wr.addr,
-                len: U::from(len),
-                size: beat_size::<D>(wr.size),
-                burst: wr.burst,
-                lock: wr.lock,
-                cache: wr.cache,
-                prot: wr.prot,
-                qos: wr.qos,
-                region: wr.region,
-            })
-            .await;
+        let iss = Issue {
+            read: Bit::Zero,
+            addr: wr.addr,
+            len: U::from(len),
+            size: beat_size::<D>(wr.size),
+            burst: wr.burst,
+            lock: wr.lock,
+            cache: wr.cache,
+            prot: wr.prot,
+            qos: wr.qos,
+            region: wr.region,
+        };
         let strb = !U::<S>::from(0u8);
-        for (i, d) in data.iter().enumerate() {
-            let beat = W {
-                data: *d,
-                strb,
-                last: Bit::from_bool(i + 1 == data.len()),
-            };
-            loop {
-                DefaultClock::rising().await;
-                self.inbox.drain();
-                if self.wbeat.ready().to_bool() {
-                    self.wbeat.send(beat);
-                    break;
-                }
+        let (mut issued, mut sent, mut id) = (false, 0, None);
+        while !(issued && sent == data.len() && id.is_some()) {
+            DefaultClock::rising().await;
+            self.inbox.drain();
+            if !issued && self.issue.ready().to_bool() {
+                self.issue.send(iss);
+                issued = true;
+            }
+            if issued && sent < data.len() && self.wbeat.ready().to_bool() {
+                self.wbeat.send(W {
+                    data: data[sent],
+                    strb,
+                    last: Bit::from_bool(sent + 1 == data.len()),
+                });
+                sent += 1;
+            }
+            if id.is_none() {
+                id = self.grant.recv().map(|g| g.id);
             }
         }
         Pending {
-            id,
+            id: id.expect("the tracker granted the burst"),
             inbox: self.inbox.clone(),
         }
     }
