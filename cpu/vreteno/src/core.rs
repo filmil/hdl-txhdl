@@ -1794,8 +1794,18 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // page of the word it wants is translated, at the physical
             // address; a page that faults is not read, and its words
             // are taken as faults at once.
-            let f_th = self.ft_valid
-                & Bit::from(self.ft_vpn.get() == f_addr.slice::<12, 20>());
+            //
+            // Whether the page is the one translated is found for both
+            // words at once, the next word's against the page after when
+            // the word is a page's last, and `hit0` chooses, so the
+            // compare does not wait for the add (issue 1130).
+            let want_vpn = want.slice::<12, 20>();
+            let ft_vpn = self.ft_vpn.get();
+            let same0 = Bit::from(ft_vpn == want_vpn);
+            let last_word = Bit::from(want.slice::<2, 10>() == 0x3ff);
+            let same1 =
+                mux(last_word, Bit::from(ft_vpn == want_vpn + 1), same0);
+            let f_th = self.ft_valid & mux(hit0, same1, same0);
             let f_tf = self.ft_pf | self.ft_af;
             let f_pa = mux(
                 vm,
