@@ -451,6 +451,42 @@ No `liteeth` line means the kernel found no port in the tree, or found it and fa
 A probe with no replies, and transmit counts going up, means frames leave and nothing comes back: look at srv's side with `tcpdump -i fpga-a200t-eth0`.
 Put the log on #1203.
 
+### The GL icosahedron's fault, #1214
+
+`ico_gl_hdmi` took a load access fault once, at its first read of Razboj's doorbell, on a bitstream where `ico_hdmi` ran for minutes.
+Both programs now report a fault themselves, with `trap::say_faults` from the HAL, on one line:
+
+```
+trap <cause> at <mepc> mtval <mtval> a0 <a0> ra <ra>
+```
+
+Each is eight hexadecimal digits: the cause, the instruction, `mtval`, which for a refused load or store is the address, and `a0` and `ra` as the faulting code had them.
+The loader's own `trap` line has only the first two, since by the time it runs every register is its own.
+`//cpu/vreteno:board_test` checks the report on a load from a hole in the map.
+
+Any flagship from #985 on, programmed over JTAG, with a monitor on the HDMI connector.
+The order matters, so that the first run follows a reset with nothing else run before it:
+
+```sh
+bazel build //cpu/vreteno/rust:ico_gl_hdmi_bin //cpu/vreteno/rust:ico_hdmi_bin
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/ico_gl_hdmi_bin.bin --seconds=20 \
+    2>&1 | tee board-1214-first.log
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/ico_hdmi_bin.bin --seconds=20 \
+    2>&1 | tee board-1214-hand.log
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/ico_gl_hdmi_bin.bin --seconds=20 \
+    2>&1 | tee board-1214-again.log
+```
+
+Pass: each run says `ico 20 faces` and no `trap`, and the icosahedron turns on the monitor.
+A `trap` line is the result #1214 wants, whichever run it comes in.
+An `mtval` of `00003900` means the doorbell refused a read it should answer; any other address means the program read somewhere it did not mean to, and the address says where.
+Which of the three runs trapped says whether what ran before matters.
+Put the three logs on #1214.
+
 ### Ethernet throughput, #1038
 
 The Ethernet half of #151: the port's throughput through the slots and the DMA engines, against the core's own copy of each frame.
