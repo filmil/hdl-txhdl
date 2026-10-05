@@ -44,6 +44,18 @@ rust_test(
     ],
 )
 
+# Points and lines through Razboj's model, against what GL says of
+# them (#994).
+rust_test(
+    name = "prims_test",
+    srcs = ["tests/prims.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+    ],
+)
+
 # Lighting against floating point: the sum at a vertex, and lit
 # triangles through the pipeline (issue 1164).
 rust_test(
