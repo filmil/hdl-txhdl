@@ -48,6 +48,17 @@ impl Memory {
         self.pages[p].get_or_insert_with(|| Box::new([0; PAGE_WORDS]))[i] = v;
     }
 
+    /// `len` bytes from `addr`, little-endian, as an engine reading a
+    /// buffer takes them.
+    pub fn get(&self, addr: u32, len: u32) -> Vec<u8> {
+        (0..len)
+            .map(|i| {
+                let a = addr + i;
+                (self.load(a & !3) >> (8 * (a & 3))) as u8
+            })
+            .collect()
+    }
+
     /// Bytes laid down from `addr`, little-endian, as a loader does.
     pub fn put(&mut self, addr: u32, bytes: &[u8]) {
         for (k, chunk) in bytes.chunks(4).enumerate() {

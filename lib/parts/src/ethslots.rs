@@ -39,8 +39,11 @@ use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 pub const SLOT: usize = 2048;
 
 // begin{regs}
-// LiteEth's map, as Zephyr's driver addresses it: ten words, a word
-// not named reading zero.
+// LiteEth's map at LiteX's own offsets, a word a register, so that
+// Linux's `litex_liteeth`, whose offsets are fixed, drives it unchanged
+// (issue 1203); Zephyr's driver takes the offsets from the header
+// `//tools/regmap` writes, and follows. The writer is LiteEth's name for
+// the receive side and the reader for the transmit side.
 regmap! { regs (regs_read, regs_we), 4: [
     (0, rx_slot, ro, "which slot the last frame is in", [
         (slot, 0, 1, ro, 0, "the slot"),
@@ -48,17 +51,17 @@ regmap! { regs (regs_read, regs_we), 4: [
     (1, rx_length, ro, "its length in bytes", [
         (length, 0, 16, ro, 0, "the length"),
     ]),
-    (2, rx_ev_pending, w1c, "a frame arrived and is not acknowledged", [
+    (2, rx_errors, ro, "frames dropped; none are, so zero", [
+        (errors, 0, 32, ro, 0, "the count"),
+    ]),
+    (3, rx_ev_status, ro, "a frame has arrived and is not acknowledged", [
+        (status, 0, 1, ro, 0, "the event"),
+    ]),
+    (4, rx_ev_pending, w1c, "a frame arrived and is not acknowledged", [
         (pending, 0, 1, w1c, 0, "set by an arrival; written one, cleared"),
     ]),
-    (3, rx_ev_enable, rw, "whether an arrival raises the line", [
+    (5, rx_ev_enable, rw, "whether an arrival raises the line", [
         (enable, 0, 1, rw, 0, "the enable"),
-    ]),
-    (4, tx_slot, wo, "which slot the next transmit reads", [
-        (slot, 0, 1, wo, 0, "the slot"),
-    ]),
-    (5, tx_length, wo, "how many bytes of it to send", [
-        (length, 0, 16, wo, 0, "the length"),
     ]),
     (6, tx_start, wo, "written one, the transmit starts", [
         (start, 0, 1, wo, 0, "the start"),
@@ -66,10 +69,22 @@ regmap! { regs (regs_read, regs_we), 4: [
     (7, tx_ready, ro, "no transmit is running or waiting", [
         (ready, 0, 1, ro, 1, "ready"),
     ]),
-    (8, tx_ev_pending, w1c, "acknowledged by the driver, otherwise unused", [
+    (8, tx_level, ro, "transmits waiting; one at a time, so zero", [
+        (level, 0, 2, ro, 0, "the level"),
+    ]),
+    (9, tx_slot, wo, "which slot the next transmit reads", [
+        (slot, 0, 1, wo, 0, "the slot"),
+    ]),
+    (10, tx_length, wo, "how many bytes of it to send", [
+        (length, 0, 16, wo, 0, "the length"),
+    ]),
+    (11, tx_ev_status, ro, "the transmit event; it is never raised", [
+        (status, 0, 1, ro, 0, "the event"),
+    ]),
+    (12, tx_ev_pending, w1c, "acknowledged by the driver, otherwise unused", [
         (pending, 0, 1, w1c, 0, "the event"),
     ]),
-    (9, tx_ev_enable, rw, "kept for the driver; it raises nothing", [
+    (13, tx_ev_enable, rw, "kept for the driver; it raises nothing", [
         (enable, 0, 1, rw, 0, "the enable"),
     ]),
 ] }
@@ -184,8 +199,8 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             // The write enables, a bit a register, which seven of the
             // updates below take a bit off.
             let we = regs_we(wgo, wsel);
-            let rx_ack = we.bit(2) & regs_rx_ev_pending_pending(data);
-            let tx_ack = we.bit(8) & regs_tx_ev_pending_pending(data);
+            let rx_ack = we.bit(4) & regs_rx_ev_pending_pending(data);
+            let tx_ack = we.bit(12) & regs_tx_ev_pending_pending(data);
 
             // A slot's address. The two directions are separate
             // regions, receive first and transmit 4096 bytes above
@@ -226,29 +241,34 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
                 },
                 rx_was: now_busy,
                 taken ? tx_go: Bit::Zero,
-                we.bit(3) ? rx_enable: regs_rx_ev_enable_enable(data),
-                we.bit(4) ? tx_slot: regs_tx_slot_slot(data).zext::<1>(),
-                we.bit(5) ? tx_length: regs_tx_length_length(data),
+                we.bit(5) ? rx_enable: regs_rx_ev_enable_enable(data),
                 we.bit(6) ? tx_go: regs_tx_start_start(data),
-                we.bit(9) ? tx_enable: regs_tx_ev_enable_enable(data),
+                we.bit(9) ? tx_slot: regs_tx_slot_slot(data).zext::<1>(),
+                we.bit(10) ? tx_length: regs_tx_length_length(data),
+                we.bit(13) ? tx_enable: regs_tx_ev_enable_enable(data),
             });
 
             if rgo.to_bool() {
-                // The map, as LiteEth has it: the write-only words 4
-                // to 6 and the unnamed 10 to 15 read as zero rather
-                // than mirror a neighbour (issue 454).
+                // The map, as LiteEth has it: the write-only words, the
+                // counts nothing here keeps, and the unnamed 14 and 15
+                // read as zero rather than mirror a neighbour (issue
+                // 454).
                 let ready = !tx_busy.get() & !self.tx_go.get();
                 let zero = U::<32>::from(0u8);
                 let word = regs_read(
                     rsel,
                     regs_rx_slot_pack(self.rx_slot.get().bit(0)),
                     regs_rx_length_pack(self.rx_length.get()),
+                    zero,
+                    regs_rx_ev_status_pack(self.rx_pending.get()),
                     regs_rx_ev_pending_pack(self.rx_pending.get()),
                     regs_rx_ev_enable_pack(self.rx_enable.get()),
                     zero,
-                    zero,
-                    zero,
                     regs_tx_ready_pack(ready),
+                    zero,
+                    zero,
+                    zero,
+                    zero,
                     regs_tx_ev_pending_pack(self.tx_pending.get()),
                     regs_tx_ev_enable_pack(self.tx_enable.get()),
                 );
@@ -312,11 +332,14 @@ mod tests {
         }
     }
 
-    /// Word 9 reads its bit, and nothing else reads it: not the three
-    /// write-only words 4 to 6, which read zero rather than an unrelated
-    /// bit, and not the unnamed tail 10 to 15.
+    /// Word 13 reads its bit, and nothing else reads it: not the
+    /// write-only words 6, 9 and 10, which read zero rather than an
+    /// unrelated bit, not the counts at 2, 8 and 11 that nothing here
+    /// keeps, and not the unnamed tail 14 and 15. LiteX's offsets
+    /// (issue 1203); the slot length written to word 10 must not show
+    /// either.
     #[test]
-    fn only_word_9_reads_tx_ev_enable() {
+    fn only_word_13_reads_tx_ev_enable() {
         let link = axi_lite::<32, 32, 4>();
         let bus: LitePort<32, 32, 4> = link.per.into();
         let host = link.host;
@@ -332,9 +355,9 @@ mod tests {
         let seen: Rc<RefCell<Vec<(u32, u32)>>> = Rc::default();
         let log = seen.clone();
         let client = async move {
-            write(&host, 9, 1).await;
-            write(&host, 5, 0x5a).await;
-            for word in [4, 5, 6, 9, 10, 11, 12, 13, 14, 15] {
+            write(&host, 13, 1).await;
+            write(&host, 10, 0x5a).await;
+            for word in [2, 6, 8, 9, 10, 11, 12, 13, 14, 15] {
                 let v = read(&host, word).await;
                 log.borrow_mut().push((word, v));
             }
@@ -356,7 +379,7 @@ mod tests {
         let seen = seen.borrow();
         assert_eq!(seen.len(), 10, "every read answered");
         for (word, v) in seen.iter() {
-            let want = if *word == 9 { 1 } else { 0 };
+            let want = if *word == 13 { 1 } else { 0 };
             assert_eq!(*v, want, "word {word}");
         }
     }

@@ -212,3 +212,35 @@ sh_test(
     ],
     tags = ["manual"],
 )
+
+# The network on the machine model (issue 1203): the model image with
+# txhdl.net on its command line, so /init sets up eth0 and pings the
+# peer the machine's --eth-peer puts on the cable. A reply is Linux's
+# own litex_liteeth driving the port's registers and slots.
+boot_image(
+    name = "model_net_boot",
+    bootargs = "earlycon console=ttySIF0 txhdl.net",
+    initramfs = "initramfs.cpio",
+    kernel = "Image",
+    model = True,
+    opensbi = "fw_jump.bin",
+    system_map = "System.map",
+    tags = ["manual"],
+)
+
+sh_test(
+    name = "boot_net_test",
+    size = "large",
+    srcs = ["boot_test.sh"],
+    args = [
+        "$(rootpath //cpu/vreteno:machine)",
+        "$(rootpath :model_net_boot)",
+        "--eth-peer",
+    ],
+    data = [
+        ":model_net_boot",
+        "//cpu/vreteno:machine",
+    ],
+    env = {"EXPECT": "txhdl: network is up"},
+    tags = ["manual"],
+)
