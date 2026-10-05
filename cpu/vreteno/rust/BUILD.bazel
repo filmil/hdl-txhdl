@@ -641,6 +641,22 @@ vreteno_flat(
     program = ":ico_hdmi",
 )
 
+# The icosahedron's display lists (issue 986), the part of ico_hdmi
+# with no hardware in it, rendered on the host through Razboj's model:
+# the faces tile the silhouette once, they are the front faces, and
+# clearing only last time's box leaves each frame as a whole clear
+# would.
+rust_test(
+    name = "ico_list_test",
+    srcs = [
+        "ico_list.rs",
+        "ico_list_test.rs",
+    ],
+    crate_root = "ico_list_test.rs",
+    edition = "2021",
+    deps = ["//gpu/razboj"],
+)
+
 # The video scanout under load on the flagship (issue 151): a frame
 # painted into the DDR3 and shown from there, and the scanout's
 # underflow bit read on an idle bus and then while the core copies in
@@ -825,6 +841,7 @@ filegroup(
     srcs = [
         "ico.rs",
         "ico_hdmi.rs",
+        "ico_list.rs",
         "remote.rs",
         "hello.rs",
         "irq.rs",
