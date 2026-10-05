@@ -40,7 +40,6 @@
 
 use core::ffi::c_void;
 use gles_capi::{gles_frame_len, gles_make_current, gles_retarget};
-use razboj_tile::WORDS;
 
 /// EGL's types as `egl.h` has them, with no window system's.
 pub type EGLBoolean = u32;
@@ -105,20 +104,8 @@ pub const WINDOW_WIDTH: u32 = 640;
 pub const WINDOW_HEIGHT: u32 = 480;
 pub const BUFFER_ROWS: [u32; 2] = [0, 512];
 
-/// What a swap needs of the machine.
-pub trait Machine {
-    /// Razboj's display list, where GL writes a frame for it to read.
-    fn list(&mut self) -> &'static mut [[u32; WORDS]];
-    /// Has Razboj draw the first `entries` of the list, and waits until
-    /// every pixel of them is written.
-    fn draw(&mut self, entries: usize);
-    /// Points the scanout at the buffer whose first row is `row`, and
-    /// shows the scanout.
-    fn show(&mut self, row: u32);
-    /// Waits for the vertical blanking to start, when the scanout takes
-    /// the base it was given.
-    fn wait_blanking(&mut self);
-}
+/// What a swap needs of the machine, from its own crate.
+pub use gles_machine::Machine;
 
 /// EGL's state: the machine, whether the display is initialised, the
 /// error, the window and the context made and current, and which buffer

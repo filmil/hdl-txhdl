@@ -85,6 +85,16 @@ rust_library(
     ],
 )
 
+# What a swap does to the hardware, as a trait (issue 996): a crate of
+# its own, so that a machine needs none of EGL's entry points.
+rust_library(
+    name = "machine",
+    srcs = ["egl/machine.rs"],
+    crate_name = "gles_machine",
+    edition = "2021",
+    deps = ["//gpu/razboj:tile"],
+)
+
 # EGL (issue 996): Khronos's EGL/egl.h over the C entry points, a window
 # double buffered in Razboj's framebuffer and a swap on the vertical
 # blanking, with the machine behind a trait.
@@ -95,7 +105,7 @@ rust_library(
     edition = "2021",
     deps = [
         ":capi",
-        "//gpu/razboj:tile",
+        ":machine",
     ],
 )
 
@@ -111,7 +121,7 @@ rust_static_library(
     edition = "2021",
     deps = [
         ":capi",
-        "//gpu/razboj:tile",
+        ":machine",
     ],
 )
 
