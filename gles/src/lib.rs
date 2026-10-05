@@ -64,6 +64,16 @@ pub fn colour_word(c: &[Fx; 4]) -> u32 {
     (byte(c[3]) << 24) | (byte(c[0]) << 16) | (byte(c[1]) << 8) | byte(c[2])
 }
 
+/// A vertex as a draw call reads it: its position in object
+/// coordinates with its w, and its own colour and normal, or `None` for
+/// the current ones.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Vertex {
+    pub position: [Fx; 4],
+    pub colour: Option<[Fx; 4]>,
+    pub normal: Option<[Fx; 3]>,
+}
+
 /// A GL context drawing into a frame of Razboj's instructions.
 pub struct Gl<'a> {
     frame: &'a mut [[u32; WORDS]],
@@ -503,7 +513,11 @@ impl<'a> Gl<'a> {
         {
             return self.fail(gl::INVALID_VALUE);
         }
-        self.draw(mode, n, |k| k, positions, colours, normals);
+        self.draw(mode, n, |k| Vertex {
+            position: positions[k],
+            colour: colours.map(|c| c[k]),
+            normal: normals.map(|v| v[k]),
+        });
     }
 
     /// `glDrawElements`: the same, the vertices taken by `indices`.
@@ -522,26 +536,44 @@ impl<'a> Gl<'a> {
         {
             return self.fail(gl::INVALID_VALUE);
         }
-        self.draw(
-            mode,
-            indices.len(),
-            |k| indices[k] as usize,
-            positions,
-            colours,
-            normals,
-        );
+        self.draw(mode, indices.len(), |k| {
+            let i = indices[k] as usize;
+            Vertex {
+                position: positions[i],
+                colour: colours.map(|c| c[i]),
+                normal: normals.map(|v| v[i]),
+            }
+        });
     }
 
-    /// The triangles of a draw call: each of `count` vertices `at(k)`,
-    /// in the order the mode says, the provoking vertex last.
+    /// A draw call whose vertices are read one at a time: the `k`th of
+    /// `count` is `vertex(k)`, in the order the mode says. This is what
+    /// a caller with arrays of its own layout draws through, the C
+    /// entry points' client arrays among them (issue 1224).
+    pub fn draw_vertices(
+        &mut self,
+        mode: u32,
+        count: usize,
+        vertex: impl Fn(usize) -> Vertex,
+    ) {
+        self.draw(mode, count, vertex);
+    }
+
+    /// Records `error` as `glGetError` will report it, if no error is
+    /// waiting already: for an entry point the library does not
+    /// implement, which still links and says so (issue 1224).
+    pub fn record_error(&mut self, error: u32) {
+        self.fail(error);
+    }
+
+    /// The triangles of a draw call: each of `count` vertices
+    /// `vertex(k)`, in the order the mode says, the provoking vertex
+    /// last.
     fn draw(
         &mut self,
         mode: u32,
         count: usize,
-        at: impl Fn(usize) -> usize,
-        positions: &[[Fx; 4]],
-        colours: Option<&[[Fx; 4]]>,
-        normals: Option<&[[Fx; 3]]>,
+        vertex: impl Fn(usize) -> Vertex,
     ) {
         let tris = match mode {
             gl::TRIANGLES => count / 3,
@@ -577,10 +609,11 @@ impl<'a> Gl<'a> {
         );
         let (lights, scene, two_side) =
             (self.lights, self.scene_ambient, self.two_side);
-        let vert = |i: usize| {
-            let eye = matrix::mul_vec(&mv, &positions[i]);
+        let vert = |k: usize| {
+            let v = vertex(k);
+            let eye = matrix::mul_vec(&mv, &v.position);
             let clip = matrix::mul_vec(&pj, &eye);
-            let col = colours.map_or(current, |c| c[i]);
+            let col = v.colour.unwrap_or(current);
             if !lighting {
                 return Vert {
                     eye,
@@ -589,7 +622,7 @@ impl<'a> Gl<'a> {
                     back: col,
                 };
             }
-            let n = matrix::mul3(&nm, &normals.map_or(normal, |v| v[i]));
+            let n = matrix::mul3(&nm, &v.normal.unwrap_or(normal));
             let n = if normalize {
                 light::normalize(&n)
             } else {
@@ -616,7 +649,7 @@ impl<'a> Gl<'a> {
                 gl::TRIANGLE_STRIP => (t, t + 1, t + 2),
                 _ => (0, t + 1, t + 2),
             };
-            let tri = [vert(at(a)), vert(at(b)), vert(at(c))];
+            let tri = [vert(a), vert(b), vert(c)];
             self.triangle(tri);
             if self.error == gl::OUT_OF_MEMORY {
                 return;
