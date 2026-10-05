@@ -28,10 +28,12 @@
 pub mod emit;
 pub mod fixed;
 pub mod gl;
+pub mod light;
 pub mod matrix;
 
 use emit::{VMAX, VMIN};
-use fixed::{div_round, Fx, ONE};
+use fixed::{div, div_round, Fx, ONE};
+use light::{Light, Material};
 use matrix::{Mat, IDENTITY};
 use razboj_tile::{bin, Binned, Bounds, Refused, TILE_WORDS, WORDS};
 
@@ -44,12 +46,14 @@ const GMAX: i64 = VMAX as i64 - 16;
 /// the seven planes it can be clipped against.
 const MAXV: usize = 10;
 
-/// A vertex on its way: eye and clip coordinates, and its colour.
+/// A vertex on its way: eye and clip coordinates, and its colour, and
+/// with two-sided lighting the colour its back takes.
 #[derive(Clone, Copy, Default)]
 struct Vert {
     eye: [Fx; 4],
     clip: [Fx; 4],
     col: [Fx; 4],
+    back: [Fx; 4],
 }
 
 /// A colour in 16.16, each channel nominally nought to one, as the
@@ -79,6 +83,15 @@ pub struct Gl<'a> {
     smooth: bool,
     colour: [Fx; 4],
     clear_colour: [Fx; 4],
+    normal: [Fx; 3],
+    lighting: bool,
+    lights: [Light; gl::MAX_LIGHTS],
+    material: Material,
+    scene_ambient: [Fx; 4],
+    two_side: bool,
+    normalize: bool,
+    rescale: bool,
+    colour_material: bool,
     error: u32,
 }
 
@@ -105,6 +118,15 @@ impl<'a> Gl<'a> {
             smooth: true,
             colour: [ONE; 4],
             clear_colour: [0; 4],
+            normal: [0, 0, ONE],
+            lighting: false,
+            lights: core::array::from_fn(Light::new),
+            material: Material::default(),
+            scene_ambient: [13107, 13107, 13107, ONE],
+            two_side: false,
+            normalize: false,
+            rescale: false,
+            colour_material: false,
             error: gl::NO_ERROR,
         }
     }
@@ -249,6 +271,15 @@ impl<'a> Gl<'a> {
         match cap {
             gl::CULL_FACE => self.cull_on = on,
             gl::CLIP_PLANE0 => self.plane_on = on,
+            gl::LIGHTING => self.lighting = on,
+            gl::NORMALIZE => self.normalize = on,
+            gl::RESCALE_NORMAL => self.rescale = on,
+            gl::COLOR_MATERIAL => self.colour_material = on,
+            l if (gl::LIGHT0..gl::LIGHT0 + gl::MAX_LIGHTS as u32)
+                .contains(&l) =>
+            {
+                self.lights[(l - gl::LIGHT0) as usize].on = on
+            }
             _ => self.fail(gl::INVALID_ENUM),
         }
     }
@@ -257,6 +288,15 @@ impl<'a> Gl<'a> {
         match cap {
             gl::CULL_FACE => self.cull_on,
             gl::CLIP_PLANE0 => self.plane_on,
+            gl::LIGHTING => self.lighting,
+            gl::NORMALIZE => self.normalize,
+            gl::RESCALE_NORMAL => self.rescale,
+            gl::COLOR_MATERIAL => self.colour_material,
+            l if (gl::LIGHT0..gl::LIGHT0 + gl::MAX_LIGHTS as u32)
+                .contains(&l) =>
+            {
+                self.lights[(l - gl::LIGHT0) as usize].on
+            }
             _ => false,
         }
     }
@@ -286,6 +326,122 @@ impl<'a> Gl<'a> {
     /// `glColor4x`: the colour a vertex without its own takes.
     pub fn color(&mut self, r: Fx, g: Fx, b: Fx, a: Fx) {
         self.colour = [r, g, b, a];
+    }
+
+    /// `glNormal3x`: the normal a vertex without its own takes.
+    pub fn normal(&mut self, x: Fx, y: Fx, z: Fx) {
+        self.normal = [x, y, z];
+    }
+
+    /// `glLightxv`, and `glLightx` with one value: light `light`'s
+    /// `pname`. The position and the spot direction are carried into eye
+    /// space by the modelview now, as the specification says.
+    pub fn light(&mut self, light: u32, pname: u32, params: &[Fx]) {
+        let i = light.wrapping_sub(gl::LIGHT0) as usize;
+        if i >= gl::MAX_LIGHTS {
+            return self.fail(gl::INVALID_ENUM);
+        }
+        let want = match pname {
+            gl::AMBIENT | gl::DIFFUSE | gl::SPECULAR | gl::POSITION => 4,
+            gl::SPOT_DIRECTION => 3,
+            gl::SPOT_EXPONENT
+            | gl::SPOT_CUTOFF
+            | gl::CONSTANT_ATTENUATION
+            | gl::LINEAR_ATTENUATION
+            | gl::QUADRATIC_ATTENUATION => 1,
+            _ => return self.fail(gl::INVALID_ENUM),
+        };
+        if params.len() < want {
+            return self.fail(gl::INVALID_VALUE);
+        }
+        let four = |p: &[Fx]| [p[0], p[1], p[2], p[3]];
+        let mv = self.modelview();
+        let v = params[0];
+        let mut l = self.lights[i];
+        match pname {
+            gl::AMBIENT => l.ambient = four(params),
+            gl::DIFFUSE => l.diffuse = four(params),
+            gl::SPECULAR => l.specular = four(params),
+            gl::POSITION => l.position = matrix::mul_vec(&mv, &four(params)),
+            gl::SPOT_DIRECTION => {
+                let d =
+                    matrix::mul_vec(&mv, &[params[0], params[1], params[2], 0]);
+                l.spot_direction = [d[0], d[1], d[2]];
+            }
+            gl::SPOT_EXPONENT if (0..=128 * ONE).contains(&v) => {
+                l.spot_exponent = v
+            }
+            gl::SPOT_CUTOFF
+                if (0..=90 * ONE).contains(&v) || v == 180 * ONE =>
+            {
+                l.spot_cutoff = v
+            }
+            gl::CONSTANT_ATTENUATION if v >= 0 => l.attenuation[0] = v,
+            gl::LINEAR_ATTENUATION if v >= 0 => l.attenuation[1] = v,
+            gl::QUADRATIC_ATTENUATION if v >= 0 => l.attenuation[2] = v,
+            _ => return self.fail(gl::INVALID_VALUE),
+        }
+        self.lights[i] = l;
+    }
+
+    /// `glLightModelxv`, and `glLightModelx` with one value.
+    pub fn light_model(&mut self, pname: u32, params: &[Fx]) {
+        match pname {
+            gl::LIGHT_MODEL_AMBIENT if params.len() >= 4 => {
+                self.scene_ambient =
+                    [params[0], params[1], params[2], params[3]]
+            }
+            gl::LIGHT_MODEL_TWO_SIDE if !params.is_empty() => {
+                self.two_side = params[0] != 0
+            }
+            gl::LIGHT_MODEL_AMBIENT | gl::LIGHT_MODEL_TWO_SIDE => {
+                self.fail(gl::INVALID_VALUE)
+            }
+            _ => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glMaterialxv`, and `glMaterialx` with one value. GL ES has one
+    /// material for both faces, so `face` is `GL_FRONT_AND_BACK`.
+    pub fn material(&mut self, face: u32, pname: u32, params: &[Fx]) {
+        if face != gl::FRONT_AND_BACK {
+            return self.fail(gl::INVALID_ENUM);
+        }
+        let want = match pname {
+            gl::AMBIENT
+            | gl::DIFFUSE
+            | gl::SPECULAR
+            | gl::EMISSION
+            | gl::AMBIENT_AND_DIFFUSE => 4,
+            gl::SHININESS => 1,
+            _ => return self.fail(gl::INVALID_ENUM),
+        };
+        if params.len() < want {
+            return self.fail(gl::INVALID_VALUE);
+        }
+        let c = || {
+            [
+                params[0],
+                params[1],
+                params[2],
+                *params.get(3).unwrap_or(&0),
+            ]
+        };
+        let m = &mut self.material;
+        match pname {
+            gl::AMBIENT => m.ambient = c(),
+            gl::DIFFUSE => m.diffuse = c(),
+            gl::SPECULAR => m.specular = c(),
+            gl::EMISSION => m.emission = c(),
+            gl::AMBIENT_AND_DIFFUSE => {
+                m.ambient = c();
+                m.diffuse = c();
+            }
+            _ if (0..=128 * ONE).contains(&params[0]) => {
+                m.shininess = params[0]
+            }
+            _ => self.fail(gl::INVALID_VALUE),
+        }
     }
 
     pub fn clear_color(&mut self, r: Fx, g: Fx, b: Fx, a: Fx) {
@@ -332,18 +488,22 @@ impl<'a> Gl<'a> {
     }
 
     /// `glDrawArrays`: `positions` in object coordinates with their w,
-    /// and each vertex's colour from `colours` or, without it, the
-    /// current colour.
+    /// each vertex's colour from `colours` and its normal from `normals`
+    /// or, without them, the current colour and normal.
     pub fn draw_arrays(
         &mut self,
         mode: u32,
         positions: &[[Fx; 4]],
         colours: Option<&[[Fx; 4]]>,
+        normals: Option<&[[Fx; 3]]>,
     ) {
-        if colours.is_some_and(|c| c.len() < positions.len()) {
+        let n = positions.len();
+        if colours.is_some_and(|c| c.len() < n)
+            || normals.is_some_and(|v| v.len() < n)
+        {
             return self.fail(gl::INVALID_VALUE);
         }
-        self.draw(mode, positions.len(), |k| k, positions, colours);
+        self.draw(mode, n, |k| k, positions, colours, normals);
     }
 
     /// `glDrawElements`: the same, the vertices taken by `indices`.
@@ -353,10 +513,12 @@ impl<'a> Gl<'a> {
         indices: &[u16],
         positions: &[[Fx; 4]],
         colours: Option<&[[Fx; 4]]>,
+        normals: Option<&[[Fx; 3]]>,
     ) {
         let n = positions.len();
         if indices.iter().any(|&i| i as usize >= n)
             || colours.is_some_and(|c| c.len() < n)
+            || normals.is_some_and(|v| v.len() < n)
         {
             return self.fail(gl::INVALID_VALUE);
         }
@@ -366,6 +528,7 @@ impl<'a> Gl<'a> {
             |k| indices[k] as usize,
             positions,
             colours,
+            normals,
         );
     }
 
@@ -378,6 +541,7 @@ impl<'a> Gl<'a> {
         at: impl Fn(usize) -> usize,
         positions: &[[Fx; 4]],
         colours: Option<&[[Fx; 4]]>,
+        normals: Option<&[[Fx; 3]]>,
     ) {
         let tris = match mode {
             gl::TRIANGLES => count / 3,
@@ -386,11 +550,64 @@ impl<'a> Gl<'a> {
         };
         let (mv, pj, current) =
             (self.modelview(), self.projection(), self.colour);
+        // The normal matrix and the rescale factor, once a draw.
+        let nm = if self.lighting {
+            matrix::normal_matrix(&mv).unwrap_or([0; 9])
+        } else {
+            [0; 9]
+        };
+        let rescale = if self.rescale && !self.normalize {
+            let len = light::length(&[nm[2], nm[5], nm[8]]);
+            if len == 0 {
+                ONE
+            } else {
+                div(ONE, len)
+            }
+        } else {
+            ONE
+        };
+        // The lighting state the vertices read, copied out of the context
+        // so that the triangles can be written into it meanwhile.
+        let (lighting, normal, normalize, material, colour_material) = (
+            self.lighting,
+            self.normal,
+            self.normalize,
+            self.material,
+            self.colour_material,
+        );
+        let (lights, scene, two_side) =
+            (self.lights, self.scene_ambient, self.two_side);
         let vert = |i: usize| {
             let eye = matrix::mul_vec(&mv, &positions[i]);
             let clip = matrix::mul_vec(&pj, &eye);
             let col = colours.map_or(current, |c| c[i]);
-            Vert { eye, clip, col }
+            if !lighting {
+                return Vert {
+                    eye,
+                    clip,
+                    col,
+                    back: col,
+                };
+            }
+            let n = matrix::mul3(&nm, &normals.map_or(normal, |v| v[i]));
+            let n = if normalize {
+                light::normalize(&n)
+            } else {
+                n.map(|c| fixed::mul(c, rescale))
+            };
+            let mut m = material;
+            if colour_material {
+                (m.ambient, m.diffuse) = (col, col);
+            }
+            let lit = |n: &[Fx; 3]| light::shade(n, &eye, &m, &lights, &scene);
+            let front = lit(&n);
+            let back = if two_side { lit(&n.map(|c| -c)) } else { front };
+            Vert {
+                eye,
+                clip,
+                col: front,
+                back,
+            }
         };
         for t in 0..tris {
             let (a, b, c) = match mode {
@@ -439,7 +656,6 @@ impl<'a> Gl<'a> {
     /// One triangle through clipping, the window, culling and shading
     /// into the frame.
     fn triangle(&mut self, tri: [Vert; 3]) {
-        let provoking = tri[2].col;
         let mut poly = [Vert::default(); MAXV];
         poly[..3].copy_from_slice(&tri);
         let mut n = 3;
@@ -511,11 +727,21 @@ impl<'a> Gl<'a> {
         };
         let (sw, sh) = self.screen;
         let screen: Bounds = (0, 0, sw - 1, sh - 1);
-        let flat = colour_word(&provoking);
+        // With two-sided lighting a back face shows the colours lit for
+        // its back.
+        let back_face = self.two_side && self.lighting && !front;
+        let face = |v: &Vert| {
+            if back_face {
+                v.back
+            } else {
+                v.col
+            }
+        };
+        let flat = colour_word(&face(&tri[2]));
         for k in 1..n - 1 {
             let (a, b, c) = (at(0), at(k), at(k + 1));
             let w = if self.smooth {
-                let s = [poly[0].col, poly[k].col, poly[k + 1].col]
+                let s = [face(&poly[0]), face(&poly[k]), face(&poly[k + 1])]
                     .map(|c| colour_word(&c));
                 emit::triangle(s[0], a, b, c, Some(s), screen)
             } else {
@@ -546,5 +772,6 @@ fn between(a: &Vert, b: &Vert, da: i128, db: i128) -> Vert {
         eye: mix(&a.eye, &b.eye),
         clip: mix(&a.clip, &b.clip),
         col: mix(&a.col, &b.col),
+        back: mix(&a.back, &b.back),
     }
 }

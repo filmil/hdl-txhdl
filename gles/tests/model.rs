@@ -313,8 +313,8 @@ fn agree(
     gl.clear(gl::COLOR_BUFFER_BIT);
     for d in draws {
         match &d.idx {
-            Some(i) => gl.draw_elements(d.mode, i, &d.pos, Some(&d.col)),
-            None => gl.draw_arrays(d.mode, &d.pos, Some(&d.col)),
+            Some(i) => gl.draw_elements(d.mode, i, &d.pos, Some(&d.col), None),
+            None => gl.draw_arrays(d.mode, &d.pos, Some(&d.col), None),
         }
     }
     assert_eq!(gl.get_error(), gl::NO_ERROR, "{what}");
@@ -606,7 +606,7 @@ fn window_positions_agree_with_floating_point() {
             })
             .collect();
         let pos: Vec<[Fx; 4]> = tri.iter().map(|v| p(v.0, v.1, v.2)).collect();
-        gl.draw_arrays(gl::TRIANGLES, &pos, None);
+        gl.draw_arrays(gl::TRIANGLES, &pos, None, None);
         let Some(w) = gl.frame().last().copied() else {
             continue;
         };

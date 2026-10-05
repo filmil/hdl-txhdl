@@ -36,3 +36,30 @@ pub const COLOR_BUFFER_BIT: u32 = 0x0000_4000;
 pub const MAX_MODELVIEW_STACK_DEPTH: usize = 16;
 /// The projection stack's depth, the specification's minimum.
 pub const MAX_PROJECTION_STACK_DEPTH: usize = 2;
+
+pub const LIGHTING: u32 = 0x0B50;
+pub const LIGHT0: u32 = 0x4000;
+pub const NORMALIZE: u32 = 0x0BA1;
+pub const RESCALE_NORMAL: u32 = 0x803A;
+pub const COLOR_MATERIAL: u32 = 0x0B57;
+
+pub const AMBIENT: u32 = 0x1200;
+pub const DIFFUSE: u32 = 0x1201;
+pub const SPECULAR: u32 = 0x1202;
+pub const POSITION: u32 = 0x1203;
+pub const SPOT_DIRECTION: u32 = 0x1204;
+pub const SPOT_EXPONENT: u32 = 0x1205;
+pub const SPOT_CUTOFF: u32 = 0x1206;
+pub const CONSTANT_ATTENUATION: u32 = 0x1207;
+pub const LINEAR_ATTENUATION: u32 = 0x1208;
+pub const QUADRATIC_ATTENUATION: u32 = 0x1209;
+
+pub const EMISSION: u32 = 0x1600;
+pub const SHININESS: u32 = 0x1601;
+pub const AMBIENT_AND_DIFFUSE: u32 = 0x1602;
+
+pub const LIGHT_MODEL_TWO_SIDE: u32 = 0x0B52;
+pub const LIGHT_MODEL_AMBIENT: u32 = 0x0B53;
+
+/// How many lights there are, the specification's minimum.
+pub const MAX_LIGHTS: usize = 8;

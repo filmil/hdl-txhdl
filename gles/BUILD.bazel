@@ -13,6 +13,7 @@ rust_library(
         "src/fixed.rs",
         "src/gl.rs",
         "src/lib.rs",
+        "src/light.rs",
         "src/matrix.rs",
     ],
     crate_name = "gles",
@@ -32,6 +33,19 @@ rust_test(
 rust_test(
     name = "model_test",
     srcs = ["tests/model.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
+
+# Lighting against floating point: the sum at a vertex, and lit
+# triangles through the pipeline (issue 1164).
+rust_test(
+    name = "light_test",
+    srcs = ["tests/light.rs"],
     edition = "2021",
     deps = [
         ":gles",
