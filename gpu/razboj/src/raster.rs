@@ -43,10 +43,12 @@
 //! rasteriser puts nothing on the link at all; where nothing does,
 //! `ring` is tied high and the count is read back to back.
 //!
-//! It is an AXI host, and it writes as a host client writes: a burst
-//! of one beat per pixel, issued on `issue` with its beat on `wbeat`
-//! in the same cycle, with the identifier the tracker granted handed
-//! back on `release` when the write response arrives. Several writes
+//! It is an AXI host, and it writes as a host client writes: a run of
+//! a row's pixels as one burst of up to sixteen beats, issued on
+//! `issue` with its first beat on `wbeat` in the same cycle and a beat
+//! a pixel after it, strobes off where a pixel is outside the primitive
+//! (issue 987), with the identifier the tracker granted handed back on
+//! `release` when the write response arrives. Several writes
 //! are in flight, as many as the tracker has identifiers. A read's
 //! identifier is handed back when its beat arrives on `rdata`.
 //!
