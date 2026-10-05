@@ -67,6 +67,15 @@ pub const MAX_TILES: usize = MAX_COLS * MAX_COLS;
 pub const TILE_WORDS: usize = 2;
 pub const TILE_BYTE_SHIFT: usize = 3;
 
+/// Where a tiled list's entries start, in bytes past its tile table:
+/// room for every tile's record, so a program lays out the table and
+/// the entries the same way whatever the screen (issue 1255).
+pub const ENTRIES_AT: usize = MAX_TILES << TILE_BYTE_SHIFT;
+
+/// The count word's bit that says the list is a tile table, its count
+/// then the number of tiles, rather than a flat list of entries.
+pub const TILED: u32 = 1 << 31;
+
 /// A tile's record in the tile table:
 ///
 /// ```text
