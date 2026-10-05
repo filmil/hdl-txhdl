@@ -755,6 +755,23 @@ rust_test(
     ],
 )
 
+# One frame of ico_hdmi worked out on the host, as a PPM: the list
+# rendered through Razboj's model with the logo laid in, to hold a board
+# recording against (issues 986 and 1213).
+rust_binary(
+    name = "ico_frame",
+    srcs = [
+        "ico_frame.rs",
+        "ico_list.rs",
+    ],
+    crate_root = "ico_frame.rs",
+    edition = "2021",
+    deps = [
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
 # The video scanout under load on the flagship (issue 151): a frame
 # painted into the DDR3 and shown from there, and the scanout's
 # underflow bit read on an idle bus and then while the core copies in
