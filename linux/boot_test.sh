@@ -35,5 +35,11 @@ grep -q "txhdl: userspace is up" "$out" ||
     { echo "FAIL: /init never said userspace is up" >&2; fail=1; }
 grep -q "^~ # " "$out" ||
     { echo "FAIL: no shell prompt" >&2; fail=1; }
+# The shell has the console as its controlling tty, so Ctrl-C reaches
+# what it runs (issue 1249).
+if grep -q "can't access tty" "$out"; then
+    echo "FAIL: the shell has no controlling tty" >&2
+    fail=1
+fi
 [ "$fail" -eq 0 ] && echo "PASS: userspace is up, and the shell prompts"
 exit "$fail"
