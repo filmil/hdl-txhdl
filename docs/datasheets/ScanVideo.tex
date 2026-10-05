@@ -60,7 +60,9 @@ a framebuffer pixel's size on the screen. \\
 
 The tables below use the flagship's: 640 by 480 at 60~Hz, a
 framebuffer pixel of four by four, ten bits of column, 525 rows and
-2560 bytes a line, as \code{hdmi/src/netlist.rs} writes \code{scan\_video}.
+4096 bytes a line, as \code{hdmi/src/netlist.rs} writes \code{scan\_video}.
+A line in memory is Razboj's row of 1024 words, of which the first 640
+are shown (issue 985).
 
 \dstables{ScanVideo}
 

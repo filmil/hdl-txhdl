@@ -1,0 +1,83 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Doorbell
+\datasheet{Doorbell}{Razboj's doorbell: the register a program writes a display list's count into, and the line that wakes the rasteriser.}
+
+\dsfacts{\code{gpu/razboj/src/doorbell.rs}}{\code{razboj::doorbell::Doorbell}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+\code{Doorbell} holds the count \code{Raster} reads at its
+\code{CTRL}: how many entries of the display list to draw, zero when
+there is nothing to draw. A program writes the list into memory, then
+the count; the rasteriser draws the list and writes the count back to
+zero. The count is a register rather than a word of memory, so that
+it holds zero from reset, and no word a loader left behind can start
+a list nobody wrote (issue 985).
+
+It drives \code{ring} high while the count is not zero, and the
+rasteriser reads the count only then, so an idle rasteriser puts no
+reads on the bus. A second word reads the rasteriser's \code{idle}
+line.
+
+It is an AXI-Lite peripheral whose link is one port, \code{bus}, a
+\code{LitePort} of the five channels: \code{bus\_aw}, \code{bus\_ar}
+and \code{bus\_w} in, \code{bus\_b} and \code{bus\_r} out. Its other
+ports are \code{rst} and \code{idle} in, and \code{ring} out.
+
+\subsection*{Parameters}
+
+None.
+
+\subsection*{Register map}
+
+Offsets from the peripheral's base, \code{0x3900} on the flagship, the
+peripheral page's tenth slot. The port selects the word by bit 2 of
+the address.
+
+\dsregs{Doorbell}
+
+\dstables{Doorbell}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item A read is answered on \code{bus\_r} in the cycle its address
+beat is taken, with \code{OKAY}. A write needs its address beat, its
+data beat and room on \code{bus\_b} in the same cycle, and is answered
+at once, with \code{OKAY}.
+\item A write of \code{count} sets it to the word's low sixteen bits.
+A write of \code{status} is ignored.
+\item \code{rst} high sets the count to zero, over a write in the same
+cycle.
+\item \code{ring} is high while the count is not zero.
+\end{itemize}
+
+A program waits for \code{count} to read zero, writes the list, then
+writes \code{count}. A write while a list is being drawn starts
+nothing: the rasteriser has read the count already, and writes zero
+over it at the end.
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//gpu/razboj:razboj\_test} runs
+\code{the\_count\_holds\_what\_is\_written\_and\_the\_status\_is\_the\_line}:
+the count reads back what is written, \code{ring} follows it, the
+status is the line, and a reset empties the count; and
+\code{the\_doorbell\_lowers}.
+\item \code{//cpu/vreteno:board\_test} runs
+\code{razboj\_draws\_a\_list\_rung\_on\_the\_doorbell}: a program on the
+board writes a list, rings, waits for the zero and for idle, and reads
+the pixels back over the bus.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{vreteno32::board::Board}, on the peripheral page's tenth slot,
+beside \code{Raster<32, 2, 10, 480, 0x4200\_0000, 0x4280\_0000,
+0x3900>}.
+
+\subsection*{Limits}
+
+The count is sixteen bits. A write's strobes are not looked at.

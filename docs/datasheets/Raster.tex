@@ -7,19 +7,30 @@
 
 \subsection*{Function}
 
-\code{Raster} finds its work in memory and draws it there. It polls a
-count at \code{CTRL} until the count is not zero. It then reads the
-six words of each instruction of the display list at \code{DL}, one
-read at a time, and walks the instruction's box one pixel per cycle.
-It writes the instruction's colour at every pixel inside the
-primitive: every pixel of a clear or a rectangle, and every pixel of a
-triangle at which no edge function is negative.
+\code{Raster} finds its work in memory and draws it there. While
+\code{ring} is high it reads a count at \code{CTRL}, until the count
+is not zero. It then reads the sixteen words of each instruction of
+the display list at \code{DL}, as one read burst of sixteen beats, and
+walks the instruction's box one pixel per cycle. It writes the
+instruction's colour, its alpha in the top byte, at every pixel inside
+the primitive: every pixel of a clear or a rectangle, and every pixel
+of a triangle at which no edge function is negative. A shaded
+triangle's colour is three planes the host worked out, each stepped
+across the box as an edge is.
+
+It draws list after list. When a list is drawn and every write has
+been answered, it writes the count back to zero and reads it again.
+On the board the count is \code{Doorbell}'s register, which drives
+\code{ring} high while the count is not zero, so an idle rasteriser
+puts nothing on the link (issue 985). Where nothing drives it,
+\code{ring} is tied high and the count is read back to back.
 
 It is an AXI host written as hardware. It issues bursts on
 \code{issue}, sends a pixel's beat on \code{wbeat}, and hands
 identifiers back on \code{release}. It receives \code{grant},
-\code{done} and \code{rdata} from its tracker. \code{idle} goes high
-when the list is drawn and no write is in flight.
+\code{done} and \code{rdata} from its tracker, and \code{ring}.
+\code{idle} goes high when the list is drawn, its zero is answered and
+no write is in flight.
 
 \subsection*{Parameters}
 
@@ -43,6 +54,9 @@ The tables use \code{Raster<16, 2, 4, 16, 0, 0x400, 0x600>}, the
 rasteriser of \code{//gpu/razboj:trace}: a sixteen by sixteen screen at
 \code{0x0}, the list at \code{0x400} and the count at \code{0x600}. In
 \code{soc} it is \code{Raster<32, 2, 7, 96, 0x8000, 0x2000, 0x4000>}.
+On the flagship it is \code{Raster<32, 2, 10, 480, 0x4200\_0000,
+0x4280\_0000, 0x3900>}: rows of 1024 pixels, the scanout's stride, of
+which 640 are shown, and the count in \code{Doorbell}.
 
 \subsection*{Address map}
 
@@ -51,30 +65,34 @@ rasteriser of \code{//gpu/razboj:trace}: a sixteen by sixteen screen at
 \toprule
 Address & What the rasteriser does there \\
 \midrule
-\code{CTRL} & Reads the count while polling. \\
-\code{DL + (i << 5) + (k << 2)} & Reads word \code{k}, 0 to 5, of
-instruction \code{i}. \\
+\code{CTRL} & Reads the count while \code{ring} is high, and writes
+zero there when a list is drawn. \\
+\code{DL + (i << 6) + (k << 2)} & Reads word \code{k}, 0 to 15, of
+instruction \code{i}, as one burst. \\
 \code{BASE + (((y << LOGW) + x) << 2)} & Writes pixel \code{x},
 \code{y}. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-An instruction's words are in the format \code{gpu/razboj/src/dl.rs} states.
-Words 6 and 7 of an instruction are never read.
+An instruction's words are in the format \code{gpu/razboj/src/dl.rs}
+states.
 
 \begin{center}\footnotesize
 \begin{tabular}{@{}lp{0.42\textwidth}p{0.3\textwidth}@{}}
 \toprule
 Word & Low field & High field \\
 \midrule
-0 & bits 1 to 0: kind, 0 clear, 1 rectangle, 2 triangle & bits 25 to
-2: colour \\
+0 & bits 1 to 0: kind, 0 clear, 1 rectangle, 2 triangle, 3 shaded
+triangle & bits 25 to 2: colour \\
 1 & bits 9 to 0: \code{x0} & bits 25 to 16: \code{y0} \\
 2 & bits 9 to 0: \code{x1} & bits 25 to 16: \code{y1} \\
-3 & bits 11 to 0: \code{ax} & bits 27 to 16: \code{ay} \\
-4 & bits 11 to 0: \code{bx} & bits 27 to 16: \code{by} \\
-5 & bits 11 to 0: \code{cx} & bits 27 to 16: \code{cy} \\
+3 & bits 15 to 0: \code{ax} & bits 31 to 16: \code{ay} \\
+4 & bits 15 to 0: \code{bx} & bits 31 to 16: \code{by} \\
+5 & bits 15 to 0: \code{cx} & bits 31 to 16: \code{cy} \\
+6 to 14 & \multicolumn{2}{l}{a shaded triangle's red, green and blue
+planes: value, step right, step down} \\
+15 & bits 7 to 0: alpha & \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -87,27 +105,31 @@ The rasteriser is two processes. The first takes the link's answers
 every cycle, and says whether the pixel under the walk is in the
 primitive and whether the rasteriser is idle. The second is the front
 end written as the sequence it is: poll the count until the list is
-ready, then for each instruction fetch its six words and walk its box a
-pixel a turn, and when the list is drawn wait for ever. The lowering
+ready, then for each instruction fetch its sixteen words and walk its
+box a pixel a turn, and when the list is drawn write the count back to
+zero and poll again. The lowering
 numbers the front end's waits into a state register the unit does not
 declare, \code{at\_wait}, and keeps its loops' counts in \code{for0} to
 \code{for3}; all are in the tables above.
 
 \begin{itemize}
-\item The front end issues a read of the count at \code{CTRL} once
-\code{issue} has room, and waits for its beat. The count's low eight
-bits go into \code{left}. A count of zero means poll again.
+\item The front end waits for \code{ring}, then issues a read of the
+count at \code{CTRL} once \code{issue} has room, and waits for its
+beat. The count's low sixteen bits go into \code{left}. A count of
+zero means wait for \code{ring} and read again.
 \item For each of \code{left} instructions it waits a cycle, for the
-instruction's index to read back, then reads the six words one at a
-time: each read is issued once \code{issue} has room, and the front end
-waits for its beat before the next. Each word's fields are latched as
-the word lands. A kind field of 3 is taken as a triangle.
-\item When word 5 lands, the walk is set up in that cycle. The third
-vertex comes straight from the bus. The six products of the edge
-functions are computed then, and nowhere else.
-\item A clear's box is the whole screen, from its own type. A
-rectangle's and a triangle's box is \code{x0}, \code{y0} to
-\code{x1}, \code{y1}. Vertices are sign-extended from twelve bits.
+instruction's index to read back, then reads its sixteen words as one
+burst of sixteen beats, issued once \code{issue} has room. Each
+word's fields are latched as its beat lands.
+\item Once the last word has landed the walk is set up over three
+cycles: the differences of the vertices, then the six products side
+by side, then their sums. The products are computed there, and
+nowhere else.
+\item A clear's box is the whole screen, from its own type: all
+\code{1 << LOGW} columns of \code{H} rows. A rectangle's and a
+triangle's box is \code{x0}, \code{y0} to \code{x1}, \code{y1}, and
+is not clipped to \code{H}. Vertices are sixteenths of a pixel in
+sixteen bits of two's complement.
 \item After a cycle for the box to read back, the walk goes over every
 row of the box, a cycle at the start of each, and every column of the
 row, a pixel a turn.
@@ -122,10 +144,11 @@ and \code{wbeat} have room, which adds one to \code{issued}. The walk
 steps when the pixel needs no write or its write went out, so
 backpressure holds the walk.
 \item A pixel's write is a burst of one beat, size 2, \code{INCR},
-with the colour zero-extended to 32 bits, strobe \code{0xf} and
+with the alpha above the 24-bit colour, strobe \code{0xf} and
 \code{last} set.
-\item When the last instruction's box is walked, \code{finished} is
-set. \code{inflight} is a wire, \code{issued} less \code{answered},
+\item When the last instruction's box is walked and every write is
+answered, the count at \code{CTRL} is written back to zero, and
+\code{finished} is set as that write goes out. \code{inflight} is a wire, \code{issued} less \code{answered},
 the writes whose response has not come back, and \code{idle} is high
 when \code{finished} is set and nothing is in flight.
 \item When a write response and a read beat arrive together, the
@@ -173,7 +196,9 @@ interpolation, so a triangle is one colour, and no texture. It clips
 no geometry, only boxes, and the assembler \code{Op::encode} does that
 on the host. It has one read out at a time.
 
-The code adds these. It has no reset port, and it waits for ever once the list
-is drawn, so it draws one list. \code{left} is eight bits. The pixel's offset from
-\code{BASE} is formed at sixteen bits and then widened to \code{A}
-bits. A colour is 24 bits.
+The code adds these. It has no reset port. A list holds at most 65535
+entries, since \code{left} is sixteen bits. \code{BASE}, \code{DL}
+and \code{CTRL} are constants of its type, so a design that draws
+into two buffers moves the second one's rows past the first's, as the
+flagship's icosahedron does (issue 986), rather than moving
+\code{BASE}. A colour is 24 bits and its alpha 8.
