@@ -705,6 +705,25 @@ rust_test(
     deps = ["//gpu/razboj"],
 )
 
+# The same icosahedron through the GL ES library (issue 995), drawn on
+# the host through Razboj's model and held to the hand-written one:
+# the same faces, their colours within 2, and the pictures differing
+# only on edges.
+rust_test(
+    name = "ico_gl_test",
+    srcs = [
+        "ico_gl.rs",
+        "ico_gl_test.rs",
+        "ico_list.rs",
+    ],
+    crate_root = "ico_gl_test.rs",
+    edition = "2021",
+    deps = [
+        "//gles",
+        "//gpu/razboj",
+    ],
+)
+
 # The video scanout under load on the flagship (issue 151): a frame
 # painted into the DDR3 and shown from there, and the scanout's
 # underflow bit read on an idle bus and then while the core copies in

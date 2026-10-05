@@ -110,7 +110,7 @@ pub const FACES: usize = 20;
 
 /// The twelve vertices: the corners of three golden rectangles.
 const PHI: i32 = 1657;
-static BODY: [[i32; 3]; VERTS] = [
+pub static BODY: [[i32; 3]; VERTS] = [
     [0, ONE, PHI],
     [0, ONE, -PHI],
     [0, -ONE, PHI],
