@@ -55,7 +55,8 @@ A rasteriser reads a display list and writes pixels into memory.
 Razboj, the minimal GPU of this document, is one: a unit whose process
 is some two hundred and seventy lines of code, written as a sequence,
 that walks a box one pixel a cycle, keeps three edge functions as it goes, and writes the pixels
-that are inside the primitive as single-beat AXI bursts; the
+that are inside the primitive as AXI bursts, a run of a row's pixels
+at a time; the
 framebuffer is a second unit, a memory behind the other end of the
 link. The display list is in that memory too, and the rasteriser
 reads it over the same link, so a program that writes the list is all
@@ -364,9 +365,20 @@ hands them out under the names \code{HostClient} and
 \code{PerClient}, and that is the whole of the difference between a
 client that is a testbench and a client that is hardware.
 
-A pixel is one burst of one beat: the issue and its beat go out in
-the same cycle, so the write data channel stays in the order the
-address channel is in, which is what AXI4 asks of a write. The
+A run of a row's pixels is one burst (issue 987). The first pixel of
+the primitive that the walk meets with no burst under way starts one,
+as long as the pixels left in the box's row, at most sixteen and short
+of the next 4~KiB page, and its issue and first beat go out in the same
+cycle; each pixel after it in the burst sends a beat, its strobes on
+where the pixel is inside the primitive and off where it is not. So
+the write data channel stays in the order the address channel is in,
+which is what AXI4 asks of a write. A triangle's pixels in a row are
+one run, since it is convex, so a burst wastes beats only past the
+run's end, and a clear or a rectangle writes nothing but whole bursts.
+On the board's model, with nothing else on the bus, a fill of the
+screen's 640 by 480 now ends at cycle 327426, about one a pixel; a
+burst a pixel ended it at 1229346, four a pixel.
+The
 identifier the tracker granted is not needed, since a write's answer
 matters only as a count and the front end has one read out at a time,
 so it is taken and dropped. An identifier is handed back on
@@ -388,8 +400,8 @@ shaded triangle's planes, zeros for a flat one, and the last is its
 alpha. The three cycles of the setup
 follow, in which \code{x} and \code{y} hold, and from there they walk
 the triangle's box and \code{hit} is
-whether the pixel is inside it; where \code{hit} is low no burst is
-issued, so the row is walked and nothing is written. \code{inflight}
+whether the pixel is inside it; where \code{hit} is low and no burst is
+under way none is issued, so the row is walked and nothing is written. \code{inflight}
 is the writes whose response has not come back.}
 \label{fig:g-wave}
 \end{figure*}
@@ -398,7 +410,10 @@ is the writes whose response has not come back.}
 \label{sec:g-fb}
 
 The framebuffer is the peripheral end of the same link: a memory of
-one word per pixel, answering single-beat bursts.
+one word per pixel, answering bursts of any length. A beat writes only
+the bytes its strobes name, so the beats of a burst that fall outside
+the primitive write nothing, and a write is answered once, with its
+last beat.
 
 \gpupart{fb.rs}{run}{The framebuffer.}{lst:g-fb}
 
