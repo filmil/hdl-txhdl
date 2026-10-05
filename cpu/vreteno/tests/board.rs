@@ -471,6 +471,9 @@ type ScanPair = LinePair<640, 10, 4, 6, 4096, DefaultClock>;
 #[derive(Default)]
 struct ScanLog {
     lines: Vec<(u32, u64, Option<u64>)>,
+    /// The cycle the pair said a line was stuck, and that line's
+    /// address (issue 1197).
+    stuck: Option<(u64, u32)>,
 }
 
 fn run_all(
@@ -507,6 +510,8 @@ fn run_all(
     let (show_o, show) = signal::<Bit, DefaultClock>();
     let (pix_o, _pix) = signal::<U<32>, DefaultClock>();
     let (starved_o, _starved) = signal::<Bit, DefaultClock>();
+    let (stuck_o, stuck) = signal::<Bit, DefaultClock>();
+    let (stuck_at_o, stuck_at) = signal::<U<32>, DefaultClock>();
     let mut raster = ScanRaster::default();
     let mut pair = ScanPair::default();
     base_o.set(U::<32>::from(0u32));
@@ -754,7 +759,7 @@ fn run_all(
             raster.run((), (col_o, vis_o, line_o, row_o, frame_o)),
             pair.run(
                 (pair_inp, col, vis, line, row, frame, base, clear, show),
-                (pix_o, pair_req, starved_o),
+                (pix_o, pair_req, starved_o, stuck_o, stuck_at_o),
             ),
         ),
     ));
@@ -841,6 +846,9 @@ fn run_all(
             typed_at = cycle;
         }
         if let Some(s) = &scan {
+            if stuck.get().to_bool() && scan_log.stuck.is_none() {
+                scan_log.stuck = Some((cycle, stuck_at.get().raw() as u32));
+            }
             if cycle == s.show_at {
                 base_o.set(U::<32>::from(s.base));
                 show_o.set(Bit::One);
@@ -958,6 +966,8 @@ fn the_scanout_shows_a_base_given_after_the_reset() {
         "{shown} lines of the base came back; asked for {:x?}",
         lines.iter().take(8).collect::<Vec<_>>()
     );
+    // Lines that come, if late, are never stuck (issue 1197).
+    assert_eq!(ran.scan.stuck, None, "a scanout that keeps going");
 }
 
 /// The configuration flash on the board (issue 312): the core reads the
@@ -2011,4 +2021,41 @@ fn every_slave_answers_every_burst() {
     }
     eprintln!("{} bursts, the slowest {slowest} cycles", asked.len());
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// A scanout whose line never comes says so (issue 1197). Its base is
+/// the third slot of the peripheral page, which these runs tie off, so
+/// the fetch of the first line waits for good, as the boot memory's one
+/// beat made it wait on the board (#1178). Two line times after that
+/// line was asked for, the pair sets `stuck` with the line's address,
+/// rather than leaving a black screen and a clear underflow bit.
+#[test]
+fn a_line_that_never_comes_is_stuck() {
+    let frame = 6 * 800;
+    let net = Net {
+        scan: Some(Scan {
+            base: 0x3200,
+            show_at: frame,
+        }),
+        ..Net::default()
+    };
+    let ran = run_all(
+        hello_program::TEXT,
+        hello_program::DATA,
+        b"",
+        &[],
+        4 * frame,
+        net,
+        &[],
+    );
+    let first = ran.scan.lines.first().expect("a line was asked for");
+    assert_eq!(first.0, 0x3200, "the base was asked for first");
+    assert!(first.2.is_none(), "and it never came");
+    let (when, at) = ran.scan.stuck.expect("the pair said it was stuck");
+    assert_eq!(at, 0x3200, "the line that did not come");
+    assert!(
+        when <= first.1 + 3 * 800,
+        "stuck at {when}, the line asked for at {}",
+        first.1
+    );
 }
