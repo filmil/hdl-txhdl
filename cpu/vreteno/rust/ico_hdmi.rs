@@ -47,13 +47,26 @@
 //! it, and the whole frame including the wait for the blanking. The
 //! core-drawn version this replaced said `ico core` and the cycles its
 //! drawing took, which is what these are measured against.
+//!
+//! ## Through GL
+//!
+//! Built with `--cfg=gl`, as `ico_gl_hdmi`, the list comes from
+//! `ico_gl.rs` instead, the same frames written through the GL ES
+//! library of `//gles` (issue 995), and the cycles line says `ico gl
+//! list` where this one says `ico razboj list`. Everything else is the
+//! same program, so the two lines measure what the library costs.
 #![no_std]
 #![no_main]
 
+#[cfg(gl)]
+mod ico_gl;
+// Through GL the hand-written list is not drawn, only its solid and
+// its rectangle are used.
+#[cfg_attr(gl, allow(dead_code))]
 mod ico_list;
 
 use core::ptr::{read_volatile, write_volatile};
-use ico_list::{frame, rect, Box, Solid, BACKDROP, MOST, SECOND, WORDS};
+use ico_list::{rect, Box, Solid, BACKDROP, MOST, SECOND, WORDS};
 use vreteno_hal::{entry, Razboj, Scan, Uart, Video};
 
 entry!(main);
@@ -66,6 +79,13 @@ const LOGO_Y: u32 = Scan::HEIGHT - txhdl_logo::H as u32 * LOGO_SCALE - 8;
 
 // The solid never reaches the logo's columns, so no clear erases it.
 const _: () = assert!(Scan::WIDTH as i32 / 2 + ico_list::REACH < LOGO_X as i32);
+
+/// What the cycles line starts with: the list written by hand, or
+/// through the GL ES library (issue 995).
+#[cfg(not(gl))]
+const SAYS: &[u8] = b"ico razboj list ";
+#[cfg(gl)]
+const SAYS: &[u8] = b"ico gl list ";
 
 /// Words from one row of the frame to the next.
 const ROW: u32 = Scan::STRIDE / 4;
@@ -163,13 +183,20 @@ fn main() -> ! {
     };
     let mut last = [CORNER, CORNER];
     let mut list = [[0u32; WORDS]; MOST];
+    #[cfg(gl)]
+    let model = ico_gl::Model::new(&solid);
     let (mut ay, mut ax) = (0i32, 0i32);
     let mut frames = 0u32;
     let mut which = 1usize;
     loop {
         let start = mcycle();
         let dy = which as i32 * SECOND;
-        let (n, filled) = frame(&solid, ay, ax, dy, last[which], &mut list);
+        #[cfg(not(gl))]
+        let (n, filled) =
+            ico_list::frame(&solid, ay, ax, dy, last[which], &mut list);
+        #[cfg(gl)]
+        let (n, filled) =
+            ico_gl::frame(&model, ay, ax, dy, last[which], &mut list);
         last[which] = filled;
         let listed = mcycle();
         draw(&list, n);
@@ -179,7 +206,7 @@ fn main() -> ! {
         let shown = mcycle();
 
         if frames & 63 == 0 {
-            Uart::say(b"ico razboj list ");
+            Uart::say(SAYS);
             Uart::put_decimal(listed.wrapping_sub(start));
             Uart::say(b" draw ");
             Uart::put_decimal(drawn.wrapping_sub(listed));
