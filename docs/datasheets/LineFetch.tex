@@ -50,8 +50,10 @@ sixteen-beat bursts on a thirty-two bit address.
 \code{base} and \code{words} are read once, there, so a register
 written under the engine does not move the run out from under it.
 \item A burst goes out when none is in flight and words are still
-wanted, asking for \code{BEATS} beats or the rest of the run,
-whichever is fewer.
+wanted, asking for \code{BEATS} beats, the rest of the run, or the
+words to the next 4\,KB boundary, whichever is fewest. AXI4 forbids a
+burst that crosses one, and the board's DDR3 controller refuses it
+(issue 1209).
 \item A beat is taken when one is offered and the channel out has
 room. That room is the backpressure: a consumer that stops taking
 stops the bursts.
@@ -82,6 +84,11 @@ memory on the far side. The build checks the netlist against that run
 under nvc and Verilator:
 \code{//docs:dma\_sim\_linefetch\_tb\_test} and
 \code{//docs:dma\_vsim\_test}.
+\item \code{a\_burst\_never\_crosses\_a\_4k\_boundary}, in
+\code{//lib/parts:parts\_test}, starts a run 32 words below a 4\,KB
+boundary with bursts of up to 128 and checks that the first is cut
+there, that none crosses one, and that every word still comes, in
+order. It fails without the cut.
 \item The example asserts rather than prints. Every word arrived;
 each word is the one at its own address, since the memory holds its
 address in each word, so a word from the wrong burst or out of order
@@ -124,9 +131,13 @@ words, and at gigabit the wire takes about 1200 cycles at 100\,MHz:
 \end{center}
 
 A realistic DDR3 first-beat latency is tens of cycles, so sixteen-beat
-bursts can lose that margin and 256-beat bursts cannot. The raster
-uses sixteen because its consumer takes a pixel per visible cycle and
-a longer burst buys it nothing; a MAC should use a longer one. Both
+bursts can lose that margin and 256-beat bursts cannot. The board's
+scanout learnt the same: in sixteen-beat bursts a 640-word line under
+the core's copying and the Ethernet port's sending took 4682 cycles
+of the 3175 a line lasts, and every line was late. It fetches in bursts
+of 64, \code{LineFetch<32, 2, 64, 16>}, and takes 1206; bursts of 128
+took 942, but a load of the core's waiting behind one waited 153 cycles
+rather than 94 (issue 1209). A MAC should use a longer one too. Both
 are the same component with a different parameter, and neither needs a
 second burst in flight, which is what keeps a second identifier, a
 tracker and out-of-order answers out of the design.
@@ -147,14 +158,14 @@ under-delivers is outside what it can detect rather than something it
 reports.
 
 
-\textbf{A burst must not cross a 4\,KB address boundary}, which is
-AXI4's rule and not this component's, and nothing here checks it.
-\code{BEATS} of 256 is 1\,KB, so a run whose base is 1\,KB aligned
-satisfies it without a special case: every burst but the last is a
-full 1\,KB from a 1\,KB aligned address, and the last is shorter from
-one. A caller that starts a run at an arbitrary address with a long
-\code{BEATS} can violate the rule, and the symptom is a burst the
-interconnect is entitled to answer however it likes.
+\textbf{A burst never crosses a 4\,KB address boundary}, which is
+AXI4's rule: the engine cuts a burst at the boundary and starts the
+next from it (issue 1209). A run from a base aligned to \code{BEATS}
+words never meets the cut, so it costs such a run nothing; it is there
+so that a run from anywhere else is still legal. Before it, a caller
+that started a run at an arbitrary address with a long \code{BEATS}
+could send a burst the interconnect was entitled to answer however it
+liked.
 
 One burst is in flight at a time, deliberately. A second would want a
 second identifier, a tracker to tell the two apart and an answer for
