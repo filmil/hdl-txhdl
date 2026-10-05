@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+# GL ES 1.1 Common-Lite for Razboj: the fixed-point pipeline from a
+# vertex to Razboj's display list, with no standard library so that a
+# Vreteno program links it (docs/gles.md, issue 1159, #995).
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "gles",
+    srcs = [
+        "src/emit.rs",
+        "src/fixed.rs",
+        "src/gl.rs",
+        "src/lib.rs",
+        "src/light.rs",
+        "src/matrix.rs",
+    ],
+    crate_name = "gles",
+    edition = "2021",
+    deps = ["//gpu/razboj:tile"],
+)
+
+rust_test(
+    name = "gles_test",
+    crate = ":gles",
+    edition = "2021",
+)
+
+# The pipeline against references, through Razboj's model: the words
+# against Razboj's encoder, the pictures against a pipeline in 128 bits,
+# pixel for pixel, and the window against floating point.
+rust_test(
+    name = "model_test",
+    srcs = ["tests/model.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
+
+# Lighting against floating point: the sum at a vertex, and lit
+# triangles through the pipeline (issue 1164).
+rust_test(
+    name = "light_test",
+    srcs = ["tests/light.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # GL ES 1.1 Common-Lite on Vreteno: the design, before the language
 
-Status: design note, October 4, 2026, for issue 995 (gl-order/14), item 13 of `opengl-gap.md`.
+Status: design note, October 4, 2026, for issue 995 (gl-order/14), item 13 of `opengl-gap.md`; section 10 records the steps done.
 Read against `main` at `c3103332`, and against the open pull requests it names.
 Author: automated coding assistant, with human supervision.
 
@@ -251,8 +251,17 @@ Each step is a pull request, checked before the next.
    No Razboj yet.
 2. **Triangles to Razboj's words.**
    Clipping, culling, flat and smooth shading, the planes in 64 bits, and the instruction words, tested bit for bit against `op.rs` and `dl.rs`, and drawn by the model.
+   Steps 1 and 2 are done together in issue 1159, as the crate `//gles`, with the frame's binning of step 4 through `razboj_tile` (issue 1157).
+   It departs from sections 4 to 6 in three places.
+   The divide is one 64-bit division a window coordinate, straight to sixteenths and rounded to the nearest, because a reciprocal of w in 2.30 cannot hold 1/w for a w under a quarter.
+   The guard band stands a pixel inside Razboj's range, so that a vertex clipped onto it and rounded stays in range.
+   A vertex keeps its own colour or the current one until step 3 lights it.
+   The pictures are checked pixel for pixel against a second pipeline written with 128-bit integers to the same rules, through Razboj's model, binned and not; the words bit for bit against `op.rs` and `dl.rs`; and the window and the matrices against floating point.
 3. **Lighting.**
    The specification's sum, with the tables, tested against a reference.
+   Done in issue 1164, in `gles/src/light.rs`: eight lights, directional and positional, with attenuation and spots; materials; the scene's ambient and two-sided lighting; `GL_NORMALIZE`, `GL_RESCALE_NORMAL` and `GL_COLOR_MATERIAL`; normals carried by the modelview's inverse transpose, worked out once a draw.
+   It departs from section 5 in one place: the powers come from a fixed-point log2 and exp2, the logarithm by squaring and the exponential from sixteen roots of two worked out at compile time, rather than from tables of a few hundred bytes, and they agree with floating point to within two thousandths over the shininess's range.
+   The colour at a vertex is within one step of its byte of a floating-point reference of the same sum, over three thousand random cases and through the pipeline into Razboj's model.
 4. **The frame.**
    Deferral, `glFlush` and `glFinish`, the list or, once issue 991's step 1 lands, the binning library.
 5. **The icosahedron.**
