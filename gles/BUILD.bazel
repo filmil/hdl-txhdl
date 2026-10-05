@@ -73,20 +73,39 @@ rust_library(
     ],
 )
 
-rust_static_library(
-    name = "capi_static",
-    srcs = ["capi/lib.rs"],
-    crate_features = ["std"],
-    crate_name = "gles_capi",
+# EGL (issue 996): Khronos's EGL/egl.h over the C entry points, a window
+# double buffered in Razboj's framebuffer and a swap on the vertical
+# blanking, with the machine behind a trait.
+rust_library(
+    name = "egl",
+    srcs = ["egl/lib.rs"],
+    crate_name = "gles_egl",
     edition = "2021",
     deps = [
-        ":gles",
+        ":capi",
         "//gpu/razboj:tile",
     ],
 )
 
-# The entry points gl.h declares and capi/lib.rs does not define, as C
-# that sets GL_INVALID_OPERATION, written from gl.h itself.
+# GL's and EGL's entry points as one static library with the standard
+# library, for a C program on the host: one, since two would each carry
+# the Rust crates beneath them. EGL's crate is its root, and GL's entry
+# points come with it from :capi.
+rust_static_library(
+    name = "c_static",
+    srcs = ["egl/lib.rs"],
+    crate_features = ["std"],
+    crate_name = "gles_egl",
+    edition = "2021",
+    deps = [
+        ":capi",
+        "//gpu/razboj:tile",
+    ],
+)
+
+# The entry points gl.h and egl.h declare and the Rust does not define,
+# as C that sets GL_INVALID_OPERATION or EGL_BAD_MATCH, written from the
+# headers themselves.
 genrule(
     name = "capi_stubs",
     srcs = [
@@ -94,16 +113,31 @@ genrule(
         "capi/lib.rs",
     ],
     outs = ["capi/stubs.c"],
-    cmd = "$(location capi/stubs.sh) $(location //third_party/khronos:GLES/gl.h) $(location capi/lib.rs) > $@",
+    cmd = "$(location capi/stubs.sh) $(location //third_party/khronos:GLES/gl.h) $(location capi/lib.rs) gl > $@",
+    tools = ["capi/stubs.sh"],
+)
+
+genrule(
+    name = "egl_stubs",
+    srcs = [
+        "//third_party/khronos:EGL/egl.h",
+        "egl/lib.rs",
+    ],
+    outs = ["egl/stubs.c"],
+    cmd = "$(location capi/stubs.sh) $(location //third_party/khronos:EGL/egl.h) $(location egl/lib.rs) egl > $@",
     tools = ["capi/stubs.sh"],
 )
 
 cc_library(
     name = "gles_c",
-    srcs = ["capi/stubs.c"],
+    srcs = [
+        "capi/stubs.c",
+        "egl/stubs.c",
+    ],
     copts = ["-std=c11"],
     deps = [
-        ":capi_static",
+        ":c_static",
+        "//third_party/khronos:egl",
         "//third_party/khronos:gles1",
     ],
 )
