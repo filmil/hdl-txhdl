@@ -11,6 +11,10 @@ pub const STACK_OVERFLOW: u32 = 0x0503;
 pub const STACK_UNDERFLOW: u32 = 0x0504;
 pub const OUT_OF_MEMORY: u32 = 0x0505;
 
+pub const POINTS: u32 = 0x0000;
+pub const LINES: u32 = 0x0001;
+pub const LINE_LOOP: u32 = 0x0002;
+pub const LINE_STRIP: u32 = 0x0003;
 pub const TRIANGLES: u32 = 0x0004;
 pub const TRIANGLE_STRIP: u32 = 0x0005;
 pub const TRIANGLE_FAN: u32 = 0x0006;
@@ -63,3 +67,8 @@ pub const LIGHT_MODEL_AMBIENT: u32 = 0x0B53;
 
 /// How many lights there are, the specification's minimum.
 pub const MAX_LIGHTS: usize = 8;
+
+/// The largest point size and line width, in pixels: the top of
+/// `ALIASED_POINT_SIZE_RANGE` and `ALIASED_LINE_WIDTH_RANGE`, whose
+/// bottom is one (#994).
+pub const MAX_SIZE: u32 = 64;
