@@ -23,7 +23,9 @@
 //! so a host that draws into one buffer and shows another flips them
 //! with one write. A column the beam reads before its word has arrived
 //! sets `starved`, a sticky bit a host reads and clears, so a run on the
-//! board can show that no line ever starved rather than argue it. A line
+//! board can show that no line ever starved rather than argue it, and is
+//! shown as [`LATE`], magenta, rather than as whatever word the line
+//! before left there (issue 1209). A line
 //! asked for that gets no word for two line times sets `stuck`, sticky
 //! too, with the line's address: a fetch that hangs says so, where on
 //! the board it once showed only as a black screen with `starved`
@@ -56,6 +58,11 @@ use txhdl::comp::{
 use txhdl::types::{Bit, U};
 use txhdl::{lower, regmap, with, Trace};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
+
+/// What a column shows when its word has not arrived: magenta, which no
+/// picture here uses, rather than the stale word the line before left
+/// in the buffer, which looked like data out of place (issue 1209).
+pub const LATE: u32 = 0x00ff_00ff;
 
 // begin{pair}
 /// Two lines of pixels on the clock that shows them, and the requests
@@ -288,7 +295,9 @@ impl<
             let silent = l & (owing != none) & !heard;
             let lost = silent & (quiet != U::<2>::from(0u8));
             with!(self <= {
-                shown: px,
+                // A column whose word has not arrived shows LATE, not the
+                // word left there by the line before (issue 1209).
+                shown: mux(starve, U::<32>::from(LATE), px),
                 to_a ? a.at(slot): word,
                 to_b ? b.at(slot): word,
                 take ? at: at + 1,
