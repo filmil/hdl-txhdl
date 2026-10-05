@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: Uart
-\datasheet{Uart}{Vreteno's serial port: an AXI-Lite peripheral with SiFive's register map, a line each way and a queue of eight on each side.}
+\datasheet{Uart}{Vreteno's serial port: an AXI-Lite peripheral with SiFive's register map, a line each way, a transmit queue of eight and a receive queue of sixty-four.}
 
 \dsfacts{\code{cpu/vreteno/src/uart.rs}}{\code{vreteno32::uart::Uart}}%
 {\code{//docs:vreteno}, \code{//docs:noc}}
@@ -16,8 +16,11 @@ Its registers are SiFive's \code{sifive,uart0} (issue 1011), so
 Linux's \code{serial/sifive.c}, OpenSBI's console and Zephyr's
 \code{uart\_sifive} drive it unchanged. A byte written to
 \code{txdata} joins a transmit queue of eight. A byte received lands
-in a receive queue of eight, and a read of \code{rxdata} takes the
-oldest. \code{irq} is high while a watermark that \code{ie} enables is
+in a receive queue of sixty-four, and a read of \code{rxdata} takes
+the oldest. SiFive's queue holds eight, but Linux's driver on this core
+takes longer to answer the interrupt than eight characters take to
+arrive at 115200 baud, so a line pasted at its shell lost all but its
+first eight (issue 1153). \code{irq} is high while a watermark that \code{ie} enables is
 passed.
 
 It is an AXI-Lite peripheral. It sits behind a \code{LiteBridge<1, ..>},
@@ -98,7 +101,7 @@ the middle cycle of each of the ten bits.
 \item A high where the start bit should be is a false start, and the
 frame is dropped. The eight data bits shift into \code{rx\_shift}.
 \item A high stop bit lands the byte. If the receive queue holds
-eight, the byte is dropped and \code{dropped} counts it; else it goes
+sixty-four, the byte is dropped and \code{dropped} counts it; else it goes
 in at the tail and \code{received} counts it. A low stop bit lands
 nothing.
 \item A push and a removal in the same cycle leave either queue's
@@ -122,6 +125,11 @@ the controls and \code{div} return to their reset values.
 \code{//cpu/vreteno:hello\_cc\_test} and \code{//cpu/vreteno:board\_test}
 check what compiled programs print on \code{tx}. The harnesses run the
 line on after the halt, while the transmit queue empties.
+\item \code{//cpu/vreteno:board\_test}'s
+\code{a\_line\_typed\_back\_to\_back\_waits\_whole\_in\_the\_receive\_queue}
+types forty-eight bytes at the line's full speed while the program is
+busy, and only then has it read and echo them. Every byte must come
+back, which a queue of eight would not allow.
 \item \code{//cpu/vreteno:zephyr\_port\_test} checks that the map's
 offsets and masks are the ones Zephyr's stock \code{uart\_sifive}
 driver uses, that Zephyr's device tree names the port
