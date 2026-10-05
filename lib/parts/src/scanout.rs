@@ -175,7 +175,13 @@ impl<
             // last line's.
             let c = col.get();
             let rd = w ^ l;
-            let px = mux(rd, self.a.read(c), self.b.read(c));
+            // A column past the line is the blanking's, whose pixel is
+            // not shown: the line is read at its first word there rather
+            // than past its end, which a raster wider than the line names
+            // (issue 1194).
+            let inside = c.resize::<16>() < U::<16>::from(LEN as u32);
+            let rc = mux(inside, c, U::<AW>::from(0u8));
+            let px = mux(rd, self.a.read(rc), self.b.read(rc));
             let got = mux(l, mux(take, at + 1, at), self.rgot.get());
             // A column shown before its word arrived.
             let starve =
