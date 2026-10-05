@@ -15,7 +15,7 @@
 //!
 //! | offset | word |
 //! |--------|------|
-//! | `0x0`  | `count`: the entries to draw. A program writes it last, once the list is in memory; the rasteriser reads it and writes zero when the list is drawn. |
+//! | `0x0`  | `count`: the entries to draw, in bits 15 to 0, and in bit 31 whether the list is a tile table, the count then its tiles (issue 1255). A program writes it last, once the list is in memory; the rasteriser reads it and writes zero when the list is drawn. |
 //! | `0x4`  | `status`: bit 0 the rasteriser's `idle` line, high while no list is being drawn. Read only. |
 //!
 //! A program waits for `count` to read zero, writes the list, then
@@ -37,6 +37,7 @@ use txhdl_parts::bus::axi_lite::{LiteB, LitePort, LiteR};
 regmap! { doorbell (doorbell_read, doorbell_we), 1: [
     (0, count, rw, "the entries to draw; zero when there is nothing to draw", [
         (count, 0, 16, rw, 0, "the count"),
+        (tiled, 31, 1, rw, 0, "the list is a tile table, the count its tiles"),
     ]),
     (1, status, ro, "what the rasteriser is doing", [
         (idle, 0, 1, ro, 1, "no list is being drawn"),
@@ -48,6 +49,8 @@ regmap! { doorbell (doorbell_read, doorbell_we), 1: [
 pub struct Doorbell {
     /// The entries to draw, zero when there is nothing to.
     pub count: Reg<U<16>>,
+    /// The list is a tile table, and the count its tiles (issue 1255).
+    pub tiled: Reg<Bit>,
 }
 
 #[lower]
@@ -80,7 +83,7 @@ impl Unit for Doorbell {
                 bus.r.send(LiteR {
                     data: doorbell_read(
                         rsel,
-                        doorbell_count_pack(count),
+                        doorbell_count_pack(count, self.tiled.get()),
                         doorbell_status_pack(idle.get()),
                     ),
                     resp: Resp::Okay,
@@ -93,8 +96,10 @@ impl Unit for Doorbell {
             ring.set(Bit::from(count != 0));
             if rst.get().to_bool() {
                 self.count.set(0);
+                self.tiled.set(Bit::Zero);
             } else if we.bit(0).to_bool() {
                 self.count.set(doorbell_count_count(wh.data));
+                self.tiled.set(doorbell_count_tiled(wh.data));
             }
         }
     }
