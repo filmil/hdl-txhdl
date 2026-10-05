@@ -39,7 +39,7 @@ const BOARD_DEFCONFIG: &str = include_str!(
 
 /// What a driver defines one of its own names as. A driver takes its
 /// registers from the header `//tools/regmap` writes from the map,
-/// `#define LOCAL GENERATED`, and `//zephyr:regs_test` holds that
+/// `#define LOCAL GENERATED`, and `//zephyr:regs_update`'s tests hold that
 /// header to the map, so the name is the check (issue 709).
 fn defined_as<'a>(c: &'a str, local: &str) -> &'a str {
     let pat = format!("#define {local} ");
@@ -244,7 +244,7 @@ fn eth_word(name: &str) -> u32 {
 ///
 /// Since issue 709 the driver names each register as the header
 /// written from the hardware's `regmap!` names it, and
-/// `//zephyr:regs_test` holds that header to the map, so the offsets
+/// `//zephyr:regs_update`'s tests hold that header to the map, so the offsets
 /// have one source. What is left for this test is the driver's side:
 /// that each name it uses is defined as the map's, that it includes
 /// the header, and that it reads and writes each word on a side the
