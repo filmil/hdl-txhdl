@@ -367,6 +367,7 @@ impl Scan {
     const CTRL: usize = map::SCAN + scan::CTRL;
     const STATUS: usize = map::SCAN + scan::STATUS;
     const CLEAR: usize = map::SCAN + scan::CLEAR;
+    const STUCK_AT: usize = map::SCAN + scan::STUCK_AT;
 
     /// Columns and rows of a frame, and bytes from one line to the next.
     pub const WIDTH: u32 = 640;
@@ -389,7 +390,19 @@ impl Scan {
         rd(Self::STATUS) & scan::STATUS_UNDER_MASK != 0
     }
 
-    /// Clear the underflow bit.
+    /// The address of a line the scanout asked for and got no word of
+    /// for two line times, since the bits were last cleared: what a
+    /// black screen with a clear underflow bit was on the board before
+    /// the bit existed (issue 1197).
+    pub fn stuck() -> Option<u32> {
+        if rd(Self::STATUS) & scan::STATUS_STUCK_MASK != 0 {
+            Some(rd(Self::STUCK_AT))
+        } else {
+            None
+        }
+    }
+
+    /// Clear the underflow and stuck bits.
     pub fn clear() {
         wr(Self::CLEAR, 1);
     }
