@@ -2,8 +2,10 @@
 # GL ES 1.1 Common-Lite for Razboj: the fixed-point pipeline from a
 # vertex to Razboj's display list, with no standard library so that a
 # Vreteno program links it (docs/gles.md, issue 1159, #995).
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -103,5 +105,34 @@ cc_library(
     deps = [
         ":capi_static",
         "//third_party/khronos:gles1",
+    ],
+)
+
+# A scene through the C entry points, and the same through the Rust
+# API, which capi_test holds to each other word for word.
+cc_binary(
+    name = "capi_draw",
+    srcs = ["capi/draw.c"],
+    copts = ["-std=c11"],
+    deps = [":gles_c"],
+)
+
+rust_binary(
+    name = "capi_draw_ref",
+    srcs = ["capi/draw_ref.rs"],
+    edition = "2021",
+    deps = [":gles"],
+)
+
+sh_test(
+    name = "capi_test",
+    srcs = ["capi/capi_test.sh"],
+    args = [
+        "$(location :capi_draw)",
+        "$(location :capi_draw_ref)",
+    ],
+    data = [
+        ":capi_draw",
+        ":capi_draw_ref",
     ],
 )
