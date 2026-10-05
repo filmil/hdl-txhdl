@@ -603,18 +603,24 @@ icosahedron.},label={lst:f-ico}]{cpu/vreteno/rust/ico_hdmi.rs}
 \lstinputlisting[caption={\code{cpu/vreteno/rust/ico\_list.rs}: the
 icosahedron as Razboj's display lists.},label={lst:f-ico-list}]{cpu/vreteno/rust/ico_list.rs}
 
-The logo is data: one twelve-bit word per pixel at the size a corner
-wants, in a crate of constants that builds for the core as it builds
-for this machine (Listing~\ref{lst:f-logo}). It is written by
-\code{//tools/logo2rs} from the PNG and committed, as the layout
-numbers are committed, because a Bazel action cannot reach the drive
-the logo is kept on. The dark background of the source becomes a value
-that is not a colour, which a program skips, so the logo sits on
-whatever is drawn under it.
+The logo is data, in a crate of constants that builds for the core as
+it builds for this machine (Listing~\ref{lst:f-logo}). It is 144
+pixels square, drawn a logo pixel to a screen pixel in the corner of
+the 640 by 480 scanout, so the wordmark under the hat can be read
+(issue~\#1213); at first it was 36 square, four screen pixels to each
+of its own, and the wordmark was a suggestion. A pixel is a 4-bit index
+into a palette of sixteen 24-bit colours, which the logo's own colours
+fill after k-means from a fixed start, so 144 square is 10~KB rather
+than the 41~KB a word a pixel would be. It is written by
+\code{//tools/logo2rs} from the 512 by 512 PNG, averaged down in boxes,
+and committed, as the layout numbers are committed, because a Bazel
+action cannot reach the drive the logo is kept on. The dark background
+of the source becomes index 0, which is not a colour and which a
+program skips, so the logo sits on whatever is drawn under it.
 
 \lstinputlisting[caption={\code{lib/logo/logo.rs}: the head of the
 logo, as \code{logo2rs} writes it.},label={lst:f-logo},%
-linerange={1-27}]{lib/logo/logo.rs}
+linerange={1-45}]{lib/logo/logo.rs}
 
 \lstinputlisting[caption={\code{tools/logo2rs/main.go}: the PNG to the
 crate.},label={lst:f-logo2rs},tabsize=2]{tools/logo2rs/main.go}
