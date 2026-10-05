@@ -23,7 +23,11 @@
 //! so a host that draws into one buffer and shows another flips them
 //! with one write. A column the beam reads before its word has arrived
 //! sets `starved`, a sticky bit a host reads and clears, so a run on the
-//! board can show that no line ever starved rather than argue it.
+//! board can show that no line ever starved rather than argue it. A line
+//! asked for that gets no word for two line times sets `stuck`, sticky
+//! too, with the line's address: a fetch that hangs says so, where on
+//! the board it once showed only as a black screen with `starved`
+//! clear (issue 1197).
 //!
 //! [`ScanFetch`] is on the bus clock. It takes the line requests the
 //! pixel side sends across and starts `LineFetch` on each, one at a
@@ -51,6 +55,7 @@ use txhdl::comp::{
 };
 use txhdl::types::{Bit, U};
 use txhdl::{lower, regmap, with, Trace};
+use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
 // begin{pair}
 /// Two lines of pixels on the clock that shows them, and the requests
@@ -91,6 +96,28 @@ pub struct LinePair<
     pub fbase: Reg<U<32>, C>,
     /// Where the next line to ask for starts.
     pub next: Reg<U<32>, C>,
+    /// The address of the oldest line asked for and not yet come
+    /// whole (issue 1197).
+    pub owed0: Reg<U<32>, C>,
+    /// The next oldest's.
+    pub owed1: Reg<U<32>, C>,
+    /// The third's.
+    pub owed2: Reg<U<32>, C>,
+    /// The fourth's: no more are asked for while four are owed.
+    pub owed3: Reg<U<32>, C>,
+    /// How many lines are owed.
+    pub owing: Reg<U<3>, C>,
+    /// How many words of the oldest line owed have come.
+    pub came: Reg<U<16>, C>,
+    /// A word has come since the last line started.
+    pub heard: Reg<Bit, C>,
+    /// How many line starts in a row found lines owed and no word
+    /// come.
+    pub quiet: Reg<U<2>, C>,
+    /// A line asked for got no word for two line times. Sticky.
+    pub hung: Reg<Bit, C>,
+    /// That line's address.
+    pub hung_at: Reg<U<32>, C>,
 }
 // end{pair}
 
@@ -117,6 +144,16 @@ impl<
             armed: Reg::default(),
             fbase: Reg::default(),
             next: Reg::default(),
+            owed0: Reg::default(),
+            owed1: Reg::default(),
+            owed2: Reg::default(),
+            owed3: Reg::default(),
+            owing: Reg::default(),
+            came: Reg::default(),
+            heard: Reg::default(),
+            quiet: Reg::default(),
+            hung: Reg::default(),
+            hung_at: Reg::default(),
         }
     }
 }
@@ -145,7 +182,13 @@ impl<
             In<Bit, C>,
             In<Bit, C>,
         ),
-        (pix, req, starved): (Out<U<32>, C>, Tx<U<32>, C>, Out<Bit, C>),
+        (pix, req, starved, stuck, stuck_at): (
+            Out<U<32>, C>,
+            Tx<U<32>, C>,
+            Out<Bit, C>,
+            Out<Bit, C>,
+            Out<U<32>, C>,
+        ),
     ) {
         loop {
             C::rising().await;
@@ -154,6 +197,8 @@ impl<
             // step has them.
             pix.set(self.shown.get());
             starved.set(self.under.get());
+            stuck.set(self.hung.get());
+            stuck_at.set(self.hung_at.get());
             // A word is taken whenever one is offered: the pair is
             // what the fetch is backpressured by, and a line longer
             // than `LEN` loses its tail rather than stalling.
@@ -199,9 +244,49 @@ impl<
                 & !last
                 & self.armed.get()
                 & (r + 1 < U::<12>::from(ROWS as u32));
-            let asked = (ask_first | ask_next) & req.ready();
+            // At most four lines are owed at once, which a fetch that
+            // keeps up never comes near: it is one line ahead.
+            let owing = self.owing.get();
+            let room = owing < U::<3>::from(4u8);
+            let asked = (ask_first | ask_next) & req.ready() & room;
             let addr = mux(ask_first, self.fbase.get(), self.next.get());
             let stride = U::<32>::from(STRIDE as u32);
+            // The lines owed (issue 1197). A word counts against the
+            // oldest, and the last of its words takes it off; a line
+            // asked for goes after those still owed. A line that gets no
+            // word for two line starts in a row did not come: `stuck`
+            // is set, sticky, with its address, and the scanout goes on
+            // asking, so the bit says why the screen is black.
+            let came = self.came.get();
+            let counted = take & (owing != U::<3>::from(0u8));
+            let whole = counted & (came + 1 == U::<16>::from(LEN as u32));
+            let one = U::<3>::from(1u8);
+            let none = U::<3>::from(0u8);
+            let pos = owing - mux(whole, one, none);
+            let (o0, o1, o2, o3) = (
+                self.owed0.get(),
+                self.owed1.get(),
+                self.owed2.get(),
+                self.owed3.get(),
+            );
+            let n0 = mux(asked & (pos == none), addr, mux(whole, o1, o0));
+            let n1 = mux(asked & (pos == one), addr, mux(whole, o2, o1));
+            let n2 = mux(
+                asked & (pos == U::<3>::from(2u8)),
+                addr,
+                mux(whole, o3, o2),
+            );
+            let n3 = mux(
+                asked & (pos == U::<3>::from(3u8)),
+                addr,
+                mux(whole, U::<32>::from(0u8), o3),
+            );
+            let owing_next =
+                owing + mux(asked, one, none) - mux(whole, one, none);
+            let heard = self.heard.get() | take;
+            let quiet = self.quiet.get();
+            let silent = l & (owing != none) & !heard;
+            let lost = silent & (quiet != U::<2>::from(0u8));
             with!(self <= {
                 shown: px,
                 to_a ? a.at(slot): word,
@@ -223,6 +308,19 @@ impl<
                 !on ? armed: Bit::Zero,
                 clear.get() ? under: Bit::Zero,
                 starve ? under: Bit::One,
+                owed0: n0,
+                owed1: n1,
+                owed2: n2,
+                owed3: n3,
+                owing: owing_next,
+                came: mux(whole, U::<16>::from(0u8), mux(counted, came + 1, came)),
+                heard: mux(l, take, heard),
+                l ? quiet: mux(silent, quiet + 1, U::<2>::from(0u8)),
+                clear.get() ? { hung: Bit::Zero, quiet: U::<2>::from(0u8) },
+                lost & !self.hung.get() ? {
+                    hung: Bit::One,
+                    hung_at: o0,
+                },
             });
             if asked.to_bool() {
                 req.send(addr);
@@ -289,22 +387,38 @@ impl<const A: usize, const WC: usize, const LEN: usize> Unit
 
 // begin{regs}
 // The scanout's AXI-Lite words, in the upper half of the video slot.
-regmap! { scan (scan_read, scan_we), 2: [
+regmap! { scan (scan_read, scan_we), 3: [
     (0, base, rw, "the byte the next frame starts at in memory"),
     (1, ctrl, rw, "what the screen shows", [
         (scan, 0, 1, rw, 0, "the scanout when set, the framebuffer when clear"),
     ]),
     (2, status, ro, "how the scanout has kept up", [
         (under, 0, 1, ro, 0, "a column was shown before its word arrived"),
+        (stuck, 1, 1, ro, 0, "a line asked for got no word for two line times"),
     ]),
-    (3, clear, wo, "a write clears the underflow bit"),
+    (3, clear, wo, "a write clears the underflow and stuck bits"),
+    (4, stuck_at, ro, "the address of the line that did not come"),
 ] }
+
+/// What the pair says about how it has kept up, for [`ScanCtl`]: the
+/// underflow bit, and the stuck bit with the address of the line that
+/// did not come (issue 1197).
+#[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
+pub struct ScanState {
+    /// A column was shown before its word arrived.
+    pub under: Bit,
+    /// A line asked for got no word for two line times.
+    pub stuck: Bit,
+    /// That line's address.
+    pub at: U<32>,
+}
 // end{regs}
 
 // begin{ctl}
 /// The scanout's registers on AXI-Lite, `scan`: the frame's base, the
 /// bit that picks the scanout over the framebuffer, and the underflow
-/// bit, read and cleared.
+/// and stuck bits, read and cleared, with the address of a line that
+/// did not come.
 ///
 /// Its three outputs are registers, for [`LinePair`] and the video
 /// multiplexer to read. The underflow bit comes back from [`LinePair`]
@@ -325,6 +439,10 @@ pub struct ScanCtl {
     pub clr: Reg<Bit>,
     /// The underflow bit, as the channel last said it.
     pub seen: Reg<Bit>,
+    /// The stuck bit, the same way (issue 1197).
+    pub seen_stuck: Reg<Bit>,
+    /// The line that did not come, the same way.
+    pub seen_at: Reg<U<32>>,
 }
 // end{ctl}
 
@@ -334,7 +452,12 @@ impl Unit for ScanCtl {
     async fn run(
         &mut self,
         bus: LitePort<32, 32, 4>,
-        (under, base, mode, clear): (Rx<Bit>, Out<U<32>>, Out<Bit>, Out<Bit>),
+        (under, base, mode, clear): (
+            Rx<ScanState>,
+            Out<U<32>>,
+            Out<Bit>,
+            Out<Bit>,
+        ),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -346,8 +469,8 @@ impl Unit for ScanCtl {
             let _ = under.recv_if(heard);
             let arh = bus.ar.head();
             let awh = bus.aw.head();
-            let rsel = arh.addr.slice::<2, 2>();
-            let wsel = awh.addr.slice::<2, 2>();
+            let rsel = arh.addr.slice::<2, 3>();
+            let wsel = awh.addr.slice::<2, 3>();
             let rgo = bus.r.ready() & bus.ar.peek().is_some();
             let _ = bus.ar.recv_if(bus.r.ready());
             let wgo = bus.b.ready()
@@ -361,14 +484,19 @@ impl Unit for ScanCtl {
                 rsel,
                 self.fbase.get(),
                 scan_ctrl_pack(self.show.get()),
-                scan_status_pack(self.seen.get()),
+                scan_status_pack(self.seen.get(), self.seen_stuck.get()),
                 U::<32>::from(0u8),
+                self.seen_at.get(),
             );
             with!(self <= {
                 we.bit(0) ? fbase: written,
                 we.bit(1) ? show: scan_ctrl_scan(written),
                 clr: we.bit(3),
-                heard ? seen: said,
+                heard ? {
+                    seen: said.under,
+                    seen_stuck: said.stuck,
+                    seen_at: said.at,
+                },
             });
             if rgo.to_bool() {
                 bus.r.send(LiteR {
@@ -385,19 +513,27 @@ impl Unit for ScanCtl {
 // end{ctl_run}
 
 // begin{tap}
-/// [`LinePair`]'s underflow bit onto a channel, for [`ScanCtl`]: a
-/// wire read after [`LinePair`] has driven it, sent on whenever the
-/// channel has room.
+/// [`LinePair`]'s underflow and stuck bits, and the line that did not
+/// come, onto a channel for [`ScanCtl`]: wires read after [`LinePair`]
+/// has driven them, sent on whenever the channel has room.
 #[derive(Trace, Default)]
 pub struct ScanTap {}
 
 #[lower]
 impl Unit for ScanTap {
-    async fn run(&mut self, starved: In<Bit>, tap: Tx<Bit>) {
+    async fn run(
+        &mut self,
+        (starved, stuck, at): (In<Bit>, In<Bit>, In<U<32>>),
+        tap: Tx<ScanState>,
+    ) {
         loop {
             DefaultClock::rising().await;
             if tap.ready().to_bool() {
-                tap.send(starved.get());
+                tap.send(ScanState {
+                    under: starved.get(),
+                    stuck: stuck.get(),
+                    at: at.get(),
+                });
             }
         }
     }
@@ -609,7 +745,9 @@ impl<
         let (clear_o, clear) = signal::<Bit, DefaultClock>();
         let (pix_o, pix) = signal::<U<32>, DefaultClock>();
         let (starved_o, starved) = signal::<Bit, DefaultClock>();
-        let (tap_tx, tap_rx) = chan::<Bit, DefaultClock>();
+        let (stuck_o, stuck) = signal::<Bit, DefaultClock>();
+        let (stuck_at_o, stuck_at) = signal::<U<32>, DefaultClock>();
+        let (tap_tx, tap_rx) = chan::<ScanState, DefaultClock>();
         let (hrgb_o, hrgb) = signal::<U<24>, DefaultClock>();
         let (hhs_o, hhs) = signal::<Bit, DefaultClock>();
         let (hvs_o, hvs) = signal::<Bit, DefaultClock>();
@@ -639,13 +777,13 @@ impl<
                     ),
                     self.pair.run(
                         (words, col, vis, line, row, frame, base, clear, show),
-                        (pix_o, req, starved_o),
+                        (pix_o, req, starved_o, stuck_o, stuck_at_o),
                     ),
                 ),
             ),
             join2(
                 join2(
-                    self.tap.run(starved, tap_tx),
+                    self.tap.run((starved, stuck, stuck_at), tap_tx),
                     self.hdmi.run(
                         LitePort {
                             aw: lo_aw_rx,
@@ -711,6 +849,8 @@ mod tests {
         let (show_o, show) = signal::<Bit, DefaultClock>();
         let (pix_o, _pix) = signal::<U<32>, DefaultClock>();
         let (starved_o, _starved) = signal::<Bit, DefaultClock>();
+        let (stuck_o, _stuck) = signal::<Bit, DefaultClock>();
+        let (stuck_at_o, _stuck_at) = signal::<U<32>, DefaultClock>();
         let (words_tx, words) = chan::<U<32>, DefaultClock>();
         let (req, req_rx) = chan::<U<32>, DefaultClock>();
         base_o.set(U::<32>::from(0x4100_0000u32));
@@ -720,7 +860,7 @@ mod tests {
             raster.run((), (col_o, vis_o, line_o, row_o, frame_o)),
             pair.run(
                 (words, col, vis, line, row, frame, base, clear, show),
-                (pix_o, req, starved_o),
+                (pix_o, req, starved_o, stuck_o, stuck_at_o),
             ),
         ));
         let mut owed = 0usize;

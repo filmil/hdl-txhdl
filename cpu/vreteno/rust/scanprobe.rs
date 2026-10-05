@@ -12,8 +12,9 @@
 //! sticky, so a single line that came late in those ten seconds shows.
 //!
 //! What it prints, a line each: `scan idle` and the bit, `scan load`
-//! and the bit with the copies and frames done, and `scan ok` or
-//! `scan underflow` at the end. The picture stays on the screen.
+//! and the bit with the copies and frames done, and at the end
+//! `scan ok`, `scan underflow`, or `scan stuck` with the address of a
+//! line that never came (issue 1197). The picture stays on the screen.
 #![no_std]
 #![no_main]
 
@@ -204,7 +205,14 @@ fn main() -> ! {
     Uart::say(b" frames ");
     Uart::put_decimal(frames);
     Uart::put(b'\n');
-    if idle || load {
+    // A line that never came, which a clear underflow bit cannot say
+    // (issue 1197).
+    let stuck = Scan::stuck();
+    if let Some(at) = stuck {
+        Uart::say(b"scan stuck ");
+        Uart::put_hex(at);
+        Uart::put(b'\n');
+    } else if idle || load {
         Uart::say(b"scan underflow\n");
     } else {
         Uart::say(b"scan ok\n");
