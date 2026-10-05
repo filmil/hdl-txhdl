@@ -383,6 +383,35 @@ Pass, in this order:
 A picture with the bars but no logo, or bars of the wrong colours, points at the pixel format, `0x00RRGGBB`.
 Put the log, and a photograph of the screen, on #151.
 
+### Razboj on the board, #985 and #1169
+
+The flagship from a `main` that holds #985 (PR 1160), programmed over JTAG, with a monitor on the HDMI connector and the Ethernet cable in, as for the scanout above.
+Nothing is written to flash.
+It needs no order against the scanout check: each program sets the scanout's base itself.
+
+```sh
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/razprobe_ram_bin.bin --seconds=10 \
+    2>&1 | tee board-985-razboj.log
+```
+
+The program shows the scanout from Razboj's frame at `0x4200_0000`.
+It writes a display list of four entries at `0x4280_0000` and rings the doorbell at `0x3900`.
+It waits for the count to read zero and for the rasteriser to say it is idle, then reads six pixels back over the bus.
+
+Pass, in this order:
+* `razboj probe`.
+* `razboj rung`.
+* `razboj idle` and a number of cycles: the whole list, a full-screen backdrop and three shapes.
+* `razboj ok`.
+* On the monitor: a dark blue screen with a red rectangle at the top left, a green triangle pointing down at the top right, and a sky blue triangle pointing up at the bottom middle, steady.
+
+`razboj stuck`, with the count and the idle bit, means the list was never finished: a count still set means the rasteriser never drew it or never wrote the zero back, and a zero with idle 0 means a write it made was never answered.
+`razboj bad`, with a column, a row and the word read, means the rasteriser drew, but not what the list says; the word read says whether the pixel was left alone, drawn in the wrong colour, or drawn at the wrong stride.
+A right serial log with a wrong picture points at the scanout's stride of 4096 rather than at Razboj.
+Put the log, the cycle count, and a photograph of the screen on #985.
+
 ### Ethernet throughput, #1038
 
 The Ethernet half of #151: the port's throughput through the slots and the DMA engines, against the core's own copy of each frame.

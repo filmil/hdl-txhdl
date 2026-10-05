@@ -2211,6 +2211,10 @@ or sample the entropy source failed with it. Razboj's rows are
 $2^{10}$ words, so the scanout's stride became 4096 bytes, of which
 it shows the first 640 words. A board test writes a list of one rectangle,
 rings the doorbell, and reads the pixels back over the bus.
+On the board, \code{razprobe} does the same with a full screen and
+three shapes, shows them through the scanout, and says on the serial
+port whether the pixels it read back are the list's
+(issue~\#1169).
 
 The cost of a host is its share of the bus when every host is busy.
 For the scanout, a line of 640 words, 2560 bytes, must arrive within
