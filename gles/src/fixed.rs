@@ -116,6 +116,96 @@ pub fn sin_cos(deg: Fx) -> (Fx, Fx) {
     (to16(s), to16(c))
 }
 
+/// The square root of a 64-bit number, rounded down, at compile time.
+const fn isqrt_const(v: u64) -> u64 {
+    if v < 2 {
+        return v;
+    }
+    let mut x = v;
+    let mut y = x.div_ceil(2);
+    while y < x {
+        x = y;
+        y = (x + v / x) / 2;
+    }
+    x
+}
+
+/// `2^(2^-k)` for `k` from 1 to 16, with thirty bits of fraction: each
+/// the square root of the one before, from 2.
+const ROOTS: [u64; 16] = {
+    let mut r = [0u64; 16];
+    let mut c = 2u64 << Q;
+    let mut k = 0;
+    while k < 16 {
+        c = isqrt_const(c << Q);
+        r[k] = c;
+        k += 1;
+    }
+    r
+};
+
+/// The base 2 logarithm of a positive 16.16 number, in 16.16: the
+/// exponent of its leading bit, then the fraction a bit at a time by
+/// squaring the mantissa, each square at or past two a one.
+pub fn log2(x: Fx) -> i64 {
+    debug_assert!(x > 0);
+    let top = 31 - x.leading_zeros() as i64;
+    // The mantissa, in [1, 2) with thirty bits of fraction.
+    let mut m = ((x as u64) << Q) >> top;
+    let mut r = (top - 16) << 16;
+    for bit in (0..16).rev() {
+        m = (m * m) >> Q;
+        if m >= 2 << Q {
+            m >>= 1;
+            r += 1 << bit;
+        }
+    }
+    r
+}
+
+/// Two to the power of `y`, a 16.16 number, in 16.16, saturated: the
+/// integer part a shift, and the fraction a product of the [`ROOTS`]
+/// its bits name.
+pub fn exp2(y: i64) -> Fx {
+    let n = y >> 16;
+    let f = y & 0xffff;
+    let mut r = 1u64 << Q;
+    for (k, root) in ROOTS.iter().enumerate() {
+        if f & (1 << (15 - k)) != 0 {
+            r = (r * root + (1 << (Q - 1))) >> Q;
+        }
+    }
+    // r is in [1, 2) with thirty bits of fraction; the result has
+    // sixteen, so it is r shifted by n less fourteen.
+    let shift = n - (Q as i64 - 16);
+    let v = if shift >= 0 {
+        if shift > 32 {
+            i64::MAX
+        } else {
+            (r as i64) << shift
+        }
+    } else if shift < -62 {
+        0
+    } else {
+        ((r >> (-shift - 1)) as i64 + 1) >> 1
+    };
+    sat(v)
+}
+
+/// `x` to the power `y`, both 16.16, `x` from nought to one and `y`
+/// from nought to 128, as the shininess and the spot exponent are:
+/// `2^(y log2 x)`. Nought to the power nought is one, as the
+/// specification has it.
+pub fn pow(x: Fx, y: Fx) -> Fx {
+    if y == 0 {
+        return ONE;
+    }
+    if x <= 0 {
+        return 0;
+    }
+    exp2((log2(x) * y as i64) >> 16)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +254,37 @@ mod tests {
             assert!(err(s, r.sin()) <= 1.0, "sin {}: {s}", f(deg));
             assert!(err(c, r.cos()) <= 1.0, "cos {}: {c}", f(deg));
         }
+    }
+    /// Logarithms and powers of two within a few units of the last
+    /// place, and powers of numbers in nought to one, the shininess's
+    /// range, within a few thousandths of floating point.
+    #[test]
+    fn logarithms_and_powers_agree_with_floating_point() {
+        for x in [1, 7, 300, 32768, 65536, 70000, 1 << 20, i32::MAX] {
+            let want = f(x).log2() * 65536.0;
+            assert!((log2(x) as f64 - want).abs() <= 2.0, "log2 {}", f(x));
+        }
+        for y in [-20 * ONE, -ONE / 3, 0, ONE / 2, 5 * ONE + 12345, 14 * ONE] {
+            let want = 2f64.powf(f(y)) * 65536.0;
+            let got = exp2(y as i64) as f64;
+            assert!(
+                (got - want).abs() <= 2.0 + want * 2e-5,
+                "exp2 {}: {got}",
+                f(y)
+            );
+        }
+        for x in [0.0, 0.01, 0.2, 0.5, 0.9, 0.99, 1.0] {
+            for y in [0.0, 0.5, 1.0, 3.0, 10.0, 50.5, 128.0] {
+                let got = f(pow((x * 65536.0) as Fx, (y * 65536.0) as Fx));
+                let want = (x * 65536.0f64).floor() / 65536.0;
+                let want = if y == 0.0 { 1.0 } else { want.powf(y) };
+                assert!(
+                    (got - want).abs() <= 2e-3,
+                    "{x}^{y}: {got} for {want}"
+                );
+            }
+        }
+        assert_eq!(exp2(40 * ONE as i64), i32::MAX, "saturated");
+        assert_eq!(exp2(-80 * ONE as i64), 0);
     }
 }

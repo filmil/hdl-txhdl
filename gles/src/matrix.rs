@@ -170,6 +170,42 @@ pub fn plane_to_eye(m: &Mat, p: &[Fx; 4]) -> Option<[Fx; 4]> {
     Some(out)
 }
 
+/// The matrix normals are carried to eye space by: the inverse
+/// transpose of the modelview's upper 3 by 3, as rows, in 16.16. Worked
+/// out in 128 bits from the cofactors, once a draw call. `None` when
+/// the 3 by 3 has no inverse.
+pub fn normal_matrix(m: &Mat) -> Option<[Fx; 9]> {
+    let a = |row: usize, col: usize| m[col * 4 + row] as i128;
+    // The cofactor of (row, col) in the 3 by 3: thirty-two bits of
+    // fraction.
+    let cof = |row: usize, col: usize| {
+        let (r0, r1) = ((row + 1) % 3, (row + 2) % 3);
+        let (c0, c1) = ((col + 1) % 3, (col + 2) % 3);
+        a(r0, c0) * a(r1, c1) - a(r0, c1) * a(r1, c0)
+    };
+    // The determinant, forty-eight bits of fraction.
+    let det: i128 = (0..3).map(|col| a(0, col) * cof(0, col)).sum();
+    if det == 0 {
+        return None;
+    }
+    // The inverse is the transposed cofactors over the determinant, so
+    // the inverse's transpose is the cofactors over it: each to 16.16 is
+    // the cofactor shifted up 32 over the determinant.
+    let (sign, d) = if det < 0 { (-1, -det) } else { (1, det) };
+    Some(core::array::from_fn(|k| {
+        let n = sign * (cof(k / 3, k % 3) << 32);
+        let q = (2 * n + d).div_euclid(2 * d);
+        q.clamp(i32::MIN as i128, i32::MAX as i128) as Fx
+    }))
+}
+
+/// A vector of three times a 3 by 3 given as rows.
+pub fn mul3(m: &[Fx; 9], v: &[Fx; 3]) -> [Fx; 3] {
+    core::array::from_fn(|r| {
+        narrow((0..3).map(|k| m[r * 3 + k] as i64 * v[k] as i64).sum())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +316,29 @@ mod tests {
             [3 * ONE, 4 * ONE, 5 * ONE, ONE]
         );
         assert_eq!(mul_mat(&IDENTITY, &t), t);
+    }
+    /// The normal matrix of a rotation is the rotation, and of a scale the
+    /// reciprocal scale, and a normal it carries stays at right angles to
+    /// the surface the modelview carries.
+    #[test]
+    fn normals_go_by_the_inverse_transpose() {
+        let r = rotate(37 * ONE, ONE, 2 * ONE, -ONE);
+        let n = normal_matrix(&r).unwrap();
+        for row in 0..3 {
+            for col in 0..3 {
+                let d = (n[row * 3 + col] - r[col * 4 + row]).abs();
+                assert!(d <= 2, "rotation ({row},{col}): {d}");
+            }
+        }
+        let s = normal_matrix(&scale(2 * ONE, ONE / 2, 4 * ONE)).unwrap();
+        assert_eq!([s[0], s[4], s[8]], [ONE / 2, 2 * ONE, ONE / 4]);
+        // A surface with tangent (1, 1, 0) and normal (1, -1, 0), sheared.
+        let m =
+            mul_mat(&scale(3 * ONE, ONE, ONE), &rotate(20 * ONE, 0, 0, ONE));
+        let t = mul_vec(&m, &[ONE, ONE, 0, 0]);
+        let nn = mul3(&normal_matrix(&m).unwrap(), &[ONE, -ONE, 0]);
+        let dot: i64 = (0..3).map(|i| t[i] as i64 * nn[i] as i64).sum();
+        assert!((dot >> 16).abs() <= 4, "at right angles: {dot}");
+        assert_eq!(normal_matrix(&scale(ONE, 0, ONE)), None);
     }
 }
