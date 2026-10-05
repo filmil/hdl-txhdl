@@ -90,6 +90,19 @@ rust_binary(
     ],
 )
 
+# The traced run at the board's width (issue 1178): rows of 1024
+# pixels on a twenty-bit link, drawn past row 16, so the build replays
+# the rasteriser's netlist at that width.
+rust_binary(
+    name = "trace_wide",
+    srcs = ["src/trace_wide.rs"],
+    edition = "2021",
+    deps = [
+        ":razboj",
+        "//lib:txhdl",
+    ],
+)
+
 rust_test(
     name = "razboj_test",
     crate = ":razboj",

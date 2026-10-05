@@ -1491,6 +1491,27 @@ waveform(
     width = 8.2,
 )
 
+# Razboj at the board's width (issue 1178): rows of 1024 pixels on a
+# twenty-bit link, with a rectangle across row 16 and a triangle below
+# it, where a pixel's offset passes sixteen bits. The rasteriser's
+# netlist is replayed against the run under nvc and Verilator at that
+# width; the sixteen-pixel trace above cannot reach it.
+waveform(
+    name = "razboj_wide",
+    example = "//gpu/razboj:trace_wide",
+    lowered = ("raster_wide", "raster"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//issue/tx_valid=>issue",
+        "//rdata/tx_valid=>rdata",
+        "//raster/y=>y",
+        "//idle=>idle",
+    ],
+    from_tick = 0,
+    until = 200,
+    width = 8.2,
+)
+
 # The demonstration's picture, rendered by Razboj and written by it.
 genrule(
     name = "razboj_scene",
