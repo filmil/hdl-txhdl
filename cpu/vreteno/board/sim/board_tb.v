@@ -54,6 +54,9 @@ module board_tb;
   reg [63:0] last = 0;
   reg [7:0] ch;
   integer i;
+  // When the last frame began, so that the verdict can wait for the line
+  // to go quiet rather than for a fixed time (issue 1219).
+  time began = 0;
   initial begin
     // The line means nothing until the memory has calibrated, since the
     // design is held in reset until then, and a frame starts from the
@@ -62,6 +65,7 @@ module board_tb;
     wait (tx == 1);
     forever begin
       @(negedge tx);
+      began = $time;
       #(BIT + BIT / 2);
       for (i = 0; i < 8; i = i + 1) begin
         ch[i] = tx;
@@ -88,8 +92,12 @@ module board_tb;
     $display("%0t ps: the memory calibrated", $time);
     wait (led1 == 0);
     $display("%0t ps: the core halted", $time);
-    // The last byte is still going out when the core halts.
-    #(BIT * 12);
+    // What the serial port still held when the core halted goes out
+    // after it, so the line is read on until no frame has begun for
+    // two frames' time: a fixed wait read only what fitted in it, and
+    // a core that reached its halt sooner cut its line short (issue
+    // 1219).
+    while ($time - began < BIT * 24) #(BIT);
     ok = (last == "ddr3 ok\n");
     $display("verdict %0d: the line ended %h", ok, last);
     $finish;
