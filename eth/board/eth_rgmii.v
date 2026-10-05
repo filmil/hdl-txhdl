@@ -82,20 +82,34 @@ module eth_rgmii #(
   input eth_rxctl,
   input [3:0] eth_rxd
 );
+  // The byte and `tx_en` are registered here first, so the path into the
+  // output registers starts at a flip-flop rather than at the MAC's
+  // byte select. Without it the whole of that select, and the route from
+  // wherever the MAC is placed to the pins, had one cycle, and the
+  // flagship's slack on clk125 fell from +0.905 to +0.155 ns when other
+  // logic moved the MAC's cells (issue 1263). The stream leaves a cycle
+  // later, both lines alike, which Ethernet does not notice.
+  reg [7:0] txd_q = 8'h00;
+  reg tx_en_q = 1'b0;
+  always @(posedge clk125) begin
+    txd_q <= txd;
+    tx_en_q <= tx_en;
+  end
+
   // Transmit: low nibble on the rising edge, high nibble on the falling.
   genvar i;
   generate
     for (i = 0; i < 4; i = i + 1) begin : txd_oddr
       ODDR #(.DDR_CLK_EDGE("SAME_EDGE"), .INIT(1'b0), .SRTYPE("SYNC")) o (
         .Q(eth_txd[i]), .C(clk125), .CE(1'b1),
-        .D1(txd[i]), .D2(txd[i + 4]), .R(1'b0), .S(1'b0)
+        .D1(txd_q[i]), .D2(txd_q[i + 4]), .R(1'b0), .S(1'b0)
       );
     end
   endgenerate
   // The control line: tx_en on both edges, since the MAC sends no errors.
   ODDR #(.DDR_CLK_EDGE("SAME_EDGE"), .INIT(1'b0), .SRTYPE("SYNC")) txctl_oddr (
     .Q(eth_txctl), .C(clk125), .CE(1'b1),
-    .D1(tx_en), .D2(tx_en), .R(1'b0), .S(1'b0)
+    .D1(tx_en_q), .D2(tx_en_q), .R(1'b0), .S(1'b0)
   );
   // The transmit clock: high then low, on the same clock as the data,
   // so the two leave the pins aligned and the PHY adds the delay.
