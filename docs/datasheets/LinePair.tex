@@ -80,7 +80,17 @@ With \code{show} low the pair disarms: it asks for nothing more, and
 does not set \code{starved}. Shown again, it starts from the base's
 line as out of a reset.
 \item \code{pix} is the word at \code{col} in the line not filling, a
-cycle after \code{col} names it.
+cycle after \code{col} names it, or \code{LATE}, magenta
+(\code{0x00ff00ff}), if that word has not arrived (issue 1209). No
+picture is drawn in magenta, so a late column shows as itself rather
+than as the word the line before left there.
+\item A word belongs to the line it was asked for, which the lines owed
+say (issue 1233). A line that starts before it has come whole is
+\code{late}, and the rest of its words go into the half the beam
+reads, so its columns fill in as they come. Lines owed whose time has
+passed are counted in \code{behind}, and the rest of their words are
+dropped. Neither lands in the half filling, where the next row would
+show it as its own.
 \item Once the frame's first line has been asked for, a visible column
 at or past the words that line had when it was swapped in sets
 \code{starved}, until \code{clear}.
@@ -117,6 +127,6 @@ flagship holds in its video slot (issue 151).
 \subsection*{Limits}
 
 One line a request, and a line is \code{LEN} words; there is no
-horizontal offset or scaling. A line that arrives late is shown with
-whatever its columns held, and \code{starved} is the only report of
-it. It runs on one clock, \code{C}.
+horizontal offset or scaling. A column of a line that arrives late
+shows \code{LATE} until its word comes, and \code{starved} says that
+it happened; a line that never comes sets \code{stuck}. It runs on one clock, \code{C}.
