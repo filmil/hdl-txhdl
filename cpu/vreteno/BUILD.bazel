@@ -133,8 +133,11 @@ rust_test(
     name = "board_test",
     # The whole board, several programs and a card identified at 400 kHz:
     # 165 s alone and near the medium size's 300 s under a suite's load,
-    # which it crossed once (issue 956).
+    # which it crossed once (issue 956). The scanout's load tests (issue
+    # 1209) took it to 890-1110 s, past the large size's 900 s, so it
+    # has the eternal timeout until it is split.
     size = "large",
+    timeout = "eternal",
     srcs = ["tests/board.rs"],
     edition = "2021",
     deps = [
