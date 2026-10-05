@@ -1719,7 +1719,14 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // halted for good, with the loader in the boot memory never
             // restarting (issue 398). The CSRs are put back by the same
             // line, below, which that fix left as they were (issue 419).
-            let halting = csr_write & (f12 == isa::CSR_MHALT) & csr_new.bit(0);
+            //
+            // `mhalt` reads as zero, so the value written has bit 0 set
+            // exactly when the source's is and the operation is not a
+            // clear: the halt does not wait for the CSR read's
+            // multiplexers (issue 1195).
+            let halt_src =
+                mux(f3.slice::<0, 2>() == 3, Bit::Zero, csr_src.bit(0));
+            let halting = csr_write & (f12 == isa::CSR_MHALT) & halt_src;
             let stop = mux(
                 rst | stop_take,
                 Bit::Zero,
