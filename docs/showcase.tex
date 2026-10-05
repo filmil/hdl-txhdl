@@ -72,9 +72,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 79\,578 lines of Rust: 18\,324 of runtime
-and macros, 23\,435 of parts, 17\,098 in a hundred and seventeen examples,
-17\,328 of Vreteno with its board, and 3\,393 of Razboj, DDR3,
+Together they are 90\,192 lines of Rust: 18\,369 of runtime
+and macros, 26\,071 of parts, 17\,990 in a hundred and twenty-one examples,
+22\,478 of Vreteno with its board, and 5\,284 of Razboj, DDR3,
 Ethernet, HDMI, PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -97,6 +97,7 @@ AXI host and peripheral trackers & parts & both \\
 An AXI-Lite bridge, one unit for N peripherals; a slot split in two & parts & 1 and 2; the split in a parent \\
 AXI to Wishbone bridge & parts & yes \\
 AXI host pins to the link's channels & parts & yes \\
+The link's channels to a peripheral's AXI pins & parts & yes \\
 An interrupt controller, one unit for 1 to 31 sources & parts & 3 \\
 Network node, switch, 2 bridges; a mesh of nodes & parts & the mesh \\
 Pins; SPI; I2C; MDIO; SD; Ethernet's five; HDMI's two & parts & all twelve \\
@@ -405,18 +406,21 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs four hundred and nine targets, of
-which two hundred and thirty-four are netlists under both simulators; the rest are the core's model and programs, the board's
+its ports. \code{bazel test //...} runs four hundred and twenty-nine targets, of
+which two hundred and forty-four are netlists under both simulators; the rest are the core's model and programs, the board's
 own run, OpenOCD and gdb on it through the debug transport, Razboj, the parts, the SoC's run, ten proofs, the width of
-every waveform, and the tools. Ten more are tagged manual: the
+every waveform, and the tools. Thirteen more are tagged manual: the
 board and its DDR3 under
 Vivado's simulator, the DDR3 controller alone and AMD's own test of
 it under the same, the PCIe endpoint on its own and against a root
 port under the same, the AXI link's fuzzing over many seeds, which
 the nightly run does, the check that every component has a
 datasheet, which a sweep of the documents runs, two that a routed
-bitstream leaves the configuration flash's program area alone, and one
-that the flash image holds its program there.
+bitstream leaves the configuration flash's program area alone, one
+that the flash image holds its program there, and three of Linux: the
+initramfs read back from its archive, and the kernel booted to its
+shell on the machine model, as built, which the nightly run does, and
+with the serial port as the loader leaves it.
 
 A run checks the inputs it was given; a proof checks all of them. A
 unit states what must hold with \code{check!}, what it assumes of its

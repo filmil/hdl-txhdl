@@ -1,0 +1,112 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: AxiPerPins, AxiPerDriven
+\datasheet{AxiPerPins}{The AXI link's peripheral end joined to an AXI4 peripheral's pins.}
+
+\dsfacts{\code{lib/parts/src/bus/axi\_per\_pins.rs}}%
+{\code{txhdl\_parts::bus::axi\_per\_pins::AxiPerPins}}%
+{\code{//docs:pcie}}
+
+\subsection*{Function}
+
+A core from elsewhere that is an AXI4 peripheral, such as AMD's DDR3
+controller generated with its AXI4 port, has pins: a \code{valid} and a
+\code{ready} per channel and a wire per field. \code{AxiPerPins} is
+\code{AxiPins} the other way round. It stands on the link's peripheral
+end, where an \code{AxiPer} would, and puts the link's channels onto
+those pins, holding nothing.
+
+Its inputs are the side \code{inp: AxiPerPinsIn}: the eleven pins the
+peripheral drives as one field, \code{pins}, an \code{AxiPerDriven},
+and the \code{aw}, \code{ar} and \code{w} channels from the link, so
+its input ports are \code{inp\_pins\_awready} and the rest beside
+\code{inp\_aw}, \code{inp\_ar} and \code{inp\_w}. \code{AxiPerDriven}
+derives \code{Ports}, so a design holding a peripheral's pins among its
+own ports passes them on whole. Its outputs are the side
+\code{outp: AxiPerPinsOut}: the \code{b} and \code{r} channels back to
+the link, and the twenty-six pins the peripheral reads.
+
+\code{axi\_per\_pins::sim} has \code{PinRam}, a memory on the pins
+written as a simulation, and \code{pins}, which makes the wires.
+\code{PinRam} can take a warm-up, before which it is not ready, and a
+read and a write latency, and it can take an address past its end
+modulo its size; that is how \code{ddr3::Ddr3} models AMD's controller.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{A} & The address width, in bits. The tables use 32. \\
+\code{D} & The data width, in bits. The tables use 32. \\
+\code{S} & The strobe width, \code{D / 8}. The tables use 4. \\
+\code{I} & The identifier width, in bits. The tables use 5. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The tables are generated for \code{AxiPerPins<32, 32, 4, 5>}, the
+widths \code{Ddr3Per} uses it with on the board. The example
+\code{ex\_axi\_per\_pins} uses \code{AxiPerPins<30, 32, 4, 5>}, the
+controller's own 30-bit address.
+
+\dstables{AxiPerPins}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item It holds no state; every output is a function of the step's
+inputs and the channels.
+\item An address phase at the head of \code{aw} is \code{awvalid} and
+the \code{aw} pins: \code{awid}, \code{awaddr}, \code{awlen},
+\code{awsize}, the burst type encoded in two bits, \code{awlock},
+\code{awcache}, \code{awprot} and \code{awqos}. It is taken off the
+channel in a step \code{awready} is high. The same holds for
+\code{ar}, and for \code{w} with \code{wdata}, \code{wstrb} and
+\code{wlast}.
+\item A response the peripheral offers, \code{bvalid} with
+\code{bid} and \code{bresp}, the response decoded from its two bits,
+goes onto \code{b} in a step \code{b} has room, and \code{bready} is
+that room. The same holds for \code{rvalid} and \code{r}, with
+\code{rid}, \code{rdata}, \code{rresp} and \code{rlast}, and
+\code{rready}.
+\item Every field of the link's address phase reaches a pin except
+\code{region}: AMD's controller has no region pins, and a peripheral
+joined to one link needs none, since the region is how an interconnect
+tells decoded ranges of one peripheral apart. \code{AxQOS} is carried.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{a\_host\_on\_the\_link\_reaches\_a\_peripheral\_on\_pins} in
+\code{bus::axi\_per\_pins}, in \code{//lib/parts:parts\_test}, writes
+three words through an \code{AxiHost}, the unit and a \code{PinRam},
+reads four back across the burst's ends, and reads past the memory's
+end, answered \code{SlvErr}.
+\item \code{a\_timed\_memory\_waits\_and\_then\_answers\_late} there
+holds \code{PinRam}'s timing: a warm-up holds a write off, and a latency
+delays an answer by itself and no more.
+\item \code{ex\_axi\_per\_pins} runs \code{AxiPerPins<30, 32, 4, 5>} with
+a host on the link and a \code{PinRam} on the pins, and the build
+simulates its netlist against that run under nvc and Verilator:
+\code{//docs:axi\_per\_pins\_sim\_axi\_per\_pins\_tb\_test} and
+\code{//docs:axi\_per\_pins\_vsim\_test}.
+\item \code{//ddr3:ddr3\_test} drives it inside \code{Ddr3Per}, and
+\code{//ddr3/sim:wrapper\_test}, which is manual, checks the
+controller's side of the same pins under Vivado's simulator.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Ddr3Per}, as its field \code{pins}, between the board's router
+and AMD's DDR3 controller. The example \code{ex\_axi\_per\_pins}.
+
+\subsection*{Limits}
+
+Its \code{ready} outputs are the channels' room in the same step, so
+a path runs from a channel's state through the unit to the
+peripheral's pins with no register. It has no \code{AxREGION} or user
+pins, so a peripheral that wants a region gets it as a constant where
+it is instantiated.

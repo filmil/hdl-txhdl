@@ -25,6 +25,7 @@ use txhdl_parts::bus::arbiter::Arbiter2;
 use txhdl_parts::bus::axi::{AxiHost, AxiPer};
 use txhdl_parts::bus::axi::{Issue, R};
 use txhdl_parts::bus::axi_lite::LiteBridge;
+use txhdl_parts::bus::axi_per_pins::AxiPerPins;
 use txhdl_parts::bus::axi_pins::AxiPins;
 use txhdl_parts::bus::lite_split::LiteSplit;
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
@@ -523,6 +524,11 @@ fn main() {
         "AxiPins",
         "AxiPins<32, 64, 8, 4>",
         AxiPins::<32, 64, 8, 4>::lowered("axi_pins"),
+    );
+    sheet(
+        "AxiPerPins",
+        "AxiPerPins<32, 32, 4, 5>",
+        AxiPerPins::<32, 32, 4, 5>::lowered("axi_per_pins"),
     );
     sheet(
         "Switch",
