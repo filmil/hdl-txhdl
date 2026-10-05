@@ -1341,10 +1341,11 @@ fn the_debug_module_halts_reads_writes_and_resumes_the_core() {
 
 /// The cycle counter read twice back to back, from the data memory, and
 /// the difference said eight times (issue 848). The routine runs from
-/// block RAM, whose fetch takes the same time every time, so every
-/// difference is the same: the cycles from one read to the next, which
-/// a read that lost a count, as every read did before issue 807's fix,
-/// would make one fewer.
+/// the data memory through the instruction cache (issue 1021), whose
+/// lines it fills on the first pass, so every difference is the same:
+/// the cycles from one read to the next, which a read that lost a
+/// count, as every read did before issue 807's fix, would make one
+/// fewer.
 #[test]
 fn mcycle_steps_steadily_between_two_reads() {
     let ran = run(steps_program::TEXT, steps_program::DATA, b"", 40000);
@@ -1364,11 +1365,12 @@ fn mcycle_steps_steadily_between_two_reads() {
         steps.iter().all(|&s| s == steps[0]),
         "every difference the same: {steps:?}"
     );
-    // Thirteen cycles from one read to the next on this board. With
-    // the core of before issue 807's fix it was a steady twelve,
-    // measured by reverting that fix on this test: each read cost the
-    // counter the one count it wrote back over.
-    assert_eq!(steps[0], 13, "cycles between the two reads");
+    // Three cycles from one read to the next, the second read's word
+    // in the cache. Fetched over the bus a word at a time, before the
+    // cache, it was thirteen; with the core of before issue 807's fix
+    // a steady twelve, each read costing the counter the one count it
+    // wrote back over.
+    assert_eq!(steps[0], 3, "cycles between the two reads");
 }
 
 /// The path into DDR3 timed by the core (issue 1023): sixteen loads,
@@ -1381,13 +1383,14 @@ fn mcycle_steps_steadily_between_two_reads() {
 /// latency, which the model has, less two cycles, since the pins part
 /// and the controller's port take two cycles fewer than the data
 /// memory's tracker and block RAM. On the board it is the controller's
-/// own latency, which is what the board run is for. The stores take
-/// the same cycles into either memory: the core issues them no faster
-/// than it fetches the routine, over the bus, from the data memory, so
-/// they show that the core cannot fill the path, not how fast the path
-/// is. Their difference also turns on how the stores fall against those
-/// fetches: at a write latency of four rather than the controller's two,
-/// the stores into the DDR3 came out fourteen cycles faster.
+/// own latency, which is what the board run is for.
+///
+/// The stores into the DDR3 take eight cycles more than into the data
+/// memory, over sixteen. Before the instruction cache (issue 1021) the
+/// two were equal: the core issued stores no faster than it fetched the
+/// routine over the bus, so they showed that the core could not fill
+/// the path. From the cache it issues them faster than the DDR3's path
+/// takes them, and the difference is the path's.
 #[test]
 fn the_ddr3_path_is_timed_by_the_core() {
     let ran = run(ddr3bw_program::TEXT, ddr3bw_program::DATA, b"", 80000);
@@ -1408,17 +1411,20 @@ fn the_ddr3_path_is_timed_by_the_core() {
         ("store dmem", &sm),
     ] {
         assert_eq!(v.len(), 4, "four runs of {what}: {}", ran.said);
-        assert!(v.iter().all(|&c| c == v[0]), "{what} steady: {v:?}");
+        // The first run of each fills the instruction cache with the
+        // routine's lines (issue 1021), so the runs after it are the
+        // steady ones.
+        assert!(v[1..].iter().all(|&c| c == v[1]), "{what} steady: {v:?}");
     }
     let (ld, lm, sd, sm) =
-        (ld[0] as i64, lm[0] as i64, sd[0] as i64, sm[0] as i64);
+        (ld[1] as i64, lm[1] as i64, sd[1] as i64, sm[1] as i64);
     let latency = ddr3::MODEL_READ_LATENCY as i64;
     assert_eq!(
         ld - lm,
         16 * (latency - 2),
         "a load costs the DDR3 the controller's latency, less two"
     );
-    assert_eq!(sd - sm, 0, "the stores wait on the core, not the path");
+    assert_eq!(sd - sm, 8, "the stores into the DDR3 wait on its path");
 }
 
 /// The DDR3's writes, reads and strobes, by the program the loader

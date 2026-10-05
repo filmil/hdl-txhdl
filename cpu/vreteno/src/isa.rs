@@ -542,6 +542,11 @@ pub fn rem(rd: u32, rs1: u32, rs2: u32) -> u32 {
 pub fn remu(rd: u32, rs1: u32, rs2: u32) -> u32 {
     r(OP_OP, rd, 7, rs1, rs2, 1)
 }
+/// `fence.i`: the stores before it are what the fetches after it see,
+/// which with the instruction cache (issue 1021) empties the cache.
+pub fn fence_i() -> u32 {
+    i(OP_FENCE, 0, 1, 0, 0)
+}
 pub fn fence() -> u32 {
     i(OP_FENCE, 0, 0, 0, 0)
 }

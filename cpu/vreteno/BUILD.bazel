@@ -864,3 +864,13 @@ vivado_repl(
     use_terminal = False,
     tags = ["manual"],
 )
+
+# The instruction cache (issue 1021): a loop fetched from the data
+# memory runs from the cache, and code stored and fenced with
+# `fence.i` is what runs.
+rust_test(
+    name = "icache_test",
+    srcs = ["tests/icache.rs"],
+    edition = "2021",
+    deps = [":vreteno32"],
+)
