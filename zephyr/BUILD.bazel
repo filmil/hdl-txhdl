@@ -329,6 +329,7 @@ exports_files([
 # regmap lists and to the headers on disk, so a map declared in the
 # parts and not named here fails rather than going unchecked.
 REG_MAPS = [
+    "doorbell",
     "eth",
     "ethslots",
     "gpio",
