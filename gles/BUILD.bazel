@@ -9,6 +9,7 @@ package(default_visibility = ["//visibility:public"])
 rust_library(
     name = "gles",
     srcs = [
+        "src/emit.rs",
         "src/fixed.rs",
         "src/gl.rs",
         "src/lib.rs",
@@ -16,6 +17,7 @@ rust_library(
     ],
     crate_name = "gles",
     edition = "2021",
+    deps = ["//gpu/razboj:tile"],
 )
 
 rust_test(
