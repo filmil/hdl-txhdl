@@ -67,7 +67,7 @@ mod ico_list;
 
 use core::ptr::{read_volatile, write_volatile};
 use ico_list::{rect, Box, Solid, BACKDROP, MOST, SECOND, WORDS};
-use vreteno_hal::{entry, Razboj, Scan, Uart, Video};
+use vreteno_hal::{entry, trap, Razboj, Scan, Uart, Video};
 
 entry!(main);
 
@@ -143,6 +143,9 @@ fn wait_blanking() {
 }
 
 fn main() -> ! {
+    // A fault says where it was and what it read, rather than leaving
+    // the loader only the cause and the instruction (#1214).
+    trap::say_faults();
     let solid = Solid::new();
     Uart::say(b"ico ");
     Uart::put_decimal(solid.found as u32);

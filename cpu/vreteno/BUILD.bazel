@@ -145,6 +145,7 @@ rust_test(
         "//cpu/vreteno/rust:ddr3_program",
         "//cpu/vreteno/rust:ethrx_program",
         "//cpu/vreteno/rust:ethtx_program",
+        "//cpu/vreteno/rust:faultsay_program",
         "//cpu/vreteno/rust:flashid_program",
         "//cpu/vreteno/rust:phydelay_program",
         "//cpu/vreteno/rust:phyregs_program",

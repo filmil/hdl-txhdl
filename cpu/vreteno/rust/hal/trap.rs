@@ -105,6 +105,41 @@ fn registered(
     }
 }
 
+/// The exceptions [`say_faults`] reports: a fetch, load or store that
+/// was misaligned or refused, and an illegal instruction.
+const FAULTS: [u32; 7] = [0, 1, 2, 4, 5, 6, 7];
+
+/// Have a fault say what it was on the serial port, then halt: the
+/// line `trap`, the cause, `at` and `mepc`, then `mtval`, then `a0` and
+/// `ra` as the faulting code had them. For a load or a store the core
+/// refused, `mtval` is the address. The loader reports a trap in a
+/// program with no handler of its own as well, but only the cause and
+/// `mepc`, since by the time it runs every register is the loader's;
+/// this is for a program on the board that may fault where nobody can
+/// look, as `ico_gl_hdmi` did once (#1214). It installs the entry too.
+pub fn say_faults() {
+    install();
+    for cause in FAULTS {
+        on_exception(cause, say_fault);
+    }
+}
+
+fn say_fault(frame: &mut Frame, cause: u32) {
+    let mtval: u32;
+    unsafe { core::arch::asm!("csrr {0}, mtval", out(reg) mtval) }
+    let word = |name: &[u8], v: u32| {
+        crate::Uart::say(name);
+        crate::Uart::put_hex(v);
+    };
+    word(b"trap ", cause);
+    word(b" at ", frame.mepc);
+    word(b" mtval ", mtval);
+    word(b" a0 ", frame.a0);
+    word(b" ra ", frame.ra);
+    crate::Uart::put(b'\n');
+    crate::halt()
+}
+
 /// Point `mtvec` at the entry. Interrupts stay off until the program
 /// turns them on, once its handlers are registered.
 pub fn install() {
