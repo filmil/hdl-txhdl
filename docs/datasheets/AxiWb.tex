@@ -38,7 +38,8 @@ Parameter & Meaning \\
 
 Words are 32 bits with four lanes, fixed in the source. The tables
 below use \code{AxiWb<32, 2, 28>}. There \code{AW} is \code{ddr3::AW},
-28 bits, the word address of the board's DDR3 memory.
+28 bits, a gigabyte of words, which was the board's DDR3 memory's word
+address while this bridge was in front of it.
 
 \dstables{AxiWb}
 
@@ -97,24 +98,17 @@ a memory that stalls for 10 cycles and answers after 2. The build
 simulates the netlist of \code{AxiWb<32, 2, 28>} against that run under
 nvc and Verilator: \code{//docs:axi\_wb\_sim\_axi\_wb\_tb\_test} and
 \code{//docs:axi\_wb\_vsim\_test}.
-\item In \code{//ddr3:ddr3\_test}, \code{words\_go\_in\_and\_come\_back}
-runs \code{Ddr3Per}, this bridge with the controller's simulation
-model behind it, and
-\code{the\_controller\_is\_instantiated\_and\_not\_written} checks that
-its netlist writes the bridge's module.
-\item \code{//cpu/vreteno/board/sim:board\_test}, a manual target,
-simulates the whole board under Vivado's simulator.
 \end{itemize}
 
 \subsection*{Used by}
 
-\code{Ddr3Per} in \code{ddr3/src/lib.rs}, as its field \code{bridge},
-and so the board's DDR3 memory at \code{0x4000\_0000}. The example
-\code{ex\_axi\_wb}, and
+The example \code{ex\_axi\_wb}, and
 \code{a\_burst\_is\_served\_word\_by\_word} in the module's own
 tests, which writes sixteen words and reads them back as one burst
-each way. Sixteen is what \code{LineFetch} issues by default and it
-crosses the eight-word burst the DDR3 wrapper carries per address.
+each way. Sixteen is what \code{LineFetch} issues by default.
+Until issue~\#1023 put the board's DDR3 memory behind the controller's
+own AXI4 port, \code{Ddr3Per} held this bridge in front of a Wishbone
+wrapper of the controller.
 That test asserts the COUNT of beats and not only their values: a
 bridge that answered one beat would return the right word in it, so
 checking the words alone passes on the fault.
