@@ -8,10 +8,12 @@ map, with the frame buffers in main memory.}
 
 \subsection*{Function}
 
-\code{EthSlots} is the register map of Zephyr's
-\code{drivers/ethernet/eth\_litex\_liteeth.c} in hardware, so that
-bringing up Ethernet is a port of a driver that already works rather
-than a design nobody has driven.
+\code{EthSlots} is the register map of LiteX's LiteEth in hardware,
+at LiteX's offsets, so that Linux's \code{litex\_liteeth}, whose
+offsets are fixed, drives it unchanged (issue 1203), and Zephyr's
+\code{drivers/ethernet/eth\_litex\_liteeth.c} takes them from the
+header \code{//tools/regmap} writes. Bringing up Ethernet is a port of
+a driver that already works rather than a design nobody has driven.
 
 Its AXI-Lite side is one port, \code{bus}, a \code{LitePort} with
 32-bit addresses and words: \code{bus\_aw}, \code{bus\_ar} and
@@ -62,17 +64,22 @@ them at \code{0x3400}, which \code{isa::ETH\_BASE} states.
 
 \dsregs{EthSlots}
 
-Words 10 to 15 are named by no register and read zero.
-\code{tx\_ev\_pending} is never set, as the behaviour below says, and
-\code{tx\_ev\_enable} is kept so the driver can write it.
+The fourteen words are LiteX's, in LiteX's order, and words 14 and
+15 are named by no register. Three words exist for the drivers and
+hold nothing here: \code{rx\_errors} and \code{tx\_level} read
+zero, since no frame is dropped and one transmit runs at a time, and
+\code{tx\_ev\_status} reads zero, since the transmit raises no
+event. \code{rx\_ev\_status} reads the same bit as
+\code{rx\_ev\_pending}. \code{tx\_ev\_pending} is never set, as
+the behaviour below says, and \code{tx\_ev\_enable} is kept so the
+driver can write it.
 
-\emph{An unnamed word does not read as zero.} Words 4, 5 and 6, which
-are write only, and words 10 to 15, which are nothing, all read as
-\code{tx\_ev\_enable}. That is issue 454 and it is a fault rather
-than a decision: a driver that writes \code{tx\_length} and reads it
-back gets neither its value nor zero but an unrelated bit, so neither
-a match nor a mismatch means anything. It reads as zero only while
-\code{tx\_ev\_enable} is clear, which is why nothing had noticed.
+The write-only words, \code{tx\_start}, \code{tx\_slot} and
+\code{tx\_length}, and the unnamed 14 and 15 read zero. They once
+read as \code{tx\_ev\_enable}, the read path's fall-through, so a
+driver that wrote \code{tx\_length} and read it back got an unrelated
+bit (issue 454); every word the read names now, and the rest are
+zero.
 
 \emph{The transmit side has no interrupt.} LiteEth's driver disables
 it and polls \code{tx\_ready}, because Zephyr's send may block, so
@@ -148,7 +155,9 @@ being a serialisation point.
 \subsection*{Verification}
 
 \begin{itemize}
-\item \code{EthSlots} has no \code{\#[test]} of its own.
+\item \code{only\_word\_13\_reads\_tx\_ev\_enable}, in
+\code{//lib/parts:parts\_test}, sets \code{tx\_ev\_enable} and reads
+every word, so a word that mirrored it again would fail (issue 454).
 \item \code{ex\_ethslots} drives the map as
 \code{eth\_litex\_liteeth.c} will, in the order that driver does it:
 \code{tx\_ready} one while idle and zero while a frame is going, no
