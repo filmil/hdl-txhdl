@@ -3,7 +3,7 @@
 # One compiled example per concept in the runtime. The article's appendix
 # includes each file verbatim, so a listing there is also a build target
 # here, and a concept with no example is a concept nobody has checked.
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rustfmt_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test", "rustfmt_test")
 load("//lib:foreign.bzl", "verilog_unit", "vhdl_unit")
 
 package(default_visibility = ["//visibility:public"])
@@ -1474,4 +1474,16 @@ filegroup(
 rustfmt_test(
     name = "fmt_test",
     targets = [":" + s[:-3] for s in SOURCES if s.endswith(".rs")],
+)
+
+# A call of a function under #[lower] whose argument is worked out as
+# `lowered` runs: a `let mut`, or a port a loop's index names. The
+# call's wires are added where the call is, not with the unit's own
+# wires, which are written before those values exist (issue 1186).
+rust_test(
+    name = "inline_run_test",
+    srcs = ["inline_run_test.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
 )

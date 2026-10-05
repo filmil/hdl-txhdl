@@ -2253,6 +2253,38 @@ thread_local! {
     /// How many wires the inlining has named in this lowering, so the
     /// next one gets a name no other has.
     static INLINED_N: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The indices of the `for` loops the lowering is inside, which
+    /// are Rust variables of `lowered` as it runs (issue 1186).
+    static INDICES: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Whether an expression the lowering wrote reads a value `lowered`
+/// works out as it runs: a `let mut`'s or a loop's `let`'s (issue
+/// 500), a loop's index, a port or field a loop's index names, or a
+/// value an inlined call held for one of those. Such an expression
+/// cannot be a wire of the unit's list, which is written before any
+/// of them exist (issue 1186).
+fn runs(e: &str) -> bool {
+    fn walk(ts: TokenStream, ix: &[String]) -> bool {
+        ts.into_iter().any(|t| match t {
+            TokenTree::Ident(id) => {
+                let n = id.to_string();
+                n.starts_with("__l_")
+                    || n.starts_with("__hw_")
+                    || ix.contains(&n)
+            }
+            TokenTree::Group(g) => walk(g.stream(), ix),
+            _ => false,
+        })
+    }
+    if e.contains(DYN) {
+        return true;
+    }
+    let Ok(ts) = e.parse::<TokenStream>() else {
+        return false;
+    };
+    INDICES.with(|ix| walk(ts, &ix.borrow()))
 }
 
 /// A name no other wire of this lowering has, for a value an inlined
@@ -3188,11 +3220,23 @@ fn inline_helper(
     // The binding of one name: the expression itself when it is read
     // once or costs nothing to read again, and otherwise a wire that
     // holds it, which the body reads by name.
+    //
+    // A value that `runs`, though, cannot be a wire of the unit's
+    // list. It is held in a Rust variable of the call's own, and its
+    // wire is one `lowered` adds where the call is, as `dyn_wire` adds
+    // a loop's (issue 1186).
+    let held: std::cell::RefCell<Vec<(String, String)>> =
+        std::cell::RefCell::new(Vec::new());
     let bind = |n: &str, v: String, reads: usize| -> String {
         if reads < 2 || is_cheap(&v) {
             return v;
         }
         let w = inline_name(&h.name, n);
+        if runs(&v) {
+            let var = format!("__hw_{w}");
+            held.borrow_mut().push((var.clone(), dyn_wire(&w, &v)));
+            return format!("{var}.clone()");
+        }
         INLINED.with(|ws| ws.borrow_mut().push((w.clone(), v)));
         ename(&w)
     };
@@ -3218,7 +3262,16 @@ fn inline_helper(
     if h.value.is_empty() {
         return Err(format!("`{}` has no value", h.name));
     }
-    tr(&toks(&h.value)?, &s)
+    let value = tr(&toks(&h.value)?, &s)?;
+    let held = held.take();
+    if held.is_empty() {
+        return Ok(value);
+    }
+    let lets: String = held
+        .iter()
+        .map(|(var, e)| format!("let {var}: NlE = {e}; "))
+        .collect();
+    Ok(format!("{{ {lets}{value} }}"))
 }
 
 /// `text` with each const parameter's name replaced by the expression
@@ -4523,6 +4576,7 @@ fn lower_stmts(
             cx.subst
                 .push((var.clone(), format!("NlE::Num({var} as u128)")));
             cx.loops.push(var.clone());
+            INDICES.with(|ix| ix.borrow_mut().push(var.clone()));
             let inner: Vec<TokenTree> = body.stream().into_iter().collect();
             let hmark = cx.hoisted.len();
             let mut items = lower_stmts(cx, &inner, None)?;
@@ -4531,6 +4585,7 @@ fn lower_stmts(
             // rather than being hoisted past the loop's end (#500).
             items.extend(cx.hoisted.drain(hmark..));
             cx.loops.pop();
+            INDICES.with(|ix| ix.borrow_mut().pop());
             // A `let` inside the loop is gone after it, as in Rust.
             cx.subst.truncate(mark);
             stmts.push(format!(
@@ -6260,6 +6315,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // was lowered before it on this thread.
     INLINED.with(|w| w.borrow_mut().clear());
     INLINED_N.with(|c| c.set(0));
+    INDICES.with(|ix| ix.borrow_mut().clear());
     // Past any attributes and doc comments, to `impl`.
     let Some(at) = toks.iter().position(
         |t| matches!(t, TokenTree::Ident(id) if id.to_string() == "impl"),
