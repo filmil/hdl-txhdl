@@ -311,7 +311,12 @@ fn main() {
                 (Some((4, (DOT.0 | DOT.1 << 8) as u32)), None)
             }
             0 if x == 20 && y == 0 => (Some((8, FB)), None),
-            0 if at_end => (Some((SCAN + scan::ctrl, 1)), None),
+            // The bit that shows the scanout, a blanking row before the
+            // last: the pair asks for nothing until it is shown, and it
+            // asks for frame 1's first line as the last row starts.
+            0 if x == 1 && y == TOTAL - 2 => {
+                (Some((SCAN + scan::ctrl, 1)), None)
+            }
             2..=4 if at_end => (None, Some(SCAN + scan::status)),
             4 if at_start => (Some((SCAN + scan::clear, 1)), None),
             _ => (None, None),
