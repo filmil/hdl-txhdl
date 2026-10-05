@@ -278,6 +278,39 @@ afresh inside each tile rounds each tile's start at a different place
 and draws a different picture; one of the tests keeps that as the
 reason the planes are stepped.
 
+The rasteriser draws a tile table itself (issue~\#1255). A program
+lays the table out where it would put a list, with the entries a fixed
+two kilobytes past it, room for every tile's record, and rings the
+count with bit 31 set, which says the count is the table's tiles. For
+each tile the rasteriser reads its record and draws its entries as it
+draws a list's, but into a tile buffer beside it, a bank of 4096
+words, with a mark for each pixel written. Then it writes the tile out
+a row at a time, each row one write burst of 64 beats. A beat's
+strobes are on where a pixel was written and off where none was, so a
+pixel no entry covered keeps what memory had, as it does from a flat
+list, and the marks are cleared as they are read, which leaves the
+bank empty for the next tile. The bank's reads land in a register a
+cycle ahead of the beat, which is what makes it a block RAM. A flat
+list, with the bit clear, is drawn as before, straight into memory, so
+every program that rings a flat list draws what it drew.
+
+Six scenes of rectangles, flat and shaded triangles and clears, over
+tile edges and off the screen, drawn one over another, are the same in
+tiles as flat, byte for byte, and \code{//docs:razboj\_tiles} replays
+the rasteriser's netlist against a tiled run under both simulators. On
+the board's model a tiled list, written into the DDR3 and rung, draws
+what the model draws, and a word in a touched tile that no entry
+covers keeps its value.
+
+On the board's model, from the ring to the drawing done, a fill of
+the screen's 640 by 480 takes 326973 cycles flat and 636144 in tiles,
+and the icosahedron's first frame 452600 and 764607. In tiles a plain
+fill is slower, and by design for now: with one bank the rasteriser
+draws a tile and then writes it out, where flat it writes as it draws.
+A second bank, so that a tile is drawn while the last goes out, and
+the depth test, which a tile buffer answers without a read of DDR3,
+are what the tiles are for (\code{docs/razboj-tiles.md}, section 7).
+
 \section{The Rasteriser}
 \label{sec:g-raster}
 

@@ -155,6 +155,10 @@ Each step is a pull request, and each is checked against the model before the ne
 2. **The tile buffer and the write-out.**
    Razboj walks the tile table, draws each tile's entries into a bank, writes finished tiles out a row a burst and clears as it reads.
    No depth yet: it draws exactly what it draws now, and every existing test, run through the binning library, still passes.
+   The first half is done in issue 1255, with one bank.
+   A count with bit 31 set says the list is a tile table, with its entries at `razboj_tile::ENTRIES_AT` past it, so flat lists draw as before.
+   Each pixel written also sets a mark, and the write-out's strobes are off where no mark is set, since the table holds only the tiles some entry touches and a tile's other pixels have to keep what memory had.
+   One bank means drawing and writing out take turns, so a plain fill is slower in tiles than flat until the second half adds the other bank, which needs a host of its own on the arbiter.
 3. **The depth test, issue 992**, on the draw port, with the depth plane and the read-modify-write pipeline.
 4. **Blending and the masks, issue 993**, on the same port, reading the colour the depth test already reads beside it.
 
