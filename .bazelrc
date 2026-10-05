@@ -25,6 +25,13 @@ build --output_groups=+clippy_checks
 # writes are as complex as the hardware they stand for.
 build --@rules_rust//:clippy_flags=-Dwarnings,-Aclippy::type_complexity
 
+# The formatter on every build, the same way: every Rust target built
+# is checked against rustfmt, new crates included, with no list to
+# keep. //:fmt_test named twelve crates of three hundred, and the rest
+# went unchecked (issue 1152).
+build --aspects=@rules_rust//rust:defs.bzl%rustfmt_aspect
+build --output_groups=+rustfmt_checks
+
 # Vivado from the Bazel-installed toolchain, not Docker or the host.
 build --@rules_vivado//:vivado_mode=hermetic
 

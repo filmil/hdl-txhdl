@@ -135,8 +135,9 @@ fj -H git.hdlfactory.com release list -R origin
 
 ## Before pushing
 
-A push runs two checks that a targeted test run leaves out: the crates' formatting, `//:fmt_test`, and every document's words on their page, `//docs:edge_test`.
-`tools/hooks/pre-push` runs both and refuses the push if either fails, naming the fix (issue 1133).
+Every build checks every Rust target's formatting, through the rustfmt aspect `.bazelrc` turns on beside Clippy's (issue 1152).
+A push checks what a targeted test run leaves out: the formatting of every Rust target, with `bazel build --output_groups=rustfmt_checks //...`, then `//:fmt_test`, and every document's words on their page, `//docs:edge_test`.
+`tools/hooks/pre-push` runs them and refuses the push if any fails, naming the fix (issue 1133).
 Turn it on once per clone:
 
 ```sh

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Refuses a push whose tree fails the two checks a targeted test run
-# leaves out and CI does not: the crates' formatting and every
-# document's words on their page (issue 1133).
+# Refuses a push whose tree fails the checks a targeted test run
+# leaves out: every Rust target's formatting and every document's
+# words on their page (issues 1133 and 1152).
 #
 # Turned on once per clone, for every worktree of it:
 #
@@ -30,12 +30,19 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "pre-push: the files as they are, not as they were committed." >&2
 fi
 
-echo "pre-push: bazel test //:fmt_test //docs:edge_test" >&2
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
-if bazel test //:fmt_test //docs:edge_test --test_output=errors \
+# Every Rust target's format, through the aspect .bazelrc turns on
+# (issue 1152): this output group alone runs rustfmt and nothing else,
+# so it takes seconds once warm. Then the two tests.
+echo "pre-push: bazel build --output_groups=rustfmt_checks //..." >&2
+if bazel build --output_groups=rustfmt_checks --keep_going //... \
   >"$log" 2>&1; then
-  exit 0
+  echo "pre-push: bazel test //:fmt_test //docs:edge_test" >&2
+  if bazel test //:fmt_test //docs:edge_test --test_output=errors \
+    >>"$log" 2>&1; then
+    exit 0
+  fi
 fi
 
 echo "pre-push: refused. The end of the test run:" >&2
