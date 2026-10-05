@@ -10,15 +10,17 @@
 //! as a foreign module.
 use std::collections::HashMap;
 use txhdl::comp::{
-    chan, pad, signal, DefaultClock, In, Out, Running, Rx, Tx, Unit,
+    chan, join2, pad, signal, DefaultClock, In, Out, Running, Rx, Tx, Unit,
 };
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::dtm::Tck;
 use txhdl_parts::eth::EthByte;
+use txhdl_parts::hdmi::Raster;
 use txhdl_parts::mdio::sim::MdioPhy;
 use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
+use txhdl_parts::scanout::LinePair;
 use txhdl_parts::sd::SdCard;
 use txhdl_parts::spi::FlashDevice;
 use vreteno32::board::{Board, BoardIn, BoardOut, REMOTE_DEV};
@@ -59,6 +61,8 @@ struct Ran {
     phy_page: u16,
     /// The card in the SD slot as the run left it.
     card: SdCard,
+    /// The scanout's lines, when the run had one.
+    scan: ScanLog,
 }
 
 /// Run `text` with `data` in the data memory, on the board's design,
@@ -291,6 +295,33 @@ struct Net<'a> {
     phy: Option<MdioPhy>,
     /// The card in the SD slot: `SdCard::default()` when none is given.
     card: Option<SdCard>,
+    /// A scanout on `scan_req` and `scan_words` (issue 1178).
+    scan: Option<Scan>,
+}
+
+/// A scanout's pixel side on the board's `scan_req` and `scan_words`:
+/// the flagship's `LinePair` and a raster to drive it, on the board's
+/// clock, with frames of six rows of 640 columns so that a run sees
+/// several. From the reset it has no base, as on the board after every
+/// reset; at `show_at` a program gives it `base`.
+struct Scan {
+    base: u32,
+    show_at: u64,
+}
+
+/// The raster and the pair: the flagship's line of 640 words, 4096
+/// bytes apart, and four visible rows of six. The raster has no
+/// horizontal blanking, since the pair reads its line at every column
+/// the raster names, and a column past 640 is past the line (#1194).
+type ScanRaster = Raster<640, 0, 0, 0, 4, 1, 1, 0, 10>;
+type ScanPair = LinePair<640, 10, 4, 6, 4096, DefaultClock>;
+
+/// What a scanout asked for and when its words came: the address, the
+/// cycle the board took the request, and the cycle its last word
+/// arrived.
+#[derive(Default)]
+struct ScanLog {
+    lines: Vec<(u32, u64, Option<u64>)>,
 }
 
 fn run_all(
@@ -307,7 +338,32 @@ fn run_all(
         inject,
         phy,
         card,
+        scan,
     } = net;
+    // The scanout's two channels to the board, each tapped here so the
+    // run sees what was asked for and what came back.
+    let (scan_req_tx, scan_req) = chan::<U<32>, DefaultClock>();
+    let (scan_words, scan_words_rx) = chan::<U<32>, DefaultClock>();
+    let (pair_req, pair_req_rx) = chan::<U<32>, DefaultClock>();
+    let (pair_inp_tx, pair_inp) = chan::<U<32>, DefaultClock>();
+    let (col_o, col) = signal::<U<10>, DefaultClock>();
+    let (vis_o, vis) = signal::<Bit, DefaultClock>();
+    let (line_o, line) = signal::<Bit, DefaultClock>();
+    let (row_o, row) = signal::<U<12>, DefaultClock>();
+    let (frame_o, frame) = signal::<Bit, DefaultClock>();
+    let (base_o, base) = signal::<U<32>, DefaultClock>();
+    let (clear_o, clear) = signal::<Bit, DefaultClock>();
+    let (show_o, show) = signal::<Bit, DefaultClock>();
+    let (pix_o, _pix) = signal::<U<32>, DefaultClock>();
+    let (starved_o, _starved) = signal::<Bit, DefaultClock>();
+    let mut raster = ScanRaster::default();
+    let mut pair = ScanPair::default();
+    base_o.set(U::<32>::from(0u32));
+    clear_o.set(Bit::Zero);
+    show_o.set(Bit::Zero);
+    let mut scan_log = ScanLog::default();
+    let mut scan_got = 0usize;
+    let mut scan_words_in = 0u64;
     let mut board = TestBoard {
         cpu: Hart::with(text),
         rom: Rom::with(text),
@@ -413,7 +469,7 @@ fn run_all(
     let mut card = card.unwrap_or_default();
     sd_cmd_in_o.set(Bit::One);
     sd_dat_in_o.set(U::<4>::from(0xfu8));
-    let mut sim = Running::new(board.run(
+    let board = board.run(
         BoardIn {
             rst,
             irq,
@@ -433,7 +489,7 @@ fn run_all(
             bscan_update: signal::<Bit, Tck>().1,
             bscan_tdi: signal::<Bit, Tck>().1,
             bscan_reset: signal::<Bit, Tck>().1,
-            scan_req: chan::<U<32>, DefaultClock>().1,
+            scan_req,
             jtag: AxiHostPins {
                 awid: signal::<U<1>, DefaultClock>().1,
                 awaddr,
@@ -511,9 +567,19 @@ fn run_all(
             sd_dat_out: sd_dat_out_o,
             sd_dat_oe: sd_dat_oe_o,
             bscan_tdo: signal::<Bit, Tck>().0,
-            // No scanout runs here: nothing asks for a line.
-            scan_words: chan::<U<32>, DefaultClock>().0,
+            // A scanout runs only when the run asks for one.
+            scan_words,
         },
+    );
+    let mut sim = Running::new(join2(
+        board,
+        join2(
+            raster.run((), (col_o, vis_o, line_o, row_o, frame_o)),
+            pair.run(
+                (pair_inp, col, vis, line, row, frame, base, clear, show),
+                (pix_o, pair_req, starved_o),
+            ),
+        ),
     ));
     rst_o.set(Bit::One);
     sim.cycle();
@@ -597,7 +663,29 @@ fn run_all(
             typed_was = term.typed();
             typed_at = cycle;
         }
-        if halt.get().to_bool() {
+        if let Some(s) = &scan {
+            if cycle == s.show_at {
+                base_o.set(U::<32>::from(s.base));
+                show_o.set(Bit::One);
+            }
+            // The pair's requests to the board, and the board's words
+            // to the pair, a cycle each way through the taps.
+            if pair_req_rx.peek().is_some() && scan_req_tx.ready().to_bool() {
+                let at = pair_req_rx.recv_if(true).unwrap();
+                scan_req_tx.send(at);
+                scan_log.lines.push((at.raw() as u32, cycle, None));
+            }
+            if scan_words_rx.peek().is_some() && pair_inp_tx.ready().to_bool() {
+                pair_inp_tx.send(scan_words_rx.recv_if(true).unwrap());
+                scan_words_in += 1;
+                if scan_words_in.is_multiple_of(640) {
+                    if let Some(l) = scan_log.lines.get_mut(scan_got) {
+                        l.2 = Some(cycle);
+                    }
+                    scan_got += 1;
+                }
+            }
+        } else if halt.get().to_bool() {
             halted_at = Some(cycle);
             break;
         }
@@ -624,7 +712,50 @@ fn run_all(
         phy_frames: phy.frames.clone(),
         phy_page: phy.regs[31],
         card,
+        scan: scan_log,
     }
+}
+
+/// The scanout after a reset (issue 1178). The flagship's scanout
+/// comes out of every reset with no base, and a program gives it one
+/// some time later, as `scanprobe` and `scanat` do. Once it has one, its
+/// lines must come back from that base, whatever it did before.
+#[test]
+fn the_scanout_shows_a_base_given_after_the_reset() {
+    let frame = 6 * 640;
+    let net = Net {
+        scan: Some(Scan {
+            base: 0x4100_1000,
+            show_at: 3 * frame,
+        }),
+        ..Net::default()
+    };
+    let ran = run_all(
+        hello_program::TEXT,
+        hello_program::DATA,
+        b"",
+        &[],
+        6 * frame,
+        net,
+        &[],
+    );
+    let lines = &ran.scan.lines;
+    // Nothing is asked for before the base: not the boot memory at
+    // zero, whose one-beat answer to a line's burst hung the fetch.
+    assert!(
+        lines.iter().all(|(at, _, _)| *at >= 0x4100_1000),
+        "asked for {:x?}",
+        lines.iter().take(8).collect::<Vec<_>>()
+    );
+    let shown = lines
+        .iter()
+        .filter(|(at, _, got)| *at >= 0x4100_1000 && got.is_some())
+        .count();
+    assert!(
+        shown >= 3,
+        "{shown} lines of the base came back; asked for {:x?}",
+        lines.iter().take(8).collect::<Vec<_>>()
+    );
 }
 
 /// The configuration flash on the board (issue 312): the core reads the
