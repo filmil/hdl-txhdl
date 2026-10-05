@@ -405,6 +405,38 @@ http_archive(
     ],
 )
 
+# Khronos's headers for OpenGL ES 1.1, which the GL library's C entry
+# points are declared by (issue 1224): GLES/gl.h and GLES/glplatform.h
+# from OpenGL-Registry, and KHR/khrplatform.h from EGL-Registry, each at
+# a pinned commit and checked by its sha256. They are MIT, and they are
+# the interface every GL ES program already includes, so they are
+# fetched as Khronos publishes them rather than copied into the tree.
+http_file = use_repo_rule(
+    "@bazel_tools//tools/build_defs/repo:http.bzl",
+    "http_file",
+)
+
+http_file(
+    name = "khronos_gles_gl_h",
+    downloaded_file_path = "gl.h",
+    sha256 = "6dea5ae69d619c8181a2c5aa5f55f69fd19427fd6efb78a9a5c7453491bc0598",
+    urls = ["https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/1cdd228e34966dd6b95bd203e9f84faba0f371a1/api/GLES/gl.h"],
+)
+
+http_file(
+    name = "khronos_gles_glplatform_h",
+    downloaded_file_path = "glplatform.h",
+    sha256 = "c6bcc0caaf56609c494efb327e8e9e2845630f6b58641ddde71eacd2c2790d21",
+    urls = ["https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/1cdd228e34966dd6b95bd203e9f84faba0f371a1/api/GLES/glplatform.h"],
+)
+
+http_file(
+    name = "khronos_khrplatform_h",
+    downloaded_file_path = "khrplatform.h",
+    sha256 = "7b1e01aaa7ad8f6fc34b5c7bdf79ebf5189bb09e2c4d2e79fc5d350623d11e83",
+    urls = ["https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/db3425b8246136faccb5e2782b5694960bd6edf1/api/KHR/khrplatform.h"],
+)
+
 # Zephyr's Mbed TLS module, at the revision v4.1.0's west.yml pins, for
 # the SHA-256 the entropy driver conditions with (issue 780). Zephyr's
 # own tree holds the module's CMake and Kconfig; this is the library.
