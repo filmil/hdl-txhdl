@@ -267,6 +267,13 @@ Each step is a pull request, checked before the next.
 5. **The icosahedron.**
    The program of section 8, checked in the model against issue 986's, and then on the board.
    The cycles a frame takes on Vreteno are measured here, and compared with issue 986's hand-written list.
+   Done in `cpu/vreteno/rust/ico_gl.rs`, which writes the frames `ico_list.rs` writes by hand through `glFrustumx`, `glRotatex`, `glLightxv`, `glMaterialxv` and `glDrawElements`, and `ico_gl_hdmi`, the board's program built with it.
+   It departs from section 8 in two places.
+   Issue 986's program lights a face as the square root of `0.4 + 0.6 l`, where `l` is how directly the face looks at the eye, and GL's sum has no square root.
+   One directional light at the eye has its half vector at the eye too, so the specular term is `l` raised to the shininess, and the scene's ambient at `sqrt(0.4)` of the colour, no diffuse, and the rest of the colour as specular at a shininess of 0.8715 stay within 0.004 of the square root for every `l`.
+   And the backdrop's rectangle at the head of each list is issue 986's own rather than `glClear`, since a clear is the whole screen and the second frame shares the framebuffer with the first.
+   `//cpu/vreteno/rust:ico_gl_test` draws both through Razboj's model at 64 angles in each frame: the same faces, every face's colour within 2 of the other's in each channel, the worst being 2, and every pixel where the two differ beyond that on an edge of both.
+   The cycles on the board wait for a board session.
 
 Points, lines, depth, blending and the scissor are added as issues 990, 992, 993 and 994 land, each with the entry points section 2 holds for it.
 
