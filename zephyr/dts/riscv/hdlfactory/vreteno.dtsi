@@ -173,6 +173,18 @@
 			eth_bufs: memory@41000000 {
 				reg = <0x41000000 0x2000>;
 			};
+
+			// Razboj's framebuffer, 1024 rows of 4096 bytes, and its
+			// display list, four megabytes, which EGL draws and
+			// shows (issue 996): the scanout and the rasteriser read
+			// and write them behind the kernel's back.
+			razboj_fb: memory@42000000 {
+				reg = <0x42000000 DT_SIZE_M(4)>;
+			};
+
+			razboj_dl: memory@42800000 {
+				reg = <0x42800000 DT_SIZE_M(4)>;
+			};
 		};
 	};
 };

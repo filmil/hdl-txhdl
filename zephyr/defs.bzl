@@ -47,9 +47,23 @@ def _zephyr_image_impl(ctx):
     # glob happened to put first.
     module = ctx.attr.module.label.package
 
+    # What an application links that Bazel built: static libraries, C
+    # sources and headers, each handed to CMake as a list of its own
+    # (issue 996). A header is included as `<its directory>/<its name>`,
+    # so the directory above its own is the one put on the path.
+    extra = ctx.files.extra
+    libs = [f.path for f in extra if f.extension == "a"]
+    srcs = [f.path for f in extra if f.extension == "c"]
+    incs = []
+    for f in extra:
+        if f.extension == "h":
+            d = f.dirname.rsplit("/", 1)[0]
+            if d not in incs:
+                incs.append(d)
+
     inputs = depset(
         ctx.files.module + ctx.files._cmake + ctx.files._ninja +
-        ctx.files._dtc + ctx.files._python + ctx.files._py_deps,
+        ctx.files._dtc + ctx.files._python + ctx.files._py_deps + extra,
         transitive = [
             depset(ctx.files._zephyr),
             depset(ctx.files._mbedtls),
@@ -93,6 +107,9 @@ def _zephyr_image_impl(ctx):
             "EXTRA_CONF": (
                 ctx.file.conf.path if ctx.file.conf else ""
             ),
+            "EXTRA_LIBS": ";".join(libs),
+            "EXTRA_SOURCES": ";".join(srcs),
+            "EXTRA_INCLUDES": ";".join(incs),
             "OUT_ELF": elf.path,
             "OUT_BIN": binary.path,
             "OUT_CONFIG": config.path,
@@ -168,6 +185,21 @@ if [ -n "$EXTRA_CONF" ]; then
   conf_arg="-DEXTRA_CONF_FILE=$root/$EXTRA_CONF"
 fi
 
+# What the application links that Bazel built, made absolute, as the
+# lists TXHDL_LIBS, TXHDL_SOURCES and TXHDL_INCLUDES its CMakeLists.txt
+# reads (issue 996).
+absolute() {
+  local out="" p
+  IFS=';' read -r -a parts <<< "$1"
+  for p in "${parts[@]}"; do
+    [ -n "$p" ] && out="$out${out:+;}$root/$p"
+  done
+  echo "$out"
+}
+txhdl_libs=$(absolute "$EXTRA_LIBS")
+txhdl_sources=$(absolute "$EXTRA_SOURCES")
+txhdl_includes=$(absolute "$EXTRA_INCLUDES")
+
 # An application of this repository is inside the module, one of
 # Zephyr's own samples inside Zephyr.
 src="$zbase/$SAMPLE"
@@ -214,6 +246,9 @@ remap="$remap -ffile-prefix-map=$breal=./$MBEDTLS_ROOT"
   -DSOC_ROOT="$root/$MODULE_DIR" \
   -DDTS_ROOT="$root/$MODULE_DIR" \
   -DZEPHYR_MODULES="$root/$MODULE_DIR;$mods/mbedtls" \
+  -DTXHDL_LIBS="$txhdl_libs" \
+  -DTXHDL_SOURCES="$txhdl_sources" \
+  -DTXHDL_INCLUDES="$txhdl_includes" \
   > "$build.log" 2>&1 || { cat "$build.log"; exit 1; }
 
 "$root/$CMAKE" --build "$build" >> "$build.log" 2>&1 || {
@@ -256,6 +291,14 @@ zephyr_image = rule(
         "app": attr.string(
             doc = "The application, as a path inside the module, for " +
                   "one this repository writes (issue 143).",
+        ),
+        "extra": attr.label_list(
+            doc = "What the application links that Bazel built: " +
+                  "static libraries (`.a`), C sources (`.c`) and " +
+                  "headers (`.h`), handed to its CMakeLists.txt as " +
+                  "TXHDL_LIBS, TXHDL_SOURCES and TXHDL_INCLUDES " +
+                  "(issue 996).",
+            allow_files = [".a", ".c", ".h"],
         ),
         "_cmake": attr.label(
             default = "@cmake_host//:cmake",

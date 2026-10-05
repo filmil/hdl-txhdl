@@ -163,6 +163,25 @@ zephyr_image(
     module = ":module",
 )
 
+# EGL and GL ES 1.1 on Razboj (issue 996): a turning, lit fan of
+# triangles, double buffered and swapped on the vertical blanking, with
+# the GL library, EGL and the board's machine as one static library
+# built for the core, and the stubs written from Khronos's headers.
+# Sent with the serial loader as fastboot is; what the build proves off
+# the board is that it compiles and links against this port.
+zephyr_image(
+    name = "gles",
+    app = "gles/app",
+    board = "ax7a200b",
+    extra = [
+        "//gles:capi_stubs",
+        "//gles:egl_stubs",
+        "//gles:zephyr_lib",
+        "//third_party/khronos:headers",
+    ],
+    module = ":module",
+)
+
 # The same with the network stack logging at debug, for the board when
 # a frame goes missing (#786).
 zephyr_image(
