@@ -3,13 +3,14 @@
 //!
 //! The program paints a 640 by 480 frame into the DDR3, colour bars
 //! over a grey ramp with the TxHDL logo in the bottom right corner, a
-//! logo pixel to a screen pixel, points the scanout at it and
-//! shows it. Then it reads the scanout's underflow bit twice: once
-//! after two seconds on an otherwise idle bus, and once after ten
-//! seconds in which the core copies a quarter of a megabyte back and
-//! forth in the DDR3 without a pause and the Ethernet port sends a
-//! full frame from the DDR3 whenever it is ready for one. The bit is
-//! sticky, so a single line that came late in those ten seconds shows.
+//! logo pixel to a screen pixel on a black square of its own, points
+//! the scanout at it and shows it. Then it reads the scanout's
+//! underflow bit twice: once after two seconds on an otherwise idle
+//! bus, and once after ten seconds in which the core copies a quarter
+//! of a megabyte back and forth in the DDR3 without a pause and the
+//! Ethernet port sends a full frame from the DDR3 whenever it is
+//! ready for one. The bit is sticky, so a single line that came late
+//! in those ten seconds shows.
 //!
 //! What it prints, a line each: `scan idle` and the bit, `scan load`
 //! and the bit with the copies and frames done, and at the end
@@ -48,10 +49,19 @@ const TXBUF: u32 = 0x4100_1000;
 /// stack takes, so the machine at the other end counts it and drops it.
 const FRAME_LEN: u32 = 1514;
 
+/// The logo's place: eight in from the bottom right corner.
+const LOGO_LEFT: u32 = Scan::WIDTH - txhdl_logo::W as u32 - 8;
+const LOGO_TOP: u32 = Scan::HEIGHT - txhdl_logo::H as u32 - 8;
+
 /// The picture at a pixel, before the logo: eight bars over the top
-/// two thirds, a grey ramp under them.
+/// two thirds, a grey ramp under them, and a black square in the
+/// bottom right corner for the logo. Its light grey wordmark was faint
+/// over the ramp's light end (issue 1245); on black it reads, as it
+/// does on the icosahedron's.
 fn picture(x: u32, y: u32) -> u32 {
-    if y < 320 {
+    if x + 8 >= LOGO_LEFT && y + 8 >= LOGO_TOP {
+        0
+    } else if y < 320 {
         let bars = [
             0xffffff, 0xffff00, 0x00ffff, 0x00ff00, 0xff00ff, 0xff0000,
             0x0000ff, 0x000000,
@@ -86,16 +96,15 @@ fn paint() {
         }
         y += 1;
     }
-    // The logo, a pixel of its own to a pixel of the screen, eight in
-    // from the bottom right corner (issue 1213).
-    let left = Scan::WIDTH - txhdl_logo::W as u32 - 8;
-    let top = Scan::HEIGHT - txhdl_logo::H as u32 - 8;
+    // The logo, a pixel of its own to a pixel of the screen, on its
+    // square (issue 1213).
     let mut r = 0usize;
     while r < txhdl_logo::H {
         let mut c = 0usize;
         while c < txhdl_logo::W {
             if let Some(px) = txhdl_logo::colour(c, r) {
-                let at = ((top + r as u32) * ROW + left + c as u32) as usize;
+                let at = ((LOGO_TOP + r as u32) * ROW + LOGO_LEFT + c as u32)
+                    as usize;
                 unsafe { write_volatile(base.add(at), px) };
             }
             c += 1;

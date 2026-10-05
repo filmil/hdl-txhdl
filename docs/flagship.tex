@@ -603,7 +603,7 @@ icosahedron.},label={lst:f-ico}]{cpu/vreteno/rust/ico_hdmi.rs}
 \lstinputlisting[caption={\code{cpu/vreteno/rust/ico\_list.rs}: the
 icosahedron as Razboj's display lists.},label={lst:f-ico-list}]{cpu/vreteno/rust/ico_list.rs}
 
-The logo is data, in a crate of constants that builds for the core as
+The logo is data, in a crate of tables that builds for the core as
 it builds for this machine (Listing~\ref{lst:f-logo}). It is 144
 pixels square, drawn a logo pixel to a screen pixel in the corner of
 the 640 by 480 scanout, so the wordmark under the hat can be read
@@ -617,10 +617,15 @@ and committed, as the layout numbers are committed, because a Bazel
 action cannot reach the drive the logo is kept on. The dark background
 of the source becomes index 0, which is not a colour and which a
 program skips, so the logo sits on whatever is drawn under it.
+The tables are statics rather than constants: the crate is built
+unoptimised, and there a constant array read at an index known only
+at run time is copied whole for the read, so drawing the logo copied
+its ten kilobytes once a pixel, some 215~MB, and the paint took 31
+seconds rather than two (issue~\#1245).
 
 \lstinputlisting[caption={\code{lib/logo/logo.rs}: the head of the
 logo, as \code{logo2rs} writes it.},label={lst:f-logo},%
-linerange={1-45}]{lib/logo/logo.rs}
+linerange={1-51}]{lib/logo/logo.rs}
 
 \lstinputlisting[caption={\code{tools/logo2rs/main.go}: the PNG to the
 crate.},label={lst:f-logo2rs},tabsize=2]{tools/logo2rs/main.go}
