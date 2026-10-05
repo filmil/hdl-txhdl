@@ -29,7 +29,12 @@ The frame's base address is a register taken at the vertical sync, so
 a host that draws into one buffer and shows another flips them with
 one write. A column the beam shows before its word has arrived sets
 \code{starved}, a sticky bit that \code{clear} resets, so a run can
-show that no line starved.
+show that no line starved. The pair keeps the addresses of the lines
+it has asked for and not had whole, at most four. A line that gets no
+word for two line times in a row sets \code{stuck}, sticky too, and
+puts its address on \code{stuck\_at}, so a fetch that hangs says so
+rather than leaving a black screen and a clear \code{starved}
+(issue 1197).
 
 \subsection*{Parameters}
 
@@ -79,6 +84,14 @@ cycle after \code{col} names it.
 \item Once the frame's first line has been asked for, a visible column
 at or past the words that line had when it was swapped in sets
 \code{starved}, until \code{clear}.
+\item A line asked for goes after the lines still owed, and no line is
+asked for while four are. A word counts against the oldest owed, and
+that line's last word takes it off.
+\item Two line starts in a row with lines owed and no word come set
+\code{stuck}, and \code{stuck\_at} is the oldest owed line's address
+then; while \code{stuck} is set it does not change. \code{clear}
+clears \code{stuck} and leaves \code{stuck\_at}. The pair goes on
+asking.
 \end{itemize}
 
 \subsection*{Verification}
