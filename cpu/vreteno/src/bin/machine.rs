@@ -12,6 +12,10 @@
 //!     [--steps 100000000] [--as-loaded BYTES]
 //! ```
 //!
+//! `--eth-peer` puts a station on the Ethernet port's cable that answers
+//! ARP and ping at 10.0.0.2 (issue 1203), and says on standard error how
+//! many frames went each way when the machine stops.
+//!
 //! `--as-loaded` starts the serial port as the serial loader leaves it
 //! on the board (issue 1136): its receive interrupt enabled, as the
 //! hardware resets it, and `BYTES` waiting to be read, so the line is
@@ -47,6 +51,7 @@ fn main() {
     let mut dtb_at = DTB_AT;
     let mut steps = 100_000_000u64;
     let mut loaded = None;
+    let mut peer = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val =
@@ -58,6 +63,7 @@ fn main() {
             "--dtb-at" => dtb_at = number(&val()) as u32,
             "--steps" => steps = number(&val()),
             "--as-loaded" => loaded = Some(val()),
+            "--eth-peer" => peer = true,
             _ => panic!("unknown argument {a}"),
         }
     }
@@ -71,6 +77,7 @@ fn main() {
         m.load(dtb_at, &blob);
     }
     m.boot(at, if dtb.is_some() { dtb_at } else { 0 });
+    m.board.0.borrow_mut().eth.peer = peer;
     if let Some(bytes) = &loaded {
         m.board.0.borrow_mut().uart.ie = 2;
         m.type_bytes(bytes.as_bytes());
@@ -111,4 +118,12 @@ fn main() {
         None => "stopped at the step limit".to_string(),
     };
     eprintln!("\n{how} after {ran} instructions, pc {:#010x}", m.model.pc);
+    if peer {
+        let d = m.board.0.borrow();
+        eprintln!(
+            "eth: {} frames sent, {} received",
+            d.eth.sent.len(),
+            d.eth.received
+        );
+    }
 }

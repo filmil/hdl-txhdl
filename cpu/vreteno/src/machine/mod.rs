@@ -10,7 +10,9 @@
 //! * the DDR3, a gigabyte at `0x4000_0000`, as plain memory;
 //! * the CLINT, with the count advancing one an instruction;
 //! * the PLIC with its two targets, machine and supervisor;
-//! * the serial port as SiFive's `sifive,uart0`.
+//! * the serial port as SiFive's `sifive,uart0`;
+//! * the Ethernet port's slots, with a peer on the cable that answers
+//!   ARP and ping (issue 1203).
 //!
 //! A program and a device tree blob are loaded into the DDR3, and the
 //! hart starts as a bootloader would leave it: `a0` the hart's number,
@@ -22,6 +24,7 @@
 //! only through its `Bus`, so the ISA's own growth in `model.rs` (A,
 //! then the supervisor and user modes) and this machine's do not touch.
 pub mod clint;
+pub mod eth;
 pub mod memory;
 pub mod plic;
 pub mod uart;
@@ -37,6 +40,8 @@ use txhdl::map::AddrMap;
 pub const SERIAL_SOURCE: usize = 1;
 /// The PLIC's sources on the board.
 pub const PLIC_SOURCES: usize = 3;
+/// The PLIC source the Ethernet port asks on: the board's third.
+pub const ETH_SOURCE: usize = 3;
 
 /// A router range: its base, and its length from the mask.
 fn range<const N: usize, M: AddrMap<N>>(what: &str) -> (u32, u32) {
@@ -55,6 +60,9 @@ pub struct Map {
     pub clint: (u32, u32),
     pub plic: (u32, u32),
     pub uart: (u32, u32),
+    pub eth: (u32, u32),
+    /// Where the Ethernet port's slots are in the DDR3.
+    pub eth_bufs: u32,
 }
 
 impl Map {
@@ -65,6 +73,8 @@ impl Map {
             clint: range::<8, BoardMap>("timer"),
             plic: range::<8, BoardMap>("interrupt controller"),
             uart: range::<10, SlotMap>("serial"),
+            eth: range::<10, SlotMap>("Ethernet port's registers"),
+            eth_bufs: crate::isa::ETH_BUF_BASE,
         }
     }
 }
@@ -82,6 +92,7 @@ pub struct Devices {
     pub clint: clint::Clint,
     pub plic: plic::Plic,
     pub uart: uart::Uart,
+    pub eth: eth::Eth,
     /// The lines the PLIC drives, as last worked out, and whether they
     /// have to be worked out again: they change only when a program
     /// reaches the PLIC or the serial port, or when a byte arrives, so
@@ -114,6 +125,9 @@ impl Bus for Board {
             d.stale = true;
             return Some(d.uart.load(off));
         }
+        if let Some(off) = inside(map.eth, addr) {
+            return Some(d.eth.load(off));
+        }
         None
     }
 
@@ -141,6 +155,17 @@ impl Bus for Board {
             d.uart.store(off, v);
             return true;
         }
+        if let Some(off) = inside(map.eth, addr) {
+            d.stale = true;
+            // A transmit is the fetch engine reading the slot, done at
+            // once.
+            if let eth::Effect::Send { slot, len } = d.eth.store(off, v) {
+                let at = map.eth_bufs + eth::TX_REGION + slot * eth::SLOT;
+                let frame = d.ddr.get(at, len);
+                d.eth.sent(frame);
+            }
+            return true;
+        }
         false
     }
 }
@@ -161,6 +186,7 @@ impl Machine {
             clint: clint::Clint::default(),
             plic: plic::Plic::new(PLIC_SOURCES),
             uart: uart::Uart::default(),
+            eth: eth::Eth::default(),
             meip: false,
             seip: false,
             stale: true,
@@ -197,9 +223,20 @@ impl Machine {
     pub fn step(&mut self) {
         {
             let mut d = self.board.0.borrow_mut();
+            // A frame on the wire goes into a slot when the receive
+            // side has room, as the store engine writes it.
+            if !d.eth.inbox.is_empty() {
+                if let Some((slot, f)) = d.eth.arrival() {
+                    let at = d.map.eth_bufs + slot * eth::SLOT;
+                    d.ddr.put(at, &f);
+                    d.stale = true;
+                }
+            }
             if d.stale || d.uart.rx.len() != d.rx_seen {
                 let rx = d.uart.irq();
                 d.plic.line(SERIAL_SOURCE, rx);
+                let e = d.eth.irq();
+                d.plic.line(ETH_SOURCE, e);
                 // The second target, the supervisor's, is `mip.SEIP`'s
                 // line (issue 1094).
                 (d.meip, d.seip) = (d.plic.irq(0), d.plic.irq(1));
@@ -254,6 +291,22 @@ impl Default for Machine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sources the model drives are the board's: the serial port's
+    /// and the Ethernet port's, each where `board::PLIC_SOURCES` puts
+    /// it, counting from one.
+    #[test]
+    fn the_models_plic_sources_are_the_boards() {
+        let at = |what: &str| {
+            1 + crate::board::PLIC_SOURCES
+                .iter()
+                .position(|s| *s == what)
+                .unwrap()
+        };
+        assert_eq!(SERIAL_SOURCE, at("serial"));
+        assert_eq!(ETH_SOURCE, at("ethernet"));
+        assert_eq!(PLIC_SOURCES, crate::board::PLIC_SOURCES.len());
+    }
 
     /// A small RV32I program in the DDR3: `lui t0, 0x3` puts the serial
     /// port's base in a register, three `sw`s write "Hi\n" to `txdata`,
