@@ -271,7 +271,7 @@ pub fn run_lists_at<
 /// framebuffer, must leave exactly what the model leaves.
 #[cfg(test)]
 mod tests {
-    use super::{run, run_lists};
+    use super::{run, run_lists, run_lists_at};
     use crate::dl::image;
     use crate::model;
     use crate::op::{assemble, Kind, Op};
@@ -712,5 +712,47 @@ mod tests {
         }
         assert!(triangles > 8, "too few triangles drawn: {triangles}");
         assert!(drawn > 20, "too few entries drawn: {drawn}");
+    }
+
+    /// Rows past the sixteenth on the board's rows of 1024 pixels
+    /// (issue 1178). A pixel's byte offset there is past sixteen bits
+    /// from row 16 on, so a rasteriser that forms the offset at sixteen
+    /// bits and widens it after wraps every later row into the first
+    /// sixteen. The harness's own link is sixteen bits and cannot reach
+    /// that far, so this run is on twenty.
+    #[test]
+    fn rows_past_sixteen_land_where_the_model_puts_them() {
+        const LOGW: usize = 10;
+        const H: usize = 40;
+        let ops = [
+            Op::Rect {
+                colour: 0x12_3456,
+                x: 5,
+                y: 14,
+                w: 6,
+                h: 6,
+            },
+            Op::Tri {
+                colour: 0x65_4321,
+                a: (900, 24),
+                b: (1000, 38),
+                c: (800, 38),
+            },
+        ];
+        let insns = assemble(&ops, 1 << LOGW, H);
+        let want = model::render(&insns, 1 << LOGW, H);
+        let runs = run_lists_at::<20, LOGW, H, 65536, 0x3_0000, 0x3_8000>(
+            &[insns],
+            false,
+            false,
+        );
+        let got = &runs[0].fb;
+        for y in 0..H {
+            for x in 0..1usize << LOGW {
+                let i = (y << LOGW) + x;
+                assert_eq!(got[i], want[i], "pixel {x},{y}");
+            }
+        }
+        assert!(want.iter().filter(|&&p| p != 0).count() > 1000);
     }
 }
