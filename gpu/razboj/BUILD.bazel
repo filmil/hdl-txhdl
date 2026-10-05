@@ -30,13 +30,19 @@ rust_library(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
-# Razboj's display list for the CPU, with no standard library so that a
-# Vreteno program can use it: the box clip, which the binning into tiles
-# shares (issue 1157).
+# Razboj's display list in tiles, for the CPU: the tile table and the
+# binning (issue 1157). No standard library, so that a Vreteno program
+# can use it as the tests do.
 rust_library(
     name = "tile",
     srcs = ["tile/lib.rs"],
     crate_name = "razboj_tile",
+    edition = "2021",
+)
+
+rust_test(
+    name = "tile_test",
+    crate = ":tile",
     edition = "2021",
 )
 
