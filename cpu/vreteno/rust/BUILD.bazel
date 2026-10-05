@@ -350,6 +350,32 @@ vreteno_flat(
     program = ":sdprobe_ram",
 )
 
+# A load from a hole in the board's map, reported by the HAL's
+# `trap::say_faults` (#1214). Built for the boot memory, for
+# `board_test`.
+rust_binary(
+    name = "faultsay",
+    srcs = ["faultsay.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_image(
+    name = "faultsay_image",
+    platform = ":vreteno",
+    program = ":faultsay",
+)
+
+rust_library(
+    name = "faultsay_program",
+    srcs = [":faultsay_image"],
+    crate_name = "faultsay_program",
+    edition = "2021",
+)
+
 # The configuration flash read by the core (issue 312): its identity
 # over the master, write enable refused, and the bitstream's sync word
 # found through the window. Nothing is written to the chip. Built for

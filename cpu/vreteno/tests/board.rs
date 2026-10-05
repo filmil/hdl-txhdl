@@ -982,6 +982,31 @@ fn the_configuration_flash_answers_on_the_board() {
     assert!(ran.halted_at.is_some(), "and halted");
 }
 
+/// A load from a hole in the board's map, refused by the router, as
+/// the HAL's fault report says it (#1214): a load access fault, cause
+/// 5, at an instruction in the boot memory, with the address in
+/// `mtval` and in `a0`, where the program put it.
+#[test]
+fn a_refused_load_says_where_it_was_and_what_it_read() {
+    let ran = run(faultsay_program::TEXT, faultsay_program::DATA, b"", 20000);
+    let line = ran
+        .said
+        .strip_prefix("fault say\n")
+        .unwrap_or_else(|| panic!("the greeting first: {:?}", ran.said));
+    let words: Vec<&str> = line.trim_end().split(' ').collect();
+    assert_eq!(words.len(), 10, "one line of five fields: {line:?}");
+    let field = |name: &str| {
+        let at = words.iter().position(|w| *w == name).unwrap();
+        u32::from_str_radix(words[at + 1], 16).unwrap()
+    };
+    assert_eq!(field("trap"), 5, "a load access fault");
+    assert!(field("at") < 0x1000, "at an instruction in the boot memory");
+    assert_eq!(field("mtval"), 0x3000_0000, "the address refused");
+    assert_eq!(field("a0"), 0x3000_0000, "a0 as the load had it");
+    assert!(ran.halted_at.is_some(), "and halted, not resumed");
+    assert!(!ran.said.contains("not refused"));
+}
+
 /// The registers of the model PHY on the board's management line: the
 /// JL2121's, page 0, as `phyregs` read them from the board on October
 /// 3, 2026, the second of two runs (#864). The first differed only in
