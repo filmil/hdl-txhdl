@@ -2,7 +2,10 @@
 # GL ES 1.1 Common-Lite for Razboj: the fixed-point pipeline from a
 # vertex to Razboj's display list, with no standard library so that a
 # Vreteno program links it (docs/gles.md, issue 1159, #995).
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -41,6 +44,18 @@ rust_test(
     ],
 )
 
+# Points and lines through Razboj's model, against what GL says of
+# them (#994).
+rust_test(
+    name = "prims_test",
+    srcs = ["tests/prims.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+    ],
+)
+
 # Lighting against floating point: the sum at a vertex, and lit
 # triangles through the pipeline (issue 1164).
 rust_test(
@@ -51,5 +66,134 @@ rust_test(
         ":gles",
         "//gpu/razboj",
         "//gpu/razboj:tile",
+    ],
+)
+
+# The C entry points (issue 1224): extern "C" functions with the names
+# and types Khronos's GLES/gl.h declares, over the library, so that a C
+# program includes <GLES/gl.h> and links :gles_c. The library alone,
+# for a Rust program on Vreteno; the same as a static library with the
+# standard library, for a C program on the host.
+rust_library(
+    name = "capi",
+    srcs = ["capi/lib.rs"],
+    crate_name = "gles_capi",
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj:tile",
+    ],
+)
+
+# EGL (issue 996): Khronos's EGL/egl.h over the C entry points, a window
+# double buffered in Razboj's framebuffer and a swap on the vertical
+# blanking, with the machine behind a trait.
+rust_library(
+    name = "egl",
+    srcs = ["egl/lib.rs"],
+    crate_name = "gles_egl",
+    edition = "2021",
+    deps = [
+        ":capi",
+        "//gpu/razboj:tile",
+    ],
+)
+
+# GL's and EGL's entry points as one static library with the standard
+# library, for a C program on the host: one, since two would each carry
+# the Rust crates beneath them. EGL's crate is its root, and GL's entry
+# points come with it from :capi.
+rust_static_library(
+    name = "c_static",
+    srcs = ["egl/lib.rs"],
+    crate_features = ["std"],
+    crate_name = "gles_egl",
+    edition = "2021",
+    deps = [
+        ":capi",
+        "//gpu/razboj:tile",
+    ],
+)
+
+# The entry points gl.h and egl.h declare and the Rust does not define,
+# as C that sets GL_INVALID_OPERATION or EGL_BAD_MATCH, written from the
+# headers themselves.
+genrule(
+    name = "capi_stubs",
+    srcs = [
+        "//third_party/khronos:GLES/gl.h",
+        "capi/lib.rs",
+    ],
+    outs = ["capi/stubs.c"],
+    cmd = "$(location capi/stubs.sh) $(location //third_party/khronos:GLES/gl.h) $(location capi/lib.rs) gl > $@",
+    tools = ["capi/stubs.sh"],
+)
+
+genrule(
+    name = "egl_stubs",
+    srcs = [
+        "//third_party/khronos:EGL/egl.h",
+        "egl/lib.rs",
+    ],
+    outs = ["egl/stubs.c"],
+    cmd = "$(location capi/stubs.sh) $(location //third_party/khronos:EGL/egl.h) $(location egl/lib.rs) egl > $@",
+    tools = ["capi/stubs.sh"],
+)
+
+cc_library(
+    name = "gles_c",
+    srcs = [
+        "capi/stubs.c",
+        "egl/stubs.c",
+    ],
+    copts = ["-std=c11"],
+    deps = [
+        ":c_static",
+        "//third_party/khronos:egl",
+        "//third_party/khronos:gles1",
+    ],
+)
+
+# A scene through the C entry points, and the same through the Rust
+# API, which capi_test holds to each other word for word.
+cc_binary(
+    name = "capi_draw",
+    srcs = ["capi/draw.c"],
+    copts = ["-std=c11"],
+    deps = [":gles_c"],
+)
+
+rust_binary(
+    name = "capi_draw_ref",
+    srcs = ["capi/draw_ref.rs"],
+    edition = "2021",
+    deps = [":gles"],
+)
+
+sh_test(
+    name = "capi_test",
+    srcs = ["capi/capi_test.sh"],
+    args = [
+        "$(location :capi_draw)",
+        "$(location :capi_draw_ref)",
+    ],
+    data = [
+        ":capi_draw",
+        ":capi_draw_ref",
+    ],
+)
+
+# EGL in the model (issue 996): a program's calls through EGL's and GL's
+# entry points, swapping between the two buffers, with Razboj's model
+# drawing each frame.
+rust_test(
+    name = "egl_test",
+    srcs = ["tests/egl.rs"],
+    edition = "2021",
+    deps = [
+        ":capi",
+        ":egl",
+        ":gles",
+        "//gpu/razboj",
     ],
 )

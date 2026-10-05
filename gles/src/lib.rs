@@ -35,7 +35,7 @@ use emit::{VMAX, VMIN};
 use fixed::{div, div_round, Fx, ONE};
 use light::{Light, Material};
 use matrix::{Mat, IDENTITY};
-use razboj_tile::{bin, Binned, Bounds, Refused, TILE_WORDS, WORDS};
+use razboj_tile::{bin, clip, Binned, Bounds, Refused, TILE_WORDS, WORDS};
 
 /// The guard band's edges in sixteenths, a pixel inside Razboj's range,
 /// so that a vertex clipped onto the band and rounded stays in range.
@@ -64,11 +64,25 @@ pub fn colour_word(c: &[Fx; 4]) -> u32 {
     (byte(c[3]) << 24) | (byte(c[0]) << 16) | (byte(c[1]) << 8) | byte(c[2])
 }
 
+/// A vertex as a draw call reads it: its position in object
+/// coordinates with its w, and its own colour and normal, or `None` for
+/// the current ones.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Vertex {
+    pub position: [Fx; 4],
+    pub colour: Option<[Fx; 4]>,
+    pub normal: Option<[Fx; 3]>,
+}
+
 /// A GL context drawing into a frame of Razboj's instructions.
 pub struct Gl<'a> {
     frame: &'a mut [[u32; WORDS]],
     used: usize,
     screen: (u32, u32),
+    /// The window's first row in Razboj's framebuffer: zero, unless
+    /// EGL has put the window lower, on the half of a double buffer not
+    /// shown (issue 996). Nothing is drawn above it.
+    window_top: u32,
     mode: u32,
     mv: [Mat; gl::MAX_MODELVIEW_STACK_DEPTH],
     mv_top: usize,
@@ -81,6 +95,8 @@ pub struct Gl<'a> {
     cull: u32,
     front: u32,
     smooth: bool,
+    point_size: Fx,
+    line_width: Fx,
     colour: [Fx; 4],
     clear_colour: [Fx; 4],
     normal: [Fx; 3],
@@ -104,6 +120,7 @@ impl<'a> Gl<'a> {
             frame,
             used: 0,
             screen: (sw, sh),
+            window_top: 0,
             mode: gl::MODELVIEW,
             mv: [IDENTITY; gl::MAX_MODELVIEW_STACK_DEPTH],
             mv_top: 0,
@@ -116,6 +133,8 @@ impl<'a> Gl<'a> {
             cull: gl::BACK,
             front: gl::CCW,
             smooth: true,
+            point_size: ONE,
+            line_width: ONE,
             colour: [ONE; 4],
             clear_colour: [0; 4],
             normal: [0, 0, ONE],
@@ -323,6 +342,24 @@ impl<'a> Gl<'a> {
         }
     }
 
+    /// `glPointSizex`: a point's size in pixels, rounded to a whole one
+    /// and kept between one and [`gl::MAX_SIZE`] when it is drawn. Not
+    /// above nought is `GL_INVALID_VALUE`.
+    pub fn point_size(&mut self, size: Fx) {
+        if size <= 0 {
+            return self.fail(gl::INVALID_VALUE);
+        }
+        self.point_size = size;
+    }
+
+    /// `glLineWidthx`: a line's width in pixels, as a point's size is.
+    pub fn line_width(&mut self, width: Fx) {
+        if width <= 0 {
+            return self.fail(gl::INVALID_VALUE);
+        }
+        self.line_width = width;
+    }
+
     /// `glColor4x`: the colour a vertex without its own takes.
     pub fn color(&mut self, r: Fx, g: Fx, b: Fx, a: Fx) {
         self.colour = [r, g, b, a];
@@ -455,7 +492,16 @@ impl<'a> Gl<'a> {
             return self.fail(gl::INVALID_VALUE);
         }
         if mask & gl::COLOR_BUFFER_BIT != 0 {
-            let w = emit::clear(colour_word(&self.clear_colour));
+            let colour = colour_word(&self.clear_colour);
+            // Razboj's clear is of its own screen, the rows from zero; a
+            // window lower down is cleared as a rectangle of itself, so
+            // that the half of a double buffer being shown is left alone.
+            let w = if self.window_top == 0 {
+                emit::clear(colour)
+            } else {
+                let (sw, sh) = self.screen;
+                emit::rect(colour, (0, self.window_top, sw - 1, sh - 1))
+            };
             self.push(w);
         }
     }
@@ -466,6 +512,25 @@ impl<'a> Gl<'a> {
         }
         self.frame[self.used] = w;
         self.used += 1;
+    }
+
+    /// Draws from here on into `frame`, empty, as a window of `width`
+    /// by `height` pixels whose first row is Razboj's row `top`, keeping
+    /// every other part of the context's state: what EGL does at a swap,
+    /// moving the window to the half of a double buffer not shown
+    /// (issue 996). GL's window is the same size, so the viewport and
+    /// everything else a program set stand.
+    pub fn retarget(
+        &mut self,
+        frame: &'a mut [[u32; WORDS]],
+        width: u32,
+        height: u32,
+        top: u32,
+    ) {
+        self.frame = frame;
+        self.used = 0;
+        self.screen = (width, top + height);
+        self.window_top = top;
     }
 
     /// The frame so far, as the instructions an untiled Razboj reads.
@@ -503,7 +568,11 @@ impl<'a> Gl<'a> {
         {
             return self.fail(gl::INVALID_VALUE);
         }
-        self.draw(mode, n, |k| k, positions, colours, normals);
+        self.draw(mode, n, |k| Vertex {
+            position: positions[k],
+            colour: colours.map(|c| c[k]),
+            normal: normals.map(|v| v[k]),
+        });
     }
 
     /// `glDrawElements`: the same, the vertices taken by `indices`.
@@ -522,28 +591,51 @@ impl<'a> Gl<'a> {
         {
             return self.fail(gl::INVALID_VALUE);
         }
-        self.draw(
-            mode,
-            indices.len(),
-            |k| indices[k] as usize,
-            positions,
-            colours,
-            normals,
-        );
+        self.draw(mode, indices.len(), |k| {
+            let i = indices[k] as usize;
+            Vertex {
+                position: positions[i],
+                colour: colours.map(|c| c[i]),
+                normal: normals.map(|v| v[i]),
+            }
+        });
     }
 
-    /// The triangles of a draw call: each of `count` vertices `at(k)`,
-    /// in the order the mode says, the provoking vertex last.
+    /// A draw call whose vertices are read one at a time: the `k`th of
+    /// `count` is `vertex(k)`, in the order the mode says. This is what
+    /// a caller with arrays of its own layout draws through, the C
+    /// entry points' client arrays among them (issue 1224).
+    pub fn draw_vertices(
+        &mut self,
+        mode: u32,
+        count: usize,
+        vertex: impl Fn(usize) -> Vertex,
+    ) {
+        self.draw(mode, count, vertex);
+    }
+
+    /// Records `error` as `glGetError` will report it, if no error is
+    /// waiting already: for an entry point the library does not
+    /// implement, which still links and says so (issue 1224).
+    pub fn record_error(&mut self, error: u32) {
+        self.fail(error);
+    }
+
+    /// The points, lines or triangles of a draw call: each of `count`
+    /// vertices `vertex(k)`, in the order the mode says, the provoking
+    /// vertex last.
     fn draw(
         &mut self,
         mode: u32,
         count: usize,
-        at: impl Fn(usize) -> usize,
-        positions: &[[Fx; 4]],
-        colours: Option<&[[Fx; 4]]>,
-        normals: Option<&[[Fx; 3]]>,
+        vertex: impl Fn(usize) -> Vertex,
     ) {
-        let tris = match mode {
+        let prims = match mode {
+            gl::POINTS => count,
+            gl::LINES => count / 2,
+            gl::LINE_STRIP => count.saturating_sub(1),
+            gl::LINE_LOOP if count >= 2 => count,
+            gl::LINE_LOOP => 0,
             gl::TRIANGLES => count / 3,
             gl::TRIANGLE_STRIP | gl::TRIANGLE_FAN => count.saturating_sub(2),
             _ => return self.fail(gl::INVALID_ENUM),
@@ -577,10 +669,11 @@ impl<'a> Gl<'a> {
         );
         let (lights, scene, two_side) =
             (self.lights, self.scene_ambient, self.two_side);
-        let vert = |i: usize| {
-            let eye = matrix::mul_vec(&mv, &positions[i]);
+        let vert = |k: usize| {
+            let v = vertex(k);
+            let eye = matrix::mul_vec(&mv, &v.position);
             let clip = matrix::mul_vec(&pj, &eye);
-            let col = colours.map_or(current, |c| c[i]);
+            let col = v.colour.unwrap_or(current);
             if !lighting {
                 return Vert {
                     eye,
@@ -589,7 +682,7 @@ impl<'a> Gl<'a> {
                     back: col,
                 };
             }
-            let n = matrix::mul3(&nm, &normals.map_or(normal, |v| v[i]));
+            let n = matrix::mul3(&nm, &v.normal.unwrap_or(normal));
             let n = if normalize {
                 light::normalize(&n)
             } else {
@@ -609,17 +702,150 @@ impl<'a> Gl<'a> {
                 back,
             }
         };
-        for t in 0..tris {
-            let (a, b, c) = match mode {
-                gl::TRIANGLES => (3 * t, 3 * t + 1, 3 * t + 2),
-                gl::TRIANGLE_STRIP if t % 2 == 1 => (t + 1, t, t + 2),
-                gl::TRIANGLE_STRIP => (t, t + 1, t + 2),
-                _ => (0, t + 1, t + 2),
-            };
-            let tri = [vert(at(a)), vert(at(b)), vert(at(c))];
-            self.triangle(tri);
+        // A strip's or a loop's vertex ends one segment and starts the
+        // next, so it is lit once and carried over.
+        let mut last = None;
+        for t in 0..prims {
+            match mode {
+                gl::POINTS => self.point(vert(t)),
+                gl::LINES => self.line(vert(2 * t), vert(2 * t + 1)),
+                gl::LINE_STRIP | gl::LINE_LOOP => {
+                    let a = last.unwrap_or_else(|| vert(t));
+                    let b = vert((t + 1) % count);
+                    self.line(a, b);
+                    last = Some(b);
+                }
+                _ => {
+                    let (a, b, c) = match mode {
+                        gl::TRIANGLES => (3 * t, 3 * t + 1, 3 * t + 2),
+                        gl::TRIANGLE_STRIP if t % 2 == 1 => (t + 1, t, t + 2),
+                        gl::TRIANGLE_STRIP => (t, t + 1, t + 2),
+                        _ => (0, t + 1, t + 2),
+                    };
+                    self.triangle([vert(a), vert(b), vert(c)]);
+                }
+            }
             if self.error == gl::OUT_OF_MEMORY {
                 return;
+            }
+        }
+    }
+
+    /// The part of the screen GL draws on, which every instruction is
+    /// clipped to: the window's rows, from its top down.
+    fn bounds(&self) -> Bounds {
+        let (sw, sh) = self.screen;
+        (0, self.window_top, sw - 1, sh - 1)
+    }
+
+    /// A clipped vertex in GL's window, in sixteenths of a pixel, its y
+    /// growing upwards: the divide and the viewport. `None` for a vertex
+    /// at or behind the eye, which clipping leaves only in a degenerate
+    /// case.
+    fn window(&self, v: &Vert) -> Option<(i64, i64)> {
+        let [x, y, _, w] = v.clip.map(|c| c as i64);
+        if w <= 0 {
+            return None;
+        }
+        let (vx, vy, vw, vh) = self.viewport;
+        let wx =
+            16 * vx as i64 + 8 * vw as i64 + div_round(x * 8 * vw as i64, w);
+        let wy =
+            16 * vy as i64 + 8 * vh as i64 + div_round(y * 8 * vh as i64, w);
+        Some((wx, wy))
+    }
+
+    /// A point, as GL draws one that is not antialiased: kept only when
+    /// its vertex is inside the clip volume and the user plane, then the
+    /// square of its size in whole pixels, centred on the pixel the
+    /// vertex is in when the size is odd and on the pixel corner nearest
+    /// it when even, as one of Razboj's rectangles.
+    fn point(&mut self, v: Vert) {
+        let [x, y, z, w] = v.clip.map(|c| c as i64);
+        let outside = |c: i64| c < -w || c > w;
+        if outside(x) || outside(y) || outside(z) {
+            return;
+        }
+        if self.plane_on && self.distances(&v, 2) < 0 {
+            return;
+        }
+        let Some((wx, wy)) = self.window(&v) else {
+            return;
+        };
+        let s = size(self.point_size);
+        let lo = |c: i64| {
+            if s % 2 == 1 {
+                c.div_euclid(16) - (s - 1) / 2
+            } else {
+                (c + 8).div_euclid(16) - s / 2
+            }
+        };
+        // GL's rows count up from the bottom, Razboj's down from the top.
+        let sh = self.screen.1 as i64;
+        let (x0, gy0) = (lo(wx), lo(wy));
+        let (x1, y0, y1) = (x0 + s - 1, sh - gy0 - s, sh - 1 - gy0);
+        let c = |v: i64| v.clamp(-(1 << 20), 1 << 20) as i32;
+        if let Some(b) = clip(c(x0), c(y0), c(x1), c(y1), self.bounds()) {
+            self.push(emit::rect(colour_word(&v.col), b));
+        }
+    }
+
+    /// A line segment from `a` to `b`, clipped against the planes a
+    /// triangle is, then drawn as the parallelogram GL's wide lines
+    /// describe: the segment moved half the width up and down when it is
+    /// more across than down, or left and right when not, as two of
+    /// Razboj's triangles. Each column of an x-major line, or row of a
+    /// y-major one, between its ends then holds as many pixels as the
+    /// line is wide. Shaded smooth from one end's colour to the other's,
+    /// or flat in `b`'s, the provoking vertex.
+    ///
+    /// GL's own rule for a line one pixel wide, the diamond exit, differs
+    /// from this at the ends and in which of two pixels a column takes on
+    /// a tie; it is left for the conformance tests (#999) to ask for.
+    fn line(&mut self, a: Vert, b: Vert) {
+        let flat = colour_word(&b.col);
+        let (mut a, mut b) = (a, b);
+        let guard = (3..7)
+            .any(|p| self.distances(&a, p) < 0 || self.distances(&b, p) < 0);
+        for p in 0..7 {
+            if (p == 2 && !self.plane_on) || (p >= 3 && !guard) {
+                continue;
+            }
+            let (da, db) = (self.distances(&a, p), self.distances(&b, p));
+            match (da >= 0, db >= 0) {
+                (false, false) => return,
+                (true, false) => b = between(&a, &b, da, db),
+                (false, true) => a = between(&a, &b, da, db),
+                _ => {}
+            }
+        }
+        let (Some(p), Some(q)) = (self.window(&a), self.window(&b)) else {
+            return;
+        };
+        // Razboj's y, turned over.
+        let sh16 = 16 * self.screen.1 as i64;
+        let (p, q) = ((p.0, sh16 - p.1), (q.0, sh16 - q.1));
+        let half = 8 * size(self.line_width);
+        let o = if (q.0 - p.0).abs() >= (q.1 - p.1).abs() {
+            (0, half)
+        } else {
+            (half, 0)
+        };
+        let at = |v: (i64, i64), s: i64| {
+            let r = |c: i64| c.clamp(VMIN as i64, VMAX as i64) as i32;
+            (r(v.0 + s * o.0), r(v.1 + s * o.1))
+        };
+        let quad = [at(p, -1), at(q, -1), at(q, 1), at(p, 1)];
+        let (cp, cq) = (colour_word(&a.col), colour_word(&b.col));
+        let screen = self.bounds();
+        for (i, j, k, s) in [(0, 1, 2, [cp, cq, cq]), (0, 2, 3, [cp, cq, cp])] {
+            let w = if self.smooth {
+                emit::triangle(s[0], quad[i], quad[j], quad[k], Some(s), screen)
+            } else {
+                emit::triangle(flat, quad[i], quad[j], quad[k], None, screen)
+            };
+            if let Some(w) = w {
+                self.push(w);
             }
         }
     }
@@ -686,21 +912,13 @@ impl<'a> Gl<'a> {
             }
         }
         // The window, in sixteenths: GL's y, and Razboj's.
-        let (vx, vy, vw, vh) = self.viewport;
         let sh16 = 16 * self.screen.1 as i64;
         let mut win = [(0i64, 0i64); MAXV];
         for (k, v) in poly[..n].iter().enumerate() {
-            let [x, y, _, w] = v.clip.map(|c| c as i64);
-            if w <= 0 {
+            let Some(at) = self.window(v) else {
                 return;
-            }
-            let wx = 16 * vx as i64
-                + 8 * vw as i64
-                + div_round(x * 8 * vw as i64, w);
-            let wy = 16 * vy as i64
-                + 8 * vh as i64
-                + div_round(y * 8 * vh as i64, w);
-            win[k] = (wx, wy);
+            };
+            win[k] = at;
         }
         // Which way it faces, in GL's window, where counter-clockwise
         // has a positive area.
@@ -725,8 +943,7 @@ impl<'a> Gl<'a> {
             let r = |v: i64| v.clamp(VMIN as i64, VMAX as i64) as i32;
             (r(win[k].0), r(sh16 - win[k].1))
         };
-        let (sw, sh) = self.screen;
-        let screen: Bounds = (0, 0, sw - 1, sh - 1);
+        let screen = self.bounds();
         // With two-sided lighting a back face shows the colours lit for
         // its back.
         let back_face = self.two_side && self.lighting && !front;
@@ -752,6 +969,12 @@ impl<'a> Gl<'a> {
             }
         }
     }
+}
+
+/// A point size or a line width in whole pixels: rounded to the
+/// nearest, and kept between one and [`gl::MAX_SIZE`].
+fn size(s: Fx) -> i64 {
+    ((s as i64 + (1 << 15)) >> 16).clamp(1, gl::MAX_SIZE as i64)
 }
 
 /// The point where the edge from `a` to `b` crosses a plane, from their

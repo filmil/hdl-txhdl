@@ -37,7 +37,7 @@ A later issue means the entry point is accepted from the start but does what tha
 |---|---|---|
 | Viewport | `glViewport`, `glDepthRangex` | Now; depth range matters from #992 |
 | Matrices | `glMatrixMode`, `glLoadIdentity`, `glLoadMatrixx`, `glMultMatrixx`, `glPushMatrix`, `glPopMatrix`, `glTranslatex`, `glRotatex`, `glScalex`, `glFrustumx`, `glOrthox` | Now |
-| Vertex arrays | `glVertexPointer`, `glColorPointer`, `glNormalPointer`, `glEnableClientState`, `glDisableClientState`, `glDrawArrays`, `glDrawElements` | Now, for triangles, strips and fans |
+| Vertex arrays | `glVertexPointer`, `glColorPointer`, `glNormalPointer`, `glEnableClientState`, `glDisableClientState`, `glDrawArrays`, `glDrawElements` | Now, for points, lines, line strips and loops, triangles, strips and fans |
 | Buffer objects | `glGenBuffers`, `glBindBuffer`, `glBufferData`, `glBufferSubData`, `glDeleteBuffers` | Now; they are core in 1.1, and here they are memory the library owns |
 | Current values | `glColor4x`, `glColor4ub`, `glNormal3x` | Now |
 | Shading and faces | `glShadeModel`, `glFrontFace`, `glCullFace` | Now |
@@ -47,7 +47,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Scissor | `glScissor` | #990 |
 | Depth | `glDepthFunc`, `glDepthMask` | #992 |
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask` | #993 |
-| Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls | #994 |
+| Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls | Now, from issue 994 |
 | Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
@@ -87,7 +87,7 @@ Section 4 gives the format at each one.
    The signed area in window space says which way the triangle faces, against `glFrontFace`, and `glCullFace` drops the faces it names.
 8. **Primitive assembly.**
    Triangles, strips and fans become triangles.
-   Points and lines wait for issue 994, and either become Razboj's own points and lines or, if that issue chooses, thin triangles from here.
+   Points and lines, issue 994, do not reach Razboj as points and lines: a point becomes a rectangle and a line segment two thin triangles, from here, as the end of section 10 says.
 9. **Shading.**
    Flat shading takes the colour of the provoking vertex, the last of each triangle in ES 1.1, and writes a flat triangle.
    Smooth shading writes a Gouraud triangle with a colour at each vertex, and the library works out the three colour planes Razboj steps (section 4).
@@ -274,8 +274,41 @@ Each step is a pull request, checked before the next.
    And the backdrop's rectangle at the head of each list is issue 986's own rather than `glClear`, since a clear is the whole screen and the second frame shares the framebuffer with the first.
    `//cpu/vreteno/rust:ico_gl_test` draws both through Razboj's model at 64 angles in each frame: the same faces, every face's colour within 2 of the other's in each channel, the worst being 2, and every pixel where the two differ beyond that on an edge of both.
    The cycles on the board wait for a board session.
+6. **The C ABI.**
+   The user chose Rust inside with C at the edge (section 9), and this is the edge, issue 1224, which EGL (issue 996) needs.
+   `gles/capi/lib.rs` has `extern "C"` functions with the names and types of Khronos's `GLES/gl.h` for the 41 entry points the library implements, over a current context and its client arrays.
+   The client arrays are read a vertex at a time, in the types Common-Lite allows, through `Gl::draw_vertices`, so nothing is copied or allocated.
+   `GLES/gl.h`, `GLES/glplatform.h` and `KHR/khrplatform.h` are not copied into the tree: `MODULE.bazel` fetches them from Khronos's OpenGL-Registry and EGL-Registry at pinned commits, by their sha256, and `//third_party/khronos:gles1` lays them out for `#include <GLES/gl.h>`.
+   The other 104 entry points gl.h declares, the floating-point ones among them, are C that `gles/capi/stubs.sh` writes from gl.h itself, leaving out every name `lib.rs` defines; each sets `GL_INVALID_OPERATION`, so every GL ES 1.1 program links and is told what it asked for is not there.
+   `glGetString(GL_VERSION)` says "OpenGL ES-CL 1.1 TxHDL, Common-Lite without textures, not conformant", which answers the last question of section 11 for now.
+   It departs from the plan in one place: making a context current is EGL's, so until issue 996 lands `gles_make_current` does it over a frame its caller owns, and `glFlush` and `glFinish` leave the frame for EGL to hand to Razboj.
+   `//gles:capi_test` draws one scene in C through `:gles_c` and through the Rust API, and holds the two frames to each other word for word, with what an unimplemented entry point and `glGetString` say.
+7. **EGL, in the model.**
+   Issue 996: `gles/egl/lib.rs` has Khronos's `EGL/egl.h` calls a GL ES 1.1 program makes, as `extern "C"` functions over the C entry points, Rust inside as the library is.
+   There is one display, one configuration and one window of 640 by 480, double buffered in Razboj's framebuffer at rows 0 and 512, as issue 986's icosahedron is.
+   GL draws into the buffer not shown: `Gl::retarget` moves the context there with its state kept, clips every triangle to that buffer's rows, and clears it as a rectangle, since Razboj's own clear is of rows 0 to 479.
+   `eglSwapBuffers` has Razboj draw the frame and waits until it is written, points the scanout at that buffer, and waits for the vertical blanking, so a frame is never shown half drawn.
+   What a swap does to the hardware is behind the `Machine` trait.
+   `//gles:egl_test` gives one that draws through Razboj's model.
+   A program sets up through EGL and draws two frames.
+   Each lands in the buffer not shown, nothing lands on the buffer being shown, a triangle reaching above the window is clipped at its top, and GL's state holds across the swaps.
+   The calls egl.h declares and this does not implement are written from egl.h by the same `stubs.sh`, and fail with `EGL_BAD_MATCH`.
+   The EGL headers are fetched as the GL ones are, with `EGL_NO_PLATFORM_SPECIFIC_TYPES`, since neither Zephyr nor the host has a window system.
+   The board's `Machine`, and a Zephyr program drawing through it, are the issue's next step.
 
-Points, lines, depth, blending and the scissor are added as issues 990, 992, 993 and 994 land, each with the entry points section 2 holds for it.
+Points and lines are issue 994's, done in the library, so Razboj is unchanged.
+`glPointSizex` and `glLineWidthx` set a size and a width, which a draw rounds to whole pixels between 1 and 64.
+A point is kept when its vertex is inside the clip volume and the user plane.
+It becomes the square GL gives a point that is not antialiased, as one of Razboj's rectangles: centred on the pixel the vertex is in for an odd size, and on the pixel corner nearest it for an even one.
+A line segment is clipped against the planes a triangle is.
+It then becomes the parallelogram GL's wide lines describe: the segment moved half the width up and down when it is more across than down, or left and right when not.
+That parallelogram is two of Razboj's triangles, shaded smooth from one end's colour to the other's, or flat in the second vertex's, the provoking one.
+With the top-left rule, every column of such a line between its ends, or row when it is more down than across, holds exactly as many pixels as the line is wide.
+`//gles:prims_test` checks that through Razboj's model at 120 slopes and four widths, with every pixel within half the width of the line.
+It also checks points of sizes 1 to 8 at sub-pixel positions against GL's square, and the segments each mode makes.
+GL's own rule for a line one pixel wide, the diamond exit, differs from this at the ends and on ties; it is left for the conformance tests, issue 999, to ask for.
+
+Depth, blending and the scissor are added as issues 992, 993 and 990 land, each with the entry points section 2 holds for it.
 
 ## 11. What the user has to decide
 

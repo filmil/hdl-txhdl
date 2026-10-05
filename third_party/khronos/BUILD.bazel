@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+# Khronos's OpenGL ES 1.1 and EGL headers, as MODULE.bazel fetches
+# them, laid out where `#include <GLES/gl.h>` and `#include <EGL/egl.h>`
+# find them (issues 1224 and 996). The files are Khronos's, under the
+# licences their own headers state: MIT for GLES and KHR, Apache 2.0 for
+# EGL.
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+[
+    genrule(
+        name = "place_" + name,
+        srcs = [src],
+        outs = [out],
+        cmd = "cp $< $@",
+    )
+    for name, src, out in [
+        ("gl_h", "@khronos_gles_gl_h//file", "GLES/gl.h"),
+        ("glplatform_h", "@khronos_gles_glplatform_h//file", "GLES/glplatform.h"),
+        ("egl_h", "@khronos_egl_h//file", "EGL/egl.h"),
+        ("eglplatform_h", "@khronos_eglplatform_h//file", "EGL/eglplatform.h"),
+        ("khrplatform_h", "@khronos_khrplatform_h//file", "KHR/khrplatform.h"),
+    ]
+]
+
+cc_library(
+    name = "gles1",
+    hdrs = [
+        "GLES/gl.h",
+        "GLES/glplatform.h",
+        "KHR/khrplatform.h",
+    ],
+    includes = ["."],
+)
+
+# EGL with no window system's types: Zephyr has none, and neither has
+# the host's test, so a native window is a pointer.
+cc_library(
+    name = "egl",
+    hdrs = [
+        "EGL/egl.h",
+        "EGL/eglplatform.h",
+        "KHR/khrplatform.h",
+    ],
+    defines = ["EGL_NO_PLATFORM_SPECIFIC_TYPES"],
+    includes = ["."],
+)
