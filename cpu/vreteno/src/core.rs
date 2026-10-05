@@ -814,6 +814,11 @@ pub struct Vreteno<const IW: usize> {
     /// early so that the read starts at a register and not behind a
     /// multiplexer (issue 1130).
     pub ra_at: Reg<U<5>>,
+    /// Whether the register the writeback stage writes is the one each
+    /// operand reads: the forwarding's two compares, made a cycle early
+    /// so that the operand waits on no compare (issue 1130).
+    pub m_a: Reg<Bit>,
+    pub m_b: Reg<Bit>,
     pub imem: Mem<U<32>, IMEM_WORDS>,
     /// A fetch that is out on the bus, for a program above the boot
     /// memory: whether one is out, the word it asked for, the two
@@ -1138,8 +1143,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // file, which has it by then. The stall is the one wait the
             // pipeline makes by itself; the others, ORed into `stall`
             // below, wait on something outside it.
-            let fwd_a = wb_write & (wb_rd == rs1);
-            let fwd_b = wb_write & (wb_rd == rs2);
+            let fwd_a = wb_write & self.m_a;
+            let fwd_b = wb_write & self.m_b;
             let stall_ld = self.valid & self.wb_load & (fwd_a | fwd_b);
             // The M extension is a sequencer: a multiply is one step in
             // the part's multipliers, a division thirty-two restoring
@@ -2448,15 +2453,22 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 ),
             );
             self.pc.set(mux(redirect, jmp, go));
-            // The next instruction's first register number, which the
-            // read port takes a cycle early: the fetched word's when it
-            // goes into the instruction register below, else the one
-            // there now (issue 1130).
+            // The next instruction's register numbers, which the read
+            // port and the forwarding's compares take a cycle early: the
+            // fetched word's when it goes into the instruction register
+            // below, else the one there now (issue 1130).
             let load_ir =
                 !rst & !wb_fault & !stall & !stop & !(in_debug | dbg_take);
             let rs1_next = mux(load_ir, fetched.slice::<15, 5>(), rs1);
+            let rs2_next = mux(load_ir, fetched.slice::<20, 5>(), rs2);
+            // What the writeback stage will write: the instruction now in
+            // execute if it goes on, else what is there, held or cleared;
+            // a cleared one writes nothing, which `wb_write` says.
+            let wr_next = mux(live, rd, wb_rd);
             with!(self <= {
                 ra_at: mux(in_debug, dbg_gpr, rs1_next),
+                m_a: Bit::from(wr_next == rs1_next),
+                m_b: Bit::from(wr_next == rs2_next),
             });
             case!(rst => {
                 Bit::One => { self.valid <= Bit::Zero },
