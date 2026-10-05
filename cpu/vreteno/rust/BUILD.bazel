@@ -730,7 +730,10 @@ rust_test(
     ],
     crate_root = "ico_list_test.rs",
     edition = "2021",
-    deps = ["//gpu/razboj"],
+    deps = [
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
+    ],
 )
 
 # The same icosahedron through the GL ES library (issue 995), drawn on

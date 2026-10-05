@@ -2,8 +2,8 @@
 //! The video scanout on the board, under load (issue 151).
 //!
 //! The program paints a 640 by 480 frame into the DDR3, colour bars
-//! over a grey ramp with the TxHDL logo in the bottom right corner at
-//! four screen pixels to a logo pixel, points the scanout at it and
+//! over a grey ramp with the TxHDL logo in the bottom right corner, a
+//! logo pixel to a screen pixel, points the scanout at it and
 //! shows it. Then it reads the scanout's underflow bit twice: once
 //! after two seconds on an otherwise idle bus, and once after ten
 //! seconds in which the core copies a quarter of a megabyte back and
@@ -47,14 +47,6 @@ const TXBUF: u32 = 0x4100_1000;
 /// stack takes, so the machine at the other end counts it and drops it.
 const FRAME_LEN: u32 = 1514;
 
-/// A twelve-bit colour as a scanout pixel, each four bits repeated.
-fn wide(c: u32) -> u32 {
-    let r = (c >> 8) & 0xf;
-    let g = (c >> 4) & 0xf;
-    let b = c & 0xf;
-    (r * 0x11) << 16 | (g * 0x11) << 8 | b * 0x11
-}
-
 /// The picture at a pixel, before the logo: eight bars over the top
 /// two thirds, a grey ramp under them.
 fn picture(x: u32, y: u32) -> u32 {
@@ -93,20 +85,17 @@ fn paint() {
         }
         y += 1;
     }
-    // The logo, four by four screen pixels to each of its own, eight
-    // in from the bottom right corner.
-    let size = txhdl_logo::W as u32 * 4;
-    let left = Scan::WIDTH - size - 8;
-    let top = Scan::HEIGHT - size - 8;
-    let mut r = 0u32;
-    while r < size {
-        let mut c = 0u32;
-        while c < size {
-            let word = txhdl_logo::PIXELS
-                [((r >> 2) * txhdl_logo::W as u32 + (c >> 2)) as usize];
-            if word != txhdl_logo::TRANSPARENT {
-                let at = ((top + r) * ROW + left + c) as usize;
-                unsafe { write_volatile(base.add(at), wide(word as u32)) };
+    // The logo, a pixel of its own to a pixel of the screen, eight in
+    // from the bottom right corner (issue 1213).
+    let left = Scan::WIDTH - txhdl_logo::W as u32 - 8;
+    let top = Scan::HEIGHT - txhdl_logo::H as u32 - 8;
+    let mut r = 0usize;
+    while r < txhdl_logo::H {
+        let mut c = 0usize;
+        while c < txhdl_logo::W {
+            if let Some(px) = txhdl_logo::colour(c, r) {
+                let at = ((top + r as u32) * ROW + left + c as u32) as usize;
+                unsafe { write_volatile(base.add(at), px) };
             }
             c += 1;
         }
