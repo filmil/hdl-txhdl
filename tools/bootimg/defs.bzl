@@ -12,6 +12,11 @@ whole: `fastboot boot NAME.bin`.
 model: the kernel then sets up 64 MiB rather than the board's gigabyte,
 which is most of what it does before devtmpfs. The board boots with all
 of its memory, so the board's image leaves it off.
+
+The initramfs goes in gzipped, by `//tools/gzip` with no timestamp, so
+the image is the same every build; the kernel unpacks it
+itself (`CONFIG_RD_GZIP`). With the parts packed and the shim moving
+each into place (issue 1201), the image is the parts and nothing else.
 """
 
 BOOTARGS = "earlycon console=ttySIF0"
@@ -31,6 +36,15 @@ def boot_image(
     # inputs, a kernel built from source say, is manual all the way and
     # `bazel build //...` does not reach it through a step.
     tags = kwargs.get("tags", [])
+    native.genrule(
+        name = name + "_initramfs_gz",
+        srcs = [initramfs],
+        outs = [name + ".cpio.gz"],
+        cmd = "$(location //tools/gzip) $(location " + initramfs + ") $@",
+        tools = ["//tools/gzip"],
+        tags = tags,
+    )
+    initramfs = name + ".cpio.gz"
     native.genrule(
         name = name + "_layout",
         srcs = [system_map, initramfs],

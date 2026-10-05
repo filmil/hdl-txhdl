@@ -38,6 +38,7 @@ name = "direct-cargo-bazel-deps"
 version = "0.0.1"
 dependencies = [
  "fst-writer",
+ "miniz_oxide 0.8.9",
  "wellen",
 ]
 

@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+# A file gzipped the same way every time, for the boot image's initramfs
+# (issue 1201).
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "gzip",
+    srcs = ["main.rs"],
+    edition = "2021",
+    deps = ["@crates//:miniz_oxide"],
+)
+
+rust_test(
+    name = "gzip_test",
+    crate = ":gzip",
+    edition = "2021",
+)

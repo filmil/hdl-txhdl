@@ -21,7 +21,11 @@
 //! completes, in the machine's context, every request the controller
 //! holds, and leaves every source disabled at priority zero.
 //!
-//! The layout, from the image's base:
+//! The image does not hold the parts at their addresses: placed there it
+//! was half zeros, which fastboot sends at about 26 KB/s. They are
+//! packed one after another behind the shim, which moves each to its
+//! address before anything else (issue 1201), so the image is the parts
+//! and nothing between them. Where each part goes, from the base:
 //!
 //! | address       | what                                             |
 //! |---------------|--------------------------------------------------|
@@ -84,14 +88,34 @@ pub const PLIC_ENABLE: u32 = PLIC + 0x2000;
 pub const PLIC_THRESHOLD: u32 = PLIC + 0x20_0000;
 pub const PLIC_CLAIM: u32 = 4;
 
-/// The shim's instructions. First the port's `ie` is written zero,
+/// A part of the image to move before anything runs: `len` bytes, a
+/// whole number of words, from `from` in the packed image to `to`, its
+/// load address (issue 1201).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Move {
+    pub from: u32,
+    pub to: u32,
+    pub len: u32,
+}
+
+/// Words the shim takes for `moves` parts: twelve a part, and the rest.
+pub fn shim_words(moves: usize) -> usize {
+    12 * moves + shim(&[]).len()
+}
+
+/// The shim's instructions. First each part of the packed image is
+/// moved to its load address, in the order `moves` gives, a word at a
+/// time from its top down: since no part is packed above its load
+/// address, a part copied top down never overwrites a word of itself
+/// it has not yet copied, and given last to first, never one of a part
+/// still to move. Then the port's `ie` is written zero,
 /// and the controller drained: each source at priority one and
 /// enabled, the threshold zero, then a claim read and written back
 /// until one reads zero, then each source disabled and at priority
 /// zero again. Then `a0 = 0`, `a1 = DTB`, `t0 = OPENSBI`, and a jump to
 /// `t0`. Every address it names has low twelve bits of zero, or is
 /// within twelve bits of one that has, so a `lui` loads each.
-pub fn shim() -> Vec<u32> {
+pub fn shim(moves: &[Move]) -> Vec<u32> {
     let lui = |rd: u32, imm: u32| (imm & 0xffff_f000) | (rd << 7) | 0x37;
     let addi = |rd: u32, rs: u32, imm: i32| {
         ((imm as u32 & 0xfff) << 20) | (rs << 15) | (rd << 7) | 0x13
@@ -126,14 +150,34 @@ pub fn shim() -> Vec<u32> {
             | (((o >> 12) & 0xff) << 12)
             | 0x6f
     };
-    let (t0, t1, t2) = (5, 6, 7);
+    let (t0, t1, t2, t3) = (5, 6, 7, 28);
+    // A constant in two instructions, always two, so that the shim's
+    // length does not depend on the addresses it moves between.
+    let li = |rd: u32, v: u32| {
+        let lo = ((v & 0xfff) as i32) << 20 >> 20;
+        [lui(rd, v.wrapping_sub(lo as u32)), addi(rd, rd, lo)]
+    };
+    let mut w = Vec::new();
+    for m in moves {
+        w.extend(li(t0, m.from + m.len)); // t0: past the source's end
+        w.extend(li(t1, m.to + m.len)); //   t1: past the target's end
+        w.extend(li(t2, m.from)); //          t2: the source's start
+        w.extend([
+            beq(t0, t2, 24), // done when t0 is back at the start
+            addi(t0, t0, -4),
+            addi(t1, t1, -4),
+            lw(t3, t0, 0),
+            sw(t3, t1, 0),
+            jal0(-20),
+        ]);
+    }
     let enable_all: u32 = ((1 << (PLIC_SOURCES + 1)) - 1) & !1;
-    let mut w = vec![
+    w.extend([
         lui(t0, UART),
         sw(0, t0, UART_IE), // ie = 0: the port's line falls
         lui(t0, PLIC),
         addi(t1, 0, 1),
-    ];
+    ]);
     for s in 1..=PLIC_SOURCES {
         w.push(sw(t1, t0, 4 * s)); // priority 1
     }
@@ -204,7 +248,11 @@ pub fn layout(map: &str, initrd_len: u32) -> Result<Layout, String> {
     })
 }
 
-/// The image, from `BASE` to the initramfs's end.
+/// The image: the shim, then each part packed after it on a word
+/// boundary, for the shim to move to its load address (issue 1201).
+/// Packed, the image is the parts and nothing between them; placed at
+/// their load addresses it was half padding, and fastboot sends every
+/// byte of it.
 pub fn pack(
     opensbi: &[u8],
     dtb: &[u8],
@@ -212,8 +260,9 @@ pub fn pack(
     initramfs: &[u8],
     layout: &Layout,
 ) -> Result<Vec<u8>, String> {
+    let words = |len: usize| len.div_ceil(4) * 4;
     let fits = |what: &str, at: u32, len: usize, next: u32| {
-        if at + len as u32 > next {
+        if at + words(len) as u32 > next {
             Err(format!(
                 "{what} is {len:#x} bytes at {at:#x}, past {next:#x}"
             ))
@@ -224,17 +273,43 @@ pub fn pack(
     fits("fw_jump", OPENSBI, opensbi.len(), DTB)?;
     fits("the device tree", DTB, dtb.len(), KERNEL)?;
     fits("the kernel", KERNEL, kernel.len(), layout.initrd.0)?;
-    let mut img = vec![0u8; (layout.end - BASE) as usize];
-    let mut put = |at: u32, bytes: &[u8]| {
-        let o = (at - BASE) as usize;
-        img[o..o + bytes.len()].copy_from_slice(bytes);
-    };
-    let words: Vec<u8> = shim().iter().flat_map(|w| w.to_le_bytes()).collect();
-    put(BASE, &words);
-    put(OPENSBI, opensbi);
-    put(DTB, dtb);
-    put(KERNEL, kernel);
-    put(layout.initrd.0, initramfs);
+    let parts = [
+        ("fw_jump", opensbi, OPENSBI),
+        ("the device tree", dtb, DTB),
+        ("the kernel", kernel, KERNEL),
+        ("the initramfs", initramfs, layout.initrd.0),
+    ];
+    let mut at = BASE + 4 * shim_words(parts.len()) as u32;
+    let mut moves = Vec::new();
+    for (what, bytes, to) in parts {
+        // Cannot happen while each part fits before the next one's
+        // address, since the shim is far smaller than the 512 KiB below
+        // OpenSBI's; kept so that a layout change cannot make it happen
+        // quietly.
+        if at > to {
+            return Err(format!(
+                "{what} packs at {at:#x}, above its load address {to:#x}"
+            ));
+        }
+        let len = words(bytes.len()) as u32;
+        moves.push(Move { from: at, to, len });
+        at += len;
+    }
+    if at > LIMIT {
+        return Err(format!(
+            "the packed image ends at {at:#x}, past {LIMIT:#x}"
+        ));
+    }
+    // The last part first, so that no part is moved over one still to
+    // move.
+    let order: Vec<Move> = moves.iter().rev().copied().collect();
+    let mut img: Vec<u8> =
+        shim(&order).iter().flat_map(|w| w.to_le_bytes()).collect();
+    for ((_, bytes, _), m) in parts.iter().zip(&moves) {
+        assert_eq!(BASE + img.len() as u32, m.from, "packed in order");
+        img.extend_from_slice(bytes);
+        img.resize((m.from + m.len - BASE) as usize, 0);
+    }
     Ok(img)
 }
 
@@ -369,7 +444,7 @@ mod tests {
         m.model.pc = BASE;
         m.model.x[10] = 0x5555;
         m.model.x[11] = 0x6666;
-        m.run(100);
+        m.run(1_000_000);
         assert!(m.model.halted.is_some(), "the stand-in halted");
         assert_eq!(m.model.pc, OPENSBI + 4, "at OpenSBI, past its halt");
         assert_eq!(m.model.x[10], 0, "a0 is hart 0");
@@ -379,7 +454,64 @@ mod tests {
         assert_eq!(b.load(DTB), Some(0xd0d0_d0d0));
         assert_eq!(b.load(KERNEL), Some(0x4b4b_4b4b));
         assert_eq!(b.load(l.initrd.0), Some(0x1a1a_1a1a));
-        assert_eq!(b.load(l.initrd.0 - 4), Some(0), "nothing before it");
+    }
+
+    /// A packed image is the parts and the shim, nothing between them,
+    /// and once the shim has run every part is at its load address byte
+    /// for byte (issue 1201). The parts are of odd lengths and full of
+    /// bytes that differ, so a word moved to the wrong place, a part
+    /// overwritten by the one moved after it, or a tail cut short all
+    /// show; and the kernel's extent leaves the parts packed far below
+    /// where they land, which is the case the order of the moves is for.
+    #[test]
+    fn a_packed_image_lands_every_part_byte_for_byte() {
+        let mut x = 0x2545_f491u32;
+        let mut bytes = |n: usize| -> Vec<u8> {
+            (0..n)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 17;
+                    x ^= x << 5;
+                    x as u8
+                })
+                .collect()
+        };
+        let mhalt =
+            ((0x7c0u32 << 20) | (1 << 15) | (5 << 12) | 0x73).to_le_bytes();
+        let mut opensbi = mhalt.to_vec();
+        opensbi.extend(bytes(0x4_1003));
+        let dtb = bytes(0x7f5);
+        let kernel = bytes(0x2_2001);
+        let initramfs = bytes(0x1_0102);
+        let l = layout(&map(0x30_0000), initramfs.len() as u32).unwrap();
+        let img = pack(&opensbi, &dtb, &kernel, &initramfs, &l).unwrap();
+        let parts = opensbi.len() + dtb.len() + kernel.len() + initramfs.len();
+        assert!(
+            img.len() < parts + 4 * shim_words(4) + 16,
+            "{:#x} bytes for {parts:#x} of parts",
+            img.len()
+        );
+        assert!(img.len() < (l.end - BASE) as usize / 4, "packed tight");
+        let mut m = Machine::new();
+        m.load(BASE, &img);
+        m.boot(BASE, DTB);
+        m.run(2_000_000);
+        assert_eq!(m.model.pc, OPENSBI + 4, "at OpenSBI, past its halt");
+        use vreteno32::model::Bus;
+        let b = &m.board;
+        for (what, part, at) in [
+            ("fw_jump", &opensbi, OPENSBI),
+            ("the tree", &dtb, DTB),
+            ("the kernel", &kernel, KERNEL),
+            ("the initramfs", &initramfs, l.initrd.0),
+        ] {
+            for (i, want) in part.iter().enumerate() {
+                let a = at + i as u32;
+                let word = b.load(a & !3).expect("memory");
+                let got = (word >> (8 * (a & 3))) as u8;
+                assert_eq!(got, *want, "{what}, byte {i:#x}");
+            }
+        }
     }
 
     /// The addresses the shim names are the machine's, and the board's.
@@ -421,7 +553,7 @@ mod tests {
             let d = m.board.0.borrow();
             assert_ne!(d.plic.pending, 0, "the loader's request is held");
         }
-        m.run(200);
+        m.run(1_000_000);
         assert_eq!(m.model.pc, OPENSBI + 4, "at OpenSBI, past its halt");
         assert_eq!((m.model.x[10], m.model.x[11]), (0, DTB));
         let d = m.board.0.borrow();
