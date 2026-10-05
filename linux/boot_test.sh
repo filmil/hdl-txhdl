@@ -24,6 +24,12 @@ cat "$out"
 tail -2 "$out.err"
 
 fail=0
+# A test may ask for one more line, as boot_net_test asks for the
+# network's (issue 1203).
+if [ -n "${EXPECT:-}" ]; then
+    grep -q "$EXPECT" "$out" ||
+        { echo "FAIL: never said: $EXPECT" >&2; fail=1; }
+fi
 grep -q "txhdl: userspace is up" "$out" ||
     { echo "FAIL: /init never said userspace is up" >&2; fail=1; }
 grep -q "^~ # " "$out" ||

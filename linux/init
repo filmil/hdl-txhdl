@@ -7,4 +7,14 @@
 /bin/busybox --install -s
 echo "txhdl: userspace is up"
 uname -a
+# The network, when the command line asks for it (issue 1203): the
+# machine model's peer is 10.0.0.2, and a ping it answers is the
+# Ethernet port, its slots and Linux's litex_liteeth all working.
+if /bin/busybox grep -q txhdl.net /proc/cmdline; then
+	/bin/busybox ip addr add 10.0.0.1/24 dev eth0
+	/bin/busybox ip link set eth0 up
+	if /bin/busybox ping -c 1 -W 5 10.0.0.2; then
+		echo "txhdl: network is up"
+	fi
+fi
 exec /bin/sh

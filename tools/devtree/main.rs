@@ -146,6 +146,9 @@ pub fn dts_with(chosen: &Chosen) -> String {
     let (plic, plic_len) =
         range::<8, BoardMap>(named::<8, BoardMap>("interrupt controller"));
     let (uart, uart_len) = range::<10, SlotMap>(named::<10, SlotMap>("serial"));
+    let (mac, mac_len) =
+        range::<10, SlotMap>(named::<10, SlotMap>("Ethernet port's registers"));
+    let ethernet = source("ethernet");
     let exts = extensions()
         .iter()
         .map(|e| format!("\"{e}\""))
@@ -264,6 +267,22 @@ pub fn dts_with(chosen: &Chosen) -> String {
 			interrupts = <{serial}>;
 			clocks = <&sysclk>;
 		}};
+
+		// The Ethernet port, which Linux's own litex_liteeth drives:
+		// its registers are LiteEth's at LiteX's offsets, and its two
+		// receive and two transmit slots are the reserved buffers
+		// above, in that order (issue 1203).
+		eth0: ethernet@{mac:x} {{
+			compatible = "litex,liteeth";
+			reg = <{mac:#010x} {mac_len:#x}>, <{eth:#010x} 0x2000>;
+			reg-names = "mac", "buffer";
+			litex,rx-slots = <2>;
+			litex,tx-slots = <2>;
+			litex,slot-size = <0x800>;
+			interrupt-parent = <&plic>;
+			interrupts = <{ethernet}>;
+			local-mac-address = [00 0a 35 00 00 01];
+		}};
 	}};
 }};
 "#,
@@ -358,6 +377,33 @@ mod tests {
             cells(&t, "eth_bufs: memory@", "reg")[0],
             ETH_BUF_BASE as u64,
             "the Ethernet buffers where the port's engines write"
+        );
+        // The port's registers on their slot, and its slots the
+        // reserved buffers, which litex_liteeth maps as `buffer`.
+        let i = SlotMap::NAMES
+            .iter()
+            .position(|n| n.contains("Ethernet port's registers"))
+            .unwrap();
+        let (b, m) = SlotMap::RANGES[i];
+        assert_eq!(
+            cells(&t, "eth0: ethernet@", "reg"),
+            [b as u64, ((!m & 0xffff_ffff) + 1) as u64],
+            "the Ethernet port's registers"
+        );
+        let node = &t[t.find("eth0: ethernet@").unwrap()..];
+        let reg = &node[node.find("reg = ").unwrap()..];
+        let reg = &reg[..reg.find(';').unwrap()];
+        assert!(
+            reg.ends_with(&format!(", <{ETH_BUF_BASE:#010x} 0x2000>")),
+            "the Ethernet port's buffers, its second region: {reg}"
+        );
+        assert_eq!(
+            cells(&t, "eth0: ethernet@", "interrupts"),
+            [
+                1 + PLIC_SOURCES.iter().position(|s| *s == "ethernet").unwrap()
+                    as u64
+            ],
+            "the Ethernet port's PLIC source"
         );
     }
 
