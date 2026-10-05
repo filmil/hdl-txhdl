@@ -41,3 +41,15 @@ rust_test(
     ],
 )
 
+# Lighting against floating point: the sum at a vertex, and lit
+# triangles through the pipeline (issue 1164).
+rust_test(
+    name = "light_test",
+    srcs = ["tests/light.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
