@@ -514,6 +514,58 @@ vreteno_flat(
     program = ":ddr3bw_ram",
 )
 
+# EGL's machine on the board, through the board's model (issue 996):
+# a rectangle drawn, shown and waited for as a swap does, in the boot
+# memory, which `board_test` runs.
+rust_binary(
+    name = "eglboard",
+    srcs = ["eglboard.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//gles:machine",
+        "//gles:vreteno",
+    ],
+)
+
+vreteno_image(
+    name = "eglboard_image",
+    platform = ":vreteno",
+    program = ":eglboard",
+)
+
+rust_library(
+    name = "eglboard_program",
+    srcs = [":eglboard_image"],
+    crate_name = "eglboard_program",
+    edition = "2021",
+)
+
+# The same program sent down the wire, for the flagship (issue 996).
+rust_binary(
+    name = "eglboard_ram",
+    srcs = ["eglboard.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    crate_root = "eglboard.rs",
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//gles:machine",
+        "//gles:vreteno",
+    ],
+)
+
+vreteno_flat(
+    name = "eglboard_ram_bin",
+    platform = ":vreteno",
+    program = ":eglboard_ram",
+)
+
 # The DDR3's writes, reads and strobes, tested by a program the loader
 # sends, so that the flagship runs it with no second bitstream (issue
 # 1174). Built as a boot image too, which `board_test` runs through

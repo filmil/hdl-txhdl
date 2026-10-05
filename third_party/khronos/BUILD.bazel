@@ -47,3 +47,16 @@ cc_library(
     defines = ["EGL_NO_PLATFORM_SPECIFIC_TYPES"],
     includes = ["."],
 )
+
+# The headers as files, for a build outside Bazel's C rules: Zephyr's
+# CMake, which `zephyr_image`'s `extra` hands them to (issue 996).
+filegroup(
+    name = "headers",
+    srcs = [
+        "EGL/egl.h",
+        "EGL/eglplatform.h",
+        "GLES/gl.h",
+        "GLES/glplatform.h",
+        "KHR/khrplatform.h",
+    ],
+)

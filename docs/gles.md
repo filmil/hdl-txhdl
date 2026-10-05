@@ -294,7 +294,19 @@ Each step is a pull request, checked before the next.
    Each lands in the buffer not shown, nothing lands on the buffer being shown, a triangle reaching above the window is clipped at its top, and GL's state holds across the swaps.
    The calls egl.h declares and this does not implement are written from egl.h by the same `stubs.sh`, and fail with `EGL_BAD_MATCH`.
    The EGL headers are fetched as the GL ones are, with `EGL_NO_PLATFORM_SPECIFIC_TYPES`, since neither Zephyr nor the host has a window system.
-   The board's `Machine`, and a Zephyr program drawing through it, are the issue's next step.
+8. **EGL on the board.**
+   Issue 996's second half: `gles/vreteno/lib.rs` is the board's `Machine`, over Vreteno's registers.
+   The list is Razboj's, at `0x4280_0000`, and GL writes each frame straight into it.
+   A draw reads the list's last word back, rings the doorbell at `0x3900` with the count, and waits for the count to read zero with the rasteriser idle.
+   A show writes the scanout's base at `0x3280`, the first one also its show bit, and the blanking is bit 0 of the video peripheral's status at `0x3200`.
+   The trait is a crate of its own, `//gles:machine`, and nothing in the board's machine is `#[no_mangle]`, so a program in the 4 KiB boot memory can use it without EGL's entry points.
+   `cpu/vreteno/rust/eglboard.rs` is one: it writes a rectangle into the second buffer through the machine, swaps to it as EGL does, and reads back a pixel inside it and the scanout's registers.
+   `//cpu/vreteno:board_test` runs it through the board's model, with a video peripheral whose blanking comes and goes.
+   `//gles:zephyr_lib` is GL, EGL and the board's machine as one static library for the core, and `gles/vreteno/zephyr.rs` adds `egl_vreteno_install`, which a program calls before `eglInitialize`.
+   `//zephyr:gles` links it with both stubs into the Zephyr program `zephyr/gles/app`, which draws a turning, lit fan of six triangles through EGL and GL and says on the console how many cycles a frame takes.
+   `zephyr_image` takes what Bazel built through `extra`, so the app's `CMakeLists.txt` names no path in Bazel's tree.
+   The device tree reserves Razboj's framebuffer and list, four megabytes each, so that Zephyr keeps out of them.
+   The program on the board is `docs/board-checks.md`'s, under "EGL on the board".
 
 Points and lines are issue 994's, done in the library, so Razboj is unchanged.
 `glPointSizex` and `glLineWidthx` set a size and a width, which a draw rounds to whole pixels between 1 and 64.

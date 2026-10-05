@@ -156,6 +156,7 @@ rust_test(
         "//cpu/vreteno/rust:hello_program",
         "//cpu/vreteno/rust:irq_program",
         "//cpu/vreteno/rust:ddr3bw_program",
+        "//cpu/vreteno/rust:eglboard_program",
         "//cpu/vreteno/rust:ddr3ram_program",
         "//cpu/vreteno/rust:steps_program",
         "//cpu/vreteno/rust:trng_program",

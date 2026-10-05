@@ -442,8 +442,11 @@ struct Net<'a> {
     /// A scanout on `scan_req` and `scan_words` (issue 1178).
     scan: Option<Scan>,
     /// Whether the third slot answers, as the flagship's video
-    /// peripheral would, rather than being tied off: a write is taken
-    /// and a read reads zero (issue 1196).
+    /// peripheral and scanout would, rather than being tied off (issue
+    /// 1196): a write is taken and kept, a read gives a kept word back,
+    /// or zero, and the video peripheral's status word, at offset zero,
+    /// reads its blanking bit high for 400 cycles in every 4000 (issue
+    /// 996).
     video: bool,
     /// Whether the run ends once the debugger's plan is done, rather
     /// than when the core halts or the limit is reached.
@@ -532,12 +535,14 @@ fn run_all(
     let mut scan_log = ScanLog::default();
     let mut scan_got = 0usize;
     let mut scan_words_in = 0u64;
-    // The third slot's channels, answered below when `video` says so.
+    // The third slot's channels, answered below when `video` says so,
+    // and the words written to it.
     let (vaw_tx, vaw_rx) = chan::<LiteAw<32>, DefaultClock>();
     let (var_tx, var_rx) = chan::<LiteAr<32>, DefaultClock>();
     let (vw_tx, vw_rx) = chan::<LiteW<32, 4>, DefaultClock>();
     let (vb_tx, vb_rx) = chan::<LiteB, DefaultClock>();
     let (vr_tx, vr_rx) = chan::<LiteR<32>, DefaultClock>();
+    let mut vwords: HashMap<u32, u32> = HashMap::new();
     let mut board = TestBoard {
         cpu: Hart::with(text),
         rom: Rom::with(text),
@@ -857,6 +862,34 @@ fn run_all(
             typed_was = term.typed();
             typed_at = cycle;
         }
+        if video {
+            // The video slot as the flagship has it, as far as a
+            // program needs: a write kept, a read of it given back, and
+            // the video peripheral's status, at offset zero, blanking
+            // 400 cycles in every 4000.
+            if vaw_rx.peek().is_some()
+                && vw_rx.peek().is_some()
+                && vb_tx.ready().to_bool()
+            {
+                let aw = vaw_rx.recv_if(true).unwrap();
+                let w = vw_rx.recv_if(true).unwrap();
+                vwords.insert(aw.addr.raw() as u32 & 0xff, w.data.raw() as u32);
+                vb_tx.send(LiteB { resp: Resp::Okay });
+            }
+            if var_rx.peek().is_some() && vr_tx.ready().to_bool() {
+                let ar = var_rx.recv_if(true).unwrap();
+                let at = ar.addr.raw() as u32 & 0xff;
+                let data = if at == 0 {
+                    (cycle % 4000 < 400) as u32
+                } else {
+                    vwords.get(&at).copied().unwrap_or(0)
+                };
+                vr_tx.send(LiteR {
+                    data: U::from(data),
+                    resp: Resp::Okay,
+                });
+            }
+        }
         if let Some(s) = &scan {
             if starved.get().to_bool() && scan_log.starved.is_none() {
                 scan_log.starved = Some(cycle);
@@ -884,25 +917,6 @@ fn run_all(
                     }
                     scan_got += 1;
                 }
-            }
-        }
-        if video {
-            // The third slot as an empty peripheral: a write and its
-            // beat taken and answered, a read answered zero.
-            if vaw_rx.peek().is_some()
-                && vw_rx.peek().is_some()
-                && vb_tx.ready().to_bool()
-            {
-                let _ = vaw_rx.recv_if(true);
-                let _ = vw_rx.recv_if(true);
-                vb_tx.send(LiteB { resp: Resp::Okay });
-            }
-            if var_rx.peek().is_some() && vr_tx.ready().to_bool() {
-                let _ = var_rx.recv_if(true);
-                vr_tx.send(LiteR {
-                    data: U::from(0u32),
-                    resp: Resp::Okay,
-                });
             }
         }
         if until_planned {
@@ -2382,4 +2396,28 @@ fn a_core_load_waits_behind_the_scanout() {
          the scanout"
     );
     assert!(beside < alone + 32, "a load waited {beside} cycles");
+}
+
+/// EGL's machine on the board (issue 996): `eglboard.rs` writes a
+/// rectangle into Razboj's display list through the board's machine at
+/// the second buffer's rows, has Razboj draw it, points the scanout
+/// there and waits for the blanking, as a swap does; and the pixels,
+/// the scanout's base and its show bit read back as a swap leaves them.
+#[test]
+fn the_board_machine_draws_shows_and_waits_for_the_blanking() {
+    let net = Net {
+        video: true,
+        ..Net::default()
+    };
+    let ran = run_all(
+        eglboard_program::TEXT,
+        eglboard_program::DATA,
+        b"",
+        &[],
+        200_000,
+        net,
+        &[],
+    );
+    assert!(ran.halted_at.is_some(), "and halted: {}", ran.said);
+    assert_eq!(ran.said, "inside ff005aa5\nbase 42200000\negl board ok\n");
 }

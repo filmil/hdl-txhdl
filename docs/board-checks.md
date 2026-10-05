@@ -515,6 +515,47 @@ A few wrong pixels along an edge point at the edge rule rather than at the shadi
 `shade stuck` means the list was never finished, as `razboj stuck` above.
 Put the log, the cycle count, and a photograph of the screen on #989, which a pass finishes.
 
+### EGL on the board, #996
+
+The flagship from a `main` that holds #996's board half, programmed over JTAG, with a monitor on the HDMI connector, as for Razboj above.
+Nothing is written to flash.
+Two programs, in this order: the first is the swap alone, and the second is the whole of GL and EGL under Zephyr, so a failure of the second with the first passing is in GL or Zephyr and not in the hardware.
+
+```sh
+bazel build //cpu/vreteno/rust:eglboard_ram_bin //zephyr:gles
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/eglboard_ram_bin.bin --seconds=10 \
+    2>&1 | tee board-996-swap.log
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/zephyr/gles.bin --seconds=60 \
+    2>&1 | tee board-996-gles.log
+```
+
+`eglboard` writes one rectangle into the second buffer through the board's machine, has Razboj draw it, shows the second buffer and waits for the vertical blanking, as `eglSwapBuffers` does.
+
+Pass, for the first:
+* `inside ff005aa5`: the pixel Razboj drew.
+* `base 42200000`: the scanout's base, row 512 of the framebuffer.
+* `egl board ok`.
+* On the monitor: a speck of blue a few pixels across near the top left, over whatever the DDR3 held.
+
+`egl board bad` prints what it read.
+An `inside` of anything else means Razboj did not draw the list; a run that stops before `inside` means the doorbell never went back to zero or the blanking never came, which `razprobe` above tells apart.
+
+The Zephyr program is about 107 KB, so its transfer takes about a minute and a half, as fastboot's does (section 7).
+
+Pass, for the second:
+* `gles egl 1.4`, once.
+* `gles frame 0 cycles` and a number, then a line every sixty frames, the frame count rising by 60.
+* On the monitor: a gold fan of six triangles on dark blue, lit from the eye, turning steadily, with no torn or half-drawn frame and nothing flickering at its edges.
+
+`gles egl failed` or `gles egl setup failed` with a number is an EGL error, `0x3000` and up, and names the call that failed.
+A console that says `gles egl 1.4` and nothing more means the first swap never returned: the draw or the blanking hung, which the first program checks.
+A picture that tears means the show was not at the blanking; one that flickers between two pictures means a buffer was shown while it was drawn.
+The cycles a frame takes, against `ico_gl_hdmi`'s, are what the issue asks to be measured; a frame waits for one blanking, so the frame rate is at most the screen's.
+Put both logs, the cycle counts, and a photograph or a short video of the screen on #996.
+
 ### Ethernet throughput, #1038
 
 The Ethernet half of #151: the port's throughput through the slots and the DMA engines, against the core's own copy of each frame.
