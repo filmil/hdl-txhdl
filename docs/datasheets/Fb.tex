@@ -16,8 +16,14 @@ It is the peripheral client of an \code{AxiPer}, and its link is one
 port, \code{bus}, a \code{PerPort} of the four channels: requests
 come on \code{bus\_req} and write beats on \code{bus\_w}, and answers
 go out on \code{bus\_ans} and \code{bus\_r}. It answers single-beat
-bursts, which is all
-the rasteriser makes.
+writes, which is all the rasteriser makes, and read bursts of any
+length, since the rasteriser fetches a display list entry as one: a
+read's first beat is answered from the memory in the cycle the request
+is taken and the rest follow a beat a cycle, one burst at a time. A
+write is held until its beat arrives. It counts what it served:
+\code{rbursts} read bursts taken, \code{rbeats} read beats sent and
+\code{wbeats} write beats taken, which a run reads to say how much of
+its time the link was busy.
 
 \subsection*{Parameters}
 
@@ -109,8 +115,9 @@ simulation-only \code{Ram}.
 
 \subsection*{Limits}
 
-It serves bursts of one beat and does not look at a burst's length or
-strobe. It holds one write at a time. \code{//docs:razboj} states that
+A write is a burst of one beat, and its strobe is not looked at; a
+read burst's length is, and its beats are answered a cycle apart. It
+holds one write at a time. \code{//docs:razboj} states that
 this is why the demonstration takes about three cycles a pixel. The
 word index is sixteen bits wide, so the framebuffer reaches at most
 65536 words.

@@ -28,9 +28,26 @@ which the program reads or fills a word at a time through
 
 A multi-block transfer is one command, \code{CMD18} or \code{CMD25},
 then one data-only transfer for each further block, then
-\code{CMD12}. The card's side is eight wires: \code{sclk}, the command
-line in, out and its output enable, the four data lines in, out and
-their output enable, and \code{irq}.
+\code{CMD12}. A card streams a read back to back, and keeping up with
+that at 25~MHz through a register is what the host's way to memory is
+for (issue 912). Two engines of issue 151 sit beside the host, a
+\code{LineStore} for a read and a \code{LineFetch} for a write, and a
+command given a count in \code{blocks} runs that many blocks on its
+own: the buffer becomes a ring between the lines and an engine, a
+read's words go to the store engine as the card sends them, a write's
+come from the fetch engine and each block is sent once all of it is
+in, and the command is done only once its engine has finished too. A
+command is a read or a write and never both, and none starts until the
+last has finished, so the two engines never run at once.
+
+The card's side is eight wires: \code{sclk}, the command line in, out
+and its output enable, the four data lines in, out and their output
+enable, and \code{irq}. The engines' side is nine more:
+\code{dma\_in} and \code{dma\_out}, the words from the fetch engine
+and to the store engine; \code{dma\_at}, \code{dma\_bytes} and
+\code{dma\_words}, where in memory and how much; \code{store\_go}
+and \code{fetch\_go}, the starts; and \code{store\_busy} and
+\code{fetch\_busy}, the engines' busy lines.
 
 \subsection*{Parameters}
 
@@ -46,6 +63,10 @@ zero.
 \code{cmd}'s \code{resp} is 0 for none, 1 for short and 2 for long.
 Writing \code{cmd} starts the command. Writing a one to
 \code{status}'s \code{done} clears it and the four faults with it.
+\code{dma} is where in memory the next command's blocks start, and
+\code{blocks}' \code{count} how many it moves, zero for the buffer as
+before; \code{left} counts the blocks still to move and \code{run}
+says an engine is still moving words.
 
 A half of a card clock takes \code{div + 1} cycles, so the card's
 clock is the system's over \code{2 * (div + 1)}: at 100~MHz, 124 is
@@ -95,20 +116,32 @@ block 5 on four and reads it back, and checks both blocks.
 \item The netlist is checked against that run under nvc and
 Verilator: \code{//docs:sd\_sim\_sd\_tb\_test} and
 \code{//docs:sd\_vsim\_test}.
-\item \code{//lib/parts:parts\_test} holds six tests of it:
+\item \code{ex\_sddma} moves blocks through memory with real
+\code{LineStore<32, 1, 16, 16>} and \code{LineFetch<32, 1, 16, 16>}
+engines behind an \code{Arbiter2}, the card sending its blocks back to
+back, and its netlist is checked against that run:
+\code{//docs:sddma\_sim\_sd\_dma\_tb\_test} and
+\code{//docs:sddma\_vsim\_test}.
+\item \code{//lib/parts:parts\_test} holds eleven tests of it:
 \begin{itemize}
 \item the card comes up and gives its CID;
 \item a block is read on one line;
 \item a block is written and read back on four lines, the card's CRC
 status accepting it;
-\item two blocks each way, as a command, a data-only transfer and
+\item a card slow to drive is read and written at 25~MHz;
+\item a divider of zero runs as one;
+\item several blocks each way, as a command, data-only transfers and
 \code{CMD12};
 \item a spoiled response CRC sets bit 3 and the next command is
 clean; a command the card does not answer sets bit 2; a spoiled block
 sets bit 5;
+\item a card wants its clocks before its first command;
 \item the CRC-7 of \code{CMD0} with a zero argument is \code{0x4a} and
 the CRC-16 of 512 bytes of \code{0xff} is \code{0x7fa1}, the
-specification's own examples.
+specification's own examples;
+\item blocks read back to back go to memory through the store engine;
+\item blocks written from memory through the fetch engine reach the
+card.
 \end{itemize}
 \end{itemize}
 
@@ -118,10 +151,15 @@ The example \code{ex\_sd}, and the board: the Vreteno board holds it
 in the peripheral page's ninth slot, at \code{0x3800}, with the card
 slot's pins in bank 16 (E13 the clock, E14 the command line, D15,
 D14, F14 and F13 the data lines) on every top that holds the board.
+Its engines are the board's \code{sdstore} and \code{sdfetch}, sharing
+one host, \code{sdshost}, through \code{sdarb}, an
+\code{Arbiter2<32, 32, 4, 1, 2, 0>}, on the main arbiter's sixth port.
 \code{cpu/vreteno/rust/sdprobe.rs} brings a card up and prints its CID
-and block 0; \code{//cpu/vreteno:board\_test} runs it against
-\code{SdCard}, and \code{docs/board-checks.md} says how to run it on
-the board.
+and block 0, then reads blocks 0 to 3 with one \code{CMD18} straight
+into the DDR3 and compares them with the same blocks read one at a time
+through the buffer; \code{//cpu/vreteno:board\_test} runs it against
+\code{SdCard} and expects \code{dma same}, and
+\code{docs/board-checks.md} says how to run it on the board.
 
 \subsection*{Limits}
 
@@ -132,10 +170,10 @@ and on 2026-10-04 read them again at 25~MHz, line for line the same
 No write has been sent to a card on the board, and \code{sdprobe}
 sends none.
 
-One command and at most one block at a time, and the block moves
-through a register. A card streams a multi-block read back to back,
-and keeping up with that at 25~MHz a word at a time is what direct
-memory access would be for; there is none.
+One command at a time. Without a count in \code{blocks} a command
+moves at most one block, through a register; with one, its blocks go
+through memory by the engines, which only a read or a write uses at a
+time.
 
 \code{SdCard}, the model, is not a component: nothing lowers it, and
 it is only as right as the tests that check the host against it.

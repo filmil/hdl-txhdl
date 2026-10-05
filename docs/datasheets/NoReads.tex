@@ -15,7 +15,20 @@ nothing from it.
 
 \subsection*{Parameters}
 
-None. The answer is the tree's read answer, \code{R<32, 2>}.
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{I} & The host's identifier width: the answer is \code{R<32, I>}.
+It has no default, since the derive refuses one (issue 1044). \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The board has two: \code{NoReads<2>} for the Ethernet port's store
+engine and \code{NoReads<1>} for the SD host's, whose shared host
+carries one bit of identifier. The tables use \code{NoReads<2>}.
 
 \dstables{NoReads}
 
@@ -39,8 +52,10 @@ with it in place.
 
 \subsection*{Used by}
 
-\code{Board}, as \code{snoreads}, on the read-data channel of the
-store engine's host \code{shost}.
+\code{Board}, twice: as \code{snoreads}, \code{NoReads<2>}, on the
+read-data channel of the Ethernet store engine's host \code{shost}, and
+as \code{sdnoreads}, \code{NoReads<1>}, on the SD host's engines'
+host \code{sdshost}.
 
 \subsection*{Limits}
 
