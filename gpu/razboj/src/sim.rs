@@ -28,9 +28,12 @@ pub struct Run {
     pub cycles: u64,
     /// Read bursts the memory took and read beats it sent, until then.
     pub reads: (u64, u64),
-    /// Write beats the memory took, until then: one a pixel written,
-    /// and one for each count written back.
+    /// Write beats the memory took that wrote something, until then:
+    /// one a pixel written, and one for each count written back.
     pub writes: u64,
+    /// Write bursts the memory took, until then: one a run of pixels in
+    /// a row, and one for each count written back (issue 987).
+    pub bursts: u64,
 }
 
 /// Render `ops` on the hardware. The screen is `1 << LOGW` by `H`
@@ -158,7 +161,8 @@ pub fn run_lists_at<
     // finished, so a second handle on it is kept here, and on the
     // counts of what was read.
     let pixels = fb.px.clone();
-    let (rbursts, rbeats, wbeats) = (fb.rbursts, fb.rbeats, fb.wbeats);
+    let (rbursts, rbeats, wbeats, wbursts) =
+        (fb.rbursts, fb.rbeats, fb.wbeats, fb.wbursts);
 
     if wave {
         if let Some(mut t) = Wave::from_env() {
@@ -213,6 +217,7 @@ pub fn run_lists_at<
                 cycles,
                 reads: (rbursts.get().raw() as u64, rbeats.get().raw() as u64),
                 writes: wbeats.get().raw() as u64,
+                bursts: wbursts.get().raw() as u64,
             });
             if next == lists.len() {
                 break;
@@ -577,6 +582,48 @@ mod tests {
     #[test]
     fn a_scene_of_every_kind_agrees_with_the_model() {
         agree(&scene::small(), "the small scene");
+    }
+
+    /// A run of a row's pixels goes out as one write burst of at most
+    /// sixteen beats (issue 987), on a screen whose rows are four runs
+    /// long: a clear is a burst for each sixteen pixels of each row, and
+    /// a triangle, whose pixels in a row are one run, a burst for each
+    /// sixteen of that run, its beats past the run's end writing nothing.
+    /// Each takes one more, for the count's zero, and the pictures are
+    /// the model's.
+    #[test]
+    fn a_run_of_a_rows_pixels_is_one_burst() {
+        const LOGW: usize = 6;
+        const W: usize = 1 << LOGW;
+        const H: usize = 16;
+        const N: usize = 4096;
+        const DL: usize = 0x1000;
+        const CTRL: usize = 0x3800;
+        let clear = [bg(0x0012_3456)];
+        let got = run::<LOGW, H, N, DL, CTRL>(&clear, false, false);
+        assert!(got.fb.iter().all(|&p| p == 0x0012_3456), "the clear");
+        assert_eq!(got.bursts, (H * W / 16 + 1) as u64, "clear's bursts");
+        assert_eq!(got.writes, (W * H + 1) as u64, "clear's pixels");
+        let tri = [Op::Tri {
+            colour: 0x00_ff00,
+            a: (3, 1),
+            b: (61, 7),
+            c: (9, 15),
+        }];
+        let list = assemble(&tri, W, H);
+        let got = run::<LOGW, H, N, DL, CTRL>(&tri, false, false);
+        assert_eq!(got.fb, model::render(&list, W, H), "the triangle");
+        let cover = model::coverage(&list, W, H);
+        let runs: Vec<usize> = (0..H)
+            .map(|y| {
+                cover[y * W..(y + 1) * W].iter().filter(|&&n| n > 0).count()
+            })
+            .collect();
+        let want: usize = runs.iter().map(|n| n.div_ceil(16)).sum();
+        assert!(runs.iter().any(|&n| n > 32), "some row is three runs long");
+        assert_eq!(got.bursts, (want + 1) as u64, "the triangle's bursts");
+        let pixels: usize = runs.iter().sum();
+        assert_eq!(got.writes, (pixels + 1) as u64, "the triangle's pixels");
     }
 
     /// The clear is the one entry whose box the hardware supplies.
