@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Fastboot's copy and jump, run on the core's model (issue 143).
+//! Fastboot's copy and jump, run on the core's model (issue 143), and on
+//! the core itself, whose instruction cache the jump must empty (issue
+//! 1211).
 //!
 //! `boot` copies a program over the Zephyr that is running and jumps
 //! to it, from a routine in `zephyr/fastboot/app/src/jump.S` that is
@@ -99,4 +101,53 @@ fn the_routine_runs_wherever_it_is_put() {
         assert!(matches!(m.halted, Some(Halt::Break)), "at {at:#x}");
         assert_eq!(m.x[5], 0x123, "at {at:#x}");
     }
+}
+
+/// The routine on the core, whose instruction cache (issue 1021) holds
+/// the words a program ran before `boot` copied another over them: the
+/// jump must run the words copied, not the line the old program left
+/// in the cache (issue 1211). The old routine at 0x1100 is called once
+/// from the boot memory, which caches its line, and stores 0x111; the
+/// new one, staged at 0x1400 and copied over it by the routine from
+/// 0x1700, stores 0x123 and halts. The return address is a halt, so
+/// the old words, run again, stop the core with 0x111 stored.
+#[test]
+fn the_core_runs_the_words_copied_not_the_ones_cached() {
+    use vreteno32::isa::{addi, halt, jalr, lui, sw};
+    use vreteno32::run::run;
+
+    let old = [addi(13, 0, 0x111), lui(14, 1), sw(13, 14, 0), jalr(0, 1, 0)];
+    let new = [addi(13, 0, 0x123), lui(14, 1), sw(13, 14, 0), halt()];
+    let text = [
+        lui(5, 1),          // x5 = 0x1000, the data memory
+        addi(6, 5, 0x100),  // x6 = 0x1100, where the program runs
+        jalr(1, 6, 0),      // run the old one: its line is cached
+        addi(10, 5, 0x400), // a0 = 0x1400, the staged program
+        addi(11, 5, 0x100), // a1 = 0x1100, where it goes
+        addi(12, 0, 16),    // a2 = its length
+        addi(1, 0, 40),     // ra = the halt below
+        addi(7, 5, 0x700),  // x7 = 0x1700, the routine
+        jalr(0, 7, 0),      // boot
+        0x0000_0013,        // nop
+        halt(),             // at 40: where the old words return to
+    ];
+    let mut data = vec![0u8; 0x1000];
+    let mut put = |at: usize, words: &[u32]| {
+        for (i, w) in words.iter().enumerate() {
+            data[at + 4 * i..at + 4 * i + 4].copy_from_slice(&w.to_le_bytes());
+        }
+    };
+    put(0x100, &old);
+    put(0x400, &new);
+    put(0x700, &routine());
+    let ran = run(&text, &data, 50_000);
+    assert!(
+        ran.halted_at.is_some(),
+        "the core halts; the data memory begins {:x?}",
+        &ran.mem[..4]
+    );
+    assert_eq!(
+        ran.mem[0], 0x123,
+        "the jump ran the program copied (0x111 is the cached old one)"
+    );
 }
