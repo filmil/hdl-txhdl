@@ -875,6 +875,26 @@ vreteno_flat(
     program = ":scanprobe_ram",
 )
 
+# What a full frame costs the core to update (issue 151): the video
+# peripheral's framebuffer painted a register write a pixel, against a
+# frame painted into the DDR3 and shown through the scanout, both timed
+# with the cycle counter. Sent down the wire like the icosahedron.
+rust_binary(
+    name = "fbtime_ram",
+    srcs = ["fbtime.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_flat(
+    name = "fbtime_ram_bin",
+    platform = ":vreteno",
+    program = ":fbtime_ram",
+)
+
 # Razboj on the flagship (issue 1169): a list of a backdrop and three
 # shapes written into the DDR3, the doorbell rung, the pixels read back,
 # and the picture shown through the scanout. Sent down the wire like the
