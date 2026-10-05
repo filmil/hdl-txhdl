@@ -136,6 +136,7 @@ fn main() {
     let (frame_o, frame) = signal::<Bit, ClkPix>();
     let (base_o, base) = signal::<U<32>, ClkPix>();
     let (clear_o, clear) = signal::<Bit, ClkPix>();
+    let (show_o, show) = signal::<Bit, ClkPix>();
     let (pix_o, pix) = signal::<U<32>, ClkPix>();
     let (starved_o, starved) = signal::<Bit, ClkPix>();
     // The words, bus side and pixel side; the requests, pixel side
@@ -173,6 +174,7 @@ fn main() {
         w.add("frame", &frame);
         w.add("base", &base);
         w.add("clear", &clear);
+        w.add("show", &show);
         w.add("pix", &pix);
         w.add("req", &req);
         w.add("starved", &starved);
@@ -189,6 +191,8 @@ fn main() {
     hold_o.set(Bit::Zero);
     base_o.set(U::<32>::from((BASE_WORD * 4) as u32));
     clear_o.set(Bit::Zero);
+    // Shown from the start: the pair asks for nothing until it is.
+    show_o.set(Bit::One);
 
     // `LineFetch` before `ScanFetch`, so that `running` is this
     // step's when `ScanFetch` reads it, as the netlist has it.
@@ -211,7 +215,7 @@ fn main() {
             join2(
                 join2(down.run(fetched_rx, inp_tx), up.run(req_rx, lines_tx)),
                 pair.run(
-                    (inp, col, vis, line, row, frame, base, clear),
+                    (inp, col, vis, line, row, frame, base, clear, show),
                     (pix_o, req, starved_o),
                 ),
             ),

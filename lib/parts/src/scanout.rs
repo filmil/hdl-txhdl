@@ -11,12 +11,19 @@
 //! lines: the beam reads one while the other fills, and they change
 //! places at the start of each line. At that start it asks for the
 //! line after the one about to be shown, so a line is fetched during
-//! the whole of the line before it. The frame's base address is a
-//! register taken at the vertical sync, so a host that draws into one
-//! buffer and shows another flips them with one write. A column the
-//! beam reads before its word has arrived sets `starved`, a sticky bit a
-//! host reads and clears, so a run on the board can show that no line
-//! ever starved rather than argue it.
+//! the whole of the line before it. It asks for nothing while the
+//! scanout is not shown, and once it is, it asks for a frame's first
+//! line, from the base, before any other: out of a reset the next
+//! line's address is zero, and the line there is the boot memory's,
+//! whose one-beat answer to a burst hung the fetch for good on the
+//! board (issue 1178). So the picture starts with the first frame
+//! whose last row begins after the bit that shows it.
+//!
+//! The frame's base address is a register taken at the vertical sync,
+//! so a host that draws into one buffer and shows another flips them
+//! with one write. A column the beam reads before its word has arrived
+//! sets `starved`, a sticky bit a host reads and clears, so a run on the
+//! board can show that no line ever starved rather than argue it.
 //!
 //! [`ScanFetch`] is on the bus clock. It takes the line requests the
 //! pixel side sends across and starts `LineFetch` on each, one at a
@@ -127,7 +134,7 @@ impl<
 {
     async fn run(
         &mut self,
-        (inp, col, vis, line, row, frame, base, clear): (
+        (inp, col, vis, line, row, frame, base, clear, show): (
             Rx<U<32>, C>,
             In<U<AW>, C>,
             In<Bit, C>,
@@ -135,6 +142,7 @@ impl<
             In<U<12>, C>,
             In<Bit, C>,
             In<U<32>, C>,
+            In<Bit, C>,
             In<Bit, C>,
         ),
         (pix, req, starved): (Out<U<32>, C>, Tx<U<32>, C>, Out<Bit, C>),
@@ -174,8 +182,17 @@ impl<
                 self.armed.get() & vis.get() & (c.resize::<16>() >= got);
             let r = row.get();
             let last = r == U::<12>::from((TOTAL - 1) as u32);
-            let ask_first = l & last;
-            let ask_next = l & !last & (r + 1 < U::<12>::from(ROWS as u32));
+            // Nothing is asked for until the pair is shown, and then the
+            // frame's first line first, from the base a host gave it:
+            // out of a reset the next address is zero, and memory there
+            // is the boot memory, which answers a line's burst with one
+            // beat and hangs the fetch for good (issue 1178).
+            let on = show.get();
+            let ask_first = l & last & on;
+            let ask_next = l
+                & !last
+                & self.armed.get()
+                & (r + 1 < U::<12>::from(ROWS as u32));
             let asked = (ask_first | ask_next) & req.ready();
             let addr = mux(ask_first, self.fbase.get(), self.next.get());
             let stride = U::<32>::from(STRIDE as u32);
@@ -197,6 +214,7 @@ impl<
                     armed: Bit::One,
                 },
                 asked & ask_next ? next: self.next.get() + stride,
+                !on ? armed: Bit::Zero,
                 clear.get() ? under: Bit::Zero,
                 starve ? under: Bit::One,
             });
@@ -579,6 +597,9 @@ impl<
         let (frame_o, frame) = signal::<Bit, DefaultClock>();
         let (base_o, base) = signal::<U<32>, DefaultClock>();
         let (mode_o, mode) = signal::<Bit, DefaultClock>();
+        // The bit that shows the scanout is also what lets the pair ask
+        // for lines at all (issue 1178).
+        let show = mode.clone();
         let (clear_o, clear) = signal::<Bit, DefaultClock>();
         let (pix_o, pix) = signal::<U<32>, DefaultClock>();
         let (starved_o, starved) = signal::<Bit, DefaultClock>();
@@ -611,7 +632,7 @@ impl<
                         (tap_rx, base_o, mode_o, clear_o),
                     ),
                     self.pair.run(
-                        (words, col, vis, line, row, frame, base, clear),
+                        (words, col, vis, line, row, frame, base, clear, show),
                         (pix_o, req, starved_o),
                     ),
                 ),
