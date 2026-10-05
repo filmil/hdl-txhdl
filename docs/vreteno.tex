@@ -2295,7 +2295,10 @@ behind one waits for it: 88 cycles with no scanout, 94 beside bursts
 of 64 and 153 beside bursts of 128, which
 \code{a\_core\_load\_waits\_behind\_the\_scanout} measures. A column whose word is late anyway now shows
 magenta, \code{LATE}, rather than a stale word, so an underflow looks
-like one.
+like one. And a late line's words land in its own row: before, the
+words of a line that came after its start went into the half filling
+for the next row, which then showed them as its own, one row low
+(issue~\#1233).
 
 \code{vreteno\_board\_jtag.v} is the top with the master, the board's
 own top with one block added, and every other top ties the pins off,
