@@ -26,3 +26,16 @@ rust_test(
     edition = "2021",
 )
 
+# The pipeline against references, through Razboj's model: the words
+# against Razboj's encoder, the pictures against a pipeline in 128 bits,
+# pixel for pixel, and the window against floating point.
+rust_test(
+    name = "model_test",
+    srcs = ["tests/model.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
