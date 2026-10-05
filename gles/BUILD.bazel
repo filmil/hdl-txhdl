@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# GL ES 1.1 Common-Lite for Razboj: the fixed-point pipeline from a
+# vertex to Razboj's display list, with no standard library so that a
+# Vreteno program links it (docs/gles.md, issue 1159, #995).
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "gles",
+    srcs = [
+        "src/fixed.rs",
+        "src/gl.rs",
+        "src/lib.rs",
+        "src/matrix.rs",
+    ],
+    crate_name = "gles",
+    edition = "2021",
+)
+
+rust_test(
+    name = "gles_test",
+    crate = ":gles",
+    edition = "2021",
+)
+
