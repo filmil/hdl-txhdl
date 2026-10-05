@@ -827,6 +827,13 @@ pub struct Vreteno<const IW: usize> {
     /// so that the operand waits on no compare (issue 1130).
     pub m_a: Reg<Bit>,
     pub m_b: Reg<Bit>,
+    /// An exception the instruction in execute raised last cycle, and
+    /// the handler it goes to: the fetch is redirected there a cycle
+    /// after the trap, so that the decision, which settles behind the
+    /// operands and the address's adder, reaches only registers and
+    /// not the next program counter (issue 1195).
+    pub tp: Reg<Bit>,
+    pub tp_vec: Reg<U<32>>,
     pub imem: Mem<U<32>, IMEM_WORDS>,
     /// A fetch that is out on the bus, for a program above the boot
     /// memory: whether one is out, the word it asked for, the two
@@ -1530,9 +1537,13 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // interrupt. The cause, the address and the trap value go to
             // the CSRs, the interrupt enable is saved and cleared, and
             // the handler is the redirect.
-            let trap = (run & (is_ecall | is_ebreak | !known | unaligned | xf))
-                | int_take
-                | st_take;
+            //
+            // The exceptions are the instruction's own; the interrupt and
+            // the refused store are taken before it, from registers, and
+            // redirect at once, while an exception redirects a cycle
+            // later (issue 1195).
+            let exc = run & (is_ecall | is_ebreak | !known | unaligned | xf);
+            let trap = exc | int_take | st_take;
             // The exception an unaligned access raises says which way
             // it was going, and its trap value is the address, which is
             // what a handler emulating the access needs.
@@ -1719,7 +1730,14 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // halted for good, with the loader in the boot memory never
             // restarting (issue 398). The CSRs are put back by the same
             // line, below, which that fix left as they were (issue 419).
-            let halting = csr_write & (f12 == isa::CSR_MHALT) & csr_new.bit(0);
+            //
+            // `mhalt` reads as zero, so the value written has bit 0 set
+            // exactly when the source's is and the operation is not a
+            // clear: the halt does not wait for the CSR read's
+            // multiplexers (issue 1195).
+            let halt_src =
+                mux(f3.slice::<0, 2>() == 3, Bit::Zero, csr_src.bit(0));
+            let halting = csr_write & (f12 == isa::CSR_MHALT) & halt_src;
             let stop = mux(
                 rst | stop_take,
                 Bit::Zero,
@@ -1746,37 +1764,30 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 _ => mux(is_m, m_res, alu),
             });
             // Where the instruction goes next, other than on: a jump's
-            // or a taken branch's target, the saved address on mret, the
-            // handler on a trap, which is every arm that can trap. The
-            // jalr arm is first because it is last to settle: a loaded
-            // value forwarded into the add, and this select is on the
-            // critical path.
+            // or a taken branch's target, the saved address on mret, or
+            // the next instruction after a refetch. An exception goes to
+            // its handler a cycle later, from `tp_vec` (issue 1195), so
+            // none of this waits for it; a jump that also traps goes
+            // here first and is then squashed. The jalr arm is first
+            // because it is last to settle: a loaded value forwarded
+            // into the add, and this select is on the critical path.
             let target = select!(opcode.raw() => {
                 0x67 => (a + imm_i) & !U::<32>::from(1u32),
                 0x6f => pc + imm_j,
                 0x63 => pc + imm_b,
-                0x0f => mux(trap, trap_vec, link),
                 0x73 => mux(
-                    trap,
-                    trap_vec,
-                    mux(
-                        is_mret,
-                        mepc,
-                        mux(
-                            is_sret,
-                            self.sepc.get(),
-                            mux(refetch, link, trap_vec),
-                        ),
-                    ),
+                    is_mret,
+                    mepc,
+                    mux(is_sret, self.sepc.get(), link),
                 ),
-                _ => trap_vec,
+                _ => link,
             });
             let jump = select!(opcode.raw() => {
                 0x6f | 0x67 => Bit::One,
                 0x63 => taken,
-                0x73 => is_mret | is_sret | trap | refetch,
-                0x0f => trap | Bit::from(is_fencei),
-                _ => trap,
+                0x73 => is_mret | is_sret | refetch,
+                0x0f => Bit::from(is_fencei),
+                _ => Bit::Zero,
             });
 
             // The drives. The writeback stage writes the register file
@@ -2581,7 +2592,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // candidates fold the early conditions in and the redirect
             // chooses last, one multiplexer from the instruction memory.
             self.redirect.set(
-                (run & jump) | int_take | resume_take | st_take | wb_fault,
+                (run & jump)
+                    | int_take
+                    | resume_take
+                    | st_take
+                    | wb_fault
+                    | self.tp,
             );
             let redirect = self.redirect.get();
             let park = run & stop;
@@ -2602,7 +2618,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                         mux(
                             wb_fault,
                             wb_vec,
-                            mux(int_take | st_take, trap_vec, target),
+                            mux(
+                                self.tp,
+                                self.tp_vec.get(),
+                                mux(int_take | st_take, vec_other, target),
+                            ),
                         ),
                     ),
                 ),
@@ -2624,6 +2644,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 ra_at: mux(in_debug, dbg_gpr, rs1_next),
                 m_a: Bit::from(wr_next == rs1_next),
                 m_b: Bit::from(wr_next == rs2_next),
+                tp: exc,
+                tp_vec: trap_vec,
             });
             case!(rst => {
                 Bit::One => { self.valid <= Bit::Zero },
@@ -2640,7 +2662,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     self.ir_pf2 <= !self.f_pf0;
                     self.ir_c <= Bit::from(short);
                     self.ir_pc <= fetch_pc;
-                    self.valid <= !redirect
+                    // The word behind an exception is squashed here,
+                    // and the redirect follows (issue 1195).
+                    self.valid <= !redirect & !exc
                 },
             });
             // end{fetch}
