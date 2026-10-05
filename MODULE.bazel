@@ -153,6 +153,12 @@ bazel_dep(name = "toolchains_llvm", version = "1.10.0")
 # this module's extension makes sees only this module's dependencies.
 bazel_dep(name = "bazel_skylib", version = "1.9.2")
 
+# `write_source_files`, which keeps the committed generated files, the
+# register headers, equal to what their generators write, with one
+# command to write them all again (issue 1179). bazel_lib, which
+# replaces the module aspect_bazel_lib.
+bazel_dep(name = "bazel_lib", version = "3.7.2")
+
 cc_toolchain = use_extension("//third_party/llvm:extension.bzl", "cc_toolchain")
 use_repo(cc_toolchain, "llvm_toolchain", "llvm_toolchain_llvm", "sysroot_bullseye")
 

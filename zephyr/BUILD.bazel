@@ -13,10 +13,10 @@
 # compile time and checks their addresses against the design's own
 # constants. `README.md` says what each target is.
 
+load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(":defs.bzl", "analyses_under_python_test", "zephyr_image")
 
@@ -316,26 +316,71 @@ exports_files([
 
 # The register headers the drivers include, one per map the parts
 # declare with `regmap!` (issue 709). They are committed, since a
-# reader's `west build` of this module runs no Bazel; the test holds
-# them to the declarations, and the binary writes them again.
+# reader's `west build` of this module runs no Bazel.
+#
+# REG_MAPS names every map //tools/regmap lists. Each header is
+# written from its map by a genrule, and write_source_files keeps the
+# committed copy equal to it (issue 1179): its test fails on a header
+# that differs or is missing, and
+#
+#   bazel run //zephyr:regs_update
+#
+# writes them all again. :regs_maps_test holds REG_MAPS to the maps
+# regmap lists and to the headers on disk, so a map declared in the
+# parts and not named here fails rather than going unchecked.
+REG_MAPS = [
+    "eth",
+    "ethslots",
+    "gpio",
+    "hdmi",
+    "i2c",
+    "mdio",
+    "pwm",
+    "scan",
+    "sd",
+    "spi",
+    "syscon",
+    "timer",
+    "tracer",
+    "trng",
+    "uart",
+    "wdog",
+]
+
+[
+    genrule(
+        name = "regs_" + m,
+        outs = ["regs_gen/%s.h" % m],
+        cmd = "$(execpath //tools/regmap) %s c > $@" % m,
+        tools = ["//tools/regmap"],
+    )
+    for m in REG_MAPS
+]
+
+write_source_files(
+    name = "regs_update",
+    # A map just added to REG_MAPS has no header yet, and this target
+    # is what writes it, so a missing file is the diff test's to
+    # report rather than a reason not to build.
+    check_that_out_file_exists = False,
+    files = {
+        "include/vreteno/regs/%s.h" % m: ":regs_" + m
+        for m in REG_MAPS
+    },
+    suggested_update_target = "//zephyr:regs_update",
+)
+
 sh_test(
-    name = "regs_test",
-    srcs = ["regs_test.sh"],
+    name = "regs_maps_test",
+    srcs = ["regs_maps_test.sh"],
     args = [
         "$(rootpath //tools/regmap)",
         "zephyr/include/vreteno/regs",
-    ],
+    ] + REG_MAPS,
     data = [
         "//tools/regmap",
     ] + glob(
         ["include/vreteno/regs/*.h"],
         allow_empty = True,
     ),
-)
-
-sh_binary(
-    name = "regs_update",
-    srcs = ["regs_update.sh"],
-    args = ["$(rootpath //tools/regmap)"],
-    data = ["//tools/regmap"],
 )
