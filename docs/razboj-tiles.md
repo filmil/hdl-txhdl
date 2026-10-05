@@ -88,7 +88,8 @@ The edges need nothing: the rasteriser's setup computes them from the vertices a
 
 **What the CPU writes.**
 A frame becomes a table of tiles, each naming its origin, where its entries start and how many there are, and the count the rasteriser polls becomes the table's length.
-The format is the implementation's to fix, and it belongs in `gpu/razboj/src/dl.rs` beside the instruction's, stated once.
+The format is the implementation's to fix, and it is stated once.
+It is in `gpu/razboj/tile/lib.rs`, the crate `razboj_tile`, rather than beside the instruction's in `gpu/razboj/src/dl.rs`: a Vreteno program writes the table, and `dl.rs` sits in a crate with the standard library, which a program on the core cannot use (issue 1157).
 A binning library in Rust, usable from a Vreteno program and from the model, does the sorting, so that the same code that the board runs is what the tests check.
 
 **What it costs the CPU.**
@@ -147,6 +148,7 @@ A 24-bit depth would take three block RAM tiles a bank where 16-bit takes two, 1
 Each step is a pull request, and each is checked against the model before the next.
 
 1. **The binning library and its test.**
+   Done in issue 1157: the crate `razboj_tile` and the tests in `gpu/razboj/src/tiles.rs`.
    `gpu/razboj` gains the tile table's format and a binning library that clips to tiles and steps the planes.
    The test renders scenes binned into tiles with the model and asserts the picture equals the model's untiled picture, pixel for pixel, including shaded triangles across tile edges and the mesh of issue 988 that draws every pixel once.
    No hardware changes, so this lands first and fixes the format.

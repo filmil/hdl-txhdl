@@ -20,6 +20,11 @@
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=#2-#2,caption={#3},label={#4}]{gpu/razboj/src/#1}}
+% A range of the tile crate's one file, by its markers.
+\newcommand{\tilepart}[3]{%
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=#1-#1,caption={#2},label={#3}]{gpu/razboj/tile/lib.rs}}
 
 \title{Razboj: A Minimal GPU in TxHDL}
 
@@ -222,6 +227,51 @@ next poll reads a count of two, \code{finished} and \code{idle} fall,
 and the next list's first entry arrives as one burst of sixteen beats.}
 \label{fig:g-lists}
 \end{figure*}
+
+\section{The List in Tiles}
+\label{sec:g-tiles}
+
+Razboj is to draw in tiles of 64 by 64 pixels, so that a depth test
+and blending read and write block RAM beside the rasteriser and not
+DDR3, which then sees one write a pixel a frame
+(\code{docs/razboj-tiles.md}, issue~\#991). The first piece is on
+the CPU, and it changes nothing in the hardware: sorting a list into
+the tiles each entry touches, which is binning. It is a crate of its
+own, \code{razboj\_tile} in \code{gpu/razboj/tile/lib.rs}, with no
+standard library and no allocation, so that a program on the
+core~\cite{vreteno} can bin its own lists with the code the tests
+check.
+
+A tile is a scissor box, so binning an entry is clipping its box to
+each tile it touches, with the same clip the scissor box uses, which
+moved into that crate for the purpose. A clear becomes a rectangle of
+its tile, since a clear's box is always the whole screen. The edges
+need nothing, since the rasteriser tests them against the same
+vertices whatever the box. A shaded triangle's planes do: they start
+at the box's first pixel, so a clipped entry's start is the whole
+entry's stepped to the clipped box's first pixel, in the thirty-two
+bits the walk's own adders wrap in.
+
+\tilepart{entry}{An entry clipped to a tile: a clear becomes a
+rectangle, and a shaded triangle's planes are stepped to the tile's
+first pixel.}{lst:g-tile-entry}
+
+A frame becomes a table of tiles, each a record of two words, and the
+entries each tile takes, one tile after another, in the list's order.
+
+\tilepart{format}{The tile table, stated once, in the crate a program
+writes it with.}{lst:g-tile-format}
+
+The tests draw each scene with the model twice, as a list and binned,
+and the two pictures are the same pixel for pixel: the demonstration's
+house across tile edges and corners, shaded triangles over many tiles
+and off the screen, a clear and a triangle under a scissor box that
+crosses tiles, scenes of pseudorandom entries, and the mesh of issue
+988 laid over the tiles so that every tile edge is a mesh edge, which
+still covers every pixel exactly once. A shaded triangle worked out
+afresh inside each tile rounds each tile's start at a different place
+and draws a different picture; one of the tests keeps that as the
+reason the planes are stepped.
 
 \section{The Rasteriser}
 \label{sec:g-raster}
