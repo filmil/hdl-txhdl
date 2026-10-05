@@ -23,9 +23,14 @@
 //! the whole of a read and released after it, so each read is a
 //! command of its own.
 //!
-//! A write is answered `SLVERR`. The window is read only, which is
-//! what makes it safe to fetch from: nothing on the bus can change
-//! what the instruction stream is reading.
+//! A read burst of incrementing words is a fast read a word, each
+//! started as the word before it goes, with the select raised between
+//! them, and the burst gets every beat it asked for (issue 1208).
+//!
+//! A write is answered `SLVERR`, once, after every beat of it has been
+//! taken. The window is read only, which is what makes it safe to
+//! fetch from: nothing on the bus can change what the instruction
+//! stream is reading.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
@@ -67,6 +72,9 @@ pub struct FlashWin<const DIV: usize, const I: usize> {
     pub wpend: Reg<U<1>>,
     /// The identifier that write is answered under.
     pub wid: Reg<U<I>>,
+    /// The beats of a read burst left after the word being read: each
+    /// is a fast read of its own at the next word (issue 1208).
+    pub rleft: Reg<U<8>>,
 }
 // end{state}
 
@@ -114,9 +122,16 @@ impl<const DIV: usize, const I: usize> Unit for FlashWin<DIV, I> {
             let take_read = q_off & q.read & !busy & !waiting & !held;
             let take_write = q_off & !q.read & !held;
             let _ = bus.req.recv_if(take_read | take_write);
-            let w_go = held & bus.w.peek().is_some() & bus.ans.ready();
+            // Every beat of a write burst is taken, and the burst is
+            // answered once, after its last (issue 1208).
+            let wlast = bus.w.head().last;
+            let w_go =
+                held & bus.w.peek().is_some() & (bus.ans.ready() | !wlast);
             let _ = bus.w.recv_if(w_go);
             let send = waiting & bus.r.ready();
+            // A read burst's next word starts as this one goes.
+            let rleft = self.rleft.get();
+            let again = send & (rleft != 0);
             // The byte this phase puts on the wires: the command, then
             // the address from the top down, then nothing, since the
             // chip is doing the talking from there.
@@ -152,12 +167,13 @@ impl<const DIV: usize, const I: usize> Unit for FlashWin<DIV, I> {
                         half: Bit::Zero,
                         count: U::<5>::from(0u8),
                         word: U::<32>::from(0u32),
+                        rleft: q.len,
                     },
                     take_write ? {
                         wpend: U::<1>::from(1u8),
                         wid: q.id,
                     },
-                    w_go ? wpend: U::<1>::from(0u8),
+                    w_go & wlast ? wpend: U::<1>::from(0u8),
                     busy ? tick: mux(strobe, U::<8>::from(0u8), tick + 1),
                     strobe ? {
                         half: !half,
@@ -184,6 +200,17 @@ impl<const DIV: usize, const I: usize> Unit for FlashWin<DIV, I> {
                         ready: Bit::One,
                     },
                     send ? ready: Bit::Zero,
+                    again ? {
+                        busy: Bit::One,
+                        addr: at + U::<24>::from(4u8),
+                        phase: U::<4>::from(0u8),
+                        txb: U::<8>::from(0x0bu8),
+                        tick: U::<8>::from(0u8),
+                        half: Bit::Zero,
+                        count: U::<5>::from(0u8),
+                        word: U::<32>::from(0u32),
+                        rleft: rleft - 1,
+                    },
                 },
             });
             if send.to_bool() {
@@ -191,10 +218,10 @@ impl<const DIV: usize, const I: usize> Unit for FlashWin<DIV, I> {
                     id: self.rid.get(),
                     data: self.word.get(),
                     resp: Resp::Okay,
-                    last: Bit::One,
+                    last: Bit::from(rleft == 0),
                 });
             }
-            if w_go.to_bool() {
+            if (w_go & wlast).to_bool() {
                 bus.ans.send(Answer {
                     id: self.wid.get(),
                     resp: Resp::SlvErr,

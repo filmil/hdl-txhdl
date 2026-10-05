@@ -9,8 +9,9 @@
 //! same cycle; this copy answers the bus, a cycle after a read is
 //! taken, as the data memory does. Both are initialised with the same
 //! image by the netlist, so they cannot disagree, and neither can be
-//! written at run time: a write burst is taken, its beat consumed so
-//! the channel does not jam, and answered `SlvErr`, which is what a
+//! written at run time: a write burst is taken, every beat of it up to
+//! the last consumed so the channel does not jam (issue 1208), and
+//! answered `SlvErr` once, which is what a
 //! peripheral that was reached and refused says. That settles the
 //! question of what a fetch sees when a write lands on the same
 //! address in the same cycle: nothing lands.
@@ -86,14 +87,18 @@ impl<const I: usize> Unit for Rom<I> {
             let _ = bus.req.recv_if(take_read | take_write);
             // The beat of a refused write is taken and dropped, so that
             // the write data channel is not left holding it.
-            let wgo = held & bus.w.peek().is_some() & bus.ans.ready();
+            // Every beat of a refused write burst is taken, and the
+            // burst answered once, after its last (issue 1208).
+            let wlast = bus.w.head().last;
+            let wgo =
+                held & bus.w.peek().is_some() & (bus.ans.ready() | !wlast);
             let _ = bus.w.recv_if(wgo);
             with!(self <= {
                 take_write ? {
                     pend: U::<1>::from(1u8),
                     pid: q.id,
                 },
-                wgo ? pend: U::<1>::from(0u8),
+                wgo & wlast ? pend: U::<1>::from(0u8),
                 take_read ? {
                     word: self.words.read(at),
                     rid: q.id,
@@ -118,7 +123,7 @@ impl<const I: usize> Unit for Rom<I> {
                     last: !more,
                 });
             }
-            if wgo.to_bool() {
+            if (wgo & wlast).to_bool() {
                 bus.ans.send(Answer {
                     id: self.pid.get(),
                     resp: Resp::SlvErr,

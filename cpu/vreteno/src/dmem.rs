@@ -9,9 +9,11 @@
 //! word read as the one before it goes, which is what the core's
 //! instruction cache fills its lines with (issue 1021). A write is
 //! held until its beat arrives, because AXI4 puts no identifier on the
-//! write data channel, and is a single beat, which is all the core
-//! makes. The router sends this peripheral only the
-//! bursts in its range, so it checks no address.
+//! write data channel. A write burst's beats go to consecutive words,
+//! and the burst is answered once, after its last beat, so that a burst
+//! host's beats never stay in the write channel behind an early answer
+//! (issue 1208). The router sends this peripheral only the bursts in
+//! its range, so it checks no address.
 use txhdl::comp::{Clock, DefaultClock, Mem, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
@@ -99,8 +101,12 @@ impl<const I: usize> Unit for Dmem<I> {
             let nat = self.raddr.get();
             let take_write = qoff & !q.read & !held;
             let _ = bus.req.recv_if(take_read | take_write);
+            // A write burst's beats go to consecutive words, and only
+            // its last is answered, so only the last waits for room.
             let wh = bus.w.head();
-            let wgo = held & bus.w.peek().is_some() & bus.ans.ready();
+            let wlast = wh.last;
+            let wgo =
+                held & bus.w.peek().is_some() & (bus.ans.ready() | !wlast);
             let _ = bus.w.recv_if(wgo);
             let data = wh.data;
             let strb = wh.strb;
@@ -115,7 +121,8 @@ impl<const I: usize> Unit for Dmem<I> {
                     paddr: at,
                     pid: q.id,
                 },
-                wgo ? pend: U::<1>::from(0u8),
+                wgo & !wlast ? paddr: to + 1,
+                wgo & wlast ? pend: U::<1>::from(0u8),
                 take_read ? {
                     word: self
                         .lane3
@@ -150,7 +157,7 @@ impl<const I: usize> Unit for Dmem<I> {
                     last: !more,
                 });
             }
-            if wgo.to_bool() {
+            if (wgo & wlast).to_bool() {
                 bus.ans.send(Answer {
                     id: self.pid.get(),
                     resp: Resp::Okay,

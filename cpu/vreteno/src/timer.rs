@@ -19,6 +19,12 @@
 //! The window is 64 KiB, which those offsets need, and the router
 //! sends it only the bursts in it, so the decode is on the offset and
 //! not on the whole address.
+//!
+//! It answers single beats, which is all the core and a stock driver
+//! make. A burst of more than one beat is refused rather than cut
+//! short: a read gets every beat it asked for, each `SlvErr`, and a
+//! write has every beat taken and nothing written, then one `SlvErr`,
+//! so a burst host's burst ends and the bus goes on (issue 1208).
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::regmap;
 use txhdl::types::{Bit, U};
@@ -69,6 +75,12 @@ pub struct Timer<const I: usize> {
     pub pend: Reg<U<1>>,
     pub pwe: Reg<U<5>>,
     pub pid: Reg<U<I>>,
+    /// The write waiting is a burst of more than one beat, refused.
+    pub pburst: Reg<Bit>,
+    /// A refused read burst's beats left to answer, and its
+    /// identifier.
+    pub rleft: Reg<U<8>>,
+    pub rid: Reg<U<I>>,
 }
 
 #[lower]
@@ -88,12 +100,24 @@ impl<const I: usize> Unit for Timer<I> {
             let q = bus.req.head();
             let qoff = bus.req.peek().is_some();
             let held = self.pend.get() == 1;
-            let take_read = qoff & q.read & bus.r.ready() & !held;
+            // A burst of more than one beat is refused, since these are
+            // registers and a stock driver only reads and writes whole
+            // words: a read gets every beat it asked for, each `SlvErr`,
+            // and a write has every beat taken and nothing written, then
+            // one `SlvErr` (issue 1208).
+            let rleft = self.rleft.get();
+            let refusing = Bit::from(rleft != 0);
+            let take_read = qoff & q.read & bus.r.ready() & !held & !refusing;
             let take_write = qoff & !q.read & !held;
             let _ = bus.req.recv_if(take_read | take_write);
+            let burst = Bit::from(q.len != 0);
+            let more = refusing & bus.r.ready();
             let wh = bus.w.head();
-            let wgo = held & bus.w.peek().is_some() & bus.ans.ready();
+            let wlast = wh.last;
+            let wgo =
+                held & bus.w.peek().is_some() & (bus.ans.ready() | !wlast);
             let _ = bus.w.recv_if(wgo);
+            let pburst = self.pburst.get();
             // The word a request selects in the map; the map answers zero
             // for a word it does not name, and no write enable is set for
             // one (issue 681).
@@ -126,7 +150,7 @@ impl<const I: usize> Unit for Timer<I> {
                     ),
                 ),
             );
-            let we = mux(wgo, pwe, U::<5>::from(0u8));
+            let we = mux(wgo & !pburst, pwe, U::<5>::from(0u8));
             // A write puts the lanes its strobe covers into the word.
             let wdata = wh.data;
             let strb = wh.strb;
@@ -153,8 +177,11 @@ impl<const I: usize> Unit for Timer<I> {
                     pend: U::<1>::from(1u8),
                     pwe: clint_we(Bit::One, sel),
                     pid: q.id,
+                    pburst: burst,
                 },
-                wgo ? pend: U::<1>::from(0u8),
+                wgo & wlast ? pend: U::<1>::from(0u8),
+                take_read & burst ? { rleft: q.len, rid: q.id },
+                more ? rleft: rleft - 1,
                 we.bit(0) ? msip: clint_msip_msip(merged),
                 we.bit(1) ? mtimecmp: mtimecmp
                     .slice::<32, 32>()
@@ -171,18 +198,22 @@ impl<const I: usize> Unit for Timer<I> {
                 // zero would fire at once (issue 419).
                 rst ? mtimecmp: U::<64>::from(u64::MAX),
             });
-            if take_read.to_bool() {
+            // A read's first beat as it is taken, or a refused burst's
+            // next: never both, since a burst being refused takes no
+            // read.
+            let single = take_read & !burst;
+            if (take_read | more).to_bool() {
                 bus.r.send(R {
-                    id: q.id,
-                    data: word,
-                    resp: Resp::Okay,
-                    last: Bit::One,
+                    id: mux(take_read, q.id, self.rid.get()),
+                    data: mux(single, word, U::<32>::from(0u8)),
+                    resp: mux(single, Resp::Okay, Resp::SlvErr),
+                    last: mux(take_read, !burst, Bit::from(rleft == 1)),
                 });
             }
-            if wgo.to_bool() {
+            if (wgo & wlast).to_bool() {
                 bus.ans.send(Answer {
                     id: self.pid.get(),
-                    resp: Resp::Okay,
+                    resp: mux(pburst, Resp::SlvErr, Resp::Okay),
                 });
             }
             self.pending.set(mtime >= mtimecmp);

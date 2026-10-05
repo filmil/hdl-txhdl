@@ -12,7 +12,9 @@ use std::collections::HashMap;
 use txhdl::comp::{
     chan, join2, pad, signal, DefaultClock, In, Out, Running, Rx, Tx, Unit,
 };
+use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
+use txhdl_parts::bus::axi::Resp;
 use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::dtm::Tck;
@@ -23,7 +25,9 @@ use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
 use txhdl_parts::scanout::LinePair;
 use txhdl_parts::sd::SdCard;
 use txhdl_parts::spi::FlashDevice;
-use vreteno32::board::{Board, BoardIn, BoardOut, REMOTE_DEV};
+use vreteno32::board::{
+    Board, BoardIn, BoardMap, BoardOut, SlotMap, REMOTE_DEV,
+};
 use vreteno32::dmem::Dmem;
 use vreteno32::hart::Hart;
 use vreteno32::rom::Rom;
@@ -63,6 +67,8 @@ struct Ran {
     card: SdCard,
     /// The scanout's lines, when the run had one.
     scan: ScanLog,
+    /// What each burst of the debugger's plan met, in order.
+    bursts: Vec<BurstSeen>,
 }
 
 /// Run `text` with `data` in the data memory, on the board's design,
@@ -146,12 +152,41 @@ fn device(
 /// word, a read of one, whose answer is kept, or a wait. The master
 /// model in the run drives the pins as the JTAG-to-AXI core does, one
 /// transaction at a time (issue 154).
+///
+/// A burst is a transaction of its own, for the bus's conformance
+/// rather than a debugger's (issue 1196): its address, its beats and
+/// the identifier it carries. A write burst's beats carry their own
+/// index.
 #[derive(Clone, Copy, Debug)]
 enum Op {
     Write(u32, u32),
     Read(u32),
     Wait(u64),
+    ReadBurst(u32, u32, u8),
+    WriteBurst(u32, u32, u8),
 }
+
+/// What a burst on the master's pins met: the beats that came back,
+/// which of them were marked last, every response, whether every
+/// identifier was the burst's, the write responses and whether one came
+/// before the last beat went, and the cycles from the address to the
+/// end. A burst that is not `done` waited out the bound.
+#[derive(Clone, Debug, Default)]
+struct BurstSeen {
+    beats: u32,
+    lasts: Vec<u32>,
+    resps: Vec<u8>,
+    ids_ok: bool,
+    bs: u32,
+    b_early: bool,
+    cycles: u64,
+    done: bool,
+}
+
+/// The cycles a burst may take before it counts as a hang. The slowest
+/// that answer, sixteen beats of the remote peripheral each a frame on
+/// the wire and back, take about 1300.
+const BURST_BOUND: u64 = 20_000;
 
 /// The pins the model drives and reads, kept out of the board's port
 /// struct so the run can move them.
@@ -164,12 +199,22 @@ struct Jtag {
     araddr: Out<U<32>>,
     arvalid: Out<Bit>,
     rready: Out<Bit>,
+    awid: Out<U<1>>,
+    awlen: Out<U<8>>,
+    wlast: Out<Bit>,
+    arid: Out<U<1>>,
+    arlen: Out<U<8>>,
     awready: In<Bit>,
     wready: In<Bit>,
     bvalid: In<Bit>,
+    bid: In<U<1>>,
+    bresp: In<U<2>>,
     arready: In<Bit>,
     rdata: In<U<32>>,
     rvalid: In<Bit>,
+    rid: In<U<1>>,
+    rresp: In<U<2>>,
+    rlast: In<Bit>,
 }
 
 /// The master model's state between cycles: which op, and which of its
@@ -187,14 +232,40 @@ struct Master {
     arv: bool,
     waited: u64,
     got: Vec<u32>,
+    /// A write burst's beats sent so far, and the burst in hand's
+    /// record; every burst's, in order.
+    sent: u32,
+    seen: BurstSeen,
+    bursts: Vec<BurstSeen>,
 }
 
 impl Master {
     /// Before a cycle: drive the pins for the op in hand.
     fn drive(&mut self, plan: &[Op], j: &Jtag) {
         let (mut awv, mut wv, mut arv) = (false, false, false);
+        // A single beat with identifier zero unless the op says more.
+        j.awlen.set(U::from(0u8));
+        j.arlen.set(U::from(0u8));
+        j.wlast.set(Bit::One);
+        j.awid.set(U::from(0u8));
+        j.arid.set(U::from(0u8));
         if let Some(op) = plan.get(self.at) {
             match *op {
+                Op::ReadBurst(addr, beats, id) => {
+                    j.araddr.set(U::from(addr));
+                    j.arlen.set(U::from((beats - 1) as u8));
+                    j.arid.set(U::from(id));
+                    arv = !self.ar_done;
+                }
+                Op::WriteBurst(addr, beats, id) => {
+                    j.awaddr.set(U::from(addr));
+                    j.awlen.set(U::from((beats - 1) as u8));
+                    j.awid.set(U::from(id));
+                    j.wdata.set(U::from(self.sent));
+                    j.wlast.set(Bit::from_bool(self.sent + 1 == beats));
+                    awv = !self.aw_done;
+                    wv = self.aw_done && self.sent < beats;
+                }
                 Op::Write(addr, data) => {
                     j.awaddr.set(U::from(addr));
                     j.wdata.set(U::from(data));
@@ -250,11 +321,83 @@ impl Master {
                 }
             }
             Op::Wait(n) => {
+                // A beat or a response after a burst has ended is the
+                // last burst's, and counts against it.
+                if let Some(b) = self.bursts.last_mut() {
+                    if j.rvalid.get().to_bool() {
+                        if j.rlast.get().to_bool() {
+                            b.lasts.push(b.beats);
+                        }
+                        b.beats += 1;
+                    }
+                    if j.bvalid.get().to_bool() {
+                        b.bs += 1;
+                    }
+                }
                 self.waited += 1;
                 if self.waited >= n {
                     self.next();
                 }
             }
+            Op::ReadBurst(_, _, id) => {
+                self.start();
+                if self.arv && j.arready.get().to_bool() {
+                    self.ar_done = true;
+                }
+                if self.ar_done && j.rvalid.get().to_bool() {
+                    let k = self.seen.beats;
+                    self.seen.beats += 1;
+                    self.seen.resps.push(j.rresp.get().raw() as u8);
+                    if j.rid.get().raw() as u8 != id {
+                        self.seen.ids_ok = false;
+                    }
+                    if j.rlast.get().to_bool() {
+                        self.seen.lasts.push(k);
+                        self.seen.done = true;
+                    }
+                }
+                self.end_burst();
+            }
+            Op::WriteBurst(_, beats, id) => {
+                self.start();
+                if self.awv && j.awready.get().to_bool() {
+                    self.aw_done = true;
+                }
+                if self.wv && j.wready.get().to_bool() {
+                    self.sent += 1;
+                }
+                if j.bvalid.get().to_bool() {
+                    self.seen.bs += 1;
+                    self.seen.resps.push(j.bresp.get().raw() as u8);
+                    if j.bid.get().raw() as u8 != id {
+                        self.seen.ids_ok = false;
+                    }
+                    if self.sent < beats {
+                        self.seen.b_early = true;
+                    }
+                    self.seen.done = true;
+                }
+                self.end_burst();
+            }
+        }
+    }
+
+    /// A burst's first cycle starts its record.
+    fn start(&mut self) {
+        if self.seen.cycles == 0 {
+            self.seen.ids_ok = true;
+        }
+        self.seen.cycles += 1;
+    }
+
+    /// A burst ends when its last beat or its response is seen, or
+    /// when it has waited out the bound.
+    fn end_burst(&mut self) {
+        if self.seen.done || self.seen.cycles >= BURST_BOUND {
+            let mut s = std::mem::take(&mut self.seen);
+            s.beats = s.beats.max(self.sent);
+            self.bursts.push(s);
+            self.next();
         }
     }
 
@@ -264,6 +407,7 @@ impl Master {
         self.w_done = false;
         self.ar_done = false;
         self.waited = 0;
+        self.sent = 0;
     }
 }
 
@@ -297,6 +441,13 @@ struct Net<'a> {
     card: Option<SdCard>,
     /// A scanout on `scan_req` and `scan_words` (issue 1178).
     scan: Option<Scan>,
+    /// Whether the third slot answers, as the flagship's video
+    /// peripheral would, rather than being tied off: a write is taken
+    /// and a read reads zero (issue 1196).
+    video: bool,
+    /// Whether the run ends once the debugger's plan is done, rather
+    /// than when the core halts or the limit is reached.
+    until_planned: bool,
 }
 
 /// A scanout's pixel side on the board's `scan_req` and `scan_words`:
@@ -337,6 +488,8 @@ fn run_all(
         phy,
         card,
         scan,
+        video,
+        until_planned,
     } = net;
     // The scanout's two channels to the board, each tapped here so the
     // run sees what was asked for and what came back.
@@ -362,6 +515,12 @@ fn run_all(
     let mut scan_log = ScanLog::default();
     let mut scan_got = 0usize;
     let mut scan_words_in = 0u64;
+    // The third slot's channels, answered below when `video` says so.
+    let (vaw_tx, vaw_rx) = chan::<LiteAw<32>, DefaultClock>();
+    let (var_tx, var_rx) = chan::<LiteAr<32>, DefaultClock>();
+    let (vw_tx, vw_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+    let (vb_tx, vb_rx) = chan::<LiteB, DefaultClock>();
+    let (vr_tx, vr_rx) = chan::<LiteR<32>, DefaultClock>();
     let mut board = TestBoard {
         cpu: Hart::with(text),
         rom: Rom::with(text),
@@ -402,6 +561,28 @@ fn run_all(
     let (arready_o, arready) = signal::<Bit, DefaultClock>();
     let (rdata_o, rdata) = signal::<U<32>, DefaultClock>();
     let (rvalid_o, rvalid) = signal::<Bit, DefaultClock>();
+    // A word wide and incrementing, as the master sends: a single beat
+    // with identifier zero, unless a burst of the plan says otherwise.
+    let (awid_o, awid) = signal::<U<1>, DefaultClock>();
+    let (awlen_o, awlen) = signal::<U<8>, DefaultClock>();
+    let (awsize_o, awsize) = signal::<U<3>, DefaultClock>();
+    let (awburst_o, awburst) = signal::<U<2>, DefaultClock>();
+    let (wstrb_o, wstrb) = signal::<U<4>, DefaultClock>();
+    let (wlast_o, wlast) = signal::<Bit, DefaultClock>();
+    let (arid_o, arid) = signal::<U<1>, DefaultClock>();
+    let (arlen_o, arlen) = signal::<U<8>, DefaultClock>();
+    let (arsize_o, arsize) = signal::<U<3>, DefaultClock>();
+    let (arburst_o, arburst) = signal::<U<2>, DefaultClock>();
+    let (bid_o, bid) = signal::<U<1>, DefaultClock>();
+    let (bresp_o, bresp) = signal::<U<2>, DefaultClock>();
+    let (rid_o, rid) = signal::<U<1>, DefaultClock>();
+    let (rresp_o, rresp) = signal::<U<2>, DefaultClock>();
+    let (rlast_o, rlast) = signal::<Bit, DefaultClock>();
+    awsize_o.set(U::from(2u8));
+    awburst_o.set(U::from(1u8));
+    wstrb_o.set(U::from(0xfu8));
+    arsize_o.set(U::from(2u8));
+    arburst_o.set(U::from(1u8));
     let jtag = Jtag {
         awaddr: awaddr_o,
         awvalid: awvalid_o,
@@ -411,30 +592,28 @@ fn run_all(
         araddr: araddr_o,
         arvalid: arvalid_o,
         rready: rready_o,
+        awid: awid_o,
+        awlen: awlen_o,
+        wlast: wlast_o,
+        arid: arid_o,
+        arlen: arlen_o,
         awready,
         wready,
         bvalid,
+        bid,
+        bresp,
         arready,
         rdata,
         rvalid,
+        rid,
+        rresp,
+        rlast,
     };
-    // A single beat, a word wide, incrementing: what the master sends.
-    let (awlen_o, awlen) = signal::<U<8>, DefaultClock>();
-    let (awsize_o, awsize) = signal::<U<3>, DefaultClock>();
-    let (awburst_o, awburst) = signal::<U<2>, DefaultClock>();
-    let (wstrb_o, wstrb) = signal::<U<4>, DefaultClock>();
-    let (wlast_o, wlast) = signal::<Bit, DefaultClock>();
-    let (arlen_o, arlen) = signal::<U<8>, DefaultClock>();
-    let (arsize_o, arsize) = signal::<U<3>, DefaultClock>();
-    let (arburst_o, arburst) = signal::<U<2>, DefaultClock>();
-    awlen_o.set(U::from(0u8));
-    awsize_o.set(U::from(2u8));
-    awburst_o.set(U::from(1u8));
-    wstrb_o.set(U::from(0xfu8));
-    wlast_o.set(Bit::One);
-    arlen_o.set(U::from(0u8));
-    arsize_o.set(U::from(2u8));
-    arburst_o.set(U::from(1u8));
+    jtag.awlen.set(U::from(0u8));
+    jtag.arlen.set(U::from(0u8));
+    jtag.wlast.set(Bit::One);
+    jtag.awid.set(U::from(0u8));
+    jtag.arid.set(U::from(0u8));
     // The configuration flash, as the board has it: the chip's identity,
     // and the start of a bitstream, whose sync word is 32 bytes in.
     let (fl_miso_o, fl_miso) = signal::<Bit, DefaultClock>();
@@ -474,8 +653,8 @@ fn run_all(
             rx,
             sys_clk: quiet(),
             sys_rst: quiet(),
-            vb: chan::<LiteB, DefaultClock>().1,
-            vr: chan::<LiteR<32>, DefaultClock>().1,
+            vb: vb_rx,
+            vr: vr_rx,
             net_rx: net_in_rx,
             fl_miso,
             phy_mdio_in,
@@ -489,7 +668,7 @@ fn run_all(
             bscan_reset: signal::<Bit, Tck>().1,
             scan_req,
             jtag: AxiHostPins {
-                awid: signal::<U<1>, DefaultClock>().1,
+                awid,
                 awaddr,
                 awlen,
                 awsize,
@@ -503,7 +682,7 @@ fn run_all(
                 wlast,
                 wvalid,
                 bready,
-                arid: signal::<U<1>, DefaultClock>().1,
+                arid,
                 araddr,
                 arlen,
                 arsize,
@@ -537,20 +716,20 @@ fn run_all(
             dq: pad::<U<32>, DefaultClock>(),
             dqs: pad::<U<4>, DefaultClock>(),
             dqs_n: pad::<U<4>, DefaultClock>(),
-            vaw: chan::<LiteAw<32>, DefaultClock>().0,
-            var: chan::<LiteAr<32>, DefaultClock>().0,
-            vw: chan::<LiteW<32, 4>, DefaultClock>().0,
+            vaw: vaw_tx,
+            var: var_tx,
+            vw: vw_tx,
             net_tx: net_out_tx,
             jtag_awready: awready_o,
             jtag_wready: wready_o,
-            jtag_bid: signal::<U<1>, DefaultClock>().0,
-            jtag_bresp: signal::<U<2>, DefaultClock>().0,
+            jtag_bid: bid_o,
+            jtag_bresp: bresp_o,
             jtag_bvalid: bvalid_o,
             jtag_arready: arready_o,
-            jtag_rid: signal::<U<1>, DefaultClock>().0,
+            jtag_rid: rid_o,
             jtag_rdata: rdata_o,
-            jtag_rresp: signal::<U<2>, DefaultClock>().0,
-            jtag_rlast: bit(),
+            jtag_rresp: rresp_o,
+            jtag_rlast: rlast_o,
             jtag_rvalid: rvalid_o,
             fl_cs_n: fl_cs_n_o,
             fl_mosi: fl_mosi_o,
@@ -683,7 +862,31 @@ fn run_all(
                     scan_got += 1;
                 }
             }
-        } else if halt.get().to_bool() {
+        }
+        if video {
+            // The third slot as an empty peripheral: a write and its
+            // beat taken and answered, a read answered zero.
+            if vaw_rx.peek().is_some()
+                && vw_rx.peek().is_some()
+                && vb_tx.ready().to_bool()
+            {
+                let _ = vaw_rx.recv_if(true);
+                let _ = vw_rx.recv_if(true);
+                vb_tx.send(LiteB { resp: Resp::Okay });
+            }
+            if var_rx.peek().is_some() && vr_tx.ready().to_bool() {
+                let _ = var_rx.recv_if(true);
+                vr_tx.send(LiteR {
+                    data: U::from(0u32),
+                    resp: Resp::Okay,
+                });
+            }
+        }
+        if until_planned {
+            if master.at >= plan.len() {
+                break;
+            }
+        } else if scan.is_none() && halt.get().to_bool() {
             halted_at = Some(cycle);
             break;
         }
@@ -705,6 +908,7 @@ fn run_all(
         sent,
         got: master.got,
         steps: master.at,
+        bursts: master.bursts,
         flash: chip.commands.clone(),
         flash_short: chip.partial,
         phy_frames: phy.frames.clone(),
@@ -1705,4 +1909,106 @@ fn razboj_draws_a_list_rung_on_the_doorbell() {
     let ran = run(&text, &[], b"", 60000);
     assert_eq!(ran.said, "razboj ok\n");
     assert!(ran.halted_at.is_some(), "the core halted itself");
+}
+
+/// Every slave on the board's map answers every legal burst (issue
+/// 1196): for each range of `BoardMap`, each slot of the peripheral
+/// page's `SlotMap` and a hole, a read and a write of 1, 2, 4, 8 and 16
+/// beats, incrementing and a word wide, from the debugger's port.
+///
+/// A read gets exactly as many beats as it asked for, the last of them
+/// and only the last marked last; a write gets one response, and not
+/// before its last beat has gone; every beat and response carries the
+/// burst's identifier; nothing waits out `BURST_BOUND`; and the hole
+/// answers `DecErr`. The core spins in place meanwhile, the remote
+/// peripheral has a program on the wire, and the third slot answers as
+/// the flagship's video peripheral would, so that every slave is there
+/// to answer.
+///
+/// The core makes single beats only, so no test sent a burst to most
+/// of these before, and the boot memory answered sixteen beats with
+/// one, which hung the scanout (#1178).
+#[test]
+fn every_slave_answers_every_burst() {
+    let mut slaves: Vec<(u32, &str)> = BoardMap::RANGES
+        .iter()
+        .zip(BoardMap::NAMES)
+        .filter(|((base, _), _)| *base != 0x3000)
+        .map(|((base, _), name)| (*base as u32, name))
+        .collect();
+    slaves.extend(
+        SlotMap::RANGES
+            .iter()
+            .zip(SlotMap::NAMES)
+            .map(|((base, _), name)| (*base as u32, name)),
+    );
+    let hole = 0x2000u32;
+    slaves.push((hole, "no slave: the hole above the data memory"));
+    // Each slave on a board of its own, so that one that wedges the bus
+    // does not take the next one's bursts with it.
+    let mut seen = Vec::new();
+    let mut asked = Vec::new();
+    for &(base, name) in &slaves {
+        let mut plan = Vec::new();
+        let mut mine = Vec::new();
+        for beats in [1u32, 2, 4, 8, 16] {
+            for write in [false, true] {
+                let id = (mine.len() & 1) as u8;
+                plan.push(if write {
+                    Op::WriteBurst(base, beats, id)
+                } else {
+                    Op::ReadBurst(base, beats, id)
+                });
+                plan.push(Op::Wait(16));
+                mine.push((name, base, beats, write));
+            }
+        }
+        let net = Net {
+            serve: true,
+            video: true,
+            until_planned: true,
+            ..Net::default()
+        };
+        let spin = [vreteno32::isa::jal(0, 0)];
+        let ran = run_all(&spin, &[], b"", &[], 2_000_000, net, &plan);
+        assert_eq!(ran.bursts.len(), mine.len(), "every burst to {name}");
+        seen.extend(ran.bursts);
+        asked.extend(mine);
+    }
+    let mut wrong = Vec::new();
+    let mut slowest = 0;
+    for (seen, &(name, base, beats, write)) in seen.iter().zip(&asked) {
+        let what = format!(
+            "{name} at {base:#x}, a {} of {beats}",
+            if write { "write" } else { "read" }
+        );
+        slowest = slowest.max(seen.cycles);
+        if !seen.done {
+            wrong.push(format!("{what}: no answer in {BURST_BOUND} cycles"));
+            continue;
+        }
+        if write {
+            if seen.bs != 1 {
+                wrong.push(format!("{what}: {} write responses", seen.bs));
+            }
+            if seen.b_early {
+                wrong.push(format!("{what}: answered before its last beat"));
+            }
+        } else {
+            if seen.beats != beats {
+                wrong.push(format!("{what}: {} beats came back", seen.beats));
+            }
+            if seen.lasts != [beats - 1] {
+                wrong.push(format!("{what}: last on beats {:?}", seen.lasts));
+            }
+        }
+        if !seen.ids_ok {
+            wrong.push(format!("{what}: another burst's identifier"));
+        }
+        if base == hole && seen.resps.iter().any(|&r| r != 3) {
+            wrong.push(format!("{what}: {:?}, not DecErr", seen.resps));
+        }
+    }
+    eprintln!("{} bursts, the slowest {slowest} cycles", asked.len());
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
