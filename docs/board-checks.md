@@ -428,6 +428,29 @@ Pass, in this order:
 A right serial log with a wrong picture points at the scanout's stride of 4096 rather than at Razboj.
 Put the log, the cycle count, and a photograph of the screen on #985.
 
+### Linux on the Ethernet port, #1203
+
+A flagship built from a `main` that holds #1203, since the port's registers moved to LiteX's offsets in the hardware.
+First run the Ethernet transmit and echo checks above from that `main`, exactly as written: a failure there is the register move, not Linux.
+
+Then boot `//linux:board_boot` from the same `main` with fastboot, as for M12.
+The kernel says `liteeth 3400.ethernet eth0: irq 2 slots: tx 2 rx 2 size 2048`.
+The board's image does not start the network itself, since `/init` does that only for `txhdl.net` on the command line, so from the board's shell:
+
+```sh
+ip addr add 192.168.1.50/24 dev eth0
+ip link set eth0 up
+ping -c 3 192.168.1.1
+```
+
+Then from srv, which needs no `sudo`, `ping -c 3 192.168.1.50`, and on the board `ip -s link show eth0`.
+The cable is point to point to srv's `fpga-a200t-eth0`, which already holds 192.168.1.1, so there is nothing to configure there.
+
+Pass: three replies each way, and receive and transmit counts on `eth0` that are not zero.
+No `liteeth` line means the kernel found no port in the tree, or found it and failed to map it.
+A probe with no replies, and transmit counts going up, means frames leave and nothing comes back: look at srv's side with `tcpdump -i fpga-a200t-eth0`.
+Put the log on #1203.
+
 ### Ethernet throughput, #1038
 
 The Ethernet half of #151: the port's throughput through the slots and the DMA engines, against the core's own copy of each frame.

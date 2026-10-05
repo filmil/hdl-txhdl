@@ -413,6 +413,19 @@ machine above is its first reader: a test boots a packed image there
 and checks the shim's registers and every part's address before an
 image ever reaches the board.
 
+Linux reaches the network through its own LiteEth driver,
+\code{litex\_liteeth}, on the Ethernet port (issue~\#1203). The
+port's registers are LiteEth's at LiteX's offsets, and its two
+receive and two transmit slots are the DDR3 buffers the tree reserves,
+so the driver runs as the kernel ships it. The tree names the port as
+\code{litex,liteeth}, with its registers and its buffers. The machine
+has the port too: its registers by the hardware's own map, its engines
+as copies to and from the DDR3, and with \code{--eth-peer} a station
+on the cable that answers ARP and ping at 10.0.0.2.
+\code{boot\_net\_test} boots an image whose command line asks
+\code{/init} for the network, and passes when Linux has pinged that
+station and had its replies.
+
 \lstinputlisting[caption={\code{model.rs}: the reference
 model.},label={lst:v-model}]{cpu/vreteno/src/model.rs}
 

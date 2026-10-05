@@ -13,6 +13,16 @@ a maintained driver for a soft MAC on an FPGA whose slot size is
 bringing up Ethernet under Zephyr is a port of a file that already
 works rather than a design nobody has driven.
 
+Linux has the same driver, \code{litex\_liteeth}, but it fixes each
+register at LiteX's own offset rather than taking it from the device
+tree, as Zephyr's does. So the registers sit at LiteX's offsets, a word
+each, the receive side's slot, length, errors, status, pending and
+enable, then the transmit side's start, ready, level, slot, length,
+status, pending and enable (issue~\#1203). The counts and statuses
+nothing here keeps read zero. Zephyr's driver names each register from
+the header \code{//tools/regmap} writes from this map, so it follows
+wherever the map puts them, and Linux's runs unchanged.
+
 \subsection{Two slots a direction, not a ring}
 
 A descriptor ring was the obvious design and it is the wrong one.
