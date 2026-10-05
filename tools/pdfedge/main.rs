@@ -72,7 +72,8 @@ fn overruns(bbox: &str, slack: f64) -> Vec<Overrun> {
             page += 1;
             width = attr(line, "width").unwrap_or(0.0);
         } else if line.starts_with("<word ") {
-            let (x_min, x_max) = match (attr(line, "xMin"), attr(line, "xMax")) {
+            let (x_min, x_max) = match (attr(line, "xMin"), attr(line, "xMax"))
+            {
                 (Some(a), Some(b)) => (a, b),
                 _ => continue,
             };
@@ -109,7 +110,9 @@ fn frames(svg: &str) -> Vec<Rect> {
     let mut lines: Vec<Rect> = Vec::new();
     for path in svg.split("<path ").skip(1) {
         let tag = &path[..path.find("/>").unwrap_or(path.len())];
-        let Some(fill) = quoted(tag, "fill") else { continue };
+        let Some(fill) = quoted(tag, "fill") else {
+            continue;
+        };
         let grey: Vec<f64> = fill
             .trim_start_matches("rgb(")
             .trim_end_matches(')')
@@ -125,7 +128,9 @@ fn frames(svg: &str) -> Vec<Rect> {
         let Some(rect) = quoted(tag, "d").and_then(|d| rectangle(&d)) else {
             continue;
         };
-        let same = |r: &Rect| (r.1 - rect.1).abs() < 0.05 && (r.3 - rect.3).abs() < 0.05;
+        let same = |r: &Rect| {
+            (r.1 - rect.1).abs() < 0.05 && (r.3 - rect.3).abs() < 0.05
+        };
         match lines.iter_mut().find(|r| same(r)) {
             Some(r) if rect.2 - rect.0 > r.2 - r.0 => *r = rect,
             Some(_) => {}
@@ -188,7 +193,9 @@ fn words(bbox: &str) -> Vec<Vec<(Rect, String)>> {
             pages.push(Vec::new());
         } else if line.starts_with("<word ") {
             let b = ["xMin", "yMin", "xMax", "yMax"].map(|k| attr(line, k));
-            let [Some(x0), Some(y0), Some(x1), Some(y1)] = b else { continue };
+            let [Some(x0), Some(y0), Some(x1), Some(y1)] = b else {
+                continue;
+            };
             let text = line
                 .find('>')
                 .map(|i| &line[i + 1..])
@@ -215,9 +222,9 @@ fn overflows(
     let mut found = Vec::new();
     for ((x0, y0, x1, y1), text) in words {
         let mid = (y0 + y1) / 2.0;
-        let on = lines
-            .iter()
-            .find(|l| l.1 <= mid && mid <= l.3 && l.0 - 0.5 <= *x0 && *x0 < l.2);
+        let on = lines.iter().find(|l| {
+            l.1 <= mid && mid <= l.3 && l.0 - 0.5 <= *x0 && *x0 < l.2
+        });
         if let Some(l) = on {
             if *x1 > l.2 + slack {
                 found.push(Overflow {
@@ -243,7 +250,9 @@ fn pinned(tool: &Path, suffix: &str, args: &[&str]) -> Result<String, String> {
     let tree = tool
         .to_str()
         .and_then(|p| p.strip_suffix(suffix))
-        .ok_or_else(|| format!("{}: not a pinned tree's tool", tool.display()))?;
+        .ok_or_else(|| {
+            format!("{}: not a pinned tree's tool", tool.display())
+        })?;
     let out = Command::new(format!("{}/usr/lib64/ld-linux-x86-64.so.2", tree))
         .arg("--library-path")
         .arg(format!("{}/usr/lib/x86_64-linux-gnu", tree))
@@ -281,13 +290,12 @@ fn main() {
             "--pdftocairo" => pdftocairo = args.next(),
             "--frames" => check_frames = true,
             "--slack" => {
-                slack = args
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_else(|| {
+                slack = args.next().and_then(|s| s.parse().ok()).unwrap_or_else(
+                    || {
                         eprintln!("pdfedge: --slack wants a number of points");
                         std::process::exit(2)
-                    })
+                    },
+                )
             }
             _ => pdfs.push(a),
         }
@@ -335,12 +343,20 @@ fn main() {
         );
         std::process::exit(1)
     }
-    println!("pdfedge: {} document(s), every word on its page", pdfs.len());
+    println!(
+        "pdfedge: {} document(s), every word on its page",
+        pdfs.len()
+    );
 }
 
 /// The frame check over every document: 0 when every listing's words
 /// end inside its frame, 1 when one does not, 2 when a tool fails.
-fn check_listings(pdftotext: &str, pdftocairo: &str, pdfs: &[String], slack: f64) -> i32 {
+fn check_listings(
+    pdftotext: &str,
+    pdftocairo: &str,
+    pdfs: &[String],
+    slack: f64,
+) -> i32 {
     let mut bad = 0;
     for pdf in pdfs {
         let pages = match bbox(Path::new(pdftotext), Path::new(pdf)) {
@@ -353,7 +369,11 @@ fn check_listings(pdftotext: &str, pdftocairo: &str, pdfs: &[String], slack: f64
         for (k, on_page) in pages.iter().enumerate() {
             let n = (k + 1).to_string();
             let args = ["-svg", "-f", &n, "-l", &n, pdf, "-"];
-            let svg = match pinned(Path::new(pdftocairo), "/usr/bin/pdftocairo", &args) {
+            let svg = match pinned(
+                Path::new(pdftocairo),
+                "/usr/bin/pdftocairo",
+                &args,
+            ) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("pdfedge: {}: {}", pdf, e);
@@ -378,7 +398,10 @@ fn check_listings(pdftotext: &str, pdftocairo: &str, pdfs: &[String], slack: f64
         );
         return 1;
     }
-    println!("pdfedge: {} document(s), every listing inside its frame", pdfs.len());
+    println!(
+        "pdfedge: {} document(s), every listing inside its frame",
+        pdfs.len()
+    );
     0
 }
 
@@ -451,7 +474,8 @@ mod tests {
     #[test]
     fn a_word_that_starts_in_a_frame_ends_in_it() {
         let f = frames(PAGE);
-        let w = |x0: f64, x1: f64, t: &str| ((x0, 59.5, x1, 65.0), t.to_string());
+        let w =
+            |x0: f64, x1: f64, t: &str| ((x0, 59.5, x1, 65.0), t.to_string());
         let on_page = vec![
             w(52.0, 120.0, "fits"),
             w(280.0, 296.9, "edge"),

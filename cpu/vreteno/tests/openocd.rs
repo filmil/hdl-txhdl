@@ -807,7 +807,10 @@ fn openocd_halts_a_core_waiting_in_wfi() {
     let done = run.finish(Duration::from_secs(60)).unwrap();
     let log = &done.log;
     eprintln!("{log}");
-    assert!(served.rises > 0, "OpenOCD clocked the TAP: {served:?}\n{log}");
+    assert!(
+        served.rises > 0,
+        "OpenOCD clocked the TAP: {served:?}\n{log}"
+    );
     assert!(
         !log.contains("unable to halt"),
         "a core in wfi refused the halt:\n{log}"
@@ -863,7 +866,10 @@ fn openocd_halts_a_core_that_has_stopped() {
     let done = run.finish(Duration::from_secs(60)).unwrap();
     let log = &done.log;
     eprintln!("{log}");
-    assert!(served.rises > 0, "OpenOCD clocked the TAP: {served:?}\n{log}");
+    assert!(
+        served.rises > 0,
+        "OpenOCD clocked the TAP: {served:?}\n{log}"
+    );
     assert!(
         !log.contains("unable to halt"),
         "a stopped core refused the halt:\n{log}"
