@@ -257,11 +257,13 @@ extern "C" fn main() -> ! {
         // say nothing about whether they have landed, so what ordered
         // the jump after the last store was the millisecond the line
         // took (issue 550). Since issue 432 a `fence` stalls until every
-        // posted store has been answered, and this core has no
-        // instruction cache, so a fence is what the jump needs and
-        // `fence.i` would add nothing.
+        // posted store has been answered. The core has an instruction
+        // cache since issue 1021, which a store does not reach, so the
+        // jump takes `fence.i`: it waits for the stores as a `fence`
+        // does, empties the cache, and fetches the program from
+        // memory rather than what the last one left in the cache.
         unsafe {
-            core::arch::asm!("fence");
+            core::arch::asm!("fence.i");
             let entry: extern "C" fn() -> ! =
                 core::mem::transmute(addr as usize);
             entry()
