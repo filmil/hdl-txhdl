@@ -52,7 +52,7 @@
 #define UART_IE_RXWM_SHIFT 1 /* read, write: the receive watermark */
 #define UART_IE_RXWM_MASK 0x2
 #define UART_IE_RXWM_WIDTH 1
-#define UART_IE_RXWM_RESET 0x1
+#define UART_IE_RXWM_RESET 0x0
 #define UART_IP 0x14 /* read only: which watermarks are passed */
 #define UART_IP_TXWM_SHIFT 0 /* read only: fewer than txcnt bytes wait to be sent */
 #define UART_IP_TXWM_MASK 0x1

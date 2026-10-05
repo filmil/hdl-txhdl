@@ -67,9 +67,11 @@ fn on_interrupt(_frame: &mut Frame, _cause: u32) {
 entry!(main);
 
 fn main() -> ! {
-    // The controller: source 1 at priority 1, enabled; the threshold
-    // is 0 from the reset. The core: the vector, the external
-    // interrupt allowed, and interrupts on.
+    // The port: a received byte raises its line, which a reset leaves
+    // off (issue 1137). The controller: source 1 at priority 1,
+    // enabled; the threshold is 0 from the reset. The core: the vector,
+    // the external interrupt allowed, and interrupts on.
+    Uart::interrupt_on_receive(true);
     Plic::enable(Plic::UART, 1);
     trap::install();
     trap::on_interrupt(trap::EXTERNAL, on_interrupt);

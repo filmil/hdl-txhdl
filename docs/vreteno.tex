@@ -809,14 +809,16 @@ fewer than \code{txctrl}'s count or the receive queue more than
 \code{rxctrl}'s, and the port's interrupt line is high while one that
 \code{ie} enables is; on the board it is source 1 of the interrupt
 controller, whose line is the core's external interrupt, and the
-demonstration joins it to the line it drives. Three resets differ
-from SiFive's, so that a program that never writes the controls finds
-the port as it was before the map: both enables start set, and so does
-\code{ie}'s receive bit, so the line is high while a received byte
-waits. \code{div} starts at the unit's parameter \code{DIV} less one:
+demonstration joins it to the line it drives. Two resets differ from
+SiFive's, so that a program that never writes the controls finds the
+port as it was before the map: both enables start set, and
+\code{div} starts at the unit's parameter \code{DIV} less one:
 867 for 115\,200 baud at 100~MHz on the board, and 3 in the runs that
 are checked, so that a byte takes forty cycles rather than nine
-thousand. The two are the same unit lowered twice, and a driver sets
+thousand. \code{ie} starts clear, as SiFive's does: a receive bit that
+started set let the serial loader's bytes leave a request pending in
+the interrupt controller, which Linux took before its port was ready
+(issues~\#1136 and~\#1137). The two are the same unit lowered twice, and a driver sets
 \code{div} from the clock it is told the port runs on. The line in
 goes through one register before the logic, as a pin's should. The
 port's pieces, the frame a byte goes out as, the frame after a bit, a

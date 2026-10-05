@@ -110,6 +110,14 @@ impl Uart {
     const TX_FULL: u32 = uart::TXDATA_FULL_MASK;
     const RX_EMPTY: u32 = uart::RXDATA_EMPTY_MASK;
     const RX_WAITING: u32 = uart::IP_RXWM_MASK;
+    const IE: usize = map::UART + uart::IE;
+
+    /// Let a received byte raise the port's interrupt line, or stop it:
+    /// `ie`'s receive bit, which a reset clears, as SiFive's does
+    /// (issue 1137).
+    pub fn interrupt_on_receive(on: bool) {
+        wr(Self::IE, if on { uart::IE_RXWM_MASK } else { 0 });
+    }
 
     /// Send one byte, once the queue has room for it. A byte written
     /// while the queue is full is dropped, so the wait is not optional.
