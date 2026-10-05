@@ -33,8 +33,8 @@ fn the_solid_has_twenty_faces() {
 /// touch the logo the program paints once.
 #[test]
 fn the_solid_cannot_reach_the_logo() {
-    let logo_x = W - 36 * 4 - 8;
-    let logo_y = H - 36 * 4 - 8;
+    let logo_x = W - txhdl_logo::W as i32 - 8;
+    let logo_y = H - txhdl_logo::H as i32 - 8;
     assert!(
         W / 2 + ico_list::REACH < logo_x,
         "reach {}",

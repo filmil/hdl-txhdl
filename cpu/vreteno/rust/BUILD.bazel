@@ -730,7 +730,10 @@ rust_test(
     ],
     crate_root = "ico_list_test.rs",
     edition = "2021",
-    deps = ["//gpu/razboj"],
+    deps = [
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
+    ],
 )
 
 # The same icosahedron through the GL ES library (issue 995), drawn on
@@ -749,6 +752,23 @@ rust_test(
     deps = [
         "//gles",
         "//gpu/razboj",
+    ],
+)
+
+# One frame of ico_hdmi worked out on the host, as a PPM: the list
+# rendered through Razboj's model with the logo laid in, to hold a board
+# recording against (issues 986 and 1213).
+rust_binary(
+    name = "ico_frame",
+    srcs = [
+        "ico_frame.rs",
+        "ico_list.rs",
+    ],
+    crate_root = "ico_frame.rs",
+    edition = "2021",
+    deps = [
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
     ],
 )
 

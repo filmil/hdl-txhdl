@@ -35,8 +35,8 @@
 //!
 //! ## The logo
 //!
-//! The core paints the logo into both frames once, at four screen
-//! pixels to one of its own, in the bottom right corner. The solid
+//! The core paints the logo into both frames once, a pixel of its own
+//! to a pixel of the screen, in the bottom right corner (issue 1213). The solid
 //! never reaches that corner, which the host test checks, so no clear
 //! ever touches the logo and it is never drawn again.
 //!
@@ -71,11 +71,10 @@ use vreteno_hal::{entry, Razboj, Scan, Uart, Video};
 
 entry!(main);
 
-/// The logo's place: the bottom right corner, eight pixels in, four
-/// screen pixels to each of its own.
-const LOGO_SCALE: u32 = 4;
-const LOGO_X: u32 = Scan::WIDTH - txhdl_logo::W as u32 * LOGO_SCALE - 8;
-const LOGO_Y: u32 = Scan::HEIGHT - txhdl_logo::H as u32 * LOGO_SCALE - 8;
+/// The logo's place: the bottom right corner, eight pixels in, a pixel
+/// of its own to a pixel of the screen (issue 1213).
+const LOGO_X: u32 = Scan::WIDTH - txhdl_logo::W as u32 - 8;
+const LOGO_Y: u32 = Scan::HEIGHT - txhdl_logo::H as u32 - 8;
 
 // The solid never reaches the logo's columns, so no clear erases it.
 const _: () = assert!(Scan::WIDTH as i32 / 2 + ico_list::REACH < LOGO_X as i32);
@@ -95,14 +94,6 @@ fn mcycle() -> u32 {
     let c: u32;
     unsafe { core::arch::asm!("csrr {0}, mcycle", out(reg) c) };
     c
-}
-
-/// A twelve-bit colour as a scanout pixel, each four bits repeated.
-fn wide(c: u32) -> u32 {
-    let r = (c >> 8) & 0xf;
-    let g = (c >> 4) & 0xf;
-    let b = c & 0xf;
-    (r * 0x11) << 16 | (g * 0x11) << 8 | b * 0x11
 }
 
 /// The first `n` entries of `list`, where the rasteriser reads them,
@@ -129,18 +120,13 @@ fn draw(list: &[[u32; WORDS]], n: usize) {
 /// left as the backdrop.
 fn logo(dy: u32) {
     let base = Razboj::FRAME as *mut u32;
-    let size = txhdl_logo::W as u32 * LOGO_SCALE;
-    let mut r = 0u32;
-    while r < size {
-        let mut c = 0u32;
-        while c < size {
-            let word = txhdl_logo::PIXELS[((r / LOGO_SCALE)
-                * txhdl_logo::W as u32
-                + c / LOGO_SCALE)
-                as usize];
-            if word != txhdl_logo::TRANSPARENT {
-                let at = ((dy + LOGO_Y + r) * ROW + LOGO_X + c) as usize;
-                let px = wide(word as u32);
+    let mut r = 0usize;
+    while r < txhdl_logo::H {
+        let mut c = 0usize;
+        while c < txhdl_logo::W {
+            if let Some(px) = txhdl_logo::colour(c, r) {
+                let row = dy + LOGO_Y + r as u32;
+                let at = (row * ROW + LOGO_X + c as u32) as usize;
                 unsafe { write_volatile(base.add(at), px) };
             }
             c += 1;
