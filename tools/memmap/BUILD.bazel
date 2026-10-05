@@ -13,6 +13,7 @@ rust_binary(
     edition = "2021",
     deps = [
         "//cpu/vreteno:vreteno32",
+        "//gpu/razboj",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
         "//pcie",
