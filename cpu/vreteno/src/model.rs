@@ -595,7 +595,8 @@ impl Model {
             CSR_MBUSQUIET => self.csr.busquiet as u32,
             CSR_DCSR => self.dcsr,
             CSR_DPC => self.dpc,
-            // What the machine is. `misa` says RV32IMC; the four
+            // What the machine is. `misa` says RV32IMAC with
+            // supervisor and user modes; the four
             // machine information registers say that the vendor, the
             // architecture and the implementation are unassigned and
             // that this is hart zero.

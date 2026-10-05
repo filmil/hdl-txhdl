@@ -2968,7 +2968,7 @@ waveform(
     ],
 )
 
-# Vreteno: the RV32IMC core, its run and the opening cycles of its
+# Vreteno: the RV32IMAC core, its run and the opening cycles of its
 # waveform, in its own document.
 waveform(
     name = "vreteno",
@@ -3773,7 +3773,7 @@ combined_pdf(
         "Deleting a Language: Embedding TxHDL in Rust",
         "The TxHDL Runtime",
         "TxHDL by Example",
-        "Vreteno: An RV32IMC Core in TxHDL",
+        "Vreteno: An RV32IMAC Core in TxHDL",
         "A Tapeout Prep in TxHDL: Vreteno on an Open 45 nm Node",
         "TxHDL: A Hardware Description Language That Is a Rust Library",
         "TxHDL by the Numbers",

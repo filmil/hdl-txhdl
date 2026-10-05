@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: Apache-2.0
 %
-% Vreteno: an RV32IMC core in TxHDL, the first large design. Built by
+% Vreteno: an RV32IMAC core in TxHDL, the first large design. Built by
 % //docs:vreteno. One column, because it is mostly listings.
 \documentclass[journal,onecolumn,9pt]{IEEEtran}
 
@@ -24,13 +24,14 @@ linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/plic.rs}}
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=#1-#1,caption={#2},label={#3}]{lib/parts/src/mmu.rs}}
 
-\title{Vreteno: An RV32IMC Core in TxHDL}
+\title{Vreteno: An RV32IMAC Core in TxHDL}
 
 \author{Filip Filmar and Dragiša Janković%
 \thanks{Both authors are independent. Filip Filmar is the
 corresponding author, at f@hdlfactory.com; Dragiša Janković is
 reached at linkedin.com/in/dragisa-jankovic.}%
-\thanks{This document holds the Vreteno core, a RISC-V RV32IMC processor
+\thanks{This document holds the Vreteno core, a RISC-V RV32IMAC processor
+with machine, supervisor and user modes and Sv32 paging,
 written in TxHDL under \code{//cpu/vreteno} of the project repository,
 included verbatim at build time with the reference model it is checked
 against, the programs it runs, and the trace and waveform the build
@@ -44,14 +45,16 @@ the documents and the programs; every commit of the repository says
 so and carries the prompts that led to it, verbatim.}%
 \thanks{\buildstamp}}
 
-\markboth{Vreteno: An RV32IMC Core in TxHDL}{Filmar and Janković: Vreteno}
+\markboth{Vreteno: An RV32IMAC Core in TxHDL}{Filmar and Janković: Vreteno}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
 Vreteno is a 32-bit RISC-V core, the RV32I base integer set, the M
-extension and the C extension's compressed instructions, written in
+extension, the A extension's atomic instructions and the C extension's
+compressed instructions, with machine, supervisor and user modes and
+Sv32 paging, written in
 TxHDL: the first design large enough to ask whether the language
 scales past its examples. This is its fifth form: a three-stage
 pipeline, one process in which a fetch stage reads the instruction
@@ -92,7 +95,7 @@ build produced when it ran the core.
 \end{abstract}
 
 \begin{IEEEkeywords}
-RISC-V, RV32IMC, processor, hardware description languages, Rust,
+RISC-V, RV32IMAC, processor, hardware description languages, Rust,
 lockstep testing.
 \end{IEEEkeywords}
 
@@ -2347,7 +2350,7 @@ access was in flight, so neither port waits for the other to stop.
 
 Everything above runs programs written with the assembler in
 \code{program.rs}, which is enough to check a core and no way to
-write software. The core is an RV32IMC machine, so a compiler can
+write software. The core is an RV32IMAC machine, so a compiler can
 target it, and the toolchain for that is fetched by the build like
 every other: \code{MODULE.bazel} names the bare-metal RISC-V target
 beside the host's, and the ruleset downloads that target's standard
@@ -2483,8 +2486,9 @@ so the toolchain and the core are checked together by
 
 The other toolchain is the GNU one for bare-metal RISC-V, fetched by
 checksum like the first. It is the GNU one rather than a Clang
-because of what comes with it: its \code{rv32imc/ilp32} multilib is
-this core exactly, RV32IMC and the soft-float ABI, and it carries
+because of what comes with it: its \code{rv32imc/ilp32} multilib,
+RV32IMC and the soft-float ABI, is this core less the atomic
+instructions, so its code runs here as it is, and it carries
 \code{newlib} and a \code{libstdc++}
 already built for it, so a standard library is something the
 toolchain has rather than something the build would have to compile.
