@@ -1,7 +1,8 @@
 % SPDX-License-Identifier: Apache-2.0
-% covers: ScanCtl
+% covers: ScanCtl, ScanTap
 \datasheet{ScanCtl}{The scanout's registers: the frame's base, the bit
-that shows the scanout, and the underflow bit, read and cleared.}
+that shows the scanout, and the underflow and stuck bits, read and
+cleared, with the address of a line that did not come.}
 
 \dsfacts{\code{lib/parts/src/scanout.rs}}%
 {\code{txhdl\_parts::scanout::ScanCtl}}%
@@ -12,11 +13,16 @@ that shows the scanout, and the underflow bit, read and cleared.}
 \code{ScanCtl} holds what a program sets and reads of a scanout from
 memory (issue 151): where the next frame starts, whether the screen
 shows the scanout or the video peripheral's own framebuffer, and
-whether a column was ever shown before its word arrived. Its three
-outputs are registers, for \code{LinePair} and \code{VidMux} to read.
+whether a column was ever shown before its word arrived, and whether
+a line asked for never came, with that line's address (issue 1197).
+Its three outputs are registers, for \code{LinePair} and
+\code{VidMux} to read.
 
-The underflow bit comes back from \code{LinePair} over a channel,
-through \code{ScanTap}, rather than on a wire. \code{ScanCtl} drives
+The underflow bit, the stuck bit and the address come back from
+\code{LinePair} over a channel, as one \code{ScanState}, rather than
+on wires. \code{ScanTap}, which this sheet covers too, puts them on it:
+it reads \code{LinePair}'s three wires after \code{LinePair} has
+driven them and sends them whenever the channel has room. \code{ScanCtl} drives
 \code{clear}, which \code{LinePair} reads, so it runs before
 \code{LinePair}, and a wire back would be read a step stale in the run
 while the netlist reads it fresh. A channel commits at the end of the
@@ -24,15 +30,17 @@ step whichever unit ran first.
 
 \subsection*{Register map}
 
-The unit decodes the word from address bits 3 to 2. In
+The unit decodes the word from address bits 4 to 2. In
 \code{ScanVideo} it sits above \code{1 << SCAN\_BIT}, \code{0x80}, of
 the video slot, so on the board its words are at \code{0x3280} to
-\code{0x328c}, the HAL's \code{map::SCAN}.
+\code{0x3290}, the HAL's \code{map::SCAN}.
 
 \dsregs{ScanCtl}
 
-A write to \code{clear} of any value clears the underflow bit; the
-word itself is not kept.
+A write to \code{clear} of any value clears the underflow and stuck
+bits; the word itself is not kept. \code{stuck\_at} is the
+first line that did not come since the stuck bit was last clear, and a
+clear leaves it until another line does not come.
 
 \dstables{ScanCtl}
 
@@ -45,8 +53,9 @@ for the one cycle after a write to \code{clear}.
 \item \code{mode} also starts the fetch: in \code{ScanVideo} it is
 \code{LinePair}'s \code{show}, so no line is read from memory until
 the show bit is set (issue 1178).
-\item The underflow bit is \code{seen}, the last value the channel
-brought. It can read high for a few cycles after a clear, the values
+\item The underflow bit is \code{seen}, the stuck bit
+\code{seen\_stuck} and the address \code{seen\_at}, the last values
+the channel brought. It can read high for a few cycles after a clear, the values
 already in the channel, the same in the run and the netlist.
 \item Reads and writes are answered the cycle they are taken.
 \end{itemize}
@@ -59,13 +68,18 @@ memory stalls for a line, and clear again after a write to
 \code{clear}. \code{//docs:scanvideo\_sim\_scanvideo\_tb\_test} and
 \code{//docs:scanvideo\_vsim\_test} simulate it inside
 \code{ScanVideo}'s netlist against that run.
+\code{//cpu/vreteno:board\_test}'s
+\code{a\_line\_that\_never\_comes\_is\_stuck} points the scanout at
+memory that never answers and reads the stuck bit set with that
+line's address.
 
 \subsection*{Used by}
 
 \code{ScanVideo}. On the board, \code{cpu/vreteno/rust/scanprobe.rs}
-uses it through the HAL's \code{Scan}.
+uses it through the HAL's \code{Scan}, and says \code{scan stuck} with
+the address when the bit is set.
 
 \subsection*{Limits}
 
 One base, taken at each vertical sync; there is no interrupt, so a
-program reads the underflow bit.
+program reads the underflow and stuck bits.
