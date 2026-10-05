@@ -33,6 +33,13 @@ use vreteno32::hart::Hart;
 use vreteno32::rom::Rom;
 use vreteno32::term::Terminal;
 
+// The icosahedron's lists, which `cpu/vreteno/rust/ico_hdmi.rs` sends,
+// for the timing of Razboj drawing them (issue 1255); the board
+// program's constants this file has no use for go unused.
+#[allow(dead_code)]
+#[path = "../rust/ico_list.rs"]
+mod ico_list;
+
 /// The serial port's divider in these runs: four cycles a bit, as the
 /// demonstration has it.
 type TestBoard = Board<4>;
@@ -2027,6 +2034,235 @@ fn razboj_fills_the_screen_in_bursts() {
     let at = ran.halted_at.expect("the core halted itself");
     eprintln!("razboj fill: halted at cycle {at}");
     assert!(at < 360_000, "the fill took until cycle {at}");
+}
+
+/// The word in `rs` as eight hexadecimal digits on the serial port, `x1`
+/// holding the port's page; `x2`, `x3` and `x4` are used.
+fn say_hex(a: &mut vreteno32::program::Asm, rs: u32) {
+    use vreteno32::isa::{addi, andi, blt, lw, srli, sw};
+    for k in (0..8).rev() {
+        a.emit(srli(4, rs, 4 * k));
+        a.emit(andi(4, 4, 15));
+        a.emit(addi(3, 4, b'0' as i32));
+        a.emit(addi(2, 0, 10));
+        let digit = a.label();
+        a.to(digit, |off| blt(4, 2, off));
+        a.emit(addi(3, 4, b'a' as i32 - 10));
+        a.place(digit);
+        let wait = a.label();
+        a.place(wait);
+        a.emit(lw(2, 1, 0));
+        a.to(wait, |off| blt(2, 0, off));
+        a.emit(sw(3, 1, 0));
+    }
+}
+
+/// A program that waits while Razboj draws a list the debugger's plan
+/// wrote and rang (issue 1255): the count read until it is not zero,
+/// then until it is zero again with the status idle, the cycle counter
+/// read at each end. It says `razboj cycles` and the cycles between,
+/// then reads each of `checks`, a byte address and the word it must
+/// hold, and says `razboj ok` or `razboj bad`, and halts.
+fn razboj_wait_program(checks: &[(u32, u32)]) -> Vec<u32> {
+    use vreteno32::board::RAZBOJ_DOORBELL;
+    use vreteno32::isa::{
+        beq, bne, csrrs, halt, jal, lui, lw, sub, CSR_MCYCLE, UART_BASE,
+    };
+    let mut a = vreteno32::program::Asm::default();
+    a.emit(lui(1, UART_BASE >> 12));
+    li(&mut a, 15, RAZBOJ_DOORBELL as u32);
+    let rung = a.label();
+    a.place(rung);
+    a.emit(lw(5, 15, 0));
+    a.to(rung, |off| beq(5, 0, off));
+    a.emit(csrrs(20, CSR_MCYCLE, 0));
+    let drawn = a.label();
+    a.place(drawn);
+    a.emit(lw(5, 15, 0));
+    a.to(drawn, |off| bne(5, 0, off));
+    let idle = a.label();
+    a.place(idle);
+    a.emit(lw(5, 15, 4));
+    a.to(idle, |off| beq(5, 0, off));
+    a.emit(csrrs(21, CSR_MCYCLE, 0));
+    a.emit(sub(22, 21, 20));
+    say(&mut a, b"razboj cycles ");
+    say_hex(&mut a, 22);
+    say(&mut a, b"\n");
+    let bad = a.label();
+    let done = a.label();
+    for &(at, want) in checks {
+        li(&mut a, 14, at);
+        a.emit(lw(5, 14, 0));
+        li(&mut a, 13, want);
+        a.to(bad, |off| bne(5, 13, off));
+    }
+    say(&mut a, b"razboj ok\n");
+    a.to(done, |off| jal(0, off));
+    a.place(bad);
+    say(&mut a, b"razboj bad\n");
+    a.place(done);
+    a.emit(halt());
+    a.words()
+}
+
+/// The debugger's plan for a list on the board: `words` written at the
+/// list's address, only those that are not zero since the DDR3 starts
+/// at zero, then `marks`, each a byte address and a word, and last the
+/// count rung on the doorbell.
+fn razboj_plan(words: &[u32], marks: &[(u32, u32)], count: u32) -> Vec<Op> {
+    use vreteno32::board::{RAZBOJ_DL, RAZBOJ_DOORBELL};
+    let mut plan: Vec<Op> = words
+        .iter()
+        .enumerate()
+        .filter(|(_, &w)| w != 0)
+        .map(|(i, &w)| Op::Write(RAZBOJ_DL as u32 + 4 * i as u32, w))
+        .collect();
+    plan.extend(marks.iter().map(|&(at, w)| Op::Write(at, w)));
+    plan.push(Op::Write(RAZBOJ_DOORBELL as u32, count));
+    plan
+}
+
+/// The cycles a `razboj_wait_program` run said Razboj took.
+fn razboj_cycles(said: &str) -> u64 {
+    let hex = said
+        .lines()
+        .find_map(|l| l.strip_prefix("razboj cycles "))
+        .unwrap_or_else(|| panic!("no cycles in {said:?}"));
+    u64::from_str_radix(hex, 16).unwrap()
+}
+
+/// Razboj draws a list in tiles on the board (issue 1255): a rectangle
+/// and a shaded triangle across the edges of tiles, binned into a tile
+/// table, drawn through the tile buffer and written out through the
+/// arbiter into the DDR3. Every pixel checked is the model's, and a word
+/// inside a tile the list touches but at a pixel no entry covers keeps
+/// what the debugger wrote there, since the write-out's strobes are off
+/// where nothing was drawn.
+#[test]
+fn razboj_draws_a_list_in_tiles() {
+    use razboj::model::render;
+    use razboj::op::{assemble, Op as Draw};
+    use vreteno32::board::RAZBOJ_FB;
+    let (sw, sh) = (1024usize, 480usize);
+    let list = assemble(
+        &[
+            Draw::Rect {
+                colour: 0xff12_3456,
+                x: 40,
+                y: 50,
+                w: 40,
+                h: 30,
+            },
+            Draw::Gouraud {
+                a: (100 * 16, 20 * 16 + 8),
+                b: (150 * 16 + 4, 90 * 16),
+                c: (60 * 16, 130 * 16 + 12),
+                colours: [0xffff_0000, 0x00_ff00, 0x00_00ff],
+            },
+        ],
+        sw,
+        sh,
+    );
+    let (words, count) = razboj::tiles::image(&list, sw, sh);
+    assert!(count & 0xffff >= 4, "tiles: {}", count & 0xffff);
+    let want = render(&list, sw, sh);
+    let at = |x: usize, y: usize| RAZBOJ_FB as u32 + 4 * (y * sw + x) as u32;
+    // A pixel of tile (0, 0), which the rectangle touches, that nothing
+    // covers.
+    let mark = (at(10, 10), 0x0bad_f00du32);
+    assert_eq!(want[10 * sw + 10], 0, "the marked pixel is not drawn");
+    let mut checks = vec![mark];
+    for &(x, y) in
+        &[(40, 50), (79, 79), (63, 60), (64, 60), (100, 40), (90, 100)]
+    {
+        checks.push((at(x, y), want[y * sw + x]));
+    }
+    assert!(
+        checks.iter().skip(1).all(|c| c.1 != 0),
+        "every check is drawn"
+    );
+    let plan = razboj_plan(&words, &[mark], count);
+    let ran = run_all(
+        &razboj_wait_program(&checks),
+        &[],
+        b"",
+        &[],
+        600_000,
+        Net::default(),
+        &plan,
+    );
+    assert!(ran.said.ends_with("razboj ok\n"), "{}", ran.said);
+    eprintln!("razboj tiles: {} cycles", razboj_cycles(&ran.said));
+}
+
+/// Razboj's draw time on the board's model, flat and in tiles (issue
+/// 1255): the screen filled, 640 by 480, and the icosahedron's first
+/// frame, which clears the screen and draws the faces. Each list is
+/// written and rung by the debugger, and the core says the cycles
+/// between the ring and the drawing done. Ignored by default, since the
+/// runs take many minutes; run it with `--test_arg=--ignored`. In tiles
+/// a plain fill is slower, by design, until the second bank lets a tile
+/// be drawn while the last is written out, and depth gives the tile
+/// buffer work that memory could not do cheaply.
+#[test]
+#[ignore = "minutes of simulation: run with --test_arg=--ignored"]
+fn razboj_draws_flat_and_in_tiles_timed() {
+    use razboj::dl::decode;
+    use razboj::model::render;
+    use razboj::op::{assemble, Insn, Op as Draw};
+    use vreteno32::board::RAZBOJ_FB;
+    let (sw, sh) = (1024usize, 480usize);
+    let fill = assemble(
+        &[Draw::Rect {
+            colour: 0xff12_3456,
+            x: 0,
+            y: 0,
+            w: 640,
+            h: 480,
+        }],
+        sw,
+        sh,
+    );
+    let solid = ico_list::Solid::new();
+    let mut out = [[0u32; ico_list::WORDS]; ico_list::MOST];
+    let (n, _) =
+        ico_list::frame(&solid, 0, 0, 0, ico_list::Box::SCREEN, &mut out);
+    let ico: Vec<Insn> = out[..n].iter().map(|w| decode(w)).collect();
+    for (name, list) in [("fill", fill), ("icosahedron", ico)] {
+        let want = render(&list, sw, sh);
+        let at = |x: usize, y: usize| {
+            (RAZBOJ_FB as u32 + 4 * (y * sw + x) as u32, want[y * sw + x])
+        };
+        let checks = [at(5, 5), at(320, 240), at(639, 479)];
+        let flat = razboj::dl::image(&list);
+        let (tiled, count) = razboj::tiles::image(&list, sw, sh);
+        for (how, words, count) in
+            [("flat", flat, list.len() as u32), ("tiled", tiled, count)]
+        {
+            let plan = razboj_plan(&words, &[], count);
+            let ran = run_all(
+                &razboj_wait_program(&checks),
+                &[],
+                b"",
+                &[],
+                8_000_000,
+                Net::default(),
+                &plan,
+            );
+            assert!(
+                ran.said.ends_with("razboj ok\n"),
+                "{name} {how}: {}",
+                ran.said
+            );
+            eprintln!(
+                "razboj {name} {how}: {} entries, {} tiles, {} cycles",
+                list.len(),
+                if how == "flat" { 0 } else { count & 0xffff },
+                razboj_cycles(&ran.said)
+            );
+        }
+    }
 }
 
 /// Razboj on the board (issue 985): a program writes a display list
