@@ -13,6 +13,7 @@ rust_library(
         "src/fixed.rs",
         "src/gl.rs",
         "src/lib.rs",
+        "src/light.rs",
         "src/matrix.rs",
     ],
     crate_name = "gles",
@@ -39,3 +40,4 @@ rust_test(
         "//gpu/razboj:tile",
     ],
 )
+
