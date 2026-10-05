@@ -283,6 +283,18 @@ Each step is a pull request, checked before the next.
    `glGetString(GL_VERSION)` says "OpenGL ES-CL 1.1 TxHDL, Common-Lite without textures, not conformant", which answers the last question of section 11 for now.
    It departs from the plan in one place: making a context current is EGL's, so until issue 996 lands `gles_make_current` does it over a frame its caller owns, and `glFlush` and `glFinish` leave the frame for EGL to hand to Razboj.
    `//gles:capi_test` draws one scene in C through `:gles_c` and through the Rust API, and holds the two frames to each other word for word, with what an unimplemented entry point and `glGetString` say.
+7. **EGL, in the model.**
+   Issue 996: `gles/egl/lib.rs` has Khronos's `EGL/egl.h` calls a GL ES 1.1 program makes, as `extern "C"` functions over the C entry points, Rust inside as the library is.
+   There is one display, one configuration and one window of 640 by 480, double buffered in Razboj's framebuffer at rows 0 and 512, as issue 986's icosahedron is.
+   GL draws into the buffer not shown: `Gl::retarget` moves the context there with its state kept, clips every triangle to that buffer's rows, and clears it as a rectangle, since Razboj's own clear is of rows 0 to 479.
+   `eglSwapBuffers` has Razboj draw the frame and waits until it is written, points the scanout at that buffer, and waits for the vertical blanking, so a frame is never shown half drawn.
+   What a swap does to the hardware is behind the `Machine` trait.
+   `//gles:egl_test` gives one that draws through Razboj's model.
+   A program sets up through EGL and draws two frames.
+   Each lands in the buffer not shown, nothing lands on the buffer being shown, a triangle reaching above the window is clipped at its top, and GL's state holds across the swaps.
+   The calls egl.h declares and this does not implement are written from egl.h by the same `stubs.sh`, and fail with `EGL_BAD_MATCH`.
+   The EGL headers are fetched as the GL ones are, with `EGL_NO_PLATFORM_SPECIFIC_TYPES`, since neither Zephyr nor the host has a window system.
+   The board's `Machine`, and a Zephyr program drawing through it, are the issue's next step.
 
 Points, lines, depth, blending and the scissor are added as issues 990, 992, 993 and 994 land, each with the entry points section 2 holds for it.
 
