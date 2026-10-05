@@ -1680,7 +1680,14 @@ impl Lowered {
     /// Give a memory its first words, as `Mem::with` gave them at run
     /// time; the netlist cannot see those, so the example says them
     /// again here.
+    ///
+    /// The name must be one of the unit's own memories. Anything else,
+    /// a typo or a memory that has moved into a child, is refused here,
+    /// naming it and the unit, rather than giving a netlist whose memory
+    /// is all zeros without a word (issue 1104): a board's boot memory
+    /// came close to shipping empty that way.
     pub fn init(&mut self, mem: &str, words: &[u128]) {
+        self.own(mem, Kind::Mem, "memory");
         self.init.push((mem.to_string(), words.to_vec()));
     }
     /// Give a register its value before the first edge, as `Reg::new`
@@ -1695,8 +1702,29 @@ impl Lowered {
     /// `Default` gave. Without it the netlist and the run disagree from
     /// the first cycle (issue 359). The value is also what a reset puts
     /// back, in both emitters as in the runtime (issue 728).
+    ///
+    /// The name must be one of the unit's own registers, and a name
+    /// that is not is refused, as for [`Lowered::init`] (issue 1104).
     pub fn init_reg(&mut self, reg: &str, value: u128) {
+        self.own(reg, Kind::Reg, "register");
         self.init_regs.push((reg.to_string(), value));
+    }
+    /// Refuse a name that is not one of the unit's own fields of `kind`,
+    /// saying which the unit does have.
+    fn own(&self, name: &str, kind: Kind, what: &str) {
+        let have: Vec<&str> = self
+            .fields
+            .iter()
+            .filter(|(_, k, _, _)| *k == Some(kind))
+            .map(|(n, _, _, _)| *n)
+            .collect();
+        assert!(
+            have.contains(&name),
+            "{} has no {what} `{name}` to give a first value: its own are \
+             {have:?}, and a child's are given through the child's \
+             instance",
+            self.name
+        );
     }
 }
 
@@ -3591,6 +3619,37 @@ mod tests {
             instances: Vec::new(),
             foreign: None,
         }
+    }
+
+    /// A memory's first words, and a register's first value, are given
+    /// only to the unit's own: a name it does not have is refused,
+    /// naming it and the unit (issue 1104).
+    #[test]
+    fn a_first_value_for_a_name_the_unit_lacks_is_refused() {
+        let mut net = three_regs();
+        net.fields.push(("words", Some(Kind::Mem), 32, 4));
+        net.init("words", &[1, 2, 3]);
+        net.init_reg("flag", 1);
+        let mem = std::panic::catch_unwind(|| {
+            let mut n = three_regs();
+            n.init("imem", &[1, 2, 3]);
+        })
+        .expect_err("a memory the unit lacks");
+        let said = mem.downcast_ref::<String>().unwrap();
+        assert!(said.contains("regs has no memory `imem`"), "{said}");
+        let reg = std::panic::catch_unwind(|| {
+            let mut n = three_regs();
+            n.init_reg("flags", 1);
+        })
+        .expect_err("a register the unit lacks");
+        let said = reg.downcast_ref::<String>().unwrap();
+        assert!(said.contains("regs has no register `flags`"), "{said}");
+        assert!(said.contains("\"flag\""), "and says what it has: {said}");
+        let not_mem = std::panic::catch_unwind(|| {
+            let mut n = three_regs();
+            n.init("count", &[1]);
+        });
+        assert!(not_mem.is_err(), "a register is not a memory");
     }
 
     /// A unit of units whose foreign children sit in fields named as
