@@ -517,55 +517,95 @@ pub struct Csrs {
     pub time: U<64>,
 }
 
-/// A CSR read, by its number. The registers come as one struct, which
-/// the lowering reads a field of at a time (issue 504); they were
-/// fourteen parameters before it could.
+/// Which of the CSRs that read as anything but zero a number names:
+/// one to thirty-five, in the order [`csr_read_at`] reads them, and
+/// zero for every other number, which reads as zero. The core finds it a cycle early,
+/// from the next instruction's word, so that the read is a select on
+/// a register rather than the number's decode followed by the select
+/// (issue 1260).
 #[lower]
-fn csr_read(f12: U<12>, c: Csrs) -> U<32> {
+fn csr_index(f12: U<12>) -> U<6> {
     select!(f12.raw() => {
-        0x300 => c.mstatus,
-        0x305 => c.mtvec,
-        0x340 => c.mscratch,
-        0x341 => c.mepc,
-        0x342 => c.mcause,
-        0x7b0 => c.dcsr,
-        0x7b1 => c.dpc,
-        0x7c1 => c.busquiet.zext::<32>(),
-        0x304 => c.mie,
-        0x344 => c.mip,
-        0x343 => c.mtval,
-        0x301 => U::<32>::from(isa::MISA),
-        0xb00 => c.mcycle.slice::<0, 32>(),
-        0xb80 => c.mcycle.slice::<32, 32>(),
-        0xb02 => c.minstret.slice::<0, 32>(),
-        0xb82 => c.minstret.slice::<32, 32>(),
-        // User and supervisor mode (issue 1012): the delegations and
-        // counter enables, the supervisor's views of `mstatus`, `mie`
-        // and `mip`, its own registers, and the unprivileged counters,
-        // which read the machine's and, for `time`, the timer's count.
-        0x302 => c.medeleg,
-        0x303 => c.mideleg,
-        0x306 => c.counteren.slice::<0, 3>().zext::<32>(),
-        0x106 => c.counteren.slice::<3, 3>().zext::<32>(),
-        0x100 => c.mstatus & U::<32>::from(SSTATUS_W),
-        0x104 => c.mie & c.mideleg,
-        0x144 => c.mip & c.mideleg,
-        0x105 => c.stvec,
-        0x140 => c.sscratch,
-        0x141 => c.sepc,
-        0x142 => c.scause,
-        0x143 => c.stval,
-        0x180 => c.satp,
-        0xc00 => c.mcycle.slice::<0, 32>(),
-        0xc01 => c.time.slice::<0, 32>(),
-        0xc81 => c.time.slice::<32, 32>(),
-        0xc80 => c.mcycle.slice::<32, 32>(),
-        0xc02 => c.minstret.slice::<0, 32>(),
-        0xc82 => c.minstret.slice::<32, 32>(),
-        // `mvendorid`, `marchid`, `mimpid` and `mhartid` all read as
-        // zero, which the default below gives them, and so does the
-        // halt. What makes them legal rather than illegal is
-        // `csr_known`, not an arm here.
+        0x300 => U::<6>::from(1u8),
+        0x305 => U::<6>::from(2u8),
+        0x340 => U::<6>::from(3u8),
+        0x341 => U::<6>::from(4u8),
+        0x342 => U::<6>::from(5u8),
+        0x7b0 => U::<6>::from(6u8),
+        0x7b1 => U::<6>::from(7u8),
+        0x7c1 => U::<6>::from(8u8),
+        0x304 => U::<6>::from(9u8),
+        0x344 => U::<6>::from(10u8),
+        0x343 => U::<6>::from(11u8),
+        0x301 => U::<6>::from(12u8),
+        0xb00 => U::<6>::from(13u8),
+        0xb80 => U::<6>::from(14u8),
+        0xb02 => U::<6>::from(15u8),
+        0xb82 => U::<6>::from(16u8),
+        0x302 => U::<6>::from(17u8),
+        0x303 => U::<6>::from(18u8),
+        0x306 => U::<6>::from(19u8),
+        0x106 => U::<6>::from(20u8),
+        0x100 => U::<6>::from(21u8),
+        0x104 => U::<6>::from(22u8),
+        0x144 => U::<6>::from(23u8),
+        0x105 => U::<6>::from(24u8),
+        0x140 => U::<6>::from(25u8),
+        0x141 => U::<6>::from(26u8),
+        0x142 => U::<6>::from(27u8),
+        0x143 => U::<6>::from(28u8),
+        0x180 => U::<6>::from(29u8),
+        0xc00 => U::<6>::from(30u8),
+        0xc01 => U::<6>::from(31u8),
+        0xc81 => U::<6>::from(32u8),
+        0xc80 => U::<6>::from(33u8),
+        0xc02 => U::<6>::from(34u8),
+        0xc82 => U::<6>::from(35u8),
+        _ => U::<6>::from(0u8),
+    })
+}
+
+/// A CSR read, by the index [`csr_index`] gives its number (issue
+/// 1260). The registers come as one struct, which the lowering reads a
+/// field of at a time (issue 504).
+#[lower]
+fn csr_read_at(at: U<6>, c: Csrs) -> U<32> {
+    select!(at.raw() => {
+        1 => c.mstatus,
+        2 => c.mtvec,
+        3 => c.mscratch,
+        4 => c.mepc,
+        5 => c.mcause,
+        6 => c.dcsr,
+        7 => c.dpc,
+        8 => c.busquiet.zext::<32>(),
+        9 => c.mie,
+        10 => c.mip,
+        11 => c.mtval,
+        12 => U::<32>::from(isa::MISA),
+        13 => c.mcycle.slice::<0, 32>(),
+        14 => c.mcycle.slice::<32, 32>(),
+        15 => c.minstret.slice::<0, 32>(),
+        16 => c.minstret.slice::<32, 32>(),
+        17 => c.medeleg,
+        18 => c.mideleg,
+        19 => c.counteren.slice::<0, 3>().zext::<32>(),
+        20 => c.counteren.slice::<3, 3>().zext::<32>(),
+        21 => c.mstatus & U::<32>::from(SSTATUS_W),
+        22 => c.mie & c.mideleg,
+        23 => c.mip & c.mideleg,
+        24 => c.stvec,
+        25 => c.sscratch,
+        26 => c.sepc,
+        27 => c.scause,
+        28 => c.stval,
+        29 => c.satp,
+        30 => c.mcycle.slice::<0, 32>(),
+        31 => c.time.slice::<0, 32>(),
+        32 => c.time.slice::<32, 32>(),
+        33 => c.mcycle.slice::<32, 32>(),
+        34 => c.minstret.slice::<0, 32>(),
+        35 => c.minstret.slice::<32, 32>(),
         _ => U::<32>::from(0u32),
     })
 }
@@ -827,6 +867,11 @@ pub struct Vreteno<const IW: usize> {
     /// so that the operand waits on no compare (issue 1130).
     pub m_a: Reg<Bit>,
     pub m_b: Reg<Bit>,
+    /// Which CSR the instruction reads, as [`csr_index`] gives it: found a
+    /// cycle early from the next instruction's number, or the debug
+    /// module's in debug mode, so that the read starts at a register
+    /// (issue 1260).
+    pub csr_at: Reg<U<6>>,
     /// An exception the instruction in execute raised last cycle, and
     /// the handler it goes to: the fetch is redirected there a cycle
     /// after the trap, so that the decision, which settles behind the
@@ -1442,8 +1487,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let is_sys = opcode == 0x73;
             let csr_op = is_sys & (f3 != 0);
             let mip_now = mip_all;
-            let csr_old = csr_read(
-                mux(in_debug, dbg_csr, f12),
+            let csr_old = csr_read_at(
+                self.csr_at.get(),
                 Csrs {
                     mcycle: self.mcycle.get(),
                     minstret: self.minstret.get(),
@@ -2636,6 +2681,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 !rst & !wb_fault & !stall & !stop & !(in_debug | dbg_take);
             let rs1_next = mux(load_ir, fetched.slice::<15, 5>(), rs1);
             let rs2_next = mux(load_ir, fetched.slice::<20, 5>(), rs2);
+            let f12_next = mux(load_ir, fetched.slice::<20, 12>(), f12);
             // What the writeback stage will write: the instruction now in
             // execute if it goes on, else what is there, held or cleared;
             // a cleared one writes nothing, which `wb_write` says.
@@ -2644,6 +2690,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 ra_at: mux(in_debug, dbg_gpr, rs1_next),
                 m_a: Bit::from(wr_next == rs1_next),
                 m_b: Bit::from(wr_next == rs2_next),
+                csr_at: csr_index(mux(in_debug, dbg_csr, f12_next)),
                 tp: exc,
                 tp_vec: trap_vec,
             });
