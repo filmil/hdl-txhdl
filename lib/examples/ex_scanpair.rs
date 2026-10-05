@@ -238,6 +238,10 @@ fn main() {
     let mut checked = 0usize;
     let mut long_stall_at: Option<u64> = None;
     let mut under_seen = Vec::new();
+    // In the frame with the long stall, a row at a time: columns shown
+    // as LATE, and columns that showed some other word than theirs.
+    let mut late = [0u32; ROWS];
+    let mut stale = [0u32; ROWS];
     while frames < 5 {
         let t = now();
         if ClkPix::rising_at(t) {
@@ -269,6 +273,15 @@ fn main() {
                     }
                     checked += 1;
                 }
+                if v && frames == 3 {
+                    let want = (BASE_WORD + r * LEN + c) as u128;
+                    let got = pix.get().raw();
+                    if got == txhdl_parts::scanout::LATE as u128 {
+                        late[r] += 1;
+                    } else if got != want {
+                        stale[r] += 1;
+                    }
+                }
             }
             asked = Some((x < LEN && y < ROWS, y, x));
             x += 1;
@@ -286,6 +299,7 @@ fn main() {
     stop();
     println!("pixels checked in frames 1 and 2: {checked}, wrong: {wrong}");
     println!("underflow at each frame's end:     {under_seen:?}");
+    println!("in the stalled frame, late by row {late:?}");
     assert_eq!(wrong, 0, "every pixel is the word at its place");
     assert_eq!(checked, 2 * ROWS * LEN, "two frames of pixels checked");
     assert_eq!(
@@ -293,6 +307,15 @@ fn main() {
         [false, false, false, true, false],
         "no underflow until the long stall, then one, then cleared"
     );
+    // A column whose word is late shows LATE, not the word the line
+    // before left in the buffer (issue 1209): in a row the stall made
+    // late, every column is LATE or its own word.
+    assert!(late.iter().any(|&n| n > 0), "the long stall showed as LATE");
+    for r in 0..ROWS {
+        if late[r] > 0 {
+            assert_eq!(stale[r], 0, "row {r} showed a word not its own");
+        }
+    }
     let pair_net = Pair::lowered("linepair");
     let fetch_net = Fetch::lowered("scanfetch");
     txhdl::netlist::write_netlists_from_env(&[&pair_net, &fetch_net]);

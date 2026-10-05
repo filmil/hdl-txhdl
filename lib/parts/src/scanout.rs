@@ -23,7 +23,9 @@
 //! so a host that draws into one buffer and shows another flips them
 //! with one write. A column the beam reads before its word has arrived
 //! sets `starved`, a sticky bit a host reads and clears, so a run on the
-//! board can show that no line ever starved rather than argue it. A line
+//! board can show that no line ever starved rather than argue it, and is
+//! shown as [`LATE`], magenta, rather than as whatever word the line
+//! before left there (issue 1209). A line
 //! asked for that gets no word for two line times sets `stuck`, sticky
 //! too, with the line's address: a fetch that hangs says so, where on
 //! the board it once showed only as a black screen with `starved`
@@ -40,11 +42,16 @@
 //! before the CAS latency of six clocks, 15 ns. A read that meets a
 //! refresh and then a miss waits about 300 ns plus the controller's
 //! own pipeline. The board's mode is 640 by 480, 31.8 us a line of
-//! 800 columns, and a visible line is 640 words, forty bursts of
-//! sixteen. A line has the whole of the previous one to arrive in,
-//! and a refresh lands about four times in it, so the margin is the
-//! line time against forty bursts and four refreshes, not a burst's
-//! latency against a pixel.
+//! 800 columns, and a visible line is 640 words. A line has the whole
+//! of the previous one to arrive in, and a refresh lands about four
+//! times in it, so the margin is the line time against the bursts, the
+//! other hosts' turns between them and four refreshes, not a burst's
+//! latency against a pixel. The flagship fetches a line in ten bursts
+//! of 64 beats rather than forty of sixteen, since a burst pays the
+//! path's latency and its turn at the arbiter once (issue 1209): in the
+//! board's simulation, under the core copying in the DDR3 and the
+//! Ethernet port sending, a line took 4682 cycles of its 3175 in
+//! bursts of sixteen, and takes 1206.
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LitePort, LiteR, LiteW};
 use crate::bus::lite_split::LiteSplit;
@@ -56,6 +63,11 @@ use txhdl::comp::{
 use txhdl::types::{Bit, U};
 use txhdl::{lower, regmap, with, Trace};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
+
+/// What a column shows when its word has not arrived: magenta, which no
+/// picture here uses, rather than the stale word the line before left
+/// in the buffer, which looked like data out of place (issue 1209).
+pub const LATE: u32 = 0x00ff_00ff;
 
 // begin{pair}
 /// Two lines of pixels on the clock that shows them, and the requests
@@ -288,7 +300,9 @@ impl<
             let silent = l & (owing != none) & !heard;
             let lost = silent & (quiet != U::<2>::from(0u8));
             with!(self <= {
-                shown: px,
+                // A column whose word has not arrived shows LATE, not the
+                // word left there by the line before (issue 1209).
+                shown: mux(starve, U::<32>::from(LATE), px),
                 to_a ? a.at(slot): word,
                 to_b ? b.at(slot): word,
                 take ? at: at + 1,

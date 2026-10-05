@@ -102,11 +102,20 @@ impl<const A: usize, const I: usize, const BEATS: usize, const WC: usize> Unit
 
             // A burst goes out when none is in flight, words are
             // still wanted and the address channel has room. It asks
-            // for `BEATS` beats or the rest of the run, whichever is
-            // fewer.
+            // for `BEATS` beats, the rest of the run, or the words to
+            // the next 4 KiB boundary, whichever is fewest, since AXI4
+            // forbids a burst that crosses one and the board's DDR3
+            // controller refuses it (issue 1209). A run from an aligned
+            // base never meets the third, which is there so that one
+            // from anywhere else is still legal.
             let rest_small = want < U::<WC>::from(BEATS as u32);
             let beats =
                 mux(rest_small, want.resize::<9>(), U::<9>::from(BEATS as u32));
+            let edge = (U::<A>::from(0x1000u32)
+                - (self.addr.get() & U::<A>::from(0xfffu32)))
+                >> 2u32;
+            let near = edge < beats.resize::<A>();
+            let beats = mux(near, edge.resize::<9>(), beats);
             let send = !busy & !held & (want != 0) & issue.ready();
 
             // A beat is taken when one is offered and the channel out
@@ -489,3 +498,97 @@ impl<const I: usize> Unit<Rx<R<32, I>>, ()> for NoReads<I> {
     }
 }
 // end{tie}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bus::axi::Resp;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use txhdl::comp::{chan, join2, signal, Running};
+
+    /// A run that starts 32 words below a 4 KiB boundary, in bursts of
+    /// up to 128, is cut at the boundary and never crosses it, and still
+    /// brings every word, in order (issue 1209). A stand-in for the host
+    /// takes each burst, grants it an identifier and answers its beats
+    /// a cycle apart, each word its own address.
+    #[test]
+    fn a_burst_never_crosses_a_4k_boundary() {
+        let (grant_tx, grant) = chan::<Grant<2>, DefaultClock>();
+        let (done_tx, done) = chan::<Done<2>, DefaultClock>();
+        let (rdata_tx, rdata) = chan::<R<32, 2>, DefaultClock>();
+        let (issue, issue_rx) = chan::<Issue<16>, DefaultClock>();
+        let (release, release_rx) = chan::<Grant<2>, DefaultClock>();
+        let (out, out_rx) = chan::<U<32>, DefaultClock>();
+        let (base_o, base) = signal::<U<16>, DefaultClock>();
+        let (words_o, words) = signal::<U<16>, DefaultClock>();
+        let (go_o, go) = signal::<Bit, DefaultClock>();
+        let (running, _running) = signal::<Bit, DefaultClock>();
+        base_o.set(U::from(0x0f80u32));
+        words_o.set(U::from(300u32));
+        go_o.set(Bit::One);
+        let bursts: Rc<RefCell<Vec<(u32, u32)>>> = Rc::default();
+        let log = bursts.clone();
+        let host = async move {
+            // The beats still owed: the next word's address and how many.
+            let mut owed: Option<(u32, u32)> = None;
+            loop {
+                DefaultClock::rising().await;
+                let _ = done_tx.ready();
+                let _ = release_rx.recv();
+                if owed.is_none() {
+                    if let Some(i) = issue_rx.recv() {
+                        let (at, n) =
+                            (i.addr.raw() as u32, i.len.raw() as u32 + 1);
+                        log.borrow_mut().push((at, n));
+                        grant_tx.send(Grant { id: U::from(1u8) });
+                        owed = Some((at, n));
+                    }
+                } else if let Some((at, n)) = owed {
+                    if rdata_tx.ready().to_bool() {
+                        rdata_tx.send(R {
+                            id: U::from(1u8),
+                            data: U::from(at),
+                            resp: Resp::Okay,
+                            last: Bit::from_bool(n == 1),
+                        });
+                        owed = (n > 1).then_some((at + 4, n - 1));
+                    }
+                }
+            }
+        };
+        let mut fetch = LineFetch::<16, 2, 128, 16>::default();
+        let mut sim = Running::new(join2(
+            fetch.run(
+                (grant, done, rdata, base, words, go),
+                (issue, release, out, running),
+            ),
+            host,
+        ));
+        let mut got = Vec::new();
+        for _ in 0..4000 {
+            sim.cycle();
+            if !got.is_empty() {
+                go_o.set(Bit::Zero);
+            }
+            while let Some(w) = out_rx.recv() {
+                got.push(w.raw() as u32);
+            }
+        }
+        let b = bursts.borrow();
+        for &(at, n) in b.iter() {
+            assert_eq!(
+                at / 0x1000,
+                (at + 4 * n - 1) / 0x1000,
+                "the burst at {at:#x} of {n} beats crosses 4 KiB; all: {b:x?}"
+            );
+        }
+        assert_eq!(
+            *b,
+            vec![(0x0f80, 32), (0x1000, 128), (0x1200, 128), (0x1400, 12)],
+            "cut at the boundary, then whole bursts, then the rest"
+        );
+        let want: Vec<u32> = (0..300).map(|i| 0x0f80 + 4 * i).collect();
+        assert_eq!(got, want, "every word, in order");
+    }
+}

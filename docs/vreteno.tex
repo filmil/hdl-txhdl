@@ -2276,6 +2276,27 @@ happens, and the board check runs the scanout with the core copying
 in the DDR3 and the Ethernet port sending, so that the bit is read
 under contention and not on an idle bus.
 
+On the board it did happen (issue~\#1209): under that load the
+picture showed short streaks of colour from elsewhere on the row, the
+line buffer running dry and showing what the line before had left. A
+burst of sixteen paid the path's latency and a turn at the arbiter
+forty times a line, and the core's single words between them are turns
+too. In the board's simulation, a line as long as the board's, 3175
+cycles, took 1964 idle and 4682 under the load, every line late. The
+scanout now fetches a line in ten bursts of 64 beats: a line from a
+4~KiB-aligned base never crosses a 4~KiB boundary, and
+\code{LineFetch} cuts a burst at one if it would. The same runs then
+take 974 idle, 1206 under the load and 1200 with Razboj drawing as
+well, under two fifths of a line, and
+\code{the\_scanout\_keeps\_up\_with\_the\_boards\_load} holds every
+line to half of one. Longer bursts fetch faster, 942 under the load
+at 128 beats, but a burst holds the path, and a load of the core's
+behind one waits for it: 88 cycles with no scanout, 94 beside bursts
+of 64 and 153 beside bursts of 128, which
+\code{a\_core\_load\_waits\_behind\_the\_scanout} measures. A column whose word is late anyway now shows
+magenta, \code{LATE}, rather than a stale word, so an underflow looks
+like one.
+
 \code{vreteno\_board\_jtag.v} is the top with the master, the board's
 own top with one block added, and every other top ties the pins off,
 so the shipping bitstreams are unchanged in what they do.

@@ -412,7 +412,14 @@ pub struct Board<const DIV: u32> {
     /// line pair. The crossings are the board top's, as the video
     /// slot's are.
     pub scan: ScanFetch<32, 16, 640>,
-    pub vfetch: LineFetch<32, 2, 16, 16>,
+    /// Bursts of 64 beats, a line in ten, so that a line pays the DDR3
+    /// path's latency and waits its turn at the arbiter ten times rather
+    /// than forty: under the core's copying and the Ethernet port's
+    /// sending, a line took 4682 cycles of its 3175 in bursts of
+    /// sixteen, and takes 1206 (issue 1209). Bursts of 128 took 942,
+    /// but a load of the core's behind one waited up to 153 cycles
+    /// where it waits 94 behind 64 and 88 with no scanout.
+    pub vfetch: LineFetch<32, 2, 64, 16>,
     pub vhost: AxiHost<32, 32, 4, 2, 4>,
     /// The scanout's fetch never writes.
     pub vnobeats: NoBeats,
