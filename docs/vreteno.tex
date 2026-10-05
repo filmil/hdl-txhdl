@@ -374,12 +374,19 @@ above, and the lockstep test holds the core to it as before.
 
 What Linux boots from is one image, which fastboot loads at
 \code{0x4000\_0000} and jumps to (issue~\#1019). \code{//tools/bootimg}
-packs it: OpenSBI's \code{fw\_jump} at \code{0x4008\_0000}, the device
-tree at \code{0x4030\_0000}, the kernel at \code{0x4040\_0000}, where
-OpenSBI jumps, and the initramfs past the kernel's \code{\_end}, taken
-from its \code{System.map}, so that the kernel's BSS is clear of it.
-A few instructions at the front stand in for a bootloader: \code{a0}
-is zero, \code{a1} the tree, and a jump to OpenSBI. Before the jump
+lays it out: OpenSBI's \code{fw\_jump} at \code{0x4008\_0000}, the
+device tree at \code{0x4030\_0000}, the kernel at \code{0x4040\_0000},
+where OpenSBI jumps, and the initramfs past the kernel's \code{\_end},
+taken from its \code{System.map}, so that the kernel's BSS is clear of
+it. The image does not hold them there, though. Placed at those
+addresses it was half zeros, and fastboot sends every byte at about
+26\,KB/s, so the parts are packed one after another and the initramfs
+gzipped, which the kernel unpacks itself (issue~\#1201). A few
+instructions at the front stand in for a bootloader. First they move
+each part to its address, the last part first and each a word at a
+time from its top down: no part is packed above its address, so no
+word is overwritten before it is copied. Then \code{a0} is zero,
+\code{a1} the tree, and a jump to OpenSBI. Before the jump
 they leave the serial port and the interrupt controller as SiFive's
 parts leave them at reset, as Linux's drivers expect
 (issue~\#1136). Our port resets with its receive interrupt enabled,
