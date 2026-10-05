@@ -15,6 +15,7 @@ use txhdl::netlist::Lowered;
 
 use ddr3::Ddr3Per;
 use pcie::bar::{BarRegs, PcieBar};
+use razboj::doorbell::Doorbell;
 use razboj::fb::Fb;
 use razboj::raster::Raster;
 use txhdl::regmap::RegMap;
@@ -460,7 +461,7 @@ fn main() {
     sheet("ScanCtl", "ScanCtl", ScanCtl::lowered("scan_ctl"));
     sheet(
         "ScanVideo",
-        "ScanVideo<640, 16, 96, 48, 480, 10, 2, 33, 2, 10, 525, 2560>",
+        "ScanVideo<640, 16, 96, 48, 480, 10, 2, 33, 2, 10, 525, 4096>",
         ScanVideo::<
             { vga::HV },
             { vga::HFP },
@@ -473,7 +474,7 @@ fn main() {
             2,
             10,
             525,
-            2560,
+            4096,
         >::lowered("scan_video"),
     );
     sheet("NoBeats", "NoBeats", NoBeats::lowered("nobeats"));
@@ -688,4 +689,6 @@ fn main() {
         "Raster<16, 2, 4, 16, 0, 0x400, 0x600>",
         Raster::<16, 2, 4, 16, 0, 0x400, 0x600>::lowered("raster"),
     );
+    regs("Doorbell", &razboj::doorbell::doorbell::MAP);
+    sheet("Doorbell", "Doorbell", Doorbell::lowered("doorbell"));
 }
