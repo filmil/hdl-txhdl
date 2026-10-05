@@ -2277,9 +2277,15 @@ fn line_times(log: &ScanLog) -> (u64, u64, usize, usize) {
 /// take 974, 1206 and 1200; with bursts of 128 they took 809, 942 and
 /// 904, at a cost to the core that `a_core_load_waits_behind_the_scanout`
 /// measures.
+///
+/// Each run is some 25 lines. Over 77 the longest line came first at
+/// line 0 idle, at line 8 under the load, and at line 44 with Razboj,
+/// where it was 1187 against 1172 by line 18; all of them are some 400
+/// cycles inside the half line the test allows, so 25 lines say what 77
+/// said in a third of the time (issue 1250).
 #[test]
 fn the_scanout_keeps_up_with_the_boards_load() {
-    let rows = 6 * 20;
+    let rows = 6 * 7;
     for (what, text) in [
         ("idle", hello_program::TEXT.to_vec()),
         ("load", load_program(false)),
@@ -2309,7 +2315,7 @@ fn the_scanout_keeps_up_with_the_boards_load() {
             ran.scan.starved,
             ran.sent.len()
         );
-        assert!(n >= 60, "{what}: only {n} lines came");
+        assert!(n >= 20, "{what}: only {n} lines came");
         assert_eq!(late, 0, "{what}: lines later than a line");
         assert_eq!(ran.scan.starved, None, "{what}: a column starved");
         assert!(
