@@ -19,6 +19,7 @@ rust_library(
         "src/raster.rs",
         "src/scene.rs",
         "src/sim.rs",
+        "src/tiles.rs",
     ],
     crate_name = "razboj",
     edition = "2021",
