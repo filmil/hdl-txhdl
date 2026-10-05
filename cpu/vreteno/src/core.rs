@@ -169,6 +169,14 @@ fn enc_b(off: U<13>, rs1: U<5>, f3: U<3>) -> U<32> {
 }
 
 // begin{expand}
+/// Whether the instruction cache holds words of a physical page: the
+/// data memory's, at 0x1000, or one of DDR3's, from 0x4000_0000 for a
+/// gigabyte (issue 1021). The rest are devices and the boot memory.
+#[lower]
+fn cacheable(page: U<20>) -> Bit {
+    Bit::from(page.slice::<18, 2>() == 1) | Bit::from(page == 1)
+}
+
 /// A compressed instruction as the thirty-two bit instruction it stands
 /// for; a halfword that is none, as itself, which is no thirty-two bit
 /// instruction either, since those have both low bits set, and so traps
@@ -837,6 +845,29 @@ pub struct Vreteno<const IW: usize> {
     /// Whether the fetch that is out is for the second word of a
     /// thirty-two bit instruction that straddles two words.
     pub f_second: Reg<Bit>,
+    // begin{icache}
+    /// The instruction cache (issue 1021): four kilobytes, one way,
+    /// lines of four words, indexed by the page offset so that the
+    /// fetch's translation works beside it, and tagged by the physical
+    /// page. It holds words of the data memory and of DDR3, the two
+    /// memories behind the bus.
+    pub ic_data: Mem<U<32>, 1024>,
+    /// Each line's tag: bit 20 says the line is valid, and the low
+    /// twenty bits are its physical page.
+    pub ic_tag: Mem<U<21>, 256>,
+    /// Where a cached fetch is: 0 not in the cache, 1 looking up
+    /// `ic_pa` in it, 2 filling its line from the bus.
+    pub ic_st: Reg<U<2>>,
+    /// The physical address of the word the cached fetch wants.
+    pub ic_pa: Reg<U<32>>,
+    /// The next beat of a fill, and whether one of them was refused.
+    pub ic_beat: Reg<U<2>>,
+    pub ic_bad: Reg<Bit>,
+    /// The tags being cleared after a reset or a `fence.i`, a line a
+    /// cycle, and the next line to clear.
+    pub ic_clearing: Reg<Bit>,
+    pub ic_clr: Reg<U<8>>,
+    // end{icache}
     // begin{vm}
     /// Virtual memory (issue 1014). The fetch's translation of one
     /// page, the last it asked for: whether there is one, the virtual
@@ -1822,6 +1853,51 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 & !amo_go
                 & issue.ready();
             let f_ffill = f_want & vm & f_th & f_tf & !self.f_wait;
+            // The instruction cache (issue 1021). A fetch from the data
+            // memory or DDR3 goes to the cache instead of the bus: it
+            // looks its word up the cycle after, and a miss fills the
+            // line from the bus as one burst of four words while the
+            // fetch waits. Whether the page is one of those is found for
+            // both words at once, as `f_th` is, so that the choice does
+            // not wait for the add.
+            let c_page0 = cacheable(want_vpn);
+            let c_page1 = mux(last_word, cacheable(want_vpn + 1), c_page0);
+            let f_cache = mux(
+                vm,
+                cacheable(self.ft_ppn.get()),
+                mux(hit0, c_page1, c_page0),
+            );
+            let c_go = f_send & f_cache;
+            let b_go = f_send & !f_cache;
+            let ic_st = self.ic_st.get();
+            let ic_pa = self.ic_pa.get();
+            let ic_clearing = self.ic_clearing.get();
+            // The lookup reads the line's tag and the word at the
+            // address registered when the fetch went to the cache.
+            let ic_line = ic_pa.slice::<4, 8>();
+            let ic_t = self.ic_tag.read(ic_line);
+            let ic_w = self.ic_data.read(ic_pa.slice::<2, 10>());
+            let looking = Bit::from(ic_st == 1);
+            let filling = Bit::from(ic_st == 2);
+            let ic_hit = ic_t.bit(20)
+                & Bit::from(ic_t.slice::<0, 20>() == ic_pa.slice::<12, 20>());
+            // A lookup waits while the tags are cleared, ends when its
+            // fetch was dropped, fills the buffer on a hit, and on a miss
+            // asks the bus for the line once nothing else of the core's
+            // is out or going, so that the four beats are the only
+            // answers until the last.
+            let l_live = looking & !ic_clearing;
+            let l_drop = l_live & self.f_drop;
+            let l_hit = l_live & !self.f_drop & ic_hit;
+            let r_go = l_live
+                & !self.f_drop
+                & !ic_hit
+                & !self.p_wait
+                & !self.dev_wait
+                & !send_load
+                & !st_go
+                & issue.ready();
+            let line_base = ic_pa & U::<32>::from(0xffff_fff0u32);
             // A walk's read goes out when nothing else of the core's is
             // out or going and every store is answered, so that it reads
             // what the program wrote.
@@ -1832,11 +1908,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 & !send_load
                 & !st_go
                 & !f_send
+                & !r_go
                 & Bit::from(self.stores_out.get() == 0)
                 & issue.ready();
             let p_addr = ptw.head();
             let _ = ptw.recv_if(p_send);
-            let send_any = send_load | st_go | f_send | p_send;
+            let send_any = send_load | st_go | b_go | r_go | p_send;
             // The address: the access's, which settles last behind its
             // adder, goes through one choice, and the rest are chosen
             // among beforehand.
@@ -1844,17 +1921,22 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 p_send,
                 p_addr,
                 mux(
-                    f_send,
+                    b_go,
                     f_pa,
-                    mux(amo_go, self.wb_pa.get(), self.x_pa.get()),
+                    mux(
+                        r_go,
+                        line_base,
+                        mux(amo_go, self.wb_pa.get(), self.x_pa.get()),
+                    ),
                 ),
             );
-            let use_addr = !p_send & !f_send & !amo_go & !self.x_done;
+            let use_addr = !p_send & !b_go & !r_go & !amo_go & !self.x_done;
             if bool::from(send_any) {
                 issue.send(Issue {
                     read: !st_go,
                     addr: mux(use_addr, addr, other),
-                    len: U::<8>::from(0u8),
+                    // A fill is a burst of the line's four words.
+                    len: mux(r_go, U::<8>::from(3u8), U::<8>::from(0u8)),
                     size: U::<3>::from(2u8),
                     burst: BurstKind::Incr,
                     lock: Bit::Zero,
@@ -1871,17 +1953,21 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     last: Bit::One,
                 });
             }
-            if bool::from(take_done | take_r) {
+            if bool::from(take_done | (take_r & rh.last)) {
                 release.send(Grant {
                     id: mux(take_done, dh.id, rh.id),
                 });
             }
             // An answer belongs to whichever of the three is out, and
             // only one ever is: the fetch's, the walker's, or the
-            // data's.
-            let f_resp = resp_valid & self.f_wait;
+            // data's. The fetch's is a word from the bus, or a beat of
+            // the cache's fill; a fetch the cache is looking up is not
+            // on the bus at all.
+            let f_resp = resp_valid & self.f_wait & Bit::from(ic_st == 0);
+            let r_beat = resp_valid & filling;
+            let f_bus = (self.f_wait & Bit::from(ic_st == 0)) | filling;
             let p_resp = resp_valid & self.p_wait;
-            let d_resp = resp_valid & !self.f_wait & !self.p_wait;
+            let d_resp = resp_valid & !f_bus & !self.p_wait;
             if bool::from(p_resp) {
                 pte.send(Pte {
                     data: resp_data,
@@ -1899,9 +1985,38 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 | fencei_go
                 | (satp_r.bit(31)
                     & (trap | mret_ok | sret_ok | resume_take | wb_fault));
-            let f_fill = f_resp & !self.f_drop;
+            // The fill's last beat: the line becomes valid and is looked
+            // up again, unless the fetch was dropped meanwhile or a beat
+            // was refused, when the fetch ends, the refusal taken as the
+            // word's access fault.
+            let r_last = r_beat & Bit::from(self.ic_beat.get() == 3);
+            let r_bad = self.ic_bad | resp_bad;
+            let r_stop = r_last & (self.f_drop | r_bad);
+            let r_badend = r_last & !self.f_drop & r_bad;
+            let r_ok = r_last & !self.f_drop & !r_bad;
+            let c_end = l_hit | l_drop | r_stop;
+            // A word into the fetch buffer: from the bus, from the
+            // cache, or a fill's refusal.
+            let b_fill = f_resp & !self.f_drop;
+            let f_fill = b_fill | l_hit | r_badend;
+            let f_word =
+                mux(b_fill, resp_data, mux(l_hit, ic_w, U::<32>::from(0u32)));
+            let f_err = mux(b_fill, resp_bad, r_badend);
             let second = self.f_second.get();
             let asked = self.f_asked.get();
+            // A fill's beat into the line, and the tags' one write: a
+            // clear, or a filled line made valid. A fill ending while
+            // the tags are cleared stays invalid.
+            let fill_at = ic_line.concat::<_, 10>(self.ic_beat.get());
+            when!(r_beat => self { ic_data.at(fill_at): resp_data });
+            let tag_go = ic_clearing | r_ok;
+            let tag_at = mux(ic_clearing, self.ic_clr.get(), ic_line);
+            let tag_val = mux(
+                ic_clearing,
+                U::<21>::from(0u32),
+                U::<1>::from(1u8).concat::<_, 21>(ic_pa.slice::<12, 20>()),
+            );
+            when!(tag_go => self { ic_tag.at(tag_at): tag_val });
             when!(d_resp => self { wb_dev: resp_data });
             when!(d_resp => self { wb_err: resp_bad });
             // The fetch's request to the unit (issue 1014): made for the
@@ -1938,15 +2053,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 },
                 f_resp ? f_wait: Bit::Zero,
                 f_fill & !second ? {
-                    f_w0: resp_data,
-                    f_bad0: resp_bad,
+                    f_w0: f_word,
+                    f_bad0: f_err,
                     f_pf0: Bit::Zero,
                     f_at: asked,
                     f_have: U::<2>::from(1u8)
                 },
                 f_fill & second ? {
-                    f_w1: resp_data,
-                    f_bad1: resp_bad,
+                    f_w1: f_word,
+                    f_bad1: f_err,
                     f_pf1: Bit::Zero,
                     f_have: U::<2>::from(2u8)
                 },
@@ -1964,6 +2079,33 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     f_have: U::<2>::from(2u8)
                 },
                 f_resp ? f_drop: Bit::Zero,
+                // The cache's steps (issue 1021).
+                c_go ? {
+                    ic_st: U::<2>::from(1u8),
+                    ic_pa: f_pa
+                },
+                r_go ? {
+                    ic_st: U::<2>::from(2u8),
+                    ic_beat: U::<2>::from(0u8),
+                    ic_bad: Bit::Zero
+                },
+                r_beat ? {
+                    ic_beat: self.ic_beat.get() + 1,
+                    ic_bad: r_bad
+                },
+                r_ok ? ic_st: U::<2>::from(1u8),
+                c_end ? {
+                    ic_st: U::<2>::from(0u8),
+                    f_wait: Bit::Zero,
+                    f_drop: Bit::Zero
+                },
+                ic_clearing ? ic_clr: self.ic_clr.get() + 1,
+                ic_clearing & Bit::from(self.ic_clr.get() == 255) ?
+                    ic_clearing: Bit::Zero,
+                fencei_go ? {
+                    ic_clearing: Bit::One,
+                    ic_clr: U::<8>::from(0u8)
+                },
                 i_need & !self.i_req ? {
                     i_req: Bit::One,
                     i_va: f_addr,
@@ -2004,11 +2146,14 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     i_req: Bit::Zero,
                     x_req: Bit::Zero
                 },
-                vctx & self.f_wait & !f_resp ? f_drop: Bit::One,
+                vctx & self.f_wait & !f_resp & !c_end ? f_drop: Bit::One,
                 p_send ? p_wait: Bit::One,
                 p_resp ? p_wait: Bit::Zero,
                 flush: flush_go,
                 rst ? {
+                    ic_st: U::<2>::from(0u8),
+                    ic_clearing: Bit::One,
+                    ic_clr: U::<8>::from(0u8),
                     f_wait: Bit::Zero,
                     f_have: U::<2>::from(0u8),
                     f_bad0: Bit::Zero,
