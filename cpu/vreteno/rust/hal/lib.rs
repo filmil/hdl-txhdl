@@ -353,7 +353,9 @@ impl Video {
 /// The scanout beside the video peripheral (issue 151): the frame's
 /// base in memory, the bit that shows the scanout rather than the
 /// framebuffer, and the underflow bit, which a write clears. A frame is
-/// 640 by 480 words, `0x00RRGGBB`, 2560 bytes a line.
+/// 640 by 480 words, `0x00RRGGBB`, 4096 bytes a line: a row of 1024
+/// words, as Razboj draws one, of which the first 640 are shown
+/// (issue 985).
 pub struct Scan;
 
 impl Scan {
@@ -366,7 +368,7 @@ impl Scan {
     /// Columns and rows of a frame, and bytes from one line to the next.
     pub const WIDTH: u32 = 640;
     pub const HEIGHT: u32 = 480;
-    pub const STRIDE: u32 = 2560;
+    pub const STRIDE: u32 = 4096;
 
     /// Where the next frame starts: taken at the vertical sync.
     pub fn base(at: u32) {
