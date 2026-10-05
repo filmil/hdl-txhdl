@@ -60,10 +60,16 @@ out, and its \code{rxwm} while more than \code{rxcnt} wait to be read.
 Writes to \code{rxdata} and \code{ip} are ignored, and \code{0x1c},
 which no register names, reads zero.
 
-Three resets differ from SiFive's, so that a program that never writes
-the controls finds the port running: \code{txen}, \code{rxen} and
-\code{ie}'s \code{rxwm} start set. So \code{irq} is high while a
-received byte waits, as before this map.
+Two resets differ from SiFive's, so that a program that never writes
+the controls finds the port running: \code{txen} and \code{rxen}
+start set, and \code{div} starts at \code{DIV} less one, 867 for
+115200 baud at 100~MHz. \code{ie} starts clear, as SiFive's does, so
+\code{irq} stays low until a program sets a watermark's enable. It
+started with \code{rxwm} set until issue~\#1137: Linux's driver asks
+for its interrupt before its port is registered, and a receive enable
+that started set let the loader's bytes leave a request pending in the
+interrupt controller, which Linux took before its port was ready
+(issue~\#1136).
 
 \dstables{Uart}
 
@@ -143,6 +149,4 @@ byte received with the receive queue full is dropped and counted.
 \code{sent}, \code{received} and \code{dropped} are eight-bit counters
 that are not on the bus. The port checks no address beyond bits 4 to
 2, since the bridge sends it only its own range. There is no parity
-bit and no flow-control line. Unlike SiFive's, the receive
-watermark's interrupt is enabled from reset; a driver that wants it off
-writes \code{ie}.
+bit and no flow-control line.
