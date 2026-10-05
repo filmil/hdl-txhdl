@@ -26,7 +26,10 @@ not Razboj's rasteriser, which has a sheet of its own under the same
 name (issue 1055).
 \item \code{LinePair} holds two lines and asks for each a line ahead,
 on \code{req}; their words arrive on \code{words}. Both channels
-leave the unit for the bus clock.
+leave the unit for the bus clock. \code{ScanCtl}'s show bit, which
+picks the scanout's picture at \code{VidMux}, is also
+\code{LinePair}'s \code{show}, so the fetch starts only once the
+scanout is shown (issue 1178).
 \item \code{ScanTap} puts \code{LinePair}'s underflow bit on a channel
 back to \code{ScanCtl}.
 \item \code{VidMux} puts \code{Hdmi}'s pixel or the scanout's, a
