@@ -298,6 +298,16 @@ pub extern "C" fn glShadeModel(mode: u32) {
 }
 
 #[no_mangle]
+pub extern "C" fn glPointSizex(size: Fx) {
+    with(|g| g.point_size(size));
+}
+
+#[no_mangle]
+pub extern "C" fn glLineWidthx(width: Fx) {
+    with(|g| g.line_width(width));
+}
+
+#[no_mangle]
 pub extern "C" fn glColor4x(r: Fx, g: Fx, b: Fx, a: Fx) {
     with(|gl| gl.color(r, g, b, a));
 }
