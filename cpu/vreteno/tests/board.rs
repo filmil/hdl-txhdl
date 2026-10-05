@@ -1421,6 +1421,22 @@ fn the_ddr3_path_is_timed_by_the_core() {
     assert_eq!(sd - sm, 0, "the stores wait on the core, not the path");
 }
 
+/// The DDR3's writes, reads and strobes, by the program the loader
+/// sends to the flagship (issue 1174), run here from the boot memory
+/// through the controller's model: a block of words, words up to the
+/// top of the gigabyte, bytes and halfwords written under their
+/// strobes, and bytes and halfwords read back at every offset.
+#[test]
+fn the_loaded_memory_test_passes_through_the_model() {
+    let ran = run(ddr3ram_program::TEXT, ddr3ram_program::DATA, b"", 200000);
+    assert_eq!(
+        ran.said,
+        "ddr3ram words ok\nddr3ram high ok\nddr3ram strobes ok\n\
+         ddr3ram lanes ok\nddr3ram ok\n"
+    );
+    assert!(ran.halted_at.is_some(), "the core halted itself");
+}
+
 /// `rd` = `v`, in two instructions, the upper part rounded for the
 /// sign of the lower.
 fn li(a: &mut vreteno32::program::Asm, rd: u32, v: u32) {

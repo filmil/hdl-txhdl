@@ -29,7 +29,7 @@ bazel build //cpu/vreteno:vreteno_board_pnr        # the DDR3 test, #188
 bazel build //flagship:flagship_pnr                # Ethernet and the loader, #143
 bazel build //cpu/vreteno/rust:hello_ram_bin //cpu/vreteno/rust:hello_fastboot \
     //cpu/vreteno/rust:trng_ram_bin //cpu/vreteno/rust:steps_ram_bin \
-    //cpu/vreteno/rust:ddr3bw_ram_bin
+    //cpu/vreteno/rust:ddr3bw_ram_bin //cpu/vreteno/rust:ddr3ram_ram_bin
 bazel build //zephyr:fastboot @multitool//tools/fastboot
 bazel build //third_party/gdb //cpu/vreteno/rust:gdbprobe_elf   # gdb, #872
 bazel build //tools/trngstat
@@ -221,6 +221,22 @@ Post the log on #1023.
 
 Done on October 4, 2026, by hil, on the flagship: sixteen loads took 841, 837, 834 and 826 cycles against the DDR3 and 397 against the data memory, about 27 cycles a word more, so the controller adds about 23.
 The result and what it decides are in `docs/ddr3-throughput.md`, section 6, and on #1023.
+
+### The DDR3's writes and strobes, #1174
+
+Same bitstream again, or any flagship session, a Linux one included: the program leaves alone what the flagship keeps in the memory.
+`ddr3ram_ram_bin` writes and reads back a block of words from `0x4100_2000`, words up to the top of the gigabyte from `0x4400_0000`, and bytes and halfwords under their strobes, and reads the bytes and halfwords back at every offset.
+It keeps clear of the loaded program, the Ethernet slots at `0x4100_0000`, the device tree at `0x4100_8000` and Razboj's frame buffer at `0x4200_0000`.
+
+```sh
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/ddr3ram_ram_bin.bin --seconds=10 \
+    2>&1 | tee board-1174-ddr3ram.log
+```
+
+Pass: `ddr3ram words ok`, `ddr3ram high ok`, `ddr3ram strobes ok`, `ddr3ram lanes ok` and `ddr3ram ok`, and the core halts, which lights the first LED.
+`board_test`'s `the_loaded_memory_test_passes_through_the_model` pins the same lines in simulation.
+A check that fails says how many accesses were wrong, the first wrong address and what was read there, and the core spins; post the log on #1174 and #1023.
 
 ## 7. Fastboot, #143
 
