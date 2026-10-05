@@ -1451,11 +1451,27 @@ second only once the first says it is wanted; a run straight through
 memory therefore asks for a word every second instruction rather than
 every one.
 
-It is correct and it is slow. An instruction from the data memory is
-several cycles where one from the boot memory is none, and a program
-in the DDR3 across the router is slower still. What would make it fast
-is a prefetch buffer or a line cache, and neither is here: the order
-that pays is correct first, then measured.
+It was correct and it was slow: issue~\#1009's loop of three
+instructions ran at 14.655 cycles an instruction from the data memory
+and at 1.333 from the boot memory. So a fetch from the data memory or
+the DDR3, the two memories behind the bus, goes to an instruction
+cache instead (issue~\#1021): four kilobytes, 256 lines of four words,
+one way, indexed by the page offset, so that the fetch's translation
+works beside it, and tagged by the physical page. The fetch registers
+the word's physical address where it would have sent it to the bus,
+and the cycle after reads the line's tag and the word. A hit puts the
+word in the buffer; a miss asks the bus for the line as one burst of
+four, writes each beat into it, and looks it up again. The data memory
+answers such a burst a beat a cycle. The same loop from the data
+memory now runs at 4.093 cycles an instruction, which
+\code{//cpu/vreteno:icache\_test} measures; most of what is left is
+the buffer, which serves one instruction's words and not the next
+one's, so each instruction is a lookup of its own (issue~\#1187).
+
+A store does not reach the cache, as the specification allows, so code
+written by stores runs after a \code{fence.i}, which clears the tags,
+a line a cycle, as a reset does. The loader in the boot memory ends
+with one before it jumps to the program it was sent.
 
 \code{//cpu/vreteno:lockstep\_test} runs a program that lives above the
 boot memory: the boot memory holds a jump into the data memory, the
@@ -1632,7 +1648,8 @@ translation on, a trap, a return or a resume, drops the fetch's one
 translation and its buffer, and a fetch out on the bus across any of
 these is dropped when it answers. \code{fence.i} does the same to the
 buffer: it used not to, and a program that rewrote the word the buffer
-held ran the old one (issue~\#1096).
+held ran the old one (issue~\#1096). It also clears the instruction
+cache's tags (issue~\#1021).
 
 The lockstep test holds the hart to the model, which translates with
 \code{translate} and keeps nothing. One program writes tables into the
@@ -1648,7 +1665,8 @@ machine mode either stepping past one or doing what a kernel does:
 setting what the entry lacks, flushing, and running the instruction
 again. Ninety-six seeds run in lockstep. The cost is the fetch: under
 translation every word comes from the bus, and every return translates
-its page again, which the instruction cache of issue~\#1021 is for.
+its page again; the instruction cache of issue~\#1021 takes the words
+from its lines, and a return still translates its page.
 
 The flagship, Vreteno's board with the Ethernet and HDMI parts on one
 FPGA, places and routes with the hart in it. On 2026-10-04 at commit
