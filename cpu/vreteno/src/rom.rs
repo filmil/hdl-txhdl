@@ -15,9 +15,14 @@
 //! question of what a fetch sees when a write lands on the same
 //! address in the same cycle: nothing lands.
 //!
-//! It answers single-beat bursts, which is all the core makes. The
-//! router sends it only the bursts in its range, so it checks no
-//! address.
+//! A read burst of incrementing words is answered a beat a cycle, each
+//! word read as the one before it goes, as the data memory answers
+//! one. The core makes single beats, but a host on the bus that asks
+//! for a burst here is owed every beat it asked for: the scanout's
+//! fetch, out of a reset, asked for a line of sixteen-beat bursts at
+//! zero, was answered one beat, and waited for the rest for good
+//! (issue 1193). The router sends it only the bursts in its range, so
+//! it checks no address.
 use txhdl::comp::{Clock, DefaultClock, Mem, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
@@ -34,6 +39,10 @@ pub struct Rom<const I: usize> {
     pub word: Reg<U<32>>,
     pub rid: Reg<U<I>>,
     pub answer: Reg<Bit>,
+    /// The beats of a read burst left after the one in `word`, and
+    /// the word the next of them reads.
+    pub rleft: Reg<U<8>>,
+    pub raddr: Reg<U<10>>,
     /// A write taken and waiting for its beat, so that the beat can be
     /// consumed and the burst refused: whether one is, and which
     /// identifier answers it.
@@ -65,10 +74,14 @@ impl<const I: usize> Unit for Rom<I> {
             // The word this burst names, within the memory.
             let at = q.addr.slice::<2, 10>();
             // A read is taken when the register it lands in is free or
-            // is being emptied this cycle; a write is taken when no
-            // other write is waiting for its beat.
+            // is sending a burst's last beat this cycle; a write is
+            // taken when no other write is waiting for its beat.
             let send = queued & bus.r.ready();
-            let take_read = qoff & q.read & !held & (!queued | bus.r.ready());
+            let more = Bit::from(self.rleft.get() != 0);
+            let next = send & more;
+            let take_read =
+                qoff & q.read & !held & (!queued | (bus.r.ready() & !more));
+            let nat = self.raddr.get();
             let take_write = qoff & !q.read & !held;
             let _ = bus.req.recv_if(take_read | take_write);
             // The beat of a refused write is taken and dropped, so that
@@ -85,8 +98,16 @@ impl<const I: usize> Unit for Rom<I> {
                     word: self.words.read(at),
                     rid: q.id,
                     answer: Bit::One,
+                    rleft: q.len,
+                    raddr: at + 1,
                 } else {
-                    send ? answer: Bit::Zero,
+                    next ? {
+                        word: self.words.read(nat),
+                        rleft: self.rleft.get() - 1,
+                        raddr: nat + 1,
+                    } else {
+                        send ? answer: Bit::Zero,
+                    },
                 },
             });
             if send.to_bool() {
@@ -94,7 +115,7 @@ impl<const I: usize> Unit for Rom<I> {
                     id: self.rid.get(),
                     data: self.word.get(),
                     resp: Resp::Okay,
-                    last: Bit::One,
+                    last: !more,
                 });
             }
             if wgo.to_bool() {
@@ -104,5 +125,58 @@ impl<const I: usize> Unit for Rom<I> {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use txhdl::comp::{join2, Running};
+    use txhdl_parts::bus::axi::{
+        axi_units, host_end, AxiHost, AxiPer, Host, Rd,
+    };
+
+    /// A read burst of sixteen beats, which is how the scanout's fetch
+    /// asks for a line, gets sixteen words in order with the last one
+    /// marked, and a single beat after it gets its one word as before
+    /// (issue 1193).
+    #[test]
+    fn a_read_burst_gets_every_beat() {
+        let program: Vec<u32> = (0..64u32).map(|i| 0x1000 + i).collect();
+        let mut rom = Rom::<2>::with(&program);
+        let u = axi_units::<32, 32, 4, 2>();
+        let host: Host<32, 32, 4, 2, 4> = host_end(u.host_client);
+        let bus = PerPort::from(u.per_client);
+        let done = Rc::new(RefCell::new(false));
+        let d = done.clone();
+        let client = async move {
+            let got = host.read(Rd::at(0x40u32, 16)).await.done().await;
+            assert_eq!(got.resp, Resp::Okay);
+            let raw: Vec<u128> = got.data.iter().map(|x| x.raw()).collect();
+            let want: Vec<u128> = (16..32).map(|i| 0x1000 + i).collect();
+            assert_eq!(raw, want, "the sixteen words, in order");
+            let got = host.read(Rd::at(0x8u32, 1)).await.done().await;
+            assert_eq!(got.data.len(), 1);
+            assert_eq!(got.data[0].raw(), 0x1002);
+            *d.borrow_mut() = true;
+        };
+        let mut tracker = AxiHost::<32, 32, 4, 2, 4>::default();
+        let mut per = AxiPer::<32, 32, 4, 2>::default();
+        let mut sim = Running::new(join2(
+            client,
+            join2(
+                tracker.run(u.host_in, u.host_out),
+                join2(per.run(u.per_in, u.per_out), rom.run(bus, ())),
+            ),
+        ));
+        for _ in 0..400 {
+            sim.cycle();
+            if *done.borrow() {
+                break;
+            }
+        }
+        assert!(*done.borrow(), "every beat of both reads came back");
     }
 }
