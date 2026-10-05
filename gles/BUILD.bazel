@@ -6,6 +6,7 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//cpu/vreteno/rust:defs.bzl", "vreteno_static")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -206,4 +207,49 @@ rust_test(
         ":gles",
         "//gpu/razboj",
     ],
+)
+
+# EGL's machine on the board (issue 996): Razboj's display list and
+# doorbell, the scanout's base and the blanking, at the board's
+# addresses.
+rust_library(
+    name = "vreteno",
+    srcs = ["vreteno/lib.rs"],
+    crate_name = "gles_vreteno",
+    edition = "2021",
+    deps = [
+        ":machine",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+        "//gpu/razboj:tile",
+    ],
+)
+
+# GL, EGL and the board's machine as one static library for a Zephyr
+# program on Vreteno (issue 996), built for the core by vreteno_static
+# below, with the panic handler a library without the standard library
+# must bring.
+rust_static_library(
+    name = "zephyr_static",
+    srcs = ["vreteno/zephyr.rs"],
+    crate_name = "gles_zephyr",
+    edition = "2021",
+    rustc_flags = [
+        "-Copt-level=z",
+        "-Cdebug-assertions=no",
+        "-Coverflow-checks=no",
+        "-Cpanic=abort",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":capi",
+        ":egl",
+        ":machine",
+        ":vreteno",
+    ],
+)
+
+vreteno_static(
+    name = "zephyr_lib",
+    library = ":zephyr_static",
+    platform = "//cpu/vreteno/rust:vreteno",
 )

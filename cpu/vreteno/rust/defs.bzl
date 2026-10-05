@@ -179,3 +179,31 @@ vreteno_elf = rule(
         ),
     },
 )
+
+def _vreteno_static_impl(ctx):
+    files = [
+        f
+        for f in ctx.attr.library[0][DefaultInfo].files.to_list()
+        if f.extension == "a"
+    ]
+    if len(files) != 1:
+        fail("expected one static library from %s" % ctx.attr.library[0].label)
+    return [DefaultInfo(files = depset(files))]
+
+vreteno_static = rule(
+    implementation = _vreteno_static_impl,
+    doc = "A `rust_static_library` built for the core, as the `.a` a C " +
+          "program for it links: what a Zephyr program on Vreteno takes " +
+          "the GL library from (issue 996).",
+    attrs = {
+        "library": attr.label(
+            doc = "The `rust_static_library` to build for the core.",
+            cfg = _vreteno_transition,
+            mandatory = True,
+        ),
+        "platform": attr.label(
+            doc = "The platform the core is.",
+            mandatory = True,
+        ),
+    },
+)
