@@ -153,7 +153,10 @@ fn main() -> ! {
 
     // Both frames cleared whole, once, and the logo painted into each.
     draw(
-        &[rect(BACKDROP, Box::SCREEN, 0), rect(BACKDROP, Box::SCREEN, SECOND)],
+        &[
+            rect(BACKDROP, Box::SCREEN, 0),
+            rect(BACKDROP, Box::SCREEN, SECOND),
+        ],
         2,
     );
     logo(0);

@@ -233,7 +233,11 @@ fn main() -> ! {
     ok &= high().say(b"high");
     ok &= strobes().say(b"strobes");
     ok &= lanes().say(b"lanes");
-    Uart::say(if ok { b"ddr3ram ok\n" } else { b"ddr3ram bad\n" });
+    Uart::say(if ok {
+        b"ddr3ram ok\n"
+    } else {
+        b"ddr3ram bad\n"
+    });
     // The verdict on a board whose serial port cannot be read: the core
     // halts only when every check passed, and the first LED shows the
     // halt. A failure spins here instead, and that LED stays dark.
