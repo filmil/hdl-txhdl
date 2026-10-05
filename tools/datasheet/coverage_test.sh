@@ -3,7 +3,8 @@
 #
 # Every component has a datasheet. A component is a unit under
 # `#[lower]` in the crates this test is given, or a type a family macro
-# writes (`station!`). A datasheet
+# writes (`station!`). A unit in a module declared under `#[cfg(test)]`
+# is a fixture of the crate's tests and is not one. A datasheet
 # says what it covers on a line `% covers: A, B, C` in
 # `docs/datasheets/`. The test lists each component nobody covers, and
 # each datasheet the document does not include, and fails if there is
@@ -34,6 +35,39 @@ covered=$(grep -h '^% covers:' $sheets | sed 's/^% covers://' \
 sources=$(find -L . \( -path '*/lib/parts/src/*' -o -path '*/cpu/vreteno/src/*' \
   -o -path '*/gpu/razboj/src/*' -o -path '*/ddr3/src/*' \
   -o -path '*/pcie/src/*' \) -name '*.rs' | sort)
+# A module its parent declares under `#[cfg(test)]` is the crate's
+# tests: a unit lowered there is a fixture, not a component, and wants
+# no sheet (issue 1167). Each such module, as the path its file has
+# less `.rs`: beside its parent when the parent is a crate root or a
+# `mod.rs`, and in the parent's own directory otherwise.
+test_only=$(
+  for f in $sources; do
+    awk '
+      /^[[:space:]]*#\[cfg\(test\)\][[:space:]]*$/ { t = 1; next }
+      t && /^[[:space:]]*(pub[^[:space:]]*[[:space:]]+)?mod[[:space:]]+[A-Za-z0-9_]+;/ {
+        s = $0
+        sub(/^.*mod[[:space:]]+/, "", s)
+        sub(/;.*/, "", s)
+        print s
+      }
+      { t = 0 }
+    ' "$f" | while read -r name; do
+      dir=${f%/*}
+      base=${f##*/}
+      base=${base%.rs}
+      case "$base" in lib | main | mod) ;; *) dir=$dir/$base ;; esac
+      echo "$dir/$name"
+    done
+  done
+)
+# Whether a file is a test-only module, or a file under one's directory.
+is_test_only() {
+  local f=$1 m
+  for m in $test_only; do
+    [[ "$f" == "$m.rs" || "$f" == "$m/"* ]] && return 0
+  done
+  return 1
+}
 # The crate a file is in, by the directory its sources are under, and
 # the module the file is, so that a component has a path.
 module_of() {
@@ -55,6 +89,7 @@ module_of() {
 # Each component as its path and its type's name, one to a line.
 components=$(
   for f in $sources; do
+    is_test_only "$f" && continue
     m=$(module_of "$f")
     awk -v m="$m" '
       /^#\[lower\]/ { take = 1; head = ""; next }
