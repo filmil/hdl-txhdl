@@ -809,6 +809,16 @@ pub struct Vreteno<const IW: usize> {
     pub m_neg_q: Reg<Bit>,
     pub m_neg_r: Reg<Bit>,
     pub regs: Mem<U<32>, 32>,
+    /// The register the first read port reads: the instruction's `rs1`,
+    /// or the debug module's number in debug mode, chosen a cycle
+    /// early so that the read starts at a register and not behind a
+    /// multiplexer (issue 1130).
+    pub ra_at: Reg<U<5>>,
+    /// Whether the register the writeback stage writes is the one each
+    /// operand reads: the forwarding's two compares, made a cycle early
+    /// so that the operand waits on no compare (issue 1130).
+    pub m_a: Reg<Bit>,
+    pub m_b: Reg<Bit>,
     pub imem: Mem<U<32>, IMEM_WORDS>,
     /// A fetch that is out on the bus, for a program above the boot
     /// memory: whether one is out, the word it asked for, the two
@@ -1133,8 +1143,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // file, which has it by then. The stall is the one wait the
             // pipeline makes by itself; the others, ORed into `stall`
             // below, wait on something outside it.
-            let fwd_a = wb_write & (wb_rd == rs1);
-            let fwd_b = wb_write & (wb_rd == rs2);
+            let fwd_a = wb_write & self.m_a;
+            let fwd_b = wb_write & self.m_b;
             let stall_ld = self.valid & self.wb_load & (fwd_a | fwd_b);
             // The M extension is a sequencer: a multiply is one step in
             // the part's multipliers, a division thirty-two restoring
@@ -1211,7 +1221,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // boot memory included. A store goes out when the bus has room; a
             // load goes out and moves on to writeback, which holds it
             // until the answer has landed in its register there.
-            let ra = self.regs.read(mux(in_debug, dbg_gpr, rs1));
+            let ra = self.regs.read(self.ra_at.get());
             let a = mux(rs1 == 0, U::<32>::from(0u32), mux(fwd_a, wb_alu, ra));
             let b = mux(
                 rs2 == 0,
@@ -1623,7 +1633,22 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             );
             let to_s_wb = (prv != 3) & bit_of(medeleg, wb_code);
             let stvec = self.stvec.get();
-            let trap_vec = mux(to_s, stvec, mtvec);
+            // The trap's vector, on the way to the next program counter,
+            // chosen last by whether the access is misaligned, which
+            // settles behind the adder: the vector of every other trap
+            // and that of a misaligned one are found beforehand, and the
+            // check picks between them, one multiplexer from the fetch's
+            // address (issue 1130). It is the vector `to_s` says.
+            let to_s_other = (prv != 3)
+                & mux(
+                    int_take,
+                    Bit::from(m_set == 0),
+                    mux(st_take, medeleg.bit(7), d_early),
+                );
+            let vec_other = mux(to_s_other, stvec, mtvec);
+            let vec_mis = mux((prv != 3) & d_mis, stvec, mtvec);
+            let trap_vec =
+                mux(unaligned & !int_take & !st_take, vec_mis, vec_other);
             let wb_vec = mux(to_s_wb, stvec, mtvec);
             let m_trap_status = (mstatus & !U::<32>::from(0x1888u32))
                 | mux(mstatus.bit(3), U::<32>::from(0x80u32), zero32)
@@ -1769,8 +1794,18 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // page of the word it wants is translated, at the physical
             // address; a page that faults is not read, and its words
             // are taken as faults at once.
-            let f_th = self.ft_valid
-                & Bit::from(self.ft_vpn.get() == f_addr.slice::<12, 20>());
+            //
+            // Whether the page is the one translated is found for both
+            // words at once, the next word's against the page after when
+            // the word is a page's last, and `hit0` chooses, so the
+            // compare does not wait for the add (issue 1130).
+            let want_vpn = want.slice::<12, 20>();
+            let ft_vpn = self.ft_vpn.get();
+            let same0 = Bit::from(ft_vpn == want_vpn);
+            let last_word = Bit::from(want.slice::<2, 10>() == 0x3ff);
+            let same1 =
+                mux(last_word, Bit::from(ft_vpn == want_vpn + 1), same0);
+            let f_th = self.ft_valid & mux(hit0, same1, same0);
             let f_tf = self.ft_pf | self.ft_af;
             let f_pa = mux(
                 vm,
@@ -2428,6 +2463,23 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 ),
             );
             self.pc.set(mux(redirect, jmp, go));
+            // The next instruction's register numbers, which the read
+            // port and the forwarding's compares take a cycle early: the
+            // fetched word's when it goes into the instruction register
+            // below, else the one there now (issue 1130).
+            let load_ir =
+                !rst & !wb_fault & !stall & !stop & !(in_debug | dbg_take);
+            let rs1_next = mux(load_ir, fetched.slice::<15, 5>(), rs1);
+            let rs2_next = mux(load_ir, fetched.slice::<20, 5>(), rs2);
+            // What the writeback stage will write: the instruction now in
+            // execute if it goes on, else what is there, held or cleared;
+            // a cleared one writes nothing, which `wb_write` says.
+            let wr_next = mux(live, rd, wb_rd);
+            with!(self <= {
+                ra_at: mux(in_debug, dbg_gpr, rs1_next),
+                m_a: Bit::from(wr_next == rs1_next),
+                m_b: Bit::from(wr_next == rs2_next),
+            });
             case!(rst => {
                 Bit::One => { self.valid <= Bit::Zero },
                 _ if wb_fault.to_bool() => { self.valid <= Bit::Zero },
