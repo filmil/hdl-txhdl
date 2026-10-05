@@ -657,8 +657,10 @@ extern "C" fn main() -> ! {
     ramp(&mut shades);
     let mut ready = [Ready::NONE; FACES];
     let mut row = [0u16; W as usize];
+    let mut frames: u32 = 0;
     loop {
         wait_blanking();
+        let start = mcycle();
 
         // The vertices, turned once and projected once, rather than
         // once per face that uses them.
@@ -711,8 +713,40 @@ extern "C" fn main() -> ! {
             y += 1;
         }
 
+        // What drawing a frame on the core costs, from the blanking to
+        // the last row written, every 64 frames: the time Razboj's
+        // version is measured against (issue 986).
+        if frames & 63 == 0 {
+            say("ico core ");
+            number(mcycle().wrapping_sub(start));
+            say(" cycles\n");
+        }
+        frames = frames.wrapping_add(1);
+
         ay = (ay + 2) & 255;
         ax = (ax + 1) & 255;
+    }
+}
+
+/// The low word of the cycle counter.
+fn mcycle() -> u32 {
+    let c: u32;
+    unsafe { core::arch::asm!("csrr {0}, mcycle", out(reg) c) };
+    c
+}
+
+/// A number in decimal, on the serial port.
+fn number(mut n: u32) {
+    let mut digits = [0u8; 10];
+    let mut k = 0;
+    while k == 0 || (n > 0 && k < 10) {
+        digits[k] = b'0' + (n % 10) as u8;
+        n /= 10;
+        k += 1;
+    }
+    while k > 0 {
+        k -= 1;
+        put(digits[k]);
     }
 }
 
