@@ -11,8 +11,14 @@
 // the logo became, and a caller skips it, so the logo sits on whatever
 // is already there. A colour is the scanout's 0x00RRGGBB.
 //
-// The crate is no_std: it is constants and two small functions, and it
-// is read by programs compiled for the core, where there is no std.
+// The crate is no_std: it is two tables, two constants and two small
+// functions, and it is read by programs compiled for the core, where
+// there is no std.
+//
+// The tables are statics, not constants. A constant array read at an
+// index known only at run time is a copy of the whole array made for
+// the read, and the crate is built unoptimised, so each pixel copied
+// all ten kilobytes and a paint took 31 s rather than 2 (issue 1245).
 #![no_std]
 
 /// Columns.
@@ -23,7 +29,7 @@ pub const H: usize = 144;
 /// The colours, index 0 unused. Four to a line, which rustfmt is told
 /// to leave, as below.
 #[rustfmt::skip]
-pub const PALETTE: [u32; 16] = [
+pub static PALETTE: [u32; 16] = [
     0x000000, 0x5f493c, 0xe7ebf0, 0x59d4be,
     0xdfab74, 0xb3b3b8, 0xb67a42, 0x6a8084,
     0x41777e, 0x2d4a59, 0x8097b4, 0x98612f,
@@ -31,13 +37,13 @@ pub const PALETTE: [u32; 16] = [
 ];
 
 /// A pixel's index, 0 where the logo is transparent.
-pub const fn index(x: usize, y: usize) -> u8 {
+pub fn index(x: usize, y: usize) -> u8 {
     let i = y * W + x;
     (PIXELS[i / 2] >> (4 * (i % 2))) & 0xf
 }
 
 /// A pixel's colour, or None where the logo is transparent.
-pub const fn colour(x: usize, y: usize) -> Option<u32> {
+pub fn colour(x: usize, y: usize) -> Option<u32> {
     match index(x, y) {
         0 => None,
         n => Some(PALETTE[n as usize]),
@@ -52,7 +58,7 @@ pub const fn colour(x: usize, y: usize) -> Option<u32> {
 /// the repository requires before a commit rewrites this file in
 /// every branch that runs it (issue 437).
 #[rustfmt::skip]
-pub const PIXELS: [u8; (W * H).div_ceil(2)] = [
+pub static PIXELS: [u8; (W * H).div_ceil(2)] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
