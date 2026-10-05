@@ -125,16 +125,57 @@ pub fn run_lists_at<
     wave: bool,
     netlists: bool,
 ) -> Vec<Run> {
-    let insns: &[Insn] = &lists[0];
+    let works: Vec<Work> = lists.iter().map(|l| Work::flat(l)).collect();
+    run_works_at::<A, LOGW, H, N, DL, CTRL>(&works, wave, netlists)
+}
+
+/// A list as the rasteriser finds it in memory: the words at `DL`, and
+/// the count word at `CTRL` that says it is there.
+pub struct Work {
+    pub words: Vec<u32>,
+    pub count: u32,
+}
+
+impl Work {
+    /// A flat list, its entries one after another.
+    pub fn flat(list: &[Insn]) -> Work {
+        Work {
+            words: crate::dl::image(list),
+            count: list.len() as u32,
+        }
+    }
+
+    /// The same list binned into tiles on a screen of `sw` by `sh`, with
+    /// the count word that says so (issue 1255).
+    pub fn tiled(list: &[Insn], sw: usize, sh: usize) -> Work {
+        let (words, count) = crate::tiles::image(list, sw, sh);
+        Work { words, count }
+    }
+}
+
+/// Render lists laid out in memory as [`Work`] says, flat or in tiles,
+/// one after another, as [`run_lists_at`] does.
+pub fn run_works_at<
+    const A: usize,
+    const LOGW: usize,
+    const H: usize,
+    const N: usize,
+    const DL: usize,
+    const CTRL: usize,
+>(
+    lists: &[Work],
+    wave: bool,
+    netlists: bool,
+) -> Vec<Run> {
     let w = 1usize << LOGW;
     // The memory the rasteriser reads its work out of and writes its
     // pixels into: the framebuffer at nought, the display list at
     // `DL`, and the count last, which is what says the list is ready.
     let mut image = vec![U::<32>::new(0); N];
-    for (i, word) in crate::dl::image(insns).iter().enumerate() {
+    for (i, word) in lists[0].words.iter().enumerate() {
         image[DL / 4 + i] = U::from(*word);
     }
-    image[CTRL / 4] = U::from(insns.len() as u32);
+    image[CTRL / 4] = U::from(lists[0].count);
     let UnitLink {
         host_client,
         per_client,
@@ -224,12 +265,12 @@ pub fn run_lists_at<
             }
             // The program: the next list, a word a cycle, since the
             // memory takes one write a cycle, and the count last.
-            for (i, word) in crate::dl::image(&lists[next]).iter().enumerate() {
+            for (i, word) in lists[next].words.iter().enumerate() {
                 pixels.write(DL / 4 + i, U::<32>::from(*word));
                 sim.cycle();
                 cycles += 1;
             }
-            pixels.write(CTRL / 4, U::<32>::from(lists[next].len() as u32));
+            pixels.write(CTRL / 4, U::<32>::from(lists[next].count));
             next += 1;
         }
         was_idle = now_idle;
@@ -276,7 +317,7 @@ pub fn run_lists_at<
 /// framebuffer, must leave exactly what the model leaves.
 #[cfg(test)]
 mod tests {
-    use super::{run, run_lists, run_lists_at};
+    use super::{run, run_lists, run_lists_at, run_works_at, Work};
     use crate::dl::image;
     use crate::model;
     use crate::op::{assemble, Kind, Op};
@@ -582,6 +623,85 @@ mod tests {
     #[test]
     fn a_scene_of_every_kind_agrees_with_the_model() {
         agree(&scene::small(), "the small scene");
+    }
+
+    /// Every scene drawn from a tile table is the picture its flat list
+    /// draws, byte for byte (issue 1255). There are six scenes of
+    /// rectangles, flat and shaded triangles, and clears, many over tile
+    /// edges and hanging off the screen, on a screen four tiles across
+    /// and one and a half down, so the last row of tiles is cut short.
+    /// Each scene is drawn over the last one's picture, so a pixel a
+    /// tiled list does not cover has to keep what memory had.
+    #[test]
+    fn every_scene_is_the_same_in_tiles() {
+        const A: usize = 20;
+        const LOGW: usize = 8;
+        const W: usize = 1 << LOGW;
+        const H: usize = 96;
+        const N: usize = 32768;
+        const DL: usize = 0x18000;
+        const CTRL: usize = 0x1fffc;
+        let mut x = 0x1234_5678u32;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        let px = |v: u32| (v % (W as u32 + 40)) as i32 - 20;
+        let py = |v: u32| (v % (H as u32 + 40)) as i32 - 20;
+        let mut scenes = Vec::new();
+        for s in 0..6u32 {
+            let mut ops = Vec::new();
+            if s % 3 == 0 {
+                ops.push(Op::Clear {
+                    colour: 0x10_2030 + s,
+                });
+            }
+            for _ in 0..6 {
+                let (r, q) = (next(), next());
+                let colour = q & 0xff_ffff;
+                ops.push(match r % 3 {
+                    0 => Op::Rect {
+                        colour,
+                        x: px(r >> 2),
+                        y: py(r >> 12),
+                        w: ((q >> 8) % 90) as i32 + 1,
+                        h: ((q >> 16) % 60) as i32 + 1,
+                    },
+                    1 => Op::Tri {
+                        colour,
+                        a: (px(r >> 2), py(r >> 11)),
+                        b: (px(q >> 3), py(q >> 13)),
+                        c: (px(r ^ q), py((r ^ q) >> 9)),
+                    },
+                    _ => Op::Gouraud {
+                        a: (px(r >> 2) * 16 + 3, py(r >> 11) * 16 + 5),
+                        b: (px(q >> 3) * 16 + 9, py(q >> 13) * 16),
+                        c: (px(r ^ q) * 16, py((r ^ q) >> 9) * 16 + 11),
+                        colours: [q, r, q ^ r].map(|c| c & 0xff_ffff),
+                    },
+                });
+            }
+            scenes.push(assemble(&ops, W, H));
+        }
+        let flat: Vec<Work> = scenes.iter().map(|l| Work::flat(l)).collect();
+        let tiled: Vec<Work> =
+            scenes.iter().map(|l| Work::tiled(l, W, H)).collect();
+        let many = tiled.iter().filter(|t| t.count & 0xffff > 4).count();
+        assert!(many >= 3, "scenes over many tiles: {many}");
+        let a = run_works_at::<A, LOGW, H, N, DL, CTRL>(&flat, false, false);
+        let b = run_works_at::<A, LOGW, H, N, DL, CTRL>(&tiled, false, false);
+        for (i, (f, t)) in a.iter().zip(&b).enumerate() {
+            let first = f.fb.iter().zip(&t.fb).position(|(p, q)| p != q);
+            assert_eq!(first, None, "scene {i}: the first pixel that differs");
+            eprintln!(
+                "scene {i}: {} tiles, flat {} cycles, tiled {}",
+                tiled[i].count & 0xffff,
+                f.cycles - if i == 0 { 0 } else { a[i - 1].cycles },
+                t.cycles - if i == 0 { 0 } else { b[i - 1].cycles },
+            );
+        }
     }
 
     /// A run of a row's pixels goes out as one write burst of at most

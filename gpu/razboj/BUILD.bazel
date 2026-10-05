@@ -103,6 +103,19 @@ rust_binary(
     ],
 )
 
+# The traced run of a list drawn in tiles (issue 1255), with the
+# rasteriser's netlist, so the build replays the tile buffer and its
+# write-out.
+rust_binary(
+    name = "trace_tiles",
+    srcs = ["src/trace_tiles.rs"],
+    edition = "2021",
+    deps = [
+        ":razboj",
+        "//lib:txhdl",
+    ],
+)
+
 rust_test(
     name = "razboj_test",
     crate = ":razboj",
