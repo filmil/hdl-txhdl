@@ -61,7 +61,8 @@ register_toolchains("@rust_toolchains//:all")
 # A C and C++ compiler for Vreteno itself, fetched by checksum: the
 # xPack build of the GNU toolchain for bare-metal RISC-V. It is here
 # rather than a Clang because of what comes with it. Its `rv32imc/ilp32`
-# multilib is exactly this core, RV32IMC with the soft-float ABI, and
+# multilib, RV32IMC with the soft-float ABI, is this core less the
+# atomic instructions, so its code runs on the core as it is, and
 # it carries newlib and a
 # real `libstdc++.a` built for it, so "with a standard library" is
 # something the toolchain already has rather than something the build

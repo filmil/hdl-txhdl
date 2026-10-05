@@ -30,7 +30,7 @@ corresponding author, at f@hdlfactory.com; Dragiša Janković is
 reached at linkedin.com/in/dragisa-jankovic.}%
 \thanks{This paper presents TxHDL as it stands: the language, its
 runtime, the traces and netlists it produces, the checks that hold
-them together, and the Vreteno RV32IMC core built with it. Every
+them together, and the Vreteno RV32IMAC core built with it. Every
 listing is included from the project repository \code{HDL/txhdl} at
 build time, every waveform is drawn from a trace the build produced,
 and every number is from a run the build made. The companion
@@ -57,8 +57,9 @@ source runs as a cycle-accurate simulation, writes a waveform, and
 lowers to a netlist in Verilog and VHDL, and the build simulates that
 netlist under nvc and Verilator against the trace the simulation
 wrote, so a design that passes is right in three forms at once. The
-largest design so far is Vreteno, a three-stage RV32IMC core with
-machine-mode traps, an interrupt line and a bus with its data
+largest design so far is Vreteno, a three-stage RV32IMAC core with
+machine, supervisor and user modes, Sv32 paging, an interrupt line and
+a bus with its data
 memory, a timer and a serial port on it: written in the subset the
 lowering reads, checked
 in lockstep against a reference model, checked as a netlist against
@@ -129,7 +130,7 @@ is the language: what a unit is, how time is modelled, how units are
 wired, and how control flow on a signal is spelled.
 Section~\ref{sec:p-sim} is the simulation and its traces.
 Section~\ref{sec:p-lower} is the lowering and the checks that close
-the loop. Section~\ref{sec:p-vreteno} is Vreteno, an RV32IMC core
+the loop. Section~\ref{sec:p-vreteno} is Vreteno, an RV32IMAC core
 written in the language, from a reference model to synthesis.
 Section~\ref{sec:p-results} gathers the numbers.
 
@@ -590,10 +591,10 @@ writeback decoded into its register and value.}
 \subsection{Programs written for it}
 
 A core that runs only what its own assembler emits is a core that has
-been tested, not one that can be programmed. Vreteno is RV32IMC, so
+been tested, not one that can be programmed. Vreteno is RV32IMAC, so
 compilers target it, and two do: Rust through the ruleset's own
 toolchain, and C++ through the GNU bare-metal RISC-V toolchain, whose
-\code{rv32imc/ilp32} multilib is this machine exactly and carries
+\code{rv32imc/ilp32} multilib runs on this machine as it is and carries
 \code{newlib} and a \code{libstdc++} built for it. Both are fetched
 by the build against a checksum. Nothing is installed to compile for
 the core, as nothing is installed to simulate or to synthesise it.

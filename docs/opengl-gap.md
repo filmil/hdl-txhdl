@@ -82,7 +82,7 @@ The distance in bytes from one line to the next is a parameter, `STRIDE`, so Raz
 `docs/board-checks.md` says nothing yet joins the scanout to the video peripheral in a bitstream; issue 151 is doing that now, and on the way found issue 979, two netlists in one design each defining `txhdl_chan`.
 
 **The core.**
-Vreteno is RV32IMC at 100 MHz, with multiply and divide as a multi-cycle sequence and no floating point (`//docs:vreteno`).
+Vreteno is RV32IMAC at 100 MHz, with multiply and divide as a multi-cycle sequence and no floating point (`//docs:vreteno`).
 Both icosahedron programs work in fixed point for that reason (`ico_hdmi.rs:35`).
 
 **The memory.**

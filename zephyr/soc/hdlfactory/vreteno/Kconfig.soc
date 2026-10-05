@@ -4,7 +4,7 @@ config SOC_VRETENO
 	bool
 	select SOC_FAMILY_HDLFACTORY
 	help
-	  The Vreteno RV32IMC core with its bus, its timer and its
+	  The Vreteno RV32IMAC core with its bus, its timer and its
 	  interrupt controller.
 
 	  What the core is, rather than how it is configured, is said
