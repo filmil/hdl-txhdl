@@ -2,15 +2,17 @@
 //! The framebuffer: `N` words of memory behind an AXI peripheral end,
 //! one word per pixel, `N` a power of two.
 //!
-//! It answers single-beat writes, which is all the rasteriser makes,
-//! and read bursts of any length, since the rasteriser fetches a
-//! display list entry as one. A read's first beat is answered from the
-//! memory in the cycle the request is taken and the rest follow a beat
-//! a cycle; a write is held until its beat arrives, because AXI4 puts
-//! no identifier on the write data channel and the beat therefore
-//! comes when it comes. The word address is the byte address shifted
-//! by two and masked to the memory, so a stray address wraps instead
-//! of ending the run.
+//! It answers write bursts and read bursts of any length: the
+//! rasteriser writes a run of a row's pixels as one burst (issue 987)
+//! and fetches a display list entry as one. A read's first beat is
+//! answered from the memory in the cycle the request is taken and the
+//! rest follow a beat a cycle; a write is held while its beats arrive,
+//! because AXI4 puts no identifier on the write data channel and the
+//! beats therefore come when they come, and it is answered once, with
+//! its last. A beat writes only the bytes its strobes name, so a beat
+//! with none writes nothing. The word address is the byte address
+//! shifted by two and masked to the memory, so a stray address wraps
+//! instead of ending the run.
 use txhdl::comp::{mux, Clock, DefaultClock, Mem, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
@@ -25,7 +27,7 @@ const WORD: usize = 2;
 #[derive(Trace, Default)]
 pub struct Fb<const A: usize, const I: usize, const N: usize> {
     pub px: Mem<U<32>, N>,
-    /// A write taken and waiting for its beat: where it goes and
+    /// A write taken and waiting for its beats: where the next goes and
     /// which identifier answers it.
     pub pend: Reg<U<1>>,
     pub paddr: Reg<U<16>>,
@@ -40,10 +42,23 @@ pub struct Fb<const A: usize, const I: usize, const N: usize> {
     /// the rasteriser asked of the memory.
     pub rbursts: Reg<U<32>>,
     pub rbeats: Reg<U<32>>,
-    /// Write beats taken, for a run to count the pixels written.
+    /// Write beats taken that wrote something, for a run to count the
+    /// pixels written, and write bursts taken.
     pub wbeats: Reg<U<32>>,
+    pub wbursts: Reg<U<32>>,
 }
 // end{state}
+
+/// The bytes of a word that a beat's strobes name, as a mask.
+#[lower]
+fn bytes(strb: U<4>) -> U<32> {
+    let on = U::<8>::from(0xffu8);
+    let off = U::<8>::from(0u8);
+    mux(strb.bit(3), on, off)
+        .concat::<8, 16>(mux(strb.bit(2), on, off))
+        .concat::<8, 24>(mux(strb.bit(1), on, off))
+        .concat::<8, 32>(mux(strb.bit(0), on, off))
+}
 
 // begin{run}
 #[lower]
@@ -61,27 +76,42 @@ impl<const A: usize, const I: usize, const N: usize> Unit for Fb<A, I, N> {
             let at =
                 (q.addr >> WORD).resize::<16>() & U::<16>::from((N - 1) as u32);
             // A read's first beat is answered at once and the rest a
-            // beat a cycle, one burst at a time; a write is held until
-            // its beat arrives, and only one is held at a time.
+            // beat a cycle, one burst at a time; a write is held while
+            // its beats arrive, and only one is held at a time.
             let mask = U::<16>::from((N - 1) as u32);
             let reading = Bit::from(self.rleft.get() != 0);
             let more = reading & bus.r.ready();
             let take_read = qoff & q.read & bus.r.ready() & !held & !reading;
             let take_write = qoff & !q.read & !held;
             let _ = bus.req.recv_if(take_read | take_write);
+            // A beat is taken while a write is held; the last only when
+            // the answer has room, since it is answered with it.
             let wh = bus.w.head();
-            let wgo = held & bus.w.peek().is_some() & bus.ans.ready();
+            let wgo =
+                held & bus.w.peek().is_some() & (bus.ans.ready() | !wh.last);
             let _ = bus.w.recv_if(wgo);
+            let fin = wgo & wh.last;
+            // The bytes the strobes name, over the word already there.
+            let keep = bytes(wh.strb);
+            let old = self.px.read(self.paddr.get());
+            let new = (wh.data & keep) | (old & !keep);
+            // A beat with no strobes writes nothing, and is not counted.
+            let none = wh.strb == 0;
+            let wrote = mux(none, U::<32>::from(0u8), U::<32>::from(1u8));
             with!(self <= {
                 take_write ? {
                     pend: U::<1>::from(1u8),
                     paddr: at,
                     pid: q.id,
+                    wbursts: self.wbursts.get() + 1,
                 },
                 wgo ? {
+                    paddr: (self.paddr.get() + 1) & mask,
+                    px.at(self.paddr.get()): new,
+                    wbeats: self.wbeats.get() + wrote,
+                },
+                fin ? {
                     pend: U::<1>::from(0u8),
-                    px.at(self.paddr.get()): wh.data,
-                    wbeats: self.wbeats.get() + 1,
                 },
                 take_read ? {
                     rleft: q.len,
@@ -111,7 +141,7 @@ impl<const A: usize, const I: usize, const N: usize> Unit for Fb<A, I, N> {
                     ),
                 });
             }
-            if wgo.to_bool() {
+            if fin.to_bool() {
                 bus.ans.send(Answer {
                     id: self.pid.get(),
                     resp: Resp::Okay,
