@@ -10,14 +10,34 @@ else in the tree then depends on that source and nothing has to be
 built by hand with a flag.
 """
 
+# The flags every crate built for the core is compiled with, the
+# programs' own and every library they link alike: the HAL's, which
+# the programs' `VRETENO_FLAGS` repeat. A library that set none was
+# built for the core unoptimised, with its debug assertions and
+# overflow checks, which cost the logo's table a copy of ten kilobytes
+# a pixel (issue 1245). The transition sets them once for all of them
+# (issue 1248), and a build for this machine, the libraries' own tests
+# included, keeps its defaults.
+CORE_RUSTC_FLAGS = [
+    "-Copt-level=z",
+    "-Cdebug-assertions=no",
+    "-Coverflow-checks=no",
+]
+
 def _to_vreteno(settings, attr):
     _ = settings  # the incoming configuration is not read
-    return {"//command_line_option:platforms": str(attr.platform)}
+    return {
+        "//command_line_option:platforms": str(attr.platform),
+        "@rules_rust//rust/settings:extra_rustc_flags": CORE_RUSTC_FLAGS,
+    }
 
 _vreteno_transition = transition(
     implementation = _to_vreteno,
     inputs = [],
-    outputs = ["//command_line_option:platforms"],
+    outputs = [
+        "//command_line_option:platforms",
+        "@rules_rust//rust/settings:extra_rustc_flags",
+    ],
 )
 
 def _vreteno_image_impl(ctx):

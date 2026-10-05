@@ -20,12 +20,9 @@ rust_library(
     crate_name = "vreteno_hal",
     edition = "2021",
     deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
-    rustc_flags = [
-        "-Copt-level=z",
-        "-Cdebug-assertions=no",
-        "-Coverflow-checks=no",
-        "-Cpanic=abort",
-    ],
+    # Optimised for size with no debug assertions and no overflow
+    # checks, as everything the transition builds is (issue 1248).
+    rustc_flags = ["-Cpanic=abort"],
     tags = ["manual"],
 )
 
