@@ -2193,16 +2193,32 @@ is a read or a write and none starts until the last has finished.
 The host checks the two busy lines are never high together. The nest
 keeps two ports free, for Razboj and a texture fetch.
 
+Razboj took the seventh (issue~\#985), and the arbiter is
+\code{Arbiter7}. Its rasteriser draws into the frame the scanout
+shows, at \code{0x4200\_0000}, from a display list at
+\code{0x4280\_0000}. It reads the list's count from a doorbell on the
+peripheral page's tenth slot, at \code{0x3900}: a register that holds
+zero from reset, so no word of memory can start a list nobody wrote.
+The doorbell also drives a line to the rasteriser, high while the
+count is not zero, and the rasteriser reads the count only then. An
+idle rasteriser therefore puts nothing on the bus. Reading the count
+back to back, or even once in 256 cycles, moved the timing of every
+other host's accesses, and the board tests that time the DDR3 path
+or sample the entropy source failed with it. Razboj's rows are
+$2^{10}$ words, so the scanout's stride became 4096 bytes, of which
+it shows the first 640 words. A board test writes a list of one rectangle,
+rings the doorbell, and reads the pixels back over the bus.
+
 The cost of a host is its share of the bus when every host is busy.
 For the scanout, a line of 640 words, 2560 bytes, must arrive within
 the 31.8\,$\mu$s of the line before it, about 80\,MB/s. The link
 moves at most four bytes a beat at 100\,MHz, 400\,MB/s, and the DDR3
 controller behind it less. With every port offering a burst, each
-wins one turn in six, and a turn is a burst of sixteen beats. The
+wins one turn in seven, and a turn is a burst of sixteen beats. The
 SD port offers a burst only as fast as the card fills one, though,
-at most 12.5\,MB/s on four lines at 25\,MHz, so the other five share
+at most 12.5\,MB/s on four lines at 25\,MHz, so the other six share
 nearly all of the link and the scanout's worst share is about
-77\,MB/s, just short of a line's need. That bound holds only while
+65\,MB/s, short of a line's need. That bound holds only while
 every other host moves bursts back to back for a whole line, which
 the core's single-word accesses do not. The tighter limit is behind
 the arbiter: the DDR3 path takes one access at a time, and measured
