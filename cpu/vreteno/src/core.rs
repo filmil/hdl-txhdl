@@ -809,6 +809,11 @@ pub struct Vreteno<const IW: usize> {
     pub m_neg_q: Reg<Bit>,
     pub m_neg_r: Reg<Bit>,
     pub regs: Mem<U<32>, 32>,
+    /// The register the first read port reads: the instruction's `rs1`,
+    /// or the debug module's number in debug mode, chosen a cycle
+    /// early so that the read starts at a register and not behind a
+    /// multiplexer (issue 1130).
+    pub ra_at: Reg<U<5>>,
     pub imem: Mem<U<32>, IMEM_WORDS>,
     /// A fetch that is out on the bus, for a program above the boot
     /// memory: whether one is out, the word it asked for, the two
@@ -1211,7 +1216,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // boot memory included. A store goes out when the bus has room; a
             // load goes out and moves on to writeback, which holds it
             // until the answer has landed in its register there.
-            let ra = self.regs.read(mux(in_debug, dbg_gpr, rs1));
+            let ra = self.regs.read(self.ra_at.get());
             let a = mux(rs1 == 0, U::<32>::from(0u32), mux(fwd_a, wb_alu, ra));
             let b = mux(
                 rs2 == 0,
@@ -2443,6 +2448,16 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 ),
             );
             self.pc.set(mux(redirect, jmp, go));
+            // The next instruction's first register number, which the
+            // read port takes a cycle early: the fetched word's when it
+            // goes into the instruction register below, else the one
+            // there now (issue 1130).
+            let load_ir =
+                !rst & !wb_fault & !stall & !stop & !(in_debug | dbg_take);
+            let rs1_next = mux(load_ir, fetched.slice::<15, 5>(), rs1);
+            with!(self <= {
+                ra_at: mux(in_debug, dbg_gpr, rs1_next),
+            });
             case!(rst => {
                 Bit::One => { self.valid <= Bit::Zero },
                 _ if wb_fault.to_bool() => { self.valid <= Bit::Zero },
