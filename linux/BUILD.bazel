@@ -241,6 +241,12 @@ sh_test(
         ":model_net_boot",
         "//cpu/vreteno:machine",
     ],
-    env = {"EXPECT": "txhdl: network is up"},
+    # Three pings a second apart: each after the first waits on alarm(),
+    # and a second of the model's time is 100 million instructions
+    # (issue 1246).
+    env = {
+        "EXPECT": "txhdl: network is up",
+        "STEPS": "500000000",
+    },
     tags = ["manual"],
 )

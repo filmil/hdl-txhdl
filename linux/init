@@ -13,8 +13,13 @@ uname -a
 if /bin/busybox grep -q txhdl.net /proc/cmdline; then
 	/bin/busybox ip addr add 10.0.0.1/24 dev eth0
 	/bin/busybox ip link set eth0 up
-	if /bin/busybox ping -c 1 -W 5 10.0.0.2; then
-		echo "txhdl: network is up"
-	fi
+	# Three, all answered: ping waits for each after the first with
+	# alarm(), which the kernel had compiled out while one ping still
+	# passed (issue 1246).
+	pinged=$(/bin/busybox ping -c 3 -W 5 10.0.0.2)
+	echo "$pinged"
+	case "$pinged" in
+	*"3 packets received"*) echo "txhdl: network is up" ;;
+	esac
 fi
 exec /bin/sh
