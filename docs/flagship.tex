@@ -542,9 +542,10 @@ for this purpose, the same checkpoint the numbers above come from.
 \label{sec:f-first}
 
 The slot and the crossing are worth nothing until something writes the
-screen. The first program that does is a turning icosahedron, drawn by
-the core into the framebuffer with the TxHDL logo in a corner
-(Listing~\ref{lst:f-ico}). It is linked for the memory at
+screen. The first program that does is a turning icosahedron with the
+TxHDL logo in a corner (Listing~\ref{lst:f-ico}), drawn at first by
+the core into the video peripheral's framebuffer, and now by Razboj
+through the scanout. It is linked for the memory at
 \code{0x4000\_0000}, flattened, and sent by the loader: the picture
 on the flagship changed a dozen times in an afternoon and Vivado ran
 for none of them, which is the loop this document is about.
@@ -556,10 +557,11 @@ the centre, and the program says how many it found, which on the board
 was twenty. The face normals are unit vectors turned with the solid, so
 one number decides whether a face is seen and how brightly it is lit,
 and for a convex solid that test is the whole of hidden surface
-removal. And nothing is cleared: a row is composed in a buffer and
-written once, because the raster reads the framebuffer while the core
-writes it, and a screen that is cleared and then drawn is seen in
-between. The first version cleared, and it flickered.
+removal. And while the core drew it, nothing was cleared: a row was
+composed in a buffer and written once, because the raster read the
+framebuffer while the core wrote it, and a screen that is cleared and
+then drawn is seen in between. The first version cleared, and it
+flickered.
 
 Two things it got wrong on the way are in its comments, because they
 are the kind of thing a picture on a monitor teaches and a simulation
@@ -567,15 +569,39 @@ does not: the eye was three radii from the solid, so the nearest face
 swelled to nearly the whole silhouette and read as a back face painted
 over the front; and each colour channel was shaded and rounded on its
 own, so a face turning smoothly changed hue rather than brightness.
-The colour is now one ramp of the same tan, spaced by a square root so
+The colour became one ramp of the same tan, spaced by a square root so
 the steps are even to the eye, with a floor so no face goes near black;
-and because a flat face still snaps from one four-bit step to the next,
-a pixel between two steps is dithered between them in a two by two
-pattern, which quadruples the levels the eye sees. On the monitor that
-is what turned a solid that stepped into one that turns.
+and because a flat face still snapped from one four-bit step to the
+next, a pixel between two steps was dithered between them in a two by
+two pattern, which quadruples the levels the eye sees. On the monitor
+that is what turned a solid that stepped into one that turns.
+
+Razboj draws it now (issue~\#986), at the screen's 640 by 480 rather
+than the peripheral's 160 by 120, and in eight bits a channel, so the
+dither is gone and the square root stays. The core still turns the
+solid and picks the faces, but writes a display list instead of pixels
+(Listing~\ref{lst:f-ico-list}): a rectangle of the backdrop over the
+box the solid filled the last time that frame was drawn, then a
+triangle a face. A face is drawn when its corners wind clockwise on the
+screen, which is exact in perspective where the turned normal is not
+quite. There are two frames, rows 0 to 479 and 512 to 991 of Razboj's
+framebuffer, since its base is a constant of its type. Razboj draws
+the one not shown, the program waits for the doorbell to read zero and
+for idle, points the scanout at it, and waits for the vertical
+blanking, where the scanout takes its base. Nothing is drawn into the
+frame on the screen, so the flicker that row composition cured cannot
+come back. The logo is painted into both frames once, by the core, in
+a corner the solid cannot reach, which a test on the host checks with
+the clears and the faces rendered through Razboj's model. Every 64
+frames the program says how many cycles making the list, drawing it,
+and the whole frame took, against the \code{ico core} line the
+core-drawn version printed.
 
 \lstinputlisting[caption={\code{cpu/vreteno/rust/ico\_hdmi.rs}: the
 icosahedron.},label={lst:f-ico}]{cpu/vreteno/rust/ico_hdmi.rs}
+
+\lstinputlisting[caption={\code{cpu/vreteno/rust/ico\_list.rs}: the
+icosahedron as Razboj's display lists.},label={lst:f-ico-list}]{cpu/vreteno/rust/ico_list.rs}
 
 The logo is data: one twelve-bit word per pixel at the size a corner
 wants, in a crate of constants that builds for the core as it builds
