@@ -1896,6 +1896,75 @@ fn razboj_program() -> Vec<u32> {
     a.words()
 }
 
+/// A program that has Razboj fill the screen the scanout shows, 640 by
+/// 480, with one rectangle, waits for the doorbell to read zero and the
+/// rasteriser to say it is idle, checks two opposite corners, and halts:
+/// the cycle it halts at is the draw's time, give or take the few
+/// hundred the program takes around it (issue 987).
+fn razboj_fill_program() -> Vec<u32> {
+    use razboj::dl::encode;
+    use razboj::op::{Insn, Kind};
+    use vreteno32::board::{RAZBOJ_DL, RAZBOJ_DOORBELL, RAZBOJ_FB};
+    use vreteno32::isa::{beq, bne, halt, jal, lui, lw, sw, UART_BASE};
+    let mut a = vreteno32::program::Asm::default();
+    a.emit(lui(1, UART_BASE >> 12)); // x1 = the serial port, for say
+    li(&mut a, 15, RAZBOJ_DOORBELL as u32);
+    let words = encode(&Insn {
+        kind: Kind::Rect,
+        colour: U::from(0x12_3456u32),
+        alpha: U::from(0xffu8),
+        x0: U::from(0u32),
+        y0: U::from(0u32),
+        x1: U::from(639u32),
+        y1: U::from(479u32),
+        ..Insn::default()
+    });
+    li(&mut a, 10, RAZBOJ_DL as u32);
+    for (i, w) in words.iter().enumerate() {
+        li(&mut a, 4, *w);
+        a.emit(sw(4, 10, 4 * i as i32));
+    }
+    li(&mut a, 4, 1);
+    a.emit(sw(4, 15, 0)); // ring for the one entry
+    let drawn = a.label();
+    a.place(drawn);
+    a.emit(lw(5, 15, 0));
+    a.to(drawn, |off| bne(5, 0, off));
+    let idle = a.label();
+    a.place(idle);
+    a.emit(lw(5, 15, 4));
+    a.to(idle, |off| beq(5, 0, off));
+    li(&mut a, 13, 0xff12_3456);
+    let bad = a.label();
+    let done = a.label();
+    for at in [0, (479 * 1024 + 639) * 4] {
+        li(&mut a, 14, RAZBOJ_FB as u32 + at);
+        a.emit(lw(5, 14, 0));
+        a.to(bad, |off| bne(5, 13, off));
+    }
+    say(&mut a, b"razboj full\n");
+    a.to(done, |off| jal(0, off));
+    a.place(bad);
+    say(&mut a, b"razboj bad\n");
+    a.place(done);
+    a.emit(halt());
+    a.words()
+}
+
+/// Razboj fills the screen on the board's model, through the arbiter
+/// and the DDR3's controller, with nothing else on the bus (issue 987).
+/// A row's pixels go out as bursts of sixteen, so the core halts at
+/// cycle 327426, about one a pixel of the 307200; written a pixel a
+/// burst, as before, it halted at 1229346, four a pixel.
+#[test]
+fn razboj_fills_the_screen_in_bursts() {
+    let ran = run(&razboj_fill_program(), &[], b"", 4_000_000);
+    assert_eq!(ran.said, "razboj full\n");
+    let at = ran.halted_at.expect("the core halted itself");
+    eprintln!("razboj fill: halted at cycle {at}");
+    assert!(at < 360_000, "the fill took until cycle {at}");
+}
+
 /// Razboj on the board (issue 985): a program writes a display list
 /// into the DDR3 and rings the doorbell, the rasteriser draws it into
 /// the frame the scanout shows, through the arbiter's seventh port,
