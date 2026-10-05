@@ -223,8 +223,12 @@ impl Unit for Dm {
             let err_unsupported = cmd & !busy & !supported;
             let err_running = cmd & !busy & supported & !halted;
             let go = cmd & !busy & supported & halted & transfer;
+            // The core reads a register from a number it took a cycle
+            // before (issue 1130), so the answer is taken a stage later:
+            // asking, waiting, answered.
             let asking = Bit::from(stage == 1);
-            let answered = Bit::from(stage == 2);
+            let waiting = Bit::from(stage == 2);
+            let answered = Bit::from(stage == 3);
             // The arms apply in order and the last drive of a field wins,
             // so what fires together is ordered by who should win: the
             // core's completion of a resume before the debugger's write,
@@ -253,6 +257,7 @@ impl Unit for Dm {
                 err_running ? cmderr: U::<3>::from(4u8),
                 go ? { stage: U::<2>::from(1u8), regno: rn, write: wr },
                 asking ? stage: U::<2>::from(2u8),
+                waiting ? stage: U::<2>::from(3u8),
                 answered ? stage: U::<2>::from(0u8),
                 answered & !self.write ? data0: rdata.get(),
                 // Inactive, the module holds nothing.
