@@ -340,7 +340,10 @@ run.
 
 \begin{figure}[htbp]
 \centering
-\input{paper_ports_timing.tex}
+% Eight long signal names make this one wider than a column at the
+% waveforms' 7 cm, so it is scaled to the column rather than spilling
+% into the next one.
+\resizebox{\columnwidth}{!}{\input{paper_ports_timing.tex}}
 \caption{The subtractor: a pair is taken when both operands are
 offered and the output has room, and the difference leaves a cycle
 later. \code{3 - 7} raises \code{borrow} and leaves 252, \code{fc} in hex.}
