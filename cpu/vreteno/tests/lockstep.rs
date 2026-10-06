@@ -353,6 +353,11 @@ fn lockstep_with(
     // controller's `msip` as the core saw it.
     let mut soft = false;
     let mut soft_before = false;
+    // The supervisor's line as the core read it: the core registers
+    // SEIP and reads `mip` in execute, a cycle before the instruction
+    // retires, so the line it saw is two cycles behind the model's step,
+    // where the model reads its own `mip` (issue 1295).
+    let (mut s_before, mut s_before2) = (false, false);
     let mut answer;
     // The terminal on the port's lines: it answers the demonstration's
     // line with three bytes, which the program echoes; a random program
@@ -494,6 +499,7 @@ fn lockstep_with(
             model.dev_err = refused;
             model.tirq = line_before;
             model.msip = soft_before;
+            model.sline(s_before2);
             model.step(program, taken_before);
             retired += 1;
             quiet = 0;
@@ -504,6 +510,8 @@ fn lockstep_with(
         taken_before = taken;
         line_before = line;
         soft_before = soft;
+        s_before2 = s_before;
+        s_before = s_raised;
         // Debug mode is entered before the instruction in execute,
         // after the one behind it retired, and left to `dpc`; the
         // model follows the core's register at each edge, and the
