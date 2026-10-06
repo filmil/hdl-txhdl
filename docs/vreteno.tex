@@ -1503,12 +1503,13 @@ again, which is rare. The first version compared the counter with
 both words' addresses and chose between them before the instruction
 register, and the flagship missed timing on that choice
 (issue~\#1279); shifting at the edge keeps one compare, of a register
-with the counter, in front of the read and the fetch. The loop runs at
-3.093 cycles an instruction once the cache is ready.
-\code{//cpu/vreteno:icache\_test} counts from the reset and measures
-3.348: the loop jumps to the data memory at once and waits for the
-tags to be cleared, 1024 cycles at sixteen kilobytes, which is 0.256
-of a cycle over its 3002 instructions. Asking ahead alone moved
+with the counter, in front of the read and the fetch.
+\code{//cpu/vreteno:icache\_test} measures the loop at 3.349 cycles an
+instruction. It counts from the reset, and the loop jumps to the data
+memory at once, so it waits first for the tags to be cleared: 1024
+cycles at sixteen kilobytes, 0.341 of a cycle over its 3002
+instructions. At four kilobytes the clearing took 256 cycles, and the
+test measured 3.093 with the window. Asking ahead alone moved
 nothing, since one fetch is out at a time and a lookup takes three
 cycles: two words from one lookup is what pays. A fetch can now be
 out under an instruction that is ready to run, so a load waits while
