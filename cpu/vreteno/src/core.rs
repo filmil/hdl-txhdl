@@ -955,6 +955,12 @@ pub struct Vreteno<const IW: usize> {
     /// has written the line.
     pub ic_ewd: Reg<U<32>>,
     pub ic_owd: Reg<U<32>>,
+    /// The line's tag for the lookup, read the same way (issue 1309);
+    /// and whether the tags were being cleared a cycle ago, since a
+    /// lookup that waited on the clearing reads its tag again the cycle
+    /// after the last line is cleared, and looks it up the cycle after.
+    pub ic_tdat: Reg<U<21>>,
+    pub ic_clr2: Reg<Bit>,
     /// The next beat of a fill, and whether one of them was refused.
     pub ic_beat: Reg<U<2>>,
     pub ic_bad: Reg<Bit>,
@@ -2020,7 +2026,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // The lookup reads the line's tag and the word at the
             // address registered when the fetch went to the cache.
             let ic_line = ic_pa.slice::<4, 10>();
-            let ic_t = self.ic_tag.read(ic_line);
+            let ic_t = self.ic_tdat.get();
             // The word, and the one after it, which a hit puts in the
             // buffer's second place when it is in the same line (issue
             // 1187): one from each bank, each at its own address
@@ -2035,12 +2041,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // when it is odd. At the fetch's address while the cache is
             // idle, so that the read is there when the fetch goes to it,
             // and at the registered one after a fill.
-            let rd_pa = mux(Bit::from(ic_st == 3), ic_pa, f_pa);
+            let rd_pa = mux(Bit::from(ic_st == 0), f_pa, ic_pa);
             let rd_line = rd_pa.slice::<4, 10>();
             let rd_ea = rd_line
                 .concat::<_, 11>(rd_pa.slice::<3, 1>() | rd_pa.slice::<2, 1>());
             let rd_oa = rd_line.concat::<_, 11>(rd_pa.slice::<3, 1>());
-            let rd_go = Bit::from(ic_st == 0) | Bit::from(ic_st == 3);
+            let ic_clr2 = self.ic_clr2.get();
+            let rd_go = Bit::from(ic_st == 0)
+                | Bit::from(ic_st == 3)
+                | (Bit::from(ic_st == 1) & (ic_clearing | ic_clr2));
             let looking = Bit::from(ic_st == 1);
             let filling = Bit::from(ic_st == 2);
             let ic_hit = ic_t.bit(20)
@@ -2050,7 +2059,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // asks the bus for the line once nothing else of the core's
             // is out or going, so that the four beats are the only
             // answers until the last.
-            let l_live = looking & !ic_clearing;
+            let l_live = looking & !ic_clearing & !ic_clr2;
             let l_drop = l_live & self.f_drop;
             let l_hit = l_live & !self.f_drop & ic_hit;
             let r_go = l_live
@@ -2297,12 +2306,16 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 // The cache's steps (issue 1021).
                 rd_go ? {
                     ic_ewd: self.ic_even.read(rd_ea),
-                    ic_owd: self.ic_odd.read(rd_oa)
+                    ic_owd: self.ic_odd.read(rd_oa),
+                    ic_tdat: self.ic_tag.read(rd_line)
                 },
-                c_go ? {
-                    ic_st: U::<2>::from(1u8),
-                    ic_pa: f_pa
-                },
+                c_go ? ic_st: U::<2>::from(1u8),
+                // The address is taken on every cycle the cache is idle,
+                // not only when a fetch goes to it: nothing reads it then,
+                // and a fetch goes to the cache only while it is idle, so
+                // the value is the same, and its enable is the state alone,
+                // with no stall in it (issue 1309).
+                Bit::from(ic_st == 0) ? ic_pa: f_pa,
                 r_go ? {
                     ic_st: U::<2>::from(2u8),
                     ic_beat: U::<2>::from(0u8),
@@ -2389,6 +2402,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 p_send ? p_wait: Bit::One,
                 p_resp ? p_wait: Bit::Zero,
                 flush: flush_go,
+                ic_clr2: ic_clearing,
                 rst ? {
                     ic_st: U::<2>::from(0u8),
                     ic_clearing: Bit::One,
