@@ -1483,7 +1483,10 @@ tagged by the physical address, and two virtual pages of one physical
 page share its lines. It was four kilobytes at first, and the GL
 frame's code, of 34~KB, did not stay in it: at sixteen its misses
 fell from 6.45 to 0.70 per cent of lookups and the frame took 25 per
-cent fewer cycles; thirty-two bought three more (issue~\#1290). A hit puts the
+cent fewer cycles; thirty-two bought three more (issue~\#1290). Its
+words are in two banks, the even and the odd: a lookup reads a word
+and the one after it, which are always in different banks, so each
+bank is read once a cycle and is a block RAM (issue~\#1303). A hit puts the
 word in the buffer; a miss asks the bus for the line as one burst of
 four, writes each beat into it, and looks it up again. The data memory
 answers such a burst a beat a cycle. That brought the loop from the
