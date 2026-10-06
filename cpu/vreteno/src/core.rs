@@ -944,18 +944,17 @@ pub struct Vreteno<const IW: usize> {
     /// low two as well.
     pub ic_tag: Mem<U<21>, 1024>,
     /// Where a cached fetch is: 0 not in the cache, 1 looking up
-    /// `ic_pa` in it, 2 filling its line from the bus.
+    /// `ic_pa` in it, 2 filling its line from the bus, 3 reading the
+    /// filled line's words before looking it up again.
     pub ic_st: Reg<U<2>>,
     /// The physical address of the word the cached fetch wants.
     pub ic_pa: Reg<U<32>>,
-    /// Each bank's address for the lookup: the line, and the bank's
-    /// word in it. The odd bank's is bit 3 of the address; the even
-    /// bank's is the word's own when it is even, the one after it when
-    /// it is odd. Registers of their own, apart from ic_pa, so that each
-    /// bank's read address is a register only it reads, which is what
-    /// makes it a block RAM (issue 1303).
-    pub ic_ea: Reg<U<11>>,
-    pub ic_oa: Reg<U<11>>,
+    /// Each bank's word for the lookup, read the cycle before it, so
+    /// that the read is a block RAM's own registered read (issue
+    /// 1303): when the fetch goes to the cache, and again once a fill
+    /// has written the line.
+    pub ic_ewd: Reg<U<32>>,
+    pub ic_owd: Reg<U<32>>,
     /// The next beat of a fill, and whether one of them was refused.
     pub ic_beat: Reg<U<2>>,
     pub ic_bad: Reg<Bit>,
@@ -2026,10 +2025,22 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // buffer's second place when it is in the same line (issue
             // 1187): one from each bank, each at its own address
             // register (issue 1303).
-            let ic_ew = self.ic_even.read(self.ic_ea.get());
-            let ic_ow = self.ic_odd.read(self.ic_oa.get());
+            let ic_ew = self.ic_ewd.get();
+            let ic_ow = self.ic_owd.get();
             let ic_w = mux(ic_pa.bit(2), ic_ow, ic_ew);
             let ic_w1 = mux(ic_pa.bit(2), ic_ew, ic_ow);
+            // Where the banks are read: the line, and each bank's word
+            // in it. The odd bank's is bit 3 of the address; the even
+            // bank's is the word's own when it is even, the one after it
+            // when it is odd. At the fetch's address while the cache is
+            // idle, so that the read is there when the fetch goes to it,
+            // and at the registered one after a fill.
+            let rd_pa = mux(Bit::from(ic_st == 3), ic_pa, f_pa);
+            let rd_line = rd_pa.slice::<4, 10>();
+            let rd_ea = rd_line
+                .concat::<_, 11>(rd_pa.slice::<3, 1>() | rd_pa.slice::<2, 1>());
+            let rd_oa = rd_line.concat::<_, 11>(rd_pa.slice::<3, 1>());
+            let rd_go = Bit::from(ic_st == 0) | Bit::from(ic_st == 3);
             let looking = Bit::from(ic_st == 1);
             let filling = Bit::from(ic_st == 2);
             let ic_hit = ic_t.bit(20)
@@ -2284,13 +2295,13 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 },
                 f_resp ? f_drop: Bit::Zero,
                 // The cache's steps (issue 1021).
+                rd_go ? {
+                    ic_ewd: self.ic_even.read(rd_ea),
+                    ic_owd: self.ic_odd.read(rd_oa)
+                },
                 c_go ? {
                     ic_st: U::<2>::from(1u8),
-                    ic_pa: f_pa,
-                    ic_ea: f_pa
-                        .slice::<4, 10>()
-                        .concat::<_, 11>(f_pa.slice::<3, 1>() | f_pa.slice::<2, 1>()),
-                    ic_oa: f_pa.slice::<4, 10>().concat::<_, 11>(f_pa.slice::<3, 1>())
+                    ic_pa: f_pa
                 },
                 r_go ? {
                     ic_st: U::<2>::from(2u8),
@@ -2301,7 +2312,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     ic_beat: self.ic_beat.get() + 1,
                     ic_bad: r_bad
                 },
-                r_ok ? ic_st: U::<2>::from(1u8),
+                // The line's words are read the cycle after its last
+                // beat is written, and looked up the cycle after that.
+                r_ok ? ic_st: U::<2>::from(3u8),
+                Bit::from(ic_st == 3) ? ic_st: U::<2>::from(1u8),
                 c_end ? {
                     ic_st: U::<2>::from(0u8),
                     f_wait: Bit::Zero,
