@@ -22,6 +22,8 @@ ENTRY(_start)
 MEMORY
 {
   ram (rwx) : ORIGIN = 0x40000000, LENGTH = 1M
+  /* The stack memory, the HAL's map::STACK (issue 1278). */
+  stack (rw) : ORIGIN = 0x00010000, LENGTH = 64K
 }
 
 SECTIONS
@@ -53,11 +55,10 @@ SECTIONS
   } > ram
 
   /* The stack grows down from the top of the stack memory, 64 KiB of
-     block RAM at 0x10000, the HAL's map::STACK, rather than from the
-     top of this region: the DDR3 is not cached for data, so a stack
+     block RAM, rather than from the top of the region above: the DDR3 is not cached for data, so a stack
      here paid the controller's latency on every spill and reload,
      39% of a frame of ico_gl's cycles (issue 1278). */
-  __stack_top = 0x00010000 + 64K;
+  __stack_top = ORIGIN(stack) + LENGTH(stack);
 
   /DISCARD/ : {
     *(.eh_frame)
