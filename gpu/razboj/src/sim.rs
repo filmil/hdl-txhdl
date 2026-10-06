@@ -625,6 +625,112 @@ mod tests {
         agree(&scene::small(), "the small scene");
     }
 
+    /// Depth in tiles (issue 992): scenes of overlapping flat and shaded
+    /// triangles at depths across the range, after a clear of depth, under
+    /// each of GL's eight comparisons, with depth written and not, and
+    /// entries that do not test depth among them, are drawn in tiles as
+    /// the model draws them, byte for byte. The same lists drawn flat are
+    /// the model's with the depth taken out, which is the documented
+    /// limit: a flat list has no depth.
+    #[test]
+    fn depth_in_tiles_is_the_models() {
+        use crate::op::{DepthMode, ALWAYS};
+        const A: usize = 20;
+        const LOGW: usize = 7;
+        const W: usize = 1 << LOGW;
+        const H: usize = 80;
+        const N: usize = 16384;
+        const DL: usize = 0xa000;
+        const CTRL: usize = 0xfffc;
+        let mut x = 0x2468_ace1u32;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        let mut drawn_differently = 0;
+        for func in 0..8u32 {
+            let mut ops = vec![
+                Op::Depth(Some(DepthMode {
+                    func: ALWAYS,
+                    write: true,
+                })),
+                Op::RectZ {
+                    colour: 0x10_1010,
+                    x: 0,
+                    y: 0,
+                    w: W as i32,
+                    h: H as i32,
+                    z: 0x8000,
+                },
+                Op::Depth(Some(DepthMode {
+                    func,
+                    write: func % 2 == 1,
+                })),
+            ];
+            for k in 0..8 {
+                let (r, q) = (next(), next());
+                let p = |v: u32| {
+                    (
+                        (v % (W as u32 * 16)) as i32 - 64,
+                        ((v >> 12) % (H as u32 * 16)) as i32 - 64,
+                    )
+                };
+                let z = [r & 0xffff, q & 0xffff, (r >> 16) ^ (q >> 16)];
+                let (a, b, c) = (p(r), p(q), p(r ^ q.rotate_left(7)));
+                ops.push(match k % 3 {
+                    0 => Op::TriZ {
+                        colour: q & 0xff_ffff,
+                        a,
+                        b,
+                        c,
+                        z,
+                    },
+                    1 => Op::GouraudZ {
+                        a,
+                        b,
+                        c,
+                        colours: [q, r, q ^ r].map(|c| c & 0xff_ffff),
+                        z,
+                    },
+                    // No depth: drawn over whatever is there.
+                    _ => Op::TriQ4 {
+                        colour: r & 0xff_ffff,
+                        a,
+                        b,
+                        c,
+                    },
+                });
+            }
+            let list = assemble(&ops, W, H);
+            assert!(list.iter().any(|i| i.depth.to_bool()), "func {func}");
+            let want = model::render(&list, W, H);
+            let tiled = run_works_at::<A, LOGW, H, N, DL, CTRL>(
+                &[Work::tiled(&list, W, H)],
+                false,
+                false,
+            );
+            let at = want.iter().zip(&tiled[0].fb).position(|(p, q)| p != q);
+            assert_eq!(at, None, "func {func}: the first pixel that differs");
+            let flat = run_works_at::<A, LOGW, H, N, DL, CTRL>(
+                &[Work::flat(&list)],
+                false,
+                false,
+            );
+            let mut plain = list.clone();
+            for i in &mut plain {
+                i.depth = txhdl::types::Bit::Zero;
+            }
+            assert_eq!(flat[0].fb, model::render(&plain, W, H), "func {func}");
+            drawn_differently += (want != flat[0].fb) as u32;
+        }
+        assert!(
+            drawn_differently >= 5,
+            "depth mattered: {drawn_differently}"
+        );
+    }
+
     /// Every scene drawn from a tile table is the picture its flat list
     /// draws, byte for byte (issue 1255). There are six scenes of
     /// rectangles, flat and shaded triangles, and clears, many over tile

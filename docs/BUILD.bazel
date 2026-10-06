@@ -1534,6 +1534,27 @@ waveform(
     width = 8.2,
 )
 
+# Razboj's depth test (issue 992): in one tile, a clear of depth and two
+# triangles that cross in depth under GL_LESS. The rasteriser's netlist
+# is replayed against the run under nvc and Verilator, the depth bank and
+# the test included.
+waveform(
+    name = "razboj_depth",
+    example = "//gpu/razboj:trace_depth",
+    lowered = ("raster_depth", "raster"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//issue/tx_valid=>issue",
+        "//rdata/tx_valid=>rdata",
+        "//raster/zon=>zon",
+        "//raster/y=>y",
+        "//idle=>idle",
+    ],
+    from_tick = 0,
+    until = 200,
+    width = 8.2,
+)
+
 # The demonstration's picture, rendered by Razboj and written by it.
 genrule(
     name = "razboj_scene",
