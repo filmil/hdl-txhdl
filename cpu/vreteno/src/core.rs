@@ -948,10 +948,14 @@ pub struct Vreteno<const IW: usize> {
     pub ic_st: Reg<U<2>>,
     /// The physical address of the word the cached fetch wants.
     pub ic_pa: Reg<U<32>>,
-    /// The even bank's word in the line for the lookup: the word's own
-    /// when it is even, the one after it when it is odd. A register of
-    /// its own, so that each bank's address is registers alone.
-    pub ic_eb: Reg<U<1>>,
+    /// Each bank's address for the lookup: the line, and the bank's
+    /// word in it. The odd bank's is bit 3 of the address; the even
+    /// bank's is the word's own when it is even, the one after it when
+    /// it is odd. Registers of their own, apart from ic_pa, so that each
+    /// bank's read address is a register only it reads, which is what
+    /// makes it a block RAM (issue 1303).
+    pub ic_ea: Reg<U<11>>,
+    pub ic_oa: Reg<U<11>>,
     /// The next beat of a fill, and whether one of them was refused.
     pub ic_beat: Reg<U<2>>,
     pub ic_bad: Reg<Bit>,
@@ -2020,14 +2024,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let ic_t = self.ic_tag.read(ic_line);
             // The word, and the one after it, which a hit puts in the
             // buffer's second place when it is in the same line (issue
-            // 1187): one from each bank (issue 1303). The odd bank's word
-            // in the line is bit 3 of the address either way; the
-            // even bank's is registered.
-            let ic_ew =
-                self.ic_even.read(ic_line.concat::<_, 11>(self.ic_eb.get()));
-            let ic_ow = self
-                .ic_odd
-                .read(ic_line.concat::<_, 11>(ic_pa.slice::<3, 1>()));
+            // 1187): one from each bank, each at its own address
+            // register (issue 1303).
+            let ic_ew = self.ic_even.read(self.ic_ea.get());
+            let ic_ow = self.ic_odd.read(self.ic_oa.get());
             let ic_w = mux(ic_pa.bit(2), ic_ow, ic_ew);
             let ic_w1 = mux(ic_pa.bit(2), ic_ew, ic_ow);
             let looking = Bit::from(ic_st == 1);
@@ -2287,7 +2287,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 c_go ? {
                     ic_st: U::<2>::from(1u8),
                     ic_pa: f_pa,
-                    ic_eb: f_pa.slice::<3, 1>() | f_pa.slice::<2, 1>()
+                    ic_ea: f_pa
+                        .slice::<4, 10>()
+                        .concat::<_, 11>(f_pa.slice::<3, 1>() | f_pa.slice::<2, 1>()),
+                    ic_oa: f_pa.slice::<4, 10>().concat::<_, 11>(f_pa.slice::<3, 1>())
                 },
                 r_go ? {
                     ic_st: U::<2>::from(2u8),
