@@ -102,6 +102,28 @@ trace is its six wires by side: \code{rx\_data}, \code{rx\_valid} and
 \code{rx\_ready} on the receiver's, \code{tx\_data}, \code{tx\_valid}
 and \code{tx\_ready} on the sender's.
 
+\textbf{An unregistered channel passes an offer in the cycle it is
+made.} \code{chan\_unregistered}, which \code{\#[unregistered]} on a
+\code{let} of \code{chan} in a unit of units makes, is the same
+buffer of two with one bypass (issue 1293). While the buffer is empty,
+the receiver's \code{peek}, \code{head} and \code{recv} see the
+sender's offer of this step, and a take of it takes it this step, so it
+never enters the buffer. An offer the receiver does not take is
+buffered at the edge, as a registered channel's is. \code{ready} stays
+the buffer as the edge left it, so only \code{valid} and \code{data}
+cross in the cycle, and nothing runs from the receiver back to the
+sender. The step polls each process once, so the receiver must run
+after its sender: a receiver that found the channel empty before its
+sender offered in the same step is refused when the sender offers, with
+a panic naming the line that made the channel, rather than see the
+offer a step later than the netlist would. In the netlist the channel
+is the second channel module, \code{<top>\_txhdl\_chan\_u}, whose
+\code{rx\_valid} and \code{rx\_data} are the sender's while the buffer
+is empty. A unit of units whose unregistered channels close a ring of
+wires through its children is refused when it is lowered, naming the
+ring; a child's paths are read from its own lowering, so a child that
+answers from a register breaks a ring.
+
 \textbf{A wire kept as a field is a \code{let} with a name in the
 trace.} \code{Wire<T>} is driven with \code{set} in the step, may be
 read back with \code{get} in the same step, and is set before it is

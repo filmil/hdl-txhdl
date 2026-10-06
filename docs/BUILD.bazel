@@ -423,6 +423,7 @@ latex_document(
         ":buildstamp",
         ":vendored_tex",
         "//experiments/rust_embedding:probe_interface_proc.rs",
+        "//lib/examples:ex_unreg.rs",
     ],
     deps = ["housestyle.tex"] + glob(["embedding_sections/*.tex"]),
 )
@@ -1172,6 +1173,8 @@ latex_document(
         ":stream_alu_timing",
         ":compose_run",
         ":compose_timing",
+        ":unreg_run",
+        ":unreg_timing",
         ":ports_run",
         ":ports_timing",
         ":bundle_run",
@@ -1891,13 +1894,13 @@ waveform(
     ],
     signals = [
         "//clocks/clk=>clk",
-        "//req/rx_valid=>req",
+        "//req/tx_valid=>req",
         "//res/rx_valid=>res",
-        "//requ/rx_valid=>req_u",
+        "//requ/tx_valid=>req_u",
         "//resu/rx_valid=>res_u",
         "//chainu/ans/full=>full_u",
     ],
-    until = 16,
+    until = 28,
 )
 
 waveform(

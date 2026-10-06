@@ -1,0 +1,43 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Unregistered Channels}
+\label{sec:x-unreg}
+
+A channel between two units is registered on both sides, so each one a
+transaction crosses costs a cycle. \code{\#[unregistered]} on the
+\code{let} that makes a channel in a unit of units takes that cycle
+away: while the channel is empty, the receiver sees the sender's
+\code{valid} and \code{data} in the cycle they are offered, and takes
+the transaction then; one it does not take waits in the channel as
+before. \code{ready} is still a register, so nothing runs from the
+receiver back to the sender (issue 1293).
+
+\code{ex\_unreg} builds one chain twice. A forwarding stage hands a
+request to a stage that answers from a register, and a second
+forwarding stage hands the answer on. In \code{Chain} the two channels
+inside are registered; in \code{ChainU} they are unregistered, and the
+chain answers its first request two cycles sooner. Both take a request
+a cycle. The sink stops taking for three cycles in the middle, so the
+answers back up and an unregistered channel keeps an offer it was not
+taken, and both chains still deliver every answer in order.
+
+The answering stage holds its answer in a register, and that is what
+lets both of its channels be unregistered: without it, the two would
+join the forwarding stages into one path of wires end to end. Each
+child is joined before the one it sends to, since the receiver of an
+unregistered channel has to run after its sender in the step; joined
+the other way round, the run stops and names the channel. Both
+netlists are checked against this run under both simulators, the
+stall included.
+
+\begin{figure}[htbp]
+\centering
+\input{unreg_timing.tex}
+\caption{The two chains side by side: a request a cycle into each, the
+answers out of the unregistered one two cycles sooner, and the sink's
+three-cycle stall.}
+\label{fig:x-unreg}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_unreg.rs}. Run with \code{bazel run //lib/examples:ex\_unreg}.},label={lst:x-unreg}]{lib/examples/ex_unreg.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_unreg} printed when the build ran it: the requests sent and each chain's answers, per cycle; then the unregistered chain's Verilog, its two channels instances of the unregistered channel module.},label={lst:x-unreg-out}]{out_unreg.txt}
