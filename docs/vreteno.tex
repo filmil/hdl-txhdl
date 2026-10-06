@@ -1963,6 +1963,15 @@ there, 39\% fewer, which is within 1\% of the same list with every
 DDR3 read answered in two cycles. Nothing is fetched from it, so the instruction
 cache leaves it alone.
 
+The data memory's and the stack memory's trackers hand a request to
+the memory, and a read beat to the router, over unregistered channels
+(issue~\#1291), so each crosses in the cycle it is offered.
+A load from either takes two cycles fewer, 9.14 a load where it was
+11.13, and the GL frame above takes 2.23 million cycles where it took
+2.37 million, 6\% fewer.
+Each tracker runs before its memory and the router in the board's
+join, as the sender of an unregistered channel has to.
+
 \begin{table}[htbp]
 \caption{The board's address map, lowest first, as the router decodes
 it.}
