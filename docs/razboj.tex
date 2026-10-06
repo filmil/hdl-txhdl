@@ -311,6 +311,27 @@ A second bank, so that a tile is drawn while the last goes out, and
 the depth test, which a tile buffer answers without a read of DDR3,
 are what the tiles are for (\code{docs/razboj-tiles.md}, section 7).
 
+The depth test is the first of them (issue~\#992). An entry can test
+depth: word 15 says whether it does, which of GL's eight comparisons it
+makes and whether it writes its depth, and such an entry takes a second
+slot right after it for its depth plane, a value and two steps with
+twelve bits of fraction, so that sixteen bits of depth fit. Every other
+entry takes one slot, so no list that does not test depth changes. In a
+tile the rasteriser reads the plane's slot and steps it with the walk;
+a pixel of such an entry reads the depth bank at its place, is compared
+with what was there a cycle later, and a cycle after that, at the same
+address, is kept if it passed, and writes its own depth if the entry
+says so. Each depth
+written sets a mark, which the write-out clears, and a depth not marked
+reads as the farthest, so each tile starts far while the depth bank is
+read and written at one address only, which keeps it a block RAM. Depth lives only in the tile buffer, so a flat list has none: its
+depth entries draw as if depth were off, and a program that wants depth
+rings a tile table. Under every comparison, scenes of overlapping
+triangles are drawn in tiles as the model draws them, byte for byte,
+\code{//docs:razboj\_depth} replays the netlist's depth test under both
+simulators, and on the board's model two triangles that cross in depth
+are each seen where they are nearer.
+
 \section{The Rasteriser}
 \label{sec:g-raster}
 
@@ -533,8 +554,9 @@ cent.
 \label{sec:g-not}
 
 It is minimal, and the ways in which it is minimal are worth naming.
-There is one pixel per cycle and no more; no depth buffer, so
-primitives are drawn in the order the display list gives them; no
+There is one pixel per cycle and no more, two for a pixel that tests
+depth; depth only in a tiled list, so a flat one draws its primitives
+in the order the display list gives them; no
 interpolation but of colour, and that in the screen's plane, without
 the correction for perspective a texture would need; an alpha
 written and never read, so nothing is blended; no texture; no
