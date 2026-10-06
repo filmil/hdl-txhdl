@@ -143,7 +143,11 @@ opt_test(
 # Manual, so that it is not run a second time as it is.
 rust_test(
     name = "board_test_rust",
-    srcs = ["tests/board.rs"],
+    srcs = [
+        "tests/board.rs",
+        "//cpu/vreteno/rust:ico_list.rs",
+    ],
+    crate_root = "tests/board.rs",
     edition = "2021",
     tags = ["manual"],
     deps = [

@@ -581,6 +581,36 @@ A picture that tears means the show was not at the blanking; one that flickers b
 The cycles a frame takes, against `ico_gl_hdmi`'s, are what the issue asks to be measured; a frame waits for one blanking, so the frame rate is at most the screen's.
 Put both logs, the cycle counts, and a photograph or a short video of the screen on #996.
 
+### Razboj's tile buffer on the board, #1255
+
+A flagship from the change that adds the tile buffer (#1255's pull request, or a `main` that holds it), programmed over JTAG, with a monitor on the HDMI connector.
+Nothing is written to flash.
+
+The change leaves a flat list drawing as before, so the check is that the three Razboj programs that draw flat lists still draw what they drew, on a bitstream whose Razboj also has the tile buffer:
+
+```sh
+bazel build //cpu/vreteno/rust:razprobe_ram_bin //cpu/vreteno/rust:shadeprobe_ram_bin \
+    //cpu/vreteno/rust:ico_hdmi_bin
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/razprobe_ram_bin.bin --seconds=10 \
+    2>&1 | tee board-1255-razprobe.log
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/shadeprobe_ram_bin.bin --seconds=20 \
+    2>&1 | tee board-1255-shade.log
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/ico_hdmi_bin.bin --seconds=30 \
+    2>&1 | tee board-1255-ico.log
+```
+
+Pass:
+* `razboj ok`, as under "Razboj on the board, #985 and #1169" above.
+* `shade ok 104000`, as under "Gouraud shading on the board, #989" above.
+* `ico 20 faces` and the icosahedron turning, with no `trap`.
+
+A program that draws a tile table on the board is not in this check; `//cpu/vreteno:board_test`'s `razboj_draws_a_list_in_tiles` draws one through the board's model.
+Put the three logs on #1255.
+
 ### Ethernet throughput, #1038
 
 The Ethernet half of #151: the port's throughput through the slots and the DMA engines, against the core's own copy of each frame.

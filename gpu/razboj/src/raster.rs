@@ -55,7 +55,8 @@
 //! The framebuffer's first word is at `BASE` and a pixel is one word,
 //! so a pixel's address is `BASE + ((y << LOGW) + x) * 4`.
 use txhdl::comp::{
-    join2, mux, until, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit, Wire,
+    join2, mux, until, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit,
+    Wire,
 };
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
@@ -74,6 +75,19 @@ const RUN: u32 = 15;
 
 /// The words of a 4 KiB page, less one, which a burst may not cross.
 const PAGE: u32 = 1023;
+
+/// Where a tiled list's entries start, in bytes past its tile table:
+/// `razboj_tile::ENTRIES_AT`, room for every tile's record (issue 1255).
+const ENTRIES_AT: u32 = 0x800;
+
+/// A tile's side, and the beats of a row of it, less one, as AXI's
+/// `len` says it: `razboj_tile::TILE`.
+const TILE: u32 = 64;
+const TILE_LEN: u32 = 63;
+
+// Those three are razboj_tile's, which the build holds them to.
+const _: () = assert!(ENTRIES_AT as usize == razboj_tile::ENTRIES_AT);
+const _: () = assert!(TILE == razboj_tile::TILE && TILE_LEN == TILE - 1);
 
 /// The shift from an instruction's index to its byte address, which
 /// is `razboj::dl::BYTE_SHIFT` and is stated here because the lowering
@@ -193,6 +207,29 @@ pub struct Raster<
     /// The beats still owed to the write burst under way; nought when
     /// none is (issue 987).
     pub beats: Reg<U<8>>,
+    /// Drawing in tiles (issue 1255): whether the list is a tile table,
+    /// which bit 31 of the count says; the tiles still to draw, one for
+    /// a flat list; the next tile's record; the entries the tile has;
+    /// and the tile's top left pixel.
+    pub tiled: Reg<Bit>,
+    pub tiles: Reg<U<16>>,
+    pub tile: Reg<U<16>>,
+    pub n: Reg<U<16>>,
+    pub ox: Reg<U<16>>,
+    pub oy: Reg<U<16>>,
+    /// The tile buffer: a tile's colour, and a mark for each pixel
+    /// written, at `{y, x}`, the low six bits of each coordinate.
+    pub bank: Mem<U<32>, 4096>,
+    pub mark: Mem<U<1>, 4096>,
+    /// The write-out: the tile's rows on the screen, the row and the
+    /// column going out, and the word and the mark read a cycle ahead
+    /// for the next beat, so that the bank's read lands in a register,
+    /// which is what makes it a block RAM.
+    pub th: Reg<U<8>>,
+    pub wr: Reg<U<6>>,
+    pub wc: Reg<U<7>>,
+    pub rd: Reg<U<32>>,
+    pub rm: Reg<U<1>>,
 }
 // end{state}
 
@@ -346,16 +383,90 @@ impl<
                     .await;
                     // A count that is not zero is a new list, so the
                     // last one is no longer what `idle` reports.
-                    let count = rdata.head().data.slice::<0, 16>();
+                    // Bit 31 says the list is a tile table, and the count
+                    // is then its tiles (issue 1255). A flat list is
+                    // drawn as one tile of all its entries, straight into
+                    // memory.
+                    let cw = rdata.head().data;
+                    let count = cw.slice::<0, 16>();
+                    let tiled = cw.bit(31);
                     with!(self <= {
                         left: count,
+                        tiled: tiled,
+                        tiles: mux(tiled, count, U::<16>::from(1u8)),
+                        tile: U::<16>::from(0u8),
+                        n: count,
                         insn: U::<16>::from(0u8),
                         finished:
                             mux(count == 0, self.finished.get(), Bit::Zero),
                     });
                     DefaultClock::rising().await;
                     if self.left.get() != 0 {
-                        for _ in 0..self.left.get().raw() as usize {
+                      for _ in 0..self.tiles.get().raw() as usize {
+                        DefaultClock::rising().await;
+                        // A tile's record, as one read burst of its two
+                        // words: its first entry and how many it has, then
+                        // its top left pixel.
+                        if self.tiled.get().to_bool() {
+                            until(DefaultClock::rising, || {
+                                issue.ready().to_bool()
+                            })
+                            .await;
+                            issue.send(Issue {
+                                read: Bit::One,
+                                addr: U::<A>::from(DL as u32)
+                                    + (self.tile.get().resize::<A>() << 3),
+                                len: U::<8>::from(1u8),
+                                size: U::<3>::from(2u8),
+                                burst: BurstKind::Incr,
+                                lock: Bit::Zero,
+                                cache: U::<4>::from(0u8),
+                                prot: U::<3>::from(0u8),
+                                qos: U::<4>::from(0u8),
+                                region: U::<4>::from(0u8),
+                            });
+                            until(DefaultClock::rising, || {
+                                landing(
+                                    rdata.peek().is_some(),
+                                    release.ready(),
+                                    done.peek().is_some(),
+                                )
+                                .to_bool()
+                            })
+                            .await;
+                            let w0 = rdata.head().data;
+                            with!(self <= {
+                                insn: w0.slice::<0, 16>(),
+                                n: w0.slice::<16, 16>(),
+                            });
+                            until(DefaultClock::rising, || {
+                                landing(
+                                    rdata.peek().is_some(),
+                                    release.ready(),
+                                    done.peek().is_some(),
+                                )
+                                .to_bool()
+                            })
+                            .await;
+                            let w1 = rdata.head().data;
+                            let oy = w1.slice::<16, 10>().resize::<16>();
+                            // The tile's rows on the screen: 64, or what
+                            // is left of the screen below its top.
+                            let below = U::<16>::from(H as u32) - oy;
+                            let rows = mux(
+                                below < U::<16>::from(TILE),
+                                below,
+                                U::<16>::from(TILE),
+                            );
+                            with!(self <= {
+                                ox: w1.slice::<0, 10>().resize::<16>(),
+                                oy: oy,
+                                th: rows.resize::<8>(),
+                                tile: self.tile.get() + 1,
+                            });
+                            DefaultClock::rising().await;
+                        }
+                        for _ in 0..self.n.get().raw() as usize {
                             // An edge for the instruction's index to
                             // read back, and for the sequence to
                             // begin a turn with.
@@ -374,6 +485,11 @@ impl<
                             issue.send(Issue {
                                 read: Bit::One,
                                 addr: U::<A>::from(DL as u32)
+                                    + mux(
+                                        self.tiled.get(),
+                                        U::<A>::from(ENTRIES_AT),
+                                        U::<A>::from(0u32),
+                                    )
                                     + (self.insn.get().resize::<A>() << SHIFT),
                                 len: U::<8>::from(15u8),
                                 size: U::<3>::from(2u8),
@@ -610,9 +726,12 @@ impl<
                                     // its next beat; a pixel that would
                                     // start one, room for the burst and
                                     // its first beat.
+                                    // In a tile the pixel goes to the
+                                    // bank, which takes one a cycle.
                                     until(DefaultClock::rising, || {
-                                        ((Bit::from(self.beats.get() != 0)
-                                            & wbeat.ready())
+                                        (self.tiled.get()
+                                            | (Bit::from(self.beats.get() != 0)
+                                                & wbeat.ready())
                                             | (Bit::from(
                                                 self.beats.get() == 0,
                                             ) & (!self.hit.get()
@@ -651,7 +770,21 @@ impl<
                                     // one run, so a burst wastes beats
                                     // only past the run's end.
                                     let on = self.beats.get() != 0;
-                                    let start = !on & self.hit.get().to_bool();
+                                    let start = !on
+                                        & (self.hit.get() & !self.tiled.get())
+                                            .to_bool();
+                                    // In a tile, the pixel and its mark
+                                    // into the bank at `{y, x}` within it.
+                                    let at = py
+                                        .slice::<0, 6>()
+                                        .concat::<6, 12>(px.slice::<0, 6>());
+                                    let keep = self.tiled.get() & self.hit.get();
+                                    with!(self <= {
+                                        keep ? {
+                                            bank.at(at): self.rgb.get(),
+                                            mark.at(at): U::<1>::from(1u8),
+                                        },
+                                    });
                                     let rest =
                                         (self.xb.get() - px).resize::<32>();
                                     let page = U::<32>::from(PAGE)
@@ -735,6 +868,87 @@ impl<
                             }
                             self.insn.set(self.insn.get() + 1);
                         }
+                        // A tile drawn goes out a row at a time, each one
+                        // burst of 64 beats, its strobes on where a pixel
+                        // was written and off where none was, so a pixel
+                        // the tile's entries did not cover keeps what
+                        // memory had, as it does from a flat list. Each
+                        // mark is cleared as it is read, which leaves the
+                        // bank empty for the next tile.
+                        if self.tiled.get().to_bool() {
+                            self.wr.set(U::<6>::from(0u8));
+                            for _ in 0..self.th.get().raw() as usize {
+                                DefaultClock::rising().await;
+                                self.wc.set(U::<7>::from(0u8));
+                                // Sixty-five turns a row. Each reads the
+                                // word and the mark at one column, and
+                                // clears that mark, at the same address,
+                                // which a block RAM's port does in one
+                                // cycle, reading first. The first turn
+                                // sends the burst and the rest each send
+                                // the word read the turn before, so the
+                                // read lands in a register, and each
+                                // memory has one port here and the walk's
+                                // write as its other.
+                                for _ in 0..=TILE as usize {
+                                    until(DefaultClock::rising, || {
+                                        ((Bit::from(self.wc.get() == 0)
+                                            & issue.ready())
+                                            | (Bit::from(self.wc.get() != 0)
+                                                & wbeat.ready()))
+                                        .to_bool()
+                                    })
+                                    .await;
+                                    let c = self.wc.get();
+                                    let at = self
+                                        .wr
+                                        .get()
+                                        .concat::<6, 12>(c.slice::<0, 6>());
+                                    let row = (self.oy.get()
+                                        + self.wr.get().resize::<16>())
+                                    .resize::<A>();
+                                    if c == 0 {
+                                        issue.send(Issue {
+                                            read: Bit::Zero,
+                                            addr: (((row << LOGW)
+                                                + self.ox.get().resize::<A>())
+                                                << WORD)
+                                                + U::<A>::from(BASE as u32),
+                                            len: U::<8>::from(TILE_LEN),
+                                            size: U::<3>::from(2u8),
+                                            burst: BurstKind::Incr,
+                                            lock: Bit::Zero,
+                                            cache: U::<4>::from(0u8),
+                                            prot: U::<3>::from(0u8),
+                                            qos: U::<4>::from(0u8),
+                                            region: U::<4>::from(0u8),
+                                        });
+                                        self.issued.set(self.issued.get() + 1);
+                                    }
+                                    if c != 0 {
+                                        wbeat.send(W {
+                                            data: self.rd.get(),
+                                            strb: mux(
+                                                self.rm.get() == 1,
+                                                U::<4>::from(15u8),
+                                                U::<4>::from(0u8),
+                                            ),
+                                            last: Bit::from(
+                                                c == U::<7>::from(TILE),
+                                            ),
+                                        });
+                                    }
+                                    with!(self <= {
+                                        rd: self.bank.read(at),
+                                        rm: self.mark.read(at),
+                                        wc: c + 1,
+                                        mark.at(at): U::<1>::from(0u8),
+                                    });
+                                }
+                                self.wr.set(self.wr.get() + 1);
+                            }
+                        }
+                      }
                         // The list is drawn. Once every write it made
                         // has been answered, the count goes back to
                         // zero: that is how a program learns the list

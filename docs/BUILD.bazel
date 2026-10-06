@@ -1512,6 +1512,28 @@ waveform(
     width = 8.2,
 )
 
+# Razboj drawing in tiles (issue 1255): a scene binned into a tile table
+# on a screen two tiles across, drawn into the tile buffer and written
+# out a row a burst. The rasteriser's netlist is replayed against the
+# run under nvc and Verilator, the tile buffer's memories included.
+waveform(
+    name = "razboj_tiles",
+    example = "//gpu/razboj:trace_tiles",
+    lowered = ("raster_tiles", "raster"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//issue/tx_valid=>issue",
+        "//rdata/tx_valid=>rdata",
+        "//wbeat/tx_valid=>wbeat",
+        "//raster/tile=>tile",
+        "//raster/wr=>wr",
+        "//idle=>idle",
+    ],
+    from_tick = 0,
+    until = 200,
+    width = 8.2,
+)
+
 # The demonstration's picture, rendered by Razboj and written by it.
 genrule(
     name = "razboj_scene",

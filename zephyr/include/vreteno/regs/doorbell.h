@@ -9,6 +9,10 @@
 #define DOORBELL_COUNT_COUNT_MASK 0xffff
 #define DOORBELL_COUNT_COUNT_WIDTH 16
 #define DOORBELL_COUNT_COUNT_RESET 0x0
+#define DOORBELL_COUNT_TILED_SHIFT 31 /* read, write: the list is a tile table, the count its tiles */
+#define DOORBELL_COUNT_TILED_MASK 0x80000000
+#define DOORBELL_COUNT_TILED_WIDTH 1
+#define DOORBELL_COUNT_TILED_RESET 0x0
 #define DOORBELL_STATUS 0x04 /* read only: what the rasteriser is doing */
 #define DOORBELL_STATUS_IDLE_SHIFT 0 /* read only: no list is being drawn */
 #define DOORBELL_STATUS_IDLE_MASK 0x1

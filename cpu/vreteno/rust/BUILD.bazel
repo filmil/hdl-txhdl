@@ -10,6 +10,10 @@
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load(":defs.bzl", "vreteno_elf", "vreteno_fastboot", "vreteno_flat", "vreteno_image")
 
+# The icosahedron's lists, which board_test also times Razboj drawing,
+# flat and in tiles (issue 1255).
+exports_files(["ico_list.rs"])
+
 package(default_visibility = ["//visibility:public"])
 
 # The machine Vreteno is, for Bazel's toolchain resolution.

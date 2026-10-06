@@ -9,7 +9,7 @@
 //! check the same code a program runs.
 use crate::dl::{decode, encode, WORDS};
 use crate::op::Insn;
-use razboj_tile::{bin, Binned, MAX_TILES, TILE_WORDS};
+use razboj_tile::{bin, Binned, ENTRIES_AT, MAX_TILES, TILED, TILE_WORDS};
 
 /// A list binned into tiles: the tile table's records, and the entries,
 /// each tile's in the list's order, one tile after another.
@@ -33,6 +33,23 @@ pub fn tiled(list: &[Insn], sw: usize, sh: usize) -> Tiled {
         tiles: tiles[..t].to_vec(),
         entries: entries[..n].iter().map(|w| decode(w)).collect(),
     }
+}
+
+/// `list` binned into tiles as a program lays it out for the rasteriser
+/// (issue 1255): the words that go at the list's address, the tile
+/// table and then, from `ENTRIES_AT` past it, the entries; and the count
+/// word, the number of tiles with the bit that says they are tiles.
+pub fn image(list: &[Insn], sw: usize, sh: usize) -> (Vec<u32>, u32) {
+    let t = tiled(list, sw, sh);
+    let mut words = vec![0u32; ENTRIES_AT / 4 + t.entries.len() * WORDS];
+    for (i, rec) in t.tiles.iter().enumerate() {
+        words[i * TILE_WORDS..(i + 1) * TILE_WORDS].copy_from_slice(rec);
+    }
+    for (i, e) in t.entries.iter().enumerate() {
+        let at = ENTRIES_AT / 4 + i * WORDS;
+        words[at..at + WORDS].copy_from_slice(&encode(e));
+    }
+    (words, t.tiles.len() as u32 | TILED)
 }
 
 #[cfg(test)]
