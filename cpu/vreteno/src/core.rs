@@ -906,15 +906,17 @@ pub struct Vreteno<const IW: usize> {
     /// thirty-two bit instruction that straddles two words.
     pub f_second: Reg<Bit>,
     // begin{icache}
-    /// The instruction cache (issue 1021): four kilobytes, one way,
-    /// lines of four words, indexed by the page offset so that the
-    /// fetch's translation works beside it, and tagged by the physical
-    /// page. It holds words of the data memory and of DDR3, the two
-    /// memories behind the bus.
-    pub ic_data: Mem<U<32>, 1024>,
+    /// The instruction cache (issue 1021): sixteen kilobytes (issue
+    /// 1290), one way, 1024 lines of four words. A fetch goes to it
+    /// once translated, so it is indexed and tagged by the physical
+    /// address: two virtual pages of one physical page share its lines.
+    /// It holds words of the data memory and of DDR3, the two memories
+    /// behind the bus.
+    pub ic_data: Mem<U<32>, 4096>,
     /// Each line's tag: bit 20 says the line is valid, and the low
-    /// twenty bits are its physical page.
-    pub ic_tag: Mem<U<21>, 256>,
+    /// twenty bits are its physical page, of which the index holds the
+    /// low two as well.
+    pub ic_tag: Mem<U<21>, 1024>,
     /// Where a cached fetch is: 0 not in the cache, 1 looking up
     /// `ic_pa` in it, 2 filling its line from the bus.
     pub ic_st: Reg<U<2>>,
@@ -926,7 +928,7 @@ pub struct Vreteno<const IW: usize> {
     /// The tags being cleared after a reset or a `fence.i`, a line a
     /// cycle, and the next line to clear.
     pub ic_clearing: Reg<Bit>,
-    pub ic_clr: Reg<U<8>>,
+    pub ic_clr: Reg<U<10>>,
     // end{icache}
     // begin{vm}
     /// Virtual memory (issue 1014). The fetch's translation of one
@@ -1954,12 +1956,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let ic_clearing = self.ic_clearing.get();
             // The lookup reads the line's tag and the word at the
             // address registered when the fetch went to the cache.
-            let ic_line = ic_pa.slice::<4, 8>();
+            let ic_line = ic_pa.slice::<4, 10>();
             let ic_t = self.ic_tag.read(ic_line);
-            let ic_w = self.ic_data.read(ic_pa.slice::<2, 10>());
+            let ic_w = self.ic_data.read(ic_pa.slice::<2, 12>());
             // The word after it, which a hit puts in the buffer's second
             // place when it is in the same line (issue 1187).
-            let ic_w1 = self.ic_data.read(ic_pa.slice::<2, 10>() + 1);
+            let ic_w1 = self.ic_data.read(ic_pa.slice::<2, 12>() + 1);
             let looking = Bit::from(ic_st == 1);
             let filling = Bit::from(ic_st == 2);
             let ic_hit = ic_t.bit(20)
@@ -2090,7 +2092,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // A fill's beat into the line, and the tags' one write: a
             // clear, or a filled line made valid. A fill ending while
             // the tags are cleared stays invalid.
-            let fill_at = ic_line.concat::<_, 10>(self.ic_beat.get());
+            let fill_at = ic_line.concat::<_, 12>(self.ic_beat.get());
             when!(r_beat => self { ic_data.at(fill_at): resp_data });
             let tag_go = ic_clearing | r_ok;
             let tag_at = mux(ic_clearing, self.ic_clr.get(), ic_line);
@@ -2229,11 +2231,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     f_drop: Bit::Zero
                 },
                 ic_clearing ? ic_clr: self.ic_clr.get() + 1,
-                ic_clearing & Bit::from(self.ic_clr.get() == 255) ?
+                ic_clearing & Bit::from(self.ic_clr.get() == 1023) ?
                     ic_clearing: Bit::Zero,
                 fencei_go ? {
                     ic_clearing: Bit::One,
-                    ic_clr: U::<8>::from(0u8)
+                    ic_clr: U::<10>::from(0u8)
                 },
                 i_need & !self.i_req ? {
                     i_req: Bit::One,
@@ -2299,7 +2301,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 rst ? {
                     ic_st: U::<2>::from(0u8),
                     ic_clearing: Bit::One,
-                    ic_clr: U::<8>::from(0u8),
+                    ic_clr: U::<10>::from(0u8),
                     f_wait: Bit::Zero,
                     f_have: U::<2>::from(0u8),
                     f_sh: Bit::Zero,
