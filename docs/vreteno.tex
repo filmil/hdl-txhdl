@@ -1475,11 +1475,15 @@ It was correct and it was slow: issue~\#1009's loop of three
 instructions ran at 14.655 cycles an instruction from the data memory
 and at 1.333 from the boot memory. So a fetch from the data memory or
 the DDR3, the two memories behind the bus, goes to an instruction
-cache instead (issue~\#1021): four kilobytes, 256 lines of four words,
-one way, indexed by the page offset, so that the fetch's translation
-works beside it, and tagged by the physical page. The fetch registers
-the word's physical address where it would have sent it to the bus,
-and the cycle after reads the line's tag and the word. A hit puts the
+cache instead (issue~\#1021): sixteen kilobytes, 1024 lines of four
+words, one way. The fetch registers the word's physical address where
+it would have sent it to the bus, once translated, and the cycle after
+reads the line's tag and the word at it; so the cache is indexed and
+tagged by the physical address, and two virtual pages of one physical
+page share its lines. It was four kilobytes at first, and the GL
+frame's code, of 34~KB, did not stay in it: at sixteen its misses
+fell from 6.45 to 0.70 per cent of lookups and the frame took 25 per
+cent fewer cycles; thirty-two bought three more (issue~\#1290). A hit puts the
 word in the buffer; a miss asks the bus for the line as one burst of
 four, writes each beat into it, and looks it up again. The data memory
 answers such a burst a beat a cycle. That brought the loop from the
@@ -1500,12 +1504,15 @@ both words' addresses and chose between them before the instruction
 register, and the flagship missed timing on that choice
 (issue~\#1279); shifting at the edge keeps one compare, of a register
 with the counter, in front of the read and the fetch. The loop runs at
-3.093 cycles an instruction, which \code{//cpu/vreteno:icache\_test}
-measures. Asking ahead alone moved nothing, since one fetch is out at
-a time and a lookup takes three cycles: two words from one lookup is
-what pays. A fetch can now be out under an instruction that is ready
-to run, so a load waits while one is: the core still holds one read
-at a time.
+3.093 cycles an instruction once the cache is ready.
+\code{//cpu/vreteno:icache\_test} counts from the reset and measures
+3.348: the loop jumps to the data memory at once and waits for the
+tags to be cleared, 1024 cycles at sixteen kilobytes, which is 0.256
+of a cycle over its 3002 instructions. Asking ahead alone moved
+nothing, since one fetch is out at a time and a lookup takes three
+cycles: two words from one lookup is what pays. A fetch can now be
+out under an instruction that is ready to run, so a load waits while
+one is: the core still holds one read at a time.
 
 A store does not reach the cache, as the specification allows, so code
 written by stores runs after a \code{fence.i}, which clears the tags,
