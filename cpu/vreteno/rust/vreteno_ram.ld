@@ -52,8 +52,12 @@ SECTIONS
     __bss_end = .;
   } > ram
 
-  /* The stack grows down from the top of the region. */
-  __stack_top = ORIGIN(ram) + LENGTH(ram);
+  /* The stack grows down from the top of the stack memory, 64 KiB of
+     block RAM at 0x10000, the HAL's map::STACK, rather than from the
+     top of this region: the DDR3 is not cached for data, so a stack
+     here paid the controller's latency on every spill and reload,
+     39% of a frame of ico_gl's cycles (issue 1278). */
+  __stack_top = 0x00010000 + 64K;
 
   /DISCARD/ : {
     *(.eh_frame)
