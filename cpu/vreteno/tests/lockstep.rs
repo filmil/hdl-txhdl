@@ -2096,3 +2096,73 @@ fn a_misaligned_access_traps_where_it_is_delegated() {
     assert_eq!((m.x[22], m.x[23]), (CAUSE_LOAD_MISALIGNED, 0x1002));
     assert_eq!((m.x[20], m.x[25]), (CAUSE_STORE_MISALIGNED, 0x1001));
 }
+
+/// A branch guessed wrong, then a trap at once on the right path (issue
+/// 1300): a forward branch taken, which was guessed not taken, lands on
+/// an `ecall`; a backward branch not taken at the end of its loop,
+/// which was guessed taken, falls on another. The handler counts both
+/// and steps past them, and the word skipped is never run.
+#[test]
+fn a_branch_guessed_wrong_then_a_trap() {
+    use vreteno32::isa::*;
+    const HANDLER: u32 = 0x80;
+    let mut p = vec![
+        addi(5, 0, HANDLER as i32),
+        csrrw(0, CSR_MTVEC, 5),
+        beq(0, 0, 8),    // forward, taken: guessed wrong
+        addi(1, 1, 100), // skipped
+        ecall(),         // the trap right after the correction
+        addi(6, 0, 3),
+        addi(6, 6, -1), // the loop
+        bne(6, 0, -4),  // backward: taken twice, then not, wrongly
+        ecall(),        // the trap right after that correction
+        halt(),
+    ];
+    p.resize((HANDLER / 4) as usize, addi(0, 0, 0));
+    p.extend([
+        addi(9, 9, 1),
+        csrrs(10, CSR_MEPC, 0),
+        addi(10, 10, 4),
+        csrrw(0, CSR_MEPC, 10),
+        mret(),
+    ]);
+    let m = lockstep(&p, &[], "branch then trap", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[9], 2, "both traps taken");
+    assert_eq!(m.x[1], 0, "the skipped word never ran");
+    assert_eq!(m.x[6], 0, "the loop ran out");
+}
+
+/// Branches guessed wrong, stepped one instruction at a time with
+/// `dcsr.step` (issue 1300): every step that follows a wrong guess
+/// enters debug mode at the right path's next instruction, with `dpc`
+/// there, which lockstep checks at every entry and resume.
+#[test]
+fn branches_guessed_wrong_under_single_steps() {
+    use vreteno32::isa::*;
+    let p = vec![
+        addi(6, 0, 4),
+        beq(0, 0, 8),    // forward, taken: guessed wrong
+        addi(1, 1, 100), // skipped
+        addi(2, 2, 1),
+        addi(6, 6, -1),
+        bne(6, 0, -16), // backward: taken, then not, wrongly
+        halt(),
+    ];
+    let plan = DebugPlan {
+        halt_at: 2,
+        hold: 3,
+        resumes: 40,
+        entries: RefCell::new(Vec::new()),
+        writes: vec![(0, CSR_DCSR, 4)],
+    };
+    let m = lockstep(&p, &[], "branch steps", None, Some(&plan), None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[2], 4, "four rounds");
+    assert_eq!(m.x[1], 0, "the skipped word never ran");
+    let entries = plan.entries.borrow();
+    assert!(entries.len() > 10, "stepped through: {}", entries.len());
+    for (i, &e) in entries.iter().enumerate().skip(1) {
+        assert_eq!(cause(e), 4, "entry {i} is a step: {e:#x}");
+    }
+}
