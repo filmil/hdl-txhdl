@@ -1814,12 +1814,13 @@ fn mcycle_steps_steadily_between_two_reads() {
         steps.iter().all(|&s| s == steps[0]),
         "every difference the same: {steps:?}"
     );
-    // Three cycles from one read to the next, the second read's word
-    // in the cache. Fetched over the bus a word at a time, before the
-    // cache, it was thirteen; with the core of before issue 807's fix
-    // a steady twelve, each read costing the counter the one count it
-    // wrote back over.
-    assert_eq!(steps[0], 3, "cycles between the two reads");
+    // Two cycles from one read to the next, the second read's word
+    // in the buffer with the first's (issue 1279); three with the cache
+    // alone. Fetched over the bus a word at a time, before the cache,
+    // it was thirteen; with the core of before issue 807's fix a steady
+    // twelve, each read costing the counter the one count it wrote back
+    // over.
+    assert_eq!(steps[0], 2, "cycles between the two reads");
 }
 
 /// The path into DDR3 timed by the core (issue 1023): sixteen loads,
