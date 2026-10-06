@@ -720,6 +720,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (ar0_tx, ar0_rx) = chan::<Ar<32, 5>, DefaultClock>();
         let (w0_tx, w0_rx) = chan::<W<32, 4>, DefaultClock>();
         let (b0_tx, b0_rx) = chan::<B<5>, DefaultClock>();
+        #[unregistered]
         let (r0_tx, r0_rx) = chan::<R<32, 5>, DefaultClock>();
         let (aw1_tx, aw1_rx) = chan::<Aw<32, 5>, DefaultClock>();
         let (ar1_tx, ar1_rx) = chan::<Ar<32, 5>, DefaultClock>();
@@ -752,6 +753,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (ans5_tx, ans5_rx) = chan::<Answer<5>, DefaultClock>();
         let (rb5_tx, rb5_rx) = chan::<R<32, 5>, DefaultClock>();
         // Each peripheral's tracker and the peripheral.
+        #[unregistered]
         let (req0_tx, req0_rx) = chan::<PerReq<32, 5>, DefaultClock>();
         let (wd0_tx, wd0_rx) = chan::<W<32, 4>, DefaultClock>();
         let (ans0_tx, ans0_rx) = chan::<Answer<5>, DefaultClock>();
@@ -857,7 +859,9 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (ar8_tx, ar8_rx) = chan::<Ar<32, 5>, DefaultClock>();
         let (w8_tx, w8_rx) = chan::<W<32, 4>, DefaultClock>();
         let (b8_tx, b8_rx) = chan::<B<5>, DefaultClock>();
+        #[unregistered]
         let (r8_tx, r8_rx) = chan::<R<32, 5>, DefaultClock>();
+        #[unregistered]
         let (req8_tx, req8_rx) = chan::<PerReq<32, 5>, DefaultClock>();
         let (wd8_tx, wd8_rx) = chan::<W<32, 4>, DefaultClock>();
         let (ans8_tx, ans8_rx) = chan::<Answer<5>, DefaultClock>();
@@ -1171,14 +1175,16 @@ impl<const DIV: u32> Unit for Board<DIV> {
                         ),
                         join2(
                             join2(
-                                self.dmem.run(
-                                    PerPort {
-                                        req: req0_rx,
-                                        w: wd0_rx,
-                                        ans: ans0_tx,
-                                        r: rb0_tx,
-                                    },
-                                    (),
+                                // The tracker runs before the memory and
+                                // the router: the request and the read
+                                // beats it hands them cross in the
+                                // cycle (issue 1291).
+                                self.pdmem.run(
+                                    (
+                                        aw0_rx, ar0_rx, w0_rx, ans0_rx,
+                                        rb0_rx,
+                                    ),
+                                    (req0_tx, wd0_tx, b0_tx, r0_tx),
                                 ),
                                 join2(
                                     self.pstack.run(
@@ -1393,12 +1399,14 @@ impl<const DIV: u32> Unit for Board<DIV> {
                         join2(
                             join2(
                                 join2(
-                                    self.pdmem.run(
-                                        (
-                                            aw0_rx, ar0_rx, w0_rx, ans0_rx,
-                                            rb0_rx,
-                                        ),
-                                        (req0_tx, wd0_tx, b0_tx, r0_tx),
+                                    self.dmem.run(
+                                        PerPort {
+                                            req: req0_rx,
+                                            w: wd0_rx,
+                                            ans: ans0_tx,
+                                            r: rb0_tx,
+                                        },
+                                        (),
                                     ),
                                     self.ptimer.run(
                                         (
