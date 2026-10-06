@@ -3,7 +3,10 @@
 //! checked against. It decodes the same instructions and tests the
 //! same edge functions, but it says them as a program rather than as
 //! a step per cycle, so that the two agreeing means something.
-use crate::op::{signed, Insn, Kind, SUB};
+use crate::op::{
+    signed, Insn, Kind, EQUAL, GEQUAL, GREATER, LEQUAL, LESS, NEVER, NOTEQUAL,
+    SUB, ZFRAC,
+};
 use txhdl::types::U;
 
 /// An edge function of the edge from `a` to `b`, at `p`, all in
@@ -109,16 +112,63 @@ fn colour(op: &Insn, i: i32, j: i32) -> u32 {
     alpha | (r << 16) | (g << 8) | b
 }
 
-/// A display list rendered into a framebuffer of `w` by `h` pixels.
+/// The depth plane at the pixel `i` right and `j` down of the box's
+/// first, as the rasteriser steps it (issue 992): wrapping in thirty-two
+/// bits, then the sixteen bits above the fraction, nought below nought
+/// and the farthest, `0xffff`, past it.
+pub(crate) fn depth(start: u32, dx: u32, dy: u32, i: i32, j: i32) -> u32 {
+    let v = start
+        .wrapping_add(dx.wrapping_mul(i as u32))
+        .wrapping_add(dy.wrapping_mul(j as u32));
+    if v & 0x8000_0000 != 0 {
+        0
+    } else {
+        (v >> ZFRAC).min(0xffff)
+    }
+}
+
+/// Whether a pixel at depth `z` passes the comparison `func`, GL's, with
+/// `d` the depth already there.
+pub fn passes(func: u32, z: u32, d: u32) -> bool {
+    match func {
+        NEVER => false,
+        LESS => z < d,
+        EQUAL => z == d,
+        LEQUAL => z <= d,
+        GREATER => z > d,
+        NOTEQUAL => z != d,
+        GEQUAL => z >= d,
+        _ => true,
+    }
+}
+
+/// A display list rendered into a framebuffer of `w` by `h` pixels, as a
+/// tiled list draws it: an entry that tests depth (issue 992) writes a
+/// pixel only where it passes against the depth there, which starts at
+/// the farthest, and writes its own depth there if it says so. A flat
+/// list draws its depth entries without the test; see `crate::dl`.
 pub fn render(ops: &[Insn], w: usize, h: usize) -> Vec<u32> {
     let mut fb = vec![0u32; w * h];
+    let mut zb = vec![0xffffu32; w * h];
     for op in ops {
         let (x0, y0, x1, y1) = box_of(op, w, h);
+        let on = op.depth.to_bool();
+        let raw = |u: U<32>| u.raw() as u32;
+        let func = op.zfunc.raw() as u32;
         for y in y0..=y1 {
             for x in x0..=x1 {
-                if inside(op, x, y) {
-                    fb[y as usize * w + x as usize] =
-                        colour(op, x - x0, y - y0);
+                if !inside(op, x, y) {
+                    continue;
+                }
+                let at = y as usize * w + x as usize;
+                let z =
+                    depth(raw(op.z0), raw(op.zdx), raw(op.zdy), x - x0, y - y0);
+                if on && !passes(func, z, zb[at]) {
+                    continue;
+                }
+                fb[at] = colour(op, x - x0, y - y0);
+                if on && op.zwrite.to_bool() {
+                    zb[at] = z;
                 }
             }
         }

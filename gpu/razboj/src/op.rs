@@ -17,7 +17,7 @@
 //! the screen's size from its type. That is the difference between
 //! the three that costs the decoder anything, and it is the reason
 //! this is worth writing as an instruction set at all.
-use txhdl::types::U;
+use txhdl::types::{Bit, U};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
 // begin{op}
@@ -66,7 +66,65 @@ pub enum Op {
     /// `y`: the scissor box. A box that holds the screen turns it off.
     /// It is state the assembler keeps, and draws nothing itself.
     Scissor { x: i32, y: i32, w: i32, h: i32 },
+    /// From here on, test and write depth as `mode` says, or not at all
+    /// with `None` (issue 992). State, as the scissor box is: only the
+    /// entries below that carry a depth, `RectZ`, `TriZ` and `GouraudZ`,
+    /// are tested, and only in a tiled list, since depth lives only in
+    /// Razboj's tile buffer; in a flat list they draw as if depth were
+    /// off.
+    Depth(Option<DepthMode>),
+    /// A rectangle at the depth `z`, the same everywhere: what a clear
+    /// of the depth buffer is, with [`ALWAYS`] and depth written.
+    RectZ {
+        colour: u32,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        z: u32,
+    },
+    /// A flat triangle with a depth at each vertex, `0` the nearest and
+    /// `0xffff` the farthest, its vertices in sixteenths of a pixel.
+    TriZ {
+        colour: u32,
+        a: (i32, i32),
+        b: (i32, i32),
+        c: (i32, i32),
+        z: [u32; 3],
+    },
+    /// A shaded triangle with a depth at each vertex.
+    GouraudZ {
+        a: (i32, i32),
+        b: (i32, i32),
+        c: (i32, i32),
+        colours: [u32; 3],
+        z: [u32; 3],
+    },
 }
+
+/// How an entry tests depth: the comparison a pixel's depth must pass
+/// against the depth already there, GL's eight in GL's order, and
+/// whether a pixel that passes writes its depth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DepthMode {
+    pub func: u32,
+    pub write: bool,
+}
+
+/// The comparisons, as `DepthMode::func` and word 15's bits 11 to 9 say
+/// them: GL's `GL_NEVER` to `GL_ALWAYS`, less `0x0200`.
+pub const NEVER: u32 = 0;
+pub const LESS: u32 = 1;
+pub const EQUAL: u32 = 2;
+pub const LEQUAL: u32 = 3;
+pub const GREATER: u32 = 4;
+pub const NOTEQUAL: u32 = 5;
+pub const GEQUAL: u32 = 6;
+pub const ALWAYS: u32 = 7;
+
+/// Bits of fraction in a depth plane: twelve, so that the sixteen bits
+/// of depth and the sign fit in thirty-two.
+pub const ZFRAC: u32 = 12;
 
 /// Which entry an instruction is. The rasteriser reads this and
 /// nothing else to know where its box comes from and whether to test
@@ -124,6 +182,16 @@ pub struct Insn {
     pub b0: U<32>,
     pub bdx: U<32>,
     pub bdy: U<32>,
+    /// Depth (issue 992): whether the entry tests it, the comparison,
+    /// and whether a pixel that passes writes its depth; then the depth
+    /// plane, as a channel's, with [`ZFRAC`] bits of fraction. An entry
+    /// that tests depth takes a second slot in the list for its plane.
+    pub depth: Bit,
+    pub zfunc: U<3>,
+    pub zwrite: Bit,
+    pub z0: U<32>,
+    pub zdx: U<32>,
+    pub zdy: U<32>,
 }
 // end{op}
 
@@ -236,13 +304,63 @@ impl Op {
                 .encode_in(within, sw, sh)
             }
             Op::TriQ4 { colour, a, b, c } => {
-                triangle(colour, a, b, c, None, within)
+                triangle(colour, a, b, c, None, None, within)
             }
             Op::Gouraud { a, b, c, colours } => {
-                triangle(colours[0], a, b, c, Some(colours), within)
+                triangle(colours[0], a, b, c, Some(colours), None, within)
             }
-            Op::Scissor { .. } => None,
+            // Without a depth mode an entry with a depth draws as the
+            // same entry without one.
+            Op::RectZ {
+                colour, x, y, w, h, ..
+            } => Op::Rect { colour, x, y, w, h }.encode_in(within, sw, sh),
+            Op::TriZ {
+                colour, a, b, c, ..
+            } => Op::TriQ4 { colour, a, b, c }.encode_in(within, sw, sh),
+            Op::GouraudZ {
+                a, b, c, colours, ..
+            } => Op::Gouraud { a, b, c, colours }.encode_in(within, sw, sh),
+            Op::Scissor { .. } | Op::Depth(_) => None,
         }
+    }
+
+    /// The same under a depth mode (issue 992): an entry that carries a
+    /// depth tests it as `depth` says, with its depth plane; every other
+    /// entry is as [`Op::encode_in`] gives it.
+    pub fn encode_with(
+        &self,
+        within: Bounds,
+        depth: Option<DepthMode>,
+        sw: usize,
+        sh: usize,
+    ) -> Option<Insn> {
+        let Some(mode) = depth else {
+            return self.encode_in(within, sw, sh);
+        };
+        let mut insn = match *self {
+            Op::RectZ { z, .. } => {
+                let mut i = self.encode_in(within, sw, sh)?;
+                // The same depth everywhere, half a unit up as a
+                // channel's start is.
+                i.z0 = U::from((z << ZFRAC) + (1 << (ZFRAC - 1)));
+                i
+            }
+            Op::TriZ { colour, a, b, c, z } => {
+                triangle(colour, a, b, c, None, Some(z), within)?
+            }
+            Op::GouraudZ {
+                a,
+                b,
+                c,
+                colours,
+                z,
+            } => triangle(colours[0], a, b, c, Some(colours), Some(z), within)?,
+            _ => return self.encode_in(within, sw, sh),
+        };
+        insn.depth = Bit::One;
+        insn.zfunc = U::from(mode.func);
+        insn.zwrite = Bit::from(mode.write);
+        Some(insn)
     }
 }
 
@@ -254,13 +372,15 @@ fn triangle(
     b: (i32, i32),
     c: (i32, i32),
     shades: Option<[u32; 3]>,
+    zs: Option<[u32; 3]>,
     within: Bounds,
 ) -> Option<Insn> {
     // The winding the rasteriser wants: swap two vertices, and their
-    // colours, when the signed area says the other way.
+    // colours and depths, when the signed area says the other way.
     let swap = area2(a, b, c) < 0;
     let (b, c) = if swap { (c, b) } else { (b, c) };
-    let shades = shades.map(|s| if swap { [s[0], s[2], s[1]] } else { s });
+    let turn = |s: [u32; 3]| if swap { [s[0], s[2], s[1]] } else { s };
+    let (shades, zs) = (shades.map(turn), zs.map(turn));
     if area2(a, b, c) == 0 {
         return None;
     }
@@ -300,11 +420,16 @@ fn triangle(
         let first = (x0 as i32 * SUB + SUB / 2, y0 as i32 * SUB + SUB / 2);
         let [r, g, bl] = [16, 8, 0].map(|at| {
             let ch = |v: u32| ((v >> at) & 0xff) as i64;
-            plane(a, b, c, [ch(s[0]), ch(s[1]), ch(s[2])], first)
+            plane(a, b, c, [ch(s[0]), ch(s[1]), ch(s[2])], first, 16)
         });
         (insn.r0, insn.rdx, insn.rdy) = r;
         (insn.g0, insn.gdx, insn.gdy) = g;
         (insn.b0, insn.bdx, insn.bdy) = bl;
+    }
+    if let Some(z) = zs {
+        let first = (x0 as i32 * SUB + SUB / 2, y0 as i32 * SUB + SUB / 2);
+        let v = z.map(|z| (z & 0xffff) as i64);
+        (insn.z0, insn.zdx, insn.zdy) = plane(a, b, c, v, first, ZFRAC);
     }
     Some(insn)
 }
@@ -313,15 +438,17 @@ fn triangle(
 /// One channel's plane across a triangle wound as the rasteriser wants,
 /// with values `v` at its vertices: the value at `first`, the centre of
 /// the box's first pixel, and what it gains a pixel right and a row
-/// down, each with sixteen bits of fraction, rounded to the nearest.
-/// The start carries half a unit more, so that the byte the rasteriser
-/// takes above the fraction, which drops it, is the nearest one.
+/// down, each with `frac` bits of fraction, sixteen for a colour and
+/// [`ZFRAC`] for a depth, rounded to the nearest. The start carries half
+/// a unit more, so that the value the rasteriser takes above the
+/// fraction, which drops it, is the nearest one.
 fn plane(
     a: (i32, i32),
     b: (i32, i32),
     c: (i32, i32),
     v: [i64; 3],
     first: (i32, i32),
+    frac: u32,
 ) -> (U<32>, U<32>, U<32>) {
     let d = |p: (i32, i32), q: (i32, i32)| {
         ((q.0 - p.0) as i128, (q.1 - p.1) as i128)
@@ -332,7 +459,7 @@ fn plane(
     // The gradient, per sixteenth of a pixel, is (nx, ny) / area.
     let nx = db * vy - dc * uy;
     let ny = dc * ux - db * vx;
-    let one = 1i128 << 16;
+    let one = 1i128 << frac;
     let round = |n: i128| (n + area / 2).div_euclid(area);
     let (px, py) = d(a, first);
     let start = v[0] as i128 * one + one / 2 + round((nx * px + ny * py) * one);
@@ -347,14 +474,18 @@ fn plane(
 /// A display list assembled: every entry that draws something, in
 /// order, as the instructions the rasteriser reads. A scissor box holds
 /// from where it is set to where the next is, and one wholly off the
-/// screen draws nothing until then.
+/// screen draws nothing until then; a depth mode holds the same way.
 pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
     let mut within = Some(screen(sw, sh));
+    let mut depth = None;
     let mut out = Vec::new();
     for op in ops {
         if let Op::Scissor { x, y, w, h } = *op {
             within = clip(x, y, x + w - 1, y + h - 1, screen(sw, sh));
-        } else if let Some(insn) = within.and_then(|b| op.encode_in(b, sw, sh))
+        } else if let Op::Depth(mode) = *op {
+            depth = mode;
+        } else if let Some(insn) =
+            within.and_then(|b| op.encode_with(b, depth, sw, sh))
         {
             out.push(insn);
         }
