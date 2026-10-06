@@ -863,8 +863,9 @@ pub struct Vreteno<const IW: usize> {
     /// multiplexer (issue 1130).
     pub ra_at: Reg<U<5>>,
     /// Whether the register the writeback stage writes is the one each
-    /// operand reads: the forwarding's two compares, made a cycle early
-    /// so that the operand waits on no compare (issue 1130).
+    /// operand reads, and not x0: the forwarding's two compares, made a
+    /// cycle early so that the operand waits on no compare (issues 1130
+    /// and 1288).
     pub m_a: Reg<Bit>,
     pub m_b: Reg<Bit>,
     /// Which CSR the instruction reads, as [`csr_index`] gives it: found a
@@ -1243,8 +1244,14 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // file, which has it by then. The stall is the one wait the
             // pipeline makes by itself; the others, ORed into `stall`
             // below, wait on something outside it.
-            let fwd_a = wb_write & self.m_a;
-            let fwd_b = wb_write & self.m_b;
+            //
+            // The select waits on registers alone (issue 1288): `m_a` and
+            // `m_b` already say the number is the one written and not x0,
+            // and a refused load, `wb_fault`, need not be ruled out, since
+            // the instruction in execute is then not live and is squashed,
+            // so what it would have been given is never used.
+            let fwd_a = wb_here & self.m_a;
+            let fwd_b = wb_here & self.m_b;
             let stall_ld = self.valid & self.wb_load & (fwd_a | fwd_b);
             // The M extension is a sequencer: a multiply is one step in
             // the part's multipliers, a division thirty-two restoring
@@ -2777,12 +2784,20 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let f12_next = mux(load_ir, fetched.slice::<20, 12>(), f12);
             // What the writeback stage will write: the instruction now in
             // execute if it goes on, else what is there, held or cleared;
-            // a cleared one writes nothing, which `wb_write` says.
+            // a cleared one writes nothing, which `wb_here` says.
             let wr_next = mux(live, rd, wb_rd);
+            // Whether it writes a register at all, from the decode alone:
+            // an instruction that does not write, or writes x0, is never
+            // forwarded (issue 1288). One that traps, or that an interrupt
+            // takes the place of, writes nothing either, but the
+            // instruction behind it is squashed, so what it would forward
+            // is never used, and the late trap stays out of these compares.
+            let now_any = writes & Bit::from(rd != 0);
+            let wr_any = mux(live, now_any, Bit::from(wb_rd != 0));
             with!(self <= {
                 ra_at: mux(in_debug, dbg_gpr, rs1_next),
-                m_a: Bit::from(wr_next == rs1_next),
-                m_b: Bit::from(wr_next == rs2_next),
+                m_a: Bit::from(wr_next == rs1_next) & wr_any,
+                m_b: Bit::from(wr_next == rs2_next) & wr_any,
                 csr_at: csr_index(mux(in_debug, dbg_csr, f12_next)),
                 tp: exc,
                 tp_vec: trap_vec,
