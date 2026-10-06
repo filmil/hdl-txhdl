@@ -261,6 +261,35 @@ impl Unit<(), ()> for Top {
 }
 \end{lstlisting}
 
+\subsubsection{An unregistered channel is a hop that costs no cycle}
+
+A channel between two units is registered on both sides, so a
+transaction takes a cycle to cross it, and a request that crosses ten
+of them on its way to a memory and back waits ten cycles for the
+crossings alone. Marking a channel \code{\#[unregistered]} where a
+unit of units makes it takes the register off its forward side: while
+the channel is empty, the receiver sees the sender's \code{valid} and
+\code{data} in the cycle they are offered, and \code{ready} stays a
+register (issue 1293). Listing~\ref{lst:wire-unreg} is the chain of
+\code{ex\_unreg}, whose two inner channels are unregistered; the same
+chain registered answers two cycles later.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=chains-chains,caption={Two channels a unit
+of units makes, marked unregistered, each sender joined before its
+receiver: from \code{lib/examples/ex\_unreg.rs}.},label={lst:wire-unreg}]{lib/examples/ex_unreg.rs}
+
+An unregistered hop is not free in time. The receiver's logic now
+follows the sender's in one cycle, so every one lengthens a path, and
+it is for hops whose two ends are short: a stage that only forwards,
+or one that answers from a register. Two rules keep the run and the
+netlist in step. The receiver has to run after its sender in the join,
+since the run polls each unit once a step, and a run that joins them
+the other way stops naming the channel. A ring of wires through the
+children closed by an unregistered channel has no such order, and it
+is refused when the unit is lowered, naming the ring.
+
 \begin{table*}[t]
 \caption{The four concepts, and what each one is responsible for. Reading
 down the table is the life of a wire.}

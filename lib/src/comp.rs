@@ -167,6 +167,14 @@ pub struct Signal<T: Copy + Default, C: Clock = DefaultClock>(
 /// and a receive commit at the end of the step, as a register drive
 /// does, so what a process sees is the buffer as the edge left it,
 /// whichever process ran first.
+///
+/// An unregistered channel (issue 1293) is the same buffer with one
+/// bypass: while it is empty, the receiver sees the sender's offer of
+/// this step, and a take of it takes it this step, so it never enters
+/// the buffer. `ready` stays the buffer as the edge left it. Only
+/// `valid` and `data` are combinational, so the receiver must run after
+/// the sender in the step, and a receiver that looked first is caught
+/// when the sender offers.
 struct ChanCell<T: Copy> {
     head: Cell<Option<T>>,
     tail: Cell<Option<T>>,
@@ -175,6 +183,14 @@ struct ChanCell<T: Copy> {
     offered: Cell<T>,
     offer_at: Cell<u64>,
     take_at: Cell<u64>,
+    /// Where an unregistered channel was made, for the message that
+    /// names it; `None` for a registered one.
+    unreg: Cell<Option<&'static std::panic::Location<'static>>>,
+    /// The step at which the receiver of an unregistered channel found
+    /// it empty with nothing offered yet.
+    looked_at: Cell<u64>,
+    /// The receiver took this step's offer through the bypass.
+    through: Cell<bool>,
     /// The channel's clock, at whose rising edges a reset empties it.
     clk: clock::Clk,
 }
@@ -189,8 +205,26 @@ impl<T: Copy + Default> ChanCell<T> {
             offered: Cell::new(T::default()),
             offer_at: Cell::new(u64::MAX),
             take_at: Cell::new(u64::MAX),
+            unreg: Cell::new(None),
+            looked_at: Cell::new(u64::MAX),
+            through: Cell::new(false),
             clk,
         }
+    }
+    /// What the receiver sees at the head: the buffer's head, or, on an
+    /// unregistered channel whose buffer is empty, this step's offer.
+    /// An unregistered channel found empty before any offer remembers
+    /// the step, so that an offer after it in the step is caught.
+    fn front(&self) -> Option<T> {
+        if let Some(v) = self.head.get() {
+            return Some(v);
+        }
+        self.unreg.get()?;
+        if self.offering() {
+            return Some(self.offered.get());
+        }
+        self.looked_at.set(now());
+        None
     }
     /// Empty: what a reset leaves, and what the netlist's channel is
     /// with both its valid bits clear. A send or a take in the step is
@@ -200,6 +234,7 @@ impl<T: Copy + Default> ChanCell<T> {
         self.tail.set(None);
         self.push.set(None);
         self.pop.set(false);
+        self.through.set(false);
     }
     /// Whether the sender offered at this step: the `valid` wire.
     fn offering(&self) -> bool {
@@ -221,6 +256,11 @@ impl<T: Copy + Default> Commit for ChanCell<T> {
         }
         if self.pop.take() {
             self.head.set(self.tail.take());
+        }
+        // An offer taken through the bypass was taken, so it does not
+        // enter the buffer.
+        if self.through.take() {
+            self.push.set(None);
         }
         if let Some(v) = self.push.take() {
             if self.head.get().is_none() {
@@ -321,6 +361,14 @@ impl<T: Transaction, C: Clock> Tx<T, C> {
     pub fn send(&self, v: impl Into<T>) {
         assert!(self.ready().to_bool(), "send on a channel with no room");
         assert!(!self.0.offering(), "two sends on one channel in one step");
+        if let Some(at) = self.0.unreg.get() {
+            assert!(
+                self.0.looked_at.get() != now(),
+                "the unregistered channel made at {at} was looked at by its \
+                 receiver before its sender ran in this step; put the \
+                 sender first in the join that runs them (issue 1293)"
+            );
+        }
         let v = v.into();
         self.0.offered.set(v);
         self.0.offer_at.set(now());
@@ -359,9 +407,11 @@ impl<T: Transaction, C: Clock> Tx<T, C> {
 }
 impl<T: Transaction, C: Clock> Rx<T, C> {
     /// The transaction at the channel's head, if any, left in place:
-    /// `valid` and `data` as the edge left them.
+    /// `valid` and `data` as the edge left them, or, on an
+    /// unregistered channel that is empty, as the sender offers them
+    /// this step.
     pub fn peek(&self) -> Option<T> {
-        self.0.head.get()
+        self.0.front()
     }
     /// Wait for a transaction: the next edge of the channel's clock at
     /// which the channel holds one, and take it. An event, like
@@ -377,11 +427,16 @@ impl<T: Transaction, C: Clock> Rx<T, C> {
     /// Take the transaction at the head, if any: `ready` high this
     /// step, the head gone at the end of it. One take per step.
     pub fn recv(&self) -> Option<T> {
-        let v = self.0.head.get()?;
-        if self.0.pop.get() {
+        let buffered = self.0.head.get().is_some();
+        let v = self.0.front()?;
+        if self.0.pop.get() || self.0.through.get() {
             return None;
         }
-        self.0.pop.set(true);
+        if buffered {
+            self.0.pop.set(true);
+        } else {
+            self.0.through.set(true);
+        }
         self.0.take_at.set(now());
         commit(self.0.clone());
         Some(v)
@@ -399,7 +454,7 @@ impl<T: Transaction, C: Clock> Rx<T, C> {
     /// The head's data, as the edge left it, or the default when there
     /// is none: what a process looks at before deciding to take.
     pub fn head(&self) -> T {
-        self.0.head.get().unwrap_or_default()
+        self.0.front().unwrap_or_default()
     }
     /// Take the head only under a condition: `ready` is the condition,
     /// which is what a process that runs every cycle says when it can
@@ -507,6 +562,22 @@ pub fn link<B: Link>() -> (B::Host, B) {
 /// Create a channel and get its two ends.
 pub fn chan<T: Transaction, C: Clock>() -> (Tx<T, C>, Rx<T, C>) {
     Chan::<T, C>::new().split()
+}
+
+/// Create an unregistered channel and get its two ends (issue 1293):
+/// what `#[unregistered]` on a `chan` in a unit of units makes.
+///
+/// It is a channel whose receiver sees an offer in the step it is made
+/// while the buffer is empty, so a transaction crosses it in the same
+/// cycle; `ready` is still the buffer as the edge left it. The receiver
+/// has to run after the sender in the step: a receiver that looked at
+/// the empty channel before its sender offered is refused with a panic
+/// naming the line that made the channel.
+#[track_caller]
+pub fn chan_unregistered<T: Transaction, C: Clock>() -> (Tx<T, C>, Rx<T, C>) {
+    let ch = Chan::<T, C>::new();
+    ch.0.unreg.set(Some(std::panic::Location::caller()));
+    ch.split()
 }
 
 // ---------------------------------------------------------------------
@@ -2467,5 +2538,72 @@ mod mem_tests {
         for a in 0..4usize {
             assert_eq!(m.read(a).raw() as usize, a + 10);
         }
+    }
+}
+
+/// An unregistered channel passes a transaction in the step it is
+/// offered while its buffer is empty, keeps one it is not taken, and
+/// refuses a receiver that looked before its sender ran (issue 1293).
+#[cfg(test)]
+mod unregistered_tests {
+    use super::{chan, chan_unregistered, settle, DefaultClock};
+    use crate::types::U;
+
+    type T = U<8>;
+
+    /// The sender first, then the receiver: the receiver sees and takes
+    /// the offer in the same step, and nothing is left in the buffer.
+    #[test]
+    fn an_offer_is_taken_in_the_step_it_is_made() {
+        let (tx, rx) = chan_unregistered::<T, DefaultClock>();
+        tx.send(T::from(5u8));
+        assert_eq!(rx.peek().map(|v| v.raw()), Some(5));
+        assert_eq!(rx.recv().map(|v| v.raw()), Some(5));
+        assert_eq!(rx.recv(), None, "one take a step");
+        settle();
+        assert_eq!(rx.peek(), None, "a taken offer is not buffered");
+        assert!(tx.ready().to_bool());
+    }
+
+    /// An offer the receiver does not take is buffered at the edge, as
+    /// a registered channel's is, and is there in the next step.
+    #[test]
+    fn an_offer_not_taken_is_kept() {
+        let (tx, rx) = chan_unregistered::<T, DefaultClock>();
+        tx.send(T::from(7u8));
+        assert_eq!(rx.peek().map(|v| v.raw()), Some(7));
+        settle();
+        assert_eq!(rx.peek().map(|v| v.raw()), Some(7));
+        tx.send(T::from(8u8));
+        assert_eq!(rx.recv().map(|v| v.raw()), Some(7), "the buffer first");
+        settle();
+        assert_eq!(rx.recv().map(|v| v.raw()), Some(8));
+        settle();
+        assert_eq!(rx.peek(), None);
+    }
+
+    /// The receiver first, finding the channel empty, then the sender:
+    /// the netlist would pass the offer in this cycle and the run would
+    /// not, so the run stops rather than differ.
+    #[test]
+    #[should_panic(expected = "was looked at by its receiver before its \
+                               sender ran in this step; put the sender \
+                               first in the join that runs them")]
+    fn a_receiver_before_its_sender_is_refused() {
+        let (tx, rx) = chan_unregistered::<T, DefaultClock>();
+        assert_eq!(rx.peek(), None);
+        tx.send(T::from(1u8));
+    }
+
+    /// A registered channel is as it was: an offer is seen the step
+    /// after, whichever ran first.
+    #[test]
+    fn a_registered_channel_is_unchanged() {
+        let (tx, rx) = chan::<T, DefaultClock>();
+        assert_eq!(rx.peek(), None);
+        tx.send(T::from(3u8));
+        assert_eq!(rx.peek(), None);
+        settle();
+        assert_eq!(rx.recv().map(|v| v.raw()), Some(3));
     }
 }

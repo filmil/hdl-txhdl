@@ -5471,6 +5471,54 @@ fn call_lowered(
     )))
 }
 
+/// The run's Rust with each `#[unregistered]` taken off its `let` and
+/// the `chan` of that `let` made `chan_unregistered` (issue 1293): an
+/// attribute Rust does not know may not stand on a statement, and the
+/// channel the run makes has to be the unregistered kind.
+fn unregistered_rust(ts: TokenStream) -> TokenStream {
+    let toks: Vec<TokenTree> = ts.into_iter().collect();
+    let mut out: Vec<TokenTree> = Vec::new();
+    let mut pending = false;
+    let mut k = 0;
+    while k < toks.len() {
+        match (&toks[k], toks.get(k + 1)) {
+            (TokenTree::Punct(h), Some(TokenTree::Group(g)))
+                if h.as_char() == '#'
+                    && g.delimiter() == Delimiter::Bracket
+                    && g.stream().to_string().trim() == "unregistered" =>
+            {
+                pending = true;
+                k += 2;
+                continue;
+            }
+            (TokenTree::Ident(id), _)
+                if pending && id.to_string() == "chan" =>
+            {
+                let path: TokenStream =
+                    "::txhdl::comp::chan_unregistered".parse().expect("a path");
+                for mut t in path {
+                    t.set_span(id.span());
+                    out.push(t);
+                }
+                pending = false;
+            }
+            (TokenTree::Punct(p), _) if p.as_char() == ';' => {
+                pending = false;
+                out.push(toks[k].clone());
+            }
+            (TokenTree::Group(g), _) => {
+                let mut inner =
+                    Group::new(g.delimiter(), unregistered_rust(g.stream()));
+                inner.set_span(g.span());
+                out.push(TokenTree::Group(inner));
+            }
+            (t, _) => out.push(t.clone()),
+        }
+        k += 1;
+    }
+    out.into_iter().collect()
+}
+
 /// A unit of units: `run` makes the channels and wires between its
 /// children with `chan()` and `signal()`, and joins the children's
 /// `run`s. Read into the parent's nets and instances, as generated
@@ -5484,10 +5532,12 @@ fn lower_structural(
     body: &Group,
     ports: &[(String, String)],
     bound: &[(String, Vec<String>)],
-) -> Result<(Vec<String>, Vec<String>, Vec<String>), TokenStream> {
+) -> Result<(Vec<String>, Vec<String>, Vec<String>, Vec<String>), TokenStream> {
     // The wires a constant is tied to, each a `(name, lit(v))`: what a
     // child's input passed `tie(v)` is joined to (issue 498).
     let mut ties: Vec<String> = Vec::new();
+    // The channels marked `#[unregistered]`, by net (issue 1293).
+    let mut unreg: Vec<String> = Vec::new();
     // The ends made in `run`: the end, its net, whether a channel.
     let mut ends: Vec<(String, String, bool)> = Vec::new();
     // The two sides of each bundle made whole, `let (h, p) = link::<B>()`:
@@ -5505,9 +5555,34 @@ fn lower_structural(
     let mut arr_ends: Vec<(String, String)> = Vec::new();
     let is_chan = |k: &str| k == "Tx" || k == "Rx";
     for st in statements(body) {
-        let ts: Vec<TokenTree> = st.into_iter().collect();
+        let mut ts: Vec<TokenTree> = st.into_iter().collect();
         if ts.is_empty() {
             continue;
+        }
+        // `#[unregistered]` before a `let` of `chan()`: the channel's
+        // receiver sees an offer in the cycle it is made (issue 1293).
+        let mut unregistered = false;
+        if let (Some(TokenTree::Punct(h)), Some(TokenTree::Group(g))) =
+            (ts.first(), ts.get(1))
+        {
+            if h.as_char() == '#'
+                && g.delimiter() == Delimiter::Bracket
+                && g.stream().to_string().trim() == "unregistered"
+            {
+                let at = h.span();
+                ts.drain(..2);
+                let on_chan = ts.first().is_some_and(|t| is_ident(t, "let"))
+                    && ts.get(3).is_some_and(|f| is_ident(f, "chan"));
+                if !on_chan {
+                    return Err(err(
+                        at,
+                        "`#[unregistered]` marks a channel a unit of units \
+                         makes: `#[unregistered] let (tx, rx) = \
+                         chan::<T, C>();` (issue 1293)",
+                    ));
+                }
+                unregistered = true;
+            }
         }
         // `let mut x = Ends::from(ins);`: an array port handed out by
         // index, its element `e` the port `ins_e` (issue 635).
@@ -5716,6 +5791,9 @@ fn lower_structural(
                 continue;
             }
             let kind = if chan { "Tx" } else { "Out" };
+            if unregistered {
+                unreg.push(net.clone());
+            }
             nets.push(format!(
                 "(\"{net}\".to_string(), ::txhdl::comp::trace::Kind::{kind}, \
                  <{ty} as ::txhdl::types::Value>::WIDTH, \
@@ -6218,7 +6296,7 @@ fn lower_structural(
              children's `run`",
         ));
     }
-    Ok((nets, instances, ties))
+    Ok((nets, instances, ties, unreg))
 }
 
 /// Every `self.FIELD.run(ARGS)` in a token list, into any group.
@@ -6664,12 +6742,14 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut nets: Vec<String> = Vec::new();
     let mut instances: Vec<String> = Vec::new();
     let mut ties: Vec<String> = Vec::new();
+    let mut unreg: Vec<String> = Vec::new();
     if loops.is_empty() {
         match lower_structural(fbody, &pkinds, &bound) {
-            Ok((n, i, t)) => {
+            Ok((n, i, t, u)) => {
                 nets = n;
                 instances = i;
                 ties = t;
+                unreg = u;
             }
             Err(e) => return e,
         }
@@ -6875,6 +6955,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          aliases: Vec::new(),\n\
          nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, \
          usize, &'static str)> = Vec::new(); {nets} n }},\n\
+         unregistered: vec![{unreg}],\n\
          instances: __ins,\n\
          foreign: None,\n\
          }}\n\
@@ -6897,6 +6978,11 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          fn lowered_as(name: &str) -> ::txhdl::netlist::Lowered {{\n\
          Self::lowered(name) }}\n}}",
         ports = ports.join(" "),
+        unreg = unreg
+            .iter()
+            .map(|u| format!("\"{u}\".to_string()"))
+            .collect::<Vec<_>>()
+            .join(", "),
         nets = nets
             .iter()
             .map(|n| match n.strip_prefix("@link ") {
@@ -6976,6 +7062,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         item
     };
+    // `#[unregistered]` is read above, for the netlist; the Rust that
+    // runs makes the channel with `chan_unregistered` (issue 1293).
+    let item = unregistered_rust(item);
     let toks: Vec<TokenTree> = item.clone().into_iter().collect();
     // `impl Unit for X`, the ports named once, in `run`: the header
     // takes them from there.
