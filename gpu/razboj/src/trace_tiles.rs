@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The traced run of a list drawn in tiles (issue 1255): a scene on a
-//! screen two tiles across and one and a quarter down, binned into a
+//! screen two tiles across and one and an eighth down, binned into a
 //! tile table and drawn through the tile buffer, then written out a row
 //! at a time. It writes the trace and the rasteriser's netlist, so the
 //! build replays the netlist under nvc and Verilator against this run,
@@ -11,10 +11,12 @@ use razboj::op::{assemble, Op};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
 
-/// Two tiles across, and a second row of tiles sixteen rows high.
+/// Two tiles across, and a second row of tiles eight rows high: the
+/// scene is as small as shows both, since nvc elaborates the whole run
+/// within a heap of 16 MiB, and the scrub after reset is 4096 cycles.
 const LOGW: usize = 7;
 const W: usize = 1 << LOGW;
-const H: usize = 80;
+const H: usize = 72;
 /// A link past sixteen bits, since the memory is 64 KiB.
 const A: usize = 20;
 /// Words of memory: the framebuffer, then the tile table and its
