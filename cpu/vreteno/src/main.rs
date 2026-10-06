@@ -69,7 +69,7 @@ fn main() {
     let (wb_pc, regs) = (cpu.wb_pc, cpu.regs.clone());
     // Read to know when the external interrupt has been taken.
     let mcause = cpu.mcause;
-    let mut dmem = Dmem::default();
+    let mut dmem: Dmem<2> = Dmem::default();
     let lanes = (
         dmem.lane0.clone(),
         dmem.lane1.clone(),
