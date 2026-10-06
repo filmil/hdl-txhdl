@@ -1,0 +1,85 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Hart
+\datasheet{Hart}{The Vreteno core and its Sv32 unit, joined, with the core's ports and nothing more.}
+
+\dsfacts{\code{cpu/vreteno/src/hart.rs}}{\code{vreteno32::hart::Hart}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+\code{Hart<IW>} is a unit of two units: a \code{Vreteno<IW>} core and
+the \code{Mmu8} that translates its addresses for Sv32 (issue 1014).
+Its ports are the core's, all of them and no others, so everything
+outside sees one core: the bus side, the interrupts, the debug
+module's lines and the retire outputs.
+
+Inside, the core tells the unit \code{satp}, the mode a data access is
+checked as, \code{sum}, \code{mxr} and the flush, and asks on its two
+request wires; the unit answers on two answer wires. The walker's page
+table reads go to the core on a channel, which the core puts on its
+own bus port as loads, and the words read come back to
+the unit on a second channel. The hart therefore needs no bus port of
+its own for the page tables.
+
+\code{Hart::with} loads a program into the core's instruction memory.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{IW} & The width of the AXI identifier, passed to the core. The
+tables use 2, as the board and the runs do. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{Hart}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item The unit goes first in the join. Its answers are registers, and
+the core reads them in the same step.
+\item The core's requests are registers too, and the unit reads them a
+step late in simulation and on time in hardware. So the core waits two
+cycles on every request before it believes an answer, which is right
+in both, since the unit holds its answer while the request is held.
+\item The hart adds no register and no logic of its own: every
+register in it is the core's or the unit's.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{run.rs}'s machine, which \code{//cpu/vreteno:lockstep\_test},
+\code{//cpu/vreteno:hello\_test}, \code{//cpu/vreteno:icache\_test} and
+the core's other tests use, runs a \code{Hart}. Lockstep holds it
+against the reference model after every cycle, with paging directed
+and over random tables.
+\item The build simulates \code{Hart<2>}'s netlist, under the entity
+name \code{vreteno} and with the demonstration program in the core's
+instruction memory, against the trace of \code{//cpu/vreteno:vreteno}
+under nvc and Verilator: \code{//docs:vreteno\_sim\_vreteno}\allowbreak\code{\_vreteno\_tb\_test}
+and \code{//docs:vreteno\_vsim\_vreteno\_test}.
+\item \code{//cpu/vreteno:openocd\_test} runs a stock OpenOCD against a
+hart on the simulated board, and \code{//cpu/vreteno:pair\_test} runs
+two harts in step.
+\item \code{//cpu/vreteno:vreteno\_synth} and
+\code{//cpu/vreteno:vreteno\_pnr}, which are manual, synthesise and
+place the hart's netlist; on the board it is in every flagship.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Hart<2>} as \code{cpu} in \code{Board}, and so in the flagship;
+two of them in \code{Pair}; and the machine of \code{run.rs}.
+
+\subsection*{Limits}
+
+One hart: there is no second core sharing the unit or the bus port.
+The core's fetch and data requests each take the unit's cycle of
+latency, which the core's own rules account for (\code{Vreteno}'s
+sheet).

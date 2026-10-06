@@ -24,7 +24,8 @@ the instruction memory the fetch reads from the bus, into a buffer of
 two words, and the words of the data memory and of DDR3 through an
 instruction cache (issue 1021): four kilobytes, 256 lines of four
 words, one way, indexed by the page offset and tagged by the physical
-page, in \code{ic\_data} and \code{ic\_tag}.
+page, in \code{ic\_data} and \code{ic\_tag}. A hit fills both words of
+the buffer when the line holds the next one (issue 1187).
 
 The bus side is an AXI host written as hardware. The core issues a
 burst on \code{issue}, sends a store's beat on \code{wbeat}, and hands
@@ -39,6 +40,28 @@ register access, \code{dbg\_regno}, \code{dbg\_wdata} and
 \code{halt}, \code{instr}, the word retiring, \code{wb}, a
 \code{Writeback} of \code{done}, \code{rd} and \code{val}, \code{dbg},
 debug mode, and \code{dbg\_rdata}, the register the module asked for.
+
+Two more inputs carry the machine timer's count, \code{time}, which
+\code{rdtime} reads, and \code{seirq}, the interrupt controller's
+supervisor line, which the core registers beside MEIP as
+\code{mip.SEIP} (issue 1094).
+
+Eleven ports join the core to its memory management unit, an
+\code{Mmu8}, inside a \code{Hart} (issue 1014). The core tells the
+unit \code{mmu\_satp}; \code{mmu\_prv}, the mode a data access is
+checked as, which is \code{MPP} under \code{MPRV} (issue 1105);
+\code{mmu\_sum} and \code{mmu\_mxr} from \code{mstatus};
+\code{mmu\_flush}, raised for a write of
+\code{satp} or an \code{sfence.vma}; and its two requests,
+\code{ireq} for a fetch and \code{dreq} for a load or a store. The
+unit answers on \code{ires} and \code{dres}, each a \code{Res} of a
+physical address, a page fault or an access fault, a cycle after the
+request. Its walker's reads come in on \code{ptw} as addresses, go out
+on the core's own \code{issue}, and their words go back to the unit on
+\code{pte}, so the hart needs no bus port of its own for the page
+tables. The core believes an answer only at the second cycle of a
+request, which is right both in simulation, where the unit sees a
+request a step late, and in hardware.
 
 \subsection*{Parameters}
 
@@ -206,14 +229,17 @@ halted.
 the core inside \code{Board} and on the lattice.
 \item \code{//cpu/vreteno:icache\_test} runs issue 1009's loop of three
 instructions from the instruction memory and from the data memory,
-through the cache, at 1.333 and 4.093 cycles an instruction (14.655
+through the cache, at 1.333 and 3.426 cycles an instruction (4.093
+before one cache hit filled both words of the buffer, issue 1187, and
+14.655
 from the data memory before the cache); the same loop across two
 lines; and a routine rewritten by a store and called again after
 \code{fence.i}, which runs the word stored.
-\item The build simulates \code{Vreteno<2>}'s netlist, with the
-demonstration program in its instruction memory, against the trace of
+\item The build simulates the netlist of \code{Hart<2>}, the core and its
+unit, under the entity name \code{vreteno}, with the demonstration
+program in the core's instruction memory, against the trace of
 \code{//cpu/vreteno:vreteno} under nvc and Verilator:
-\code{//docs:vreteno\_sim\_vreteno\_vreteno\_tb\_test} and
+\code{//docs:vreteno\_sim\_vreteno}\allowbreak\code{\_vreteno\_tb\_test} and
 \code{//docs:vreteno\_vsim\_vreteno\_test}.
 \item \code{//cpu/vreteno:vreteno\_synth} and
 \code{//cpu/vreteno:vreteno\_pnr} synthesise and place the core on an

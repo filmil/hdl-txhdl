@@ -1,0 +1,124 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: Mmu, Mmu8
+\datasheet{Mmu}{Sv32 address translation: a fetch TLB, a data TLB and a walker that never writes, answering in a register a cycle after each request.}
+
+\dsfacts{\code{lib/parts/src/mmu.rs}}{\code{txhdl\_parts::mmu::Mmu}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+\code{Mmu<E>} translates a core's virtual addresses for Sv32, the
+RISC-V page-based virtual memory of thirty-two bits (issue 1014). It
+has two translation lookaside buffers of \code{E} entries each, one
+for fetches and one for data, and one walker that fills them from the
+page tables.
+
+The core asks on \code{ireq} for a fetch and on \code{dreq} for a load
+or a store, with a virtual address it already holds in a register. The
+answer is a register too: on \code{ires} or \code{dres}, a cycle after
+the request, a \code{Res} that says the access is allowed at a
+physical address, or is a page fault, or an access fault. A miss
+answers none of the three. The walker then reads the page table, a
+word at a time, by sending the entry's address on \code{ptw} and
+taking the entry, or the failure of its read, on \code{pte}. It fills
+an entry, and the answer comes a cycle after the fill. The core holds
+its request steady until one of the three comes. An answer belongs to
+the request of the cycle before it.
+
+The other inputs are \code{satp}, the mode the access is checked as,
+\code{prv}, the two \code{mstatus} bits \code{sum} and \code{mxr}, and
+\code{flush}, which empties both buffers.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{E} & The entries in each buffer, from 1 to 16. The tree uses 8, as
+\code{Mmu8}, which is what the tables lower. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{Mmu}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item Translation is on when \code{satp.MODE} is set and \code{prv} is
+not machine mode. Otherwise the address passes through unchecked, with
+the same latency of one cycle, so the core has one rule.
+\item Pages are four kilobytes. A leaf at the first level is a four
+megabyte megapage, which compares the upper ten bits of the page
+number only. Each buffer is fully associative and replaced in turn.
+\item The checks are made on a hit: read, write and execute against the
+access, the user bit against the mode and \code{sum}, and \code{mxr}
+for a load from an execute-only page.
+\item The walker never writes. An entry whose accessed bit is clear, or
+whose dirty bit is clear on a store, is a page fault, and the kernel
+sets the bit (Svade).
+\item A flush empties both buffers. Address space identifiers are not
+kept, which the specification allows, so \code{satp.ASID} is ignored.
+A request in the cycle of a flush is not answered; the core holds it,
+and it is answered from the emptied buffers, by a walk. A flush during
+a walk drops what the walk finds.
+\item When both ports miss at once, the data port is walked first.
+\item A walk that ends in a fault answers for that page while its port
+goes on asking for it, which the core does until it takes the trap,
+and is not kept after.
+\item Physical addresses are thirty-two bits. An entry or a
+\code{satp} whose page number reaches past them is an access fault, as
+is a table read that nothing answers.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{translate} in \code{mmu.rs} is the reference: the
+specification's walk, with no buffer. In \code{mmu::tests}, in
+\code{//lib/parts:parts\_test}, the unit is held to it against tables
+in a memory that answers the walker after a few cycles:
+\code{bare\_and\_machine\_mode}\allowbreak\code{\_pass\_the\_address}\allowbreak\code{\_through\_a\_cycle\_later};
+\code{a\_page\_is\_walked\_once}\allowbreak\code{\_and\_then\_hits\_a\_cycle\_later};
+\code{a\_megapage\_maps}\allowbreak\code{\_four\_megabytes\_from\_one\_entry};
+\code{every\_fault}\allowbreak\code{\_is\_the\_specifications};
+\code{an\_address\_past}\allowbreak\code{\_thirty\_two\_bits}\allowbreak\code{\_or\_nowhere}\allowbreak\code{\_is\_an\_access\_fault};
+\code{a\_fault\_is\_not\_kept}\allowbreak\code{\_after\_its\_request};
+\code{a\_flush\_empties\_both\_tlbs};
+\code{a\_flush\_during\_a\_walk}\allowbreak\code{\_drops\_what\_it\_finds};
+\code{a\_request\_in\_the\_cycle}\allowbreak\code{\_of\_a\_flush\_is\_answered\_after\_it};
+\code{entries\_are\_replaced\_in\_turn};
+\code{the\_data\_port\_walks\_first}; and
+\code{random\_requests}\allowbreak\code{\_agree\_with\_the\_reference}, six hundred random
+requests over random tables, on both ports and in every mode.
+\code{the\_eight\_entry\_unit\_lowers} writes \code{Mmu8}'s Verilog.
+\item \code{ex\_mmu} runs \code{Mmu8} the way a kernel meets it, and
+the build simulates its netlist against that run under nvc and
+Verilator: \code{//docs:mmu\_sim\_mmu8\_tb\_test} and
+\code{//docs:mmu\_vsim\_test}.
+\item In the core, \code{//cpu/vreteno:lockstep\_test} runs Sv32
+directed and over random page tables against the reference model
+(\code{sv32\_translates\_and\_faults}\allowbreak\code{\_where\_the\_tables\_say},
+\code{random\_programs\_under\_paging}), and Linux runs under it on the
+board (issue 279).
+\item \code{//lib/parts:mmu\_pnr}, which is manual, places and routes
+\code{Mmu8} alone, out of context, against the core's ten nanosecond
+clock: it meets it with 2.440\,ns to spare, in 493 LUTs and 919
+flip-flops (\code{//docs:vreteno}).
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Mmu8} in \code{Hart}, the core and its unit, in
+\code{cpu/vreteno/src/hart.rs}, and so in every design that holds a
+hart: the board, the flagship and \code{Pair}. \code{Mmu8} in the
+example \code{ex\_mmu}.
+
+\subsection*{Limits}
+
+No address space identifiers. No hardware update of the accessed and
+dirty bits. The buffers are held in flip-flops, not block RAM, so
+\code{E} stays small. Physical addresses are thirty-two bits, with no
+Sv32 thirty-four bit physical space.

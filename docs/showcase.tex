@@ -72,9 +72,9 @@ and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
 them, both as of the last sweep of the documents rather than of the
 last commit; a component added since then is an open issue on the
 repository, which is where to look for what is newer than this page.
-Together they are 90\,192 lines of Rust: 18\,369 of runtime
-and macros, 26\,071 of parts, 17\,990 in a hundred and twenty-one examples,
-22\,478 of Vreteno with its board, and 5\,284 of Razboj, DDR3,
+Together they are 94\,581 lines of Rust: 18\,484 of runtime
+and macros, 26\,512 of parts, 18\,113 in a hundred and twenty-one examples,
+25\,927 of Vreteno with its board, and 5\,545 of Razboj, DDR3,
 Ethernet, HDMI, PCIe and the SoC.
 
 \begin{table}[htbp]
@@ -99,6 +99,7 @@ AXI to Wishbone bridge & parts & yes \\
 AXI host pins to the link's channels & parts & yes \\
 The link's channels to a peripheral's AXI pins & parts & yes \\
 An interrupt controller, one unit for 1 to 31 sources & parts & 3 \\
+Sv32 translation: fetch and data TLBs, a walker that never writes & parts & yes \\
 Network node, switch, 2 bridges; a mesh of nodes & parts & the mesh \\
 Pins; SPI; I2C; MDIO; SD; Ethernet's five; HDMI's two & parts & all twelve \\
 The RISC-V debug transport, behind \code{BSCANE2}, and its bridge & parts & the transport \\
@@ -113,7 +114,7 @@ A flash read as memory, mode 0 only & parts & both \\
 The configuration flash through \code{STARTUPE2}, write enable refused & parts & yes \\
 A peripheral written as software, behind a channel & parts & both \\
 Its wire: each transaction one Ethernet frame & parts & both \\
-Vreteno; boot and data memory, timer, serial port & \code{cpu} & four of five \\
+Vreteno, a hart with its Sv32 unit; boot and data memory, timer, serial port & \code{cpu} & four of five \\
 The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
 PCIe BAR registers; the BAR as one unit & \code{pcie} & not yet \\
@@ -160,8 +161,12 @@ cycle: the program counter, the thirty-one registers and the control
 registers must agree after each retirement, on a demonstration
 program and on sixty-four random ones. Above its boot memory it
 fetches through a four-kilobyte instruction cache, which runs a loop
-from memory at 4.1 cycles an instruction where a word over the bus
+from memory at 3.4 cycles an instruction where a word over the bus
 for each took 14.7.
+It has supervisor and user modes and Sv32 paging, through a unit
+beside it, in a hart, with fetch and data TLBs of eight entries each,
+and on the board it boots Linux to a shell thirty seconds after the
+image arrives.
 
 It runs on hardware. The netlist goes through a hermetic Vivado onto
 an Alinx AX7A200B, and the board says on its serial port what the
@@ -413,10 +418,11 @@ build runs, and its output is included in a document from the run, so
 a document cannot drift from the code. Every simulated unit of
 Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
 as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs four hundred and twenty-nine targets, of
-which two hundred and forty-four are netlists under both simulators; the rest are the core's model and programs, the board's
+its ports. \code{bazel test //...} runs four hundred and sixty-two targets, of
+which two hundred and forty-six are netlists under both simulators; the rest are the core's model and programs, the board's
 own run, OpenOCD and gdb on it through the debug transport, Razboj, the parts, the SoC's run, ten proofs, the width of
-every waveform, and the tools. Thirteen more are tagged manual: the
+every waveform, and the tools. Fifteen more are tagged manual: the
+board's own run as a plain test, which another runs built optimised; the
 board and its DDR3 under
 Vivado's simulator, the DDR3 controller alone and AMD's own test of
 it under the same, the PCIe endpoint on its own and against a root
@@ -424,10 +430,11 @@ port under the same, the AXI link's fuzzing over many seeds, which
 the nightly run does, the check that every component has a
 datasheet, which a sweep of the documents runs, two that a routed
 bitstream leaves the configuration flash's program area alone, one
-that the flash image holds its program there, and three of Linux: the
+that the flash image holds its program there, and four of Linux: the
 initramfs read back from its archive, and the kernel booted to its
-shell on the machine model, as built, which the nightly run does, and
-with the serial port as the loader leaves it.
+shell on the machine model, as built, which the nightly run does,
+with the serial port as the loader leaves it, and with its network up,
+pinging the model's peer.
 
 A run checks the inputs it was given; a proof checks all of them. A
 unit states what must hold with \code{check!}, what it assumes of its
