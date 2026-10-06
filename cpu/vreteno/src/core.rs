@@ -932,7 +932,13 @@ pub struct Vreteno<const IW: usize> {
     /// address: two virtual pages of one physical page share its lines.
     /// It holds words of the data memory and of DDR3, the two memories
     /// behind the bus.
-    pub ic_data: Mem<U<32>, 4096>,
+    ///
+    /// The words are in two banks, the even and the odd (issue 1303):
+    /// a lookup reads a word and the one after it, which are always in
+    /// different banks, so each bank is read once a cycle and written
+    /// by the fill, and is a block RAM.
+    pub ic_even: Mem<U<32>, 2048>,
+    pub ic_odd: Mem<U<32>, 2048>,
     /// Each line's tag: bit 20 says the line is valid, and the low
     /// twenty bits are its physical page, of which the index holds the
     /// low two as well.
@@ -942,6 +948,10 @@ pub struct Vreteno<const IW: usize> {
     pub ic_st: Reg<U<2>>,
     /// The physical address of the word the cached fetch wants.
     pub ic_pa: Reg<U<32>>,
+    /// The even bank's word in the line for the lookup: the word's own
+    /// when it is even, the one after it when it is odd. A register of
+    /// its own, so that each bank's address is registers alone.
+    pub ic_eb: Reg<U<1>>,
     /// The next beat of a fill, and whether one of them was refused.
     pub ic_beat: Reg<U<2>>,
     pub ic_bad: Reg<Bit>,
@@ -2008,10 +2018,18 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // address registered when the fetch went to the cache.
             let ic_line = ic_pa.slice::<4, 10>();
             let ic_t = self.ic_tag.read(ic_line);
-            let ic_w = self.ic_data.read(ic_pa.slice::<2, 12>());
-            // The word after it, which a hit puts in the buffer's second
-            // place when it is in the same line (issue 1187).
-            let ic_w1 = self.ic_data.read(ic_pa.slice::<2, 12>() + 1);
+            // The word, and the one after it, which a hit puts in the
+            // buffer's second place when it is in the same line (issue
+            // 1187): one from each bank (issue 1303). The odd bank's word
+            // in the line is bit 3 of the address either way; the
+            // even bank's is registered.
+            let ic_ew =
+                self.ic_even.read(ic_line.concat::<_, 11>(self.ic_eb.get()));
+            let ic_ow = self
+                .ic_odd
+                .read(ic_line.concat::<_, 11>(ic_pa.slice::<3, 1>()));
+            let ic_w = mux(ic_pa.bit(2), ic_ow, ic_ew);
+            let ic_w1 = mux(ic_pa.bit(2), ic_ew, ic_ow);
             let looking = Bit::from(ic_st == 1);
             let filling = Bit::from(ic_st == 2);
             let ic_hit = ic_t.bit(20)
@@ -2142,8 +2160,13 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // A fill's beat into the line, and the tags' one write: a
             // clear, or a filled line made valid. A fill ending while
             // the tags are cleared stays invalid.
-            let fill_at = ic_line.concat::<_, 12>(self.ic_beat.get());
-            when!(r_beat => self { ic_data.at(fill_at): resp_data });
+            // Each beat goes into its word's bank.
+            let beat = self.ic_beat.get();
+            let fill_at = ic_line.concat::<_, 11>(beat.slice::<1, 1>());
+            let fill_even = r_beat & !beat.bit(0);
+            let fill_odd = r_beat & beat.bit(0);
+            when!(fill_even => self { ic_even.at(fill_at): resp_data });
+            when!(fill_odd => self { ic_odd.at(fill_at): resp_data });
             let tag_go = ic_clearing | r_ok;
             let tag_at = mux(ic_clearing, self.ic_clr.get(), ic_line);
             let tag_val = mux(
@@ -2263,7 +2286,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 // The cache's steps (issue 1021).
                 c_go ? {
                     ic_st: U::<2>::from(1u8),
-                    ic_pa: f_pa
+                    ic_pa: f_pa,
+                    ic_eb: f_pa.slice::<3, 1>() | f_pa.slice::<2, 1>()
                 },
                 r_go ? {
                     ic_st: U::<2>::from(2u8),
