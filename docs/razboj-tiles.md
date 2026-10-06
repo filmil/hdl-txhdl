@@ -158,11 +158,13 @@ Each step is a pull request, and each is checked against the model before the ne
    The first half is done in issue 1255, with one bank.
    A count with bit 31 set says the list is a tile table, with its entries at `razboj_tile::ENTRIES_AT` past it, so flat lists draw as before.
    Each pixel written also sets a mark, and the write-out's strobes are off where no mark is set, since the table holds only the tiles some entry touches and a tile's other pixels have to keep what memory had.
+   A mark is the serial of the tile that wrote the pixel, from 1 to 255, and the write-out compares it with this tile's rather than clearing it, so the marks have one write and are a block RAM; cleared by the write-out they were 4096 flip-flops behind a 4096-to-1 multiplexer, and missed the board's clock.
+   The walk scrubs every mark to nought after a reset and when the serial runs out, 4096 cycles in 255 tiles.
    One bank means drawing and writing out take turns, so a plain fill is slower in tiles than flat until the second half adds the other bank, which needs a host of its own on the arbiter.
 3. **The depth test, issue 992**, on the draw port, with the depth plane and the read-modify-write pipeline.
    Done in issue 992, and section 8's choice made: an entry that tests depth takes a second slot for its plane, so the fetch's length is the entry's, and no list without depth changes.
    Depth is sixteen bits, in a third bank read and written at one address only, the pixel under the walk, so that it is a block RAM of one port; the lowering puts a unit in one process, where a memory with a second write anywhere cannot be a block RAM.
-   So the write-out does not reset the depths: each depth written sets a mark in 4096 bits beside the bank, which the write-out clears, and a depth not marked reads as the farthest.
+   So the write-out does not reset the depths: each depth written has a mark beside the bank, the tile's serial as with the colour, and a depth without this tile's serial reads as the farthest.
    A depth pixel takes three cycles, the read, the comparison, and the write at the same address, rather than a pipeline, so that no forwarding is needed between entries.
    The comparison has a cycle of its own so that the banks' write enables come from a register rather than from a comparison of the block RAM's output.
    A flat list has no depth and draws its depth entries without the test; the GL library rings a tile table whenever `GL_DEPTH_TEST` is on (issue 1273).
