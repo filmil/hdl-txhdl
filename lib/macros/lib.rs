@@ -488,7 +488,7 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
 
 /// `#[derive(Trace)]`: every field is registered under its own name,
 /// or under the name `#[rename("...")]` gives it in the netlist.
-#[proc_macro_derive(Trace, attributes(rename, async_reg))]
+#[proc_macro_derive(Trace, attributes(rename, async_reg, distributed))]
 pub fn derive_trace(input: TokenStream) -> TokenStream {
     let item = parse_item(input);
     let Some(body) = &item.body else {
@@ -497,6 +497,7 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
     let rust = field_names(body);
     let renames = field_renames(body);
     let asyncs = field_flags(body, "async_reg");
+    let distributed = field_flags(body, "distributed");
     // The name each field takes in the netlist and in the trace: its
     // own, or the one it was renamed to, escaped where either target
     // reserves it (issue 497). The trace takes the netlist's name, so
@@ -554,6 +555,7 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
          const RENAMES: &'static [(&'static str, &'static str)] = \
          &[{pairs}];\n\
          const ASYNC_REGS: &'static [&'static str] = &[{asyncs}];\n\
+         const DISTRIBUTED: &'static [&'static str] = &[{distributed}];\n\
          fn fields() -> Vec<(&'static str, \
          Option<::txhdl::comp::trace::Kind>, usize, usize)> {{ \
          let mut __v = Vec::new(); {fields} __v }}\n}}\n\
@@ -569,6 +571,13 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
         asyncs = names
             .iter()
             .zip(&asyncs)
+            .filter(|(_, a)| **a)
+            .map(|(n, _)| format!("\"{n}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+        distributed = names
+            .iter()
+            .zip(&distributed)
             .filter(|(_, a)| **a)
             .map(|(n, _)| format!("\"{n}\""))
             .collect::<Vec<_>>()
@@ -6952,6 +6961,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          // (issue 890).\n\
          init_regs: ::txhdl::netlist::starts::<Self>(),\n\
          async_regs: <Self as ::txhdl::netlist::Fields>::ASYNC_REGS.to_vec(),\n\
+         distributed: <Self as ::txhdl::netlist::Fields>::DISTRIBUTED.to_vec(),\n\
          aliases: Vec::new(),\n\
          nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, \
          usize, &'static str)> = Vec::new(); {nets} n }},\n\

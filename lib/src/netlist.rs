@@ -257,6 +257,11 @@ pub trait Fields {
     /// reports them as a synchroniser (#884). Empty when there are
     /// none.
     const ASYNC_REGS: &'static [&'static str] = &[];
+    /// The memories meant to be distributed RAM, not block RAM:
+    /// `#[distributed]` on a field puts it here, and the check that a
+    /// memory of more than 4096 bits has the ports a block RAM has
+    /// leaves it alone (issue 1285). Empty when there are none.
+    const DISTRIBUTED: &'static [&'static str] = &[];
     /// Every field of the unit, as its name, what it is, how wide it
     /// is, and how many words it holds if it is a memory.
     fn fields() -> Vec<(&'static str, Option<Kind>, usize, usize)>;
@@ -868,6 +873,9 @@ pub struct Lowered {
     /// The registers the netlist marks `ASYNC_REG`, as
     /// [`Fields::ASYNC_REGS`] names them: a synchroniser's stages.
     pub async_regs: Vec<&'static str>,
+    /// The memories [`Fields::DISTRIBUTED`] names: meant to be LUT RAM,
+    /// so not held to a block RAM's ports (issue 1285).
+    pub distributed: Vec<&'static str>,
     /// A port's trace scope when it is not the port's own name: a
     /// channel two units share under one name in the run has a port
     /// name of its own on each side.
@@ -956,6 +964,7 @@ pub fn foreign(
         init: Vec::new(),
         init_regs: Vec::new(),
         async_regs: Vec::new(),
+        distributed: Vec::new(),
         aliases: Vec::new(),
         nets: Vec::new(),
         unregistered: Vec::new(),
@@ -1335,6 +1344,9 @@ impl Lowered {
         // An unregistered channel may not close a loop of wires
         // through the children (issue 1293).
         self.refuse_comb_loops();
+        // A memory a block RAM cannot hold is refused here, not found
+        // in a synthesis an hour later (issue 1285).
+        self.refuse_unblockable_mems();
         // `ASYNC_REG` belongs on a register; on a wire or a memory it
         // would say nothing true (#884).
         for a in &self.async_regs {
@@ -4006,6 +4018,141 @@ impl Lowered {
     }
 }
 
+/// Every address `e` reads `mem` at: each `Index` of the memory's name.
+fn mem_reads(e: &Expr, mem: &str, out: &mut Vec<String>) {
+    match e {
+        Expr::Index(m, a) => {
+            if matches!(m.as_ref(), Expr::Name(n) if n == mem) {
+                let k = format!("{a:?}");
+                if !out.contains(&k) {
+                    out.push(k);
+                }
+            } else {
+                mem_reads(m, mem, out);
+            }
+            mem_reads(a, mem, out);
+        }
+        Expr::Name(_) | Expr::Num(_) | Expr::Bits(_, _) => {}
+        Expr::Bin(_, a, b) | Expr::Cat(a, b) => {
+            mem_reads(a, mem, out);
+            mem_reads(b, mem, out);
+        }
+        Expr::Not(a)
+        | Expr::Slice(a, _, _)
+        | Expr::Sext(a, _)
+        | Expr::Zext(a, _)
+        | Expr::Cast(a, _) => mem_reads(a, mem, out),
+        Expr::Cond(c, a, b) => {
+            mem_reads(c, mem, out);
+            mem_reads(a, mem, out);
+            mem_reads(b, mem, out);
+        }
+    }
+}
+
+/// Every address a body reads `mem` at, into `reads`, and writes it at,
+/// into `writes`, the conditions over the statements included.
+fn mem_sites(
+    body: &[Stmt],
+    mem: &str,
+    reads: &mut Vec<String>,
+    writes: &mut Vec<String>,
+) {
+    let drive = |t: &Target,
+                 e: &Expr,
+                 reads: &mut Vec<String>,
+                 writes: &mut Vec<String>| {
+        if let Target::Word(m, a) = t {
+            if m == mem {
+                let k = format!("{a:?}");
+                if !writes.contains(&k) {
+                    writes.push(k);
+                }
+            }
+            mem_reads(a, mem, reads);
+        }
+        mem_reads(e, mem, reads);
+    };
+    for st in body {
+        match st {
+            Stmt::Drive(t, e) => drive(t, e, reads, writes),
+            Stmt::When(c, a, b) => {
+                mem_reads(c, mem, reads);
+                for (t, e) in a.iter().chain(b) {
+                    drive(t, e, reads, writes);
+                }
+            }
+            Stmt::Case(arms) => {
+                for (c, ds) in arms {
+                    mem_reads(c, mem, reads);
+                    for (t, e) in ds {
+                        drive(t, e, reads, writes);
+                    }
+                }
+            }
+            Stmt::If(arms, els) => {
+                for (c, ss) in arms {
+                    mem_reads(c, mem, reads);
+                    mem_sites(ss, mem, reads, writes);
+                }
+                mem_sites(els, mem, reads, writes);
+            }
+            Stmt::Guard(c) | Stmt::Check(_, c, _) => mem_reads(c, mem, reads),
+        }
+    }
+}
+
+impl Lowered {
+    /// Refuse a memory of more than 4096 bits whose accesses no block
+    /// RAM has the ports for (issue 1285). A block RAM has two ports,
+    /// and a read at the address a write is at shares the write's port,
+    /// as a read-modify-write does. So it holds a memory written at one
+    /// address and read at one other, or read at two and not written;
+    /// a memory written at two addresses, or reached at three, Vivado
+    /// builds from LUTs, and says so to no test. A smaller memory, a
+    /// register file or a FIFO, is meant to be LUT RAM, as is a field
+    /// marked `#[distributed]`.
+    fn refuse_unblockable_mems(&self) {
+        for (m, k, w, d) in &self.fields {
+            if *k != Some(Kind::Mem)
+                || w * d <= 4096
+                || self.distributed.contains(m)
+            {
+                continue;
+            }
+            let (mut reads, mut writes) = (Vec::new(), Vec::new());
+            for p in &self.procs {
+                mem_sites(&p.body, m, &mut reads, &mut writes);
+            }
+            for (_, e) in &self.wires {
+                mem_reads(e, m, &mut reads);
+            }
+            let mut ports = writes.clone();
+            for r in &reads {
+                if !ports.contains(r) {
+                    ports.push(r.clone());
+                }
+            }
+            let too_many = writes.len() > 1 || ports.len() > 2;
+            if too_many {
+                panic!(
+                    "memory `{m}` of `{}`, {d} words of {w} bits, is reached \
+                     at {} addresses and written at {}, which no block RAM \
+                     has the ports for, so Vivado would build it from LUTs. \
+                     Read it at one address a cycle beside the write's, and \
+                     write it at one, or mark the field #[distributed] if LUT \
+                     RAM is meant (issue 1285). Read at: {}. Written at: {}",
+                    self.name,
+                    ports.len(),
+                    writes.len(),
+                    reads.join("; "),
+                    writes.join("; ")
+                );
+            }
+        }
+    }
+}
+
 /// Every node reachable from `from` along `edges`, `from` included.
 fn reachable(edges: &[(String, String)], from: &str) -> Vec<String> {
     let mut seen = vec![from.to_string()];
@@ -4069,6 +4216,7 @@ mod tests {
             init: Vec::new(),
             init_regs: Vec::new(),
             async_regs: Vec::new(),
+            distributed: Vec::new(),
             aliases: Vec::new(),
             nets: Vec::new(),
             unregistered: Vec::new(),
