@@ -137,14 +137,14 @@ pub fn dts_with(chosen: &Chosen) -> String {
     if let Some(args) = &chosen.bootargs {
         extra.push_str(&format!("\n\t\tbootargs = \"{args}\";"));
     }
-    let (ddr, ddr_len) = range::<8, BoardMap>(named::<8, BoardMap>("DDR3"));
-    let (rom, rom_len) = range::<8, BoardMap>(named::<8, BoardMap>("boot"));
+    let (ddr, ddr_len) = range::<9, BoardMap>(named::<9, BoardMap>("DDR3"));
+    let (rom, rom_len) = range::<9, BoardMap>(named::<9, BoardMap>("boot"));
     let (dmem, dmem_len) =
-        range::<8, BoardMap>(named::<8, BoardMap>("data memory"));
+        range::<9, BoardMap>(named::<9, BoardMap>("data memory"));
     let (clint, clint_len) =
-        range::<8, BoardMap>(named::<8, BoardMap>("timer"));
+        range::<9, BoardMap>(named::<9, BoardMap>("timer"));
     let (plic, plic_len) =
-        range::<8, BoardMap>(named::<8, BoardMap>("interrupt controller"));
+        range::<9, BoardMap>(named::<9, BoardMap>("interrupt controller"));
     let (uart, uart_len) = range::<10, SlotMap>(named::<10, SlotMap>("serial"));
     let (mac, mac_len) =
         range::<10, SlotMap>(named::<10, SlotMap>("Ethernet port's registers"));

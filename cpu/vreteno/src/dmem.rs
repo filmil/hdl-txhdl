@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The data memory as an AXI peripheral: 1024 words at `DATA_BASE` in
-//! four memories of a byte, one per lane, so that a store of a byte or
-//! a half writes its lanes and reads nothing.
+//! The data memory as an AXI peripheral: `W` words, 1024 at
+//! `DATA_BASE` on the board, in four memories of a byte, one per lane,
+//! so that a store of a byte or a half writes its lanes and reads
+//! nothing. The board's stack memory is the same unit with 16384 words
+//! (issue 1278).
 //!
 //! A read goes into the memory's own register at the edge, the
 //! synchronous read a block RAM has, and is answered the cycle after.
@@ -22,12 +24,19 @@ use txhdl_parts::bus::axi::{Answer, PerPort, Resp, R};
 /// Words of data memory.
 pub const DMEM_WORDS: usize = 1024;
 
+/// `I` is the width of the link's identifier, `W` the words, a power
+/// of two, and `AW` the bits that number them, so that `W` is
+/// `1 << AW`. The data memory is the defaults.
 #[derive(Trace, Default)]
-pub struct Dmem<const I: usize> {
-    pub lane0: Mem<U<8>, DMEM_WORDS>,
-    pub lane1: Mem<U<8>, DMEM_WORDS>,
-    pub lane2: Mem<U<8>, DMEM_WORDS>,
-    pub lane3: Mem<U<8>, DMEM_WORDS>,
+pub struct Dmem<
+    const I: usize,
+    const AW: usize = 10,
+    const W: usize = DMEM_WORDS,
+> {
+    pub lane0: Mem<U<8>, W>,
+    pub lane1: Mem<U<8>, W>,
+    pub lane2: Mem<U<8>, W>,
+    pub lane3: Mem<U<8>, W>,
     /// The word a read landed in, whose identifier it answers, and
     /// whether it is to be answered.
     pub word: Reg<U<32>>,
@@ -36,15 +45,15 @@ pub struct Dmem<const I: usize> {
     /// The beats of a read burst left after the one in `word`, and
     /// the word the next of them reads.
     pub rleft: Reg<U<8>>,
-    pub raddr: Reg<U<10>>,
+    pub raddr: Reg<U<AW>>,
     /// A write taken and waiting for its beat: where it goes and which
     /// identifier answers it.
     pub pend: Reg<U<1>>,
-    pub paddr: Reg<U<10>>,
+    pub paddr: Reg<U<AW>>,
     pub pid: Reg<U<I>>,
 }
 
-impl<const I: usize> Dmem<I> {
+impl<const I: usize, const AW: usize, const W: usize> Dmem<I, AW, W> {
     /// A memory holding `bytes` from its base before the first cycle:
     /// a compiled program's initialised data. Its constants live in
     /// the boot memory beside the code, which is on the bus read-only
@@ -54,7 +63,7 @@ impl<const I: usize> Dmem<I> {
     pub fn with(bytes: &[u8]) -> Self {
         // A drive through `at` is deferred to the edge, as a register's
         // is, so the lanes are built whole and handed to `Mem::with`.
-        let words = bytes.len().div_ceil(4).min(DMEM_WORDS);
+        let words = bytes.len().div_ceil(4).min(W);
         let lane = |k: usize| -> Vec<U<8>> {
             (0..words)
                 .map(|w| U::from(*bytes.get(w * 4 + k).unwrap_or(&0)))
@@ -71,7 +80,7 @@ impl<const I: usize> Dmem<I> {
 
     /// A word of the memory, for the run and the test to look at.
     pub fn data_word(&self, at: usize) -> u32 {
-        let lane = |m: &Mem<U<8>, DMEM_WORDS>| m.read(at).raw() as u32;
+        let lane = |m: &Mem<U<8>, W>| m.read(at).raw() as u32;
         lane(&self.lane0)
             | lane(&self.lane1) << 8
             | lane(&self.lane2) << 16
@@ -80,7 +89,7 @@ impl<const I: usize> Dmem<I> {
 }
 
 #[lower]
-impl<const I: usize> Unit for Dmem<I> {
+impl<const I: usize, const AW: usize, const W: usize> Unit for Dmem<I, AW, W> {
     async fn run(&mut self, bus: PerPort<32, 32, 4, I>, _o: ()) {
         loop {
             DefaultClock::rising().await;
@@ -89,7 +98,7 @@ impl<const I: usize> Unit for Dmem<I> {
             let held = self.pend.get() == 1;
             let queued = self.answer.to_bool();
             // The word this burst names, within the memory.
-            let at = q.addr.slice::<2, 10>();
+            let at = q.addr.slice::<2, AW>();
             // A read is taken when the register it lands in is free or
             // is sending a burst's last beat this cycle; a write is
             // taken when no other write is waiting for its beat.

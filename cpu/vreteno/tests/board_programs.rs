@@ -240,7 +240,7 @@ fn hal_map() -> Vec<(String, usize)> {
 fn every_base_in_the_hal_is_where_the_router_puts_it() {
     let board = |i: usize| (BoardMap::RANGES[i].0, BoardMap::NAMES[i]);
     let slot = |i: usize| (SlotMap::RANGES[i].0, SlotMap::NAMES[i]);
-    let want: [(&str, (usize, &str)); 15] = [
+    let want: [(&str, (usize, &str)); 16] = [
         ("ROM", board(5)),
         ("DMEM", board(0)),
         ("CLINT", board(1)),
@@ -256,6 +256,7 @@ fn every_base_in_the_hal_is_where_the_router_puts_it() {
         ("FLASH", board(7)),
         ("PLIC", board(4)),
         ("DDR3", board(3)),
+        ("STACK", board(8)),
     ];
     let hal = hal_map();
     for (name, value) in &hal {

@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: Dmem
-\datasheet{Dmem}{Vreteno's data memory: 1024 words behind an AXI peripheral end.}
+\datasheet{Dmem}{Vreteno's data memory and stack memory: a block RAM of words behind an AXI peripheral end.}
 
 \dsfacts{\code{cpu/vreteno/src/dmem.rs}}{\code{vreteno32::dmem::Dmem}}%
 {\code{//docs:vreteno}}
@@ -8,9 +8,12 @@
 \subsection*{Function}
 
 \code{Dmem} is the data memory of the Vreteno machine, a device on its
-bus. It holds \code{DMEM\_WORDS}, 1024 words, in four memories of a
-byte, \code{lane0} to \code{lane3}, one per lane of the word. A store
-of a byte or a half writes only its lanes and reads nothing.
+bus. It holds \code{W} words, \code{DMEM\_WORDS}, 1024, by default,
+in four memories of a byte, \code{lane0} to \code{lane3}, one per
+lane of the word. A store of a byte or a half writes only its lanes and
+reads nothing. The board has a second, \code{Dmem<5, 14, 16384>}, the
+stack memory: 64~KiB where a program loaded into the DDR3 keeps its
+stack, since the DDR3 is not cached for data (issue 1278).
 
 It is the peripheral client of an \code{AxiPer}, and its link is one
 port, \code{bus}, a \code{PerPort} of the four channels: it takes
@@ -18,7 +21,8 @@ requests on \code{bus\_req} and write beats on \code{bus\_w}, and
 answers on \code{bus\_ans} for a write and \code{bus\_r} for a read.
 It answers a read burst of incrementing words a beat a cycle, which
 is what the core's instruction cache fills its lines with (issue 1021),
-and single-beat writes, which is all the core makes.
+and write bursts, whose beats go to consecutive words and which it
+answers once, after the last beat (issue 1208).
 
 \subsection*{Parameters}
 
@@ -30,32 +34,40 @@ Parameter & Meaning \\
 \code{I} & The width of the AXI identifier on \code{bus\_req},
 \code{bus\_ans} and \code{bus\_r}, in bits. The tables use 4, as the board
 does since its bus has two hosts behind an arbiter (issue 241). \\
+\code{AW} & The bits that number the words, 10 by default. \\
+\code{W} & The words, \code{1 << AW}, 1024 by default. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 \subsection*{Address map}
 
-The word a burst names is bits 11 to 2 of its address. Lane $k$ is
+The word a burst names is bits \code{AW + 1} to 2 of its address,
+11 to 2 by default. Lane $k$ is
 byte $k$ of the word: \code{lane0} is bits 7 to 0, \code{lane3} bits 31
 to 24. The memory looks at no other address bits.
 
 On the board, \code{BoardRouter} sends it the page at \code{0x1000}
 with mask \code{0xffff\_f000}, so addresses \code{0x1000} to
 \code{0x1ffc} are words 0 to 1023. The model's \code{DATA\_BASE} is
-the same \code{0x1000}.
+the same \code{0x1000}. The stack memory is the 64~KiB at
+\code{0x1\_0000} with mask \code{0xffff\_0000}, the router's ninth
+port and the HAL's \code{map::STACK}, and \code{vreteno\_ram.ld} puts
+a loaded program's stack at its top, \code{0x2\_0000}.
 
 \dstables{Dmem}
 
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item A write is taken when no other write is waiting for its beat.
-Its word and identifier go into \code{paddr} and \code{pid}, and
-\code{pend} is set.
-\item The held write's beat is taken when it has arrived and
-\code{bus\_ans} has room. Each lane whose strobe bit is set takes its byte
-of the beat, and \code{bus\_ans} sends \code{OKAY} with \code{pid}.
+\item A write is taken when no other write is held. Its first word
+and identifier go into \code{paddr} and \code{pid}, and \code{pend}
+is set.
+\item The held write's beats are taken as they arrive, the last only
+when \code{bus\_ans} has room. Each lane whose strobe bit is set takes
+its byte of the beat, and \code{paddr} moves to the next word. The
+last beat clears \code{pend}, and \code{bus\_ans} sends \code{OKAY}
+with \code{pid}.
 \item A read is taken when no write is waiting and the answer register
 is free or is being emptied in this cycle. The four lanes are read
 into \code{word} at the edge, the synchronous read a block RAM has.
@@ -66,8 +78,7 @@ into \code{word} at the edge, the synchronous read a block RAM has.
 \code{word} and counts \code{rleft} down, and the beat with
 \code{rleft} at zero has \code{last} set. A new read is taken only
 when the answer register is free or is sending a burst's last beat.
-\item While a write waits for its beat, no request of either kind is
-taken.
+\item While a write is held, no request of either kind is taken.
 \item \code{Dmem::with} fills the lanes from bytes before the first
 cycle. \code{data\_word} reads a word back for a run or a test.
 \end{itemize}
@@ -90,17 +101,18 @@ of \code{//cpu/vreteno:vreteno} under nvc and Verilator:
 
 \subsection*{Used by}
 
-\code{Board}, as \code{dmem} behind the tracker \code{pdmem}. The
+\code{Board}, as \code{dmem} behind the tracker \code{pdmem}, and
+as \code{stack} behind \code{pstack}. The
 demonstration \code{//cpu/vreteno:vreteno}, the lockstep test and
 \code{run.rs}. \code{board\_netlist} writes a program's data into
 \code{lane0} to \code{lane3} of the board's netlist.
 
 \subsection*{Limits}
 
-It serves bursts of one beat and does not look at a burst's length. It
+It does not read a write burst's length: the last beat ends it. It
 checks no address, since the router sends it only its own range, so
-an address beyond word 1023 wraps. One write is held at a time. Nothing
+an address beyond word \code{W} $-$ 1 wraps. One write is held at a time. Nothing
 on the machine fills it at run time except stores, so a program's
 constants have to be in it before the first cycle.
 \code{cpu/vreteno/board/ax7a200.xdc} constrains the four lanes to block
-RAM.
+RAM, the stack memory's as well.
