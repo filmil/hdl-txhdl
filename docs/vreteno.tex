@@ -1482,11 +1482,30 @@ the word's physical address where it would have sent it to the bus,
 and the cycle after reads the line's tag and the word. A hit puts the
 word in the buffer; a miss asks the bus for the line as one burst of
 four, writes each beat into it, and looks it up again. The data memory
-answers such a burst a beat a cycle. The same loop from the data
-memory now runs at 4.093 cycles an instruction, which
-\code{//cpu/vreteno:icache\_test} measures; most of what is left is
-the buffer, which serves one instruction's words and not the next
-one's, so each instruction is a lookup of its own (issue~\#1187).
+answers such a burst a beat a cycle. That brought the loop from the
+data memory to 4.093 cycles an instruction, most of what was left
+being the buffer, which served one instruction's words and not the
+next one's, so each instruction was a lookup of its own.
+
+So a hit fills both of the buffer's words when the line holds the
+next one, and the word after the buffer's one is asked for ahead of
+time when it is in the same line (issue~\#1187). An instruction is
+read from the first word only. When the counter moves on from an
+instruction there to one that begins in the second, the buffer shifts
+along at that edge, the second word and its fault marks moving to the
+first; if the second word is still out, it goes into the first place
+when it comes back. A jump into the second word misses and fetches it
+again, which is rare. The first version compared the counter with
+both words' addresses and chose between them before the instruction
+register, and the flagship missed timing on that choice
+(issue~\#1279); shifting at the edge keeps one compare, of a register
+with the counter, in front of the read and the fetch. The loop runs at
+3.093 cycles an instruction, which \code{//cpu/vreteno:icache\_test}
+measures. Asking ahead alone moved nothing, since one fetch is out at
+a time and a lookup takes three cycles: two words from one lookup is
+what pays. A fetch can now be out under an instruction that is ready
+to run, so a load waits while one is: the core still holds one read
+at a time.
 
 A store does not reach the cache, as the specification allows, so code
 written by stores runs after a \code{fence.i}, which clears the tags,
