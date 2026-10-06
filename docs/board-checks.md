@@ -399,6 +399,31 @@ Pass, in this order:
 A picture with the bars but no logo, or bars of the wrong colours, points at the pixel format, `0x00RRGGBB`.
 Put the log, and a photograph of the screen, on #151.
 
+### What a full frame costs to update, #151
+
+The same flagship and setup as the scanout check above.
+Nothing is written to flash.
+
+```sh
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/fbtime_ram_bin.bin --seconds=10 \
+    2>&1 | tee board-151-fbtime.log
+```
+
+The program times two ways of updating the whole screen with the cycle counter.
+It paints the video peripheral's 160 by 120 framebuffer, a register write a pixel.
+Then it paints a 640 by 480 frame into the DDR3 and switches the scanout to it.
+
+Pass, in this order:
+* `fb time`.
+* `fb regs` with three numbers: the cycles, the cycles a pixel in hundredths, and a 640 by 480 screen's cycles at that rate.
+* `fb ddr3` with the same three.
+* `fb done`.
+* On the monitor, after `fb ddr3`: a pattern of colour ramps over the whole screen.
+
+The comparison #151 asks for is the third number of each line: a full screen through the peripheral's registers against a full screen through the DDR3.
+Put the log on #151.
+
 ### Razboj on the board, #985 and #1169
 
 The flagship from a `main` that holds #985 (PR 1160), programmed over JTAG, with a monitor on the HDMI connector and the Ethernet cable in, as for the scanout above.
