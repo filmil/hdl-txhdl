@@ -496,6 +496,17 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Unregistered channels (issue 1293): a chain of three stages, its
+# inner channels registered and then unregistered:
+#   bazel run //lib/examples:ex_unreg
+rust_binary(
+    name = "ex_unreg",
+    srcs = ["ex_unreg.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Two clocks in one netlist, checked against one run: a counter on
 # each, and a parent that holds both. The test of issue 131:
 #   bazel run //lib/examples:ex_twoclock
@@ -1381,6 +1392,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "stream_alu.rs",
         "ex_stream_alu.rs",
         "ex_compose.rs",
+        "ex_unreg.rs",
         "ex_twoclock.rs",
         "ex_slowfirst.rs",
         "ex_blackbox.rs",

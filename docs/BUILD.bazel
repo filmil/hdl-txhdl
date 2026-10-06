@@ -1879,6 +1879,27 @@ waveform(
     until = 59,
 )
 
+# Unregistered channels (issue 1293): the same chain of three stages,
+# its inner channels registered and unregistered, both netlists
+# checked against the run.
+waveform(
+    name = "unreg",
+    example = "//lib/examples:ex_unreg",
+    lowered = [
+        ("chain", "chain"),
+        ("chain_u", "chainu"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//req/rx_valid=>req",
+        "//res/rx_valid=>res",
+        "//requ/rx_valid=>req_u",
+        "//resu/rx_valid=>res_u",
+        "//chainu/ans/full=>full_u",
+    ],
+    until = 16,
+)
+
 waveform(
     name = "compose",
     example = "//lib/examples:ex_compose",
