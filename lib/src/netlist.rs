@@ -880,6 +880,11 @@ pub struct Lowered {
     /// sender's three nets on one side and the receiver's on the other;
     /// a wire is one net.
     pub nets: Vec<(String, Kind, usize, &'static str)>,
+    /// The channels among `nets` that are unregistered (issue 1293):
+    /// each an instance of the netlist's second channel module,
+    /// `<top>_txhdl_chan_u`, whose receiver sees the sender's `valid`
+    /// and `data` in the same cycle while its buffer is empty.
+    pub unregistered: Vec<String>,
     /// The children of a unit of units, each a module of its own
     /// instantiated once here.
     pub instances: Vec<Instance>,
@@ -953,6 +958,7 @@ pub fn foreign(
         async_regs: Vec::new(),
         aliases: Vec::new(),
         nets: Vec::new(),
+        unregistered: Vec::new(),
         instances: Vec::new(),
         foreign: Some(Foreign {
             module: module.to_string(),
@@ -1629,6 +1635,21 @@ impl Lowered {
         self.nets.iter().any(|(_, k, _, _)| matches!(k, Kind::Tx))
             || self.instances.iter().any(|i| i.unit.has_chan_nets())
     }
+    /// Whether this netlist, or a child of it, has an unregistered
+    /// channel, and so the second channel module (issue 1293).
+    fn has_unreg_nets(&self) -> bool {
+        !self.unregistered.is_empty()
+            || self.instances.iter().any(|i| i.unit.has_unreg_nets())
+    }
+    /// The module a channel net is an instance of: the unregistered one
+    /// for a net among `unregistered`, else the registered one.
+    fn chan_module(&self, chan: &str, net: &str) -> String {
+        if self.unregistered.iter().any(|u| u == net) {
+            format!("{chan}_u")
+        } else {
+            chan.to_string()
+        }
+    }
     /// Every module or entity name this netlist defines or
     /// instantiates, its own and its children's, foreign ones included.
     fn unit_names(&self, out: &mut Vec<String>) {
@@ -1644,9 +1665,12 @@ impl Lowered {
     /// one in any case is refused, naming both.
     fn chan_name(&self) -> String {
         let chan = format!("{}_txhdl_chan", self.name);
+        let unreg = format!("{chan}_u");
         let mut names = Vec::new();
         self.unit_names(&mut names);
-        if let Some(n) = names.iter().find(|n| n.eq_ignore_ascii_case(&chan)) {
+        if let Some(n) = names.iter().find(|n| {
+            n.eq_ignore_ascii_case(&chan) || n.eq_ignore_ascii_case(&unreg)
+        }) {
             panic!(
                 "`{}` names its channel module `{chan}`, which the unit \
                  `{n}` already is; rename the field that holds `{n}`",
@@ -2162,6 +2186,10 @@ impl Lowered {
             out.push('\n');
             out.push_str(&CHAN_VERILOG.replace("txhdl_chan", &chan));
         }
+        if esc.has_unreg_nets() {
+            out.push('\n');
+            out.push_str(&CHAN_VERILOG_U.replace("txhdl_chan", &chan));
+        }
         out
     }
     /// The `let`s the netlist named differently, as comment lines in
@@ -2285,13 +2313,14 @@ impl Lowered {
                      wire {n}_tx_ready;\n  \
                      wire {r}{n}_rx_data;\n  wire {n}_rx_valid;\n  \
                      wire {n}_rx_ready;\n  \
-                     {chan} #(.W({w})) {n}_chan(\n    .clk({c}), \
+                     {m} #(.W({w})) {n}_chan(\n    .clk({c}), \
                      .rst({rs}),\n    \
                      .tx_data({n}_tx_data), .tx_valid({n}_tx_valid), \
                      .tx_ready({n}_tx_ready),\n    \
                      .rx_data({n}_rx_data), .rx_valid({n}_rx_valid), \
                      .rx_ready({n}_rx_ready)\n  );",
                     r = range(*w),
+                    m = self.chan_module(chan, n),
                     rs = crate::comp::RESET_NAME
                 )
                 .unwrap(),
@@ -2564,6 +2593,10 @@ impl Lowered {
             out.push_str(&CHAN_VHDL.replace("txhdl_chan", &chan));
             out.push('\n');
         }
+        if esc.has_unreg_nets() {
+            out.push_str(&CHAN_VHDL_U.replace("txhdl_chan", &chan));
+            out.push('\n');
+        }
         out.push_str(&esc.vhdl_in(&chan));
         out
     }
@@ -2780,13 +2813,14 @@ impl Lowered {
                 };
                 writeln!(
                     out,
-                    "  {n}_chan : entity work.{chan} \
+                    "  {n}_chan : entity work.{m} \
                      generic map (W => {w}) port map (\n    clk => {c}, \
                      rst => {rs},\n    \
                      {td} => {n}_tx_data, tx_valid => {n}_tx_valid, \
                      tx_ready => {n}_tx_ready,\n    \
                      {rd} => {n}_rx_data, rx_valid => {n}_rx_valid, \
                      rx_ready => {n}_rx_ready\n  );",
+                    m = self.chan_module(chan, n),
                     rs = crate::comp::RESET_NAME
                 )
                 .unwrap();
@@ -3144,6 +3178,100 @@ module txhdl_chan #(parameter W = 1)(
   assign rx_valid = head_v;
   assign tx_ready = ~tail_v;
 endmodule
+";
+
+/// The unregistered channel (issue 1293): the same buffer of two, with
+/// the receiver's `valid` and `data` passing the sender's straight
+/// through while the buffer is empty. An offer the receiver takes in
+/// that cycle, `thru`, does not enter the buffer; one it does not take
+/// is buffered as the registered channel's is. `tx_ready` is the tail's
+/// room, a register, so no path runs from the receiver back to the
+/// sender. Named `<top>_txhdl_chan_u`.
+const CHAN_VERILOG_U: &str = "`timescale 1ns/1ps
+module txhdl_chan_u #(parameter W = 1)(
+  input clk,
+  input rst,
+  input [W-1:0] tx_data, input tx_valid, output tx_ready,
+  output [W-1:0] rx_data, output rx_valid, input rx_ready
+);
+  reg [W-1:0] head = 0;
+  reg [W-1:0] tail = 0;
+  reg head_v = 0;
+  reg tail_v = 0;
+  wire thru = tx_valid & ~head_v & rx_ready;
+  wire push = tx_valid & ~thru;
+  wire pop = rx_ready & head_v;
+  wire hv1 = pop ? tail_v : head_v;
+  wire [W-1:0] h1 = pop ? tail : head;
+  wire tv1 = pop ? 1'b0 : tail_v;
+  always @(posedge clk) begin
+    if (rst) begin
+      head_v <= 1'b0;
+      tail_v <= 1'b0;
+    end else begin
+      head_v <= hv1 | push;
+      head <= (push & ~hv1) ? tx_data : h1;
+      tail_v <= tv1 | (push & hv1);
+      tail <= (push & hv1) ? tx_data : tail;
+    end
+  end
+  assign rx_data = head_v ? head : tx_data;
+  assign rx_valid = head_v | tx_valid;
+  assign tx_ready = ~tail_v;
+endmodule
+";
+
+/// The unregistered channel in VHDL, named per netlist the same way.
+const CHAN_VHDL_U: &str = "library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+entity txhdl_chan_u is
+  generic (W : natural);
+  port (
+    clk : in std_logic;
+    rst : in std_logic;
+    tx_data : in unsigned(W - 1 downto 0);
+    tx_valid : in std_logic;
+    tx_ready : out std_logic;
+    rx_data : out unsigned(W - 1 downto 0);
+    rx_valid : out std_logic;
+    rx_ready : in std_logic
+  );
+end entity;
+
+architecture rtl of txhdl_chan_u is
+  signal head, tail : unsigned(W - 1 downto 0) := (others => '0');
+  signal head_v, tail_v : std_logic := '0';
+begin
+  process (clk)
+    variable h, t : unsigned(W - 1 downto 0);
+    variable hv, tv, push : std_logic;
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        head_v <= '0'; tail_v <= '0';
+      else
+        h := head; t := tail; hv := head_v; tv := tail_v;
+        push := tx_valid;
+        if tx_valid = '1' and head_v = '0' and rx_ready = '1' then
+          push := '0';
+        end if;
+        if rx_ready = '1' and head_v = '1' then
+          h := tail; hv := tail_v; tv := '0';
+        end if;
+        if push = '1' then
+          if hv = '0' then h := tx_data; hv := '1';
+          else t := tx_data; tv := '1'; end if;
+        end if;
+        head <= h; tail <= t; head_v <= hv; tail_v <= tv;
+      end if;
+    end if;
+  end process;
+  rx_data <= head when head_v = '1' else tx_data;
+  rx_valid <= head_v or tx_valid;
+  tx_ready <= not tail_v;
+end architecture;
 ";
 
 /// The same channel in VHDL, an entity with the width as a generic,
@@ -3616,6 +3744,7 @@ mod tests {
             async_regs: Vec::new(),
             aliases: Vec::new(),
             nets: Vec::new(),
+            unregistered: Vec::new(),
             instances: Vec::new(),
             foreign: None,
         }
