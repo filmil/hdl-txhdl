@@ -1,0 +1,162 @@
+// SPDX-License-Identifier: Apache-2.0
+//! What the lowering refuses of a memory a block RAM cannot hold
+//! (issue 1285). A block RAM has two ports, and a read at the address a
+//! write is at shares the write's port. A memory of more than 4096 bits
+//! written at two addresses, or reached at three, is refused when it is
+//! lowered, naming it; one a block RAM holds is lowered; a small one, or
+//! one marked `#[distributed]`, is left alone.
+use txhdl::comp::{Clock, DefaultClock, Mem, Out, Reg, Unit};
+use txhdl::types::U;
+use txhdl::{lower, with, Trace};
+
+/// Read at two addresses beside a write at a third: `Dmem` before
+/// issue 1301, which read at a new read's and a burst's next and wrote
+/// at a held write's.
+#[derive(Trace, Default)]
+pub struct TwoReads {
+    pub m: Mem<U<32>, 1024>,
+    pub a: Reg<U<10>>,
+    pub b: Reg<U<10>>,
+    pub c: Reg<U<10>>,
+}
+
+#[lower]
+impl Unit for TwoReads {
+    async fn run(&mut self, _i: (), out: Out<U<32>>) {
+        loop {
+            DefaultClock::rising().await;
+            out.set(self.m.read(self.a.get()) ^ self.m.read(self.b.get()));
+            with!(self <= {
+                m.at(self.c.get()): U::<32>::from(1u8),
+                c: self.c.get() + 5,
+                a: self.a.get() + 1,
+                b: self.b.get() + 3,
+            });
+        }
+    }
+}
+
+/// Written at two addresses: Razboj's depth bank before issue 992.
+#[derive(Trace, Default)]
+pub struct TwoWrites {
+    pub m: Mem<U<32>, 1024>,
+    pub a: Reg<U<10>>,
+    pub b: Reg<U<10>>,
+    pub t: Reg<U<1>>,
+}
+
+#[lower]
+impl Unit for TwoWrites {
+    async fn run(&mut self, _i: (), out: Out<U<32>>) {
+        loop {
+            DefaultClock::rising().await;
+            out.set(self.m.read(self.a.get()));
+            with!(self <= {
+                t: !self.t.get(),
+                self.t.get() == 0 ? m.at(self.a.get()): U::<32>::from(1u8),
+                self.t.get() == 1 ? m.at(self.b.get()): U::<32>::from(2u8),
+                a: self.a.get() + 1,
+                b: self.b.get() + 3,
+            });
+        }
+    }
+}
+
+/// A read-modify-write at one address beside a read at another: two
+/// ports, which a block RAM has.
+#[derive(Trace, Default)]
+pub struct Rmw {
+    pub m: Mem<U<32>, 1024>,
+    pub a: Reg<U<10>>,
+    pub b: Reg<U<10>>,
+}
+
+#[lower]
+impl Unit for Rmw {
+    async fn run(&mut self, _i: (), out: Out<U<32>>) {
+        loop {
+            DefaultClock::rising().await;
+            out.set(self.m.read(self.b.get()));
+            with!(self <= {
+                m.at(self.a.get()): self.m.read(self.a.get()) + 1,
+                a: self.a.get() + 1,
+                b: self.b.get() + 3,
+            });
+        }
+    }
+}
+
+/// Two reads beside a write, but marked LUT RAM on purpose.
+#[derive(Trace, Default)]
+pub struct Marked {
+    #[distributed]
+    pub m: Mem<U<32>, 1024>,
+    pub a: Reg<U<10>>,
+    pub b: Reg<U<10>>,
+}
+
+#[lower]
+impl Unit for Marked {
+    async fn run(&mut self, _i: (), out: Out<U<32>>) {
+        loop {
+            DefaultClock::rising().await;
+            out.set(self.m.read(self.a.get()) ^ self.m.read(self.b.get()));
+            with!(self <= {
+                m.at(self.a.get()): U::<32>::from(1u8),
+                a: self.a.get() + 1,
+                b: self.b.get() + 3,
+            });
+        }
+    }
+}
+
+/// Two reads beside a write in 4096 bits: small enough to be LUT RAM.
+#[derive(Trace, Default)]
+pub struct Small {
+    pub m: Mem<U<32>, 128>,
+    pub a: Reg<U<7>>,
+    pub b: Reg<U<7>>,
+}
+
+#[lower]
+impl Unit for Small {
+    async fn run(&mut self, _i: (), out: Out<U<32>>) {
+        loop {
+            DefaultClock::rising().await;
+            out.set(self.m.read(self.a.get()) ^ self.m.read(self.b.get()));
+            with!(self <= {
+                m.at(self.a.get()): U::<32>::from(1u8),
+                a: self.a.get() + 1,
+                b: self.b.get() + 3,
+            });
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "memory `m` of `two_reads`, 1024 words of 32 bits, \
+                           is reached at 3 addresses and written at 1")]
+fn two_reads_beside_a_write_are_refused() {
+    let _ = TwoReads::lowered("two_reads");
+}
+
+#[test]
+#[should_panic(expected = "is reached at 2 addresses and written at 2")]
+fn two_writes_are_refused() {
+    let _ = TwoWrites::lowered("two_writes");
+}
+
+#[test]
+fn a_read_modify_write_beside_a_read_is_lowered() {
+    let _ = Rmw::lowered("rmw");
+}
+
+#[test]
+fn a_memory_marked_distributed_is_lowered() {
+    let _ = Marked::lowered("marked");
+}
+
+#[test]
+fn a_small_memory_is_lowered() {
+    let _ = Small::lowered("small");
+}

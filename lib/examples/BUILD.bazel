@@ -517,6 +517,16 @@ rust_test(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# What the lowering refuses of a memory no block RAM can hold (issue
+# 1285): two reads beside a write, two writes; and what it lowers.
+rust_test(
+    name = "mem_ports_test",
+    srcs = ["mem_ports_test.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Two clocks in one netlist, checked against one run: a counter on
 # each, and a parent that holds both. The test of issue 131:
 #   bazel run //lib/examples:ex_twoclock
