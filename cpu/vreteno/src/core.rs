@@ -519,10 +519,11 @@ pub struct Csrs {
 
 /// Which of the CSRs that read as anything but zero a number names:
 /// one to thirty-five, in the order [`csr_read_at`] reads them, and
-/// zero for every other number, which reads as zero. The core finds it a cycle early,
-/// from the next instruction's word, so that the read is a select on
-/// a register rather than the number's decode followed by the select
-/// (issue 1260).
+/// zero for every other number, which reads as zero. The core finds it
+/// from the instruction register, into a register of its own, so that
+/// the read is a select on a register rather than the number's decode
+/// followed by the select (issue 1260); a CSR instruction waits a cycle
+/// for it (issue 1295).
 #[lower]
 fn csr_index(f12: U<12>) -> U<6> {
     select!(f12.raw() => {
@@ -868,11 +869,16 @@ pub struct Vreteno<const IW: usize> {
     /// and 1288).
     pub m_a: Reg<Bit>,
     pub m_b: Reg<Bit>,
-    /// Which CSR the instruction reads, as [`csr_index`] gives it: found a
-    /// cycle early from the next instruction's number, or the debug
-    /// module's in debug mode, so that the read starts at a register
-    /// (issue 1260).
+    /// Which CSR the instruction reads, as [`csr_index`] gives it: found from
+    /// the instruction register's number, or the debug module's in debug
+    /// mode, so that the read starts at a register (issue 1260). It lags
+    /// the instruction register by a cycle, which a CSR instruction waits
+    /// out (issue 1295).
     pub csr_at: Reg<U<6>>,
+    /// The instruction register was loaded at the last edge: the
+    /// instruction in execute is in its first cycle, before `csr_at`
+    /// has caught up with it (issue 1295).
+    pub ir_new: Reg<Bit>,
     /// An exception the instruction in execute raised last cycle, and
     /// the handler it goes to: the fetch is redirected there a cycle
     /// after the trap, so that the decision, which settles behind the
@@ -1418,8 +1424,17 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // not attach to it (issue 930). The `wfi` has retired, so
             // the core halts on the instruction after it.
             let wake = (pend != 0) | haltreq;
+            // A CSR instruction waits its first cycle in execute: its CSR
+            // is found from the instruction register, a register, and so
+            // is ready a cycle after the word arrives (issue 1295).
+            let stall_csr = self.valid
+                & Bit::from(opcode == 0x73)
+                & Bit::from(f3 != 0)
+                & self.ir_new
+                & !in_debug;
             self.stall.set(
                 stall_ld
+                    | stall_csr
                     | stall_m
                     | stall_fence
                     | stall_mem
@@ -2781,7 +2796,6 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 !rst & !wb_fault & !stall & !stop & !(in_debug | dbg_take);
             let rs1_next = mux(load_ir, fetched.slice::<15, 5>(), rs1);
             let rs2_next = mux(load_ir, fetched.slice::<20, 5>(), rs2);
-            let f12_next = mux(load_ir, fetched.slice::<20, 12>(), f12);
             // What the writeback stage will write: the instruction now in
             // execute if it goes on, else what is there, held or cleared;
             // a cleared one writes nothing, which `wb_here` says.
@@ -2798,7 +2812,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 ra_at: mux(in_debug, dbg_gpr, rs1_next),
                 m_a: Bit::from(wr_next == rs1_next) & wr_any,
                 m_b: Bit::from(wr_next == rs2_next) & wr_any,
-                csr_at: csr_index(mux(in_debug, dbg_csr, f12_next)),
+                csr_at: csr_index(mux(in_debug, dbg_csr, f12)),
+                ir_new: load_ir,
                 tp: exc,
                 tp_vec: trap_vec,
             });
