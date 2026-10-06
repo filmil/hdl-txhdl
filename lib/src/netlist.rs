@@ -1332,6 +1332,9 @@ impl Lowered {
     /// clock shares it. A child's clock counts, since the parent takes
     /// it as a port to pass on. This is issue 367.
     pub fn checked(self) -> Self {
+        // An unregistered channel may not close a loop of wires
+        // through the children (issue 1293).
+        self.refuse_comb_loops();
         // `ASYNC_REG` belongs on a register; on a wire or a memory it
         // would say nothing true (#884).
         for a in &self.async_regs {
@@ -3719,6 +3722,330 @@ fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
             format!("({} {op} {})", hval(a, w, l), hval(b, w, l))
         }
     }
+}
+
+// ---------------------------------------------------------------------
+// Combinational paths through a unit, and the loops unregistered
+// channels can close (issue 1293)
+
+impl Expr {
+    /// Every name the expression reads.
+    fn names_into(&self, out: &mut Vec<String>) {
+        match self {
+            Expr::Name(n) => out.push(n.clone()),
+            Expr::Num(_) | Expr::Bits(_, _) => {}
+            Expr::Bin(_, a, b) | Expr::Index(a, b) | Expr::Cat(a, b) => {
+                a.names_into(out);
+                b.names_into(out);
+            }
+            Expr::Not(a)
+            | Expr::Slice(a, _, _)
+            | Expr::Sext(a, _)
+            | Expr::Zext(a, _)
+            | Expr::Cast(a, _) => a.names_into(out),
+            Expr::Cond(c, a, b) => {
+                c.names_into(out);
+                a.names_into(out);
+                b.names_into(out);
+            }
+        }
+    }
+}
+
+/// The drives of a body, each with every name its value and the
+/// conditions over it read: what an output driven by it waits on in
+/// the cycle.
+fn drives_of(
+    body: &[Stmt],
+    ctx: &[String],
+    out: &mut Vec<(String, Vec<String>)>,
+) {
+    let mut ctx = ctx.to_vec();
+    let drive = |t: &Target,
+                 e: &Expr,
+                 ctx: &[String],
+                 out: &mut Vec<(String, Vec<String>)>| {
+        if let Target::Name(n) = t {
+            let mut names = ctx.to_vec();
+            e.names_into(&mut names);
+            out.push((n.clone(), names));
+        }
+    };
+    for st in body {
+        match st {
+            Stmt::Drive(t, e) => drive(t, e, &ctx, out),
+            Stmt::When(c, a, b) => {
+                let mut cx = ctx.clone();
+                c.names_into(&mut cx);
+                for (t, e) in a.iter().chain(b) {
+                    drive(t, e, &cx, out);
+                }
+            }
+            Stmt::Case(arms) => {
+                let mut cx = ctx.clone();
+                for (c, ds) in arms {
+                    c.names_into(&mut cx);
+                    for (t, e) in ds {
+                        drive(t, e, &cx, out);
+                    }
+                }
+            }
+            Stmt::If(arms, els) => {
+                let mut cx = ctx.clone();
+                for (c, ss) in arms {
+                    c.names_into(&mut cx);
+                    drives_of(ss, &cx, out);
+                }
+                drives_of(els, &cx, out);
+            }
+            Stmt::Guard(c) => c.names_into(&mut ctx),
+            Stmt::Check(..) => {}
+        }
+    }
+}
+
+impl Lowered {
+    /// The input port a net belongs to, on the forward path: a
+    /// receiving port's `valid` or `data`, or a wire in.
+    fn in_port_of(&self, net: &str) -> Option<String> {
+        self.ports.iter().find_map(|(p, k, _, _)| match k {
+            Kind::Rx
+                if net == format!("{p}_valid")
+                    || net == format!("{p}_data") =>
+            {
+                Some(p.clone())
+            }
+            Kind::In if net == p => Some(p.clone()),
+            _ => None,
+        })
+    }
+    /// The output port a net belongs to, on the forward path: a
+    /// sending port's `valid` or `data`, or a wire out.
+    fn out_port_of(&self, net: &str) -> Option<String> {
+        self.ports.iter().find_map(|(p, k, _, _)| match k {
+            Kind::Tx
+                if net == format!("{p}_valid")
+                    || net == format!("{p}_data") =>
+            {
+                Some(p.clone())
+            }
+            Kind::Out if net == p => Some(p.clone()),
+            _ => None,
+        })
+    }
+    /// The pairs of an input port and an output port this unit joins
+    /// through wires in one cycle, with no register between: a sending
+    /// port's `valid` or `data` that depends on a receiving port's
+    /// `valid` or `data`, or on a wire in (issue 1293). A foreign
+    /// unit, whose netlist is not this one's to read, joins every input
+    /// to every output.
+    pub fn comb_paths(&self) -> Vec<(String, String)> {
+        let ins = |k: &Kind| matches!(k, Kind::Rx | Kind::In);
+        let outs = |k: &Kind| matches!(k, Kind::Tx | Kind::Out);
+        if self.foreign.is_some() {
+            let mut v = Vec::new();
+            for (p, k, _, _) in &self.ports {
+                for (q, j, _, _) in &self.ports {
+                    if ins(k) && outs(j) {
+                        v.push((p.clone(), q.clone()));
+                    }
+                }
+            }
+            return v;
+        }
+        if !self.instances.is_empty() {
+            let (edges, _) = self.port_graph();
+            let mut v = Vec::new();
+            for (p, k, _, _) in &self.ports {
+                if !ins(k) {
+                    continue;
+                }
+                let reach = reachable(&edges, &format!("port:{p}"));
+                for (q, j, _, _) in &self.ports {
+                    if outs(j) && reach.contains(&format!("port:{q}")) {
+                        v.push((p.clone(), q.clone()));
+                    }
+                }
+            }
+            return v;
+        }
+        let wires: std::collections::HashMap<&str, &Expr> =
+            self.wires.iter().map(|(n, e)| (n.as_str(), e)).collect();
+        let mut drives = Vec::new();
+        for p in &self.procs {
+            drives_of(&p.body, &[], &mut drives);
+        }
+        let mut v: Vec<(String, String)> = Vec::new();
+        for (t, names) in &drives {
+            let Some(q) = self.out_port_of(t) else {
+                continue;
+            };
+            // Through the wires to what they read, stopping at
+            // registers, memories and ports.
+            let mut seen: Vec<String> = Vec::new();
+            let mut todo = names.clone();
+            while let Some(n) = todo.pop() {
+                if seen.contains(&n) {
+                    continue;
+                }
+                if let Some(e) = wires.get(n.as_str()) {
+                    e.names_into(&mut todo);
+                }
+                if let Some(p) = self.in_port_of(&n) {
+                    if !v.contains(&(p.clone(), q.clone())) {
+                        v.push((p, q.clone()));
+                    }
+                }
+                seen.push(n);
+            }
+        }
+        v
+    }
+    /// The graph of a unit of units' combinational paths, over its own
+    /// ports, `port:P`, and its children's, `CHILD.P`: each child's own
+    /// paths; an unregistered channel from its sender to its receiver;
+    /// a wire from its driver to its readers; and a child's port joined
+    /// to one of the unit's own. With it, the edges that are an
+    /// unregistered channel's.
+    fn port_graph(&self) -> (Vec<(String, String)>, Vec<(String, String)>) {
+        let mut edges: Vec<(String, String)> = Vec::new();
+        let mut unreg: Vec<(String, String)> = Vec::new();
+        let kind_of = |inst: &Instance, p: &str| {
+            inst.unit
+                .ports
+                .iter()
+                .find(|(n, _, _, _)| n == p)
+                .map(|(_, k, _, _)| *k)
+        };
+        for inst in &self.instances {
+            for (p, q) in inst.unit.comb_paths() {
+                edges.push((
+                    format!("{}.{p}", inst.name),
+                    format!("{}.{q}", inst.name),
+                ));
+            }
+            for (cp, to) in &inst.conns {
+                let node = format!("{}.{cp}", inst.name);
+                let Some(k) = kind_of(inst, cp) else {
+                    continue;
+                };
+                if let Some((_, pk, _, _)) =
+                    self.ports.iter().find(|(n, _, _, _)| n == to)
+                {
+                    // A child's port joined to one of the unit's own.
+                    match (pk, k) {
+                        (Kind::Rx | Kind::In, _) => {
+                            edges.push((format!("port:{to}"), node))
+                        }
+                        (Kind::Tx | Kind::Out, _) => {
+                            edges.push((node, format!("port:{to}")))
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+                // A net between children: an edge from each driver's
+                // port to each reader's, for a wire and for an
+                // unregistered channel.
+                let Some((_, nk, _, _)) =
+                    self.nets.iter().find(|(n, _, _, _)| n == to)
+                else {
+                    continue;
+                };
+                let is_unreg = self.unregistered.iter().any(|u| u == to);
+                let wire = matches!(nk, Kind::Out);
+                if !(wire || is_unreg) || !matches!(k, Kind::Tx | Kind::Out) {
+                    continue;
+                }
+                for other in &self.instances {
+                    for (op, oto) in &other.conns {
+                        if oto != to
+                            || matches!(
+                                kind_of(other, op),
+                                Some(Kind::Tx | Kind::Out)
+                            )
+                        {
+                            continue;
+                        }
+                        let e = (node.clone(), format!("{}.{op}", other.name));
+                        if is_unreg {
+                            unreg.push(e.clone());
+                        }
+                        edges.push(e);
+                    }
+                }
+            }
+        }
+        (edges, unreg)
+    }
+    /// Refuse a unit of units whose unregistered channels close a loop
+    /// of wires: a ring through its children, each joined to the next
+    /// with no register between, in which one of the joins is an
+    /// unregistered channel (issue 1293). Such a ring is a
+    /// combinational loop in the netlist, and no order of the run's
+    /// processes lets every sender run before its receiver.
+    fn refuse_comb_loops(&self) {
+        if self.unregistered.is_empty() {
+            return;
+        }
+        let (edges, unreg) = self.port_graph();
+        for (a, b) in &unreg {
+            // `a` to `b` is the channel; a way back from `b` to `a`
+            // closes the ring.
+            if reachable(&edges, b).contains(a) {
+                let ring = path(&edges, b, a);
+                panic!(
+                    "`{}` closes a combinational loop through an \
+                     unregistered channel, from `{a}` to `{b}` and back: \
+                     {}. Leave one of its channels registered (issue 1293)",
+                    self.name,
+                    ring.join(" -> ")
+                );
+            }
+        }
+    }
+}
+
+/// Every node reachable from `from` along `edges`, `from` included.
+fn reachable(edges: &[(String, String)], from: &str) -> Vec<String> {
+    let mut seen = vec![from.to_string()];
+    let mut todo = vec![from.to_string()];
+    while let Some(n) = todo.pop() {
+        for (a, b) in edges {
+            if *a == n && !seen.contains(b) {
+                seen.push(b.clone());
+                todo.push(b.clone());
+            }
+        }
+    }
+    seen
+}
+
+/// One path from `from` to `to` along `edges`, by breadth first.
+fn path(edges: &[(String, String)], from: &str, to: &str) -> Vec<String> {
+    let mut prev: Vec<(String, String)> = Vec::new();
+    let mut seen = vec![from.to_string()];
+    let mut q = std::collections::VecDeque::from([from.to_string()]);
+    while let Some(n) = q.pop_front() {
+        if n == to {
+            break;
+        }
+        for (a, b) in edges {
+            if *a == n && !seen.contains(b) {
+                seen.push(b.clone());
+                prev.push((b.clone(), n.clone()));
+                q.push_back(b.clone());
+            }
+        }
+    }
+    let mut out = vec![to.to_string()];
+    let mut cur = to.to_string();
+    while let Some((_, p)) = prev.iter().find(|(b, _)| *b == cur) {
+        out.push(p.clone());
+        cur = p.clone();
+    }
+    out.reverse();
+    out
 }
 
 #[cfg(test)]

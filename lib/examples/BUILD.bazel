@@ -507,6 +507,16 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# What #[unregistered] refuses (issue 1293): a ring of wires, at the
+# lowering, and a receiver joined before its sender, in the run.
+rust_test(
+    name = "unreg_test",
+    srcs = ["unreg_test.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Two clocks in one netlist, checked against one run: a counter on
 # each, and a parent that holds both. The test of issue 131:
 #   bazel run //lib/examples:ex_twoclock
