@@ -821,6 +821,12 @@ pub struct Vreteno<const IW: usize> {
     /// word's address, and whether it holds.
     pub rsv_valid: Reg<Bit>,
     pub rsv_at: Reg<U<30>>,
+    /// The reservation compare of last cycle, and whether it was made
+    /// for the `sc.w` in execute with its operand valid: an `sc.w`
+    /// waits a cycle and uses the registered compare, which keeps the
+    /// compare off every store's issue (issue 1298).
+    pub sc_q: Reg<Bit>,
+    pub sc_ready: Reg<Bit>,
     /// An AMO in writeback: whether the instruction there is one, its
     /// function and its register operand, kept from execute; its
     /// phase after the load's answer, 1 to compute and 2 to store;
@@ -1354,8 +1360,11 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // the adder's path.
             let is_load = (opcode == 0x03) | is_lr | is_rmw;
             let is_store = (opcode == 0x23) | is_sc;
-            let sc_ok =
+            let sc_hit =
                 self.rsv_valid & (self.rsv_at.get() == a.slice::<2, 30>());
+            // What the `sc.w` acts on: the compare a cycle old, made
+            // while it waited (issue 1298).
+            let sc_ok = self.sc_q.get();
             // A half wants an even address and a word one that is a
             // multiple of four; a byte is never misaligned. The
             // specification lets a core either support an unaligned
@@ -1427,6 +1436,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // A CSR instruction waits its first cycle in execute: its CSR
             // is found from the instruction register, a register, and so
             // is ready a cycle after the word arrives (issue 1295).
+            // An `sc.w` waits until last cycle's compare was its own,
+            // with its operand valid (issue 1298).
+            let stall_sc = self.valid & is_sc & !self.sc_ready & !in_debug;
             let stall_csr = self.valid
                 & Bit::from(opcode == 0x73)
                 & Bit::from(f3 != 0)
@@ -1435,6 +1447,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             self.stall.set(
                 stall_ld
                     | stall_csr
+                    | stall_sc
                     | stall_m
                     | stall_fence
                     | stall_mem
@@ -2814,6 +2827,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 m_b: Bit::from(wr_next == rs2_next) & wr_any,
                 csr_at: csr_index(mux(in_debug, dbg_csr, f12)),
                 ir_new: load_ir,
+                sc_q: sc_hit,
+                sc_ready: self.valid & is_sc & stall & !stall_ld & !wb_fault,
                 tp: exc,
                 tp_vec: trap_vec,
             });
