@@ -2199,6 +2199,89 @@ fn razboj_draws_a_list_in_tiles() {
     eprintln!("razboj tiles: {} cycles", razboj_cycles(&ran.said));
 }
 
+/// Razboj tests depth on the board (issue 992): two triangles that cross
+/// in depth, each nearer than the other over part of it, under
+/// `GL_LESS` with depth written over a clear of depth, in a tile table
+/// the debugger writes into the DDR3 and rings. The pixels checked, on
+/// both sides of where the two cross, are the model's, so the nearer
+/// triangle is the one seen at each.
+#[test]
+fn razboj_tests_depth_in_tiles() {
+    use razboj::model::render;
+    use razboj::op::{assemble, DepthMode, Op as Draw, ALWAYS, LESS};
+    use vreteno32::board::RAZBOJ_FB;
+    let (sw, sh) = (1024usize, 480usize);
+    let list = assemble(
+        &[
+            Draw::Depth(Some(DepthMode {
+                func: ALWAYS,
+                write: true,
+            })),
+            Draw::RectZ {
+                colour: 0xff20_2020,
+                x: 0,
+                y: 0,
+                w: 128,
+                h: 96,
+                z: 0xffff,
+            },
+            Draw::Depth(Some(DepthMode {
+                func: LESS,
+                write: true,
+            })),
+            Draw::TriZ {
+                colour: 0xffc0_4000,
+                a: (8 * 16, 10 * 16),
+                b: (120 * 16, 14 * 16),
+                c: (30 * 16, 90 * 16),
+                z: [0x1000, 0xf000, 0x8000],
+            },
+            Draw::GouraudZ {
+                a: (110 * 16, 10 * 16),
+                b: (100 * 16, 92 * 16),
+                c: (10 * 16, 40 * 16),
+                colours: [0xffff_ff00, 0xff00_ffff, 0xffff_00ff],
+                z: [0x2000, 0x3000, 0xe000],
+            },
+        ],
+        sw,
+        sh,
+    );
+    let (words, count) = razboj::tiles::image(&list, sw, sh);
+    let want = render(&list, sw, sh);
+    let at = |x: usize, y: usize| RAZBOJ_FB as u32 + 4 * (y * sw + x) as u32;
+    // Where the flat triangle is nearer, where the shaded one is, and the
+    // clear where neither reaches.
+    let flat = 0xffc0_4000u32;
+    let near_flat = (0..96)
+        .flat_map(|y| (0..128).map(move |x| (x, y)))
+        .find(|&(x, y)| want[y * sw + x] == flat)
+        .expect("the flat triangle is nearer somewhere");
+    let near_shaded = (0..96)
+        .flat_map(|y| (0..128).map(move |x| (x, y)))
+        .find(|&(x, y)| {
+            let p = want[y * sw + x];
+            p != flat && p != 0xff20_2020 && p != 0
+        })
+        .expect("the shaded triangle is nearer somewhere");
+    let checks: Vec<(u32, u32)> = [near_flat, near_shaded, (126, 94), (64, 50)]
+        .iter()
+        .map(|&(x, y)| (at(x, y), want[y * sw + x]))
+        .collect();
+    let plan = razboj_plan(&words, &[], count);
+    let ran = run_all(
+        &razboj_wait_program(&checks),
+        &[],
+        b"",
+        &[],
+        1_000_000,
+        Net::default(),
+        &plan,
+    );
+    assert!(ran.said.ends_with("razboj ok\n"), "{}", ran.said);
+    eprintln!("razboj depth: {} cycles", razboj_cycles(&ran.said));
+}
+
 /// Razboj's draw time on the board's model, flat and in tiles (issue
 /// 1255): the screen filled, 640 by 480, and the icosahedron's first
 /// frame, which clears the screen and draws the faces. Each list is
