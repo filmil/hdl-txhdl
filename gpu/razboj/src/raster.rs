@@ -230,6 +230,33 @@ pub struct Raster<
     pub wc: Reg<U<7>>,
     pub rd: Reg<U<32>>,
     pub rm: Reg<U<1>>,
+    /// Depth (issue 992): whether the entry tests it, which only a tile
+    /// does; the comparison; whether a pixel that passes writes its
+    /// depth; the plane at this pixel and at the start of this row, and
+    /// its two steps; and the address of the pixel under the walk in the
+    /// tile, which the depth bank is read and written at.
+    pub zon: Reg<Bit>,
+    pub deep: Reg<Bit>,
+    pub zfunc: Reg<U<3>>,
+    pub zwrite: Reg<Bit>,
+    pub zc: Reg<U<32>>,
+    pub zr: Reg<U<32>>,
+    pub zdx: Reg<U<32>>,
+    pub zdy: Reg<U<32>>,
+    pub pa: Reg<U<12>>,
+    /// The depth bank, a tile's depths, read and written at one address
+    /// only, so that it is a block RAM of one port; a mark for each depth
+    /// written in this tile, which the write-out clears, so that a depth
+    /// not written yet reads as the farthest; the depth and its mark
+    /// read for the pixel under the walk, and the pixel's own depth; and
+    /// whether the pixel passed, decided a turn after the read so that
+    /// the banks' write enables come from a register.
+    pub zbank: Mem<U<16>, 4096>,
+    pub zmark: Mem<U<1>, 4096>,
+    pub dread: Reg<U<16>>,
+    pub dvalid: Reg<U<1>>,
+    pub zq: Reg<U<16>>,
+    pub zpass: Reg<Bit>,
 }
 // end{state}
 
@@ -255,6 +282,38 @@ fn channel(v: U<32>) -> U<8> {
     let over = Bit::from(v.slice::<24, 8>() != 0);
     let top = mux(over, U::<8>::from(255u8), v.slice::<16, 8>());
     mux(v.bit(31), U::<8>::from(0u8), top)
+}
+
+/// A pixel's depth from its plane (issue 992): the sixteen bits above
+/// the plane's twelve of fraction, nought when the value is below nought
+/// and the farthest, `0xffff`, when it is past it, as `model::depth` has
+/// it.
+#[lower]
+fn depth16(v: U<32>) -> U<16> {
+    let over = Bit::from(v.slice::<28, 3>() != 0);
+    let top = mux(over, U::<16>::from(0xffffu32), v.slice::<12, 16>());
+    mux(v.bit(31), U::<16>::from(0u8), top)
+}
+
+/// Whether a pixel at depth `z` passes `func`, GL's comparisons from
+/// `GL_NEVER` to `GL_ALWAYS` in GL's order, against the depth `d` there,
+/// as `model::passes` has it.
+#[lower]
+fn depth_pass(func: U<3>, z: U<16>, d: U<16>) -> Bit {
+    let lt = Bit::from(z < d);
+    let eq = Bit::from(z == d);
+    let gt = Bit::from(z > d);
+    let hi = mux(
+        func.bit(1),
+        mux(func.bit(0), Bit::One, gt | eq),
+        mux(func.bit(0), !eq, gt),
+    );
+    let lo = mux(
+        func.bit(1),
+        mux(func.bit(0), lt | eq, eq),
+        mux(func.bit(0), lt, Bit::Zero),
+    );
+    mux(func.bit(2), hi, lo)
 }
 
 /// Whether a read's beat is taken this cycle: one is offered, the
@@ -592,6 +651,9 @@ impl<
                                         x: wx,
                                         y: wy,
                                         xa: wx,
+                                        pa: wy.slice::<0, 6>().concat::<6, 12>(
+                                            wx.slice::<0, 6>(),
+                                        ),
                                         xb: bx1,
                                         yb: by1,
                                         scx: rh.data.slice::<0, 16>(),
@@ -632,9 +694,78 @@ impl<
                                     self.cby.set(v);
                                 }
                                 // Every entry's alpha, last.
+                                // Every entry's alpha, and its depth bits.
                                 if self.word.get() == 15 {
-                                    self.alpha.set(v.slice::<0, 8>());
+                                    with!(self <= {
+                                        alpha: v.slice::<0, 8>(),
+                                        deep: v.bit(8),
+                                        zon: v.bit(8) & self.tiled.get(),
+                                        zfunc: v.slice::<9, 3>(),
+                                        zwrite: v.bit(12),
+                                    });
                                 }
+                            }
+                            // An entry that tests depth is followed by
+                            // its depth plane's slot (issue 992), read in
+                            // a tile and passed over in a flat list, which
+                            // has no depth.
+                            // An edge first, for word 15's bits to be read.
+                            DefaultClock::rising().await;
+                            if self.deep.get().to_bool() {
+                                if self.tiled.get().to_bool() {
+                                    until(DefaultClock::rising, || {
+                                        issue.ready().to_bool()
+                                    })
+                                    .await;
+                                    issue.send(Issue {
+                                        read: Bit::One,
+                                        addr: U::<A>::from(DL as u32)
+                                            + U::<A>::from(ENTRIES_AT)
+                                            + ((self.insn.get() + 1)
+                                                .resize::<A>()
+                                                << SHIFT),
+                                        len: U::<8>::from(2u8),
+                                        size: U::<3>::from(2u8),
+                                        burst: BurstKind::Incr,
+                                        lock: Bit::Zero,
+                                        cache: U::<4>::from(0u8),
+                                        prot: U::<3>::from(0u8),
+                                        qos: U::<4>::from(0u8),
+                                        region: U::<4>::from(0u8),
+                                    });
+                                    until(DefaultClock::rising, || {
+                                        landing(
+                                            rdata.peek().is_some(),
+                                            release.ready(),
+                                            done.peek().is_some(),
+                                        )
+                                        .to_bool()
+                                    })
+                                    .await;
+                                    let z0 = rdata.head().data;
+                                    with!(self <= { zc: z0, zr: z0 });
+                                    until(DefaultClock::rising, || {
+                                        landing(
+                                            rdata.peek().is_some(),
+                                            release.ready(),
+                                            done.peek().is_some(),
+                                        )
+                                        .to_bool()
+                                    })
+                                    .await;
+                                    self.zdx.set(rdata.head().data);
+                                    until(DefaultClock::rising, || {
+                                        landing(
+                                            rdata.peek().is_some(),
+                                            release.ready(),
+                                            done.peek().is_some(),
+                                        )
+                                        .to_bool()
+                                    })
+                                    .await;
+                                    self.zdy.set(rdata.head().data);
+                                }
+                                self.insn.set(self.insn.get() + 1);
                             }
                             // The setup the walk asks for: per edge, the
                             // two steps and the value at the box's first
@@ -740,6 +871,35 @@ impl<
                                         .to_bool()
                                     })
                                     .await;
+                                    // A pixel of an entry that tests
+                                    // depth reads the depth there first,
+                                    // is compared with it a turn later,
+                                    // and is written a turn after that
+                                    // at the same address, so that the
+                                    // depth bank has one port here and
+                                    // no write enable waits on a compare
+                                    // (issue 992).
+                                    if (self.zon.get() & self.hit.get())
+                                        .to_bool()
+                                    {
+                                        let pa = self.pa.get();
+                                        with!(self <= {
+                                            dread: self.zbank.read(pa),
+                                            dvalid: self.zmark.read(pa),
+                                            zq: depth16(self.zc.get()),
+                                        });
+                                        DefaultClock::rising().await;
+                                        self.zpass.set(depth_pass(
+                                            self.zfunc.get(),
+                                            self.zq.get(),
+                                            mux(
+                                                self.dvalid.get() == 1,
+                                                self.dread.get(),
+                                                U::<16>::from(0xffffu32),
+                                            ),
+                                        ));
+                                        DefaultClock::rising().await;
+                                    }
                                     let px = self.x.get();
                                     let py = self.y.get();
                                     // The pixel's word. The address is
@@ -778,11 +938,24 @@ impl<
                                     let at = py
                                         .slice::<0, 6>()
                                         .concat::<6, 12>(px.slice::<0, 6>());
-                                    let keep = self.tiled.get() & self.hit.get();
+                                    // A pixel that tests depth is kept
+                                    // where it passed against the depth
+                                    // read, and writes its own if the
+                                    // entry says so.
+                                    let zon = self.zon.get();
+                                    let pass = !zon | self.zpass.get();
+                                    let hit = self.tiled.get() & self.hit.get();
+                                    let keep = hit & pass;
+                                    let zkeep = keep & zon & self.zwrite.get();
+                                    let pa = self.pa.get();
                                     with!(self <= {
                                         keep ? {
                                             bank.at(at): self.rgb.get(),
                                             mark.at(at): U::<1>::from(1u8),
+                                        },
+                                        zkeep ? {
+                                            zbank.at(pa): self.zq.get(),
+                                            zmark.at(pa): U::<1>::from(1u8),
                                         },
                                     });
                                     let rest =
@@ -843,6 +1016,10 @@ impl<
                                         cr: self.cr.get() + self.crx.get(),
                                         cg: self.cg.get() + self.cgx.get(),
                                         cb: self.cb.get() + self.cbx.get(),
+                                        zc: self.zc.get() + self.zdx.get(),
+                                        pa: py.slice::<0, 6>().concat::<6, 12>(
+                                            (px + 1).slice::<0, 6>(),
+                                        ),
                                     });
                                 }
                                 // The next row: the column goes back to
@@ -855,9 +1032,16 @@ impl<
                                 let qr = self.lr.get() + self.cry.get();
                                 let qg = self.lg.get() + self.cgy.get();
                                 let qb = self.lb.get() + self.cby.get();
+                                let qz = self.zr.get() + self.zdy.get();
                                 with!(self <= {
                                     x: self.xa.get(),
                                     y: self.y.get() + 1,
+                                    zc: qz, zr: qz,
+                                    pa: (self.y.get() + 1)
+                                        .slice::<0, 6>()
+                                        .concat::<6, 12>(
+                                            self.xa.get().slice::<0, 6>(),
+                                        ),
                                     e0: q0, r0: q0,
                                     e1: q1, r1: q1,
                                     e2: q2, r2: q2,
@@ -943,6 +1127,7 @@ impl<
                                         rm: self.mark.read(at),
                                         wc: c + 1,
                                         mark.at(at): U::<1>::from(0u8),
+                                        zmark.at(at): U::<1>::from(0u8),
                                     });
                                 }
                                 self.wr.set(self.wr.get() + 1);
