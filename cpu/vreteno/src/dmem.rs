@@ -16,7 +16,7 @@
 //! host's beats never stay in the write channel behind an early answer
 //! (issue 1208). The router sends this peripheral only the bursts in
 //! its range, so it checks no address.
-use txhdl::comp::{Clock, DefaultClock, Mem, Reg, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, Mem, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{Answer, PerPort, Resp, R};
@@ -108,6 +108,12 @@ impl<const I: usize, const AW: usize, const W: usize> Unit for Dmem<I, AW, W> {
             let take_read =
                 qoff & q.read & !held & (!queued | (bus.r.ready() & !more));
             let nat = self.raddr.get();
+            // One read of the four lanes a cycle, at one address: a new
+            // read's word, or a burst's next. Two reads at two addresses
+            // were two read ports beside the write's, which no block RAM
+            // has, so Vivado built the memory from LUTs: 35 K of them for
+            // the 64 KiB stack memory (issue 1301).
+            let ra = mux(take_read, at, nat);
             let take_write = qoff & !q.read & !held;
             let _ = bus.req.recv_if(take_read | take_write);
             // A write burst's beats go to consecutive words, and only
@@ -132,25 +138,19 @@ impl<const I: usize, const AW: usize, const W: usize> Unit for Dmem<I, AW, W> {
                 },
                 wgo & !wlast ? paddr: to + 1,
                 wgo & wlast ? pend: U::<1>::from(0u8),
+                take_read | next ? word: self
+                    .lane3
+                    .read(ra)
+                    .concat::<_, 16>(self.lane2.read(ra))
+                    .concat::<_, 24>(self.lane1.read(ra))
+                    .concat::<_, 32>(self.lane0.read(ra)),
                 take_read ? {
-                    word: self
-                        .lane3
-                        .read(at)
-                        .concat::<_, 16>(self.lane2.read(at))
-                        .concat::<_, 24>(self.lane1.read(at))
-                        .concat::<_, 32>(self.lane0.read(at)),
                     rid: q.id,
                     answer: Bit::One,
                     rleft: q.len,
                     raddr: at + 1,
                 } else {
                     next ? {
-                        word: self
-                            .lane3
-                            .read(nat)
-                            .concat::<_, 16>(self.lane2.read(nat))
-                            .concat::<_, 24>(self.lane1.read(nat))
-                            .concat::<_, 32>(self.lane0.read(nat)),
                         rleft: self.rleft.get() - 1,
                         raddr: nat + 1,
                     } else {
