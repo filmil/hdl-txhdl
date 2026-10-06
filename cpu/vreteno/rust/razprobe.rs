@@ -57,8 +57,7 @@ fn main() -> ! {
     Scan::show(true);
     // A list may still be drawing from a run before this one.
     let start = Timer::ticks();
-    while Razboj::count() != 0 && Timer::ticks().wrapping_sub(start) < SECOND
-    {}
+    while Razboj::count() != 0 && Timer::ticks().wrapping_sub(start) < SECOND {}
     write_list();
     let rung = mcycle();
     Razboj::ring(ENTRIES as u32);
