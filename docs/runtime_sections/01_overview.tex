@@ -84,6 +84,20 @@ VHDL indexes the array as written and nvc stops on an index out of
 range, and a runtime that wrapped the address agreed with Verilator on
 a word the hardware never had (issue 556).
 
+\textbf{A memory a block RAM cannot hold is refused when it is
+lowered.} A block RAM has two ports, and a read at the address a write
+is at shares the write's port, as a read-modify-write does. A memory
+of more than 4096 bits that is written at two addresses, or reached at
+three, Vivado builds from LUTs, which no test sees and a synthesis an
+hour later shows as lost timing. The lowering counts each memory's
+read and write addresses across the unit's processes and wires, and
+refuses such a memory with a panic that names the unit, the memory and
+the addresses (issue 1285). The remedy is to read it at one address a
+cycle beside the write's, through a multiplexer of the addresses, or
+to mark the field \code{\#[distributed]} when LUT RAM is what is
+meant. A memory of 4096 bits or fewer, a register file or a small
+FIFO, is left alone.
+
 \textbf{A channel is an elastic buffer of two.} A send is an offer:
 \code{valid} and \code{data} high this step, the transaction in the
 buffer at the end of it; \code{ready} says whether there is room, as
