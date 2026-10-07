@@ -20,14 +20,15 @@
 \thanks{Both authors are independent. Filip Filmar is the
 corresponding author, at f@hdlfactory.com; Dragiša Janković is
 reached at linkedin.com/in/dragisa-jankovic.}%
-\thanks{A few pages on the whole of it, for a reader deciding whether
-to read the rest. Every claim here is a target in the project
-repository \code{HDL/txhdl} that the build runs; the cover document,
-\code{//docs:cover}, names the twenty-three documents that say more.}%
+\thanks{A summary of the complete implementation for readers seeking an
+architectural overview before consulting the detailed monograph. Every
+technical claim maps directly to an automated target in the project
+repository \code{HDL/txhdl}; the cover document, \code{//docs:cover},
+catalogues the twenty-three companion reports.}%
 \thanks{The authors used a large language model, Claude, as an
-assistant in exploring the concepts and in writing and constructing
-the documents and the programs; every commit of the repository says
-so and carries the prompts that led to it, verbatim.}%
+assistant in exploring concepts and in drafting and constructing
+the documents and implementations; every repository commit documents
+this collaboration and includes the prompt sequence verbatim.}%
 \thanks{\buildstamp}}
 
 \markboth{TxHDL: What Has Been Built}{Filmar and Janković: TxHDL: What Has Been Built}
@@ -37,27 +38,29 @@ so and carries the prompts that led to it, verbatim.}%
 
 \section{The Rule}
 
-TxHDL is a hardware description language that is a Rust library. It
-was built by deleting every construct Rust already provides. A
-transaction is a \code{struct}; a unit is a \code{struct} that
-implements \code{Unit}; a pipeline is an \code{async fn}; a
-configuration is a trait; a clock is a type, and so is the reset
-beside it: every module the netlist writes has one, every lowered
-child is joined to its parent's, and no unit declares a port for it,
-which a reset port would have asked of about 127 \code{.run} call
-sites; under it a register goes back to what it held before the
-first edge and a channel empties. \code{rustc} is the
-parser, and its type checker is the design rule checker: two drivers
-on a wire are a move error, a clock domain crossed other than
-through \code{ChanCdc} is a type error, and a cycle counted in combinational
-logic is impossible because a plain \code{fn} has no \code{.await} to
-write in.
+TxHDL is a hardware description language implemented purely as a Rust
+library. Its architecture emerged by systematically stripping away every
+redundant construct that the host language already provides. A transaction is a
+native \code{struct}; a hardware module is a \code{struct} implementing the
+\code{Unit} trait; a synchronous pipeline is an \code{async fn}; a parameter
+configuration is a trait constraint. A clock is an affine type, paired
+implicitly with its synchronous reset: every emitted netlist binds one, every
+lowered sub-unit joins its parent domain, and no unit pollutes its interface
+with explicit reset wiring---sparing approximately 127 individual \code{.run}
+invocation sites. Under reset assertion, every register restores its initial
+state and every communication channel empties. The host compiler, \code{rustc},
+serves as front-end parser and design-rule checker: driving a wire from
+multiple sources violates affine move semantics, crossing clock domains outside
+an explicit \code{ChanCdc} primitive triggers a static type mismatch, and
+registering a cycle in purely combinational logic is syntactically prohibited
+because a synchronous \code{fn} admits no \code{.await} expression.
 
-What is left is a unit, and a unit is a netlist. Listing~\ref{lst:w-unit}
-is one whole: a counter that ticks once in eight cycles while
-enabled. \code{\#[lower]} gives it a Verilog module and a VHDL entity
-beside the Rust, and the build simulates both against the Rust run's
-own trace, every time.
+What remains is a unit, and every unit is a synthesizable netlist.
+Listing~\ref{lst:w-unit} shows a complete example: a three-bit counter that
+pulses once every eight cycles while asserted. The \code{\#[lower]} procedural
+attribute derives cycle-equivalent Verilog and VHDL definitions alongside the
+Rust implementation, and hermetic build actions co-simulate both HDL netlists
+against the Rust execution trace on every run.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
@@ -67,15 +70,16 @@ label={lst:w-unit}]{lib/examples/ex_cheat.rs}
 
 \section{What Is In It}
 
-Table~\ref{tab:w-units} lists the units the build lowers to Verilog
-and VHDL, and Table~\ref{tab:w-systems} the systems it assembles from
-them, both as of the last sweep of the documents rather than of the
-last commit; a component added since then is an open issue on the
-repository, which is where to look for what is newer than this page.
-Together they are 94\,581 lines of Rust: 18\,484 of runtime
-and macros, 26\,512 of parts, 18\,113 in a hundred and twenty-one examples,
-25\,927 of Vreteno with its board, and 5\,545 of Razboj, DDR3,
-Ethernet, HDMI, PCIe and the SoC.
+Table~\ref{tab:w-units} details the hardware units lowered to Verilog and VHDL,
+while Table~\ref{tab:w-systems} catalogues the integrated systems composed from
+them. These tables reflect the documented corpus baseline; ongoing peripheral
+development is tracked via active repository issues. In aggregate, the
+implementation spans 94\,581 physical lines of Rust: 18\,484 across runtime
+abstractions and procedural macros, 26\,512 in reusable subsystem parts,
+18\,113 distributed across 121 compiled examples, 25\,927 comprising the
+Vreteno processor and its FPGA board envelope, and 5\,545 spanning the Razboj
+GPU, DDR3 controller, Ethernet MAC, HDMI rasterizer, PCIe bridge, and unified
+SoC.
 
 \begin{table}[htbp]
 \caption{The lowered units, and which netlists are simulated.}
@@ -153,36 +157,40 @@ On silicon & Vreteno, Yosys, OpenROAD & routed, no DRC \\
 
 \section{Vreteno, a Core}
 
-Vreteno is an RV32IMAC core: fetch, execute and writeback, with the
-multiply and divide as a sequence, the machine control registers, the
-timer and the external interrupt. It is checked against a reference
-model of the instruction set written as a program, in lockstep, every
-cycle: the program counter, the thirty-one registers and the control
-registers must agree after each retirement, on a demonstration
-program and on sixty-four random ones. Above its boot memory it
-fetches through a sixteen-kilobyte instruction cache, which runs a loop
-from memory at 3.3 cycles an instruction, counted from the reset,
-where a word over the bus for each took 14.7.
-It has supervisor and user modes and Sv32 paging, through a unit
-beside it, in a hart, with fetch and data TLBs of eight entries each,
-and on the board it boots Linux to a shell thirty seconds after the
-image arrives.
+Vreteno is an RV32IMAC processor core implementing an in-order fetch, execute,
+and writeback pipeline, with sequential multi-cycle integer multiplication and
+division, privileged machine control registers, an architectural timer, and
+vectored external interrupts. The microarchitecture is validated in lockstep
+against an authoritative software ISA reference model on every cycle: program
+counter progression, all 31 general-purpose registers, and privileged CSR
+state must match identically across every instruction retirement, verified
+across deterministic benchmark binaries and 64 randomised instruction
+sequences. Outside local boot memory, instruction fetch traverses a 16\,KB
+direct-mapped cache, sustaining 3.3 cycles per instruction on loop execution
+from system memory, compared to 14.7 cycles per instruction when fetching
+unbuffered across the system bus. The core integrates supervisor and user
+privilege modes alongside an Sv32 memory management unit featuring dual 8-entry
+instruction and data TLBs; targeting the physical development board, it boots a
+full Linux distribution to an interactive shell within thirty seconds of image
+receipt.
 
-It runs on hardware. The netlist goes through a hermetic Vivado onto
-an Alinx AX7A200B, and the board says on its serial port what the
-simulation says it will: \code{OK}, and then whatever is typed at it,
-echoed. The same netlist also goes onto an open 45~nm standard cell
-library, through Yosys and OpenROAD, both fetched by checksum: a die
-\asicdie~$\mu$m square that meets \asicfreq~MHz and routes with
-\asicdrc{} violations. That is a layout and not a tapeout, and
-\code{//docs:tapeout} says what a tapeout would still want.
+The design operates seamlessly on silicon targets. Lowered RTL netlists are
+synthesized hermetically through Vivado targeting an Alinx AX7A200B FPGA; upon
+boot, the hardware UART emits the expected simulation string---\code{OK}---and
+faithfully echoes interactive character input. The identical netlist is
+lowered to an open 45\,nm standard-cell library using pinned releases of Yosys
+and OpenROAD, yielding a square die of \asicdie\,$\mu$m per side meeting a
+closed clock frequency of \asicfreq\,MHz with \asicdrc{} design-rule
+violations. This physical layout represents an automated demonstration; the
+remaining steps required for foundry tapeout are catalogued in
+\code{//docs:tapeout}.
 
-Its bus is AXI4, and every device behind it is an AXI peripheral,
-with the router deciding by address which one a burst reaches. On the
-board that includes a gigabyte of DDR3, through a controller brought
-in as a foreign module: the first thing here the language wires
-rather than writes.
-Fig.~\ref{fig:s-board} is the whole of it.
+System interconnection is built upon AXI4. Every subordinate device behaves as
+an AXI peripheral, mapped by an address-decoding router. On the evaluation
+board, this fabric addresses 1\,GB of DDR3 SDRAM via a vendor memory-interface
+controller integrated as a foreign module: the sole external component wired
+rather than directly authored in TxHDL. Figure~\ref{fig:s-board} illustrates
+the complete board topology.
 
 \begin{figure}[htbp]
 \centering
@@ -239,47 +247,51 @@ module reaches its halt, resume and registers.}
 \label{fig:s-board}
 \end{figure}
 
-
 \section{The AXI Link}
 
-A channel carries one transaction. AXI is five channels that only
-mean something together, so the library provides the link rather than
-the channels: \code{axi()} makes every channel of it at once and
-hands back two ends, the way \code{chan()} hands back a sender and a
-receiver.
+A native channel transports a single transaction. The AXI4 protocol
+coordinates five independent channels that maintain semantic validity only in
+concert. The TxHDL library therefore abstracts the interconnect as a cohesive
+link: invoking \code{axi()} instantiates all five constituent channels
+atomically, returning paired host and peripheral endpoints analogously to
+\code{chan()} yielding connected sender and receiver handles.
 
-A host client issues a burst and awaits its answer, in any order. A
-peripheral client accepts a whole transaction and answers it from
-whatever process holds it. Neither names a channel, counts a beat or
-writes an identifier. Two trackers between the ends do the protocol,
-and a router goes between them without changing client code.
+A host client initiates a burst request and awaits its corresponding response
+out of order. A peripheral client receives complete transactional descriptors
+and commits responses asynchronously from whichever process finishes the
+underlying work. Client implementations never manipulate raw channel handshake
+signals, track burst beat counters, or manage transaction ID tags directly.
+Autonomous protocol trackers situated at each link boundary enforce protocol
+invariants, permitting intermediate routers to steer traffic without altering
+client code.
 
 \section{A Network}
 
-A router puts several peripherals behind one host. For several of
-both, there is a lattice of nodes, each with a two-way link to its
-four neighbours and a fifth, the exit, where a bridge with AXI on one
-side and packets on the other attaches. Every link is two virtual
-channels, one for requests and one for responses, which is what keeps
-a full path of requests from holding up the answers that would empty
-it. Routing is dimension order, which on a lattice needs nothing else
-said to be free of deadlock.
+While an AXI router aggregates multiple peripherals beneath a single host,
+multi-host, multi-peripheral fabrics require a packet-routed topology. TxHDL
+implements a scalable 2D torus/mesh network-on-chip: each routing node couples
+bidirectional links to its cardinal neighbours with a fifth injection/ejection
+port attached to an AXI protocol bridge. Every physical link multiplexes two
+virtual channels---one dedicated to requests and one to responses---precluding
+request buffers from saturating the fabric and stalling the response packets
+required to drain them. Dimension-order routing guarantees structural freedom
+from routing deadlocks without virtual-channel reassignment.
 
-Neither end knows the network is there. A host issues a burst and
-awaits its answer as it would on a link; a peripheral accepts a
-transaction and answers it as it would. What the network adds is the
-renaming: an identifier belongs to the host that made it, so a
-peripheral bridge gives every request one of its own and remembers
-the node and the identifier to answer under.
+Endpoint modules remain completely oblivious to the packetised fabric. Hosts
+issue standard AXI bursts and await responses; peripherals consume transactions
+and commit replies transparently. The network bridge manages transaction ID
+namespace remapping: because transaction IDs are local to the originating host,
+peripheral bridges translate request IDs dynamically, caching the source
+coordinates and original transaction tag to route replies back to their origin.
 
-Vreteno, Razboj, a memory and a serial port sit on the four corners of a
-two by two lattice, as Fig.~\ref{fig:s-noc} shows, and run together: the core works out an
-icosahedron and writes it into the memory they share as a display
-list, and the rasteriser, which has been watching for it, reads the
-list and draws it there. Drawing across the lattice takes Razboj
-nearly twice as long as on a link, which is what never waiting
-for an answer costs on a network that moves one packet a node a cycle.
-
+In demonstration, Vreteno, the Razboj GPU, shared SRAM, and a UART peripheral
+occupy the four nodes of a $2\times 2$ mesh (Figure~\ref{fig:s-noc}). Working
+concurrently, the CPU computes vertex coordinates for a rotating icosahedron
+and writes the resulting display list into shared memory over the network. The
+Razboj rasteriser detects the list, traverses the geometry, and renders pixels
+into the frame buffer. Traversal of the packet mesh imposes an approximately
+two-fold latency penalty over a direct point-to-point link, representing the
+routing overhead of a single-flit-per-cycle distributed fabric.
 
 \begin{figure}[htbp]
 \centering
@@ -310,39 +322,45 @@ into memory over AXI, read back and written out as this file.}
 \label{fig:w-scene}
 \end{figure}
 
-Figure~\ref{fig:w-scene} was drawn by hardware. A rasteriser walks
-the box a display list entry gives it, one pixel a cycle, keeping
-three edge functions incrementally, and writes a run of a row's
-pixels as one AXI burst of up to sixteen beats, with the strobes off
-where a pixel is outside the primitive; the framebuffer is a memory
-behind the other end of the link. Both are lowered units, and
-the build simulates both netlists against the run that drew a smaller
-version of this picture. On the flagship the rasteriser is one more host
-on the board's bus: a program writes a list into the DDR3, rings a
-doorbell on the peripheral page, and the rasteriser draws into the
-frame the scanout shows.
+Figure~\ref{fig:w-scene} was rendered directly by synthesised hardware logic.
+The Razboj rasteriser traverses the axis-aligned bounding box defined by each
+display-list primitive at one pixel per clock cycle, evaluating three edge
+functions incrementally. Pixel spans along each scanline are committed to
+memory through AXI burst writes of up to 16 beats, masking write strobes for
+sample points falling outside triangle boundaries. The receiving framebuffer
+operates as a memory controller across the bus link. Both modules are fully
+lowerable units, and regression suites co-simulate their gate netlists against
+the software model that produced the reference render. Within the flagship SoC,
+the rasteriser operates as a second bus-mastering host: software populates a
+display list in DDR3 memory, asserts a doorbell register on the control page,
+and Razboj autonomously paints the frame buffer scanned out to the physical
+display.
 
 \section{Parts}
 
-A part is hardware the language provides, written in its own lowerable
-subset and checked as every unit is, so nothing in the library is a
-primitive the compiler knows and the user cannot read. A reservation station gathers the operands
-of an operation that arrive on separate channels, out of order, and
-fires when the last of them has.
+In TxHDL, a reusable part is standard hardware implemented strictly within the
+synthesizable language subset. Modules are subjected to the same lowering and
+verification rules as custom designs; the standard library incorporates no
+magic compiler primitives hidden from the user. Out-of-order execution
+primitives include parameterised reservation stations that aggregate operands
+arriving asynchronously across disparate channels, firing execution upon
+complete dependency resolution.
 
-It has grown outwards from the bus since: an Ethernet MAC, HDMI video
-with the I2C that configures the chip and a general I2C master beside
-it, general purpose pins, an SPI master, a system control block that
-says which design is running and why it last restarted, a watchdog
-that restarts it when software stops saying it is there, and a bridge
-from AXI to Wishbone, which lets a controller written elsewhere be a
-peripheral here.
+The component library radiates outward from the central bus: a full-duplex
+Ethernet MAC; an HDMI video timing generator paired with a dedicated I2C
+transmitter for encoder initialization; a general-purpose I2C master; GPIO
+pads; an SPI master; a system controller reporting active design identity and
+reset provenance; a windowed watchdog timer that forces a reset when software
+heartbeats lapse; and an AXI-to-Wishbone bridge enabling seamless integration of
+legacy IP cores.
 
-The bus itself has both halves now. A router puts several peripherals
-behind one host and decides on the address; an arbiter puts several
-hosts on one peripheral link and decides whose turn it is, tagging
-each host's identifier so the answers find their way home. Until there
-was an arbiter, the core was the only unit here that could be a host.
+The bus ecosystem accommodates bidirectional complexity. Address routers steer
+requests from a single host across multiple subordinate endpoints; arbiters
+multiplex multiple competing hosts onto a single peripheral channel using fair
+round-robin scheduling, prepending host tags so responses return
+deterministically to their initiator. The introduction of this bus arbiter
+unlocked multi-master concurrency, allowing Razboj, DMA controllers, and
+secondary processors to coexist alongside the primary core.
 
 \begin{figure}[htbp]
 \centering
@@ -352,7 +370,6 @@ this from the trace that same run wrote, and generated a testbench
 from it that replays the netlist.}
 \label{fig:w-wave}
 \end{figure}
-
 
 \begin{figure}[htbp]
 \centering
@@ -377,15 +394,16 @@ a bitstream; what has run on the board is in Table~II.}
 
 \section{From an Empty Directory}
 
-A reader with nothing installed but Bazelisk and Git writes five
-files, and the blinky among them builds, runs, and prints its netlist
-as Verilog. It depends on the project the way anyone else would,
-through the public mirror at a named commit. The tree builds the same
-blinky as a check, against its own library rather than the mirror, so
-the tutorial's source cannot rot. The build fetches every toolchain in
-Table~\ref{tab:w-tools} itself, by checksum or from source, but Vivado,
-whose archive AMD gives out only after a login. Nothing else is
-installed by hand, on a workstation or in CI.
+A developer equipped only with Bazelisk and Git can draft five concise
+configuration files to build, simulate, and lower an LED blinky design to
+synthesizable Verilog. The project is consumed via standard external repository
+rules pinned to an immutable git commit. Continuous integration builds this
+standalone tutorial design against the active working tree to ensure external
+examples never suffer bitrot. Every toolchain in Table~\ref{tab:w-tools} is
+fetched and verified hermetically by Bazel---either via cryptographic checksum
+or compiled directly from source---with the sole exception of AMD Vivado, which
+requires authenticated vendor licensing. No supplementary toolchains are
+installed manually on local workstations or CI runners.
 
 \begin{table}[htbp]
 \caption{The toolchains the build fetches.}
@@ -413,56 +431,55 @@ Two waveform converters, for figures & pinned \\
 
 \section{How It Is Checked}
 
-Nothing here is checked by reading it. Every example is a program the
-build runs, and its output is included in a document from the run, so
-a document cannot drift from the code. Every simulated unit of
-Table~\ref{tab:w-units} runs twice more, as VHDL under \code{nvc} and
-as Verilog under Verilator, against the trace the Rust run wrote, at
-its ports. \code{bazel test //...} runs four hundred and sixty-two targets, of
-which two hundred and forty-six are netlists under both simulators; the rest are the core's model and programs, the board's
-own run, OpenOCD and gdb on it through the debug transport, Razboj, the parts, the SoC's run, ten proofs, the width of
-every waveform, and the tools. Fifteen more are tagged manual: the
-board's own run as a plain test, which another runs built optimised; the
-board and its DDR3 under
-Vivado's simulator, the DDR3 controller alone and AMD's own test of
-it under the same, the PCIe endpoint on its own and against a root
-port under the same, the AXI link's fuzzing over many seeds, which
-the nightly run does, the check that every component has a
-datasheet, which a sweep of the documents runs, two that a routed
-bitstream leaves the configuration flash's program area alone, one
-that the flash image holds its program there, and four of Linux: the
-initramfs read back from its archive, and the kernel booted to its
-shell on the machine model, as built, which the nightly run does,
-with the serial port as the loader leaves it, and with its network up,
-pinging the model's peer.
+No behavior is validated by casual inspection. Every example is a standalone
+executable program compiled and executed by Bazel; its console output and signal
+dumps are embedded directly into documentation from build artifacts, preventing
+divergence between text and reality. Each lowered module in
+Table~\ref{tab:w-units} is verified twice in parallel: as VHDL under \code{nvc}
+and as Verilog under Verilator, with port transitions asserted against the
+golden trace captured during native Rust simulation. Running \code{bazel test
+//...} invokes 462 automated targets, including 246 co-simulated netlists, the
+golden ISA CPU model, bare-metal software test programs, in-circuit debug
+sessions linking OpenOCD and GDB over the JTAG transport, Razboj graphics
+regressions, peripheral unit tests, full SoC integration runs, ten formal
+property proofs, automated diagram boundary checks, and compiler toolchains.
+Fifteen long-running targets are reserved for manual or nightly qualification:
+optimized board simulations, DDR3 memory controller verification under the
+Vivado simulator, standalone and root-port PCIe endpoint regressions, randomized
+AXI link fuzzing, datasheet completeness audits, bitstream flash preservation
+checks, and four end-to-end Linux boots verifying networking and interactive
+shell responsiveness.
 
-A run checks the inputs it was given; a proof checks all of them. A
-unit states what must hold with \code{check!}, what it assumes of its
-inputs with \code{assume!} and what it should reach with
-\code{cover!}, and \code{formal\_test} hands the netlist's assertions
-to SymbiYosys on the pinned Yosys: \code{abc pdr} proves a digit's
-checks for every input and reachable state, two broken copies must
-fail, z3 finds the cycle a broken check fails in, and a cover run
-finds the path to the cover point. A unit with its own reset is
-proved to check only out of it (issue 633). Those are the ten proofs,
-a second each, and \code{//docs:prove} is their document.
+Simulation tests validate targeted input stimuli; formal verification proves
+invariant properties across all reachable states. Hardware modules declare
+safety invariants via \code{check!}, environment constraints via
+\code{assume!}, and reachability targets via \code{cover!}. The
+\code{formal\_test} rule extracts netlist assertions into SymbiYosys running
+against pinned Yosys: Property Directed Reachability (\code{abc pdr}) proves
+unbounded safety invariants for all valid input combinations, intentional bug
+injections verify that faulty logic triggers counterexamples, Z3 isolates
+failing execution cycles, and cover runs generate witness traces demonstrating
+target reachability. Every reset-conditioned unit is formally proved to suppress
+checks during reset assertion. These ten formal suites complete within seconds,
+as documented in \code{//docs:prove}.
 
-Every claim about what
-Rust accepts was compiled first, as a probe kept in the tree,
-including the ones whose answer was no.
+Similarly, every factual claim regarding host language type semantics is backed
+by standalone compiler probes preserved in the tree, retaining negative
+outcomes alongside positive validations to document compiler diagnostics.
 
 \section{What Is Not Done}
 
-A wire may take a name other than the one its \code{let} is written
-with, and the netlist says which: it carries a line per renamed
-\code{let}. No \code{let} Rust accepts is refused any more. The core
-fetches from the bus above its boot memory, so it runs a program it
-was not built with, and the boot memory is on the bus too, readable
-and not writable; but a fetch that leaves the core stalls the
-pipeline until the word is back. A wrapping burst does not cross the
-network on chip; it is refused rather than carried, and an
-incrementing one crosses as that many writes of one beat. Razboj has no depth buffer, no
-interpolation and no texture. Each is an issue on the repository rather
-than a paragraph here.
+A lowered netlist wire may be assigned a canonical name distinct from its
+lexical Rust binding, recorded as an explicit rename comment within the
+generated Verilog and VHDL. Every valid Rust \code{let} statement is now
+accepted without restriction. The Vreteno core executes arbitrary unbuilt code
+fetched from system memory beyond its internal boot ROM, and that boot ROM
+resides on the AXI bus as read-only memory; however, off-chip instruction cache
+misses stall the execution pipeline until the read completes. The
+network-on-chip fabric refuses wrapping AXI burst transfers, decomposing
+incrementing bursts into single-beat transactions across the mesh. In graphics,
+the Razboj rasteriser lacks depth buffering, barycentric perspective
+interpolation, and texture filtering. Each of these architectural boundaries is
+tracked as an active issue in the repository rather than deferred in prose.
 
 \end{document}
