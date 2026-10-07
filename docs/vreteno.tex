@@ -425,6 +425,15 @@ on the cable that answers ARP and ping at 10.0.0.2.
 \code{boot\_net\_test} boots an image whose command line asks
 \code{/init} for the network, and passes when Linux has pinged that
 station and had its replies.
+\code{/init} reads two words of the command line for it (issue~1318):
+\code{txhdl.ip=} brings \code{eth0} up at an address, and
+\code{txhdl.ping=} pings a host and says whether it answered;
+\code{txhdl.net} is the two at the machine's addresses.
+The board's image carries \code{txhdl.ip=192.168.1.50/24}, the
+address the fastboot server has, so on the board Linux is on the
+network beside srv's 192.168.1.1 with nothing typed.
+\code{boot\_ip\_test} boots the machine's image with the two words
+spelled out.
 
 \lstinputlisting[caption={\code{model.rs}: the reference
 model.},label={lst:v-model}]{cpu/vreteno/src/model.rs}

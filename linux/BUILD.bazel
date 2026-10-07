@@ -161,14 +161,17 @@ boot_image(
     tags = ["manual"],
 )
 
-# The same for the board (M12, issue 1020): the default command line,
-# earlycon console=ttySIF0, and all of the board's gigabyte, so no
-# mem=64M. Fastboot takes it whole:
+# The same for the board (M12, issue 1020): earlycon
+# console=ttySIF0, and all of the board's gigabyte, so no mem=64M.
+# Its eth0 comes up at 192.168.1.50/24, the address the fastboot
+# server has, beside srv's 192.168.1.1, so the board is on its network
+# with no commands typed (issue 1318). Fastboot takes it whole:
 #
 #   bazel build //linux:board_boot
 #   fastboot -s tcp:192.168.1.50 boot bazel-bin/linux/board_boot.bin
 boot_image(
     name = "board_boot",
+    bootargs = "earlycon console=ttySIF0 txhdl.ip=192.168.1.50/24",
     initramfs = "initramfs.cpio",
     kernel = "Image",
     opensbi = "fw_jump.bin",
@@ -244,6 +247,43 @@ sh_test(
     # Three pings a second apart: each after the first waits on alarm(),
     # and a second of the model's time is 100 million instructions
     # (issue 1246).
+    env = {
+        "EXPECT": "txhdl: network is up",
+        "STEPS": "500000000",
+    },
+    tags = ["manual"],
+)
+
+# The words the board's image takes, on the machine model (issue 1318):
+# txhdl.ip brings eth0 up at an address and txhdl.ping pings a host, as
+# txhdl.net does with the model's two. The board carries
+# txhdl.ip=192.168.1.50/24; the model's peer answers only 10.0.0.2, so
+# the model shows the same words at its own addresses.
+boot_image(
+    name = "model_ip_boot",
+    bootargs = "earlycon console=ttySIF0 " +
+               "txhdl.ip=10.0.0.1/24 txhdl.ping=10.0.0.2",
+    initramfs = "initramfs.cpio",
+    kernel = "Image",
+    model = True,
+    opensbi = "fw_jump.bin",
+    system_map = "System.map",
+    tags = ["manual"],
+)
+
+sh_test(
+    name = "boot_ip_test",
+    size = "large",
+    srcs = ["boot_test.sh"],
+    args = [
+        "$(rootpath //cpu/vreteno:machine)",
+        "$(rootpath :model_ip_boot)",
+        "--eth-peer",
+    ],
+    data = [
+        ":model_ip_boot",
+        "//cpu/vreteno:machine",
+    ],
     env = {
         "EXPECT": "txhdl: network is up",
         "STEPS": "500000000",
