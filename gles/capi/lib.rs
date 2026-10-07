@@ -28,7 +28,7 @@
 use core::ffi::c_void;
 use gles::fixed::{Fx, ONE};
 use gles::{gl, Gl, Vertex};
-use razboj_tile::WORDS;
+use razboj_tile::{Binned, TILE_WORDS, WORDS};
 
 /// The enumerants `gles::gl` does not name, which the client arrays and
 /// the queries use.
@@ -388,6 +388,43 @@ pub extern "C" fn glClearColorx(r: Fx, g: Fx, b: Fx, a: Fx) {
 #[no_mangle]
 pub extern "C" fn glClear(mask: u32) {
     with(|g| g.clear(mask));
+}
+
+#[no_mangle]
+pub extern "C" fn glDepthFunc(func: u32) {
+    with(|g| g.depth_func(func));
+}
+
+#[no_mangle]
+pub extern "C" fn glDepthMask(flag: u8) {
+    with(|g| g.depth_mask(flag != 0));
+}
+
+#[no_mangle]
+pub extern "C" fn glClearDepthx(depth: Fx) {
+    with(|g| g.clear_depth(depth));
+}
+
+#[no_mangle]
+pub extern "C" fn glDepthRangex(near: Fx, far: Fx) {
+    with(|g| g.depth_range(near, far));
+}
+
+/// Whether the current context's frame tests depth, so that it has to
+/// be drawn from a tile table (#1273). Not a GL call: EGL's.
+pub fn gles_frame_tiled() -> bool {
+    current().is_some_and(|c| c.gl.tiled())
+}
+
+/// The current context's frame binned into tiles, into `entries` and
+/// `tiles`, and a new frame begun: `None`, with the frame kept, when
+/// the room is too small or no context is current. Not a GL call: what
+/// EGL's swap does with a frame that tests depth (#1273).
+pub fn gles_flush(
+    entries: &mut [[u32; WORDS]],
+    tiles: &mut [[u32; TILE_WORDS]],
+) -> Option<Binned> {
+    current().and_then(|c| c.gl.flush(entries, tiles).ok())
 }
 
 /// `glFlush` and `glFinish` leave the frame where it is: handing it to

@@ -16,10 +16,11 @@ if [[ "$c" != "$rust" ]]; then
   diff <(echo "$rust") <(echo "$c") >&2 || true
   exit 1
 fi
-# A clear, the quad's two triangles and the fan's two: an empty frame
-# on both sides is not a pass.
-if [[ "$(echo "$c" | head -1)" != "frame 5" ]]; then
-  echo "the scene drew $(echo "$c" | head -1), not five instructions" >&2
+# A clear of the colour and the depth with its depth plane's slot, the
+# quad's two triangles, and the fan's two, each testing depth with its
+# slot: eight slots. An empty frame on both sides is not a pass.
+if [[ "$(echo "$c" | head -1)" != "frame 8" ]]; then
+  echo "the scene drew $(echo "$c" | head -1), not eight slots" >&2
   exit 1
 fi
 echo "$c" | head -1

@@ -2,7 +2,7 @@
 /*
  * A scene drawn through the GL library's C entry points, as any GL ES
  * 1.1 program draws (issue 1224): Khronos's <GLES/gl.h>, a projection
- * and a modelview, a light, client arrays of three types with a stride,
+ * and a modelview, a light, the depth test, client arrays of three types with a stride,
  * indices, and the current colour. It prints the frame's instructions,
  * a word at a time in hex, which capi_test holds to the same scene drawn
  * through the Rust API by draw_ref.rs; and then what an entry point the
@@ -42,7 +42,8 @@ int main(void) {
   gles_make_current(frame, CAP, 64, 48);
 
   glClearColorx(0, 0, ONE / 4, ONE);
-  glClear(GL_COLOR_BUFFER_BIT);
+  glClearDepthx(ONE / 2);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glMatrixMode(GL_PROJECTION);
   glLoadIdentity();
   glFrustumx(-ONE, ONE, -3 * ONE / 4, 3 * ONE / 4, ONE, 10 * ONE);
@@ -70,6 +71,10 @@ int main(void) {
   glDisable(GL_LIGHTING);
   glShadeModel(GL_FLAT);
   glColor4x(ONE, ONE / 2, 0, ONE);
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glDepthMask(GL_FALSE);
+  glDepthRangex(ONE / 4, 3 * ONE / 4);
   glVertexPointer(2, GL_FIXED, 0, fan);
   glDrawArrays(GL_TRIANGLE_FAN, 1, 4);
 

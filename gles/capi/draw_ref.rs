@@ -49,7 +49,8 @@ fn main() {
     let mut frame = [[0u32; 16]; CAP];
     let mut g = Gl::new(&mut frame, 64, 48);
     g.clear_color(0, 0, ONE / 4, ONE);
-    g.clear(gl::COLOR_BUFFER_BIT);
+    g.clear_depth(ONE / 2);
+    g.clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
     g.matrix_mode(gl::PROJECTION);
     g.load_identity();
     g.frustum(-ONE, ONE, -3 * ONE / 4, 3 * ONE / 4, ONE, 10 * ONE);
@@ -72,6 +73,10 @@ fn main() {
     g.disable(gl::LIGHTING);
     g.shade_model(gl::FLAT);
     g.color(ONE, ONE / 2, 0, ONE);
+    g.enable(gl::DEPTH_TEST);
+    g.depth_func(gl::LEQUAL);
+    g.depth_mask(false);
+    g.depth_range(ONE / 4, 3 * ONE / 4);
     g.draw_arrays(gl::TRIANGLE_FAN, &fan, None, None);
 
     let words = g.frame();
