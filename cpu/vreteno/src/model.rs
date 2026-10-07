@@ -212,6 +212,75 @@ pub struct Model {
     /// The exceptions taken, counted by cause, which a test reads to
     /// say what its programs exercised (issue 1014).
     pub causes: [u32; 16],
+    /// The costs a step is charged in the timing mode (issue 1392), or
+    /// none, when a step is an instruction and `mcycle` reads zero.
+    pub timing: Option<Timing>,
+    /// The cycles charged so far in the timing mode, which `mcycle`
+    /// and `cycle` read there.
+    pub cycles: u64,
+    /// The step's data access, if it made one: its address, and
+    /// whether it was a store.
+    pub access: std::cell::Cell<Option<(u32, bool)>>,
+}
+
+/// What a step costs in the timing mode (issue 1392): a base an
+/// instruction, a penalty when control does not fall through, and a
+/// cost for a data access by where it goes. A fetch is charged nothing
+/// more, as a hit in the instruction cache. [`Timing::board`] is
+/// calibrated to the board's own figures.
+#[derive(Clone, Debug)]
+pub struct Timing {
+    /// Cycles an instruction.
+    pub base: u64,
+    /// More when control goes anywhere but the next instruction.
+    pub taken: u64,
+    /// A data access's extra cycles by region: from, to, load, store.
+    pub regions: Vec<(u32, u32, u64, u64)>,
+    /// A load or a store anywhere else, the peripherals among it.
+    pub other: (u64, u64),
+}
+
+impl Timing {
+    /// The board's costs, from its own timings: `cpi.rs`'s
+    /// three-instruction loop, 3004 instructions in 7036 cycles (a base
+    /// of one and four for the taken branch); `ethperf.rs`'s copies,
+    /// a word from or into the DDR3 in about 53 cycles with the loop
+    /// round it (a DDR3 load and store about 43 together), and its
+    /// note of a received frame, two DDR3 loads and the registers in
+    /// 128 (a load 40, a store, posted, 3); the memories on the bus about nine
+    /// a load (`board_test`'s stack load before #1275, 9.14), and the
+    /// core's own data memory one (#1275).
+    pub fn board() -> Self {
+        Timing {
+            base: 1,
+            taken: 4,
+            regions: vec![
+                // The boot memory and the data memory, on the bus.
+                (0x0000_0000, 0x0000_2000, 9, 2),
+                // The core's own data memory (#1275).
+                (0x0001_0000, 0x0002_0000, 1, 0),
+                // The DDR3: loads wait for the controller, stores are
+                // posted.
+                (0x4000_0000, 0x8000_0000, 40, 3),
+            ],
+            other: (8, 2),
+        }
+    }
+
+    /// The extra cycles of a data access at `addr`.
+    fn access(&self, addr: u32, store: bool) -> u64 {
+        let (load, st) = self
+            .regions
+            .iter()
+            .find(|(lo, hi, _, _)| (*lo..*hi).contains(&addr))
+            .map(|(_, _, l, s)| (*l, *s))
+            .unwrap_or(self.other);
+        if store {
+            st
+        } else {
+            load
+        }
+    }
 }
 
 impl Default for Model {
@@ -237,6 +306,9 @@ impl Default for Model {
             halted: None,
             debug: false,
             dpc: 0,
+            timing: None,
+            cycles: 0,
+            access: std::cell::Cell::new(None),
             dcsr: 0x4000_0003,
             step_armed: false,
             stepped: false,
@@ -364,6 +436,11 @@ impl Model {
     /// answered the core with, which the caller handed over. `None`
     /// between the boot memory and the data memory.
     fn word(&self, imem: &[u32], addr: u32) -> Option<u32> {
+        // The step's data access, for the timing mode; a store marks
+        // its own before it reads the word it merges into.
+        if !matches!(self.access.get(), Some((a, true)) if a == addr) {
+            self.access.set(Some((addr, false)));
+        }
         if in_dram(addr) {
             return Some(self.dram[((addr - DRAM_BASE) / 4) as usize]);
         }
@@ -630,6 +707,10 @@ impl Model {
             // a model beside it.
             CSR_MINSTRET => self.minstret as u32,
             CSR_MINSTRETH => (self.minstret >> 32) as u32,
+            // In the timing mode, the cycles it has charged (issue
+            // 1392).
+            CSR_MCYCLE if self.timing.is_some() => self.cycles as u32,
+            CSR_MCYCLEH if self.timing.is_some() => (self.cycles >> 32) as u32,
             CSR_MCYCLE | CSR_MCYCLEH => 0,
             CSR_MEDELEG => self.csr.medeleg,
             // Its upper half holds nothing here (issue 1076).
@@ -648,6 +729,8 @@ impl Model {
             CSR_SATP => self.csr.satp,
             // Zicntr: the cycles as `mcycle`, which the model cannot
             // know; the count the timer gave; the retirements.
+            CSR_CYCLE if self.timing.is_some() => self.cycles as u32,
+            CSR_CYCLEH if self.timing.is_some() => (self.cycles >> 32) as u32,
             CSR_CYCLE | CSR_CYCLEH => 0,
             CSR_TIME => self.time as u32,
             CSR_TIMEH => (self.time >> 32) as u32,
@@ -880,6 +963,27 @@ impl Model {
         if self.halted.is_some() || self.debug {
             return;
         }
+        if self.timing.is_none() {
+            return self.execute(imem, interrupt);
+        }
+        // In the timing mode the step is charged what the core would
+        // spend on it (issue 1392).
+        self.access.set(None);
+        let pc = self.pc;
+        self.execute(imem, interrupt);
+        let t = self.timing.as_ref().expect("timing");
+        let mut c = t.base;
+        if self.pc != pc.wrapping_add(4) && self.pc != pc.wrapping_add(2) {
+            c += t.taken;
+        }
+        if let Some((addr, store)) = self.access.get() {
+            c += t.access(addr, store);
+        }
+        self.cycles += c;
+    }
+
+    /// One instruction, or the trap taken instead of it.
+    fn execute(&mut self, imem: &[u32], interrupt: Option<u32>) {
         // One more retired, counted before the instruction runs so
         // that a read of `minstret` by this instruction does not count
         // itself, which is what the specification asks for.
@@ -1000,6 +1104,7 @@ impl Model {
                         return;
                     }
                 };
+                self.access.set(Some((addr, true)));
                 // In a machine the store goes out with its lanes' mask,
                 // and nothing is read first (issue 1016); one into the
                 // data RAM stays in the core (issue 1275).

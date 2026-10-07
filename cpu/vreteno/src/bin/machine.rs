@@ -16,6 +16,10 @@
 //! ARP and ping at 10.0.0.2 (issue 1203), and says on standard error how
 //! many frames went each way when the machine stops.
 //!
+//! `--timing` charges each step what the core would spend on it, with
+//! the board's costs (issue 1392), so `mcycle` reads cycles and the
+//! machine says the total when it stops.
+//!
 //! `--fastboot-peer BYTES` puts a fastboot client on the cable instead
 //! (issue 1390), smoltcp's TCP/IP at 192.168.1.1 with a client on top,
 //! which sends the fastboot server at 192.168.1.50 a download of `BYTES`
@@ -64,6 +68,7 @@ fn main() {
     let mut steps = 100_000_000u64;
     let mut loaded = None;
     let mut peer = false;
+    let mut timing = false;
     let mut fastboot = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -77,6 +82,7 @@ fn main() {
             "--steps" => steps = number(&val()),
             "--as-loaded" => loaded = Some(val()),
             "--eth-peer" => peer = true,
+            "--timing" => timing = true,
             "--fastboot-peer" => fastboot = Some(number(&val()) as usize),
             _ => panic!("unknown argument {a}"),
         }
@@ -92,6 +98,9 @@ fn main() {
     }
     m.boot(at, if dtb.is_some() { dtb_at } else { 0 });
     m.board.0.borrow_mut().eth.peer = peer;
+    if timing {
+        m.model.timing = Some(vreteno32::model::Timing::board());
+    }
     if let Some(n) = fastboot {
         // A pattern rather than zeros, so a byte that lands in the wrong
         // place is a byte that is wrong.
@@ -149,16 +158,22 @@ fn main() {
         None => "stopped at the step limit".to_string(),
     };
     eprintln!("\n{how} after {ran} instructions, pc {:#010x}", m.model.pc);
+    if timing {
+        eprintln!("timing: {} cycles", m.model.cycles);
+    }
     if fastboot.is_some() {
         let d = m.board.0.borrow();
         let c = d.eth.client.as_ref().expect("the client");
         match (c.began, c.ended) {
             (Some(b), Some(e)) => {
                 eprintln!(
-                    "fastboot: {} bytes in {} steps, {:.1} a byte; {} \
+                    "fastboot: {} bytes in {} {}, {:.1} a byte; {} \
                      segments, {} retransmits; the port dropped {} frames",
                     c.image.len(),
                     e - b,
+                    // The client's clock: steps, or in the timing mode
+                    // cycles (issue 1392).
+                    if timing { "cycles" } else { "steps" },
                     (e - b) as f64 / c.image.len() as f64,
                     c.segments,
                     c.retransmits,

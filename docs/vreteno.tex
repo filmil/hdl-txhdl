@@ -439,6 +439,20 @@ most one a slot, and a frame that finds both slots held is dropped and
 counted in \code{rx\_errors} (issues~1313 and~1314), so a driver
 too slow for a burst loses frames on the machine as it does on the
 board.
+A step of the machine is an instruction, which is what lockstep
+compares, and \code{mcycle} reads zero there. With \code{--timing} a
+step is charged what the core would spend on it instead (issue~1392):
+one cycle an instruction and four more when control does not fall
+through, and for a data access forty more from the DDR3, three into
+it, nine from a memory on the bus and one from the core's own, eight
+from a peripheral and two into one. \code{mcycle} and the timer count
+those cycles. The costs are fitted to the board's own programs, and
+\code{timing\_test} holds the model to the fit: \code{cpi.rs}'s warm
+loop takes 7000 cycles where the board took 7036 from the data memory
+and 7088 from the DDR3, and \code{ethperf.rs} copies a full frame into
+a DDR3 slot in 20\,142 where the board took 19\,926. A cold run misses
+by the instruction cache's fills, which the model does not have, and a
+transmit by the engine, which it does not time.
 \code{boot\_net\_test} boots an image whose command line asks
 \code{/init} for the network, and passes when Linux has pinged that
 station and had its replies.
