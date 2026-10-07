@@ -23,9 +23,9 @@ Everything before the pixel is the library's: vertices, matrices, lighting, clip
 Everything from the pixel on is Razboj's: coverage, the fill rule, interpolating colour across a triangle, and later depth and blending.
 
 It is not conformant ES 1.1, and does not claim to be.
-ES 1.1 requires texturing, which waits for issue 997, and the library leaves out fog, stencil, logic operations and point sprites, which wait for issue 998.
+ES 1.1 requires texturing, which issue 997 adds with one texture unit, and the library leaves out fog, stencil, logic operations and point sprites, which wait for issue 998.
 The conformance run is issue 999.
-Until then the library is "Common-Lite without textures", as issue 995's title says, and `glGetString(GL_VERSION)` should say so rather than claim the profile.
+Until then `glGetString(GL_VERSION)` says what the library is, "Common-Lite, one texture unit, not conformant", rather than claim the profile.
 
 ## 2. The API subset
 
@@ -47,13 +47,14 @@ A later issue means the entry point is accepted from the start but does what tha
 | Scissor | `glScissor` | #990 |
 | Depth | `glDepthFunc`, `glDepthMask` | Now, from #1273, drawn in a tile table |
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask` | Now, from #993, drawn in a tile table |
+| Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; on Razboj's model until the rasteriser samples them |
 | Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls | Now, from issue 994 |
 | Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
 | Hints | `glHint` | Accepted and ignored, as the specification allows |
 
-Left out until their issues: every texture entry point (#997), fog (#998), stencil (#998), `glLogicOp` (#998), `glPolygonOffsetx` (#998), point sprites (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed textures, and a second texture unit, which wait for a program that needs them; fog (#998), stencil (#998), `glLogicOp` (#998), `glPolygonOffsetx` (#998), point sprites (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -277,11 +278,11 @@ Each step is a pull request, checked before the next.
    The cycles on the board wait for a board session.
 6. **The C ABI.**
    The user chose Rust inside with C at the edge (section 9), and this is the edge, issue 1224, which EGL (issue 996) needs.
-   `gles/capi/lib.rs` has `extern "C"` functions with the names and types of Khronos's `GLES/gl.h` for the 41 entry points the library implements, over a current context and its client arrays.
+   `gles/capi/lib.rs` has `extern "C"` functions with the names and types of Khronos's `GLES/gl.h` for the 64 entry points the library implements, over a current context and its client arrays.
    The client arrays are read a vertex at a time, in the types Common-Lite allows, through `Gl::draw_vertices`, so nothing is copied or allocated.
    `GLES/gl.h`, `GLES/glplatform.h` and `KHR/khrplatform.h` are not copied into the tree: `MODULE.bazel` fetches them from Khronos's OpenGL-Registry and EGL-Registry at pinned commits, by their sha256, and `//third_party/khronos:gles1` lays them out for `#include <GLES/gl.h>`.
-   The other 104 entry points gl.h declares, the floating-point ones among them, are C that `gles/capi/stubs.sh` writes from gl.h itself, leaving out every name `lib.rs` defines; each sets `GL_INVALID_OPERATION`, so every GL ES 1.1 program links and is told what it asked for is not there.
-   `glGetString(GL_VERSION)` says "OpenGL ES-CL 1.1 TxHDL, Common-Lite without textures, not conformant", which answers the last question of section 11 for now.
+   The other 81 entry points gl.h declares, the floating-point ones among them, are C that `gles/capi/stubs.sh` writes from gl.h itself, leaving out every name `lib.rs` defines; each sets `GL_INVALID_OPERATION`, so every GL ES 1.1 program links and is told what it asked for is not there.
+   `glGetString(GL_VERSION)` says "OpenGL ES-CL 1.1 TxHDL, Common-Lite, one texture unit, not conformant", which answers the last question of section 11 for now.
    It departs from the plan in one place: making a context current is EGL's, so until issue 996 lands `gles_make_current` does it over a frame its caller owns, and `glFlush` and `glFinish` leave the frame for EGL to hand to Razboj.
    `//gles:capi_test` draws one scene in C through `:gles_c` and through the Rust API, and holds the two frames to each other word for word, with what an unimplemented entry point and `glGetString` say.
 7. **EGL, in the model.**
@@ -336,6 +337,21 @@ Blending, the alpha test and the colour mask are issue 993's, on the same tile b
 With any of them on, a primitive carries the pixel's state in its second slot, and the frame is binned into a tile table as one that tests depth is.
 `glClear` writes the channels the colour mask allows and the depth when the depth mask does, as GL says.
 `//gles:blend_test` holds a scene for each of the 72 pairs of factors GL ES 1.1 allows to a reference that blends in f64, pixel by pixel, through Razboj's model.
+
+Textures are issue 997's, one texture unit, in the layout `razboj_tile::tex` gives Razboj.
+The machine gives the context room for them at `eglMakeCurrent`, words of DDR3 with the bus address Razboj reads them at, through `Machine::textures`.
+The room's head is a table of 64 descriptors, one an object, and the texels follow it, handed out in order and never given back.
+`glTexImage2D` takes sides that are powers of two up to 1024, in the five base formats as bytes and in the three packed types of 16 bits.
+It stores every texel as 32-bit RGBA in blocks of four by four, and the descriptor keeps the base format, since the environments read each format differently.
+Level 0 of a new size takes room for its whole chain of levels, and with `GL_GENERATE_MIPMAP` on it writes every level below it, each texel the rounded mean of the two by two above.
+An object whose levels are not all given, when its filter reads them, leaves texturing off, as GL says.
+A textured triangle carries two slots after its pixel's: the texture's index, its environment and colour, `s/w`, `t/w` and `1/w` as planes across the window in 64 bits, and the numerators Razboj takes the level of detail from.
+The emitter works them out as Razboj's assembler does, bit for bit, which `//gles:model_test` holds it to.
+Texture coordinates go through the texture matrix, and points and lines are drawn untextured for now.
+A textured frame is binned into a tile table as one that tests depth is, and the swap tells the machine where the descriptors are, through `Machine::texture_table`.
+`//gles:texture_test` draws a floor in perspective under each of six pairs of filters and the five environments, through Razboj's model, and holds it pixel by pixel to a reference that runs GL's pipeline in f64.
+Each of 77,760 pixels is within 3 a channel of what GL gives within the sixteenth of a pixel a snapped vertex moves, at a level of detail within 0.010 of GL's.
+`//gles:egl_test` uploads a texture through the C entry points into the machine's room and draws it through EGL.
 
 The scissor is added as issue 990 lands, with the entry points section 2 holds for it.
 

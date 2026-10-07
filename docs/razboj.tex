@@ -304,6 +304,27 @@ in tiles as the model draws them, byte for byte, loaded and not, and
 \code{//docs:razboj\_blend} replays the netlist's load and blend under
 both simulators.
 
+Textures are next (issue~\#997), and so far they are a format and a
+model, not hardware. A texture is its levels in DDR3, each texel RGBA in
+32 bits as a pixel is, stored in blocks of four by four so that the
+texels a cache line holds are one burst; a table of descriptors, sixteen
+words each, says where each texture is and how to filter and wrap it.
+Bit 14 of word 15 says an entry is textured, and gives it the second
+slot and two more. They hold $uq$, $vq$ and $q$ as planes of 64 bits,
+$q$ being one over the clip $w$, so that a pixel's texel is $uq/q$
+there, correct in perspective; the texture's index, its environment
+and that environment's colour; and the numerators of the four
+derivatives GL takes the level of detail from, each of which varies
+along one axis of the box only. The model divides by $q$ with a table of
+1024 reciprocals and one Newton step, and takes the level of detail as
+a base-2 logarithm from a table of 256. It samples under GL's two
+magnification and six minification filters, repeats or clamps, and
+applies the five environments of GL ES~1.1 but \code{COMBINE}, before
+the alpha test. Over a floor in perspective it is within a fiftieth of a
+level of the level of detail in floating point. The rasteriser reads a
+textured entry's two extra slots and, until it samples, draws the entry
+as if it had no texture.
+
 \section{The Rasteriser}
 \label{sec:g-raster}
 
@@ -456,7 +477,8 @@ architectural patterns. The baseline design renders one pixel per cycle (three
 cycles for depth-tested pixels and five for blended ones), restricts depth
 testing and blending to tiled modes, limits color interpolation to screen
 space without perspective correction, and gives a shaded triangle the alpha
-of its first vertex. The pipeline omits
+of its first vertex. Textures are in the format and the model, not yet in
+the rasteriser. The pipeline omits
 geometric clipping outside bounding boxes and issues single bursts
 sequentially.
 
