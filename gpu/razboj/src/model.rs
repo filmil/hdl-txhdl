@@ -208,6 +208,28 @@ pub fn render(ops: &[Insn], w: usize, h: usize) -> Vec<u32> {
 /// depth test, the blend with the colour there, and the colour mask.
 /// A pixel that fails a test writes nothing, its depth included.
 pub fn render_over(ops: &[Insn], w: usize, h: usize, fb: Vec<u32>) -> Vec<u32> {
+    render_textured(ops, w, h, fb, None)
+}
+
+/// Where a textured list's textures are (issue 997): the memory, a word
+/// at each byte address a multiple of four, and the byte address of the
+/// descriptor table.
+pub struct Textures<'a> {
+    pub mem: &'a dyn Fn(u32) -> u32,
+    pub table: u32,
+}
+
+/// The same with textures: a textured entry's colour at a pixel is its
+/// fragment's colour through its texture's environment, before the alpha
+/// test, as GL orders it. A textured entry with no textures given draws
+/// untextured.
+pub fn render_textured(
+    ops: &[Insn],
+    w: usize,
+    h: usize,
+    fb: Vec<u32>,
+    textures: Option<&Textures>,
+) -> Vec<u32> {
     let mut fb = fb;
     let mut zb = vec![0xffffu32; w * h];
     for op in ops {
@@ -220,13 +242,39 @@ pub fn render_over(ops: &[Insn], w: usize, h: usize, fb: Vec<u32>) -> Vec<u32> {
         let blending = state && op.blend.to_bool();
         let (sf, df) = (op.sfactor.raw() as u32, op.dfactor.raw() as u32);
         let mask = op.mask();
+        let tex = textures.filter(|_| op.tex.to_bool()).map(|t| {
+            let d = op.tdesc.raw() as u32;
+            let words = core::array::from_fn(|k| {
+                (t.mem)(t.table + d * 64 + 4 * k as u32)
+            });
+            (t, razboj_tile::tex::decode(&words))
+        });
+        let r64 = |u: U<64>| u.raw() as u64;
+        let at64 = |p: [U<64>; 3], i: i32, j: i32| {
+            r64(p[0])
+                .wrapping_add(r64(p[1]).wrapping_mul(i as u64))
+                .wrapping_add(r64(p[2]).wrapping_mul(j as u64))
+        };
         for y in y0..=y1 {
             for x in x0..=x1 {
                 if !inside(op, x, y) {
                     continue;
                 }
                 let at = y as usize * w + x as usize;
-                let src = colour(op, x - x0, y - y0);
+                let mut src = colour(op, x - x0, y - y0);
+                if let Some((t, d)) = &tex {
+                    let (i, j) = (x - x0, y - y0);
+                    let uq = at64([op.u0, op.udx, op.udy], i, j);
+                    let vq = at64([op.v0, op.vdx, op.vdy], i, j);
+                    let q = at64([op.q0, op.qdx, op.qdy], i, j);
+                    let (u, v) = crate::tex::texel_uv(uq, vq, q);
+                    let n = crate::tex::numerators(op, i, j);
+                    let l = crate::tex::lod(n, op.lodk.raw() as u32, q);
+                    let ct = crate::tex::sample(d, u, v, l, t.mem);
+                    let mode = op.tenv.raw() as u32;
+                    let cc = op.tenvc.raw() as u32;
+                    src = crate::tex::env(mode, d.class, src, ct, cc);
+                }
                 let aref = op.aref.raw() as u32;
                 if atest && !passes(op.afunc.raw() as u32, src >> 24, aref) {
                     continue;

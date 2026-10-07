@@ -23,6 +23,8 @@
 //! place and could differ in the last bit.
 #![cfg_attr(not(test), no_std)]
 
+pub mod tex;
+
 // begin{clip}
 /// A box of pixels, both ends included: the first column and row, then
 /// the last.
@@ -181,7 +183,18 @@ pub enum Refused {
 /// tests depth (issue 992) or blends, tests alpha or masks its colour
 /// (issue 993).
 pub fn has_ext(e: &[u32; WORDS]) -> bool {
-    (e[15] >> 8) & 1 == 1 || (e[15] >> 13) & 1 == 1
+    (e[15] >> 8) & 1 == 1 || (e[15] >> 13) & 1 == 1 || is_textured(e)
+}
+
+/// Whether an entry is textured (issue 997), which gives it two slots more
+/// after its second, for its texture's planes; see [`tex`].
+pub fn is_textured(e: &[u32; WORDS]) -> bool {
+    e[15] & tex::TEXTURED != 0
+}
+
+/// The slots an entry takes: its own, its second, and its texture's two.
+pub fn slots_of(e: &[u32; WORDS]) -> usize {
+    1 + has_ext(e) as usize + 2 * is_textured(e) as usize
 }
 
 /// The bit of a tile's record, in its second word, that says the tile
@@ -278,7 +291,7 @@ pub fn bin(
     while s < list.len() {
         let e = &list[s];
         let ext = has_ext(e).then(|| &list[s + 1]);
-        let n = 1 + ext.is_some() as u32;
+        let n = slots_of(e) as u32;
         let reads = ext.is_some_and(|x| reads_dst(e, x));
         let (i0, j0, i1, j1) = span(e);
         for j in j0..=j1 {
@@ -324,6 +337,7 @@ pub fn bin(
     while s < list.len() {
         let e = &list[s];
         let deep = has_ext(e);
+        let textured = is_textured(e);
         let (x0, y0, _, _) = walked(e, sw, sh);
         let (i0, j0, i1, j1) = span(e);
         for j in j0..=j1 {
@@ -342,9 +356,18 @@ pub fn bin(
                         step_depth(&list[s + 1], cx0 - x0, cy0 - y0);
                     at[k] += 1;
                 }
+                if textured {
+                    let (cx0, cy0) =
+                        (clipped[1] & 0x3ff, (clipped[1] >> 16) & 0x3ff);
+                    let (a, b) = (&list[s + 2], &list[s + 3]);
+                    for slot in tex::step_slots(a, b, cx0 - x0, cy0 - y0) {
+                        entries[at[k] as usize] = slot;
+                        at[k] += 1;
+                    }
+                }
             }
         }
-        s += 1 + deep as usize;
+        s += slots_of(e);
     }
     Ok(Binned {
         tiles: t,

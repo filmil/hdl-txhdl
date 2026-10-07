@@ -100,7 +100,8 @@ pub fn encode(i: &Insn) -> [u32; WORDS] {
         | ((i.depth.to_bool() as u32) << 8)
         | (lo(i.zfunc.raw()) << 9)
         | ((i.zwrite.to_bool() as u32) << 12)
-        | ((i.state.to_bool() as u32) << 13);
+        | ((i.state.to_bool() as u32) << 13)
+        | ((i.tex.to_bool() as u32) << 14);
     w
 }
 
@@ -110,7 +111,7 @@ pub fn encode(i: &Insn) -> [u32; WORDS] {
 /// the blend, the alpha test and the colour mask in words 3 and 4.
 /// `None` for an entry with neither, which takes one slot.
 pub fn encode_ext(i: &Insn) -> Option<[u32; WORDS]> {
-    if !i.depth.to_bool() && !i.state.to_bool() {
+    if !i.depth.to_bool() && !i.state.to_bool() && !i.tex.to_bool() {
         return None;
     }
     let lo = |v: u128| v as u32;
@@ -126,6 +127,33 @@ pub fn encode_ext(i: &Insn) -> Option<[u32; WORDS]> {
         | (lo(i.aref.raw()) << 8)
         | (lo(i.cmask.raw()) << 16);
     Some(w)
+}
+
+/// The two slots of a textured entry (issue 997), after its second: its
+/// planes `u q`, `v q` and `q`, 64 bits each, its level of detail where
+/// `q` is one, and its texture, as `razboj_tile::tex` lays them out.
+/// `None` for an entry that is not textured.
+pub fn encode_tex(i: &Insn) -> Option<[[u32; WORDS]; 2]> {
+    if !i.tex.to_bool() {
+        return None;
+    }
+    use razboj_tile::tex::plane_words;
+    let p = |a: U<64>, b: U<64>, c: U<64>| {
+        plane_words([a.raw() as u64, b.raw() as u64, c.raw() as u64])
+    };
+    let (mut a, mut b) = ([0u32; WORDS], [0u32; WORDS]);
+    a[0..6].copy_from_slice(&p(i.u0, i.udx, i.udy));
+    a[6..12].copy_from_slice(&p(i.v0, i.vdx, i.vdy));
+    a[12] = i.lodk.raw() as u32;
+    a[13] = i.tdesc.raw() as u32;
+    a[14] = i.tenv.raw() as u32;
+    a[15] = i.tenvc.raw() as u32;
+    b[0..6].copy_from_slice(&p(i.q0, i.qdx, i.qdy));
+    let n = [i.nux, i.nuxd, i.nvx, i.nvxd, i.nuy, i.nuyd, i.nvy, i.nvyd];
+    for (k, v) in n.iter().enumerate() {
+        b[6 + k] = v.raw() as u32;
+    }
+    Some([a, b])
 }
 // end{format}
 
@@ -167,6 +195,7 @@ pub fn decode(w: &[u32]) -> Insn {
         zfunc: U::from((w[15] >> 9) & 7),
         zwrite: Bit::from((w[15] >> 12) & 1 == 1),
         state: Bit::from((w[15] >> 13) & 1 == 1),
+        tex: Bit::from((w[15] >> 14) & 1 == 1),
         ..Insn::default()
     }
 }
@@ -185,6 +214,22 @@ pub fn decode_ext(i: &mut Insn, e: &[u32]) {
     i.cmask = U::from((e[4] >> 16) & 0xf);
 }
 
+/// A textured entry's two slots read back into it (issue 997).
+pub fn decode_tex(i: &mut Insn, a: &[u32; WORDS], b: &[u32; WORDS]) {
+    use razboj_tile::tex::plane_of;
+    let w = |p: [u64; 3]| p.map(U::<64>::from);
+    [i.u0, i.udx, i.udy] = w(plane_of(&a[0..6]));
+    [i.v0, i.vdx, i.vdy] = w(plane_of(&a[6..12]));
+    [i.q0, i.qdx, i.qdy] = w(plane_of(&b[0..6]));
+    let n = |k: usize| U::<32>::from(b[6 + k]);
+    (i.nux, i.nuxd, i.nvx, i.nvxd) = (n(0), n(1), n(2), n(3));
+    (i.nuy, i.nuyd, i.nvy, i.nvyd) = (n(4), n(5), n(6), n(7));
+    i.lodk = U::from(a[12] & 0xff);
+    i.tdesc = U::from(a[13] & 0xffff);
+    i.tenv = U::from(a[14] & 7);
+    i.tenvc = U::from(a[15]);
+}
+
 /// A list's words read back as its instructions, an entry that tests
 /// depth or carries the pixel's state taking its second slot with it.
 pub fn decode_list(words: &[[u32; WORDS]]) -> Vec<Insn> {
@@ -192,9 +237,13 @@ pub fn decode_list(words: &[[u32; WORDS]]) -> Vec<Insn> {
     let mut k = 0;
     while k < words.len() {
         let mut i = decode(&words[k]);
-        if i.depth.to_bool() || i.state.to_bool() {
+        if i.depth.to_bool() || i.state.to_bool() || i.tex.to_bool() {
             decode_ext(&mut i, &words[k + 1]);
             k += 1;
+        }
+        if i.tex.to_bool() {
+            decode_tex(&mut i, &words[k + 1], &words[k + 2]);
+            k += 2;
         }
         out.push(i);
         k += 1;
@@ -210,6 +259,9 @@ pub fn image(list: &[Insn]) -> Vec<u32> {
         out.extend_from_slice(&encode(ins));
         if let Some(e) = encode_ext(ins) {
             out.extend_from_slice(&e);
+        }
+        for t in encode_tex(ins).iter().flatten() {
+            out.extend_from_slice(t);
         }
     }
     out

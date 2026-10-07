@@ -302,6 +302,9 @@ pub struct Raster<
     /// Whether the tile is loaded from the framebuffer before its
     /// entries, as one more entry after the scrub (issue 993).
     pub load: Reg<Bit>,
+    /// Whether the entry is textured, so that its two texture slots are
+    /// passed over (issue 997).
+    pub texd: Reg<Bit>,
 }
 // end{state}
 
@@ -854,7 +857,10 @@ impl<
                                   if self.word.get() == 15 {
                                       with!(self <= {
                                           alpha: v.slice::<0, 8>(),
-                                          deep: v.bit(8) | v.bit(13),
+                                          deep: v.bit(8)
+                                              | v.bit(13)
+                                              | v.bit(14),
+                                          texd: v.bit(14),
                                           zon: v.bit(8) & self.tiled.get(),
 
                                           son: v.bit(13) & self.tiled.get(),
@@ -956,7 +962,17 @@ impl<
                                           cmask: w4.slice::<16, 4>(),
                                       });
                                   }
-                                  self.insn.set(self.insn.get() + 1);
+                                  // A textured entry's two slots more are
+                                  // passed over: this rasteriser draws it
+                                  // untextured (issue 997).
+                                  self.insn.set(
+                                      self.insn.get()
+                                          + mux(
+                                              self.texd.get(),
+                                              U::<16>::from(3u8),
+                                              U::<16>::from(1u8),
+                                          ),
+                                  );
                               }
                             }
                             // The setup the walk asks for: per edge, the

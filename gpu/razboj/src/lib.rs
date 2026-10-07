@@ -20,4 +20,5 @@ pub mod op;
 pub mod raster;
 pub mod scene;
 pub mod sim;
+pub mod tex;
 pub mod tiles;
