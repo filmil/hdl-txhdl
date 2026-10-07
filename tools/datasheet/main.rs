@@ -448,8 +448,8 @@ fn main() {
     );
     sheet(
         "LinePair",
-        "LinePair<8, 3, 4, 6, 32, ClkPix>",
-        LinePair::<8, 3, 4, 6, 32, ClkPix>::lowered("linepair"),
+        "LinePair<8, 3, 4, 6, 32, 0, 1024, ClkPix>",
+        LinePair::<8, 3, 4, 6, 32, 0, 1024, ClkPix>::lowered("linepair"),
     );
     sheet(
         "LineStore",
@@ -464,7 +464,10 @@ fn main() {
     sheet("ScanCtl", "ScanCtl", ScanCtl::lowered("scan_ctl"));
     sheet(
         "ScanVideo",
-        "ScanVideo<640, 16, 96, 48, 480, 10, 2, 33, 2, 10, 525, 4096>",
+        concat!(
+            "ScanVideo<640, 16, 96, 48, 480, 10, 2, 33, 2, 10, 525, 4096, ",
+            "0x4000_0000, 0x8000_0000>"
+        ),
         ScanVideo::<
             { vga::HV },
             { vga::HFP },
@@ -478,6 +481,8 @@ fn main() {
             10,
             525,
             4096,
+            0x4000_0000,
+            0x8000_0000,
         >::lowered("scan_video"),
     );
     sheet("NoBeats", "NoBeats", NoBeats::lowered("nobeats"));

@@ -50,6 +50,8 @@ const STRIDE: usize = LEN * 4;
 /// The frame's first word in memory.
 const BASE_WORD: usize = 16;
 const N: usize = 256;
+/// The memory's bytes, outside which no line is asked for.
+const MEM: usize = N * 4;
 
 /// The pixel clock, unrelated to the bus clock on purpose.
 pub struct ClkPix;
@@ -117,7 +119,7 @@ impl<const A: usize, const I: usize, const M: usize>
     }
 }
 
-type Pair = LinePair<LEN, AW, ROWS, TOTAL, STRIDE, ClkPix>;
+type Pair = LinePair<LEN, AW, ROWS, TOTAL, STRIDE, 0, MEM, ClkPix>;
 type Fetch = ScanFetch<ADDR, 16, LEN>;
 
 fn main() {

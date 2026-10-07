@@ -35,7 +35,12 @@
 //! asked for that gets no word for two line times sets `stuck`, sticky
 //! too, with the line's address: a fetch that hangs says so, where on
 //! the board it once showed only as a black screen with `starved`
-//! clear (issue 1197).
+//! clear (issue 1197). A line not wholly inside the frame's memory,
+//! the window the pair is given, is not asked for at all: it sets
+//! `stuck` with its address at once and shows `LATE`, and the frame
+//! goes on (issue 1382). A base gone wrong once sent a line's burst
+//! into the serial port's page, and the core's prints stopped behind
+//! it.
 //!
 //! [`ScanFetch`] is on the bus clock. It takes the line requests the
 //! pixel side sends across and starts `LineFetch` on each, one at a
@@ -82,7 +87,9 @@ pub const LATE: u32 = 0x00ff_00ff;
 /// `LEN` is the words in a visible line, `AW` the width of a column,
 /// with `LEN` at most `1 << AW`. `ROWS` is the visible rows and
 /// `TOTAL` the rows of a frame, blanking included. `STRIDE` is the
-/// bytes from one line's start in memory to the next's.
+/// bytes from one line's start in memory to the next's. `LO` and `HI`
+/// are the frame's memory, the bytes from `LO` up to but not including
+/// `HI`: a line not wholly inside them is not asked for (issue 1382).
 #[derive(Trace)]
 pub struct LinePair<
     const LEN: usize,
@@ -90,6 +97,8 @@ pub struct LinePair<
     const ROWS: usize,
     const TOTAL: usize,
     const STRIDE: usize,
+    const LO: usize,
+    const HI: usize,
     C: Clock,
 > {
     /// One line.
@@ -154,8 +163,10 @@ impl<
         const ROWS: usize,
         const TOTAL: usize,
         const STRIDE: usize,
+        const LO: usize,
+        const HI: usize,
         C: Clock,
-    > Default for LinePair<LEN, AW, ROWS, TOTAL, STRIDE, C>
+    > Default for LinePair<LEN, AW, ROWS, TOTAL, STRIDE, LO, HI, C>
 {
     fn default() -> Self {
         LinePair {
@@ -193,8 +204,10 @@ impl<
         const ROWS: usize,
         const TOTAL: usize,
         const STRIDE: usize,
+        const LO: usize,
+        const HI: usize,
         C: Clock,
-    > Unit for LinePair<LEN, AW, ROWS, TOTAL, STRIDE, C>
+    > Unit for LinePair<LEN, AW, ROWS, TOTAL, STRIDE, LO, HI, C>
 {
     async fn run(
         &mut self,
@@ -286,7 +299,7 @@ impl<
             // keeps up never comes near: it is one line ahead.
             let owing = self.owing.get();
             let room = owing < U::<3>::from(4u8);
-            let asked = (ask_first | ask_next) & req.ready() & room;
+            let due = (ask_first | ask_next) & req.ready() & room;
             // The first line after the scanout is shown is asked from the
             // base as the host gave it, not from the one taken at the last
             // vertical sync, which a reset leaves at zero: a show written
@@ -297,6 +310,17 @@ impl<
             let first_at = mux(self.armed.get(), self.fbase.get(), base.get());
             let addr = mux(ask_first, first_at, self.next.get());
             let stride = U::<32>::from(STRIDE as u32);
+            // A line outside the frame's memory is not asked for (issue
+            // 1382): a base gone wrong once sent a line's burst of 64
+            // beats into the serial port's page, which held the path
+            // the core prints through. The frame goes on as if it had
+            // been, so the rows after it are asked where they belong;
+            // the line is never filled, so it shows `LATE`, and `stuck`
+            // says where it was.
+            let in_mem = Bit::from(addr >= U::<32>::from(LO as u32))
+                & Bit::from(addr <= U::<32>::from((HI - 4 * LEN) as u32));
+            let asked = due & in_mem;
+            let refused = due & !in_mem;
             // The lines owed (issue 1197). A word counts against the
             // oldest, and the last of its words takes it off; a line
             // asked for goes after those still owed. A line that gets no
@@ -357,11 +381,11 @@ impl<
                     rgot: got,
                 },
                 frame.get() ? fbase: base.get(),
-                asked & ask_first ? {
+                due & ask_first ? {
                     next: first_at + stride,
                     armed: Bit::One,
                 },
-                asked & ask_next ? next: self.next.get() + stride,
+                due & ask_next ? next: self.next.get() + stride,
                 !on ? armed: Bit::Zero,
                 clear.get() ? under: Bit::Zero,
                 starve ? under: Bit::One,
@@ -377,6 +401,10 @@ impl<
                 lost & !self.hung.get() ? {
                     hung: Bit::One,
                     hung_at: o0,
+                },
+                refused & !self.hung.get() ? {
+                    hung: Bit::One,
+                    hung_at: addr,
                 },
                 // A line come whole while late: a passed one, one fewer
                 // to drop; else the line shown, which is no longer late.
@@ -657,7 +685,8 @@ pub const SCAN_BIT: usize = 7;
 ///
 /// `HV` to `VBP` and `SHIFT` are [`Hdmi`]'s. `AW` is the width of a
 /// column, `TOTAL` the rows of a frame, which must be `VV + VFP + VSW +
-/// VBP`, and `STRIDE` the bytes from one line to the next in memory.
+/// VBP`, `STRIDE` the bytes from one line to the next in memory, and
+/// `LO` to `HI` the frame's memory, outside which no line is asked for.
 /// `TOTAL` is stated because a parameter cannot be a sum of others
 /// here; the `Default` refuses one that disagrees.
 ///
@@ -679,6 +708,8 @@ pub struct ScanVideo<
     const AW: usize,
     const TOTAL: usize,
     const STRIDE: usize,
+    const LO: usize,
+    const HI: usize,
 > {
     /// The slot, split by address bit 7.
     pub split: LiteSplit<32, 32, 4, SCAN_BIT>,
@@ -687,7 +718,7 @@ pub struct ScanVideo<
     /// The beam, counted again for the pair.
     pub raster: Raster<HV, HFP, HSW, HBP, VV, VFP, VSW, VBP, AW>,
     /// The two lines.
-    pub pair: LinePair<HV, AW, VV, TOTAL, STRIDE, DefaultClock>,
+    pub pair: LinePair<HV, AW, VV, TOTAL, STRIDE, LO, HI, DefaultClock>,
     /// The underflow bit back to the registers.
     pub tap: ScanTap,
     /// The video peripheral, below `0x80`.
@@ -710,6 +741,8 @@ impl<
         const AW: usize,
         const TOTAL: usize,
         const STRIDE: usize,
+        const LO: usize,
+        const HI: usize,
     > Default
     for ScanVideo<
         HV,
@@ -724,6 +757,8 @@ impl<
         AW,
         TOTAL,
         STRIDE,
+        LO,
+        HI,
     >
 {
     fn default() -> Self {
@@ -756,6 +791,8 @@ impl<
         const AW: usize,
         const TOTAL: usize,
         const STRIDE: usize,
+        const LO: usize,
+        const HI: usize,
     > Unit
     for ScanVideo<
         HV,
@@ -770,6 +807,8 @@ impl<
         AW,
         TOTAL,
         STRIDE,
+        LO,
+        HI,
     >
 {
     async fn run(
@@ -900,8 +939,16 @@ mod tests {
             { vga::VBP },
             10,
         >;
-        type P =
-            LinePair<{ vga::HV }, 10, { vga::VV }, 525, 4096, DefaultClock>;
+        type P = LinePair<
+            { vga::HV },
+            10,
+            { vga::VV },
+            525,
+            4096,
+            0x4000_0000,
+            0x8000_0000,
+            DefaultClock,
+        >;
         let mut raster = R::default();
         let mut pair = P::default();
         let (col_o, col) = signal::<U<10>, DefaultClock>();

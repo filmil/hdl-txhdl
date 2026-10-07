@@ -60,14 +60,30 @@ const STRIDE: usize = HV * 4;
 /// The frame's first word in memory.
 const BASE_WORD: usize = 16;
 const N: usize = 256;
+/// The memory's bytes, outside which no line is asked for.
+const MEM: usize = N * 4;
 /// The one pixel the host paints in the framebuffer, and its colour.
 const DOT: (usize, usize) = (3, 2);
 const FB: u32 = 0xabc;
 /// The scanout's registers, at the upper half of the slot.
 const SCAN: u32 = 0x80;
 
-type Video =
-    ScanVideo<HV, HFP, HSW, HBP, VV, VFP, VSW, VBP, 0, AW, TOTAL, STRIDE>;
+type Video = ScanVideo<
+    HV,
+    HFP,
+    HSW,
+    HBP,
+    VV,
+    VFP,
+    VSW,
+    VBP,
+    0,
+    AW,
+    TOTAL,
+    STRIDE,
+    0,
+    MEM,
+>;
 type Fetch = ScanFetch<ADDR, 16, HV>;
 
 /// The memory, whose beats a `hold` stalls, as in `ex_scanpair`.
