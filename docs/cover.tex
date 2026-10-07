@@ -18,16 +18,15 @@
 corresponding author, at f@hdlfactory.com; Dragiša Janković is
 reached at linkedin.com/in/dragisa-jankovic.}%
 \thanks{This is the cover document of TxHDL. It names every document
-the project produces, says what each is for, and says where each is
-built. When a document is added, it is added here.}%
+the project produces, describes its role, and specifies where each is
+built. When a document is added to the project, it is recorded here.}%
 \thanks{The authors used a large language model, Claude, as an
-assistant in exploring the concepts and in writing and constructing
-the documents and the programs; every commit of the repository says
-so and carries the prompts that led to it, verbatim.}%
+assistant in exploring concepts and in drafting and constructing
+the documents and implementations; every repository commit documents
+this collaboration and includes the prompt sequence verbatim.}%
 \thanks{\buildstamp}}
 
-% The table of documents fills a page of its own: set it at the top of
-% that page rather than at its middle.
+% Keep top-floated tables firmly at the page head.
 \makeatletter
 \setlength{\@fptop}{0pt}
 \makeatother
@@ -39,251 +38,291 @@ so and carries the prompts that led to it, verbatim.}%
 
 \section{The Language and Its Documents}
 
-TxHDL is a hardware description language embedded in Rust. It began as
-two languages, LHDL and TxHDL, developed independently for the same
-project; they were merged into one with a Rust-shaped syntax, and the
-merged language was then reduced by deleting every construct Rust
-already provides, until what remained was a library. The documents
-follow that history, and a reader who wants the current state of the
-language reads the last three; a reader who wants to start writing
-reads the tutorial.
+TxHDL is a hardware description language embedded directly in Rust. It began
+as two independent experimental formalisms, LHDL and TxHDL, developed for the
+same digital design project. Merged first under a unified Rust-shaped surface
+syntax, the composite language was subsequently streamlined: every syntactic
+construct already provided by the Rust host language was systematically
+eliminated until only a clean domain library remained.
 
-Every document is built by Bazel from the project repository,
-\code{HDL/txhdl}, against a hermetic \LaTeX{} toolchain, so
-\code{bazel build //docs/...} on any machine produces all of them.
-The release workflow publishes every PDF nightly, and on request.
+The documentation preserves this architectural trajectory. A reader seeking
+the operational mechanics of the current language should begin with the trio
+of core reports: the embedding rationale, the discrete-event runtime, and the
+compiled reference examples. An engineer seeking to write synthesizable
+hardware immediately should turn directly to the step-by-step tutorial.
 
-\section{The Documents}
+Every document in this collection is built hermetically by Bazel from the
+project repository, \code{HDL/txhdl}, against a pinned \LaTeX{} toolchain.
+Executing \code{bazel build //docs/...} on any supported host reproduces the
+entire corpus bit-for-bit. Release workflows validate every listing and diagram
+nightly, publishing verified PDFs on release.
 
-Tables~\ref{tab:documents} and~\ref{tab:records} name every
-document, in the order the combined PDF binds them, with the target
-that builds each. The first holds the documents on the language and
-what was built in it; the second, the ones that summarise and record.
+\section{The Documentation Map}
+
+Tables~\ref{tab:lang_docs}, \ref{tab:hardware_docs}, and~\ref{tab:record_docs}
+enumerate the complete corpus of project documents alongside the Bazel targets
+that construct them.
+
+Table~\ref{tab:lang_docs} presents the foundational reports detailing language
+semantics, embedding theory, runtime mechanics, and introductory tutorials.
+Table~\ref{tab:hardware_docs} surveys the complete digital systems implemented
+in TxHDL, from modular AXI peripherals and network-on-chip fabrics to the
+tapeout-ready RISC-V processor core. Table~\ref{tab:record_docs} collects the
+overarching summaries, empirical codebase metrics, historical dynamics, and
+the unified monograph.
+
+\clearpage
 
 \begin{table}[t]
-\caption{Every document, what it is for, and where it is built.}
-\label{tab:documents}
+\caption{Language foundations, runtime mechanics, and core tutorials.}
+\label{tab:lang_docs}
 \centering
 \begin{tabular}{@{}p{46mm}p{92mm}l@{}}
 \toprule
-Document & What it is for & Target \\
+Document & Role and Scope & Target \\
 \midrule
 TxHDL: Unifying a Dataflow and a Transaction HDL
-  & The merge. What each source language contributed, the four conflicts
-    of meaning and how each was resolved, and the merged language as it
-    stood before the embedding. Historical now, and the record of why
-    the language has the shape it has.
+  & The architectural synthesis. Documents what each original language
+    contributed, analyzes the four semantic conflicts between dataflow and
+    transaction-level models, and explains their formal resolution. Serves as
+    the design rationale for the language morphology.
   & \code{//docs:article} \\
 \addlinespace
 Deleting a Language: Embedding TxHDL in Rust
-  & The language as it is. The rule that every construct Rust provides
-    is deleted, what is left, and every claim about Rust compiled as a
-    probe. The exposition; read this first.
+  & The definitive exposition of modern TxHDL. Details the rule that custom
+    syntax is deleted in favour of standard Rust types, traits, and executors.
+    Every claim regarding compiler behavior is verified through automated
+    probes. Recommended starting point.
   & \code{//docs:embedding} \\
 \addlinespace
 The TxHDL Runtime
-  & The library that is the language, included verbatim from the tree,
-    with the model of time its executor keeps stated in prose. For
-    somebody changing the runtime, or asking what a construct does
-    inside.
+  & The operational engine. Incorporates the complete runtime source code
+    verbatim from the tree, accompanied by an exact prose specification of its
+    discrete-event execution model, cycle boundaries, and transactional state
+    propagation.
   & \code{//docs:runtime} \\
 \addlinespace
 TxHDL by Example
-  & One compiled example per concept, from values to an asynchronous
-    FIFO between two clocks, each with the output the build produced
-    when it ran it. The runtime appears only through its public
-    interface. For somebody writing a design.
+  & A graded progression of compiled reference designs, from basic signal types
+    to dual-clock asynchronous FIFOs, juxtaposing verified source listings with
+    execution traces generated during the build.
   & \code{//docs:examples} \\
 \addlinespace
-Vreteno: An RV32IMAC Core in TxHDL
-  & The first large design: a RISC-V core written in the language,
-    checked every cycle against a reference model of the instruction
-    set, with its programs and its waveform, and run on an Artix-7
-    board, where it said what its simulation said. For somebody
-    asking whether the language scales, how a design of this size is
-    tested, and whether it has been proven on hardware: it has.
-  & \code{//docs:vreteno} \\
-\addlinespace
-A Tapeout Prep in TxHDL: Vreteno on an Open 45\,nm Node
-  & The same core after the FPGA: mapped onto an open 45\,nm standard
-    cell library and floorplanned, placed, routed and timed with
-    OpenROAD, with the die it came to, the timing it met, and a list of
-    everything a real tapeout would still want. For somebody asking
-    what happens to a design of this language on the way to silicon.
-  & \code{//docs:tapeout} \\
-\addlinespace
 TxHDL: A Hardware Description Language That Is a Rust Library
-  & The paper. The system as it is and what it does, with diagrams:
-    the language, the model of time, traces, the lowering and its
-    checks, and the Vreteno core through synthesis. No history. For
-    somebody meeting TxHDL for the first time.
+  & The comprehensive system paper. Details end-to-end architecture with
+    complete schematics: host language embedding, discrete-event semantics,
+    simulation traces, register-transfer lowering, and synthesis of the
+    Vreteno core.
   & \code{//docs:paper} \\
 \addlinespace
 TxHDL, Step by Step
-  & The tutorial. Eight steps on examples the build runs: a counter,
-    the model of time, the ways of choosing, channels between units,
-    ports with names, units of units on more than one clock, the
-    waveform, and the netlist with its checks; then how to add an
-    example of your own. For somebody who has written some Rust
-    and no hardware.
+  & An eight-stage hands-on tutorial built around executable hardware modules:
+    synchronous counters, the discrete-event model of time, control structures,
+    inter-unit channels, named ports, multi-clock domains, waveform generation,
+    and netlist validation.
   & \code{//docs:tutorial} \\
 \addlinespace
 TxHDL from Zero: A Blinky in Bazel
-  & The tutorial for an empty directory: Bazelisk and Git
-    installed, no copy of the tree, and five files that build, run and lower a blinky
-    with Bazel; the workspace is in the tree, and its design is built
-    against the tree as a check.
+  & The bootstrap guide for an empty directory: installing Bazelisk and Git,
+    configuring a minimal standalone workspace without checking out the full
+    tree, and building, simulating, and lowering a hardware blinky across five
+    concise configuration files.
   & \code{//docs:zero} \\
 \addlinespace
 Formal Verification in TxHDL
-  & The tutorial on proving what a unit states about itself: the
-    digit of \code{ex\_formal} proved for every input with SymbiYosys
-    on the pinned Yosys, a broken copy failing with the counterexample
-    drawn, and the cover point reached, every log the build's. For
-    somebody who wants a check to hold for every input rather than
-    for one run.
+  & A practical guide to bounded model checking and safety property proofs.
+    Proves the \code{ex\_formal} module across all input states using
+    SymbiYosys, analyzes falsified assertions via counterexample traces, and
+    reaches formal cover targets.
   & \code{//docs:prove} \\
-\addlinespace
-A Reservation Station in TxHDL
-  & The tutorial on a part: what a reservation station is, its rule
-    read cycle by cycle on the example's run, how a station of any
-    count of inputs is used, with a FIFO behind it, and what its
-    netlist is.
-  & \code{//docs:station} \\
-\addlinespace
-AXI in TxHDL
-  & The tutorial on a bus: what an AXI link is, the two verbs a host
-    client has and the one a peripheral client has, accepting many
-    transactions and answering them as the work finishes, the two
-    trackers and their netlists, and what routing will attach to.
-  & \code{//docs:axi} \\
-\addlinespace
-Razboj: A Minimal GPU in TxHDL
-  & The first design on the bus: a rasteriser that reads a display
-    list and writes pixels into memory over AXI, the framebuffer
-    behind the other end of the link, the picture it drew, and the
-    netlists of both.
-  & \code{//docs:razboj} \\
-\addlinespace
-A Network on Chip in TxHDL
-  & Several hosts and several peripherals, on a lattice: a node with a
-    link to each neighbour and an exit, two virtual channels,
-    dimension-order routing, and the bridge with AXI on one side and
-    packets on the other.
-  & \code{//docs:noc} \\
-\addlinespace
-Ethernet in TxHDL
-  & A part on the bus: a MAC in two halves that store whole frames, a
-    CRC-32 written as its eight steps, an AXI-Lite peripheral of three
-    words,
-    a run on a loop of wire with one frame corrupted, and the
-    hand-written echo design for the AX7A200B's PHY.
-  & \code{//docs:eth} \\
-\addlinespace
-HDMI in TxHDL
-  & A peripheral for an encoder chip: the raster, a framebuffer a host
-    paints over AXI-Lite, the I2C master that configures the chip, a
-    run that checks every pixel on the screen, and the hand-written
-    demonstration for the AX7A200B's SiI9134.
-  & \code{//docs:hdmi} \\
-\addlinespace
-The TxHDL Flagship
-  & The one bitstream that holds all of it: the core with its memory,
-    the Ethernet port and the HDMI output in one part, three clock
-    domains kept apart, the loader in the boot memory, and the whole
-    written to the board's flash.
-  & \code{//docs:flagship} \\
-\addlinespace
-PCIe in TxHDL
-  & TxHDL behind an endpoint the build generates: the part that joins
-    an AXI master's pins to the link, the registers a host reaches in
-    BAR1, and the AX7A200B's design, taken to a bitstream.
-  & \code{//docs:pcie} \\
-\addlinespace
-TxHDL Datasheets
-  & A datasheet per component: what it does, its parameters and
-    register map, its ports, state and children as its netlist has
-    them, how it behaves, how it is checked, and where it is used.
-  & \code{//docs:datasheets} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[t]
-\caption{The documents that summarise and record, and all of them in
-one file.}
-\label{tab:records}
-\centering
-\begin{tabular}{@{}p{46mm}p{92mm}l@{}}
-\toprule
-Document & What it is for & Target \\
-\midrule
-TxHDL Documents
-  & This document.
-  & \code{//docs:cover} \\
-\addlinespace
-TxHDL: What Has Been Built
-  & A few pages on the whole of it: the rule the language was built on,
-    the parts, the core, the GPU, how all of it is checked, and what
-    is not done. For a reader deciding whether to read the rest.
-  & \code{//docs:showcase} \\
-\addlinespace
-TxHDL cheat sheet
-  & One page: the rule, the model of time, the vocabulary, a unit with
-    its netlist and its waveform, and how to build. Also a PNG.
-  & \begin{tabular}[t]{@{}l@{}}\code{//docs:cheatsheet}\\\code{//docs:cheatsheet\_png}\end{tabular} \\
-\addlinespace
-TxHDL by the Numbers
-  & The repository in numbers: lines per topic, per language and per
-    file, measured once, on September 13, 2026, and typed in. Not kept
-    up to date; the script that measured is in the tree.
-  & \code{//docs:stats} \\
-\addlinespace
-The Dynamics of a Project
-  & How the work went rather than what it is: the timeline measured
-    from the repository's own history, a Gantt chart of the bands of
-    work with what each needed before it could begin, and what a
-    repository cannot say.
-  & \code{//docs:dynamics} \\
-\addlinespace
-All of the above, in this order
-  & One file, \code{txhdl.pdf}, with a bookmark per document, for
-    reading or printing the whole.
-  & \code{//docs:all} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \section{The Working Notes}
 
-Under \code{docs/} in the repository, in Markdown, are the notes the
-articles were written from. They are not typeset, and they are kept
-because a decision is worth nothing if the reasons for it are lost.
+Beneath \code{docs/} in the repository lie the foundational engineering notes
+from which these publications were drafted. Preserved in raw Markdown, they are
+intentionally retained alongside the formal papers: an architectural decision
+survives only as long as its underlying trade-offs and alternatives remain
+legible.
 
 \begin{itemize}
-\item \code{unification-analysis.md}: what each source language is, what
-  conflicts, what each contributes, and every defect found in the two
-  sources.
-\item \code{syntax-decisions.md}: the Rust-shaped surface syntax of the
-  merged language, one decision per conflict.
-\item \code{rust-embedding.md}: the working notes of the embedding, with
-  every probe result in full.
-\item \code{document-build-plan.md}: how the documents are built, what
-  was tried before, and why the \TeX{} packages are vendored.
+\item \code{unification-analysis.md}: The initial comparative study of LHDL
+  and original TxHDL, detailing feature overlaps, semantic divergences, and
+  every defect uncovered in the legacy prototypes.
+\item \code{syntax-decisions.md}: The rationale governing the surface syntax
+  of the unified language, resolving each syntactic conflict in favour of
+  idiomatic Rust conventions.
+\item \code{rust-embedding.md}: The detailed experimental notes documenting
+  the language reduction, recording compiler output from every type-system probe.
+\item \code{document-build-plan.md}: The hermetic build specification for
+  the documentation suite, explaining the rationale for vendoring \TeX{} packages
+  and pinning the \LaTeX{} toolchain in Bazel.
 \end{itemize}
+
+\clearpage
+
+\begin{table}[t]
+\caption{Hardware subsystems, core architectures, and physical implementation.}
+\label{tab:hardware_docs}
+\centering
+\begin{tabular}{@{}p{46mm}p{92mm}l@{}}
+\toprule
+Document & Role and Scope & Target \\
+\midrule
+A Reservation Station in TxHDL
+  & Out-of-order execution primitives. Specifies the operational discipline of
+    an instruction reservation station cycle by cycle, demonstrates
+    parameterised multi-port dispatch with upstream queueing, and analyzes the
+    lowered gate-level netlist.
+  & \code{//docs:station} \\
+\addlinespace
+AXI in TxHDL
+  & Standard on-chip interconnect protocols. Implements AXI4 point-to-point
+    channels through two host transaction verbs and one peripheral verb,
+    handling concurrent split-response transactions, outstanding request
+    tracking, and structural routing.
+  & \code{//docs:axi} \\
+\addlinespace
+Razboj: A Minimal GPU in TxHDL
+  & The first complex peripheral on the bus. Implements a hardware rasteriser
+    that consumes memory-mapped display lists and streams computed pixels
+    across an AXI interface into a dedicated framebuffer, complete with
+    rendered visual output and gate netlists.
+  & \code{//docs:razboj} \\
+\addlinespace
+A Network on Chip in TxHDL
+  & Scalable multi-agent interconnect. Implements a 2D mesh network-on-chip
+    featuring dimension-order wormhole routing, dual virtual channels for
+    deadlock avoidance, local router ports, and transactional packet-to-AXI
+    translation bridges.
+  & \code{//docs:noc} \\
+\addlinespace
+Ethernet in TxHDL
+  & Media-access control on the system bus. Combines a dual-buffer full-frame
+    MAC, a parallelised eight-step CRC-32 generator, and a three-register
+    AXI-Lite control port, verified with loopback wire tests and on-board
+    AX7A200B PHY operation.
+  & \code{//docs:eth} \\
+\addlinespace
+HDMI in TxHDL
+  & High-definition video generation. Implements video timing raster generators,
+    an AXI-Lite addressable framebuffer, and an I2C control master that programs
+    the physical transmitter, validated through whole-frame pixel tests and
+    on-board SiI9134 output.
+  & \code{//docs:hdmi} \\
+\addlinespace
+PCIe in TxHDL
+  & High-speed host attachment. Couples an AXI master to a generated PCI Express
+    endpoint core, exposing host-accessible memory and control registers mapped
+    into BAR1, compiled through bitstream generation for the AX7A200B development
+    board.
+  & \code{//docs:pcie} \\
+\addlinespace
+The TxHDL Flagship
+  & The complete system-on-chip demonstration bitstream. Integrates the Vreteno
+    RISC-V core, system memory, Ethernet MAC, and HDMI rasterizer within a single
+    design, coordinating three asynchronous clock domains, an SPI flash
+    bootloader, and on-board peripherals.
+  & \code{//docs:flagship} \\
+\addlinespace
+Vreteno: An RV32IMAC Core in TxHDL
+  & The flagship processor implementation. An RV32IMAC RISC-V CPU verified cycle
+    by cycle against an authoritative instruction-set reference model, accompanied
+    by software test suites, execution waveforms, and physical Artix-7 FPGA
+    deployment validating hardware equivalence.
+  & \code{//docs:vreteno} \\
+\addlinespace
+A Tapeout Prep in TxHDL: Vreteno on an Open 45\,nm Node
+  & Silicon implementation study. Takes the Vreteno core from RTL through an
+    automated OpenROAD physical design flow targeting the FreePDK45
+    standard-cell library, documenting floorplanning, cell placement,
+    clock-tree synthesis, routing, timing closure, and tapeout readiness.
+  & \code{//docs:tapeout} \\
+\addlinespace
+TxHDL Datasheets
+  & Standardised component references. Standalone specification sheets for each
+    reusable module in the library, detailing register maps, parameter
+    interfaces, structural netlist hierarchies, temporal behavior, and
+    automated regression test harnesses.
+  & \code{//docs:datasheets} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+
+\begin{table}[t]
+\caption{Overviews, codebase metrics, project dynamics, and the collected monograph.}
+\label{tab:record_docs}
+\centering
+\begin{tabular}{@{}p{46mm}p{92mm}l@{}}
+\toprule
+Document & Role and Scope & Target \\
+\midrule
+TxHDL Documents
+  & The master index and documentation roadmap. Outlines the corpus structure,
+    details document roles and compilation targets, and establishes the
+    triad verification rules governing the repository.
+  & \code{//docs:cover} \\
+\addlinespace
+TxHDL: What Has Been Built
+  & The executive summary. Synthesises the core architectural thesis, library
+    ecosystem, RISC-V processor, raster GPU, and automated verification
+    infrastructure into a concise multi-page survey of completed work and
+    future directions.
+  & \code{//docs:showcase} \\
+\addlinespace
+TxHDL Cheat Sheet
+  & A dense single-page visual reference. Summarises core syntax, the
+    discrete-event model of time, essential vocabulary, sample module anatomy,
+    lowered netlists, and common build commands. Available as both PDF and PNG.
+  & \begin{tabular}[t]{@{}l@{}}\code{//docs:cheatsheet}\\\code{//docs:cheatsheet\_png}\end{tabular} \\
+\addlinespace
+TxHDL by the Numbers
+  & Quantitative repository archaeology. Measures source line counts across
+    functional domains, programming languages, and individual files. Captures an
+    immutable historical snapshot of project scale alongside reproducible
+    measurement tooling.
+  & \code{//docs:stats} \\
+\addlinespace
+The Dynamics of a Project
+  & Chronological development history. Reconstructs engineering evolution from
+    Git commit history, rendering dependency-constrained Gantt schedules across
+    concurrent architectural initiatives and reflecting on lessons learned.
+  & \code{//docs:dynamics} \\
+\addlinespace
+TxHDL: The Collected Monograph
+  & The unified publication. Assembles every project paper and specification in
+    canonical reading order into a single publication, \code{txhdl.pdf},
+    complete with hierarchical PDF bookmarks for printing or comprehensive study.
+  & \code{//docs:all} \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{How the Documents Are Kept True}
 
-Three rules keep the documents and the code from drifting apart, and
-they are stated in the repository's \code{AGENTS.md} so that every
-change is held to them.
+Three inviolable engineering rules ensure that this documentation remains in
+perpetual synchronization with the underlying implementation. Enforced through
+continuous integration and documented in \code{AGENTS.md}, every proposed change
+is subject to their constraints:
 
-A concept lives in three places or it does not exist: the runtime, a
-compiled example, and these documents, in the same change. A listing
-of a source file is included from the tree at build time, never typed
-into a document, because a typed copy is the one copy nothing checks.
-And a claim about what Rust accepts is a probe that was compiled before
-it was written down, kept even when the answer was no, because the
-error message is the evidence.
+\begin{enumerate}
+\item \textbf{The Triad Rule:} A language feature exists only if it is
+  implemented simultaneously in three locations: within the runtime library,
+  in an automated compilation test or reference example, and in the relevant
+  documentation. Omission in any single location renders the change incomplete.
+\item \textbf{Verbatim Listing Inclusion:} Source code listings are never
+  transcribed manually into \LaTeX{} sources. Every snippet is extracted
+  directly from active tree files during the build. If a code example fails to
+  compile or drifts from the implementation, the document build fails
+  immediately.
+\item \textbf{Empirical Probes as Evidence:} Claims regarding host language
+  acceptance or rejection are backed by standalone compiler probes. Even
+  negative outcomes are preserved as permanent tests, ensuring that compiler
+  error messages serve as reproducible empirical evidence.
+\end{enumerate}
 
 \end{document}
