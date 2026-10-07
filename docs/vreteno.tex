@@ -629,7 +629,18 @@ the enable in \code{mstatus} are all set, the interrupt takes the
 live instruction's place: it runs nothing, its address goes to
 \code{mepc} with the interrupt's cause, \code{mtval} takes zero,
 the status is saved and cleared as for any trap, and the fetch is
-redirected to \code{mtvec}. The instruction still passes through
+redirected to \code{mtvec}. The decision is made a cycle before it is
+acted on (issue 1331): whether one is pending and enabled, for which
+mode, and from which set, go into registers, and the take reads them,
+since the enables' logic in front of the fetch's address was the
+flagship's worst path. A cycle later is nothing a program can see.
+What it could see is an interrupt taken just after it was forbidden,
+so the decision is dropped after a write of \code{mstatus},
+\code{sstatus}, \code{mie}, \code{sie}, \code{mideleg}, \code{mip} or
+\code{sip}, an \code{mret} or \code{sret}, a trap, and debug mode.
+Only as the instruction runs: a CSR access merely sitting in execute
+once dropped it every cycle, and a loop reading \code{mip} while it
+waited for an interrupt never took one. The instruction still passes through
 the writeback stage, writing nothing, so that it retires as a trap
 does and the lockstep test steps the model on it. A division in
 flight when an interrupt is taken is cancelled, and starts again
@@ -1256,7 +1267,10 @@ pending register while the instruction is in execute, and the core's
 register for a load's answer before the cycle in which the load
 retires, and hands both to the model with the instruction. So a load
 from a device agrees on what the device said, and the timer's
-interrupt is decided on the same bit in both. The compare lands in
+interrupt is decided on the same bit in both. The test hands the model
+the interrupt the core decided on, a cycle old, and checks each one
+against the model's enables where it is taken, which is what fails
+if the decision is not dropped after a write of them (issue 1331). The compare lands in
 the timer a cycle after the core's store, so it is checked at the
 halt, as the memory is. So are the serial port's count of bytes and
 its last byte, against the bytes the model was given.
