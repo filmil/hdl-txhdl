@@ -41,11 +41,13 @@ LHDL declares conformance with \code{implements}. TxHDL infers it from
 matching fields.
 
 \begin{rulebox}[Structural for data, nominal for behaviour]
-Each source already uses its mechanism for what that mechanism is good at.
-Field compatibility between two transactions is a question about layout, and
-structural typing decides layout well. Whether a pipeline satisfies a bus
-contract is a question about intent, and intent should be declared, because
-two modules can share a field set by accident.
+Each source employs its typing discipline where it provides the strongest
+guarantees. Field compatibility between two transactions concerns memory and
+signal layout; structural typing models layout effectively. In contrast,
+verifying that a pipeline satisfies an interconnect contract concerns
+architectural intent. Intent requires explicit nominal declaration, preventing
+distinct modules that happen to share field signatures from being mistakenly
+bound.
 \end{rulebox}
 
 \subsection{Is verification in the language?}
@@ -54,12 +56,12 @@ LHDL's twelfth thesis argues for interop with existing testing
 infrastructure instead of a non-synthesisable subset. TxHDL puts assertions,
 assumptions, cover points and properties in the language.
 
-\begin{rulebox}[Both, split by what the construct talks to]
-The thesis argues against a simulation subset: file input and output, string
-handling, and stimulus generation. It does not argue against formal
-properties. Assertions and properties are read by formal tools and by
-synthesis, not by a simulator's runtime library, so they do not create the
-subset the thesis objects to.
+\begin{rulebox}[Both, split by target toolchain]
+The thesis targets simulation-only constructs such as file I/O, string
+formatting, and procedural testbench generators. It does not preclude formal
+property specifications. Assertions and temporal properties are evaluated by
+model checkers and synthesis tools rather than runtime simulation libraries,
+avoiding the non-synthesizable simulation subset that the thesis rejects.
 \end{rulebox}
 
 Stimulus, file handling and scoreboarding move to the foreign function

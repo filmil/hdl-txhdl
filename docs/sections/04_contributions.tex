@@ -48,9 +48,9 @@ of both is about something the other never addressed.
 
 \subsection{Dropped from both}
 
-LHDL's \code{state} blocks go, because a sequence with \code{await} states
-the same machine and reads better, and
-Section~\ref{sec:conflicts} already keeps both models of time. TxHDL's
-Verilog-style bit slice and sized literal go, replaced by ranges and casts.
-LHDL's directional range operators go: Rust has no such operator, and the
-same intent is written with a range and an explicit reversal.
+LHDL \code{state} blocks are retired: procedural sequences with \code{await}
+express identical finite-state automata with greater clarity, and
+Section~\ref{sec:conflicts} preserves both execution models. TxHDL Verilog-style
+bit slicing and sized literals are replaced by idiomatic slice ranges and
+explicit type casts. Directional range operators from LHDL are omitted because
+standard range syntax paired with explicit reversal clarifies bit ordering.

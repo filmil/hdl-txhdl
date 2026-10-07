@@ -2,42 +2,41 @@
 \section{Surface Syntax, Biased Toward Rust}
 \label{sec:syntax}
 
-Where the two languages disagree and Rust has an answer, Rust wins. Rust is
-familiar, it is popular enough that engineers arrive already reading it, and
-its constructs hold up under the coding patterns people now use. The bias
-also earns its keep in a way that was not obvious in advance: it removes six
-defects present in the sources, listed in Section~\ref{sec:defects}.
+Where the source languages disagree and Rust provides an established precedent,
+the unified specification adopts Rust syntax. Rust syntax provides strong
+familiarity, concise expression, and robust scoping rules. Adopting this
+convention also yields a decisive structural benefit: it resolves six
+grammatical ambiguities present in the source drafts, detailed in
+Section~\ref{sec:defects}.
 
-Where Rust has no answer, because the construct is about hardware and not
-about software, the better of the two sources wins.
+Where Rust has no direct analogue because a construct addresses hardware-specific
+concerns, the unified specification adopts the cleaner construct from the source drafts.
 
-Rust's naming conventions apply throughout. Types, traits, buses,
-transactions and modules take \code{CamelCase}. Values, functions, ports and
-stages take \code{snake\_case}. Constants take
-\code{SCREAMING\_SNAKE\_CASE}.
+Rust naming conventions apply throughout. Types, traits, buses, transactions,
+and modules use \code{CamelCase}. Values, functions, ports, and pipeline stages
+use \code{snake\_case}. Constants use \code{SCREAMING\_SNAKE\_CASE}.
 
 \subsection{The decision that does the most work}
 
-TxHDL declares state with \code{var} and combinational logic with
-\code{wire}. LHDL argues, in its eighth thesis, that the designer should not
-make that distinction at all. Rust settles it with one keyword that neither
-source has.
+TxHDL declares sequential state with \code{var} and combinational paths with
+\code{wire}. LHDL argues in its eighth thesis that hardware designers should not
+draw this distinction manually. Rust resolves this dichotomy through immutability:
 
-\begin{lstlisting}[caption={A binding and a place. \code{mut} is the whole of the distinction that \code{wire} and \code{var} used to draw.},label={lst:mut}]
+\begin{lstlisting}[caption={A binding and a place. \code{mut} encapsulates the distinction previously drawn between \code{wire} and \code{var}.},label={lst:mut}]
 let sum = a + b;            // a binding. Always a + b. A wire.
 let mut count: u8 = 0;      // a place. Holds its value. A register.
 \end{lstlisting}
 
-\code{mut} states whether the value changes, which is a fact about the
-design. It never states whether a flip-flop appears, which is a fact about
-the implementation. This satisfies LHDL's eighth thesis and TxHDL's third
-principle, ``variables become registers automatically based on usage'', with
-one keyword readers already know. Both \code{var} and \code{wire} are
-dropped.
+\code{mut} specifies whether a named value changes over time, expressing an
+architectural design invariant. It does not dictate whether synthesis instantiates
+a flip-flop, which remains an implementation retiming decision. This reconciles
+LHDL's eighth thesis with TxHDL's principle that variables map to registers
+automatically based on usage. Both \code{var} and \code{wire} are retired.
 
 \subsection{Conflicts that Rust settles}
 
-Table~\ref{tab:syntax} lists them. Two entries are worth drawing out.
+Table~\ref{tab:syntax} lists these resolutions. Two specific syntactic entries
+warrant detailed discussion.
 
 \emph{Bit slicing.} LHDL writes a Rust range and TxHDL writes a Verilog
 descending pair. The range wins, which is the one place LHDL's spelling is
