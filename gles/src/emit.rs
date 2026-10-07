@@ -82,6 +82,40 @@ pub fn depth(w: &mut [u32; WORDS], func: u32, write: bool) {
     w[15] = (w[15] & 0xff) | 1 << 8 | (func & 7) << 9 | (write as u32) << 12;
 }
 
+/// What happens to a pixel after its coverage (#993), as Razboj's list
+/// says it: the blend's two factors, Razboj's codes from nought for
+/// `GL_ZERO`; the alpha test's comparison, from nought for `GL_NEVER`,
+/// and its reference, a byte; and the channels written, a bit a byte,
+/// bit 0 blue to bit 3 alpha.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pixel {
+    pub blend: Option<(u32, u32)>,
+    pub alpha: Option<(u32, u32)>,
+    pub mask: u32,
+}
+
+impl Pixel {
+    /// GL's initial state, which an instruction says by leaving it out.
+    pub const DEFAULT: Pixel = Pixel {
+        blend: None,
+        alpha: None,
+        mask: 0xf,
+    };
+}
+
+/// An instruction's word 15 told it has the pixel's state `p`, and its
+/// second slot, `slot`, given it in words 3 and 4 (Razboj's #993).
+pub fn state(w: &mut [u32; WORDS], slot: &mut [u32; WORDS], p: Pixel) {
+    w[15] |= 1 << 13;
+    slot[3] = p
+        .blend
+        .map_or(0, |(s, d)| 1 | (s & 0xf) << 4 | (d & 0xf) << 8);
+    slot[4] = p
+        .alpha
+        .map_or(0, |(f, r)| 1 | (f & 7) << 1 | (r & 0xff) << 8)
+        | (p.mask & 0xf) << 16;
+}
+
 /// A depth plane's slot for a depth `z` everywhere, of sixteen bits:
 /// the plane of a clear, a rectangle or a point, half a unit up as a
 /// triangle's start is.

@@ -85,3 +85,20 @@ pub const MAX_LIGHTS: usize = 8;
 /// `ALIASED_POINT_SIZE_RANGE` and `ALIASED_LINE_WIDTH_RANGE`, whose
 /// bottom is one (#994).
 pub const MAX_SIZE: u32 = 64;
+
+/// Blending and the alpha test (#993): the switches, and the factors of
+/// `glBlendFunc`, GL's `ZERO` and `ONE`, then `SRC_COLOR` to
+/// `SRC_ALPHA_SATURATE` in GL's order, which is Razboj's from two.
+pub const BLEND: u32 = 0x0BE2;
+pub const ALPHA_TEST: u32 = 0x0BC0;
+pub const ZERO: u32 = 0x0000;
+pub const ONE: u32 = 0x0001;
+pub const SRC_COLOR: u32 = 0x0300;
+pub const ONE_MINUS_SRC_COLOR: u32 = 0x0301;
+pub const SRC_ALPHA: u32 = 0x0302;
+pub const ONE_MINUS_SRC_ALPHA: u32 = 0x0303;
+pub const DST_ALPHA: u32 = 0x0304;
+pub const ONE_MINUS_DST_ALPHA: u32 = 0x0305;
+pub const DST_COLOR: u32 = 0x0306;
+pub const ONE_MINUS_DST_COLOR: u32 = 0x0307;
+pub const SRC_ALPHA_SATURATE: u32 = 0x0308;

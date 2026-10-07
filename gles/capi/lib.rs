@@ -401,6 +401,21 @@ pub extern "C" fn glDepthMask(flag: u8) {
 }
 
 #[no_mangle]
+pub extern "C" fn glBlendFunc(sfactor: u32, dfactor: u32) {
+    with(|g| g.blend_func(sfactor, dfactor));
+}
+
+#[no_mangle]
+pub extern "C" fn glAlphaFuncx(func: u32, reference: Fx) {
+    with(|g| g.alpha_func(func, reference));
+}
+
+#[no_mangle]
+pub extern "C" fn glColorMask(red: u8, green: u8, blue: u8, alpha: u8) {
+    with(|g| g.color_mask(red != 0, green != 0, blue != 0, alpha != 0));
+}
+
+#[no_mangle]
 pub extern "C" fn glClearDepthx(depth: Fx) {
     with(|g| g.clear_depth(depth));
 }

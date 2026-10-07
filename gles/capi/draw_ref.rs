@@ -77,6 +77,11 @@ fn main() {
     g.depth_func(gl::LEQUAL);
     g.depth_mask(false);
     g.depth_range(ONE / 4, 3 * ONE / 4);
+    g.enable(gl::BLEND);
+    g.blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+    g.enable(gl::ALPHA_TEST);
+    g.alpha_func(gl::GREATER, ONE / 4);
+    g.color_mask(true, true, true, false);
     g.draw_arrays(gl::TRIANGLE_FAN, &fan, None, None);
 
     let words = g.frame();

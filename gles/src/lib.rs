@@ -120,6 +120,15 @@ pub struct Gl<'a> {
     /// Whether the frame holds an entry that tests depth, which Razboj
     /// draws only from a tile table.
     deep: bool,
+    /// The pixel's state (#993): the blend's switch and its two
+    /// factors, Razboj's codes; the alpha test's switch, its comparison
+    /// from nought for `GL_NEVER` and its reference, a byte; and the
+    /// channels written, a bit a byte from blue up to alpha.
+    blend_on: bool,
+    blend: (u32, u32),
+    alpha_on: bool,
+    alpha: (u32, u32),
+    colour_mask: u32,
     error: u32,
 }
 
@@ -164,6 +173,11 @@ impl<'a> Gl<'a> {
             clear_depth: ONE,
             depth_range: (0, ONE),
             deep: false,
+            blend_on: false,
+            blend: (1, 0),
+            alpha_on: false,
+            alpha: (gl::ALWAYS - gl::NEVER, 0),
+            colour_mask: 0xf,
             error: gl::NO_ERROR,
         }
     }
@@ -313,6 +327,8 @@ impl<'a> Gl<'a> {
             gl::RESCALE_NORMAL => self.rescale = on,
             gl::COLOR_MATERIAL => self.colour_material = on,
             gl::DEPTH_TEST => self.depth_test = on,
+            gl::BLEND => self.blend_on = on,
+            gl::ALPHA_TEST => self.alpha_on = on,
             l if (gl::LIGHT0..gl::LIGHT0 + gl::MAX_LIGHTS as u32)
                 .contains(&l) =>
             {
@@ -331,6 +347,8 @@ impl<'a> Gl<'a> {
             gl::RESCALE_NORMAL => self.rescale,
             gl::COLOR_MATERIAL => self.colour_material,
             gl::DEPTH_TEST => self.depth_test,
+            gl::BLEND => self.blend_on,
+            gl::ALPHA_TEST => self.alpha_on,
             l if (gl::LIGHT0..gl::LIGHT0 + gl::MAX_LIGHTS as u32)
                 .contains(&l) =>
             {
@@ -514,6 +532,47 @@ impl<'a> Gl<'a> {
         }
     }
 
+    /// `glBlendFunc`: the source's factor and the destination's (#993),
+    /// as GL ES 1.1 allows them: the source's not a source colour, the
+    /// destination's not a destination colour nor the saturate.
+    pub fn blend_func(&mut self, src: u32, dst: u32) {
+        let code = |f: u32| match f {
+            gl::ZERO | gl::ONE => Some(f),
+            gl::SRC_COLOR..=gl::SRC_ALPHA_SATURATE => {
+                Some(f - gl::SRC_COLOR + 2)
+            }
+            _ => None,
+        };
+        let src_ok = !matches!(src, gl::SRC_COLOR | gl::ONE_MINUS_SRC_COLOR);
+        let dst_ok = !matches!(
+            dst,
+            gl::DST_COLOR | gl::ONE_MINUS_DST_COLOR | gl::SRC_ALPHA_SATURATE
+        );
+        match (code(src), code(dst)) {
+            (Some(s), Some(d)) if src_ok && dst_ok => self.blend = (s, d),
+            _ => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glAlphaFuncx`: the comparison a pixel's alpha makes with `reference`,
+    /// kept between nought and one and taken as a byte (#993).
+    pub fn alpha_func(&mut self, func: u32, reference: Fx) {
+        match func {
+            gl::NEVER..=gl::ALWAYS => {
+                let r =
+                    (reference.clamp(0, ONE) as i64 * 255 + (1 << 15)) >> 16;
+                self.alpha = (func - gl::NEVER, r as u32);
+            }
+            _ => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glColorMask`: which channels drawing and clearing write (#993).
+    pub fn color_mask(&mut self, r: bool, g: bool, b: bool, a: bool) {
+        self.colour_mask =
+            (b as u32) | (g as u32) << 1 | (r as u32) << 2 | (a as u32) << 3;
+    }
+
     /// `glDepthMask`: whether a pixel that passes writes its depth.
     pub fn depth_mask(&mut self, flag: bool) {
         self.depth_mask = flag;
@@ -532,44 +591,61 @@ impl<'a> Gl<'a> {
     }
 
     /// `glClear` of the colour buffer, the depth buffer, or both, at
-    /// this point of the frame.
+    /// this point of the frame, as one rectangle of the window. The clear
+    /// writes the channels `glColorMask` allows and the depth if
+    /// `glDepthMask` does, and neither blends, tests alpha nor tests
+    /// depth.
     ///
-    /// A clear of both is the clear's rectangle writing its colour and,
-    /// over any depth, its depth. A tile's depth starts at the farthest
-    /// (#992), so a clear of the depth to the farthest before anything
-    /// in the frame has tested depth has nothing to do. A clear of the
-    /// depth alone otherwise writes the depth and leaves the colour,
-    /// which Razboj does not do until it has #993's masks: that clear is
-    /// left undone, and `docs/gles.md` says so.
+    /// A tile's depth starts at the farthest (#992), so a clear of the
+    /// depth to the farthest before anything in the frame has tested
+    /// depth has nothing to do. A clear of the depth alone is a rectangle
+    /// that writes no channel (#993).
     pub fn clear(&mut self, mask: u32) {
         let both = gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT;
         if mask & !both != 0 {
             return self.fail(gl::INVALID_VALUE);
         }
         let z = depth_units(self.clear_depth);
-        let depth =
-            mask & gl::DEPTH_BUFFER_BIT != 0 && (self.deep || z != emit::FAR);
-        if mask & gl::COLOR_BUFFER_BIT == 0 {
+        let depth = mask & gl::DEPTH_BUFFER_BIT != 0
+            && self.depth_mask
+            && (self.deep || z != emit::FAR);
+        let colour_mask = if mask & gl::COLOR_BUFFER_BIT != 0 {
+            self.colour_mask
+        } else {
+            0
+        };
+        if colour_mask == 0 && !depth {
             return;
         }
         let colour = colour_word(&self.clear_colour);
+        let pixel = emit::Pixel {
+            mask: colour_mask,
+            ..emit::Pixel::DEFAULT
+        };
         // Razboj's clear is of its own screen, the rows from zero; a
         // window lower down is cleared as a rectangle of itself, so that
         // the half of a double buffer being shown is left alone. A clear
-        // of depth is a rectangle too, since only a tile table tests
-        // depth and a tile table makes every clear one.
-        let mut w = if self.window_top == 0 && !depth {
+        // with depth or a mask is a rectangle too, since only a tile
+        // table holds either and a tile table makes every clear one.
+        let plain = !depth && pixel == emit::Pixel::DEFAULT;
+        let mut w = if self.window_top == 0 && plain {
             emit::clear(colour)
         } else {
             let (sw, sh) = self.screen;
             emit::rect(colour, (0, self.window_top, sw - 1, sh - 1))
         };
+        if plain {
+            return self.push(w);
+        }
+        let mut slot = [0u32; WORDS];
         if depth {
             emit::depth(&mut w, gl::ALWAYS - gl::NEVER, true);
-            self.push_pair(w, emit::flat_depth(z));
-        } else {
-            self.push(w);
+            slot = emit::flat_depth(z);
         }
+        if pixel != emit::Pixel::DEFAULT {
+            emit::state(&mut w, &mut slot, pixel);
+        }
+        self.push_pair(w, slot);
     }
 
     fn push(&mut self, w: [u32; WORDS]) {
@@ -596,12 +672,30 @@ impl<'a> Gl<'a> {
     /// when the depth test is on and its plane's slot `slot` is there,
     /// and as it is otherwise.
     fn push_drawn(&mut self, mut w: [u32; WORDS], slot: Option<[u32; WORDS]>) {
-        match slot {
-            Some(p) if self.depth_test => {
-                emit::depth(&mut w, self.depth_func, self.depth_mask);
-                self.push_pair(w, p);
-            }
-            _ => self.push(w),
+        let depth = self.depth_test && slot.is_some();
+        let pixel = self.pixel();
+        if !depth && pixel == emit::Pixel::DEFAULT {
+            return self.push(w);
+        }
+        // The second slot: the depth plane, or nought without the depth
+        // test, then the pixel's state (#993).
+        let mut p = slot.filter(|_| depth).unwrap_or([0u32; WORDS]);
+        if depth {
+            emit::depth(&mut w, self.depth_func, self.depth_mask);
+        }
+        if pixel != emit::Pixel::DEFAULT {
+            emit::state(&mut w, &mut p, pixel);
+        }
+        self.push_pair(w, p);
+    }
+
+    /// What drawing does to a pixel after its coverage (#993): the blend
+    /// and the alpha test when they are on, and the colour mask.
+    fn pixel(&self) -> emit::Pixel {
+        emit::Pixel {
+            blend: self.blend_on.then_some(self.blend),
+            alpha: self.alpha_on.then_some(self.alpha),
+            mask: self.colour_mask,
         }
     }
 
@@ -631,9 +725,10 @@ impl<'a> Gl<'a> {
         &self.frame[..self.used]
     }
 
-    /// Whether the frame tests depth anywhere, so that Razboj has to
-    /// draw it from a tile table, [`Gl::flush`]'s: a flat list draws an
-    /// entry that tests depth as if it did not (#992).
+    /// Whether the frame tests depth, blends, tests alpha or masks a
+    /// channel anywhere, so that Razboj has to draw it from a tile table,
+    /// [`Gl::flush`]'s: a flat list draws such an entry as if it did
+    /// none of it (#992, #993).
     pub fn tiled(&self) -> bool {
         self.deep
     }
