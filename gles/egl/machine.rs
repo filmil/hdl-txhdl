@@ -5,7 +5,7 @@
 //! a program in the boot memory has no room for them.
 #![no_std]
 
-use razboj_tile::WORDS;
+use razboj_tile::{TILE_WORDS, WORDS};
 
 /// What a swap needs of the machine.
 pub trait Machine {
@@ -14,6 +14,18 @@ pub trait Machine {
     /// Has Razboj draw the first `entries` of the list, and waits until
     /// every pixel of them is written.
     fn draw(&mut self, entries: usize);
+    /// Room apart from the list, which a frame that tests depth is
+    /// binned into before it is drawn as a tile table (#1273).
+    fn scratch(&mut self) -> &'static mut [[u32; WORDS]];
+    /// Has Razboj draw a tile table: `tiles`, the records, laid out at
+    /// the list, and `entries` from `razboj_tile::ENTRIES_AT` past it,
+    /// rung with the count's bit that says it is one; and waits until
+    /// every pixel of it is written.
+    fn draw_tiled(
+        &mut self,
+        tiles: &[[u32; TILE_WORDS]],
+        entries: &[[u32; WORDS]],
+    );
     /// Points the scanout at the buffer whose first row is `row`, and
     /// shows the scanout.
     fn show(&mut self, row: u32);

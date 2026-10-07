@@ -9,6 +9,10 @@
 //!   when Razboj reads the list, as `ico_hdmi.rs` does.
 //! * The doorbell at `0x3900` takes the count, and reads zero again with
 //!   the rasteriser's status idle once every pixel is written.
+//! * A frame that tests depth is binned into a megabyte two into the
+//!   list's four, then laid out at the list as a tile table, its records
+//!   first and its entries `razboj_tile::ENTRIES_AT` past them, and rung
+//!   with the count's bit 31 set (#1273).
 //! * The scanout's base, at `0x3280`, is the byte the buffer starts at,
 //!   `0x4200_0000` and 4096 bytes a row; the first swap also sets the bit
 //!   that shows the scanout.
@@ -24,7 +28,7 @@
 
 use core::ptr::{read_volatile, write_volatile};
 use gles_machine::Machine;
-use razboj_tile::WORDS;
+use razboj_tile::{ENTRIES_AT, TILE_WORDS, WORDS};
 use vreteno_regs::{doorbell, hdmi, scan};
 
 /// The board's map, as `vreteno_hal::map` has it.
@@ -40,6 +44,11 @@ const STRIDE: u32 = 4096;
 /// The instructions a frame may hold: 256 KiB of the four megabytes the
 /// board gives the list.
 const ENTRIES: usize = 4096;
+/// Room for a frame binned into tiles (#1273): a megabyte two into the
+/// list's four, clear of the frame GL writes and of the tile table laid
+/// out at the list.
+const SCRATCH: usize = LIST + 0x20_0000;
+const SCRATCH_SLOTS: usize = 16384;
 
 fn rd(at: usize) -> u32 {
     // SAFETY: a register of the board's map.
@@ -49,6 +58,20 @@ fn rd(at: usize) -> u32 {
 fn wr(at: usize, v: u32) {
     // SAFETY: a register of the board's map.
     unsafe { write_volatile(at as *mut u32, v) }
+}
+
+/// Rings the doorbell with `count` once the list's last word, at
+/// `last`, reads back, so that every store before it has landed; then
+/// waits until the list is drawn, the count back at zero and every
+/// pixel written.
+fn ring(last: usize, count: u32) {
+    let (bell, status) =
+        (DOORBELL + doorbell::COUNT, DOORBELL + doorbell::STATUS);
+    let _ = rd(last);
+    wr(bell, count);
+    while rd(bell) & doorbell::COUNT_COUNT_MASK != 0
+        || rd(status) & doorbell::STATUS_IDLE_MASK == 0
+    {}
 }
 
 /// The board's machine: whether the scanout has been shown yet.
@@ -82,14 +105,48 @@ impl Machine for Board {
         if entries == 0 {
             return;
         }
-        let count = DOORBELL + doorbell::COUNT;
-        let status = DOORBELL + doorbell::STATUS;
-        while rd(count) & doorbell::COUNT_COUNT_MASK != 0 {}
-        let _ = rd(LIST + entries * WORDS * 4 - 4);
-        wr(count, entries as u32);
-        while rd(count) & doorbell::COUNT_COUNT_MASK != 0
-            || rd(status) & doorbell::STATUS_IDLE_MASK == 0
-        {}
+        while rd(DOORBELL + doorbell::COUNT) & doorbell::COUNT_COUNT_MASK != 0 {
+        }
+        ring(LIST + entries * WORDS * 4 - 4, entries as u32);
+    }
+
+    fn scratch(&mut self) -> &'static mut [[u32; WORDS]] {
+        // SAFETY: the scratch room is EGL's alone, between a frame's
+        // binning and its being laid out at the list.
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                SCRATCH as *mut [u32; WORDS],
+                SCRATCH_SLOTS,
+            )
+        }
+    }
+
+    fn draw_tiled(
+        &mut self,
+        tiles: &[[u32; TILE_WORDS]],
+        entries: &[[u32; WORDS]],
+    ) {
+        if tiles.is_empty() {
+            return;
+        }
+        // The list is Razboj's until the last list is drawn.
+        while rd(DOORBELL + doorbell::COUNT) & doorbell::COUNT_COUNT_MASK != 0 {
+        }
+        for (i, r) in tiles.iter().enumerate() {
+            for (k, &w) in r.iter().enumerate() {
+                wr(LIST + (i * TILE_WORDS + k) * 4, w);
+            }
+        }
+        let at = LIST + ENTRIES_AT;
+        for (i, e) in entries.iter().enumerate() {
+            for (k, &w) in e.iter().enumerate() {
+                wr(at + (i * WORDS + k) * 4, w);
+            }
+        }
+        ring(
+            at + entries.len() * WORDS * 4 - 4,
+            tiles.len() as u32 | doorbell::COUNT_TILED_MASK,
+        );
     }
 
     fn show(&mut self, row: u32) {

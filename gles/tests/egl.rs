@@ -11,7 +11,7 @@
 use gles::fixed::ONE;
 use gles_capi::*;
 use gles_egl::*;
-use razboj::dl::decode;
+use razboj::dl::{decode, decode_list};
 use razboj::model::render;
 use razboj::op::Kind;
 use std::ffi::CStr;
@@ -23,12 +23,14 @@ const LIST: usize = 256;
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Event {
     Draw(usize),
+    DrawTiled(usize, usize),
     Show(u32),
     Blank,
 }
 
 struct Model {
     list: &'static mut [[u32; 16]],
+    scratch: &'static mut [[u32; 16]],
     fb: Vec<u32>,
     events: Vec<Event>,
 }
@@ -54,6 +56,25 @@ impl Machine for Model {
         }
     }
 
+    fn scratch(&mut self) -> &'static mut [[u32; 16]] {
+        // SAFETY: as the list's.
+        unsafe { &mut *(self.scratch as *mut [[u32; 16]]) }
+    }
+
+    /// A tile table, drawn as the rasteriser draws one: its entries,
+    /// each clipped to its tile, through one depth buffer, which no two
+    /// tiles share a pixel of.
+    fn draw_tiled(&mut self, tiles: &[[u32; 2]], entries: &[[u32; 16]]) {
+        self.events
+            .push(Event::DrawTiled(tiles.len(), entries.len()));
+        let drawn = render(&decode_list(entries), FW, FH);
+        for (p, d) in self.fb.iter_mut().zip(drawn) {
+            if d != 0 {
+                *p = d;
+            }
+        }
+    }
+
     fn show(&mut self, row: u32) {
         self.events.push(Event::Show(row));
     }
@@ -66,6 +87,7 @@ impl Machine for Model {
 fn model() -> &'static mut Model {
     Box::leak(Box::new(Model {
         list: Box::leak(vec![[0u32; 16]; LIST].into_boxed_slice()),
+        scratch: Box::leak(vec![[0u32; 16]; 4096].into_boxed_slice()),
         fb: vec![0; FW * FH],
         events: Vec::new(),
     }))
@@ -183,5 +205,65 @@ fn a_program_draws_and_swaps_without_tearing() {
 
         let version = CStr::from_ptr(eglQueryString(dpy, 0x3054) as *const _);
         assert_eq!(version.to_str().unwrap(), "1.4 TxHDL Razboj");
+
+        // A frame that tests depth (#1273): a green triangle near the
+        // eye, then a larger red one behind it. The swap draws it as a
+        // tile table, and where they overlap the green stays.
+        static NEAR: [i32; 9] =
+            [0, 0, ONE / 2, 1 << 15, 0, ONE / 2, 0, 1 << 15, ONE / 2];
+        static FAR: [i32; 9] = [
+            -ONE / 2,
+            -ONE / 2,
+            -ONE / 2,
+            ONE,
+            -ONE / 2,
+            -ONE / 2,
+            -ONE / 2,
+            ONE,
+            -ONE / 2,
+        ];
+        glClearColorx(0, 0, 0, ONE);
+        glClear(0x4000 | 0x0100);
+        glEnable(0x0B71);
+        glColor4x(0, ONE, 0, ONE);
+        glVertexPointer(3, 0x140C, 0, NEAR.as_ptr() as *const _);
+        glDrawArrays(0x0004, 0, 3);
+        glColor4x(ONE, 0, 0, ONE);
+        glVertexPointer(3, 0x140C, 0, FAR.as_ptr() as *const _);
+        glDrawArrays(0x0004, 0, 3);
+        assert_eq!(eglSwapBuffers(dpy, surface), 1);
+        let Event::DrawTiled(tiles, entries) = m.events[6] else {
+            panic!("a frame that tests depth is a tile table: {:?}", m.events);
+        };
+        assert!(tiles > 0 && entries > 2 * tiles, "{tiles} tiles, {entries}");
+        let third = rows(&m.fb, 512..992);
+        let count = |c: u32| third.iter().filter(|&&p| p == c).count();
+        let (green, red) = (count(0xff00_ff00), count(0xffff_0000));
+        assert!(green > 1000 && red > 1000, "{green} green, {red} red");
+        // Each triangle's every pixel is in the window's middle: the near
+        // one is a quarter window across, the far one half a window.
+        assert_eq!(green, green_alone(), "nothing of the green hidden");
+        assert_eq!(eglGetError(), 0x3000);
     }
+}
+
+/// How many pixels the near triangle covers drawn alone, through the
+/// library and the model: the green a frame with depth has to keep.
+fn green_alone() -> usize {
+    use gles::{gl, Gl};
+    let mut frame = vec![[0u32; 16]; 8];
+    let mut g = Gl::new(&mut frame, 640, 480);
+    g.matrix_mode(gl::PROJECTION);
+    g.ortho(-ONE, ONE, -ONE, ONE, -ONE, ONE);
+    g.matrix_mode(gl::MODELVIEW);
+    g.color(0, ONE, 0, ONE);
+    let p = [
+        [0, 0, ONE / 2, ONE],
+        [1 << 15, 0, ONE / 2, ONE],
+        [0, 1 << 15, ONE / 2, ONE],
+    ];
+    g.draw_arrays(gl::TRIANGLES, &p, None, None);
+    let n = g.frame().len();
+    let drawn = render(&decode_list(&frame[..n]), 640, 480);
+    drawn.iter().filter(|&&p| p == 0xff00_ff00).count()
 }

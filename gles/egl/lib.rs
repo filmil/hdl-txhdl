@@ -23,6 +23,12 @@
 //! buffer is the one drawn into. A frame is therefore never shown half
 //! drawn, and the swap interval is one, always.
 //!
+//! A frame that tests depth anywhere is not a flat list, since Razboj
+//! tests depth only in a tile table (#992, #1273). The swap bins it into
+//! the machine's scratch room and has the machine draw that as a tile
+//! table, laid out at the list. Too little room draws it flat, its depth
+//! untested, and fails the swap with `EGL_BAD_ALLOC`.
+//!
 //! ## The machine
 //!
 //! What a swap does to the hardware is behind [`Machine`]: the display
@@ -39,7 +45,11 @@
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_void;
-use gles_capi::{gles_frame_len, gles_make_current, gles_retarget};
+use gles_capi::{
+    gles_flush, gles_frame_len, gles_frame_tiled, gles_make_current,
+    gles_retarget,
+};
+use razboj_tile::{MAX_TILES, TILE_WORDS};
 
 /// EGL's types as `egl.h` has them, with no window system's.
 pub type EGLBoolean = u32;
@@ -54,6 +64,7 @@ const FALSE: EGLBoolean = 0;
 pub const SUCCESS: EGLint = 0x3000;
 pub const NOT_INITIALIZED: EGLint = 0x3001;
 pub const BAD_ACCESS: EGLint = 0x3002;
+pub const BAD_ALLOC: EGLint = 0x3003;
 pub const BAD_ATTRIBUTE: EGLint = 0x3004;
 pub const BAD_CONFIG: EGLint = 0x3005;
 pub const BAD_CONTEXT: EGLint = 0x3006;
@@ -562,13 +573,33 @@ pub extern "C" fn eglSwapBuffers(dpy: Handle, surface: Handle) -> EGLBoolean {
     let Some(m) = s.machine.as_deref_mut() else {
         return fail(NOT_INITIALIZED, FALSE);
     };
-    let n = gles_frame_len();
-    m.draw(n);
+    // A frame that tests depth is drawn from a tile table, which only
+    // tests it (#1273); one that does not, as the flat list it is. Too
+    // little room to bin it in draws it flat, its depth untested, and
+    // says so.
+    let mut drawn = true;
+    if gles_frame_tiled() {
+        let mut tiles = [[0u32; TILE_WORDS]; MAX_TILES];
+        let room = m.scratch();
+        match gles_flush(room, &mut tiles) {
+            Some(b) => m.draw_tiled(&tiles[..b.tiles], &room[..b.entries]),
+            None => {
+                m.draw(gles_frame_len());
+                drawn = false;
+            }
+        }
+    } else {
+        m.draw(gles_frame_len());
+    }
     m.show(BUFFER_ROWS[s.back]);
     m.wait_blanking();
     s.back ^= 1;
     target(m, s.back);
-    ok(TRUE)
+    if drawn {
+        ok(TRUE)
+    } else {
+        fail(BAD_ALLOC, FALSE)
+    }
 }
 
 /// The interval is one: every swap waits for the blanking, which is
