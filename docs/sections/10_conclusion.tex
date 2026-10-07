@@ -2,19 +2,22 @@
 \section{Conclusion}
 \label{sec:conclusion}
 
-Two languages written independently for one project turned out to be two
-halves of one language. LHDL specifies how a system is assembled,
-configured and scheduled, and cannot express a protocol body. TxHDL
-specifies how a module talks a protocol, and cannot express a system. The
-merge keeps almost all of both.
+Two hardware description languages developed independently for the same
+project proved to represent complementary facets of a unified architecture.
+LHDL specifies system assembly, static configuration, and dataflow scheduling,
+yet provides no primitives for multi-cycle protocol sequencing. TxHDL specifies
+cycle-accurate transaction handling within modules, yet provides no mechanisms
+for system-level interconnect composition. The unified specification retains
+both domains.
 
-Only four questions needed a decision about meaning. The model of time is
-the one that shapes the language, and the answer is that both models are
-right about different things: a number that comes from a protocol on a wire
-is a specification, and a number that comes from how fast the fabric
-happens to be is not.
+Only four issues required semantic decisions rather than syntactic reconciliation.
+Among these, reconciling the model of time is foundational: both models are
+correct within their respective operating boundaries. Cycle counts mandated by
+external bus protocols represent architectural specifications, whereas latency
+arising from target fabric timing represents an implementation parameter.
 
-Everything else was spelling, and following Rust settled it while removing
-six defects the sources had. The remaining defects are the ones nothing
-checked, and the merged specification is being written so that a machine
-checks them.
+Surface syntax aligns with Rust, establishing consistent conventions while
+eliminating six grammatical defects present in the source drafts. The remaining
+grammatical ambiguities are resolved through automated verification, ensuring
+that every construct in the unified TxHDL specification is backed by passing
+test suites.

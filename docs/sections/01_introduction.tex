@@ -2,21 +2,25 @@
 \section{Introduction}
 \label{sec:introduction}
 
-\IEEEPARstart{T}{wo} hardware description languages were written for one
-project, independently, and both describe the same intended hardware. The
-goal is a single consistent specification. This article states what has to
-happen to get there, and settles every question that a merge cannot leave
-open.
+\IEEEPARstart{T}{wo} hardware description languages were developed
+independently for the same project, each targeting the same underlying
+hardware platform. The goal of this effort is a unified, consistent
+language specification. This article defines the required consolidation
+and resolves every open architectural and syntactic question.
 
-The short answer is that the two languages do not compete. LHDL says how a
-large system is assembled, configured and scheduled. TxHDL says how one
-module talks a multi-cycle protocol. Each is nearly silent where the other
-is detailed. Four questions need a decision about meaning rather than about
-spelling, and Section~\ref{sec:conflicts} resolves all four.
+Fundamentally, the two languages address complementary abstraction levels
+rather than competing models. LHDL specifies system-level composition,
+static configuration, and dataflow scheduling, leaving low-level protocol
+timing to the compiler. TxHDL specifies cycle-accurate transaction protocols
+and multi-cycle bus interactions within individual modules. Each language is
+largely silent where the other provides fine detail. Four fundamental
+questions require semantic decisions rather than superficial syntactic
+alignment; Section~\ref{sec:conflicts} resolves each one.
 
-\subsection{What the sources are}
+\subsection{Source Material}
 
-Seven files state language content. Their sizes say which ones matter.
+Seven repository files document language content, spanning initial sketches
+to detailed drafts.
 
 \begin{table*}[t]
 \caption{The source material. Two languages, seven files, four spellings of
@@ -39,15 +43,16 @@ Path & Lines & Language & What it is \\
 \end{tabular}
 \end{table*}
 
-The most complete specification in the repository was, until this work, the
-one that was never built or published. \code{spec/language.md} had no build
-target, while the four smaller files did.
+Prior to this consolidation, the most comprehensive specification in the
+repository was neither integrated into the automated build nor published.
+The complete specification in \code{spec/language.md} lacked a build target,
+whereas several smaller exploratory files possessed active Bazel rules.
 
-The language is named four ways across those files. The long LHDL draft
-writes FLHDL 88 times, the condensed one writes it 9 times, the earliest
-sketch writes LHdl 6 times, and \code{spec/language.md} writes TxHDL 5
-times. The repository, the build module and the published path are all named
-\code{txhdl}. Section~\ref{sec:decisions} settles the name.
+Nomenclature also diverged across these documents. The extended LHDL draft
+uses FLHDL 88 times; the condensed specification uses it 9 times; the initial
+proposal uses LHdl 6 times; and \code{spec/language.md} introduces TxHDL 5
+times. Because the repository, build targets, and distribution packages use
+\code{txhdl}, Section~\ref{sec:decisions} adopts TxHDL as the canonical name.
 
 \subsection{Contributions}
 

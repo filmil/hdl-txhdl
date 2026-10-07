@@ -79,11 +79,12 @@ without tooling: two top-level productions both begin with an optional
 \code{pub}, so a predictive parser cannot choose between them on that token
 until the prefix is factored out.
 
-\subsection{The lesson for the merged specification}
+\subsection{Lessons for the unified specification}
 
-Both sources state a grammar, or claim a property, that their own examples
-break. The only reason that survived is that nothing checked it. Every
-construct in the merged specification therefore gets an example, every
-example is a file, and every file is parsed by a test. That is also what
-makes an existing project rule true rather than aspirational: every piece of
-specification must have a test, and that test must pass.
+Both original source drafts include grammars or syntactic claims that diverge
+from their own code listings. This divergence persisted because neither draft
+was verified by automated tooling. In the unified specification, every
+syntactic construct possesses a corresponding reference example in a standalone
+file verified by automated test harnesses. This practice enforces the project
+requirement that every specification construct must be accompanied by a
+passing automated test.

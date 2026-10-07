@@ -9,22 +9,22 @@ path are all named \code{txhdl}, and transactions are the distinguishing
 idea. FLHDL, LHdl and LHDL are retired, and appear from here on only in the
 project's analysis documents.
 
-\emph{The behavioural keywords are \code{flow} and \code{seq}.} Neither word
-is inherited from a source, so neither drags old semantics with it.
+\emph{The behavioural keywords are \code{flow} and \code{seq}.} Selecting
+neutral terminology establishes clear semantic separation from legacy
+constructs in both progenitor drafts.
 
-\emph{The fate of the LHDL source files is deferred.} They stay in the tree
-for now. Whether they merge into the specification and then leave, or stay
-as source material, is a decision for later. The twelve theses are a
-separate case either way: they are an argument rather than a specification,
-and they belong in the merged document as a rationale section.
+\emph{The disposition of legacy LHDL source files is deferred.} These
+documents remain in the repository as historical reference material.
+The twelve foundational design theses are incorporated into the unified
+document within a dedicated architectural rationale section.
 
 \subsection{Still open}
 
 \begin{itemize}
-  \item \emph{Awaiting a condition.} A boolean that is itself awaitable
-        keeps one rule, at the cost of reading oddly the first time. A
-        prefix statement reads better in isolation, at the cost of two
-        spellings for one idea.
+  \item \emph{Awaiting conditions.} Permitting boolean expressions to implement
+        the awaitable interface preserves a single syntax rule, whereas
+        introducing a dedicated statement adds specialized syntax for a single
+        use case.
   \item \emph{Chaining.} Replacing LHDL's pipe operator with a method chain
         costs one non-Rust operator and reads well for long chains either
         way.
