@@ -1269,6 +1269,126 @@ fn a_frame_received_lands_in_memory_and_the_core_reads_it_back() {
     assert!(ran.halted_at.is_some(), "the core acknowledged and halted");
 }
 
+/// A driver too slow for the frames, as Zephyr's is on the board: it
+/// copies each frame out of DDR3 inside its interrupt handler, a
+/// thousand cycles and more, while full frames arrive every 1514 bytes'
+/// time (issue 1313). Eight such frames back to back, each with its
+/// number at byte 14 and again at byte 1500, against a driver that
+/// polls, reads the slot and the number, spends five thousand loop
+/// turns on it, reads the second copy, and acknowledges.
+///
+/// Every frame must be either announced to the driver, once and intact,
+/// or dropped and counted in `rx_errors`; none may land on a slot the
+/// driver has not released, and none may vanish unannounced. Before the
+/// fix the driver was told of two frames, 0 and 5, and `rx_errors` read
+/// zero: the other six were overwritten or never announced.
+#[test]
+fn frames_beyond_the_slots_are_dropped_and_counted_not_lost() {
+    let frames: Vec<Vec<u8>> = (0..8u8)
+        .map(|seq| {
+            let mut f: Vec<u8> = (0..1514u32).map(|i| i as u8).collect();
+            f[12] = 0x08;
+            f[13] = 0x00;
+            f[14] = seq;
+            f[1500] = seq;
+            f
+        })
+        .collect();
+    let net = Net {
+        inject: &frames,
+        ..Default::default()
+    };
+    let ran = run_all(&slow_driver(5000), &[], b"", &[], 3_000_000, net, &[]);
+    assert!(ran.halted_at.is_some(), "the driver gave up and halted");
+    let word = |name: &str| -> u32 {
+        let at = ran.said.find(name).expect(name) + name.len() + 1;
+        u32::from_str_radix(&ran.said[at..at + 8], 16).expect("hex")
+    };
+    let (told, errors, torn, seen) =
+        (word("told"), word("errors"), word("torn"), word("seen"));
+    assert_eq!(
+        torn, 0,
+        "no frame was overwritten under the driver: {}",
+        ran.said
+    );
+    assert_eq!(
+        seen.count_ones(),
+        told,
+        "no frame was told twice: {}",
+        ran.said
+    );
+    assert_eq!(
+        told + errors,
+        8,
+        "every frame told or counted: {}",
+        ran.said
+    );
+    assert!(told >= 2, "both slots were used: {}", ran.said);
+}
+
+/// The driver of the test above: `delay` loop turns a frame between
+/// reading its number and acknowledging it. Says how many frames it was
+/// told of, `rx_errors`, how many frames' two numbers disagreed, and the
+/// mask of the numbers it saw.
+fn slow_driver(delay: u32) -> Vec<u32> {
+    use vreteno32::isa::{
+        add, addi, andi, beq, bne, halt, jal, lbu, lui, lw, or, sll, slli, sw,
+        UART_BASE,
+    };
+    let mut a = vreteno32::program::Asm::default();
+    a.emit(lui(1, UART_BASE >> 12)); // x1 = the serial port, for say
+    li(&mut a, 10, 0x3400); // the port's registers
+    li(&mut a, 9, 0x4100_0000); // the receive slots
+    a.emit(addi(11, 0, 0)); // frames told of
+    a.emit(addi(15, 0, 0)); // the numbers seen, a bit each
+    a.emit(addi(8, 0, 0)); // frames torn
+    a.emit(addi(12, 0, 0)); // polls since the last frame
+    let top = a.label();
+    let idle = a.label();
+    a.place(top);
+    a.emit(lw(14, 10, 0x10)); // rx_ev_pending
+    a.emit(andi(14, 14, 1));
+    a.to(idle, |off| beq(14, 0, off));
+    a.emit(addi(12, 0, 0));
+    a.emit(addi(11, 11, 1));
+    a.emit(lw(7, 10, 0)); // rx_slot
+    a.emit(slli(7, 7, 11));
+    a.emit(add(7, 7, 9)); // x7 = the slot's address
+    a.emit(lbu(6, 7, 14)); // x6 = the frame's number
+    a.emit(addi(13, 0, 1));
+    a.emit(sll(13, 13, 6));
+    a.emit(or(15, 15, 13));
+    li(&mut a, 13, delay);
+    let spin = a.label();
+    a.place(spin);
+    a.emit(addi(13, 13, -1));
+    a.to(spin, |off| bne(13, 0, off));
+    a.emit(lbu(5, 7, 1500)); // its second copy, after the copy's time
+    let whole = a.label();
+    a.to(whole, |off| beq(5, 6, off));
+    a.emit(addi(8, 8, 1));
+    a.place(whole);
+    a.emit(addi(14, 0, 1));
+    a.emit(sw(14, 10, 0x10)); // acknowledge
+    a.to(top, |off| jal(0, off));
+    a.place(idle);
+    a.emit(addi(12, 12, 1));
+    li(&mut a, 14, 30000);
+    a.to(top, |off| bne(12, 14, off));
+    a.emit(lw(5, 10, 0x08)); // rx_errors
+    say(&mut a, b"told ");
+    say_hex(&mut a, 11);
+    say(&mut a, b" errors ");
+    say_hex(&mut a, 5);
+    say(&mut a, b" torn ");
+    say_hex(&mut a, 8);
+    say(&mut a, b" seen ");
+    say_hex(&mut a, 15);
+    say(&mut a, b"\n");
+    a.emit(halt());
+    a.words()
+}
+
 /// The core writes two frames into the two transmit slots in DDR3 and
 /// sends them back to back, in the Zephyr driver's shape: wait until the
 /// port is ready, give it the slot, the length and the start, return.
