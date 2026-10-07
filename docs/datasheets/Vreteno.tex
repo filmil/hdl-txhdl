@@ -22,10 +22,13 @@ instruction memory, \code{IMEM\_WORDS} or 1024 words.
 data memory and every device are on the bus, outside the core. Above
 the instruction memory the fetch reads from the bus, into a buffer of
 two words, and the words of the data memory and of DDR3 through an
-instruction cache (issue 1021): four kilobytes, 256 lines of four
-words, one way, indexed by the page offset and tagged by the physical
-page, in \code{ic\_data} and \code{ic\_tag}. A hit fills both words of
-the buffer when the line holds the next one (issue 1187).
+instruction cache (issue 1021): sixteen kilobytes, 1024 lines of
+four words, one way, looked up after translation and so indexed and
+tagged by the physical address (issue 1290), in \code{ic\_data} and
+\code{ic\_tag}. A hit fills both words of the buffer when the line
+holds the next one, and the buffer shifts its second word into the
+first at the clock edge, as the program counter moves into it
+(issues 1187 and 1279).
 
 The bus side is an AXI host written as hardware. The core issues a
 burst on \code{issue}, sends a store's beat on \code{wbeat}, and hands
@@ -229,11 +232,14 @@ halted.
 the core inside \code{Board} and on the lattice.
 \item \code{//cpu/vreteno:icache\_test} runs issue 1009's loop of three
 instructions from the instruction memory and from the data memory,
-through the cache, at 1.333 and 3.426 cycles an instruction (4.093
-before one cache hit filled both words of the buffer, issue 1187, and
-14.655
-from the data memory before the cache); the same loop across two
-lines; and a routine rewritten by a store and called again after
+through the cache, at 1.334 and 3.349 cycles an instruction counted
+from the reset. The second includes the 1024 cycles in which the cache
+clears its tags, which the loop waits for, since the cache is sixteen
+kilobytes (issue 1290); it was 3.093 at four kilobytes, 4.093 before
+one cache hit filled both words of the buffer and the shift moved to
+the edge (issues 1187 and 1279), and 14.655 from the data memory
+before the cache. It also runs the same loop across two lines, and a
+routine rewritten by a store and called again after
 \code{fence.i}, which runs the word stored.
 \item The build simulates the netlist of \code{Hart<2>}, the core and its
 unit, under the entity name \code{vreteno}, with the demonstration
