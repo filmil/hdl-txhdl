@@ -421,7 +421,10 @@ so the driver runs as the kernel ships it. The tree names the port as
 \code{litex,liteeth}, with its registers and its buffers. The machine
 has the port too: its registers by the hardware's own map, its engines
 as copies to and from the DDR3, and with \code{--eth-peer} a station
-on the cable that answers ARP and ping at 10.0.0.2. Its frames arrive
+on the cable that answers ARP and ping at 10.0.0.2. It has the entropy source too, its registers by the part's map and
+a fixed sequence in place of the rings, so that a Zephyr image whose
+network stack asks for entropy boots there: \code{fastboot\_model\_test}
+boots the fastboot server to its listening line (issue~1386). Its frames arrive
 at the line's pace and wait for the driver as the hardware's do, at
 most one a slot, and a frame that finds both slots held is dropped and
 counted in \code{rx\_errors} (issues~1313 and~1314), so a driver
