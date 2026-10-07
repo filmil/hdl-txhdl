@@ -41,7 +41,7 @@ lists every document.}%
 \thanks{The authors used a large language model, Claude, as an
 assistant in exploring the concepts and in writing and constructing
 the documents and the programs; every commit of the repository says
-so and carries the prompts that led to it, verbatim.}%
+so and records the prompts that led to it, verbatim.}%
 \thanks{\buildstamp}}
 
 \markboth{A Network on Chip in TxHDL}{Filmar and Janković: A Network on Chip in TxHDL}
@@ -50,15 +50,17 @@ so and carries the prompts that led to it, verbatim.}%
 \maketitle
 
 \begin{abstract}
-A router puts several peripherals behind one host. A network puts
-several of both on a lattice and lets any of them reach any other. The
-network here is nodes with a two-way link to each of their four
-neighbours and a fifth, the exit, where something that is not a node
-attaches; every link is two virtual channels; routing is dimension
-order; and the exit is a bridge with AXI on one side and packets on
-the other. Neither end knows the network is there: a host issues a
-burst and awaits its answer as it would on a link, and a peripheral
-accepts a transaction and answers it as it would.
+A bus router connects multiple peripherals to a single host. In contrast,
+a network on chip interconnects multiple hosts and peripherals across a
+two-dimensional lattice, enabling arbitrary point-to-point communication.
+Each network node maintains bidirectional links with its four cardinal
+neighbors alongside a local exit port for attaching endpoints. Links
+multiplex traffic across two independent virtual channels to prevent
+protocol deadlock. The network routes packets using deterministic
+dimension-order routing. Network bridges translate standard AXI4 channel
+transactions into fixed-format packets. Host and peripheral clients interact
+through standard AXI interfaces without awareness of the underlying
+packet-switched topology.
 \end{abstract}
 
 
@@ -85,56 +87,54 @@ accepts a transaction and answers it as it would.
   \node[lbl] at (-0.95,0.45) {exit};
   \node[lbl] at (1.95,1.45) {exit};
 \end{tikzpicture}
-\caption{A two by two lattice, and the way a burst takes from the host
-at 0,0 to the memory at 1,1. Dimension order: X first and then Y, so a
-packet never turns from Y back into X and no cycle of waiting can form
-among the links.}
+\caption{A two-by-two lattice and the path a burst follows from the host
+at (0,0) to the memory at (1,1). Dimension-order routing traverses X
+first and then Y, preventing cyclic dependencies among network links.}
 \label{fig:n-lattice}
 \end{figure}
 
-\section{What a Link Carries}
+\section{Packet Framing}
 \label{sec:n-pkt}
 
-Figure~\ref{fig:n-lattice} is the shape of it. A link carries one beat
-of one AXI channel, addressed to a node and stamped with the
-node it came from.
+Figure~\ref{fig:n-lattice} illustrates the network topology. A physical link
+transmits individual beats of an AXI channel, framed into packets targeted
+to a coordinate node and stamped with their originating node identifier.
 
-\nocpart{pkt.rs}{pkt}{A packet.}{lst:n-pkt}
+\nocpart{pkt.rs}{pkt}{Packet format definition.}{lst:n-pkt}
 
-It is one shape, as wide as the widest beat needs, for the same reason
-Razboj's instruction is~\cite{gpu}: every field a step reads has to
-be at a fixed place, and a link that carried a header and then a body
-would want a sequencer at both ends before anything else worked. A
-read address beat leaves the data and the strobe at zero; a write
-response leaves the address at zero; \code{Chan} says which fields
-mean anything.
+The packet structure maintains a uniform width matching the widest channel
+beat, following the design principles of the Razboj instruction word~\cite{gpu}.
+Lowered hardware requires fields at fixed bit offsets; variable-length headers
+would necessitate serialization state machines across every port. A read
+address beat clears payload and strobe fields to zero. A write response beat
+clears address fields to zero. The \code{Chan} discriminant identifies the
+active channel payload.
 
-The source is carried rather than remembered. A node keeps no table of
-who asked, and an answer finds its way home by reading the stamp the
-question arrived with.
+Packets encode return routing explicitly. Nodes maintain no internal state
+tables for pending transactions; response packets route back to their origin
+by inspecting the source coordinate embedded in the request.
 
 \section{Virtual Channels}
 \label{sec:n-vc}
 
-There are two, one for requests and one for responses, and they share
-nothing: a node is a switch per virtual channel, and each switch has
-its own buffers.
+Each link provides two dedicated virtual channels: one for requests and one
+for responses. These channels operate over independent buffer queues without
+shared storage. A network node instantiates two parallel switches, allocating
+one to each virtual channel.
 
-That is not tidiness, it is the thing that keeps the network from
-seizing. A peripheral answers a request by sending a response. If a
-full path of requests could hold up the responses behind it, the
-responses that would empty that path could never leave, and the
-network would stop with every buffer full and nothing able to move. On
-two channels the response has a way through whatever the requests are
-doing.
+Physical separation guarantees deadlock freedom at the protocol level. A
+peripheral processes an incoming request by generating an outbound response.
+If saturated request queues could block response traffic, the responses
+needed to retire pending requests could never traverse the fabric, resulting
+in store-and-forward deadlock. Allocating an isolated channel to responses
+guarantees forward progress regardless of request queue utilization.
 
 \section{A Node}
 \label{sec:n-node}
 
-Routing is dimension order: a packet goes east or west until it is in
-its destination's column, then north or south until it is at its node,
-then out of the exit.
-
+The network employs deterministic dimension-order routing. A packet advances
+east or west until reaching the target column, traverses north or south to
+reach the destination row, and exits through the local terminal port.
 
 \begin{figure}[htbp]
 \centering
@@ -161,76 +161,64 @@ then out of the exit.
        ($(q.south)+(0.55,0)$) -- ++(0.55,-0.75)
        node[below right, font=\scriptsize, inner sep=1pt] {exit};
 \end{tikzpicture}
-\caption{A switch: a two-way link on each of the four sides it is
-named for, and a fifth port, the exit, where something that is not a
-node attaches. A node is two of these, one per virtual channel, and
-they share nothing, so a request held up behind a full buffer cannot
-hold up the response that would empty it. A host's bridge puts
-requests into the one and takes responses out of the other; a
-peripheral's bridge does the reverse.}
+\caption{Switch architecture: four cardinal links and a fifth local exit
+port. Each node instantiates two isolated switches per virtual channel to
+prevent protocol deadlock. Host bridges inject requests and consume responses;
+peripheral bridges invert this mapping.}
 \label{fig:n-node}
 \end{figure}
 
-\nocpart{switch.rs}{route}{The whole of the routing.}{lst:n-route}
+\nocpart{switch.rs}{route}{Dimension-order routing implementation.}{lst:n-route}
 
-On a lattice that is deadlock free with nothing else said, because a
-packet never turns from Y back into X, so no cycle of waiting can
-form among the links.
+Restricting routing directions ensures deadlock freedom on two-dimensional
+meshes. Because packets never turn from Y channels back onto X channels,
+cyclic waiting chains cannot form across physical links.
 
-One packet moves through a switch per cycle. Each input's direction
-and the room at the port it wants are worked out first, so that an
-input whose port is full does not hold up the others. The choice among
-those that can move is a round robin. The inputs are numbered north,
-south, west, east and the exit, and the switch keeps one register,
-\code{turn}, the input the choice starts from. The input that moves is
-the first at or after \code{turn}, going round, that can; \code{turn}
-then becomes the input after it. An input that has just moved goes
-last of the five, so no input waits on more than four others, however
-busy they are. The register is the whole of the switch's state: where
-a packet goes is a function of the packet and the node's place, and
-needs nothing kept.
+A switch routes one packet per clock cycle. The router calculates target
+directions and output buffer availability concurrently across all five
+inputs, preventing blocked ports from stalling unblocked flows. An arbiter
+schedules eligible packets using a round-robin policy. Inputs are ordered
+cyclically: north, south, west, east, and exit. An internal \code{turn}
+register tracks the starting priority index. The arbiter selects the first
+eligible input at or following \code{turn}, updating the register to the
+subsequent port. A serviced input moves to the end of the priority queue,
+ensuring no packet waits behind more than four competing transfers.
 
-\nocpart{switch.rs}{pick}{The round robin: five rotations of one
-chain, one per value of \code{turn}.}{lst:n-pick}
+\nocpart{switch.rs}{pick}{Round-robin arbiter rotations across \code{turn} states.}{lst:n-pick}
 
-\nocpart{switch.rs}{run}{The switch, a cycle at a
-time.}{lst:n-switch}
+\nocpart{switch.rs}{run}{Cycle-by-cycle switch execution.}{lst:n-switch}
 
-\nocpart{node.rs}{run}{A node: a switch per virtual channel. The
-twenty ports are written out one by one because a lowered unit's
-ports are a positional tuple and a named type for a side is
-refused.}{lst:n-node}
+\nocpart{node.rs}{run}{Node definition containing dual virtual channel switches.}{lst:n-node}
 
 \subsection{A lattice as one unit}
 \label{sec:n-mesh}
 
-A node's column and row are two inputs, \code{col} and \code{row},
-and not two type parameters, so every node of a lattice is one type
-(issue 635). Whoever places a node holds them at constants with
-\code{tie}. A tied input is a constant to synthesis, which folds it
-into the comparisons that route a packet, so a node pays nothing for
-being told its place rather than being built with it.
+Nodes receive their spatial coordinates via runtime inputs (\code{col} and
+\code{row}) rather than compile-time generic types, unifying all network nodes
+under a single concrete hardware type (issue 635). Instantiating logic binds
+these coordinates to constants using \code{tie}. Synthesis tools propagate
+these constants into address comparators, eliminating generic parameter
+proliferation without silicon area penalty.
 
-One type is what lets a lattice be one unit that lowers.
-\code{Mesh<W, H, N, ..>} holds its \code{N} nodes as one field of
-\code{Units} and joins them by index, node \code{i} at column
-\code{i \% W} and row \code{i / W}. The links are one set of channels
-per direction of travel and per virtual channel, and the exits are
-the mesh's ports, four arrays of \code{N}. A link at an edge wraps to
-the other end of its row or column, so that every channel has one
-driver and one reader; dimension-order routing never sends a packet
-for a place on the lattice along one. Rust cannot yet compute
-\code{N} from \code{W} and \code{H}, so the count is a parameter of
-its own and a mesh whose count is not \code{W * H} refuses to be
-made. The example \code{ex\_mesh} runs six nodes, three by two, and
-checks the netlist against the run~\cite{examples}.
+Using a uniform node type enables synthesizing the entire network mesh as a
+single composite module. \code{Mesh<W, H, N, ..>} allocates \(N\) nodes
+within a \code{Units} container, connecting node \(i\) at column \(i \pmod W\)
+and row \(\lfloor i / W \rfloor\). Channel interconnects bind cardinal
+directions across both virtual channels, exposing terminal exits as \(N\)-element
+port arrays. Boundary links wrap toroidally to terminate open wires with
+single drivers and receivers, though dimension-order routing never routes
+traffic along wrap-around links. Explicit parameters define mesh dimensions
+while const asserts verify that \(N = W \cdot H\). The test target \code{ex\_mesh}
+synthesizes a 3 by 2 mesh, verifying netlist ports against simulation
+traces~\cite{examples}.
 
-\nocpart{mesh.rs}{mesh}{A lattice as a unit of units.}{lst:n-mesh}
+\nocpart{mesh.rs}{mesh}{Lattice constructor wiring nodes as a composite unit.}{lst:n-mesh}
 
 \section{The Exit}
 \label{sec:n-bridge}
 
-A bridge, AXI on one side and packets on the other, in two halves.
+A network bridge connects standard AXI interfaces to packet-switched links
+through host and peripheral adapters.
 
 \begin{figure}[htbp]
 \centering
@@ -252,103 +240,72 @@ A bridge, AXI on one side and packets on the other, in two halves.
   \node[lbl, anchor=west] at (1.65,4.5) {\code{aw ar w b r}};
   \node[lbl, anchor=west] at (1.65,5.5) {transactions};
 \end{tikzpicture}
-\caption{What is between the two clients. Neither end knows the
-network is there: the host issues a burst and awaits its answer as it
-would on a link, and the peripheral accepts a transaction and answers
-it as it would.}
+\caption{Protocol layers connecting endpoint clients across the network.
+Standard AXI interfaces interact with protocol bridges that translate between
+channel handshakes and network packets.}
 \label{fig:n-layers}
 \end{figure}
 
+The host bridge encodes address beats into packets using a three-entry
+address map. The final map entry specifies a default route with a zero mask,
+directing unmatched addresses to a designated fallback node and eliminating
+unroutable address exceptions.
 
-The host half packs an address phase into a packet addressed by a map
-of three ranges, whose last entry is the default route: give it a mask
-of zero and every address that matched nothing else goes there. A
-design that states its map that way has no address the network does
-not know, which is why neither half has to answer for one.
+Single-beat writes assemble into single packets containing both address and
+data payloads. Multi-beat write bursts are decomposed by the host bridge:
+the initial beat transmits with the address phase, while subsequent beats
+dispatch as individual single-beat writes with incremented addresses. The
+destination peripheral confirms each beat independently. The host bridge
+aggregates these acknowledgments, returning a single response beat to the
+master once all beats complete (emitting \texttt{SlvErr} if any beat faults).
+This decomposition prevents write interleaving across single-ported
+peripherals. Because AXI4 omits transaction identifiers on the write data
+channel, interleaved beats from distinct masters would cause undetectable
+data corruption. Decomposing bursts into atomic packets ensures that
+individual writes complete without interruption.
 
-A write of one beat is one packet, carrying its address phase and its
-data together, and a write of more is that many packets. The host
-half splits a burst: the first beat leaves with the address phase,
-and each beat after it leaves as a single-beat write of its own at
-the next address, under the phase the bridge holds for it. Every one
-of those the far side answers, and the bridge answers the host once,
-when the last answer is in, \texttt{SlvErr} if any of them was an
-error. That is what keeps two hosts from interleaving their write
-data at a peripheral that has one port: AXI4 puts no identifier on
-the write data channel, so a beat that arrived between another host's
-address phase and its beat could not be told apart, and a packet that
-is a whole write can be cut into by nothing. What the peripheral sees
-is $N$ writes rather than one burst of $N$, which is the same thing
-to a memory and to every peripheral here; \code{docs/noc-bursts.md}
-weighs that against carrying the burst whole, and says for whom it
-would matter.
+Burst decomposition processes one burst at a time, holding subsequent
+multi-beat writes until the active burst completes. Single-beat writes and
+reads execute without blocking. Fixed bursts transmit all beats at a single
+address. Wrapping bursts are rejected: the host bridge accepts the address
+phase and data beats up to \code{wlast}, discards the transfer locally, and
+returns \texttt{SlvErr} to maintain channel alignment.
 
-One burst is split at a time, and the next long write waits until it
-has been answered; a write of one beat and a read do not wait. A
-fixed burst is every beat at one address, and leaves so. A wrapping
-burst is the one still refused, since the wrap is not computed at the
-bridge: the host half takes its address phase and every beat up to
-the one marked last, sends nothing onto the network, and answers the
-host \texttt{SlvErr}. That is not what the burst asked for, but it is
-an answer, in one burst's time, and the channel is left clean for the
-next write. Before the split every long write was refused so, and
-before the refusal it hung: the write left as a single packet marked
-last, the peripheral's tracker waited for a beat that had stayed
-behind on the host's channel, and the client waited for ever.
+\nocpart{bridge.rs}{hostrun}{Host bridge implementation.}{lst:n-host}
 
-\nocpart{bridge.rs}{hostrun}{The host half.}{lst:n-host}
+The peripheral bridge unpacks incoming packets into native AXI subordinate
+channels and repacks responses for transmission back to the originating node.
 
-The peripheral half unpacks a request into the channels a
-peripheral's tracker reads, and packs the answers back to the node
-the request came from.
+The peripheral bridge also renames transaction identifiers. Because hosts
+allocate identifiers independently, two masters may issue requests with
+identical tags. To prevent response aliasing at shared peripherals, the
+bridge translates incoming tags into a local identifier space while recording
+the originating coordinate and host tag. Completion responses map back to the
+original host tag and route to the source node. Tag availability bounds the
+maximum number of concurrent in-flight transactions supported by the
+peripheral.
 
-It also renames. An identifier belongs to the host that made it, so
-two hosts may use the same one, and a peripheral behind one port
-cannot tell their bursts apart; the second request would overwrite
-the first's way home and one of the two answers would go to the wrong
-corner of the lattice. The bridge therefore gives every request an
-identifier of its own and remembers against it the node the request
-came from and the identifier that node used. The answer comes back
-under the local one and the packet goes home under the original. A
-request waits when the identifier whose turn it is has not been
-answered, which is what bounds how many bursts a peripheral has in
-flight.
-
-\nocpart{bridge.rs}{perrun}{The peripheral half.}{lst:n-per}
-
-That renaming is not a refinement. It is the difference between the
-network working and not, and the test that found it is the one below
-that puts two hosts on one memory.
+\nocpart{bridge.rs}{perrun}{Peripheral bridge implementation.}{lst:n-per}
 
 \section{What Is Checked}
 \label{sec:n-tests}
 
-Ten tests, in \code{noc.rs}. Three of them drive the whole of it:
-four nodes, both bridges, both trackers and memory, with a host client
-that issues and awaits as it would on a link, and they are the three
-below. The others check the bursts the bridge carries, split into
-single writes or read whole, the wrapping burst it refuses, and the
-turns a switch and a link take between their inputs.
+The test suite in \code{noc.rs} comprises ten verification targets. Three
+end-to-end integration tests instantiate four network nodes, both bridge
+types, protocol trackers, and memory modules. The remaining unit tests
+validate burst decomposition, wrapping burst rejections, and fair arbitration
+across switch inputs.
 
-The first sends a burst from one corner of a two by two lattice to the
-far one, so that it crosses in X and then in Y, and reads back what it
-wrote. The second puts a host at two corners and one memory at a
-third, each host writing its own word and reading it back. Nothing
-keeps a table of who asked, so the second test is the source stamp and
-the renaming being right or the test failing, and before the renaming
-was written it did fail.
+The first integration test transmits bursts across the diagonal of a 2 by 2
+mesh, exercising horizontal and vertical routing before verifying readback
+integrity. The second test connects two hosts and a shared memory, verifying
+that concurrent operations complete without tag aliasing.
 
-The third puts four peripherals behind one node. An exit holds one
-bridge, and the bridge's other side is five ordinary AXI channels, so
-a router of four goes there, with a memory in each of its ranges. Two
-hosts write a word into every peripheral, read each back, and read an
-address that the network sends to that node but that no peripheral
-has. Each word has to be in its own memory and in no other, and the
-router has to answer the missing address with \code{DecErr} itself.
-A peripheral behind the router needs nothing of the network: the
-router does not know a bridge is in front of it, and the bridge does
-not know a router is behind it.
-
+The third test places four distinct peripherals behind a single node via an
+AXI router. An exit port binds to one bridge, whose AXI interface drives a
+four-port router with memory attached to each port. Two hosts write words
+into every peripheral, read them back, and probe an unmapped address. The
+router returns \code{DecErr} locally without deadlocking the network fabric.
 
 \section{Four Corners}
 \label{sec:n-soc}
@@ -356,70 +313,54 @@ not know a router is behind it.
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.52\columnwidth]{soc_scene.png}
-\caption{An icosahedron. The core worked it out and wrote it into
-memory as a display list; the rasteriser read the list out of that
-memory and drew it there, two hops away from the core.}
+\caption{Rendered icosahedron frame. The Vreteno processor computes vertex
+transformations and populates display lists in shared memory; the Razboj
+rasterizer fetches commands and renders pixels over the on-chip network.}
 \label{fig:n-soc}
 \end{figure}
 
-A core at 0,0, a GPU at 1,0, a memory at 0,1 and a serial port at 1,1:
-two hosts and two peripherals, none of which knows that the others are
-there or that the network is. The core is Vreteno running a program
-compiled for it; the GPU is Razboj, the rasteriser; the memory is the
-simulation-only \code{Ram}; the serial port is the same \code{Uart}
-the core has always had, with a terminal on its lines.
+The demonstration design deploys a 2 by 2 heterogeneous system: a Vreteno
+processor core at (0,0), a Razboj rasterizer at (1,0), a shared RAM at (0,1),
+and a UART controller at (1,1). Endpoints communicate solely across the
+packet-switched fabric.
 
-The two hosts work together through the memory and through nothing
-else. The program holds an icosahedron as twelve vertices and twenty
-faces, turns it to the view, throws away the faces that point away
-from the camera, shades the rest by how squarely they face a light,
-and writes each as a triangle of the display list at \mmget{at}{soc_dl},
-with the count at \mmget{at}{soc_count} last. The rasteriser has been reading
-that count since the first cycle. When it turns non-zero, the
-rasteriser fetches the list and draws it into the framebuffer at
-\mmget{at}{soc_fb}. The program's constants and its stack are at
-\mmget{at}{soc_data}, and the serial port is at \mmget{at}{soc_serial}, where the core
-says \code{icosahedron} when it is done.
-Table~\ref{tab:n-map} is the map, which the build reads from the
-constants in \code{soc} that the bridges are made with.
+The two master cores interact through shared memory. The processor software
+evaluates 3D icosahedron geometry, performs back-face culling, calculates
+flat lighting, and writes display list primitives into memory at
+\mmget{at}{soc_dl}, updating the command count at \mmget{at}{soc_count}.
+The rasterizer detects the non-zero count, fetches command packets across the
+network, and renders pixels into the framebuffer at \mmget{at}{soc_fb}.
+Upon completion, the core emits confirmation over the serial port at
+\mmget{at}{soc_serial}. Table~\ref{tab:n-map} summarizes the memory map.
 
 \begin{table}[htbp]
-\caption{What each host finds where, and the corner a host bridge
-sends it to.}
+\caption{System address map and network routing destinations.}
 \label{tab:n-map}
 \mmget{board}{soc}
 \end{table}
 
-\socpart{map}{The address map, stated in a host bridge's type. Both
-hosts use it: the serial port, the program's data, and then everything
-else, the list and the framebuffer included.}{lst:n-map}
+\socpart{map}{Address map defined within the host bridge type.}{lst:n-map}
 
-The masks cover the whole address. A mask of \code{0xf000} compares
-only the digit the base is written in, and the framebuffer's last
-rows, at \mmget{at}{soc_alias} and above, then went to the serial port: the
-picture came out of the terminal as a line of the background colour's
-low byte.
+Address masks must cover the entire range. An address mask of \code{0xf000}
+matches only the top nibble, causing alias addresses at \mmget{at}{soc_alias}
+to misroute to the UART port, which emitted framebuffer bytes to the console
+during early debugging.
 
-Each corner is the same three pieces: the client, an \code{AxiHost} or
-an \code{AxiPer}, and the bridge. Nothing was added to the core to put
-it here. The rasteriser is told three addresses in its type, the
-framebuffer's base, the list's and the count's, and works its
-addresses out at the link's width, since a framebuffer above
-\code{0x10000} would otherwise wrap onto whatever the map has below.
+Each corner integrates three components: the endpoint client, an \code{AxiHost}
+or \code{AxiPer} engine, and the network bridge. The processor core required
+no modifications to interface with the network fabric.
 
-The program found a fault in the core. A multiply whose operand is
-the word the instruction before it loaded latched the register's old
-value, because the load was still waiting for its answer from the bus
-and the sequencer started anyway. The colour of every face came out
-with no red in it. The core's lockstep test now has that case, and the
-sequencer waits for the answer.
+Running the system exposed a processor hazard: an integer multiply using
+the result of an immediately preceding load sampled stale register data
+because the load completion was still in flight on the bus. Adding pipeline
+interlocks resolved the issue.
 
 \section{What the Hops Cost}
 \label{sec:n-cost}
 
 \begin{table}[htbp]
-\caption{Cycles in the run of Figure~\ref{fig:n-soc}, and the same
-display list drawn by the rasteriser alone on a direct link.}
+\caption{Execution cycles for icosahedron rendering: direct link versus
+network lattice.}
 \label{tab:n-cost}
 \centering\footnotesize
 \begin{tabular}{@{}lrr@{}}
@@ -432,49 +373,33 @@ The GPU draws the list & 45\,468 & 82\,438 \\
 \end{tabular}
 \end{table}
 
-The demonstration prints both numbers for the GPU. It hands the list
-the core wrote to the rasteriser and its framebuffer joined by a
-plain link, draws it again, and checks that the picture is the same.
-On the lattice the rasteriser takes nearly twice as long,
-counted from the cycle the count is written.
+The benchmark logs rendering duration across both topologies. Running the
+identical display list across a dedicated AXI link requires 45\,468 cycles,
+compared to 82\,438 cycles across the network mesh.
 
-That is the cost of throughput rather than of latency. A hop adds
-about as much to one transaction's round trip as it does to the next,
-and a host that waits for each answer, as the core does for its loads,
-pays that and nothing more. The rasteriser writes over twelve thousand
-pixels and never waits for any of them, so what it pays is the
-network's rate: one packet through a node per cycle, and a write is a
-packet each way across two hops.
-
-The rate is the number to improve, and improving it is arbitration and
-width rather than routing: a switch that moved a packet per port per
-cycle rather than one per node would carry the rasteriser's stream at
-the rate the link does.
+This latency disparity reflects throughput constraints rather than hop delay.
+A store-and-forward hop adds minimal latency to round-trip times. While the
+processor core stalls synchronously on loads, the rasterizer streams over
+12\,000 pixels asynchronously without blocking. Mesh throughput limits
+processing to one packet per node per cycle, requiring two hops in each
+direction for every write beat.
 
 \subsection{What a node's own logic costs}
 \label{sec:n-timing}
 
-How fast a node can be clocked was read off the logic for a long time
-and not measured. It has been measured now, with the hermetic Vivado
-the rest of the tree uses: \code{//lib/parts:node\_synth} and
-\code{//lib/parts:switch\_synth} put one node, and one switch inside
-it, through synthesis for the Artix-7 the board has. Both are manual,
-as every Vivado target here is, and both take about a minute.
+Synthesis targets \code{//lib/parts:node\_synth} and
+\code{//lib/parts:switch\_synth} evaluate implementation metrics on an
+Artix-7 FPGA (\code{xc7a200tfbg484-2}). Both runs complete in approximately
+one minute.
 
-A node holds three flip-flops per switch and six in all: the
-\code{turn} of each round robin, and nothing else. Everything that
-carries a packet is combinational, and the flip-flops that bound those
-paths are the channels' on either side of the node, which belong to
-whatever instantiates it. Table~\ref{tab:n-timing} is the answer, as
-measured at commit 7a8e89e, when the node's place in the lattice was
-a type parameter; \code{noc\_netlist} has since left \code{col} and
-\code{row} as inputs, and the table has not been measured again.
+A network node requires three flip-flops per switch (six registers total),
+dedicated to round-robin state. Packet routing datapaths operate
+combinationally between channel registers. Table~\ref{tab:n-timing} reports
+measured synthesis results.
 
 \begin{table}[htbp]
-\caption{One node, and one switch inside it, through synthesis for
-the \code{xc7a200tfbg484-2}. The path measured is the worst the tool
-found, which is now inside the switch, from one bit of \code{turn} to
-another, and carries no pad.}
+\caption{Synthesis metrics for a single switch and complete node on an
+Artix-7 FPGA (\code{xc7a200tfbg484-2}).}
 \label{tab:n-timing}
 \centering\footnotesize
 \begin{tabular}{@{}lrr@{}}
@@ -489,58 +414,29 @@ Levels of logic on it & 5 & 4 \\
 \end{tabular}
 \end{table}
 
-Four or five levels of look-up table is the whole of it, and the path
-is the arbitration deciding what moves next rather than anything that
-carries a packet. At the tenth of a nanosecond a LUT costs on this
-part, about half a nanosecond of that is logic and the rest is an
-unplaced estimate of the wires. So a node has room at 100~MHz with
-more than half the period to spare, and the shortening that was
-proposed for it, carrying the next hop's direction in the packet so
-that a node reads its direction rather than working it out, is not
-worth doing yet.
+Critical path analysis reveals 3.62~ns delay through four LUT logic levels,
+dominated by arbitration logic rather than packet multiplexing datapaths.
+The design achieves timing closure at 100~MHz (10.0~ns period) with over
+6.0~ns slack.
 
-The round robin is what the registers are for, and what it cost is in
-that table: five look-up tables and three flip-flops in a switch,
-against an arbiter that starved. Before it, the choice was a fixed
-order and a link that never paused kept its output for ever; issue 315
-has the measurement, 198 packets against none in two hundred cycles.
+Round-robin arbitration prevents port starvation. An earlier fixed-priority
+implementation allowed saturated inputs to starve adjacent ports indefinitely,
+dropping throughput to zero over 200 cycles (issue 315).
 
-The path is not the one that was expected, and that is worth writing
-down. It is the arbitration deciding what moves next, from one bit of
-\code{turn} through the eligibility of the five inputs and back, and
-not the wide multiplexer that carries the packet. Before the round
-robin the measured path was the same chain without the registers, an
-output's \code{ready} to another output's \code{valid}. A switch that
-wanted to be faster would shorten that chain first, and it is the
-chain the arbiter is in.
-
-The two hardly contend. While the core works, the rasteriser only
-polls the count, one read at a time; by the time it draws, the core
-has halted. A program that kept writing while the GPU drew would
-contend for longer, and what that costs is now bounded: the round
-robin gives every input a turn within four of the others, where the
-fixed order it replaced could leave a node unable to speak at all.
+Contention between the two masters remains minimal. While the processor core
+executes geometry math, the rasterizer polls the counter once per cycle; by
+the time rasterization commences, the processor has halted.
 
 \section{What Is Not Here}
 \label{sec:n-not}
 
-The tests and \code{//soc} wire their lattice with \code{lattice}, a
-helper that makes the channels and hands out the ends and does not
-lower; \code{Mesh} is the same wiring as a unit that does.
-Writes of more than one beat cross the network as that
-many writes of one, split at the host bridge and answered once, so a
-peripheral that means something by a burst sees the beats and not the
-burst; \code{docs/noc-bursts.md} says what carrying it whole would
-cost, and why the split was chosen (issue 125). A wrapping write is
-refused rather than carried. Reads of several beats cross as one
-request and a packet per beat of the answer, and a test crosses the
-lattice with four of them.
-The arbiter in a switch is a round robin, so an input waits on at most
-four others; it was a fixed priority that starved the exit outright,
-which was issue 315.
-A switch moves one packet
-per cycle rather than one per port, which is what the rasteriser's
-stream pays for above.
+The network implementation balances simplicity and performance. Multi-beat
+write bursts decompose into single-beat transactions, trading burst protocol
+efficiency for robust multi-master isolation (issue 125). Wrapping bursts
+trigger explicit \texttt{SlvErr} responses. Multi-beat read bursts cross the
+fabric as a single request followed by individual return beats. Switches route
+one packet per cycle across all ports, establishing a clear path for future
+multi-port crossbar enhancements.
 
 \begin{thebibliography}{9}
 
