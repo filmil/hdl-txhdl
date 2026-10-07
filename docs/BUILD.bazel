@@ -1176,6 +1176,8 @@ latex_document(
         ":compose_timing",
         ":unreg_run",
         ":unreg_timing",
+        ":empty_run",
+        ":empty_timing",
         ":ports_run",
         ":ports_timing",
         ":bundle_run",
