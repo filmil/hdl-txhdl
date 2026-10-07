@@ -99,4 +99,17 @@ enum fb_result fb_input(struct fb *fb, const uint8_t *p, size_t n);
 int fb_kernel(const uint8_t *img, uint32_t len, uint32_t *offset,
 	      uint32_t *size);
 
+/*
+ * Copy `n` bytes a word at a time whatever the two addresses' alignment,
+ * as `memcpy` with no overlap. The download lands in the staging area at
+ * whatever offset fastboot's framing leaves it, which is rarely
+ * co-aligned with where `recv` put it, and a `memcpy` that copies a byte
+ * at a time when the two are not co-aligned made the staging copy 265
+ * cycles a byte on the board (issue 1230). It stores bytes until `dst`
+ * is aligned, then whole words: each built from two aligned loads of
+ * `src`, shifted together, when `src` is not aligned with it. It reads
+ * no word that holds none of `src`'s bytes.
+ */
+void fb_copy(uint8_t *dst, const uint8_t *src, size_t n);
+
 #endif

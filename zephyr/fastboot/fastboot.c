@@ -292,3 +292,47 @@ int fb_kernel(const uint8_t *img, uint32_t len, uint32_t *offset,
 	*size = ksize;
 	return 0;
 }
+
+/* A word that may alias the bytes it is read from or written to. */
+typedef uint32_t __attribute__((may_alias)) fb_word;
+
+void fb_copy(uint8_t *dst, const uint8_t *src, size_t n)
+{
+	while (n > 0 && ((uintptr_t)dst & 3) != 0) {
+		*dst++ = *src++;
+		n--;
+	}
+	unsigned int off = (uintptr_t)src & 3;
+
+	if (off == 0) {
+		while (n >= 4) {
+			*(fb_word *)dst = *(const fb_word *)src;
+			dst += 4;
+			src += 4;
+			n -= 4;
+		}
+	} else if (n >= 8) {
+		/* Little-endian: the word at `src` is the high bytes of one
+		 * aligned word and the low bytes of the next. The loop stops
+		 * with at least four bytes left, so the last word it loads
+		 * still holds a byte of `src`. */
+		const fb_word *w = (const fb_word *)(src - off);
+		unsigned int lo_sh = 8 * off;
+		unsigned int hi_sh = 32 - lo_sh;
+		uint32_t lo = *w++;
+
+		while (n >= 8) {
+			uint32_t hi = *w++;
+
+			*(fb_word *)dst = (lo >> lo_sh) | (hi << hi_sh);
+			lo = hi;
+			dst += 4;
+			src += 4;
+			n -= 4;
+		}
+	}
+	while (n > 0) {
+		*dst++ = *src++;
+		n--;
+	}
+}
