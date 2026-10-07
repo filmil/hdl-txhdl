@@ -29,7 +29,8 @@ bazel build //cpu/vreteno:vreteno_board_pnr        # the DDR3 test, #188
 bazel build //flagship:flagship_pnr                # Ethernet and the loader, #143
 bazel build //cpu/vreteno/rust:hello_ram_bin //cpu/vreteno/rust:hello_fastboot \
     //cpu/vreteno/rust:trng_ram_bin //cpu/vreteno/rust:steps_ram_bin \
-    //cpu/vreteno/rust:ddr3bw_ram_bin //cpu/vreteno/rust:ddr3ram_ram_bin
+    //cpu/vreteno/rust:ddr3bw_ram_bin //cpu/vreteno/rust:ddr3ram_ram_bin \
+    //cpu/vreteno/rust:cpi_ram_bin
 bazel build //zephyr:fastboot @multitool//tools/fastboot
 bazel build //third_party/gdb //cpu/vreteno/rust:gdbprobe_elf   # gdb, #872
 bazel build //tools/trngstat
@@ -221,6 +222,23 @@ Post the log on #1023.
 
 Done on October 4, 2026, by hil, on the flagship: sixteen loads took 841, 837, 834 and 826 cycles against the DDR3 and 397 against the data memory, about 27 cycles a word more, so the controller adds about 23.
 The result and what it decides are in `docs/ddr3-throughput.md`, section 6, and on #1023.
+
+### The instruction cache's CPI, #1320
+
+Same bitstream again.
+`cpi_ram_bin` writes `icache_test`'s loop, three instructions a thousand times round, into the data memory and into the DDR3, and times it from each with `mcycle` and `minstret`: cold, with a `fence.i` in the time that clears the tags and leaves the line to be filled, and warm, straight after.
+
+```sh
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/cpi_ram_bin.bin --seconds=10 \
+    2>&1 | tee board-1320-cpi.log
+```
+
+Pass: four lines, `cpi dmem cold`, `cpi dmem warm`, `cpi ddr3 cold` and `cpi ddr3 warm`, each with its cycles and 3004 instructions.
+In simulation, `board_test`'s `the_cache_loop_is_timed_by_the_core` gives 8077, 7036, 8149 and 7084 cycles: warm, 2.34 cycles an instruction from either memory, and cold about 1040 more, the 1024 cycles the tags take to clear and the line's fill.
+The warm figures are the steady CPI #1306 left unmeasured; a warm DDR3 figure far above the data memory's would mean the line is not staying in the cache, and is a finding.
+The cold DDR3 figure less the warm one, less 1024, is what a line's fill from AMD's controller costs.
+Post the log on #1320.
 
 ### The DDR3's writes and strobes, #1174
 
