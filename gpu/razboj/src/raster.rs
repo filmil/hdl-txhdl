@@ -285,6 +285,9 @@ pub struct Raster<
     /// each of the two is a block RAM of one write and one read; the
     /// colour read there; the pixel's own, held a turn; and the colour
     /// the pixel writes, blended and masked.
+    /// A block RAM, which Vivado makes of it only while the blend's
+    /// products below keep out of DSP slices (issue 1343).
+    #[ram_style("block")]
     pub dbank: Mem<U<32>, 4096>,
     pub dcol: Reg<U<32>>,
     pub srcq: Reg<U<32>>,
@@ -295,9 +298,13 @@ pub struct Raster<
     /// its two products, before the divide.
     pub fsq: Reg<U<32>>,
     pub fdq: Reg<U<32>>,
+    #[use_dsp("no")]
     pub sum_a: Reg<U<17>>,
+    #[use_dsp("no")]
     pub sum_r: Reg<U<17>>,
+    #[use_dsp("no")]
     pub sum_g: Reg<U<17>>,
+    #[use_dsp("no")]
     pub sum_b: Reg<U<17>>,
     /// Whether the tile is loaded from the framebuffer before its
     /// entries, as one more entry after the scrub (issue 993).
