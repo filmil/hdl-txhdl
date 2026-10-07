@@ -74,7 +74,7 @@ Written by hand, that is one struct for the interface and one more per
 role, with every member repeated in each. It is mechanical, and it is also
 where an interface and its roles drift apart. So it is declared.
 
-\begin{lstlisting}[caption={The whole of an interface and its two roles. Everything else is generated.},label={lst:iface}]
+\begin{lstlisting}[caption={Complete interface declaration and its two roles; all supporting definitions are generated automatically.},label={lst:iface}]
 interface! {
     Wishbone {
         adr: Signal<U<32>>,
@@ -175,15 +175,16 @@ expected `In<u32, Clk400>`, found `In<u32, Clk100>`
 expected `In<u32, Clk400>`, found `In<u32>`
 \end{lstlisting}
 
-A value goes between clocks on a channel, through \code{ChanCdc} in
-\code{//lib/parts}, which takes the channel in on one clock and gives
-it out on the other (issue 1017): an asynchronous FIFO, its memory
-written on one clock and read on the other, and each side's pointer
-Gray coded and carried across by two flip-flops of the other clock. A
-wire has no way across at all, since nothing but a unit of the other
-domain produces a signal there, so a crossing cannot be forgotten.
-That is the failure the merged specification handled by having the
-compiler notice two tags differ; here the type system notices.
+Values cross clock domains through explicit channel bridges such as
+\code{ChanCdc} in \code{//lib/parts}, which accepts transactions on one
+clock and delivers them on the other (issue 1017). Internally,
+\code{ChanCdc} implements an asynchronous dual-clock FIFO: write and
+read pointers are Gray-coded and synchronized across domains via
+two-stage flip-flop synchronizers. Raw wires cannot bridge domains
+directly because signal endpoints must belong to matching clock types,
+preventing unmitigated domain crossings. While the merged specification
+relied on compiler tag analysis to flag clock domain mismatches, the
+embedded runtime enforces this invariant through the Rust type system.
 
 A unit that does not care which clock it is in says so by being generic
 over \code{C: Clock}, which is the Rust way of saying it and costs the
@@ -193,11 +194,12 @@ unit nothing.
 
 Section~\ref{sec:e-binding} gave a \code{Tag}: a synchronisation domain
 with a policy, handshake and capacity. That is LHDL's idea, and it is
-about how data moves. A \code{Clock} is about which edge moves it. One
-clock may carry several tags, an elastic one and a raw one side by side,
-and the configuration maps each tag onto a clock. The two are kept apart
-because merging them would force every elastic domain to be its own
-clock.
+about how data moves. A \code{Clock} defines the physical switching edge
+that triggers register updates. A single clock domain can host multiple
+synchronisation tags, accommodating elastic pipelines and raw synchronous
+paths concurrently. The system configuration maps tags onto physical
+clocks. Decoupling these concepts avoids forcing every elastic domain to
+instantiate a distinct hardware clock network.
 
 \subsubsection{Two clocks stand in a stated relation}
 \label{sec:e-phase}

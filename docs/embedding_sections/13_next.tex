@@ -117,10 +117,12 @@ three-cycle implementation and once to a single-cycle one, and the second
 netlist has to have one register fewer than the first without any edit to
 Listing~\ref{lst:next-mac}.
 
-That is the whole claim of Section~\ref{sec:e-pipeline} stated as a
-test. If it passes, the behavioural half is real. If it cannot be made to
-pass, the paper has rebuilt Chisel in Rust with better error messages,
-which is worth having and is not what the project set out to do.
+This test operationalizes the architectural thesis of
+Section~\ref{sec:e-pipeline}. Successfully synthesizing both configurations
+demonstrates that high-level procedural async definitions lower into retimed
+physical pipelines. If this property cannot be verified, the framework
+reduces to a structural DSL in Rust with enhanced diagnostics, rather than
+achieving its intended behavioral synthesis objective.
 
 \subsection{What it needs}
 

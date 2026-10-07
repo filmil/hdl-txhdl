@@ -147,19 +147,19 @@ without a colon is in Listing~\ref{lst:when-err}.
 \subsubsection{Many values}
 \label{sec:e-select}
 
-\code{with!} and \code{case!} choose among drives. A datapath also
-chooses among values, an ALU's result by its function code, and
-\code{match} on a signal hits the wall a third time. \code{select!}
-is \code{match} on a value by another name: the first pattern that
-matches chooses, a pattern may carry a guard, and the last arm is the
-default. It is a \code{macro\_rules!} of one line that expands to
-\code{match}, so it runs as Rust runs it; the name says what the
-hardware is, a chain of multiplexers in priority order, which is what
-the lowering makes of it. \code{mux} is its two-arm case. Both
-\code{case!} and \code{select!} take an integer literal as a
-pattern, so an opcode is matched as the manual writes it; the RISC-V
-core~\cite{vreteno} chooses among values with them and \code{mux},
-and among drives with \code{case!}, \code{with!} and \code{when!}.
+\code{with!} and \code{case!} select among driving assignments. A datapath also
+selects among data values, such as an ALU selecting output based on function
+code, where a native \code{match} on a dynamic signal would trigger an evaluation
+error. The \code{select!} macro provides value-level selection: the first matching
+pattern determines the result, patterns may include conditional guards, and the
+terminal arm provides a default fallback. This macro expands directly to a Rust
+\code{match} expression; its name reflects its hardware implementation as a
+priority multiplexer tree during lowering. The \code{mux} helper handles binary
+selection. Both \code{case!} and \code{select!} accept integer literals as match
+patterns, enabling opcodes to be decoded directly as documented in architecture
+manuals. The Vreteno core~\cite{vreteno} uses \code{select!} and \code{mux} for
+datapath values, and \code{case!}, \code{with!}, and \code{when!} for register
+drives.
 
 \subsection{Bit slicing}
 

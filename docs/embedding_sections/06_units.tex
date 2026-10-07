@@ -134,17 +134,16 @@ child fresh. A loop that awaits nothing never yields and spins. That is
 the right behaviour, because such a loop is a combinational loop in
 the hardware, which is the thing that was wrong.
 
-One consequence is worth stating because the arbiter example ran into
-it. State read before the wait, at the top of a loop, is read in the
-previous step, before that step's own drives have committed. An
-arbiter whose priority order was fixed before it waited saw the
-previous cycle's turn and granted one side twice. The order belongs
-after the wait, which is why its event is \code{until} on either input
-offering and its choice is a plain read at that edge, and why there is
-no wait that selects among channels: the first of several channel
-waits with a state-dependent priority is \code{until} with an
-\code{||} in it. The \code{select!} the library does have is not a
-wait; it chooses a value by pattern, Section~\ref{sec:e-select}.
+A key timing subtlety arises from loop execution order. State sampled
+before an \code{await} statement at the top of a loop reflects the
+preceding clock step, prior to the commitment of that step's driven values.
+If an arbiter samples its round-robin priority before waiting for request
+assertion, it samples stale cycle state, causing double grants. Priority
+evaluation must occur strictly after the wait resumes. For this reason,
+arbitration blocks on an \code{until} condition combining input requests
+via \code{||}, sampling winner priority immediately upon waking. The
+\code{select!} macro provided by the library does not block; it evaluates
+combinational pattern matches, as described in Section~\ref{sec:e-select}.
 
 \begin{pitfall}
 This is the constraint most likely to surprise somebody writing a unit for
@@ -283,17 +282,17 @@ impl<TC: TopConfig> Unit<(), ()> for Top<TC> {
 
 \subsection{Why the borrow rule does not bite here}
 
-Section~\ref{sec:e-units} showed that two processes of one unit cannot
-both take \code{\&mut self}. Listing~\ref{lst:hier-run} appears to do
-exactly that and compiles, which is worth explaining rather than leaving
-as an inconsistency.
+Section~\ref{sec:e-units} showed that two processes belonging to the
+same unit cannot concurrently hold \code{\&mut self}. Listing~\ref{lst:hier-run}
+appears to permit this and compiles cleanly.
 
-The two cases are not the same. A process is a method on the unit, so it
-borrows the whole of \code{self} and two of them collide. A submodule is a
-\emph{field}, and Rust permits simultaneous mutable borrows of disjoint
-fields, so \code{\&mut self.producer} and \code{\&mut self.consumer} coexist
-legally. The bus between them is borrowed shared by both, which is what a
-wire is.
+The mechanisms are fundamentally distinct. A process method borrows the
+entire struct reference, causing conflicting borrows across processes. In
+contrast, a submodule is an individual struct \emph{field}. The Rust borrow
+checker permits simultaneous mutable borrows of disjoint fields, allowing
+\code{\&mut self.producer} and \code{\&mut self.consumer} to operate
+concurrently. The interconnect bus between them is borrowed immutably by
+both endpoints, accurately reflecting shared wiring.
 
 \begin{rulebox}[Where interior mutability is needed]
 State that two processes of one unit both drive. Not submodules, which are
