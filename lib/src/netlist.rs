@@ -3158,7 +3158,10 @@ impl Lowered {
 /// buffer of two, `head` and `tail`, the receiver's `valid` and
 /// `data` the head as the edge left it, the sender's `ready` the
 /// tail's room; a take moves the tail up and an offer fills the
-/// first free place, the take first. In Verilog, a module. Its name,
+/// first free place, the take first. A free place loads whatever is
+/// offered, valid or not, and only its valid bit says whether it holds
+/// anything, so the sender's valid enables no data bit (issue 1321).
+/// In Verilog, a module. Its name,
 /// `txhdl_chan` here, is replaced by the netlist's own, `<top>_txhdl_chan`
 /// (issue 979).
 const CHAN_VERILOG: &str = "`timescale 1ns/1ps
@@ -3183,10 +3186,15 @@ module txhdl_chan #(parameter W = 1)(
       head_v <= 1'b0;
       tail_v <= 1'b0;
     end else begin
+      // The head loads whenever it will be empty and the tail
+      // whenever it is, whatever is offered, so the sender's valid is
+      // on the two valid bits and not on every data bit's enable
+      // (issue 1321). What a free register takes is read only once its
+      // valid says so.
       head_v <= hv1 | tx_valid;
-      head <= (tx_valid & ~hv1) ? tx_data : h1;
+      head <= hv1 ? h1 : tx_data;
       tail_v <= tv1 | (tx_valid & hv1);
-      tail <= (tx_valid & hv1) ? tx_data : tail;
+      tail <= tv1 ? tail : tx_data;
     end
   end
   assign rx_data = head;
@@ -3224,10 +3232,12 @@ module txhdl_chan_u #(parameter W = 1)(
       head_v <= 1'b0;
       tail_v <= 1'b0;
     end else begin
+      // Free registers load whatever is offered, as the registered
+      // channel's do (issue 1321).
       head_v <= hv1 | push;
-      head <= (push & ~hv1) ? tx_data : h1;
+      head <= hv1 ? h1 : tx_data;
       tail_v <= tv1 | (push & hv1);
-      tail <= (push & hv1) ? tx_data : tail;
+      tail <= tv1 ? tail : tx_data;
     end
   end
   assign rx_data = head_v ? head : tx_data;
@@ -3275,9 +3285,11 @@ begin
         if rx_ready = '1' and head_v = '1' then
           h := tail; hv := tail_v; tv := '0';
         end if;
+        -- Free registers load whatever is offered (issue 1321).
+        if hv = '0' then h := tx_data; end if;
+        if tv = '0' then t := tx_data; end if;
         if push = '1' then
-          if hv = '0' then h := tx_data; hv := '1';
-          else t := tx_data; tv := '1'; end if;
+          if hv = '0' then hv := '1'; else tv := '1'; end if;
         end if;
         head <= h; tail <= t; head_v <= hv; tail_v <= tv;
       end if;
@@ -3327,9 +3339,13 @@ begin
         if rx_ready = '1' and head_v = '1' then
           h := tail; hv := tail_v; tv := '0';
         end if;
+        -- The head loads whenever it will be empty and the tail
+        -- whenever it is, so the sender's valid is on the valid bits
+        -- alone and not on every data bit's enable (issue 1321).
+        if hv = '0' then h := tx_data; end if;
+        if tv = '0' then t := tx_data; end if;
         if tx_valid = '1' then
-          if hv = '0' then h := tx_data; hv := '1';
-          else t := tx_data; tv := '1'; end if;
+          if hv = '0' then hv := '1'; else tv := '1'; end if;
         end if;
         head <= h; tail <= t; head_v <= hv; tail_v <= tv;
       end if;
