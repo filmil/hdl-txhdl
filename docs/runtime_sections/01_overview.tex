@@ -112,6 +112,16 @@ RAM cannot hold Vivado still refuses, and says so in its synthesis
 log as an infeasible \code{ram\_style}, which is where to look. A
 memory that says nothing is left to Vivado, as before.
 
+\textbf{A register can say whether Vivado may use DSP slices.}
+\code{\#[use\_dsp("no")]} on a register's field, or \code{"yes"},
+\code{"logic"} or \code{"simd"}, puts the \code{use\_dsp} attribute
+on it in both netlists (issue 1383). It is what a block RAM's read
+register beside a multiply needs: Vivado pulls up to two registers on
+a path into a multiply's input, and the read's register is one of
+them, which leaves the read asynchronous and the memory LUT RAM, even
+where the multiply ends in LUTs (issue 1343). \code{"no"} on the
+products keeps the read's register where it is, at no cycle's cost.
+
 \textbf{A channel is an elastic buffer of two.} A send is an offer:
 \code{valid} and \code{data} high this step, the transaction in the
 buffer at the end of it; \code{ready} says whether there is room, as

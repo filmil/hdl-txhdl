@@ -5,7 +5,7 @@
 //! written at two addresses, or reached at three, is refused when it is
 //! lowered, naming it; one a block RAM holds is lowered; a small one, or
 //! one marked `#[distributed]`, is left alone.
-use txhdl::comp::{Clock, DefaultClock, Mem, Out, Reg, Unit};
+use txhdl::comp::{Clock, DefaultClock, In, Mem, Out, Reg, Unit};
 use txhdl::types::U;
 use txhdl::{lower, with, Trace};
 
@@ -201,6 +201,43 @@ fn a_memory_says_what_vivado_should_make_it() {
     // A memory that says nothing is as before.
     let v = Rmw::lowered("rmw").verilog();
     assert!(!v.contains("ram_style"), "{v}");
+}
+
+/// A register whose logic must not go into DSP slices (issue 1383).
+#[derive(Trace, Default)]
+pub struct NoDsp {
+    #[use_dsp("no")]
+    pub p: Reg<U<16>>,
+    pub q: Reg<U<16>>,
+}
+
+#[lower]
+impl Unit for NoDsp {
+    async fn run(&mut self, (a, b): (In<U<8>>, In<U<8>>), out: Out<U<16>>) {
+        loop {
+            DefaultClock::rising().await;
+            let (a, b) = (a.get(), b.get());
+            with!(self <= {
+                p: a.zext::<16>().mul::<16>(b.zext::<16>()),
+                q: self.p.get(),
+            });
+            out.set(self.q.get());
+        }
+    }
+}
+
+#[test]
+fn a_register_says_whether_vivado_may_use_dsp_slices() {
+    let l = NoDsp::lowered("no_dsp");
+    let v = l.verilog();
+    assert!(v.contains("(* use_dsp = \"no\" *) reg [15:0] p"), "{v}");
+    assert!(!v.contains("use_dsp = \"no\" *) reg [15:0] q"), "{v}");
+    let h = l.vhdl();
+    assert!(h.contains("attribute use_dsp : string;"), "{h}");
+    assert!(
+        h.contains("attribute use_dsp of p : signal is \"no\";"),
+        "{h}"
+    );
 }
 
 #[test]

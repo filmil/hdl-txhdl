@@ -262,6 +262,11 @@ fn field_renames(body: &Group) -> Vec<Option<(String, Span)>> {
 /// Each field's `#[ram_style("...")]`, in `field_idents` order: what a
 /// memory asks Vivado to make it (issue 1371), or `None`.
 fn field_ram_styles(body: &Group) -> Vec<Option<(String, Span)>> {
+    field_values(body, "ram_style")
+}
+
+/// Each field's `#[key("value")]`, in `field_idents` order, or `None`.
+fn field_values(body: &Group, key: &str) -> Vec<Option<(String, Span)>> {
     let toks: Vec<TokenTree> = body.stream().into_iter().collect();
     let mut out = Vec::new();
     let mut pending: Option<(String, Span)> = None;
@@ -276,7 +281,7 @@ fn field_ram_styles(body: &Group) -> Vec<Option<(String, Span)>> {
                 if let [TokenTree::Ident(k), TokenTree::Group(a)] =
                     inner.as_slice()
                 {
-                    if k.to_string() == "ram_style" {
+                    if k.to_string() == key {
                         let text = a.stream().to_string();
                         let v = text.trim().trim_matches('"').to_string();
                         pending = Some((v, k.span()));
@@ -538,7 +543,7 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
 /// or under the name `#[rename("...")]` gives it in the netlist.
 #[proc_macro_derive(
     Trace,
-    attributes(rename, async_reg, distributed, ram_style)
+    attributes(rename, async_reg, distributed, ram_style, use_dsp)
 )]
 pub fn derive_trace(input: TokenStream) -> TokenStream {
     let item = parse_item(input);
@@ -550,6 +555,7 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
     let asyncs = field_flags(body, "async_reg");
     let distributed = field_flags(body, "distributed");
     let styles = field_ram_styles(body);
+    let dsps = field_values(body, "use_dsp");
     // The name each field takes in the netlist and in the trace: its
     // own, or the one it was renamed to, escaped where either target
     // reserves it (issue 497). The trace takes the netlist's name, so
@@ -617,6 +623,22 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
             style_pairs.push(format!("(\"{n}\", \"{v}\")"));
         }
     }
+    // Whether Vivado may build what drives a register from DSP slices
+    // (issue 1383): a register beside a memory's read keeps it from
+    // being pulled into a multiply and leaving the read asynchronous.
+    let mut dsp_pairs: Vec<String> = Vec::new();
+    for (k, n) in names.iter().enumerate() {
+        if let Some((v, span)) = dsps.get(k).cloned().flatten() {
+            if !["yes", "no", "logic", "simd"].contains(&v.as_str()) {
+                refused.extend(err(
+                    span,
+                    &format!("use_dsp is yes, no, logic or simd, not `{v}`"),
+                ));
+                continue;
+            }
+            dsp_pairs.push(format!("(\"{n}\", \"{v}\")"));
+        }
+    }
     let calls = rust
         .iter()
         .zip(&names)
@@ -649,6 +671,8 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
          const DISTRIBUTED: &'static [&'static str] = &[{distributed}];\n\
          const RAM_STYLES: &'static [(&'static str, &'static str)] = \
          &[{styles}];\n\
+         const USE_DSP: &'static [(&'static str, &'static str)] = \
+         &[{dsps}];\n\
          fn fields() -> Vec<(&'static str, \
          Option<::txhdl::comp::trace::Kind>, usize, usize)> {{ \
          let mut __v = Vec::new(); {fields} __v }}\n}}\n\
@@ -676,6 +700,7 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
             .collect::<Vec<_>>()
             .join(", "),
         styles = style_pairs.join(", "),
+        dsps = dsp_pairs.join(", "),
         pairs = rust
             .iter()
             .zip(&names)
@@ -7057,6 +7082,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          async_regs: <Self as ::txhdl::netlist::Fields>::ASYNC_REGS.to_vec(),\n\
          distributed: <Self as ::txhdl::netlist::Fields>::DISTRIBUTED.to_vec(),\n\
          ram_styles: <Self as ::txhdl::netlist::Fields>::RAM_STYLES.to_vec(),\n\
+         use_dsp: <Self as ::txhdl::netlist::Fields>::USE_DSP.to_vec(),\n\
          aliases: Vec::new(),\n\
          nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, \
          usize, &'static str)> = Vec::new(); {nets} n }},\n\
