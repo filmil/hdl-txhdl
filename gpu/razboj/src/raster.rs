@@ -59,7 +59,7 @@ use txhdl::comp::{
     Wire,
 };
 use txhdl::types::{Bit, U};
-use txhdl::{lower, with, Trace};
+use txhdl::{lower, select, with, Trace};
 use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, R, W};
 
 use crate::op::Kind;
@@ -419,6 +419,89 @@ fn masked(new: U<32>, old: U<32>, mask: U<4>) -> U<32> {
     let r = mux(mask.bit(2), new.slice::<16, 8>(), old.slice::<16, 8>());
     let a = mux(mask.bit(3), new.slice::<24, 8>(), old.slice::<24, 8>());
     a.concat::<8, 16>(r).concat::<8, 24>(g).concat::<8, 32>(b)
+}
+
+/// The reciprocal's first guess (issue 997) follows a line in each of 32
+/// segments of a mantissa between one and two: this is the line's value
+/// at the start of the segment `k`, `2^17 / m` with 16 bits of fraction,
+/// and [`seed_fall`] how far it falls over the segment. `tex::seed_line`
+/// is the formula, which a test holds both to.
+#[lower]
+pub(crate) fn seed_start(k: U<5>) -> U<17> {
+    select!(k.raw() => {
+        0 => U::<17>::from(131057u32),
+        1 => U::<17>::from(127086u32),
+        2 => U::<17>::from(123349u32),
+        3 => U::<17>::from(119826u32),
+        4 => U::<17>::from(116498u32),
+        5 => U::<17>::from(113350u32),
+        6 => U::<17>::from(110367u32),
+        7 => U::<17>::from(107538u32),
+        8 => U::<17>::from(104850u32),
+        9 => U::<17>::from(102293u32),
+        10 => U::<17>::from(99858u32),
+        11 => U::<17>::from(97536u32),
+        12 => U::<17>::from(95319u32),
+        13 => U::<17>::from(93201u32),
+        14 => U::<17>::from(91175u32),
+        15 => U::<17>::from(89236u32),
+        16 => U::<17>::from(87377u32),
+        17 => U::<17>::from(85594u32),
+        18 => U::<17>::from(83882u32),
+        19 => U::<17>::from(82237u32),
+        20 => U::<17>::from(80656u32),
+        21 => U::<17>::from(79134u32),
+        22 => U::<17>::from(77669u32),
+        23 => U::<17>::from(76257u32),
+        24 => U::<17>::from(74895u32),
+        25 => U::<17>::from(73582u32),
+        26 => U::<17>::from(72313u32),
+        27 => U::<17>::from(71087u32),
+        28 => U::<17>::from(69903u32),
+        29 => U::<17>::from(68757u32),
+        30 => U::<17>::from(67648u32),
+        _ => U::<17>::from(66574u32),
+    })
+}
+
+/// The fall of the segment `k`'s line over its 1024 steps, in 1024ths of
+/// a step: see [`seed_start`].
+#[lower]
+pub(crate) fn seed_fall(k: U<5>) -> U<12> {
+    select!(k.raw() => {
+        0 => U::<12>::from(3972u32),
+        1 => U::<12>::from(3738u32),
+        2 => U::<12>::from(3525u32),
+        3 => U::<12>::from(3329u32),
+        4 => U::<12>::from(3149u32),
+        5 => U::<12>::from(2983u32),
+        6 => U::<12>::from(2830u32),
+        7 => U::<12>::from(2689u32),
+        8 => U::<12>::from(2558u32),
+        9 => U::<12>::from(2436u32),
+        10 => U::<12>::from(2322u32),
+        11 => U::<12>::from(2217u32),
+        12 => U::<12>::from(2118u32),
+        13 => U::<12>::from(2026u32),
+        14 => U::<12>::from(1940u32),
+        15 => U::<12>::from(1859u32),
+        16 => U::<12>::from(1783u32),
+        17 => U::<12>::from(1712u32),
+        18 => U::<12>::from(1645u32),
+        19 => U::<12>::from(1582u32),
+        20 => U::<12>::from(1522u32),
+        21 => U::<12>::from(1466u32),
+        22 => U::<12>::from(1412u32),
+        23 => U::<12>::from(1362u32),
+        24 => U::<12>::from(1314u32),
+        25 => U::<12>::from(1269u32),
+        26 => U::<12>::from(1226u32),
+        27 => U::<12>::from(1185u32),
+        28 => U::<12>::from(1146u32),
+        29 => U::<12>::from(1109u32),
+        30 => U::<12>::from(1074u32),
+        _ => U::<12>::from(1040u32),
+    })
 }
 
 /// Whether a read's beat is taken this cycle: one is offered, the
