@@ -424,7 +424,16 @@ as copies to and from the DDR3, and with \code{--eth-peer} a station
 on the cable that answers ARP and ping at 10.0.0.2. It has the entropy source too, its registers by the part's map and
 a fixed sequence in place of the rings, so that a Zephyr image whose
 network stack asks for entropy boots there: \code{fastboot\_model\_test}
-boots the fastboot server to its listening line (issue~1386). Its frames arrive
+boots the fastboot server to its listening line (issue~1386). With \code{--fastboot-peer} the far end of the cable is a fastboot
+client instead, smoltcp's TCP/IP with the protocol on top, and it
+sends the server a download, which arrives through the port's slots
+at the line's pace and is dropped as the board drops it (issue~1390).
+\code{fastboot\_download\_model\_test} sends 256~KiB, checks the
+staged bytes against the image, and says the steps a byte took, the
+retransmits and the dropped frames. A step is an instruction, since
+the machine has no memory latency, so the number is the work the
+receive path does and how TCP fares on the port, and the board still
+says what the DDR3 costs. Its frames arrive
 at the line's pace and wait for the driver as the hardware's do, at
 most one a slot, and a frame that finds both slots held is dropped and
 counted in \code{rx\_errors} (issues~1313 and~1314), so a driver

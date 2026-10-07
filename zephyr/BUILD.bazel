@@ -222,6 +222,23 @@ sh_test(
     ],
 )
 
+# A download to the fastboot server on the machine model (issue 1390):
+# 256 KiB from a fastboot client on smoltcp, on the far end of the
+# model's cable, staged and checked byte for byte, with the steps a byte,
+# the retransmits and the port's dropped frames said in the log.
+sh_test(
+    name = "fastboot_download_model_test",
+    srcs = ["fastboot/model_download_test.sh"],
+    args = [
+        "$(rootpath //cpu/vreteno:machine)",
+        "$(rootpaths :fastboot)",
+    ],
+    data = [
+        ":fastboot",
+        "//cpu/vreteno:machine",
+    ],
+)
+
 # Fastboot over TCP, the device's side, with no transport in it
 # (issue 143). The same C is what the Zephyr server runs on the board
 # and what the host harness below runs, so a test against the harness
