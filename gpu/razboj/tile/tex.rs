@@ -6,8 +6,9 @@
 //! A texture is its levels in DDR3, each RGBA in 32 bits a texel,
 //! `0xAARRGGBB` as a pixel is, and stored in blocks of 4 by 4 texels, 64
 //! bytes, so that the texels a cache line holds are one burst. A
-//! texture's descriptor, [`Desc`], is sixteen words in a table the
-//! program keeps, and an entry names its texture by its index there.
+//! texture's descriptor, [`Desc`], is sixteen words the program keeps, on
+//! a boundary of 64 bytes, and an entry names its texture by its
+//! descriptor's byte address, so that the list says all Razboj reads.
 //!
 //! A textured entry carries three planes for the walk to step, as a
 //! colour channel's: `u q` and `v q`, the texel coordinates of the base
@@ -21,7 +22,7 @@
 //!   slot A  words 0-5   u q: value, step right, step down, low word first
 //!           words 6-11  v q: the same
 //!           word 12     k, the shift of the numerators below
-//!           word 13     the descriptor's index
+//!           word 13     the descriptor's byte address
 //!           word 14     [2:0] the environment
 //!           word 15     the environment's colour
 //!   slot B  words 0-5   q: value, step right, step down, low word first

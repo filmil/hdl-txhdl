@@ -157,6 +157,12 @@ impl<'a> Store<'a> {
         self.bus
     }
 
+    /// The bus address of object `name`'s descriptor, which a textured
+    /// entry names its texture by.
+    pub fn desc_at(&self, name: u32) -> u32 {
+        self.bus + (name - 1) * (DESC_WORDS as u32) * 4
+    }
+
     /// The room, read back: for a test that hands it to Razboj's model.
     pub fn words(&self) -> &[u32] {
         self.mem

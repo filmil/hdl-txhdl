@@ -630,7 +630,7 @@ mod against_gl {
                 let (mem, d) = texture(min, mag, k % 2 == 1);
                 let ops = [
                     Op::Texture(Some(TexMode {
-                        desc: 0,
+                        desc: TABLE,
                         env,
                         env_colour,
                     })),
@@ -640,10 +640,7 @@ mod against_gl {
                 let list = assemble(&ops, W, H);
                 assert!(list.iter().all(|i| i.tex.to_bool()));
                 let read = |a: u32| *mem.get(&a).unwrap_or(&0);
-                let t = Textures {
-                    mem: &read,
-                    table: TABLE,
-                };
+                let t = Textures { mem: &read };
                 let got =
                     render_textured(&list, W, H, vec![0; W * H], Some(&t));
                 for y in 0..H {
@@ -742,7 +739,7 @@ mod against_gl {
         let (mem, _) = texture(LINEAR_MIPMAP_LINEAR, LINEAR, false);
         let ops = [
             Op::Texture(Some(TexMode {
-                desc: 0,
+                desc: TABLE,
                 env: MODULATE,
                 env_colour: 0,
             })),
@@ -751,10 +748,7 @@ mod against_gl {
         ];
         let list = assemble(&ops, W, H);
         let read = |a: u32| *mem.get(&a).unwrap_or(&0);
-        let t = Textures {
-            mem: &read,
-            table: TABLE,
-        };
+        let t = Textures { mem: &read };
         let draw = |l: &[crate::op::Insn]| {
             render_textured(l, W, H, vec![0; W * H], Some(&t))
         };

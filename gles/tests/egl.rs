@@ -33,7 +33,6 @@ struct Model {
     list: &'static mut [[u32; 16]],
     scratch: &'static mut [[u32; 16]],
     textures: &'static mut [u32],
-    table: u32,
     fb: Vec<u32>,
     events: Vec<Event>,
 }
@@ -72,13 +71,9 @@ impl Machine for Model {
             .push(Event::DrawTiled(tiles.len(), entries.len()));
         let words = &*self.textures;
         let read = |a: u32| words[((a - TEX_BUS) / 4) as usize];
-        let t = Textures {
-            mem: &read,
-            table: self.table,
-        };
-        let t = (self.table != 0).then_some(&t);
+        let t = Textures { mem: &read };
         let ops = decode_list(entries);
-        let drawn = render_textured(&ops, FW, FH, vec![0; FW * FH], t);
+        let drawn = render_textured(&ops, FW, FH, vec![0; FW * FH], Some(&t));
         for (p, d) in self.fb.iter_mut().zip(drawn) {
             if d != 0 {
                 *p = d;
@@ -90,10 +85,6 @@ impl Machine for Model {
         // SAFETY: as the list's; the draw only reads it.
         let room = unsafe { &mut *(self.textures as *mut [u32]) };
         Some((room, TEX_BUS))
-    }
-
-    fn texture_table(&mut self, table: u32) {
-        self.table = table;
     }
 
     fn show(&mut self, row: u32) {
@@ -110,7 +101,6 @@ fn model() -> &'static mut Model {
         list: Box::leak(vec![[0u32; 16]; LIST].into_boxed_slice()),
         scratch: Box::leak(vec![[0u32; 16]; 4096].into_boxed_slice()),
         textures: Box::leak(vec![0u32; 1 << 14].into_boxed_slice()),
-        table: 0,
         fb: vec![0; FW * FH],
         events: Vec::new(),
     }))
@@ -307,7 +297,6 @@ fn a_program_draws_and_swaps_without_tearing() {
             "a textured frame is a tile table: {:?}",
             m.events
         );
-        assert!(m.table >= TEX_BUS, "the machine told the table");
         let fourth = rows(&m.fb, 0..480);
         let texel = fourth.iter().filter(|&&p| p == 0xff40_80c0).count();
         assert_eq!(texel, green_alone(), "the texture over the triangle");

@@ -88,7 +88,7 @@ const FRUSTUM: [f64; 6] = [-0.5, 0.5, -0.375, 0.375, 1.0, 20.0];
 
 /// The library's frame of the quad, textured with `min`, `mag` and `env`,
 /// and its room.
-fn library(min: u32, mag: u32, env: u32) -> (Vec<[u32; WORDS]>, Vec<u32>, u32) {
+fn library(min: u32, mag: u32, env: u32) -> (Vec<[u32; WORDS]>, Vec<u32>) {
     let mut frame = vec![[0u32; WORDS]; 512];
     let room: &'static mut [u32] =
         Box::leak(vec![0u32; 1 << 16].into_boxed_slice());
@@ -129,9 +129,8 @@ fn library(min: u32, mag: u32, env: u32) -> (Vec<[u32; WORDS]>, Vec<u32>, u32) {
     assert_eq!(g.get_error(), gl::NO_ERROR);
     assert!(g.tiled(), "a textured frame is a tile table");
     let used = g.frame().len();
-    let table = g.textures().unwrap().table();
     let words = g.textures().unwrap().words().to_vec();
-    (frame[..used].to_vec(), words, table)
+    (frame[..used].to_vec(), words)
 }
 
 /// A point of the quad in the window, from its object coordinates: x and
@@ -290,10 +289,10 @@ fn textures_are_floating_points() {
     let (mut compared, mut worst) = (0, 0f64);
     for &(min, mag) in &filters {
         for &e in &envs {
-            let (frame, words, table) = library(min, mag, e);
+            let (frame, words) = library(min, mag, e);
             let list = decode_list(&frame);
             let read = |a: u32| words[((a - BUS) / 4) as usize];
-            let t = Textures { mem: &read, table };
+            let t = Textures { mem: &read };
             let (w, h) = (W as usize, H as usize);
             let got = render_textured(&list, w, h, vec![0; w * h], Some(&t));
             for y in 0..h {
