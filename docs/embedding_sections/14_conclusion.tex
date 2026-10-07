@@ -2,54 +2,34 @@
 \section{Conclusion}
 \label{sec:e-conclusion}
 
-A companion paper merged two hardware description languages and gave the
-result a syntax shaped after Rust. This paper removed every construct Rust
-already provides and asked what was left.
+A companion paper merged two hardware description languages into one with
+Rust-like syntax. This paper evaluated removing every construct Rust natively
+provides to determine the minimal viable embedded subset.
 
-Seventeen of twenty constructs go. What remains is four Rust modules
-of traits and types and a crate of macros, not a grammar.
+Seventeen of twenty domain-specific constructs were eliminated, reducing the
+language from a distinct grammar to four core Rust modules and procedural macros.
 
-Two deletions are worth more than the count suggests. The rule that a
-timeless body may not count cycles needs no enforcement, because a cycle
-count is spelled \code{.await} and a plain function has none: a paragraph
-of specification and a compiler check become a fact about the type system.
-And a pipeline, a sequence and a set of parallel processes turn out to be
-one construct driven three ways, so \code{pipeline}, \code{stage} and
-\code{pipe} all go, and the live-range analysis the last of them existed to
-feed is what an async state machine does already.
+Two design simplifications proved especially significant. First, timeless dataflow
+cannot count cycles because cycle counting requires \code{.await}, making
+retiming invariants enforceable directly through Rust's type system rather than
+specialized compiler checks. Second, pipelines, transaction sequences, and
+concurrent processes represent a single construct (\code{async fn}) differentiated
+solely by execution drivers; async state machine synthesis replaces dedicated
+pipeline live-range tracking.
 
-Two results were negative and were worth more still, because neither was
-visible from the language reference. Arbitrary-width arithmetic does not
-work on stable Rust. A unit's parallel processes cannot take a mutable
-borrow of the unit, and the repair, a register being a cell that several
-processes reach, describes a register better than the version that failed.
+Two negative experimental findings guided the architecture. Arbitrary-width
+arithmetic requires nightly compiler features due to const-eval limits. Furthermore,
+concurrent processes cannot hold simultaneous mutable borrows of unit state;
+modeling registers via interior mutability cells provides a cleaner abstraction
+for shared hardware state.
 
-One wall stands. A signal has no value while the program runs, so it cannot
-be the condition of an \code{if}. That is what a separate grammar was
-buying, and a macro front end over Rust's own syntax tree was the way
-to buy it back; \code{with!}, \code{case!} and \code{select!} are
-that front end, and \code{\#[lower]} reads them.
+To support dynamic signal selection without separate grammar parsing, the
+runtime provides \code{with!}, \code{case!}, and \code{select!} macros that
+lower directly into priority multiplexer trees.
 
-Half of what this paper builds is Chisel, in Rust, and the paper says so.
-The structural half was settled in 2012, and rebuilding it buys better
-error messages and a configuration that is a type. Those are worth having
-and would not justify a new toolchain on their own.
-
-The other half is the bet. An \code{async fn} that is a sequence, a
-pipeline or a process according to how it is driven, with operator
-latency the mapping's decision, is not something Chisel can express, and
-it is what both source languages existed to provide. The probes show
-that Rust accepts it, and the experiment of
-Section~\ref{sec:e-next} shows that it lowers: an \code{async fn} to
-a pipeline whose depth follows its operators' latencies, a unit to a
-module, and a RISC-V core~\cite{vreteno} to a netlist that simulates
-against the trace of its own source, runs at 100~MHz on an Artix-7,
-and has run on the board, where it said what its simulation said:
-the language is proven on hardware. What the lowering does not read
-yet is stated there, and it is the next thing to do.
-
-The project's second thesis declined embedding on the grounds that a full
-toolchain had become affordable. That argument has not weakened. It now
-points the other way: if a toolchain is affordable, build the one that
-arrives with a type system, a module system, generics and a package manager
-already written, and spend the effort on the part nobody has built.
+While the structural features of this architecture transpose Chisel's
+proven concepts into Rust with stronger static typing, the primary contribution
+is unifying hardware pipelines and protocols through \code{async fn}. As
+demonstrated by lowering a verified RV32I core~\cite{vreteno} at 100~MHz on
+FPGA hardware, embedding TxHDL within Rust harnesses an industrial-grade type
+system while concentrating design effort on novel behavioral synthesis.

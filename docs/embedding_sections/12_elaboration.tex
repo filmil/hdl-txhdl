@@ -44,10 +44,11 @@ reinterpret \code{if} on a signal, because only it sees the source.}
 \textbf{Runtime elaboration.} The program runs, builds a netlist through
 side effects, and emits Verilog. Chisel~\cite{bachrach2012} works this way,
 and for the structural half of this design it would work here unchanged.
-The whole of Rust is available for generating hardware and no macro is
-needed. \code{if} on a signal stays impossible, so
-Section~\ref{sec:e-walls} stands, and errors arrive when the generator runs
-rather than when it compiles.
+The full expressive power of standard Rust remains available for metaprogramming
+and hardware generation without requiring procedural macros. However, native
+\code{if} on dynamic signals remains impossible, maintaining the constraints
+detailed in Section~\ref{sec:e-walls}, and generator errors surface at execution
+time rather than during compilation.
 
 \textbf{Proc macro elaboration.} An attribute on the unit parses the item's
 own source and emits hardware from it. \code{if} and \code{match} on
