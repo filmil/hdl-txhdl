@@ -28,6 +28,7 @@
 //! then the supervisor and user modes) and this machine's do not touch.
 pub mod clint;
 pub mod eth;
+pub mod fbpeer;
 pub mod memory;
 pub mod plic;
 pub mod trng;
@@ -108,6 +109,8 @@ pub struct Devices {
     pub seip: bool,
     pub stale: bool,
     pub rx_seen: usize,
+    /// Steps taken: the clock of what is on the far end of the cable.
+    pub steps: u64,
 }
 
 /// The bus the model reaches the devices through.
@@ -206,6 +209,7 @@ impl Machine {
             seip: false,
             stale: true,
             rx_seen: 0,
+            steps: 0,
         })));
         let model = Model {
             bus: Some(board.clone() as Rc<dyn Bus>),
@@ -238,6 +242,19 @@ impl Machine {
     pub fn step(&mut self) {
         {
             let mut d = self.board.0.borrow_mut();
+            d.steps += 1;
+            // The fastboot client on the cable, every microsecond of the
+            // core's: its stack moves on and what it sent goes onto the
+            // wire towards the port (issue 1390).
+            if d.steps.is_multiple_of(100) {
+                let now = d.steps;
+                if let Some(mut c) = d.eth.client.take() {
+                    c.poll(now);
+                    let out = c.take_sent();
+                    d.eth.client = Some(c);
+                    d.eth.inbox.extend(out);
+                }
+            }
             // A frame on the wire goes into a slot when the receive
             // side has room, as the store engine writes it.
             if !d.eth.inbox.is_empty() {

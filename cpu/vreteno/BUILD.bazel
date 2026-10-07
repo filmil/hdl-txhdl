@@ -30,6 +30,7 @@ rust_library(
         "src/machine/clint.rs",
         "src/machine/memory.rs",
         "src/machine/eth.rs",
+        "src/machine/fbpeer.rs",
         "src/machine/trng.rs",
         "src/machine/mod.rs",
         "src/machine/plic.rs",
@@ -49,6 +50,7 @@ rust_library(
         "//gpu/razboj",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
+        "@crates//:smoltcp",
     ],
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
@@ -71,6 +73,7 @@ rust_library(
         "src/machine/clint.rs",
         "src/machine/memory.rs",
         "src/machine/eth.rs",
+        "src/machine/fbpeer.rs",
         "src/machine/trng.rs",
         "src/machine/mod.rs",
         "src/machine/plic.rs",
@@ -91,6 +94,7 @@ rust_library(
         "//gpu/razboj",
         "//lib:txhdl",
         "//lib/parts:txhdl_parts",
+        "@crates//:smoltcp",
     ],
     proc_macro_deps = ["//lib:txhdl_macros"],
 )

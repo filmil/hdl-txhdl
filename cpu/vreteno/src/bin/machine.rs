@@ -16,6 +16,14 @@
 //! ARP and ping at 10.0.0.2 (issue 1203), and says on standard error how
 //! many frames went each way when the machine stops.
 //!
+//! `--fastboot-peer BYTES` puts a fastboot client on the cable instead
+//! (issue 1390), smoltcp's TCP/IP at 192.168.1.1 with a client on top,
+//! which sends the fastboot server at 192.168.1.50 a download of `BYTES`
+//! bytes. The machine stops when the server has answered `OKAY`, and
+//! says on standard error the bytes, the steps the transfer took and a
+//! byte's share of them, the client's retransmits and the frames the
+//! port dropped.
+//!
 //! `--as-loaded` starts the serial port as the serial loader leaves it
 //! on the board (issue 1136): its receive interrupt enabled, as the
 //! hardware resets it, and `BYTES` waiting to be read, so the line is
@@ -27,6 +35,10 @@
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use vreteno32::machine::Machine;
+
+/// Where the fastboot server stages a download: `fastboot_stage` in
+/// `zephyr/fastboot/app/boards/ax7a200b.overlay`.
+const STAGE: u32 = 0x4800_0000;
 
 /// Where the image goes and starts, by default: the DDR3's base, which
 /// is OpenSBI's `FW_TEXT_START`.
@@ -52,6 +64,7 @@ fn main() {
     let mut steps = 100_000_000u64;
     let mut loaded = None;
     let mut peer = false;
+    let mut fastboot = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val =
@@ -64,6 +77,7 @@ fn main() {
             "--steps" => steps = number(&val()),
             "--as-loaded" => loaded = Some(val()),
             "--eth-peer" => peer = true,
+            "--fastboot-peer" => fastboot = Some(number(&val()) as usize),
             _ => panic!("unknown argument {a}"),
         }
     }
@@ -78,6 +92,13 @@ fn main() {
     }
     m.boot(at, if dtb.is_some() { dtb_at } else { 0 });
     m.board.0.borrow_mut().eth.peer = peer;
+    if let Some(n) = fastboot {
+        // A pattern rather than zeros, so a byte that lands in the wrong
+        // place is a byte that is wrong.
+        let image = (0..n).map(|i| (i * 131 + 7) as u8).collect();
+        m.board.0.borrow_mut().eth.client =
+            Some(vreteno32::machine::fbpeer::FbClient::new(image));
+    }
     if let Some(bytes) = &loaded {
         m.board.0.borrow_mut().uart.ie = 2;
         m.type_bytes(bytes.as_bytes());
@@ -101,7 +122,16 @@ fn main() {
             }
         }
     });
-    while ran < steps && m.model.halted.is_none() {
+    let done = |m: &Machine| {
+        m.board.0.borrow().eth.client.as_ref().is_some_and(|c| {
+            matches!(
+                c.step,
+                vreteno32::machine::fbpeer::Step::Done
+                    | vreteno32::machine::fbpeer::Step::Failed
+            )
+        })
+    };
+    while ran < steps && m.model.halted.is_none() && !done(&m) {
         while let Ok(bytes) = typed.try_recv() {
             m.type_bytes(&bytes);
         }
@@ -115,9 +145,40 @@ fn main() {
     }
     let how = match m.model.halted {
         Some(h) => format!("halted ({h:?})"),
+        None if done(&m) => "stopped when the download ended".to_string(),
         None => "stopped at the step limit".to_string(),
     };
     eprintln!("\n{how} after {ran} instructions, pc {:#010x}", m.model.pc);
+    if fastboot.is_some() {
+        let d = m.board.0.borrow();
+        let c = d.eth.client.as_ref().expect("the client");
+        match (c.began, c.ended) {
+            (Some(b), Some(e)) => {
+                eprintln!(
+                    "fastboot: {} bytes in {} steps, {:.1} a byte; {} \
+                     segments, {} retransmits; the port dropped {} frames",
+                    c.image.len(),
+                    e - b,
+                    (e - b) as f64 / c.image.len() as f64,
+                    c.segments,
+                    c.retransmits,
+                    d.eth.dropped
+                );
+                // What the server staged, read back from where its
+                // overlay puts the staging area.
+                let staged = d.ddr.get(STAGE, c.image.len() as u32);
+                eprintln!(
+                    "fastboot: the staged image is {}",
+                    if staged == c.image { "intact" } else { "WRONG" }
+                );
+            }
+            _ => eprintln!(
+                "fastboot: no OKAY ({:?}); answers {:?}; {} retransmits; \
+                 the port dropped {} frames",
+                c.step, c.answers, c.retransmits, d.eth.dropped
+            ),
+        }
+    }
     if peer {
         let d = m.board.0.borrow();
         eprintln!(
