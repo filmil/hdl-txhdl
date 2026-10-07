@@ -867,6 +867,61 @@ mod tests {
         assert!(changed >= 8, "the state mattered in {changed} rounds");
     }
 
+    /// A textured entry (issue 997) takes four slots, and the rasteriser,
+    /// which does not texture yet, passes over its texture's two and draws
+    /// it untextured, in a flat list and in tiles, among entries that are
+    /// not textured.
+    #[test]
+    fn a_textured_entry_draws_untextured_for_now() {
+        use crate::op::TexMode;
+        const A: usize = 20;
+        const LOGW: usize = 7;
+        const W: usize = 1 << LOGW;
+        const H: usize = 64;
+        const N: usize = 16384;
+        const DL: usize = 0xa000;
+        const CTRL: usize = 0xfffc;
+        let q = |w: f64| ((1u64 << 48) as f64 / w) as u64;
+        let ops = [
+            Op::Clear { colour: 0x10_2030 },
+            Op::Texture(Some(TexMode {
+                desc: 0,
+                env: 1,
+                env_colour: 0,
+            })),
+            Op::TexTri {
+                a: (4 * 16, 4 * 16),
+                b: (120 * 16, 10 * 16),
+                c: (30 * 16, 60 * 16),
+                colours: [0xff40_80c0; 3],
+                shaded: false,
+                z: [0; 3],
+                uvq: [
+                    (0, 0, q(1.0)),
+                    (1 << 37, 0, q(2.0)),
+                    (0, 1 << 36, q(1.5)),
+                ],
+            },
+            Op::Rect {
+                colour: 0xffc0_4020,
+                x: 60,
+                y: 20,
+                w: 30,
+                h: 30,
+            },
+        ];
+        let list = assemble(&ops, W, H);
+        assert!(list.iter().any(|i| i.tex.to_bool()));
+        let want = model::render(&list, W, H);
+        let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
+            &[Work::flat(&list), Work::tiled(&list, W, H)],
+            false,
+            false,
+        );
+        assert_eq!(runs[0].fb, want, "flat");
+        assert_eq!(runs[1].fb, want, "in tiles");
+    }
+
     /// What a load costs (issue 993): the same tile table drawn with its
     /// tiles loaded and with the load bits cleared, the difference in
     /// cycles shared among the tiles loaded. A load reads a burst of the
