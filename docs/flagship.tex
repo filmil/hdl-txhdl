@@ -418,6 +418,13 @@ no lock, since the core's reset is on the core's clock and a lowered
 module's reset arm runs from its \code{rst} input alone; the first
 version left those inputs unconnected, so a press reset the core and
 left the rest running on stale state (issue 509).
+The crossings between the clocks reset with them. Each
+\code{chan\_cdc} takes the reset of the side on each of its clocks, and
+holds itself empty while either is on, so a word in flight when the
+reset came is dropped rather than handed to a side that was reset and
+never asked for it; before, the FIFOs had no reset at all, and a
+serial reset left whatever they held for the next program to meet
+(issue 1325).
 
 The flash is a Micron MT25QL128 over a four-bit bus. It is the part
 this board answers with, read off the chip over JTAG rather than out of
