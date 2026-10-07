@@ -26,7 +26,8 @@ def waveform(
         from_tick = None,
         width = None,
         foreign_vhdl = [],
-        foreign_verilog = []):
+        foreign_verilog = [],
+        nvc_heap = None):
     """`lowered = (entity, unit)` also takes the example's VHDL and
     Verilog and simulates each against the trace: NAME.vhd, NAME.v and
     NAME.vhd.ports from the run, NAME_tb.vhd, NAME_tb.v and its
@@ -40,7 +41,9 @@ def waveform(
     `foreign_vhdl` and `foreign_verilog` are the sources of the foreign
     modules a lowered unit instantiates, simulated with its netlist in
     that language, since the netlist names them and does not write
-    them."""
+    them.
+    `nvc_heap` is the heap the VHDL replay gives nvc, such as "64m",
+    for a netlist that does not elaborate in nvc's 16 MiB."""
     outs = ["out_" + name + ".txt", name + ".fst", name + ".fst.names"]
     env = "TXHDL_FST=$(RULEDIR)/" + name + ".fst"
     if lowered:
@@ -74,6 +77,7 @@ def waveform(
                 srcs = foreign_vhdl + [name + ".vhd", tb + ".vhd"],
                 deps = [],
                 entities = [entity + "_tb"],
+                global_args = ["-H", nvc_heap] if nvc_heap else [],
             )
             # The Verilog testbench is a loop over a file of vectors,
             # one a cycle, which the test opens from its runfiles by the
