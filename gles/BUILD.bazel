@@ -72,6 +72,20 @@ rust_test(
     ],
 )
 
+# Textures (#997): a quad in perspective, uploaded with its levels
+# generated, through Razboj's model, against GL in floating point; and
+# the formats an upload takes.
+rust_test(
+    name = "texture_test",
+    srcs = ["tests/texture.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
+
 # Points and lines through Razboj's model, against what GL says of
 # them (#994).
 rust_test(

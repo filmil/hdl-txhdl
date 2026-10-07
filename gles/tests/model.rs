@@ -129,6 +129,52 @@ fn the_words_are_razbojs_encoders() {
     );
 }
 
+/// Textured triangles (#997): the library's two texture slots are the
+/// assembler's, bit for bit, the planes and the level of detail's
+/// numerators and their shift, over triangles anywhere in Razboj's range
+/// and texture coordinates across a texture of 1024 repeated.
+#[test]
+fn the_texture_slots_are_razbojs_encoders() {
+    use razboj::dl::encode_tex;
+    use razboj::op::TexMode;
+    let mut r = Rng(0x7e57_0997);
+    let screen = (0, 0, W - 1, H - 1);
+    let mut drawn = 0;
+    for _ in 0..3000 {
+        let near = |r: &mut Rng| (r.range(-800, 11000), r.range(-800, 8500));
+        let (a, b, c) = (near(&mut r), near(&mut r), near(&mut r));
+        let uvq = [0, 1, 2].map(|_| {
+            let q = (r.next() as u64 % (1 << 16) + 1) << 32;
+            let u = r.range(-4096, 4096) as i64 * (q >> 16) as i64;
+            let v = r.range(-4096, 4096) as i64 * (q >> 16) as i64;
+            (u, v, q)
+        });
+        let ours = gles::emit::textured([a, b, c], uvq, screen);
+        let ops = [
+            Op::Texture(Some(TexMode {
+                desc: 0,
+                env: 0,
+                env_colour: 0,
+            })),
+            Op::TexTri {
+                a,
+                b,
+                c,
+                colours: [0; 3],
+                shaded: false,
+                z: [0; 3],
+                uvq,
+            },
+        ];
+        let theirs = assemble(&ops, W as usize, H as usize)
+            .first()
+            .and_then(encode_tex);
+        assert_eq!(ours, theirs, "{a:?} {b:?} {c:?} {uvq:?}");
+        drawn += ours.is_some() as u32;
+    }
+    assert!(drawn > 1500, "{drawn} drawn");
+}
+
 // ---------------------------------------------------------------------
 // The reference pipeline, in 128 bits.
 

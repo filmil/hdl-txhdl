@@ -12,13 +12,14 @@ use gles::fixed::ONE;
 use gles_capi::*;
 use gles_egl::*;
 use razboj::dl::{decode, decode_list};
-use razboj::model::render;
+use razboj::model::{render, render_textured, Textures};
 use razboj::op::Kind;
 use std::ffi::CStr;
 
 const FW: usize = 1024;
 const FH: usize = 1024;
 const LIST: usize = 256;
+const TEX_BUS: u32 = 0x0100_0000;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Event {
@@ -31,6 +32,8 @@ enum Event {
 struct Model {
     list: &'static mut [[u32; 16]],
     scratch: &'static mut [[u32; 16]],
+    textures: &'static mut [u32],
+    table: u32,
     fb: Vec<u32>,
     events: Vec<Event>,
 }
@@ -67,12 +70,30 @@ impl Machine for Model {
     fn draw_tiled(&mut self, tiles: &[[u32; 2]], entries: &[[u32; 16]]) {
         self.events
             .push(Event::DrawTiled(tiles.len(), entries.len()));
-        let drawn = render(&decode_list(entries), FW, FH);
+        let words = &*self.textures;
+        let read = |a: u32| words[((a - TEX_BUS) / 4) as usize];
+        let t = Textures {
+            mem: &read,
+            table: self.table,
+        };
+        let t = (self.table != 0).then_some(&t);
+        let ops = decode_list(entries);
+        let drawn = render_textured(&ops, FW, FH, vec![0; FW * FH], t);
         for (p, d) in self.fb.iter_mut().zip(drawn) {
             if d != 0 {
                 *p = d;
             }
         }
+    }
+
+    fn textures(&mut self) -> Option<(&'static mut [u32], u32)> {
+        // SAFETY: as the list's; the draw only reads it.
+        let room = unsafe { &mut *(self.textures as *mut [u32]) };
+        Some((room, TEX_BUS))
+    }
+
+    fn texture_table(&mut self, table: u32) {
+        self.table = table;
     }
 
     fn show(&mut self, row: u32) {
@@ -88,6 +109,8 @@ fn model() -> &'static mut Model {
     Box::leak(Box::new(Model {
         list: Box::leak(vec![[0u32; 16]; LIST].into_boxed_slice()),
         scratch: Box::leak(vec![[0u32; 16]; 4096].into_boxed_slice()),
+        textures: Box::leak(vec![0u32; 1 << 14].into_boxed_slice()),
+        table: 0,
         fb: vec![0; FW * FH],
         events: Vec::new(),
     }))
@@ -243,6 +266,51 @@ fn a_program_draws_and_swaps_without_tearing() {
         // Each triangle's every pixel is in the window's middle: the near
         // one is a quarter window across, the far one half a window.
         assert_eq!(green, green_alone(), "nothing of the green hidden");
+        assert_eq!(eglGetError(), 0x3000);
+
+        // A textured frame (#997): a texture uploaded into the machine's
+        // room, two by two of one colour, replacing the triangle's. The
+        // swap tells the machine where the descriptors are and draws the
+        // frame as a tile table, which reads them.
+        static TEXEL: [u8; 16] = [
+            0x40, 0x80, 0xc0, 0xff, 0x40, 0x80, 0xc0, 0xff, 0x40, 0x80, 0xc0,
+            0xff, 0x40, 0x80, 0xc0, 0xff,
+        ];
+        static ST: [i32; 6] = [0, 0, ONE, 0, 0, ONE];
+        glDisable(0x0B71);
+        glClear(0x4000);
+        let mut name = 0;
+        glGenTextures(1, &mut name);
+        glBindTexture(0x0DE1, name);
+        glTexParameteri(0x0DE1, 0x2801, 0x2600);
+        glTexImage2D(
+            0x0DE1,
+            0,
+            0x1908,
+            2,
+            2,
+            0,
+            0x1908,
+            0x1401,
+            TEXEL.as_ptr() as *const _,
+        );
+        glTexEnvi(0x2300, 0x2200, 0x1E01);
+        glEnable(0x0DE1);
+        glEnableClientState(0x8078);
+        glTexCoordPointer(2, 0x140C, 0, ST.as_ptr() as *const _);
+        glVertexPointer(3, 0x140C, 0, NEAR.as_ptr() as *const _);
+        glDrawArrays(0x0004, 0, 3);
+        assert_eq!(glGetError(), 0);
+        assert_eq!(eglSwapBuffers(dpy, surface), 1);
+        assert!(
+            matches!(m.events[9], Event::DrawTiled(..)),
+            "a textured frame is a tile table: {:?}",
+            m.events
+        );
+        assert!(m.table >= TEX_BUS, "the machine told the table");
+        let fourth = rows(&m.fb, 0..480);
+        let texel = fourth.iter().filter(|&&p| p == 0xff40_80c0).count();
+        assert_eq!(texel, green_alone(), "the texture over the triangle");
         assert_eq!(eglGetError(), 0x3000);
     }
 }
