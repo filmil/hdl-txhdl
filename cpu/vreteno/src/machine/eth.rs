@@ -12,9 +12,12 @@
 //!
 //! A frame is sent the moment `tx_start` is written, which the part
 //! takes a burst at a time; the model's driver sees `tx_ready` high
-//! again at once. A frame arrives when the receive side has nothing
-//! pending, into the slot after the last, as the part's store engine
-//! alternates them.
+//! again at once. Frames on the wire arrive at the line's pace, a byte
+//! a step after the frame before, and wait for the driver in order, at
+//! most one a slot, as the part's do (issue 1314, after 1313): a frame
+//! that arrives while both slots hold one is dropped and counted in
+//! `rx_errors`. Before, the model held every frame until nothing was
+//! pending, so it never lost one where the board did.
 use std::collections::VecDeque;
 use txhdl_parts::ethslots::regs;
 
@@ -30,9 +33,9 @@ pub const PEER_IP: [u8; 4] = [10, 0, 0, 2];
 /// The port's registers, its traffic, and the frames waiting to arrive.
 #[derive(Debug, Default)]
 pub struct Eth {
-    pub rx_slot: u32,
-    pub rx_length: u32,
-    pub rx_pending: bool,
+    /// The frames received and not yet acknowledged, oldest first, a
+    /// slot and a length each, at most one a slot.
+    pub waiting: VecDeque<(u32, u32)>,
     pub rx_enable: bool,
     pub tx_slot: u32,
     pub tx_length: u32,
@@ -46,6 +49,12 @@ pub struct Eth {
     pub inbox: VecDeque<Vec<u8>>,
     /// Frames delivered into a slot.
     pub received: usize,
+    /// Frames that arrived with both slots holding one, dropped; what
+    /// `rx_errors` reads.
+    pub dropped: u32,
+    /// Steps until the next frame on the wire arrives: the line's pace,
+    /// a byte a step after the one before.
+    pub gap: u32,
     /// Whether the peer answers what is sent.
     pub peer: bool,
 }
@@ -60,16 +69,19 @@ pub enum Effect {
 impl Eth {
     /// The port's interrupt line.
     pub fn irq(&self) -> bool {
-        self.rx_pending && self.rx_enable
+        !self.waiting.is_empty() && self.rx_enable
     }
 
     /// A word read at byte offset `off`.
     pub fn load(&self, off: u32) -> u32 {
         let b = |v: bool| v as u32;
         match off {
-            regs::rx_slot => self.rx_slot,
-            regs::rx_length => self.rx_length,
-            regs::rx_ev_status | regs::rx_ev_pending => b(self.rx_pending),
+            regs::rx_slot => self.waiting.front().map_or(0, |w| w.0),
+            regs::rx_length => self.waiting.front().map_or(0, |w| w.1),
+            regs::rx_errors => self.dropped,
+            regs::rx_ev_status | regs::rx_ev_pending => {
+                b(!self.waiting.is_empty())
+            }
             regs::rx_ev_enable => b(self.rx_enable),
             regs::tx_ready => 1,
             regs::tx_ev_pending => b(self.tx_pending),
@@ -81,7 +93,9 @@ impl Eth {
     /// A word written at byte offset `off`.
     pub fn store(&mut self, off: u32, v: u32) -> Effect {
         match off {
-            regs::rx_ev_pending if v & 1 != 0 => self.rx_pending = false,
+            regs::rx_ev_pending if v & 1 != 0 => {
+                self.waiting.pop_front();
+            }
             regs::rx_ev_enable => self.rx_enable = v & 1 != 0,
             regs::tx_slot => self.tx_slot = v & 1,
             regs::tx_length => self.tx_length = v & 0xffff,
@@ -108,18 +122,25 @@ impl Eth {
         self.sent.push(frame);
     }
 
-    /// The next frame to put in a slot, and the slot, when the receive
-    /// side has room: nothing pending, as the part delivers.
+    /// One step of the wire: the next frame, and the slot it goes in,
+    /// when its time has come and a slot is free. A frame whose time
+    /// has come with both slots holding one is dropped and counted, as
+    /// the part drops it (issue 1313); the next comes a frame's bytes
+    /// later.
     pub fn arrival(&mut self) -> Option<(u32, Vec<u8>)> {
-        if self.rx_pending {
+        if self.gap > 0 {
+            self.gap -= 1;
             return None;
         }
         let f = self.inbox.pop_front()?;
+        self.gap = f.len() as u32;
+        if self.waiting.len() == 2 {
+            self.dropped += 1;
+            return None;
+        }
         let slot = self.next_rx;
         self.next_rx ^= 1;
-        self.rx_slot = slot;
-        self.rx_length = f.len() as u32;
-        self.rx_pending = true;
+        self.waiting.push_back((slot, f.len() as u32));
         self.received += 1;
         Some((slot, f))
     }
@@ -234,11 +255,39 @@ mod tests {
         assert_eq!(e.arrival().map(|(s, f)| (s, f.len())), Some((0, 64)));
         assert!(e.irq(), "an arrival raises the line when enabled");
         assert_eq!(e.load(regs::rx_length), 64);
-        e.inbox.push_back(vec![8; 70]);
-        assert!(e.arrival().is_none(), "nothing while one is pending");
         e.store(regs::rx_ev_pending, 1);
-        assert!(!e.irq());
-        assert_eq!(e.arrival().map(|(s, _)| s), Some(1), "the next slot");
+        assert!(!e.irq(), "acknowledged, and nothing else waits");
+        e.inbox.push_back(vec![8; 70]);
+        assert!(e.arrival().is_none(), "not before the line's pace");
+        let next = (0..100).find_map(|_| e.arrival());
+        assert_eq!(next.map(|(s, _)| s), Some(1), "the next slot");
+    }
+
+    /// Eight full frames back to back and no driver: the first two land,
+    /// one a slot, and wait in order; the other six find both slots
+    /// held and are dropped and counted in `rx_errors`, as on the board
+    /// (issue 1314, after 1313). The model before held every frame
+    /// until nothing was pending, so it landed one and lost none.
+    #[test]
+    fn a_frame_with_no_slot_is_dropped_and_counted() {
+        let mut e = Eth::default();
+        for n in 0..8u8 {
+            e.inbox.push_back(vec![n; 1514]);
+        }
+        let landed: Vec<(u32, u8)> = (0..20_000)
+            .filter_map(|_| e.arrival())
+            .map(|(slot, f)| (slot, f[0]))
+            .collect();
+        assert_eq!(landed, vec![(0, 0), (1, 1)], "two land, one a slot");
+        assert_eq!(e.load(regs::rx_errors), 6, "six dropped and counted");
+        assert!(e.inbox.is_empty(), "none still waiting on the wire");
+        assert_eq!(e.load(regs::rx_slot), 0, "the first is read first");
+        assert_eq!(e.load(regs::rx_length), 1514);
+        e.store(regs::rx_ev_pending, 1);
+        assert_eq!(e.load(regs::rx_ev_pending), 1, "the second waits");
+        assert_eq!(e.load(regs::rx_slot), 1, "in the other slot");
+        e.store(regs::rx_ev_pending, 1);
+        assert_eq!(e.load(regs::rx_ev_pending), 0, "both acknowledged");
     }
 
     /// The peer answers a request for its address, and a ping of it,
