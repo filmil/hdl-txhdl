@@ -402,8 +402,11 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{p}: {e}"))
         };
         let overlay = text("zephyr/fastboot/app/boards/ax7a200b.overlay");
+        // The staging area's node by name: the data memory's comes
+        // first in the overlay (#1401).
         let reg = overlay
             .lines()
+            .skip_while(|l| !l.contains("fastboot_stage:"))
             .find_map(|l| l.trim().strip_prefix("reg = <"))
             .expect("the staging area's reg");
         let size = reg.trim_end_matches(">;").split_whitespace().nth(1);
