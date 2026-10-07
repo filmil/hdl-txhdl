@@ -1578,26 +1578,24 @@ impl<
                                         DefaultClock::rising().await;
                                         // A signed plane times the
                                         // reciprocal: the product of its
-                                        // bits as unsigned, less the
-                                        // reciprocal where the sign bit
-                                        // stood for 2^64 rather than -2^64.
+                                        // bits as unsigned, and a turn
+                                        // later less the reciprocal where
+                                        // the sign bit stood for 2^64
+                                        // rather than -2^64. One turn held
+                                        // both and missed the clock.
                                         let r96 = self.trc.get().resize::<96>();
-                                        let none96 = U::<96>::from(0u8);
-                                        let tuv = self.tuc.get();
-                                        let tvv = self.tvc.get();
                                         with!(self <= {
-                                            tpu: tuv.resize::<96>().mul::<96>(r96)
-                                                - mux(
-                                                    tuv.bit(63),
-                                                    r96 << 64usize,
-                                                    none96,
-                                                ),
-                                            tpv: tvv.resize::<96>().mul::<96>(r96)
-                                                - mux(
-                                                    tvv.bit(63),
-                                                    r96 << 64usize,
-                                                    none96,
-                                                ),
+                                            tpu: self.tuc.get().resize::<96>().mul::<96>(r96),
+                                            tpv: self.tvc.get().resize::<96>().mul::<96>(r96),
+                                        });
+                                        DefaultClock::rising().await;
+                                        let rc = self.trc.get().resize::<96>() << 64usize;
+                                        let none96 = U::<96>::from(0u8);
+                                        with!(self <= {
+                                            tpu: self.tpu.get()
+                                                - mux(self.tuc.get().bit(63), rc, none96),
+                                            tpv: self.tpv.get()
+                                                - mux(self.tvc.get().bit(63), rc, none96),
                                         });
                                         DefaultClock::rising().await;
                                         let tsh = (U::<7>::from(64u8)
