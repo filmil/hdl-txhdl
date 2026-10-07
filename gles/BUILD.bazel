@@ -19,6 +19,7 @@ rust_library(
         "src/lib.rs",
         "src/light.rs",
         "src/matrix.rs",
+        "src/texture.rs",
     ],
     crate_name = "gles",
     edition = "2021",

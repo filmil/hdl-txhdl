@@ -102,3 +102,46 @@ pub const ONE_MINUS_DST_ALPHA: u32 = 0x0305;
 pub const DST_COLOR: u32 = 0x0306;
 pub const ONE_MINUS_DST_COLOR: u32 = 0x0307;
 pub const SRC_ALPHA_SATURATE: u32 = 0x0308;
+
+/// Textures (#997): the target and its switch, the matrix, the client
+/// array, the parameters and their values, the environment, and the
+/// formats and types `glTexImage2D` takes.
+pub const TEXTURE_2D: u32 = 0x0DE1;
+pub const TEXTURE: u32 = 0x1702;
+pub const TEXTURE_COORD_ARRAY: u32 = 0x8078;
+pub const TEXTURE_MAG_FILTER: u32 = 0x2800;
+pub const TEXTURE_MIN_FILTER: u32 = 0x2801;
+pub const TEXTURE_WRAP_S: u32 = 0x2802;
+pub const TEXTURE_WRAP_T: u32 = 0x2803;
+pub const GENERATE_MIPMAP: u32 = 0x8191;
+pub const NEAREST: u32 = 0x2600;
+pub const LINEAR: u32 = 0x2601;
+pub const NEAREST_MIPMAP_NEAREST: u32 = 0x2700;
+pub const LINEAR_MIPMAP_NEAREST: u32 = 0x2701;
+pub const NEAREST_MIPMAP_LINEAR: u32 = 0x2702;
+pub const LINEAR_MIPMAP_LINEAR: u32 = 0x2703;
+pub const REPEAT: u32 = 0x2901;
+pub const CLAMP_TO_EDGE: u32 = 0x812F;
+pub const TEXTURE_ENV: u32 = 0x2300;
+pub const TEXTURE_ENV_MODE: u32 = 0x2200;
+pub const TEXTURE_ENV_COLOR: u32 = 0x2201;
+pub const MODULATE: u32 = 0x2100;
+pub const DECAL: u32 = 0x2101;
+pub const REPLACE: u32 = 0x1E01;
+pub const ADD: u32 = 0x0104;
+pub const ALPHA: u32 = 0x1906;
+pub const RGB: u32 = 0x1907;
+pub const RGBA: u32 = 0x1908;
+pub const LUMINANCE: u32 = 0x1909;
+pub const LUMINANCE_ALPHA: u32 = 0x190A;
+pub const UNSIGNED_BYTE: u32 = 0x1401;
+pub const UNSIGNED_SHORT_4_4_4_4: u32 = 0x8033;
+pub const UNSIGNED_SHORT_5_5_5_1: u32 = 0x8034;
+pub const UNSIGNED_SHORT_5_6_5: u32 = 0x8363;
+
+/// The largest texture's side, Razboj's: ten bits of coordinate.
+pub const MAX_TEXTURE_SIZE: u32 = 1024;
+
+/// The texture stack's depth, the specification's minimum.
+pub const MAX_TEXTURE_STACK_DEPTH: usize = 2;
+pub const UNPACK_ALIGNMENT: u32 = 0x0CF5;

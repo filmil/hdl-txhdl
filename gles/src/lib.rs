@@ -30,6 +30,7 @@ pub mod fixed;
 pub mod gl;
 pub mod light;
 pub mod matrix;
+pub mod texture;
 
 use emit::{VMAX, VMIN};
 use fixed::{div, div_round, Fx, ONE};
@@ -54,6 +55,8 @@ struct Vert {
     clip: [Fx; 4],
     col: [Fx; 4],
     back: [Fx; 4],
+    /// Its texture coordinates, through the texture matrix (#997).
+    tex: [Fx; 4],
 }
 
 /// A colour in 16.16, each channel nominally nought to one, as the
@@ -72,6 +75,8 @@ pub struct Vertex {
     pub position: [Fx; 4],
     pub colour: Option<[Fx; 4]>,
     pub normal: Option<[Fx; 3]>,
+    /// Its texture coordinates, or `None` for the current ones (#997).
+    pub tex: Option<[Fx; 4]>,
 }
 
 /// A GL context drawing into a frame of Razboj's instructions.
@@ -129,6 +134,20 @@ pub struct Gl<'a> {
     alpha_on: bool,
     alpha: (u32, u32),
     colour_mask: u32,
+    /// Textures (#997): the texture matrix stack; whether texturing is
+    /// on; the texture bound; the environment, Razboj's code, and its
+    /// colour; the current texture coordinates; the room textures live
+    /// in, which the caller gives; and the rows' alignment an upload
+    /// reads.
+    tx: [Mat; gl::MAX_TEXTURE_STACK_DEPTH],
+    tx_top: usize,
+    texture_on: bool,
+    bound: u32,
+    env: u32,
+    env_colour: [Fx; 4],
+    tex_coords: [Fx; 4],
+    store: Option<texture::Store<'a>>,
+    unpack: usize,
     error: u32,
 }
 
@@ -178,6 +197,15 @@ impl<'a> Gl<'a> {
             alpha_on: false,
             alpha: (gl::ALWAYS - gl::NEVER, 0),
             colour_mask: 0xf,
+            tx: [IDENTITY; gl::MAX_TEXTURE_STACK_DEPTH],
+            tx_top: 0,
+            texture_on: false,
+            bound: 0,
+            env: razboj_tile::tex::MODULATE,
+            env_colour: [0; 4],
+            tex_coords: [0, 0, 0, ONE],
+            store: None,
+            unpack: 4,
             error: gl::NO_ERROR,
         }
     }
@@ -195,10 +223,19 @@ impl<'a> Gl<'a> {
 
     /// The matrix the matrix calls act on.
     fn top(&mut self) -> &mut Mat {
-        if self.mode == gl::PROJECTION {
-            &mut self.pj[self.pj_top]
-        } else {
-            &mut self.mv[self.mv_top]
+        match self.mode {
+            gl::PROJECTION => &mut self.pj[self.pj_top],
+            gl::TEXTURE => &mut self.tx[self.tx_top],
+            _ => &mut self.mv[self.mv_top],
+        }
+    }
+
+    /// The stack the matrix calls act on, and how deep it is.
+    fn stack(&mut self) -> (&mut [Mat], &mut usize) {
+        match self.mode {
+            gl::PROJECTION => (&mut self.pj, &mut self.pj_top),
+            gl::TEXTURE => (&mut self.tx, &mut self.tx_top),
+            _ => (&mut self.mv, &mut self.mv_top),
         }
     }
 
@@ -212,7 +249,7 @@ impl<'a> Gl<'a> {
 
     pub fn matrix_mode(&mut self, mode: u32) {
         match mode {
-            gl::MODELVIEW | gl::PROJECTION => self.mode = mode,
+            gl::MODELVIEW | gl::PROJECTION | gl::TEXTURE => self.mode = mode,
             _ => self.fail(gl::INVALID_ENUM),
         }
     }
@@ -232,27 +269,16 @@ impl<'a> Gl<'a> {
     }
 
     pub fn push_matrix(&mut self) {
-        if self.mode == gl::PROJECTION {
-            if self.pj_top + 1 == self.pj.len() {
-                return self.fail(gl::STACK_OVERFLOW);
-            }
-            self.pj[self.pj_top + 1] = self.pj[self.pj_top];
-            self.pj_top += 1;
-        } else {
-            if self.mv_top + 1 == self.mv.len() {
-                return self.fail(gl::STACK_OVERFLOW);
-            }
-            self.mv[self.mv_top + 1] = self.mv[self.mv_top];
-            self.mv_top += 1;
+        let (s, top) = self.stack();
+        if *top + 1 == s.len() {
+            return self.fail(gl::STACK_OVERFLOW);
         }
+        s[*top + 1] = s[*top];
+        *top += 1;
     }
 
     pub fn pop_matrix(&mut self) {
-        let top = if self.mode == gl::PROJECTION {
-            &mut self.pj_top
-        } else {
-            &mut self.mv_top
-        };
+        let (_, top) = self.stack();
         if *top == 0 {
             return self.fail(gl::STACK_UNDERFLOW);
         }
@@ -329,6 +355,7 @@ impl<'a> Gl<'a> {
             gl::DEPTH_TEST => self.depth_test = on,
             gl::BLEND => self.blend_on = on,
             gl::ALPHA_TEST => self.alpha_on = on,
+            gl::TEXTURE_2D => self.texture_on = on,
             l if (gl::LIGHT0..gl::LIGHT0 + gl::MAX_LIGHTS as u32)
                 .contains(&l) =>
             {
@@ -349,6 +376,7 @@ impl<'a> Gl<'a> {
             gl::DEPTH_TEST => self.depth_test,
             gl::BLEND => self.blend_on,
             gl::ALPHA_TEST => self.alpha_on,
+            gl::TEXTURE_2D => self.texture_on,
             l if (gl::LIGHT0..gl::LIGHT0 + gl::MAX_LIGHTS as u32)
                 .contains(&l) =>
             {
@@ -573,6 +601,147 @@ impl<'a> Gl<'a> {
             (b as u32) | (g as u32) << 1 | (r as u32) << 2 | (a as u32) << 3;
     }
 
+    /// Gives the context room for its textures (#997): `mem`, which Razboj
+    /// reads at the bus address `bus`, the descriptor table at its head.
+    /// Without it every texture call fails with `GL_OUT_OF_MEMORY`.
+    pub fn texture_room(&mut self, mem: &'a mut [u32], bus: u32) {
+        self.store = Some(texture::Store::new(mem, bus));
+    }
+
+    /// The textures' room, for EGL and for tests.
+    pub fn textures(&self) -> Option<&texture::Store<'a>> {
+        self.store.as_ref()
+    }
+
+    /// `glGenTextures`: names for `out`, each a new texture.
+    pub fn gen_textures(&mut self, out: &mut [u32]) {
+        if self.store.as_mut().is_none_or(|s| s.gen(out).is_none()) {
+            self.fail(gl::OUT_OF_MEMORY);
+        }
+    }
+
+    /// `glDeleteTextures`: the names given back, and the binding to any of
+    /// them undone.
+    pub fn delete_textures(&mut self, names: &[u32]) {
+        if let Some(s) = self.store.as_mut() {
+            s.delete(names);
+        }
+        if names.contains(&self.bound) {
+            self.bound = 0;
+        }
+    }
+
+    /// `glBindTexture`: the texture drawing reads, nought for none. A
+    /// name not in use becomes a texture, as GL says.
+    pub fn bind_texture(&mut self, target: u32, name: u32) {
+        if target != gl::TEXTURE_2D {
+            return self.fail(gl::INVALID_ENUM);
+        }
+        if name == 0 {
+            self.bound = 0;
+            return;
+        }
+        match self.store.as_mut().map(|s| s.ensure(name)) {
+            Some(true) => self.bound = name,
+            Some(false) => self.fail(gl::INVALID_VALUE),
+            None => self.fail(gl::OUT_OF_MEMORY),
+        }
+    }
+
+    /// `glTexImage2D` into the texture bound: `pixels`, `width` by
+    /// `height` in `format` and `type_`, each row padded to the unpack
+    /// alignment. GL ES asks the internal format to be the format and the
+    /// border to be nought.
+    #[allow(clippy::too_many_arguments)] // GL's own arguments, in its order.
+    pub fn tex_image_2d(
+        &mut self,
+        target: u32,
+        level: u32,
+        internal: u32,
+        width: u32,
+        height: u32,
+        border: u32,
+        format: u32,
+        type_: u32,
+        pixels: &[u8],
+    ) {
+        if target != gl::TEXTURE_2D {
+            return self.fail(gl::INVALID_ENUM);
+        }
+        if border != 0 || internal != format {
+            return self.fail(gl::INVALID_VALUE);
+        }
+        let (name, align) = (self.bound, self.unpack);
+        let r = match self.store.as_mut() {
+            Some(s) if name != 0 => s.image(
+                name, level, format, width, height, type_, pixels, align,
+            ),
+            Some(_) => Err(gl::INVALID_OPERATION),
+            None => Err(gl::OUT_OF_MEMORY),
+        };
+        if let Err(e) = r {
+            self.fail(e);
+        }
+    }
+
+    /// `glTexParameteri` and `glTexParameterx` on the texture bound.
+    pub fn tex_parameter(&mut self, target: u32, pname: u32, value: u32) {
+        if target != gl::TEXTURE_2D {
+            return self.fail(gl::INVALID_ENUM);
+        }
+        let name = self.bound;
+        let r = match self.store.as_mut() {
+            Some(s) => s.parameter(name, pname, value),
+            None => Err(gl::OUT_OF_MEMORY),
+        };
+        if let Err(e) = r {
+            self.fail(e);
+        }
+    }
+
+    /// `glTexEnvx` and `glTexEnvxv`: the environment, `GL_REPLACE`,
+    /// `GL_MODULATE`, `GL_DECAL`, `GL_BLEND` or `GL_ADD`, or its colour.
+    pub fn tex_env(&mut self, target: u32, pname: u32, params: &[Fx]) {
+        if target != gl::TEXTURE_ENV || params.is_empty() {
+            return self.fail(gl::INVALID_ENUM);
+        }
+        use razboj_tile::tex;
+        match (pname, params[0] as u32) {
+            (gl::TEXTURE_ENV_MODE, gl::REPLACE) => self.env = tex::REPLACE,
+            (gl::TEXTURE_ENV_MODE, gl::MODULATE) => self.env = tex::MODULATE,
+            (gl::TEXTURE_ENV_MODE, gl::DECAL) => self.env = tex::DECAL,
+            (gl::TEXTURE_ENV_MODE, gl::BLEND) => self.env = tex::BLEND,
+            (gl::TEXTURE_ENV_MODE, gl::ADD) => self.env = tex::ADD,
+            (gl::TEXTURE_ENV_COLOR, _) if params.len() >= 4 => {
+                self.env_colour = [params[0], params[1], params[2], params[3]]
+            }
+            _ => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glMultiTexCoord4x` for the one unit: the texture coordinates a
+    /// vertex without its own takes.
+    pub fn tex_coord(&mut self, s: Fx, t: Fx, r: Fx, q: Fx) {
+        self.tex_coords = [s, t, r, q];
+    }
+
+    /// `glPixelStorei(GL_UNPACK_ALIGNMENT)`: the rows' alignment an upload
+    /// reads, one, two, four or eight bytes.
+    pub fn pixel_store(&mut self, pname: u32, value: u32) {
+        match (pname, value) {
+            (gl::UNPACK_ALIGNMENT, 1 | 2 | 4 | 8) => {
+                self.unpack = value as usize
+            }
+            (gl::UNPACK_ALIGNMENT, _) => self.fail(gl::INVALID_VALUE),
+            _ => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// The rows' alignment an upload reads, in bytes.
+    pub fn unpack_alignment(&self) -> usize {
+        self.unpack
+    }
+
     /// `glDepthMask`: whether a pixel that passes writes its depth.
     pub fn depth_mask(&mut self, flag: bool) {
         self.depth_mask = flag;
@@ -768,6 +937,7 @@ impl<'a> Gl<'a> {
             position: positions[k],
             colour: colours.map(|c| c[k]),
             normal: normals.map(|v| v[k]),
+            tex: None,
         });
     }
 
@@ -793,6 +963,7 @@ impl<'a> Gl<'a> {
                 position: positions[i],
                 colour: colours.map(|c| c[i]),
                 normal: normals.map(|v| v[i]),
+                tex: None,
             }
         });
     }
@@ -838,6 +1009,7 @@ impl<'a> Gl<'a> {
         };
         let (mv, pj, current) =
             (self.modelview(), self.projection(), self.colour);
+        let (tx, tex_now) = (self.tx[self.tx_top], self.tex_coords);
         // The normal matrix and the rescale factor, once a draw.
         let nm = if self.lighting {
             matrix::normal_matrix(&mv).unwrap_or([0; 9])
@@ -870,12 +1042,14 @@ impl<'a> Gl<'a> {
             let eye = matrix::mul_vec(&mv, &v.position);
             let clip = matrix::mul_vec(&pj, &eye);
             let col = v.colour.unwrap_or(current);
+            let tex = matrix::mul_vec(&tx, &v.tex.unwrap_or(tex_now));
             if !lighting {
                 return Vert {
                     eye,
                     clip,
                     col,
                     back: col,
+                    tex,
                 };
             }
             let n = matrix::mul3(&nm, &v.normal.unwrap_or(normal));
@@ -896,6 +1070,7 @@ impl<'a> Gl<'a> {
                 clip,
                 col: front,
                 back,
+                tex,
             }
         };
         // A strip's or a loop's vertex ends one segment and starts the
@@ -1182,6 +1357,8 @@ impl<'a> Gl<'a> {
                 zw[k] = self.window_z(v);
             }
         }
+        // The texture, when texturing is on and it is complete (#997).
+        let texture = self.texturing();
         for k in 1..n - 1 {
             let (a, b, c) = (at(0), at(k), at(k + 1));
             let z = self.depth_test.then_some([zw[0], zw[k], zw[k + 1]]);
@@ -1192,10 +1369,59 @@ impl<'a> Gl<'a> {
             } else {
                 emit::triangle(flat, a, b, c, None, z, screen)
             };
+            let tex = texture.and_then(|(lw, lh)| {
+                let t = uvq([&poly[0], &poly[k], &poly[k + 1]], lw, lh)?;
+                emit::textured([a, b, c], t, screen)
+            });
             if let Some((w, slot)) = w {
-                self.push_drawn(w, slot);
+                self.push_textured(w, slot, tex);
             }
         }
+    }
+
+    /// The bound texture's log2 sides, when texturing is on and the
+    /// texture is complete, as GL needs before it textures anything.
+    fn texturing(&self) -> Option<(u32, u32)> {
+        let s = self.store.as_ref()?;
+        if !self.texture_on || !s.complete(self.bound) {
+            return None;
+        }
+        s.desc(self.bound).map(|d| (d.log_w, d.log_h))
+    }
+
+    /// An entry drawn with its texture's two slots, when it has them: its
+    /// second slot as [`Gl::push_drawn`] makes it, or nought, then the
+    /// texture's, which name the texture and its environment.
+    fn push_textured(
+        &mut self,
+        mut w: [u32; WORDS],
+        slot: Option<[u32; WORDS]>,
+        tex: Option<[[u32; WORDS]; 2]>,
+    ) {
+        let Some([mut ta, tb]) = tex else {
+            return self.push_drawn(w, slot);
+        };
+        let depth = self.depth_test && slot.is_some();
+        let pixel = self.pixel();
+        let mut p = slot.filter(|_| depth).unwrap_or([0u32; WORDS]);
+        if depth {
+            emit::depth(&mut w, self.depth_func, self.depth_mask);
+        }
+        if pixel != emit::Pixel::DEFAULT {
+            emit::state(&mut w, &mut p, pixel);
+        }
+        emit::textured_bit(&mut w);
+        ta[13] = self.bound - 1;
+        ta[14] = self.env;
+        ta[15] = colour_word(&self.env_colour);
+        if self.frame.len() - self.used < 4 {
+            return self.fail(gl::OUT_OF_MEMORY);
+        }
+        for s in [w, p, ta, tb] {
+            self.frame[self.used] = s;
+            self.used += 1;
+        }
+        self.deep = true;
     }
 }
 
@@ -1204,6 +1430,33 @@ impl<'a> Gl<'a> {
 fn depth_units(d: Fx) -> u32 {
     let n = d.clamp(0, ONE) as i64 * emit::FAR as i64;
     ((n + (1 << 15)) >> 16) as u32
+}
+
+/// A triangle's `u q`, `v q` and `q` at its three vertices (#997), with
+/// 32, 32 and 48 bits of fraction, for a texture `2^lw` by `2^lh`: `q` is
+/// the texture's `q` over the clip `w`, scaled so that the largest of the
+/// three is one, and `u q` is `s / q` in texels times that, so that
+/// `(u q) / q` across the window is perspective-correct, as GL's
+/// interpolation of `s / w`, `t / w` and `q / w` is. `None` when a
+/// vertex's texture `q` is not above nought, which leaves it untextured.
+fn uvq(v: [&Vert; 3], lw: u32, lh: u32) -> Option<[(i64, i64, u64); 3]> {
+    let w = v.map(|v| v.clip[3] as i128);
+    let q = v.map(|v| v.tex[3] as i128);
+    if q.iter().chain(w.iter()).any(|&x| x <= 0) {
+        return None;
+    }
+    // The vertex whose q / w is largest.
+    let m = (0..3)
+        .reduce(|a, b| if q[b] * w[a] > q[a] * w[b] { b } else { a })
+        .unwrap_or(0);
+    let div = |n: i128, d: i128| (2 * n + d).div_euclid(2 * d);
+    Some(core::array::from_fn(|k| {
+        let den = w[k] * q[m];
+        let s = (v[k].tex[0] as i128 * (1 << lw) * w[m]) << 32;
+        let t = (v[k].tex[1] as i128 * (1 << lh) * w[m]) << 32;
+        let qq = (q[k] * w[m]) << 48;
+        (div(s, den) as i64, div(t, den) as i64, div(qq, den) as u64)
+    }))
 }
 
 /// A point size or a line width in whole pixels: rounded to the
@@ -1231,5 +1484,6 @@ fn between(a: &Vert, b: &Vert, da: i128, db: i128) -> Vert {
         clip: mix(&a.clip, &b.clip),
         col: mix(&a.col, &b.col),
         back: mix(&a.back, &b.back),
+        tex: mix(&a.tex, &b.tex),
     }
 }

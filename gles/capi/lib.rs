@@ -618,6 +618,7 @@ unsafe fn fetch(c: &Arrays, i: usize) -> Vertex {
         position,
         colour,
         normal,
+        tex: None,
     }
 }
 
