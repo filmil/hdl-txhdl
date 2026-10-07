@@ -89,9 +89,9 @@ nor written where it was meant to go. Against the Wishbone bridge
 before issue 471 nine words of sixty four landed and the rest of
 memory was left as it was.
 
-That failure is silent, which is what makes it worth stating here: a
-read that stops announces itself by never finishing, and a write that
-stops looks exactly like a write that worked.
+That failure is silent: a read stall is immediately detectable because
+the transaction never completes, whereas a premature write response
+appears outwardly identical to successful completion.
 
 
 The byte count's tail is the low two bits of \code{bytes}, so a run

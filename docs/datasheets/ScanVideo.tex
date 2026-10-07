@@ -89,12 +89,13 @@ reads the underflow bit idle and under load; both read clear
 \subsection*{Used by}
 
 \code{flagship/board/flagship.v}, in the video slot at \code{0x3200},
-with \code{chan\_cdc} carrying \code{req} and \code{words} across to
-the board's \code{ScanFetch} and \code{LineFetch}.
+with \code{chan\_cdc} transferring \code{req} and \code{words} across
+clock domains to the board's \code{ScanFetch} and \code{LineFetch} engines.
 
 \subsection*{Limits}
 
-One mode at a time, fixed by its parameters. The scanout and the
-framebuffer share the syncs, so the scanout's frame is the video mode's
-size, with no scaling. The underflow bit reaches the registers a few
-cycles after \code{LinePair} sets it.
+The module operates in a single video mode determined by its synthesis
+parameters. Scanout timing and framebuffer addressing share common sync
+generators; scanout resolution matches the native video mode without
+scaling. The underflow status bit propagates to the register interface
+several cycles after \code{LinePair} asserts it due to domain crossing.

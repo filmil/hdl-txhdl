@@ -70,15 +70,14 @@ As lowered for \dsget{type}{#1}: \dsget{counts}{#1}.
 \thanks{Both authors are independent. Filip Filmar is the
 corresponding author, at f@hdlfactory.com; Dragiša Janković is
 reached at linkedin.com/in/dragisa-jankovic.}%
-\thanks{One datasheet per component built in the project repository
-\code{HDL/txhdl}. The tables of ports, state and children on each sheet
-are generated at build time from the component's own lowering, so they
-are the netlist's. The cover, \code{//docs:cover}, lists every
-document.}%
-\thanks{The authors used a large language model, Claude, as an
-assistant in exploring the concepts and in writing and constructing
-the documents and the programs; every commit of the repository says
-so and carries the prompts that led to it, verbatim.}%
+\thanks{This volume provides comprehensive datasheets for hardware components
+implemented in the \code{HDL/txhdl} project repository. Port, state, and
+submodule tables are extracted automatically during compilation directly from
+lowered netlist definitions. The project overview~\cite{cover} indexes companion
+documentation.}%
+\thanks{The authors used Claude, an AI assistant, while developing
+architectural concepts, documentation, and software. Verbatim prompts are
+preserved in repository commit logs.}%
 \thanks{\buildstamp}}
 
 \markboth{TxHDL Datasheets}{Filmar and Janković: TxHDL Datasheets}
@@ -88,22 +87,23 @@ so and carries the prompts that led to it, verbatim.}%
 
 \section*{How to Read a Datasheet}
 
-A component is a unit written in the lowered subset, so it is both a
-simulation and a netlist. Each sheet says what the component does, the
-parameters it takes, how it behaves at its ports, how it is checked and
-where it is used, and what it does not do.
+Each component is implemented within the synthesizable lowered subset,
+functioning simultaneously as cycle-accurate simulation logic and structural
+RTL. Individual datasheets define component functionality, generic parameters,
+port interface protocols, verification strategies, system instantiations, and
+architectural limitations.
 
-The tables of ports, state and children are not typed in. The build
-lowers each component with the parameters the tree uses it with, the
-ones the sheet names, and writes the tables from that lowering. A
-channel port is one row, and its width is the width of the word it passes;
-in the netlist it is \code{\_data}, \code{\_valid} and \code{\_ready}. A
-wire port is one row and one net. A memory's width is its word's, and
-its words are how many it holds.
+Interface tables are extracted systematically rather than transcribed
+manually. The build system compiles each component using canonical repository
+parameters, generating structural tables directly from the resulting netlists.
+Channel ports occupy single table rows displaying payload bit widths; within
+synthesized netlists, each channel expands to standard \code{\_data},
+\code{\_valid}, and \code{\_ready} signals. Discrete wire ports map directly to
+individual nets. Memory entries document data word widths alongside total depth.
 
-A family of components written by one macro, such as the routers of two
-to eight peripherals, has one sheet, and its tables are those of the
-member the tree uses.
+Parameterized component families instantiated across varying port configurations
+(such as routers multiplexing between two and eight peripherals) share a single
+datasheet displaying representative topology from production designs.
 
 % Channels and queues.
 \input{datasheets/Buffer}

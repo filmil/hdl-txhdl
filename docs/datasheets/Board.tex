@@ -20,11 +20,11 @@ own (issue 151); the video scanout's fetch (issue 151); and the SD card
 host's two engines, sharing one host through \code{sdarb} (issue 912);
 and Razboj's rasteriser behind \code{rhost} (issue 985).
 The arbiter is an \code{Arbiter7<32, 32, 4, 2, 5, 0>}, so the
-peripheral side of the bus carries five bits of identifier, two for a
+peripheral side of the bus allocates five bits of identifier, two for a
 host's own and three for the port, which is room for eight hosts
 (issue 1022). The debug transport, \code{dtm}, runs on the cable's
 clock behind the top's \code{BSCANE2}, and \code{dreq} and
-\code{dans} carry its accesses across to the board's clock and back.
+\code{dans} transfer its accesses across to the board's clock and back.
 The data memory and the timer each sit behind an \code{AxiPer}. Ten
 small peripherals share the page at \code{0x3000} behind the AXI-Lite
 bridge \code{LiteBridge<10, ..>}, a sixteenth of the page each: the

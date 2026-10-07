@@ -128,14 +128,14 @@ names, in the 64\,KiB from \code{0x0200\_0000}. The demonstration
 
 \subsection*{Limits}
 
-The count counts clock cycles. The controller serves bursts of one
-beat: \code{len}, \code{size} and the rest of a request are not read,
-every read beat carries \code{last}, and a burst of more than one beat
-is not served correctly. It checks no address above bit 15, since the
-router sends it only its own window. One write is held at a time, and no
-read is taken while it waits, so a write blocks the reads behind it. A
-write updates 32 bits of a 64-bit register, so software sets a whole
-compare in two stores, and the count and the compare are too far apart
-in the window for one base register to reach both with a 12-bit offset,
-which the programs in \code{program.rs} work around with a second
-register. Every answer is \code{OKAY}; nothing returns an error.
+The counter increments once per clock cycle. The controller supports
+single-beat bursts only: transaction fields such as \code{len} and \code{size}
+are uninspected, every read response asserts \code{last}, and multi-beat
+bursts are not supported. Address decoding ignores bits above bit 15 because
+the interconnect router filters traffic outside the peripheral's 64\,KiB window.
+One write request is held at a time, during which incoming reads stall.
+Writes update 32 bits of a 64-bit register per access, requiring two store
+instructions to update a full compare threshold. The counter and compare registers
+reside beyond the 12-bit immediate displacement range of a single base register,
+requiring separate base pointers in software routines (\code{program.rs}).
+All transactions return \code{OKAY} without generating decode errors.

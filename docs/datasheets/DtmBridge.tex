@@ -58,7 +58,7 @@ and 32 bits. Its settings are \code{sbreadonaddr} (bit 20),
 \code{sbdata0} under \code{sbreadondata}, and only with no error
 standing.
 \item A narrow access goes on the link as a word at the aligned
-address. A write carries the data moved into its lanes with only
+address. A write positions data into its active byte lanes with only
 their strobes set; a read moves its lane down into \code{sbdata0} and
 clears the rest. \code{sbautoincrement} steps by the width.
 \item An access not aligned to its width sets \code{sberror} to 3,
@@ -73,7 +73,7 @@ while it runs does not change it.
 
 \begin{itemize}
 \item \code{//lib/parts:parts\_test} runs the bridge against a model
-memory that honours the strobes and checks that the link carries word
+memory that honours the strobes and checks that the link transmits word
 addresses: a module register as a word at four times its number;
 \code{sbcs}; reads following the address and the data; a write
 landing; a byte and a halfword read and written on every lane;

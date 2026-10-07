@@ -11,8 +11,8 @@ The FPGA's JTAG port belongs to the device, so a design reaches it
 through \code{BSCANE2}, one of the user scan chains of the device's
 TAP. OpenOCD speaks to a transport there with its BSCAN tunnel,
 \code{riscv use\_bscan\_tunnel 5}: it sets the device's instruction
-register to \code{USER4}, and carries every scan the transport's own
-TAP would have had inside one data scan of that chain, framed as
+register to \code{USER4}, and encapsulates each scan of the transport's own
+TAP inside one data scan of that chain, framed as
 OpenOCD 0.12.0's \code{riscv.c} frames it:
 
 \begin{center}\footnotesize

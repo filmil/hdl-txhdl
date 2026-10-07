@@ -13,9 +13,9 @@ remote peripheral of issue 297, whose transport is a frame per
 transaction, and the port a Zephyr driver talks to through
 \code{EthSlots}. Neither can have the wire to itself.
 
-Nothing new has to be invented to share it, because Ethernet already
-carries several protocols on one wire and says which is which: bytes
-twelve and thirteen of every frame are its EtherType. The remote
+Nothing new has to be invented to share it, because Ethernet
+multiplexes several protocols on one wire and identifies each by type:
+bytes twelve and thirteen of every frame are its EtherType. The remote
 peripheral sends \code{0x88b5}, which IEEE leaves for local use, and
 Zephyr's stack sends only the standard types, so the two cannot be
 confused.

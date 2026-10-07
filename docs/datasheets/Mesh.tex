@@ -90,8 +90,8 @@ lattices with \code{mesh::lattice}, which does not lower.
 
 \subsection*{Limits}
 
-Nothing refuses a packet addressed to a place off the lattice, a
-column of \code{W} or more say: the wrapped links carry nothing only
-while every destination is on it. The nodes' registers are checked
-at the mesh's ports only, not inside it. Each node's switches move
-one packet per cycle, not one per port.
+The lattice does not reject packets addressed beyond its boundaries,
+such as columns of \code{W} or greater. Wrapped links remain idle only
+while every destination lies within the grid. The nodes' registers are
+checked at the mesh ports only, not inside the core logic. Each node
+switch moves one packet per cycle rather than one packet per port.

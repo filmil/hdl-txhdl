@@ -14,8 +14,8 @@ the ones that face in, and may ask for an interrupt from any of them.
 The part drives no pin itself. It offers the three wires a pad wants,
 \code{drive}, the value; \code{dirs}, whether to drive it; and
 \code{pins}, the value read back, and a board's top level joins them
-to a tristate buffer. A \code{Pad} carries nothing in a simulation, so
-a part written around one could not be run or checked.
+to a tristate buffer. A \code{Pad} models no signals in a simulation, so
+a part written around one could not be simulated or tested.
 
 \code{pins} is taken through two flip-flops, \code{sync0} then
 \code{sync1}, before anything reads it. Nothing else in the part reads
