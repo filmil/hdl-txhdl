@@ -1342,7 +1342,9 @@ impl<
                                       .await;
                                       issue.send(Issue {
                                           read: Bit::One,
-                                          addr: self.tdesc.get().resize::<A>(),
+                                          // A slice, not a resize, which the
+                                          // Verilog does not narrow (#1387).
+                                          addr: self.tdesc.get().slice::<0, A>(),
                                           len: U::<8>::from(1u8),
                                           size: U::<3>::from(2u8),
                                           burst: BurstKind::Incr,
@@ -1652,9 +1654,10 @@ impl<
                                             .await;
                                             issue.send(Issue {
                                                 read: Bit::One,
+                                                // A slice, as the descriptor's (#1387).
                                                 addr: (self.taddr.get()
                                                     & U::<32>::from(0xffff_ffc0u32))
-                                                .resize::<A>(),
+                                                .slice::<0, A>(),
                                                 len: U::<8>::from(15u8),
                                                 size: U::<3>::from(2u8),
                                                 burst: BurstKind::Incr,
