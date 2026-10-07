@@ -60,6 +60,8 @@ fn range<const N: usize, M: AddrMap<N>>(what: &str) -> (u32, u32) {
 #[derive(Clone, Copy, Debug)]
 pub struct Map {
     pub ddr: (u32, u32),
+    /// The data memory on the bus, 4 KiB at `0x1000` (issue 1392).
+    pub dmem: (u32, u32),
     pub clint: (u32, u32),
     pub plic: (u32, u32),
     pub uart: (u32, u32),
@@ -73,6 +75,7 @@ impl Map {
     pub fn board() -> Self {
         Map {
             ddr: range::<8, BoardMap>("DDR3"),
+            dmem: range::<8, BoardMap>("the data memory"),
             clint: range::<8, BoardMap>("timer"),
             plic: range::<8, BoardMap>("interrupt controller"),
             uart: range::<10, SlotMap>("serial"),
@@ -92,6 +95,9 @@ fn inside((base, len): (u32, u32), addr: u32) -> Option<u32> {
 pub struct Devices {
     pub map: Map,
     pub ddr: memory::Memory,
+    /// The data memory, which a program may run code from, as the
+    /// board's `cpi.rs` does (issue 1392).
+    pub dmem: memory::Memory,
     pub clint: clint::Clint,
     pub plic: plic::Plic,
     pub uart: uart::Uart,
@@ -117,6 +123,9 @@ impl Bus for Board {
         if d.ddr.holds(addr) {
             return Some(d.ddr.load(addr));
         }
+        if d.dmem.holds(addr) {
+            return Some(d.dmem.load(addr));
+        }
         if let Some(off) = inside(map.clint, addr) {
             return Some(d.clint.load(off));
         }
@@ -140,6 +149,11 @@ impl Bus for Board {
         if d.ddr.holds(addr) {
             let was = d.ddr.load(addr);
             d.ddr.store(addr, (was & !mask) | (v & mask));
+            return true;
+        }
+        if d.dmem.holds(addr) {
+            let was = d.dmem.load(addr);
+            d.dmem.store(addr, (was & !mask) | (v & mask));
             return true;
         }
         // The devices take whole words: a narrower store writes its lanes
@@ -186,6 +200,7 @@ impl Machine {
         let board = Rc::new(Board(RefCell::new(Devices {
             map,
             ddr: memory::Memory::new(map.ddr.0, map.ddr.1),
+            dmem: memory::Memory::new(map.dmem.0, map.dmem.1),
             clint: clint::Clint::default(),
             plic: plic::Plic::new(PLIC_SOURCES),
             uart: uart::Uart::default(),
