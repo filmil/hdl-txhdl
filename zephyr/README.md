@@ -73,6 +73,15 @@ flat program to 4096 bytes, as `hello_fastboot` does for
 
 `//zephyr:fastboot` is the image that listens for it: a TCP server on
 port 5554, which is where AOSP's `fastboot/README.md` puts the device.
+Its RAM, the network buffers and the stacks among it, is the core's own
+data memory, the 64 KiB at `0x1_0000` (#1275), and its code is in the
+DDR3: the image runs in place and copies its data across as it starts,
+since a fetch from the core's memory faults (issue 1230).
+It uses about 41 KiB of the 64.
+In `board_test` a stack's store and load cost 1.75 cycles a byte there
+against 10 in the DDR3, and a copy between two buffers 2 against 10.25.
+The Ethernet port's slots and the staging area stay in the DDR3, where
+the engines and the jump can reach them.
 The address is static by default, `CONFIG_NET_CONFIG_MY_IPV4_ADDR` in
 `fastboot/app/prj.conf`, since fastboot's device is the server and the
 host has to know where it is.
