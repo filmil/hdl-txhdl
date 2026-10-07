@@ -1253,14 +1253,15 @@ impl<
                                           .await;
                                           let sa = rdata.head().data;
                                           let sat = self.word.get();
-                                          let sa64 =
-                                              sa.concat::<32, 64>(self.tlo.get());
+                                          let sal = self.tlo.get();
+                                          let sa64 = sa.concat::<32, 64>(sal);
                                           with!(self <= {
                                               tlo: sa,
                                               word: sat + 1,
                                           });
                                           if sat == 1 {
-                                              with!(self <= { tuc: sa64, tur: sa64 });
+                                              self.tuc.set(sa64);
+                                              self.tur.set(sa64);
                                           }
                                           if sat == 3 {
                                               self.tudx.set(sa64);
@@ -1269,7 +1270,8 @@ impl<
                                               self.tudy.set(sa64);
                                           }
                                           if sat == 7 {
-                                              with!(self <= { tvc: sa64, tvr: sa64 });
+                                              self.tvc.set(sa64);
+                                              self.tvr.set(sa64);
                                           }
                                           if sat == 9 {
                                               self.tvdx.set(sa64);
@@ -1281,7 +1283,8 @@ impl<
                                               self.tdesc.set(sa);
                                           }
                                           if sat == 14 {
-                                              self.tenv.set(sa.slice::<0, 3>());
+                                              let sae = sa.slice::<0, 3>();
+                                              self.tenv.set(sae);
                                           }
                                       }
                                       until(DefaultClock::rising, || {
@@ -1317,14 +1320,15 @@ impl<
                                           .await;
                                           let sb = rdata.head().data;
                                           let sbt = self.word.get();
-                                          let sb64 =
-                                              sb.concat::<32, 64>(self.tlo.get());
+                                          let sbl = self.tlo.get();
+                                          let sb64 = sb.concat::<32, 64>(sbl);
                                           with!(self <= {
                                               tlo: sb,
                                               word: sbt + 1,
                                           });
                                           if sbt == 1 {
-                                              with!(self <= { tqc: sb64, tqr: sb64 });
+                                              self.tqc.set(sb64);
+                                              self.tqr.set(sb64);
                                           }
                                           if sbt == 3 {
                                               self.tqdx.set(sb64);
@@ -1340,11 +1344,13 @@ impl<
                                           issue.ready().to_bool()
                                       })
                                       .await;
+                                      // A slice, not a resize, which the
+                                      // Verilog does not narrow (#1387).
+                                      let tdv = self.tdesc.get();
+                                      let tdq = tdv.slice::<0, A>();
                                       issue.send(Issue {
                                           read: Bit::One,
-                                          // A slice, not a resize, which the
-                                          // Verilog does not narrow (#1387).
-                                          addr: self.tdesc.get().slice::<0, A>(),
+                                          addr: tdq,
                                           len: U::<8>::from(1u8),
                                           size: U::<3>::from(2u8),
                                           burst: BurstKind::Incr,
@@ -1547,117 +1553,109 @@ impl<
                                         .to_bool()
                                     {
                                         let tq = self.tqc.get();
-                                        let tq1 =
-                                            mux(tq == 0, U::<64>::from(1u8), tq);
+                                        let one64 = U::<64>::from(1u8);
+                                        let tq1 = mux(tq == 0, one64, tq);
                                         with!(self <= {
                                             tn: lz64(tq1),
                                             tx: norm64(tq1).slice::<32, 32>(),
                                         });
                                         DefaultClock::rising().await;
-                                        let tk = self.tx.get().slice::<26, 5>();
-                                        let tt = self.tx.get().slice::<16, 10>();
-                                        let tf = seed_fall(tk)
-                                            .resize::<22>()
-                                            .mul::<22>(tt.resize::<22>());
-                                        self.tr0.set(
-                                            seed_start(tk)
-                                                - (tf >> 10usize).resize::<17>(),
-                                        );
+                                        let tx0 = self.tx.get();
+                                        let tk = tx0.slice::<26, 5>();
+                                        let tt10 = tx0.slice::<16, 10>();
+                                        let tt = tt10.resize::<22>();
+                                        let tf0 = seed_fall(tk).resize::<22>();
+                                        let tf = tf0.mul::<22>(tt);
+                                        let tf12 = tf.slice::<10, 12>();
+                                        let tfs = tf12.resize::<17>();
+                                        self.tr0.set(seed_start(tk) - tfs);
                                         DefaultClock::rising().await;
-                                        let tp = self
-                                            .tx
-                                            .get()
-                                            .resize::<50>()
-                                            .mul::<50>(self.tr0.get().resize::<50>());
-                                        self.te.set(U::<50>::from(1u64 << 49) - tp);
+                                        let tr0v = self.tr0.get();
+                                        let tx50 = self.tx.get().resize::<50>();
+                                        let r050 = tr0v.resize::<50>();
+                                        let tp = tx50.mul::<50>(r050);
+                                        let one49 = U::<50>::from(1u64 << 49);
+                                        self.te.set(one49 - tp);
                                         DefaultClock::rising().await;
-                                        let tre = self
-                                            .tr0
-                                            .get()
-                                            .resize::<68>()
-                                            .mul::<68>(self.te.get().resize::<68>());
-                                        self.trc.set((tre >> 40usize).resize::<28>());
+                                        let tr0w = self.tr0.get();
+                                        let r068 = tr0w.resize::<68>();
+                                        let te68 = self.te.get().resize::<68>();
+                                        let tre = r068.mul::<68>(te68);
+                                        self.trc.set(tre.slice::<40, 28>());
                                         DefaultClock::rising().await;
-                                        // A signed plane times the
-                                        // reciprocal: the product of its
-                                        // bits as unsigned, and a turn
-                                        // later less the reciprocal where
-                                        // the sign bit stood for 2^64
-                                        // rather than -2^64. One turn held
-                                        // both and missed the clock.
+                                        // A signed plane times the reciprocal:
+                                        // the product of its bits as unsigned,
+                                        // and a turn later less the reciprocal
+                                        // where the sign bit stood for 2^64
+                                        // rather than -2^64. One turn held both
+                                        // and missed the clock.
                                         let r96 = self.trc.get().resize::<96>();
-                                        with!(self <= {
-                                            tpu: self.tuc.get().resize::<96>().mul::<96>(r96),
-                                            tpv: self.tvc.get().resize::<96>().mul::<96>(r96),
-                                        });
+                                        let u96 = self.tuc.get().resize::<96>();
+                                        let v96 = self.tvc.get().resize::<96>();
+                                        self.tpu.set(u96.mul::<96>(r96));
+                                        self.tpv.set(v96.mul::<96>(r96));
                                         DefaultClock::rising().await;
-                                        let rc = self.trc.get().resize::<96>() << 64usize;
-                                        let none96 = U::<96>::from(0u8);
-                                        with!(self <= {
-                                            tpu: self.tpu.get()
-                                                - mux(self.tuc.get().bit(63), rc, none96),
-                                            tpv: self.tpv.get()
-                                                - mux(self.tvc.get().bit(63), rc, none96),
-                                        });
+                                        let rcs = self.trc.get().resize::<96>();
+                                        let rc = rcs << 64usize;
+                                        let n96 = U::<96>::from(0u8);
+                                        let su = self.tuc.get().bit(63);
+                                        let sv = self.tvc.get().bit(63);
+                                        let cu = mux(su, rc, n96);
+                                        let cv = mux(sv, rc, n96);
+                                        self.tpu.set(self.tpu.get() - cu);
+                                        self.tpv.set(self.tpv.get() - cv);
                                         DefaultClock::rising().await;
-                                        let tsh = (U::<7>::from(64u8)
-                                            - self.tn.get())
-                                        .raw()
-                                            as usize;
-                                        with!(self <= {
-                                            tiu: clamp30(sra(self.tpu.get(), tsh)),
-                                            tiv: clamp30(sra(self.tpv.get(), tsh)),
-                                        });
+                                        let tnz = self.tn.get();
+                                        let tsh7 = U::<7>::from(64u8) - tnz;
+                                        let tsh = tsh7.raw() as usize;
+                                        let pu = sra(self.tpu.get(), tsh);
+                                        let pv = sra(self.tpv.get(), tsh);
+                                        self.tiu.set(clamp30(pu));
+                                        self.tiv.set(clamp30(pv));
                                         DefaultClock::rising().await;
-                                        let ti = wrap(
-                                            sra(self.tiu.get(), 8),
-                                            self.tlogw.get(),
-                                            self.tcs.get(),
-                                        );
-                                        let tj = wrap(
-                                            sra(self.tiv.get(), 8),
-                                            self.tlogh.get(),
-                                            self.tct.get(),
-                                        );
-                                        self.taddr.set(
-                                            self.tbase.get()
-                                                + texel_at(ti, tj, self.tlogw.get()),
-                                        );
+                                        let si = sra(self.tiu.get(), 8);
+                                        let sj = sra(self.tiv.get(), 8);
+                                        let tlw = self.tlogw.get();
+                                        let tlh = self.tlogh.get();
+                                        let ti = wrap(si, tlw, self.tcs.get());
+                                        let tj = wrap(sj, tlh, self.tct.get());
+                                        let toff = texel_at(ti, tj, tlw);
+                                        self.taddr.set(self.tbase.get() + toff);
                                         DefaultClock::rising().await;
                                         let ta = self.taddr.get();
                                         let tline = ta.slice::<6, 6>();
+                                        let tws = ta.slice::<2, 4>();
+                                        let tword = tline.concat::<4, 10>(tws);
+                                        let tsh2 = tline.raw() as usize;
+                                        let tvb = self.cvalid.get() >> tsh2;
                                         with!(self <= {
                                             ttag: self.ctag.read(tline),
-                                            tok: (self.cvalid.get()
-                                                >> (tline.raw() as usize))
-                                                .bit(0),
-                                            tdat: self.cdata.read(
-                                                tline.concat::<4, 10>(
-                                                    ta.slice::<2, 4>(),
-                                                ),
-                                            ),
+                                            tok: tvb.bit(0),
+                                            tdat: self.cdata.read(tword),
                                         });
                                         DefaultClock::rising().await;
                                         // A miss reads the texel's block, one
                                         // burst of sixteen beats, into its
-                                        // line, and keeps the texel's own
-                                        // word as it passes.
-                                        let thit = self.tok.get()
-                                            & Bit::from(
-                                                self.ttag.get()
-                                                    == self.taddr.get().slice::<12, 20>(),
-                                            );
+                                        // line, and keeps the texel's own word
+                                        // as it passes.
+                                        let tad = self.taddr.get();
+                                        let ttop = tad.slice::<12, 20>();
+                                        let ttg = self.ttag.get();
+                                        let teq = Bit::from(ttg == ttop);
+                                        let thit = self.tok.get() & teq;
                                         if !thit.to_bool() {
                                             until(DefaultClock::rising, || {
                                                 issue.ready().to_bool()
                                             })
                                             .await;
+                                            // A slice, not a resize (#1387).
+                                            let tad6 = self.taddr.get();
+                                            let tb6 = tad6 >> 6usize;
+                                            let tb0 = tb6 << 6usize;
+                                            let tblock = tb0.slice::<0, A>();
                                             issue.send(Issue {
                                                 read: Bit::One,
-                                                // A slice, as the descriptor's (#1387).
-                                                addr: (self.taddr.get()
-                                                    & U::<32>::from(0xffff_ffc0u32))
-                                                .slice::<0, A>(),
+                                                addr: tblock,
                                                 len: U::<8>::from(15u8),
                                                 size: U::<3>::from(2u8),
                                                 burst: BurstKind::Incr,
@@ -1681,63 +1679,59 @@ impl<
                                                 let fd = rdata.head().data;
                                                 let fa = self.taddr.get();
                                                 let fl = fa.slice::<6, 6>();
-                                                let fw = self.word.get().slice::<0, 4>();
-                                                let mine = Bit::from(fw == fa.slice::<2, 4>());
-                                                let done16 = Bit::from(fw == 15);
+                                                let fwd = self.word.get();
+                                                let fw = fwd.slice::<0, 4>();
+                                                let fws = fa.slice::<2, 4>();
+                                                let mine = Bit::from(fw == fws);
+                                                let last = Bit::from(fw == 15);
                                                 let fill = Bit::One;
-                                                let valid = self.cvalid.get()
-                                                    | (U::<64>::from(1u8)
-                                                        << (fl.raw() as usize));
+                                                let fp = fl.concat::<4, 10>(fw);
+                                                let fg = fa.slice::<12, 20>();
+                                                let f1 = U::<64>::from(1u8);
+                                                let fsh = fl.raw() as usize;
+                                                let fcv = self.cvalid.get();
+                                                let fv = fcv | (f1 << fsh);
                                                 with!(self <= {
-                                                    word: self.word.get() + 1,
+                                                    word: fwd + 1,
                                                     mine ? tdat: fd,
-                                                    fill ? { cdata.at(fl.concat::<4, 10>(fw)): fd },
-                                                    done16 ? { ctag.at(fl): fa.slice::<12, 20>() },
-                                                    done16 ? cvalid: valid,
+                                                    fill ? { cdata.at(fp): fd },
+                                                    last ? { ctag.at(fl): fg },
+                                                    last ? cvalid: fv,
                                                 });
                                             }
                                         }
                                         DefaultClock::rising().await;
                                         let ef = self.rgb.get();
                                         let et = self.tdat.get();
+                                        let z8 = U::<8>::from(0u8);
+                                        let fa8 = ef.slice::<24, 8>();
+                                        let ta8 = et.slice::<24, 8>();
+                                        let fr8 = ef.slice::<16, 8>();
+                                        let tr8 = et.slice::<16, 8>();
+                                        let fg8 = ef.slice::<8, 8>();
+                                        let tg8 = et.slice::<8, 8>();
+                                        let fb8 = ef.slice::<0, 8>();
+                                        let tb8 = et.slice::<0, 8>();
                                         with!(self <= {
-                                            tma: blend_sum(
-                                                ef.slice::<24, 8>(),
-                                                U::<8>::from(0u8),
-                                                et.slice::<24, 8>(),
-                                                U::<8>::from(0u8),
-                                            ),
-                                            tmr: blend_sum(
-                                                ef.slice::<16, 8>(),
-                                                U::<8>::from(0u8),
-                                                et.slice::<16, 8>(),
-                                                U::<8>::from(0u8),
-                                            ),
-                                            tmg: blend_sum(
-                                                ef.slice::<8, 8>(),
-                                                U::<8>::from(0u8),
-                                                et.slice::<8, 8>(),
-                                                U::<8>::from(0u8),
-                                            ),
-                                            tmb: blend_sum(
-                                                ef.slice::<0, 8>(),
-                                                U::<8>::from(0u8),
-                                                et.slice::<0, 8>(),
-                                                U::<8>::from(0u8),
-                                            ),
+                                            tma: blend_sum(fa8, z8, ta8, z8),
+                                            tmr: blend_sum(fr8, z8, tr8, z8),
+                                            tmg: blend_sum(fg8, z8, tg8, z8),
+                                            tmb: blend_sum(fb8, z8, tb8, z8),
                                         });
                                         DefaultClock::rising().await;
-                                        let em = over255(self.tma.get())
-                                            .concat::<8, 16>(over255(self.tmr.get()))
-                                            .concat::<8, 24>(over255(self.tmg.get()))
-                                            .concat::<8, 32>(over255(self.tmb.get()));
-                                        self.tcol.set(tex_env(
-                                            self.rgb.get(),
-                                            self.tdat.get(),
-                                            em,
-                                            self.tclass.get(),
-                                            self.tenv.get(),
-                                        ));
+                                        let ea = over255(self.tma.get());
+                                        let er = over255(self.tmr.get());
+                                        let eg = over255(self.tmg.get());
+                                        let eb = over255(self.tmb.get());
+                                        let ear = ea.concat::<8, 16>(er);
+                                        let earg = ear.concat::<8, 24>(eg);
+                                        let em = earg.concat::<8, 32>(eb);
+                                        let f2 = self.rgb.get();
+                                        let t2 = self.tdat.get();
+                                        let tcl = self.tclass.get();
+                                        let tev = self.tenv.get();
+                                        let te0 = tex_env(f2, t2, em, tcl, tev);
+                                        self.tcol.set(te0);
                                         DefaultClock::rising().await;
                                     }
                                     // A pixel of an entry that tests
