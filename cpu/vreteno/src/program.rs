@@ -332,7 +332,15 @@ pub fn soft() -> Vec<u32> {
 /// AMO on it in turn with 3 or -2 as the register, then `lr.w` and two
 /// `sc.w`, the first of which stores. It leaves the old words in x10 to
 /// x18, `lr.w`'s in x19, 0 and 1 in x20 and x21, and the last word at
-/// the first data word, and halts.
+/// the first data word.
+///
+/// Then the same in the core's data RAM, at its window `0x1_0000`
+/// (issue 1378), so that the netlist is co-simulated against it too: a
+/// store and a load of the word at once, a load through a pointer just
+/// loaded, a byte and a half under the strobes, an offset below
+/// `0x2_0000`, which the netlist's four words a lane wrap as the run
+/// does, an AMO, and `lr.w` and `sc.w`. Its words stay in the window's
+/// first sixteen bytes but that one, and it halts.
 pub fn atomics() -> Vec<u32> {
     let mut p = vec![
         lui(2, DATA_BASE >> 12),
@@ -348,7 +356,29 @@ pub fn atomics() -> Vec<u32> {
     for (k, op) in ops.iter().enumerate() {
         p.push(op(10 + k as u32, 2, if k % 2 == 0 { 6 } else { 7 }));
     }
-    p.extend([lr_w(19, 2), sc_w(20, 2, 6), sc_w(21, 2, 7), halt()]);
+    p.extend([lr_w(19, 2), sc_w(20, 2, 6), sc_w(21, 2, 7)]);
+    p.extend([
+        lui(8, 0x10), // x8 = 0x1_0000, the data RAM
+        addi(22, 0, 0x55),
+        sw(22, 8, 0),
+        lw(23, 8, 0), // the word stored the cycle before
+        sw(8, 8, 4),  // a pointer to 0x1_0000
+        lw(24, 8, 4),
+        lw(25, 24, 0), // through the pointer just loaded
+        addi(26, 0, -1),
+        sw(0, 8, 8),
+        sb(26, 8, 8),
+        sh(26, 8, 10),
+        lw(27, 8, 8),  // 0xffff_00ff
+        lui(9, 0x20),  // x9 = 0x2_0000, past the window
+        sw(22, 9, -4), // 0x1_fffc, a negative offset into it
+        lw(28, 9, -4),
+        amoadd_w(29, 8, 6), // 0x55, and 0x58 stored
+        lr_w(30, 8),        // 0x58
+        sc_w(31, 8, 7),     // 0, and -2 stored
+        lw(9, 8, 0),        // -2
+        halt(),
+    ]);
     p
 }
 
