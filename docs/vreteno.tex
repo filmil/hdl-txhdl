@@ -636,6 +636,11 @@ and the counter cannot disagree. Writing the lockstep test for this
 found that a \code{wfi} the core refused in user mode still set its
 wait, and a core that waited for an interrupt nothing would send; the
 wait now asks that the instruction be legal.
+Machine mode can also take three of the supervisor's instructions
+over (issue~\#1347): with \code{mstatus.TVM} set, a \code{satp} access
+and \code{sfence.vma} are illegal in supervisor mode, with \code{TW}
+\code{wfi}, and with \code{TSR} \code{sret}, so that a hypervisor or
+an emulating monitor sees each as a trap.
 
 Three of the cycle's decisions, whether the instruction in execute
 is stalled, whether an interrupt takes its place and whether the
