@@ -24,6 +24,11 @@ use vreteno32::uart::Uart;
 /// and posts its stores, and it hands an identifier back as its
 /// answer arrives, so four is more than it uses.
 const IW: usize = 2;
+/// The data RAM's words a lane in the netlist the documents simulate and
+/// the layout maps (issue 1275): a few, since a cell library has no RAM
+/// and 64 KiB of flip-flops would be most of the layout. The window's
+/// addresses wrap in it; the demonstration does not use it.
+const DW: usize = 4;
 const NIDS: usize = 4;
 
 /// The address map, a range per router port in the order of the
@@ -64,7 +69,7 @@ fn main() {
     } else {
         demo()
     };
-    let mut hart = Hart::with(&program);
+    let mut hart = Hart::<IW, DW>::with(&program);
     let cpu = &hart.core;
     let (wb_pc, regs) = (cpu.wb_pc, cpu.regs.clone());
     // Read to know when the external interrupt has been taken.
@@ -400,8 +405,11 @@ fn main() {
     // goes into its core's memory (issue 1014), by hand, since an
     // `init` the hart has no memory for is dropped without a word
     // (#1104).
-    let mut lowered =
-        Hart::<IW>::lowered(if atomics { "vreteno_amo" } else { "vreteno" });
+    let mut lowered = Hart::<IW, DW>::lowered(if atomics {
+        "vreteno_amo"
+    } else {
+        "vreteno"
+    });
     let words: Vec<u128> = program.iter().map(|&w| w as u128).collect();
     for c in &mut lowered.instances {
         if c.name == "core" {

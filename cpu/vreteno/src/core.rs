@@ -53,6 +53,10 @@ pub const IMEM_WORDS: usize = 1024;
 /// counter at or above this is fetched from the bus (issue 134).
 pub const IMEM_BYTES: u32 = IMEM_WORDS as u32 * 4;
 pub const DATA_BASE: u32 = crate::model::DATA_BASE;
+/// The data RAM on the core's own port (issue 1275): 64 KiB at
+/// `0x1_0000`, the window a program keeps its stack in (issue 1278).
+pub const DRAM_BASE: u32 = 0x1_0000;
+pub const DRAM_BYTES: u32 = 0x1_0000;
 
 /// What the core retired this cycle: `done` when an instruction
 /// completed, and the register and the value it wrote, `rd` zero when
@@ -736,7 +740,7 @@ fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
 /// halts. The halt itself, which the writeback stage sets. And the two
 /// memories, the registers and the boot memory.
 #[derive(Trace, Default)]
-pub struct Vreteno<const IW: usize> {
+pub struct Vreteno<const IW: usize, const DW: usize = 16384> {
     pub pc: Reg<U<32>>,
     pub ir: Reg<U<32>>,
     pub ir_c: Reg<Bit>,
@@ -809,6 +813,23 @@ pub struct Vreteno<const IW: usize> {
     /// the load then traps as it retires, a load access fault at its
     /// address, and writes nothing (issue 417).
     pub wb_err: Reg<Bit>,
+    /// The data RAM on the core's own port (issue 1275): 64 KiB at
+    /// DRAM_BASE, the window a program keeps its stack in, answered in
+    /// the cycle after a load runs rather than over the bus. Four lanes
+    /// of a byte, so a store's strobes are four write enables; each is
+    /// written at one address and read at one, a block RAM. Nothing but
+    /// the core reaches it. DW words a lane: 16384 on the board, and a
+    /// few in the netlist the documents and the layout take, where the
+    /// window's addresses wrap.
+    pub dl0: Mem<U<8>, DW>,
+    pub dl1: Mem<U<8>, DW>,
+    pub dl2: Mem<U<8>, DW>,
+    pub dl3: Mem<U<8>, DW>,
+    /// The word the lanes read, at the address the access in execute
+    /// had, a cycle ago; and whether the load in writeback is one of
+    /// theirs.
+    pub dl_word: Reg<U<32>>,
+    pub wb_loc: Reg<Bit>,
     /// A store the bus refused, kept until the trap for it is taken
     /// before the next instruction to run: a store is posted, so its
     /// fault is raised late and without the address (issue 417).
@@ -1018,9 +1039,17 @@ pub struct Vreteno<const IW: usize> {
     // end{vm}
 }
 
-impl<const IW: usize> Vreteno<IW> {
+impl<const IW: usize, const DW: usize> Vreteno<IW, DW> {
+    /// The data RAM's depth is a power of two, since its addresses are
+    /// masked to it with `DW - 1` (issue 1275).
+    const DW_POW2: () = assert!(
+        DW.is_power_of_two(),
+        "the data RAM's depth is a power of two"
+    );
+
     /// A core with its program loaded.
     pub fn with(program: &[u32]) -> Self {
+        let () = Self::DW_POW2;
         let words: Vec<U<32>> = program.iter().map(|&w| U::from(w)).collect();
         Vreteno {
             imem: Mem::with(&words),
@@ -1046,7 +1075,7 @@ impl<const IW: usize> Vreteno<IW> {
 }
 
 #[lower]
-impl<const IW: usize> Unit for Vreteno<IW> {
+impl<const IW: usize, const DW: usize> Unit for Vreteno<IW, DW> {
     async fn run(
         &mut self,
         (
@@ -1192,10 +1221,16 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // extended; else the value execute computed. Written to the
             // register file, and forwarded to execute below.
             // A load's word: what the bus answered, in its register.
+            // From the data RAM's lanes, the cycle after the load ran
+            // (issue 1275); an AMO's word is the one it captured.
             let loaded = extended(
                 self.wb_f3.get(),
                 self.wb_lane.get(),
-                self.wb_dev.get(),
+                mux(
+                    self.wb_loc & !self.wb_amo,
+                    self.dl_word.get(),
+                    self.wb_dev.get(),
+                ),
             );
             let wb_val = mux(self.wb_load, loaded, wb_alu);
             // A device load sits in writeback while its wait is on, and
@@ -1373,11 +1408,42 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 U::<32>::from(0u32),
                 mux(fwd_b, wb_alu, self.regs.read(rs2)),
             );
-            let addr = a + select!(opcode.raw() => {
+            let off = select!(opcode.raw() => {
                 0x23 => imm_s,
                 0x2f => U::<32>::from(0u32),
                 _ => imm_i,
             });
+            let addr = a + off;
+            // Whether the access is in the data RAM's window (issue 1275),
+            // without the full sum: the offset is twelve bits, signed, so
+            // the sum's upper half is rs1's, less one when the offset is
+            // negative, plus the carry out of the lower halves' sum. That
+            // sum, seventeen bits, also gives the lanes their address,
+            // so the window and the address share one short carry chain.
+            // Under translation, the physical address decides.
+            let lo17 = U::<1>::from(0u8).concat::<_, 17>(a.slice::<0, 16>())
+                + U::<1>::from(0u8).concat::<_, 17>(off.slice::<0, 16>());
+            let c16 = lo17.bit(16);
+            let hi = a.slice::<16, 16>();
+            let in_bare = mux(
+                off.bit(31),
+                (Bit::from(hi == 2) & !c16) | (Bit::from(hi == 1) & c16),
+                (Bit::from(hi == 1) & !c16) | (Bit::from(hi == 0) & c16),
+            );
+            let x_pa = self.x_pa.get();
+            let local = mux(
+                self.x_done,
+                Bit::from(x_pa.slice::<16, 16>() == 1),
+                in_bare,
+            );
+            // The lanes' word, within their depth: the board's 16384
+            // words, or the few the document's and the layout's netlist
+            // keep, so that 64 KiB of flip-flops is not mapped onto cells
+            // (issue 1275).
+            let dl_mask = U::<14>::from((DW - 1) as u32);
+            let dl_at =
+                mux(self.x_done, x_pa.slice::<2, 14>(), lo17.slice::<2, 14>())
+                    & dl_mask;
             // `lr.w` and an AMO read as a load does, and the AMO's store
             // comes later, from writeback; `sc.w` stores as a store
             // does, if its reservation holds. The reservation is
@@ -1527,7 +1593,13 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // nowhere. Registers alone, since the answer only comes for
             // an access that is aligned (issue 1014).
             let xf = self.x_done & (self.x_pf | self.x_af);
-            let send_load = run & is_load & !unaligned & !xf;
+            // A load in the data RAM's window goes to its lanes and not
+            // to the bus (issue 1275). An AMO there waits a cycle in
+            // writeback for its word, as one on the bus waits for its
+            // answer.
+            let send_load = run & is_load & !unaligned & !xf & !local;
+            let ld_loc = run & is_load & !unaligned & !xf & local;
+            let amo_loc = ld_loc & is_rmw;
 
             // The ALU, shared by the register and immediate forms; bit
             // 30 means subtract or arithmetic shift, except that an
@@ -1956,12 +2028,31 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // so the core writes none, and the grant it sends back is
             // of no use here and is dropped.
             let _ = grant.recv_if(grant.peek().is_some());
-            let send_store = store;
+            let send_store = store & !local;
+            let st_loc = store & local;
             // An AMO's store, from writeback, once its word is computed
             // and the bus has room; nothing of execute's goes out then,
             // since execute waits for it, and it goes before a fetch.
             let amo_go = (amo_ph == 2) & issue.ready() & wbeat.ready();
-            let st_go = send_store | amo_go;
+            let amo_loc_go = amo_go & self.wb_loc;
+            let st_go = send_store | (amo_go & !self.wb_loc);
+            // A store into the data RAM, and an AMO's store there, write
+            // its lanes in the cycle they go (issue 1275): the store's
+            // lanes under its strobes, the AMO's whole word.
+            let dl_we = st_loc | amo_loc_go;
+            let dl_wa =
+                mux(amo_loc_go, self.wb_pa.get().slice::<2, 14>(), dl_at)
+                    & dl_mask;
+            let dl_wd = mux(amo_loc_go, self.amo_val.get(), sdata);
+            let dl_en = mux(amo_loc_go, U::<4>::from(15u8), en);
+            let dw0 = dl_we & dl_en.bit(0);
+            let dw1 = dl_we & dl_en.bit(1);
+            let dw2 = dl_we & dl_en.bit(2);
+            let dw3 = dl_we & dl_en.bit(3);
+            when!(dw0 => self { dl0.at(dl_wa): dl_wd.slice::<0, 8>() });
+            when!(dw1 => self { dl1.at(dl_wa): dl_wd.slice::<8, 8>() });
+            when!(dw2 => self { dl2.at(dl_wa): dl_wd.slice::<16, 8>() });
+            when!(dw3 => self { dl3.at(dl_wa): dl_wd.slice::<24, 8>() });
             // A fetch goes out when the words it wants are not in the
             // buffer, nothing else of the core's is out, and the
             // channel has room. The second word is asked for after the
@@ -2196,7 +2287,12 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             );
             when!(tag_go => self { ic_tag.at(tag_at): tag_val });
             when!(d_resp => self { wb_dev: resp_data });
-            when!(d_resp => self { wb_err: resp_bad });
+            // A load from the data RAM is never refused, so it clears
+            // what a refused load before it left (issue 1275); a local
+            // AMO's word is captured in its first cycle in writeback.
+            let l_ans = self.dev_wait & self.wb_loc;
+            when!(d_resp | ld_loc => self { wb_err: resp_bad & d_resp });
+            when!(l_ans => self { wb_dev: self.dl_word.get() });
             // The fetch's request to the unit (issue 1014): made for the
             // page of the word the fetch wants when it is not the page
             // translated, held, and answered no sooner than two cycles
@@ -2402,6 +2498,14 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 p_send ? p_wait: Bit::One,
                 p_resp ? p_wait: Bit::Zero,
                 flush: flush_go,
+                // The data RAM's lanes, read at the address of the access
+                // in execute, every cycle (issue 1275).
+                dl_word: self
+                    .dl3
+                    .read(dl_at)
+                    .concat::<_, 16>(self.dl2.read(dl_at))
+                    .concat::<_, 24>(self.dl1.read(dl_at))
+                    .concat::<_, 32>(self.dl0.read(dl_at)),
                 ic_clr2: ic_clearing,
                 rst ? {
                     ic_st: U::<2>::from(0u8),
@@ -2444,8 +2548,10 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             });
             case!(rst => {
                 Bit::One => { self.dev_wait <= Bit::Zero },
-                _ if send_load.to_bool() => { self.dev_wait <= Bit::One },
-                _ if (self.dev_wait & resp_valid).to_bool() => {
+                _ if (send_load | amo_loc).to_bool() => {
+                    self.dev_wait <= Bit::One
+                },
+                _ if (self.dev_wait & (resp_valid | self.wb_loc)).to_bool() => {
                     self.dev_wait <= Bit::Zero
                 },
                 _ => {},
@@ -2457,7 +2563,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // register operand, then stored, and the instruction then
             // retires with the old word. The reservation: `lr.w` makes
             // it and every `sc.w` uses it up, whether it stored or not.
-            let amo_start = d_resp & self.wb_amo & !resp_bad;
+            let amo_start = ((d_resp & !resp_bad) | l_ans) & self.wb_amo;
             with!(self <= {
                 amo_start ? amo_ph: U::<2>::from(1u8),
                 amo_ph == 1 ? {
@@ -2813,8 +2919,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     // Only a load that went out waits for an answer, and
                     // only it can be refused: one that trapped in
                     // execute went nowhere (issue 1084).
-                    self.wb_load <= send_load;
-                    self.wb_amo <= is_rmw & send_load;
+                    self.wb_load <= send_load | ld_loc;
+                    self.wb_amo <= is_rmw & (send_load | ld_loc);
+                    self.wb_loc <= ld_loc;
                     self.amo_op <= funct5;
                     self.amo_b <= b;
                     self.wb_stop <= halting

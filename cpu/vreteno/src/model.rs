@@ -2,7 +2,7 @@
 //! The reference: RV32IMAC as a program, one `step` per instruction,
 //! written against the decoder and nothing else. The core is checked
 //! against it, in lockstep, every cycle.
-use crate::core::IMEM_BYTES;
+use crate::core::{DRAM_BASE, DRAM_BYTES, IMEM_BYTES};
 use crate::isa::{
     compressed, decode, is_compressed, Kind, CAUSE_BREAKPOINT,
     CAUSE_FETCH_ACCESS, CAUSE_FETCH_PAGE, CAUSE_ILLEGAL, CAUSE_LOAD_ACCESS,
@@ -157,6 +157,10 @@ pub struct Model {
     pub pc: u32,
     pub x: [u32; 32],
     pub mem: Vec<u32>,
+    /// The data RAM on the core's own port (issue 1275), 64 KiB at
+    /// DRAM_BASE: loads and stores reach it, a fetch and the page
+    /// walker do not, as in the core.
+    pub dram: Vec<u32>,
     pub csr: Csr,
     /// What the bus answered the core's last load from a device: the
     /// model has neither a clock nor a bus, so the caller sets it
@@ -218,6 +222,7 @@ impl Default for Model {
             pc: 0,
             x: [0; 32],
             mem: vec![0; DATA_BYTES as usize / 4],
+            dram: vec![0; DRAM_BYTES as usize / 4],
             csr: Csr::default(),
             dev_word: 0,
             dev_err: false,
@@ -314,6 +319,11 @@ pub fn misaligned(kind: Kind, addr: u32) -> bool {
 /// gave the core, which the caller hands over.
 const DEVICES: u32 = DATA_BASE + DATA_BYTES;
 
+/// Whether a data access at addr is the data RAM's (issue 1275).
+fn in_dram(addr: u32) -> bool {
+    addr.wrapping_sub(DRAM_BASE) < DRAM_BYTES
+}
+
 impl Model {
     /// The instruction at `pc`, from the boot memory below
     /// `IMEM_BYTES` or from the data memory above it, which is what
@@ -354,6 +364,9 @@ impl Model {
     /// answered the core with, which the caller handed over. `None`
     /// between the boot memory and the data memory.
     fn word(&self, imem: &[u32], addr: u32) -> Option<u32> {
+        if in_dram(addr) {
+            return Some(self.dram[((addr - DRAM_BASE) / 4) as usize]);
+        }
         if let Some(bus) = &self.bus {
             return bus.load(addr & !3);
         }
@@ -502,6 +515,10 @@ impl Model {
     /// core, which does not look at a write's answer, so it changes
     /// nothing here either.
     fn set_word(&mut self, addr: u32, v: u32) -> bool {
+        if in_dram(addr) {
+            self.dram[((addr - DRAM_BASE) / 4) as usize] = v;
+            return true;
+        }
         if let Some(bus) = &self.bus {
             return bus.store(addr & !3, v, u32::MAX);
         }
@@ -984,8 +1001,9 @@ impl Model {
                     }
                 };
                 // In a machine the store goes out with its lanes' mask,
-                // and nothing is read first (issue 1016).
-                if let Some(bus) = &self.bus {
+                // and nothing is read first (issue 1016); one into the
+                // data RAM stays in the core (issue 1275).
+                if let (Some(bus), false) = (&self.bus, in_dram(addr)) {
                     let (lanes, shift) = match d.kind {
                         Sb => (0xff, 8 * (addr & 3)),
                         Sh => (0xffff, 16 * (addr >> 1 & 1)),
