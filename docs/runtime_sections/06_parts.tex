@@ -43,7 +43,7 @@ runs it against a queue.
 \code{Station2} to \code{Station10} are reservation stations, one
 type per count of inputs, each written out by \code{station!}
 (Section~\ref{sec:r-macros}) since the lowering reads a body and not
-a loop over inputs. An input carries a \code{Tagged<TB, T>}, the tag
+a loop over inputs. An input supplies a \code{Tagged<TB, T>}, containing the tag
 above the value; the station has \code{L = 1 << TB} lines, a memory
 per input for the cells and an occupancy mask per input, one bit per
 line. The step is the rule: an input's cell is free when its bit of

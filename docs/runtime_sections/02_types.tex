@@ -13,8 +13,9 @@ the bits above. A wider value states its limbs,
 \code{U<256, 2>}, since the count cannot be computed from \code{N} on
 stable Rust, and the build checks that the count is the one the width
 needs. With one limb every operation is the \code{u128} one it always
-was; with more, \code{limbs} carries and borrows across them, shifts
-across them, multiplies in 64-bit digits and divides bit by bit. What
+was; with more, \code{limbs} propagates overflow and borrow bits across limb
+boundaries, shifts across them, multiplies in 64-bit digits and divides bit
+by bit. What
 comes out of a wide value is a word, through \code{slice}, of at most
 128 bits; widening into one (\code{concat}, \code{zext},
 \code{resize}) and a wide \code{I<N>} are not written yet. A width
