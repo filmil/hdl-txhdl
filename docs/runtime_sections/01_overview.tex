@@ -74,8 +74,8 @@ or the same with \code{falling}, the next such edge at which a
 condition on state holds. Reads are plain: a register in an
 expression, or \code{Reg::get}, is what the last edge latched, since
 a register is \code{Copy} and has its value's operators; a wire's
-\code{get} returns what it
-carries, a memory's \code{read} is its asynchronous port. Drives are
+\code{get} returns its driven value, a memory's \code{read} accesses
+its asynchronous read port. Drives are
 deferred: \code{Reg::set} and \code{Mem::write} take effect at the end
 of the step, so a read after a drive in the same iteration still sees
 what the edge latched. A memory refuses an address past its end, a
