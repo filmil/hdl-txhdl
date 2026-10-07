@@ -24,8 +24,8 @@ The script that produced them is in the tree, for a reader who wants
 the numbers of a later day.}%
 \thanks{The authors used a large language model, Claude, as an
 assistant in exploring the concepts and in writing and constructing
-the documents and the programs; every commit of the repository says
-so and carries the prompts that led to it, verbatim.}%
+the documents and the programs; every commit of the repository records
+this attribution and includes the exact prompts that guided it.}%
 \thanks{\buildstamp}}
 
 \markboth{TxHDL by the Numbers}{Filmar and Janković: TxHDL by the Numbers}
@@ -37,22 +37,22 @@ so and carries the prompts that led to it, verbatim.}%
 
 Every file tracked by git in the repository \code{HDL/txhdl}, outside
 \code{third\_party/}, was counted with \code{wc -l}, so comments and
-blank lines count as lines. The lock files, \code{Cargo.lock},
-\code{MODULE.bazel.lock}, \code{cargo-bazel-lock.json} and
-\code{multitool.lock.json}, and \code{.bazelversion} were left out:
-they are generated, and they would have added some thirty thousand
-lines that nobody wrote. \code{third\_party/} holds vendored \LaTeX{}
-packages and the IEEE document class, under their own licenses, and is
-not this project's work.
+blank lines count as lines. Lock files (\code{Cargo.lock},
+\code{MODULE.bazel.lock}, \code{cargo-bazel-lock.json}, and
+\code{multitool.lock.json}) and \code{.bazelversion} were excluded:
+because they are generated artifacts, including them would add thirty
+thousand lines of external configuration. \code{third\_party/} holds
+vendored \LaTeX{} packages and the IEEE document class, under their own
+licenses, and is not this project's work.
 
 The measurement was taken on September 13, 2026, at commit
 \code{0ab36f3} of the mainline, the commit before this document and
-its script were added. Listing~\ref{lst:stats-script} is the script;
-run from the root of a checkout, it prints
+its script were added. Listing~\ref{lst:stats-script} displays the
+script; executed from the root of a checkout, it reports
 Tables~\ref{tab:stats-topic} and~\ref{tab:stats-lang} for that
 checkout. The topics are the directories of the tree, named in the
-script. The script has gained topics since that day, for the parts
-library, the Vreteno programs and the directories the tree grew later
+script. The script has gained topics since that date, covering the
+parts library, Vreteno software, and newly created directories
 (issue 745), so a run today sorts into rows the tables below do not
 have.
 
@@ -141,11 +141,11 @@ other
 
 \section{The Largest Files}
 
-Table~\ref{tab:stats-files} is the runtime and the core file by file,
-with the tools, since those are the files a reader asks about. The
-largest file in the tree is the lowering macro; the second is the
-early language specification, which predates the library and is kept
-as history.
+Table~\ref{tab:stats-files} lists individual file sizes across
+the runtime, the core, and associated tooling. The largest single file
+in the tree is the lowering macro; the second largest is the early
+specification, which predates the library and is preserved for
+historical context.
 
 \begin{table}[h]
 \caption{The runtime, the core and the tools, file by file.}
@@ -173,26 +173,29 @@ Runtime & Lines & Vreteno & Lines & Tools & Lines \\
 
 \section{What the Numbers Say}
 
-The language is small. The runtime and the macro together are about
-6,300 lines of Rust, and of the runtime, \code{comp.rs} and
-\code{netlist.rs} are three quarters; the rest is the types, the
-foreign units, the pipeline and the functions.
+The core language footprint is compact. The runtime and macro together
+total approximately 6,300 lines of Rust. Within the runtime,
+\code{comp.rs} and \code{netlist.rs} comprise three quarters of the
+volume, with the remainder distributed across type definitions,
+foreign unit declarations, pipeline primitives, and helper functions.
 
-Vreteno is about half the size of the language. The core proper is
-815 lines, the decoder 522 and the reference model 364; the devices on
-the bus, the UART, the timer, the router and the data memory, are
-about 560 together.
+The Vreteno processor is roughly half the size of the language runtime.
+The CPU core comprises 815 lines, the instruction decoder 522 lines, and
+the reference model 364 lines. On-chip bus peripherals (including the
+UART, timer, crossbar router, and data memory) total 560 lines.
 
-Prose outweighs code. The documents, the design notes and the early
-specifications sum to about 13,800 lines, against about 15,000 of
-Rust, and the documents include their listings from the tree rather
-than repeating them, so the prose is prose.
+Technical prose approaches parity with codebase implementation.
+Documentation, architectural design notes, and formal specifications
+account for approximately 13,800 lines, compared to 15,000 lines of
+Rust. Because documents incorporate code listings by reference rather
+than duplicating text, these counts reflect pure explanatory prose.
 
-The examples are many and short: thirty-two files of ninety lines on
-average, one per concept, which is the rule of the project.
+Examples remain modular and focused: thirty-two files averaging ninety
+lines each, with each file demonstrating an isolated architectural concept.
 
-The tools are a quarter of the Rust, and the two testbench generators,
-\code{vshim} and \code{fst2tb}, are the largest of them at about 550
-lines each: the checks are as big a part of the work as the checked.
+Tooling represents one quarter of the Rust codebase. The two testbench
+generators, \code{vshim} and \code{fst2tb}, form the largest utilities
+at roughly 550 lines each, demonstrating that verification harnesses
+require substantial engineering investment.
 
 \end{document}
