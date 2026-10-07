@@ -135,6 +135,17 @@ itself.
 
 What checks it, off the board:
 
+* `//zephyr:fastboot_model_test`: the image boots on the machine model
+  to its listening line (issue 1386).
+* `//zephyr:fastboot_download_model_test`: a fastboot client on the
+  model's cable, smoltcp's TCP/IP with the protocol on top, sends it
+  256 KiB, and the staged bytes must be the image's; the log says the
+  steps a byte, the retransmits and the frames the port dropped
+  (issue 1390).
+  A step is an instruction, since the model has no memory latency, so
+  the figure is the work the receive path does, and the board says
+  what the DDR3 costs.
+
 * `//zephyr:fastboot_test`: stock `fastboot` 35.0.2, pinned in
   `multitool.lock.json`, reads `max-download-size` and boots a 100 003
   byte image through `//zephyr:fastboot_host`, which runs the board's
