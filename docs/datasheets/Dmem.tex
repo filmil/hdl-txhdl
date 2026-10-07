@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: Dmem
-\datasheet{Dmem}{Vreteno's data memory and stack memory: a block RAM of words behind an AXI peripheral end.}
+\datasheet{Dmem}{Vreteno's data memory: a block RAM of words behind an AXI peripheral end.}
 
 \dsfacts{\code{cpu/vreteno/src/dmem.rs}}{\code{vreteno32::dmem::Dmem}}%
 {\code{//docs:vreteno}}
@@ -11,9 +11,9 @@
 bus. It holds \code{W} words, \code{DMEM\_WORDS}, 1024, by default,
 in four memories of a byte, \code{lane0} to \code{lane3}, one per
 lane of the word. A store of a byte or a half writes only its lanes and
-reads nothing. The board has a second, \code{Dmem<5, 14, 16384>}, the
-stack memory: 64~KiB where a program loaded into the DDR3 keeps its
-stack, since the DDR3 is not cached for data (issue 1278).
+reads nothing. The board had a second, \code{Dmem<5, 14, 16384>}, the
+stack memory at \code{0x1\_0000} (issue 1278), until the stack window
+became a RAM in the core, on its own port (issue 1275).
 
 It is the peripheral client of an \code{AxiPer}, and its link is one
 port, \code{bus}, a \code{PerPort} of the four channels: it takes
@@ -50,10 +50,7 @@ to 24. The memory looks at no other address bits.
 On the board, \code{BoardRouter} sends it the page at \code{0x1000}
 with mask \code{0xffff\_f000}, so addresses \code{0x1000} to
 \code{0x1ffc} are words 0 to 1023. The model's \code{DATA\_BASE} is
-the same \code{0x1000}. The stack memory is the 64~KiB at
-\code{0x1\_0000} with mask \code{0xffff\_0000}, the router's ninth
-port and the HAL's \code{map::STACK}, and \code{vreteno\_ram.ld} puts
-a loaded program's stack at its top, \code{0x2\_0000}.
+the same \code{0x1000}.
 
 \dstables{Dmem}
 
@@ -101,8 +98,7 @@ of \code{//cpu/vreteno:vreteno} under nvc and Verilator:
 
 \subsection*{Used by}
 
-\code{Board}, as \code{dmem} behind the tracker \code{pdmem}, and
-as \code{stack} behind \code{pstack}. The
+\code{Board}, as \code{dmem} behind the tracker \code{pdmem}. The
 demonstration \code{//cpu/vreteno:vreteno}, the lockstep test and
 \code{run.rs}. \code{board\_netlist} writes a program's data into
 \code{lane0} to \code{lane3} of the board's netlist.
@@ -115,4 +111,4 @@ an address beyond word \code{W} $-$ 1 wraps. One write is held at a time. Nothin
 on the machine fills it at run time except stores, so a program's
 constants have to be in it before the first cycle.
 \code{cpu/vreteno/board/ax7a200.xdc} constrains the four lanes to block
-RAM, the stack memory's as well.
+RAM.
