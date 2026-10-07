@@ -77,10 +77,15 @@ and write transactions complete on \code{bus\_b}; either response returns
 
 \begin{itemize}
 \item Four unit tests in \code{lib/parts/src/remote.rs} (\code{//lib/parts:parts\_test}):
-\code{a\_word\_written\_to\_the\_program\_is\_read\_back\_from\_it} verifies standard loopback;
-\code{the\_program\_says\_which\_transactions\_fail} validates remote error signaling;
-\code{a\_slow\_program\_is\_waited\_for} tests latency tolerance; and
-\code{a\_program\_that\_never\_answers\_does\_not\_stop\_the\_bus} confirms timeout recovery.
+\begin{itemize}
+\item \code{a\_word\_written\_to\_the\_program\_is\_read\_back\_from\_it}
+verifies standard loopback;
+\item \code{the\_program\_says\_which\_transactions\_fail} validates
+remote error signaling;
+\item \code{a\_slow\_program\_is\_waited\_for} tests latency tolerance;
+\item \code{a\_program\_that\_never\_answers\_does\_not\_stop\_the\_bus}
+confirms timeout recovery.
+\end{itemize}
 \item \code{//lib/examples:ex\_remote} executes the complete pipeline comprising
 \code{RemoteLink} and dual Ethernet MACs. Netlists synthesized from this design
 are simulated under both nvc and Verilator via
