@@ -360,6 +360,13 @@ pub struct Raster<
     pub ttag: Reg<U<20>>,
     pub tok: Reg<Bit>,
     pub tdat: Reg<U<32>>,
+    /// The texel's word in the cache, an address of its own, so that
+    /// the cache's read has a register for one and nothing else; the
+    /// texel's word as a refill passes, and whether it came that way,
+    /// so that the read's register, `tdat`, takes nothing but the read.
+    pub tca: Reg<U<10>>,
+    pub tfil: Reg<U<32>>,
+    pub tmiss: Reg<Bit>,
     /// The environment's four products, before their divide, and the
     /// textured pixel's colour. The products are made in logic and not
     /// in DSP slices: a slice would take the cache's read register into
@@ -1626,18 +1633,23 @@ impl<
                                         let ti = wrap(si, tlw, self.tcs.get());
                                         let tj = wrap(sj, tlh, self.tct.get());
                                         let toff = texel_at(ti, tj, tlw);
-                                        self.taddr.set(self.tbase.get() + toff);
+                                        let tan = self.tbase.get() + toff;
+                                        let tln = tan.slice::<6, 6>();
+                                        let twn = tan.slice::<2, 4>();
+                                        with!(self <= {
+                                            taddr: tan,
+                                            tca: tln.concat::<4, 10>(twn),
+                                        });
                                         DefaultClock::rising().await;
                                         let ta = self.taddr.get();
                                         let tline = ta.slice::<6, 6>();
-                                        let tws = ta.slice::<2, 4>();
-                                        let tword = tline.concat::<4, 10>(tws);
                                         let tsh2 = tline.raw() as usize;
                                         let tvb = self.cvalid.get() >> tsh2;
+                                        let tcav = self.tca.get();
                                         with!(self <= {
                                             ttag: self.ctag.read(tline),
                                             tok: tvb.bit(0),
-                                            tdat: self.cdata.read(tword),
+                                            tdat: self.cdata.read(tcav),
                                         });
                                         DefaultClock::rising().await;
                                         // A miss reads the texel's block, one
@@ -1649,6 +1661,7 @@ impl<
                                         let ttg = self.ttag.get();
                                         let teq = Bit::from(ttg == ttop);
                                         let thit = self.tok.get() & teq;
+                                        self.tmiss.set(!thit);
                                         if !thit.to_bool() {
                                             until(DefaultClock::rising, || {
                                                 issue.ready().to_bool()
@@ -1698,7 +1711,7 @@ impl<
                                                 let fv = fcv | (f1 << fsh);
                                                 with!(self <= {
                                                     word: fwd + 1,
-                                                    mine ? tdat: fd,
+                                                    mine ? tfil: fd,
                                                     fill ? { cdata.at(fp): fd },
                                                     last ? { ctag.at(fl): fg },
                                                     last ? cvalid: fv,
@@ -1707,7 +1720,10 @@ impl<
                                         }
                                         DefaultClock::rising().await;
                                         let ef = self.rgb.get();
-                                        let et = self.tdat.get();
+                                        let et0 = self.tdat.get();
+                                        let et1 = self.tfil.get();
+                                        let etm = self.tmiss.get();
+                                        let et = mux(etm, et1, et0);
                                         let z8 = U::<8>::from(0u8);
                                         let fa8 = ef.slice::<24, 8>();
                                         let ta8 = et.slice::<24, 8>();
@@ -1732,7 +1748,10 @@ impl<
                                         let earg = ear.concat::<8, 24>(eg);
                                         let em = earg.concat::<8, 32>(eb);
                                         let f2 = self.rgb.get();
-                                        let t2 = self.tdat.get();
+                                        let t20 = self.tdat.get();
+                                        let t21 = self.tfil.get();
+                                        let t2m = self.tmiss.get();
+                                        let t2 = mux(t2m, t21, t20);
                                         let tcl = self.tclass.get();
                                         let tev = self.tenv.get();
                                         let te0 = tex_env(f2, t2, em, tcl, tev);
