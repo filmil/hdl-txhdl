@@ -58,6 +58,19 @@ rust_test(
     ],
 )
 
+# Blending, the alpha test and the colour mask (#993), through Razboj's
+# model, against floating point; and the clear of the depth alone.
+rust_test(
+    name = "blend_test",
+    srcs = ["tests/blend.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
+
 # Points and lines through Razboj's model, against what GL says of
 # them (#994).
 rust_test(
