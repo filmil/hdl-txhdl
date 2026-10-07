@@ -29,6 +29,93 @@
 
 #include "fastboot.h"
 
+#ifdef CONFIG_ETH_VRETENO_PROFILE
+/*
+ * Where a download's time goes (issue 1230): the cycles in `recv`,
+ * which is waiting and the copy out of the stack, in the fastboot core
+ * and of those in the copy into the staging area, the driver's own
+ * counts, and every thread's cycles, all across one connection. Said on
+ * the console when the connection closes.
+ */
+#include <vreteno/eth_vreteno.h>
+
+#define PROF_THREADS 16
+
+static struct {
+	uint32_t recv_cycles;
+	uint32_t recv_calls;
+	uint32_t fb_cycles;
+	uint32_t write_cycles;
+	uint32_t bytes;
+	uint32_t start;
+	struct eth_vreteno_prof eth;
+	const struct k_thread *thread[PROF_THREADS];
+	uint64_t cycles[PROF_THREADS];
+	int threads;
+} prof;
+
+static void prof_thread_start(const struct k_thread *t, void *arg)
+{
+	k_thread_runtime_stats_t st;
+
+	ARG_UNUSED(arg);
+	if (prof.threads == PROF_THREADS ||
+	    k_thread_runtime_stats_get((k_tid_t)t, &st) != 0) {
+		return;
+	}
+	prof.thread[prof.threads] = t;
+	prof.cycles[prof.threads] = st.execution_cycles;
+	prof.threads++;
+}
+
+static void prof_begin(void)
+{
+	memset(&prof, 0, sizeof(prof));
+	prof.eth = eth_vreteno_prof;
+	k_thread_foreach(prof_thread_start, NULL);
+	prof.start = k_cycle_get_32();
+}
+
+static void prof_end(void)
+{
+	uint32_t total = k_cycle_get_32() - prof.start;
+	const struct eth_vreteno_prof *e = &eth_vreteno_prof;
+
+	printk("fastboot profile: %u bytes in %u cycles, %u a second\n",
+	       prof.bytes, total, (uint32_t)sys_clock_hw_cycles_per_sec());
+	printk("  recv %u cycles in %u calls; fastboot %u, of which the "
+	       "staging copy %u\n",
+	       prof.recv_cycles, prof.recv_calls, prof.fb_cycles,
+	       prof.write_cycles);
+	printk("  driver rx %u frames, %u cycles, copy %u; tx %u frames, "
+	       "%u cycles, copy %u, %u waits\n",
+	       e->rx_frames - prof.eth.rx_frames,
+	       e->rx_cycles - prof.eth.rx_cycles,
+	       e->rx_copy_cycles - prof.eth.rx_copy_cycles,
+	       e->tx_frames - prof.eth.tx_frames,
+	       e->tx_cycles - prof.eth.tx_cycles,
+	       e->tx_copy_cycles - prof.eth.tx_copy_cycles,
+	       e->tx_waits - prof.eth.tx_waits);
+	for (int i = 0; i < prof.threads; i++) {
+		k_thread_runtime_stats_t st;
+		const char *name = k_thread_name_get((k_tid_t)prof.thread[i]);
+
+		if (k_thread_runtime_stats_get((k_tid_t)prof.thread[i], &st)) {
+			continue;
+		}
+		printk("  thread %s: %u cycles\n", name ? name : "?",
+		       (uint32_t)(st.execution_cycles - prof.cycles[i]));
+	}
+}
+#define PROF_NOW() k_cycle_get_32()
+#define PROF_ADD(field, since) (prof.field += k_cycle_get_32() - (since))
+#else
+#define prof_begin() ((void)0)
+#define prof_end() ((void)0)
+#define PROF_NOW() 0u
+#define PROF_ADD(field, since) ((void)(since))
+#endif
+
 #define STAGE_BASE DT_REG_ADDR(DT_NODELABEL(fastboot_stage))
 #define STAGE_SIZE DT_REG_SIZE(DT_NODELABEL(fastboot_stage))
 
@@ -64,7 +151,10 @@ static int board_write(void *ctx, uint32_t offset, const uint8_t *p,
 	if (offset > MAX_DOWNLOAD || n > MAX_DOWNLOAD - offset) {
 		return 1;
 	}
+	uint32_t t0 = PROF_NOW();
+
 	memcpy((uint8_t *)STAGE_BASE + offset, p, n);
+	PROF_ADD(write_cycles, t0);
 	return 0;
 }
 
@@ -167,14 +257,26 @@ int main(void)
 		}
 		fb_init(&fb, &ops);
 		fb.staged = staged;
+		prof_begin();
 		while (r == FB_MORE) {
+			uint32_t t0 = PROF_NOW();
 			ssize_t k = zsock_recv(b.fd, buf, sizeof(buf), 0);
 
+			PROF_ADD(recv_cycles, t0);
+#ifdef CONFIG_ETH_VRETENO_PROFILE
+			prof.recv_calls++;
+#endif
 			if (k <= 0) {
 				break;
 			}
+#ifdef CONFIG_ETH_VRETENO_PROFILE
+			prof.bytes += (uint32_t)k;
+#endif
+			t0 = PROF_NOW();
 			r = fb_input(&fb, buf, (size_t)k);
+			PROF_ADD(fb_cycles, t0);
 		}
+		prof_end();
 		staged = fb.staged;
 		/* Close before acting, so the host has its `OKAY`. */
 		zsock_close(b.fd);

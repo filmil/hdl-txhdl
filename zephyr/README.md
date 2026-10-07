@@ -96,6 +96,20 @@ because the Ethernet engines store received frames at `0x4100_0000`
 and go on doing so after the jump.
 The host test's server has no jump page and offers the full 16 MiB.
 
+`//zephyr:fastboot_profile` is the same server saying where a
+download's time goes (issue 1230), with `fastboot/profile.conf`.
+When a connection closes it prints the bytes and the cycles it took, at
+the rate the line gives.
+It prints the cycles spent in `recv` and in the fastboot core, and of
+those in the copy to the staging area.
+It prints the Ethernet driver's frames and cycles each way, the copy
+into or out of a slot apart, and how often a send waited for the
+transmitter (`CONFIG_ETH_VRETENO_PROFILE`).
+It prints every thread's cycles across the connection, from Zephyr's
+runtime statistics.
+The driver's counts are `eth_vreteno_prof` in
+`include/vreteno/eth_vreteno.h`.
+
 `getvar`, `download` and `boot` are answered.
 `flash` and `erase` fail, since nothing on this machine writes
 persistent storage, and so does `reboot`, since the SoC cannot reset
