@@ -5,6 +5,12 @@
 //! that width in either language. The accumulator sums the products
 //! of the pairs it is given, and the netlist is checked against the
 //! trace under nvc and Verilator.
+//!
+//! The accumulator says `#[use_dsp("no")]`, which keeps Vivado from
+//! building its multiply and add from DSP slices: both netlists carry
+//! the `use_dsp` attribute on it (issue 1383). A register beside a
+//! memory's read is where that matters, since a multiply pulled into a
+//! DSP takes the read's register with it (issue 1343).
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Reg, Running, Unit};
 use txhdl::types::{Bit, U};
@@ -12,6 +18,7 @@ use txhdl::{lower, when, Trace};
 
 #[derive(Trace, Default)]
 pub struct Mac {
+    #[use_dsp("no")]
     pub acc: Reg<U<20>>,
 }
 

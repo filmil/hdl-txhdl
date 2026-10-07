@@ -268,6 +268,11 @@ pub trait Fields {
     /// `"distributed"` (issue 1371). The netlists say it as the
     /// `ram_style` attribute. Empty when there are none.
     const RAM_STYLES: &'static [(&'static str, &'static str)] = &[];
+    /// Whether Vivado may build what drives each register from DSP
+    /// slices, by name: `#[use_dsp("no")]` on a field, or `"yes"`,
+    /// `"logic"` or `"simd"` (issue 1383). The netlists say it as the
+    /// `use_dsp` attribute. Empty when there are none.
+    const USE_DSP: &'static [(&'static str, &'static str)] = &[];
     /// Every field of the unit, as its name, what it is, how wide it
     /// is, and how many words it holds if it is a memory.
     fn fields() -> Vec<(&'static str, Option<Kind>, usize, usize)>;
@@ -885,6 +890,9 @@ pub struct Lowered {
     /// The memories [`Fields::RAM_STYLES`] names, with what each asks
     /// Vivado to make it (issue 1371).
     pub ram_styles: Vec<(&'static str, &'static str)>,
+    /// The registers [`Fields::USE_DSP`] names, with what each says
+    /// (issue 1383).
+    pub use_dsp: Vec<(&'static str, &'static str)>,
     /// A port's trace scope when it is not the port's own name: a
     /// channel two units share under one name in the run has a port
     /// name of its own on each side.
@@ -975,6 +983,7 @@ pub fn foreign(
         async_regs: Vec::new(),
         distributed: Vec::new(),
         ram_styles: Vec::new(),
+        use_dsp: Vec::new(),
         aliases: Vec::new(),
         nets: Vec::new(),
         unregistered: Vec::new(),
@@ -2096,6 +2105,12 @@ impl Lowered {
             .any(|(n, k, _, _)| *n == t && *k == Some(Kind::Mem))
     }
 
+    /// What register `r` says of DSP slices: its `#[use_dsp]` (issue
+    /// 1383).
+    pub fn use_dsp_of(&self, r: &str) -> Option<&'static str> {
+        self.use_dsp.iter().find(|(n, _)| *n == r).map(|(_, v)| *v)
+    }
+
     /// What memory `m` asks Vivado to make it: its `#[ram_style]`, or
     /// `"distributed"` for `#[distributed]` (issue 1371).
     pub fn ram_style(&self, m: &str) -> Option<&'static str> {
@@ -2308,11 +2323,17 @@ impl Lowered {
                 // hand (#884).
                 Some(Kind::Reg) => writeln!(
                     out,
-                    "  {}reg {}{n} = {w}'h{:x};",
+                    "  {}{}reg {}{n} = {w}'h{:x};",
                     if self.async_regs.contains(n) {
                         "(* ASYNC_REG = \"TRUE\" *) "
                     } else {
                         ""
+                    },
+                    // Whether Vivado may use DSP slices for what drives
+                    // it (issue 1383).
+                    match self.use_dsp_of(n) {
+                        Some(v) => format!("(* use_dsp = \"{v}\" *) "),
+                        None => String::new(),
                     },
                     range(*w),
                     self.reg_init(n)
@@ -2744,6 +2765,8 @@ impl Lowered {
         }
         // Whether `attribute ram_style : string;` is declared yet.
         let mut styled = false;
+        // And `attribute use_dsp : string;` (issue 1383).
+        let mut dsp_declared = false;
         for (n, k, w, d) in &self.fields {
             let init = if *w == 1 {
                 "'0'".to_string()
@@ -2763,6 +2786,17 @@ impl Lowered {
                             "  attribute ASYNC_REG of {n} : signal is \"TRUE\";"
                         )
                         .unwrap()
+                    }
+                    if let Some(v) = self.use_dsp_of(n) {
+                        if !std::mem::replace(&mut dsp_declared, true) {
+                            writeln!(out, "  attribute use_dsp : string;")
+                                .unwrap();
+                        }
+                        writeln!(
+                            out,
+                            "  attribute use_dsp of {n} : signal is \"{v}\";"
+                        )
+                        .unwrap();
                     }
                 }
                 Some(Kind::Wire) => {
@@ -4297,6 +4331,7 @@ mod tests {
             async_regs: Vec::new(),
             distributed: Vec::new(),
             ram_styles: Vec::new(),
+            use_dsp: Vec::new(),
             aliases: Vec::new(),
             nets: Vec::new(),
             unregistered: Vec::new(),
